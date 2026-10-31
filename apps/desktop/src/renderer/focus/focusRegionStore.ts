@@ -8,8 +8,8 @@
 // for focus genuinely leaving every panel — app chrome, a dock tab, a dialog,
 // the startup screen — because that is the case the scope gate must catch.
 //
-// React subscribers must use the ATOMIC selector hook below (per
-// `feedback_zustand_composite_selector` — never select a composite object).
+// React subscribers must use the ATOMIC selector hook below — never select a
+// composite object.
 
 import { create } from "zustand";
 import type { PanelKind } from "../workspace/panelRegistry";

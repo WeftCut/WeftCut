@@ -285,8 +285,8 @@ export function playheadCategory(layerKind: string): PlayheadCategory {
   return "video";
 }
 
-/// The panel's two sections (ADR 0044): the boundary is the playhead,
-/// not the category.
+/// The panel's two sections (docs/features.md#track-placement): the boundary is
+/// the playhead, not the category.
 export interface PlayheadSections {
   /** Full visual stack, including reserved references even under a filter. */
   stack: PlayheadStackRow[];
@@ -349,7 +349,8 @@ export function splitPlayheadSections(
   };
 }
 
-/// Stable layer or track addressing (ADR 0088), never a positional index.
+/// Stable layer or track addressing (docs/features.md#track-placement), never a
+/// positional index.
 export interface RestackTarget {
   anchor: RestackAnchor;
   position: "above" | "below";
@@ -377,8 +378,8 @@ export function restackReferenceTargets(rows: readonly PlayheadStackRow[], index
   }));
 }
 
-/// Map a drop gap in the At-playhead visual stack to its anchored restack
-/// (ADR 0044 decision 5), or report a no-op as null.
+/// Map a drop gap in the At-playhead visual stack to its anchored restack,
+/// or report a no-op as null.
 ///
 /// `visibleRows` is exactly what the user sees: the filtered visual rows,
 /// top-of-stack first — so a neighbour hidden by a category chip can never
@@ -421,9 +422,10 @@ export interface RestackMenuTargets {
 }
 
 /// Map a row of the visible At-playhead visual stack to its four
-/// context-menu actions (ADR 0044 decision 4). Front/back are not op
+/// context-menu actions. Front/back are not op
 /// variants: they derive as above-the-top / below-the-bottom of the visible
-/// stack, including reserved visual track references (ADR 0088).
+/// stack, including reserved visual track references
+/// (docs/features.md#track-placement).
 ///
 /// `visibleRows` is exactly what the user sees — the filtered visual rows,
 /// top-of-stack first (the same contract as `restackTargetForGap`, so a

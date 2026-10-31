@@ -794,8 +794,8 @@ const enUS = {
     // CONTEXT.md's pinned word.
     hibernating: "Hibernating",
     // Row fields. There is deliberately no time field: a marker's time is
-    // spatial and belongs to the lane's drag (ADR 0056) — on an anchored marker
-    // the next reconcile would overwrite anything typed here.
+    // spatial and belongs to the lane's drag (docs/features.md#markers) — on an
+    // anchored marker the next reconcile would overwrite anything typed here.
     label_field: "Marker label",
     note_field: "Marker note",
     color_field: "Marker color",
@@ -1831,10 +1831,10 @@ const enUS = {
       "Ripple delete blocked: link {{link}} has members on both sides of the cut.",
     ripple_locked_layer:
       "Ripple delete blocked: {{layer}} is locked and would have to move.",
-    // The gap's own refusal (ADR 0069): the span the renderer selected is no
-    // longer a gap by the time the actor reads it — a clip moved into it, or
-    // an edge moved. Same four-word opening as the ripple's, since it greys the
-    // same row and lands on the same status bar.
+    // The gap's own refusal (docs/features.md#ripple-delete): the span the
+    // renderer selected is no longer a gap by the time the actor reads it — a
+    // clip moved into it, or an edge moved. Same four-word opening as the
+    // ripple's, since it greys the same row and lands on the same status bar.
     gap_not_found:
       "Ripple delete blocked: the selected gap on {{track}} is no longer there.",
     fps_locked_by_content:
@@ -2710,7 +2710,8 @@ const enUS = {
     outline_width: "Outline width (px), 0 for none",
     seek_to: "Go to caption at {{timecode}}",
   },
-  // Clip-compute jobs: transcribe_clip / describe_clip (ADR 0120, ADR 0121).
+  // Clip-compute jobs: transcribe_clip / describe_clip
+  // (docs/performance-settings.md#admission-lanes, ADR 0121).
   compute: {
     // One per key `phaseLabel` (shared/compute-jobs.ts) emits — tool-neutral,
     // for any surface that only has the phase. A queued job's reason is the
@@ -3049,7 +3050,8 @@ const enUS = {
       add_av_pair: "Added A/V pair",
       rebind_motif: "Rebound motif clips",
     },
-    // A selected gap closed (ADR 0069): the subject is the gap, no clip went.
+    // A selected gap closed (docs/features.md#ripple-delete): the subject is
+    // the gap, no clip went.
     gap: {
       close: "Closed gap",
     },

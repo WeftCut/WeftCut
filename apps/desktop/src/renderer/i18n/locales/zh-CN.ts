@@ -725,7 +725,7 @@ const zhCN: Resources = {
     // 存放那些片段已经不再显示其所指画面的标记。CONTEXT.md 的定名用词。
     hibernating: "休眠中",
     // 行内字段。这里刻意没有时间字段：标记的时间是空间性的，属于轨道上的拖拽
-    // （ADR 0056）——已锚定的标记上，下一次 reconcile 会覆盖这里输入的任何值。
+    // （docs/features.md#markers）——已锚定的标记上，下一次 reconcile 会覆盖这里输入的任何值。
     label_field: "标记标签",
     note_field: "标记备注",
     color_field: "标记颜色",
@@ -1631,7 +1631,7 @@ const zhCN: Resources = {
     ripple_collision: "波纹删除受阻：“{{moving}}”会落到“{{blocking}}”上。",
     ripple_link_straddles: "波纹删除受阻：链接 {{link}} 在切口两侧都有成员。",
     ripple_locked_layer: "波纹删除受阻：“{{layer}}”已锁定，但它必须移动。",
-    // 间隙自己的拒绝（ADR 0069）：渲染端选中的区间，到达通道时已经不是间隙——
+    // 间隙自己的拒绝（docs/features.md#ripple-delete）：渲染端选中的区间，到达通道时已经不是间隙——
     // 有片段移进来了，或边界变了。开头和波纹删除的四条一样，因为它变灰的是同一行、
     // 落到的是同一个状态栏。
     gap_not_found: "波纹删除受阻：{{track}} 上选中的间隙已不存在。",
@@ -2460,7 +2460,7 @@ const zhCN: Resources = {
     outline_width: "描边宽度（px），0 为无描边",
     seek_to: "跳到 {{timecode}} 的字幕",
   },
-  // 片段计算任务：转写 / 描述（ADR 0120、ADR 0121）。
+  // 片段计算任务：转写 / 描述（docs/performance-settings.md#admission-lanes、ADR 0121）。
   compute: {
     // 与 phaseLabel 输出的键一一对应，不区分工具。排队原因说的是在等什么。
     phase: {
@@ -2752,7 +2752,7 @@ const zhCN: Resources = {
       add_av_pair: "添加音视频对",
       rebind_motif: "重绑定 Motif 片段",
     },
-    // 闭合选中的间隙（ADR 0069）：动作的对象是间隙，没有片段被删。
+    // 闭合选中的间隙（docs/features.md#ripple-delete）：动作的对象是间隙，没有片段被删。
     gap: {
       close: "闭合间隙",
     },

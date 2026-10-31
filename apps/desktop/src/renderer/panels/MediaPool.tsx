@@ -525,8 +525,8 @@ export function MediaPool({
         />
         {/* The Groups section gathered orphans under a heading; the merged
             list scatters them by name, and this toggle is what buys that job
-            back — the surface ADR 0042 requires a remnant to stay removable
-            through. */}
+            back — it is the surface through which a remnant stays
+            removable. */}
         <button
           type="button"
           className={`media-filter-button${unusedOnly ? " is-active" : ""}`}

@@ -579,8 +579,8 @@ export interface TrackSummary {
   role: TrackRole | null;
   /// True for every track outside the reserved skeleton, which is exactly
   /// the set cleanup may remove: an unlocked one disappears the moment its
-  /// last layer leaves it (ADR 0042). Equivalent to `role === null` — a track
-  /// carrying a role is never a cleanup candidate.
+  /// last layer leaves it (docs/data-model.md#track). Equivalent to
+  /// `role === null` — a track carrying a role is never a cleanup candidate.
   transient: boolean;
   layers: LayerSummary[];
 }
@@ -1360,7 +1360,7 @@ export async function updateTrackFlags(
 
 /// Name a lane. RECORDED (unlike the flags above) — a name is content, so
 /// Ctrl-Z reverts it. `null` (or a blank string, which the actor folds to null)
-/// restores the derived name (ADR 0042).
+/// restores the derived name (docs/data-model.md#track).
 export async function renameTrack(
   trackId: string,
   label: string | null,
@@ -1585,10 +1585,10 @@ export async function moveLayer(
   });
 }
 
-/// Raise layers onto one fresh lane at the top of the z-stack (ADR 0042). One
-/// commit: the lane appears, every listed layer moves onto it, and every lane
-/// the raise emptied goes with it, so one undo restores all of them. Returns the
-/// new track's id.
+/// Raise layers onto one fresh lane at the top of the z-stack
+/// (docs/features.md#track-placement). One commit: the lane appears, every
+/// listed layer moves onto it, and every lane the raise emptied goes with it,
+/// so one undo restores all of them. Returns the new track's id.
 ///
 /// `anchor` is the drop strip's landing — its layer's head goes to `tStartUs`
 /// and every other member holds its phase. Omit it to keep every time verbatim,
@@ -1607,8 +1607,9 @@ export async function moveLayersToNewTrack(
 }
 
 /// Restack a visual layer above/below a stable layer or track reference
-/// (ADR 0088) — the Playhead Panel's drop gesture. One undoable step; degradation and no-op
-/// semantics live on the mutation (main/state/mutations/restack.ts).
+/// (docs/features.md#track-placement) — the Playhead Panel's drop gesture. One
+/// undoable step; degradation and no-op semantics live on the mutation
+/// (main/state/mutations/restack.ts).
 export async function restackLayer(
   layerId: string,
   anchor: import("../../shared/restack").RestackAnchor,
@@ -1748,8 +1749,8 @@ export async function compositionsDelete(compositionId: string): Promise<void> {
 ///
 /// The lifted track is `transient` like every role-less track, so emptying it
 /// later removes it — and lifting can now empty the SOURCE row, which the same
-/// rule then removes (ADR 0042). It is also the one track that keeps a stored
-/// label, when the source had a name worth recording.
+/// rule then removes (docs/data-model.md#track). It is also the one track that
+/// keeps a stored label, when the source had a name worth recording.
 export async function separateAudioToNewTrack(
   layerId: string,
 ): Promise<string> {
@@ -1815,7 +1816,8 @@ export async function deleteLayers(layerIds: string[]): Promise<void> {
 /// `deleteLayers` that also CLOSES what the set vacated: every layer downstream
 /// of the freed span, on every track of that composition, moves left, and the
 /// film gets shorter. Takes the selection verbatim for the same reason
-/// `deleteLayers` does, and lands as ONE undo step (ADR 0062).
+/// `deleteLayers` does, and lands as ONE undo step
+/// (docs/features.md#ripple-delete).
 ///
 /// Refuses rather than making room — a layer starting inside the span, a
 /// landing that would collide, a link with members on both sides, a locked
@@ -1826,13 +1828,13 @@ export async function rippleDeleteLayers(layerIds: string[]): Promise<void> {
   return invoke<void>("ripple_delete_layers", { layerIds });
 }
 
-/// Close a selected gap (ADR 0069): the empty span `[startUs, endUs)` on
-/// `trackId` goes, and every layer of the composition starting at or after it
-/// moves left by its length — `rippleDeleteLayers`' closing with nothing
-/// deleted, as ONE undo step. Both edges travel so the actor closes exactly the
-/// span the timeline highlighted; a span that is no longer a gap when the actor
-/// reads it is refused (`GapNotFound`) rather than re-measured, and the
-/// ripple's own refusals apply as they do to a deletion.
+/// Close a selected gap (docs/features.md#ripple-delete): the empty span
+/// `[startUs, endUs)` on `trackId` goes, and every layer of the composition
+/// starting at or after it moves left by its length — `rippleDeleteLayers`'
+/// closing with nothing deleted, as ONE undo step. Both edges travel so the
+/// actor closes exactly the span the timeline highlighted; a span that is no
+/// longer a gap when the actor reads it is refused (`GapNotFound`) rather than
+/// re-measured, and the ripple's own refusals apply as they do to a deletion.
 export async function rippleDeleteGap(args: {
   trackId: string;
   startUs: number;
@@ -1913,7 +1915,7 @@ export interface CompositionPatchPartial {
 
 /// Update one or more composition fields. Setting `duration_us` pins
 /// the composition duration — call `fitCompositionToLayers()` to clear
-/// the pin and resume auto-fit. See ADR 0005.
+/// the pin and resume auto-fit. See docs/data-model.md#composition.
 export async function setComposition(
   patch: CompositionPatchPartial,
 ): Promise<void> {
@@ -2876,9 +2878,9 @@ export async function detectPauses(args: {
 
 /// Detect and mark in ONE commit (one undo entry): a region marker per pause,
 /// in the subject's own composition, anchored to the clip so trimming past one
-/// hibernates its mark and deleting the clip takes them all (ADR 0056).
-/// Detection re-runs inside the same call at the parameters given, so the marks
-/// can never be a set the section did not show.
+/// hibernates its mark and deleting the clip takes them all
+/// (docs/features.md#markers). Detection re-runs inside the same call at the
+/// parameters given, so the marks can never be a set the section did not show.
 ///
 /// The FULL range is marked, pad and all — the pad is what a removal keeps, and
 /// a mark changes no timing (spec Decision 8), so it has nothing to shrink for.
@@ -2909,9 +2911,9 @@ export interface RemovePausesResult {
 
 /// Detect and CUT in ONE commit (one undo entry): each pause's core is removed
 /// and the gap it vacated closes behind it, so the clip — and the film — get
-/// shorter (ADR 0062). Detection re-runs inside the same call at the parameters
-/// given, exactly as `markPauses` does, so what leaves is the set the section
-/// showed.
+/// shorter (docs/features.md#ripple-delete). Detection re-runs inside the same
+/// call at the parameters given, exactly as `markPauses` does, so what leaves
+/// is the set the section showed.
 ///
 /// `padUs` is what each side of a pause KEEPS: the core cut is
 /// `[start + pad, end − pad)`, and a pause touching the clip's head or tail

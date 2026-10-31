@@ -109,7 +109,7 @@ export const MENU_ONLY_COMMAND_IDS = [
   "createCheckpoint",
   // Raise-to-top. No binding on purpose — the key budget belongs to
   // higher-frequency operations, and z-order rearrangement is not one
-  // (ADR 0042).
+  // (docs/features.md#track-placement).
   "moveToNewTrack",
   // Marker display. No binding on purpose: `M` went to `addMarkerAtPlayhead`
   // (ACTION_DEFS) — the reservation this entry once held open, now spent — and
@@ -202,10 +202,10 @@ const SELF_CONTAINED_COMMAND_IDS = [
   "setPlaybackResolutionHalf",
   "setPlaybackResolutionQuarter",
   "cyclePlaybackResolution",
-  // Preview zoom, the two steps only. The wheel is the gesture (ADR 0072) and
-  // Fit carries the one key worth spending (`Z`, an `ACTION_DEFS` entry), so
-  // these two exist for the palette and for an agent: nameable, bounded, and
-  // one call from any current scale.
+  // Preview zoom, the two steps only. The wheel is the gesture
+  // (docs/preview.md#interaction) and Fit carries the one key worth spending
+  // (`Z`, an `ACTION_DEFS` entry), so these two exist for the palette and for
+  // an agent: nameable, bounded, and one call from any current scale.
   "previewZoomIn",
   "previewZoomOut",
 ] as const;

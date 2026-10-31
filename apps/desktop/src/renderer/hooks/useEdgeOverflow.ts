@@ -3,7 +3,8 @@
 // `lib/edgeOverflow.ts`; this file only measures, subscribes, and writes
 // `scrollLeft` / `scrollTop`.
 //
-// Shared by the dock tab strip and the Quick Actions strip. ADR 0050.
+// Shared by the dock tab strip and the Quick Actions strip. Why:
+// docs/features.md#strip-overflow.
 
 import { useUiScale } from "../settings/layoutTheme";
 import { UI_METRICS } from "../settings/uiMetrics";

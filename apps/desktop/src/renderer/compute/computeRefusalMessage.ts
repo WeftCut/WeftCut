@@ -1,8 +1,9 @@
-// A transcription or description that could not get processing resources,
-// said the way a person can act on. The native refusal (ADR 0120) is one long
-// English sentence written for logs and for agents — "resource-capacity-exceeded:
-// Waited 60 s before sampling clip frames: the CPU and memory budget is held by
-// 2 other lease(s) …" — and shown raw it read as a crash dump in a Chinese UI.
+// A transcription or description that could not get processing resources, said
+// the way a person can act on. The native refusal
+// (docs/performance-settings.md#admission-lanes) is one long English sentence
+// written for logs and for agents — "resource-capacity-exceeded: Waited 60 s
+// before sampling clip frames: the CPU and memory budget is held by 2 other
+// lease(s) …" — and shown raw it read as a crash dump in a Chinese UI.
 //
 // The sentence stays the record (log details, the agent's answer, a
 // collapsible "technical details"); what a person reads first is a short

@@ -231,9 +231,10 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // field. UNSCOPED like the transport keys rather than timeline-scoped: `=`
   // means the timeline with the preview or the media pool focused too, and the
   // handler is registered by Timeline — with the panel closed the key is inert
-  // anyway. The preview is zoomable as well (ADR 0072), and deliberately does
-  // NOT share these: its gesture is the wheel, and one key means one thing
-  // app-wide here rather than whatever panel happens to hold focus.
+  // anyway. The preview is zoomable as well (docs/preview.md#interaction), and
+  // deliberately does NOT share these: its gesture is the wheel, and one key
+  // means one thing app-wide here rather than whatever panel happens to hold
+  // focus.
   //
   // Not `repeatable`: a held key would cross the whole range in a third of a
   // second. The wheel is the gesture for sweeping through scales.
