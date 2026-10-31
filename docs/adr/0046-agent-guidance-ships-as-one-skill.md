@@ -2,137 +2,70 @@
 status: accepted
 ---
 
-# Agent guidance ships as one app-bundled skill, single-sourced from the docs
+# Agent guidance is one app-bundled skill; the app holds the evidence, the client runs the loop
+
+Date: 2026-10-25
 
 ## Context
 
-WeftCut's MCP surface already teaches connected agents everything a single
-tool can carry: tool descriptions written as API docs, structured errors with
-options, three canned prompts. What it structurally cannot carry is
-**cross-tool process knowledge** — how a session should go (checkpoint first,
-ask before taking over the UI), which tools compose into which flows, and the
-Motif authoring loop with its verification gate. That knowledge lived only in
-repo docs, and an end user's agent has no repo: whatever it should know has to
-travel to its machine.
+WeftCut is an MCP server. Claude Code, Codex, Claude Desktop and others run
+their own loops and prompts, so WeftCut cannot inject a pipeline or own the
+loop. Tool descriptions carry per-call contracts; cross-tool process knowledge
+(checkpoint first, ask before taking over the UI, the Motif authoring loop)
+must reach an end user's agent, which has no repo. Nothing in MCP loads before
+the first tool call: prompts are user-invoked, resources are read on demand.
 
-The obvious hazard of any client-side artifact is drift. The skill describes
-the app; the app updates; a stale skill teaches every connected agent to call
-tools that no longer exist — silently, on machines we don't control.
+A client-side artifact drifts: the app updates and a stale skill teaches every
+connected agent tools that no longer exist, on machines we don't control. Each
+link of the delivery chain (an empty copy, an extraResource filter matching
+nothing, a startup refresh that cannot tell empty from absent) fails silently.
+
+Bench runs (`docs/notes/agent-bench-*.md`) showed that look follows tool
+defaults rather than the model, and that taste rules (density, pictures vs
+words) made weaker models meet counts instead of ideas; the user's review of
+plan and cut was what held quality.
 
 ## Decision
 
-### One skill, not a series
+- **One skill**, `skills/weftcut/`, described as "use BEFORE calling any
+  weftcut MCP tool". Sibling files (`craft/`, `recipes/`, the Motif docs) are
+  disclosed by pointer; no skill series until trigger failures are observed.
+- **Boundary rule**: the skill carries only what no tool description can
+  (etiquette, composition, process). A skill that must restate a tool's
+  contract means the description is too weak — fix it there.
+- **Single-sourced, skill version = app version**: `build-skills.mjs` stages
+  `skills/` plus the docs in `REQUIRED_DOCS` (copied verbatim, so they link to
+  no other doc); it ships as an extraResource and is refreshed to
+  `<userData>/skills/` at startup. No marketplace copy. No embedded example
+  Motifs: built-ins are read live with `read_motif`.
+- **A missing skill is a failure**: `build:skills` and the afterPack gate
+  assert shape and version stamp; startup reports `installed` / `stale` /
+  `unavailable` with its fault; the panel shows the fault with a retry, and a
+  packaged build that is not `installed` raises a retractable startup notice.
+- **Names are pinned**: `mcp.skill-conformance.test.ts` checks every backticked
+  tool/resource/prompt name and the recipe stage/signal vocabulary against the
+  advertised catalog.
+- **The app holds the evidence**: style-token defaults, refusals, the audit
+  (ADR 0128), the handoff report of `end_agent_session` and the review
+  baseline (ADR 0115) work whether or not the client follows the skill. A rule
+  sits on the lowest rung that holds it: construction → refusal → lint →
+  skill prose → human review.
+- **No self-certification, no in-app judge**: the agent's opinion of its own
+  work is never an exit condition, and there is no server-side critic or model.
+  Taste is the user's review; Motif install waits for the user's approval in
+  the app preview, since not every agent can see images.
 
-A single model-invoked skill named `weftcut` (repo-root `skills/weftcut/`),
-description-anchored on "use BEFORE calling any weftcut MCP tool" so the MCP
-catalog itself is the trigger signal. Editing etiquette and orchestration
-patterns sit inline in `SKILL.md`; the Motif authoring spec is a disclosed
-sibling file reached by a pointer. Splitting waits for observed trigger
-failures, not anticipation.
+## Consequences
 
-### The content boundary is a rule, not a judgment call
+- A stale client fails loudly on its first call against the catalog instead of
+  following drifting prose.
+- The harness stays light: one skill, objective checks, human review. Guidance
+  is added only when a bench run shows the default it fixes.
+- Recipes are skill files with a closed stage/signal vocabulary; no MCP prompt
+  is generated from them.
 
-The skill carries only what no single tool description can: etiquette,
-composition, the authoring loop. If writing the skill ever requires restating
-a tool's contract, the tool description is too weak — fix it at the source,
-where every MCP client benefits, and leave a name-drop in the skill. The same
-rule sends single-resource contracts into resource descriptions: the
-`project://history` window semantics (`window_start`, `evicted`) moved into
-its advertised description as part of this work, pinned by a Rust test.
-
-### The authoring contract is single-sourced and build-copied
-
-`docs/motif-authoring.md` is the one normative authoring spec — deliberately
-self-contained (it links to no other doc), because a verbatim copy of it is
-what ships inside the skill bundle. `docs/motifs.md` shrank to system
-narrative and points at it. The spec embeds **zero example HTML**: the living
-exemplar is always a built-in read via `get_motif_source`, which cannot drift
-from the running app by construction.
-
-### Verification is the user's, not the agent's
-
-Not every MCP agent is multimodal, so the install gate cannot be "look at the
-preview PNG". The mandated loop places the draft on the timeline and has the
-user approve in the app's own preview before `install_motif`; image-capable
-agents may pre-filter with `preview_motif_draft`, but the user's confirmation
-is the gate either way. The same ask-first posture governs
-`begin_agent_session`: small edits take a `checkpoint` and nothing more;
-batch jobs ask before flipping the user's UI.
-
-### Delivery rides the shim's rails
-
-`scripts/build-skills.mjs` stages `skills/` plus the contract copy into
-`out/skills`; electron-builder ships it as an extraResource; startup refreshes
-it to `<userData>/skills/` (the only path stable across upgrades on all three
-OSes); the Connect-agent panel shows a copyable install prompt pointing at
-that copy. Skill version therefore equals app version — drift between the two
-is structurally impossible. A marketplace mirror is deferred until the content
-is validated with real users.
-
-### A missing skill is a failure, never a quiet absence
-
-Every link in that chain degrades silently on its own: copying an empty tree
-succeeds, an extraResource filter that matches nothing packs nothing, and the
-startup refresh cannot tell an empty bundle from an absent one. Composed, they
-turn "the skill did not ship" into "the panel has one fewer section" — the one
-outcome that leaves a user with no way to notice, on the feature whose entire
-purpose is to reach machines we don't control.
-
-So the chain is gated at both ends. `build:skills` and an electron-builder
-`afterPack` hook assert the same two things — the bundle's shape and its
-version stamp — first over what was staged, then over what actually landed in
-the distributable, because the link between those is itself one of the silent
-ones. Past the gates, the startup refresh reports a state (`installed`,
-`stale`, `unavailable`) with the fault behind it instead of a nullable path,
-the panel renders its skill surfaces unconditionally and shows the fault where
-the buttons would be, and a packaged build that is not `installed` raises a
-startup notice. A dev tree before `build:skills` is the one benign fault, and
-it is named separately so it can read as the instruction it is.
-
-The fault block carries a "try again" rather than only an instruction, because
-none of the causes that reach a user live inside WeftCut — a full disk, a
-quarantined file, a lock, a damaged install — and re-running the install is the
-only way to find out whether the cause is gone. Recovery therefore costs no app
-restart, which also means the startup notice has to be retractable: main
-re-broadcasts the notice list on `app:notices`, the one push in a surface that
-is otherwise pull-only.
-
-### Names are pinned by a gate
-
-`mcp.skill-conformance.test.ts` extracts every backticked tool / resource /
-prompt reference from the shipped sources and asserts membership in the
-advertised catalog (the same fixture-plus-TS-tables union the bijection gate
-uses). A rename goes red in CI until the prose is updated; semantic honesty
-stays a docs-conformance-pass duty.
-
-## Alternatives considered and rejected
-
-- **MCP-native only (prompts / resources).** Reaches every client, but nothing
-  in MCP loads proactively before the first tool call — prompts are
-  user-invoked and resources are read on demand, so process knowledge would
-  arrive only after the mistakes it exists to prevent. The boundary rule keeps
-  the MCP surface as strong as it can be; the skill covers only the remainder.
-- **A skill series.** Two-plus descriptions of permanent context load for
-  content that shares its etiquette core; the Motif branch is reachable
-  through one pointer at no standing cost.
-- **Marketplace-first distribution.** Decouples skill version from app version
-  on day one — the drift hazard adopted before any user has validated the
-  content.
-- **Embedded example Motifs.** Every embedded source is a future lie once the
-  contract moves; built-ins read at run time are always current.
-- **Agent self-review as the install gate.** Assumes multimodality; a
-  text-only agent would install blind or not at all.
-
-## Where this lives
-
-- `skills/weftcut/SKILL.md` — the skill; `docs/motif-authoring.md` — the
-  contract (copied verbatim into the bundle).
-- `apps/desktop/scripts/build-skills.mjs` — staging, and
-  `build-skills-lib.mjs` — the stamp plus the two assertions both gates share;
-  `apps/desktop/scripts/after-pack-skill.mjs` — the pack-time gate;
-  `apps/desktop/electron-builder.yml` `extraResources` — shipping;
-  `apps/desktop/src/main/mcp/skillsInstall.ts` — the startup refresh and the
-  faults it reports; `AgentSection.tsx` — the Connect-panel install block.
-- `apps/desktop/src/main/state/__tests__/mcp.skill-conformance.test.ts` — the
-  anti-drift gate; `native/src/mcp/resources.rs` — the history-description
-  pin.
+Rejected: MCP-native-only guidance (arrives after the mistakes it should
+prevent); a skill series (standing context per description); marketplace-first
+distribution (drift on day one); growing the `initialize` instructions into a
+harness (they stay ten lines of etiquette); numeric taste scores as a gate;
+agent self-review as the Motif install gate.

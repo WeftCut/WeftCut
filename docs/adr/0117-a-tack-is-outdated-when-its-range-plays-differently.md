@@ -1,119 +1,62 @@
-# ADR 0117: A tack is outdated when its range plays differently
+---
+status: accepted
+---
 
-Status: Accepted
+# A tack is outdated when its range plays differently
 
-Supersedes the Tack placement and lifecycle of
-[ADR 0115](0115-agent-review-lives-beside-the-project-not-in-it.md): its edge
-anchoring, its pinning to one clip (`anchor_layer_id`), its `stale` and
-`hibernating` states and its shrinking ranges.
-That a tack is runtime review state beside the project, its verbs, its panel,
-its Review lane and its conversion into a marker remain in force.
+Date: 2026-10-17
 
 ## Context
 
-ADR 0115 tied each end of a tack to the clip under it and remembered the
-clips on those two tracks that its range overlapped. A tack was `outdated` only
-when one of those remembered clips changed in more than a move. Anything else
-in the range went unseen: a tack whose ends both sat over gaps remembered no
-clip at all, so deleting the only clip inside it left it reading as current;
-the other tracks, content added into the range, a clip moved out of it,
-transitions and a Group's contents were never compared. The other way round,
-trimming a clip's far end, outside the range, outdated it.
-
-Three placement states (`visible`, `hibernating`, `stale`) on top of
-`outdated`, three range kinds and an end that kept or lost its own clip made
-the tack hard to reason about, for the user and for the agent, while still
-not answering the one question a review comment needs answered: is what I
-commented on still what plays here?
+Tacks first anchored each end to the clip under it and remembered the clips
+on those two tracks that the range overlapped; a tack was outdated only when
+a remembered clip changed in more than a move. That missed most of what
+changes a range — a tack over gaps remembered nothing, so deleting the only
+clip inside left it "current"; other tracks, content added into the range, a
+clip moved out, transitions and Group contents were never compared — while
+trimming a clip's far end, outside the range, outdated it. Three placement
+states (`visible`, `hibernating`, `stale`), three range kinds and per-end
+anchoring made tacks hard to reason about for user and agent alike, without
+answering the one question a review comment needs: is what I commented on
+still what plays here?
 
 ## Decision
 
-**A tack is a comment on what plays in a time range.** At creation the store
-records what plays in the range across every track of its composition: each
-layer the range overlaps, the part of it inside the range (as offsets from
-the range's start), the content time that part starts on, the layer's values
-that affect what plays, the tracks' order, the transitions touching those
-layers, and — through a Group — what plays in the stretch of its composition
-the Group shows. Keyframe times are compared from the range's start, not the
-layer's, since a head trim rebases them; a layer's label and lock play nothing
-and are not compared. Markers are notes, not playback, and are not part of it;
-neither are the preference-shaped track toggles review already excludes.
-`main/agent/rangePlayback.ts` owns this comparison; the tack store only
-records and replays it.
-
-The covered playback includes the gain of each audio layer's role. A role
-change must invalidate replay's memo even when every composition object is
-shared. Animation dependencies are the interpolation segments intersecting
-the covered interval, including their boundary keys and the handles they
-read. Transitions contribute only where their half-open overlap intersects
-the interval. Fade ramps depend on the layer-local time and total duration,
-so a trim outside the interval can still change its fade inside it.
-`playbackValues.ts` owns these layer-local dependencies. Non-hold animation
-extrapolation conservatively retains its curve when the interval reaches
-outside the keys; the comparison does not claim symbolic equivalence of
-different authored curves or sample them on a frame/half-frame grid.
-
-**Two states.** A tack is *current* while its range, where it now sits, plays
-what it played at creation, and *outdated* (内容已修改) otherwise. Nothing else:
-there is no stale, no hibernating, no shrinking. A deleted clip, a trim into
-the range, an insert into a gap inside it, a clip moved out of it, a change on
-another track, a retimed Group's contents — each outdates it. A trim, a move
-or any edit wholly outside the range does not.
-
-**The range keeps its length and moves with its content.** Its position is
-its created position moved by as far as its content moved, read from the
-first covered layer, in track order, that still shows the content its covered
-part started on — by source time for a layer with a source window, as an
-anchored marker follows, and by its offset into the layer for a title, colour
-or image. A ripple upstream moves the whole range and leaves it current. There
-is no choosing which layer: content that moved together moved every covered
-layer alike, and content that did not is outdated whichever layer placed it —
-the choice could only change where an outdated tack is drawn. When no covered
-layer still shows its content the range stays at its created position, and is
-outdated, since what it covered is gone. Only a tack whose composition no
-longer exists has no place: it is listed, outdated, and cannot be located or
-converted.
-
-Placement uses the content's displacement in microseconds, without a marker's
-video-frame snap. Audio can start on its sample grid between video frames;
-creating a tack there must preserve its requested position and keep it current.
-
-Undo that restores the content restores the tack to current: the state is
-derived on read, never latched.
-
-## Considered options
-
-**Keep ADR 0115's covered-clip list, extended to every track.** Rejected: a
-list fixed at creation cannot see content added into the range or moved out
-of it, which is half of what changes a range.
-
-**Compare whole layers.** Rejected: a trim of a clip's far end changes the
-layer but not one frame inside the range.
-
-**Track the range through every edit without following content.** Rejected
-for the reason ADR 0115 gave against mapping positions through edits; and a
-range fixed on the clock would read every upstream ripple as a change.
-
-**Keep `anchor_layer_id` to choose the followed clip.** Rejected: under the
-rule above the choice never decides whether a tack is current, only where an
-outdated one is drawn — a parameter whose effect an agent cannot see.
-
-**Let a range over nothing but gap follow its neighbours.** Rejected: it would
-add back a placement rule for the one case with no content to follow.
+- **A tack comments on what plays in a time range.** At creation the store
+  records, across every track of its composition, each overlapping layer's
+  part inside the range (offsets from the range start), the content time it
+  starts on, the values that affect playback, track order, touching
+  transitions, role gain, and — through a Group — what plays in the Group's
+  shown stretch. Keyframe times are compared from the range start; only
+  interpolation segments intersecting the range count; fades count by
+  layer-local time, so a trim outside the range can still change a fade
+  inside it. Markers, labels, locks and preference toggles are not playback.
+  `main/agent/rangePlayback.ts` owns the comparison (with `playbackValues.ts`).
+- **Two states**: *current* while the range, where it now sits, plays what it
+  played at creation; otherwise *outdated*. Derived on read, never latched:
+  undo that restores the content restores current.
+- **The range keeps its length and moves with its content**: displaced by as
+  far as the first covered layer (track order) that still shows its covered
+  content moved — by source time for a layer with a source window, by offset
+  for titles, colours and images; in µs, without frame snap, so audio on the
+  sample grid stays put. A ripple upstream moves it and leaves it current. If
+  no covered layer shows its content it stays put and is outdated; a tack whose
+  composition is gone is listed, outdated, and cannot be located or converted.
 
 ## Consequences
 
-- `TackView` loses `state` and `range.kind`; a tack's place is null only when
-  its composition is gone. `follows` names the layer the range moves with now
-  (with its source instant when it has a source window), or null — used to
-  locate, outline and convert a tack, not shown as a field of its own.
-- `create_tacks` takes no `anchor_layer_id` and returns no `follows`.
-- `affected_tacks` reports `moved` or `outdated`; `tacks_to_review` lists the
+- `TackView` has no `state` or range kind; `follows` names the layer the range
+  moves with now (or null). `create_tacks` takes no `anchor_layer_id`.
+  `affected_tacks` reports `moved` or `outdated`; `tacks_to_review` lists the
   client's open outdated tacks.
-- A tack made over nothing but gap follows nothing and keeps its timeline
-  time. It is outdated as soon as anything plays there — whether put there,
-  which is what such a tack is about, or carried in by a ripple upstream,
-  which is the cost of not giving gaps a placement rule.
-- An outdated tack cannot be made current again except by restoring the
-  content; to comment on the new content, the agent deletes it and tacks
-  again.
+- A tack over pure gap follows nothing and is outdated as soon as anything
+  plays there, including content carried in by an upstream ripple.
+- An outdated tack becomes current again only by restoring the content; to
+  comment on new content the agent deletes it and tacks again.
+
+Rejected: extending the covered-clip list to every track (cannot see content
+added or moved out); comparing whole layers (a far-end trim changes no frame
+in range); tracking the range through edits without following content (every
+upstream ripple would read as a change; timeline edits are entity operations,
+not axis operations); keeping `anchor_layer_id` (it only changes where an
+outdated tack is drawn); a placement rule for gap-only ranges.
