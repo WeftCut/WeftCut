@@ -28,6 +28,17 @@ function fixture(enabled = true) {
 }
 
 describe('Motif capture and persistence', () => {
+  it('uses parallel PNG pages only with a main-resolved export reservation', async () => {
+    const h = fixture(false);
+    const exportPng = vi.fn(async () => Buffer.from('export png').toString('base64'));
+    const service = new MotifCaptureService({ ...h.deps, exportPng }, false);
+    const { bake: _bake, ...request } = args;
+    await service.capture(owner, request);
+    expect(exportPng).not.toHaveBeenCalled();
+    await service.capture(owner, request, () => true, 71);
+    expect(exportPng).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ motifId: 'synthetic' }), 71, '12:job', false, expect.any(Function));
+    expect(h.deps.png).toHaveBeenCalledOnce();
+  });
   it('does not deliver an old document capture to its replacement or disable GPU capture', async () => {
     const h = fixture(); const { bake: _bake, ...preview } = args;
     let current = true;

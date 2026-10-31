@@ -300,6 +300,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     const motifProducer = hasMotifs ? new MotifFrameProducer({
       maxBytes: motifBufferBytes,
       maxFrames: init.resourcePlan?.motifFrames ?? 3,
+      maxConcurrentReads: Math.min(2, init.resourcePlan?.motifFrames ?? 3),
       totalFrames: exportFrameCount(Math.max(0, startUs), Math.min(comp.duration_us, endUs), outFpsNum, outFpsDen),
       plan: exportMotifPlanner(summary, Math.max(0, startUs), outFpsNum, outFpsDen, init.resourcePlan ? init.finalizationToken : undefined),
       send: packet => worker.postMessage({ type: "motif:frame", packet } satisfies ExportRequest,

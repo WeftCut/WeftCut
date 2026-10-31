@@ -11,11 +11,14 @@ import { sharedBakedKeyIndex, sharedMotifFrameCache } from "./motifs/motifRaster
 import { frameTimeUs } from "./worker/frameGrid";
 import type { MotifReadTask } from "./worker/motifStream";
 
+interface ExportCacheWrites { enabled: boolean }
+
 /** Uses the same composition-frame selection as the compositor, including
  * nested Group instances, trimmed ranges, held tails and output-fps changes.
  * Planning allocates metadata only; the producer admits reads by byte budget. */
 export function planExportMotifFrame(
   summary: ProjectSummary, tUs: number, finalizationToken?: string,
+  cacheWrites: ExportCacheWrites = { enabled: true },
 ): MotifReadTask[] {
   const comp = rootCompositionOf(summary);
   const t = snapFrameFloor(tUs, comp.fps_num, comp.fps_den);
@@ -47,7 +50,7 @@ export function planExportMotifFrame(
             desc.tSec, desc.canonicalProps, desc.renderW, desc.renderH,
             spec.motif.manifest.settle_rafs, spec.motif.manifest.content_hash,
             comp.fps_num, comp.fps_den, { key, high: true,
-              bake: { hash: hashCacheKey(desc.cacheKey), frame: desc.contentFrame }, bakeOptional: true,
+              ...(cacheWrites.enabled ? { bake: { hash: hashCacheKey(desc.cacheKey), frame: desc.contentFrame }, bakeOptional: true } : {}),
               ...(finalizationToken ? { finalizationToken } : {}) }));
         } finally { signal.removeEventListener("abort", cancel); }
         if (persisted) {
@@ -58,7 +61,7 @@ export function planExportMotifFrame(
         // Native capture persists during the existing OSR lease; only portable
         // capture or unavailable native readback needs this PNG compatibility path.
         // Await within the read reservation so writes cannot build an unbounded queue.
-        if (!signal.aborted) {
+        if (!signal.aborted && cacheWrites.enabled) {
           let canvas: OffscreenCanvas | undefined;
           try {
             canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
@@ -71,7 +74,14 @@ export function planExportMotifFrame(
               sharedBakedKeyIndex.add(desc.cacheKey, desc.contentFrame);
             }
           } catch (error) {
-            console.warn("[weftcut/export] Motif cache write skipped:", error);
+            if (/motif-disk-capacity|ENOSPC|disk.*full/i.test(String(error))) {
+              // This job's optional cache cannot grow. Do not PNG-encode every
+              // following frame only to hit the same quota over IPC again.
+              // Reads of already-baked frames remain enabled; required pixels
+              // are still captured at full quality and passed to the worker.
+              if (cacheWrites.enabled) console.warn("[weftcut/export] Motif cache is full; optional writes disabled for this export:", error);
+              cacheWrites.enabled = false;
+            } else console.warn("[weftcut/export] Motif cache write skipped:", error);
           } finally { if (canvas) canvas.width = canvas.height = 0; }
         }
         return bitmap;
@@ -81,5 +91,6 @@ export function planExportMotifFrame(
 }
 
 export function exportMotifPlanner(summary: ProjectSummary, startUs: number, fpsNum: number, fpsDen: number, finalizationToken?: string) {
-  return (index: number) => planExportMotifFrame(summary, frameTimeUs(startUs, index, fpsNum, fpsDen), finalizationToken);
+  const cacheWrites = { enabled: true };
+  return (index: number) => planExportMotifFrame(summary, frameTimeUs(startUs, index, fpsNum, fpsDen), finalizationToken, cacheWrites);
 }

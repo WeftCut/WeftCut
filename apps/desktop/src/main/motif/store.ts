@@ -21,7 +21,7 @@ type MotifSource = { manifest: Manifest; html: string };
 
 /** On-disk store of user Motifs rooted at `<userData>/motifs/`. */
 export class UserMotifStore {
-  private pinned = new Map<string, Map<string, Buffer>>();
+  private pinned = new Map<string, { files: Map<string, Buffer>; bytes: number; readers: number }>();
   constructor(private readonly _root: string) {}
 
   root(): string { return this._root; }
@@ -46,14 +46,14 @@ export class UserMotifStore {
 
   readFile(id: string, rel: string): Buffer | null {
     const revision = /^\.revisions\/([0-9a-f]{64})\/(.+)$/.exec(rel);
-    if (revision) return this.pinned.get(`${id}/${revision[1]}`)?.get(revision[2]!) ?? null;
+    if (revision) return this.pinned.get(`${id}/${revision[1]}`)?.files.get(revision[2]!) ?? null;
     if (!motifFileSegments(rel) || rel.toLowerCase() === 'target') return null;
     const pkg = this.packageRel(id);
     return pkg ? readMotifFile(this._root, `${pkg}/${rel}`) : null;
   }
 
-  /** Two navigation snapshots bound retained memory; companion URLs use the
-   * revision directory so a source save cannot mix old HTML with new assets. */
+  /** Keep two idle snapshots, but never evict resources belonging to a live
+   * capture document. Export pages load fonts/models lazily after navigation. */
   pinPackage(id:string, revision:string): boolean {
     const key=`${id}/${revision}`;
     if(this.pinned.has(key))return true;
@@ -61,9 +61,33 @@ export class UserMotifStore {
     if(!source)return false;
     const files=this.packageFiles(id);
     if(motifContentHash(source.manifest,source.html,files)!==revision)throw new Error('Motif revision changed before capture; refresh the catalog');
-    this.pinned.set(key,new Map(files.map(f=>[f.path,f.bytes])));
-    while(this.pinned.size>2)this.pinned.delete(this.pinned.keys().next().value!);
+    this.pinned.set(key,{ files: new Map(files.map(f=>[f.path,f.bytes])), bytes: files.reduce((n,f)=>n+f.bytes.length,0), readers: 0 });
+    this.trimPinned();
     return true;
+  }
+
+  private trimPinned(): void {
+    const idle = [...this.pinned].filter(([, snapshot]) => snapshot.readers === 0);
+    for (const [key] of idle.slice(0, Math.max(0, idle.length - 2))) this.pinned.delete(key);
+  }
+
+  /** The page owns this lease until navigation/teardown, not just setup. */
+  retainPackage(id: string, revision: string): (() => void) | null {
+    if (!this.pinPackage(id, revision)) return null;
+    const snapshot = this.pinned.get(`${id}/${revision}`)!;
+    snapshot.readers++;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      snapshot.readers--;
+      this.trimPinned();
+    };
+  }
+
+  /** Export admission includes the actual immutable package bytes. */
+  pinnedPackageBytes(id: string, revision: string): number {
+    return this.pinPackage(id, revision) ? this.pinned.get(`${id}/${revision}`)!.bytes : 0;
   }
 
   packageFiles(id: string): MotifFile[] {
