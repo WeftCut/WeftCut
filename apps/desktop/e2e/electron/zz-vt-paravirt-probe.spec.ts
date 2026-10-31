@@ -5,11 +5,14 @@
 import { test } from '@playwright/test'
 import { spawn, execFile } from 'node:child_process'
 import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 const exec = promisify(execFile)
 const FFMPEG = process.env.FFMPEG || 'ffmpeg'
 const ROUNDS = 40
+const MEDIA = process.env.WEFTCUT_TEST_MEDIA || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../fixtures/media')
 
 /** One short VT encode. A healthy VM finishes 10 frames in well under a second. */
 async function health(dir: string, round: number): Promise<number | null> {
@@ -28,13 +31,21 @@ async function health(dir: string, round: number): Promise<number | null> {
   return null
 }
 
-for (const mode of ['graceful', 'sigkill'] as const) test(`vt-probe-${mode}`, async ({}, testInfo) => {
+for (const mode of ['graceful', 'sigkill', 'sigkill-decoding'] as const) test(`vt-probe-${mode}`, async ({}, testInfo) => {
   test.skip(process.platform !== 'darwin', 'paravirtualized VideoToolbox is a macOS runner question')
   test.setTimeout(30 * 60_000)
   const dir = testInfo.outputPath('vt-probe')
   fs.mkdirSync(dir, { recursive: true })
   const log = (line: string) => { console.log(`[vt-probe:${mode}] ${line}`); fs.appendFileSync(`${dir}/rounds.log`, `${line}\n`) }
   log(`baseline health ${await health(dir, 0)} ms`)
+  // The app keeps other VT clients open while it kills an encoder (preview
+  // decode in main, WebCodecs decode in the GPU process). Model one of them.
+  const decoder = mode === 'sigkill-decoding'
+    ? spawn(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-hwaccel', 'videotoolbox', '-stream_loop', '-1', '-re',
+      '-i', path.join(MEDIA, 'test_1080p_30fps_6s.mp4'), '-f', 'null', '-'], { stdio: ['ignore', 'ignore', 'pipe'] })
+    : null
+  decoder?.stderr?.resume()
+  try {
   for (let round = 1; round <= ROUNDS; round++) {
     // Same shape as an export: raw frames on stdin, VT encode to a file.
     const out = `${dir}/round-${round}.mp4`
@@ -45,13 +56,14 @@ for (const mode of ['graceful', 'sigkill'] as const) test(`vt-probe-${mode}`, as
     // Let the compression session open and encode for a while.
     await new Promise(resolve => setTimeout(resolve, 1500))
     const stopStarted = Date.now()
-    if (mode === 'sigkill') child.kill('SIGKILL')
+    if (mode !== 'graceful') child.kill('SIGKILL')
     else child.stdin.end('q')
     const stopped = await Promise.race([exited.then(() => true), new Promise<boolean>(resolve => setTimeout(() => resolve(false), 10_000))])
+    const stopMs = Date.now() - stopStarted
     if (!stopped) child.kill('SIGKILL')
     fs.rmSync(out, { force: true })
     const ms = await health(dir, round)
-    log(`round ${round}: stop ${stopped ? Date.now() - stopStarted : 'timeout'} ms, health ${ms ?? 'HUNG'}`)
+    log(`round ${round}: stop ${stopped ? stopMs : 'timeout'} ms, health ${ms ?? 'HUNG'}`)
     if (ms === null) {
       log(`wedged after ${round} ${mode} stops; retrying health once after 20 s`)
       await new Promise(resolve => setTimeout(resolve, 20_000))
@@ -60,4 +72,5 @@ for (const mode of ['graceful', 'sigkill'] as const) test(`vt-probe-${mode}`, as
     }
   }
   log(`no wedge after ${ROUNDS} ${mode} stops`)
+  } finally { decoder?.kill('SIGKILL') }
 })
