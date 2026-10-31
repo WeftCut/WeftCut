@@ -34,7 +34,7 @@ export interface ResetDecisionInput {
   ringFirstPtsUs: number | null;
 }
 
-/// Pure ADR-0003 reset decision, in µs.
+/// Pure forward-GOP reset decision (docs/preview.md#decode), in µs.
 /// Returns true only when the decoder cannot reach `targetUs` by
 /// continuing to pump forward and must reset + seek to a key packet:
 ///

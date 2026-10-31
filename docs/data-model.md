@@ -304,7 +304,8 @@ empties a renamed track deletes it and its name; one undo restores both
 (exempting named tracks would make a name a second pin beside the lock).
 `transient == (role is None)` at every creation site. The app setting
 `auto_delete_empty_tracks` (default true) gates the rule; changing it sweeps
-nothing. `remove_media --force` removes layers inline without pruning.
+nothing. `remove_media --force` deletes through the same `applyDeleteLayer`, so
+it prunes too.
 
 ## Layer
 
@@ -612,7 +613,7 @@ Command contracts not stated elsewhere:
 
 | Command | Contract |
 |---|---|
-| `remove_media(id, force?)` | `MediaInUse { referenced_by }` unless `force`, which deletes the layers (no track prune) |
+| `remove_media(id, force?)` | `MediaInUse { referenced_by }` unless `force`, which deletes the layers as `delete_layers` does (links, lane prune, autofit; locked lane → `TrackLocked`) in one recorded entry; unreferenced media is removed unrecorded |
 | `update_track_flags` / `update_role_flags` | unrecorded; `set_role_gain` and `rename_track` are recorded |
 | `move_track(id, position)` | whole-track reorder in its composition, `0` = bottom; refuses locked tracks and tracks holding locked clips; keeps identity, links, transitions; no-op records nothing |
 | `paste_layers(ids, t_start_us \| t_offset_us, target_track_id?)` | the only copy command: clones shift by the seed's (`ids[0]`) delta, re-snap on their own lattice; only the seed changes track; any lock or overlap refuses the set; ≥ 2 clones are linked together |

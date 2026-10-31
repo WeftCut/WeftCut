@@ -1,7 +1,7 @@
 # Agent bench
 
 Measures how far apart models land on the same WeftCut task: the **model gap**
-of [ADR 0123](../../../docs/adr/0123-the-app-holds-the-evidence-the-client-runs-the-loop.md).
+of [ADR 0046](../../../docs/adr/0046-agent-guidance-ships-as-one-skill.md).
 It launches the built app, sets a project up, hands it to an agent client
 (Claude Code first) with the WeftCut skill and MCP server, and records what the
 agent did from the app's side: before/after snapshots, the entity-level review
