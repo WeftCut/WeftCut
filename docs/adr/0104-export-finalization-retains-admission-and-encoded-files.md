@@ -2,55 +2,65 @@
 status: accepted
 ---
 
-# Export finalization retains admission and encoded files
+# Export admits one working set and keeps a finalization reservation for retry
 
-A completed video export must not lose its encoded work because its stream-copy
-mux is admitted as a new task. On Linux, ordinary process-RSS hysteresis can
-remain constrained after all production leases have drained (ADR 0101).
+Date: 2026-10-08
 
-Before starting video production, export reserves 64 MiB for its stream-copy
-finalization in the same native authority. This reservation holds no CPU slot. Production borrows those same 64 MiB as
-part of its larger working-memory claim; releasing production atomically
-returns them to finalization. The two sequential phases are not charged twice.
-After production teardown, mux borrows one CPU slot against that reservation;
-it allocates no second memory claim. Only a live, owner-scoped reservation can
-continue under ordinary RSS pressure. New tasks still cannot enter. Critical
-host pressure (available RAM below 256 MiB, recovery above 512 MiB) still rejects
-the attempt. Occupied CPU capacity now waits for at most 15 seconds, matching
-interactive admission. Queued finalization has priority over new compute claims
-so background work cannot repeatedly steal a single processing slot. Waiting
-holds no CPU slot or additional memory. Timeout, cancellation and owner teardown
-remove that priority; a timeout retains encoded files for retry. This replaces
-the initial immediate CPU refusal, which made completed exports fail during
-short-lived background occupancy on three-core CI hosts.
-Missing telemetry preserves pressure.
-The memory target remains cooperative, not an OS-enforced hard cap.
+## Context
 
-The main process translates a renderer-owned opaque token into the native
-reservation. Normal leases cannot act as continuations; duplicate mux attempts
-cannot share one reservation. Reload/crash releases ownership, but a running mux
-remains charged until its permit is dropped. A failed attempt returns its CPU
-slot and retains the memory reservation for retry or explicit discard.
+The native resource governor (ADR 0101) admits cooperative memory and CPU
+claims. Two export failures came from admitting stages independently:
 
-Audio is produced before video. After video encoding and encoder flush succeed,
-both intermediate files are immutable. Finalization failure retains them and
-offers Retry finishing export / Discard export. Retry performs only stream-copy
-mux against those same files; it never reads a newer project or re-encodes audio
-or video. An expected but missing audio file is an error, not a silent
-video-only export. Settings can be opened without losing the pending retry.
+- Encoder, compositor and decoder reservations each fit the working allowance
+  while their simultaneous demand did not, so an export held a sink/worker
+  allocation while waiting for a decoder that could never fit. At the 2304 MiB
+  memory target (921 MiB working allowance), a fixed 24-picture decode window
+  rejected 1080p Main10.
+- Admitting the stream-copy mux as a new task lost completed exports. On Linux,
+  process-RSS hysteresis can stay "pressured" after every production lease has
+  drained, and on three-core CI hosts background work briefly held the only
+  free CPU slot.
 
-Mux writes to a unique sibling temporary file and replaces the requested output
-only after ffmpeg succeeds. A failure removes the incomplete sibling and leaves
-any existing destination intact. Encoded inputs and the reservation are removed
-on success or explicit discard. They are not part of the managed cache LRU.
+## Decision
 
-Retry is local to the open editor session. The error panel cannot be dismissed
-accidentally; closing the window warns that unfinished work will be discarded.
-Editor teardown releases retained resources and cleans its intermediate files.
-Crash/restart recovery is not promised by this change; abrupt process termination
-can leave OS-temporary files. A durable export queue would need a persisted
-manifest, startup recovery UI and storage accounting as a separate contract.
+- **One parent reservation.** Metadata preflight builds up to three execution
+  plans (`buildExportResourcePlans`), each summing encoder, compositor, Motif
+  producer/capture and peak simultaneous decode demand (overlapping clips at
+  different source phases count twice; adjacent clips do not). The governor
+  atomically picks the first plan that fits and reserves its memory and native
+  encoder threads. Worker, decoder, sink and Motif claims borrow from that
+  parent; borrowing preserves the total and cannot cross owners. Cheaper plans
+  shrink decode windows (to the AVC level's DPB + 8 credits, at most 24; unknown
+  codecs keep 24) and the Motif producer from three frames to one. Resolution,
+  bit depth, frame count and rate control never change.
+- **Wait, don't hold.** A waiting export holds nothing. Releases, pressure and
+  settings changes wake admission; temporary contention waits up to 15 s with
+  cancellation. A static minimum above the working allowance fails before any
+  production. An admitted working set is not revoked by ordinary pressure or a
+  reduced target; critical host pressure (available RAM below 256 MiB,
+  recovery above 512 MiB) still refuses new child allocations.
+- **Audio first.** Audio is encoded before the video envelope is reserved, so it
+  cannot deadlock behind it.
+- **Finalization reservation.** Export reserves 64 MiB (no CPU) for
+  finalization before video production; production borrows it and atomically
+  returns it, so the phases are not charged twice. At mux, the parent shrinks
+  to that tail and mux borrows one CPU slot against it. Only a live,
+  owner-scoped finalization may proceed under ordinary RSS pressure; critical
+  pressure still rejects. Queued finalization takes priority over new compute
+  claims and waits at most 15 s. The renderer holds an opaque token that main
+  maps to the native reservation; normal leases cannot act as continuations.
+- **Encoded files are immutable.** After encoder flush, mux failure keeps the
+  encoded files and the reservation for Retry (stream-copy only) or Discard.
+  Retry is session-local; no crash/restart recovery exists.
 
-Regression coverage includes the unchanged 2304 MiB export and cancellation
-cases, one processing slot, real pressure-gated failures followed by retry or
-discard, preservation of an existing output, and native reservation lifecycle.
+## Consequences
+
+- Retry never re-encodes or reads a newer project. A durable queue would need a
+  persisted manifest, startup recovery UI and storage accounting.
+- The memory target stays cooperative: the 2304 MiB retry runs peaked at
+  ~2617 MiB process-tree RSS (Chromium allocator retention), with 76 MiB in the
+  ledger at the mux boundary (64 MiB finalization + 12 MiB preview).
+- Native encoding stays serialized (the encoder sink is a singleton); encoder
+  threads return to the governor when the encoder closes.
+- Preview suspends for the export and retires its Motif GPU caches before
+  admission.

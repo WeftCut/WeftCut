@@ -1,251 +1,187 @@
 # Export
 
-The export pipeline has three concerns:
+Export renders the project's root composition to one file. Pixel work (export
+Worker, encode exits) is in [`render.md`](render.md); the audio mixer is in
+[`audio.md`](audio.md#export-mixer). This doc covers settings, orchestration,
+finalization and the job/preset surfaces.
 
-1. **Visual preview + export** — both run through the PixiJS + WebCodecs
-   compositor described in [`render.md`](render.md). One renderer
-   module, mounted against a `<canvas>` on the main thread for
-   preview and against an `OffscreenCanvas` in a Worker for export.
-2. **Audio export** — the Rust block mixer sums conform PCM
-   sample-accurately and pipes the mix to ffmpeg's encode tail
-   (limiter + AAC/Opus), producing a temporary audio file when the
-   user includes audio. The full audio architecture (conform cache,
-   envelope contract, preview mixer) lives in [`audio.md`](audio.md).
-3. **Final mux** — Rust stream-copy muxes the already-encoded video —
-   written either by the WebCodecs path or by the native `ffmpeg` encode
-   sink ([`render.md`](render.md)'s "Encode exits") — with the optional
-   audio track into the user's chosen container.
+## Pipeline
 
-This doc covers (2)'s export entry point and (3). For (1) see
-[`render.md`](render.md) and [`preview.md`](preview.md); for the audio
-engine itself see [`audio.md`](audio.md).
+`ExportJobs` (`src/main/exportJobs.ts`) admits one job per app session (UI or
+MCP, [ADR 0111](adr/0111-ui-and-mcp-share-session-export-jobs.md)), resolves
+settings, probes the destination via `export_prepare_output` (which also
+creates the same-directory staging file), and allocates encoded temp files in
+the OS temp dir (`weftcut-export-<id>-video.{mp4|mov}`, `-audio.{m4a|mka}`).
+The renderer's `createExportRunner` (`src/renderer/app/exportRunner.ts`) then
+runs, in order:
 
-## Export settings and range
+1. **No-material guard** — a video export with nothing visible in range fails
+   with "no video material" rather than encoding black.
+2. **Readiness gates** — decode-routing/proxy readiness for video referenced
+   by the range; audio conform and baked-effect readiness for audible layers
+   ([`audio.md`](audio.md#readiness-and-errors)).
+3. **Encode target** — `resolveEncodeTarget` (render.md § Encode exits);
+   resource plans from `prepareExportResourcePlans`.
+4. **Audio** — `exportProjectAudioOnly` writes the encoded audio file before
+   any video resource is reserved.
+5. **Admission** — `admitExportResources` reserves one working set
+   ([ADR 0104](adr/0104-export-finalization-retains-admission-and-encoded-files.md)).
+6. **Video** — the Worker renders the half-open range into the native sink or
+   the WebCodecs fMP4 path.
+7. **Finalization** — stream-copy mux into the staging file, then publication.
 
-The renderer owns the `ExportSettings` schema in
-`apps/desktop/src/render/exportSettings.ts`; Rust persists the saved blob as
-opaque JSON. Audio settings are persisted:
+Audio-only (`includeVideo: false`) skips the video stages and writes the audio
+straight to the staging path. Video-only keeps the full pipeline and omits the
+audio input at mux.
 
-- `include`: when false, JS skips audio export and produces video-only output.
-- `codec`: `aac` or `opus`.
-- `bitrate`: bits per second.
-- `sampleRate`: `null` to follow the composition, otherwise a concrete output
-  sample rate.
-- `channels`: `null` to follow the composition, otherwise mono or stereo.
+## Settings
 
-H.264 and HEVC can target `mp4`, `mov`, and `mkv`. AV1 can target `mp4` and
-`mkv`; `mov` is rejected because ffmpeg's MOV muxer does not accept AV1. AAC is
-valid in every supported container. Opus is restricted to `mkv` because
-Opus-in-MP4/MOV playback is unreliable in Chromium/Electron. `mergeSettings` backfills
-missing audio fields from `DEFAULT_AUDIO_SETTINGS` and snaps stale saved blobs
-back to AAC if the selected container cannot hold the saved audio codec.
+`ExportSettings` lives in `src/shared/exportSettings.ts` (the renderer module
+re-exports it); Rust stores the project's `export.json` as opaque JSON.
+`mergeSettings` overlays a saved blob on `DEFAULT_EXPORT_SETTINGS` and snaps
+invalid combinations instead of failing: an intermediate codec forces `mov`;
+an audio codec the container cannot hold becomes AAC; an invalid bit depth is
+reset; a `webcodecs` encoder pin with an intermediate or 10-bit falls back to
+`auto`; an unknown `decodeEngine` becomes `auto`; a non-positive
+`maxBitrate`/`bufferSize` becomes `null`.
+
+| Codec | Containers | Bit depth | Engine |
+| --- | --- | --- | --- |
+| H.264 | mp4, mov, mkv | 8 | native, or WebCodecs pin |
+| HEVC | mp4, mov, mkv | 8, 10 | native; WebCodecs pin for 8-bit only |
+| AV1 | mp4, mkv (ffmpeg's MOV muxer rejects AV1) | 8, 10 | as HEVC |
+| ProRes | mov | 10 | native only |
+| DNxHR | mov | 8 | native only |
+
+10-bit HEVC/AV1 is experimental: the dialog labels it and confirms the click
+because preview stays 8-bit SDR; MCP must pass `allow_experimental_10bit`.
+AAC muxes into any container; Opus only into `mkv` (Opus-in-MP4/MOV playback
+is unreliable in Chromium). Audio-only output is `.m4a` (AAC) or `.mka` (Opus).
+Audio `sampleRate`/`channels` of `null` follow the composition.
 
 ### Rate control
 
-`rateMode` picks which of two mutually exclusive shapes reaches the encoder, and
-the Rust seam models that exclusivity as an enum (`RateControl` in
-`export/encoder_registry.rs`) rather than a bag of optional fields — so "a CRF
-with a peak bitrate" does not exist as a representable state.
+`rateMode` selects one of two exclusive shapes; Rust models it as the
+`RateControl` enum in `export/encoder_registry.rs`, so "CRF with a peak" is
+unrepresentable.
 
-| `rateMode` | user-facing controls | ffmpeg args |
-| --- | --- | --- |
-| `vbr` | quality preset / target bitrate, optional maximum, optional buffer | `-b:v target`, plus `-maxrate peak -bufsize buf` when a maximum is set |
-| `cbr` | quality preset / target bitrate, optional buffer | `-b:v target -maxrate target -minrate target -bufsize buf` |
-| `quality` | CRF | `-crf n` (plus `-b:v 0` on libaom, whose default bitrate would otherwise constrain the CRF) |
+| `rateMode` | ffmpeg args |
+| --- | --- |
+| `vbr` | `-b:v target`; with a peak, `-maxrate peak -bufsize buf` |
+| `cbr` | `-b:v target -maxrate target -minrate target -bufsize buf` |
+| `quality` | `-crf n` (plus `-b:v 0` on libaom-av1) |
 
-The quality preset (`low`/`medium`/`high`/`custom`) is a **shortcut that seeds
-the target bitrate**, not a parallel control: `computeBitrate` turns a preset
-into `width × height × fps × bpp` scaled per codec, and `customBitrate`
-overrides it outright. The dialog therefore shows the target bitrate at all
-times in a bitrate mode — under a preset it displays the derived figure, and
-typing into it flips the preset to `custom`. There is no state in which the
-bitrate the export runs at is not on screen.
+The quality preset only seeds the target bitrate (`computeBitrate`:
+`w × h × fps × bpp × codec multiplier`); typing a bitrate flips it to `custom`,
+so the effective bitrate is always on screen. `maxBitrate`/`bufferSize`
+default to `null`: no `-maxrate` under VBR, and `-bufsize` = 2× the ceiling,
+derived only in the registry. A defaulted peak would silently re-rate old
+projects. Invariants:
 
-Both constraints are `null` by default, and `null` means *unchanged from what
-shipped*: no `-maxrate` at all under VBR (plain ABR), and a `-bufsize` derived
-as 2× the ceiling. A defaulted-to-derived peak would silently re-rate every
-project exported before these fields existed. The derivation lives in the
-encoder registry, not the renderer, so there is one place to keep honest.
+- A peak below the target is rejected (`bitrateConstraintIssue` disables
+  Export; `validate_intent` rejects before spawning ffmpeg).
+- CBR ignores a stored peak.
+- Peak and buffer are native-only; `maxBitrateApplies` / `bufferSizeApplies`
+  gate both the dialog rows and the IPC payload.
 
-Three invariants the two sides agree on, each enforced where it can be:
+### Frame rate and range
 
-- **A peak below the target is rejected**, not reconciled — the encoder would
-  abandon the target and emit at the ceiling. `bitrateConstraintIssue` disables
-  the Export button and explains it; `validate_intent` rejects the intent before
-  any encoder process is spawned.
-- **CBR ignores a peak.** Its ceiling is its target by definition, so a value
-  left behind by a VBR session is persisted but inert rather than honored.
-- **Peak and buffer are native-only.** A WebCodecs `VideoEncoderConfig` carries
-  `bitrate` + `bitrateMode` and nothing else, so under a WebCodecs pin the rows
-  are absent (with a blurb saying why) instead of present and dead. The
-  `maxBitrateApplies` / `bufferSizeApplies` predicates gate the UI rows *and*
-  the IPC payload from the same source, so what ffmpeg receives is exactly what
-  the user could see and edit.
+The export frame rate may differ from the composition's. Output frame `i` is
+sampled at `timeUsAtFrame(i)` on the export rate (`worker/frameGrid.ts`), so a
+cut on a composition frame can land up to half an export frame away. A
+frame-exact hand-off should export at the composition rate
+([`data-model.md`](data-model.md#timeline-field-alignment-composition-frame)).
 
-### Export fps need not equal composition fps
+The range is not persisted: the dialog holds full project or a custom
+`[startUs, endUs)`, and `clampExportRange` returns `null` (never the whole
+project) when nothing usable remains. Every stage receives the same range; the
+Worker resets output timestamps to start at 0 and Rust trims the audio mix to
+it.
 
-The dialog offers its own frame rate, so an export can be resampled off the
-timeline's rate. This is the one place the frame-grid guarantee narrows: "the
-actor, the ruler, playback and export resolve the same canonical microsecond for
-every frame index" holds **at a single rate**. Export at a different rate is an
-output-sampling operation — the encoder samples the composition at its own
-frame times, `round(i × 1e6 × den / num)` on the *export* rate — and those
-instants generally do not coincide with edit points on the composition grid.
+## Audio
 
-The consequence to expect: a cut authored exactly on a composition frame can
-land mid-frame in the output and be quantised to the nearest export frame, up to
-half an export frame away. Nothing is silently corrupted — the composition is
-untouched and the operation is repeatable — but a frame-exact hand-off (a
-conform, a round-trip through another tool) should export at the composition
-rate. See [`docs/data-model.md`](data-model.md#timeline-field-alignment-composition-frame)
-for the grid itself.
+`export::export_audio_only_cancellable` plans the mix
+(`audio::mix::plan_for_project`, or role stems from `audio::retime` when any
+layer is retimed), pipes 65 536-frame f32 blocks into ffmpeg's limiter + encode
+tail, and returns `false` without spawning ffmpeg when the range has no audible
+layer. Skip rules, the encode tail and the conform gate are in
+[`audio.md`](audio.md#export-mixer).
 
-The export range is not persisted. `ExportSettingsDialog` keeps it as
-dialog-local state: full project, or a custom `[startUs, endUs)` selected with
-In/Out SMPTE timecode fields and "set to playhead" buttons. `clampExportRange`
-keeps the span ordered and inside `[0, durationUs]`.
+## Finalization
 
-`App.tsx` threads the resolved range through all export stages:
+`export::mux_to_file` runs `ffmpeg -i video [-i audio] -c copy <out>`. It never
+re-encodes (the native sink already applied codec tags such as `hvc1`). The
+audio input is omitted when no audio file exists, unless the run produced
+audio (`audioRequired`), which is then an error rather than a silent
+video-only file. Mux takes its CPU slot through the finalization reservation
+(`resources::continue_finalization`, 15 s wait).
 
-- The readiness gate checks only video sources referenced by the export range.
-- Motif layer frames are baked only for the export range before the Worker
-  starts.
-- `runPixiExport` receives `startUs` and `endUs`; the Worker renders that
-  half-open range and resets output video timestamps to start at 0.
-- `exportProjectAudioOnly` receives the same range so Rust trims the final
-  audio mix to match.
+Publication (`export/publication.rs`) moves the complete staging file to the
+destination in the same directory. With overwrite it renames over the target;
+otherwise it hard-links, falling back to the platform's atomic no-replace
+rename (`renameat2(RENAME_NOREPLACE)`, `renamex_np(RENAME_EXCL)`, `MoveFileExW`
+without replace). There is no copy fallback; `export_prepare_output` proves the
+operation works in that directory before rendering.
 
-## Audio-only export
+If mux or publication fails after encoding, the job becomes `awaiting_retry`
+and the panel offers **Retry finishing export** (stream-copy only; never
+re-encodes or rereads the project) and **Discard export**. Retrying a
+publication failure reuses the muxed file. An existing destination is never
+truncated. Recovery is session-local: the error cannot be dismissed by
+accident, closing the window asks before discarding, and success, discard or
+editor teardown releases the reservation and deletes the intermediates
+(`render/exportFinalization.ts`). Intermediates are not in the cache LRU.
 
-`export::export_audio_only(app, &project, &output_path, &audio, window_us)` is
-the single entry point. It delegates to the audio engine
-([`audio.md`](audio.md)):
+## Export jobs (UI and MCP)
 
-1. `audio::mix::plan_for_project(project, window_us) → MixPlan` — every
-   audible Audio layer resolved to conform-file placement + sampled
-   gain/pan envelopes. "Audible" applies the full skip-rule set from
-   [`audio.md`](audio.md): track `enabled`/`muted`/`solo` gates,
-   `Layer.enabled`/`locked`/`AudioParams.mute`, and overlap with the
-   half-open export window — a layer entirely outside `[start, end)` is
-   neither planned nor required to have a conform cache. An audible
-   in-window layer whose conform cache is missing fails the plan loudly
-   with the media named (the renderer's readiness gate normally prevents
-   reaching that state).
-2. If the plan has no layers (or the window is empty): log a warning and
-   return `Ok(())`. The mux step downstream tolerates a missing audio file.
-3. Otherwise: spawn ffmpeg reading raw f32 from stdin —
+Both entry points submit to `ExportJobs` and control the same job; editing is
+frozen while a job is active or awaiting retry (ADR 0111).
 
-   ```text
-   -f f32le -ar 48000 -ac 2 -i - \
-     -af alimiter=limit=0.891:level=0 \
-     -ar <target_sr> -ac <target_ch> -c:a <aac|libopus> -b:a <bps> <output>
-   ```
+- **Conflicts.** The UI follows the app-level `export_auto_overwrite`
+  preference (default off; the checkbox persists across projects). With
+  overwrite off, a collision shows a hint and an optional free-name
+  suggestion, adopted only on click. MCP `on_conflict` is `rename` (default,
+  numbered name) or `fail`; MCP never overwrites. Renaming during retry keeps
+  the directory and extension and clears that job's overwrite consent.
+- **MCP tools.** `get_export_options`, `start_export`, `get_export_status`,
+  `retry_export`, `cancel_export`. A repeated `request_id` with identical
+  arguments returns the same job; different arguments conflict. Records
+  survive reconnects, not app restart. Agents must report the completed
+  `output_path`. MCP settings are per-job overrides; MCP never falls back from
+  native to WebCodecs.
 
-   — and run the block mixer on a blocking thread, summing 65 536-frame
-   stereo blocks from conform reads and piping them in. The `alimiter`
-   ceiling (−1 dB sample-peak, auto-normalize explicitly off) is what
-   keeps overlapping layers from clipping at encode.
-4. On non-zero exit, return an error with the last ~8 lines of stderr.
+## Export presets
 
-The JS orchestrator chooses the temp audio extension from the selected codec:
-AAC writes `.m4a`; Opus writes `.mka`. No `export:*` events are emitted from
-this path; the renderer owns ExportPanel state.
+An export preset is a named, versioned copy of portable output values
+(`src/shared/export-presets.ts`): `ExportSettings` minus `encoderEngine`,
+`decodeEngine` and `hwAccel`. Paths, conflict policy and range are never part
+of a preset. Built-ins (`builtin:match`, `builtin:hd` 720p, `builtin:fullhd`
+1080p, `builtin:uhd` 2160p) are read-only and seed explicit bitrates for
+standard and high frame rates. Personal presets and `default_export_preset_id`
+live in `app_settings.json`; library changes are individual
+create/update/rename/delete operations in main. Names are capped at
+`EXPORT_PRESET_NAME_LIMIT` (40).
 
-When `settings.audio.include` is false, `App.tsx` skips
-`exportProjectAudioOnly` entirely. When it's true, the export readiness
-gate first asks Rust `ensure_export_audio_conform(start_us, end_us)` for
-the media whose conform cache is absent or invalid — the command shares
-`plan_for_project`'s layer walk (`conform_waiting_media`), so the gate
-and the plan can never disagree on selection, and it validates the cache
-file itself (`cached_ok`), not the store's `conform_path` (which goes
-stale if the cache dir is cleared). The command kicks a conform job per
-missing media; the gate holds in "preparing" until a
-`media:job_complete kind=conform` event lands for every returned id
-(`createConformTracker` in `exportReadiness.ts` — listeners register
-before the command so a fast job can't complete unseen).
+- **Copy, not reference.** Applying a preset copies its values into the dialog
+  through `applyExportPreset`, which keeps the height-based, downscale-only,
+  aspect-preserving resolution contract (a larger target follows the project;
+  fractional project rates stay fractional). Projects keep their own snapshot
+  when a preset changes or is deleted.
+- **Precedence.** Saved project settings, then the personal default, then
+  `builtin:match` (also the fallback for a missing default). UI and MCP share
+  the resolver.
+- **UI.** The export dialog's title menu is the only management surface:
+  choices, current/default markers, save-as, update (modified personal
+  preset), restore (any modified preset), rename/delete (personal), set
+  default.
+- **MCP.** Preset tools work without an open project. `get_export_options` and
+  `start_export` take an optional `preset_id`: preset values first, then
+  per-job overrides. An admitted job snapshots its preset. A personal copy made
+  without a project copies a built-in's fixed standard-rate values.
+- Entries are validated by the shared export validator; a corrupt entry is
+  dropped on its own.
 
-## Final mux
-
-`export::mux_to_file(video_path, audio_path, output)` runs a stream-copy mux:
-
-```text
-ffmpeg -y -hide_banner -nostats \
-       -i <video.mp4> \
-       [-i <audio.m4a|audio.mka>] \
-       -c copy \
-       <output_path>
-```
-
-The audio input is optional. If the user excluded audio, or the project has no
-audio layers and `export_audio_only` produced no temp file, `mux_args` omits the
-audio `-i` and writes a video-only file.
-
-Every export has already written its final codec before this step runs —
-either the WebCodecs path's direct encode, or the native `ffmpeg` sink
-described in [`render.md`](render.md)'s "Encode exits", which also applies the
-`hvc1` tag HEVC needs in MP4/MOV. `mux_to_file` never re-encodes; it only
-copies streams into the user-chosen container.
-
-## Coverage
-
-The root behavior above is guarded by focused tests and diagnostics; see
-[`conformance.md`](conformance.md) for the media fixtures and E2E gates:
-
-- `exportSettings.test.ts`: default merge/backfill, audio codec/container
-  validity, estimate size, and range clamping.
-- `frameGrid.test.ts`: half-open export frame counts and timestamp grid.
-- Rust unit tests in `export/mod.rs`: AAC/Opus encode args, missing-audio
-  mux arguments, and a real-ffmpeg mixer round-trip (two overlapping
-  layers → AAC → decode → analytic peak).
-- Rust unit tests in `audio/`: envelope sampling (cross-language goldens),
-  pan law, block-mixer placement/summing.
-- `media_conformance --audio`: frequency-based audio export diagnostics;
-  `--audio-envelope` / `--audio-pan`: analytic RMS-envelope, limiter-ceiling,
-  and pan-law gates (`audio/audio.e2e.js`).
-
-## Proxies
-
-Import generates the H.264 proxies the WebCodecs renderer decodes,
-cached under `<cache>/proxies/<file_hash>.mp4` (skip-if-cached). There
-are two, for two roles (full detail in [`preview.md`](preview.md) and
-[`data-model.md`](data-model.md); ADRs 0009–0011):
-
-- **Quick proxy** (`jobs/quick_proxy.rs`) — 720p, short fixed GOP
-  (`PROXY_GOP_FRAMES`), `libx264 -preset ultrafast`, yuv420p. The
-  **preview** scrub source. The short GOP bounds the
-  seek-to-key-then-decode-forward tail to a few frames — frame-accurate
-  live scrubbing (ADR 0008; ADR 0003's no-reset-on-forward-GOP-crossing
-  still holds).
-- **Export master** (`jobs/proxy.rs`) — source-resolution (≤4K) H.264,
-  `-preset fast -crf 18 -profile:v high` (auto level), short GOP,
-  `-bf 0`, yuv420p, `+faststart`. Generated only for sources WebCodecs
-  can't decode directly; export decodes it (never the quick proxy). A
-  `PROXY_FORMAT_VERSION` bump or `proxy_path = Some(None)` invalidates
-  it for re-encode on next open.
-
-Both recipes assert the source's ffprobe color tags on the encode and
-write the mp4 `colr` atom (`source_color_args` + `+write_colr`; the
-quick proxy's remux path derives colr from the input VUI), keeping
-proxies color-readable to mediabunny, which never parses the SPS VUI
-(ADR 0014).
-
-Sources WebCodecs *can* decode are bypassed (no proxy) or DirectExport
-(export reads the original); see the decode-routing summary in
-[`data-model.md`](data-model.md).
-
-## Background jobs
-
-All ffmpeg-driven derivatives live under `jobs/`:
-
-| Job | Output | Trigger |
-|---|---|---|
-| `proxy.rs` / `quick_proxy.rs` | source-res (≤4K) export master + 720p scrub proxy | Auto on import |
-| `thumbnails.rs` | per-source thumb strip | Auto on import |
-| `waveform.rs` | `.peaks` binary file | Auto on import (audio-bearing sources) |
-| `conform.rs` | `.conform` canonical PCM (48 kHz f32, [`audio.md`](audio.md)) | Auto on import (audio-bearing sources); `ensure_conform` backfill |
-| `frame.rs` | single PNG at a t_us | On-demand via `media://{id}/frame/{t}` |
-| `import.rs` | source bytes copied into `<workspace>/Media/` | User import action |
-
-Each job runs in a single-worker FIFO so disk I/O doesn't thrash.
-Progress is surfaced over backend events (`media:job_started`,
-`media:job_complete`, `media:job_error`).
+Gates: [`conformance.md`](conformance.md). Export-specific specs under
+`apps/desktop/e2e/electron/`: `export_codecs`, `export_eos_tail`,
+`export-finalization-retry`, `export-resource-admission`, `export-presets`,
+`mcp-export`.
