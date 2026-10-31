@@ -480,6 +480,7 @@ export interface WeftcutApi {
     /** The saved layout preset when main created this window (see
      *  shared/layout-theme.ts); null when main did not pass one. */
     launchLayoutTheme: import('./layout-theme').LayoutTheme | null
+    previewRenderer: import('./preview-renderer').PreviewRenderer
   }
   updates: {
     status(): Promise<UpdateStatus>

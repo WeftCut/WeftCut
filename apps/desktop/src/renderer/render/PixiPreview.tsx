@@ -294,6 +294,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   const handleInit = useCallback(
     (app: Application) => {
       applicationRef.current = app;
+      if (window.api?.app.previewRenderer === 'webgl') app.ticker.maxFPS = 60;
       // The device dies one microtask after Pixi's own teardown, and not a
       // moment sooner. @pixi/react destroys the Application asynchronously
       // after this component's cleanup; inside that one synchronous
@@ -946,7 +947,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         // runtime doesn't expose `navigator.gpu` (older Chromium,
         // restricted contexts). `app.renderer.type` in the init log
         // reads 2 for WebGPU, 1 for WebGL — useful sanity check.
-        preference="webgpu"
+        preference={window.api?.app.previewRenderer ?? 'webgpu'}
         onInit={handleInit}
         className="pixi-preview-canvas"
       />

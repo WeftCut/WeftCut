@@ -1890,6 +1890,20 @@ const enUS = {
 
     title: "Export",
     phase_encode: "Encoding",
+    device_gpu: "Encoding: GPU",
+    device_cpu: "Encoding: CPU",
+    load_gpu_label: "Encoder load:",
+    load_cpu_label: "System CPU load:",
+    load_gpu_hint: "NVIDIA video encoder block utilization, not general GPU/3D usage. Updated approximately every 3 seconds.",
+    load_cpu_hint: "Whole-system CPU utilization across all cores, not only the encoder process. Updated approximately every 3 seconds.",
+    load_unavailable: "load unavailable",
+    time_calculating: "Calculating remaining time…",
+    time_remaining: "Encoding: approximately {{time}} remaining",
+    time_hours_minutes: "{{hours}} h {{minutes}} min",
+    time_minutes_seconds: "{{minutes}} min {{seconds}} s",
+    time_seconds: "{{seconds}} s",
+    time_frames_done: "Frames encoded. Finishing the file…",
+
     starting: "Starting export…",
     preparing:
       "Preparing optimized media for {{labels}} — export will start automatically.",

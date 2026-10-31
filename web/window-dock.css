@@ -1,0 +1,4 @@
+#editor-window-dock { position: fixed; bottom: 0; left: 0; right: 0; z-index: 1000; padding: 7px 14px; background: #172131; border-top: 1px solid #405772; }
+#editor-window-dock[hidden] { display: none; }
+#editor-window-dock button { padding: 7px 14px; }
+#screen[hidden] { display: none !important; }

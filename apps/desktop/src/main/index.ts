@@ -1,3 +1,4 @@
+import { createExportTelemetry } from "./exportTelemetry";
 import { ExportJobs, exportPathExists, suggestExportName } from "./exportJobs";
 import path from 'node:path'
 import { diagnosticOwner, recordDiagnostic, recordProjectDiagnostic } from './diagnostics'
@@ -26,6 +27,7 @@ import { motifContentHash } from './motif/contentHash.js'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
 import electronUpdater from 'electron-updater'
 import { createUpdates } from './updates.js'
+import { createServerRestart } from './serverRestart.js';
 import { createUpdateResume } from './updateResume.js'
 import { mediaMimeForExt } from './mediaMime.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
@@ -80,6 +82,10 @@ import { openExportSw, decodeRangeExportSw, returnCreditExportSw, closeExportSw,
 import { loadNativeDecode } from './native-decode.js'
 import { mainWindowGeometryDefaults, MAIN_WINDOW_LABEL } from './mainWindowConfig.js'
 import { DEFAULT_LAYOUT_THEME, layoutThemeArgument, readLayoutTheme } from '../shared/layout-theme.js'
+import { revealServerFile } from './serverFileReveal.js';
+import { previewRendererArgument } from '../shared/preview-renderer.js';
+import { fitServerWindow } from './serverWindowFit.js';
+import { minimizeEditorWindow, restoreEditorWindow, editorWindowMinimized, onEditorWindowStateChanged } from './serverWindowLifecycle.js';
 import { openPathRobust, revealPathRobust } from './openPath.js'
 import {
   planMigration, runCopy, verify, rollback,
@@ -336,7 +342,7 @@ async function createWindow(): Promise<BrowserWindow> {
     webPreferences: {
       preload: path.join(import.meta.dirname, '../preload/index.js'),
       // Theme the splash's first frame; settings hydration lands after it.
-      additionalArguments: [layoutThemeArgument(layoutTheme)],
+      additionalArguments: [layoutThemeArgument(layoutTheme), previewRendererArgument(process.platform, !!process.env.WEFTCUT_SERVER, app.commandLine.getSwitchValue('ozone-platform'), process.env.WEFTCUT_PREVIEW_RENDERER)],
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -995,6 +1001,7 @@ app.whenReady().then(async () => {
   })
 
   const exportJobs = new ExportJobs({ host: () => tsHost, send: emitToRenderer,
+    telemetry: createExportTelemetry(),
     exportPreferences: () => appSettings.get(),
     generation: () => workspaceEvents.requireCurrent(),
     native: async (channel, args) => JSON.parse(await backend!.invoke(channel, JSON.stringify(args))),
@@ -1197,6 +1204,10 @@ app.whenReady().then(async () => {
   // (the host serves state views from the actor and injects compute slices).
   const { startMcpHost } = await import('./mcp/index.js')
   const mcpHost = await startMcpHost(backend, {
+    ...(process.env.WEFTCUT_SERVER ? { prepareEditorRestart: () => serverRestart(), restoreEditorWindow: () => {
+      if (!mainWindow || mainWindow.isDestroyed()) throw new Error('Editor window unavailable');
+      restoreEditorWindow(mainWindow, !!process.env.WAYLAND_DISPLAY);
+    } } : {}),
     getTsHost: () => tsHost,
     getSpeech,
     getVlm,
@@ -1339,7 +1350,19 @@ app.whenReady().then(async () => {
     clear: () => fs.rmSync(resumePath, { force: true }),
   })
   const resumeAfterUpdate = updateResume.take()
-  const updates = createUpdates(app.isPackaged && process.platform !== 'darwin'
+  const restartIntent = path.join(process.env.XDG_RUNTIME_DIR ?? '/data/run', 'editor-restart.json');
+  const serverRestart = createServerRestart({
+    busy: () => !!exportJobs.isActive() || (computeJobs?.running() ?? 0) > 0 || !!tsHost?.projectOperationPending?.(),
+    hold: () => exportJobs.holdForRestart(),
+    saveResume: () => updateResume.save(app.getVersion(), tsHost?.openedProject()?.dir ?? null),
+    clearResume: () => updateResume.clear(),
+    flushSettings: () => { workspaceStore?.flush(); windowGeometryStore?.flush(); },
+    writeIntent: () => fs.writeFileSync(restartIntent, JSON.stringify({ pid: process.pid }), { mode: 0o600 }),
+    clearIntent: () => fs.rmSync(restartIntent, { force: true }),
+    shutdown: async () => { await tsHost?.shutdown(); quitFlushed = true; },
+    quit: () => app.quit(),
+  });
+  const updates = createUpdates(app.isPackaged && process.platform !== 'darwin' && !process.env.WEFTCUT_SERVER
     ? electronUpdater.autoUpdater : null, {
     installOnQuit: () => appSettings.get().auto_install_updates_on_quit !== false,
     skippedVersion: () => appSettings.get().skipped_update_version,
@@ -2163,7 +2186,10 @@ app.whenReady().then(async () => {
   // invoked the IPC; mainWindow is the fallback if it can't (shouldn't happen).
   const ctlWin = (e: Electron.IpcMainInvokeEvent): BrowserWindow | null =>
     BrowserWindow.fromWebContents(e.sender) ?? mainWindow
-  ipcMain.handle('window:minimize', (e) => ctlWin(e)?.minimize())
+  ipcMain.handle('window:minimize', (e) => {
+    const w = ctlWin(e);
+    if (w) minimizeEditorWindow(w, !!process.env.WEFTCUT_SERVER && !!process.env.WAYLAND_DISPLAY);
+  })
   ipcMain.handle('window:toggleMaximize', (e) => {
     const w = ctlWin(e)
     if (w?.isMaximized()) w.unmaximize()
@@ -2213,6 +2239,7 @@ app.whenReady().then(async () => {
   // only: showItemInFolder never dispatches to a protocol handler, so unlike
   // shell:open there is no scheme allowlist to enforce here.
   ipcMain.handle('shell:reveal', async (_e, { target }: { target: string }) => {
+    if (process.env.WEFTCUT_SERVER === '1') { await revealServerFile(target); return }
     const err = await revealPathRobust(target)
     if (err) throw new Error(err)
   })
@@ -2832,6 +2859,29 @@ app.whenReady().then(async () => {
     void confirmQuit().then(confirmed => { if (confirmed && !win.isDestroyed()) win.close(); }).catch(console.error);
   });
 
+  if(process.env.WEFTCUT_SERVER){
+    const fit=()=>fitServerWindow(win,()=>screen.getDisplayMatching(win.getBounds()).workArea);
+    fit();screen.on('display-metrics-changed',fit);screen.on('display-added',fit);
+    win.once('closed',()=>{screen.removeListener('display-metrics-changed',fit);screen.removeListener('display-added',fit);});
+  }
+  if (process.env.WEFTCUT_SERVER) {
+    const target = path.join(process.env.XDG_RUNTIME_DIR || '/data/run', 'editor-window.json');
+    const writeWindowState = () => {
+      if (win.isDestroyed()) return;
+      try {
+        fs.writeFileSync(target + '.tmp', JSON.stringify({ pid: process.pid, minimized: editorWindowMinimized(win, !!process.env.WAYLAND_DISPLAY), visible: win.isVisible() }), { mode: 0o600 });
+        fs.renameSync(target + '.tmp', target);
+      } catch (error) { console.warn('Could not publish editor window state', error); }
+    };
+    win.on('minimize', writeWindowState);
+    win.on('restore', writeWindowState);
+    win.on('show', writeWindowState);
+    win.on('hide', writeWindowState);
+    win.on('focus', writeWindowState);
+    win.on('blur', writeWindowState);
+    win.once('closed', onEditorWindowStateChanged(win, writeWindowState));
+    writeWindowState();
+  }
   win.once('ready-to-show', () => win.show())
   updates.start()
 
@@ -2847,6 +2897,9 @@ app.whenReady().then(async () => {
 // No platform test, for the same reason the gate carries none — a windowless
 // WeftCut is never a state to leave running.
 app.on('window-all-closed', () => app.quit())
+if (process.env.WEFTCUT_SERVER) {
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => { void app.whenReady().then(() => app.quit()) });
+}
 
 // Flush the TS actor's debounced autosave before the process exits — an edit made
 // inside the 500ms autosave debounce window would otherwise be lost on quit
