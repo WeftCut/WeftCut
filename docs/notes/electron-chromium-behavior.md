@@ -1,311 +1,207 @@
 # Electron/Chromium engine behavior — verified verdicts
 
-Measured 2026-06-19 on Electron 42.4.1 / Chromium 148.0.7778.265 (Windows 11, RTX 3050) via a standalone probe harness (Electron plus a bare probe page, no app build). This was the "Phase 0" of the post-Tauri→Electron cleanup: every WebView2-era browser-behavior verdict that could have changed with the engine swap was re-tested empirically before being carried forward. Two of the three high-risk verdicts flipped.
-
-Re-verify on the next Chromium major bump, or on hardware that breaks an entry's stated assumption.
-
-## Re-verification on Electron 44.1.1 / Chromium 152.0.7977.65 (Linux x64, NVIDIA Ampere + Intel iHD VAAPI, X11), 2026-09-03
-
-Re-run through the repository's own gates rather than the original bare-page harness, so each line says what the evidence actually is.
-
-- ✅ **Canceled `pointerdown` cancels the focus move** — `focus-regions.spec.ts` ("a pointerdown the target cancels still releases the field") passes.
-- ✅ **Offscreen window is a full citizen of the window list** — the motif capture host (`webPreferences.offscreen`) still captures and the quit accounting still passes (`determinism.spec.ts`, `motif-export.spec.ts`, `windows.test.ts`).
-- ✅ **WebGPU on Linux needs `--enable-features=Vulkan`** — bare-page probe on 44: `navigator.gpu` present, `requestAdapter()` → `null` without the feature, `nvidia / ampere` with it. The F16 parity gate (`effects-f16-parity`) passes on the real device.
-- ✅ **Buffer-defined `VideoFrame` → owned-shader conversion** — the ProRes fidelity gate (`preview-sw-conformance`, SSIM 0.997) and the saturated-chart colour gates (`preview-sw-color` / `preview-hw-color` nvdec + vaapi, worst patch error 1–2 of tolerance 8) pass. This proves the owned conversion still yields correct colour; it does not re-measure whether Chromium's `drawImage` of a buffer frame still applies BT.601.
-- ✅ **`prefer-hardware` encode rule** — `export_codecs.spec.ts` (AV1, HEVC, WebCodecs H.264, native H.264) passes with the hint omitted for non-H.264 codecs. Again evidence that the rule still produces working exports, not a fresh negative probe.
-- 🆕 **WebCodecs hardware *decode* is refused outright on Linux/NVIDIA** — `import-probe.spec.ts` on 152: `VideoDecoder.configure({ hardwareAcceleration: "prefer-hardware" })` throws `OperationError: Unsupported configuration` in both the main thread and a worker; `prefer-software` configures, produces I420, and all four import paths (`drawImage`, `createImageBitmap`, `texImage2D`, `copyTo`) read lit. On 148 the hardware configuration was accepted and produced BGRA frames that read black through every path. The product consequence is unchanged — `preferSoftware` / `hwExportDecodeAllowed` stay, and there is still no WebCodecs-side hardware decode on Linux — but the failure mode moved from "silent black frames" to "config rejected", which is the safer one.
-- ⏳ **Not re-verified on 44** — Pointer Lock (no gate), inline foreignObject taint (no gate), EyeDropper widget behavior (Windows), the macOS menu-accelerator table (manual check below). Those entries still describe Electron 42.
-
-## Re-verification on Electron 44.1.1 / Chromium 152 (Windows 11, RTX 3050 + Intel UHD 730, display on the RTX 3050)
-
-- ✅ **Windows persistent D3D11 shared textures** — `preview-gpu-order` 8/8, `preview-hw-color` d3d11va 4/4 (worst patch error 1–2 of tolerance 8), `preview-hw-conformance` d3d11va, `poc/shared-texture` full matrix including the RGBA byte-exact probe. `importSharedTexture` accepts the keyed-mutex slots unchanged.
-- ✅ **Context loss** — `chrome://gpucrash` under a live d3d11va session: the app survives, close + reopen Preview brings the hardware lane back with advancing frames.
-- ✅ **WebGPU on D3D12** — the F16 parity gate (`effects-f16-parity`, GLSL and WGSL) passes on the real device.
-- 🆕 **A WebGPU device that dies out of order stalls the renderer** — the section below; the product fix is ADR 0059.
-
-## Pointer Lock works (WebView2 verdict overturned)
-
-`element.requestPointerLock()` locks fine on a visible, focused window. A *hidden* window forces `pointerlockerror` — that is a probe-harness artifact, not an engine limit.
-
-History: in the Tauri WebView2/Edge webview, pointer lock never engaged, so the Base UI `NumberField.ScrubArea` drag-to-scrub gesture (which needs pointer lock for unbounded relative cursor movement) could only move the cursor right — the value only ever increased. The ScrubArea grip was removed (`3edd7b15`) and `AppNumberField` fell back to typing + arrow keys + hover-revealed steppers.
-
-Implication: drag-to-scrub on numeric fields is unblocked on Electron and can be re-introduced as a feature; the stepper/typing path remains the no-pointer-lock fallback.
+First measured on Electron 42.4.1 / Chromium 148 (Windows 11, RTX 3050) with a
+bare probe harness. Re-verified on Electron 44.1.1 / Chromium 152 (2026-09,
+Linux x64 NVIDIA + Intel VAAPI, and Windows 11 RTX 3050) through the app's own
+gates, except where an entry says otherwise. Windows D3D11 shared textures
+(`importSharedTexture` with keyed-mutex slots) and recovery after
+`chrome://gpucrash` passed on 44. Re-verify on each Chromium major bump.
 
 ## A canceled `pointerdown` cancels the focus move
 
-`preventDefault()` on `pointerdown` suppresses the compatibility `mousedown`, and it is
-`mousedown`'s default action — not `pointerdown`'s — that moves focus. So a handler that
-cancels `pointerdown` to suppress native drag or text selection also, silently, leaves focus
-exactly where it was. Verified in the app rather than the probe harness:
-`e2e/electron/focus-regions.spec.ts` dispatches a cancelable `pointerdown` at a listener
-that cancels it and asserts the focus outcome.
+Focus moves in `mousedown`'s default action, and `preventDefault()` on
+`pointerdown` suppresses the compatibility `mousedown`. A gesture handler that
+cancels `pointerdown` (to stop native drag/selection) therefore leaves focus
+where it was. Focus release cannot be left to the browser; the only phase ahead
+of every gesture handler is capture at `window` (React attaches lower). Premise
+of ADR 0041; gated by `e2e/electron/focus-regions.spec.ts`.
 
-Implication: focus release cannot be left to the browser anywhere a drag gesture lives, and
-it cannot be fixed inside the gesture handlers either — every one of them needs its
-`preventDefault()`. The only phase that runs ahead of all of them is **capture at `window`**;
-React attaches at the root container, a descendant of window, so even React's capture
-handlers are later. That is the premise of ADR 0041's focus regions.
+## Pointer Lock works
 
-## Inline foreignObject raster does NOT taint the canvas (WebView2 verdict overturned)
+`requestPointerLock()` engages on a visible, focused window (a hidden window
+always errors). Drag-to-scrub on numeric fields is possible; typing + steppers
+remain the fallback. Not re-probed on 44.
 
-An inline `<foreignObject>` SVG rasterized via `<img>` → canvas reads back cleanly: `getImageData` and `toDataURL` both succeed, no `SecurityError`.
+## Inline foreignObject raster does not taint the canvas
 
-History: WebView2 flagged EVERY foreignObject raster as cross-origin-tainted — even fully inline, script-free, system-font, same-origin content (`blob:` and `data:` URLs alike) — blocking `getImageData`, `convertToBlob`, WebGL `texImage2D`, and WebGPU `copyExternalImageToTexture` (the path PixiJS v8 uses for texture upload). That taint is what forced the pure-SVG template raster path and is the premise of ADR 0015 ("templates rasterize from plain SVG to dodge the taint", since superseded by the Motifs rebuild). On the pinned Electron Chromium that premise no longer holds for inline content; the successor Motifs CDP-capture design stands on its own merits (untrusted-JS sandbox, uniform authoring), not on the taint.
+An inline `<foreignObject>` SVG drawn via `<img>` to a canvas reads back
+(`getImageData`, `toDataURL`). Only the inline case was probed: an embedded
+external resource or web font is the classic taint trigger and is unverified.
+Not re-probed on 44.
 
-⚠ Caveat: only the INLINE case was re-probed. The classic Chromium taint trigger is an embedded external resource or web font inside the foreignObject; re-confirm that case before fully retiring the constraint for arbitrary HTML/CSS content.
+## WebCodecs hardware hints are requirements, not preferences
 
-## `prefer-hardware` encode hint is MANDATORY, not a preference (confirmed on Electron)
+- `VideoEncoder` `prefer-hardware` rejects a codec with no hardware encoder
+  instead of falling back (AV1 on RTX 3050: `isConfigSupported` false, encode
+  "Encoder creation error"; hint omitted → software libaom, 71 ms/frame at
+  720p). Omit the hint except for H.264. Chromium has no software HEVC
+  encoder; HEVC needs ffmpeg.
+- On Linux/NVIDIA (Chromium 152) `VideoDecoder.configure` with
+  `prefer-hardware` throws `OperationError: Unsupported configuration` (on 148
+  it produced black BGRA frames). `prefer-software` works; Linux has no
+  WebCodecs hardware decode (`preferSoftware`, `hwExportDecodeAllowed`).
+- `isConfigSupported` is wrong in both directions (negative under
+  `prefer-hardware`, positive for some decodes such as Hi10P). Confirm with a
+  real `encode()`/`decode()` plus `flush()`.
 
-Chromium treats `VideoEncoder` `hardwareAcceleration: "prefer-hardware"` as a hard requirement, not a hint: a codec with no hardware encoder on the box is rejected outright instead of falling back to the software encoder that works.
+## Buffer-defined `VideoFrame` conversion ignores `colorSpace` (always BT.601)
 
-Probe matrix (AV1 on a GPU without hardware AV1 encode, RTX 3050):
+A `VideoFrame` built from an ArrayBuffer (`new VideoFrame(data, { format:
+"NV12", colorSpace })`) converts with BT.601 in `drawImage` /
+`createImageBitmap` whatever the stamped space; decoder-produced frames honor
+their tags. Found by the saturated-chart gate (chart SSIM 0.616 vs 0.892;
+natural content barely moved, so natural-clip gates are blind to it). Never
+hand a buffer-defined YUV frame to the browser for conversion: native-decode
+planes convert in owned shaders (`Nv12Ingest`, `TenBitIngest`,
+`coefForMatrix`), ADR 0032. Same family: `VideoEncoder` ignores
+`VideoFrame.colorSpace`; `copyExternalImageToTexture` converts as
+BT.709/limited regardless of tags (ADR 0014).
 
-- `isConfigSupported({codec: "av01.0.13M.08", …})`: no hint → true; `prefer-hardware` → **false**; `prefer-software` → true.
-- Real one-frame encode: `prefer-hardware` → "Encoder creation error"; hint omitted or `prefer-software` → OK. Sustained 15-frame software AV1 encode: 0 errors, 71 ms @ 720p (libaom, near-realtime).
-- HEVC fails ALL variants — Chromium ships no software HEVC encoder (patent-encumbered). HEVC genuinely needs the ffmpeg exit.
+## EyeDropper samples screen-wide but its widget is window-hosted
 
-Rules:
+`new EyeDropper().open()` returns correct colors from any window, but the
+magnifier clips at the app window edge and the pick click activates the
+foreign window (electron#27980, #44916, #44917). WeftCut uses
+`main/screenPick.ts` instead: freeze each display with desktopCapturer, then
+show overlay windows that own magnifier and input. Fractional DPI: use actual
+capture dimensions, request each display separately (a larger thumbnail can
+upscale), and commit from the `PointerEvent` position (the compatibility click
+truncated coordinates by a pixel). Probe: `poc/colorpick/FINDINGS.md`.
 
-- Never force `prefer-hardware` when probing or encoding a codec that may lack a hardware encoder — omit the hint so Chromium picks hardware-if-present-else-software. (H.264 keeps `prefer-hardware` for its proven fast path.)
-- Never trust `isConfigSupported` alone, in either direction: it lies *negative* under `prefer-hardware` (this entry) and lies *positive* for some decodes (Hi10P). Confirm with a real `encode()`/`decode()` plus `flush()`.
+## Hidden windows can withhold animation frames before their first show
 
-History: first hit on WebView2/Edge, but it is Chromium-wide, not Edge-specific. WeftCut's `smokeEncode` and `App.buildConfig` used to force the hint, producing a false "this machine cannot encode AV1"; fixed by omitting it for non-H.264 codecs.
+Windows / Electron 44.1.1: an overlay reporting `visibilityState: visible`,
+with `backgroundThrottling: false`, ran no `requestAnimationFrame` callbacks
+before its first show. Main waited for renderer `ready` before
+`showInactive()` while the renderer awaited a frame before sending `ready`.
+Rule: a hidden window's init handshake must not depend on frames or
+visibility; `ready` follows decode + handler install
+(`renderer/colorpick/desktopOverlay.test.ts`).
 
-## EyeDropper API: sampling is screen-wide, the WIDGET is window-hosted
+## Pixi WebGPU `extract.pixels` cannot read an in-flight filter input
 
-Observed 2026-07-11 in the real app (not the probe harness), corroborated by
-upstream electron#27980 / #44916 / #44917. `new EyeDropper().open()` correctly
-samples pixels from ANY window on ANY display — the returned `sRGBHex` is
-accurate for foreign-window content. But Chromium hosts the dropper's UI
-widget inside the Electron window with no system-wide mouse capture, so:
-
-- the magnifier clips at the app window's edge (invisible while hovering
-  foreign windows, though picking there still works);
-- the pick click lands on and ACTIVATES the clicked foreign window (focus
-  steal) — in Chrome the same click does not transfer focus.
-
-Blockbench (Chrome's own EyeDropper showcase app) abandoned the native API in
-its Electron build over this same defect. WeftCut previously mitigated it by
-refocusing the editor after selection. Replaced 2026-09-13 by
-`main/screenPick.ts`: desktopCapturer freezes each display before any independent
-overlay window is shown. The dedicated renderer owns magnifier/hover/input.
-
-Verified on Electron 44.1.1, Windows, 1920×1080 at 110%: full-screen UI is visible
-outside the editor, native click/Escape work in the standalone probe, and the
-real-editor E2E checks pick/undo/cancel and capture failure recovery.
-Fractional-DPI details matter: integer DIP bounds times scale can differ from
-physical resolution by a pixel; use actual capture dimensions. Requesting a
-larger thumbnail (even a +2-pixel margin) can upscale it; request each display
-separately. Pointerdown preserves fractional CSS coordinates whereas the
-compatibility click event truncated them in this build, causing a one-pixel
-offset. Commit from the PointerEvent position with round-trip rounding.
-See `poc/colorpick/FINDINGS.md` for the initial probe and remaining platform cells.
-
-## Hidden picker windows can withhold animation frames before their first show
-
-Reproduced 2026-09-14 on Windows / Electron 44.1.1. Repeated desktop picking
-sometimes left an overlay loaded but invisible until the session timeout.
-Tracing separated the stages: capture returned in about 0.4 s; the overlay
-finished loading, decoded a 1920-pixel-wide screenshot and populated its hint;
-the owner stayed focused. The overlay reported `visibilityState: visible`, yet
-its pending `requestAnimationFrame` callbacks never ran during the observation
-window. This happened with `backgroundThrottling: false` already set.
-
-The picker had a circular startup dependency: main waited for renderer `ready`
-before `showInactive()`, while the renderer awaited an animation frame before
-sending `ready`. The fix sends `ready` once decoding, canvas drawing and input
-handler installation finish. It does not await painting or relax screenshot
-readiness. Main still captures every screen first and waits for every overlay
-to initialize before showing the group.
-
-The regression test `renderer/colorpick/desktopOverlay.test.ts` runs the real
-overlay entry with animation frames withheld and deferred bitmap decoding:
-`ready` must follow decoding without needing any frame callback. Before the
-fix it deterministically failed; after the fix it passes. The existing desktop
-E2E repeats open/pick/undo/reopen/Escape on the real Electron window path:
-10 consecutive runs passed after the fix (20 desktop-picker openings).
-Temporary event probes have been removed; both E2E handoffs retain failure
-snapshots of window visibility, page readiness and canvas dimensions.
-
-**Rule:** a hidden window's initialization handshake must not depend on
-animation frames or visibility. Keep data/handler readiness distinct from
-presentation; `document.visibilityState` alone is not evidence that frames run.
-
-## Effect-input picking reads the GPU texture before pool reuse
-
-Implemented and verified 2026-09-13 on Windows, Electron 44.1.1 / Pixi 8.20.1.
-The color-picker E2E runs the real editor on WebGPU (`renderer=2`) and forced
-WebGL fallback (`renderer=1`). An asymmetric image with an upstream brightness
-effect, downstream brightness and an opaque covering layer still samples the
-upstream result exactly. Disabled target, translation, scale, rotation, half
-preview resolution, effects-preview bypass, half opacity, transparent-region
-rejection and one-step undo are covered by the same test.
-
-Pixi's WebGPU `extract.pixels(Texture)` goes through a WebGPU canvas and a 2D
-canvas. It copies the source extent, submits a separate command encoder and
-converts premultiplied alpha; it is not suitable for an in-flight filter input.
-`EffectInputCapture` instead queues `copyTextureToBuffer` on the render encoder
-while the pooled input is still owned, then maps the staging buffer after
-rendering. WebGL uses texture readback and restores the previous framebuffer.
-No pooled GPU texture survives the capture. Pixi's public
-`calculateSpriteMatrix` supplies the input rectangle relative to an identity
-reference sprite, keeping padding/clipping out of the picker coordinate code.
-
-## Buffer-defined `VideoFrame` conversion ignores the stamped `colorSpace` (always BT.601)
-
-Observed 2026-07-16 in the real app (the export ProRes fidelity gate), Electron 42 / Chromium 148. When a `VideoFrame` is constructed **from an ArrayBuffer** (`new VideoFrame(data, { format: "NV12", colorSpace: … })`), Chromium's software RGB conversion (`drawImage`, `createImageBitmap`) applies BT.601 coefficients regardless of the stamped BT.709 `colorSpace`. **Decoder-produced** frames are unaffected — their conversion honors the tagged space.
-
-Caught by the saturated-chart SSIM gate: the native-decode lane's HD frames converted visibly wrong (chart SSIM 0.616 vs the proxy path's 0.892) while natural-content SSIM barely moved — chroma-coefficient error hides in low-saturation material, so gates on natural clips are blind to it.
-
-Rule: never hand a buffer-defined YUV frame to the browser for color conversion. CPU planes from the native decode lanes (export relay AND the SW preview transport) carry their own kinds (`NativeNv12Frame` / `TenBitFrame`) and convert in owned shaders (`Nv12Ingest` / `TenBitIngest`, matrix selected from the stamped `colorSpace` via `coefForMatrix`). Policy: ADR 0032. Third member of the platform color-gap family, alongside `VideoEncoder` ignoring `colorSpace` (below) and WebGPU `copyExternalImageToTexture` converting as BT.709/limited regardless of tags (ADR 0021's offender list).
-
-## macOS menu accelerators do NOT preempt the renderer — `preventDefault()` wins
-
-Measured 2026-07-30 on Electron 42.4.1, macOS (Darwin 25.5.0, Apple silicon) — a different
-platform and date from this file's header. Standalone probe: a bare window with a focused,
-text-selected `<input>`, a **page-world** `keydown` recorder, and a **real** `Cmd+C`
-delivered through AppKit via `osascript … keystroke "c" using command down`.
-`webContents.sendInputEvent` cannot probe this — it injects past AppKit, so menu key
-equivalents never run and every variant looks identical.
-
-| Application menu installed | native copy happened | renderer saw the keydown |
-| --- | --- | --- |
-| `[appMenu, editMenu]` roles, default accelerators | yes | yes |
-| …same, but the renderer calls `preventDefault()` | **no** | yes |
-| Edit items as roles with `accelerator: ''` | no | yes |
-| Edit items as roles with `registerAccelerator: false` | yes | yes |
-| `[appMenu]` only — menu exists, no Edit menu | no | yes |
-| `setApplicationMenu(null)` — no menu at all | **yes** | yes |
-
-**Custom items behave exactly like roles here** (re-probed the same way when the menu was
-built): a `{ label, accelerator: 'CommandOrControl+S', click }` item did **not** fire when
-the renderer called `preventDefault()` on Cmd+S, and an otherwise identical item on a chord
-the renderer let through **did** fire. So a menu of the app's own commands cannot
-double-dispatch against `useShortcuts`, and the rule below is about the menu, not about
-roles specifically.
-
-The renderer observed the chord in **every** configuration, including the ones where the
-native role also fired. The `preventDefault()` verdict was re-run 4× alternating
-(prevent → no copy, pass → copy) with no flake, and holds for a **destructive** role too:
-against `role: 'close'` (Cmd+W), `preventDefault()` left the window open, and without it
-the window closed.
-
-Rules:
-
-- **The renderer is upstream of the application menu on macOS.** `useShortcuts` can own any
-  chord by calling `preventDefault()`; the matching menu role then does not fire. So a full,
-  standard, discoverable menu **with real accelerators** can coexist with renderer
-  ownership — no display-only menu items, and no renderer reimplementation of text-field
-  clipboard/undo. Focus-aware dispatch falls out for free: don't prevent when a text input
-  has focus and the native role serves it.
-- **Never try to strip an accelerator off a role item.** `accelerator: ''` silently kills the
-  role's native behavior; `registerAccelerator: false` is ignored on macOS (the accelerator
-  still fires). Either include the role normally or omit the item.
-- Electron's **default** menu binds `Cmd+R`/`Shift+Cmd+R` (reload) and `Alt+Cmd+I`
-  (DevTools) in **production** too, plus `Cmd+W` → Close Window and `Cmd+Z` →
-  `webContents.undo()` (DOM text undo, never project history). An app that keeps the default
-  menu ships all four. `role: 'viewMenu'` re-adds reload + DevTools, so build View by hand.
-- `role: 'appMenu'` contains no Settings/Preferences slot — `Cmd+,` must be a custom item.
-
-⚠ Caveat: the last table row is the odd one — *no* menu yields a working native Cmd+C, yet a
-menu **without** a copy role does not. Treat that asymmetry as an Electron 42 implementation
-detail rather than a contract, and ship the standard Edit menu instead of relying on it.
-
-History: the intuitive model — "macOS menu accelerators are resolved by the browser process
-through the AppKit main-menu responder chain and preempt the renderer's keydown listener" —
-is what ADR 0031 was first written around, and it is **false** on Electron 42. A design
-derived from it (Cmd+Z/C/V as display-only items plus a renderer clipboard/undo
-reimplementation) is dead work; the table above is what replaced it. The same ADR's claim
-that `setApplicationMenu(null)` "breaks Cmd+C/V in the app's text inputs" is likewise false,
-though the near-miss variant (a menu lacking the copy role) does break it.
-
-### Manual check: the renderer still owns the shared chords
-
-The one thing here that cannot be a CI gate — `webContents.sendInputEvent` injects past
-AppKit, so menu key equivalents never run and an injected-key test passes whatever the menu
-does. Real keys need `osascript`, which needs Accessibility permission for the runner. Run
-this by hand after touching the menu template, `useShortcuts`, or the Electron major;
-`e2e/electron/menu.spec.ts` covers everything else (menu shape, the projection, dispatch).
-
-With a project open, on macOS:
-
-1. **`Cmd+Z`** in the timeline → the app's undo runs (a timeline edit reverts), not the Edit
-   menu's DOM undo. In a text field (a layer name) → the opposite: the typing is undone and
-   project history is untouched. Both directions are unit-tested in `useShortcuts.test.tsx`;
-   the in-app half was found broken once, when `undo`/`redo` lacked `fireWhenEditing: false`.
-2. **`Cmd+W`** → "Save and Close" — back to the startup screen, window still open.
-3. **`Cmd+C` / `Cmd+V`** in a text field → native clipboard; in the timeline → the app's
-   copy/paste.
-4. **`Cmd+,`** on the startup screen and in the editor → Settings opens.
-
-## An offscreen window is a full citizen of the window list
-
-Probed on Electron 42.4.1 with a two-window harness (one visible, one
-`webPreferences: { offscreen: true }`): `getAllWindows()` returns **both**, `includes()` the
-offscreen one is **true**, and closing the visible window does **not** emit
-`window-all-closed`. `offscreen: true` selects a paint target, not a lifecycle class.
-
-Implication: the failure this causes is a closed loop, not a missed teardown. The handler that
-destroys WeftCut's Motif capture host runs on `before-quit`, which is reached only through
-`app.quit()`, which was called only from `window-all-closed` — so the host held the
-process open and the process was the only thing that would have closed the host, leaving a
-live app with no window on screen. The quit decision therefore rides the **user-facing**
-window count (`main/windows.ts`), with `window-all-closed` demoted to a backstop;
-`e2e/electron/app-quit.spec.ts` gates it.
-
-Rule: a window the user cannot see or close must be declared internal in the same tick as its
-constructor — before the first `await` of its setup, or a user window closing during that
-setup still counts it as one of their own.
-
-## Closing the last window quits, macOS included
-
-Cocoa sanctions both policies — `applicationShouldTerminateAfterLastWindowClosed` exists
-precisely so an app can choose — and the split is by app shape, not by OS. A document-based
-app (many windows, a `File > New Window`) stays Dock-resident with its menu bar; a
-single-window app terminates with its window.
-
-WeftCut is the second kind: one workspace, one editor window, no `File > New Window`. The
-Performance Monitor is the only secondary window, and it *is* counted, so closing the editor
-beneath it does not quit. Nothing needs a windowless WeftCut — the MCP stdio shim already
-serves an agent against a closed app — while the process such a state leaves behind is not
-idle: it holds decode sessions, GPU textures and ffmpeg children behind no window the user
-can see or close.
-
-So `quitIfLastUserWindowClosed` takes no platform argument and `window-all-closed` carries no
-platform test. The `process.platform !== 'darwin'` guard that belongs at this seam in the
-Electron quick-start is a decision about document-based apps, not about this one; restoring it
-fails `app-quit.spec.ts` on the macOS leg alone, and would drag back the `activate` handler
-that re-creates a window on zero — which can fire from a Dock click inside the `before-quit`
-flush and resurrect the window the quit has stopped waiting for.
+It copies through a WebGPU canvas and a 2D canvas on a separate command
+encoder. Effect-input picking (`EffectInputCapture`) queues
+`copyTextureToBuffer` on the render encoder while the pooled input is still
+owned and maps the staging buffer after rendering; WebGL reads back and
+restores the framebuffer.
 
 ## A WebGPU device that dies out of order stalls the renderer (Chromium 152)
 
-Pixi's `GpuDeviceSystem.destroy()` drops its reference to the `GPUDevice` and never
-destroys it — its WebGL twin, `GlContextSystem.destroy()`, calls
-`WEBGL_lose_context.loseContext()` — so a destroyed WebGPU `Application` leaves a live
-device for the garbage collector. On Chromium 148 that is harmless. On Chromium 152 the
-renderer main thread blocks for 30–45 s inside `gpu.mojom.CommandBufferClient` handling,
-right after a burst of WebGPU return data, with every process at 0 % CPU and the main
-process answering — whenever such a device dies while the next Application's first
-WebGPU work is in flight. Measured on Windows with the d3d11va shared-texture lane live,
-eight Preview close→reopen rounds per run, three runs per row:
+Pixi's `GpuDeviceSystem.destroy()` drops the `GPUDevice` without destroying it
+(its WebGL twin calls `loseContext()`). On 152, when such a device is garbage
+collected while the next Application's first WebGPU work is in flight, the
+renderer main thread blocks 30–45 s in `gpu.mojom.CommandBufferClient`, all
+processes idle. Windows, d3d11va lane live, 8 Preview close/reopen rounds x 3
+runs:
 
 | device lifetime on Application destroy | result |
 | --- | --- |
-| left to the garbage collector (Pixi default) | frozen in round 1–2, every run |
-| `device.destroy()` BEFORE Pixi's teardown (in the host's own cleanup) | frozen in round 1, every run |
-| `device.destroy()` right AFTER Pixi's teardown | clean, every run |
-| device held forever, or one device shared by every Application | clean, every run |
+| left to GC (Pixi default) | frozen in round 1–2, every run |
+| `device.destroy()` before Pixi's teardown | frozen in round 1, every run |
+| `device.destroy()` right after Pixi's teardown | clean |
+| held forever, or one device shared | clean |
 
-Two product faces: Preview close→reopen with a live hardware session froze, and export
-start under four concurrent app instances wedged six to seven of 39 export tests per
-leg — each export worker's Application leaked its device the same way. The verdict is
-about ORDER, not about calling `destroy()`: the canvas swap chain and textures must be
-released on a live device, then the device destroyed, deterministically and before the
-next Application exists. WeftCut does this in the Preview host and the export worker
-(ADR 0059). WebGL is unaffected because Pixi loses the GL context deterministically. The
-same lifecycle is clean on Electron 42 and 43.
+Order matters: release swap chain and textures on a live device, then destroy
+it, before the next Application exists (`render/webgpuDevice.ts`, used by the
+Preview host and the export worker). Clean on Electron 42 and 43.
 
-## Not re-probed (kept as known Blink behavior)
+## macOS menu accelerators do not preempt the renderer
 
-These WebCodecs behaviors live in the same Blink core WebView2 used, so they were carried forward without re-probing: Hi10P software-decodes but needs `flush()`; a lone IDR frame parks in the decoder's reorder buffer until `flush()`; held `VideoFrame`s pin the ~13-slot hardware decoder pool (ADR 0004); `VideoEncoder` ignores `VideoFrame.colorSpace` and tags color by resolution.
+Electron 42.4.1, macOS (Apple silicon), 2026-07-30; a real `Cmd+C` through
+AppKit (`osascript ... keystroke`). `webContents.sendInputEvent` injects past
+AppKit and cannot probe this.
+
+| application menu | native copy | renderer saw keydown |
+| --- | --- | --- |
+| `[appMenu, editMenu]` roles, default accelerators | yes | yes |
+| same, renderer calls `preventDefault()` | **no** | yes |
+| Edit roles with `accelerator: ''` | no | yes |
+| Edit roles with `registerAccelerator: false` | yes | yes |
+| `[appMenu]` only | no | yes |
+| `setApplicationMenu(null)` | yes | yes |
+
+Custom items behave like roles, and `preventDefault()` also stops a destructive
+role (`close`, Cmd+W). Rules:
+
+- The renderer is upstream of the menu: `useShortcuts` owns a chord by calling
+  `preventDefault()`; a full menu with real accelerators can coexist, and a
+  focused text input simply is not prevented.
+- Never strip an accelerator off a role: `accelerator: ''` kills the role,
+  `registerAccelerator: false` is ignored on macOS.
+- Electron's default menu ships reload, DevTools, Close Window and DOM undo in
+  production; `role: 'viewMenu'` re-adds reload + DevTools. `role: 'appMenu'`
+  has no Settings slot (`Cmd+,` is a custom item).
+- No menu gives native Cmd+C but a menu without a copy role does not; treat
+  that as an implementation detail and ship the standard Edit menu.
+
+### Manual check: the renderer still owns the shared chords
+
+Not a CI gate (injected keys bypass AppKit; `osascript` needs Accessibility).
+Run on macOS after touching the menu template, `useShortcuts` or the Electron
+major; `e2e/electron/menu.spec.ts` covers the rest.
+
+1. `Cmd+Z` in the timeline reverts an edit; in a text field it undoes typing
+   and leaves project history alone.
+2. `Cmd+W` saves and closes to the start screen; the window stays open.
+3. `Cmd+C` / `Cmd+V`: native clipboard in a text field, app copy/paste in the
+   timeline.
+4. `Cmd+,` opens Settings on the start screen and in the editor.
+
+## An offscreen window is a full citizen of the window list
+
+`webPreferences: { offscreen: true }` selects a paint target, not a lifecycle
+class: `getAllWindows()` includes it and closing the visible window does not
+emit `window-all-closed`. With quit driven by `window-all-closed`, the Motif
+capture host kept the process alive with no window. Quit follows the
+user-facing window count (`main/windows.ts`), gated by
+`e2e/electron/app-quit.spec.ts`. Declare an internal window in the same tick as
+its constructor, before the first `await`.
+
+## Closing the last window quits, macOS included
+
+WeftCut is a single-window app (no File > New Window), and a windowless process
+would hold decode sessions, GPU textures and ffmpeg children with nothing to
+close; the MCP stdio shim already serves agents with the app closed. So
+`quitIfLastUserWindowClosed` has no platform branch. Restoring the quick-start
+`process.platform !== 'darwin'` guard fails `app-quit.spec.ts` on macOS and
+would bring back an `activate` handler that can resurrect the window during the
+`before-quit` flush.
+
+## macOS offscreen bitmap host drops the first commit when window and emulation sizes differ
+
+GitHub macOS runner (3 cores, GPU compositing, no physical GPU), 2026-10-26/27.
+The PNG capture host (every Mac) left its window at 800x600 while emulating
+1920x1080 with `Emulation.setDeviceMetricsOverride`. About 7% of
+first-after-navigation captures were fully transparent (never stale or
+partial); Windows and Linux never missed. On a blank, paint events after
+`__motifRender`, `capturePage`, a second readback, a 100 ms wait,
+`invalidate` and `stopPainting`/`startPainting` were all blank too;
+`settleRafs` 1 vs 2 and a discarded first readback changed nothing. Only
+re-rendering recovered (14/14). Sizing the window to the capture with
+`setContentSize` removed every blank (384/384 captures). A verify-and-re-render
+fallback also passed but costs a decode per surface and was rejected. The
+emulation override stays: it pins `deviceScaleFactor` to 1. Not reproduced on a
+Mac outside CI. Gated by `e2e/electron/motif-png-capture.spec.ts` and the
+capture-host fake in `main/motif/capture.test.ts`.
+
+## Platform facts from the 2026-10 full verification runs
+
+- Playwright's Electron launcher forces `--password-store=basic`, so
+  `safeStorage` reports no keyring on Linux even with Secret Service running;
+  keyring specs skip there.
+- `overflow: hidden` still permits programmatic scrolling (`scrollIntoView`,
+  focus): revealing content panned the whole dock workspace. Non-scrolling
+  shells use `overflow: clip`.
+- macOS screenshots carry display-profile (Display P3) bytes: a fixed sRGB
+  oracle color misses (outline painted 78,129,238 vs expected 59,130,246).
+  Calibrate screenshot oracles from painted swatches of the same surface.
+- macOS `/var` is a symlink to `/private/var`: compare `realpath`ed roots
+  against paths resolved through their nearest existing ancestor, not
+  lexically.
+
+## Not re-probed (known Blink behavior)
+
+Hi10P software-decodes but needs `flush()`; a lone IDR frame parks in the
+reorder buffer until `flush()`; held `VideoFrame`s pin the ~13-slot hardware
+decoder pool (ADR 0004).

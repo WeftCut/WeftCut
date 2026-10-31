@@ -1,124 +1,103 @@
 # Desktop releases
 
-The desktop version is a stable SemVer (`0.1.1`, not `0.1.001`). From the repo
-root, run `npm run version:release -- 0.1.2` and commit the two package.json
-files and package-lock.json together. Native crate versions are independent.
+## Versioning and publishing
 
-On a push to `main` in `WeftCut/WeftCut`, electron-ci compares that version with
-published GitHub Releases. An unpublished, increasing version is a release
-candidate. PRs, scheduled runs and manual CI runs cannot publish. Subsequent
-main pushes retry an unpublished version if a previous build failed or was
-cancelled; a published version is never overwritten. Version-only edits to one
-package fail validation, so use the command above.
+The desktop version is plain SemVer. Bump it with
+`npm run version:release -- <x.y.z>` and commit both package.json files and
+package-lock.json together; a version edit in one package fails
+`release.mjs validate`. Native crate versions are independent.
 
-The packaging legs build NSIS (.exe) on Windows, AppImage and .deb on Linux,
-and an Apple Silicon DMG on macOS, plus electron-builder's update manifests and
-blockmaps. Release publishing waits for every E2E, unit/typecheck, Rust and
-determinism comparison gate on all three OSes. No additional release build
-bypasses these gates.
+On a push to `main` in `WeftCut/WeftCut`, electron-ci's `release-plan` job
+compares the version with published GitHub Releases; an unpublished, higher
+version is a release candidate. PRs, scheduled and manual runs never publish.
+A later main push retries an unpublished version whose build failed; a
+published version is never overwritten.
 
-Assets are named by OS and architecture with no version: `WeftCut-win-x64.exe`,
-`WeftCut-linux-x86_64.AppImage`, `WeftCut-linux-amd64.deb` and
-`WeftCut-mac-arm64.dmg`. GitHub's
-`https://github.com/WeftCut/WeftCut/releases/latest/download/<asset>` is
-therefore a permanent link to the current build, fit for a download page that
-never needs editing. A specific build stays addressable through its tag,
-`releases/download/v<version>/<asset>`. electron-updater derives the previous
-release's blockmap URL by swapping the version inside that tag segment, so
-differential Windows updates do not depend on a version in the file name.
+The packaging leg (`e2e-2`) builds NSIS (.exe) on Windows, AppImage + .deb on
+Linux and an arm64 DMG on macOS, plus update manifests and blockmaps. The
+`release` job waits for every E2E leg, `checks`, `rust-test` and the
+determinism `compare`; it alone has `contents: write` and uses the built-in
+`GITHUB_TOKEN`. Publish runs queue (never cancel), so two pushes cannot
+interleave on one version. `release.mjs publish` validates all three
+platforms' manifests, versions, sizes and SHA-512 hashes, creates a draft
+`v<version>` at the tested commit with install steps prepended to the notes,
+uploads, then publishes it as Latest. Installer artifacts are kept 5 days in
+Actions; release assets are the permanent update source.
 
-The macOS build is ad-hoc signed (`identity: "-"` in electron-builder.yml) and
-not notarized: WeftCut has no Apple Developer ID. Ad-hoc rather than no
-signature keeps the bundle's seal consistent after electron-builder rewrites
-Electron's stock bundle, so Gatekeeper treats the app as an unidentified
-developer's instead of reporting it damaged. Users open it once, then allow it
-under System Settings → Privacy & Security → Open Anyway, or clear the
-quarantine flag with `xattr -dr com.apple.quarantine`; every release's notes
-carry both. Only arm64 ships: the runner, the bundled ffmpeg sidecar and the
-from-source LGPL libraries are all Apple Silicon.
+A failed upload leaves a draft, invisible to update checks; re-run the failed
+job at the same commit to resume. If a draft belongs to an older commit, delete
+it (and its tag, if GitHub created one) before retrying. The workflow refuses
+existing tags without a matching draft and lower versions. Ship fixes as a
+higher patch; never replace installers under a published version.
 
-Only the final release job gets `contents: write`. The built-in GITHUB_TOKEN is
-enough; no personal token or client-side GitHub credentials are needed. The
-publisher validates all three platforms' manifests, versions, file sizes and
-SHA-512 hashes, creates a draft `v<version>` at the tested commit with the
-install steps prepended to the generated notes, uploads all assets, then
-publishes it as Latest. Artifacts are retained in Actions for five days;
-public release assets are the permanent update source.
+## Asset names
 
-A failed upload leaves a draft, invisible to update checks. Re-run the failed
-job at the same commit to resume it. If a draft belongs to an older commit,
-remove that draft before retrying a new commit (also remove its version tag if
-GitHub created one). The workflow refuses existing tags without a matching
-draft, and refuses lower versions. Publish a higher patch version to deliver a
-fix; do not replace installers under an already published version.
+Assets carry OS and architecture, no version: `WeftCut-win-x64.exe`,
+`WeftCut-linux-x86_64.AppImage`, `WeftCut-linux-amd64.deb`,
+`WeftCut-mac-arm64.dmg`. So
+`https://github.com/WeftCut/WeftCut/releases/latest/download/<asset>` is a
+permanent link to the current build, and `releases/download/v<version>/<asset>`
+addresses one build. electron-updater finds the previous blockmap by swapping
+the version in the tag segment, so differential Windows updates still work.
 
-Packaged Windows/Linux applications use electron-updater against the public
-GitHub Release feed. They check 5 seconds after startup and every six hours,
-and surface an available update as an icon on the start screen and in the
-editor's status bar; neither interrupts work with a notice. General
-settings' second item, "Automatically install available updates when closing
-the app", defaults on (including older settings files). With it enabled,
-background downloads begin automatically; normal exit installs the downloaded
-update after the editor's autosave flush and leaves the app closed. With it off,
-checks only fetch release metadata. "Download and install" explicitly downloads
-the installer, then saves and restarts to install. Turning the preference off
-cancels an ongoing background download; an already completed download remains
-available for an explicit restart. Turning it on downloads a known available
-update immediately. An explicitly requested download is independent of this
-preference.
-"Later" only closes the dialog; it does not change this preference.
-"Skip this version" stores that version as skipped (`skipped_update_version`):
-both icons hide it, and the background download and the exit install step aside
-for it. Help → Check for Updates still offers it as usual, without mentioning the
-skip, and choosing Download and install or Update and restart there clears it.
-A newer release is never covered by an older skip.
+## macOS signing
 
-"Update and restart app" is a one-time action independent of that preference.
-It blocks further UI operations while saving, then exits normally; the final
-quit event starts installation with relaunch enabled. A failed save leaves the
-project open and the update available to retry. A version-bound, one-use
-`update-resume.json` handoff restores the exact current project (or start
-screen) without changing the separate reopen-on-launch preference. Workspace
-layout and window geometry use their existing persistence.
+The Mac build is ad-hoc signed (`identity: "-"`), not notarized: there is no
+Apple Developer ID. Ad-hoc rather than unsigned keeps the seal consistent after
+electron-builder rewrites Electron's bundle, so Gatekeeper reports an
+unidentified developer instead of "damaged". Users allow it once under System
+Settings → Privacy & Security → Open Anyway, or run
+`xattr -dr com.apple.quarantine`; release notes carry both. Only arm64 ships:
+the runner, the ffmpeg sidecar and the from-source LGPL libraries are Apple
+Silicon.
 
-Windows updates show the NSIS installation progress page, skip install-location
-and install-mode choices, and close automatically on success. Only an explicit
-update-and-restart requests relaunch; ordinary exit updates do not reopen.
-This makes the file-replacement interval visible; it is not an atomic switch
-between executable versions, and shortcuts still target the installed exe.
-The start screen's top-left actions end with a circular, theme-blue update
-button bearing Lucide's ArrowDownToLine download icon. Release builds show this
-icon-only button when a new version is known; development
-keeps it visible for UI work. Its tooltip and accessible name describe the
-action, and it opens the same dialog as the editor's Help → Check for Updates
-entry. The editor's status bar carries the same entry as a solid theme-blue
-"Update available" pill left of the Logs toggle. Its label stays fixed, since an
-update outlives the transient job badges beside it; its tooltip and accessible
-name carry the version and phase, and a running download draws a progress ring
-around its icon. Opening the dialog is the
-explicit check; simply showing either icon only reads status. The dialog shows
-availability/progress/readiness, offers skip, later and download or restart
-actions in one row, retries errors and links to manual downloads. Dev,
-E2E and macOS builds disable update checks. macOS cannot self-update without a
-Developer ID: Squirrel.Mac installs only a build whose signature satisfies the
-running app's designated requirement, and an ad-hoc signature pins that to the
-running build's own code hash. Prereleases and downgrades are off.
+macOS cannot self-update: Squirrel.Mac installs only a build satisfying the
+running app's designated requirement, and an ad-hoc requirement is that build's
+own code hash. Main passes no updater on darwin.
 
-On Windows the taskbar icon and window grouping come from the app's
-AppUserModelID, which the installer stamps onto the Start Menu and Desktop
-shortcuts. The runtime value (`src/main/appIdentity.ts`) must equal
-electron-builder's `appId`; a unit test pins them together, and this value stays
-stable across releases so pinned shortcuts and notifications survive updates.
-electron-builder's stock installer only re-stamps a shortcut when it recreates or
-renames one, so an in-place update that keeps a same-named shortcut could leave a
-rewritten exe with a stale identity and a blank taskbar icon. `build/installer.nsh`
-re-asserts the AppUserModelID on every install and update to prevent that. A
-machine whose per-identity taskbar record was already corrupted by an earlier
-update is only reliably cleared by uninstalling and reinstalling.
+## Auto-update (Windows and Linux)
 
-Before declaring updates verified, install the actual 0.1.1 Windows/Linux
-packages, publish a higher patch, and exercise checking, downloading and normal
-exit installation. Confirm the saved project reopens and the app reports the
-new version. Include AppImage and .deb (which may prompt for system privileges),
-network failure/retry and an export left running while an update downloads.
-Unit tests and release-manifest checks do not replace this installed-app test.
+Packaged Windows/Linux builds use electron-updater against the public GitHub
+Release feed (`src/main/updates.ts`); dev, E2E and macOS builds do not check.
+Prereleases and downgrades are off. Checks run 5 s after startup and every six
+hours. An available update shows as a start-screen button and an "Update
+available" status-bar pill; neither interrupts work, and showing them only
+reads status. Clicking either opens the same dialog as Help → Check for
+Updates, which is the explicit check.
+
+- `auto_install_updates_on_quit` (General settings, default on): downloads in
+  the background and installs on normal exit, after the autosave flush, without
+  relaunching. Off: checks only fetch metadata. Turning it off cancels a
+  running background download; turning it on downloads a known update.
+- "Download and install" downloads explicitly, then saves and restarts.
+  "Update and restart" blocks the UI while saving, exits normally, and the
+  final quit event installs with relaunch. A failed save keeps the project open
+  and the update available. A version-bound, one-use `update-resume.json`
+  (`updateResume.ts`) restores the exact project or start screen without
+  touching the reopen-on-launch preference.
+- "Skip this version" stores `skipped_update_version`: both indicators hide it
+  and background download and exit install step aside. Help → Check for
+  Updates still offers it, and downloading from there clears the skip. A newer
+  release is never covered by an older skip. "Later" only closes the dialog.
+
+Windows updates show the NSIS progress page without location or mode choices
+and close on success; only update-and-restart relaunches. File replacement is
+not atomic, and shortcuts keep targeting the installed exe.
+
+## Windows AppUserModelID
+
+Taskbar icon and grouping come from the AppUserModelID stamped onto the Start
+Menu and Desktop shortcuts. `src/main/appIdentity.ts` must equal
+electron-builder's `appId` (`dev.weftcut.desktop`; a unit test pins them) and
+must stay stable across releases. The stock installer re-stamps a shortcut only
+when it recreates or renames it, so an in-place update could leave a stale
+identity and a blank taskbar icon; `build/installer.nsh` re-asserts it on every
+install and update. A machine already corrupted needs uninstall + reinstall.
+
+## Manual release check
+
+Unit tests and manifest checks do not cover the installed-app path. When the
+updater changes, install the current Windows/Linux packages (AppImage and
+.deb), publish a higher patch, and exercise check, download and exit install,
+including network failure/retry and an export running during download; confirm
+the project reopens and the new version reports.
