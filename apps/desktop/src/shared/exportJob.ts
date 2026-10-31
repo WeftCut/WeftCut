@@ -1,6 +1,12 @@
 import type { ExportSettings } from './exportSettings';
 
 export type ExportJobState = 'preparing' | 'rendering' | 'finalizing' | 'awaiting_retry' | 'completed' | 'failed' | 'cancelled';
+export interface ExportEncoderLoad {
+  encoder: string;
+  device: 'gpu' | 'cpu';
+  /** Encoder block utilisation for GPU, whole-system CPU utilisation for CPU. */
+  utilization_percent: number | null;
+}
 export interface ExportJob {
   job_id: string;
   state: ExportJobState;
@@ -13,6 +19,11 @@ export interface ExportJob {
   can_retry?: boolean;
   phase?: string;
   progress?: number;
+  /** Encoding only; excludes preparation and the separately reported finalization. */
+  render_elapsed_ms?: number;
+  /** Rolling measured estimate. Null while warming up, stalled, or frames are done. */
+  estimated_remaining_ms?: number | null;
+  encoder_load?: ExportEncoderLoad;
   duration_us?: number;
   error?: { code: string; message: string };
 }

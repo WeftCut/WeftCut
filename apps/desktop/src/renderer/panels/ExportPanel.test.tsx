@@ -100,6 +100,70 @@ describe("ExportPanel complete state", () => {
   });
 });
 
+describe('export time estimate', () => {
+  const progress = (remaining: number | null = null): ExportState => ({
+    kind: 'progress', progress: { progress: 0.25, currentTimeUs: 250_000, frame: 8, fps: 30, speed: 1 },
+    job: { job_id: 'timed', state: 'rendering', filename: 'final.mp4', output_path: OUTPUT,
+      settings: DEFAULT_EXPORT_SETTINGS, range: { startUs: 0, endUs: 1_000_000 }, agent: true,
+      estimated_remaining_ms: remaining },
+  });
+
+  it.each([
+    ['en-US', 'Encoding: approximately 2 min 5 s remaining'],
+    ['en-US', 'Encoding: approximately 2 min 5 s remaining'],
+    ['zh-CN', '编码预计还需 2 分钟 5 秒'],
+  ])('localizes the shared UI/MCP estimate in %s alongside percent', async (language, label) => {
+    await i18n.changeLanguage(language);
+    render(<ExportPanel state={progress(125_000)} onClose={vi.fn()} />);
+    expect(screen.getByText(label)).toBeTruthy();
+    expect(screen.getByText('25%')).toBeTruthy();
+  });
+
+  it('shows warmup, hours, seconds and a separate finalization instead of zero remaining', () => {
+    const { rerender } = render(<ExportPanel state={progress()} onClose={vi.fn()} />);
+    expect(screen.getByText('Calculating remaining time…')).toBeTruthy();
+    rerender(<ExportPanel state={progress(3_720_000)} onClose={vi.fn()} />);
+    expect(screen.getByText('Encoding: approximately 1 h 2 min remaining')).toBeTruthy();
+    rerender(<ExportPanel state={progress(501)} onClose={vi.fn()} />);
+    expect(screen.getByText('Encoding: approximately 1 s remaining')).toBeTruthy();
+    const done = progress(0);
+    if (done.kind !== 'progress') throw Error('Expected progress');
+    done.progress.progress = 1;
+    rerender(<ExportPanel state={done} onClose={vi.fn()} />);
+    expect(screen.getByText('Frames encoded. Finishing the file…')).toBeTruthy();
+    rerender(<ExportPanel state={{ kind: 'finalizing', step: 'audio', job: done.job! }} onClose={vi.fn()} />);
+    expect(screen.getByText('Rendering audio…')).toBeTruthy();
+    expect(screen.queryByText(/approximately/)).toBeNull();
+    rerender(<ExportPanel state={{ kind: 'error', detail: 'Failed', job: done.job! }} onClose={vi.fn()} />);
+    expect(screen.queryByText(/remaining/)).toBeNull();
+  });
+
+  it('never renders invalid estimates or an ETA during cancellation', () => {
+    const { rerender } = render(<ExportPanel state={progress(Infinity)} onClose={vi.fn()} />);
+    expect(screen.getByText('Calculating remaining time…')).toBeTruthy();
+    const state = progress(10_000);
+    state.job!.phase = 'cancelling';
+    rerender(<ExportPanel state={state} onClose={vi.fn()} />);
+    expect(screen.queryByText(/remaining/)).toBeNull();
+  });
+
+  it('labels the real encoder and its measured load, not the auto setting', () => {
+    const state = progress(10_000);
+    state.job!.encoder_load = { encoder: 'h264_nvenc', device: 'gpu', utilization_percent: 0 };
+    const { rerender } = render(<ExportPanel state={state} onClose={vi.fn()} />);
+    expect(screen.getByRole('dialog', { name: 'Export · Encoding: GPU' })).toBeTruthy();
+    expect(screen.getByText('h264_nvenc · Encoder load: 0%')).toBeTruthy();
+    state.job!.encoder_load = { encoder: 'libx264', device: 'cpu', utilization_percent: 38.4 };
+    rerender(<ExportPanel state={{ ...state }} onClose={vi.fn()} />);
+    expect(screen.getByRole('dialog', { name: 'Export · Encoding: CPU' })).toBeTruthy();
+    expect(screen.getByText('libx264 · System CPU load: 38%')).toBeTruthy();
+    state.job!.encoder_load.utilization_percent = null;
+    rerender(<ExportPanel state={{ ...state }} onClose={vi.fn()} />);
+    expect(screen.getByRole('dialog', { name: 'Export · Encoding: CPU' })).toBeTruthy();
+    expect(screen.getByText('libx264 · System CPU load: load unavailable')).toBeTruthy();
+  });
+});
+
 it("keeps a recoverable export modal and offers translated retry and discard actions", async () => {
   await i18n.changeLanguage("zh-CN");
   const onRetry = vi.fn(async () => {}), onDiscard = vi.fn(async () => {}), onClose = vi.fn();
