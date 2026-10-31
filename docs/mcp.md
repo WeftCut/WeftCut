@@ -70,18 +70,26 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   header form; breaks when the app is closed and goes stale when port or
   token change. Until the shim bundle exists (dev before `build:cli`) HTTP
   renders as primary; "starting…" shows until the port is bound.
-- **`initialize` carries `instructions`**: the session etiquette in ten lines
-  (`main/mcp/instructions.ts`), pinned equal to the head of the shipped skill.
-  `serverInfo` is `weftcut` at the app version (a bare dev
+- **`initialize` carries `instructions` on both transports**: the session
+  etiquette in ten lines (`main/mcp/instructions.ts`). The app's server sends
+  it, and so does the shim, which answers `initialize` itself and bundles the
+  same file, so a stdio and an HTTP-direct client read identical text. The
+  etiquette is pinned equal to the head of the shipped skill; the last line
+  names the app version, so an agent whose skill copy carries another
+  `metadata.version` knows to replace it. `serverInfo`
+  is `weftcut` (`weftcut-mcp` through the shim) at the app version (a bare dev
   `electron out/main/index.js` reports Electron's).
 - **The skill**: `skills/weftcut/` staged with its required docs by
-  `scripts/build-skills.mjs`, shipped as an extraResource, refreshed to
-  `<userData>/skills/` at startup (`main/mcp/skillsInstall.ts`). The panel
-  shows an install prompt pointing at that folder, plus the path and an
-  open-folder button. The install state is `installed`, `stale` or
-  `unavailable` with its fault; the panel shows the fault with *Try again*
-  (no restart), and a packaged build that is not `installed` raises a startup
-  notice that main retracts by re-broadcasting `app:notices`.
+  `scripts/build-skills.mjs`, its SKILL.md stamped with the app version as
+  `metadata.version`, shipped as an extraResource, and mirrored to
+  `<userData>/skills/` at startup (`main/mcp/skillsInstall.ts`): that folder
+  is the app's and holds exactly the bundle, so a file a release removed is
+  deleted. The panel shows an install prompt pointing at that folder, plus
+  the path, an open-folder button and a note that the agent's own copy does
+  not update itself. The state describes the app's copy only: `current`,
+  `stale` or `unavailable` with its fault; the panel shows the fault with
+  *Try again* (no restart), and a packaged build that is not `current` raises
+  a startup notice that main retracts by re-broadcasting `app:notices`.
 
 ## Multi-agent semantics
 

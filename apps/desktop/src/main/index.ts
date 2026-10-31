@@ -1255,7 +1255,7 @@ app.whenReady().then(async () => {
   }
   let skills = installSkills(skillsSource)
   /// Bring `startupNotices` in line with the latest install attempt: at most one
-  /// agent-skill row, and none once it is installed.
+  /// agent-skill row, and none once the app's copy is current.
   ///
   /// A dev tree before `npm run build:skills` never raises one — the Agent panel
   /// names that command itself, and a standing notice would be noise in every
@@ -1265,7 +1265,7 @@ app.whenReady().then(async () => {
   const syncSkillNotice = () => {
     const at = startupNotices.findIndex((n) => n.code.startsWith('agent_skill_'))
     if (at >= 0) startupNotices.splice(at, 1)
-    if (skills.state === 'installed') return
+    if (skills.state === 'current') return
     console.warn(`[mcp] agent skill ${skills.state} (${skills.fault})`)
     if (!app.isPackaged) return
     startupNotices.push(

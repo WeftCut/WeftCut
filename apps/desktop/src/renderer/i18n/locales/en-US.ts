@@ -2128,9 +2128,11 @@ const enUS = {
     prompt_copied: "Prompt copied!",
     prompt_heading: "Let your agent set itself up",
     prompt_blurb:
-      "For agents that support MCP: paste the prompt into the chat and it configures the MCP connection and installs the Skill. The Skill updates with each release, so reinstalling after every upgrade is recommended.",
+      "For agents that support MCP: paste the prompt into the chat and it configures the MCP connection and copies the Skill. Paste it again after each WeftCut upgrade: the agent's copy does not update itself.",
     manual_heading: "Prove you're human",
-    skill_path_heading: "Skill folder location",
+    skill_path_heading: "WeftCut's Skill copy",
+    skill_copy_note:
+      "Agents read their own copy of this folder, which does not update itself: replace it after each WeftCut upgrade.",
     skill_path_unavailable:
       "No Skill folder to open — see “Let your agent set itself up” above.",
     skill_stale:
@@ -2195,7 +2197,7 @@ const enUS = {
       "Then install the WeftCut Skill — the usage guidance that ships with the app.",
       "",
       '- Copy the folder "{{folder}}" into your own skills directory, keeping the folder name weftcut. For Claude Code that is ~/.claude/skills/weftcut.',
-      "- Overwrite any copy already sitting there; it belongs to an older version of WeftCut.",
+      "- Delete any copy already there first; it belongs to another version of WeftCut.",
       "- Read the Skill once it is in place, and follow it whenever you work on a WeftCut project.",
       "- Report where you installed it.",
     ].join("\n"),

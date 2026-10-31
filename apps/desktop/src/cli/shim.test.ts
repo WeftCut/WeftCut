@@ -18,6 +18,7 @@ import {
   ProgressNotificationSchema,
 } from '@modelcontextprotocol/sdk/types.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
+import { mcpInstructions } from '../main/mcp/instructions.js'
 import { createShim, type Shim } from './shim.js'
 import type { McpAuth, ShimEnv } from './paths.js'
 
@@ -103,6 +104,7 @@ async function harness(opts: {
   spawnApp?: (p: string) => void
   launchTimeoutMs?: number
   env?: Record<string, string>
+  version?: string
 }): Promise<Harness> {
   let up = opts.appUp
   let frozen = false
@@ -125,6 +127,7 @@ async function harness(opts: {
     launchTimeoutMs: opts.launchTimeoutMs ?? 300,
     launchPollMs: 20,
     probeTimeoutMs: 100,
+    ...(opts.version !== undefined ? { version: opts.version } : {}),
   })
   const notified: string[] = []
   const client = new Client({ name: 'test', version: '0' }, { capabilities: {} })
@@ -163,6 +166,18 @@ afterEach(async () => {
 })
 
 const settle = () => new Promise((r) => setTimeout(r, 25))
+
+describe('initialize', () => {
+  // The shim answers `initialize` itself, so the app's instructions never reach
+  // a stdio client unless the shim sends its own — the recommended transport
+  // would otherwise be the one that carries no etiquette.
+  it('carries the app instructions at the shim version, with the app down', async () => {
+    open = await harness({ appUp: false, version: '1.2.3' })
+    expect(open.client.getInstructions()).toBe(mcpInstructions('1.2.3'))
+    expect(open.client.getInstructions()).toContain('`metadata.version` is not 1.2.3')
+    expect(open.client.getServerVersion()).toMatchObject({ name: 'weftcut-mcp', version: '1.2.3' })
+  })
+})
 
 describe('down state', () => {
   it('lists exactly the synthetic tools, and empty resources/prompts', async () => {

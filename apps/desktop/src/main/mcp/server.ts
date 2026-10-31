@@ -43,7 +43,7 @@ import { shapeHybridResult, shapeImportResult } from './hybridResult.js'
 import { PROJECT_TOOLS, runProjectTool } from './projectTools.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
 import { HOST_RESOURCE_DEFS, HOST_RESOURCE_TEMPLATES, mediaResourceDefs } from './hostResources.js'
-import { MCP_INSTRUCTIONS } from './instructions.js'
+import { mcpInstructions } from './instructions.js'
 import { effectsCatalogView } from '../../shared/effects/catalogView.js'
 import { withLog, NO_MCP_LOG, type McpCommitWindow, type McpLogDeps, type McpRowSummary } from './withLog.js'
 import { withCanonicalToolName } from './toolAliases.js'
@@ -950,12 +950,14 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
   // per call would be pure churn.
   const log: McpLogDeps = opts.log ? { ...opts.log, observe: mcpCommitObserver(getTsHost) } : NO_MCP_LOG
   // `instructions` rides on `initialize`: the ten-line etiquette every client
-  // reads before its first call (`instructions.ts`). `version` is the app's
-  // (`app.getVersion()` in `mcp/index.ts`); a bare `electron.exe out/main`
-  // dev launch reports Electron's, since there is no package.json in that path.
+  // reads before its first call (`instructions.ts`), closed by the version a
+  // skill copy must match. `version` is the app's (`app.getVersion()` in
+  // `mcp/index.ts`); a bare `electron.exe out/main` dev launch reports
+  // Electron's, since there is no package.json in that path.
+  const version = opts.version ?? '0.0.0-dev'
   const server = new Server(
-    { name: 'weftcut', version: opts.version ?? '0.0.0-dev' },
-    { capabilities: { tools: {}, resources: { listChanged: true }, prompts: {} }, instructions: MCP_INSTRUCTIONS },
+    { name: 'weftcut', version },
+    { capabilities: { tools: {}, resources: { listChanged: true }, prompts: {} }, instructions: mcpInstructions(version) },
   )
   // One Server per session (`mcp/index.ts`), so this closure resolves to the
   // client that opened *this* session — `undefined` until it has initialized.

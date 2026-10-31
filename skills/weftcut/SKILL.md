@@ -14,18 +14,19 @@ what no single tool can: how a session should go.
 ## In ten lines
 
 The server sends these as its `initialize` instructions, so a client without
-this skill reads the same etiquette; the long form follows.
+this skill reads the same etiquette; the long form follows. Its last line names
+the server's version: if it differs from this skill's `metadata.version`, this
+copy is stale, so replace it with the app's (Settings > Agent).
 
 WeftCut is a desktop video editor; the user watches the same project live, and every edit you commit lands in their undo history. A video the user asks you to edit is the project open in WeftCut, named or not.
 1. Read `project://tracks` (or `read_project` view "tracks") before your first edit; ids come from reads, never memory.
 2. Every mutator answers with the committed record (minted ids, the span as it landed, `adjusted` for a grid snap); verify from it before reporting.
 3. A refusal (isError) names the cause and the fix: act on it, never retry the call verbatim.
 4. Times are microseconds on the frame grid: off-grid times are snapped and echoed, times outside their layer refused.
-5. Call `create_checkpoint` before your first edit. For a batch (rough cut, pause pass, captions): ask the user, then `begin_agent_session`, `set_history_lock` around the batch, `dry_run` where supported, and `end_agent_session` when done, on failure too.
+5. For a batch (rough cut, pause pass, captions): ask the user, then `begin_agent_session` (it checkpoints and locks the user's undo; `lock: false` opts out) and `end_agent_session` when done, on failure too.
 6. Others may edit concurrently; when a commit fails for that, re-read and reapply.
 7. Export: `start_export`; poll `get_export_status` for the completed output_path.
 8. Edit the project open in the app; never create one unless asked. With none open, `open_project` or `create_project` the one the user named, else ask. A folder with project.json is a project; if it is not the open one (`project.dir` in `project://session`), ask. Its files change only through tools, TASTE.md aside.
-The weftcut skill (Settings > Agent) carries the long form, common flows and the Motif contract.
 
 ## Session etiquette
 
@@ -36,17 +37,14 @@ The weftcut skill (Settings > Agent) carries the long form, common flows and the
    copy they did not ask for.
    If your client cannot read MCP resources, `read_project` returns the same
    views as a tool result.
-2. Call `create_checkpoint` before your first edit, so the user has a one-step
-   restore point.
-3. A small change (a handful of tool calls) needs no more ceremony than that:
-   edit, verify, report.
-4. A batch job (rough-cutting a video, a pause pass, building a caption
+2. A small change (a handful of tool calls) needs no ceremony: edit, verify,
+   report.
+3. A batch job (rough-cutting a video, a pause pass, building a caption
    track) uses a work session: ASK whether to begin the batch and enter the
    lightweight agent view unless already authorized, then call
-   `begin_agent_session`. It creates a checkpoint once per session. Wrap the
-   batch in `set_history_lock`, both ways, rehearse with `dry_run` where
-   supported, and call `end_agent_session` when finished (also on failure).
-   Use a finally-style cleanup so a failed tool does not leave undo locked.
+   `begin_agent_session`. It creates a checkpoint once per session and locks
+   the user's undo until `end_agent_session`, which you call when finished
+   (also on failure); `lock: false` leaves undo free.
    Manual view switching neither starts nor ends work. The user can end work
    or unlock locally; closing your connection ends its owned session, and the
    app closes a session whose connection has gone quiet. If `begin_agent_session`
@@ -54,11 +52,11 @@ The weftcut skill (Settings > Agent) carries the long form, common flows and the
    with `end_agent_session { force: true }` when that holder is gone.
    None of these cancels running calls or prohibits later tools. Do not infer
    that a session ended because the user returned to the editor.
-5. Errors are instructions: WeftCut errors name the cause and list concrete
+4. Errors are instructions: WeftCut errors name the cause and list concrete
    options. Pick one; never retry a rejected call verbatim.
-6. A commit can also fail because the user (or another agent) edited
+5. A commit can also fail because the user (or another agent) edited
    concurrently — re-read the resource and reapply.
-7. Export with `get_export_options`, then `start_export`. Generate one unique
+6. Export with `get_export_options`, then `start_export`. Generate one unique
    `request_id` per export intent and reuse it after a reconnect. Poll
    `get_export_status` until completion, failure or `awaiting_retry`; a transport
    disconnect does not cancel the job. Report the completed `output_path` and

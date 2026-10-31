@@ -2011,8 +2011,9 @@ export interface McpInfoView {
   /// build:cli has produced the bundle (the panel then falls back to
   /// HTTP-direct as the primary path).
   shim_path: string | null;
-  /// State of the <userData>/skills refresh — the folder the user copies into
-  /// their agent client's skills directory. Anything but `installed` is a
+  /// State of the <userData>/skills refresh — the app's own copy, which the
+  /// user copies into their agent client's skills directory. It says nothing
+  /// about that client's copy, which the app cannot see. Anything but `current` is a
   /// condition the panel reports; main/mcp/skillsInstall.ts says what each
   /// fault means and why none of them is a reason to hide the section.
   skills: SkillsInstallView;
@@ -2027,7 +2028,7 @@ export type SkillsFault =
   | "copy_failed";
 
 export type SkillsInstallView =
-  | { state: "installed"; dir: string }
+  | { state: "current"; dir: string }
   | { state: "stale"; dir: string; fault: SkillsFault }
   | { state: "unavailable"; dir: null; fault: SkillsFault };
 

@@ -35,13 +35,15 @@ plan and cut was what held quality.
   contract means the description is too weak — fix it there.
 - **Single-sourced, skill version = app version**: `build-skills.mjs` stages
   `skills/` plus the docs in `REQUIRED_DOCS` (copied verbatim, so they link to
-  no other doc); it ships as an extraResource and is refreshed to
-  `<userData>/skills/` at startup. No marketplace copy. No embedded example
+  no other doc); it ships as an extraResource and is mirrored to
+  `<userData>/skills/` at startup. The `initialize` instructions name the app
+  version, so a client's copy whose `metadata.version` differs is detectable.
+  No marketplace copy. No embedded example
   Motifs: built-ins are read live with `read_motif`.
 - **A missing skill is a failure**: `build:skills` and the afterPack gate
-  assert shape and version stamp; startup reports `installed` / `stale` /
+  assert shape and version stamp; startup reports `current` / `stale` /
   `unavailable` with its fault; the panel shows the fault with a retry, and a
-  packaged build that is not `installed` raises a retractable startup notice.
+  packaged build that is not `current` raises a retractable startup notice.
 - **Names are pinned**: `mcp.skill-conformance.test.ts` checks every backticked
   tool/resource/prompt name and the recipe stage/signal vocabulary against the
   advertised catalog.
