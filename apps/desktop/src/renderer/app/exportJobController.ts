@@ -3,6 +3,7 @@ import { listen } from '@/bridge/events';
 import { projectSummary } from '../ipc';
 import { exportTerminal, type ExportJob, type ExportRun } from '../../shared/exportJob';
 import { createExportRunner } from './exportRunner';
+import { RendererCannotDrawError } from '../render/rendererCapability';
 import { composeStillsSheet } from './stillsSheet';
 import type { ExportState } from '../panels/ExportPanel';
 
@@ -62,7 +63,9 @@ export function createExportJobController(deps: Omit<Parameters<typeof createExp
     await report(job, final?.kind === 'complete' ? { state: 'completed', duration_us: final.payload.durationUs }
       : final?.kind === 'error' && final.onRetry && !aborted.aborted ? { state: 'awaiting_retry', error: { code: 'finalization_failed', message: final.detail } }
         : aborted.aborted || !final ? { state: 'cancelled' }
-          : { state: 'failed', error: { code: 'export_failed', message: final.kind === 'error' ? final.detail : 'Export ended without a result' } });
+          : { state: 'failed', error: final.kind === 'error'
+            ? { ...final.fault, code: final.code ?? 'export_failed', message: final.detail }
+            : { code: 'export_failed', message: 'Export ended without a result' } });
   };
   const enqueue = (job: ExportRun | undefined, operation: () => Promise<void>) => {
     running = running.then(operation).catch(async error => {
@@ -115,7 +118,7 @@ export function createExportJobController(deps: Omit<Parameters<typeof createExp
                 ? { frames: frames.map(({ t_us, width, height }) => ({ t_us, width, height })), sheet: { ...sheet, jpeg: new Uint8Array(sheet.jpeg) } }
                 : { frames: frames.map((f) => ({ ...f, jpeg: new Uint8Array(f.jpeg) })) });
             } catch (error) {
-              await reply({ error: error instanceof Error ? error.message : String(error) }).catch(reportError);
+              await reply({ error: error instanceof Error ? error.message : String(error), ...(error instanceof RendererCannotDrawError ? { fault: error.fault } : {}) }).catch(reportError);
             }
           });
         }),

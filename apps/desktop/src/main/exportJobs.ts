@@ -86,12 +86,13 @@ export class ExportJobs {
     });
   }
   /** The renderer's answer to `render_frames:run`. */
-  stillsResult(p: { request_id: string; renderer_token: string; frames?: StillsResult['frames']; sheet?: StillsResult['sheet']; error?: string }) {
+  stillsResult(p: { request_id: string; renderer_token: string; frames?: StillsResult['frames']; sheet?: StillsResult['sheet']; error?: string; fault?: Record<string, unknown> }) {
     const pending = this.stills.get(p.request_id);
     if (!pending || pending.token !== p.renderer_token) return;
     this.stills.delete(p.request_id);
     clearTimeout(pending.timer);
-    if (p.error !== undefined) pending.reject(new ExportJobError('render_failed', p.error));
+    // A typed refusal (`fault`, e.g. `RendererCannotDraw`) keeps its variant and data.
+    if (p.error !== undefined) pending.reject(p.fault?.error === 'RendererCannotDraw' ? new ExportJobError('renderer_cannot_draw', p.error, p.fault) : new ExportJobError('render_failed', p.error));
     else pending.resolve({ frames: p.frames ?? [], ...(p.sheet ? { sheet: p.sheet } : {}) });
   }
   isActive() { return !!this.active; }
@@ -304,7 +305,7 @@ export class ExportJobs {
     if (typeof update.duration_us === 'number') j.view.duration_us = update.duration_us;
     if (update.state && exportTerminal(update.state)) {
       if (update.state === 'completed' && !j.published) throw new ExportJobError('invalid_state', 'Export cannot complete before publication');
-      await this.finish(j, j.published ? 'completed' : j.cancelling ? 'cancelled' : update.state, update.error?.message, update.error?.code);
+      await this.finish(j, j.published ? 'completed' : j.cancelling ? 'cancelled' : update.state, update.error?.message, update.error?.code, update.error);
     } else if (update.state && ['preparing', 'rendering', 'finalizing', 'awaiting_retry'].includes(update.state)) {
       j.view.state = update.state; j.view.error = update.error;
       if (!j.cancelling) j.view.phase = update.phase && ['sink', 'audio', 'mux'].includes(update.phase) ? update.phase : update.state;
@@ -346,7 +347,7 @@ export class ExportJobs {
     this.deps.send('export:retry', { job_id: id, renderer_token: j.renderer });
     return this.status(id);
   }
-  private async finish(j: Entry, state: 'completed' | 'failed' | 'cancelled', message?: string, code = 'export_failed') {
+  private async finish(j: Entry, state: 'completed' | 'failed' | 'cancelled', message?: string, code = 'export_failed', fault?: ExportJob['error']) {
     if (j.finishing) return j.finishing;
     j.finishing = (async () => {
       clearTimeout(j.timer);
@@ -355,7 +356,7 @@ export class ExportJobs {
       await Promise.all([j.staging, j.video, j.audio].filter(Boolean).map(file => fs.rm(file, { force: true })));
       j.view.state = j.published ? 'completed' : state;
       j.view.phase = j.view.state;
-      if (message && !j.published) j.view.error = { code, message };
+      if (message && !j.published) j.view.error = { ...fault, code, message };
       else delete j.view.error;
       if (this.active === j) { this.active = undefined; this.idleWaiters.forEach(resolve => resolve()); this.idleWaiters.clear(); }
       this.notify(j);

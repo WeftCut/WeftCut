@@ -1230,6 +1230,15 @@ const enUS = {
     zoom_label: "Preview zoom",
     zoom_fit: "Fit",
     zoom_percent: "{{percent}}%",
+    // The status-area note while the canvas fallback renderer (no WebGPU or
+    // WebGL2) cannot draw something on screen (rendererCapability.ts).
+    renderer_limit: "Not all drawn",
+    renderer_limit_hint:
+      "This computer draws the preview with the {{renderer}} fallback (no WebGPU or WebGL2), which cannot draw the {{features}} here, so those clips show without them. Exports and frame checks refuse such frames. To fix, turn on hardware acceleration or use a computer with a working GPU driver.",
+    renderer_feature_effects: "effects",
+    renderer_feature_crop: "crop",
+    renderer_feature_transitions: "transitions",
+    renderer_feature_separator: ", ",
   },
   timeline: {
     // The Review lane's header cell (ReviewLane.tsx): the row of tack chips.
@@ -1903,6 +1912,10 @@ const enUS = {
       "No video to export: the selected range has no visible clips.",
     no_audio_material:
       "No audio to export: the selected range has no audio.",
+    renderer_cannot_draw:
+      "This computer draws with the {{renderer}} fallback (no WebGPU or WebGL2), which cannot draw the {{features}} in the export range. The export stopped before encoding instead of leaving them out. Export on a computer with working GPU acceleration, or remove them from the range.",
+    encoder_needs_webgl:
+      "This computer has no WebGL, which the native encoder needs, and these settings have no WebCodecs path. Set the video encoder (encoder_engine) to Auto or WebCodecs with H.264, HEVC or AV1 at 8-bit and a bitrate rate mode.",
     progress_label:
       "{{percent}}% · frame {{frame}} · {{fps}}fps · {{speed}}x",
     phase_finalize: "Finalizing",

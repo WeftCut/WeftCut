@@ -1078,6 +1078,13 @@ const zhCN: Resources = {
     zoom_label: "预览缩放",
     zoom_fit: "适应窗口",
     zoom_percent: "{{percent}}%",
+    renderer_limit: "部分未绘制",
+    renderer_limit_hint:
+      "这台电脑以 {{renderer}} 备用渲染器绘制预览（没有 WebGPU 或 WebGL2），无法绘制此处的{{features}}，相关片段显示时不含这些内容。导出和画面检查会拒绝这样的画面。解决方法：开启硬件加速，或换用 GPU 驱动正常的电脑。",
+    renderer_feature_effects: "效果",
+    renderer_feature_crop: "裁剪",
+    renderer_feature_transitions: "转场",
+    renderer_feature_separator: "、",
   },
   timeline: {
     // 审阅行（ReviewLane.tsx）的表头名称：批注芯片所在的行。
@@ -1693,6 +1700,10 @@ const zhCN: Resources = {
     failed_audio_fx_chain: "“{{layer}}”上的音频效果：{{message}}",
     no_video_material: "无可导出的视频：所选范围内没有可见片段。",
     no_audio_material: "无可导出的音频：所选范围内没有音频。",
+    renderer_cannot_draw:
+      "这台电脑以 {{renderer}} 备用渲染器绘制（没有 WebGPU 或 WebGL2），无法绘制导出范围内的{{features}}。导出已在编码前停止，而不是略去这些内容。请在 GPU 加速正常的电脑上导出，或将它们移出导出范围。",
+    encoder_needs_webgl:
+      "这台电脑没有原生编码器所需的 WebGL，而当前设置没有可用的 WebCodecs 路径。请将视频编码器（encoder_engine）设为“自动”或 WebCodecs，并选用 8 位 H.264、HEVC 或 AV1 及码率控制模式。",
     progress_label:
       "{{percent}}% · 第 {{frame}} 帧 · {{fps}}fps · {{speed}}x",
     phase_finalize: "正在完成导出",

@@ -13,7 +13,7 @@ const HELP: Record<string, string> = {
   maxBitrate: 'Native VBR peak ceiling in bits/second; null removes the cap.', bufferSize: 'Native VBV buffer in bits; null derives it from rate.',
   proresProfile: 'Profile for ProRes output.', dnxhrProfile: 'Profile for DNxHR output.', crf: 'Native constant quality value; null uses codec default.',
   preset: 'Native software encoder speed preset.', keyframeIntervalSec: 'Seconds between keyframes.', hwAccel: 'Auto prefers native hardware candidates; software forces CPU encoding.',
-  encoderEngine: 'Auto selects native. MCP never prompts for or automatically switches to WebCodecs.', decodeEngine: 'Source decoding engine for this job.',
+  encoderEngine: 'Auto: native, or WebCodecs without WebGL.', decodeEngine: 'Source decoding engine for this job.',
   bitDepth: 'Output bit depth. Delivery-codec 10-bit needs explicit experimental opt-in.', container: 'Video container; audio-only uses m4a or mka.',
   audio: 'Audio settings overrides.', include: 'Include audio; must agree with include_audio if both are set.', bitrate: 'Audio bitrate in bits/second.',
   sampleRate: 'Audio sample rate in Hz; null follows composition.', channels: 'Audio channels, mono or stereo; null follows composition.',
@@ -62,7 +62,7 @@ export const EXPORT_TOOL_DEFS = [
     range: { ...schema({ t_start_us: { type: 'integer', minimum: 0, description: 'Inclusive start, timeline µs.' }, t_end_us: { type: 'integer', minimum: 1, description: 'Exclusive end, timeline µs.' } }, ['t_start_us', 't_end_us']), description: 'Span inside the root composition, snapped to its frame grid. Omit for the whole composition.' },
     allow_experimental_10bit: { type: 'boolean', description: 'Explicit opt-in for experimental HEVC/AV1 10-bit export.' },
   }), false, false),
-  definition('render_frames', 'See the root composition as export renders it — footage, Motifs, text, captions and Groups composited — as JPEGs. Pass t_us, or layer_ids to judge beats over their whole span: each is sampled settled, in the middle, in its exit, and just after every cut or shot change under it. Returns one labelled contact sheet (default) or one image per frame, plus the times and why each was taken. Read-only; refused while an export runs. Seconds per frame.', schema({
+  definition('render_frames', 'See the root composition as export renders it (footage, Motifs, text, captions and Groups composited) as JPEGs. Pass t_us, or layer_ids to judge beats over their whole span: each is sampled settled, in the middle, in its exit, and just after every cut or shot change under it. Returns one labelled contact sheet (default) or one image per frame, plus each time and why it was taken. Read-only; refused while an export runs, or (RendererCannotDraw) for frames with effects, crops or transitions the host cannot draw. Seconds per frame.', schema({
     t_us: { type: 'array', items: { type: 'integer', minimum: 0 }, minItems: 1, maxItems: 24, description: 'Timeline times in µs.' },
     layer_ids: { type: 'array', items: { type: 'string', minLength: 1 }, minItems: 1, maxItems: 12, description: 'Root layers to sample over their spans (at most 24 frames in all).' },
     width: { type: 'integer', minimum: 160, maximum: 1920, description: 'Frame width in px; default 640.' },
@@ -95,10 +95,14 @@ const EXPORT_REFUSALS: Record<string, { code: McpErrorCode; error: string; next?
   not_retryable: { code: 'invalid_request', error: 'ExportNotRetryable', next: 'get_export_status reports its state; only awaiting_retry can be retried' },
   render_timeout: { code: 'internal', error: 'RenderTimeout', next: 'retry with fewer t_us or a smaller width' },
   render_failed: { code: 'internal', error: 'RenderFailed' },
+  renderer_cannot_draw: { code: 'invalid_request', error: 'RendererCannotDraw' },
   export_unavailable: { code: 'internal', error: 'ExportUnavailable' },
 }
-export function exportRefusal(e: { code: string; message: string }): McpToolErrorJson {
+export function exportRefusal(e: { code: string; message: string; data?: unknown }): McpToolErrorJson {
   const known = EXPORT_REFUSALS[e.code]
+  // A typed refusal names its own variant in its data and is passed on whole.
+  const typed = e.data !== null && typeof e.data === 'object' && typeof (e.data as { error?: unknown }).error === 'string'
+  if (typed && known) return { code: known.code, message: e.message, data: e.data }
   // A render that failed for a reason with its own family (the admission
   // budget was busy, a file could not be written) is refused as that family.
   const fault = describeFault(e.message)

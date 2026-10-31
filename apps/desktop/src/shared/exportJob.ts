@@ -14,7 +14,8 @@ export interface ExportJob {
   phase?: string;
   progress?: number;
   duration_us?: number;
-  error?: { code: string; message: string };
+  /** A typed failure also carries its variant (`error`) and data, flat. */
+  error?: { code: string; message: string; [key: string]: unknown };
 }
 export interface ExportRun extends ExportJob { staging_path: string; encoded_video_path: string; encoded_audio_path: string; renderer_token: string }
 export const exportTerminal = (state: ExportJobState): state is 'completed' | 'failed' | 'cancelled' => ['completed', 'failed', 'cancelled'].includes(state);

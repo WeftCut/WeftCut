@@ -387,6 +387,17 @@ describe('the export, render and Motif file routes refuse in the model', () => {
     expect(r.content![0]!.text).toContain('414 MiB')
   })
 
+  it('render_frames on a renderer that cannot draw the frames is RendererCannotDraw with its ids', async () => {
+    const host = rawHost()
+    const fault = { error: 'RendererCannotDraw', renderer: 'canvas', missing: ['effects'], layer_ids: [L1], needs: 'WebGPU or WebGL2', t_us: [2_000_000] }
+    host.exportJobs = { renderStills: async () => { throw new ExportJobError('renderer_cannot_draw', `render_frames refused: this host renders with the canvas fallback (no WebGPU or WebGL2), which cannot draw effects, and layer(s) ${L1} carry them at t_us 2000000.`, fault) } }
+    const r = await handleCallTool(rawBackend(), () => host as never, 'render_frames', { t_us: [0, 2_000_000] }) as Answer
+    expect(r.isError).toBe(true)
+    assertInModel('render_frames', {}, r)
+    expect(r.structuredContent).toMatchObject({ code: 'invalid_request', ...fault })
+    expect(r.content![0]!.text).toContain(L1)
+  })
+
   it('a failed export job reports its cause without the IPC wrapper', async () => {
     const host = rawHost()
     const r = await handleCallTool(rawBackend(), () => host as never, 'start_export', {}) as Answer

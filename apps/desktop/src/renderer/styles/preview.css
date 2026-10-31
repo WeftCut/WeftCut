@@ -314,6 +314,19 @@
 /* Give the current status priority over canvas metadata in a narrow panel. */
 .audio-playback-status ~ .preview-meta { flex: 1 1 0; }
 
+/* The renderer cannot draw something in view (RendererLimitIndicator):
+   quiet text, the reason and fix in its tooltip. */
+.renderer-limit-status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-caption);
+  color: var(--muted-foreground);
+  user-select: none;
+  cursor: help;
+}
+
 /* Dropped-frame indicator: dim while merely reporting a past-session
    count, full --warning while decode is actively behind. */
 .dropped-frames-indicator {

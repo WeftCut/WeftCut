@@ -37,6 +37,7 @@ import { webgpuDeviceOf } from "../webgpuDevice";
 import { loadFontsIntoFaceSet } from "../fonts/loadFontsIntoFaceSet";
 import { initEval } from "@/eval";
 import { MotifFrameInbox, closeMotifPacket } from "./motifStream";
+import { cannotDraw, cannotDrawMessage, capabilityOf, drawNeeds, rendererNameOf } from "../rendererCapability";
 
 // PixiJS defaults to `BrowserAdapter`, which calls `document.*`
 // and `new Image()`. In a Worker neither exists, so any renderer
@@ -161,12 +162,25 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   // and every GL-dependent pass then reads `renderer.gl` as undefined — which
   // surfaces as a `createBuffer` TypeError deep inside plane readback, naming
   // neither the renderer nor the missing context. Assert once, here, for EVERY
-  // path that asked for WebGL.
+  // path that asked for WebGL. The runner already resolves `auto` engines to
+  // what the host runs (rendererCapability.ts); this is the backstop for a
+  // context that went away since.
   if (needsGl && !("gl" in app.renderer)) {
     throw new Error(
-      `export needs the WebGL2 renderer (native sink, native decode, or 10-bit); ` +
-        `got ${app.renderer.name} — no WebGL2 context is available in this worker`,
+      `export needs the WebGL2 renderer (native encoder, native decode, or 10-bit); ` +
+        `got ${app.renderer.name} — no WebGL2 context is available in this worker. ` +
+        `Set encoder_engine and decode_engine to webcodecs at bit_depth 8, or export on a host with WebGL2`,
     );
+  }
+  // The same backstop for content: refuse what this renderer cannot draw
+  // rather than composite the frames without it.
+  {
+    const summary = req.project.summary as ProjectSummary;
+    const refusal = cannotDraw(
+      capabilityOf(rendererNameOf(app.renderer.name), app.renderer.name === "webgl"),
+      drawNeeds(summary, summary.root_id, req.startUs, req.endUs),
+    );
+    if (refusal) throw new Error(cannotDrawMessage(refusal, stills ? "render_frames" : "export"));
   }
 
   if (tenBit) {

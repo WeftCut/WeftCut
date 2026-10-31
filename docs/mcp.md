@@ -628,6 +628,16 @@ Export jobs are application-session jobs shared with the UI (ADR 0111).
   over `layer_ids` (settled, middle, exit, after each cut and shot change;
   ≤ 24); a labelled contact sheet by default. Refused while an export runs or
   before the editor has announced the project.
+- Renderer capability (`renderer/render/rendererCapability.ts`, one query for
+  preview, stills and export). Without WebGPU and WebGL2 Pixi falls back to its
+  canvas renderer, which draws no clip effects, crops or transitions. A
+  `render_frames` call whose frames hold any of them is refused before drawing:
+  `invalid_request`, `RendererCannotDraw { renderer, missing, layer_ids, t_us,
+  needs }`; frames without them render as usual. An export whose range holds
+  them fails before encoding with the same variant on the job's `error`.
+  `encoder_engine` / `decode_engine: auto` pick what the host runs: no WebGL
+  means WebCodecs encode (8-bit H.264/HEVC/AV1 at a bitrate) and no native
+  decode; anything else fails as `EncoderUnavailable` naming `encoder_engine`.
 - `project://compiled` shows the audio composition before rendering.
 
 ### Prompts

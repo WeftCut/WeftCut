@@ -38,7 +38,9 @@ type ExportPhase =
   // step makes both the user's wait and the probe's stall budget honest.
   | { kind: "finalizing"; step: FinalizeStep }
   | { kind: "complete"; payload: ExportComplete }
-  | { kind: "error"; detail: string; onRetry?: (filename?: string) => Promise<void>; onDiscard?: () => Promise<void> };
+  // `code` + `fault`: a typed refusal (`RendererCannotDraw`), carried onto the
+  // job record so an agent reads the variant and its ids, not just the text.
+  | { kind: "error"; detail: string; code?: string; fault?: Record<string, unknown>; onRetry?: (filename?: string) => Promise<void>; onDiscard?: () => Promise<void> };
 
 /// Ordered as they run. `sink` only occurs on the native-encode path.
 export type FinalizeStep = "sink" | "audio" | "mux";

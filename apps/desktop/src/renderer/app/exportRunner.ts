@@ -26,7 +26,16 @@ import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
 import { hasVisibleContent, referencedVideoMediaIds } from "../render/activeVideoLayers";
 import { classifyWebcodecsDecodability } from "../render/decoder/probeSourceDecodable";
 import { resolveDecode } from "../render/decodeRoute";
-import { needsEncoderProbe, resolveEncodeTarget } from "../render/encodeTarget";
+import { resolveEncodeTarget, type EncodeTarget } from "../render/encodeTarget";
+import {
+  cannotDraw,
+  drawNeeds,
+  rendererCapability,
+  RendererCannotDrawError,
+  type DrawNeeds,
+  type RendererCannotDraw,
+  type RendererCapability,
+} from "../render/rendererCapability";
 import { smokeEncode } from "../render/exportCodecProbe";
 import {
   proxyWaitScope,
@@ -96,7 +105,6 @@ function audioLayerLabel(summary: ProjectSummary | null, layerId: string): strin
   return layerId;
 }
 
-
 export function createExportRunner(deps: {
   previewRef: React.RefObject<PreviewSurfaceHandle | null>;
   proxyStateRef: React.MutableRefObject<Map<string, ProxyState>>;
@@ -105,8 +113,16 @@ export function createExportRunner(deps: {
   onState: (state: ExportState | null) => void;
   cancel: () => void;
   publish: () => Promise<string>;
+  /// The host renderer's capability; the shared query unless a test injects one.
+  capability?: () => Promise<RendererCapability>;
 }) {
   const { previewRef, proxyStateRef, decodeProbeMemo, t } = deps;
+  const capability = deps.capability ?? rendererCapability;
+  /// The UI sentence for a refusal: renderer and the features, in the UI's words.
+  const cannotDrawDetail = (r: RendererCannotDraw) => t("export.renderer_cannot_draw", {
+    renderer: r.renderer,
+    features: r.missing.map((f) => t(`preview.renderer_feature_${f}`)).join(t("preview.renderer_feature_separator")),
+  });
   const runningRef = { current: false };
   const pendingFinalization = { current: null as ReturnType<typeof createExportFinalization> | null };
   let state: ExportState | null = null;
@@ -163,16 +179,19 @@ export function createExportRunner(deps: {
   /// originals; rules in exportDecodeRouting.ts), then waits for any proxy
   /// still encoding. `detail: null` is a cancel.
   async function videoGate(
-    proj: ProjectSummary, startUs: number, endUs: number, settings: ExportRun["settings"],
+    proj: ProjectSummary, startUs: number, endUs: number, settings: ExportRun["settings"], cap: RendererCapability,
     signal: AbortSignal, onWaiting: (labels: string[]) => void,
   ): Promise<{ ok: true; decodeRouting: ExportDecodeRouting } | { ok: false; detail: string | null }> {
     const store = useProjectStore.getState();
     const referencedMedia = [...referencedVideoMediaIds(proj, startUs, endUs)]
       .map((id) => store.mediaById.get(id))
       .filter((m): m is MediaSummary => !!m);
+    // Native decode converts relay frames in GL ingest passes: without WebGL
+    // it is as unusable as a missing component, so `auto` keeps every source
+    // on WebCodecs (blind spots via their full proxy).
     const decodeRouting = resolveExportDecodeRouting({
       setting: settings.decodeEngine,
-      componentAvailable: useDecodeComponentStore.getState().available,
+      componentAvailable: useDecodeComponentStore.getState().available && cap.webgl,
       bitDepth: compositeBitDepth(settings),
       media: referencedMedia,
     });
@@ -240,7 +259,15 @@ export function createExportRunner(deps: {
       const frameUs = Math.ceil((1_000_000 * comp.fps_den) / comp.fps_num);
       const times = [...new Set(request.times_us.map((t) => Math.max(0, Math.min(Math.round(t), Math.max(0, comp.duration_us - frameUs)))))].sort((a, b) => a - b);
       if (!times.length) return [];
-      const gate = await videoGate(summary, times[0]!, times.at(-1)! + frameUs, request.settings, signal, () => { });
+      // Refuse before rendering anything when a requested frame holds content
+      // this renderer cannot draw; frames without it render as usual.
+      const cap = await capability();
+      const refusedAt = times.filter((t) => cannotDraw(cap, drawNeeds(summary, summary.root_id, t, t + frameUs)) !== null);
+      const needs: DrawNeeds = new Map();
+      for (const t of refusedAt) drawNeeds(summary, summary.root_id, t, t + frameUs, needs);
+      const refusal = cannotDraw(cap, needs);
+      if (refusal) throw new RendererCannotDrawError({ ...refusal, t_us: refusedAt });
+      const gate = await videoGate(summary, times[0]!, times.at(-1)! + frameUs, request.settings, cap, signal, () => { });
       if (!gate.ok) throw new Error(gate.detail ?? "render cancelled");
       const out: Array<{ t_us: number; width: number; height: number; jpeg: ArrayBuffer }> = [];
       for (const t of times) {
@@ -295,6 +322,7 @@ export function createExportRunner(deps: {
     let restorePreview: (() => void) | undefined;
     try {
       restorePreview = previewRef.current?.suspendForExport();
+      const cap = await capability();
       // ---- No-material guard -----------------------------------------------
       // A video export with nothing visible to render would emit pure black —
       // reject it as "no video material" instead. (Audio emptiness is judged
@@ -313,6 +341,15 @@ export function createExportRunner(deps: {
           const eUs = range?.endUs ?? rootCompositionOf(proj).duration_us;
           if (!hasVisibleContent(proj, sUs, eUs)) {
             setExportState({ kind: "error", detail: t("export.no_video_material") });
+            return;
+          }
+          // ---- Renderer capability ------------------------------------------
+          // Every video path composites with this renderer (the GL ones need
+          // WebGL, which draws everything), so content it cannot draw refuses
+          // here, before any wait or encode — never an export without it.
+          const refusal = cannotDraw(cap, drawNeeds(proj, proj.root_id, sUs, eUs));
+          if (refusal) {
+            setExportState({ kind: "error", detail: cannotDrawDetail(refusal), code: "renderer_cannot_draw", fault: refusal });
             return;
           }
         }
@@ -411,6 +448,18 @@ export function createExportRunner(deps: {
         return;
       }
 
+      // ---- Encoder this host can run ----------------------------------------
+      // Resolved before any wait: `auto` picks WebCodecs where there is no
+      // WebGL; a combination with no path on this host names the setting.
+      const resolved = resolveEncodeTarget(settings, cap.webgl);
+      if (resolved.engine === "unavailable") {
+        setExportState({
+          kind: "error", detail: t("export.encoder_needs_webgl"), code: "encoder_unavailable",
+          fault: { error: "EncoderUnavailable", renderer: cap.renderer, option: "encoder_engine", needs: "WebGL2" },
+        });
+        return;
+      }
+
       // ---- Export-readiness gate -------------------------------------------
       // Confirm every video source the export will decode is ready. Undecodable
       // DirectExport sources are route-corrected here; sources whose proxy is
@@ -429,7 +478,7 @@ export function createExportRunner(deps: {
         // Shared with stills (`videoGate`), so `render_frames` decodes exactly
         // as this export will.
         setExportState({ kind: "starting" });
-        const gate = await videoGate(proj, startUs, endUs, settings, exportController.signal, (labels) =>
+        const gate = await videoGate(proj, startUs, endUs, settings, cap, exportController.signal, (labels) =>
           setExportState({ kind: "preparing", labels, onCancel: deps.cancel }));
         if (!gate.ok) {
           setExportState(gate.detail === null ? null : { kind: "error", detail: gate.detail });
@@ -519,30 +568,12 @@ export function createExportRunner(deps: {
       const outFps = fpsNum / fpsDen;
       // `path` already carries the chosen container extension (set by the dialog).
 
-      // One resolution seam for the encode engine (see docs/render.md §"Encode exits").
-      // Probe injected: the smoke-encode only runs when the target needs it —
-      // that's only an explicit WebCodecs pin; `auto` always resolves
-      // native and this ternary short-circuits to `true` unconsulted. Cast is
-      // sound: this branch only runs when needsEncoderProbe(settings) is true,
-      // which needsEncoderProbe itself defines as excluding
-      // isIntermediateCodec(settings.codec) — so settings.codec here is always
-      // a WebCodecsCodecId, never "prores"/"dnxhr".
-      const needsProbe = needsEncoderProbe(settings);
-      const smokeOk = needsProbe
-        ? await smokeEncode(
-          settings.codec as WebCodecsCodecId,
-          dims.width,
-          dims.height,
-          outFps,
-        )
-        : true;
-      // A pinned WebCodecs export that fails its own smoke test has no
-      // fallback — the pin is explicit user intent, unlike `auto`'s
-      // fallback-carrying native-first path (handled below at the native
-      // sink-start catch). Fail loudly, before the sink or the export Worker
-      // ever starts, instead of letting resolveEncodeTarget silently proceed
-      // with an encoder that just proved it can't run.
-      if (needsProbe && !smokeOk) {
+      // The encode target resolved above (see docs/render.md §"Encode exits").
+      // A WebCodecs target smoke-encodes one frame first: an encoder that
+      // cannot run fails here, before the sink or the Worker starts, with no
+      // fallback.
+      let target: EncodeTarget = resolved;
+      if (target.engine === "webcodecs" && !await smokeEncode(target.workerCodec, dims.width, dims.height, outFps)) {
         setExportState({
           kind: "error",
           detail: t("export_dialog.codec_unsupported", {
@@ -556,7 +587,6 @@ export function createExportRunner(deps: {
       // is nulled out alongside the flip so its type (`NativeTarget | null`)
       // stays honest — no consumer below may assert it non-null with `!`;
       // each site re-checks `sinkTarget` (or reads it after the flip settles).
-      let target = resolveEncodeTarget(settings, smokeOk);
       let nativeSink = target.engine === "native";
       let sinkTarget = target.engine === "native" ? target : null;
 
