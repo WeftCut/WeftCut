@@ -6,6 +6,7 @@ Re-verify an entry before relying on it when the engine major version changes (a
 
 - `electron-chromium-behavior.md` — verdicts measured on the pinned Electron/Chromium engine: Pointer Lock, foreignObject canvas taint, the `prefer-hardware` encode hint.
 - `canvas-raster-facts.md` — engine-independent rasterization/encoding facts: plain-SVG cleanliness, the "WebP lossless" myth, the adversarial-frame testing rule.
+- `preview-thread-split-2026-10-26.md` — spike: moving 4K WebCodecs decode or the whole Pixi compositor into a Worker does not smooth preview; the stall is the GPU-process copy behind `createImageBitmap(VideoFrame)` on hardware frames.
 - `linux-native-decode-spike.md` — spike bringing the Standard engine's software lane up on Linux: the LGPL-ffmpeg supply chain, and the `RTLD_DEEPBIND` fix for the Chromium-`libffmpeg.so` symbol collision (why the component was Windows-only).
 - `linux-lite-export-off-by-one-tail.md` — investigation handoff, resolved 2026-07-23 by non-reproduction: the Lite/webcodecs export leg once failed gate B's tail alignment on Linux (tail sample best-matched source+1); symptom, suspects, repro steps, and the closure evidence.
 - `webcodecs-cross-platform-tail-alignment-research.md` — cross-platform WebCodecs tail-alignment research (macOS decoder retention, Linux hardware BGRA frames reading black); closes the Linux tail question.
