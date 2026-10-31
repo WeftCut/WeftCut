@@ -7,7 +7,11 @@ import { composeStillsSheet } from './stillsSheet';
 import type { ExportState } from '../panels/ExportPanel';
 
 /** Renderer adapter: readiness is announced only after all control listeners
- * exist. A terminal acknowledgement is sent only after runner cleanup settles. */
+ * exist. A terminal acknowledgement is sent only after runner cleanup settles.
+ * Each queued step reports for the job it was queued for, never for whichever
+ * job is active when it runs, and each job is reported terminal once: main
+ * may answer before its status event arrives, and by then the next job can be
+ * active. */
 export function createExportJobController(deps: Omit<Parameters<typeof createExportRunner>[0], 'publish' | 'cancel'> & { onBegin: (request: ExportRun) => void }) {
   const token = crypto.randomUUID();
   let active: ExportRun | undefined;
@@ -17,8 +21,10 @@ export function createExportJobController(deps: Omit<Parameters<typeof createExp
   let state: ExportState | null = null;
   const unsubscribers: Array<() => void> = [];
   const settledJobs = new Set<string>();
+  // Jobs reported terminal, by this controller or by main's status event.
+  const ended = new Set<string>();
   const waiters = new Map<string, Array<() => void>>();
-  const args = () => ({ job_id: active!.job_id, renderer_token: token });
+  const args = (job: ExportRun) => ({ job_id: job.job_id, renderer_token: token });
   const reportError = (error: unknown) => console.error('[export job]', error);
   const cancel = () => { if (active) void invoke('export_job_cancel', { job_id: active.job_id }).catch(reportError); };
   const display = () => {
@@ -34,32 +40,35 @@ export function createExportJobController(deps: Omit<Parameters<typeof createExp
   };
   const runner = createExportRunner({
     ...deps, cancel,
-    publish: () => invoke<string>('export_job_publish', args()),
+    publish: () => invoke<string>('export_job_publish', args(active!)),
     onState: next => {
       state = next; display();
-      if (!active || !next || next.kind === 'error' || next.kind === 'complete') return;
+      if (!active || ended.has(active.job_id) || !next || next.kind === 'error' || next.kind === 'complete') return;
       const update = {
         state: next.kind === 'progress' ? 'rendering' : next.kind === 'finalizing' ? 'finalizing' : 'preparing',
         ...(next.kind === 'finalizing' ? { phase: next.step } : {}),
         ...(next.kind === 'progress' ? { progress: next.progress.progress } : {})
       };
-      void invoke('export_job_update', { ...args(), update }).catch(reportError);
+      void invoke('export_job_update', { ...args(active), update }).catch(reportError);
     },
   });
-  const settle = async () => {
-    if (!active || exportTerminal(active.state)) return;
-    const final = runner.state();
-    const update = final?.kind === 'complete' ? { state: 'completed', duration_us: final.payload.durationUs }
-      : final?.kind === 'error' && final.onRetry && !abort.signal.aborted ? { state: 'awaiting_retry', error: { code: 'finalization_failed', message: final.detail } }
-        : abort.signal.aborted || !final ? { state: 'cancelled' }
-          : { state: 'failed', error: { code: 'export_failed', message: final.kind === 'error' ? final.detail : 'Export ended without a result' } };
-    await invoke('export_job_update', { ...args(), update });
+  const report = async (job: ExportRun, update: { state: string; [key: string]: unknown }) => {
+    if (ended.has(job.job_id)) return;
+    await invoke('export_job_update', { ...args(job), update });
+    if (exportTerminal(update.state as ExportJob['state'])) ended.add(job.job_id);
   };
-  const enqueue = (operation: () => Promise<void>) => {
+  const settle = async (job: ExportRun, aborted: AbortSignal) => {
+    const final = runner.state();
+    await report(job, final?.kind === 'complete' ? { state: 'completed', duration_us: final.payload.durationUs }
+      : final?.kind === 'error' && final.onRetry && !aborted.aborted ? { state: 'awaiting_retry', error: { code: 'finalization_failed', message: final.detail } }
+        : aborted.aborted || !final ? { state: 'cancelled' }
+          : { state: 'failed', error: { code: 'export_failed', message: final.kind === 'error' ? final.detail : 'Export ended without a result' } });
+  };
+  const enqueue = (job: ExportRun | undefined, operation: () => Promise<void>) => {
     running = running.then(operation).catch(async error => {
       reportError(error);
       state = { kind: 'error', detail: String(error) }; display();
-      if (active && !exportTerminal(active.state)) await invoke('export_job_update', { ...args(), update: { state: 'failed', error: { code: 'export_failed', message: String(error) } } }).catch(reportError);
+      if (job) await report(job, { state: 'failed', error: { code: 'export_failed', message: String(error) } }).catch(reportError);
     });
     return running;
   };
@@ -89,14 +98,15 @@ export function createExportJobController(deps: Omit<Parameters<typeof createExp
         listen('export:session_ready', () => { void announceReady(); }),
         listen<ExportRun>('export:run', ({ payload: request }) => {
           if (disposed || request.renderer_token !== token || active && !exportTerminal(active.state)) return;
-          active = request; abort = new AbortController(); deps.onBegin(request);
-          void enqueue(async () => { await runner.run(request, abort); if (abort.signal.aborted) await runner.discard(); await settle(); });
+          const jobAbort = abort = new AbortController();
+          active = request; deps.onBegin(request);
+          void enqueue(request, async () => { await runner.run(request, jobAbort); if (jobAbort.signal.aborted) await runner.discard(); await settle(request, jobAbort.signal); });
         }),
         // `render_frames`: export-path stills for an agent, queued behind any
         // export so the two never share the pipeline.
         listen<{ request_id: string; renderer_token: string; times_us: number[]; width: number; sheet: boolean; settings: ExportRun['settings'] }>('render_frames:run', ({ payload: r }) => {
           if (disposed || r.renderer_token !== token) return;
-          void enqueue(async () => {
+          void enqueue(undefined, async () => {
             const reply = (body: Record<string, unknown>) => invoke('export_job_stills', { request_id: r.request_id, renderer_token: token, ...body });
             try {
               const frames = await runner.runStills(r, new AbortController().signal);
@@ -111,14 +121,17 @@ export function createExportJobController(deps: Omit<Parameters<typeof createExp
         }),
         listen<{ job_id: string; renderer_token: string }>('export:cancel', ({ payload }) => {
           if (payload.renderer_token !== token || payload.job_id !== active?.job_id) return;
-          abort.abort();
-          void enqueue(async () => { await runner.discard(); await settle(); });
+          const job = active, jobAbort = abort;
+          jobAbort.abort();
+          void enqueue(job, async () => { await runner.discard(); await settle(job, jobAbort.signal); });
         }),
         listen<{ job_id: string; renderer_token: string }>('export:retry', ({ payload }) => {
           if (payload.renderer_token !== token || payload.job_id !== active?.job_id) return;
-          void enqueue(async () => { await runner.retry(); if (abort.signal.aborted) await runner.discard(); await settle(); });
+          const job = active, jobAbort = abort;
+          void enqueue(job, async () => { await runner.retry(); if (jobAbort.signal.aborted) await runner.discard(); await settle(job, jobAbort.signal); });
         }),
         listen<ExportJob>('export:status', ({ payload }) => {
+          if (exportTerminal(payload.state)) ended.add(payload.job_id);
           if (exportTerminal(payload.state) || payload.state === 'awaiting_retry') {
             settledJobs.add(payload.job_id);
             waiters.get(payload.job_id)?.forEach(resolve => resolve());
@@ -145,7 +158,8 @@ export function createExportJobController(deps: Omit<Parameters<typeof createExp
       disposed = true; abort.abort();
       unsubscribers.splice(0).forEach(f => f());
       if (active && !exportTerminal(active.state)) await invoke('export_job_cancel', { job_id: active.job_id }).catch(reportError);
-      await running; await runner.discard(); await settle();
+      await running; await runner.discard();
+      if (active) await settle(active, abort.signal);
       await invoke('export_job_detaching', { renderer_token: token }).catch(reportError);
     },
   };
