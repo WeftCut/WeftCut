@@ -76,7 +76,7 @@ pub async fn prepare(
     let _permit = crate::resources::user_compute(UserComputeCaller::AudioNormalize, observer)
         .await
         .map_err(anyhow::Error::msg)?;
-    let measured = crate::ffmpeg::command(Bound::TemporarilyUnbounded)
+    let measured = crate::ffmpeg::command(Bound::watchdog())
         .args(["-hide_banner", "-nostats", "-i"])
         .arg(&path)
         .args([
@@ -111,7 +111,7 @@ pub async fn prepare(
         .prefix("weftcut-transcription-")
         .tempdir()?;
     let output = directory.path().join("normalized.wav");
-    let result = crate::ffmpeg::command(Bound::TemporarilyUnbounded)
+    let result = crate::ffmpeg::command(Bound::watchdog())
         .args(["-y", "-hide_banner", "-nostats", "-loglevel", "error", "-i"])
         .arg(&path)
         .args([
@@ -195,13 +195,15 @@ mod tests {
         assert_ne!(prepared.path, path);
         let report = prepared.normalization.as_ref().unwrap();
         assert!((report.gain_db - 23.23).abs() < 0.02, "{report:?}");
-        let decoded = crate::ffmpeg::command(crate::ffmpeg::Bound::TemporarilyUnbounded)
-            .args(["-v", "error", "-i"])
-            .arg(&prepared.path)
-            .args(["-f", "s16le", "-"])
-            .output()
-            .await
-            .unwrap();
+        let decoded = crate::ffmpeg::command(crate::ffmpeg::Bound::Timeout(
+            std::time::Duration::from_secs(60),
+        ))
+        .args(["-v", "error", "-i"])
+        .arg(&prepared.path)
+        .args(["-f", "s16le", "-"])
+        .output()
+        .await
+        .unwrap();
         assert!(decoded.status.success());
         assert_eq!(decoded.stdout.len(), 32000);
         let peak = decoded

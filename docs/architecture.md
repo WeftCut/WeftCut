@@ -80,6 +80,15 @@ The binary main puts on `PATH` wins over an exe-adjacent one, and
 (`native/src/ffmpeg/mod.rs`; [setup.md](setup.md#ffmpeg-at-runtime),
 [licensing.md](licensing.md)).
 
+Every ffmpeg and ffprobe child is spawned and owned through
+`native/src/ffmpeg/`, and ends one way: stdin EOF, SIGTERM, a 2 s grace, then a
+kill (a SIGKILLed VideoToolbox session hangs the next one:
+[note](notes/macos-runner-videotoolbox-kill-2026-10-31.md)). Every child is
+also bounded: short commands by a timeout, transcodes by a progress watchdog
+that stops a child showing no sign of life (no progress, no input taken, no
+CPU use) for 60 s. The only exception is the one-time download's own version
+check.
+
 ## Data flow: one edit
 
 1. A UI command (`backend:invoke`) or an MCP tool call reaches the actor.

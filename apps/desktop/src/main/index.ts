@@ -96,11 +96,16 @@ import { ContentQueue } from './contentQueue.js'
 import { createModelFeature } from './model-feature.js'
 import { ModelManager } from './model-manager.js'
 import { MODEL_EVENTS, type ModelUseRequest, type ModelFamily } from '../shared/inference-models.js'
+import { stalledEncoderLimitMs } from './exportE2EStall.js'
 
 const require_ = createRequire(import.meta.url)
 const { Backend } = require_('@weftcut/core') as typeof import('@weftcut/core')
 
 let backend: import('@weftcut/core').Backend | null = null
+// E2E builds only (exportE2EStall.ts). A production build folds the flag to
+// '0', so this is null and the native sink never sees the stand-in request.
+const e2eStalledEncoderMs = process.env.WEFTCUT_E2E_BUILD === '1'
+  ? stalledEncoderLimitMs(process.env.WEFTCUT_E2E_STALLED_ENCODER_MS) : null
 let mainWindow: BrowserWindow | null = null
 let layoutTheme = DEFAULT_LAYOUT_THEME
 
@@ -1507,8 +1512,10 @@ app.whenReady().then(async () => {
     if (channel === IMPORT_DIAGNOSTIC_MILESTONE) { importDiagnostics?.milestone(args); return null }
     if (['export_begin','export_cancel','export_prepare_output','export_publish_output'].includes(channel)) throw new Error('Native export lifecycle is main-owned');
     if (channel === 'export_video_sink_start') {
-      const { finalizationToken, finalizationId: _id, finalization_id: _alias, ...rest } = args?.args ?? {};
-      args = { ...args, args: { ...rest, finalizationId: resolveExportFinalization(_e.sender.id, finalizationToken) } };
+      // The stand-in encoder is main's to request, never the renderer's.
+      const { finalizationToken, finalizationId: _id, finalization_id: _alias, e2eStalledEncoderMs: _stall, ...rest } = args?.args ?? {};
+      args = { ...args, args: { ...rest, finalizationId: resolveExportFinalization(_e.sender.id, finalizationToken),
+        ...(e2eStalledEncoderMs === null ? {} : { e2eStalledEncoderMs }) } };
     }
     if (channel === 'mux_export') {
       // Never accept a renderer-supplied native lease number (including the

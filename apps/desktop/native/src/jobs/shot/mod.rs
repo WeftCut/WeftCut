@@ -146,7 +146,7 @@ impl ShotDetector for FfmpegShotDetector {
         // backslash escaping, and `file=-` collides with the null muxer on
         // stdout. So run at info level and parse the captured stderr.
         let vf = format!("select='gt(scene,{})',metadata=print", opts.sensitivity);
-        let output = crate::ffmpeg::command(Bound::TemporarilyUnbounded)
+        let output = crate::ffmpeg::command(Bound::watchdog())
             .args([
                 "-nostdin",
                 "-hide_banner",
@@ -627,7 +627,7 @@ pub(crate) async fn extract_rgb(video: &Path, t_us: i64, dest: &Path) -> Result<
         .acquire()
         .await
         .context("acquire ffmpeg slot")?;
-    let output = crate::ffmpeg::command(Bound::TemporarilyUnbounded)
+    let output = crate::ffmpeg::command(Bound::Timeout(crate::ffmpeg::FRAME_TIMEOUT))
         .args([
             "-nostdin",
             "-hide_banner",

@@ -113,7 +113,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     let tmp = temp_path(&dest);
     let _ = tokio::fs::remove_file(&tmp).await;
 
-    let mut child = crate::ffmpeg::command_with_threads(1, Bound::TemporarilyUnbounded)
+    let mut child = crate::ffmpeg::command_with_threads(1, Bound::watchdog())
         .args(["-hide_banner", "-nostats", "-loglevel", "error", "-i"])
         .arg(&media.path_abs)
         .args([

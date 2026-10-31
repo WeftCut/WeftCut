@@ -1706,6 +1706,8 @@ const zhCN: Resources = {
     complete: "已导出到 {{path}}",
     failed: "导出失败：{{detail}}",
     resource_unavailable: "当前可用资源不足，无法完成导出。请等待其他处理任务结束后重试；若仍失败，可在设置的“性能”页调高“内存使用目标”。",
+    encoder_stalled: "编码器停止响应，导出已停止。",
+    encoder_stalled_hint: "请重新导出。若再次停止，请在导出设置的“视频”页将“视频编码器”设为“软件”后再导出。",
     open_settings: "打开设置",
     technical_details: "技术详情",
     dismiss: "关闭",

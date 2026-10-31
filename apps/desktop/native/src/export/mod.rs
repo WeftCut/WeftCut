@@ -155,7 +155,7 @@ async fn mix_and_encode(
         _ = cancellation.cancelled() => anyhow::bail!("export cancelled"),
         permit = crate::resources::interactive(128) => permit.map_err(anyhow::Error::msg)?,
     };
-    let mut cmd = crate::ffmpeg::command(Bound::TemporarilyUnbounded);
+    let mut cmd = crate::ffmpeg::command(Bound::watchdog());
     cmd.args(["-y", "-hide_banner", "-nostats"])
         .args(["-f", "f32le", "-ar", "48000", "-ac", "2", "-i", "-"])
         // −1 dB sample-peak ceiling answers overlap summing past full scale;
@@ -331,7 +331,7 @@ pub async fn mux_to_file(
             }),
         ),
     };
-    let mut cmd = crate::ffmpeg::command(Bound::TemporarilyUnbounded);
+    let mut cmd = crate::ffmpeg::command(Bound::watchdog());
     // Write beside the destination so committing is atomic on the same volume.
     // A failed mux must not truncate an existing user file or leave a partial
     // file that looks like a completed export. TempPath drops the open handle

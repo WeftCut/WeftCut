@@ -74,7 +74,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
             cache.check_active()?;
             let time = duration_s * (index as f64 + 0.5) / THUMB_COUNT as f64;
             let dest = tmp_dir.join(format!("{:03}.jpg", index + 1));
-            let mut command = crate::ffmpeg::command(Bound::TemporarilyUnbounded);
+            let mut command = crate::ffmpeg::command(Bound::Timeout(crate::ffmpeg::FRAME_TIMEOUT));
             command
                 .args([
                     "-y",
@@ -113,7 +113,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
             );
         }
     } else {
-        let mut command = crate::ffmpeg::command(Bound::TemporarilyUnbounded);
+        let mut command = crate::ffmpeg::command(Bound::watchdog());
         let command = command
             .args(["-y", "-hide_banner", "-nostats", "-loglevel", "error", "-i"])
             .arg(&media.path_abs)

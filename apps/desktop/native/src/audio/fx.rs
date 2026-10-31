@@ -255,7 +255,7 @@ pub(super) async fn render_cancellable(
     head.extend_from_slice(&0u64.to_le_bytes()); // frame_count patched below
     f.write_all(&head).await.context("write bake header")?;
     check_cancelled(cancel)?;
-    let mut child = crate::ffmpeg::command(Bound::TemporarilyUnbounded)
+    let mut child = crate::ffmpeg::command(Bound::watchdog())
         .args(["-hide_banner", "-nostats", "-loglevel", "error"])
         .args(["-skip_initial_bytes", &HEADER_LEN.to_string()])
         .args([

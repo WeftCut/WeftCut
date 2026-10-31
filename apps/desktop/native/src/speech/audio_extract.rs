@@ -119,7 +119,7 @@ pub async fn extract_audio_window_with_observer(
     // pre-roll (a window deep into a long file would otherwise decode from 0),
     // and the output-side -ss is the sample-accurate remainder transcription
     // needs; an input-side seek alone is only as precise as the index.
-    let mut command = crate::ffmpeg::command(Bound::TemporarilyUnbounded);
+    let mut command = crate::ffmpeg::command(Bound::watchdog());
     command.args(["-y", "-hide_banner", "-nostats", "-loglevel", "error"]);
     if let Some(coarse_s) = &coarse_s {
         command.args(["-ss", coarse_s]);

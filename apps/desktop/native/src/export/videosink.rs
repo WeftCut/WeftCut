@@ -8,12 +8,11 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::ChildStdin;
 
-use crate::ffmpeg::{Bound, FfmpegCommand, SyncFfmpegChild};
+use crate::ffmpeg::{Bound, FfmpegCommand, FfmpegStdin, SyncFfmpegChild};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
@@ -33,7 +32,7 @@ pub struct SinkShared {
     /// ffmpeg child (None when output_path is empty / after wait).
     pub child: Mutex<Option<SyncFfmpegChild>>,
     /// ffmpeg stdin. The IPC write command writes here; dropping it = EOF.
-    pub stdin: Mutex<Option<ChildStdin>>,
+    pub stdin: Mutex<Option<FfmpegStdin>>,
     /// Time origin for SinkStats.
     pub t0: Instant,
     /// IPC-path counters reported as SinkStats.
@@ -106,10 +105,39 @@ pub struct VideoSinkStartArgs {
     /// Intermediate-codec profile: prores proxy|lt|422|hq, dnxhr lb|sq|hq.
     #[serde(default)]
     pub profile: Option<String>,
+    /// E2E builds only: replace the encoder with a stand-in that never reads
+    /// its input and stops advancing after one frame, watched at this stall
+    /// limit (ms), so the stalled-encoder failure can be driven end to end.
+    /// Main sets it from `WEFTCUT_E2E_STALLED_ENCODER_MS` and strips it from
+    /// every renderer request (`src/main/index.ts`).
+    #[serde(default)]
+    pub e2e_stalled_encoder_ms: Option<u64>,
 }
 
 fn default_sink_pix_fmt() -> String {
     "yuv420p10le".to_string()
+}
+
+/// See `VideoSinkStartArgs::e2e_stalled_encoder_ms`. `-re` at one frame an
+/// hour reads the first frame and then waits; `-nostdin` keeps it off the
+/// pipe the sink writes to, so a frame write blocks on it.
+fn stalled_encoder_stand_in(limit: Duration) -> FfmpegCommand {
+    let mut command = FfmpegCommand::ffmpeg(Bound::Stall(limit));
+    command.args([
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-re",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=size=16x16:rate=1/3600",
+        "-f",
+        "null",
+        "-",
+    ]);
+    command
 }
 
 /// Build the ffmpeg-stderr suffix appended to error messages (last ≤8 lines).
@@ -279,7 +307,7 @@ pub async fn export_video_sink_start_cancellable(
     };
 
     let mut child_opt: Option<SyncFfmpegChild> = None;
-    let mut stdin_opt: Option<ChildStdin> = None;
+    let mut stdin_opt: Option<FfmpegStdin> = None;
     let mut stderr_temp: Option<std::process::ChildStderr> = None;
 
     if !args.output_path.is_empty() {
@@ -341,12 +369,19 @@ pub async fn export_video_sink_start_cancellable(
             })),
             ..Default::default()
         });
-        let mut child = FfmpegCommand::ffmpeg(Bound::TemporarilyUnbounded)
-            .args(sink_cmd_args(
-                &args,
-                &plan,
-                resources.as_ref().map_or(1, |p| p.threads()),
-            ))
+        let mut command = match args.e2e_stalled_encoder_ms {
+            Some(limit_ms) => stalled_encoder_stand_in(Duration::from_millis(limit_ms)),
+            None => {
+                let mut command = FfmpegCommand::ffmpeg(Bound::watchdog());
+                command.args(sink_cmd_args(
+                    &args,
+                    &plan,
+                    resources.as_ref().map_or(1, |p| p.threads()),
+                ));
+                command
+            }
+        };
+        let mut child = command
             .media_on_stdin()
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
@@ -468,12 +503,12 @@ pub async fn export_video_sink_finish(state: &VideoSinkState) -> Result<SinkStat
         let status = {
             let mut child = shared.child.lock().unwrap();
             match child.as_mut() {
-                Some(child) => child.try_wait().map_err(|e| format!("ffmpeg wait: {e}")),
+                Some(child) => child.try_wait(),
                 None => Ok(None),
             }
         };
         match status {
-            Err(e) => break Err(e),
+            Err(e) => break Err(format!("ffmpeg wait: {e}{}", tail_suffix(&shared))),
             Ok(Some(status)) => {
                 shared.child.lock().unwrap().take();
                 if status.success() {
@@ -566,7 +601,7 @@ mod tests {
     fn fixture_child() -> SyncFfmpegChild {
         FfmpegCommand::program(
             std::env::current_exe().unwrap(),
-            Bound::TemporarilyUnbounded,
+            Bound::Timeout(Duration::from_secs(60)),
         )
         .args([
             "--exact",
@@ -691,6 +726,7 @@ mod tests {
             preset: None,
             profile: None,
             finalization_id: None,
+            e2e_stalled_encoder_ms: None,
         }
     }
 
@@ -713,6 +749,7 @@ mod tests {
             preset: None,
             profile: None,
             finalization_id: None,
+            e2e_stalled_encoder_ms: None,
         }
     }
 
@@ -845,6 +882,50 @@ mod tests {
         );
     }
 
+    // The stalled-encoder failure end to end, through the stand-in the e2e
+    // hook selects: a frame the encoder never takes fails the write with the
+    // stalled error, finish reports it as well, and no child is left.
+    #[tokio::test]
+    async fn a_stalled_encoder_fails_the_sink_and_leaves_no_child() {
+        let state = VideoSinkState::default();
+        let workspace = tempfile::tempdir().expect("tempdir");
+        let mut args = args_8bit("h264");
+        args.output_path = workspace
+            .path()
+            .join("stalled.mp4")
+            .to_string_lossy()
+            .into_owned();
+        args.e2e_stalled_encoder_ms = Some(500);
+        export_video_sink_start(
+            &state,
+            &EncoderRegistry::default(),
+            &LogBusSlot::new(),
+            args,
+        )
+        .await
+        .expect("start");
+        let shared = state.0.lock().unwrap().as_ref().unwrap().shared.clone();
+        let started = Instant::now();
+        // One 1080p frame, far larger than a pipe buffer.
+        let error = video_sink_write(&state, vec![0; 1920 * 1080 * 3 / 2], 0)
+            .await
+            .unwrap_err();
+        assert!(error.contains("ffmpeg-stalled: "), "{error}");
+        assert!(started.elapsed() >= Duration::from_millis(500));
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+        let error = export_video_sink_finish(&state).await.unwrap_err();
+        assert!(error.contains("ffmpeg-stalled: "), "{error}");
+        assert!(state.0.lock().unwrap().is_none(), "finish clears the sink");
+        assert!(
+            shared.child.lock().unwrap().is_none(),
+            "the encoder is reaped"
+        );
+    }
+
     // Unknown codecs are rejected while translating the wire request, before
     // any adapter name can be guessed or any probe can run.
     #[tokio::test]
@@ -941,6 +1022,7 @@ mod tests {
                 preset: None,
                 profile: None,
                 finalization_id: None,
+                e2e_stalled_encoder_ms: None,
             },
         )
         .await

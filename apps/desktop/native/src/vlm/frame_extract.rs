@@ -178,7 +178,7 @@ pub async fn sample_frames(
 
         // -ss BEFORE -i = fast keyframe seek (matches spike.mjs + jobs/frame.rs);
         // description is robust to thumbnail-grade seek accuracy.
-        let output = crate::ffmpeg::command(Bound::TemporarilyUnbounded)
+        let output = crate::ffmpeg::command(Bound::Timeout(crate::ffmpeg::FRAME_TIMEOUT))
             .args([
                 "-nostdin",
                 "-hide_banner",

@@ -51,24 +51,36 @@ where
     F: FnMut(bool, &mut FfmpegCommand),
 {
     if preferred_hwaccel().is_some() {
-        let mut cmd = crate::ffmpeg::command(Bound::TemporarilyUnbounded);
+        let mut cmd = crate::ffmpeg::command(Bound::watchdog());
         build(true, &mut cmd);
-        let output = cache
-            .command_output(&mut cmd)
-            .await
-            .with_context(|| format!("spawn ffmpeg for {label} (hw decode)"))?;
-        if output.status.success() {
-            info!("{label}: hardware decode succeeded");
-            return Ok(output);
+        match cache.command_output(&mut cmd).await {
+            Ok(output) if output.status.success() => {
+                info!("{label}: hardware decode succeeded");
+                return Ok(output);
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                warn!(
+                    "{label}: hardware decode failed, retrying with software decode: {}",
+                    stderr.trim()
+                );
+            }
+            // A hardware session that stopped answering is what the software
+            // retry is for.
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(crate::ffmpeg::is_stalled) =>
+            {
+                warn!("{label}: hardware decode stalled, retrying with software decode: {error:#}");
+            }
+            Err(error) => {
+                return Err(error.context(format!("spawn ffmpeg for {label} (hw decode)")));
+            }
         }
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        warn!(
-            "{label}: hardware decode failed, retrying with software decode: {}",
-            stderr.trim()
-        );
     }
 
-    let mut cmd = crate::ffmpeg::command(Bound::TemporarilyUnbounded);
+    let mut cmd = crate::ffmpeg::command(Bound::watchdog());
     build(false, &mut cmd);
     if preferred_hwaccel().is_some() {
         info!("{label}: software decode fallback");

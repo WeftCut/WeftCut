@@ -31,11 +31,11 @@ use std::path::PathBuf;
 use std::process::Stdio;
 
 use anyhow::{Context, Result};
-use ffmpeg_sidecar::{download::auto_download, version::ffmpeg_version_with_path};
+use ffmpeg_sidecar::download::auto_download;
 use parking_lot::Mutex;
 use tracing::{info, warn};
 
-pub(crate) use child::{Bound, FfmpegCommand, SyncFfmpegChild};
+pub(crate) use child::{is_stalled, Bound, FfmpegCommand, FfmpegStdin, SyncFfmpegChild};
 
 /// The usual ffmpeg builder. Both decoder and filter thread defaults follow the
 /// cross-platform allocation; encoder callers also put `-threads` before their
@@ -192,6 +192,15 @@ pub fn refused_shadow() -> Option<PathBuf> {
     resolve("ffmpeg").refused_shadow
 }
 
+/// Bound on `-version`. It answers at once; the slack is for a busy machine
+/// and a first launch, where the OS may scan the binary before it runs.
+const VERSION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Bound on a single-frame extract (`-ss` before `-i`, `-frames:v 1`): the
+/// seek decodes from the keyframe before the target, which for a long-GOP 4K
+/// source in software takes tens of seconds on a slow machine.
+pub(crate) const FRAME_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 fn is_installed(mut command: FfmpegCommand) -> bool {
     command
         .arg("-version")
@@ -205,12 +214,12 @@ fn is_installed(mut command: FfmpegCommand) -> bool {
 
 /// `ffmpeg -version` succeeds on the resolved binary.
 pub fn ffmpeg_is_installed() -> bool {
-    is_installed(FfmpegCommand::ffmpeg(Bound::TemporarilyUnbounded))
+    is_installed(FfmpegCommand::ffmpeg(Bound::Timeout(VERSION_TIMEOUT)))
 }
 
 /// `ffprobe -version` succeeds on the resolved binary.
 pub fn ffprobe_is_installed() -> bool {
-    is_installed(FfmpegCommand::ffprobe(Bound::TemporarilyUnbounded))
+    is_installed(FfmpegCommand::ffprobe(Bound::Timeout(VERSION_TIMEOUT)))
 }
 
 pub async fn bootstrap() -> Result<BootstrapStatus> {
@@ -231,6 +240,9 @@ pub async fn bootstrap() -> Result<BootstrapStatus> {
                 return Ok::<BootstrapStatus, anyhow::Error>(BootstrapStatus::Unavailable(msg));
             }
             info!("ffmpeg not found; attempting sidecar auto-download");
+            // The one ffmpeg spawn outside `child`: the download's own
+            // `-version` checks, unowned and unbounded, reachable only here,
+            // when no ffmpeg answered at all.
             if let Err(e) = auto_download() {
                 let msg = format!(
                     "ffmpeg auto-download failed ({e:#}). Install manually: \
@@ -245,7 +257,7 @@ pub async fn bootstrap() -> Result<BootstrapStatus> {
             invalidate();
         }
         let path = ffmpeg_path();
-        let v = ffmpeg_version_with_path(&path).context("read ffmpeg version banner")?;
+        let v = ffmpeg_version().context("read ffmpeg version banner")?;
         info!(path = %path.display(), "ffmpeg ready: {v}");
         Ok(BootstrapStatus::Ready(v))
     })
@@ -253,9 +265,50 @@ pub async fn bootstrap() -> Result<BootstrapStatus> {
     .context("ffmpeg bootstrap join")?
 }
 
+/// The version in `ffmpeg -version`'s banner.
+fn ffmpeg_version() -> Result<String> {
+    let output = FfmpegCommand::ffmpeg(Bound::Timeout(VERSION_TIMEOUT))
+        .arg("-version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output_sync()
+        .context("run ffmpeg -version")?;
+    anyhow::ensure!(
+        output.status.success(),
+        "ffmpeg -version exited {}",
+        output.status
+    );
+    parse_version(&String::from_utf8_lossy(&output.stdout))
+        .map(str::to_owned)
+        .context("no version in the ffmpeg -version banner")
+}
+
+/// `ffmpeg version <version> Copyright …`, the banner's first line.
+fn parse_version(banner: &str) -> Option<&str> {
+    banner
+        .lines()
+        .next()?
+        .trim()
+        .strip_prefix("ffmpeg version ")?
+        .split_whitespace()
+        .next()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_version_is_the_banner_token_after_ffmpeg_version() {
+        let banner = "ffmpeg version n8.1.3-24-g92611900bb-20261026 Copyright (c) 2000-2026 the FFmpeg developers\nbuilt with gcc 16.2.0\n";
+        assert_eq!(
+            parse_version(banner),
+            Some("n8.1.3-24-g92611900bb-20261026")
+        );
+        assert_eq!(parse_version("ffprobe version 8.1\n"), None);
+        assert_eq!(parse_version(""), None);
+    }
 
     const ADJ: &str = "/app/ffmpeg";
     const PINNED: &str = "/opt/weftcut/resources/ffmpeg/ffmpeg";

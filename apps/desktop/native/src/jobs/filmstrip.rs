@@ -82,7 +82,7 @@ pub async fn extract_tile(
     let _resources = crate::resources::interactive(128)
         .await
         .map_err(anyhow::Error::msg)?;
-    let output = crate::ffmpeg::command(Bound::TemporarilyUnbounded)
+    let output = crate::ffmpeg::command(Bound::Timeout(crate::ffmpeg::FRAME_TIMEOUT))
         .args([
             "-y",
             "-hide_banner",

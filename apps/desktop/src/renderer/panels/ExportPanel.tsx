@@ -9,6 +9,7 @@ import { AppDialog } from "../components/AppDialog";
 import { Button } from "@/components/ui/button";
 import { rendererOS, type RendererOS } from "@/platform";
 import { isResourceCapacityError } from "../../shared/resource-policy";
+import { isFfmpegStallError } from "../../shared/ffmpeg-stall";
 
 export interface ExportProgress {
   progress: number;
@@ -91,6 +92,9 @@ export function ExportPanel({
   const resourceReason = state.kind === "error" ? resourceFailureReason(state.detail) : undefined;
   const resourceMessage = resourceReason === "budget-too-small" ? "export.resource_budget"
     : resourceReason === "host-pressure" || resourceReason === "pressure" ? "export.resource_pressure" : "export.resource_unavailable";
+  // A finalization retry repeats only the steps that do not encode, so it
+  // keeps its own hint; otherwise the stall hint names the software encoder.
+  const stalled = state.kind === "error" && !resourceError && isFfmpegStallError(state.detail);
   // Publication can choose a new name. Completion always shows the saved path.
   const outputPath = state.kind === "complete" ? state.payload.outputPath : state.job?.output_path;
   const separator = outputPath ? Math.max(outputPath.lastIndexOf("/"), outputPath.lastIndexOf("\\")) : -1;
@@ -135,8 +139,10 @@ export function ExportPanel({
         )}
         {!cancelling && state.kind === "error" && (
           <div className="export-failure" role="alert">
-            <p className="export-progress-status">{resourceError ? t(resourceMessage) : t(retryable ? "export.retry_hint" : "export.failure_hint")}</p>
+            <p className="export-progress-status">{resourceError ? t(resourceMessage) : stalled ? t("export.encoder_stalled")
+              : t(retryable ? "export.retry_hint" : "export.failure_hint")}</p>
             {resourceError && retryable && <p className="export-progress-detail">{t("export.retry_hint")}</p>}
+            {stalled && <p className="export-progress-detail">{t(retryable ? "export.retry_hint" : "export.encoder_stalled_hint")}</p>}
           </div>
         )}
         {filename && (

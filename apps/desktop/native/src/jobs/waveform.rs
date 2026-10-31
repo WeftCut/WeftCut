@@ -345,7 +345,7 @@ pub async fn run_from_input(
     let tmp = temp_path(&dest);
     let _ = tokio::fs::remove_file(&tmp).await;
 
-    let mut cmd = crate::ffmpeg::command_with_threads(1, Bound::TemporarilyUnbounded);
+    let mut cmd = crate::ffmpeg::command_with_threads(1, Bound::watchdog());
     cmd.args(["-hide_banner", "-nostats", "-loglevel", "error"]);
     match input {
         WaveformInput::Media(media) => {

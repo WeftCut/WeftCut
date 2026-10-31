@@ -22,6 +22,7 @@ goes where.
 - `export-webcodecs-tail-alignment-2026-07-23.md` — WebCodecs tail-frame alignment across platforms.
 - `motif-preview-progress-2026-10-05.md` — Motif preparation progress during playback.
 - `macos-runner-videotoolbox-kill-2026-10-31.md` — on the GitHub macOS VM, a SIGKILLed VideoToolbox encoder hangs the next export; a graceful ffmpeg stop does not.
+- `ffmpeg-stall-limit-2026-10-31.md` — slowest software encodes go 78 s without progress but never idle on CPU; why the ffmpeg watchdog counts CPU use.
 
 ## Agent and MCP
 - `agent-bench-baseline-2026-10-20.md`, `agent-bench-h1-2026-10-21.md`, `agent-bench-style-2026-10-25.md` — agent bench runs and what changed between them.

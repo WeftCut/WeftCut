@@ -67,6 +67,9 @@ pub fn hash_and_stat_scoped(
     })
 }
 
+/// Bound on one ffprobe run. It reads headers, or a few seconds of packets.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+
 pub fn probe_metadata(path: &Path) -> MediaMetadata {
     if !ffprobe_is_installed() {
         warn!(
@@ -76,7 +79,7 @@ pub fn probe_metadata(path: &Path) -> MediaMetadata {
         return MediaMetadata::default();
     }
 
-    let output = FfmpegCommand::ffprobe(Bound::TemporarilyUnbounded)
+    let output = FfmpegCommand::ffprobe(Bound::Timeout(PROBE_TIMEOUT))
         .args([
             "-v",
             "quiet",
@@ -123,7 +126,7 @@ pub async fn probe_metadata_scoped(
     if !ffprobe_is_installed() {
         return Ok(MediaMetadata::default());
     }
-    let mut command = FfmpegCommand::ffprobe(Bound::Timeout(Duration::from_secs(30)));
+    let mut command = FfmpegCommand::ffprobe(Bound::Timeout(PROBE_TIMEOUT));
     command
         .args([
             "-threads",
@@ -168,7 +171,7 @@ pub async fn probe_max_keyframe_gap_secs_scoped(
     if !ffprobe_is_installed() {
         return None;
     }
-    let mut command = FfmpegCommand::ffprobe(Bound::Timeout(Duration::from_secs(30)));
+    let mut command = FfmpegCommand::ffprobe(Bound::Timeout(PROBE_TIMEOUT));
     let command = command
         .args([
             "-threads",

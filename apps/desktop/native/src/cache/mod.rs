@@ -160,7 +160,8 @@ impl CacheLayout {
 
     /// Keep the caller's resource permit alive until cancellation has stopped
     /// and reaped the child, not merely until its output future is dropped.
-    /// A child spawned with a timeout fails with "media probe timed out".
+    /// A child spawned with a timeout fails with "media probe timed out"; a
+    /// watched one that stalls keeps the owner's stalled error.
     #[cfg(feature = "jobs")]
     pub async fn command_output(
         &self,

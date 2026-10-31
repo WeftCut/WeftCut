@@ -72,7 +72,7 @@ fn can_remux(media: &MediaItem, source_gop_secs: Option<f64>) -> bool {
 }
 
 async fn run_remux(cache: &CacheLayout, media: &MediaItem, tmp: &PathBuf) -> Result<()> {
-    let mut command = crate::ffmpeg::command(Bound::TemporarilyUnbounded);
+    let mut command = crate::ffmpeg::command(Bound::watchdog());
     let command = command
         .args(["-y", "-hide_banner", "-nostats", "-loglevel", "error", "-i"])
         .arg(&media.path_abs)
