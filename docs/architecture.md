@@ -1,420 +1,164 @@
 # Architecture
 
-WeftCut is an Electron desktop video editor (Electron + napi-rs). The
-Electron **main** process (TypeScript) owns project state, persistence, and
-the agent/MCP surface. The Rust core (an in-process napi addon) owns
-native runtime services — media jobs, cache/workspace slots, import queue,
-logs, cloud-provider calls, the audio mixer, export video sink, and ffmpeg —
-but it does **not** own the authoritative `Project`. Project-shaped Rust
-code is a serde/compute model: each compute call receives the exact
-`Project`/`MediaItem` slice it needs as an argument. The renderer hosts a
-PixiJS-based compositor and a React UI; external agents connect over MCP.
-The workspace folder *is* the project — opening a folder = opening the
-project; auto-save means closing the app loses nothing.
+WeftCut is an Electron desktop video editor with a Rust core loaded as a napi
+addon. The Electron **main** process (TypeScript) owns the authoritative
+project, persistence, config stores and the MCP host. The Rust core owns native
+runtime services (derivative jobs, caches, ffmpeg, the export audio mixer and
+video sink, speech/VLM backends, logs, resource admission) and receives the
+project slice it needs as a call argument. The **renderer** hosts the React UI
+and the PixiJS compositor that draws both preview and export. External agents
+connect over MCP. The project folder *is* the project, and auto-save means
+closing the app loses nothing ([data-model.md](data-model.md#on-disk-format-workspace-folder)).
+Runtime choice and the stateless-Rust split:
+[ADR 0024](adr/0024-desktop-runtime-electron-napi.md).
 
-Runtime choice and rationale: see [ADR 0024](adr/0024-desktop-runtime-electron-napi.md).
+## Processes
 
-## Component map
+Paths are under `apps/desktop/`.
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                          External agents                             │
-│        (Claude Desktop, Cursor, Cline, custom Python clients)        │
-└────────────────────────┬─────────────────────────────────────────────┘
-                         │ MCP / streamable-HTTP / localhost / token
-┌────────────────────────▼─────────────────────────────────────────────┐
-│                          Electron app                                │
-│                                                                      │
-│  ┌────────────────────────┐         ┌─────────────────────────────┐  │
-│  │ Renderer (React + Pixi)│ ◄─IPC─► │ Main + Rust core (napi)     │  │
-│  │  via preload bridge    │         │                             │  │
-│  │ • Startup screen       │         │ ┌─────────────────────────┐ │  │
-│  │ • Timeline             │         │ │ Project actor (state)   │ │  │
-│  │ • Property panels      │         │ │  • snapshots + history  │ │  │
-│  │ • PreviewSurface       │         │ │  • serialized dispatch  │ │  │
-│  │   - PixiJS Application │         │ │                         │ │  │
-│  │   - audio-master clock │         │ └────────────┬────────────┘ │  │
-│  │   - WebCodecs decoder  │         │ ┌────────────▼────────────┐ │  │
-│  │     pool               │         │ │ Subscriber tasks        │ │  │
-│  │   - Web Audio mixer    │         │ │  • Autosave (debounce)  │ │  │
-│  │ • Export Worker        │         │ │  • UI event bridge      │ │  │
-│  │   (OffscreenCanvas)    │         │ └────────────┬────────────┘ │  │
-│  └────────────────────────┘         │ ┌────────────▼────────────┐ │  │
-│                                     │ │ Background jobs         │ │  │
-│                                     │ │  • proxy / thumbnails / │ │  │
-│                                     │ │    waveform / conform / │ │  │
-│                                     │ │    import               │ │  │
-│                                     │ └────────────┬────────────┘ │  │
-│                                     │ ┌────────────▼────────────┐ │  │
-│                                     │ │ Audio mixer (export)    │ │  │
-│                                     │ │  • MixPlan → block sum  │ │  │
-│                                     │ │    over conform PCM     │ │  │
-│                                     │ │  • ffmpeg encode tail + │ │  │
-│                                     │ │    mux_to_file          │ │  │
-│                                     │ └─────────────────────────┘ │  │
-│                                     │ ┌─────────────────────────┐ │  │
-│                                     │ │ MCP host (main, TS)     │ │  │
-│                                     │ │  • streamable-HTTP +    │ │  │
-│                                     │ │    bearer; merged TS+   │ │  │
-│                                     │ │    Rust tool catalog    │ │  │
-│                                     │ └─────────────────────────┘ │  │
-│                                     └─────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────────┘
-```
+| Process | Entry | Role |
+|---|---|---|
+| Main | `src/main/entry.ts` → `index.ts` | Registers the `weftcut-media:` and `motif:` schemes, loads `@weftcut/core`, runs the project actor, IPC routing, MCP host, export jobs, audio-effect baker and Motif capture. |
+| Rust core (in main) | `native/` → `@weftcut/core` | `Backend.invoke(cmd, argsJson)` dispatch (`native/src/napi_backend.rs`); events return through a thread-safe function (`events.rs`). Never links libav. |
+| Native decode (in main, optional) | `native/decode/` → `@weftcut/native-decode` | The only libav (ffmpeg-next) consumer: Standard-engine decode for preview and export. Loaded once in a try/catch (`src/main/native-decode.ts`); a failure only disables that engine ([ADR 0030](adr/0030-decode-engine-overlay-and-native-component.md)). |
+| Renderer | `src/renderer/index.html`, preload `src/preload/index.ts` | React UI, PixiJS compositor, decoded-frame intake, Web Audio preview mixer. |
+| Renderer workers | `render/worker/exportWorker.ts`, `render/motifs/motifReaderWorker.ts`, `render/positionConversion.worker.ts` | Export render and encode on an `OffscreenCanvas`; Motif frame reads; offline position conversion. |
+| Utility processes | `src/main/motif-reader-host.ts`, `decode-probe-host.ts` (macOS), `hardware-probe-host.ts` (Linux) | Motif frame decode off main ([ADR 0154](adr/0154-motif-frames-are-read-at-preview-scale-through-one-reader.md)); crash-isolated hardware probes. |
+| Hidden windows | `src/main/motif/capture.ts`, `svgRaster.ts`, `screenPick.ts` | Offscreen Motif capture over CDP ([ADR 0017](adr/0017-motifs-cdp-webcap-clock-takeover.md), [motifs.md](motifs.md#capture-host)); SVG rasterizing on import; screen color pick. |
+| Child processes | `native/src/ffmpeg/`, `speech/`, `vlm/` | ffmpeg/ffprobe via `ffmpeg-sidecar`; local speech (whisper.cpp, FunASR) and VLM engines as sidecars. |
+| `weftcut-mcp` shim | `src/cli/` | Stdio MCP server that bridges agent clients to the app's HTTP endpoint ([mcp.md](mcp.md#transport--deployment)). |
 
-Within the single app process, the project **actor, history, autosave, the
-UI/MCP event bridges, the config stores, and the MCP host are TypeScript**
-(Electron main); the **background jobs, audio mixer, ffmpeg, and export are
-the Rust napi core**. Rust is project-state stateless: it keeps runtime slots
-for cache/workspace/jobs/logs/session, but every project compute/export path
-takes its state slice as a call argument. The boundary between the two is the
-napi `Backend.invoke` dispatch.
+`src/main/calibration-host.ts` is a Windows-only developer prototype, selected
+by `--weftcut-calibration` and built only into E2E builds.
 
-## Three load-bearing principles
+## Principles
 
-### 1. Single-writer state
+### 1. Single writer
 
-All mutations — UI edits and MCP tool calls — funnel through one
-TypeScript actor in the Electron main process (`src/main/state/`) that
-holds the authoritative project snapshot + history. Reads are cheap
-immutable-snapshot clones. Concurrency is solved by serialization, not by
-locks scattered through the code. The Rust core never mutates the
-authoritative project directly: each compute call receives the exact state
-slice it needs as an argument, and derivative jobs emit write-back events
-that the TS actor folds into state.
+Every mutation, from a UI edit or an MCP tool call, goes through one TypeScript
+actor in main (`src/main/state/`). It validates, commits a frozen snapshot to
+history and broadcasts a `ChangeEvent`. Serialization, not locking, handles
+concurrency. Rust never mutates the project: compute calls take the slice they
+need, and derivative jobs emit write-back events the actor folds in
+([data-model.md](data-model.md#concurrency-single-writer-actor)).
 
 ### 2. Preview = export pipeline
 
-The PixiJS + WebCodecs compositor that drives the live preview is the
-same module the export Worker invokes against an `OffscreenCanvas`.
-Preview pixels equal export pixels by construction; there's no
-"preview engine" to drift from export. See [`render.md`](render.md) for
-the renderer architecture.
+The export Worker constructs the same `Compositor` the preview uses, against an
+`OffscreenCanvas`, so preview pixels equal export pixels by construction. The
+pipeline is recursive: a Group is a composition drawn to a texture and staged
+as one layer of its parent ([ADR 0052](adr/0052-link-propagates-group-composes.md)).
+Preview draws its render target (the composition it is locked to, or the one
+holding focus) on that composition's own clock
+([ADR 0053](adr/0053-a-timeline-panel-is-one-composition.md)); export always
+draws the root. Details: [render.md](render.md#compositions-the-recursive-composite).
 
-That one pipeline is recursive, because a project is a tree of
-compositions rather than one timeline: the root and every Group share one
-shape, and a Group is a composition placed as a single layer in another
-([ADR 0052](adr/0052-link-propagates-group-composes.md)). One
-`CompositionNode` draws one composition INSTANCE — per Group *layer*, not per
-composition, since two placements sit at different offsets and so show
-different frames of the same content — and renders it to a texture the parent
-stages like any other picture, which is what makes nested transforms,
-opacity, effects and transitions compose for free. The two ends differ only
-in where they enter it: the preview draws its **render target** — the
-composition it is locked to, or the one holding the keyboard while it follows
-focus — at that composition's own frame size and on its own clock, which is
-what lets a Group be edited while the whole film stays on screen
-([ADR 0053](adr/0053-a-timeline-panel-is-one-composition.md)). Export always
-draws the root, because a Group is a source and a file of one alone is a file
-nobody asked for.
-
-The deterministic "what-you-see/hear" MATH both the renderer and Rust's
-compute/export paths need — frame snap, keyframe interpolation, the audio
-envelope curve, the role mute/solo gate — lives once in the `weftcut-eval`
-leaf crate, compiled natively for the Rust compute + export paths and to
-wasm for the renderer and the TS main-process actor where main-process state
-logic needs it (notably frame snapping). One source of truth instead of
-hand-mirrored Rust + TS copies that could drift.
-See [ADR 0025](adr/0025-shared-eval-wasm-leaf-crate.md).
+Deterministic "what you see/hear" math (frame snap, keyframe evaluation, the
+audio envelope, the role gate) lives once in the `weftcut-eval` crate
+(`native/eval/`). Rust links it natively; the renderer and the main-process
+actor load it as wasm from `src/renderer/eval/`
+([ADR 0025](adr/0025-shared-eval-wasm-leaf-crate.md)).
 
 ### 3. ffmpeg never composites
 
-The Rust side runs ffmpeg at:
+ffmpeg runs as a subprocess for:
 
-- **Import** — proxy generation (a 720p short-GOP scrub proxy for
-  preview, plus a source-resolution H.264 export master for sources
-  WebCodecs can't decode directly), thumbnails, waveform, and the audio
-  conform (canonical 48 kHz f32 PCM both audio paths read;
-  [`audio.md`](audio.md)).
-- **Audio export** — the encode tail only: the mix itself happens in
-  Rust (`audio::mix`, sample-accurate over conform PCM); ffmpeg applies
-  the limiter ceiling and encodes AAC/Opus into a temporary audio file.
-- **Video export** — the native encode engine (the default) streams
-  GPU-packed rawvideo frames over IPC into an ffmpeg sink that owns the
-  video encode itself (bitrate/CRF, presets, GOP, explicit color tags;
-  see [`render.md`](render.md)'s "Encode exits"). The WebCodecs engine
-  (an explicit user pin) encodes video in the renderer instead and never
-  reaches ffmpeg for it.
-- **Final mux** — ffmpeg stream-copies the already-encoded video, from
-  whichever engine produced it, with the optional audio track into the
-  user-chosen container; this step never re-encodes.
+- **Import derivatives**: the quick proxy (preview), the full proxy (an H.264
+  export master for sources WebCodecs can't decode), thumbnails, filmstrip
+  tiles, waveforms, and the 48 kHz f32 audio conform both mixers read
+  ([audio.md](audio.md#the-conform-cache), [preview.md](preview.md#proxies)).
+- **Audio export**: Rust mixes (`native/src/audio/mix.rs`); ffmpeg applies the
+  limiter and encodes.
+- **Video export**: the native engine (default) streams GPU-packed rawvideo to
+  an ffmpeg sink that owns the encode; the WebCodecs engine (explicit pin)
+  encodes in the renderer instead ([render.md](render.md#encode-exits)).
+- **Final mux**: stream copy into the user's container, never a re-encode
+  ([export.md](export.md#pipeline)).
 
-No ffmpeg-driven visual compositor, no offscreen rasterizer, no
-libmpv preview. The visual half of the old IR was deleted with the
-PixiJS migration; ffmpeg's remaining jobs are encode and mux, never pixels.
+The binary main puts on `PATH` wins over an exe-adjacent one, and
+`ffmpeg-sidecar`'s download is the clean-machine fallback on Windows and macOS
+(`native/src/ffmpeg/mod.rs`; [setup.md](setup.md#ffmpeg-at-runtime),
+[licensing.md](licensing.md)).
 
-## Data flow: a single edit
+## Data flow: one edit
 
-1. UI command or MCP tool call sends a `Command` to the project actor.
-2. Actor validates invariants. Reject on failure with a structured
-   error.
-3. Actor produces a new frozen `Project` snapshot, records it in history,
-   and broadcasts a `ChangeEvent`.
+1. A UI command (`backend:invoke`) or an MCP tool call reaches the actor.
+2. The actor validates. A failure returns a structured `CommandError`
+   (`src/shared/commandErrors.ts`).
+3. The actor commits a snapshot to history and broadcasts a `ChangeEvent`.
 4. Subscribers react:
-   - **UI event bridge** emits `project:changed` (the TS host sends it from
-     the main process to the renderer as `evt:project:changed`) so React
-     uses one versioned `project_publication` owner shared by App, panels and
-     preview. Events and command receipts name the same session/revision;
-     one read is active and only the newest requested version is retained.
-     Unchanged snapshot branches and lookup indices retain their references
-     across IPC, so unrelated edits do not wake their subscribers. The
-     `<PreviewSurface>` compositor
-     receives the updated project and updates its sprite tree in
-     place (no recompile). Stale replies cannot overwrite a newer view.
-     Renderer command promises return after their receipt is applied;
-     post-mutation callbacks join that work without fetching again. Failed
-     reads preserve the last good view; only a closed publication clears it.
-     Deliberate refresh can recheck filesystem availability at the same actor
-     version. This guarantees store visibility, not paint or disk persistence
-     (see [ADR 0114](adr/0114-project-view-publication.md)).
-   - **Autosave subscriber** debounces 500 ms, writes
-     `<workspace>/project.json`. Every 50 flushed autosaves or 5 min,
-     copies the current project file to `Backups/<ISO>.json`.
-   - **MCP change feed** — the TS host notifies the in-process MCP host,
-     which relays to subscribed agents as a streamable-HTTP notification
-     (it never reaches the renderer).
+   - **Renderer**: main sends `evt:project:changed`. The renderer's publication
+     client (`src/renderer/state/projectPublication.ts`) reads the newest
+     version, keeps unchanged branches by reference, and the compositor
+     updates its sprite tree in place. Command promises resolve after their
+     receipt is applied ([ADR 0114](adr/0114-project-view-publication.md)).
+   - **Autosave**: a debounced write of `project.json` plus periodic
+     `Backups/` copies (`src/main/state/autosave.ts`).
+   - **MCP change feed**: notifications to subscribed agents
+     ([mcp.md](mcp.md#change-feed)).
 
-Round-trip from commit to preview pixels: next animation frame
-(~16 ms at 60 Hz). The PixiJS compositor reads the new project state
-directly; no encode-and-swap step.
-
-## Inter-process boundaries
+## Process boundaries
 
 | From → To | Mechanism |
 |---|---|
-| Renderer → main (→ Rust core) | The contextBridge preload exposes named capabilities (not raw channels); the generic `api.backend.invoke(channel, args)` rides an `ipcRenderer.invoke('backend:invoke', …)` into the main process, where the TS host's `routeChannel` dispatches it — state / config / MCP channels are served in TS; compute channels forward to the napi addon's `Backend.invoke(cmd, argsJson)` dispatcher. Clip compute the renderer shares with the agent (`transcribe_clip`, `detect_pauses`, `describe_clip`) is intercepted in `main/index.ts` and served by the MCP host's own `callClipComputeTool`, so the human and the agent path are one function. |
-| Main → Renderer | The main process forwards events as `webContents.send('evt:<event>', payload)` — `project:changed` from the TS actor/host; `import:*`, `media:job_*` from the Rust core via its thread-safe-function callback — surfaced to the renderer via `api.on(event, …)`. |
-| Renderer → workspace files | The `weftcut-media://localhost/<encoded-abs-path>` custom protocol (registered privileged + `supportFetchAPI`/`stream`; HTTP `Range`, served from main) — used by the Pixi decoder pool to fetch proxies and originals. The `fs:*` IPC surface (confined to temp / userData / active-workspace roots) handles export-scratch writes and reads. |
-| External agent → main (MCP host) | MCP over streamable-HTTP on localhost (`@modelcontextprotocol/sdk` host in the main process; bearer enforced by main, token in `app_config_dir/mcp_auth.json`). The tool catalog + resources are merged in TS — the TS-routed tool defs plus the Rust compute/hybrid tools. |
-| Main → External agent | The TS host's change notification, relayed by the in-process MCP host as a streamable-HTTP notification. |
-| Rust core → ffmpeg | `ffmpeg-sidecar` subprocess. Used by the audio encode tail (limiter + AAC/Opus), the native video encode sink (the default export engine's ffmpeg-backed encoder), proxy / thumbnail / waveform / conform / frame-extract jobs, audio-extract for transcription, and final mux (stream-copy only). |
+| Renderer → main | contextBridge capabilities (`src/preload/index.ts`), mostly `api.backend.invoke(channel, args)` → `ipcMain.handle('backend:invoke')` in `src/main/index.ts`. Main first intercepts channels that need main-held state (clip compute, audio effects, and the single-media and export channels, which get the project slice injected). `routeChannel` (`src/main/state/router.ts`) sends the rest to the TS host, or to `Backend.invoke` when pure-native. |
+| Clip compute | `transcribe_clip`, `detect_pauses` and `describe_clip` from the UI call the MCP host's `callClipComputeTool` (`src/main/mcp/server.ts`), so the human and agent paths are one function. |
+| Main → renderer | `webContents.send('evt:<event>', payload)`, received via `api.on(event, …)`. Carries actor events and Rust events relayed from the thread-safe function. |
+| Renderer → files | `weftcut-media://localhost/<encoded-abs-path>` (privileged, fetch + stream, HTTP `Range`) for media reads; `motif:` for Motif documents; `fs:*` IPC confined by `fsGuard.ts` to temp, userData, the data root and the open workspace. |
+| Native decode → renderer | Windows hardware preview hands over persistent D3D11 shared textures (`src/main/previewGpu.ts`); other lanes copy frame bytes ([preview.md](preview.md#decode-engine)). |
+| Agent → main | MCP streamable HTTP on `127.0.0.1` (`src/main/mcp/`, `@modelcontextprotocol/sdk` + express), bearer token in `<userData>/mcp_auth.json`. The catalog merges TS tool defs with Rust compute/hybrid tools (`mcpCatalog.ts`). |
+| Rust → ffmpeg | `ffmpeg-sidecar` subprocesses resolved through `native/src/ffmpeg/mod.rs`. |
 
-## Repository layout
+## Where things live
 
-```
-weftcut/
-  README.md
-  docs/                       ← documentation (this directory)
-  apps/desktop/               ← the Electron app
-    native/                   ← Rust core, built as a napi-rs addon (@weftcut/core)
-      eval/                   ← weftcut-eval leaf crate: the pure WYSIWYG math
-                              ←   (snap, keyframe eval, envelope, role gate),
-                              ←   linked natively here + compiled to wasm for
-                              ←   the renderer (ADR 0025)
-      src/
-        state/                ← project state data types — the model Rust
-                              ←   compute deserializes from the slice it is
-                              ←   handed (actor/history/validation/autosave in TS)
-        audio/                ← envelope contract + export block mixer
-                              ←   (conform_reader, mix; docs/audio.md)
-        export/               ← export_audio_only (mix + encode tail) +
-                              ←   mux_to_file + native video sink
-        ffmpeg/               ← sidecar wrapper, install bootstrap
-        jobs/                 ← background derivative jobs:
-                              ←   proxy, thumbnails, waveform, conform,
-                              ←   frame, import (workspace copy worker)
-        cache/                ← workspace-scoped derivative cache
-                              ←   (workspace/Cache/{proxies, thumbnails,
-                              ←    waveforms, audio, frames, transcribe-audio,
-                              ←    voiceover, …})
-        mcp/                  ← compute/hybrid tool defs + wire + resources
-                              ←   (TS owns the merged catalog; HTTP host in
-                              ←   src/main/mcp)
-        speech/               ← provider-agnostic speech backends:
-                              ←   Transcriber / Synthesizer + resolver
-                              ←   (user preference then availability);
-                              ←   cloud (OpenAI key via safeStorage) +
-                              ←   local one-shot CLI sidecars (whisper.cpp,
-                              ←   FunASR); parse/ normalizes each raw style
-                              ←   → one word-timed Transcript
-        io/                   ← media probe helpers; project.json load/save
-                              ←   and schema-version gate live in TS
-                              ←   state/persistence.ts
-        logs/                 ← LogBus actor, JSONL writer, tracing bridge
-        commands/             ← the command surface dispatched by Backend.invoke
-                              ←   (native compute/read handlers; TS owns
-                              ←   mutation/history/query/persistence)
-        events.rs             ← EventSink + thread-safe-function bridge to main
-        subtitles/            ← caption/subtitle parse + compute (docs/captions.md)
-        agent_session.rs      ← agent-mode session lifecycle
-        workspace.rs          ← WorkspaceSlot tracking current workspace
-        bin/                  ← media_conformance analyzer binary
-        napi_backend.rs       ← the Backend napi type (invoke + init)
-        lib.rs
-      Cargo.toml
-      package.json            ← napi packaging (@weftcut/core, *.node)
-    src/
-      main/                   ← Electron main process (TypeScript)
-        index.ts             ←   app bootstrap: loads @weftcut/core, wires the
-                             ←   backend:invoke / fs:* / window:* / dialog:* IPC,
-                             ←   registers the weftcut-media:// protocol
-        state/               ←   project actor + history + validation + autosave
-                             ←   + workspace orchestrator + MCP commands
-                             ←   (THE sole state writer; ts-actor-host + router)
-        mcp/                 ←   streamable-HTTP MCP host (SDK + bearer)
-        motif/               ←   offscreen-CDP capture host + motif: protocol
-        keys.ts              ←   safeStorage cloud-key persistence
-        app-settings.ts view-state.ts export-settings.ts keybindings.ts
-        recents.ts           ←   config/preference stores (TS-owned; persist the
-                             ←   same JSON files the Rust stores used to)
-        windows.ts fsGuard.ts
-      preload/                ← contextBridge surface (api.backend / fs / window / …)
-        index.ts
-      shared/                 ← IPC types shared between main + renderer
-        ipc.ts
-        app-settings.ts view-state.ts keybindings.ts recents.ts
-                              ←   config-store types (main owns persistence)
-        motifs/               ← motif types shared main↔renderer
-      renderer/               ← React + TypeScript UI (PixiJS + WebCodecs)
-        startup/              ← Create / Open / Recent screen
-        preview/              ← <PreviewSurface> mounting the Pixi compositor
-        render/               ← PixiJS + WebCodecs renderer
-          Compositor.ts       ←   scene graph + per-frame compositor
-                              ←   (the host owns the PixiJS Application)
-          clock.ts            ←   audio-master clock (anchor-derived;
-                              ←   wall fallback while suspended)
-          PlaybackEngine.ts   ←   transport
-          decoder/            ←   SourceDecoderPool, PacketPump, mediaInput,
-                              ←   FrameRing, ExportDecoderPool,
-                              ←   probeSourceDecodable, scrub
-          sprite/             ←   per-layer-kind Sprite implementations
-          motifs/             ←   motif raster cache + frame descriptor helpers
-          worker/             ←   exportWorker + encoder (OffscreenCanvas)
-          audio/              ←   buffer-scheduled preview mixer:
-                              ←   AudioGraph (master bus), AudioMixer,
-                              ←   conformSource, chunkSchedule, envelope
-                              ←   (sampler grid/fades in TS; dB + keyframe +
-                              ←   role-gate math via the eval wasm leaf;
-                              ←   docs/audio.md)
-          fixtures/           ←   runFixture + browser-test fixtures
-        bridge/               ← renderer-side IPC client over window.api
-        timeline/
-        properties/
-        panels/               ← side / floating panels
-        connect/              ← Connect-agent panel
-        settings/             ← Settings panel (Transcription / Speech,
-                              ←   Video understanding, API keys,
-                              ←   data location, …)
-        logs/                 ← status bar + log console
-        keyframe/             ← keyframe authoring + curve editing
-        workspace/          ← Dock Workspace: the Panel catalogue, the
-                              ←   Dockview adapter, layout persistence
-        menu/ shortcuts/ focus/ agent/ hooks/ ipc/ i18n/ state/
-    electron.vite.config.ts   ← main / preload / renderer build config
-    electron-builder.yml      ← packaging + per-OS installers
-```
+| Area | Code (under `apps/desktop/`) | Doc |
+|---|---|---|
+| Project model, actor, history, persistence, migration | `src/main/state/`; Rust serde model `native/src/state/` | [data-model.md](data-model.md) |
+| Types shared by main and renderer | `src/shared/` | |
+| Compositor, sprites, effects, transitions, export Worker | `src/renderer/render/` | [render.md](render.md) |
+| Preview surface, decode engines, proxies | `src/renderer/preview/`, `render/decoder/`, `src/main/previewGpu.ts`, `native/decode/` | [preview.md](preview.md), [platform-codecs.md](platform-codecs.md) |
+| Export jobs, settings, finalization | `src/main/exportJobs.ts`, `src/renderer/app/exportRunner.ts`, `native/src/export/` | [export.md](export.md) |
+| Audio: conform, mixers, baked effects | `native/src/audio/`, `src/renderer/render/audio/`, `src/main/audioFx/` | [audio.md](audio.md) |
+| Derivative jobs and caches | `native/src/jobs/`, `native/src/cache/` (project `Cache/`; app-level cache under the data root) | [data-model.md](data-model.md#app-level-storage-the-data-root) |
+| Motifs | `src/main/motif/`, `src/renderer/render/motifs/`, `native/src/motif_*.rs` | [motifs.md](motifs.md), [motif-authoring.md](motif-authoring.md) |
+| MCP host, agent activity, tacks, audits, styles | `src/main/mcp/`, `src/main/agent/`, `src/main/lint/`, `src/main/taste/`, `native/src/mcp/` | [mcp.md](mcp.md) |
+| Speech, captions, video understanding | `native/src/speech/`, `subtitles/`, `vlm/`, `inference/`; clip-compute jobs `src/main/compute/` | [captions.md](captions.md), [mcp.md](mcp.md#video-understanding-optional-user-supplied) |
+| Resource admission and performance | `native/src/resources.rs`, `src/main/resources.ts` | [performance-settings.md](performance-settings.md) |
+| Logs and status | `native/src/logs/`, `src/renderer/logs/` | [status-log.md](status-log.md) |
+| Security: CSP, protocols, Motif sandbox | `electron.vite.config.ts`, `src/main/windows.ts`, `src/main/motif/protocol.ts` | [security.md](security.md) |
+| UI shell: Dock, panels, focus, widgets | `src/renderer/workspace/`, `focus/`, `components/` | [ui-tokens.md](ui-tokens.md) (incl. [icons](ui-tokens.md#icons)), [ADR 0018](adr/0018-ui-widgets-on-base-ui-with-tailwind-tokens.md) |
+| Build, packaging, releases | `electron.vite.config.ts`, `electron-builder.yml`, `scripts/` | [setup.md](setup.md), [releases.md](releases.md), [licensing.md](licensing.md) |
 
-## External dependencies
-
-- **electron** — desktop shell: main/renderer processes, IPC, window
-  management, and the privileged `weftcut-media://` custom protocol for
-  renderer access to workspace files.
-- **@napi-rs/cli** + **napi** / **napi-derive** — build the Rust core as
-  an in-process Node addon (`@weftcut/core`) that the main process loads.
-- **electron-vite** — bundles main / preload / renderer; **electron-builder**
-  produces the per-OS installers.
-- **@modelcontextprotocol/sdk** + **express** — the streamable-HTTP MCP
-  host that runs in the main process and fronts the merged tool catalog
-  (TS-routed tool defs + the Rust compute/hybrid tools).
-- **ffmpeg-sidecar** — auto-downloads ffmpeg on first run.
-- **immer** — TS actor drafts and frozen immutable project snapshots.
-- **imbl** — Rust project model collections used when deserializing
-  per-call project slices for native compute/export paths.
-- **tokio** — async runtime, channels.
-- **serde** / **serde_json** / **schemars** — serialization, JSON
-  Schema generation shared between the MCP tool catalog and the
-  `Backend.invoke` command bridge.
-- **uuid** — v7 IDs for all addressable entities.
-- **blake3** — content hashing (cache keys, file dedup).
-- **reqwest** (rustls) — HTTP client for cloud-provider integrations.
-- **pixi.js** v8 — renderer-side compositor.
-- **mediabunny** — renderer-side demuxer / muxer for the WebCodecs
-  pipeline (MP4/MOV + Matroska/WebM), reading through a
-  `weftcut-media://` Range `CustomSource`.
-- **i18next** + **react-i18next** — frontend i18n; bundled resources
-  for `en-US` and `zh-CN`.
-- **tailwindcss** v4 (`@tailwindcss/vite`) — design-token carrier +
-  utility layer; entry at `src/renderer/app.css`.
-- **@base-ui/react** — headless widget primitives (dialog, menu/menubar,
-  select, slider, tooltip) behind the app wrapper components.
-
-## UI widget & styling layer
-
-The widget layer rides [Base UI](https://base-ui.com) primitives behind
-app-level wrappers; Tailwind v4 carries the design tokens; the legacy
-stylesheet keeps the visual identity. Decision + the full cascade
-contract: [ADR 0018](adr/0018-ui-widgets-on-base-ui-with-tailwind-tokens.md).
-The rules a day-to-day change must respect:
-
-| Rule | Why |
-|---|---|
-| New modals go through `components/AppDialog` (omit `onClose` for an undismissable working-state). | One dismissal/focus/aria behavior app-wide. |
-| Form dropdowns/sliders use `components/AppSelect` / `AppSlider` — never native `<select>` / `<input type="range">`. | App-styled popups, shared keyboard behavior. |
-| A component that consumes Escape inside a dialog must `stopPropagation()`. | Base UI closes the dialog on Escape otherwise. |
-| `styles.css` is unlayered and beats Tailwind's layered output; don't stack utilities onto elements legacy rules target — remove the legacy rule instead. | Layered-vs-unlayered cascade ordering. |
-| If a layout relied on a UA default that preflight resets, pin the value explicitly in `styles.css` (`line-height` is the canonical case). | Preflight only leaks through UA-default reliance. |
-| Tokens live in `src/renderer/app.css` (`.dark` block, shadcn naming + a dark-NLE semantic role layer on top — full reference: [ui-tokens.md](ui-tokens.md)); the app is dark-only via the hardwired `html.dark`. | Single palette source; the `var(--*)` sweep is done, with semantic roles layered above. |
-| Icons come from [lucide](https://lucide.dev/icons) via `lucide-react` named imports (`size` explicit, `aria-hidden`, color via `currentColor`) — no inline `<svg>`, no Unicode glyphs. [ADR 0020](adr/0020-ui-icons-from-lucide-react.md); `WindowControls` and CSS cursors are the documented exceptions. | One drawing style; glyph rendering no longer font-dependent. |
+The Rust workspace (`native/Cargo.toml`) has three members besides the core:
+`eval/` (shared math, native + wasm), `conversion/` (offline position
+conversion, native + wasm) and `decode/`.
 
 ## Panels and the Dock
 
-The editor's surfaces are Dockview Panels, catalogued once in
-`renderer/workspace/panelRegistry.ts` by **kind** — the title, the size
-minimums, and whether the Editing baseline opens it. Kind is what a View-menu
-row, a shortcut's scope and a command all address a Panel by.
+Editor surfaces are Dockview panels catalogued by **kind** in
+`src/renderer/workspace/panelRegistry.ts`. A kind is not an identity: the
+`timeline` kind has one instance per composition, addressed
+`timeline:<compositionId>` ([ADR 0053](adr/0053-a-timeline-panel-is-one-composition.md)),
+and `panelIdOf` / `parsePanelId` are the only functions that know that
+spelling. A panel is also the unit of keyboard focus. An action's `scope` names
+kinds, so `scope: "timeline"` resolves to the timeline panel that last held the
+keyboard ([ADR 0041](adr/0041-focus-regions-are-panels-and-scope-the-keyboard.md)).
+Dock geometry is app-wide in `<userData>/workspaces.json`, with every
+`timeline:*` folded to the bare `timeline` slot. Which compositions are open is
+the project's `view.json` ([data-model.md](data-model.md#viewjson-how-this-project-was-last-looked-at)).
 
-**Kind is not identity.** A Panel's Dockview address is a `PanelId`, and
-`timeline` is the one kind that *instantiates*: a timeline Panel is one
-composition, addressed `timeline:<compositionId>`, so several stand open at once
-and each draws the composition its own id names. At most one Panel per
-composition — a second would show byte-identical lanes, since a composition has
-one set of tracks. Every other kind exists once per app, so its kind is its
-whole address. See
-[ADR 0053](adr/0053-a-timeline-panel-is-one-composition.md); `panelIdOf` and
-`parsePanelId` are the only two functions that know the spelling.
+## Internationalization
 
-A Panel is also the unit of keyboard focus
-([ADR 0041](adr/0041-focus-regions-are-panels-and-scope-the-keyboard.md)): its
-root element carries the kind as its focus region and, for the one kind that
-instantiates, the composition beside it as a separate attribute — a region name
-stays a kind, because an action's `scope` is a list of kinds. `scope: "timeline"`
-therefore resolves against the timeline Panel that last held the keyboard.
-
-Persistence splits along the same seam. Dock **geometry** lives app-wide in
-`<userData>/workspaces.json`, which spans every project and holds reusable
-profiles, so every `timeline:*` folds back to the bare `timeline` slot on the way
-out and no project's composition ids ever enter it. Which compositions are open,
-and each one's zoom, is the project's own `view.json` — see
-[data-model.md](data-model.md).
-
-## Internationalization (UI)
-
-The renderer is bilingual: **English (US)** as the source/default,
-**Simplified Chinese** (`zh-CN`) as the second supported locale.
-Adding more locales is a strict addition — drop a resource file under
-`apps/desktop/src/renderer/i18n/locales/`, register it in the init module.
-
-| Layer | Strategy |
-|---|---|
-| UI labels (React) | `i18next` keys via `useTranslation()` / `<Trans>`. |
-| Rust logs / `tracing` output | Stay English. Operator-facing. |
-| Backend command errors | Tagged structured form (`{kind, detail}`) returned from `Backend.invoke` to the UI; the UI maps recognized kinds to localized messages. |
-| MCP tool errors | English machine-readable strings. Agents do their own translation. |
-| Built-in motifs | Each motif carries text in its props; localization is per-project content. |
-| Date / time / number formatting | `Intl.DateTimeFormat` and `Intl.NumberFormat` with the active locale. |
+The UI ships `en-US` (default) and `zh-CN` through i18next
+(`src/renderer/i18n/locales/*.ts`, registered in `i18n/index.ts`). Rust logs and
+MCP tool errors stay English. Actor refusals cross IPC as a `CommandError`
+tagged by its `error` field, which the renderer parses
+(`src/renderer/errors/parseCommandError.ts`) and localizes. Log lines may carry
+`i18n_key` / `i18n_args` ([status-log.md](status-log.md#i18n)).
 
 ## See also
 
-- [Data model](data-model.md) — what the actor stores and emits.
-- [Render](render.md) — PixiJS + WebCodecs renderer architecture.
-- [Motifs](motifs.md) — parameterized web overlays captured via the DevTools Protocol: parameter UI, capture harness, raster cache.
-- [Motif authoring](motif-authoring.md) — the normative authoring contract (self-contained; a verbatim copy ships in the agent skill bundle).
-- [Preview](preview.md) — interactive preview surface.
-- [Export](export.md) — export orchestration + final mux.
-- [Audio](audio.md) — conform cache, envelope contract, preview + export mixers.
-- [Conformance](conformance.md) — media fixtures and E2E gates.
-- [Features](features.md) — small-feature contracts (undo scope, groups, search palette, color picker).
-- [MCP](mcp.md) — agent connection protocol and tool surface.
-- Release scope and open work live in the GitHub issue tracker, not in
-  `docs/`: everything here describes what exists today, and no doc points
-  at a tracker item — tracker links rot the moment an issue closes.
+- [Features](features.md): the concrete behavior of each capability.
+- [Conformance](conformance.md): media fixtures and E2E gates.
+- Release scope and open work live in the GitHub issue tracker; docs describe
+  what exists today.
