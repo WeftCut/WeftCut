@@ -120,7 +120,9 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     // WebCodecs a universally-decodable `avc1.640028` stream; `+faststart`
     // puts the moov atom up front so the renderer can parse before the write
     // completes. Height-cap / GOP / `-bf 0` rationale: see the constants above.
-    let scale_filter = format!("scale=-2:'min(ih,{PROXY_HEIGHT_CAP})'");
+    // Width's -2 does not make an odd source height even. Keep all source
+    // pixels and add at most one edge pixel for portable yuv420p proxies.
+    let scale_filter = format!("scale=-2:'min(ih,{PROXY_HEIGHT_CAP})',pad=ceil(iw/2)*2:ceil(ih/2)*2");
     let gop = PROXY_GOP_FRAMES.to_string();
     let input = media.path_abs.clone();
     let color_args = source_color_args(media);
