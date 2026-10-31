@@ -25,11 +25,9 @@ position keys when the user only meant to scale.
   size (their identity transform). Text is created centred. Crop and proxy
   dimensions never redefine the anchor.
 - The v3 → v4 step translates constant offsets and bakes XY where scale or
-  anchor is animated. It is import-free; the host injects source sizes and the
-  frozen **v3 numerical evaluation** contract, never current defaults. It
-  refuses missing source sizes rather than guessing from proxies.
-- Opening an upgraded file first writes and verifies a byte-identical
-  `project.pre-vN.json`; failure refuses the open.
+  anchor is animated. Source sizes and the frozen v3 evaluator arrive through
+  the migration context, and the open keeps a verified backup (both ADR 0047).
+  It refuses missing source sizes rather than guessing from proxies.
 
 ## Consequences
 

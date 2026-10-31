@@ -12,7 +12,7 @@ Temporary cache space is both the global disk-LRU target (filmstrips,
 thumbnails, waveforms, audio-effect bakes, Motif frames across every Workspace
 opened in the session) and the Motif-frame admission limit for the open
 Workspace. A fixed 2 GiB default did not fit real projects: the lyric video's
-Motif cache measured 4.0 GB with LZ4 and ~2.7 GB with zstd (ADR 0145), so
+Motif cache measured 4.0 GB with LZ4 and ~2.7 GB with zstd (ADR 0078), so
 preparation paused, and because in-use Motif directories survive a sweep the
 cheap timeline derivatives were evicted and regenerated repeatedly. One
 10-minute stereo effect bake is ~230 MB. Everything covered is rebuildable, so a

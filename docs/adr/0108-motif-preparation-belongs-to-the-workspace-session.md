@@ -60,4 +60,4 @@ with zero captures.
   reduced target, and completion is not guaranteed without space.
 - A protocol change between renderer and main needs a full app restart to
   validate; dev hot reload can pair an old main validator with a new renderer.
-- Supersedes ADR 0016's renderer-owned baker.
+- Supersedes a renderer-owned baker.

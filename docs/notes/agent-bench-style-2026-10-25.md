@@ -1,7 +1,7 @@
 # Agent bench: does the style hold without its examples? — 2026-10-25
 
 Backs ADR 0126 (a style ships its vocabulary and basic pieces, not worked
-answers) and ADR 0135 (the audit keeps only rules with a right answer).
+answers) and ADR 0128 (the audit keeps only rules with a right answer).
 
 ## Environment and probe
 
@@ -57,7 +57,7 @@ animations; Flash mostly places examples well.
    scene sits behind the captions.
 4. The user's review of these cuts found Opus's overlays the only good ones:
    design follows the model and its reviewer, not the audit's density and
-   picture counts (ADR 0135).
+   picture counts (ADR 0128).
 
 ## Plan bench, 2026-10-24 (before this round)
 
