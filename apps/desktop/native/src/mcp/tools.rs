@@ -36,6 +36,124 @@ pub(super) fn parse_uuid(s: &str, field: &str) -> Result<Uuid, McpToolError> {
         .map_err(|e| McpToolError::invalid_params(format!("{field} not a UUID: {e}"), None))
 }
 
+/// How a layer places its source on the timeline — carried by every result
+/// that answers in source time for a layer, so the caller converts without a
+/// second read: `src = src_in_us + source_phase.in + (t − t_start_us) × rate`,
+/// hence `t = t_start_us + (src − src_in_us − source_phase.in) / rate`.
+/// `rate` is source µs per timeline µs; `source_phase` (a sub-µs exact
+/// remainder) is absent when zero.
+#[cfg(feature = "jobs")]
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct LayerMapping {
+    pub layer_id: LayerId,
+    pub t_start_us: i64,
+    pub src_in_us: i64,
+    pub rate: crate::state::timing::Fraction,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_phase: Option<crate::state::timing::Phase>,
+}
+
+#[cfg(feature = "jobs")]
+impl LayerMapping {
+    pub fn of(
+        layer: &crate::state::Layer,
+        src_in_us: i64,
+        timing: &crate::state::timing::TimingFields,
+    ) -> Self {
+        Self {
+            layer_id: layer.id,
+            t_start_us: layer.t_start_us,
+            src_in_us,
+            rate: exact_rate(timing),
+            source_phase: timing.source_phase.clone(),
+        }
+    }
+}
+
+/// A layer's playback rate as the exact rational it is stored as; identity
+/// when it has no time map.
+#[cfg(feature = "jobs")]
+pub(super) fn exact_rate(
+    timing: &crate::state::timing::TimingFields,
+) -> crate::state::timing::Fraction {
+    use crate::state::timing::{Fraction, TimeMap};
+    match timing.time_map {
+        Some(TimeMap::Affine { rate }) => rate,
+        None => Fraction { num: 1, den: 1 },
+    }
+}
+
+/// One shot as the MCP surface answers it: source-absolute, named so.
+#[cfg(feature = "jobs")]
+#[derive(Debug, Serialize)]
+pub(super) struct SourceShot<'a> {
+    pub index: usize,
+    pub src_start_us: i64,
+    pub src_end_us: i64,
+    pub src_keyframe_us: i64,
+    pub brightness: Option<f64>,
+    pub motion: Option<f64>,
+    pub sharpness: Option<f64>,
+    pub flags: &'a [jobs::shot::ShotFlag],
+}
+
+/// One raw cut candidate, source-absolute.
+#[cfg(feature = "jobs")]
+#[derive(Debug, Serialize)]
+pub(super) struct SourceCut {
+    pub src_us: i64,
+    pub score: f32,
+}
+
+/// `analyze_clip` and `media://{id}/analysis`: the shot report in source time,
+/// with the media it describes and, for a layer, that layer's mapping. The
+/// cached `ShotReport` keeps its own field names; this is its wire view.
+#[cfg(feature = "jobs")]
+#[derive(Debug, Serialize)]
+pub(super) struct SourceShotReport<'a> {
+    pub media_id: crate::state::MediaId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mapping: Option<LayerMapping>,
+    pub shots: Vec<SourceShot<'a>>,
+    pub cut_scores: Vec<SourceCut>,
+}
+
+#[cfg(feature = "jobs")]
+impl<'a> SourceShotReport<'a> {
+    pub fn new(
+        media_id: crate::state::MediaId,
+        mapping: Option<LayerMapping>,
+        report: &'a jobs::shot::ShotReport,
+    ) -> Self {
+        Self {
+            media_id,
+            mapping,
+            shots: report
+                .shots
+                .iter()
+                .map(|s| SourceShot {
+                    index: s.index,
+                    src_start_us: s.t_start_us,
+                    src_end_us: s.t_end_us,
+                    src_keyframe_us: s.keyframe_t_us,
+                    brightness: s.brightness,
+                    motion: s.motion,
+                    sharpness: s.sharpness,
+                    flags: &s.flags,
+                })
+                .collect(),
+            cut_scores: report
+                .cut_scores
+                .iter()
+                .map(|c| SourceCut {
+                    src_us: c.t_us,
+                    score: c.score,
+                })
+                .collect(),
+        }
+    }
+}
+
 // ============================================================
 // Liveness
 // ============================================================
@@ -350,19 +468,23 @@ pub(super) async fn analyze_clip(
         timing.source_end(src_out_us).ceil() as i64,
     );
 
-    ToolResult::json(&report)
+    ToolResult::json(&SourceShotReport::new(
+        media_id,
+        Some(LayerMapping::of(layer, src_in_us, timing)),
+        &report,
+    ))
 }
 
 /// One side of a `compare_frames` pair. `#[schemars(skip)]` on the injected
 /// `layer` / `media` keeps each side's ADVERTISED schema exactly
-/// `{ layer_id, t_us }`; serde still deserializes the host-injected slice.
+/// `{ layer_id, src_us }`; serde still deserializes the host-injected slice.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(super) struct FrameRef {
     /// Target VideoClip layer id.
     pub layer_id: String,
-    /// SOURCE-ABSOLUTE microseconds of the frame to sample (the space
-    /// `analyze_clip`'s `keyframe_t_us` uses).
-    pub t_us: i64,
+    /// Source-absolute microseconds of the frame to sample (the space
+    /// `analyze_clip`'s `src_keyframe_us` uses).
+    pub src_us: i64,
     /// Injected by the TS MCP host (sole state owner) — see DetectPausesArgs.
     #[serde(default)]
     #[schemars(skip)]
@@ -380,7 +502,7 @@ pub(super) struct CompareFramesArgs {
     pub b: FrameRef,
 }
 
-/// Resolve one `FrameRef` to `(source_path, t_us)`: the layer must be a VideoClip
+/// Resolve one `FrameRef` to `(source_path, src_us)`: the layer must be a VideoClip
 /// whose media is a video (same guards as `analyze_clip`). `side` ("a" / "b") is
 /// folded into every error so the agent knows which frame is at fault.
 #[cfg(feature = "jobs")]
@@ -412,18 +534,18 @@ fn resolve_frame_ref(r: &FrameRef, side: &str) -> Result<(std::path::PathBuf, i6
             None,
         ));
     }
-    if r.t_us < 0 {
+    if r.src_us < 0 {
         return Err(McpToolError::invalid_params(
-            format!("{side}.t_us {} must be >= 0", r.t_us),
+            format!("{side}.src_us {} must be >= 0", r.src_us),
             None,
         ));
     }
-    Ok((media.path_abs.clone(), r.t_us))
+    Ok((media.path_abs.clone(), r.src_us))
 }
 
 /// `compare_frames` — pairwise perceptual similarity of two video frames.
 /// Read-only and cacheless — a pure function: sample one frame per side at its
-/// source-absolute `t_us` through the same PNG extract as the shot stats, then a
+/// source-absolute `src_us` through the same PNG extract as the shot stats, then a
 /// DCT perceptual hash + MSSIM fused into a `similar` verdict.
 /// Works across two different clips as well as within one.
 #[cfg(feature = "jobs")]
@@ -1095,6 +1217,76 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Probe M1: a clip at timeline 30 s playing source from 10 s. The shot
+    /// report answers in source time under `src_*` names, and its mapping
+    /// carries what lands the shot back at 30 s on the timeline.
+    #[cfg(feature = "jobs")]
+    #[test]
+    fn shot_report_answers_in_source_time_with_the_layer_mapping() {
+        use crate::jobs::shot::{clip_report, Cut, Shot, ShotReport};
+        use crate::state::timing::{Fraction, TimeMap, TimingFields};
+        let mut layer = audio_layer(10_000_000, 25_000_000);
+        layer.t_start_us = 30_000_000;
+        layer.t_end_us = 45_000_000;
+        let shot = |index, a, b| Shot {
+            index,
+            t_start_us: a,
+            t_end_us: b,
+            keyframe_t_us: a + (b - a) / 2,
+            brightness: None,
+            motion: None,
+            sharpness: None,
+            flags: Vec::new(),
+        };
+        let source = ShotReport {
+            shots: vec![shot(0, 0, 12_000_000), shot(1, 12_000_000, 40_000_000)],
+            cut_scores: vec![Cut {
+                t_us: 12_000_000,
+                score: 0.9,
+            }],
+        };
+        let report = clip_report(&source, 10_000_000, 25_000_000);
+        let timing = TimingFields::default();
+        let media_id = crate::state::new_id();
+        let body = serde_json::to_value(SourceShotReport::new(
+            media_id,
+            Some(LayerMapping::of(&layer, 10_000_000, &timing)),
+            &report,
+        ))
+        .unwrap();
+        assert_eq!(body["media_id"], serde_json::json!(media_id.to_string()));
+        let first = &body["shots"][0];
+        assert_eq!(first["src_start_us"], 10_000_000);
+        assert_eq!(first["src_end_us"], 12_000_000);
+        assert!(first.get("t_start_us").is_none() && first.get("keyframe_t_us").is_none());
+        assert_eq!(body["cut_scores"][0]["src_us"], 12_000_000);
+        let m = &body["mapping"];
+        assert_eq!(m["layer_id"], serde_json::json!(layer.id.to_string()));
+        assert_eq!(m["rate"], serde_json::json!({ "num": 1, "den": 1 }));
+        assert!(m.get("source_phase").is_none());
+        let to_timeline = |src: i64| {
+            let (num, den) = (
+                m["rate"]["num"].as_i64().unwrap(),
+                m["rate"]["den"].as_i64().unwrap(),
+            );
+            m["t_start_us"].as_i64().unwrap() + (src - m["src_in_us"].as_i64().unwrap()) * den / num
+        };
+        assert_eq!(
+            to_timeline(first["src_start_us"].as_i64().unwrap()),
+            30_000_000
+        );
+
+        // A retimed layer carries its exact rational rate.
+        let retimed = TimingFields {
+            time_map: Some(TimeMap::Affine {
+                rate: Fraction { num: 2, den: 1 },
+            }),
+            ..Default::default()
+        };
+        let m = serde_json::to_value(LayerMapping::of(&layer, 10_000_000, &retimed)).unwrap();
+        assert_eq!(m["rate"], serde_json::json!({ "num": 2, "den": 1 }));
+    }
+
     #[cfg(feature = "speech")]
     #[test]
     fn describe_fractional_retimed_window_accepts_the_layer_endpoint() {
@@ -1139,7 +1331,7 @@ mod tests {
             Some(&media),
             layer.id,
             None,
-            Some(1_000_001)
+            Some(2_000_002)
         )
         .is_err());
     }
@@ -1315,6 +1507,8 @@ pub(super) struct ResolvedClipAudio {
     /// rather than the one it asked for.
     pub timeline_end_us: i64,
     pub playback_rate: f64,
+    /// `playback_rate` as the exact rational the layer stores.
+    pub rate: crate::state::timing::Fraction,
 }
 
 /// Find a layer with audio attached (VideoClip or Audio), validate the
@@ -1424,6 +1618,7 @@ pub(super) fn resolve_clip_audio_source(
         timeline_start_us: t_start,
         timeline_end_us: t_end,
         playback_rate: timing.rate(),
+        rate: exact_rate(timing),
     })
 }
 
@@ -1690,14 +1885,15 @@ pub(super) struct DescribeClipArgs {
     pub purpose: crate::vlm::DescriptionPurpose,
     /// Target VideoClip layer id.
     pub layer_id: String,
-    /// Optional window start in timeline microseconds. Defaults to the layer's
-    /// `t_start_us`. Must lie within the layer.
+    /// Optional window start, source-absolute microseconds (the space the
+    /// answer's segments and `analyze_clip`'s shots use). Defaults to the start
+    /// of the source the layer plays. Must lie within it.
     #[serde(default)]
-    pub t_start_us: Option<i64>,
-    /// Optional window end in timeline microseconds. Defaults to the layer's
-    /// `t_end_us`. Must lie within the layer.
+    pub src_start_us: Option<i64>,
+    /// Optional exclusive window end, source-absolute microseconds. Defaults to
+    /// the end of the source the layer plays. Must lie within it.
     #[serde(default)]
-    pub t_end_us: Option<i64>,
+    pub src_end_us: Option<i64>,
     /// Frames sampled per second (higher = finer, more requests). Default:
     /// the app's setting, else 1.0. Cache key.
     #[serde(default)]
@@ -1749,23 +1945,25 @@ pub(super) struct DescribeClipArgs {
 #[cfg(feature = "speech")]
 #[derive(Debug)]
 struct ResolvedClipVideo {
+    media_id: crate::state::MediaId,
     source_path: std::path::PathBuf,
     source_hash: String,
-    /// Source-relative microseconds: the window mapped onto the source.
+    /// Source-absolute microseconds: the window to describe.
     source_in_us: i64,
     source_out_us: i64,
+    mapping: LayerMapping,
 }
 
-/// Find a VideoClip layer, validate the requested timeline window lies inside
-/// it, and map that window onto the source media's coordinate space. Mirrors
-/// `resolve_clip_audio_source` but video-only (frames, not audio).
+/// Find a VideoClip layer and resolve the source window to describe: the
+/// requested one, which must lie inside the source the layer plays, or that
+/// whole source by default. Video-only (frames, not audio).
 #[cfg(feature = "speech")]
 fn resolve_clip_video_source(
     layer: Option<&crate::state::Layer>,
     media: Option<&crate::state::MediaItem>,
     layer_id: LayerId,
-    t_start_arg: Option<i64>,
-    t_end_arg: Option<i64>,
+    src_start_arg: Option<i64>,
+    src_end_arg: Option<i64>,
 ) -> Result<ResolvedClipVideo, McpToolError> {
     use crate::state::VideoClipParams;
 
@@ -1803,58 +2001,57 @@ fn resolve_clip_video_source(
         ));
     }
 
-    let t_start = t_start_arg.unwrap_or(layer.t_start_us);
-    let t_end = t_end_arg.unwrap_or(layer.t_end_us);
-    if t_end <= t_start {
-        return Err(McpToolError::invalid_params(
-            format!(
-                "description window must have positive duration (t_start_us={t_start}, t_end_us={t_end})",
-            ),
-            None,
-        ));
-    }
-    if t_start < layer.t_start_us || t_end > layer.t_end_us {
-        return Err(McpToolError::invalid_params(
-            format!(
-                "description window [{t_start}, {t_end}] is outside layer range [{}, {}]",
-                layer.t_start_us, layer.t_end_us,
-            ),
-            None,
-        ));
-    }
-
-    let source_in = timing
-        .content_time(src_in_us, (t_start - layer.t_start_us) as f64)
-        .round() as i64;
-    let mapped_out = timing
-        .content_time(src_in_us, (t_end - layer.t_start_us) as f64)
-        .round() as i64;
+    // The default window is the source the layer plays, its endpoints mapped
+    // from the layer's own: the envelope sits on the frame grid and the source
+    // window does not, so the last frame can map up to a frame past
+    // `src_out_us` by rounding alone, and the end stops at the source's.
     let source_end = timing.source_end(src_out_us).ceil() as i64;
-    // A window that ends where the layer ends (the default one included) ends
-    // where its source does: the envelope sits on the frame grid and the
-    // source window does not, so the layer's last frame can map up to a frame
-    // past `src_out_us` by rounding alone. Any other window that maps past the
-    // source asks for frames that are not there.
-    let source_out = if t_end == layer.t_end_us {
-        mapped_out.min(source_end)
-    } else {
-        mapped_out
-    };
-    if source_out > source_end {
+    let default_in = timing.content_time(src_in_us, 0.0).round() as i64;
+    let default_out = (timing
+        .content_time(src_in_us, (layer.t_end_us - layer.t_start_us) as f64)
+        .round() as i64)
+        .min(source_end);
+    // An explicit window is checked against the same span `analyze_clip`
+    // clips its shots to, so any shot it returned is a valid window.
+    let span_in = timing.content_time(src_in_us, 0.0).floor() as i64;
+    let source_in = src_start_arg.unwrap_or(default_in);
+    let source_out = src_end_arg.unwrap_or(default_out);
+    if source_out <= source_in {
         return Err(McpToolError::invalid_params(
             format!(
-                "description window maps past the layer's source range (source_out={source_out} > src_out_us={src_out_us})",
+                "description window must have positive duration (src_start_us={source_in}, src_end_us={source_out})",
+            ),
+            None,
+        ));
+    }
+    if source_in < span_in || source_out > source_end {
+        return Err(McpToolError::invalid_params(
+            format!(
+                "description window [{source_in}, {source_out}] is outside the source the layer plays [{span_in}, {source_end}]",
             ),
             None,
         ));
     }
 
     Ok(ResolvedClipVideo {
+        media_id,
         source_path: media.path_abs.clone(),
         source_hash: media.file_hash_blake3.clone(),
         source_in_us: source_in,
         source_out_us: source_out,
+        mapping: LayerMapping::of(layer, src_in_us, timing),
     })
+}
+
+/// `describe_clip`'s answer: the description, plus the media it describes and
+/// the layer's mapping onto the timeline.
+#[cfg(feature = "speech")]
+#[derive(Debug, Serialize)]
+struct DescribeClipResult {
+    media_id: crate::state::MediaId,
+    mapping: LayerMapping,
+    #[serde(flatten)]
+    description: crate::vlm::SceneDescription,
 }
 
 /// Map a `vlm::VlmError` to a structured `McpToolError` — mirror of
@@ -1900,8 +2097,8 @@ async fn describe_clip_job(
         args.layer.as_ref(),
         args.media.as_ref(),
         layer_id,
-        args.t_start_us,
-        args.t_end_us,
+        args.src_start_us,
+        args.src_end_us,
     )?;
 
     let (explicit, preferred) = engine_choice::<vlm::VlmBackend>(
@@ -1921,7 +2118,7 @@ async fn describe_clip_job(
         None => vlm::resolve_scene_describer(preferred, cfg).ok_or_else(|| {
             McpToolError::invalid_request(
                 format!(
-                    "{}; or read `media://{{id}}/frame/{{t_us}}` (`read_project {{ view: \"media_frame\" }}`) and look at the frames yourself",
+                    "{}; or read `media://{{id}}/frame/{{src_us}}` (`read_project {{ view: \"media_frame\" }}`) and look at the frames yourself",
                     vlm::NO_DESCRIBER_CONFIGURED
                 ),
                 None,
@@ -1958,7 +2155,11 @@ async fn describe_clip_job(
                 McpToolError::internal_error(message, None)
             }
         })?;
-    ToolResult::json(&result)
+    ToolResult::json(&DescribeClipResult {
+        media_id: resolved.media_id,
+        mapping: resolved.mapping,
+        description: result,
+    })
 }
 
 /// TTS compute half of the `synthesize_speech` hybrid. Does NOT write to the
@@ -2536,8 +2737,8 @@ echo '[{"t_start": 0.5, "t_end": 1.5, "text": "a test pattern", "tags": ["patter
             .iter()
             .map(|s| {
                 (
-                    s["t_start_us"].as_i64().unwrap(),
-                    s["t_end_us"].as_i64().unwrap(),
+                    s["src_start_us"].as_i64().unwrap(),
+                    s["src_end_us"].as_i64().unwrap(),
                     s["text"].as_str().unwrap().to_string(),
                 )
             })
@@ -2562,6 +2763,11 @@ echo '[{"t_start": 0.5, "t_end": 1.5, "text": "a test pattern", "tags": ["patter
         assert_eq!(t.server.hits(), 1);
         assert_eq!(images_per_request(&t.server), [16]);
         assert_eq!(segments(&reply), [(0, 16_000_000, "scene".into())]);
+        let body: Value =
+            serde_json::from_str(reply["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(body["media_id"], t.args["media"]["id"]);
+        assert_eq!(body["mapping"]["layer_id"], t.args["layer_id"]);
+        assert_eq!(body["mapping"]["rate"], json!({ "num": 1, "den": 1 }));
         assert!(!phases(&t.sink, "describe").is_empty());
     }
 

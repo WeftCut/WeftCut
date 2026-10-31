@@ -19,7 +19,7 @@ type Side = { x: number; y: number; mode: string }
 type KfEntry = {
   id: string
   t_us: number
-  t_local_us: number
+  local_t_us: number
   value: number
   in: Side
   out: Side

@@ -30,6 +30,14 @@ reported filename is the one publication used.
 
 ## Time remapping
 
+**Time base**:
+Which clock a time reads: the timeline (`t_*`, the owning composition's
+clock), the source (`src_*`, the media file's own time) or the layer
+(`local_*`, from its `t_start_us`). Every MCP time name carries its base; a
+bare `_us` / `_s` is a duration. A source-time answer for a layer carries that
+layer's **mapping** (`t_start_us`, `src_in_us`, `rate`, `source_phase`).
+_Avoid_: absolute time (absolute on which clock?)
+
 **Time remapping**:
 The relationship between a clip's local time and its content's own time: a
 constant rate over the selected content range. A clip's own animation keeps its
@@ -345,7 +353,7 @@ _Avoid_: scene, segment, clip
 **Candidate cut**:
 One `cut_scores` entry: a source time whose frame-change score exceeded the
 floor. A threshold decides which become **shot cuts** / 镜头切点.
-_Avoid_: cut (an edit), scene change, keyframe (`keyframe_t_us` is a cover frame)
+_Avoid_: cut (an edit), scene change, keyframe (`src_keyframe_us` is a cover frame)
 
 **Floor scan**:
 The one cached detection pass per source at `FLOOR_SENSITIVITY` (0.05); every

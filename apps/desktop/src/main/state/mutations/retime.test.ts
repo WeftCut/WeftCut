@@ -51,7 +51,7 @@ describe('time-remapping transactions', () => {
     if (!read.ok) throw new Error(JSON.stringify(read));
     const record = JSON.parse(read.result.content[0].text);
     expect(record.keyframes.map((k: Keyframe<number>) => k.time_fraction)).toEqual([{ num: 1, den: 3 }, { num: 2, den: 3 }]);
-    const keys = record.keyframes.map(({ id, t_local_us, preset_id, ...k }: Record<string, unknown>) => k);
+    const keys = record.keyframes.map(({ id, local_t_us, preset_id, ...k }: Record<string, unknown>) => k);
     const written = actor.mcpCall('set_param_track', JSON.stringify({ layer_id: v, param_key: 'opacity', track: { mode: 'Keyframed', value: keys } }));
     expect(written.ok, JSON.stringify(written)).toBe(true);
     const params = rootComposition(actor.snapshot()).tracks.flatMap(t => t.layers).find(l => l.id === v)!.params;

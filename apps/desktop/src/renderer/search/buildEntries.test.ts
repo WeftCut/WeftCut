@@ -340,10 +340,10 @@ const LONG_TEXT =
 const SEGMENTS: Record<string, DescSegment[]> = {
   // Placed twice, described once.
   dm1: [
-    { t_start_us: 0, t_end_us: 1_000_000, text: LONG_TEXT, tags: ["skyline", "exterior"] },
+    { src_start_us: 0, src_end_us: 1_000_000, text: LONG_TEXT, tags: ["skyline", "exterior"] },
     {
-      t_start_us: 1_000_000,
-      t_end_us: 2_000_000,
+      src_start_us: 1_000_000,
+      src_end_us: 2_000_000,
       text: "无人机掠过海岸线",
       tags: ["航拍"],
     },
@@ -351,14 +351,14 @@ const SEGMENTS: Record<string, DescSegment[]> = {
   // Placed once, by a clip whose window opens INSIDE this segment.
   dm2: [
     {
-      t_start_us: 1_000_000,
-      t_end_us: 3_000_000,
+      src_start_us: 1_000_000,
+      src_end_us: 3_000_000,
       text: "two people talking to camera",
       tags: ["interview"],
     },
   ],
   // Described, and on no timeline.
-  dm3: [{ t_start_us: 0, t_end_us: 1_000_000, text: "an empty corridor", tags: [] }],
+  dm3: [{ src_start_us: 0, src_end_us: 1_000_000, text: "an empty corridor", tags: [] }],
 };
 
 const DESCRIPTIONS = new Map<string, readonly DescSegment[] | null>(

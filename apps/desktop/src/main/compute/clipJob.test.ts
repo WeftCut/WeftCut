@@ -24,9 +24,22 @@ describe('clipJobSpec', () => {
     expect(key({}, 'describe_clip')).toBe(key({ purpose: 'clip' }, 'describe_clip'))
   })
   it('names the job by its first layer, media and resolved timeline window', () => {
-    expect(clipJobSpec('describe_clip', { layer_id: 'l1', layer: layer(), media: media(), t_start_us: 2_000_000 })).toMatchObject({
-      tool: 'describe_clip', layer_id: 'l1', media_id: 'm1', window: { t_start_us: 2_000_000, t_end_us: 5_000_000 },
+    expect(clipJobSpec('transcribe_clip', { layer_id: 'l1', layer: layer(), media: media(), t_start_us: 2_000_000 })).toMatchObject({
+      tool: 'transcribe_clip', layer_id: 'l1', media_id: 'm1', window: { t_start_us: 2_000_000, t_end_us: 5_000_000 },
     })
+    // describe_clip's window is source time; the record says where the layer plays it.
+    expect(clipJobSpec('describe_clip', { layer_id: 'l1', layer: layer(), media: media(), src_start_us: 3_000_000 })).toMatchObject({
+      tool: 'describe_clip', window: { t_start_us: 2_000_000, t_end_us: 5_000_000 },
+    })
+  })
+
+  it('keys a description by its source window, whichever layer and spelling name it', () => {
+    const moved = clipJobSpec('describe_clip', {
+      layer: layer({ id: 'l2', t_start_us: 9_000_000, t_end_us: 13_000_000 }), media: media({ id: 'm2' }),
+    })
+    expect(moved?.key).toBe(key({}, 'describe_clip'))
+    expect(key({ src_start_us: 2_000_000, src_end_us: 6_000_000 }, 'describe_clip')).toBe(key({}, 'describe_clip'))
+    expect(key({ src_start_us: 3_000_000 }, 'describe_clip')).not.toBe(key({}, 'describe_clip'))
   })
 
   it('is null for an unresolved slice, which runs as a plain call', () => {

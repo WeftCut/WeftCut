@@ -275,7 +275,7 @@ async fn read_media_resource(
     tail: &str,
     media: Option<MediaItem>,
 ) -> Result<ResourceResult, McpToolError> {
-    // tail = "{id}/thumbnail" | "{id}/frame/{t_us}" | "{id}/waveform"
+    // tail = "{id}/thumbnail" | "{id}/frame/{src_us}" | "{id}/waveform"
     let (id_part, sub) = tail.split_once('/').ok_or_else(|| {
         McpToolError::resource_not_found(format!("media URI missing sub-path: {uri}"), None)
     })?;
@@ -422,8 +422,9 @@ async fn read_description_resource(
 /// (mirrors `serve_frame`'s on-demand `jobs::extract_frame`). Idempotent pure
 /// view: the same source + default params key the same VSHOT sidecar, so
 /// repeated reads return byte-identical JSON; `analyze_clip` is the parameterized
-/// recompute path that shares this cache. Returns the WHOLE-source `ShotReport`
-/// (source-absolute times) — a media resource has no layer window to clip to.
+/// recompute path that shares this cache. Returns the WHOLE-source report in
+/// `analyze_clip`'s wire shape (`src_*` times, no `mapping`) — a media resource
+/// has no layer window to clip to.
 #[cfg(feature = "jobs")]
 async fn read_analysis_resource(
     b: &Backend,
@@ -456,7 +457,8 @@ async fn read_analysis_resource(
     let report = jobs::shot::cached_source_report(&b.cache, &media, &opts)
         .await
         .map_err(|e| McpToolError::internal_error(format!("shot analysis: {e:#}"), None))?;
-    let body = serde_json::to_value(&report).map_err(serialize_err)?;
+    let body = serde_json::to_value(super::tools::SourceShotReport::new(media.id, None, &report))
+        .map_err(serialize_err)?;
     text_resource(uri, &body)
 }
 
@@ -477,7 +479,7 @@ async fn serve_thumbnail(
             &media.id.to_string(),
             "thumbnail",
             &format!(
-                ", or read media://{}/frame/<t_us> for an on-demand extraction",
+                ", or read media://{}/frame/<src_us> for an on-demand extraction",
                 media.id
             ),
         );

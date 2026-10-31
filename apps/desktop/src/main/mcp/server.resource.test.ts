@@ -98,7 +98,7 @@ describe('resources/templates/list and resources/list', () => {
     const { resourceTemplates } = await client.listResourceTemplates()
     const templates = resourceTemplates.map((t) => t.uriTemplate).sort()
     expect(templates).toEqual(HOST_RESOURCE_TEMPLATES.map((t) => t.uriTemplate).sort())
-    for (const want of ['project://layers/{id}', 'project://tracks{?composition}', 'project://composition{?composition}', 'media://{id}/frame/{t_us}', 'media://{id}/thumbnail']) expect(templates).toContain(want)
+    for (const want of ['project://layers/{id}', 'project://tracks{?composition}', 'project://composition{?composition}', 'media://{id}/frame/{src_us}', 'media://{id}/thumbnail']) expect(templates).toContain(want)
     for (const t of resourceTemplates) expect(typeof t.description, t.uriTemplate).toBe('string')
   })
 
@@ -194,14 +194,14 @@ describe('read_project picture views answer an image block from the media reader
     expect(spy.mock.calls[0][0]).toBe(`media://${IMG}/frame/0`)
     expect(out.content[0]).toEqual({ type: 'image', data: 'SU1H', mimeType: 'image/jpeg' })
   })
-  it('media_frame needs t_us and reads media://{id}/frame/{t_us}', async () => {
+  it('media_frame needs src_us and reads media://{id}/frame/{src_us}', async () => {
     const ts = host()
     const spy = vi.fn(async (_u: string, _s?: string) => '{"ok":true,"result":{"contents":[{"uri":"u","mimeType":"image/jpeg","blob":"QUJD"}]}}')
-    await handleCallTool(fakeBackend(spy), () => ts, 'read_project', { view: 'media_frame', id: MID, t_us: 1_500_000 })
+    await handleCallTool(fakeBackend(spy), () => ts, 'read_project', { view: 'media_frame', id: MID, src_us: 1_500_000 })
     expect(spy.mock.calls[0][0]).toBe(`media://${MID}/frame/1500000`)
     const refused = await handleCallTool(fakeBackend(spy), () => ts, 'read_project', { view: 'media_frame', id: MID }) as { isError?: boolean; content: Array<{ text: string }> }
     expect(refused.isError).toBe(true)
-    expect(refused.content[0].text).toContain('t_us')
+    expect(refused.content[0].text).toContain('src_us')
     const noId = await handleCallTool(fakeBackend(spy), () => ts, 'read_project', { view: 'media_thumbnail' }) as { isError?: boolean; content: Array<{ text: string }> }
     expect(noId.isError).toBe(true)
     expect(noId.content[0].text).toContain('media id')

@@ -1,4 +1,4 @@
-//! On-demand frame extraction for `media://{id}/frame/{t_us}` MCP reads.
+//! On-demand frame extraction for `media://{id}/frame/{src_us}` MCP reads.
 //!
 //! Different shape from the import-time pipeline: there's no fixed set of
 //! derivatives to generate up front. Agents fan out across the timeline

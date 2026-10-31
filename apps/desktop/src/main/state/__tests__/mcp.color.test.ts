@@ -17,7 +17,7 @@ type Side = { x: number; y: number; mode: string }
 type KfEntry = {
   id: string
   t_us: number
-  t_local_us: number
+  local_t_us: number
   value: Rgba
   in: Side
   out: Side
@@ -141,7 +141,7 @@ describe('the rest of the keyframe family on a colour track', () => {
     const next = {
       mode: 'Keyframed',
       extrapolate: { before: 'Hold', after: 'Loop' },
-      value: track.keyframes!.map(({ id: _id, t_local_us: _local, preset_id: _preset, ...k }, i) => ({ ...k, value: i === 0 ? BLUE : RED })),
+      value: track.keyframes!.map(({ id: _id, local_t_us: _local, preset_id: _preset, ...k }, i) => ({ ...k, value: i === 0 ? BLUE : RED })),
     }
     expect(call(a, 'set_param_track', { layer_id: layerId, param_key: 'color', track: next }).ok).toBe(true)
     const after = readTrack(a, layerId)
@@ -155,7 +155,7 @@ describe('the rest of the keyframe family on a colour track', () => {
     const next = {
       mode: 'Keyframed',
       extrapolate: { before: 'Hold', after: 'Hold' },
-      value: track.keyframes!.map(({ id: _id, t_local_us: _local, preset_id: _preset, ...k }) => ({ ...k, value: 1 })),
+      value: track.keyframes!.map(({ id: _id, local_t_us: _local, preset_id: _preset, ...k }) => ({ ...k, value: 1 })),
     }
     expect(errorMessage(call(a, 'set_param_track', { layer_id: layerId, param_key: 'color', track: next })))
       .toContain("param 'color' takes an {r,g,b,a} colour")

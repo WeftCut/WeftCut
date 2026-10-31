@@ -15,7 +15,7 @@ export const CLIP_SLICE_TOOLS: ReadonlySet<string> = new Set([
   'detect_pauses', 'transcribe_clip', 'describe_clip', 'analyze_clip', 'extract_clip_audio',
 ])
 
-/** MCP clip compute tools shaped `{ a:{layer_id,t_us}, b:{layer_id,t_us} }` —
+/** MCP clip compute tools shaped `{ a:{layer_id,src_us}, b:{layer_id,src_us} }` —
  *  TWO nested clip slices, not a top-level `layer_id`, so they can't ride
  *  `CLIP_SLICE_TOOLS`. `compare_frames` compares one frame from each side. */
 export const TWO_SLICE_TOOLS: ReadonlySet<string> = new Set(['compare_frames'])

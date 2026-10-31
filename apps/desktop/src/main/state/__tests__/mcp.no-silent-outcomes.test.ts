@@ -488,11 +488,11 @@ describe('the audit probes refuse or change state', () => {
 
   it('ME17: preview_motif takes id, not the motif_id alias, and is schema-checked', async () => {
     const w = await world()
-    const alias = await call(w, 'preview_motif', { motif_id: 'lower-third', t_sec: 0 })
+    const alias = await call(w, 'preview_motif', { motif_id: 'lower-third', local_t_s: 0 })
     expect(alias.isError).toBe(true)
     expect(text(alias)).toContain('motif_id')
-    const untyped = await call(w, 'preview_motif', { id: 'lower-third', t_sec: '1' })
+    const untyped = await call(w, 'preview_motif', { id: 'lower-third', local_t_s: '1' })
     expect(untyped.isError).toBe(true)
-    expect(text(untyped)).toContain('t_sec')
+    expect(text(untyped)).toContain('local_t_s')
   })
 })

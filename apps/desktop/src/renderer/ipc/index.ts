@@ -2396,7 +2396,7 @@ export async function getMediaThumbnail(mediaId: string): Promise<string> {
 
 /// One frame of a source at `tUs` (source-absolute microseconds) as a `data:`
 /// URL, ready for an `img` src. Served through the same
-/// `media://{id}/frame/{t_us}` resource an agent reads, so the extraction is
+/// `media://{id}/frame/{src_us}` resource an agent reads, so the extraction is
 /// cached per `(source, t_us)` and re-showing a frame is a cache read rather
 /// than a second decode.
 ///
@@ -3030,8 +3030,8 @@ export async function reportAudioMeter(report: {
 /// makes a shot row's own source span the only join needed. Mirrors Rust
 /// `DescSegment` (`native/src/vlm/description.rs`).
 export interface DescSegment {
-  t_start_us: number;
-  t_end_us: number;
+  src_start_us: number;
+  src_end_us: number;
   text: string;
   tags: string[];
 }
@@ -3079,7 +3079,8 @@ export interface DescriptionCache {
 /// `(source, backend, model, fps, focus, language)` — so a second call over a
 /// window the same key already covers returns from disk with no model spawn.
 ///
-/// `t_start_us` / `t_end_us` default to the layer's own endpoints in Rust. The
+/// `src_start_us` / `src_end_us` (source time, the domain of the shot rows and
+/// the answer's segments) default to the source the layer plays, in Rust. The
 /// THREE view arguments — sampling, focus, language — are not on this signature
 /// at all: main fills them from the user's Settings → Video understanding
 /// (`main/mcp/server.ts`), which is what makes a run land in the view
@@ -3090,15 +3091,15 @@ export interface DescriptionCache {
 export async function describeClip(args: {
   purpose?: import("../../shared/description").DescriptionPurpose;
   layerId: string;
-  tStartUs?: number;
-  tEndUs?: number;
+  srcStartUs?: number;
+  srcEndUs?: number;
   requestId?: string;
 }): Promise<SceneDescription> {
   return throwIfCancelled(await invoke<SceneDescription | ComputeCancelledPayload>("describe_clip", {
     layer_id: args.layerId,
     purpose: args.purpose ?? "clip",
-    ...(args.tStartUs === undefined ? {} : { t_start_us: args.tStartUs }),
-    ...(args.tEndUs === undefined ? {} : { t_end_us: args.tEndUs }),
+    ...(args.srcStartUs === undefined ? {} : { src_start_us: args.srcStartUs }),
+    ...(args.srcEndUs === undefined ? {} : { src_end_us: args.srcEndUs }),
     ...(args.requestId ? { [COMPUTE_REQUEST_ID_ARG]: args.requestId } : {}),
   }));
 }

@@ -25,6 +25,6 @@ export function segmentsForSpan(
 ): readonly DescSegment[] {
   if (segments === null) return [];
   return segments
-    .filter((s) => s.t_start_us < srcEndUs && s.t_end_us > srcStartUs)
-    .sort((a, b) => a.t_start_us - b.t_start_us);
+    .filter((s) => s.src_start_us < srcEndUs && s.src_end_us > srcStartUs)
+    .sort((a, b) => a.src_start_us - b.src_start_us);
 }

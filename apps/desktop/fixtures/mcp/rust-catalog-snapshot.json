@@ -2,13 +2,9 @@
   "tools": [
     {
       "name": "analyze_audio",
-      "description": "Analyze original source audio from cached waveform peaks; local, read-only, no model. Returns source-absolute microseconds, bounded peak/RMS waveform bins, onset candidates and signed energy changes (dB), plus resolution and event counts. Choose music edit/alignment points, including outside a clip's trim. These are amplitude measurements, not beats, bars or melody recognition. At most 60 s per call; max_points affects only the summary. Peaks are cache-limited, not true-peak or LUFS. Wait for the waveform job if not ready. To place a source event at timeline T: src_in_us = source_us - (T - layer.t_start_us).",
+      "description": "Analyze original source audio from cached waveform peaks; local, read-only, no model. Returns bounded peak/RMS waveform bins, onset candidates and signed energy changes (dB), all in source µs (`src_*`), plus resolution and event counts. Choose music edit/alignment points, including outside a clip's trim. These are amplitude measurements, not beats, bars or melody recognition. At most 60 s per call; max_points affects only the summary. Peaks are cache-limited, not true-peak or LUFS. To land `src_us` at timeline T on a layer: `src_in_us = src_us - (T - t_start_us) * rate` (`rate` from project://tracks, 1 when absent).",
       "inputSchema": {
         "properties": {
-          "end_us": {
-            "description": "Source-absolute end, exclusive. Default start + 60 seconds, capped at media end. At most 60 seconds per call.",
-            "type": "integer"
-          },
           "max_points": {
             "description": "Maximum waveform summary bins, 1..1000 (default 200). Does not change event detection resolution.",
             "minimum": 0,
@@ -22,7 +18,11 @@
             "description": "Minimum short-time energy rise for onset candidates, 1..30 dB (default 6). Candidates are not beats or melody labels.",
             "type": "number"
           },
-          "start_us": {
+          "src_end_us": {
+            "description": "Source-absolute end, exclusive. Default start + 60 seconds, capped at media end. At most 60 seconds per call.",
+            "type": "integer"
+          },
+          "src_start_us": {
             "description": "Source-absolute start in microseconds, inclusive. Default 0.",
             "type": "integer"
           }
@@ -79,7 +79,7 @@
     },
     {
       "name": "analyze_clip",
-      "description": "Detect shot boundaries in a VideoClip layer. Deterministic, over the source (720p proxy preferred). Returns `{ shots: [{ index, t_start_us, t_end_us, keyframe_t_us, brightness, motion, sharpness, flags }], cut_scores: [{ t_us, score }] }`, all SOURCE-ABSOLUTE µs clipped to the layer's source window. `shots` is the cleaned segmentation (cuts closer than `min_shot_us` merged), `cut_scores` the raw cut signal (0..1). Per shot: `keyframe_t_us` is the midpoint cover frame; `brightness` mean luma 0..1; `sharpness` variance of the Laplacian (higher = sharper); `motion` 0..1 endpoint difference; `flags` may hold \"black\", \"freeze\", \"fade\". Optional `sensitivity` (0..1, default 0.4; lower = more cuts), `min_shot_us` (default 500000), `passes` (subset of \"shots\" / \"stats\" / \"events\", default all — drop \"stats\" / \"events\" for timing only). VideoClip layers only. To split at every cut in one edit use `auto_split_by_shot`.",
+      "description": "Detect shot boundaries in a VideoClip layer. Deterministic, over the source (720p proxy preferred). Returns `{ media_id, mapping, shots: [{ index, src_start_us, src_end_us, src_keyframe_us, brightness, motion, sharpness, flags }], cut_scores: [{ src_us, score }] }` in source µs, clipped to the source the layer plays; `mapping` places them on the timeline: t = t_start_us + (src - src_in_us) / rate. `shots` is the cleaned segmentation (cuts closer than `min_shot_us` merged), `cut_scores` the raw cut signal (0..1). Per shot: `src_keyframe_us` is the midpoint cover frame; `brightness` mean luma 0..1; `sharpness` variance of the Laplacian (higher = sharper); `motion` 0..1 endpoint difference; `flags` may hold \"black\", \"freeze\", \"fade\". Optional `sensitivity` (0..1, default 0.4; lower = more cuts), `min_shot_us` (default 500000), `passes` (subset of \"shots\" / \"stats\" / \"events\", default all — drop \"stats\" / \"events\" for timing only). VideoClip layers only. To split at every cut in one edit use `auto_split_by_shot`.",
       "inputSchema": {
         "properties": {
           "layer_id": {
@@ -113,7 +113,7 @@
     },
     {
       "name": "compare_frames",
-      "description": "Compare two video frames for perceptual similarity — dedup shots, match a cutaway. Each side is `{ layer_id, t_us }`: a VideoClip layer and a SOURCE-ABSOLUTE µs timestamp (the space `analyze_clip`'s `keyframe_t_us` and `media://{id}/frame/<t_us>` use); the two may be the same clip or different clips. Returns `{ phash_hamming, ssim, similar }`: `phash_hamming` is the 0..64 distance between the frames' perceptual hashes (0 = identical, 20+ = a different scene), `ssim` is structural similarity 0..1, and `similar` is `phash_hamming <= 10 && ssim >= 0.5`. Read-only; VideoClip layers only, errors naming the offending side.",
+      "description": "Compare two video frames for perceptual similarity — dedup shots, match a cutaway. Each side is `{ layer_id, src_us }`: a VideoClip layer and a source µs time (the space of `analyze_clip`'s `src_keyframe_us` and `media://{id}/frame/{src_us}`); the two may be the same clip or different clips. Returns `{ phash_hamming, ssim, similar }`: `phash_hamming` is the 0..64 distance between the frames' perceptual hashes (0 = identical, 20+ = a different scene), `ssim` is structural similarity 0..1, and `similar` is `phash_hamming <= 10 && ssim >= 0.5`. Read-only; VideoClip layers only, errors naming the offending side.",
       "inputSchema": {
         "properties": {
           "a": {
@@ -123,14 +123,14 @@
                 "description": "Target VideoClip layer id.",
                 "type": "string"
               },
-              "t_us": {
-                "description": "SOURCE-ABSOLUTE microseconds of the frame to sample (the space\n`analyze_clip`'s `keyframe_t_us` uses).",
+              "src_us": {
+                "description": "Source-absolute microseconds of the frame to sample (the space\n`analyze_clip`'s `src_keyframe_us` uses).",
                 "type": "integer"
               }
             },
             "required": [
               "layer_id",
-              "t_us"
+              "src_us"
             ],
             "type": "object"
           },
@@ -141,14 +141,14 @@
                 "description": "Target VideoClip layer id.",
                 "type": "string"
               },
-              "t_us": {
-                "description": "SOURCE-ABSOLUTE microseconds of the frame to sample (the space\n`analyze_clip`'s `keyframe_t_us` uses).",
+              "src_us": {
+                "description": "Source-absolute microseconds of the frame to sample (the space\n`analyze_clip`'s `src_keyframe_us` uses).",
                 "type": "integer"
               }
             },
             "required": [
               "layer_id",
-              "t_us"
+              "src_us"
             ],
             "type": "object"
           }
@@ -184,7 +184,7 @@
     },
     {
       "name": "extract_clip_audio",
-      "description": "Extract a VideoClip or Audio layer's ORIGINAL source audio — before gain, mute, effects or mixing — for an agent running its own speech model; no engine or API key is involved and nothing is uploaded. Returns a JSON metadata block (`layer_id`, `media_id`, `t_start_us`, `t_end_us`, `source_in_us`, `source_out_us`, `duration_us`, `playback_rate`, `sample_rate_hz`, `channels`, `bits_per_sample`, `byte_length`, `mime_type`) plus an MCP audio block: base64 WAV, mono 16 kHz 16-bit, starting at zero. Optional `t_start_us`/`t_end_us` are composition-absolute µs, defaulting to the layer endpoints; at most 60 s of source audio per call — timeline windows ≤ 60 s / playback_rate. Map source-WAV offsets as `t_start_us + offset / playback_rate`, then `apply_transcripts`. Refuses a layer with no audio, a window outside the layer (a VideoClip's audio is its own stream, not its linked Audio layer).",
+      "description": "Extract a VideoClip or Audio layer's ORIGINAL source audio — before gain, mute, effects or mixing — for an agent running its own speech model; no engine or API key is involved and nothing is uploaded. Returns a JSON metadata block (`layer_id`, `media_id`, `t_start_us`, `t_end_us`, `src_in_us`, `src_out_us`, `duration_us`, `rate` {num, den}, `sample_rate_hz`, `channels`, `bits_per_sample`, `byte_length`, `mime_type`) plus an MCP audio block: base64 WAV, mono 16 kHz 16-bit, starting at zero. Optional `t_start_us`/`t_end_us` are timeline µs, defaulting to the layer endpoints; at most 60 s of source audio per call — timeline windows ≤ 60 s / rate. Map a WAV offset `w` to the timeline as `t_start_us + w / rate`, then `apply_transcripts`. Refuses a layer with no audio, a window outside the layer (a VideoClip's audio is its own stream, not its linked Audio layer).",
       "inputSchema": {
         "properties": {
           "layer_id": {
@@ -291,7 +291,7 @@
     },
     {
       "name": "describe_clip",
-      "description": "Describe a VideoClip layer's visual content as timestamped segments with a video-understanding model (local Qwen3-VL / MiniCPM-V, or an OpenAI-compatible endpoint). Samples the whole window at `fps` (default 1.0), 16 frames per request (endpoints: configurable), ≤3600 frames per call. Returns `{ backend, model, summary?, segments: [{ t_start_us, t_end_us, text, tags }] }` in SOURCE-ABSOLUTE µs; `text` is prose, `tags` short visual keywords; long windows add a `summary`. Cached per source range; an interrupted call resumes; `refresh` re-describes. `t_start_us`/`t_end_us` narrow the window; `focus` (\"general\" | \"shot-type\") steers `tags`; `language` (BCP-47, default: UI language). `backend` (\"qwen3_vl\" | \"minicpm_v\" | \"byo_endpoint\") REQUIRES that engine and errors naming what is missing, never substituting, so a local choice never uploads frames; omitted: preferred engine, then availability (local first). Retimed clips map onto source time.",
+      "description": "Describe a VideoClip layer's visual content as timestamped segments with a video-understanding model (local Qwen3-VL / MiniCPM-V, or an OpenAI-compatible endpoint). Samples the whole window at `fps` (default 1.0), 16 frames per request (endpoints: configurable), ≤3600 frames per call. Returns `{ backend, model, summary?, media_id, mapping, segments: [{ src_start_us, src_end_us, text, tags }] }`: source µs, placed on the timeline by `mapping` as `analyze_clip`'s are; `text` is prose, `tags` short visual keywords; long windows add a `summary`. Cached per source range; an interrupted call resumes; `refresh` re-describes. `src_start_us`/`src_end_us` (e.g. a shot's) narrow the window; `focus` (\"general\" | \"shot-type\") steers `tags`; `language` (BCP-47, default: UI language). `backend` (\"qwen3_vl\" | \"minicpm_v\" | \"byo_endpoint\") REQUIRES that engine and errors naming what is missing, never substituting, so a local choice never uploads frames; omitted: preferred engine, then availability (local first).",
       "inputSchema": {
         "properties": {
           "backend": {
@@ -328,12 +328,12 @@
             "description": "Describe again even when cached, replacing the earlier run (default\nfalse).",
             "type": "boolean"
           },
-          "t_end_us": {
-            "description": "Optional window end in timeline microseconds. Defaults to the layer's\n`t_end_us`. Must lie within the layer.",
+          "src_end_us": {
+            "description": "Optional exclusive window end, source-absolute microseconds. Defaults to\nthe end of the source the layer plays. Must lie within it.",
             "type": "integer"
           },
-          "t_start_us": {
-            "description": "Optional window start in timeline microseconds. Defaults to the layer's\n`t_start_us`. Must lie within the layer.",
+          "src_start_us": {
+            "description": "Optional window start, source-absolute microseconds (the space the\nanswer's segments and `analyze_clip`'s shots use). Defaults to the start\nof the source the layer plays. Must lie within it.",
             "type": "integer"
           }
         },

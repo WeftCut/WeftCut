@@ -524,12 +524,12 @@ async function dispatchTool(
       return toolRecord(effectsCatalogView()) as unknown as ServerResult
     }
     // The two picture views for a client without resources: served by the same
-    // Rust reader `media://{id}/thumbnail` and `media://{id}/frame/{t_us}` use,
+    // Rust reader `media://{id}/thumbnail` and `media://{id}/frame/{src_us}` use,
     // and answered as an IMAGE content block, which is what a model can look at.
     // A derivative not yet generated refuses with the reader's own hint.
     if (name === 'read_project' && (args.view === 'media_thumbnail' || args.view === 'media_frame')) {
       const p = mcpDef('read_project').parseDedicated!(args)
-      const uri = p.view === 'media_frame' ? `media://${p.id as string}/frame/${p.t_us as number}` : `media://${p.id as string}/thumbnail`
+      const uri = p.view === 'media_frame' ? `media://${p.id as string}/frame/${p.src_us as number}` : `media://${p.id as string}/thumbnail`
       // The resource reader answers a missing id with the resource vocabulary
       // (`not_found`, which over tools means "no such tool"); as a tool call it
       // is a bad argument, and the reader's own sentence says which.
@@ -615,13 +615,13 @@ async function dispatchTool(
     // route === 'rust' → fall through (other reads are served by the backend).
   }
   if (name === 'preview_motif') {
-    const a = args as { id: string; t_sec: number; props?: unknown; expected_revision?: string; width?: number | null; height?: number | null }
+    const a = args as { id: string; local_t_s: number; props?: unknown; expected_revision?: string; width?: number | null; height?: number | null }
     // One frame per call, at a time the caller names: an H4 run sent
     // `times_s: [...]`, got the t = 0 frame (nothing drawn yet) and concluded
     // the Motif was broken.
     const unknown = Object.keys(args).filter((k) => !PREVIEW_MOTIF_ARGS.has(k))
-    if (unknown.length) return toolErrorResult({ code: 'invalid_params', message: `preview_motif does not take ${unknown.join(', ')}; it renders one frame per call at t_sec`, data: { field: unknown[0] } })
-    // The schema check every motif tool runs: `id` and `t_sec` present and
+    if (unknown.length) return toolErrorResult({ code: 'invalid_params', message: `preview_motif does not take ${unknown.join(', ')}; it renders one frame per call at local_t_s`, data: { field: unknown[0] } })
+    // The schema check every motif tool runs: `id` and `local_t_s` present and
     // typed, named together.
     const refused = await refuseBadArgs(backend, name, args)
     if (refused) return refused
@@ -662,7 +662,7 @@ async function dispatchTool(
     const fits = [a.width != null ? a.width / canvasW : null, a.height != null ? a.height / canvasH : null].filter((f): f is number => f !== null)
     const scale = fits.length ? Math.min(2, ...fits) : 1
     const b64 = await captureMotifFrameB64({
-      motifId, tSec: a.t_sec ?? 0, propsJson: JSON.stringify(props),
+      motifId, tSec: a.local_t_s ?? 0, propsJson: JSON.stringify(props),
       width: canvasW, height: canvasH, scale, settleRafs: null, contentHash: source?.revision ?? '',
       ...(rootFps ? { fpsNum: rootFps.num, fpsDen: rootFps.den } : {}),
     })
@@ -827,7 +827,7 @@ function openCommitWindow(actor: ActorHandle): McpCommitWindow {
 }
 
 /** One media frame as a `data:` URL the renderer can put straight in an `img`
- *  src, read through the SAME `media://{id}/frame/{t_us}` resource an agent
+ *  src, read through the SAME `media://{id}/frame/{src_us}` resource an agent
  *  reads: Rust extracts the frame once and caches it per `(file_hash, t_us)`,
  *  so the shot-review surface's cover frames cost one extract each however
  *  often they are re-shown.
@@ -842,8 +842,8 @@ function openCommitWindow(actor: ActorHandle): McpCommitWindow {
 /** `render_frames`: export-path stills of the root, at given times or sampled
  *  over beats' spans (`frameSamples.ts`), as images plus what each shows. */
 async function renderFrames(backend: Backend, getTsHost: () => TsActorHost | null, tsHost: TsActorHost, jobs: NonNullable<TsActorHost['exportJobs']>, args: Record<string, unknown>): Promise<ServerResult> {
-  const times = args.times_us, ids = args.layer_ids
-  if ((times === undefined) === (ids === undefined)) throw new ExportJobError('invalid_params', 'Pass exactly one of times_us or layer_ids')
+  const times = args.t_us, ids = args.layer_ids
+  if ((times === undefined) === (ids === undefined)) throw new ExportJobError('invalid_params', 'Pass exactly one of t_us or layer_ids')
   const width = args.width === undefined ? 640 : args.width
   if (!Number.isInteger(width) || (width as number) < 160 || (width as number) > 1920) throw new ExportJobError('invalid_params', 'width must be an integer from 160 to 1920')
   const sheet = args.sheet === undefined ? true : args.sheet
@@ -858,11 +858,11 @@ async function renderFrames(backend: Backend, getTsHost: () => TsActorHost | nul
     for (const m of media) {
       const res = await handleReadResource(backend, getTsHost, `media://${m}/analysis`).catch(() => null)
       const text = (res as { contents?: Array<{ text?: string }> } | null)?.contents?.[0]?.text
-      try { shots.set(m, text ? (JSON.parse(text) as { shots?: Array<{ t_start_us: number }> }).shots?.map((s) => s.t_start_us) ?? null : null) } catch { shots.set(m, null) }
+      try { shots.set(m, text ? (JSON.parse(text) as { shots?: Array<{ src_start_us: number }> }).shots?.map((s) => s.src_start_us) ?? null : null) } catch { shots.set(m, null) }
     }
     try { samples = beatSamples(snap, ids as string[], (m) => shots.get(m) ?? null) } catch (e) { throw new ExportJobError('invalid_params', (e as Error).message) }
   } else {
-    if (!Array.isArray(times) || !times.length || times.length > 24 || times.some((t) => !Number.isInteger(t) || (t as number) < 0)) throw new ExportJobError('invalid_params', 'times_us must be 1 to 24 non-negative integers')
+    if (!Array.isArray(times) || !times.length || times.length > 24 || times.some((t) => !Number.isInteger(t) || (t as number) < 0)) throw new ExportJobError('invalid_params', 't_us must be 1 to 24 non-negative integers')
     samples = (times as number[]).map((t_us) => ({ t_us }))
   }
   const r = await jobs.renderStills({ times_us: samples.map((s) => s.t_us), width: width as number, sheet })

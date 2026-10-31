@@ -183,6 +183,10 @@ export class ExportJobs {
         }
       };
       checkWireKeys(a.settings); checkWireKeys(a.range);
+      if (a.range !== undefined && a.range !== null && typeof a.range === 'object') {
+        const extra = Object.keys(a.range).filter(k => k !== 't_start_us' && k !== 't_end_us');
+        if (extra.length) throw new ExportValidationError(`range does not take ${extra.join(', ')}; it takes t_start_us and t_end_us, timeline µs`);
+      }
     }
     // Snapshot the selected recipe before any await; edits cannot change an admitted job.
     const preset = this.preset(a.preset_id);

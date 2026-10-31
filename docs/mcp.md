@@ -149,6 +149,18 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   every write tool (TS, Motif, export, Rust) alone on a fixture project and
   fails unless the state changed or the call refused; its exceptions are an
   explicit list, each with a reason.
+- **The time base is in the name.** `t_*` is timeline-absolute (the owning
+  composition's clock), `src_*` source-absolute (the media file's own time),
+  `local_*` layer-local (µs from the layer's `t_start_us`); a few names put a
+  role word before the base (`at_t_us`, `from_t_us`, `end_t_us`). A bare
+  `_us` / `_s` is a duration (`duration_us`, `pad_us`, `delta_us`). A result
+  in source time for a layer carries that layer's `mapping { layer_id,
+  t_start_us, src_in_us, rate: {num, den}, source_phase? }`: timeline
+  `t = t_start_us + (src − src_in_us − source_phase.in) / rate`.
+  `project://tracks` envelopes carry `media_id` and `rate` (when ≠ 1) for the
+  same sum. Gate: `mcp.time-base-names.test.ts` walks every input property
+  and every result key a description documents; its exceptions are explicit
+  lists.
 
 ### Projects and the no-project rule
 
@@ -188,8 +200,8 @@ exists.
 | `project://composition` | one composition's settings only (no tracks); `?composition=<id>` for a Group's |
 | `project://compositions` | every composition with `ref_count` (Group layers pointing at it; 0 = root or orphan) |
 | `project://media` | media pool |
-| `project://tracks` | a composition's tracks (`enabled`, `locked`, `role`) with layer **envelopes** — what an agent plans timeline edits against |
-| `project://layers/{id}` | one layer in full, from any composition |
+| `project://tracks` | a composition's tracks (`enabled`, `locked`, `role`) with layer **envelopes** (`media_id`, `rate` when ≠ 1) — what an agent plans timeline edits against |
+| `project://layers/{id}` | one layer in full, from any composition; stored key times as `local_t_us` |
 | `project://markers` | a composition's markers, with `anchor_layer`, `anchor_src_us`, `hibernating` |
 | `project://links` | a composition's links `{ id, members }` |
 | `project://transitions` | a composition's transitions |
@@ -202,9 +214,9 @@ exists.
 | `composition://meter` | preview master-bus level `{ live, rms_db, peak_db }`, pushed ~2 Hz, `live: false` after 2 s of silence; a tap on what the user hears, never a render. Per-role meters reach no MCP surface ([audio.md](audio.md#meters)) |
 | `media://{id}` | one pooled file as a card (`used_by`, sub-resources). `resources/list` names one per file and `list_changed` fires on pool changes, so clients can @-mention media |
 | `media://{id}/thumbnail` | middle thumbnail JPG |
-| `media://{id}/frame/{t_us}` | frame at a source time, lazy-cached |
+| `media://{id}/frame/{src_us}` | frame at a source time, lazy-cached |
 | `media://{id}/waveform` | peaks file |
-| `media://{id}/analysis` | deterministic shot report at default params, computed on a miss, shared with `analyze_clip` |
+| `media://{id}/analysis` | deterministic shot report at default params (`analyze_clip`'s `src_*` shape, no `mapping`), computed on a miss, shared with `analyze_clip` |
 | `media://{id}/description` | cached clip descriptions for the app's preferred engine and settings; `404` until `describe_clip` (purpose `clip`) ran; never runs inference |
 | `media://{id}/shot-description` | the same for purpose `shot` |
 | `effects://catalog` | every effect kind with param defaults, ranges and the keyframe path |
@@ -214,7 +226,7 @@ Templates (`resources/templates/list`, RFC 6570): `project://layers/{id}`,
 `project://composition{?composition}`, `project://tracks{?composition}`,
 `project://markers{?composition}`, `project://links{?composition}`,
 `project://transitions{?composition}`, `project://tacks{?composition}`,
-`media://{id}`, `media://{id}/thumbnail`, `media://{id}/frame/{t_us}`,
+`media://{id}`, `media://{id}/thumbnail`, `media://{id}/frame/{src_us}`,
 `media://{id}/waveform`, `media://{id}/analysis`, `media://{id}/description`,
 `media://{id}/shot-description`. `?composition=` is the only query a
 `project://` read takes; an unknown key or a scope on a project-wide read is
@@ -269,9 +281,10 @@ deleted entities keep a name).
 
 ### Analysis tools
 
-- `analyze_audio` — the original source audio of a media item (before gain,
-  fades, effects, mix), source-absolute: waveform, onsets and energy changes
-  from the finest waveform cache, ≤ 60 s windows. Envelope estimates, not
+- `analyze_audio { media_id, src_start_us?, src_end_us? }` — the original
+  source audio of a media item (before gain, fades, effects, mix): waveform,
+  onsets (`src_us`) and energy changes from the finest waveform cache, ≤ 60 s
+  windows. Envelope estimates, not
   beats or LUFS. To show candidates, tack them; analysis never edits.
 - `detect_pauses` — pauses from the peaks of what plays: the baked effect
   sibling's when ready, else the media's (`peaks_source` `fx`/`raw`). A
@@ -284,12 +297,14 @@ deleted entities keep a name).
   edit. Linked partners are cut on the frame grid together. Refuses whole with
   `delete_layers { ripple: true }`'s refusals by name. For review first, use
   `detect_pauses` + one `create_tacks` batch.
-- `analyze_clip` — deterministic shot boundaries, `cut_scores` and per-shot
+- `analyze_clip` — deterministic shot boundaries (`src_start_us`,
+  `src_end_us`, `src_keyframe_us`), `cut_scores` (`src_us`) and per-shot
   brightness / motion / sharpness and `black` / `freeze` / `fade` flags for a
-  VideoClip, source-absolute. Defaults `sensitivity=0.4`,
+  VideoClip, with `media_id` and the layer's `mapping`. Defaults `sensitivity=0.4`,
   `min_shot_us=500000` (`shot_default_opts`). Stats are advisory (proxy
   decode); flags are deterministic.
-- `compare_frames` — pHash Hamming distance + MSSIM of two source frames;
+- `compare_frames` — pHash Hamming distance + MSSIM of two source frames
+  (`{ layer_id, src_us }` each);
   `similar` = `phash_hamming <= 10 && ssim >= 0.5`. Cross-aspect pairs lean on
   the pHash.
 - `describe_clip`, `transcribe_clip`, `extract_clip_audio` — see *Speech* and
@@ -367,9 +382,10 @@ VideoClip, ImageOverlay, Text, Motif and CompositionRef layers have one active
 position is its anchor; other kinds use the unrotated top-left (ADR 0060).
 
 - `set_position { layer_id, position }` replaces the complete record in one
-  undo entry. Key `t_us` inside it is **layer-local microseconds**, unlike the
-  timeline-absolute times of `set_keyframe` / `set_param_track`. Keys need only
-  `{t_us, value}`; nodes need only `{ point }` (handles default to zero,
+  undo entry. Its keys are timed `local_t_us`, **layer-local microseconds**,
+  unlike the timeline-absolute `t_us` of `set_keyframe` / `set_param_track`;
+  the answer echoes them the same way. Keys need only
+  `{local_t_us, value}`; nodes need only `{ point }` (handles default to zero,
   `segment` to `"Line"`, `tangent_mode` to `"Corner"`). WeftCut generates every
   node and key id; sending `id` is refused. It replaces motion; it does not fit
   or bake. Bounds: 1–128 nodes, coordinates within ±10 million px.
@@ -422,7 +438,7 @@ sides with `out` last, continuity; easing presets from
 `set_extrapolation`, `clear_keyframes`, `set_param_track` (whole track in one
 entry; keys need only `{t_us, value}`). Bulk authoring
 (`set_param_track`, `set_position`) refuses caller ids, including ids copied
-from a read (also omit `t_local_us` and `preset_id`): WeftCut allocates UUIDs
+from a read (also omit `local_t_us` and `preset_id`): WeftCut allocates UUIDs
 because native export requires them, and project load rejects a non-UUID
 keyframe id rather than regenerating it. Every replacement mints fresh ids, so
 these tools are not idempotent. Values are typed by `param_key` (`{r,g,b,a}`
@@ -478,7 +494,7 @@ CompositionRef retime; static images, Text and Color do not.
 Motifs ([motif-workspaces.md](motif-workspaces.md)): `list_motifs`,
 `open_motif_draft`, `read_motif`, `update_motif_files` (revision-checked
 batch; exact-match `edits`), `preview_motif` (whole canvas scaled to bounds,
-never cropped; `id`, no alias), `install_motif` (publishes; replacing another
+never cropped; `id`, no alias; `local_t_s` is seconds from the Motif's start, not timeline time), `install_motif` (publishes; replacing another
 target needs its version), `export_motif` (with `path`: an absolute `.zip` in
 an existing folder; an existing file is `PathExists`, never overwritten;
 annotated destructive), `delete_motif`, and the transfer tools
@@ -570,6 +586,7 @@ Export jobs are application-session jobs shared with the UI (ADR 0111).
   `retry_export` (an `awaiting_retry` finalization), `cancel_export`. With
   `preset_id`, its values then per-job `settings`; otherwise saved project
   settings over the default preset. Neither writes the project or a preset.
+  `range` is `{ t_start_us, t_end_us }`, timeline µs, half-open.
   Reuse a `request_id` only when unsure a request arrived; different arguments
   under one id fail. Conflict policy `rename` (default) or `fail`; MCP never
   overwrites. Settings, `output_path` (absolute, in an existing folder, the
@@ -582,7 +599,7 @@ Export jobs are application-session jobs shared with the UI (ADR 0111).
   editing and project switching until terminal; closing MCP does not affect
   the job; jobs do not survive an app restart.
 - `render_frames` — read-only JPEGs of the root through the export pipeline
-  (same decode, Motif frames and compositor), at `times_us` (1–24) or sampled
+  (same decode, Motif frames and compositor), at timeline `t_us` (1–24) or sampled
   over `layer_ids` (settled, middle, exit, after each cut and shot change;
   ≤ 24); a labelled contact sheet by default. Refused while an export runs or
   before the editor has announced the project.
@@ -772,8 +789,9 @@ refuse naming the Settings panel.
   (≤ +24 dB) to a private copy and reports it.
 - `extract_clip_audio` — for an agent with its own speech model: a JSON block
   plus a base64 mono 16 kHz 16-bit WAV of the **original source audio** (before
-  gain, effects, mix), ≤ 60 s of source per call; offset `w` maps to
-  `t_start_us + w / playback_rate`. Resolves no backend, uploads nothing, needs
+  gain, effects, mix), ≤ 60 s of source per call; the block's window is
+  `t_start_us`/`t_end_us` and `src_in_us`/`src_out_us` with `rate {num, den}`,
+  so offset `w` maps to `t_start_us + w / rate`. Resolves no backend, uploads nothing, needs
   nothing configured.
 - `synthesize_speech` — OpenAI tts-1 to `Cache/voiceover/<hash>.mp3`,
   imported and placed on an Audio track (default start: composition end;
@@ -799,8 +817,9 @@ Qwen3-VL and MiniCPM-V (`llama-mtmd-cli` sidecars) and an OpenAI-compatible
 endpoint (a hosted VLM is the same describer with another URL). All get the
 same sampled frames with `<t s>` markers.
 
-- `describe_clip` — source-absolute `{ backend, model, summary?, segments }`
-  for a layer window, sampled at `fps` everywhere in the window (never sparser
+- `describe_clip` — `{ backend, model, summary?, media_id, mapping,
+  segments: [{ src_start_us, src_end_us, text, tags }] }` for a source window
+  (`src_start_us`/`src_end_us`, default the source the layer plays), sampled at `fps` everywhere in the window (never sparser
   for longer windows), described in chunks (16 frames locally; 1–64 and up to
   8 concurrent for an endpoint). Over 3600 frames is refused naming the longest
   window that fits. `fps`, `focus` and `language` default to the app's

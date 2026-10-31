@@ -221,7 +221,7 @@ function authoringFields(o: Record<string, unknown>, allowed: string[], field: s
 /** Materialize the ID-free authoring shape into the complete stored record.
  *  The actor supplies its ID generator; no user ID can reach native export.
  *  Stored project parsing remains strict and does not use these defaults. */
-function parseAnimatedTrackWith<T>(v: unknown, parseValue: (v: unknown, field: string) => T, idGen: IdGen): Animated<T> {
+function parseAnimatedTrackWith<T>(v: unknown, parseValue: (v: unknown, field: string) => T, idGen: IdGen, keyTime: 't_us' | 'local_t_us' = 't_us'): Animated<T> {
   if (v === null || typeof v !== 'object') throw new McpArgError(`invalid track: not an object`)
   const o = v as Record<string, unknown>
   authoringFields(o, ['mode', 'value', 'extrapolate'], 'track')
@@ -233,11 +233,11 @@ function parseAnimatedTrackWith<T>(v: unknown, parseValue: (v: unknown, field: s
       const k = raw as Record<string, unknown>
       if ('interp' in k)
         throw new McpArgError(`invalid track: keyframe carries the retired per-segment "interp" field — a key is ${KEY_SHAPE}; the easing of a segment is this key's segment + out and the next key's in`)
-      authoringFields(k, ['t_us', 'time_fraction', 'value', 'in', 'out', 'continuity', 'segment'], `keyframe[${i}]`)
-      if (!Number.isSafeInteger(k.t_us)) throw new McpArgError(`invalid track: keyframe t_us must be an integer number of microseconds`)
+      authoringFields(k, [keyTime, 'time_fraction', 'value', 'in', 'out', 'continuity', 'segment'], `keyframe[${i}]`)
+      if (!Number.isSafeInteger(k[keyTime])) throw new McpArgError(`invalid track: keyframe ${keyTime} must be an integer number of microseconds`)
       const value = parseValue(k.value, `invalid track: keyframe[${i}].value`)
       return {
-        id: idGen(), t_us: k.t_us as number, value,
+        id: idGen(), t_us: k[keyTime] as number, value,
         ...(k.time_fraction === undefined ? {} : { time_fraction: parseTimeFraction(k.time_fraction) }),
         in: k.in === undefined ? { ...IN_IDENTITY, mode: 'Free' } : parseTangent(k.in, 'in'),
         out: k.out === undefined ? { ...OUT_IDENTITY, mode: 'Free' } : parseTangent(k.out, 'out'),
@@ -267,6 +267,12 @@ export function parseAnimatedTrack(v: unknown, paramKey: string, idGen: IdGen = 
  *  numbers whatever the param is named. */
 export function parseAnimatedF64(v: unknown, idGen: IdGen = uuidV7Gen()): Animated<number> {
   return parseAnimatedTrackWith<number>(v, parseNum, idGen)
+}
+
+/** A `set_position` track: its keys are timed `local_t_us`, µs from the
+ *  layer's start — the base they are stored in, named so. */
+function parseLocalAnimatedF64(v: unknown, idGen: IdGen): Animated<number> {
+  return parseAnimatedTrackWith<number>(v, parseNum, idGen, 'local_t_us')
 }
 
 /** Gate a structural patch/props argument: a plain JSON object, never a
@@ -475,7 +481,7 @@ export function parsePosition(v: unknown, idGen: IdGen = uuidV7Gen()): Record<st
   authoringFields(input, input.mode === 'XY' ? ['mode', 'x', 'y'] : ['mode', 'path', 'progress'], 'position')
   let o: Record<string, unknown>
   if (input.mode === 'XY') {
-    o = { mode: 'XY', x: parseAnimatedF64(input.x, idGen), y: parseAnimatedF64(input.y, idGen) }
+    o = { mode: 'XY', x: parseLocalAnimatedF64(input.x, idGen), y: parseLocalAnimatedF64(input.y, idGen) }
   } else if (input.mode === 'Path') {
     const path = parseObj(input.path, 'position.path')
     authoringFields(path, ['nodes'], 'position.path')
@@ -487,7 +493,7 @@ export function parsePosition(v: unknown, idGen: IdGen = uuidV7Gen()): Record<st
         segment: node.segment === undefined ? 'Line' : node.segment,
         tangent_mode: node.tangent_mode === undefined ? 'Corner' : node.tangent_mode }
     })
-    o = { mode: 'Path', path: { nodes }, progress: parseAnimatedF64(input.progress, idGen) }
+    o = { mode: 'Path', path: { nodes }, progress: parseLocalAnimatedF64(input.progress, idGen) }
   } else throw new McpArgError('position: mode must be XY or Path', 'position')
   const problem = positionProblem(o)
   if (problem !== null) throw new McpArgError(`position: ${problem}`, 'position')
@@ -739,7 +745,7 @@ export function toolJson(v: unknown): ToolResultJson { return { content: [{ type
 
 /** get_param_track result shape (NOT the raw Animated serde): Static →
  *  {mode,value}; Keyframed → {mode, extrapolate, keyframes:[{id, t_us
- *  (timeline-absolute = local + t_start), t_local_us (stored base), value, in,
+ *  (timeline-absolute = local + t_start), local_t_us (stored base), value, in,
  *  out, continuity, segment, preset_id?}]}. preset_id is the exact-match reverse
  *  lookup of the segment LEAVING the key (this key's segment + out, the next
  *  key's in) against the canonical easing table — present only when that
@@ -755,7 +761,7 @@ export function shapeGetParamTrack<T>(track: Animated<T>, tStartUs: number): unk
       const next = track.value[i + 1]
       const presetId = next === undefined ? undefined : presetIdForSegment(k, next)
       return {
-        id: k.id, t_us: k.t_us + tStartUs, t_local_us: k.t_us, value: k.value,
+        id: k.id, t_us: k.t_us + tStartUs, local_t_us: k.t_us, value: k.value,
         ...(k.time_fraction === undefined ? {} : { time_fraction: k.time_fraction }),
         in: k.in, out: k.out, continuity: k.continuity, segment: k.segment,
         ...(presetId === undefined ? {} : { preset_id: presetId }),
@@ -1346,7 +1352,7 @@ function animTrackSchema(value: Record<string, unknown>, staticTypes: string[], 
         items: {
           type: 'object',
           properties: {
-            t_us: US_SCHEMA('Key time; timeline-absolute for set_param_track, layer-local for set_position'), value,
+            t_us: US_SCHEMA('Key time, timeline'), value,
             time_fraction: { type: 'object', description: 'Optional exact sub-microsecond remainder; keeps retimed keys unsnapped.', properties: { num: { type: 'integer', description: '0 <= num < den.' }, den: { type: 'integer', description: 'Positive denominator; reduced fraction.' } }, required: ['num', 'den'], additionalProperties: false },
             in: { ...TANGENT_SCHEMA, description: 'Optional arriving tangent; defaults to identity, Free.' }, out: { ...TANGENT_SCHEMA, description: 'Optional leaving tangent; defaults to identity, Free.' },
             continuity: { type: 'string', enum: ['Smooth', 'Broken'], description: 'Defaults to Broken. Smooth keeps both Free sides at equal slopes on write.' },
@@ -1374,13 +1380,13 @@ const SCALAR_TRACK_SCHEMA = {
     mode: { type: 'string', enum: ['Static', 'Keyframed'], description: 'Static number or animated keys.' },
     value: { type: ['number', 'array'], description: 'Number, or keys with generated IDs (omit id).', items: {
       type: 'object', properties: {
-        t_us: { type: 'integer', description: 'Layer-local time, µs.' },
+        local_t_us: { type: 'integer', description: 'Layer-local key time, µs.' },
         value: { type: 'number', description: 'Scalar value.' },
         in: { type: 'object', description: 'Arriving {x,y,mode}; defaults to identity/Free.' },
         out: { type: 'object', description: 'Leaving {x,y,mode}; defaults to identity/Free.' },
         continuity: { type: 'string', enum: ['Smooth', 'Broken'], description: 'Defaults to Broken.' },
         segment: { type: 'object', description: '{kind,...} from set_param_track; defaults to Linear.' },
-      }, required: ['t_us', 'value'], additionalProperties: false,
+      }, required: ['local_t_us', 'value'], additionalProperties: false,
     } },
     extrapolate: { type: 'object', description: 'Optional {before,after}: Hold/Loop/PingPong/Offset/Continue; Path progress allows the first three. Defaults to Hold/Hold.' },
   },
@@ -1513,7 +1519,7 @@ export type ReadProjectView = (typeof READ_PROJECT_VIEWS)[number]
 // The dedicated stubs exist only so the MCP_TOOLS projection stays complete;
 // their behavior lives in actor.ts arms.
 export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
-  {name:'set_position',exec:'table',annotations:ANN_WRITE,description:"Replace a layer's position outright: XY tracks, or a motion path with a scalar `progress` track. Times are layer-local µs. Existing XY animation is replaced only by this explicit call. IDs are generated; omit all node/key ids. Keys need only t_us/value (Linear, identity tangents); nodes need only point (Line, Corner, zero handles). One undo step.",inputSchema:{type:'object',properties:{layer_id:LAYER_ID_SCHEMA,position:POSITION_SCHEMA},required:['layer_id','position']},parseArgs:(a,idGen)=>({op:'set_position',args:{layer:parseUuid(a.layer_id,'layer_id'),position:parsePosition(a.position,idGen)}})},
+  {name:'set_position',exec:'table',annotations:ANN_WRITE,description:"Replace a layer's position outright: XY tracks, or a motion path with a scalar `progress` track. Existing XY animation is replaced only by this explicit call. IDs are generated; omit all node/key ids. Keys need only local_t_us/value (Linear, identity tangents); nodes need only point (Line, Corner, zero handles). One undo step.",inputSchema:{type:'object',properties:{layer_id:LAYER_ID_SCHEMA,position:POSITION_SCHEMA},required:['layer_id','position']},parseArgs:(a,idGen)=>({op:'set_position',args:{layer:parseUuid(a.layer_id,'layer_id'),position:parsePosition(a.position,idGen)}})},
   {name:'translate_path',exec:'table',annotations:ANN_WRITE,description:"Translate the entire spatial path in composition pixels, preserving its geometry and progress animation. Requires Path mode. One undo step.",inputSchema:{type:'object',properties:{layer_id:LAYER_ID_SCHEMA,dx:{type:'number',description:'Shift in x, composition px.'},dy:{type:'number',description:'Shift in y, composition px.'}},required:['layer_id','dx','dy']},parseArgs:a=>({op:'translate_path',args:{layer:parseUuid(a.layer_id,'layer_id'),dx:parseNum(a.dx,'dx'),dy:parseNum(a.dy,'dy')}})},
   // ── table-exec: tracks ───────────────────────────────────────────────────
   { name: 'add_track', exec: 'table', annotations: ANN_WRITE,
@@ -1680,9 +1686,9 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')) },
     }) },
   { name: 'ripple_delete_gap', exec: 'table', annotations: ANN_DESTRUCTIVE,
-    description: "Close a GAP — an empty span on one track between two layer boundaries — so everything after it moves left and the film gets shorter; nothing is deleted. `[start_us, end_us)` must be the whole gap as it is now: `end_us` exactly where a layer on `track_id` starts, `start_us` exactly where one ends (or 0 before the first clip); the space after the last clip is not a gap. Otherwise `GapNotFound` carries the span you sent — re-read `project://tracks` and retry. The closing is `delete_layers { ripple: true }`'s: every layer starting at or after `end_us` on every track shifts left, anchored markers follow, free markers and the playhead stay. Refuses whole with the same names — `RippleInsideHole` (a layer on another track starts inside the gap: delete it first), `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer` / `TrackLocked` (a gap on a locked lane always refuses). One recorded edit.",
-    inputSchema: { type: 'object', properties: { track_id: { type: 'string', description: 'The track the gap is on.' }, start_us: US_SCHEMA('Gap start, timeline'), end_us: US_SCHEMA('Gap end (exclusive), timeline') }, required: ['track_id', 'start_us', 'end_us'] },
-    parseArgs: (a) => ({ op: 'ripple_delete_gap', args: { track: parseUuid(a.track_id, 'track_id'), s: parseNum(a.start_us, 'start_us'), e: parseNum(a.end_us, 'end_us') } }) },
+    description: "Close a GAP — an empty span on one track between two layer boundaries — so everything after it moves left and the film gets shorter; nothing is deleted. `[t_start_us, t_end_us)` must be the whole gap as it is now: `t_end_us` exactly where a layer on `track_id` starts, `t_start_us` exactly where one ends (or 0 before the first clip); the space after the last clip is not a gap. Otherwise `GapNotFound` carries the span you sent — re-read `project://tracks` and retry. The closing is `delete_layers { ripple: true }`'s: every layer starting at or after `t_end_us` on every track shifts left, anchored markers follow, free markers and the playhead stay. Refuses whole with the same names — `RippleInsideHole` (a layer on another track starts inside the gap: delete it first), `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer` / `TrackLocked` (a gap on a locked lane always refuses). One recorded edit.",
+    inputSchema: { type: 'object', properties: { track_id: { type: 'string', description: 'The track the gap is on.' }, t_start_us: US_SCHEMA('Gap start, timeline'), t_end_us: US_SCHEMA('Gap end (exclusive), timeline') }, required: ['track_id', 't_start_us', 't_end_us'] },
+    parseArgs: (a) => ({ op: 'ripple_delete_gap', args: { track: parseUuid(a.track_id, 'track_id'), s: parseNum(a.t_start_us, 't_start_us'), e: parseNum(a.t_end_us, 't_end_us') } }) },
   // ── table-exec: links ───────────────────────────────────────────────────
   { name: 'create_link', exec: 'table', annotations: ANN_WRITE,
     description: "Create a new link from >=2 distinct layer ids. If any layer is already in another link, the op fails unless `reassign=true`, which removes them from their prior link(s) first (auto-dissolving any link that falls below 2 members). Returns the link record (`link_id`, `members`).",
@@ -2137,7 +2143,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         t_us: parseNum(a.t_us, 't_us'), value: parseTrackValue(a.value, paramKey, 'value'), interp: parseInterpOpt(a.interp) }
     } },
   { name: 'get_param_track', exec: 'dedicated', annotations: ANN_READ,
-    description: "Read a layer param's animation track — the record to inspect before editing keys. Returns {\"mode\":\"Static\",\"value\":v} or {\"mode\":\"Keyframed\",\"extrapolate\":{before, after},\"keyframes\":[{id, t_us, t_local_us, time_fraction?, value, in, out, continuity, segment, preset_id?}]}. `t_us` is timeline-absolute, `t_local_us` layer-local; `value` is typed by `param_key`. Per key, `in`/`out` are the arriving/leaving tangents {x, y, mode} in the segment's unit square (\"Auto\" = solved on write, \"Free\" = authored), `continuity` is \"Smooth\" | \"Broken\", `segment` is the class of the segment leaving the key (\"Spline\" | \"Hold\" | \"Linear\" | \"Elastic\" | \"Bounce\"; only Spline reads tangents), and `preset_id` names the easing preset the leaving segment exactly matches (absent on a hand-tuned curve and the last key). Position params are mode-specific: x/y in XY mode, path_progress in Path mode (a fraction, not a percentage).",
+    description: "Read a layer param's animation track — the record to inspect before editing keys. Returns {\"mode\":\"Static\",\"value\":v} or {\"mode\":\"Keyframed\",\"extrapolate\":{before, after},\"keyframes\":[{id, t_us, local_t_us, time_fraction?, value, in, out, continuity, segment, preset_id?}]}. `t_us` is timeline-absolute, `local_t_us` layer-local; `value` is typed by `param_key`. Per key, `in`/`out` are the arriving/leaving tangents {x, y, mode} in the segment's unit square (\"Auto\" = solved on write, \"Free\" = authored), `continuity` is \"Smooth\" | \"Broken\", `segment` is the class of the segment leaving the key (\"Spline\" | \"Hold\" | \"Linear\" | \"Elastic\" | \"Bounce\"; only Spline reads tangents), and `preset_id` names the easing preset the leaving segment exactly matches (absent on a hand-tuned curve and the last key). Position params are mode-specific: x/y in XY mode, path_progress in Path mode (a fraction, not a percentage).",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, param_key: PARAM_KEY_SCHEMA }, required: ['layer_id', 'param_key'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key') }) },
   { name: 'delete_keyframe', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
@@ -2361,11 +2367,11 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), threshold_amp: parseNumOpt(a.threshold_amp, 'threshold_amp'), min_pause_us: parseNumOpt(a.min_pause_us, 'min_pause_us'), pad_us: parseNumOpt(a.pad_us, 'pad_us') }) },
   // ── dedicated-exec: reads, for a client without MCP resources ─────────────
   { name: 'read_project', exec: 'dedicated', annotations: ANN_READ,
-    description: "The `project://*` views as a tool result, for clients without resources. `view`: `current`, `composition`, `compositions`, `media` (with `id`, one item's card), `tracks` (layer envelopes), `layer` (needs `id`), `markers`, `links`, `transitions`, `settings` (preferences + metadata), `history`, `session` (who holds the session), `effects` (effects catalog), `tacks` (review tacks; `composition_id` narrows), `taste` (style tokens + provenance), `media_thumbnail` / `media_frame` (an IMAGE; `id` is the media id, `media_frame` takes `t_us`). `composition`, `tracks`, `markers`, `links`, `transitions` take `composition_id` for a Group's, the root when omitted. JSON views answer as text.",
+    description: "The `project://*` views as a tool result, for clients without resources. `view`: `current`, `composition`, `compositions`, `media` (with `id`, one item's card), `tracks` (layer envelopes), `layer` (needs `id`), `markers`, `links`, `transitions`, `settings` (preferences + metadata), `history`, `session` (who holds the session), `effects` (effects catalog), `tacks` (review tacks; `composition_id` narrows), `taste` (style tokens + provenance), `media_thumbnail` / `media_frame` (an IMAGE; `id` is the media id, `media_frame` takes `src_us`). `composition`, `tracks`, `markers`, `links`, `transitions` take `composition_id` for a Group's, the root when omitted. JSON views answer as text.",
     inputSchema: { type: 'object', properties: {
       view: { type: 'string', enum: [...READ_PROJECT_VIEWS], description: 'Which view to read.' },
       id: { type: 'string', description: 'The layer id for view `layer`; the media id for `media` (optional) / `media_thumbnail` / `media_frame`.' },
-      t_us: { type: 'integer', description: 'For `media_frame`: the frame time in the SOURCE, µs.' },
+      src_us: { type: 'integer', description: 'For `media_frame`: the frame time in the source, µs.' },
       composition_id: { type: 'string', description: 'For the per-composition views: a Group\'s composition; omit for the root.' },
     }, required: ['view'] },
     parseDedicated: (a) => {
@@ -2373,10 +2379,10 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       if (!READ_PROJECT_VIEWS.includes(view as ReadProjectView)) throw new McpArgError(`view must be one of ${READ_PROJECT_VIEWS.join(', ')}, got '${view}'`, 'view')
       const needsId = view === 'layer' || view === 'media_thumbnail' || view === 'media_frame'
       if (needsId && (a.id === undefined || a.id === null)) throw new McpArgError(`view '${view}' needs \`id\` — ${view === 'layer' ? 'the layer id (project://tracks lists them)' : 'the media id (project://media lists them)'}`, 'id')
-      if (view === 'media_frame' && (a.t_us === undefined || a.t_us === null)) throw new McpArgError("view 'media_frame' needs `t_us` — the frame time in the SOURCE, µs (media_thumbnail takes none)", 't_us')
-      const t_us = view === 'media_frame' ? parseNum(a.t_us, 't_us') : null
+      if (view === 'media_frame' && (a.src_us === undefined || a.src_us === null)) throw new McpArgError("view 'media_frame' needs `src_us` — the frame time in the source, µs (media_thumbnail takes none)", 'src_us')
+      const src_us = view === 'media_frame' ? parseNum(a.src_us, 'src_us') : null
       const takesId = needsId || (view === 'media' && a.id !== undefined && a.id !== null)
-      return { view, id: takesId ? parseUuid(a.id, 'id') : null, t_us, composition_id: parseCompositionIdOpt(a.composition_id) }
+      return { view, id: takesId ? parseUuid(a.id, 'id') : null, src_us, composition_id: parseCompositionIdOpt(a.composition_id) }
     } },
   // ── projects — executed by the MCP host (`mcp/projectTools.ts`), not the
   //    actor: opening swaps the actor's whole state and the renderer follows.

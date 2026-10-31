@@ -56,11 +56,11 @@ export const EXPORT_TOOL_DEFS = [
     on_conflict: { enum: ['rename', 'fail'], description: 'Default rename adds a number. Fail requires the exact name. Neither overwrites.' },
     preset_id: presetId,
     settings: { ...exportSettingsSchema(), description: 'Partial per-job overrides, applied after preset_id. Without preset_id, uses saved project settings then the global default. Does not change the preset or saved project settings.' },
-    range: { ...schema({ start_us: { type: 'integer', minimum: 0, description: 'Inclusive start in microseconds.' }, end_us: { type: 'integer', minimum: 1, description: 'Exclusive end in microseconds.' } }, ['start_us', 'end_us']), description: 'Span inside the root composition, snapped to its frame grid. Omit for the whole composition.' },
+    range: { ...schema({ t_start_us: { type: 'integer', minimum: 0, description: 'Inclusive start, timeline µs.' }, t_end_us: { type: 'integer', minimum: 1, description: 'Exclusive end, timeline µs.' } }, ['t_start_us', 't_end_us']), description: 'Span inside the root composition, snapped to its frame grid. Omit for the whole composition.' },
     allow_experimental_10bit: { type: 'boolean', description: 'Explicit opt-in for experimental HEVC/AV1 10-bit export.' },
   }), false, false),
-  definition('render_frames', 'See the root composition as export renders it — footage, Motifs, text, captions and Groups composited — as JPEGs. Pass times_us, or layer_ids to judge beats over their whole span: each is sampled settled, in the middle, in its exit, and just after every cut or shot change under it. Returns one labelled contact sheet (default) or one image per frame, plus the times and why each was taken. Read-only; refused while an export runs. Seconds per frame.', schema({
-    times_us: { type: 'array', items: { type: 'integer', minimum: 0 }, minItems: 1, maxItems: 24, description: 'Composition times in µs.' },
+  definition('render_frames', 'See the root composition as export renders it — footage, Motifs, text, captions and Groups composited — as JPEGs. Pass t_us, or layer_ids to judge beats over their whole span: each is sampled settled, in the middle, in its exit, and just after every cut or shot change under it. Returns one labelled contact sheet (default) or one image per frame, plus the times and why each was taken. Read-only; refused while an export runs. Seconds per frame.', schema({
+    t_us: { type: 'array', items: { type: 'integer', minimum: 0 }, minItems: 1, maxItems: 24, description: 'Timeline times in µs.' },
     layer_ids: { type: 'array', items: { type: 'string', minLength: 1 }, minItems: 1, maxItems: 12, description: 'Root layers to sample over their spans (at most 24 frames in all).' },
     width: { type: 'integer', minimum: 160, maximum: 1920, description: 'Frame width in px; default 640.' },
     sheet: { type: 'boolean', description: 'One contact sheet (default true) or one image per frame.' },
@@ -90,7 +90,7 @@ const EXPORT_REFUSALS: Record<string, { code: McpErrorCode; error: string; next?
   project_busy: { code: 'invalid_request', error: 'ProjectBusy' },
   app_closing: { code: 'invalid_request', error: 'AppClosing' },
   not_retryable: { code: 'invalid_request', error: 'ExportNotRetryable', next: 'get_export_status reports its state; only awaiting_retry can be retried' },
-  render_timeout: { code: 'internal', error: 'RenderTimeout', next: 'retry with fewer times_us or a smaller width' },
+  render_timeout: { code: 'internal', error: 'RenderTimeout', next: 'retry with fewer t_us or a smaller width' },
   render_failed: { code: 'internal', error: 'RenderFailed' },
   export_unavailable: { code: 'internal', error: 'ExportUnavailable' },
 }

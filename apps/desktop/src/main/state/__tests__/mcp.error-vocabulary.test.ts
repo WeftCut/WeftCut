@@ -370,7 +370,7 @@ describe('the export, render and Motif file routes refuse in the model', () => {
   it('render_frames during an export is ExportBusy (invalid_request), flat', async () => {
     const host = rawHost()
     host.exportJobs = { renderStills: async () => { throw new ExportJobError('export_active', 'An export is running; render frames after it finishes') } }
-    const r = await handleCallTool(rawBackend(), () => host as never, 'render_frames', { times_us: [0] }) as Answer
+    const r = await handleCallTool(rawBackend(), () => host as never, 'render_frames', { t_us: [0] }) as Answer
     expect(r.isError).toBe(true)
     assertInModel('render_frames', {}, r)
     expect(r.structuredContent).toMatchObject({ code: 'invalid_request', error: 'ExportBusy' })
@@ -380,7 +380,7 @@ describe('the export, render and Motif file routes refuse in the model', () => {
   it('render_frames refused by a busy admission budget is ResourceBusy with the MiB, not IPC text', async () => {
     const host = rawHost()
     host.exportJobs = { renderStills: async () => { throw new ExportJobError('render_failed', ADMISSION) } }
-    const r = await handleCallTool(rawBackend(), () => host as never, 'render_frames', { times_us: [0] }) as Answer
+    const r = await handleCallTool(rawBackend(), () => host as never, 'render_frames', { t_us: [0] }) as Answer
     expect(r.isError).toBe(true)
     assertInModel('render_frames', {}, r)
     expect(r.structuredContent).toMatchObject({ code: 'invalid_request', error: 'ResourceBusy', reason: 'busy', requested_mib: 414, available_mib: 372, budget_mib: 512 })

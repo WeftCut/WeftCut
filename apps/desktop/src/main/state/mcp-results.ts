@@ -21,7 +21,7 @@ import type { Composition, Layer, Project, Uuid } from './model'
 import { eachLayer } from './model'
 import type { HistoryOpRef, HistoryStatus } from './history'
 import { sortKeys } from './canonical'
-import { compositionSettings } from './resource-views'
+import { compositionSettings, localKeyTimes } from './resource-views'
 import type { ToolResultJson } from './mcp-commands'
 
 // ── Records ──────────────────────────────────────────────────────────────────
@@ -140,7 +140,8 @@ export function effectRecord(p: Project, layerId: Uuid, effectId: Uuid): EffectR
   const index = hit.layer.effects.findIndex((e) => e.id === effectId)
   if (index < 0) return null
   const e = hit.layer.effects[index]
-  return { effect_id: e.id, layer_id: layerId, kind: e.kind, enabled: e.enabled, index, params: e.params }
+  // An animated param's keys are stored layer-local: `local_t_us` on the wire.
+  return { effect_id: e.id, layer_id: layerId, kind: e.kind, enabled: e.enabled, index, params: localKeyTimes(e.params) as Record<string, unknown> }
 }
 
 export interface MediaRecord {
@@ -307,7 +308,7 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
   // ── layers ──
   set_position: (c) => {
     const params = located(c.after, str(c.args.layer_id))?.layer.params
-    return { ...layerOf(c), ...(params && 'transform' in params ? { position: params.transform.position } : {}) }
+    return { ...layerOf(c), ...(params && 'transform' in params ? { position: localKeyTimes(params.transform.position) } : {}) }
   },
   translate_path: (c) => layerOf(c),
   // A Motif whose props shortened its content pulls the layer's end (and its
@@ -519,7 +520,7 @@ export function paramTrackResult(layerId: Uuid, paramKey: string, read: { tStart
 
 /** One key's record, timeline-absolute and layer-local. */
 export function keyframeRecord(layerId: Uuid, paramKey: string, tStartUs: number, key: KeyLike, keyframes: number): Record<string, unknown> {
-  return { layer_id: layerId, param_key: paramKey, keyframe_id: key.id, t_us: key.t_us + tStartUs, t_local_us: key.t_us, value: key.value, keyframes }
+  return { layer_id: layerId, param_key: paramKey, keyframe_id: key.id, t_us: key.t_us + tStartUs, local_t_us: key.t_us, value: key.value, keyframes }
 }
 
 /** `set_keyframe`'s answer: the key it inserted (the one id that is new) or

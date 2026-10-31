@@ -56,8 +56,11 @@ describe('MCP animation authoring owns identities', () => {
     const { call, params } = setup()
     const result = call('set_position', { position: { mode: 'Path', path: { nodes: [
       { point: { x: 100, y: 200 } }, { point: { x: 300, y: 400 } },
-    ] }, progress: { mode: 'Keyframed', value: [{ t_us: 0, value: 0 }, { t_us: 1_000_000, value: 1 }] } } })
+    ] }, progress: { mode: 'Keyframed', value: [{ local_t_us: 0, value: 0 }, { local_t_us: 1_000_000, value: 1 }] } } })
     expect(result.ok, JSON.stringify(result)).toBe(true)
+    // The echo names the base too: the keys it returns are `local_t_us`.
+    expect(JSON.stringify(result)).toContain('local_t_us')
+    expect(JSON.stringify(result)).not.toMatch(/"t_us"/)
     const position = params().transform.position
     if (position.mode !== 'Path' || position.progress.mode !== 'Keyframed') throw new Error('missing path')
     expect(position.path.nodes.every(n => UUID.test(n.id))).toBe(true)
@@ -72,6 +75,8 @@ describe('MCP animation authoring owns identities', () => {
     const { actor, call } = setup()
     const before = actor.snapshot()
     expect(call('set_position', { position: { mode: 'Path', path: { nodes: [{ id: 'custom', point: { x: 1, y: 2 } }] }, progress: { mode: 'Static', value: 0 } } }).ok).toBe(false)
+    // A timeline-named key time is the keyframe tools' base, not this one's.
+    expect(call('set_position', { position: { mode: 'XY', x: { mode: 'Keyframed', value: [{ t_us: 0, value: 1 }] }, y: { mode: 'Static', value: 0 } } }).ok).toBe(false)
     for (const t_us of [1.5, '1000000', null])
       expect(call('set_param_track', { param_key: 'opacity', track: { mode: 'Keyframed', value: [{ t_us, value: 1 }] } }).ok).toBe(false)
     expect(actor.snapshot()).toEqual(before)

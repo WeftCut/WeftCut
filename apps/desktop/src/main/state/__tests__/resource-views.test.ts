@@ -259,6 +259,9 @@ describe('project://tracks lists envelopes', () => {
     const full = JSON.parse(text(serveProjectResource(`project://layers/${titleId}`, actor)))
     expect(full.params.kind).toBe('Text')
     expect(full.params.opacity.mode).toBe('Keyframed')
+    // Stored key times are layer-local, and the wire names them so.
+    expect(full.params.opacity.value[0]).toMatchObject({ local_t_us: 0 })
+    expect(JSON.stringify(full)).not.toMatch(/"t_us"/)
   })
 
   it('a media-bearing layer carries its source window; the track keeps its own flags', () => {
@@ -272,7 +275,14 @@ describe('project://tracks lists envelopes', () => {
     if (!added.ok) throw new Error(added.error.message)
     const tracks = JSON.parse(text(serveProjectResource('project://tracks', actor))) as Array<Record<string, unknown> & { layers: Array<Record<string, unknown>> }>
     const row = tracks[0].layers[0]
-    expect(row).toMatchObject({ kind: 'VideoClip', src_in_us: 500_000, src_out_us: 2_500_000 })
+    expect(row).toMatchObject({ kind: 'VideoClip', media_id: MID, src_in_us: 500_000, src_out_us: 2_500_000 })
+    // Identity rate stays off the row; a retimed one rides it, so a source
+    // time maps onto the timeline from the envelope alone.
+    expect('rate' in row).toBe(false)
+    const retimed = actor.mcpCall('retime_layers', JSON.stringify({ layer_ids: [row.id], target: { kind: 'Rate', value: { num: 2, den: 1 } } }))
+    if (!retimed.ok) throw new Error(retimed.error.message)
+    const after = (JSON.parse(text(serveProjectResource('project://tracks', actor))) as typeof tracks)[0].layers[0]
+    expect(after.rate).toEqual({ num: 2, den: 1 })
     expect(tracks[0]).toMatchObject({ id: aRoll, enabled: true, locked: false })
     expect(Object.keys(tracks[0])).toContain('role')
     // Per-track mute/solo have no writer and nothing mixes by them: a control

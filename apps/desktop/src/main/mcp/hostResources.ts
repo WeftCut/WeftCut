@@ -8,7 +8,7 @@
 // "envelopes" and means it, and how the per-composition scope is documented on
 // the resource an agent actually lists.
 //
-// The templates are the parameterised families (`media://{id}/frame/{t_us}`
+// The templates are the parameterised families (`media://{id}/frame/{src_us}`
 // and its kin): without `resources/templates/list` an agent finds them only
 // when a tool's prose happens to name one.
 
@@ -20,7 +20,7 @@ export const HOST_RESOURCE_DEFS = [
   { uri: 'project://composition', name: 'Composition', mimeType: APP_JSON,
     description: "The root composition's settings — id, label, canvas, fps, duration (+ pinned), sample rate, channels, colour space, background; no tracks. `?composition=<id>` reads a Group's." },
   { uri: 'project://tracks', name: 'Tracks', mimeType: APP_JSON,
-    description: 'The root composition\'s tracks, each with its flags and its layers as ENVELOPES: { id, label, kind, t_start_us, t_end_us, src_in_us?, src_out_us?, enabled, locked, link_id, effects: [{ id, kind }], keyframed: [param_key] }. `?composition=<id>` for a Group\'s; project://layers/{id} for one layer in full.' },
+    description: 'The root composition\'s tracks, each with its flags and its layers as ENVELOPES: { id, label, kind, media_id?, t_start_us, t_end_us, src_in_us?, src_out_us?, rate?: {num, den} (absent = 1), enabled, locked, link_id, effects: [{ id, kind }], keyframed: [param_key] }. A source time src plays at t_start_us + (src - src_in_us) / rate. `?composition=<id>` for a Group\'s; project://layers/{id} for one layer in full.' },
   { uri: 'project://links', name: 'Links', mimeType: APP_JSON,
     description: "The root composition's links — { id, label?, members: [layer_id] }. `?composition=<id>` for a Group's." },
   { uri: 'project://transitions', name: 'Transitions', mimeType: APP_JSON,
@@ -41,7 +41,7 @@ export const HOST_RESOURCE_DEFS = [
  *  form-style query: expand with a Group's id, or leave it out for the root. */
 export const HOST_RESOURCE_TEMPLATES = [
   { uriTemplate: 'project://layers/{id}', name: 'Layer', mimeType: APP_JSON,
-    description: 'One layer in full — envelope, params (kind-specific, with every animated track), effects — from whichever composition holds it.' },
+    description: "One layer in full — envelope, params (kind-specific, with every animated track), effects — from whichever composition holds it. Key times are `local_t_us`, µs from the layer's start." },
   { uriTemplate: 'project://composition{?composition}', name: 'Composition settings', mimeType: APP_JSON,
     description: "A composition's settings by id (a Group's, from project://compositions); the root when the query is omitted." },
   { uriTemplate: 'project://tracks{?composition}', name: 'Tracks of a composition', mimeType: APP_JSON,
@@ -58,14 +58,14 @@ export const HOST_RESOURCE_TEMPLATES = [
     description: 'One pooled file as a short card — media_id, kind, label, path, path_rel, duration_us, size, has_audio, used_by (layer ids), resources (its sub-resources). resources/list names one per pooled file.' },
   { uriTemplate: 'media://{id}/thumbnail', name: 'Media thumbnail', mimeType: 'image/jpeg',
     description: 'The middle frame of a media item as JPEG (base64 blob). 404 with a hint until the derivative exists.' },
-  { uriTemplate: 'media://{id}/frame/{t_us}', name: 'Media frame', mimeType: 'image/jpeg',
-    description: 'One frame of a media item at a source-absolute time in µs, as JPEG (base64 blob); decoded on demand and cached.' },
+  { uriTemplate: 'media://{id}/frame/{src_us}', name: 'Media frame', mimeType: 'image/jpeg',
+    description: 'One frame of a media item at a source time in µs, as JPEG (base64 blob); decoded on demand and cached.' },
   { uriTemplate: 'media://{id}/waveform', name: 'Media waveform', mimeType: 'application/octet-stream',
     description: 'The audio peaks file of a media item (binary, base64). 404 with a hint until generated.' },
   { uriTemplate: 'media://{id}/analysis', name: 'Media shot analysis', mimeType: APP_JSON,
-    description: 'The deterministic shot report of a media item — { shots, cut_scores }, source-absolute — computed on a miss, shared with analyze_clip.' },
+    description: 'The deterministic shot report of a media item — { media_id, shots, cut_scores } in analyze_clip\'s `src_*` shape, whole source — computed on a miss, shared with analyze_clip.' },
   { uriTemplate: 'media://{id}/description', name: 'Media scene descriptions', mimeType: APP_JSON,
-    description: 'Cached scene descriptions of a media item under the app\'s current view — { covered_ranges, segments }; 404 until describe_clip has run.' },
+    description: 'Cached scene descriptions of a media item under the app\'s current view — { covered_ranges, segments: [{ src_start_us, src_end_us, text, tags }], summaries }, source µs; 404 until describe_clip has run.' },
   { uriTemplate: 'media://{id}/shot-description', name: 'Media shot descriptions', mimeType: APP_JSON,
     description: 'Cached individual shot descriptions — { covered_ranges, segments }; 404 until describe_clip with purpose shot has run. Separate from clip content descriptions.' },
 ]

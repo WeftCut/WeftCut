@@ -76,21 +76,45 @@ export function keyframedParams(layer: Layer): string[] {
  *  — where it sits, what it is, what it plays, what is on it — without the
  *  params, keyframes and effect values `project://layers/{id}` carries; rows
  *  that inlined whole layers would make a timeline read cost as much as the
- *  project. */
+ *  project.
+ *
+ *  `media_id` and a non-identity `rate` ride along so a source-time answer
+ *  (`src_*`) maps onto the timeline from this row alone:
+ *  `t = t_start_us + (src − src_in_us) / rate`. */
 export function layerEnvelope(layer: Layer, c: Composition): Record<string, unknown> {
-  const p = layer.params as unknown as { kind: string; src_in_us?: number; src_out_us?: number; graphic_role?: string | null }
+  const p = layer.params as unknown as { kind: string; media?: string; src_in_us?: number; src_out_us?: number; graphic_role?: string | null
+    time_map?: { kind: 'Affine'; rate: { num: number; den: number } } }
+  const rate = p.time_map?.rate
   return {
     id: layer.id, label: layer.label, kind: p.kind,
     // What the layer is for — the key style and lint plan by, so it rides the envelope.
     ...(p.kind === 'Text' || p.kind === 'Motif' || p.kind === 'ImageOverlay' ? { graphic_role: p.graphic_role ?? null } : {}),
+    ...(typeof p.media === 'string' ? { media_id: p.media } : {}),
     t_start_us: layer.t_start_us, t_end_us: layer.t_end_us,
     ...(typeof p.src_in_us === 'number' ? { src_in_us: p.src_in_us } : {}),
     ...(typeof p.src_out_us === 'number' ? { src_out_us: p.src_out_us } : {}),
+    ...(rate && rate.num !== rate.den ? { rate: { num: rate.num, den: rate.den } } : {}),
     enabled: layer.enabled, locked: layer.locked,
     link_id: c.links.find((g) => g.members.includes(layer.id))?.id ?? null,
     effects: layer.effects.map((e) => ({ id: e.id, kind: e.kind })),
     keyframed: keyframedParams(layer),
   }
+}
+
+/** Stored layer state as the wire shows it: a stored key's `t_us` is an
+ *  offset from the layer's `t_start_us`, so it travels as `local_t_us`, the
+ *  name `set_position` takes, and is never mistaken for the timeline time the
+ *  keyframe tools take. Key times are the only `t_us` a layer holds
+ *  (`shared/keyframe.ts`). */
+export function localKeyTimes(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(localKeyTimes)
+  if (v === null || typeof v !== 'object') return v
+  return Object.fromEntries(Object.entries(v).map(([k, x]) => [k === 't_us' ? 'local_t_us' : k, localKeyTimes(x)]))
+}
+
+/** `project://layers/{id}`: the layer in full, key times `local_t_us`. */
+export function layerView(layer: Layer): unknown {
+  return localKeyTimes(layer)
 }
 
 /** `project://tracks`: every track with its flags and its layers as envelopes.
@@ -134,7 +158,7 @@ function scopedComposition(p: Project, query: string | null): Composition {
  *  `?composition=` id. */
 /** The sub-resources each kind of media answers (`hostResources.ts`). */
 const MEDIA_SUBRESOURCES: Record<MediaItem['kind'], readonly string[]> = {
-  Video: ['thumbnail', 'frame/{t_us}', 'waveform', 'analysis', 'description', 'shot-description'],
+  Video: ['thumbnail', 'frame/{src_us}', 'waveform', 'analysis', 'description', 'shot-description'],
   Audio: ['waveform'],
   Image: ['thumbnail'],
   Subtitle: [],
@@ -169,7 +193,7 @@ export function serveProjectResource(
     let layer: Layer | undefined
     for (const e of eachLayer(actor.snapshot())) if (e.layer.id === tail) { layer = e.layer; break }
     if (!layer) resourceNotFound(`layer ${tail} not found`)
-    return textResource(uri, layer)
+    return textResource(uri, layerView(layer))
   }
   // The per-composition views take `?composition=<id>`; absent means the root.
   // `project://composition` scopes too — a Group's envelope is readable by id,

@@ -31,7 +31,7 @@ test('MCP workspace: linked edits, binary round-trip, revision conflicts and ret
         const draft = await call('open_motif_draft', { source: { kind: 'directory', path: directory } });
         expect((await call('open_motif_draft', { source: { kind: 'directory', path: directory } })).draft_id).toBe(draft.draft_id);
         const preview = async (id: string) => {
-            const result = await client.callTool({ name: 'preview_motif', arguments: { id, t_sec: 0 } });
+            const result = await client.callTool({ name: 'preview_motif', arguments: { id, local_t_s: 0 } });
             expect(result.isError, JSON.stringify(result.content)).toBeFalsy();
             const content = result.content as Array<{
                 type: string;
@@ -65,7 +65,7 @@ test('MCP workspace: linked edits, binary round-trip, revision conflicts and ret
         expect((await preview(copied.draft_id)).color).toEqual([0, 0, 255, 255]);
         writeFileSync(path.join(directory, 'manifest.json'), '{broken');
         expect((await call('read_motif', { id: draft.draft_id })).diagnostic).toBeTruthy();
-        expect((await client.callTool({ name: 'preview_motif', arguments: { id: draft.draft_id, t_sec: 0 } })).isError).toBe(true);
+        expect((await client.callTool({ name: 'preview_motif', arguments: { id: draft.draft_id, local_t_s: 0 } })).isError).toBe(true);
         expect((await preview(published.motif_id)).color).toEqual([0, 0, 255, 255]);
         await call('delete_motif', { id: draft.draft_id });
         expect(readFileSync(path.join(directory, 'color.txt'), 'utf8')).toBe('blue');

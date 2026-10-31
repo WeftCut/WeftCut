@@ -45,10 +45,10 @@ describe('handleCallTool flip routing', () => {
     const before = ts.actor.snapshot()
     const spy = vi.fn(async (_name: string, _args: string) => '{"ok":true,"result":{"content":[]}}')
     await handleCallTool(fakeBackend(spy), () => ts, 'analyze_audio',
-      { media_id: MID, start_us: 20_000_000, end_us: 25_000_000, media: { id: 'untrusted' } })
+      { media_id: MID, src_start_us: 20_000_000, src_end_us: 25_000_000, media: { id: 'untrusted' } })
     expect(spy).toHaveBeenCalledTimes(1)
     expect(JSON.parse(spy.mock.calls[0][1])).toMatchObject({ media_id: MID,
-      start_us: 20_000_000, end_us: 25_000_000, media: before.media_pool[MID] })
+      src_start_us: 20_000_000, src_end_us: 25_000_000, media: before.media_pool[MID] })
     expect(ts.actor.snapshot()).toBe(before)
   })
 
@@ -59,7 +59,7 @@ describe('handleCallTool flip routing', () => {
     await handleCallTool(backend, () => ts, 'analyze_audio', { media_id: MID })
     expect(JSON.parse(spy.mock.calls[0][1]).media).toBeNull()
     spy.mockClear()
-    const result = await handleCallTool(backend, () => ts, 'analyze_audio', { start_us: 'bad' }) as any
+    const result = await handleCallTool(backend, () => ts, 'analyze_audio', { src_start_us: 'bad' }) as any
     expect(result.isError).toBe(true)
     expect(spy).not.toHaveBeenCalled()
   })

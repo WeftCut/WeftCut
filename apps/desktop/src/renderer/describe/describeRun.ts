@@ -40,17 +40,16 @@ export interface DescribeRunTarget {
   purpose: DescriptionPurpose;
   layerId: string;
   mediaId: string;
-  /// The span the run answers for, in SOURCE time — the domain the cache and the
-  /// rows share, and what the optimistic fill is merged over.
+  /// The span the run answers for, in SOURCE time — the domain the cache, the
+  /// rows and `describe_clip`'s window share, and what the optimistic fill is
+  /// merged over.
   srcStartUs: number;
   srcEndUs: number;
-  /// The same span in TIMELINE time, or null for the whole layer.
-  ///
-  /// Null is not "no window": it is the instruction to OMIT the two window
-  /// arguments so Rust's own endpoints decide, on `ipc/index.ts`' rule. A
-  /// whole-clip run must send no window at all — sending the layer's own
-  /// endpoints would be a second statement of a default that already has one.
-  window: { tStartUs: number; tEndUs: number } | null;
+  /// The whole layer: OMIT the two window arguments so Rust's own endpoints
+  /// decide, on `ipc/index.ts`' rule. A whole-clip run must send no window at
+  /// all — sending the layer's own endpoints would be a second statement of a
+  /// default that already has one.
+  wholeLayer: boolean;
   /// What the log rows call this run's subject: the clip's name, or the clip's
   /// name and the shot's ordinal.
   label: string;
@@ -96,9 +95,7 @@ export async function runDescribe(target: DescribeRunTarget): Promise<string> {
     const result = await describeClip({
       layerId: target.layerId,
       purpose,
-      ...(target.window === null
-        ? {}
-        : { tStartUs: target.window.tStartUs, tEndUs: target.window.tEndUs }),
+      ...(target.wholeLayer ? {} : { srcStartUs, srcEndUs }),
       requestId,
     });
     setDescribing(null);
