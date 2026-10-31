@@ -725,7 +725,7 @@ describe('link siblings follow the incoming layer', () => {
   })
 })
 
-describe('overlap add: sibling lane bounce (ADR 0042)', () => {
+describe('overlap add: sibling lane bounce', () => {
   /** twoAdjacent + an audio sibling of a2 on @B at [2M,4M] + a NON-moving audio
    *  blocker on the same lane at [1M,2M] — the sibling's 1M leftward shift lands
    *  it on [1M,3M], over the blocker. */

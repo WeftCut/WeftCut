@@ -130,7 +130,7 @@ describe("the ADR 0039 slice is present verbatim", () => {
   });
 });
 
-describe("the ADR 0043 slice is present verbatim", () => {
+describe("the Windows FunASR Paraformer slice is present verbatim", () => {
   it("sherpa-onnx v1.13.4 shared-MD-Release Windows runtime", () => {
     const runtime = CONTENT_CATALOG.find((i) => i.id === "funasr-runtime");
     const win = runtime?.platforms["win32-x64"];
@@ -166,7 +166,7 @@ describe("the ADR 0043 slice is present verbatim", () => {
   });
 });
 
-describe("the ADR 0073 Linux slice is present verbatim", () => {
+describe("the Linux slice is present verbatim", () => {
   const linuxOf = (id: string) =>
     CONTENT_CATALOG.find((i) => i.id === id)?.platforms["linux-x64"];
 
@@ -227,7 +227,7 @@ describe("the ADR 0073 Linux slice is present verbatim", () => {
   });
 });
 
-describe("the ADR 0075 macOS arm64 slice is present verbatim", () => {
+describe("the macOS arm64 slice is present verbatim", () => {
   const macOf = (id: string) =>
     CONTENT_CATALOG.find((i) => i.id === id)?.platforms["darwin-arm64"];
 
@@ -271,7 +271,7 @@ describe("the ADR 0075 macOS arm64 slice is present verbatim", () => {
 
 });
 
-describe("the ADR 0076 macOS arm64 whisper-cli is present verbatim", () => {
+describe("the macOS arm64 whisper-cli is present verbatim", () => {
   const macOf = (id: string) =>
     CONTENT_CATALOG.find((i) => i.id === id)?.platforms["darwin-arm64"];
 
