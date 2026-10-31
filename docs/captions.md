@@ -1,236 +1,125 @@
 # Captions
 
-Imported subtitles are not a special layer kind. Every cue from an SRT, VTT,
-or ASS file becomes an independent, first-class **`Text` layer** on a dedicated
-caption-role track. The same PixiJS `Text` path that renders any other text
-renders captions — in preview and in the export Worker — so captions burn into
-exported video as a consequence of normal compositing, with no subtitle-specific
-render code and no separate export stage.
+Every caption cue is an independent **`Text` layer** on a caption-role track
+(`TrackRole::Caption`). Captions render through `TextSprite` like any text, in
+preview and in the export Worker, so burn-in is ordinary compositing and every
+layer tool works on them. Why: [ADR 0026](adr/0026-captions-as-text-layers.md).
+Tool contracts: [mcp.md](mcp.md); the Transcribe command:
+[features.md](features.md) § Transcribe and voiceover.
 
-The rationale (why this replaced the previous libass/JASSUB design) lives in
-[ADR 0026](adr/0026-captions-as-text-layers.md). This document describes how the
-feature works.
+## Ingestion
 
-## The model, in one paragraph
+Two sources, one packing mutation (`add_caption_track`,
+`main/state/mutations/captions.ts`), one history entry per apply (*Added
+captions*).
 
-A subtitle import produces one or more tracks with `role: "caption"`, each
-holding one `Text` layer per cue, positioned in composition time from the cue's
-own timestamps. Because every cue is an ordinary `Text` layer, all existing
-layer operations — move, trim, split, delete, restyle, keyframe, and the MCP
-tools behind them — work on captions with no new code. Captions have no special
-status at render time: they composite through `TextSprite` like any text.
+- **Subtitle documents.** `.srt` / `.vtt` / `.ass` files enter the pool as
+  `Subtitle` items (no derivatives; the workspace copies them like any source).
+  `apply_subtitles { media_id, t_start_us? }` — or dragging the item onto the
+  timeline, where only the drop *time* counts — reads the file, parses it with
+  `subtitles::parse_subtitle_cues(body, None)` (format sniffed; the
+  `parse_subtitles` compute), shifts every cue by `t_start_us` and packs the
+  whole document. Cues are copies: removing the item leaves them; applying it
+  twice lays it twice. No partial apply. Imported cues keep the file's styles.
+- **Transcription.** `transcribe_clip` returns a normalized transcript with
+  timeline-absolute times ([ADR 0036](adr/0036-pluggable-speech-backends-normalized-transcript.md));
+  `apply_transcripts` lays it, keeping per-word timing as caption metadata
+  (below). With a project style, transcript cues are born in its caption
+  tokens and split to its caption limits (`project://taste` → `caption`);
+  without one they land as transcribed. Cue times snap to the Text frame grid.
+  A result whose source project, composition or clip signature changed since
+  the read is refused.
+- **Low-volume check (UI only).** Before a Transcribe press reads anything, the
+  cached raw waveform of each source window is checked; a peak below −24 dBFS
+  (or a missing waveform, "unchecked") prompts Cancel / Continue / Normalize
+  and transcribe. Normalize applies constant gain toward −3 dBFS peak, capped
+  at +24 dB, to a private per-run copy of the extracted WAV only
+  (`normalize_audio` on the tool; `renderer/speech/transcriptionInput.ts`).
 
-## Ingestion — one parser, one mutation
+**Packing.** Candidates are the target composition's unlocked caption tracks
+in track order. Each cue goes to the first whose layers leave its snapped span
+free (the same overlap predicate every placement uses); a cue that collides
+with all of them opens a new caption track, which joins the candidates. A
+Group's captions never spill into the root's tracks. The mutation returns the
+track the first cue landed on. So repeated transcriptions fill one caption
+track, and a second lane appears only where cues truly overlap.
 
-Two entry points feed captions, and both converge on one caption packing
-mutation:
+## Cue layout
 
-- **Subtitle documents.** A `.srt` / `.vtt` / `.ass` file enters the media pool
-  like any other file (`import_media`, a pool drop, *Import media…*), as a
-  `Subtitle` item. It needs no proxy or derivative jobs, and the workspace
-  copies it like any source. Laying it on the timeline is `apply_subtitles
-  { media_id, t_start_us? }`: the whole document lands, its time 0 at
-  `t_start_us` (default 0), and the cues pack onto the composition's caption
-  tracks (see *Cues pack into the caption tracks already there*, below). A
-  person does the same by dragging the item from the pool onto the timeline:
-  only the drop TIME counts — whichever lane, or the new-track strip, it is
-  released over, the cues go to the caption tracks. The cues are copies; the
-  pool item keeps no tie to them, and removing it leaves them in place. There
-  is no partial apply: to use part of a document, edit the file, or delete the
-  cues afterwards
-  ([ADR 0077](adr/0077-a-subtitle-document-is-pool-media-and-applying-it-copies-its-cues.md)).
-- **Transcription.** `transcribe_clip` returns a normalized transcript
-  envelope with timeline-absolute timestamps. The app passes this structure to
-  `apply_transcripts`, preserving word timing alongside the generated captions.
-  A person starts the flow with **Transcribe selected clip**
-  on a `VideoClip` / `Audio` layer's context menu, in the Edit menu and in the
-  search palette: no dialog — the language is the engine's to detect — so the
-  press reads every selected clip with sound, one at a time in timeline order,
-  applies all successful normalized transcripts in ONE `apply_transcripts` call, and
-  reveals the Caption panel so the cues are visible. One subject per source: a
-  linked picture clip yields to its selected same-media audio, and the same
-  source span selected twice is read once ([ADR 0070](adr/0070-captions-land-where-there-is-room-and-a-transcription-reads-each-selected-source-once.md)).
-  There is no review step between the two — the result is editable `Text`
-  layers on a caption track, and `CaptionsPanel` already edits them per cue,
-  which is strictly more than a review list offers ([features.md](features.md)
-  § Transcribe and voiceover).
+`cue_to_text_params` (Rust, `subtitles/layout.rs`) and its TS twin
+`cueToTextParams` build a cue's `TextParams`. A styleless cue gets white fill,
+a black outline (6 % of size, at least 1 px), no shadow, size 5 % of
+composition height, bottom-centre inside `SAFE_AREA_MARGIN` (8 %). A shadow
+appears only when an ASS style asks for one (`Shadow` 0 gives none). Every cue
+gets `box_w` = composition width less the margin on both sides and
+`box_h = null` (Auto height: wraps without shrinking —
+[ADR 0049](adr/0049-text-box-lays-out-glyphs-it-does-not-scale-them.md)), so a
+one-line machine transcript wraps at its own size. Older captions without a
+box load as Auto width unchanged.
 
-`apply_subtitles` reads the item's file and calls `subtitles::parse(body,
-None)` → `Cue { start_us, end_us, text, style }`, the format sniffed
-(`subtitles::sniff`) from the body; normalized transcripts supply cues
-directly. Both converge on the same caption packing mutation. The whole import is a
-single history entry, *Added captions* (one undo removes the whole import,
-however many cues).
+ASS: V4+ styles plus `\an \pos \c/\1c \b \i \fs \fn \fad`; karaoke, drawings,
+clips, `\t`/`\move`, rotations and blur are stripped with the text kept, and
+`simplified: true` is reported. VTT is read at SRT level (region and cue
+settings ignored).
+
+## Fonts
+
+Liberation Sans and Noto Sans SC are bundled and loaded into the preview
+(`document.fonts`) and the export Worker (`self.fonts`) before compositing
+(`renderer/render/fonts/registry.ts`). The default caption family is the chain
+`"Liberation Sans, Noto Sans SC"`. Other families are resolved best-effort
+before the Worker starts (`resolveFontsForFamilies` → `font:resolve` →
+`main/fonts/resolveSystemFont.ts`, an sfnt `name`-table scan) and passed in as
+bytes; the Worker never resolves fonts. Unresolved families fall back to the
+bundled chain. Only the bundled fonts are deterministic across machines.
+
+## Caption panel
+
+`CaptionsPanel` lists the cues of **every** caption-role track in the project,
+flattened in time order. Activating a cue selects its layer, seeks to its
+start and reveals it in the Timeline; inline text edits commit on blur via
+`update_layer_params`. The style row (size, outline width, colour) calls
+`restyle_captions` over all caption tracks in one undo step; outline width 0
+stores `null` (no outline); colour commits are debounced. `restyle_captions`
+also takes `font_family` and `layer_ids` (MCP only). `merge_captions` folds
+cues of one lane into the earliest; `export_captions` returns an SRT/VTT body
+(MCP only).
 
 ## Text correction / 文字校正
 
-The Caption Panel's **Text correction** button opens a plain-text manuscript
-dialog. One manuscript belongs to the project (`settings.correction_script`,
-optional for older v1 files); edits use unrecorded project settings, survive
-closing the dialog, and save with the project. Clearing it does not clear
-captions. Applying correction is a separate recorded transaction: one undo
-restores the preceding captions while retaining the manuscript.
+The panel's **Text correction** dialog edits one project manuscript
+(`settings.correction_script`, unrecorded, saved with the project; clearing it
+leaves captions alone). Applying is a separate recorded edit
+(`correct_caption_text`; one undo restores the captions, keeps the manuscript).
+Scope: selected captions, else all captions of the open composition; a locked
+target refuses the whole run; inputs that changed while the dialog awaited a
+save refuse rather than apply stale. Re-running on unchanged input records
+nothing.
 
-The default scope is selected caption Text layers when any are selected,
-otherwise all captions of the open composition. The dialog shows the count.
-Locked targets refuse the whole operation. Every run uses current caption
-text, including manual changes, and the current manuscript. The dialog captures
-its input before awaiting manuscript saves; changed text, times, target sets or
-manuscripts refuse the operation instead of applying to stale inputs. There are no
-review markers, confirmation states, or protected-manual-text flags.
+Matching (`shared/textCorrection.ts`) aligns caption text to the manuscript
+locally, with gaps on either side. It corrects context-supported Chinese
+homophones, equivalent formatting, near sounds with confusable initials and
+single misread Chinese numerals (五老师 / 吴老师) when two exact tokens match on
+each side and the reference has one spelling. Quantity/ordinal contexts,
+numeric targets, negation and ambiguous colloquial numbers are preserved;
+extra speech stays, unmatched manuscript text is not inserted, conflicting
+repeated contexts abstain. No acoustic model, network or forced alignment.
 
-`shared/textCorrection.ts` prepares a normalized manuscript index, finds local
-candidate windows, and aligns text sequences with gaps on either side.
-Context-supported Chinese homophones and equivalent formatting may be
-corrected. Near sounds with confusable initials, and single Chinese numeral
-characters misrecognized in lexical text (such as 五老师 / 吴老师), also qualify
-when two consecutive tokens on each side match exactly and the reference
-context has only one spelling. Quantity/ordinal contexts and numeric reference
-targets stay protected. Numerical/negation conflicts, ambiguous colloquial numbers and unsupported substitutions are
-preserved. Extra spoken text remains and unmatched manuscript text is not
-inserted. Repeated contexts with conflicting spellings abstain. No acoustic
-model, cloud request, or forced alignment is part of this operation.
-
-New transcriptions retain optional version-1 `weftcut.caption_timing` metadata
-on each caption: text, caption duration, timing provenance, relative word
-spans, and a source identity/signature when available. The renderer's
-transcription response captures the source before asynchronous recognition;
-ingestion refuses results whose project, composition or source window changed.
-Metadata follows the ordinary project save path. Caption moves preserve
-relative spans; text/duration edits or source changes make the mapping
-ineligible rather than guessing new timestamps.
-
-Matched manuscript line breaks (including CRLF/blank lines) and sentence-ending
-punctuation determine caption boundaries. Old ASR sentence/cue boundaries may
-be joined when the manuscript continues the same sentence; pauses and caption
-length do not add extra breaks. Unmatched speech remains, and unspoken
-manuscript sentences are not inserted.
-
-Usable word times place the cuts. Imported captions, missing/stale/zero-duration
-word times, and manually edited captions estimate cuts in each original cue's
-time range by character coverage. A manuscript break inside an engine word
-similarly estimates its position within that word. Estimated output records
-`interpolated_from_cue` provenance and retains its mapping for later corrections;
-it is not relabelled as engine timing. Cuts snap to the caption frame grid.
-If the available duration cannot hold valid non-overlapping output captions,
-correction retains the original boundaries and updates text only.
-
-Static appearance is inherited, different styles/positions or sources are not
-combined, and animated captions keep their boundaries. Links, transitions and
-anchored markers also prevent resegmentation. The `exact` provenance is not
-itself proof of a usable boundary: word coverage, ordering and duration are
-checked before resegmentation. Repeating a correction with unchanged input
-produces no new history entry.
-
-**Cues pack into the caption tracks already there.** `add_caption_track` tries
-the composition's own unlocked caption tracks first, in track order, and lands
-each cue on the first whose layers leave the cue's span free; a new caption
-track opens only for a cue that collides with every one of them, and then joins
-the candidates ([ADR 0070](adr/0070-captions-land-where-there-is-room-and-a-transcription-reads-each-selected-source-once.md)). So a second
-transcription — another clip on the same timeline, transcribed later — lands
-beside the first on the same caption track, and only cues that genuinely
-overlap in time fan onto additional tracks, keeping each track non-overlapping
-— the same linear-timeline invariant every other layer class obeys. Locked
-caption tracks are never candidates. A transcription, whose cues never overlap,
-adds to a single track.
-
-## Cue layout and ASS support
-
-`cue_to_text_params` turns a cue into a `Text` layer's parameters. A styleless
-cue (plain SRT/VTT) gets the default caption look: white fill and a thin black
-outline — no shadow — font size proportional to composition height,
-bottom-centre anchored with a safe-area margin. The outline alone is the
-legibility device; a shadow is only ever what an ASS style asked for, and a style
-whose `Shadow` is 0 gets none rather than a 1 px one. Neither field has an
-inspector control, which is why the default carries nothing a user could not
-take off again.
-
-Every cue — styled or not, imported or transcribed — is also born with a **wrap
-width**: `box_w` is the composition width less the safe-area margin on each side,
-and `box_h` stays null. Both numbers come from the one `SAFE_AREA_MARGIN`
-constant that the position inset is derived from, so the margin a caption sits
-inside and the width it wraps at cannot drift apart. `(set, null)` is Auto height
-([ADR 0049](adr/0049-text-box-lays-out-glyphs-it-does-not-scale-them.md)), which
-wraps *without* shrinking — the reason it is not Fixed: a machine transcript's
-cue is a single unbroken line with no `\n`, and Auto height breaks it inside the
-safe area at exactly the size its style asked for, where a fixed box would
-compress the long cues and leave two cues of one file at different font sizes.
-The wrap width is not applied retroactively and there is no migration: a caption
-layer stored without a box loads as Auto width and renders exactly as it did.
-
-ASS is supported at "Tier 3": the V4+ Style table plus the inline override tags
-that matter for captions — `\an` (alignment, mapped to anchor + position), `\pos`,
-`\c`/`\1c` (colour), `\b`, `\i`, `\fs`, `\fn`, `\fad`. Advanced tags (karaoke
-`\k`, drawings `\p`, clips, animated transforms `\t`/`\move`, rotations, blur) are
-stripped while the cue text is preserved; the parser sets a `simplified` flag the
-UI and MCP tool surface so the user knows styling was dropped.
-
-VTT is parsed at SRT level — text and timing only; region and cue-setting
-directives are ignored.
-
-## Fonts and burn-in determinism
-
-Burned-in text must render identically in preview and export and must not fall
-back to tofu (missing-glyph boxes). Two font families are bundled with the app
-and loaded into **both** surfaces before any compositing begins — the preview
-`Compositor` on startup (`document.fonts`) and the export Worker before its encode
-loop (`self.fonts`):
-
-- **Liberation Sans** — broad Latin/Cyrillic/Greek; the default caption face.
-- **Noto Sans SC** — Simplified Chinese and full CJK coverage.
-
-These bundled fonts carry the cross-OS export-determinism guarantee. The default
-caption font is the fallback chain `"Liberation Sans, Noto Sans SC"`, so any glyph
-Liberation lacks falls through to Noto.
-
-A user may set a caption (or any `Text` layer) to a font outside the bundled set.
-The main-thread renderer resolves it best-effort via `window.api.font.resolve`
-(`resolveFontsForFamilies`) **before the export Worker starts**, and merges the
-resolved bytes into the export request; the Worker only consumes pre-resolved
-fonts and never calls the resolver itself — that separation is the determinism
-boundary. On the main process, `resolveSystemFont` matches a family name by a
-hand-rolled scan of the platform font directories' sfnt `name` tables (no external
-font-enumeration dependency). User-font resolution is explicitly **outside** the
-determinism contract — a font on the author's machine may be absent on a
-collaborator's — and when a family does not resolve it is omitted, so rendering
-falls back to the bundled chain. Captions never tofu.
-
-## Editing — the Caption panel
-
-The Caption panel is a Project-wide corpus surface: it reads **every**
-caption-role track and lists their cues flattened in time order, including
-overlapping lanes. Activating a cue (its timecode) selects that `Text` layer,
-seeks the playhead to its start, and reveals it in the Timeline — keeping caption
-navigation and timeline context in sync. Each row also offers inline text editing
-of the single cue, committed on blur through `update_layer_params`. The style
-row batch-applies size, outline width and colour across every `Text` layer on
-**all** caption-role tracks in a single undo step (`restyle_captions`, whose
-patch also carries a font family the panel does not yet expose). Outline width
-0 removes the outline — stored as `null`, the same absent style the Text tool
-writes — which is how the one style the default look adds beyond the file's own
-can be taken off again. The colour commit is debounced because it fans out to
-every caption layer in the project. A selected caption cue remains editable as an
-ordinary `Text` layer in the Attribute panel.
-
-Because cues are plain `Text` layers, they are also editable directly on the
-timeline and in the inspector like any other layer — the panel is a convenience
-for navigating and bulk-styling a caption set, not the only way to edit it.
+Resegmentation: manuscript line breaks and sentence-ending punctuation set
+caption boundaries (ASR boundaries may join; pauses and length add none).
+Cuts use the caption's `weftcut.caption_timing` metadata (version 1: text,
+duration, provenance, caption-relative word spans, source id + signature;
+`shared/captionTiming.ts`) when its words are usable; otherwise — imported or
+edited captions, stale or zero-length words, a break inside a word — the cut is
+estimated by character coverage within the original cue and recorded as
+`interpolated_from_cue`. Cuts snap to the frame grid. Moves keep the metadata;
+text/duration or source changes make it ineligible. Output that cannot fit as
+valid non-overlapping captions keeps the original boundaries and updates text
+only. Differing styles, positions or sources are not combined; animated,
+linked, transitioned or marker-anchored captions keep their boundaries.
 
 ## Scope
 
-v1 export is **burn-in only**: captions composite into the video frame like any
-text. Soft-subtitle tracks (stream-muxed SRT/ASS into MKV/MP4) and sidecar
-subtitle-file export are deferred — the data already lives in `Text` layers and is
-available to a future ffmpeg subtitle-mux stage. Word-level/karaoke highlight and
-per-project user-supplied font files are out of scope, as is kinsoku (the CJK
-line-breaking prohibitions) on top of the wrap width above.
-
-## Pointers
-
-- Decision record and trade-offs: [ADR 0026](adr/0026-captions-as-text-layers.md).
-- The text box a cue is born with (resize modes, why the box never scales
-  glyphs): [ADR 0049](adr/0049-text-box-lays-out-glyphs-it-does-not-scale-them.md).
-- Layer/track data model and the `apply_subtitles` tool contract: [data-model.md](data-model.md).
-- How `Text` layers render (and how bundled fonts load into the export Worker):
-  [render.md](render.md).
-- MCP surface: [mcp.md](mcp.md).
+Video export is burn-in only; there is no soft-subtitle mux or sidecar file
+export in the export dialog. Not built: word-level/karaoke highlight,
+per-project font files, kinsoku line breaking.

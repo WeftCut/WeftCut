@@ -26,7 +26,7 @@ export { canDescribeSelection };
 /// Rust's refusal when nothing is configured to describe with — the ONE failure
 /// with a remedy inside the app, which is why it is the one that gets acted on
 /// rather than only logged. Every other refusal (an unavailable explicit engine,
-/// a missing endpoint URL, a re-timed clip) already names what to go and do, and
+/// a missing endpoint URL) already names what to go and do, and
 /// the status log carries it verbatim.
 ///
 /// Matched on the leading phrase rather than the whole sentence: the tool's

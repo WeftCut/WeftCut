@@ -130,7 +130,7 @@ describe("the ADR 0039 slice is present verbatim", () => {
   });
 });
 
-describe("the ADR 0043 slice is present verbatim", () => {
+describe("the Windows FunASR Paraformer slice is present verbatim", () => {
   it("sherpa-onnx v1.13.4 shared-MD-Release Windows runtime", () => {
     const runtime = CONTENT_CATALOG.find((i) => i.id === "funasr-runtime");
     const win = runtime?.platforms["win32-x64"];
@@ -166,7 +166,7 @@ describe("the ADR 0043 slice is present verbatim", () => {
   });
 });
 
-describe("the ADR 0073 Linux slice is present verbatim", () => {
+describe("the Linux slice is present verbatim", () => {
   const linuxOf = (id: string) =>
     CONTENT_CATALOG.find((i) => i.id === id)?.platforms["linux-x64"];
 
@@ -227,7 +227,7 @@ describe("the ADR 0073 Linux slice is present verbatim", () => {
   });
 });
 
-describe("the ADR 0075 macOS arm64 slice is present verbatim", () => {
+describe("the macOS arm64 slice is present verbatim", () => {
   const macOf = (id: string) =>
     CONTENT_CATALOG.find((i) => i.id === id)?.platforms["darwin-arm64"];
 
@@ -271,7 +271,7 @@ describe("the ADR 0075 macOS arm64 slice is present verbatim", () => {
 
 });
 
-describe("the ADR 0076 macOS arm64 whisper-cli is present verbatim", () => {
+describe("the macOS arm64 whisper-cli is present verbatim", () => {
   const macOf = (id: string) =>
     CONTENT_CATALOG.find((i) => i.id === id)?.platforms["darwin-arm64"];
 
@@ -301,8 +301,9 @@ describe("coverage is all-or-nothing per engine on every platform", () => {
   // An engine is the set of items that together make one backend runnable. If
   // a platform carried some of them and not others, its Settings row would
   // offer a download that installs part of a set and can never configure the
-  // engine — the trap ADR 0055 avoided for MiniCPM-V, and the reason ADR 0075
-  // left whisper.cpp's runtime AND model off macOS together until ADR 0076.
+  // engine — the trap docs/notes/descriptions-vlm-facts.md records for
+  // MiniCPM-V, and why whisper.cpp's runtime AND model reach macOS together
+  // (ADR 0039).
   const engines = new Map<string, string[]>();
   for (const item of CONTENT_CATALOG) {
     const keys = [

@@ -119,7 +119,7 @@ async fn run_remux(cache: &CacheLayout, media: &MediaItem, tmp: &PathBuf) -> Res
 
 async fn run_fast_transcode(cache: &CacheLayout, media: &MediaItem, tmp: &Path) -> Result<()> {
     let scale_filter = format!("scale=-2:'min(ih,{QUICK_PROXY_HEIGHT_CAP})'");
-    // Short GOP so this preview proxy is scrub-friendly (ADR 0008), matching
+    // Short GOP so this preview proxy is scrub-friendly (docs/preview.md §Proxies), matching
     // the full proxy. The quick proxy is the scrub source for DirectExport /
     // long-GOP-demoted sources.
     let gop = crate::jobs::proxy::PROXY_GOP_FRAMES.to_string();

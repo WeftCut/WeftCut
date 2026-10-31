@@ -138,7 +138,7 @@ describe('runHybrid: apply_subtitles', () => {
     expect(track.layers.map((l) => [l.t_start_us, l.t_end_us])).toEqual([[11_000_000, 12_000_000], [13_000_000, 14_000_000]])
   })
 
-  // ADR 0070: the write packs into the caption track already there.
+  // ADR 0026: the write packs into the caption track already there.
   it('a second apply whose cues fit lands on the first caption track', async () => {
     const actor = actorWithSubtitle()
     const deps = makeDeps(actor)

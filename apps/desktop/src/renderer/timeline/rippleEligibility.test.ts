@@ -176,7 +176,7 @@ describe("rippleDeleteStateOf", () => {
     });
   });
 
-  // The gap kind (ADR 0069): the same planner through its gap entry, so the
+  // The gap kind: the same planner through its gap entry, so the
   // verdict is the closing's and the refusals are the ripple's own.
   it("offers the ripple for a selected gap that closes cleanly", () => {
     const tracks = baseTracks();

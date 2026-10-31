@@ -7,8 +7,8 @@ import { layerRateNumber } from '../layerTiming';
 // verbs. It owns no drawing — the bands are the timeline's, published through
 // `state/pausePreviewStore` — and no subject rule: `commands/pauseCommands.ts`
 // states that, because the command's gate has to answer it too. See
-// `.scratch/pauses/spec.md` Decisions 3, 6, 7, 13, 15, 16 and ADR 0067's
-// sibling on where clip analysis lives.
+// `.scratch/pauses/spec.md` Decisions 3, 6, 7, 13, 15, 16 and
+// docs/features.md#pauses on where clip analysis lives.
 //
 // Home is a panel section rather than a dialog because tuning a threshold is
 // something a person does WHILE looking at the waveform and playing the clip,

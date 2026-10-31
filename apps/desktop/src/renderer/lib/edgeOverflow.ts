@@ -8,7 +8,7 @@
 //
 // Both strips share this module so "which end hides content" cannot drift
 // between them; they deliberately differ only in what they draw from it.
-// ADR 0050 carries the why.
+// docs/features.md#strip-overflow carries the why.
 
 /// Tolerance for comparing two fractional layout numbers — an item's edge
 /// against the readable band's. Layout arrives in fractional CSS px on a

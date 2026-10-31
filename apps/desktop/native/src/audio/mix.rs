@@ -632,8 +632,8 @@ mod tests {
         }
     }
 
-    /// Real projects keep `duration_us ≥ max(layer.t_end_us)` (the ADR 0005
-    /// autofit guard holds even when pinned); the window gate relies on it
+    /// Real projects keep `duration_us ≥ max(layer.t_end_us)` (the autofit
+    /// guard holds even when pinned; `docs/data-model.md#composition`); the window gate relies on it
     /// for the `None` ⇒ whole-project window.
     fn composition_of(id: CompositionId, tracks: Vec<Track>, duration_us: i64) -> Composition {
         let mut c = Composition::from_skeleton(id, None, tracks.into_iter().collect());

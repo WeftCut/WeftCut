@@ -303,10 +303,10 @@
 }
 
 /* Which ends still hide a button, from the same predicate the dock tab strip
-   reads (ADR 0050). Driven by state rather than declared once per axis: a fixed
-   trailing fade keeps dimming the last button after the strip has reached its
-   end — announcing content that is not there — and says nothing about what is
-   behind the reader once they have scrolled.
+   reads (docs/features.md#strip-overflow). Driven by state rather than declared
+   once per axis: a fixed trailing fade keeps dimming the last button after the
+   strip has reached its end — announcing content that is not there — and says
+   nothing about what is behind the reader once they have scrolled.
    No arrows here, unlike the tab strip: these buttons are anonymous icons, so an
    overlay covering one costs more than it does over a named tab, and every one of
    them already shows its keyboard shortcut.
@@ -517,12 +517,12 @@
   /* Top corners only: the bottom edge must stay flat so the selected tab
      keeps its connected silhouette with the Panel below. */
   border-radius: var(--radius-control) var(--radius-control) 0 0;
-  /* A tab never truncates its title (ADR 0050). The floor is the title's own
-     width, so the label's `text-overflow` rule can never fire and no Panel is
-     ever named by a prefix — a tab is the ONLY place a Panel is named, so a
-     title the reader has to guess at costs more than a strip they have to
-     scroll. A group too narrow for its tabs clips them out of the strip
-     instead, and the two-ended overlay is what says so.
+  /* A tab never truncates its title (docs/features.md#strip-overflow). The
+     floor is the title's own width, so the label's `text-overflow` rule can
+     never fire and no Panel is ever named by a prefix — a tab is the ONLY place
+     a Panel is named, so a title the reader has to guess at costs more than a
+     strip they have to scroll. A group too narrow for its tabs clips them out
+     of the strip instead, and the two-ended overlay is what says so.
 
      `max-content` rather than a measured px floor because the requirement is
      the text, not a number: it tracks the label through both shipped locales
@@ -599,7 +599,8 @@
 
 /* ---- Tab-strip edge overlays ---------------------------------------------
    Overflow is announced at BOTH ends by a floating layer: a gradient saying
-   content continues that way, and an arrow that reveals it (ADR 0050).
+   content continues that way, and an arrow that reveals it
+   (docs/features.md#strip-overflow).
 
    Floating is load-bearing, not cosmetic. These claim no layout width, which is
    what lets an end vanish at its stop: an affordance that took width would hand

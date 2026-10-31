@@ -1,8 +1,9 @@
 /* Playhead Panel — the A/B-roll context list and the At-playhead
-   restack gesture (ADR 0044). One home for the panel chrome, rows, filter
-   chips and the reorder presentation; the ordering semantics live in playheadItems.ts
-   and usePointerReorder. The panel's only mount is DockWorkspace's
-   PlayheadDockPanel, so it owns the full Dockview content region outright. */
+   restack gesture (docs/features.md#track-placement). One home for the panel
+   chrome, rows, filter chips and the reorder presentation; the ordering
+   semantics live in playheadItems.ts and usePointerReorder. The panel's only
+   mount is DockWorkspace's PlayheadDockPanel, so it owns the full Dockview
+   content region outright. */
 
 .right-panel-playhead {
   width: 100%;
@@ -439,7 +440,7 @@
   outline: none;
 }
 
-/* ── At-playhead restack presentation (ADR 0044 decision 6) ──────────────
+/* ── At-playhead restack presentation ────────────────────────────────────
    One visual vocabulary for the whole gesture: the grabbed row lifts and
    follows the pointer, rows at/past the active gap part 8px downward to
    open a slot, and the slot carries a --selection line. The effect chain

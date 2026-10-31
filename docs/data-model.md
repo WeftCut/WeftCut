@@ -1,1606 +1,818 @@
 # Data Model
 
-The project state is the single source of truth, authored by the
-single-writer actor in the Electron **main** process (TypeScript,
-`src/main/state/`); the Rust core holds no resident copy — it deserializes
-the same shapes from the slice it is handed per compute call (audio export,
-`project://compiled`, single-media reads). UI, MCP server, and persistence
-are all clients of the actor — the struct syntax throughout this doc
-describes the shared model, not a Rust-exclusive owner.
+The project state is the single source of truth, owned by the single-writer
+actor in the Electron **main** process (`apps/desktop/src/main/state/`). The
+types live in `state/model.ts` plus `src/shared/` (`keyframe.ts`,
+`position.ts`, `timeMapping.ts`, `decode-route.ts`); the Rust serde twin in
+`native/src/state/` holds no resident copy — it deserializes the slice it is
+handed per compute call (audio export, `project://compiled`, single-media
+reads). UI, MCP and persistence are all clients of the actor. This doc holds
+what the types do not say: units, grids, invariants, cross-field rules and
+persistence rules.
 
-## Foundational decisions
+## Time
 
-### Time: integer microseconds (`i64`)
-Precise (1 µs ≪ any frame), fps-independent, integer arithmetic. f64 seconds is exposed only at API surfaces for ergonomics.
+### Integer microseconds
+
+All times are integer µs (`TimeUs`). f64 seconds appear only at API
+surfaces. Never round-trip a time through `f64 / 1e6` and back inside the model.
 
 ### Timeline-field alignment: composition frame
-Every persisted layer `t_start_us`/`t_end_us` and the
-`composition.duration_us` is on a composition-frame boundary. The actor
-snap-rounds (half-up) every TimeUs parameter at the top of each
-mutator against `composition.fps`, so UI / MCP / future agents all
-produce aligned state without re-implementing the rule. Source-time
-fields (`src_in_us`/`src_out_us`) are NOT snapped — they're in the
-source media's own time space, and the renderer's
-`sampleIndexForPtsUs` naturally handles whatever value lands there.
 
-`transition.duration_us` and marker `t_us` / `end_t_us` are on that grid
-too. A transition duration is a whole number of composition frames measured
-between two canonical boundaries anchored **at the cut** — backward for the
-default overlap placement (the incoming layer's shifted start), forward for
-an explicit extend's borrowed tail (ADR 0048) — which is what lets the moved
-endpoint stay on the grid *and* keep the `overlap == duration_us` invariant;
-at 29.97 / 23.976 a duration derived from the rate alone cannot satisfy both. Requests below half a frame are
-rejected, not rounded down: a transition and a region marker each span at
-least one frame. Markers being frame-quantized matches Premiere/Resolve,
-so a marker dropped mid-frame moves up to half a frame.
+Visual layer `t_start_us` / `t_end_us`, every `composition.duration_us` and
+marker `t_us` / `end_t_us` sit on the composition frame grid
+`round(i × 1e6 × den / num)`. **Audio layer endpoints sit on the fixed 48 kHz
+mix lattice** `round(i × 1e6 / 48000)`, which is the mixer's own sample index,
+so nothing rounds where authoring meets render. The rate is a constant, not
+`composition.sample_rate`; that field is only the export target.
 
-Alignment is **structural**, not merely per-mutation. The commit validator
-rejects any layer endpoint, `composition.duration_us`, or marker time that
-is not `round(i × 1e6 × den / num)` for an integer index on that field's own
-grid, so a mutator that forgets to snap fails loudly instead of quietly
-persisting a sub-quantum time.
+One function, `gridForLayerKind(kind, fps)` (`state/snap.ts`), picks the
+lattice for all three enforcement sites: the validator, every mutation snap
+(including `move`'s link fan-out), and the load repair. A kind-blind fan-out or
+repair would silently drag a slipped audio member back onto a video frame.
 
-### Two grids: composition frames, and the 48 kHz audio lattice
+A frame boundary is a sample boundary at 24/25/30/50/60/23.976 fps. At 29.97 and
+59.94 (1601.6 / 800.8 samples per frame) a paired audio layer sits on the
+nearest sample boundary, up to ~10 µs from the video frame. That is where the
+mixer would play it anyway. `composition.duration_us` stays a frame count: the
+autofit rounds the high-water mark **up** to the enclosing frame.
 
-Visual layer endpoints are on the composition frame grid. **Audio layer
-endpoints are on the fixed 48 kHz mix lattice** — `round(i × 1e6 / 48000)`,
-~20.83 µs apart — because the mixer already converts `t_start_us` /
-`src_in_us` / `src_out_us` to 48 kHz sample frames. Choosing samples makes the
-authoring grid and the render grid *literally the same lattice*, so there is no
-rounding at the seam: the authoring index is the mixer's sample index.
+Mutators snap-round (half-up) every time parameter against the grid, so all
+callers get aligned state. Source-time fields (`src_in_us` / `src_out_us`) are
+in the source's own time and are **not** snapped. Audio automation (`gain_db`,
+`pan`) quantizes on the sample lattice at write time.
 
-The rate is a **constant**, not `composition.sample_rate`. That field is read
-only as the export target, so it is a delivery parameter — it moves no edit and
-is never locked. Raising the video fps used to silently change the available
-audio precision; it no longer does.
+Outside the boundary rule:
 
-One function, `gridForLayerKind(kind, fps)` in
-`apps/desktop/src/main/state/snap.ts`, picks the lattice, and all three
-enforcement sites ask it: the validator's predicate, every mutation snap
-(including `move`'s link fan-out), and the load repair. That single seam is not
-tidiness — a kind-blind fan-out drags a slipped audio member back onto the
-nearest video frame on any unrelated link move, and a kind-blind load repair
-does it on *every open*. Both destroy authored sync silently, because a snap
-that "succeeds" looks like a no-op.
+- `transition.duration_us` / `extended_us` are *distances* between canonical
+  boundaries. What is enforced is `overlap == duration_us` and
+  `0 ≤ extended_us ≤ duration_us`; canonical endpoints then make both whole
+  frame counts. A transition duration is measured from the cut (backward for
+  placement overlap, forward for an extend's borrowed tail, ADR 0048) — a
+  duration derived from the rate alone cannot stay on grid at 29.97 / 23.976.
+- Keyframe `t_us` is snapped on write but **not enforced**: trim and split
+  rebase keys by a delta, and re-snapping would dedupe-merge two keys that
+  landed on one frame.
 
-A frame boundary is exactly a sample boundary at 24, 25, 30, 50, 60 and
-23.976 fps (integer samples per frame), so a co-aligned A/V pair is exact
-there. At 29.97 and 59.94 it is not — 1601.6 and 800.8 samples per frame — so a
-paired audio layer sits on the sample boundary nearest the video frame, up to
-~10 µs away. That is where the mixer would have played it regardless; storing it
-means the file now says what renders.
+Requests below half a frame are rejected, not rounded down: a transition and a
+region marker each span at least one frame. A marker dropped mid-frame moves up
+to half a frame.
 
-`composition.duration_us` stays a frame count in all cases: the autofit rounds
-the layer high-water mark **up** to the enclosing frame, so a sub-frame audio
-tail is contained rather than clipped.
+**Structural, not per-mutation.** The commit validator rejects any off-grid
+endpoint, duration or marker time (`OffGridLayerBoundary` / `OffGridTime`, with
+`snap_to`, and `grid` naming the lattice), so a mutator that forgets to snap
+fails loudly.
 
-Audio automation (`gain_db`, `pan`, the audio-role envelopes) quantizes on the
-sample lattice at write time too, so an audio envelope is no longer coarser than
-the mixer that renders it. Keyframe times remain unenforced by the validator for
-the reason below.
+**Origin.** A layer may not start before 0 (`NegativeLayerStart`, separate from
+the grid rules because a negative time is usually canonical). A move toward the
+origin clamps the shared delta, so a link stops as a set.
 
-Three fields are deliberately outside that rule. `transition.duration_us`
-and `transition.extended_us` are *distances* between canonical boundaries,
-and at 29.97 / 23.976 a distance is not itself a boundary time — so what is
-enforced is `overlap == duration_us` (plus `0 ≤ extended_us ≤ duration_us`
-structurally), and canonical participant endpoints then make both whole
-frame counts automatically. Keyframe `t_us` is snapped on
-write but not enforced: trim and split rebase keys by a delta, and
-re-snapping the shifted set would dedupe-merge two keys that landed on one
-frame, losing authored data.
+**Repair on load, not reject.** `parseProject`'s normalize pass snaps every
+grid-bound field, re-derives transition durations from the repaired geometry,
+lifts a layer straddling zero (its visible span kept) and parks a layer lying
+entirely before zero after everything else on its track (lifting it would
+manufacture an overlap). The pass is idempotent. Its report reaches the status
+log after the workspace commit, because that commit rotates the per-workspace
+LogBus.
 
-Timeline time also starts at **zero**: a layer may not begin before the
-origin. This is a bounds rule (`NegativeLayerStart`) kept separate from the
-grid rules, because a negative time is usually perfectly canonical —
-`-1_000_000` is frame -30 at 30 fps — so reporting it as off-grid would point
-at the wrong fix. A move dragged toward the origin stops *as a set*: the
-clamp applies to the shared delta, so the earliest member of a link lands on
-0 and every other member keeps its spacing, rather than individual layers
-being shortened in place.
+Changing `composition.fps` re-snaps every layer and marker in the same
+transaction (see the fps lock under Validation).
 
-Off-grid times already on disk **repair on load rather than reject**.
-`project_open` reaches the actor through `replace_state`, which runs that
-same validator, so a hard rule alone would make any project written by an
-older build unopenable. `parseProject` snaps every grid-bound field inside
-its single normalize pass — beside the additive-field backfills, one pass in
-one place — re-derives each transition duration from the repaired geometry,
-and reports what it moved so a migrated project is visible rather than
-mysterious. The same pass brings negative starts back: a layer straddling
-zero has its start lifted (its visible span is preserved exactly, and it can
-collide with nothing), while a layer lying *entirely* before zero is parked
-after everything else on its track with its duration intact — lifting that
-one would collapse it onto the head of the track and the "repair" would
-manufacture an overlap the project could not open with. The pass is
-idempotent: saving a repaired project and reopening it repairs nothing.
+### Timecode
 
-The repair report reaches the status log. It is captured during the parse but
-emitted only after the workspace commit, because that commit rotates the
-per-workspace LogBus — a row emitted where the repair happens lands in the
-bus being discarded.
+Timecode is SMPTE `HH:MM:SS:FF`, non-drop-frame at every fps, starting at zero
+with no persisted offset. At 23.976 / 29.97 / 59.94 an NDF hour is 3603.6 s of
+wall clock. Where a **duration** is displayed at a fractional rate (export range,
+composition duration in Settings), the wall-clock figure is shown beside it.
+Drop-frame is **declined**: it only relabels, and its consumers are interchange
+formats WeftCut does not write. If interchange is built, DF and a non-zero start
+timecode share one migration and one insertion point (`formatTimecode` /
+`parseTimecode` in `renderer/frames.ts`).
 
-Display format follows the same grid: timecode reads SMPTE `HH:MM:SS:FF`,
-NDF (non-drop-frame) at every fps. Project starting timecode is zero, with
-no persisted offset. At 23.976 / 29.97 / 59.94 an NDF label therefore spans
-more wall-clock time than its digits suggest — a displayed hour is 3603.6 s,
-~3.6 s per hour. That is correct NDF counting, not a rounding error, and it
-is invisible while reading a *position*: a position makes no claim about
-elapsed time.
+### Boundary semantics
 
-Where a **duration** is displayed, it does make that claim, so at fractional
-rates the wall-clock figure is shown beside the timecode — the export
-dialog's range duration and the composition duration / content-end floor in
-Settings. Integer rates show one figure only, because the second would be
-the same instant twice.
-
-Drop-frame is **declined, not deferred**. DF changes no stored microsecond;
-it is purely a relabelling, and its consumers are interchange formats
-(EDL / AAF / OTIO / FCPXML) that do not exist here — export writes no
-timecode track. Building it would cost a persisted field, a schema
-migration, `;` parsing, and skipped-label rejection to relabel numbers that
-are already correct. If interchange is ever built, DF and a non-zero
-starting timecode are revisited **together**: they share one migration and
-one insertion point (`formatTimecode` / `parseTimecode` in
-`apps/desktop/src/renderer/frames.ts`, the choke point all 14 timecode
-consumers already go through).
-
-Changing `composition.fps` re-snaps every layer's timeline fields
-atomically in the same patch transaction.
-
-The **playhead** is the one exception to boundary semantics. Every
-boundary entity above (`t_start_us`, `t_end_us`, `composition.duration_us`,
-trim handles) is exclusive and may equal `duration_us`. The playhead,
-in contrast, is a frame-anchor: it sits on the START of a real,
-displayable frame and is clamped to `[0, lastFrameAnchorUs]` where
-`lastFrameAnchorUs = max(0, duration_us − frameDurUs)`. The
-post-last-frame slot at exactly `duration_us` is unreachable for the
-playhead — pressing End in a 10 s 30 fps comp lands at `00:00:09:29`
-(the start of frame 299), not `00:00:10:00`. Helper:
-`lastFrameAnchorUs` in `apps/desktop/src/frames.ts`. The clamp lives in
-the App-level `seekTo` so every UI seek path inherits it once; the
-PlaybackEngine's auto-pause parks at the same value so the displayed
-timecode and the painted frame agree at the end of the timeline.
-
-### Boundary semantics: which frame a surface shows or stores
-
-Two conventions coexist by design — the mainstream NLE pairing
-(Premiere / Resolve / Avid behave the same way):
-
-- **Frame-anchor display.** The playhead at time `t` displays the frame
-  *starting* at `t` (half-open `[t, t + 1 frame)`). Parked exactly on a cut
-  it shows the incoming clip's first frame; the outgoing clip's last frame
-  is one `←` away. At frame-level zoom the playhead draws a one-frame-wide
-  shadow to its right (`playheadFrameShadowPx` in `timeline/geometry.ts`)
-  to make this visible.
-- **Inclusive-out display.** A tool that presents an *exclusive end
-  boundary* to the user shows the last frame the boundary KEEPS, not the
-  frame past it: a tail-trim drag previews `boundary − 1 frame` in the
-  monitor, and "set out point from playhead" stores the *end* of the
-  displayed frame so that frame is included.
-
-The one-frame gap between the two conventions is bridged only by the
-named helpers in `apps/desktop/src/renderer/frames.ts` — never by a bare
-`±1` at a call site:
+Every boundary (`t_start_us`, `t_end_us`, `duration_us`, trim handles) is
+exclusive and may equal `duration_us`. The **playhead** is a frame anchor: it
+shows the frame *starting* at `t` and is clamped to
+`[0, lastFrameAnchorUs]` = `max(0, duration_us − frameDur)`, so End in a 10 s
+30 fps comp lands on `00:00:09:29`. Tools that show an exclusive end show the
+last frame it *keeps*. The one-frame gap is bridged only by helpers in
+`renderer/frames.ts`, never by a bare `±1` in UI code:
 
 | Surface | Rule | Helper |
 | --- | --- | --- |
 | Playhead / monitor display | frame starting at `t` | `displayedFrameStartUs` |
-| Playhead upper bound, End key, auto-pause park | start of last frame | `lastFrameAnchorUs` via `clampSeekUs` |
-| In point, range start, paste-at-playhead | inclusive; store the playhead value as-is | — |
-| Out point / range end set from the playhead | store the displayed frame's exclusive end | `inclusiveOutBoundaryUs` |
-| Trim-drag monitor preview | out side shows last kept frame, in side the first | `boundaryDisplayFrameUs` |
-| Edit-point navigation (`↑`/`↓`) | park ON the cut (shows incoming frame) | `seekToPrevEdit` / `seekToNextEdit` |
-| Attribute panel End field | shows the exclusive boundary's timecode, so Start + Duration = End holds and frame counts match `out − in + 1` editors | displayed as stored |
+| Playhead upper bound, End, auto-pause park | start of last frame | `lastFrameAnchorUs` via `clampSeekUs` |
+| In point, range start, paste-at-playhead | store the playhead value | — |
+| Out point / range end from the playhead | the displayed frame's exclusive end | `inclusiveOutBoundaryUs` |
+| Trim-drag monitor preview | out side: last kept frame; in side: first | `boundaryDisplayFrameUs` |
+| Edit-point navigation (`↑`/`↓`) | park on the cut (incoming frame) | `seekToPrevEdit` / `seekToNextEdit` |
+| Attribute panel End | the exclusive boundary, so Start + Duration = End | as stored |
 
-Interval math *inside* the render and export pipelines (active-set
-queries, export tail mapping, ring lookups) legitimately subtracts a
-microsecond from a half-open `endUs` where an inclusive query is needed;
-those sites are µs-interval arithmetic, not user-facing frame
-translation, and each carries its own why-comment. The review rule for
-everything user-facing: a new surface that displays a boundary or stores
-a time sourced from the playhead picks its row in this table and goes
-through the helper — a hand-written `frameIndex + 1` or `endUs − 1` in UI
-code is the bug class this section exists to prevent.
+Render/export interval math may subtract 1 µs from a half-open `endUs`; that is
+µs arithmetic, not frame translation. Only the time ruler seeks; clicks in the
+track body select and never move the playhead.
 
-Seeking is the time ruler's job alone. A click or drag on the ruler
-strip scrubs the playhead, and the ruler is the only surface that does —
-clicks in the track body select or deselect clips and never move the
-playhead. Seeking and selection are therefore independent: scrubbing
-never clears the current selection, and selecting a clip never moves the
-playhead. `Timeline.tsx` routes the ruler's pointer gesture through
-`beginRulerScrub`; the timeline-root `onClick` is the single
-background-deselect, and clip and ruler clicks `stopPropagation` so they
-never reach it. (The ruler keeps scrubbing in blade mode — blade only
-governs clip clicks.)
+## Identity
 
-### Identity: UUID v7 everywhere
-Stable, opaque, time-sortable. Never use array indices for identity — they shift on every insert and break agent-held references mid-conversation.
+Every entity id is a UUIDv7 (`state/ids.ts`). Never use array indices for
+identity: they shift on insert and break agent-held references. Layer and marker
+ids are unique **project-wide**, across compositions.
 
-```rust
-type MediaId = Uuid;
-type TrackId = Uuid;
-type LayerId = Uuid;
-type KeyframeId = Uuid;
-type MarkerId = Uuid;
-type CheckpointId = Uuid;
-type OpId = Uuid;
-type LinkId = Uuid;
-type TransitionId = Uuid;
-```
+## Project
 
-### History: persistent-snapshot tree
-Every mutation produces a new `Arc<Project>`. Old `Arc`s stay alive in the history ring. Built on `imbl` (`im::Vector`, `im::HashMap`) so memory cost per edit is `O(depth)`, not `O(state)`.
+`compositions` is keyed by `Composition.id`; `compositions[root_id]` is what
+export renders. A Group is another entry, referenced by a `CompositionRef` layer.
+There is no sub-composition type: every walk, mutation and validator has one path
+over one shape (ADR 0052). `compositions` and `root_id` have no serde default — a
+file without them is not a project. Rust keeps an `OrdMap` for deterministic
+serialization; TS keeps a plain object in insertion order.
 
-### Track-based timeline
-Layers belong to one track. Tracks are kind-agnostic — any layer kind
-can live on any track. **Layers of the same class (video-class vs.
-audio-class) must not overlap in time on the same track** — a hard
-invariant; agents that violate it get a structured error suggesting
-"create new track" or "trim existing." Cross-class overlap on one
-track (e.g. a Video and an Audio layer at the same time) is allowed
-and is the default for paired AV imports.
+`next_group_ordinal` is monotonic (see Composition).
 
-## Top-level shape
+`audio_roles` is sparse: an absent role resolves to unity (0 dB, unmuted,
+unsoloed) via `Project::role_mix`. The mixing model is in
+[audio.md](audio.md) and [ADR 0023](adr/0023-audio-mixes-by-role-not-track.md).
 
-```rust
-struct Project {
-    schema_version: u32,
-    project_id: Uuid,                             // stable across saves
-    metadata: ProjectMetadata,
-    compositions: imbl::OrdMap<CompositionId, Composition>,  // keyed by Composition.id; the root and every Group
-    root_id: CompositionId,                       // compositions[root_id] is what export renders
-    next_group_ordinal: u32,                      // monotonic: the number the next Group takes; never reused
-    media_pool: imbl::HashMap<MediaId, MediaItem>,
-    audio_roles: imbl::HashMap<AudioRole, RoleMixSettings>,  // per-role mix buses
-    settings: ProjectSettings,                    // proxy res, autosave, etc.
-}
-```
+`settings` (`ProjectSettings`): `shot_review` / `pause_review` are `null` for
+"detector defaults" so no threshold literal lives in TS; `2 · pad_us <
+min_pause_us` holds by validation. `preview_width/height`,
+`autosave_interval_secs` and `history_capacity` are wire-only: nothing reads
+them.
 
-Every composition has the same shape (next section). The root is
-`compositions[root_id]`; a Group is another entry, referenced from some
-composition's timeline by a `CompositionRef` layer. There is no sub-composition
-type — every walk, mutation and validator has one path over one shape
-([ADR 0052](adr/0052-link-propagates-group-composes.md) §3). `compositions` and
-`root_id` carry no serde default: a file without them is not a project. The
-TypeScript twin keys a plain object; Rust keeps an `OrdMap` so the serialised
-order is deterministic.
+## Composition
 
-`audio_roles` holds one `RoleMixSettings { gain_db, muted, solo }` per
-mixing role. The map is sparse: an absent role resolves to defaults
-(0 dB, unmuted, unsoloed) through `Project::role_mix`, so a project that
-never opened the Mixer plays every role at unity. The field carries
-`#[serde(default)]`, so older `.vproj` files load with an empty table
-(every role at unity) without a schema bump. The mixing model itself —
-how the bus folds into layer envelopes, how mute/solo gate selection —
-is described in [docs/audio.md](audio.md) and [ADR 0023](adr/0023-audio-mixes-by-role-not-track.md).
-
-## `Composition`
-
-```rust
-struct Composition {
-    id: CompositionId,
-    label: Option<String>,    // None on the root and on an unnamed Group (the UI derives "Group N"); always written, `null` on the wire
-    ordinal: u32,             // the N in "Group N", assigned at creation and never rewritten; 0 on the root
-    width: u32,
-    height: u32,
-    fps: Rational,            // (num, den) — handles 23.976, 29.97 cleanly
-    duration_us: i64,         // auto-fits to max(layer.t_end_us) while !duration_pinned
-    duration_pinned: bool,    // explicit user override; cleared by fit_composition_to_layers
-    sample_rate: u32,         // 48000 default
-    channels: u8,             // 2 default
-    color_space: ColorSpace,  // Bt709 default
-    background: Rgba,
-    tracks: imbl::Vector<Track>,            // 0 = bottom z-stack, last = top
-    markers: imbl::Vector<Marker>,
-    transitions: imbl::Vector<Transition>,
-    links: imbl::Vector<Link>,
-}
-```
-
-One timeline: settings plus the four collections that live on it. The root
-and every Group are instances of this one struct, so the per-composition
-rules apply to each alike — duration autofit (ADR 0005), track cleanup
-(ADR 0042), the overlap classes, the reserved A/B skeleton, transitions
-between same-track layers, links between same-composition layers. A new
-Group copies its parent's settings and starts with the skeleton, exactly as
-`blankProject` seeds the root.
+The root and every Group share one struct and therefore every
+per-composition rule: duration autofit, track cleanup, overlap classes, the
+reserved A/B skeleton, transitions between same-track layers, links between
+same-composition layers. A new Group copies its parent's settings and starts
+with the skeleton.
 
 **Single lattice.** Every composition's `fps`, `sample_rate` and `channels`
-equal the root's (`CompositionLatticeMismatch` otherwise): a Group on another
-rate would put its `src_*` window on a different grid from the parent's
-`t_*`, which is time-remapping under another name (ADR 0052 §5).
-`set_composition` on the root cascades those three to every composition;
-`width` / `height` may differ per composition (copied at pre-compose, not
-editable in v1).
+equal the root's (`CompositionLatticeMismatch`): a Group on another rate would
+be time remapping under another name. `set_composition` cascades those three to
+every composition whichever is named; `width` / `height` / `color_space` /
+`background` / `duration_us` apply to the named composition only.
 
-`fps` MUST be rational. `30000/1001 ≠ 29.97`, and ffmpeg cares.
+`fps` is rational: `30000/1001 ≠ 29.97`.
 
-**Group numbering is stored, not counted.** A Group with no `label` is shown as
-`Group N`, and `N` is this composition's `ordinal` — taken from
-`Project.next_group_ordinal` when the composition is created and never rewritten.
-The counter is monotonic and a number is never reused: delete Group 3, make
-another, and the list reads 1, 2, 4. Both halves are load-bearing. Numbering off
-the live list instead would renumber every Group below the one you just named or
-deleted; reusing a freed number would let undo restore a deleted Group next to
-the new one wearing its name. The ordinal is held independently of `label`, so
-clearing a name falls back to the number the Group always had, and the root
-takes the reserved `0` — it is never shown as a Group. The renderer reads it
-through `renderer/lib/layerName.ts`, which owns the one name a Group appears
-under; main stores no localized string.
+**Group numbering is stored.** An unlabelled Group shows as `Group N`, `N` =
+its `ordinal`, taken from `Project.next_group_ordinal` at creation and never
+rewritten. The counter never reuses a number (delete Group 3, create one → 1, 2,
+4): numbering off the live list would renumber Groups, and reuse would let undo
+restore a deleted Group beside a new one with its number. The root's ordinal is
+`0`. The renderer derives the display name in `renderer/lib/layerName.ts`; main
+stores no localized string. `label` is always written (`null`, never omitted).
 
-`duration_us` follows `max(layer.t_end_us)` bidirectionally — growing on adds, shrinking on deletes / inward trims — until the user pins it by calling `set_composition { duration_us }`. While pinned, only an overflow guard moves the value (a new layer extending past the pinned duration still bumps it up; the pin stays set). `fit_composition_to_layers` clears the pin and snaps duration to the live high-water mark. See ADR 0005.
+**Duration.** While `duration_pinned` is false, `duration_us` follows
+`max(layer.t_end_us)` both ways. `set_composition { duration_us }` pins it;
+while pinned only the overflow guard moves it (a layer past the end bumps it up).
+`fit_composition_to_layers` clears the pin. The fitted value is the high-water
+mark snapped **up** to the frame grid (`applyDurationAutofit`,
+`mutations/helpers.ts`). Pin and duration belong to the unrecorded composition
+envelope; Settings shows the pin as the *Extend duration* switch, floored at the
+content end, and switching it off calls `fit_composition_to_layers`.
 
-## `MediaItem`
+## MediaItem
 
-```rust
-struct MediaItem {
-    id: MediaId,
-    label: Option<String>,
-    path_abs: PathBuf,                // computed at load = workspace.join(path_rel)
-    path_rel: Option<PathBuf>,        // authoritative; relative to workspace root
-    kind: MediaKind,                  // Video | Audio | Image (subtitle files are consumed at import)
-    metadata: MediaMetadata,
-    decode_route: DecodeRoute,        // where preview and export each read their pixels; see below
-    waveform_path: Option<PathBuf>,
-    conform_path: Option<PathBuf>,    // canonical 48 kHz PCM (VCONF); see docs/audio.md
-    thumbnails_dir: Option<PathBuf>,
-    file_hash_blake3: String,         // for relink-by-content + cache key
-    file_size: u64,
-    file_mtime: u64,
-    imported_at: Timestamp,
-}
+`path_rel` (workspace-relative, e.g. `Media/clip.mp4`) is authoritative. On load
+`reconcileMediaPaths` (`state/persistence.ts`) recomputes `path_abs =
+join(workspace, path_rel)`, so a moved workspace keeps its references. Items with
+`path_rel === null` (import copy pending, or synthesized `Cache/` media) keep
+their stored `path_abs`. A missing file shows as unavailable; the project still
+loads.
 
-enum DecodeRoute {
-    // Preview and export both read the original source directly; no proxy is generated.
-    Bypass,
-    // Export reads the original source; preview reads a 720p short-GOP quick proxy.
-    // quick_proxy is None until the derivative lands.
-    DirectExport { quick_proxy: Option<PathBuf> },
-    // Preview reads the quick proxy; export reads the source-resolution export master.
-    // Both Option fields represent readiness: None = derivative not yet generated.
-    Proxied {
-        quick_proxy: Option<PathBuf>,
-        full_proxy: Option<PathBuf>,
-        format_version: u32,          // bump forces proxy regen on next load
-    },
-    // A WebCodecs-blind source (ProRes today) that a native libavcodec
-    // software decoder can preview directly. Carries the same readiness
-    // fields as Proxied so the experimental toggle being off previews via
-    // the proxy with no regression; toggle-on overlays the native original.
-    NativeSw {
-        quick_proxy: Option<PathBuf>,
-        full_proxy: Option<PathBuf>,
-        format_version: u32,
-    },
-}
-```
+`file_hash_blake3` is the content identity (relink, cache keys). Import shows the
+clip at once from a stat-only probe with a provisional hash; a standalone BLAKE3
+pass sets the real hash before any derivative job is enqueued, so jobs are always
+keyed on final content, and the workspace copy runs in parallel.
 
-`path_rel` is the on-disk anchor (workspace-relative, e.g. `Media/clip.mp4`). On load, `io::load_from_dir` rewrites `path_abs = workspace.join(path_rel)` so workspace moves between machines don't break references. `path_abs` is the in-memory convenience path consumed by the IR compiler + background jobs. If `path_rel` is missing (legacy v1 project before migration) or the resolved file doesn't exist, the pool item gets a "missing media" badge — the project still loads.
+`metadata.duration_us` is normalized content duration (container start offset
+removed); source windows use this domain.
 
-`decode_route` is the **persisted source of truth** for where preview and
-where export each read their pixels (ADR 0009, ADR 0028; see also
-[`CONTEXT.md`](../CONTEXT.md#decode-routing) for canonical term definitions).
-The route is decided per source on two axes: whether the export worker can
-decode the original directly and whether the original scrubs acceptably as a
-preview source. The four legal routes, all represented by distinct variants:
+### Decode route
 
-- **`Bypass`**: a friendly short-GOP H.264 source; no proxy generated —
-  preview and export both read the original.
-- **`DirectExport { quick_proxy }`**: export reads the original at full
-  quality; preview reads a 720p short-GOP quick proxy. `quick_proxy` is
-  `None` until the derivative lands.
-- **`Proxied { quick_proxy, full_proxy, format_version }`**: a source
-  WebCodecs cannot decode directly (non-H.264-family codec, or 10-bit/HDR)
-  — preview reads the quick proxy; export reads the source-resolution
-  export master (`full_proxy`). Both fields are `None` while the respective
-  derivative is pending. `format_version` forces proxy regeneration when bumped.
-- **`NativeSw { quick_proxy, full_proxy, format_version }`**: a WebCodecs-blind
-  source (ProRes today) that a native libavcodec software decoder can
-  preview directly. Fields mirror `Proxied` exactly. With the experimental
-  `experimental_native_sw_decode` AppSettings toggle off, preview reads
-  `quick_proxy` just as `Proxied` would; with the toggle on, preview reads
-  the original via the native software decoder (`SwSourceHandle`) instead.
-  See [ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md).
+`decode_route` is the **persisted** record of where preview and export read
+pixels, with derivative readiness folded into the variants so route and path
+cannot contradict each other (wire: `{ route: "bypass" | "direct-export" |
+"proxied" | "native-sw", … }`; terms in
+[CONTEXT.md](../CONTEXT.md#decode-routing)):
 
-The optional route paths record derivative availability on disk.
-`resolveDecode(media)` maps that persisted record to preview/export paths;
-runtime preview engine and source selection use `resolvePreviewSource` and
-`resolveDecodeEngine` (ADR 0030). Media-pool actionability uses that same
-resolution, not the mere presence of a proxy path or a job-completion event.
-See [ADR 0107](adr/0107-actionability-follows-playback-capability.md).
+- `bypass` — preview and export read the original.
+- `direct-export { quick_proxy }` — export reads the original; preview reads a
+  720p short-GOP quick proxy.
+- `proxied { quick_proxy, full_proxy, format_version }` — export reads the
+  source-resolution master `full_proxy`; preview reads the quick proxy (falling
+  back to the full one). Bumping `format_version` forces regeneration.
+- `native-sw` — a WebCodecs-blind source (ProRes, DNxHD/HR, MPEG-2, VC-1/WMV3;
+  `codec_is_blindspot` in `native/src/jobs/proxy_decision.rs`); same fields and
+  path resolution as `proxied`. Preview decodes the original through the
+  Standard (ffmpeg) engine when the native component is present, otherwise the
+  quick proxy (`renderer/render/decoder/decodeEngine.ts`, ADR 0030). Export reads
+  `full_proxy` under the `webcodecs` engine setting and the original under
+  `auto` / `ffmpeg` when the component is usable
+  (`renderer/render/exportDecodeRouting.ts`,
+  [ADR 0033](adr/0033-export-decode-joins-the-engine-overlay.md)).
 
-The static import route is intentionally narrow. H.264 and AV1 8-bit,
-browser-friendly sources can be marked DirectExport; HEVC, VP9, ProRes, and
-10-bit/HDR sources route to a full export master. The renderer still verifies
-DirectExport sources with a real `probeSourceDecodable` key-frame decode before
-export. If the probe fails on the current machine, `ensure_full_proxy`
-route-corrects the media by transitioning the route from `DirectExport` to
-`Proxied` and enqueueing a full proxy, and the export waits for the store to
-show a usable path.
+The variants make illegal combinations unrepresentable (no full-proxy export
+with original preview, no `bypass` carrying a proxy), so a change to this enum is
+a shape conversion (a chain step, see Versioning). A `null` path means the
+derivative has not landed. An unknown source GOP counts as long
+(`gop_is_scrub_friendly(None) == false`), so a probe hiccup builds a scrub proxy
+rather than bypassing. `resolveDecode(media)`
+(`renderer/render/decodeRoute.ts`) maps the record to paths; preview source and
+engine come from `resolvePreviewSource` / `resolveDecodeEngine`. Pool
+actionability uses that same resolution, not the presence of a path or a job
+event ([preview.md § Actionability](preview.md#actionability)).
+H.264 and 8-bit AV1 may import as `direct-export`; HEVC, VP9, ProRes and
+10-bit/HDR route to a full master. Before export the renderer verifies a
+`direct-export` source with `probeSourceDecodable`; on failure
+`ensure_full_proxy` moves the route to `proxied` and the export waits for the
+master (why: [platform-codecs.md](platform-codecs.md#12-export-from-original-needs-a-proven-worker-decode)).
 
-Import probes original-video capability with bounded, per-source tasks.
-Successful evidence permits Lite to use the original immediately. Standard
-uses its native engine admission without waiting for the Lite probe. A verified
-same-content workspace relocation retains evidence, including when summary
-updates coalesce. Replacing content or losing source availability invalidates
-it. The renderer summary carries a verified `content_hash` (null while pending);
-main's `media:source-relocated` event carries an explicit equal-content handoff.
+### Media kinds
 
-`mediaReadiness` answers whether a source can be placed now. Workspace copy
-progress (waiting/copying/failed) and `importOptimizeStatus` (checking/bridged/
-transcoding/failed/ready/direct) are independent. Copying does not disable an
-otherwise usable card, and job success cannot make an unsupported engine usable.
-The pool reads a readiness snapshot; timeline drops re-check the same authority
-live. First-editable and first-frame-submitted diagnostics remain distinct.
+`kind` is decided at import by `detect_kind` (`native/src/io/probe.rs`),
+ffprobe first, extension fallback:
 
-On import the clip appears immediately from a stat-only probe (the item carries
-a provisional `file_hash_blake3`); a lightweight standalone BLAKE3 pass then sets
-the real content hash before any derivative job is enqueued, so jobs are always
-keyed on the final content hash and the workspace copy runs in parallel.
-(Supersedes the former pending-hash/migrate scheme, ADR 0007.)
+- A video stream means `Video`, except: cover art (`disposition.attached_pic`)
+  is ignored; a still-image codec counts as `Video` only when it moves with a
+  real video codec (motion-JPEG stays `Video`); animated GIF / WebP / APNG / AVIF
+  are `Image` (AVIF told apart from AV1 video by `container_format`).
+- An audio stream and no counting video stream means `Audio`.
+- No probe → extension list; unknown extensions default to `Video` (so SVG
+  imports as an unusable layer).
 
-### Media kinds & import classification
-
-`kind` is decided at import by `io::probe::detect_kind`, ffprobe-first with an
-extension fallback:
-
-- A probed **video stream** means `Video` — except three ffprobe traps. Embedded
-  cover art (mp3/m4a/flac/ogg) probes as a video stream with
-  `disposition.attached_pic`; those streams are skipped entirely (neither kind
-  evidence nor metadata). Still images (png/jpg/webp/gif/bmp/tiff) probe as a
-  single-frame video stream; an image-codec stream counts as `Video` only when
-  it actually moves with a true video codec (demuxed `nb_frames > 1`, or a real
-  duration — think motion-JPEG in an AVI/MOV container). Animated still-image
-  formats — GIF, animated WebP, APNG, and animated AVIF — are the third trap:
-  they probe as multi-frame but their codec is an image codec (gif, webp, png,
-  or av1 in an image container). `detect_kind` uses the `MediaMetadata.container_format`
-  field (populated by ffprobe's `format_name`) to distinguish animated AVIF
-  (container `avif`) from a true AV1 video stream (container `mp4`/`matroska`
-  etc.), and checks the codec name for the other three. All four classify as
-  `Image`, not `Video`, so they land as `ImageOverlay` layers with no proxy or
-  conform jobs. Motion-JPEG (codec `mjpeg`) in a movie container stays `Video`.
-- A probed **audio stream** (and no counting video stream) means `Audio`.
-- No probe (ffprobe missing/unreadable) falls back to the extension lists
-  below; anything unrecognized defaults to `Video`.
-
-Supported formats per kind — the import dialog offers exactly these, and the
-extension fallback recognizes them plus `tif`/`tiff`:
-
-| Kind | Dialog extensions | Notes |
+| Kind | Import dialog offers | Derivatives |
 | --- | --- | --- |
-| Video | mp4, mov, mkv, webm, avi, m4v | Decode routing per the `DecodeRoute` above. |
-| Audio | wav, mp3, flac, aac, m4a, ogg, opus | Anything ffmpeg decodes conforms; the VCONF cache is the only contract (docs/audio.md). |
-| Image | png, jpg/jpeg, gif, webp, bmp, avif | Rendered from the ORIGINAL with no derivatives. Still images use `createImageBitmap` (single frame, 3 s default duration). Animated formats (GIF, animated WebP, APNG, animated AVIF) decode all frames once via WebCodecs `ImageDecoder` (downscaled to composition size, cached per media) and loop at native speed to fill the layer; a freshly-placed animated image defaults to one native loop. APNG files are named with the `.png` extension. |
+| Video | mp4 mov mkv webm avi m4v mpg mpeg m2v | decode-route proxies, waveform, conform, thumbnails |
+| Audio | wav mp3 flac aac m4a ogg opus | waveform + conform only, ready once the copy lands |
+| Image | png jpg jpeg gif webp bmp | none — rendered from the original |
+| Subtitle | srt ass vtt | none |
 
-**Subtitle files (srt, ass, vtt)** are consumed at import: `import_media` on a
-subtitle extension reads the body, parses it through `subtitles::parse`, and
-calls `add_caption_track` to land the cues as `Text` layers on a caption-role
-track, packing into one already there where it has room (ADR 0070). The
-file is never copied to `Media/`, never added to the media pool, and no
-`MediaItem` is created. The `MediaKind::Subtitle` enum variant exists in the
-Rust codebase but is unreachable through normal import; subtitle files are routed
-before the pool-entry path. See [captions.md](captions.md) for the full caption
-model (parser, fonts, panel).
+The extension fallback also maps `tif`/`tiff`, `avif`, `apng` to `Image`. The
+dialog omits TIFF because Chromium's `createImageBitmap` cannot decode it, and
+omits AVIF (drag-drop and MCP still import it). Still images get a 3 s default
+duration; animated images decode all frames once via WebCodecs `ImageDecoder`
+and loop to fill the layer (one native loop when placed). Subtitle items carry
+no picture: `apply_subtitles` turns one into caption `Text` layers
+([captions.md](captions.md)).
 
-TIFF classifies as `Image` when it arrives anyway (drag-drop / MCP take any
-path) but Electron/Chromium's `createImageBitmap` cannot decode it — the layer
-composites nothing — so the dialog doesn't offer it. SVG is unsupported:
-unlisted extensions default to `Video` and won't produce a usable layer.
+## Track
 
-Derivative jobs follow the kind: `Video` gets decode-route derivatives + waveform +
-conform + thumbnails; `Audio` gets waveform + conform only (ready as soon as
-the workspace copy lands — no proxy wait); `Image` gets none.
+Tracks are kind-agnostic; the class shown for a track (Video / Audio / Empty) is
+derived from its layers. **Same-class layers (video-class vs audio-class) never
+overlap on one track**; cross-class overlap is allowed and is how a paired AV
+import lands.
 
-## `Track`
+- `enabled` (eye) hides the track's video and silences its audio.
+- `locked`: at every commit and dry run, `assertLockedLayersUnchanged`
+  (`state/layerLocks.ts`) refuses any change, direct or indirect, to the content,
+  transitions or link membership of a layer on a locked track (`TrackLocked`) or
+  of a locked layer (`LayerLocked`, via `layerEditLock` in
+  `shared/layerLocks.ts`), and refuses a locked track gaining layers. A lock-only
+  patch is the one allowed write; an unlock bundled with content edits is
+  refused. The check is on results, so every write path (UI, MCP, link fan-out)
+  is covered.
+- `enabled` / `locked` change through `update_track_flags`, which is
+  **unrecorded** — undo never flips a track control.
+- `muted` / `solo` round-trip but gate nothing; audio mute/solo is per mixing
+  role. Audio control stacks in three scopes: clip (`AudioParams.mute`), role
+  (`audio_roles`), track (`enabled`).
+- `role` is stored `ARoll | BRoll | AudioA | AudioB | Caption` (kebab
+  `a-roll` … in the summary). A fresh project and every new Group carry
+  non-removable A/B-roll tracks; `delete_track` on one returns
+  `TrackNotRemovable`. Legacy files without `removable` load it as `true`; the
+  role, not `removable`, is the load-bearing discriminant.
 
-```rust
-struct Track {
-    id: TrackId,
-    label: Option<String>,
-    enabled: bool,                    // eye toggle: hides video + silences audio for the whole track
-    muted: bool,                      // retained for back-compat load; no longer gates audio (mixing is per-role)
-    solo: bool,                       // retained for back-compat load; no longer gates audio (mixing is per-role)
-    locked: bool,                     // lock toggle: UI prevents edits; actor rejects structural ops on locked tracks
-    removable: bool,                  // false → delete_track refuses; default tracks set this
-    transient: bool,                  // not part of the reserved skeleton → cleanup candidate
-    role: Option<TrackRole>,          // "a-roll" | "b-roll" | "audio-a" | "audio-b" | None
-    height_px: u16,                   // UI display preference
-    layers: imbl::Vector<Layer>,      // sorted by t_start; same-class layers never overlap
-}
-```
+**Naming.** `label: null` means the name is derived, renderer-side in
+`renderer/lib/trackName.ts` (main has no locale bundle; main emits keys, never
+English): a role track from its role, a role-less one from its 1-based slot from
+the bottom, so adding or pruning renumbers those above. The exception is the
+track `separate_audio` creates, which stores `"<source> (audio)"` because the
+source cannot be recomputed later. `rename_track` stores `null` for a blank name —
+the route back to the derived name (a layer rename instead abandons on empty).
 
-Tracks are kind-agnostic — any `LayerParams` variant can live on any
-track. The dominant class on a track ("Video", "Audio", "Empty") is
-derived from the layers it actually contains.
+**Cleanup: a track disappears when its last layer leaves it.** The predicate is
+`transient && !locked`; every path that can empty a track (`delete_layers`,
+`move_layer`, `move_layers_to_new_track`, `separate_audio`, `restack_layer`,
+`groups_create`, `groups_ungroup`, `move_layers_to_composition` /
+`groups_add_members`) calls `pruneEmptiedTrack` on the track it just emptied,
+never a project-wide sweep, in the same history entry. So a track born empty
+survives until removed, and an edit never removes a track elsewhere. A raise that
+empties a renamed track deletes it and its name; one undo restores both
+(exempting named tracks would make a name a second pin beside the lock).
+`transient == (role is None)` at every creation site. The app setting
+`auto_delete_empty_tracks` (default true) gates the rule; changing it sweeps
+nothing. `remove_media --force` deletes through the same `applyDeleteLayer`, so
+it prunes too.
 
-The live track-header controls are the **eye** and the **lock**. The
-eye sets `enabled` — the whole-track gate that hides the track's video
-and silences its audio together. The lock sets `locked` (the actor
-rejects `move_layer`, `move_layers_to_new_track`, `trim_layer`,
-`split_layer`, `delete_layers`, `update_layer`, and
-`update_layer_params` on layers that belong to a
-locked track, including via link fan-out). Both are toggled through
-`update_track_flags`, an **unrecorded** mutation (same
-`replace_settings_everywhere` convention as `ProjectSettings` patches)
-so undo never flips a track control back.
+## Layer
 
-`muted` and `solo` are **retained on the struct for back-compat load**
-but no longer gate audio. Audio mute/solo is now a property of the
-mixing **role**, not the track: the per-role `{gain_db, muted, solo}`
-in `Project.audio_roles` decides what is audible (see
-[docs/audio.md](audio.md) and [ADR 0023](adr/0023-audio-mixes-by-role-not-track.md)).
-`update_track_flags` still accepts the two fields so old callers and
-projects round-trip, and they continue to deserialize, but the export
-and preview mixers ignore them. Audio control therefore stacks in three
-scopes: **clip mute** (`AudioParams.mute`, one layer), **role
-mute/solo/gain** (`audio_roles`, a whole category of sound), and **track
-`enabled`** (the eye — an entire track's picture and audio at once).
+`t_end_us` is exclusive. `enabled: false` is not deleted: the layer serializes
+and occupies its range. `metadata` is a free extension map.
 
-A fresh project ships with non-removable tracks tagged with A-roll /
-B-roll / audio roles. They give every project a guaranteed drop
-target so the UI doesn't have to handle "no tracks exist" as a
-separate case, and they give agents a stable "where do I put this?"
-answer when they don't have other context. Users can rename them;
-they cannot delete them. `delete_track` returns
-`CommandError::TrackNotRemovable` if invoked on one.
+`effects` is an ordered chain joined to an external catalog on `kind`, which the
+model does not validate (an unknown visual kind is skipped with a warning
+renderer-side). A visual `kind` is a realtime Pixi filter
+(`render/effects/effectRegistry.ts`, ADR 0027); an `audio.*` kind is an offline
+bake catalogued in `shared/audioEffects/` (ADR 0063). The command layer enforces
+`audio.*` only on Audio layers and nothing else on them
+(`EffectKindNotApplicable`); audio effect params are static only, and the baked
+artifact is derived, never stored.
 
-`label` is `None` on every track a user has not named, and that absence
-means **the name is derived** — one rule for the whole track list, with
-one exception. A role-stamped track is named from its `role`; a role-less
-one from its 1-based slot in the vector, counted from the bottom of the
-z-stack, so adding or pruning a track renumbers the ones above it
-(Premiere and Resolve do the same). A blank label counts as absent.
-Derivation runs **renderer-side** — `renderer/lib/trackName.ts`, the one
-answer to what a track is called, called by every surface that names one —
-because main holds no locale bundle, so a name computed there could never
-be translated, and translatability is the reason the role stamp carries
-the name at all. Main emits the same *keys* where it must name a track
-without a renderer (`history-labels.ts`), never an English phrase.
+**VideoClip.** `crop` is a static retained source rect, normalized; `null` = full
+source. `w`,`h` > 0 and inside `[0,1]²`; writes quantize to 1e-9 and canonicalize
+full frame to `null` (`shared/crop.ts`). Crop never changes position, scale,
+pivot or source window.
 
-The exception is the track `separate_audio` creates, which stores
-`"<source> (audio)"` whenever the source has a name of its own: that
-records which source the audio was lifted from, and the display layer
-cannot recompute it once the layer has moved on.
+**ImageOverlay / Motif / Text `graphic_role`** is `null` or matches
+`^[a-z][a-z0-9_]{0,31}$`; a Motif's is born from its manifest role unless the
+caller names one. Roles are described in [mcp.md](mcp.md). A caption cue's is
+always `null`.
 
-`rename_track` is the only command that changes the field once a track
-exists, and it stores `None` for a blank name — so clearing the rename
-field is how a user gets the derived name back. That is the opposite of
-the layer rename, where an empty value abandons the edit: a track's
-derived name is a meaningful default the user needs a route back to, and a
-layer has no equivalent. The inconsistency is deliberate.
+**Motif.** `props` are checked against the manifest's `props_schema` at write
+(add and patch; a patch merges into existing props, a rebind starts from the
+patch alone); a Motif the catalog does not know stays permissive. `src_in_us` is
+the offset into the Motif's intrinsic content.
 
-Cleanup has one rule: **a track disappears when its last layer leaves
-it.** `transient && !locked` is the predicate, and every path that can
-empty a track — `delete_layers`, `move_layer`, `move_layers_to_new_track`
-and `separate_audio` — calls the same prune with the track it just
-emptied, once per distinct track a multi-layer edit emptied. The app-level
-`auto_delete_empty_tracks` preference gates this rule, defaulting to true even
-for older app_settings.json files. General settings → Timeline can turn it off
-to preserve emptied tracks across projects. Changing the preference neither
-sweeps existing empty tracks nor enters project history; explicit track deletion
-is independent of it. Dry-runs use the same current preference as real edits.
+**Audio.** `role` is the mix-bus tag (`dialogue` | `music` | `sfx` |
+`voiceover`, default `dialogue`); the mixer groups by role, not track. `pan` is
+−1..1.
 
-`remove_media --force` is the one deliberate exception: it removes layers
-inline and calls no prune, so it can strand an empty track.
+**Color.** A fill with no transform and no opacity; `color` is its only
+animatable param.
 
-`transient` means "not part of the reserved skeleton", so it is stamped
-on every track whose `role` is `None` — including one an agent creates
-through `add_track`. The invariant is `transient == (role is None)` at
-every creation site. `locked` out-ranks cleanup: locking is the user
-pinning a row.
+### Text box
 
-The prune is scoped to that one track, never a project-wide sweep. Two
-consequences follow. A track that was *born* empty was never emptied, so
-a track an agent creates on purpose survives until the agent's own
-`remove_track` removes it. And an edit in one part of the timeline can
-never make a track vanish in another. Cleanup lands in the same history
-entry as the edit that caused it, so one undo restores layer and track
-together.
-
-Role-stamped tracks — A/B roll, their audio pairs, caption tracks —
-survive emptying unconditionally, because carrying a role is exactly
-what makes a track non-`transient`. The role, not `removable`, is the
-load-bearing discriminant: legacy projects predate `removable` and
-deserialize it as `true`.
-
-## `Layer`
-
-Common envelope, kind-specific params:
-
-```rust
-struct Layer {
-    id: LayerId,
-    label: Option<String>,
-    t_start_us: i64,
-    t_end_us: i64,                    // exclusive
-    enabled: bool,
-    locked: bool,
-    metadata: imbl::HashMap<String, Value>,   // extension point
-    params: LayerParams,
-    effects: Vec<Effect>,                     // ordered Pixi-filter chain (v1: Blur)
-}
-
-enum LayerParams {
-    VideoClip(VideoClipParams),
-    ImageOverlay(ImageOverlayParams),
-    Text(TextParams),
-    Motif(MotifParams),
-    Audio(AudioParams),
-    Color(ColorParams),
-    CompositionRef(CompositionRefParams),
-}
-
-// A per-layer effect instance. The ordered instances + their animatable
-// params are stored here; a catalog outside the model owns which effects
-// exist and how to build them. The two join on `kind`, which the model does
-// not validate (an unknown VISUAL kind is skipped + warned renderer-side).
-// v1 params are scalar `Animated<f64>` only. See render.md, ADR 0027.
-//
-// Two families share this record. A visual `kind` is a realtime Pixi filter
-// from `render/effects/effectRegistry.ts`. A `kind` in the `audio.*`
-// namespace is an offline bake of the clip's audio, catalogued in
-// `shared/audioEffects/` (ADR 0063) — and it is the one kind-ownership rule
-// the command layer enforces: `audio.*` only on an Audio layer, nothing else
-// on one (`EffectKindNotApplicable`). Its params are Static ONLY
-// (`AudioEffectParamStatic`); the artifact a chain bakes to is derived from
-// the effects and never stored on them.
-struct Effect {
-    id: EffectId,
-    kind: String,                             // catalog key, e.g. "blur"
-    enabled: bool,
-    params: BTreeMap<String, Animated<f64>>,
-}
-```
-
-### `VideoClipParams`
-
-```rust
-struct VideoClipParams {
-    media: MediaId,
-    src_in_us: i64,
-    src_out_us: i64,
-    transform: Transform,
-    opacity: Animated<f64>,
-    crop: Option<Rect>,              // static retained source rect, normalized 0..1; null = full source
-    flip_h: bool,
-    flip_v: bool,
-    blend_mode: BlendMode,
-    speed: f64,                       // 1.0 default; warns if != 1 with attached audio
-}
-```
-
-### `TextParams`
-
-```rust
-struct TextParams {
-    content: String,
-    font: FontSpec,
-    color: Animated<Rgba>,
-    align: TextAlign,
-    transform: Transform,
-    opacity: Animated<f64>,
-    shadow: Option<Shadow>,
-    outline: Option<Outline>,
-    intro: Option<TextAnimPreset>,    // FadeIn, SlideUp, Typewriter, ...
-    outro: Option<TextAnimPreset>,
-    box_w: Option<f32>,               // layout box, composition px, LOCAL (pre-scale)
-    box_h: Option<f32>,
-    valign: VAlign,                   // Top | Middle | Bottom — the block inside the box
-    line_height: f32,                 // 0 = auto (the font's own metrics)
-    letter_spacing: f32,
-    graphic_role: Option<String>,     // what the layer is for; None = untagged (schema v5)
-}
-```
-
-Preview and export render text through PixiJS `TextSprite` (native canvas text,
-shadow/outline filters, intro/outro presets).
-
-Text is the only visual kind with no intrinsic size, and the box is what gives it
-one. Which box fields are set **is** the resize mode — there is no mode enum to
-contradict them:
+The box is what gives text a size, and which fields are set **is** the resize
+mode:
 
 | `(box_w, box_h)` | Mode | Wraps | Shrinks to fit |
 |---|---|---|---|
-| `(None, None)` | Auto width | no | no |
-| `(Some, None)` | Auto height | yes | no |
-| `(Some, Some)` | Fixed | yes | yes |
+| `(null, null)` | Auto width | no | no |
+| `(set, null)` | Auto height | yes | no |
+| `(set, set)` | Fixed | yes | yes |
 
-`(None, Some)` is not a mode: a gesture that drags a top or bottom edge backfills
-`box_w` from the measured width in the same commit, the MCP boundary refuses it
-(the state layer has no canvas and so no way to measure), and the renderer
-coalesces it to Auto width rather than blanking a frame.
+`(null, set)` is not a mode: an edge drag backfills `box_w` in the same commit,
+MCP refuses it, and the renderer coalesces it to Auto width. Box fields are in
+LOCAL composition px and are not `Animated` (a keyframed box would rebuild the
+glyph atlas every frame; `scale_*` is the size animation channel). The Fixed
+shrink factor is derived in the renderer and never stored, because an MCP
+`content` edit never reaches the renderer (ADR 0049). `line_height: 0` means the
+font's own metrics.
 
-Neither box field is `Animated`, deliberately: a keyframed box would move the
-shrink factor every frame and rebuild the glyph atlas with it. `scale_x`/`scale_y`
-remain the animation channel for a text layer's size, and they scale the rendered
-result — the box lays glyphs out instead of magnifying them. The shrink factor
-Fixed applies (and the outline, shadow, leading and tracking scaling that follows
-it) is **derived in the renderer and never stored**: an MCP `content` edit never reaches the renderer, so
-a persisted effective size would be stale from the next word typed. See ADR 0049.
+### CompositionRef (Group layer)
 
-### `MotifParams`
+A media-bearing layer whose source is a composition: source duration is
+`compositions[composition].duration_us`, parent time `t` maps to
+`t − t_start_us + src_in_us`, so trim clamping, split and keyframe rebasing apply
+as for VideoClip / Audio. `composition` is never `root_id` and never on a cycle.
+**Overhang is tolerated in state, clamped at the gesture**: validation requires
+only `0 ≤ src_in < src_out`, because an upper bound would refuse a delete inside
+the Group whenever autofit shrank it under a parent's window (ADR 0052). No crop,
+flip or ref-level gain.
 
-```rust
-struct MotifParams {
-    motif_id: String,
-    motif_version: u32,
-    props: imbl::HashMap<String, Value>,   // validated against the Motif manifest's props_schema
-    src_in_us: TimeUs,                      // window offset into the Motif's intrinsic content (0 = content frame 0)
-    transform: Transform,
-    opacity: Animated<f64>,
-    graphic_role: Option<String>,           // the manifest's role unless the placing call names one
-}
-```
+### Transform
 
-`ImageOverlayParams` carries the same `graphic_role`. The value is null or a
-name matching `^[a-z][a-z0-9_]{0,31}$`; `validate` refuses anything else.
-Built-ins and custom roles are described under *Graphic role* in `docs/mcp.md`.
+**Position is the anchor position in composition pixels** for every transformed
+kind (schema v4, [ADR 0112](adr/0112-anchor-position-schema-v4.md)):
+`world = Position + R·S·(local − anchor·naturalSize)`. The full source defines
+the pivot even when cropped; proxies never change stored Position. Text uses its
+layout box (measured bounds on auto axes).
 
-### `AudioParams`
+- `anchor_x` / `anchor_y` are the normalized **pivot** (0.5 = centre), animatable
+  and unbounded. Inspector Anchor moves content around a fixed Position; the
+  on-canvas anchor target also writes `Position += R·S·(Δanchor·naturalSize)` so
+  content stays put.
+- Scale gestures (inspector and canvas handles) hold Position fixed and write
+  only scale tracks.
+- New media and Motifs are placed with Position at half their natural size (top
+  left at 0,0); a plain Group at half its composition size (identity transform);
+  Text at the composition centre.
 
-```rust
-struct AudioParams {
-    media: MediaId,
-    src_in_us: i64,
-    src_out_us: i64,
-    gain_db: Animated<f64>,
-    pan: Animated<f64>,               // -1 .. 1
-    fade_in_us: u64,
-    fade_out_us: u64,
-    mute: bool,                       // per-clip mute
-    role: AudioRole,                  // dialogue | music | sfx | voiceover
-}
-```
+`position` is exactly one of `XY { x, y }` or `Path { path: { nodes }, progress }`
+([ADR 0060](adr/0060-position-has-xy-and-path-modes.md)). Path nodes
+carry a stable `id`, relative handles, the outgoing `segment` (Line | Cubic) and
+`tangent_mode` (Corner | Smooth | Auto); geometry has no timestamps, and the
+solver stores resolved handles for every reader. `progress` 0–1 traverses by
+distance and is keyframed as `path_progress`; independent `x`/`y` writes are
+refused in Path mode. `set_position` replaces the record atomically,
+`translate_path` moves all nodes, and a split keeps the whole route and progress
+on both halves. Conversion previews never write state; applying one is a single
+record replacement.
 
-`role` is the layer's **mix-bus tag** (kebab on the wire:
-`dialogue`/`music`/`sfx`/`voiceover`; default `dialogue` via
-`#[serde(default)]`). The mixer groups by this, not by track — every
-layer tagged `music` shares one bus, wherever its track sits. The bus
-settings live in `Project.audio_roles` (below); see [docs/audio.md](audio.md).
-
-### `CompositionRefParams`
-
-```rust
-struct CompositionRefParams {
-    composition: CompositionId,       // the Group; never root_id, never on a reference cycle
-    src_in_us: i64,                   // window into the composition's own time
-    src_out_us: i64,
-    transform: Transform,
-    opacity: Animated<f64>,
-    blend_mode: BlendMode,
-}
-```
-
-A Group layer is a media-bearing layer whose source is a composition
-(ADR 0052 §4). Its source duration is `compositions[composition].duration_us`,
-and parent time `t` maps to composition time `t − t_start_us + src_in_us`.
-That sentence is what lets the kind join `VideoClip` / `Audio` in the
-`src_in_us` / `src_out_us` family: trim clamping, split's proportional source
-distribution and keyframe re-basing apply verbatim.
-
-**Overhang is tolerated in state and clamped at the gesture** (ADR 0052 §6).
-Validation requires `0 ≤ src_in_us < src_out_us` and nothing more — no upper
-bound — because a bound would refuse a delete *inside* the Group whenever
-autofit shrank its duration under a parent's window. A trim drag clamps
-`src_out_us` to the composition's duration; past the end the Group renders
-nothing.
-
-The kind is visual, so a Group layer may be a transition participant. Not in
-v1: `speed`, `crop`, `flip_*`, a ref-level audio gain. `Layer.effects` applies
-as on any layer.
-
-### `Transform`
-
-```rust
-struct Transform {
-    position: PositionAnimation,      // canvas-pixel position reference
-    scale_x: Animated<f64>,
-    scale_y: Animated<f64>,
-    rotation_deg: Animated<f64>,
-    anchor_x: Animated<f64>,          // 0..1 normalized; the transform PIVOT
-    anchor_y: Animated<f64>,
-    scale_linked: bool,               // uniform-scale intent; default true
-}
-```
-
-`PositionAnimation` is exactly one of `XY { x: Animated<f64>, y: Animated<f64> }`
-or `Path { path: { nodes }, progress: Animated<f64> }` (ADR 0060). A path node
-has a stable `id`, `point: {x,y}`, relative `in_handle`/`out_handle` vectors, an
-outgoing `segment: Line | Cubic`, and `tangent_mode: Corner | Smooth | Auto`;
-geometry contains no timestamps. Corner handles are independent; Smooth keeps
-them opposite with independent lengths; Auto derives them from adjacent chords.
-The authoring solver stores explicit resolved handles for every reader. Progress
-0–1 traverses the path by distance, with temporal easing on that scalar track.
-Path progress exposes `path_progress` to keyframe commands and supports
-Hold/Loop/PingPong extrapolation; independent `x`/`y` writes are rejected in
-Path mode. Geometry-only edits retain progress verbatim. Full position records
-frame-snap and solve temporal Auto tangents but retain floating-point value
-precision, including baked samples. XY remains the default.
-
-`set_position` replaces the complete record atomically; `translate_path` moves
-all nodes by a relative displacement. The UI's `update_path_transform` combines
-that displacement with scale/rotation/pivot writes in one undo entry. Splitting
-a path retains both the complete route and complete progress on each half,
-shifting only the right half's local key times. Displaying an XY trajectory
-does not convert it. Conversion previews do not write project state; applying
-one is a single complete-record replacement. Shape-preserving insertion splits
-the selected span exactly and freezes adjacent Auto nodes as Smooth, retaining
-progress. Conversion fits editable cubics and adaptively refines temporal keys
-against a pixel error target. Jumping positions are refused; a missed target at
-node/key/frame-grid limits disables Apply. Error is measured, not guaranteed
-between checks. See ADR 0060 for sampling limits.
-
-The anchor pair is the **pivot**: what `rotation_deg` turns around and what a
-flip mirrors about, in normalized layer coordinates (`(0.5, 0.5)` = center, the
-default). It is `Animated` like the rest of the transform, so the pivot can be
-keyframed — a rotation whose centre travels needs nothing else. The pair is
-**unbounded**: a pivot outside the layer's own box is a legitimate authoring
-choice. It replaced a single `anchor: [x, y]` tuple pre-release; the load-time
-conversion that read that tuple is gone with the formats that carried it (ADR
-0047), so v1 knows only the two tracks. The lesson it left behind is worth
-keeping, because it is why a conversion belongs in a migration step rather than a
-default: the tuple held authored data — ASS `\an` import writes an off-centre
-anchor on every caption layer — so defaulting the new fields to the centre would
-have re-positioned every imported subtitle. Since schema v4, **Position is the anchor position in composition pixels** for
-VideoClip, ImageOverlay, Motif, CompositionRef and Text. XY curves and Path nodes
-use the same coordinates. Color is a composition fill with no Transform.
-
-The transform is `world = Position + R·S·(local − anchor·naturalSize)`. The full
-source defines the pivot, including when a VideoClip is cropped. Video proxies
-change texture-space pivot and effective scale together; they never change the
-stored Position. Text uses its layout box (measured bounds on Auto axes).
-
-Both inspector Scale and on-canvas resize handles hold Position fixed and scale
-about that anchor. A scale gesture writes only scale tracks, so it does not add
-position keys or alter a motion path. Text's box handles retain their layout-box
-resize behavior, around the same anchor; inspector Scale magnifies the text.
-
-| Surface | Writes | Effect on the picture |
-|---|---|---|
-| Inspector Anchor (also MCP / animation lanes) | anchor tracks | content moves around the fixed Position |
-| On-canvas anchor target | anchor plus `Position += R·S·(deltaAnchor·naturalSize)` | content stays stationary |
-
-New media and Motifs retain their previous initial placement: source top-left at
-composition (0,0), by storing Position at half the natural source dimensions.
-A plain Group stores Position at half its referenced composition dimensions,
-which makes its transform identity. Text starts at the composition center.
-
-`scale_linked` records **uniform-scale intent**: while `true`, the two scale
-tracks are structural twins — same mode, and when keyframed the same
-`(t_us, value, in, out, continuity, segment)` sequence and the same
-`extrapolate` (keyframe `id`s are per-track identities and legitimately
-differ) — and every editing surface shows and writes them as one
-"Scale"; the preview's resize handles do it by offering **corners only**, since a
-linked layer has no honest single-axis handle. The invariant is enforced on
-**results**, not write paths
-(`main/state/mutations/scaleLink.ts`): after any mutation that touches a scale
-track of a linked layer, a twin check runs in the same commit and clears the
-flag on divergence, so the flag can never lie regardless of which write path
-(UI, MCP, or anything else) produced the state. Re-linking (`set_scale_linked
-{ linked: true }`) is the one destructive edit: `scale_y` becomes a fresh-id
-whole-track copy of `scale_x`, atomically with the flag. The field is additive
-on the wire — absent on older saves — and the load pass backfills it from the
-twin check (never a blind `true`), which also repairs a hand-edited
-`true`-over-diverged-tracks file. Rust carries the field for wire fidelity
-only; no compute reads it.
+`scale_linked` is **uniform-scale intent**: while true, `scale_x` and `scale_y`
+are structural twins (same mode and, if keyframed, the same `(t_us, value, in,
+out, continuity, segment)` sequence and `extrapolate`; key ids differ). Enforced
+on **results** (`mutations/scaleLink.ts`): after any write touching a linked
+layer's scale, a twin check in the same commit clears the flag on divergence.
+`set_scale_linked { linked: true }` copies `scale_x` over `scale_y` with fresh
+ids. The load pass backfills a missing flag from the twin check and repairs a
+lying one. Rust carries it for wire fidelity only.
 
 ## Animated values
 
-```rust
-enum Animated<T> {                           // wire: {"mode":"Static","value":v} | {"mode":"Keyframed","value":[..],"extrapolate":{..}}
-    Static(T),
-    Keyframed(imbl::Vector<Keyframe<T>>, Extrapolation),   // sorted by t_us; Hold / Hold is the clamp
-}
+`Animated<T>` is `{mode: "Static", value}` or `{mode: "Keyframed", value: [keys],
+extrapolate}` (`shared/keyframe.ts`, Rust `native/src/state/animated.rs`).
 
-struct Keyframe<T> {
-    id: KeyframeId,
-    t_us: i64,                               // RELATIVE to layer.t_start_us
-    value: T,
-    in_: Tangent,                            // wire "in": shape of the segment ARRIVING at this key
-    out: Tangent,                            // shape of the segment LEAVING this key
-    continuity: Continuity,                  // Smooth | Broken
-    segment: Segment,                        // class of the segment LEAVING; only Spline reads tangents
-}
+**Keyframe `t_us` is relative to the layer's start**, so moving a layer keeps its
+animation. An optional `time_fraction` holds an exact sub-µs remainder. An
+IN-edge trim shifts every key by the delta; split partitions keys at the cut
+(right half rebased, an emptied half collapses to `Static` at the boundary
+value); keys outside `[0, duration]` are **kept** (trims stay reversible),
+`value_at` clamps them and the UI hides them.
 
-struct Tangent { x: f64, y: f64, mode: TangentMode }   // a point in the segment's unit square
-enum TangentMode { Auto, Free }
-enum Continuity { Smooth, Broken }
-enum Segment { Spline, Hold, Linear, Elastic { dir, amplitude, period }, Bounce { dir } }   // wire: tagged by "kind"
-enum Extrapolate { Hold, Loop, PingPong, Offset, Continue }
-struct Extrapolation { before: Extrapolate, after: Extrapolate }
-```
+**Tangents.** `out` shapes the segment leaving a key, `in` the segment
+arriving; each is `{x, y, mode}` in the segment's unit square (CSS
+`cubic-bezier` lineage). A Spline segment `a → b` evaluates
+`unit_bezier(a.out.x, a.out.y, b.in.x, b.in.y)`. `in` is stored **un-mirrored**
+(the curve graph mirrors for display): `1 − (1 − 0.58)` is not `0.58` in f64, and
+preset recovery, the linked-scale twin compare and the Rust↔TS goldens all need
+exact equality. Identity sides are `(1/3, 1/3)` / `(2/3, 2/3)`, written as
+`1 / 3` and `2 / 3` in both languages ([ADR 0058](adr/0058-tangents-live-on-the-key-the-segment-class-on-the-left-key.md)).
 
-Keyframe times are **relative to the layer's start**. Otherwise moving a layer breaks its animation. Trim and split keep keyframes content-anchored: an IN-edge trim shifts every key by the edge delta, split partitions keys at the cut (right half re-based, an emptied half collapses to `Static` at the boundary value), and keys pushed outside `[0, duration]` are **retained, not dropped** (so trims stay reversible) — `value_at` clamps out-of-range keys and the UI hides them.
+**Modes.** `Free` is the numbers as written. `Auto` is clamped monotone (slope
+from neighbours, flat at extrema / ends / sign changes, `y ∈ [0,1]`) and is
+solved when the track is **written**, in the actor's normalization beside
+frame-snap / sort / dedupe-last-wins, never in the engine — stored tangents are
+always explicit. `continuity: Smooth` with both sides Free and both segments
+Spline re-derives `in.y` from the out side ("out wins"). Trim, split and move
+never re-solve.
 
-A keyframe's shape is two **tangents**, one per side. `out` shapes the segment leaving the key and `in` the segment arriving; each is a point `{x, y}` in the owning segment's unit square — fractions of that segment's time span and value span, the CSS `cubic-bezier` lineage — plus a mode. A Spline segment `a → b` evaluates as `unit_bezier(a.out.x, a.out.y, b.in.x, b.in.y)`. `in` is stored **un-mirrored**: it is the arriving cubic's second control point exactly as the engine consumes it, not the handle the user sees (that sits at `in − (1, 1)` from the key, and the mirroring is the curve graph's presentation only). Exactness is the reason — `1 − (1 − 0.58)` is not `0.58` in f64, and preset recovery, the linked-scale twin compare and the Rust↔TS goldens all rest on exact equality — so there is zero arithmetic between store and engine. The identity sides are `(1/3, 1/3)` for `out` and `(2/3, 2/3)` for `in`, written as the expressions `1 / 3` and `2 / 3` in both languages, never as decimal literals. The first key's `in` and the last key's `out` are stored but read by no segment (the last key's `in` is what `Continue` extrapolation reads).
+**Segments.** `segment` on the left key names `kf[i] → kf[i+1]`: `Spline` reads
+tangents; `Hold`, `Linear`, `Elastic {dir, amplitude, period}` and `Bounce {dir}`
+ignore them (sides next to them hold the identity). Named presets are not
+variants: authoring bakes a preset to `(p1, p2)` as Free `left.out` /
+`right.in` with `Spline`, and recovers the name by exact lookup in the
+append-only table in `src/shared/easing.ts` (entries are never retuned; a new
+feel is a new id).
 
-`mode` is per side. **Free** is the numbers as written. **Auto** is clamped monotone — the slope through the key taken from its neighbours, flat at an extremum, an endpoint or a sign change, `y` clamped to `[0, 1]` so a value never overshoots (Blender's Auto Clamped) — and it is solved when the track is **written**, in the actor's normalization beside frame-snap / sort / dedupe-last-wins, never in the engine: stored tangents are always explicit, so the curve graph, `get_param_track`, the wasm preview and the native export read the same numbers. `continuity` is `Smooth | Broken` and is maintained by that same normalization rather than stored as a constraint: when both sides are Free and both adjacent segments are Spline, Smooth re-derives `in.y` from the out-side's slope ("out wins" — main cannot know which handle moved, and the renderer writes both sides itself on an in-handle drag, so the rule fires only when a neighbour's edit changed the segment's Δv/Δt). Trim, split and move never re-solve; explicit numbers are what keep the motion byte-identical across a cut.
+**Extrapolation.** `extrapolate { before, after }`, each `Hold | Loop |
+PingPong | Offset | Continue`, default `Hold / Hold`. Period = `last.t −
+first.t`; a single key never extrapolates. `Loop` jumps back to `first.value`;
+`PingPong` runs odd periods backwards; `Offset` adds `n·(last − first)` per
+period (Rgba in OkLab); `Continue` extends the last segment's end velocity
+(slope 0 after Hold or procedural).
 
-`segment` on the left key names the class of `kf[i] → kf[i+1]`. **Spline** reads the two tangents. **Hold** (left-stick step — no cubic represents it), **Linear** (its own class, so its glyph needs no f64 test against the diagonal), and the procedural **Elastic{dir, amplitude, period}** / **Bounce{dir}** — oscillating curves a single cubic cannot express, evaluated closed-form in the eval leaf, parameters instead of handles — ignore them, and the sides adjacent to such a segment hold the identity. Named easing presets (the CSS eases plus the sine/quad/cubic/quart/quint/expo/circ/back families) are not schema variants: the authoring layer bakes a preset to its canonical `(p1, p2)`, which land as `left.out` / `right.in`, both Free, with `left.segment = Spline`, and recovers the name for display by exact reverse lookup over `(this.out, next.in)` against the append-only table in `src/shared/easing.ts` (params in that table are never retuned — a changed feel is a new id). Applying a preset to `A → B` leaves `B.out` untouched, so an Auto key downstream stays smooth. `Interpolation` in that module names the easing of ONE segment as a value — what the table holds and what `set_keyframe_easing` takes — and `segmentEasing` / `applySegmentEasing` bridge it to the record.
+`parseProject` **refuses** a key with `interp` or missing `in` / `out` /
+`continuity` / `segment`, or a keyframed track missing `extrapolate`: a defaulted
+tangent would be silently different motion.
 
-Outside its first and last key a track follows `extrapolate { before, after }`, each `Hold | Loop | PingPong | Offset | Continue`, independent, default `Hold / Hold` (the end value — the clamp). The period is `last.t − first.t`; a single-key track never extrapolates. **Loop** returns to `first.value` at `last + period`, a visible jump when first ≠ last that nothing bridges (After Effects' `loopOut("cycle")`, Blender's Cycles). **PingPong** runs odd periods backwards. **Offset** adds `n · (last − first)` per period in the value type's interpolation space (`Rgba`: OkLab, clamped at the u8 conversion). **Continue** extends a line at the last segment's end velocity; a Hold or procedural last segment gives slope 0.
+**Animatable params.** Visual kinds: position (`x`/`y`, or `path_progress` in
+Path mode), `scale_x`, `scale_y`, `rotation_deg`, `anchor_x`, `anchor_y`,
+`opacity`; Text adds `color`; Audio `gain_db`, `pan`; Color `color`. Effect
+params are `effects[<id>].params[<key>]`; `audio.*` effect params refuse a
+Keyframed track (whole-clip bake). The list has one home per side:
+`animatableParams` in `renderer/keyframe/descriptors.ts`, and
+`TRANSFORM_F64_KEYS` + `f64Lens` / `rgbaLens` in `main/state/mutations/params.ts`,
+mirrored by `resolve_animated_f64` in `native/src/state/layer.rs`. Editing
+surfaces (timeline rows, navigation, marquee, batch edits, clipboard) discover
+params through `renderer/keyframe/channels.ts` (`layerParams`,
+`readLayerParamTrack`, `keyframedParams`), which adds per-instance effect params
+from `shared/effects/params.ts`; effect rows are addressed by effect instance id,
+so reorder changes the label, not the address. Only Keyframed params get
+timeline rows.
 
-There is no migration to this record: v1 is redefined in place under § Versioning's pre-release rule, and `parseProject` **refuses** the old shape — a key carrying `interp` or lacking any of `in` / `out` / `continuity` / `segment`, or a keyframed track lacking `extrapolate` — with a named error rather than a default (the additive-field rule: a defaulted tangent is not a blank screen but silently different motion). ADR 0058.
+`color` is the one `Rgba` track; the param key decides the lens and a value of
+the other type is refused. Quantization is numbers-only, and an Rgba Auto side
+lands on the identity with its mode kept. Text shadow and outline colours are
+plain static `Rgba` fields.
 
-Animatable params, by kind: the visual kinds carry `x`, `y`, `scale_x`,
-`scale_y`, `rotation_deg`, `anchor_x`, `anchor_y` and `opacity`; Audio carries
-`gain_db` and `pan`; Text adds `color` and Color carries `color` alone. Effect
-params are addressed as `effects[<id>].params[<key>]` — except an `audio.*`
-effect's params, which are static only and refuse a `Keyframed` track at both
-write entries, because an audio effect is a whole-clip offline bake with no
-per-frame value to animate (ADR 0063). The list has ONE home per
-side — `animatableParams` in `renderer/keyframe/descriptors.ts` and
-`TRANSFORM_F64_KEYS` + `f64Lens` / `rgbaLens` in
-`main/state/mutations/params.ts`, mirrored by `resolve_animated_f64` in
-`native/src/state/layer.rs`. A param missing from the descriptor list has no
-stopwatch, no timeline lane and no curve, however writable its track is.
+## Marker
 
-`color` is the one param whose track carries `Rgba` rather than a number, and
-the param KEY decides which: a track write picks `rgbaLens` or `f64Lens` from
-it, and a value of the other type is refused (`InvalidArgument` on `track`)
-rather than coerced. Everything between is shared — snap, sort, dedupe and the
-tangent solve are generic over the value — except that quantization is
-numbers-only (a channel is already an integer) and the Auto solve runs with no
-scalar projection, because a colour has no single axis to take a slope on: its
-Auto sides land on the identity coordinates with their mode kept, and the Smooth
-"out wins" rule does not apply. A Text layer's shadow and outline colours are
-plain `Rgba` fields, not tracks, and stay static by decision; wrapping one in an
-`Animated` later is the cheapest class of change and needs no migration.
+A marker belongs to one composition. **Following a clip is a field, not a second
+entity**: `anchor: { layer, src_us, src_fraction? }` names a layer of the same
+composition and an instant in its SOURCE domain (`src_fraction` holds the exact
+sub-µs phase, omitted when absent). `t_us` stays **stored** as a derived cache,
+so every reader (lane, `Ctrl+K`, summary, serialize, MCP, export) reads `t_us`.
 
-## `Marker`
+`reconcileMarkers` (`state/validate.ts`) runs in the commit beside
+`reconcileTransitions`, after the mutation and before validate. It re-derives
+`t_us` through the retime-aware `sourceInstantTimelineUs` (`summary.ts`) and
+carries `end_t_us` by the same delta; drops a marker whose layer exists nowhere
+(status-log row); and leaves a layer that exists in another composition for
+validate to refuse (`MarkerAnchorNotInComposition` is a bug detector).
 
-```rust
-struct Marker {
-    id: MarkerId,
-    t_us: i64,
-    end_t_us: Option<i64>,            // makes it a region marker
-    label: String,                    // short name — lane text, Ctrl+K row
-    note: String,                     // long text — the marker Panel's field
-    color: Rgba,
-    anchor: Option<MarkerAnchor>,     // None = a free marker
-}
+- Patching `t_us` on an anchored marker **moves the anchor**: `update_marker`
+  derives `src_us` from it and the reconcile writes `t_us` back. A time outside
+  the layer's span is refused, and so is `t_us` together with `end_t_us`.
+  `anchor` is set and cleared only by attach / detach.
+- An anchor whose `src_us` falls outside `[src_in_us, src_out_us)`
+  **hibernates**: kept, not painted, revived exactly by undoing the trim.
+  Hibernation is recomputed every commit and never stored, so `src_us` is
+  deliberately not range-checked.
+- `label` is short (lane text, `Ctrl+K` row); `note` is the Panel's long text.
 
-struct MarkerAnchor {
-    layer: LayerId,
-    src_us: i64,                      // in the layer's SOURCE domain
-}
-```
+## Link
 
-A marker belongs to one composition and only ever to one. **Following a clip is
-a field, not a second entity**: an anchored marker names a layer of its own
-composition plus a time in that layer's source window, and `t_us` becomes a
-derived cache that nonetheless stays *stored* — so every reader (the marker
-lane, `Ctrl+K`, the summary projection, serialize, MCP, export) goes on reading
-`t_us`.
-
-Because `t_us` is the cache, **patching it on an anchored marker moves the
-anchor**: `update_marker` takes the time as a statement of where the mark should
-read, derives `src_us` from the anchoring layer, and leaves the reconcile in the
-same commit to write `t_us` back. A time outside that layer's half-open span is
-refused, and `t_us` paired with `end_t_us` is refused too — the reconcile already
-carries an anchored region's end by the same frame delta, so writing it as well
-would move it twice. `anchor` itself is not patchable at all; it is set and
-cleared only by attach and detach.
-
-`label` and `note` split because `label` has two consumers that force it short
-(the lane's inline text, the `Ctrl+K` row) — the same split Premiere makes as
-Name + Comments and Resolve as Name + Notes.
-
-An anchored marker whose `src_us` falls outside its layer's
-`[src_in_us, src_out_us)` window **hibernates**: kept, not painted, and revived
-exactly where it was by undoing the trim. Holding the tie in source time is what
-buys that; it is a legal state, not a broken project, so `src_us` is deliberately
-not range-checked.
-
-## `Link`
-
-```rust
-struct Link {
-    id: LinkId,
-    members: imbl::OrdSet<LayerId>,   // ≥ 2; a layer is in at most one link; the TS twin keeps its array sorted to match
-}
-```
-
-A flat, non-nesting set of layers of **one composition** whose move / trim /
-split fan out to every member; nothing else about a link is rendered, mixed
-or exported, and — as in every NLE — a link has no name. The
-behaviour contract is [features.md § Links](features.md#links). On the read
-surface a link is `LinkSummary { id, layer_ids }` — `links` on
-`project://current`. A `label` in a file written while links had names is
-dropped at load.
+A flat, non-nesting set of ≥ 2 layers of **one composition** whose move / trim /
+split fan out to every member; a layer is in at most one link, and a link has no
+name (a stored `label` is dropped at load). Rust keeps `members` as an `OrdSet`;
+TS keeps the array sorted. Behaviour: [features.md § Links](features.md#links).
 
 ## Read surface: `ProjectSummary`
 
-The renderer never holds a `Project`. It mirrors the read-only view main builds
-on every `project:changed` (`main/state/summary.ts` `buildProjectSummary`;
-`renderer/ipc/index.ts` declares the same shapes):
+The renderer never holds a `Project`. Main builds a read-only view on every
+`project:changed` (`buildProjectSummary` in `state/summary.ts`; the renderer's
+types in `renderer/ipc/index.ts`). Every composition is projected, keyed by id,
+as a pure function of that composition plus the media pool; timeline fields live
+only on the composition entries, so a consumer names the composition it reads.
+`track_count` / `layer_count` span every composition; `audio_roles` always lists
+the four roles in canonical order with defaults filled; `fps_locked` is
+history-scoped, so it repeats on every entry. `TrackSummary.kind` is a derived
+class, never a name.
 
-```ts
-interface ProjectSummary {
-  project_id: string; name: string
-  root_id: string                                  // compositions[root_id] is what export renders
-  compositions: Record<CompositionId, CompositionSummary>
-  track_count: number; layer_count: number         // counted over EVERY composition
-  history: { cursor, len, can_undo, can_redo, lock_reason? }
-  media: MediaSummary[]                            // the pool, availability-gated by fs.existsSync
-  audio_roles: RoleMixView[]                       // the 4 roles, canonical order, defaults filled
-}
-
-interface CompositionSummary {
-  id: CompositionId; label: string | null
-  ordinal: number                                  // the N in a derived "Group N"; carried even on a labelled Group
-  width: number; height: number; fps_num: number; fps_den: number
-  duration_us: number; duration_pinned: boolean
-  fps_locked: boolean                              // history-scoped, so project-wide — repeated on every entry
-  tracks: TrackSummary[]; markers: MarkerSummary[]; transitions: TransitionView[]; links: LinkSummary[]
-}
-```
-
-Every composition is projected, keyed by id; the projection of one is a pure
-function of that composition (plus the media pool, and the label lookup a
-`CompositionRef` layer's view carries as `composition_label`). Timeline fields
-live only on the entries — there is no flat `tracks` on the project — so a
-consumer names the composition it reads. A timeline Panel names its own
-(ADR 0053): its Dock address is `timeline:<composition_id>`, so several can
-stand open at once, each drawing one composition. Everything that follows the
-keyboard follows the FOCUSED one — `state/compositionAnchorStore.ts`, the
-composition of the timeline Panel that last held it: the inspector, the
-Playhead panel and every creation channel (`add_track`, `add_marker`,
-`add_color_layer`, …, each stamped with the `compositionId` of the Panel that
-caused it). The preview is the one surface that does not: it names its own
-RENDER TARGET, which is a composition it is locked to or, by default, the
-focused one. Export alone is fixed — it reads `compositions[root_id]` and
-nothing else, because a Group is a source. That store also holds each Panel's
-ANCHOR, the path of `CompositionRef` layers it was entered through; should a
-composition vanish from a summary — undoing the pre-compose that created it
-while standing inside it — its Panel closes and the focus falls back to the
-nearest surviving step of that path, then the root.
-
-`TrackSummary.kind` is a derived class label (Video / Audio), never a name:
-`renderer/lib/trackName.ts` is the single answer to what a lane is called
-(ADR 0042). `TrackRole` is emitted in kebab form (`a-roll`, `b-roll`,
-`audio-a`, `audio-b`, `caption`).
+A timeline Panel is addressed `timeline:<composition_id>`
+([ADR 0053](adr/0053-a-timeline-panel-is-one-composition.md)). Keyboard
+surfaces (inspector, Playhead panel, creation commands) follow the focused
+composition (`state/compositionAnchorStore.ts`); the preview renders its locked
+target or the focused one; export always reads `compositions[root_id]`. If a
+composition vanishes (undoing the pre-compose you stand in), its Panel closes and
+focus falls back along the anchor path, then to the root.
 
 ## History
 
-```rust
-struct History {
-    snapshots: VecDeque<HistoryEntry>,        // bounded ring; default 200
-    cursor: usize,
-    checkpoints: imbl::HashMap<CheckpointId, NamedCheckpoint>,
-    lock: Option<String>,                     // when set, undo/redo/restore reject
-}
+`state/history.ts`: a linear stack of whole-project snapshots (Immer structural
+sharing), capped at 200 entries, plus named checkpoints and an optional lock.
 
-struct HistoryEntry {
-    op_id: OpId,
-    actor: Actor,                              // User | Agent { client: String }
-    timestamp: Timestamp,
-    summary: String,                           // "Moved 'intro' to 4.20s"
-    affected_ids: Vec<Uuid>,
-    snapshot: Arc<Project>,
-}
-
-struct NamedCheckpoint {
-    id: CheckpointId,
-    label: String,
-    actor: Actor,
-    created_at: Timestamp,
-    snapshot: Arc<Project>,
-}
-```
-
-- **Undo/redo**: move `cursor`, broadcast snapshot at cursor.
-- **Checkpoint**: explicit named snapshot stored separately; survives undo-truncation; persists in save file.
-- v1 is linear undo; tree-of-edits is v2 (the snapshot model already supports it — just add parent pointers).
-- **Several mutation classes sit outside the undo stack** — see `docs/features.md#undo-stack-scope` for the full per-op table. The pattern: patch every snapshot (and checkpoint) in place via `replace_media_pool_everywhere` or `replaceCompositionEverywhere`, broadcast a non-recorded `ChangeEvent`, cursor unchanged. Covers media imports/removals of unreferenced media, derivative and workspace-path updates, the **entire composition envelope** (`set_composition` / `fit_composition_to_layers`, duration included), and project open/new (`replace_state` resets history instead). Timeline edits and cascade media removals still record normally.
-- The composition fan-out is a **transform applied per snapshot**, not a value copied across them: a pinned `duration_us` is floored at each snapshot's own content high-water mark (so an older snapshot never ends up shorter than its own layers), and an `fps` re-snap runs against each snapshot's own markers. Because the write spans every stored snapshot, the `fps` rate lock is judged over them too — see the rate-lock note in features.md.
+- Undo/redo move the cursor and broadcast the snapshot there.
+- Checkpoints are in-memory snapshots that survive stack eviction; they are not
+  written to `project.json`. Restoring one records a new entry, which drops redo.
+- While the lock is set (`set_history_lock`), undo / redo / restore are refused.
+- **Unrecorded mutation classes** patch every snapshot and checkpoint in place
+  (`replace*Everywhere` in `history.ts`), broadcast a non-recorded change and
+  leave the cursor: unreferenced media import/removal, derivative and path
+  updates, track and role flags, project settings, and the whole composition
+  envelope (`set_composition` / `fit_composition_to_layers`). Opening or creating
+  a project resets history (`replace_state`). Per-op table:
+  [features.md § Undo-stack scope](features.md#undo-stack-scope).
+- The composition fan-out is a **transform per snapshot**: a pinned duration is
+  floored at that snapshot's own content, and an fps re-snap runs against that
+  snapshot's own layers and markers. Because the write spans every snapshot, the
+  fps lock is judged over all of them.
 
 ## Concurrency: single-writer actor
 
-The actor runs in the Electron **main** process (TypeScript, `src/main/state/`)
-and is the sole writer; the shape below is illustrative of what it holds.
+One writer: UI IPC and MCP calls both land in the actor (`state/actor.ts`), which
+runs each mutation as an Immer recipe, reconciles, validates, records and
+broadcasts a `ChangeEvent { op_id, actor, summary, affected, new_snapshot,
+diff_hint }`. `diff_hint` (`Coarse | Layer(id) | Composition`) lets consumers do
+partial work ([architecture.md](architecture.md)).
 
-```rust
-struct ProjectActor {
-    current: Arc<Project>,
-    history: History,
-    subscribers: Vec<Sender<ChangeEvent>>,
-    inbox: Receiver<Command>,
-}
-```
+## Validation invariants
 
-```
-   UI command (IPC)              MCP tool call
-         │                              │
-         └──────────► inbox ◄───────────┘
-                       │
-                  ProjectActor
-                       │
-        ┌──────────────┼──────────────┐
-        ▼              ▼              ▼
-   new Arc<Project> history append broadcast
-                       │
-        ┌──────────────┼─────────────────────┐
-        ▼              ▼                     ▼
-       UI       IR compiler           MCP change feed
-```
-
-- One writer; UI and MCP both submit `Command`s.
-- Reads are lock-free (`Arc` clone).
-- Bounded inbox (capacity ~100); under sustained agent flood, reject-oldest with backpressure error.
-
-## `ChangeEvent`
-
-```rust
-struct ChangeEvent {
-    op_id: OpId,
-    actor: Actor,
-    timestamp: Timestamp,
-    summary: String,
-    affected: Vec<EntityRef>,                  // (kind, id) pairs
-    new_snapshot: Arc<Project>,
-    diff_hint: DiffHint,                       // Coarse | Layer(id) | Composition | ...
-}
-```
-
-`diff_hint` lets consumers do partial work — see [architecture.md](architecture.md) for the IR-compiler contract.
-
-## Validation invariants (enforced inside the actor on every commit)
+Enforced on every commit by `validate` (`state/validate.ts`); error names are in
+`src/shared/commandErrors.ts`. A failure returns a structured error (UI toast;
+MCP tool error with a reason and, where useful, options).
 
 | Invariant | Failure |
 |---|---|
-| `t_start_us < t_end_us` | reject |
-| `t_start_us >= 0` | clamped in the mutator (a link move stops as a set), then reject as a backstop (`NegativeLayerStart`); a project loaded from disk is repaired in `parseProject` instead of rejected |
-| Visual `t_start_us`, `t_end_us`, the composition's `duration_us`, marker `t_us`/`end_t_us` on that composition's frame grid | snap-round (half-up) in the mutator, then reject as a backstop (`OffGridLayerBoundary` / `OffGridTime`); a project loaded from disk is repaired in `parseProject` instead of rejected. Both errors carry `snap_to`, the value the caller should have sent |
-| Audio `t_start_us`, `t_end_us` on the fixed 48 kHz sample lattice | same three-site enforcement, against the audio grid; the error carries `grid: "sample"` and `fps: 48000/1` |
-| `fps` immutable once the timeline — or any stored snapshot / checkpoint — holds a layer | reject (`FpsLockedByContent`, carrying `locked_by: current \| history`). History scope, because the unrecorded rate change writes to every snapshot: judging on the live state alone would let `undo` resurrect old-grid layers at the new rate. Set the rate on a project whose timeline has never held anything |
-| `transition.duration_us` == the geometric overlap of its participants | reject — this *is* the transition's grid rule; a duration is a distance, not a boundary time |
-| `0 ≤ src_in_us < src_out_us`, and `src_out_us ≤ media.duration_us` for `VideoClip` / `Audio` | reject. A `CompositionRef` window has **no** upper bound — overhang past the referenced composition's duration is tolerated (ADR 0052 §6) |
-| No two layers in the same track overlap in `[t_start, t_end)` | reject (with structured options) |
-| Per composition: `duration_us == max(layer.t_end_us)` while `duration_pinned == false` | auto-fit bidirectionally (grow on adds, shrink on deletes/inward trims) |
-| Per composition: `duration_us ≥ max(layer.t_end_us)` while `duration_pinned == true` | overflow guard only — pinned value grows if a layer extends past it, never shrinks |
-| Per composition: `fps.den > 0`, `width/height > 0` | reject |
-| `root_id` is a key of `compositions` | reject (`RootMissing`) |
-| `compositions[k].id == k` | reject (`CompositionIdMismatch`) |
-| Every `CompositionRef.composition` names an existing composition | reject (`CompositionMissing`) |
-| No `CompositionRef` targets `root_id` | reject (`RootReferenced`) |
-| Composition references form no cycle | reject (`CompositionCycle { path }`; orphans — compositions nothing references — are legal) |
-| A composition is removed only by `groups_ungroup` of its last reference or by `compositions_delete` when unreferenced | reject (`CompositionInUse { composition, ref_count }`). Deleting a Group layer never cascades into its composition — the orphan stays, legal, until `compositions_delete` |
-| Every composition's `fps`, `sample_rate`, `channels` equal the root's | reject (`CompositionLatticeMismatch { composition, field }`) |
-| `Layer.id` unique across **all** compositions | reject (`DuplicateLayerId`) |
-| `Marker.id` unique across **all** compositions | reject (`DuplicateMarkerId`) |
-| An anchored marker's `anchor.layer` names a layer of the **same** composition | reject (`MarkerAnchorNotInComposition`) — the two timelines share no origin, so no `t_us` could be derived from a crossing tie |
-| An anchored marker's layer carries a source window (`VideoClip` / `Audio` / `CompositionRef`) | reject (`MarkerAnchorLayerHasNoSourceWindow`) — the derivation reads `params.src_in_us` |
-| `anchor.src_us` inside the layer's window | **not checked** — outside it is the legal hibernating state (see `Marker`) |
-| All references (`MediaId`/`LayerId`/`LinkId`/`TransitionId`) resolve | reject |
-| `Link.id` unique within its composition's `links` | reject (`DuplicateLinkId`) |
-| Every `Link.members` entry names a layer of the **same** composition | reject (`LinkMemberMissing`) |
-| A layer is in at most one link | reject (`LayerInMultipleLinks`) |
-| A link holds ≥ 2 members | dissolved in the mutator when a delete or `links_remove_members` takes it below two — delete is local, so this is the only way a member leaves — then reject as a backstop (`LinkBelowMinSize`) |
-| A transition's two participants do not share a link | reject at `add_transition` (`TransitionParticipantsShareLink`): placement moves the incoming layer with its link siblings, so a shared link would drag the outgoing layer along and the overlap would never open |
-| Keyframe `t_us` outside `[0, layer.duration]` | **allowed** — trim/split intentionally keep out-of-range keys (non-destructive); `value_at` clamps and the UI hides them |
-| Motif props match the Motif manifest's `props_schema` | reject |
-| `Animated` with empty keyframes ⇔ `Static` | normalize |
-
-A failed invariant returns a structured error to the caller (UI shows toast; MCP returns tool error with a reason and, where useful, suggested alternative actions).
+| `t_start_us < t_end_us`; `t_start_us ≥ 0` | reject (`InvalidLayerRange`, `NegativeLayerStart`); the start is clamped in the mutator first; a loaded project is repaired instead |
+| Endpoints, `duration_us`, marker times on their grid (see Time) | snap in the mutator, then reject (`OffGridLayerBoundary` / `OffGridTime`, carrying `snap_to`); a loaded project is repaired instead |
+| `fps` changes only while no layer exists in the timeline or any stored snapshot / checkpoint | reject (`FpsLockedByContent`, `locked_by: current \| history`) — the unrecorded rate change writes every snapshot, so undo could otherwise resurrect old-grid layers |
+| `transition.duration_us` == the participants' overlap; `0 ≤ extended_us ≤ duration_us` | reject |
+| `0 ≤ src_in < src_out`, and `src_out ≤ media duration` for VideoClip / Audio (exact, through the layer's time map) | reject (`InvalidSrcRange`, `SrcRangeExceedsMedia`); a CompositionRef has no upper bound |
+| No two same-class layers on one track overlap in `[t_start, t_end)` | reject (`LayerOverlap`, with options) |
+| `duration_us == max(t_end_us)` unpinned; `≥` pinned | autofit (pinned: grow only) |
+| `width/height > 0`, `fps` num/den non-zero | reject (`InvalidCanvas`, `InvalidFps`) |
+| `root_id` resolves; `compositions[k].id == k` | reject (`RootMissing`, `CompositionIdMismatch`) |
+| Every `CompositionRef` target exists, is not the root, forms no cycle | reject (`CompositionMissing`, `RootReferenced`, `CompositionCycle`); unreferenced compositions are legal |
+| A composition is removed only by ungrouping its last reference or by `compositions_delete` when unreferenced | `CompositionInUse`; deleting a Group layer never cascades into its composition |
+| Every composition's `fps` / `sample_rate` / `channels` equal the root's | reject (`CompositionLatticeMismatch`) |
+| Layer and marker ids unique project-wide; transition ids unique per composition | reject (`DuplicateLayerId`, `DuplicateMarkerId`, `DuplicateTransitionId`) |
+| An anchored marker's layer is in the same composition and has a source window (VideoClip / Audio / CompositionRef) | reject (`MarkerAnchorNotInComposition`, `MarkerAnchorLayerHasNoSourceWindow`); `src_us` is not range-checked |
+| Media and track references resolve | reject (`MissingMedia`, …) |
+| Link ids unique per composition; members in the same composition; a layer in ≤ 1 link; ≥ 2 members | reject (`DuplicateLinkId`, `LinkMemberMissing`, `LayerInMultipleLinks`, `LinkBelowMinSize`); a delete or member removal dissolves a link below two first |
+| Transition participants do not share a link | refused at `add_transition` (`TransitionParticipantsShareLink`): placement moves the incoming layer's link siblings, so the overlap would never open |
+| `crop` valid; `graphic_role` valid; `frame_interpolation` is `FrameSampling` | `InvalidArgument` |
+| Keyframe `t_us` outside `[0, duration]` | allowed |
 
 ## Mutation surface
 
-Every command reaches agents as an MCP tool, almost always under the same
-name. The exceptions are the commands a single tool covers by argument:
-`delete_layers` / `ripple_delete_layers` are one `delete_layers { ripple }`,
-`attach_marker` / `detach_marker` one `set_marker_anchor { layer_id }`, and
-`lock_history` / `unlock_history` one `set_history_lock { locked }`. Patches are
-**strongly typed**, not JSON Patch.
+Actor commands (`state/actor.ts`) and MCP tools (`MCP_TOOL_DEFS` in
+`state/mcp-commands.ts`) are not 1:1 by name — e.g. MCP `create_group` →
+`groups_create`, `ungroup_layer` → `groups_ungroup`, `create_link` /
+`update_link` / `delete_link` → `links_*`, `update_composition` →
+`set_composition`, `delete_media` → `remove_media`, `set_track_flags` →
+`update_track_flags`, `delete_layers { ripple }` → `ripple_delete_layers`,
+`set_marker_anchor` → attach / detach. The tool catalog is [mcp.md](mcp.md).
+Patches are strongly typed, not JSON Patch.
 
-**Scope is derived, never passed** (ADR 0052 §3; the invariants table above).
-Layer ids are unique across every composition, so a layer-addressed command
-locates its layer in whichever composition holds it and edits *that*
-composition — its tracks, links, transitions, duration autofit and track
-cleanup — with no scope argument; a marker-, track-, link- or
-transition-addressed command does the same by its own id (marker ids are
-project-wide unique too). Only **creation** commands carry a scope:
-`add_track`, `add_marker`, `add_caption_track`, the lane-picking layer adds
-and the composition envelope (`set_composition`, `fit_composition_to_layers`)
-take `composition_id?`, defaulting to the root; a layer add that names a
-`track_id` needs none, because a track lives in exactly one composition.
-No command that derives its scope crosses compositions: a destination in
-another one (a move's target track, a restack's anchor, a paste's target
-lane) is refused with `CrossCompositionMove { layer, from, to }`, and a set
-command whose members straddle two compositions (`delete_layers`,
-`ripple_delete_layers`, `set_layers_enabled`, `paste_layers`,
-`move_layers_to_new_track`, `links_create`, `links_add_members`) with
-`CrossCompositionSet { layer,
-composition, expected }`. A layer changes composition only through
-pre-compose, adding it to an existing Group, ungroup, or
-`move_layers_to_composition` — the four ops that name a destination
-composition rather than inherit one. Crossing has its own op; a *move* still
-never crosses.
+**Scope is derived, never passed** (ADR 0052). Ids are project-wide unique, so a
+layer-, marker-, track-, link- or transition-addressed command edits the
+composition that holds its target. Only creation commands carry
+`composition_id?` (default root): `add_track`, `add_marker`,
+`add_caption_track`, lane-picking layer adds, and the composition envelope; a
+layer add naming a `track_id` cross-checks it. A derived-scope command never
+crosses compositions: a destination elsewhere is `CrossCompositionMove`, a set
+straddling two is `CrossCompositionSet`. A layer changes composition only through
+pre-compose, `groups_add_members`, ungroup, or `move_layers_to_composition`.
 
-The MCP surface mirrors this 1:1 (same names, schemars-derived schemas);
-the UI uses the same actor via backend commands.
+Command contracts not stated elsewhere:
 
-| Command | Notes |
+| Command | Contract |
 |---|---|
-| `import_media(path)` → `MediaId` | hashes, probes metadata, fans out proxy / thumbnails / waveform jobs |
-| `remove_media(id, force?)` | rejects with `MediaInUse { referenced_by }` if any layer references it unless `force=true` |
-| `add_track(label?, composition_id?)` → `TrackId` | tracks are kind-agnostic — any layer kind can be placed on any track; lands in the named composition, the root by default |
-| `remove_track(id, force?)` | rejects if non-empty unless `force` |
-| `move_track(id, new_position)` | Whole-track reorder within its composition, 0 = bottom of z stack. Integer position in `[0, track_count)`. Rejects locked tracks and tracks containing locked clips. Preserves track identity, attributes, clip timing, links and transitions; one undo entry, no-op records nothing. Renderer All Tracks offers drag and menu ordering with A/B as immovable references; MCP retains its explicit track addressing. |
-| `rename_track(id, label?)` | **recorded** (undoable); any track, reserved ones included. A blank or absent `label` stores `None`, which restores the derived name |
-| `update_track_flags(id, patch)` | unrecorded; patch any subset of `{enabled, muted, solo, locked}`; undo never reverts these. `muted`/`solo` round-trip but no longer gate audio (mixing is per-role) |
-| `set_role_gain(role, gain_db)` | **recorded** (undoable); sets a mixing role's bus gain, folded into that role's layers at mix time |
-| `update_role_flags(role, patch)` | unrecorded (like `update_track_flags`); patch `{muted?, solo?}` on a role's mix bus; undo never reverts these |
-| `add_color_layer(track_id, t_start_us, t_end_us, color, width?, height?, composition_id?)` → `LayerId` | rejects on overlap; the track fixes the composition, `composition_id` is a cross-check |
-| `add_video_layer(track_id, media_id, t_start_us, t_end_us, src_in_us, src_out_us, composition_id?)` → `LayerId` | rejects on overlap; same cross-check |
-| `add_motif(motif_id, t_start_us, t_end_us?, track_id?, props?, composition_id?)` → `LayerId` | `t_end_us` defaults to `default_duration_s`; `track_id` auto-creates a fresh track when absent, in `composition_id` (root by default) |
-| `apply_subtitles(media_id, t_start_us?, composition_id?)` | Reads a `Subtitle` pool item's file (format sniffed from the body) and lands the WHOLE document as editable `Text` layers on the composition's caption-role tracks, its time 0 at `t_start_us` (default 0, never negative) — packing into the unlocked caption tracks already there where they have room, opening a new caption track only for a cue that collides with all of them (ADR 0070, ADR 0077). The cues are copies with no tie back to the item. Advanced ASS tags (karaoke, drawings) are stripped; the answer says `simplified: true` when they were. Returns `{ caption_track_id, cues, simplified }`, the track being where the first cue landed. |
-| `paste_layers(layer_ids, t_start_us? \| t_offset_us?, target_track_id?)` → `{ clones: [{ source, clone }] }` | the whole-link duplicate, and the only copy command: every clone shifts by the delta the seed (`layer_ids[0]`) travels to `t_start_us`, or by `t_offset_us` directly (exactly one of the two), then snaps on its own lattice; only the seed changes track; any lock or overlap refuses the whole set; two or more clones are linked to each other |
-| `set_layers_enabled(layer_ids, enabled)` | sets `enabled` on exactly the layers named — the timeline UI passes its selection without adding linked members; a locked track refuses the whole set, a layer's own lock does not |
-| `update_layer(layer_id, patch)` | envelope-only patch (label, time range, enabled, locked) |
-| `update_layer_params(layer_id, patch)` | kind-specific params |
-| `update_layer_param_track(layer_id, param_key, track)` / `update_layer_param_tracks(layer_id, entries)` | replace one / several `Animated<f64>` tracks; normalized (frame-snap / sort / dedupe-last-wins / Auto-tangent solve), recorded, rejects empty-keyframed / unknown-param / locked-track |
-| `update_param_tracks_multi(entries)` | the cross-**layer** form of the batch above: every `(layer_id, param_key, track)` entry names its own layer, and the whole set is **one** recorded entry however many layers it spans — so one undo reverts the lot. Same normalization and rejections per entry; the scale-link invariant is checked once per distinct layer after every entry has landed, never mid-batch |
-| `move_layer(layer_id, new_track_id, new_t_start_us, escape_link?)` | rejects on overlap; link-aware (see `features.md#links`): a fan-out that would touch a locked member rejects whole with `LinkLockedMember` |
-| `move_layers_to_composition(layer_ids, to_composition_id, anchor_layer_id, anchor_t_start_us, to_track_id?)` | the move across compositions (ADR 0054; [features.md §Groups](features.md#groups)): the set — one or more layers of ONE composition — leaves it and lands in `to_composition_id`, `anchor_layer_id` at `anchor_t_start_us`, an ABSOLUTE time on the destination's clock, every other member keeping its phase. The root is an ordinary destination. Lanes are assigned per SOURCE track: `to_track_id` omitted bounces to the nearest free lane else spawns, `"spawn"` always takes a fresh one, and a named lane is refused rather than bounced when it is locked or occupied. Both endpoints re-snap at the DESTINATION's rate, so a cross-rate round trip is not identity. Refuses whole before any write: `CrossCompositionSet`, `LayerNotFound`, `CompositionNotFound`, `TrackNotFound`, `TrackLocked`, `GroupLockedMember`, `CompositionCycle`, `LayerOverlap`, and `InvalidArgument` for an empty set, an anchor outside it, a destination the set is already in, or a landing before composition time 0 |
-| `move_layers_to_new_track(layer_ids, anchor_layer_id?, t_start_us?)` → `TrackId` | the raise (ADR 0042; [features.md §Tracks](features.md#tracks)): the set — one or more layers of ONE composition — moves onto ONE fresh lane appended at the top of the z-stack, and every source lane the raise emptied is pruned in the SAME entry, so one undo restores clips and lanes together. The landing is optional and its two halves travel together: with both, `anchor_layer_id` lands on `t_start_us` — an ABSOLUTE time, snapped on the anchor's own grid, the set floored at 0 as one body — and every other member holds its phase; with neither, every time is carried verbatim with no re-snap, which is the *Move to a new track* command's shape. Links are untouched: the op moves exactly the layers it is handed. Refuses whole before minting a lane: `LayerNotFound`, `CrossCompositionSet`, `TrackLocked`, and `InvalidArgument` for an empty set, half a landing, or an anchor outside the set |
-| `restack_layer(layer_id, position, anchor_layer_id? \| anchor_track_id?)` | anchored z-reorder (ADR 0088): exactly one stable layer or track anchor, resolved at apply time; a track anchor works through a gap. `position` ∈ `"above" \| "below"` the reference track. A sole occupant moves its whole track (identity survives); a shared-track mover splits onto a fresh track (emptied source pruned by the usual rule); a role-stamped source never moves. Already-in-place calls record nothing. Audio movers/anchors, cross-composition anchors and self-anchors reject; track addressing refuses the mover's own track |
-| `split_layer(layer_id, at_t_us, escape_link?)` → `(LayerId, LayerId)` | |
-| `trim_layer(layer_id, edge, new_t_us, escape_link?)` | `edge` ∈ `"in" | "out"` |
-| `delete_layers(layer_ids)` | the cross-**layer** form: one recorded entry however many layers it spans, so one undo restores the lot. Ids are de-duplicated; a locked member rejects the WHOLE batch rather than half-deleting. Takes the id set verbatim — no link fan-out, since selection is what carries a link |
-| `ripple_delete_layers(layer_ids)` | agents reach this as `delete_layers { ripple: true }`. `delete_layers` that also **closes** what the set vacated (ADR 0062; [features.md §Ripple delete](features.md#ripple-delete)): each deleted layer's hole is its own footprint clipped to its remaining same-class neighbours on its track, touching holes merge, and every remaining layer starting at or after a hole shifts left by its length on every track of the composition, each on its own lattice. Anchored markers follow through reconcile; free markers, the playhead and layers starting before a hole stay. A transition whose two participants both move keeps its frame count and has its `duration_us` / `extended_us` re-derived from the landing. Refuses whole before any write: `RippleInsideHole`, `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer` / `TrackLocked` (only a layer that would move blocks), `CrossCompositionSet`, and `InvalidArgument` for an empty set |
-| `ripple_delete_gap(track_id, s, e)` | closes a selected **gap** (ADR 0069; [features.md §Ripple delete](features.md#ripple-delete)): `[s, e)` must be exactly a gap on `track_id` — free of every layer, `e` where a layer starts, `s` where one ends or `0` — else `GapNotFound { track, s, e }`; nothing is deleted and the closing is `ripple_delete_layers`' with the gap as the one hole (`delete_layers { ripple: true }` to an agent), refusing with the same names. `TrackNotFound` for an unknown lane; `InvalidArgument` for a degenerate span. Recorded as *Closed gap*; one undo |
-| `links_create(layer_ids, reassign?)` → `LinkId` | fewer than two distinct ids → `LinkCreateNeedsTwoLayers`; a layer already in another link → `LayerAlreadyLinked` unless `reassign: true`, which moves it over |
-| `links_dissolve(link_id)` / `links_add_members(link_id, layer_ids, reassign?)` / `links_remove_members(link_id, layer_ids)` | an unknown `link_id` → `LinkNotFound`; removing a non-member → `LayerNotInLink`; `add_members` shares `links_create`'s `LayerAlreadyLinked` / `reassign` rule |
-| `groups_create(layer_ids, label?)` → `{ composition_id, layer_id }` | pre-compose (ADR 0052; [features.md §Groups](features.md#groups)): the set — one or more layers of one composition — moves into a new composition carrying the parent's settings and the reserved A/B skeleton, its former tracks mapped bottom-up onto A roll, B roll, then fresh lanes; a Group layer takes its place at the earliest start on the top-most former lane (the drop strip's fallback on collision). Never partial: a locked member → `GroupLockedMember`, a locked track → `TrackLocked`, before anything moves. Links fully inside move with their ids, a straddling link loses its inside members; transitions between two members move, a straddling one is reconciled away and logged; the markers ANCHORED to a member move with it (their `t_us` re-derived in the child by the same commit), free markers stay |
-| `add_group_layer(source_composition_id, track_id, t_start_us, composition_id?)` → `LayerId` | place an existing composition as one more Group layer — the media pool's drag, and the reuse half of ADR 0052 (`groups_create` is the half that makes a composition). Windowed `[0, duration_us)` with an identity transform; the track fixes the destination composition and `composition_id` is a cross-check. Refused before any write, so nothing is created and no layer id is burned: the root → `RootComposition`; a source that already reaches the destination, itself included → `CompositionCycle` naming the loop; an empty source → `InvalidArgument` |
-| `groups_add_members(layer_ids, group_layer_id)` | move layers already on a timeline INTO the composition a Group layer shows, keeping the screen position they had. The members and the Group clip must be siblings, and the clip's `params.composition` is the destination; each member lands at `t_start_us − group.t_start_us + group.src_in_us`, so one outside the clip's window arrives outside it and shows as overhang. Delegates to `move_layers_to_composition` for the crossing itself, and keeps only what is its own: `CrossCompositionSet` when the clip is not the members' sibling, `WrongLayerKind` when it is not a `CompositionRef`, and `RootComposition` — which guards a `CompositionRef` pointing at the root, not the root receiving layers |
-| `groups_ungroup(layer_id)` | expand a **plain** Group layer in place — identity transform, static opacity 1, no effects, Normal blend; otherwise `GroupNotPlain { reason: transform \| opacity \| effects \| blend_mode }`. Members intersecting `[src_in_us, src_out_us)` copy in at `t + t_start_us − src_in_us`, trimmed to the window with source in/out and keyframes following; members outside are dropped; the composition's tracks become fresh transient lanes at the ref's track index; links and transitions inside carry over under fresh ids; the composition is removed when its last reference goes |
-| `groups_rename(composition_id, label?)` | `null` / blank clears back to the derived name; the root → `RootComposition` |
-| `compositions_delete(composition_id)` | removes an unreferenced composition; referenced → `CompositionInUse { composition, ref_count }`; the root → `RootComposition` |
-| `add_marker(t_us, label, color, end_t_us?, composition_id?)` → `MarkerId` | markers are per composition |
-| `update_marker(marker_id, patch)` / `remove_marker(marker_id)` | the marker id names its composition |
-| `set_composition(patch, composition_id?)` | never recorded (setup, not editing); canvas (`width`, `height`, `color_space`, `background`) and `duration_us` land on the named composition, root by default; `fps` / `sample_rate` / `channels` are one lattice and cascade to every composition; `fps` refused with `FpsLockedByContent` once the timeline — or any stored snapshot/checkpoint — holds a layer |
-| `fit_composition_to_layers(composition_id?)` | clears the named composition's duration pin (root by default) |
-| `checkpoint(label)` → `CheckpointId` | |
-| `list_checkpoints()` / `restore_checkpoint(checkpoint_id)` | restore clears redo |
-| `undo()` / `redo()` | |
-| `lock_history(reason)` / `unlock_history()` | freeze undo while a tool batch runs; one MCP tool, `set_history_lock { locked, reason? }` |
-| `dry_run(operations)` | applies the batch against a clone; halts at the first validation error; does not commit |
-| `replace_state(snapshot)` | for paste/template-instantiation; full validation; resets history |
+| `remove_media(id, force?)` | `MediaInUse { referenced_by }` unless `force`, which deletes the layers as `delete_layers` does (links, lane prune, autofit; locked lane → `TrackLocked`) in one recorded entry; unreferenced media is removed unrecorded |
+| `update_track_flags` / `update_role_flags` | unrecorded; `set_role_gain` and `rename_track` are recorded |
+| `move_track(id, position)` | whole-track reorder in its composition, `0` = bottom; refuses locked tracks and tracks holding locked clips; keeps identity, links, transitions; no-op records nothing |
+| `paste_layers(ids, t_start_us \| t_offset_us, target_track_id?)` | the only copy command: clones shift by the seed's (`ids[0]`) delta, re-snap on their own lattice; only the seed changes track; any lock or overlap refuses the set; ≥ 2 clones are linked together |
+| `set_layers_enabled(ids, enabled)` | exactly the named layers (no link fan-out); a locked track refuses the set |
+| `update_layer_param_track(s)` / `update_param_tracks_multi` | replace whole tracks with the normalization above; the multi form spans layers in **one** entry and checks the scale-link invariant once per layer after all entries land |
+| `move_layer(…, escape_link?)` | link-aware; a fan-out touching a locked member refuses whole (`LinkLockedMember`) |
+| `move_layers_to_composition(ids, to, anchor_layer_id, anchor_t_start_us, to_track_id?)` | the set lands with the anchor at an ABSOLUTE destination time, others keeping phase; lanes per source track (omitted: nearest free else spawn; `"spawn"`: fresh; named: refused if locked/occupied); each member re-snaps on its own lattice. [features.md § Groups](features.md#groups) |
+| `move_layers_to_new_track(ids, anchor_layer_id?, t_start_us?)` | one fresh top lane; emptied source lanes pruned in the same entry; with both landing args the anchor lands at an absolute time, with neither times are kept verbatim; links untouched |
+| `restack_layer(id, above\|below, anchor_layer_id? \| anchor_track_id?)` | anchored z-reorder resolved at apply time; a sole occupant moves its track, a shared-track mover splits onto a fresh track; role-stamped sources never move; audio movers/anchors, cross-composition and self anchors refuse. [features.md § Track placement](features.md#track-placement) |
+| `delete_layers(ids)` | one entry; ids de-duplicated; any locked member refuses the batch; no link fan-out |
+| `ripple_delete_layers(ids)` / `ripple_delete_gap(track, s, e)` | close what was vacated on every track of the composition, each on its own lattice; anchored markers follow, free markers and the playhead stay; refuses whole before writing. [features.md § Ripple delete](features.md#ripple-delete) |
+| `links_create(ids, reassign?)` and `links_*` | `LinkCreateNeedsTwoLayers`, `LayerAlreadyLinked` unless `reassign`, `LinkNotFound`, `LayerNotInLink` |
+| `groups_create(ids, label?)` | pre-compose into a new composition with the parent's settings and the A/B skeleton; never partial (locks refuse first); inside links and transitions move, straddling ones are trimmed / reconciled away; anchored markers follow their layer |
+| `add_group_layer(source, track_id, t_start_us)` | window `[0, duration_us)`, identity transform; refuses the root, a cycle, an empty source before any write |
+| `groups_add_members(ids, group_layer_id)` | members land at `t_start_us − group.t_start_us + group.src_in_us` (overhang possible); delegates the crossing to `move_layers_to_composition` |
+| `groups_ungroup(layer_id)` | only a plain Group (identity transform, static opacity 1, no effects, Normal) else `GroupNotPlain`; members inside the window copy in trimmed, outside dropped; the composition goes with its last reference |
+| `set_composition(patch, composition_id?)` | never recorded; lattice fields cascade; `fps` behind the lock |
+| `restore_checkpoint` | records a new entry (clears redo) |
+| `dry_run(operations)` | runs the batch on a clone, stops at the first error, commits nothing |
+| `replace_state(snapshot)` | project open / new; full validation; resets history |
 
-Keyframe authoring is exposed to agents as a small family of MCP tools —
-`get_param_track`, `set_keyframe`, `remove_keyframe`, `retime_keyframe`,
-`set_keyframe_easing`, `set_keyframe_tangents`, `smooth_keyframes`,
-`set_extrapolation`, `clear_keyframes`, and the low-level `set_param_track`.
-These are the one place the surface is **not**
-1:1 with a same-named command: they are handler-side helpers that read the
-layer, apply a pure transform, and write the whole track back through
-`update_layer_param_track`. They expose the keyframe record itself:
-`get_param_track` returns, per key, `{ id, t_us, t_local_us, value, in, out,
-continuity, segment, preset_id? }` plus the track's `extrapolate`, and
-`set_param_track` takes the same shape; `set_keyframe_easing` writes the
-segment leaving a key (`this.out`, `next.in`, `this.segment`, both sides
-Free); `set_keyframe_tangents` writes one key's sides and continuity;
-`smooth_keyframes` sets Auto on the key(s) it names; `set_extrapolation`
-writes the track's `extrapolate`. Keyframe times
-in / out are timeline-absolute (converted to layer-local at the boundary).
-The transform math is shared with the timeline UI and locked Rust↔TS by a
-golden fixture. See [`mcp.md`](mcp.md).
+Agent keyframe tools (`get_param_track`, `set_keyframe`, `update_keyframe`,
+`delete_keyframe`, `smooth_keyframes`, `set_extrapolation`, `clear_keyframes`,
+`set_param_track`) read the track, apply a pure transform, and write the whole
+track back. Their times are timeline-absolute, converted to layer-local at the
+boundary. The transform math is shared with the timeline UI and locked Rust↔TS by
+a golden fixture.
 
 ## On-disk format: workspace folder
 
-The workspace folder *is* the project. Opening a workspace folder = opening the project; zipping the folder = backing up the project. Originals get copied in on import so the bundle is self-contained.
+The workspace folder **is** the project; originals are copied in on import.
 
 ```
 <workspace>/
-├── project.json              ← canonical state, auto-saved 500ms-debounced
-├── view.json                 ← UI-only view state for THIS project (below)
-├── Media/                    ← imported originals (workspace owns the bytes)
-│   ├── interview.mov
-│   └── b-roll-001.mp4
-├── Cache/                    ← all derivatives; safe to delete
-│   ├── proxies/              ← per-source H.264: a 720p scrub proxy (preview) + a source-res export master
-│   ├── thumbnails/           ← per-source thumb strips
-│   ├── waveforms/            ← .peaks files for waveform display
-│   ├── audio/                ← canonical conformed PCM, 48 kHz f32le (see `audio.md`)
-│   ├── frames/               ← on-demand video frames (media://{id}/frame/{t})
-│   ├── raster/               ← persisted Motif L2 pre-bake PNGs (opt-in; see `motifs.md`)
-│   ├── inline-subs/          ← reserved; currently unused
-│   ├── transcribe-audio/     ← mono 16 kHz WAV slices for transcription (cloud + local sidecars)
-│   └── voiceover/            ← TTS output
-├── Backups/                  ← periodic project.json snapshots (rolling 20)
-└── Renders/                  ← export outputs default here
+├── project.json        canonical state; autosave 500 ms after the last commit
+├── project.pre-v{n}.json  pre-upgrade bytes (see Versioning)
+├── view.json           UI view state for this project
+├── Media/              imported originals (workspace owns the bytes)
+├── Cache/              derivatives, regenerable: proxies, thumbnails, filmstrip,
+│                       waveforms, audio (48 kHz conform), frames, raster (Motif
+│                       frames <hash>/<frame>.wfrm, see motifs.md#frame-cache),
+│                       transcribe-audio, descriptions, shots,
+│                       shot-stats, voiceover, inline-subs (reserved)
+├── Backups/            project.json copy every 50 commits or 5 min; newest 20 kept
+└── Renders/            default export destination
 ```
 
-**Authoritative path is `MediaItem.path_rel`** (relative to the workspace root). At load time `io::load_from_dir` rewrites `path_abs` as `workspace.join(path_rel)` so moving the workspace folder between machines doesn't break references. `path_abs` is kept in the struct as a convenience for the IR compiler + jobs that read media by absolute path.
-
-`Backups/` rolls every 50 commits or 5 minutes (whichever first), retains the 20 most recent. `project_save_as` is gone in favor of the auto-save subscriber; Cmd-S is a force-flush hook reserved for future UI. The save model is "the folder is the truth" — closing the app loses nothing.
+There is no explicit Save: autosave (`state/autosave.ts`) writes every commit;
+`project_save` only forces the flush.
 
 ### `view.json`: how this project was last looked at
 
-Sitting beside `project.json` and deliberately **not** part of it: zooming a
-timeline must not dirty the document, push an undo entry, or appear on the MCP
-tool surface. One definition, `src/shared/view-state.ts`, shared by the main
-process (which owns the file) and the renderer (which owns the live copy).
-
-```ts
-interface ViewState {
-  composition_tabs: CompositionTabView[]   // tab ORDER is this array's order
-  active_composition_id: string | null     // the tab that last held the keyboard
-  preview_render_target_id: string | null  // null = follow focus
-  track_heights: Record<TrackId, number>   // project-wide: a track id names its composition
-  expanded_tracks: TrackId[]               // keyframe sub-lanes; absent ⇒ collapsed
-}
-
-interface CompositionTabView {
-  composition_id: string
-  anchor_layer_id: string | null   // the Group clip this tab was entered through
-  px_per_sec: number               // this composition's own zoom
-  scroll_left_px: number
-}
-```
-
-`composition_tabs` is an **intent**, not the Panel list: the timeline Panels
-that exist are this list intersected with the compositions the summary carries
-(ADR 0053). An entry therefore outlives the undo that removed its composition,
-and the redo brings the tab back with its zoom, scroll and anchor intact. Only
-the last step of an anchor is stored — the rest of the path follows from the
-project — and `null` means the tab was opened by id and takes the shortest path
-from the root.
-
-`viewStateDefaults()` is the SINGLE place a missing field gets a value. A field
-added here and left `undefined` reaches the renderer as a blank screen, so every
-reader goes through the defaults rather than through a local `?? …`.
-
-The Dock's own geometry is not here. It is app-level
-([below](#app-level-storage-the-data-root)), and the seam between the two
-documents is what keeps a composition id out of a file that spans every project.
+Kept out of `project.json` so zooming never dirties the document, pushes undo or
+reaches MCP. One definition, `src/shared/view-state.ts`, shared by main (owns the
+file) and the renderer (owns the live copy). `composition_tabs` is an **intent**:
+the Panels that exist are that list intersected with the summary's compositions,
+so an entry outlives the undo that removed its composition and comes back on redo
+with zoom, scroll and anchor. Only the last anchor step is stored; `null` = take
+the shortest path from the root. `viewStateDefaults()` is the only place a
+missing field gets a value — every reader goes through it. Dock geometry is
+app-level, not here.
 
 ## App-level storage: the data root
 
-Export presets are small application preferences in `app_settings.json`:
-`export_presets` contains `{ id, name, version: 1, values }` entries and
-`default_export_preset_id` selects a personal or reserved `builtin:*` ID.
-`values` copies the shared `ExportSettings` output fields, excluding
-`encoderEngine`, `decodeEngine` and `hwAccel`. Library edits are atomic commands;
-deleting the default restores `builtin:match`. Existing project `export.json`
-files retain copied parameters and take precedence over the global default.
-See [ADR 0113](adr/0113-export-presets-copy-app-level-output-intent.md).
+**`<userData>/`** holds small, fixed-location, atomically written JSON owned by
+main: `app_settings.json`, `keybindings.json`, `workspaces.json`,
+`recents.json`, `decode_capability.json`, and the secrets `cloud_keys.json` /
+`mcp_auth.json` (plus the OS keyring). The data root's own path lives here
+(`data_root` in `app_settings.json`), so it cannot itself be under the data root.
 
-Everything above is **per-project** — it lives inside the workspace folder and
-travels with it. Orthogonal to that is **app-level** storage: state and large
-assets that belong to the installation, not to any one project. This splits in
-two, by whether the user should be able to relocate it.
+- `app_settings.json` also holds export presets: `export_presets` entries
+  `{ id, name, version: 1, values }` and `default_export_preset_id` (a personal
+  or `builtin:*` id; deleting the default restores `builtin:match`). `values`
+  copies the `ExportSettings` output fields except the encoder/decode engine and
+  `hwAccel`. A project's own `export.json` wins over the default
+  ([export.md § Export presets](export.md#export-presets)).
+- `workspaces.json` holds Dock layouts and **never a composition id**: live
+  `timeline:<id>` Panels fold back to the bare `timeline` slot on save. Restore
+  order: geometry, the root's timeline in the slot, then the project's
+  `view.json` tabs (ADR 0053).
 
-**Small config/state + secrets stay in `<userData>/`** (Electron's per-user app
-data dir), each an atomically-written JSON owned by the TS main process:
-`app_settings.json`, `keybindings.json`, `workspaces.json`, `recents.json`,
-`decode_capability.json`, and the secrets `cloud_keys.json` / `mcp_auth.json`
-(plus the OS keyring). These are tiny and their location is fixed — the data
-root's own path has to live somewhere the resolver can read before anything
-else, so it cannot itself live under the data root (bootstrap chicken-and-egg).
-
-`workspaces.json` holds Dock layouts: the current arrangement plus every saved
-profile. **No composition id may ever be written into it** — it spans every
-project, so a profile carrying one project's uuids would make "reset to my
-layout" mean different things in different projects. A timeline Panel is
-addressed `timeline:<compositionId>` while it is live, and every one of them
-folds back to the bare `timeline` slot on serialization, which records where the
-timeline row sits and how large it is and nothing else. Restore runs in that
-order: geometry first, the root's timeline in the slot, then the remaining tabs
-from the project's `view.json` (ADR 0053). The fold is also why no layout
-snapshot version moves for this: the persisted shape is unchanged.
-
-**Large, app-managed, relocatable content lives under a single user-configurable
-DATA ROOT**, default `<userData>/data/`, with a fixed internal layout WeftCut
-owns:
+**`<dataRoot>/`** (default `<userData>/data/`, relocatable) holds large
+app-managed content, resolved once at boot by `resolveDataRoot`
+(`src/main/dataRoot.ts`) before the backend, the Motif store and the fs guard
+are built; every consumer takes its paths from it, and the root is on the
+renderer's `fs:*` allow-list.
 
 ```
-<dataRoot>/            default: <userData>/data  (any absolute path via setting)
-├── motifs/            user-authored Motifs (see motifs.md) — user content, not regenerable
-├── cache/             the backend's app-level (cross-project) cache — regenerable
-└── downloads/         app-managed downloaded content — user content, not regenerable
+<dataRoot>/
+├── motifs/      user-authored Motifs — user content
+├── cache/       app-level backend cache — regenerable (not <workspace>/Cache)
+└── downloads/   downloaded engines and models — <itemId>/<version>/…, manifest.json written last
 ```
 
-`<dataRoot>/downloads/` holds content the app downloads on the user's behalf
-(ADR 0039/0043/0055: speech engines + models and the Qwen3-VL set on Windows).
-Layout is `downloads/<itemId>/<version>/…` with a `manifest.json` written last
-as the install-complete marker; the catalog of downloadable items (pinned URLs
-+ SHA-256 + byte counts) is `src/shared/content-catalog.ts`, the per-item
-lifecycle is `src/main/contentDownload.ts` (pure, fs/http-injected), and the
-main-owned queue that runs items one at a time is `src/main/contentQueue.ts`
-(ADR 0061); the renderer only enqueues, cancels, and renders over the
-`content:*` IPC family. In-flight partials live under `cache/content-partial/`
-as `<itemId>.part` plus a `<itemId>.part.json` sidecar naming the artifact the
-bytes belong to — that sidecar is what lets a drop, a cancel, or a quit resume
-from the on-disk size instead of restarting. The pending queue itself is
-`cache/content-queue.json`, re-enqueued at boot. Both are regenerable by
-definition, so the migration below never copies a torn download.
+Downloads are speech engines, models and the Qwen3-VL set
+([ADR 0039](adr/0039-local-engines-are-pinned-upstream-artifacts.md)). Catalog:
+`src/shared/content-catalog.ts` (pinned URL, SHA-256, size); lifecycle
+`src/main/contentDownload.ts`; one-at-a-time queue `src/main/contentQueue.ts`.
+Partials (`cache/content-partial/<itemId>.part` + `.part.json` naming the
+artifact) resume from their size; the queue persists in
+`cache/content-queue.json`. A transfer failure never discards a partial: up to 3
+attempts with 1 s / 4 s backoff and a 45 s stall watchdog. Cancel keeps the
+partial (pause); `content:remove` deletes it. A 200 to a Range request restarts
+from zero; a 416 refetches whole.
 
-`<dataRoot>/cache/` is the **app-level** backend cache (the second argument to
-the `Backend` constructor). Do not confuse it with the per-project
-`<workspace>/Cache/` above — that one holds a project's proxies/thumbnails/
-waveforms and is deleted with the project; this one is global to the install and
-regenerable. Nesting it here also retires a long-standing collision: it used to
-be `<userData>/Cache`, the exact path Chromium uses for its own disk cache
-(`<sessionData>/Cache`, and `sessionData` defaults to `userData`). Chromium's
-cache is deliberately left where it is; the collision is gone simply because the
-backend cache moved under the data root.
+Resolution: unset → default, created silently; set and writable → used; set but
+unavailable → a blocking native dialog offering **Re-set** or **Quit**, never a
+silent fallback.
 
-A single seam, `apps/desktop/src/main/dataRoot.ts` (`resolveDataRoot`), resolves
-the root **once, early at boot** — before the `Backend`, the `UserMotifStore`,
-and the fs guard are constructed — from a `data_root` field in
-`app_settings.json`, and exposes `{ dataRoot, motifsDir, cacheDir, downloadsDir }`.
-Every consumer takes its path from the seam; nothing string-joins `userData` for
-these buckets. The resolved root is also admitted to the renderer's `fs:*` guard
-allow-list (`isAllowed`, alongside `temp` / `userData` / the active workspace),
-since it can live outside `userData`.
-
-Resolution rules:
-
-- `data_root` unset/empty → default `<userData>/data`, created silently.
-- set + available (creatable **and** write-probed) → used as-is.
-- set + unavailable (unmounted drive, revoked permission, deleted path) → a
-  **blocking native dialog** (main window not up yet) offering **Re-set** (native
-  folder picker; the choice is persisted and used for this boot) or **Quit**.
-  Never a silent fallback — a user who deliberately placed data elsewhere makes a
-  conscious choice rather than landing in an empty default library.
-
-### Changing the data root
-
-Relocation is offered from Settings → "Data location" and is a first-class,
-verified migration (core: `apps/desktop/src/main/dataRootMigration.ts`, pure +
-fs-injected; IPC glue on the `dataRoot:*` channels). Semantics: **copy, preserve
-original, verify, roll back, prompt-to-delete-after-success.**
-
-1. The user picks a folder. If it is already a valid WeftCut data root
-   (`motifs/`+`cache/`+`downloads/` present), it is **adopted as-is** — no copy,
-   no merge. Otherwise the migration **copies** into it.
-2. Copy `motifs/` and `downloads/` (source read-only; originals untouched);
-   `cache/` is **not** copied — the new root gets an empty `cache/` that refills
-   naturally. Nested source/target picks are rejected (self-overwrite guard).
-3. **Verify** — Motifs by content hash (reusing `motif/contentHash`), downloads
-   by file count + size.
-4. **On failure → roll back** exactly what the run created at the new root; the
-   old root is never touched and `data_root` is left unchanged. No data loss.
-5. **On success** → write `data_root`, then relaunch (`app.relaunch()`) to apply
-   (the root is fixed early at boot; a live swap would rebuild too much).
-6. A userData-resident marker (`data-root-migration.json`, which survives the
-   switch) carries the old path across the relaunch. After the app comes back up
-   on the new root, Settings offers to delete the old copy — **only in copy mode**
-   (in adopt mode nothing was copied, so the old root is the user's separate prior
-   library, never proposed for deletion). Deletion is explicit-confirm-only and
-   never removes `userData` itself; "Keep" is a one-time dismiss that clears the
-   marker.
-
-This data-root *change* flow is a separate thing from project-schema migration
-(§Versioning) — different unit, different trigger. Where the repo says "no
-migration" it means **pre-v1 on-disk formats**: `.vproj` folders written by
-pre-release builds are refused, not carried forward.
+**Changing the data root** (Settings → Data location;
+`src/main/dataRootMigration.ts`): a folder that already is a data root is
+**adopted** as-is; otherwise `motifs/` and `downloads/` are **copied** (not
+`cache/`), verified (Motifs by content hash, downloads by count + size), and
+rolled back on failure with `data_root` unchanged. Same, nested or ancestor
+targets are rejected. Success writes `data_root` and relaunches. A userData
+marker (`data-root-migration.json`) lets Settings offer to delete the old copy
+after relaunch — copy mode only, explicit confirm, never `userData` itself.
 
 ## Versioning
 
-`project.json` embeds a `schema_version: u32`. `SCHEMA_VERSION`
-(`state/model.ts`) is the single home for the number and is bumped
-whenever the on-disk shape changes incompatibly. Rust deserializes whole
-projects but holds no constant and never gates on the value — the field's
-doc comment in `native/src/state/project.rs` records that.
+`project.json` carries `schema_version`. `SCHEMA_VERSION` (`state/model.ts`,
+currently **5**) is the only home of the number; Rust round-trips the field and
+never gates on it.
 
-The load path is a **version-keyed upgrade chain** (ADR 0047):
+The load path is a **version-keyed upgrade chain** ([ADR 0047](adr/0047-project-schema-upgrades-are-a-version-keyed-chain.md)):
 
-1. `state/persistence.ts` refuses what the build cannot read — a
-   missing/non-numeric version, or one *ahead* of the build (that file may
-   carry fields this binary would drop on the next save).
-2. `state/migrate.ts` walks an older file forward through one `v_n → v_n+1`
-   step per generation. The runner writes `schema_version` after each step
-   and works on a clone, so a step that throws leaves the caller holding
-   the original bytes.
-3. `state/serialize.ts` (`parseProject`) then casts and normalizes. Its own
-   version-equality check is a post-condition on the walk, not the
-   user-facing error.
+1. `state/persistence.ts` refuses a missing / non-numeric version or one
+   **ahead** of the build (writing it back would drop unknown fields).
+2. `state/migrate.ts` walks `STEPS`, one `v_n → v_n+1` step each, on a clone;
+   the host injects external facts through `MigrationContext` (media and Motif
+   sizes, the frozen v3 evaluator from `migrationEvaluation.ts`).
+3. `parseProject` (`state/serialize.ts`) casts and normalizes.
 
-Upgrading happens **in memory**. `project.json` is rewritten by the normal
-autosave on the first edit, and when the chain runs the open first copies
-the original bytes to `project.pre-v{n}.json` beside it (never into
-`Backups/`, whose snapshots are post-write and gc'd), reporting the upgrade
-as a status-log row.
-
-### v3 → v4 Position migration
-
-For VideoClip, ImageOverlay, Motif and CompositionRef, the old offset becomes
-`Position.x += anchor_x·sourceWidth·abs(scale_x)` (and the corresponding Y).
-Text already used anchor coordinates and is unchanged. Rotation, flips and crop
-do not enter this offset. Sizes come from original media metadata, the matching
-Motif manifest version, or the referenced composition; proxy/crop dimensions
-are never substituted. Missing dimensions cause an explicit refusal.
-
-Constant offsets translate Static/XY keys or Path points, preserving their
-interpolation, handles and extrapolation. Animated scale or anchor bakes XY
-position at composition frame times over each clip's span, including transition
-handles and every reachable Group instance's mapped frame times. Group rates
-and fractional phases stay exact. Existing scale/anchor tracks remain intact.
-The log lists composition/clip IDs, previous position mode and sample count.
-This preserves current frame appearance; between-sample interpolation, later
-retiming, extending a clip or changing frame rate may differ from the original.
-
-The migration refuses curves exceeding the v4 evaluator's 4096-key capacity or
-projects exceeding 2,000,000 sampled composition instants, without truncating or
-modifying the original. A missing evaluator, invalid time map or missing source
-also refuses migration. The wire step stays import-free; `migrationEvaluation`
-injects the canonical v3 numerical evaluation contract, protected by geometry
-regressions. Future interpolation changes must retain a compatible evaluator.
-
-A successful upgrade must first preserve and verify the exact input bytes in
-`project.pre-vN.json`. An identical backup is reused; a differing existing backup
-is retained and a numbered sibling is created. Failure to preserve the backup
-aborts opening before the current workspace is replaced. These backups have no
-retention cleanup. Saving writes the current schema; restoring the backup with a compatible old
-build is the rollback path. There is no automatic downgrade.
-
-### Where a change belongs
+Upgrading happens in memory. Before the workspace is replaced, the exact input
+bytes are preserved and verified in `project.pre-v{n}.json` beside
+`project.json` (not in `Backups/`, whose snapshots are post-write and gc'd); an
+identical backup is reused, a differing one kept and a numbered
+`project.pre-v{n}.{k}.json` created. Failing to preserve it aborts the open.
+These backups are never cleaned up. Saving writes the current schema; restoring
+the backup with an older build is the only downgrade.
 
 | Kind of change | Where it goes |
 |---|---|
-| A new **optional** field | Additive: `#[serde(default)]` on the Rust side, and a default in `parseProject`'s normalize pass so no consumer ever sees `undefined`. No version bump. |
-| A **validity repair** (off-grid geometry, a flag contradicting its own data) | The same version-blind normalize pass. Idempotent, carries no version. |
-| A **shape conversion** — field renamed, merged, split, retyped; an enum variant retired | A step in the chain, with a version number. **Never** an unconditional rewrite in `parseProject`. |
+| A new **optional** field | `#[serde(default)]` in Rust and a default in `parseProject`'s normalize pass, so no consumer sees `undefined`. No bump. |
+| A **validity repair** (off-grid geometry, a flag contradicting its data) | the same version-blind normalize pass; idempotent |
+| A **shape conversion** (rename, merge, split, retype, retired variant) | a chain step with a version number — never an unconditional rewrite in `parseProject` |
 
-That third row is a rule, not a preference: three conversions once rode the
-blind pass because the cut-over gate left no alternative, and the on-disk
-shape drifted across three generations while the version sat still. ADR 0047
-has the history.
+A step imports **nothing** — not `SCHEMA_VERSION` (the target is a parameter),
+not a model type, not `defaultSettings()`. It declares local types for the fields
+it touches and writes frozen literals; otherwise it silently re-anchors to a
+model that has moved on. Deserialization is permissive: unknown fields are
+ignored and dropped on next save.
 
-The current schema is **v5**. Its v4 → v5 step adds `graphic_role: null` to
-every Text, Motif and ImageOverlay layer in every composition; a Motif's
-manifest role applies at placement only and is not back-filled. The v3 → v4
-step (ADR 0112) makes Position the anchor for every transformed visual clip.
-See the migration policy below.
-The v1 → v2 step preserves existing projects when
-the inspector's clip-mute control is removed: in every composition, an Audio
-layer with `params.mute: true` becomes `enabled: false, params.mute: false`.
-Other enabled states, linked members, track flags and role mixing are untouched.
-The engine/API still carries the mute parameter; the inspector uses Enabled.
-This is an explicitly requested compatibility conversion for existing project
-JSON, superseding the empty-chain policy for this change. Earlier pre-release
-shape cutovers, including ADR 0060's position record, remain in v1; legacy direct
-transform axes are still refused rather than migrated.
+**A bump ships with its step and a frozen fixture** of the version it leaves
+(`apps/desktop/fixtures/projects/v{n}.json`). `migrate.completeness.test.ts`
+pins `MIN_SCHEMA_VERSION + STEPS.length === SCHEMA_VERSION`, the step versions,
+and that every fixture upgrades and passes `parseProject` + `validate`. A bump
+without its step cannot be repaired later.
 
-A step imports **nothing** — not `SCHEMA_VERSION` (the target version is a
-parameter), not a model type, not `defaultSettings()`. It takes the wire
-object, declares local types for the fields it touches, and writes frozen
-literals; otherwise it silently re-anchors to a model that has moved on, and
-the failure only ever appears on a real user's old file.
+### Steps
 
-Be permissive at deserialization (unknown fields are ignored) so a binary can
-load projects authored by a slightly newer binary within the same version —
-the unknown fields drop on next save.
+- **v1 → v2**: an Audio layer with `params.mute: true` becomes `enabled: false,
+  mute: false` (the inspector's clip-mute control was removed). Nothing else
+  changes. Earlier pre-release cutovers, including ADR 0060's position record,
+  stay inside v1; legacy transform axes are refused.
+- **v2 → v3**: time mapping (below). Deletes the inert `VideoClip.speed`, writes
+  an identity `time_map` and `FrameSampling` on every temporal kind,
+  `preserve_pitch: true` on Audio and CompositionRef, and a `content_window` on
+  ImageOverlay and Motif. Motif `props.speed` is content and untouched.
+- **v3 → v4**: Position becomes the anchor for VideoClip, ImageOverlay, Motif and
+  CompositionRef (ADR 0112): `x += anchor_x·sourceWidth·|scale_x|` (and y), sizes
+  from original media metadata, the Motif manifest version or the referenced
+  composition — never proxy or crop sizes; missing sizes refuse. Constant offsets
+  translate keys or path points; animated scale or anchor bakes XY position at
+  composition frame times over each clip's span, including transition handles and
+  every reachable Group instance. It refuses (original untouched) a curve over
+  the v3 evaluator's 4096 keys, a clip needing over 4096 samples, or a project
+  over 2,000,000 sampled instants. The log lists clip ids, previous mode and
+  sample count. Frames match at samples; between samples, later retiming or an fps
+  change may differ.
+- **v4 → v5**: `graphic_role: null` on every Text, Motif and ImageOverlay; a
+  Motif's manifest role is not back-filled.
 
-### Bumping `SCHEMA_VERSION`
+## Time mapping (schema 3)
 
-A bump ships **in the same change** as its migration step and a frozen fixture
-of the version it leaves behind (`fixtures/projects/v{n}.json`, frozen from
-the moment a step reads it — see that directory's README). `migrate.completeness.test.ts`
-fails otherwise: it pins `MIN_SCHEMA_VERSION + STEPS.length ===
-SCHEMA_VERSION`, that the steps sit at exactly the versions in between, and
-that every fixture still upgrades and passes `parseProject` + `validate`.
+Temporal clips (VideoClip, Audio, ImageOverlay, Motif, CompositionRef) carry
+`TimingFields` (`shared/timeMapping.ts`, Rust `native/src/state/timing.rs`):
+`time_map: { kind: "Affine", rate: {num, den} }` (absent = identity), optional
+`source_phase.in/out` and `fade_phase` remainders, `content_window`,
+`preserve_pitch`, `frame_interpolation`. Wire rationals are reduced safe integers
+with positive denominators. `src_in_us/src_out_us` plus `source_phase` form one
+exact source window. Animated images and Motifs use an unwrapped
+`content_window`; image looping happens only at frame sampling. Only
+`FrameSampling` is accepted.
 
-## Pitfalls
-
-1. **Float-time bugs.** Never round-trip `t_start_us` through `f64` except at API boundaries. One `as f64 / 1_000_000.0` and back loses precision near the hour mark.
-2. **Layer-overlap rule cuts both ways.** When the agent says "add this clip from t=5 to t=10" and there's already content at t=7, the API must return a structured error with options ("create new track" / "trim existing" / "abort"), not a brick-wall reject.
-3. **`media_pool` cleanup.** Don't auto-remove a `MediaItem` when its last reference goes away — the user might be mid-edit. Mark unreferenced; sweep on save with consent.
-4. **`enabled: false` ≠ deleted.** Disabled layers still serialize, still occupy their time range for layout. Agents will toggle these for A/B variations.
-5. **Keyframes are relative.** Document this prominently — it's the kind of bug that bites once and forever.
-6. **A `SCHEMA_VERSION` bump without its migration step** is the one mistake here that cannot be repaired after the fact — a chain added later cannot rescue files already written. The step and the frozen fixture ship in the same change; `migrate.completeness.test.ts` is what makes that mechanical (§Versioning).
-6. **Schema migrations under MCP.** Including `schema_version` in every resource response is the simplest defense; agents holding `project://` reads then adapt.
-7. **Motif raster invalidation.** Patch `MotifParams.props`
-   field-wise rather than replacing whole `params` — otherwise the
-   raster cache thrashes on every prop tweak.
-
-## Time remapping (schema 3)
-
-Temporal clips carry an optional `time_map: {kind:"Affine",rate:{num,den}}`; absence means identity for new in-memory constructors. Wire rationals are reduced safe integers with positive denominators. `src_in_us/src_out_us` plus optional proper `source_phase.in/out` remainders form one exact source window. Animated images and Motifs use an unwrapped `content_window`; image looping occurs only at frame sampling.
-
-Own keyframes use integer `t_us` plus optional `time_fraction`. Exact keys are never resnapped or merged during normalization. Retiming scales own keyframe times and fades (`fade_phase` retains fractions), including effect animation. Group child state is untouched. Composition clocks compose rational origins and rates; only the final sample/display boundary is quantized. Non-unit Group membership changes and ungrouping are refused.
-
-Schema 2→3 resets inert VideoClip.speed to identity by removing speed and writing time_map, sets FrameSampling, and enables preserve_pitch for Audio and Group. Motif props.speed remains application content.
+Keyframes carry integer `t_us` plus optional `time_fraction`; exact keys are
+never re-snapped or merged in normalization. Retiming scales a layer's own key
+times and fades (`fade_phase` keeps fractions), including effect animation; a
+Group's child state is untouched. Composition clocks compose rational origins and
+rates; only the final sample / display boundary is quantized. Non-unit-rate Group
+membership changes and ungrouping are refused. Rationale:
+[ADR 0092](adr/0092-constant-time-remapping-preserves-content-windows.md).

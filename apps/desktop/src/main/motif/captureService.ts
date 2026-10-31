@@ -245,8 +245,9 @@ export class MotifCaptureService {
         // A background write may finish after the renderer's disk miss, with
         // no pending receipt left to join. Register this display job BEFORE
         // checking so any new persistence demand can join the same producer.
-        // Stat-only (ADR 0144); the renderer's reader reads and verifies it,
-        // and an unreadable entry captures live as before.
+        // Stat-only (docs/motifs.md#preparation-l2-baking); the renderer's
+        // reader reads and verifies it, and an unreadable entry captures live
+        // as before.
         const stored = await store.has(cache.hash, cache.frame).catch(() => false)
         if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
         if (stored && (!destinationAddress || sameAddress(cache, destinationAddress))) return storedFrame()

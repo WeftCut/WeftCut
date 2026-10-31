@@ -12,7 +12,7 @@ import {
 /// the whole panel as its target rather than the picture alone.
 ///
 /// It is the SECOND way to pan, not the way in — the middle button pans under
-/// any tool (`previewViewGestures.ts`, ADR 0072). This exists for a pointer
+/// any tool (`previewViewGestures.ts`). This exists for a pointer
 /// that has no middle button, and for the user who reaches for a named tool.
 /// Both paths share one drag: same clamp, same abort, same arithmetic.
 export function PreviewHandTool() {

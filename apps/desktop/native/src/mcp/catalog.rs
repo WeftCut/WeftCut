@@ -260,7 +260,7 @@ mod tests {
                     !props.contains_key("vlm_config"),
                     "{name}: `vlm_config` must not be advertised (schemars skip)"
                 );
-                // …and transcribe_clip the speech one (ADR 0148).
+                // …and transcribe_clip the speech one (ADR 0036).
                 assert!(
                     !props.contains_key("speech_config"),
                     "{name}: `speech_config` must not be advertised (schemars skip)"

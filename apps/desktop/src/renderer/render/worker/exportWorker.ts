@@ -765,7 +765,8 @@ function cleanup({
   // moment during the next export's setup, where Chromium 152 stalls the
   // renderer main thread on it. The `destroy()` is in `finally` so a throwing
   // `app.destroy` — the torn-down state the catch anticipates — cannot skip it
-  // and leak the device it exists to reclaim. ADR 0059.
+  // and leak the device it exists to reclaim.
+  // See docs/notes/electron-chromium-behavior.md.
   const device = webgpuDeviceOf(app.renderer);
   try {
     app.destroy({ removeView: true, releaseGlobalResources: true });

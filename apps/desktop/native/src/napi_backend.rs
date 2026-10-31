@@ -850,7 +850,7 @@ impl Backend {
                 ser(crate::commands::prefs::log_emit(self, a.input).await)
             }
             "log_dir_path" => ser(crate::commands::prefs::log_dir_path(self).await),
-            // App-managed content (ADR 0043/0073): stateless tar extraction
+            // App-managed content (ADR 0039): stateless tar extraction
             // (bzip2 or gzip) for the main-process downloader. Main-only —
             // router.ts never classifies it, so the renderer cannot reach it.
             "content_extract_archive" => {
@@ -1096,7 +1096,7 @@ impl Backend {
                 ser(crate::export::videosink::export_video_sink_cancel(&self.video_sink).await)
             }
             // The speech arms take their config in `args` like the VLM ones
-            // below (ADR 0148): Electron main injects `speechConfig` per call.
+            // below (ADR 0036): Electron main injects `speechConfig` per call.
             #[cfg(feature = "speech")]
             "settings_get_api_key_status" => {
                 let a: crate::commands::speech::SpeechConfigArgs =
@@ -1521,7 +1521,7 @@ mod tests {
 
     /// The status reads the config injected with THIS call and nothing else:
     /// a key in one call's `speechConfig` is gone from the next call that does
-    /// not carry it — there is no resident cache to remember it (ADR 0148).
+    /// not carry it — there is no resident cache to remember it (ADR 0036).
     #[cfg(feature = "speech")]
     #[tokio::test]
     async fn settings_status_reflects_the_injected_config_only() {

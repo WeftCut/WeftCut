@@ -6,17 +6,18 @@
 // proceed when audio is quiet or the check is unavailable. Normalization is
 // explicit per run, only for selected quiet sources' inference copies.
 //
-// A run reads N clips and writes ONCE (ADR 0070). The reads go one at a time,
-// in timeline order — two engines on one machine would fight for the same
-// cores, and two cloud calls in flight would bill in an order nobody chose —
-// and every transcript that came back is applied in one `apply_transcripts`
-// call, so a six-clip transcription is one history row and one undo, and the
-// caption packing sees every cue at once. The run stops at the first clip that
-// fails and still lands what it has: the engine-wide failures (no model, no
-// key, no network) fail the first clip before anything is billed, and a
-// per-clip one (a clip over the provider's payload cap) should not throw away
-// the transcripts already paid for. The status log then says both things — the
-// cues that landed, and the clip that did not, by name.
+// A run reads N clips and writes ONCE
+// (docs/features.md#transcribe-and-voiceover). The reads go one at a time, in
+// timeline order — two engines on one machine would fight for the same cores,
+// and two cloud calls in flight would bill in an order nobody chose — and every
+// transcript that came back is applied in one `apply_transcripts` call, so a
+// six-clip transcription is one history row and one undo, and the caption
+// packing sees every cue at once. The run stops at the first clip that fails
+// and still lands what it has: the engine-wide failures (no model, no key, no
+// network) fail the first clip before anything is billed, and a per-clip one (a
+// clip over the provider's payload cap) should not throw away the transcripts
+// already paid for. The status log then says both things — the cues that
+// landed, and the clip that did not, by name.
 //
 // `transcribing` is module-level state rather than a component's local because
 // the COMMAND has to grey out while a run is in flight — a second concurrent

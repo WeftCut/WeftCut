@@ -7,12 +7,13 @@ import { pruneEmptiedTrack, requireLayer, requireTrack, type LocatedLayer, type 
 
 export type RestackPosition = 'above' | 'below'
 
-/** Anchored z-reorder of one visual layer (ADR 0044 decision 2/3). Z is track
- *  order, so the op moves tracks, not indices within one: `position` puts the
- *  mover's track directly above/below the track the ANCHOR layer sits on,
- *  resolved here at apply time — anchors are layers because an index drifts
+/** Anchored z-reorder of one visual layer (docs/features.md#track-placement). Z
+ *  is track order, so the op moves tracks, not indices within one: `position`
+ *  puts the mover's track directly above/below the track the ANCHOR layer sits
+ *  on, resolved here at apply time — anchors are layers because an index drifts
  *  between a caller's read and its write. Both live in one composition: an
- *  anchor in another is a destination there, and refused (CrossCompositionMove).
+ *  anchor in another is a destination there, and refused
+ *  (CrossCompositionMove).
  *
  *  Smart degradation, owned by the model (not composed by callers): a mover
  *  that is its track's sole occupant carries the track itself — id, label,
@@ -92,8 +93,8 @@ function restackAtTrack(p: Project, idGen: IdGen, mover: LocatedLayer, anchor: L
     return src.id
   }
   // Split path: the mover leaves alone. `label: null` lets the fresh track
-  // derive its name from position (ADR 0042); the source is re-found by ID
-  // because the insertion just shifted indices.
+  // derive its name from position (docs/data-model.md#track); the source is
+  // re-found by ID because the insertion just shifted indices.
   const srcTrackId = src.id
   const destTrackId = applyAddTrack(p, idGen, null, position === 'above' ? ai + 1 : ai, c.id)
   const dest = c.tracks.find((t) => t.id === destTrackId)! // just inserted

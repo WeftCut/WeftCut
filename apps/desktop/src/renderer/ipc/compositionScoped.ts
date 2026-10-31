@@ -128,8 +128,8 @@ export async function addTextLayerIn(opts: {
 /// `apply_subtitles`: lay a pooled `Subtitle` item onto `compositionId`'s
 /// caption tracks, one `Text` layer per cue, in ONE commit. The document's
 /// time 0 lands at `tStartUs`; which caption lane each cue takes is the
-/// packing's choice (ADR 0070), so there is no track argument. The hybrid reads
-/// the MCP tool's own argument names.
+/// packing's choice (docs/captions.md#ingestion), so there is no track
+/// argument. The hybrid reads the MCP tool's own argument names.
 export async function applySubtitlesIn(args: {
   compositionId: string | null;
   mediaId: string;

@@ -25,8 +25,8 @@ import { renderLogMessage } from "./renderMessage";
 import { useLogStore } from "./store";
 import { AppIcon } from "@/components/AppIcon";
 
-/// Expanded console overlay — lifts above the editor. Layout decision +
-/// deferred-features list: `docs/status-log.md`.
+/// Expanded console overlay — lifts above the editor. Layout decision:
+/// `docs/status-log.md#console`.
 ///
 /// Defaults: level `Info+`, ops collapsed.
 ///

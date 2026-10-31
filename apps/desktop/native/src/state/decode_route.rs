@@ -1,7 +1,7 @@
 //! The per-source Decode Route — where preview and export each read pixels.
 //! Persisted as the source of truth. The readiness paths live INSIDE the
 //! variants so a route↔path contradiction (a Bypass carrying a proxy) is
-//! unrepresentable. See docs/adr/0028 and CONTEXT.md.
+//! unrepresentable. See docs/data-model.md#mediaitem and CONTEXT.md.
 
 use std::path::PathBuf;
 
@@ -31,10 +31,9 @@ pub enum DecodeRoute {
     },
     /// Native software-decode preview (ProRes today): the original is
     /// WebCodecs-blind but a native ffmpeg SW decoder can preview it directly.
-    /// Carries the same proxy paths as `Proxied` so that with the experimental
-    /// toggle OFF the clip previews via its proxy (no regression from today);
-    /// the resolver returns the proxy. The toggle-ON "use the native-SW
-    /// original" behavior is a later overlay, not encoded in the route.
+    /// Carries the same proxy paths as `Proxied`; whether a session decodes
+    /// the original or the proxy is the runtime decode-engine resolution
+    /// (ADR 0030), not encoded in the route.
     NativeSw {
         #[serde(default)]
         quick_proxy: Option<PathBuf>,

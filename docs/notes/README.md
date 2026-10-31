@@ -1,18 +1,32 @@
 # Lab notes
 
-Dated, empirically verified platform-behavior records. Unlike the evergreen docs in `docs/`, these are point-in-time verification logs: each entry names the environment it was measured on (engine version, GPU, OS) and the probe that produced it. They exist so a settled question is not re-litigated or re-probed without a reason.
+Point-in-time records: measurements, experiments, rejected approaches and engine or
+platform facts. Each names the environment and the probe that produced it, so a
+settled question is not re-probed without a reason. Re-verify before relying on an
+entry after an Electron/Chromium major bump or on hardware the entry doesn't cover.
+Evergreen behavior lives in `docs/`; see [domain.md](../agents/domain.md) for what
+goes where.
 
-Re-verify an entry before relying on it when the engine major version changes (an Electron/Chromium bump) or when the hardware assumption named in the entry does not hold on the target machine.
+## Engine and platform
+- `electron-chromium-behavior.md` — verdicts on the pinned engine (Pointer Lock, foreignObject taint, encode hints, WebGPU device loss, macOS offscreen capture).
+- `canvas-raster-facts.md` — engine-independent rasterization and image-encode facts.
+- `napi-rs-multiplatform-testing.md` — how the napi-rs addons are tested and loaded on all three OSes.
+- `inference-path-compatibility.md` — local inference engines and non-ASCII / comma paths.
+- `dependency-security-verification-2026-10-30.md` — dependency audit result.
 
-- `electron-chromium-behavior.md` — verdicts measured on the pinned Electron/Chromium engine: Pointer Lock, foreignObject canvas taint, the `prefer-hardware` encode hint.
-- `canvas-raster-facts.md` — engine-independent rasterization/encoding facts: plain-SVG cleanliness, the "WebP lossless" myth, the adversarial-frame testing rule.
-- `preview-thread-split-2026-10-26.md` — spike: moving 4K WebCodecs decode or the whole Pixi compositor into a Worker does not smooth preview; the stall is the GPU-process copy behind `createImageBitmap(VideoFrame)` on hardware frames.
-- `linux-native-decode-spike.md` — spike bringing the Standard engine's software lane up on Linux: the LGPL-ffmpeg supply chain, and the `RTLD_DEEPBIND` fix for the Chromium-`libffmpeg.so` symbol collision (why the component was Windows-only).
-- `linux-lite-export-off-by-one-tail.md` — investigation handoff, resolved 2026-07-23 by non-reproduction: the Lite/webcodecs export leg once failed gate B's tail alignment on Linux (tail sample best-matched source+1); symptom, suspects, repro steps, and the closure evidence.
-- `webcodecs-cross-platform-tail-alignment-research.md` — cross-platform WebCodecs tail-alignment research (macOS decoder retention, Linux hardware BGRA frames reading black); closes the Linux tail question.
-- `napi-rs-multiplatform-testing.md` — how the two napi-rs addons are tested on all three OSes (`test-noop`, `dyn-symbols`, per-OS loader variables), with the macOS checklist.
-- `mcp-2026-07-28-spec-upgrade-assessment.md` — assessment of moving the MCP server to the 2026-07-28 protocol revision.
-- `react-electron-docking-layout-research.md` — docking-layout library research for the React/Electron renderer (why dockview).
-- `agent-bench-h1-2026-10-21.md` — the bench after H1 (style tokens as defaults, entrance presets, `check_composition`): roles and entrances in every run that built text, captions within limits in 8 of 9, both baseline engagement failures gone, and cut-only runs that skip the audit.
-- `agent-bench-baseline-2026-10-20.md` — first agent-bench baseline (ADR 0123): six tasks × Opus/Sonnet/Haiku 5.5 on main's skill; engagement gaps, the tool defaults every model converges on, and the first craft candidates.
-- `macos-resource-verification-2026-10-07.md` — physical M1 resource/settings and codec verification, cache-link and numeric-admission fixes, and portable graphics identity.
+## Preview, playback and export
+- `playback-perf-findings-2026-07.md` — max smooth tracks per decode leg and the measured non-levers.
+- `preview-thread-split-2026-10-26.md` — moving decode or Pixi into a Worker does not help; the stall is in the GPU process.
+- `edit-latency-diagnosis-2026-10-13.md` — causes of the post-drag stall.
+- `performance-calibration-observations-2026-10-05.md` — why the computer test is fixed and stays experimental.
+- `export-webcodecs-tail-alignment-2026-07-23.md` — WebCodecs tail-frame alignment across platforms.
+- `motif-preview-progress-2026-10-05.md` — Motif preparation progress during playback.
+
+## Agent and MCP
+- `agent-bench-baseline-2026-10-20.md`, `agent-bench-h1-2026-10-21.md`, `agent-bench-style-2026-10-25.md` — agent bench runs and what changed between them.
+- `agent-review-commit-cost-2026-10-17.md` — per-commit cost of the review diff.
+- `descriptions-vlm-facts.md` — video-description model facts and rejected approaches.
+- `mcp-spec-2026-07-28-migration-2026-07-29.md` — assessment of the MCP 2026-07-28 / SDK v2 migration.
+
+## UI
+- `react-electron-docking-layout-research.md` — why dockview, and floating/popout panels stay off.

@@ -4,44 +4,42 @@ status: accepted
 
 # One cross-platform application resource authority
 
-Preview budgets in ADR 0100 cannot regulate native jobs, export, audio, models or
-multiple Electron windows. More pool knobs would ask users to solve internal
-scheduling while still allowing independent subsystems to oversubscribe.
+Date: 2026-10-08
 
-Settings exposes memory target, processing effort, temporary cache space and
-background processing during playback. Main derives allocation from intent and
-host RAM/CPUs. The native core owns one admission ledger for native tasks and
-owner-scoped Electron IPC. Renderer caches coordinate retention within an app
-allowance divided across windows. Measured process-tree memory governs pressure
-independently from estimated reservations.
+## Context
 
-Windows, macOS and Linux use the same policy and authority. Platform-specific
-decode and shared-texture adapters remain behind that common contract. Portable
-resident-memory telemetry uses sysinfo. Optional platform diagnostics and
-benchmarks must declare their narrower scope.
+Per-subsystem knobs (preview cache, GPU buffer, decoder counts) could not
+regulate native jobs, export, audio, models or several Electron windows, and
+asked users to solve internal scheduling while independent subsystems still
+oversubscribed the machine. Browser/GPU allocations and running codecs offer no
+portable whole-process hard cap on Windows, macOS or Linux, and thread counts are
+not CPU percentages.
 
-Leases survive until teardown/final release. Reducing a target does not free live
-resources or cancel export. New work waits or fails explicitly; pressure reduces
-retention and closes admission with hysteresis. Resident decoders reserve memory
-and carry thread caps without retaining an exclusive job slot while idle.
-Fallback routes acquire through the same memory authority.
+## Decision
 
-Export's renderer and WebCodecs working-memory claims retry capacity refusals
-for at most 15 seconds, matching native interactive admission. Waiting holds
-no additional lease, ends on export cancellation/worker teardown, and preserves
-the final resource error if capacity does not recover. Claims larger than the
-entire work allowance and non-capacity errors fail immediately. Preview retains
-its fail-fast admission. This lets finite background work drain before export
-decoding without increasing the memory target or bypassing pressure checks.
+- Settings exposes intent only: memory target, processing effort, temporary
+  cache space, and background processing during playback. Main derives the
+  allocation from that intent and host RAM/CPUs/disk.
+- The native `resources::Governor` is the single admission ledger for native
+  tasks and owner-scoped Electron IPC leases. Renderer caches coordinate
+  retention within an app allowance divided across windows.
+- Measured process-tree memory governs pressure independently of estimated
+  reservations; pressure reduces retention and closes admission with hysteresis.
+- Leases survive until teardown/final release. Lowering a target never frees a
+  live resource or cancels an export; new work waits or fails explicitly.
+- Export's renderer/WebCodecs working-memory claims retry capacity refusals for
+  at most 15 s (the native interactive deadline), holding no extra lease while
+  waiting. Preview admission stays fail-fast.
+- One policy and authority on all three OSes; platform decode and
+  shared-texture adapters sit behind it. Resource settings never change decode
+  quality, export format or model selection.
 
-The contract is cooperative: browser/GPU allocations and running codecs do not
-offer portable whole-process hard caps. Thread counts are not CPU percentages,
-and shared textures are not total VRAM. Temporary disk quotas protect original
-media, projects, models, expensive/paid results and unvisited workspaces.
+## Consequences
 
-This supersedes ADR 0100's editable preview/decode controls. Legacy preferences
-and test records remain compatibility inputs beneath the app ceiling. Resource
-settings never silently change decode quality, export format or model selection.
-
-Coverage, thresholds and verification are in
-[performance-settings.md](../performance-settings.md).
+- The contract is cooperative: no OS-enforced RAM, CPU-percentage or VRAM cap.
+  Brief overshoot is possible.
+- Legacy preview budgets and saved computer-test profiles remain compatibility
+  inputs beneath the app ceiling; they can lower, never raise, it.
+- Temporary-disk quotas cover replaceable derivatives only; source media,
+  projects, models and paid results are never evicted.
+- Details and coverage: [performance-settings.md](../performance-settings.md).

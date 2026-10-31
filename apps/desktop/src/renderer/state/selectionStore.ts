@@ -20,12 +20,12 @@ import { create } from "zustand";
 /// unwrapped again at every read.
 ///
 /// `gap` is the one selectable thing with no id: the empty span on one track
-/// between two layer boundaries (ADR 0069), named by its lane and its half-open
-/// `[s, e)`. It is what Delete CLOSES rather than lifts — everything after it
-/// moves left — which is why it is a selection kind and not a hover state: the
-/// key has to know what it is aimed at. Kept valid by `retainGapSelection`,
-/// which re-derives the span against every summary the way the id kinds are
-/// retained against their id lists.
+/// between two layer boundaries (docs/features.md#timeline-selection), named by
+/// its lane and its half-open `[s, e)`. It is what Delete CLOSES rather than
+/// lifts — everything after it moves left — which is why it is a selection kind
+/// and not a hover state: the key has to know what it is aimed at. Kept valid
+/// by `retainGapSelection`, which re-derives the span against every summary the
+/// way the id kinds are retained against their id lists.
 export type Selection =
   | { kind: "none" }
   | { kind: "layers"; primary: string; ids: ReadonlySet<string> }
@@ -222,10 +222,10 @@ export function clearTransitionSelection(): void {
   if (currentSelection().kind === "transition") commit(NONE);
 }
 
-/// Select a gap: the empty span `[s, e)` on `trackId` (ADR 0069). The caller
-/// has already resolved the press to a gap through `ripple/gap.ts`'s rule; this
-/// records what it found and replaces whatever else was selected, as a clip
-/// click does.
+/// Select a gap: the empty span `[s, e)` on `trackId`
+/// (docs/features.md#timeline-selection). The caller has already resolved the
+/// press to a gap through `ripple/gap.ts`'s rule; this records what it found
+/// and replaces whatever else was selected, as a clip click does.
 export function setGapSelection(trackId: string, s: number, e: number): void {
   commit({ kind: "gap", trackId, s, e });
 }

@@ -627,10 +627,11 @@ export function App({ onCloseProject }: AppProps) {
   // carries the link, so a swept or clicked member already brought its
   // siblings along.
   //
-  // A SELECTED GAP CLOSES under this key (ADR 0069). There is nothing to lift —
-  // a gap is already empty — so "delete the gap" can only mean "close it", and
-  // Premiere and Resolve both give the bare key that meaning. It is the one
-  // selection kind for which Delete and Ripple delete are the same edit.
+  // A SELECTED GAP CLOSES under this key (docs/features.md#ripple-delete).
+  // There is nothing to lift — a gap is already empty — so "delete the gap" can
+  // only mean "close it", and Premiere and Resolve both give the bare key that
+  // meaning. It is the one selection kind for which Delete and Ripple delete
+  // are the same edit.
   const closeSelectedGap = useCallback(
     async (gap: GapSelection) => {
       try {
@@ -667,7 +668,8 @@ export function App({ onCloseProject }: AppProps) {
   }, [closeSelectedGap, settle]);
 
   // The same delete, plus the closing of what it vacated: everything after the
-  // freed span, on every track of that composition, moves left (ADR 0062).
+  // freed span, on every track of that composition, moves left
+  // (docs/features.md#ripple-delete).
   //
   // The precedence is `deleteSelected`'s, line for line, and that is the point
   // of the key rather than an accident of sharing a handler shape: a keyframe
@@ -1032,10 +1034,10 @@ export function App({ onCloseProject }: AppProps) {
     await settle();
   }, [settle]);
 
-  // Raise the selection to a fresh lane at the top of the z-stack (ADR 0042).
-  // The selection is read from the store, not from a captured value: App does
-  // not re-render on a multi-select change, which is the same reason the
-  // command's `enabled` predicate reads it live.
+  // Raise the selection to a fresh lane at the top of the z-stack
+  // (docs/features.md#track-placement). The selection is read from the store,
+  // not from a captured value: App does not re-render on a multi-select change,
+  // which is the same reason the command's `enabled` predicate reads it live.
   //
   // The new lane carries no role, so the A/B Roll filter would hide the clip the user
   // just raised — routed through the existing inline reveal rather than a second

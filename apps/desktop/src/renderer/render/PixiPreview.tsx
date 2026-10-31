@@ -302,7 +302,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // microtask lands after the renderer half. Destroying the device before
       // Pixi has released the canvas swap chain and its textures reproduces the
       // Electron 44 freeze exactly as leaving it to the garbage collector does.
-      // ADR 0059.
+      // See docs/notes/electron-chromium-behavior.md.
       const device = webgpuDeviceOf(app.renderer);
       app.stage.once("destroyed", () => queueMicrotask(() => {
         try {

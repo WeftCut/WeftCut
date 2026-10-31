@@ -3,7 +3,7 @@ import { readLayerParamTrack } from "../keyframe/channels";
 // populations — clips and keyframes — and what that means for the clip
 // selection. Pure: no React, no DOM, so every rule is provable from hand-fed
 // rows the way `geometry.test.ts` proves `trackIdAtClientY`. The gesture and the
-// overlay rectangle live elsewhere. See ADR 0051.
+// overlay rectangle live elsewhere. See docs/features.md#timeline-selection.
 
 import type { LinkSummary, TrackSummary } from "../ipc";
 import {

@@ -84,7 +84,7 @@ function unwrapEnvelope(env: Envelope): unknown {
 function unwrap(json: string): unknown { return unwrapEnvelope(JSON.parse(json) as Envelope) }
 
 /** Per-call speech config provider (transcribe_clip): the merged backend-config
- *  snapshot the stateless resolver reads (ADR 0148) keyed by backend tag, plus
+ *  snapshot the stateless resolver reads (ADR 0036) keyed by backend tag, plus
  *  the selected engine, injected as a SOFT preference. Built at call time, so a
  *  key saved or a model switched a moment ago is what the next call runs on.
  *  `synthesize_speech` gets the same `config` at the host's compute facade. */
@@ -176,7 +176,7 @@ export async function callClipComputeTool(
   // native resolution does not choose another configured model implicitly.
   // An agent's explicit backend override remains authoritative.
   // Speech, like vision below, resolves against the per-call configuration
-  // (ADR 0148): nothing is held natively, so this injection is the whole config.
+  // (ADR 0036): nothing is held natively, so this injection is the whole config.
   if (name === 'transcribe_clip') {
     const speech = getSpeech()
     merged.speech_config = speech.config

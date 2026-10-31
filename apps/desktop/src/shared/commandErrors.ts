@@ -136,12 +136,13 @@ export type CommandError =
   | { error: 'TrackNotEmpty'; track: Uuid }
   | { error: 'TrackNotRemovable'; track: Uuid }
   | { error: 'TrackLocked'; track: Uuid }
-  // ── Ripple delete (ADR 0062). A ripple closes the span a deletion vacated, so
-  // every refusal below is about the span — `hole` is the half-open `[s, e)`
-  // interval being closed, which is the deleted layer's own footprint clipped to
-  // its remaining neighbours, NOT the layer's length. All four are predicted
-  // BEFORE any write: the planner is pure and the renderer runs it against its
-  // mirror to grey the row with the same sentence. ──
+  // ── Ripple delete (docs/features.md#ripple-delete). A ripple closes the span
+  // a deletion vacated, so every refusal below is about the span — `hole` is
+  // the half-open `[s, e)` interval being closed, which is the deleted layer's
+  // own footprint clipped to its remaining neighbours, NOT the layer's length.
+  // All four are predicted BEFORE any write: the planner is pure and the
+  // renderer runs it against its mirror to grey the row with the same
+  // sentence. ──
   // A remaining layer STARTS inside the span. The hole must be clean, so the
   // ripple refuses instead of sliding the layer onto its neighbour: the remedy
   // is to add it to the selection (its own hole then merges in) or to delete
@@ -171,12 +172,12 @@ export type CommandError =
   // is the plain `TrackLocked`, and a locked track with nothing downstream does
   // not block at all.
   | { error: 'RippleLockedLayer'; layer: Uuid }
-  // `[s, e)` is not a gap on `track` (ADR 0069): a layer reaches into it, or an
-  // edge is not a layer boundary — the right edge must be where a layer starts,
-  // the left where one ends or composition time 0. The span the renderer
-  // selected is what closes, never "whatever is free there now": the mirror can
-  // lag the actor, and a gap that moved under the click is refused rather than
-  // silently re-measured.
+  // `[s, e)` is not a gap on `track` (docs/features.md#ripple-delete): a layer
+  // reaches into it, or an edge is not a layer boundary — the right edge must
+  // be where a layer starts, the left where one ends or composition time 0.
+  // The span the renderer selected is what closes, never "whatever is free
+  // there now": the mirror can lag the actor, and a gap that moved under the
+  // click is refused rather than silently re-measured.
   | { error: 'GapNotFound'; track: Uuid; s: TimeUs; e: TimeUs }
   | { error: 'SplitOutsideLayer'; layer: Uuid; at_t: TimeUs }
   | { error: 'LinkLockedMember'; link: Uuid; locked_layer: Uuid; touched: Uuid }

@@ -168,17 +168,17 @@ function incomingMoveSet(c: Composition, toLayer: Uuid): Uuid[] {
  *  reference would be revoked) and into LogBus rows. */
 export interface TransitionBounce { layer: Uuid; from_track: Uuid; to_track: Uuid; spawned: boolean }
 
-/** Bounce pass for an overlap add's moved LINK SIBLINGS (ADR 0042: no free
- *  lane, so make one). Runs AFTER the shift: a sibling whose lane now holds a
- *  NON-moving layer of its own overlap class (audio vs visual — the lane law)
- *  over its span moves to the first free overlay lane, spawning one when none
- *  exists. Members of the moving set never collide with each other (same
- *  delta, same relative order), so only non-movers are scanned. One sibling at
- *  a time against CURRENT state, so an earlier bounce's landing blocks a later
- *  one from claiming the same lane. The incoming layer itself never bounces —
- *  an unauthorized overlap from ITS move is a whole-commit validate refusal.
- *  No pruneEmptiedTrack: the blocking layer that caused the bounce stays on
- *  the vacated lane, so a bounce can never empty it. */
+/** Bounce pass for an overlap add's moved LINK SIBLINGS (no free lane, so
+ *  make one: docs/features.md#track-placement). Runs AFTER the shift: a sibling
+ *  whose lane now holds a NON-moving layer of its own overlap class (audio vs
+ *  visual — the lane law) over its span moves to the first free overlay lane,
+ *  spawning one when none exists. Members of the moving set never collide with
+ *  each other (same delta, same relative order), so only non-movers are
+ *  scanned. One sibling at a time against CURRENT state, so an earlier bounce's
+ *  landing blocks a later one from claiming the same lane. The incoming layer
+ *  itself never bounces — an unauthorized overlap from ITS move is a
+ *  whole-commit validate refusal. No pruneEmptiedTrack: the blocking layer that
+ *  caused the bounce stays on the vacated lane, so a bounce can never empty it. */
 function bounceCollidingSiblings(p: Project, c: Composition, idGen: IdGen, memberIds: readonly Uuid[], toLayer: Uuid, out: TransitionBounce[]): void {
   const moving = new Set(memberIds)
   for (const id of memberIds) {
@@ -220,7 +220,7 @@ function requireTransition(p: Project, id: Uuid): { comp: Composition; transitio
  *    both participants play exactly their trimmed ranges; `extended_us = 0`.
  *    Colliding shifted siblings bounce lanes (bounceCollidingSiblings); the
  *    vacated span stays a gap (no implicit ripple — closing a span is the
- *    explicit ripple delete's job, ADR 0062).
+ *    explicit ripple delete's job, docs/features.md#ripple-delete).
  *  - exact-adjacent cut, `placement: 'extend'`: the explicit tail borrow —
  *    pre-checked
  *    against the outgoing tail handle, positions untouched;

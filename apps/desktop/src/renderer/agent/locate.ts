@@ -1,7 +1,8 @@
 // Locating a review item — a change or a tack — on the editor timeline
-// (ADR 0115). Object navigation is the editor's alone (ADR 0065). The agent
-// view, which is for watching, only jumps its preview to the item's time
-// (`jump`): no selection, no composition entered, no other timeline opened.
+// (ADR 0115). Object navigation is the editor's alone
+// (docs/mcp.md#agent-panel-and-lifecycle). The agent view, which is for
+// watching, only jumps its preview to the item's time (`jump`): no selection,
+// no composition entered, no other timeline opened.
 //
 // One pure resolver says where an item can be found in the project as it is
 // now (`locateTarget`); whether Locate or Jump is offered and what it does

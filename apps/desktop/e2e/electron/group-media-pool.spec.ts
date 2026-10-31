@@ -6,8 +6,8 @@ import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from "./helpers
 
 /**
  * Groups in the media pool: the reuse surface, and the orphan's home
- * (spec § Group semantics; ADR 0052, and the failure ADR 0042 refused for
- * tracks — state holding an entity no surface can remove).
+ * (spec § Group semantics; ADR 0052, and the failure track cleanup refuses
+ * (docs/data-model.md#track) — state holding an entity no surface can remove).
  *
  * Driven through the real UI: pre-compose with `Ctrl+G`, place a second instance
  * by dragging the pool row onto a lane, delete the clips, delete the composition

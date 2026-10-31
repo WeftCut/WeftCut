@@ -76,7 +76,8 @@ export function StatusBar({
   // not something that happened.
   const linksOff = useLinkOverride();
   // A clip job queued on the processing budget is usually waiting for the
-  // derivatives this bar counts; their pill says so (ADR 0120).
+  // derivatives this bar counts; their pill says so
+  // (docs/performance-settings.md#admission-lanes).
   const budgetBlocked = useComputeJobsStore((s) =>
     Object.values(s.jobs).some((j) => j.phase.kind === "queued" && j.phase.reason === "budget"),
   );

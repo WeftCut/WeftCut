@@ -4,22 +4,44 @@ status: accepted
 
 # Preview's `FrameRing` caches `ImageBitmap` snapshots, not `VideoFrame`s
 
-`SourceHandle.output` converts each emitted `VideoFrame` to an `ImageBitmap` via `createImageBitmap(frame)` and `frame.close()`s the source as soon as the bitmap is ready. The `FrameRing` stores `{ ptsUs, durationUs, bitmap: ImageBitmap }` entries; eviction and flush call `bitmap.close()`. `VideoClipSprite.updateFrame` accepts `BrowserConvertibleFrame` (`VideoFrame | ImageBitmap` — the subset of `DecodedFrame` a 2D-canvas `drawImage` converts correctly, `decoder/decodedFrame.ts`) and snapshots it into the sprite-owned canvas (the snapshot rule, `docs/render.md`).
+Date: 2026-05-22
 
-Rationale:
+## Context
 
-- WebCodecs `VideoDecoder` emits `VideoFrame`s backed by the hardware decoder's frame buffer pool. Common desktop GPUs cap that pool at ~13 slots. Every `VideoFrame` the consumer retains pins a slot until `.close()`; the decoder cannot allocate buffers for new output past that ceiling and goes silent without an error.
-- Preview's ring is designed to hold ~40 frames at steady state (500 ms lookbehind + up to 1 s lookahead). Held as `VideoFrame`s, it permanently pins ~8 slots once warmed up; with the decoder's internal reorder buffer holding another 4–5, the pool exhausts and output stalls. Warmup pre-roll cannot exceed ~8 frames; clicking play freezes on the last cached frame for the ~600 ms it takes anchor advance to evict ring entries one at a time and feed the pool back.
-- `ImageBitmap` is a transferable pixel container whose storage is independent of the decoder's pool. `createImageBitmap(VideoFrame)` is browser-optimized to keep pixels GPU-side where possible; the source frame's `.close()` returns its buffer immediately. The ring can now hold the full lookbehind + lookahead window without back-pressuring the decoder.
-- PixiJS v8's `ImageSource` accepts `VideoFrame` and `ImageBitmap` as the same kind of resource, so the sprite code stays uniform — it reads dims off `codedWidth/codedHeight` for `VideoFrame` and `width/height` for `ImageBitmap` and otherwise treats them identically.
+A WebCodecs `VideoDecoder` emits `VideoFrame`s backed by the hardware
+decoder's buffer pool, about 13 slots on common desktop GPUs. Every retained
+`VideoFrame` pins a slot until `close()`. When the pool is exhausted the
+decoder goes silent with no error.
 
-Trade-offs:
+The preview ring holds about 40 frames at steady state (0.5 s lookbehind plus
+1 s lookahead). Held as `VideoFrame`s it pinned about 8 slots. The decoder's
+reorder buffer held 4–5 more, so the pool ran out. Warm-up could not pre-roll
+more than about 8 frames, and Play froze on the last cached frame for about
+600 ms while eviction returned slots one at a time.
 
-- The async hop introduces a race: an `inactivity-rebuild` or software downgrade between the synchronous `output()` callback and the `createImageBitmap` Promise's resolution must not push stale bitmaps into the live ring. Resolution closes its own bitmap and bails when `this.decoder !== dec` no longer holds.
-- Memory: a full lookahead at 1080p ≈ 73 frames × ~6 MB ≈ ~440 MB of GPU memory per active clip. Multi-clip projects scale linearly. The lookahead config is currently the design-intent 1 s; if memory pressure surfaces in production, lowering `DEFAULT_LOOKAHEAD_US` toward 300–500 ms is the first lever.
-- The async hop means a VideoFrame is briefly held until conversion resolves; under heavy concurrent decode (multi-clip composition, aggressive scrub) the in-flight set could still touch the pool ceiling. Has not been observed.
-- Color-space conversion through `createImageBitmap` is implementation-defined (typically YUV → display-linear RGBA). Preview's pixels are therefore not bit-identical to export's, which renders the same `VideoFrame` directly. Has not surfaced as a visible discrepancy.
+## Decision
 
-Why export does **not** apply this snapshot:
+- The WebCodecs preview path converts each output frame with
+  `createImageBitmap(frame)` and closes the `VideoFrame` as soon as the bitmap
+  exists. The ring stores bitmaps; eviction and flush close them.
+- A conversion that resolves after its decoder was replaced (inactivity
+  rebuild, software downgrade) closes its bitmap and is dropped, so stale
+  frames never enter the live ring.
+- Export does not snapshot. `ExportFrameStore` keeps `VideoFrame`s, and the
+  export loop closes each frame right after composition, so the pool drains
+  without a copy. Both stores implement `FrameStore`, so sprites accept
+  either kind.
 
-`ExportFrameStore` caches `VideoFrame`s and the export Worker's encode loop closes each frame immediately after composition (`evictBefore(nextSrcPts)`). The pool stays drained naturally; the snapshot's cost (memory, conversion latency) would buy nothing. Both stores satisfy the shared `FrameStore` interface returning `DecodedFrame`, so the sprite consumes whichever flavour the active pool produces.
+## Consequences
+
+- The ring can hold its full window without back-pressuring the decoder.
+- Memory: a 1 s 1080p lookahead is about 73 × 6 MB ≈ 440 MB of GPU memory per
+  active clip. The first lever is `DEFAULT_LOOKAHEAD_US` (`FrameRing.ts`).
+- `createImageBitmap` color conversion is implementation-defined, so preview
+  pixels are not bit-identical to export.
+- The snapshot is a GPU-process copy. At three 4K hardware streams it is the
+  measured cause of preview stalls
+  ([preview-thread-split note](../notes/preview-thread-split-2026-10-26.md)).
+  Zero-copy imports (`importExternalTexture`, `texImage2D(VideoFrame)`) would
+  hold frames until drawn. Any replacement must still keep fewer than ~13
+  frames alive per decoder.

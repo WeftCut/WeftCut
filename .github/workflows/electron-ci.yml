@@ -110,7 +110,7 @@ jobs:
     # is the binding constraint: 3 legs here + 1 `rust-test` leave one macOS
     # slot for a concurrent push run or another repository. macOS affords
     # three because it runs only the platform's own specs (e2e/slices.mjs
-    # §SKIP_ON, ADR 0141). The pack (§LEGS) balances each OS across exactly
+    # §SKIP_ON). The pack (§LEGS) balances each OS across exactly
     # these counts, so a leg's wall clock is that OS's suite over its leg
     # count: widening means buying legs back from somewhere.
     strategy:
@@ -468,7 +468,8 @@ jobs:
           # shader rounding shifts smooth regions by ±1-2 LSB — SSIM-visible,
           # PSNR-flat. Both legs measure ~0.67 healthy; floors calibrated to
           # that baseline, and the color gates' per-channel ceiling likewise
-          # (worst measured 12/255). See e2e/README.md §SSIM floors.
+          # (worst measured 12/255). See e2e/README.md
+          # §Export SSIM floors are environment-calibrated.
           WEFTCUT_E2E_SSIM_FLOOR: ${{ matrix.os != 'macos-latest' && '0.62' || '' }}
           WEFTCUT_E2E_COLOR_FAITHFUL_MAX: ${{ matrix.os != 'macos-latest' && '16' || '' }}
           # Native-decode gates run on Linux nightly: #15 measured 3/3 green

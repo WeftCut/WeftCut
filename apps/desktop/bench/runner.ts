@@ -5,7 +5,7 @@
 // open a settled copy of it from the template store — snapshot it, hand the
 // session to a driver, snapshot again and record what changed. Everything
 // measured here comes from the app — the agent's own report is kept, but only
-// beside the evidence (ADR 0123: no self-certification).
+// beside the evidence (ADR 0046: no self-certification).
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'

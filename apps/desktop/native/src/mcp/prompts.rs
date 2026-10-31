@@ -363,8 +363,8 @@ mod tests {
     /// delete: split then split then `delete_layers` left a gap exactly as long
     /// as what it removed — audibly identical to doing nothing — so the recipe
     /// marked, the blurb said so, and a "DO NOT split and delete" instruction
-    /// stood in for the missing primitive. `remove_pauses` is that primitive
-    /// (ADR 0062), and every pin moves with it: the recipe cuts, the warning is
+    /// stood in for the missing primitive. `remove_pauses` is that primitive,
+    /// and every pin moves with it: the recipe cuts, the warning is
     /// gone, and the blurb may promise tightening because it now delivers it.
     /// The review-first alternative stays pinned too, so neither half can
     /// quietly drop out of the prompt.

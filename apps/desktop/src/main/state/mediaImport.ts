@@ -219,8 +219,8 @@ async function settleImport(item: MediaItem, path: string, hashed: string | null
   let hash = hashed
   // Compute the REAL content hash (a lightweight standalone read pass), set it
   // on the pool item, THEN enqueue derivatives — so every job bakes the final
-  // cache key and no derivative ever touches a pending alias (ADR 0007
-  // superseded). One extra full read of the source, accepted to start
+  // cache key and no derivative ever touches a pending alias. One
+  // extra full read of the source, accepted to start
   // derivatives promptly instead of waiting for the workspace copy. Skipped
   // when the source was hashed before the insert.
   if (hash === null) {

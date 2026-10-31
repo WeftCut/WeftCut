@@ -118,9 +118,9 @@ describe('mapCommandError — ripple delete names the span and the way out', () 
     expect(out.data).toEqual({ error: 'RippleLockedLayer', layer: 'L9', tool: null })
   })
 
-  // The gap closing (ADR 0069): the fix is always "re-read the lane and send
-  // the gap as it is now", so the message says what a gap IS and the data
-  // echoes the span that was sent.
+  // The gap closing (docs/features.md#ripple-delete): the fix is always
+  // "re-read the lane and send the gap as it is now", so the message says what
+  // a gap IS and the data echoes the span that was sent.
   it('echoes the span that was not a gap and points at the composition resource', () => {
     const out = mapCommandError({ error: 'GapNotFound', track: 'T1', s: 2_000_000, e: 3_000_000 })
     expect(out.code).toBe('invalid_params')

@@ -18,8 +18,8 @@ export interface ScrubCoalescerInit {
   /// Must be > `debounceMs` so a real pause still fires first, and ≥ the
   /// worst-case decode time from a keyframe: if a seek's decode outruns
   /// this interval, every fire flushes an unfinished decode and nothing
-  /// ever paints (safe with the short-GOP proxy — ADR 0008; a ~1 s GOP
-  /// churns exactly that way). Default: 180.
+  /// ever paints (safe with the short-GOP proxy — docs/preview.md#proxies;
+  /// a ~1 s GOP churns exactly that way). Default: 180.
   maxWaitMs?: number;
   /// Callback invoked with the stable target after the debounce window.
   onStableSeek: (tUs: number) => Promise<void>;

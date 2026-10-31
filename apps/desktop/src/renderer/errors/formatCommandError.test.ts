@@ -213,9 +213,10 @@ describe("formatCommandError — curated tier", () => {
       );
     });
 
-    // The gap closing's refusal (ADR 0069) opens with the ripple's four words —
-    // it greys the same row — and names the lane, since the gap has no name of
-    // its own and its span was already on screen as the highlight.
+    // The gap closing's refusal (docs/features.md#ripple-delete) opens with the
+    // ripple's four words — it greys the same row — and names the lane, since
+    // the gap has no name of its own and its span was already on screen as the
+    // highlight.
     it("GapNotFound names the lane the gap was on", () => {
       seedStore();
       const out = formatCommandError({

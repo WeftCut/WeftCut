@@ -1,7 +1,7 @@
 // The Marker Panel: every marker in the PROJECT, grouped by the composition it
 // belongs to, and the only surface a HIBERNATING marker appears on at all —
-// which is what makes ADR 0056's hibernation policy honest rather than a way to
-// lose a note quietly.
+// which is what makes the hibernation policy (docs/features.md#markers) honest
+// rather than a way to lose a note quietly.
 //
 // Boundary: this Panel owns a marker's CONTENT — label, colour, note. The lane
 // owns its POSITION, and TIME IS READ-ONLY here on every row, free markers

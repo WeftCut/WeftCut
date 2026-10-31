@@ -9,7 +9,7 @@ interface SmokeSummary {
 /// `rename_track` rather than `add_track`: the point of this test is that a
 /// state-mutating command round-trips through the bridge, and it should be a
 /// command a human can also reach — `add_track` has no human entry point at all
-/// now that tracks are a by-product of placement (ADR 0042), so a smoke test
+/// now that tracks are a by-product of placement (docs/features.md#track-placement), so a smoke test
 /// built on it would keep passing while every route a user actually has is
 /// broken. Renaming is reachable by double-clicking a track header, and its
 /// null-clearing half round-trips the derived-name model in the same gesture.

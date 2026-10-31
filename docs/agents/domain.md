@@ -1,51 +1,46 @@
 # Domain Docs
 
-How the engineering skills should consume this repo's domain documentation when exploring the codebase.
+Single-context repo: one `CONTEXT.md` at the root, decisions in `docs/adr/`.
 
 ## Before exploring, read these
 
-- **`CONTEXT.md`** at the repo root, or
-- **`CONTEXT-MAP.md`** at the repo root if it exists — it points at one `CONTEXT.md` per context. Read each one relevant to the topic.
-- **`docs/adr/`** — read ADRs that touch the area you're about to work in. In multi-context repos, also check `src/<context>/docs/adr/` for context-scoped decisions.
+- **`CONTEXT.md`** — the glossary. Terms, one-line meanings, relations.
+- **`docs/architecture.md`** — the map: processes, where each area lives, which topic doc owns it.
+- **`docs/adr/`** — the ADRs that touch the area you're about to work in.
 
-If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved.
+## Where knowledge goes
 
-## File structure
+Put each fact in exactly one place; link to it from elsewhere.
 
-Single-context repo (most repos):
+| What | Where |
+|---|---|
+| A domain term and what it means | `CONTEXT.md` (no implementation, no history) |
+| What a capability does for the user | `docs/features.md` |
+| How a subsystem works now: invariants, contracts, non-obvious behavior | the topic doc in `docs/` |
+| A decision that passes the ADR bar below | `docs/adr/NNNN-*.md` |
+| A measurement, experiment, rejected approach, or engine/platform fact | `docs/notes/` (dated, with environment and probe) |
+| Anything the code, types or tests already say | nowhere — don't restate it |
 
-```
-/
-├── CONTEXT.md
-├── docs/adr/
-│   ├── 0001-event-sourced-orders.md
-│   └── 0002-postgres-for-write-model.md
-└── src/
-```
+Docs describe the present. No "used to", changelogs or plans; git and issues hold those.
 
-Multi-context repo (presence of `CONTEXT-MAP.md` at the root):
+## The ADR bar
 
-```
-/
-├── CONTEXT-MAP.md
-├── docs/adr/                          ← system-wide decisions
-└── src/
-    ├── ordering/
-    │   ├── CONTEXT.md
-    │   └── docs/adr/                  ← context-specific decisions
-    └── billing/
-        ├── CONTEXT.md
-        └── docs/adr/
-```
+Write an ADR only if **all** hold:
+
+1. **Hard to reverse** — changing it later costs real migration or rework.
+2. **Surprising without context** — a reader of the code would plausibly "fix" it back.
+3. **Forced** — by a constraint, a measurement, or a real trade-off, not a taste call or an arbitrary pick.
+
+Otherwise put the content in the topic doc or a note. When a decision changes, rewrite the existing ADR or delete it; don't stack an amendment ADR on top. ADR numbers are never reused; gaps are fine.
+
+Format: frontmatter `status: accepted`, `# Title`, `Date:`, then `## Context` (the constraint, with numbers), `## Decision`, `## Consequences`. Target ≤ 60 lines, hard cap 100. No implementation narration, file lists or build history.
 
 ## Use the glossary's vocabulary
 
-When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in `CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.
-
-If the concept you need isn't in the glossary yet, that's a signal — either you're inventing language the project doesn't use (reconsider) or there's a real gap (note it for `/domain-modeling`).
+When your output names a domain concept (an issue title, a proposal, a test name), use the term as `CONTEXT.md` defines it. If the concept isn't there, either you're inventing language the project doesn't use (reconsider) or there's a real gap (add the term).
 
 ## Flag ADR conflicts
 
 If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
 
-> _Contradicts ADR-0007 (event-sourced orders) — but worth reopening because…_
+> _Contradicts ADR 0023 (audio mixes by role) — but worth reopening because…_

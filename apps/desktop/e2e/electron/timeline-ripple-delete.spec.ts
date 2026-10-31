@@ -7,7 +7,7 @@ import { invokeCmd, launchApp, newProject, tmpDir, waitForHook, rootSummary } fr
 
 /**
  * Ripple delete in the packaged app: the KEY, the linked partner, a downstream
- * transition, and a refusal that was predicted before it was sent (ADR 0062).
+ * transition, and a refusal that was predicted before it was sent (docs/features.md#ripple-delete).
  *
  * What only a real window can answer. The planner and the mutation are covered
  * by colocated Vitest suites that hand `planRipple` a hand-built view, and
@@ -266,7 +266,7 @@ test.describe('ripple delete', () => {
       expect(videoAfter[1]!.t_start_us).toBe(videoBefore[2]!.t_start_us - 2_000_000)
       expect(audioAfter[1]!.t_start_us).toBe(audioBefore[2]!.t_start_us - 2_000_000)
       // 2 s is 60 whole frames and 96 000 whole samples, so the film gets
-      // shorter by exactly the span that was closed (ADR 0005's autofit).
+      // shorter by exactly the span that was closed (duration autofit, docs/data-model.md#composition).
       expect(after.duration_us).toBe(before.duration_us - 2_000_000)
       // Deletes AND sweep in ONE commit: two layers gone and four re-timed is
       // one row on the stack, which is what makes the undo below one keystroke.
@@ -393,7 +393,7 @@ test.describe('ripple delete', () => {
     }
   })
 
-  // The gap gesture (ADR 0069). What only a real window can answer: that a
+  // The gap gesture (docs/features.md#ripple-delete). What only a real window can answer: that a
   // press on lane background resolves through the lane's measured x to the gap
   // the store then holds, that the highlight the lane draws is that gap, and
   // that bare `Delete` over it reaches `App`'s handler and closes it on BOTH

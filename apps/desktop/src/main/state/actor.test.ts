@@ -404,7 +404,8 @@ describe('dispatch: split + links', () => {
 
   // ripple — the rejects leave through applyRippleDeleteLayers instead of the
   // plain delete loop, so what they vacated closes inside the split's own commit
-  // (ADR 0062). The flag is off by default: everything above still leaves holes.
+  // (docs/features.md#ripple-delete). The flag is off by default: everything
+  // above still leaves holes.
   /** `splittableClip` over a COUNTING id generator — the refusal case is the one
    *  place the number of ids a rolled-back recipe spent is the assertion. */
   function countedClip() {
@@ -621,7 +622,7 @@ describe('dispatch: update_track_flags (unrecorded)', () => {
   })
 })
 
-// A name is content, so unlike the flags above it RECORDS (ADR 0042 decision 3).
+// A name is content, so unlike the flags above it RECORDS (docs/data-model.md#track).
 // Read off the snapshot and the history view: what matters is what the lane is
 // called afterwards, whether one Ctrl-Z takes the name back, and that the same
 // undo leaves the eye and the lock exactly where the editor put them.
@@ -1555,7 +1556,7 @@ describe('dispatch: caption tracks', () => {
     actor.dispatch('undo', {})
     expect(root(actor.snapshot()).tracks.some((t) => t.role === 'Caption')).toBe(false)
   })
-  // ADR 0070: a second import whose cues fit lands on the caption track already
+  // ADR 0026: a second import whose cues fit lands on the caption track already
   // there — one track, two commits — and undoing the second leaves the first.
   it('a second add_caption_track packs into the existing caption track; undo peels only its cues', () => {
     const { actor } = setup()
@@ -1908,10 +1909,10 @@ describe('dispatch: attribute-panel timing/envelope ops', () => {
   })
 })
 
-// A track disappears when its last layer leaves it (ADR 0042). Everything here is
-// read off the snapshot rather than the prune helper, because a prune that never
-// fires passes every helper-level test — which is exactly how the move path spent
-// its whole life as a no-op.
+// A track disappears when its last layer leaves it (docs/data-model.md#track).
+// Everything here is read off the snapshot rather than the prune helper, because
+// a prune that never fires passes every helper-level test — which is exactly how
+// the move path spent its whole life as a no-op.
 describe('dispatch: emptied-track cleanup', () => {
   function setup() {
     const idGen = seededGen(); const initial = blankProject(idGen, 'prune')
@@ -2120,10 +2121,10 @@ describe('dispatch: delete_layers', () => {
   })
 })
 
-// Raise-to-top — the whole of z-order rearrangement (ADR 0042 decision 2). Read
-// off the snapshot for the same reason the block above is: what matters is that
-// the lane appeared, that the lanes it emptied are gone, and that ONE undo puts
-// both back.
+// Raise-to-top — the whole of z-order rearrangement
+// (docs/features.md#track-placement). Read off the snapshot for the same reason
+// the block above is: what matters is that the lane appeared, that the lanes it
+// emptied are gone, and that ONE undo puts both back.
 describe('dispatch: move to a new track', () => {
   function setup() {
     const idGen = seededGen(); const initial = blankProject(idGen, 'raise')

@@ -18,13 +18,13 @@
 /// each adapt through a one-screen mapper instead of this file learning either.
 ///
 /// Two entry points, one closing. `planRipple` derives its holes from the layers
-/// a deletion vacates; `planRippleGap` takes a gap the user selected AS the hole
-/// (ADR 0069). From the merge on the two are the same function, which is what
+/// a deletion vacates; `planRippleGap` takes a gap the user selected AS the
+/// hole. From the merge on the two are the same function, which is what
 /// makes a selected gap inherit every refusal a ripple has — a layer starting
 /// inside the span on another track, a landing that collides, a link reaching
 /// across, a lock that would have to move — with no second vocabulary.
 ///
-/// ADR 0062.
+/// See docs/features.md#ripple-delete.
 import { layerOverlapClass, shiftOnGrids, type OverlapClass } from '../grid'
 import type { CommandError, Rational, TimeUs, Uuid } from '../../shared/commandErrors'
 import { isGapOn } from './gap'
@@ -147,8 +147,8 @@ export function planRipple(view: RippleView, deleted: readonly Uuid[]): RipplePl
 }
 
 /**
- * The plan for closing a selected gap, or the refusal that says why not
- * (ADR 0069). The gap is the hole — no layer is deleted — so the closing is
+ * The plan for closing a selected gap, or the refusal that says why not.
+ * The gap is the hole — no layer is deleted — so the closing is
  * `planRipple`'s from the merge on: a layer starting inside the span on another
  * track, a landing that collides, a link reaching across the cut and a lock that
  * would have to move all refuse exactly as they do for a deletion.
@@ -213,7 +213,7 @@ function planClosing(view: RippleView, index: Map<Uuid, Placed>, doomed: Readonl
   //
   // The one exception is the ORIGIN: a layer starting at 0 when the hole starts
   // at 0 stays, because time 0 is a boundary nothing crosses, so it is anchored
-  // ahead of the cut in the only way a layer at 0 can be (ADR 0062). A LINKED
+  // ahead of the cut in the only way a layer at 0 can be. A LINKED
   // partner of a deleted layer gets no such pass: it is not anchored, it is the
   // other half of the thing being deleted, and naming it is the point.
   const linkedToDoomed = new Set<Uuid>()

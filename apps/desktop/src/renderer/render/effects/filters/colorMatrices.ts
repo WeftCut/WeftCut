@@ -25,7 +25,7 @@
 // the maths testable without a renderer.
 
 /// Rec.709 luma weights (BT.709 Y'), the luminance the whole render path is
-/// display-referred to (ADR 0021). Also the reason these writers exist.
+/// display-referred to (ADR 0014). Also the reason these writers exist.
 export const REC709_LUMA: readonly [number, number, number] = [0.2126, 0.7152, 0.0722];
 
 /// Slot count of one 4×5 colour matrix — pixi's `uColorMatrix` uniform is

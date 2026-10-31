@@ -1,6 +1,6 @@
 //! Disposable, versioned straight-alpha RGBA8 cache. Each frame is independent:
 //! seeks never decode preceding frames. PNG remains the portable fallback.
-//! Codec 0 is raw, 1 is LZ4 (read only), 2 is zstd level 1 (ADR 0145).
+//! Codec 0 is raw, 1 is LZ4 (read only), 2 is zstd level 1 (ADR 0078).
 //! A read verifies BLAKE3 over the pixels and may downscale them (ADR 0154).
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;

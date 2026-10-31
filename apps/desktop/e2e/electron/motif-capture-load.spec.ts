@@ -5,7 +5,8 @@ import { readFileSync } from 'node:fs';
 import { launchApp, newProject, tmpDir, invokeCmd } from './helpers/driver';
 import { createMotifDraft, publishMotifDraft } from './helpers/motif';
 
-/// Real-app checks of ADR 0139 (a capture timeout is probation, not a verdict)
+/// Real-app checks that a capture timeout is probation, not a verdict
+/// (docs/motifs.md#capture-host),
 /// on this machine's capture backend.
 ///
 /// The first test is deterministic and runs everywhere: a Motif that hangs on

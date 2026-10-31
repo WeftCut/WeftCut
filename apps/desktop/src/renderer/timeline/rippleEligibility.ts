@@ -92,7 +92,7 @@ const RIPPLE_DELETE_REASON: Record<"needs_selection" | "keyframes", string> = {
  * see. A selected gap is scoped the same way, by its lane.
  *
  * Takes the whole `Selection` rather than the layer set because a gap is a
- * selection kind of its own (ADR 0069): the same four surfaces grey and label
+ * selection kind of its own: the same four surfaces grey and label
  * for it, and the verdict comes from the same planner through its gap entry.
  */
 export function rippleDeleteStateOf(

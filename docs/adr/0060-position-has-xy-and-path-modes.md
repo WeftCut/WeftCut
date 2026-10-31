@@ -1,27 +1,46 @@
+---
+status: accepted
+---
+
 # Position has XY and path modes, not two synchronized representations
 
-Keep independent X/Y animation and add an explicitly chosen path mode: timestamp-free spatial geometry plus a scalar distance-progress track. Arbitrary independent axis easing cannot generally be represented by a small synchronized set of spatial keys without changing the motion; one active representation avoids hidden lossy conversions and competing sources of truth.
+Date: 2026-10-04
 
-This replaces ADR 0058's proposed `Animated<Vec2>` direction. Follow-up decision: the product has not shipped and has no old projects to maintain. Use ADR 0052's pre-release in-place cutover: schema stays at 1, the migration chain stays empty, and the current v1 fixture is refreshed without changing its ids or animation values. The initially added v1 → v2 wrapper migration and v2 fixture are removed; legacy transform axes are not silently normalized. Freeze versions and add real migration steps only once there is a released format to support.
+## Context
+
+Independent X/Y animation with arbitrary per-axis easing cannot, in general,
+be represented by a small synchronized set of spatial keys without changing
+the motion. An `Animated<Vec2>`, or XY and a path kept in sync, would mean
+hidden lossy conversions and two competing sources of truth.
+
+## Decision
+
+- `PositionAnimation` is exactly one of `XY { x, y }` or
+  `Path { path: { nodes }, progress }`. XY is the default; the user switches
+  explicitly. Path geometry has no timestamps; `progress` (0–1 by arc length)
+  is a scalar track using the normal temporal tangents.
+- Switching modes never invents motion: XY → Path starts with one node at the
+  current position and static progress 0; a single-node path returns to XY
+  exactly in one undoable edit.
+- Multi-node conversion is explicit, previewed and undoable: least-squares
+  cubic fitting against a pixel error target, measured at frames,
+  quarter-frames and key boundaries. No lossless round trip and no
+  continuous-time guarantee is claimed; instantaneous jumps are refused; a
+  target missed at node/key/frame-grid limits disables Apply.
+- Progress extrapolation is Hold/Loop/PingPong only (Offset/Continue refused).
+- Limits: 128 path nodes, 4096 keys per temporal track.
+- Conversion math lives in Rust (`weftcut-conversion`, linking `weftcut-eval`),
+  so there is one implementation of playback math and no TS numerical twin.
 
 ## Consequences
 
-- Switching static XY to Path preserves the stationary position: initialize one node at the existing position and static progress at 0. Adding a route and animating progress are explicit user edits; changing representation does not invent a destination or motion.
-- A single-node path returns directly to static XY in one undoable edit, without a baking dialog or generated keyframes. This remains exact even with animated progress, since progress cannot move a path with only one node. The conversion engine applies the same rule.
-- Space and time have separate handles: spatial handles are relative pixel vectors on path nodes; progress uses the existing scalar temporal tangents and easing. Progress 0/1 denotes the ends, not a node index. Geometry editing preserves the progress record verbatim.
-- The inspector can set arrival at a selected node at the current playhead: read the node's distance fraction from the playback arc-length table and upsert a progress key at layer-local time. This writes only progress, preserves existing keys, and is disabled outside the clip. For a static track first keyed after time zero, retain its initial value with a key at zero in the same edit. Node percentages are rounded for display only; arrival writes full precision. This is a one-time value assignment, not a persistent binding between a node and a key.
-- Spatial nodes explicitly store Corner, Smooth or Auto. Corner handles are independent; Smooth aligns the handles while preserving their individual lengths; Auto derives a bisector from neighboring chords and uses one third of each adjacent chord length. The shared authoring solver runs in previews and authoritative writes; playback consumes resolved handles. Moving an Auto handle switches it to Smooth.
-- Inserting a node uses exact de Casteljau subdivision (or line subdivision), preserving the existing curve and progress. Adjacent Auto nodes switch to Smooth to freeze their resolved handles: retaining neighbor-driven Auto would reshape the subdivided span. The panel inserts at the selected span's midpoint; canvas double-click inserts at the nearest curve parameter. One operation is one undo entry.
-- A bounded adaptive arc-length table, implemented in the Rust eval leaf and cached by immutable geometry in Wasm consumers, is shared by preview and the export worker. Overshoot extends the endpoint direction; zero-length geometry stays put. The initial open-path model supports Line/Cubic spans and Hold/Loop/PingPong progress extrapolation.
-- Positions retain the existing per-kind reference: Text's transform pivot, otherwise the unrotated top-left. No automatic orientation is implied. Normal dragging translates the complete path; path editing moves points/handles and commits once per gesture. Trim and split retain complete geometry and progress, rebasing local time without reshaping the curve.
-- Conversion is explicit, previewable and undoable. Ordered least-squares cubic fitting splits XY geometry by spatial error; a distance-table parameter map and adaptive temporal spline keys preserve timing. Path → XY defaults to editable position conversion: independently fit and simplify each axis, collapse constant axes to static values, preserve extrema and plateau boundaries, and express leading/trailing rests through Hold extrapolation. Frame baking is an explicit alternative with a maximum interval; it retains grid keys and adds keys when needed. Both hold the chosen range's endpoints outside it. Measure error at frames, quarter-frames and folded key boundaries (including repetitions), never claim a continuous-time guarantee or lossless round trip. Instantaneous position jumps are refused, not bridged. A target missed because of node/key/frame-grid limits permits preview but disables Apply.
-- Opening conversion or changing its parameters automatically computes a transient preview after a short debounce. Fitting runs in a disposable worker; changed inputs, cancellation and unmount terminate obsolete work. Only a result for the current source and parameters may be applied. Apply performs the single undoable write; Cancel discards the preview and restores the prior path-editing selection. Manual preview is not a prerequisite. Calculating, invalid input, failed computation and error-limit states explain why Apply is unavailable.
-- Representation limits: 128 spatial nodes and 4096 keys per temporal track. The former 16384-frame conversion range and fixed refinement iteration limit are removed. Refinement terminates on the requested error, exhaustion of representable frame anchors or key capacity; simplification strictly decreases key count. There is no wall-clock quality cutoff. The general Wasm track buffer evaluates 4096 resident keys directly; unrelated programmatic tracks beyond that retain the documented overflow limitation.
-
-## Rust conversion core (2026-10-04)
-
-Complex authoring calculations belong in Rust. `weftcut-conversion` owns both directions' sampling, spatial and temporal least-squares fitting, local refinement, redundant-key merging, frame alignment and final spatial-error measurement. It links `weftcut-eval` directly, so there is one implementation of playback math and no TS numerical conversion twin. Temporal fitting uses the existing normalized scalar spline format; equal-value endpoints with an intervening excursion must split. XY axis residual targets share the pixel-error budget, and final verification measures the joint spatial distance.
-
-Conversion requires dynamic reference/working buffers. Its separate std-enabled Wasm module preserves the small allocation-free playback module. The eval crate's `hosted` feature omits its standalone exports and panic handler when linked into conversion; the two Wasm artifacts must be built in separate cargo invocations to avoid feature unification. Both are embedded in the existing generated artifact and covered by the Rust-source cache key.
-
-TS packs the eval crate's numerical key/node records in one batch, calls conversion once, and assigns IDs/editor metadata to the returned standard XY/Path representation. No per-sample calls cross the Wasm seam. Conversion Wasm initializes lazily inside the disposable Worker; cancellation still terminates the worker and releases its linear memory. Project serialization does not change. Output keys use the canonical frame grid and Free/Broken tangents, so state normalization preserves the measured result; integration tests check exact committed-record equality.
+- Conversion needs allocation, so it is a separate std Wasm module, keeping
+  the playback module small and allocation-free. `weftcut-eval`'s `hosted`
+  feature drops its standalone exports when linked into conversion; the two
+  Wasm artifacts must be built in **separate cargo invocations** or feature
+  unification breaks the playback module (`scripts/build-eval-wasm.mjs`).
+- Conversion runs in a disposable Worker (`render/runPositionConversion.ts`);
+  cancellation terminates it and frees its linear memory.
+- The arc-length table is evaluated in the Rust eval leaf and shared by
+  preview and export.
+- Record, node modes and editing ops: `data-model.md` § `Transform`.

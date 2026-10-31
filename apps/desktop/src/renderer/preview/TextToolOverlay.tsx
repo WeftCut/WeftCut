@@ -1,7 +1,7 @@
-// The Text tool's click surface over the preview canvas (ADR 0067): while the
-// tool is armed, a click on a Text layer opens the inline editor on it, and a
-// click on empty frame creates a Text layer centred on the click point and
-// opens the editor on that. Nothing else changes — the timeline behaves as
+// The Text tool's click surface over the preview canvas
+// (docs/preview.md#interaction): while the tool is armed, a click on a Text
+// layer opens the inline editor on it, and a click on empty frame creates a
+// Text layer centred on the click point and opens the editor on that. Nothing else changes — the timeline behaves as
 // under the Selection tool, and the transform gizmo goes display-only
 // (`TransformGizmo.tsx` sets `data-inert`) so every press on the frame reaches
 // the one hit test in `textHitTest.ts`.

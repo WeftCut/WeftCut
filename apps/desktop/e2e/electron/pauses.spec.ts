@@ -7,7 +7,7 @@ import { invokeCmd, launchApp, newProject, rootSummary, tmpDir, waitForHook } fr
 
 /**
  * The Pauses section of the Attribute Panel, end to end in the packaged app
- * (`.scratch/pauses/spec.md`, ADR 0067's sibling): a detection a person can see
+ * (`.scratch/pauses/spec.md`): a detection a person can see
  * on the clip, a removal that takes the picture with it, and one undo that puts
  * the film back.
  *

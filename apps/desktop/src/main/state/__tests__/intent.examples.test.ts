@@ -32,8 +32,8 @@ describe('timeline mutation intent', () => {
     expect(starts).toEqual([0, 5_000_000])
   })
 
-  // ── (b) Duration autofit (ADR 0005) ───────────────────────────────────────
-  it('autofits unpinned composition duration to the last layer end (ADR 0005)', () => {
+  // ── (b) Duration autofit (docs/data-model.md#composition) ──────────────────
+  it('autofits unpinned composition duration to the last layer end', () => {
     const a = freshActor()
     const firstAdd = a.dispatch('add_layer', { track: aRollId(a), kind: 'color', t_start_us: 0, t_end_us: 2_500_000 })
     expect(firstAdd.ok).toBe(true)

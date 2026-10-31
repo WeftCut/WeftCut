@@ -3,11 +3,12 @@ import { fileURLToPath } from 'node:url';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-// Application chrome sizes through the layout theme (ADR 0103): CSS through
-// `--ui-px` and the tokens in styles/layout-theme.css, icons through AppIcon
-// roles, JS geometry through the baselines in settings/uiMetrics.ts. These
-// scans keep fixed sizes from creeping back in. A CSS length that must stay in
-// real pixels carries a same-line `/* fixed-px: <reason> */` marker.
+// Application chrome sizes through the layout theme
+// (docs/ui-tokens.md#layout-themes): CSS through `--ui-px` and the tokens in
+// styles/layout-theme.css, icons through AppIcon roles, JS geometry through the
+// baselines in settings/uiMetrics.ts. These scans keep fixed sizes from
+// creeping back in. A CSS length that must stay in real pixels carries a
+// same-line `/* fixed-px: <reason> */` marker.
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 

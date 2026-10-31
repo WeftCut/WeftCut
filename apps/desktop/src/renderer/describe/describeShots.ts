@@ -9,11 +9,10 @@
 // is about that shot and lands on that row.
 //
 // Which is also why this needs no new tool. `describe_clip` already takes
-// `t_start_us` / `t_end_us` and validates them against the layer; the cache
-// behind it is range-lazy and folds adjacent windows (`DescriptionCache::
-// merge_window`), so N shot-sized runs accumulate into the same entry a
-// whole-clip run would have written — and the rows read that entry back through
-// the same `media://{id}/description`.
+// `t_start_us` / `t_end_us` and validates them against the layer; each shot run
+// carries the `shot` purpose, so N shot-sized runs accumulate apart from the
+// whole-clip description, and the rows read them back through
+// `media://{id}/shot-description`.
 //
 // Lives in `describe/` beside `segmentsForSpan.ts`, which owns the other half of
 // the same join, and takes a plain span rather than a `ShotRow`: what a run
@@ -53,10 +52,11 @@ let cancelRequested = false;
 
 /// Ask the running sweep to stop after the shot it is on.
 ///
-/// AFTER and not during: the model run is a child process the tool layer owns,
-/// and there is no cancel on the wire — abandoning the promise would leave the
-/// engine running and the row it answers for blank. So the sweep finishes the
-/// shot it started, keeps that prose, and stops. That is also the honest reading
+/// AFTER and not during: Stop ends the sweep, not the job in flight —
+/// abandoning the promise would leave the engine running and the row it answers
+/// for blank. So the sweep finishes the shot it started, keeps that prose, and
+/// stops. (Cancelling the job itself, e.g. from its compute band, also ends the
+/// sweep.) That is also the honest reading
 /// of the button: a sweep of local model runs needs a way out, and the way out
 /// costs at most one more run.
 export function cancelDescribeShots(): void {
@@ -82,10 +82,9 @@ function shotLabel(clipName: string, index: number): string {
 /// going anyway, so a parallel version would silently drop most of the list.
 ///
 /// STOPS on the first failure. The failures this path has are properties of the
-/// setup rather than of a shot — no engine configured, a missing model file, a
-/// re-timed clip — so run two of thirty would fail for the same reason as run
-/// one, and the reviewer would have to read the same sentence thirty times to
-/// find out. The prose already landed stays; the sentence is in the store's slot.
+/// setup rather than of a shot — no engine configured, a missing model file —
+/// so run two of thirty would fail for the same reason as run one, and the
+/// reviewer would have to read the same sentence thirty times to find out. The prose already landed stays; the sentence is in the store's slot.
 ///
 /// The caller decides WHICH shots: the Panel passes the rows that have nothing
 /// yet, because that is the count its button has to name.

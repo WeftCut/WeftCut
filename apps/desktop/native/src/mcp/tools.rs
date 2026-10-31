@@ -1184,7 +1184,7 @@ pub(super) struct TranscribeClipArgs {
     pub preferred_backend: Option<String>,
     /// Injected by the TS MCP host: the merged speech backend config snapshot
     /// (cloud key + local paths + the active endpoint), keyed by backend tag —
-    /// stateless like describe_clip's `vlm_config` (ADR 0148). Never advertised,
+    /// stateless like describe_clip's `vlm_config` (ADR 0036). Never advertised,
     /// and never serialized: it carries keys, and these args feed log details.
     /// Empty → "no backend available".
     #[serde(default, skip_serializing)]

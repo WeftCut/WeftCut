@@ -654,7 +654,7 @@ function refusePadArgs(padUs: number, minPauseUs: number | undefined): void {
  *  timeline is concerned. `ripple: true` is what makes the discard a REMOVAL
  *  rather than a lift — the doomed pieces go to the ripple as one set, so two
  *  adjacent cores close as the one hole they are and everything downstream
- *  moves once (ADR 0062).
+ *  moves once (docs/features.md#ripple-delete).
  *
  *  The cut list is every core boundary STRICTLY inside the clip. A core that
  *  touches the head or the tail contributes no cut on that side, and that is

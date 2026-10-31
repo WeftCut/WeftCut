@@ -70,8 +70,7 @@ export const MATRIX = [
   // gate (the second tenBitExportCapable codec). Encoder choice and its
   // fallback: `pickAv1Encoder` in generate.mjs.
   { gradientAv1: true },
-  // The H.264 High10 ramp at 3840x2160 — the 4K ring-cap export gate
-  // (resolution-derived ten-bit high-water clamps to its entry floor).
+  // The H.264 High10 ramp at 3840x2160 — a 4K ten-bit export source.
   { gradientH2644k: true },
   // 8-bit interframe H.264 (1080p30, 1s GOPs) — the lane-parameterized preview
   // HW conformance gates (preview-hw-conformance.spec.ts: NVDEC/VAAPI/d3d11va/

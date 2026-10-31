@@ -19,7 +19,8 @@ const NO_TACKS: TackView[] = []
 
 /** The Tacks tab of the shared agent panel: what agents tacked on for review,
  *  grouped by the work session that left them. Locate is the editor's alone
- *  (ADR 0065); everything else is the same in both layouts.
+ *  (docs/mcp.md#agent-panel-and-lifecycle); everything else is the same in both
+ *  layouts.
  *
  *  Resolving or dismissing is a decision, not a toggle: the tack leaves its
  *  group's open list for the group's "closed" section (collapsed while the

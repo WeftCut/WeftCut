@@ -6,9 +6,9 @@
 // (that file's LANDMINE about second copies applies here too).
 //
 // Scoped to Text on purpose, and only while the Text tool is armed: this is
-// not the preview becoming a selection surface (ADR 0067). A click that
-// misses every Text layer is a click on empty frame, whatever else is drawn
-// there.
+// not the preview becoming a selection surface (docs/preview.md#interaction).
+// A click that misses every Text layer is a click on empty frame, whatever
+// else is drawn there.
 
 import type { CompositionSummary, LayerSummary } from "../ipc";
 import { layerFrameAt } from "./centerInFrame";

@@ -1,1246 +1,770 @@
 # WeftCut
 
 WeftCut is an Electron + napi-rs desktop video editor. This file is the
-project's glossary — the canonical word for each domain concept. It holds no
-implementation detail; the shape of the data lives in [`docs/data-model.md`](docs/data-model.md)
-and the decisions in [`docs/adr/`](docs/adr/).
+project's glossary: the canonical word for each domain concept, what it means,
+and the words to avoid. Data shapes live in [`docs/data-model.md`](docs/data-model.md),
+behavior in [`docs/features.md`](docs/features.md), decisions in [`docs/adr/`](docs/adr/).
+
+**Model word vs UI word.** Several model words never appear in UI copy; where
+they differ, the entry gives the UI word as en-US / zh-CN.
 
 ## Export
 
 **Export preset**:
-A named set of portable output parameters available across projects. Applying
-one copies its values; later preset edits do not change existing project export
-settings. Engine selection, destinations and timeline ranges remain separate.
-Built-in presets are read-only; personal presets live in application settings.
-See ADR 0113.
+A named set of portable output parameters, available across projects. Applying
+one copies its values; later preset edits do not change a project. Built-ins
+are read-only; personal presets live in app settings. See [export.md](docs/export.md#export-presets).
 
 **Export job**:
-One application-session task that produces a rendered file, shared by the user
-interface and MCP. It owns the project edit lock until completion, failure or
-drained cancellation. A disconnected agent can reconnect to the same job.
+One app-session task that produces a rendered file, shared by the UI and MCP.
+It holds the project edit lock while it runs; a disconnected agent can
+reconnect to it.
 
 **Finalization**:
-Finishing an already encoded export: muxing streams and publishing the completed
-file. A failed finalization can be retried without encoding again.
+Finishing an encoded export: muxing and publishing. A failed finalization can
+be retried without re-encoding.
 
 **Publication**:
-The atomic operation that makes a completed export visible at its final path.
-The reported filename is the one publication actually used.
+The atomic step that makes a finished export visible at its final path. The
+reported filename is the one publication used.
 
 ## Time remapping
 
 **Time remapping**:
-The relationship between a clip's local time and its content's own time. A
-constant rate applies to the whole selected content range; a Group remaps its
-internal composition. Animation on the placed clip has its own local time.
+The relationship between a clip's local time and its content's own time: a
+constant rate over the selected content range. A clip's own animation keeps its
+own local time.
 _Avoid_: speed effect, transform animation
 
 **Retime**:
-An edit that changes the timeline duration used to play a selected content range,
-preserving that range and proportionally adjusting the clip's own animation.
-Rate and target duration are two ways to request the edit.
-_Avoid_: trim (which changes the selected range), move (which changes placement)
+An edit that changes the timeline duration of a selected content range,
+keeping the range and scaling the clip's own keys. Requested as a rate or a
+target duration. See ADR 0092.
+_Avoid_: trim (changes the range), move (changes placement)
 
 ## Decode routing
 
 **Decode Route**:
-The per-source decision of where preview and where export each read their
-pixels from — one of Bypass, DirectExport, or Proxied. Distinct from a
-source's *readiness* (whether the file the route names has been generated yet).
+The persisted per-source answer to where preview and export read pixels from:
+Bypass, DirectExport or Proxied. Distinct from *readiness* (whether the named
+file exists yet).
 _Avoid_: proxy plan, proxy mode, routing flags
 
-**Bypass**:
-A Decode Route where preview and export both read the original source directly;
-no proxy is ever made.
-_Avoid_: direct, no-proxy, direct-both
+**Bypass**: preview and export both read the original; no proxy is made.
+_Avoid_: direct, no-proxy
 
-**DirectExport**:
-A Decode Route where export reads the original source and preview reads a quick
-proxy.
-_Avoid_: original-export, direct-export-quick-preview
+**DirectExport**: export reads the original, preview reads a Quick proxy.
+_Avoid_: original-export
 
-**Proxied**:
-A Decode Route where preview reads a quick proxy and export reads an export
-master.
+**Proxied**: preview reads a Quick proxy, export reads an Export master.
 _Avoid_: full-proxy, transcoded
 
 **Quick proxy**:
-A small, short-GOP scrub copy of a source, used only as a preview source —
-never an export source.
-_Avoid_: preview proxy, scrub proxy, proxy (unqualified)
+A small short-GOP scrub copy of a source; a preview source only.
+_Avoid_: preview proxy, proxy (unqualified)
 
 **Export master**:
-A source-resolution copy of a source that WebCodecs can decode, used only as an
-export source — never a preview source.
+A source-resolution copy WebCodecs can decode; an export source only.
 _Avoid_: full proxy, proxy (unqualified)
 
-**Session bridge**:
-Formerly: machine-specific, non-persisted knowledge that this machine can
-decode a source's original, letting preview read the original before any
-proxy lands. That behavior is now the ordinary outcome of the [Decode
-engine](#decode-routing) resolving the Lite engine on an original whenever
-WebCodecs can decode it. The term names only the residual WebCodecs-original
-probe memo the resolver still consults, on its way to full retirement.
-_Avoid_: decode memo, probe cache
-
 **Decode engine**:
-The runtime overlay that resolves, per source and per session, an **engine**
-(Standard or Lite) and a **source** (original or proxy) — from the
-decode-engine setting, the [Capability cache](#decode-routing), and the
-source's read-only Decode Route. Hardware-vs-software is private to the
-Standard engine, never part of the resolution. Preview re-resolves every
-session; export resolves once at export start into a frozen per-media
-routing table (`resolveExportDecodeRouting`, ADR 0033) and never mid-run.
-What persists is only the user's *intent* (the app-level preview setting;
-the per-project export `decodeEngine`), never a resolution.
-_Avoid_: decode route (that's the persisted disk truth), tier, preset
+The runtime overlay that resolves, per source, an engine (Standard or Lite)
+and a source (original or proxy) from the decode-engine setting, the
+Capability cache and the Decode Route. Preview re-resolves each session;
+export resolves once at start and never mid-run. Only the user's intent
+persists, never a resolution. See ADR 0030, ADR 0033.
+_Avoid_: decode route (the persisted truth), tier, preset
 
 **Standard engine**:
-The FFmpeg decode engine (setting value `ffmpeg`) — decodes any original
-in-process, privately choosing a hardware (d3d11va shared-texture) or software
-(NV12-over-IPC) lane. Needs the optional native-decode component.
+The FFmpeg engine (setting `ffmpeg`); decodes any original, choosing a
+hardware or software lane privately. Needs the optional native-decode component.
 _Avoid_: native engine, ffmpeg lane
 
 **Lite engine**:
-The WebCodecs decode engine (setting value `webcodecs`) — the compatibility
-floor, always present, decodes whatever the browser's WebCodecs can open.
+The WebCodecs engine (setting `webcodecs`); the always-present floor.
 _Avoid_: webcodecs lane, browser decoder
 
 **Automatic**:
-The default decode-engine setting (`auto`): resolves to the Standard engine
-when its component is loaded and hasn't failed for the source, otherwise the
-Lite engine. Not itself an engine — a resolution rule.
+The default setting (`auto`): Standard when its component is loaded and has
+not failed for the source, else Lite. A resolution rule, not an engine.
 _Avoid_: auto engine
 
 **Unsupported**:
-The Decode engine resolution state when the chosen engine cannot decode the
-chosen source (the Lite engine on an original WebCodecs can't open, or a
-pinned Standard engine with no component). Surfaced as a placeholder card with
-a Switch-to-Standard action — never a silent proxy swap.
+The resolution state when the chosen engine cannot decode the chosen source.
+Shown as a placeholder card with *Switch to Standard*; never a silent proxy swap.
 _Avoid_: unplayable, black frame, fallback
 
 **Capability cache**:
-Machine-level probe verdicts — can this machine's decoders open a given
-format/lane — keyed by format class, persisted by main and invalidated when
-the component's ffmpeg changes. A property of the machine, never of a
-project.
+Machine-level probe verdicts per decode lane and format class, persisted by
+main and wiped when the measuring environment (ffmpeg build, GPU/driver)
+changes. A property of the machine, never of a project.
 _Avoid_: session bridge, decode memo
 
+**Session bridge** (retiring):
+The per-session memo of whether WebCodecs decoded a source's original, which
+the Decode engine still consults. Not the Capability cache.
+_Avoid_: decode memo, probe cache
+
 **Media actionability**:
-Whether a source can be placed on the timeline now, using an available source
-and the current Decode engine resolution. Independent of workspace-copy and
-optimization progress. Session capability survives verified same-content
-relocation, but not source replacement or real decode failure (ADR 0107).
+Whether a source can be placed now, given an available source and the current
+Decode engine resolution. Independent of copy and optimization progress. See [preview.md](docs/preview.md#actionability).
 
 **Workspace copy**:
-The import's copy of a source into the project's `Media/` folder, after which
-the pool item points at the copy. A source already under `Media/` is recorded
-where it stands; any other source, inside the project folder or not, is
-copied. A file the pool already holds — the same file however spelled, or
-its bytes, such as the source a copy came from — is never imported twice
-(ADR 0151). An item holds its bytes only while its own file does: one whose
-file was deleted or overwritten is relinked to a source found holding them
-(ADR 0153).
+The import's copy of a source into the project's `Media/` folder. A file
+already under `Media/` is recorded in place; a file the pool already holds (by
+identity or bytes) is never imported twice. See ADR 0151, ADR 0153.
 _Avoid_: managed media, consolidate
 
 ## Transitions
 
 **Transition direction**:
-The **motion** direction of a Wipe or Slide, never the reveal side (industry
-convention): `Wipe left` = the reveal boundary sweeps right-to-left across
-the frame; `Slide left` = the incoming layer enters from the right edge
-moving left. Agents consume the enum directly, so this reading is the wire
-contract's meaning (ADR 0035).
+The **motion** direction of a Wipe or Slide, never the reveal side: *Wipe
+left* sweeps right-to-left; *Slide left* enters from the right. This is the
+wire meaning. See ADR 0035.
 _Avoid_: reveal side, wipe from, source edge
 
 **Overlap placement**:
-The default arrangement of every `add_transition`: the incoming layer moves
-left by the frame-rounded duration (link siblings following on their own
-lattices), so both participants play exactly their trimmed ranges — no
-default touches the user's cut (ADR 0048). The vacated span stays a gap
-(links, not an implicit ripple, express "these move together"), and a shifted
-sibling that collides on its lane bounces to a free one.
-_Avoid_: start-at-cut, auto-extend, handle-checked add, silent extend fallback
+The default arrangement of `add_transition`: the incoming layer moves left by
+the duration so both participants play exactly their trimmed ranges; the
+user's cut is untouched. See ADR 0048.
+_Avoid_: start-at-cut, auto-extend, silent extend fallback
 
 **extended_us / borrowed handle**:
-The per-transition counter of borrowed outgoing-tail µs: `0` = pure
-placement, and the outgoing layer's sacred end — the exit frame the user
-cut — is always `t_end_us − extended_us`. Inverse operations route by it
-(removal shrinks the outgoing layer by `extended_us`, moves the incoming
-layer right by the remainder). Only the chip's right edge or an explicit
-patch raises it; implicit duration changes are sanctity-preferring
-(ADR 0048).
-_Avoid_: placement enum, extend flag, handle-consumption mode
+Per-transition µs borrowed from the outgoing tail; `0` = pure placement. The
+outgoing layer's cut end is always `t_end_us − extended_us`, and removal
+inverts by it. See ADR 0048.
+_Avoid_: placement enum, extend flag
 
 ## Transform
 
 **Position**:
-The transform anchor's location in composition pixels, for every transformed
-visual clip (schema v4). Both XY animation and Path nodes describe this same
-point. Scaling and rotation hold Position fixed. A plain Group's Position is
-half the referenced composition dimensions. See ADR 0112.
-_Avoid_: top-left position (the retired media semantics)
+The transform anchor's location in composition pixels (schema v4). XY and
+Path animation both describe it; scale and rotation hold it fixed. See ADR 0112.
+_Avoid_: top-left position
 
 **Transform anchor**:
-The normalized pivot within the full source or Text layout box, default (0.5,
-0.5), allowed outside the box. Inspector edits move content around Position;
-dragging the on-canvas anchor also changes Position to keep content stationary.
-Distinct from a tab Anchor or an anchored marker.
+The normalized pivot within the source or Text box, default (0.5, 0.5).
+Distinct from a tab Anchor and an anchored marker.
 
 **Crop**:
-The retained rectangular area of a VideoClip, in normalized source coordinates
-before its transform. It changes visibility without changing position, scale,
-pivot, source timing or composition dimensions. Null retains the entire source.
-The visible rectangle defines the edit box, centering and snapping; the full
-source still defines the transform pivot. Quick Panel and context menus enter
-on-canvas cropping; reset is available in context menus (ADR 0090).
-_Avoid_: trim (that changes time), resize (that changes dimensions)
+The retained rectangle of a VideoClip, in normalized source coordinates before
+the transform. Changes visibility only; null keeps the whole source. See
+[features.md](docs/features.md#rectangular-video-crop).
+_Avoid_: trim (time), resize (dimensions)
 
 **Linked scale**:
-A layer state (`Transform.scale_linked`, default on) in which the two scale
-tracks are structural twins and every editing surface shows and writes them as
-one "Scale". Not a keyframe mode — `Animated` stays Static/Keyframed; linking
-is editor behavior plus a self-healing flag: any write that diverges the pair
-clears it in the same commit, and re-linking snaps `scale_y` to a copy of
-`scale_x`.
-_Avoid_: uniform-scale mode, scale lock, third keyframe mode
+A layer state (`Transform.scale_linked`) where the two scale tracks are edited
+as one "Scale". Not a keyframe mode; any write that diverges the pair clears it.
+_Avoid_: uniform-scale mode, scale lock
 
 ## Keyframes
 
 **Tangent**:
-One side of a keyframe's shape — `out` for the segment leaving the key, `in`
-for the segment arriving — as a point `{x, y}` in the owning segment's unit
-square (fractions of its time span and value span, the CSS `cubic-bezier`
-lineage) plus a mode. The segment between two keys is the cubic
-`(left.out, right.in)`, and `in` is stored as that cubic's own control point,
-never mirrored about the key: the curve graph mirrors it for display, the file
-does not, because exact equality is what preset recovery and the twin compare
-rest on. Read only by a Spline segment (ADR 0058).
-_Avoid_: handle (that is the thing drawn — fine for the gesture), in/out
-easing, influence, velocity, bezier point
+One side of a key's shape, `out` or `in`, as a point in its segment's unit
+square plus a mode. `in` is stored as the cubic's own control point, never
+mirrored. Read only by a Spline segment. See ADR 0058.
+_Avoid_: handle (the drawn thing), influence, velocity
 
 **Auto**:
-The tangent mode in which a side's numbers are solved for the key instead of
-written by hand — clamped monotone: the slope from the neighbours, flat at an
-extremum, never overshooting (Blender's Auto Clamped). Solved when the track is
-written, so a stored tangent is always explicit and every reader agrees on it;
-the other mode is **Free**, the numbers as authored. Per side in the model,
-presented per key in the menu; Smooth in `smooth_keyframes` means set Auto.
-_Avoid_: smooth as a mode (Smooth is a continuity), bake, auto-bezier,
-automatic easing
+The tangent mode whose numbers are solved (clamped monotone) when the track is
+written; the other mode is **Free**. Smooth in `smooth_keyframes` means set Auto.
+_Avoid_: smooth as a mode, auto-bezier
 
 **Continuity**:
-Whether the two sides of a key are kept at one slope — Smooth — or left to
-differ — Broken. A property the authoring layer maintains on every write, not a
-constraint anything enforces: Smooth re-derives the in-side from the out-side
-when both are Free and a neighbour's edit changed the segment under them.
-Meaningful only between two Spline segments.
-_Avoid_: tangent lock, linked handles, smooth mode
+Whether a key's two sides share one slope (Smooth) or not (Broken); maintained
+by the authoring layer, not enforced. Meaningful only between Spline segments.
+_Avoid_: tangent lock, linked handles
 
 **Segment**:
-The span between two adjacent keyframes, and the class stored on its LEFT key:
-Spline, Hold, Linear, Elastic or Bounce. Spline is the only class that reads the
-tangents; the other four ignore them — Hold is a step no cubic makes, Linear is
-kept as a class so its glyph needs no float equality, Elastic and Bounce are the
-procedural escape hatch with parameters in place of handles. Named presets are
-not classes: a preset is a Spline segment with known tangents, recovered by exact
-lookup.
-_Avoid_: interp / interpolation as the stored thing (`Interpolation` is the
-easing of one segment as a value — what the preset table holds), easing type,
-span; and never a layer a split produced
+The span between two adjacent keys, with its class stored on the LEFT key:
+Spline, Hold, Linear, Elastic or Bounce. A named preset is a Spline with known
+tangents, not a class.
+_Avoid_: interpolation as the stored thing, easing type; a layer a split produced
 
 **Extrapolation**:
-What a keyframed track does outside its first and last key —
-`extrapolate { before, after }` on the track, each one of five modes.
-**Hold** keeps the end value (the default — the clamp). **Loop** repeats the
-cycle from the first key, with the jump that first ≠ last implies; nothing
-bridges it. **PingPong** runs alternate cycles backwards. **Offset** adds the
-last-minus-first delta each cycle, in the value type's interpolation space.
-**Continue** carries the last segment's end velocity on as a line, zero after a
-Hold or procedural segment. The period is last minus first; a single key never
-extrapolates.
-_Avoid_: cycle as the umbrella (it is Loop's period, and Blender's name for that
-one mode), repeat, loop mode for the family, clamp (that is Hold)
+What a track does outside its first and last key (`extrapolate { before, after }`):
+Hold (default), Loop, PingPong, Offset or Continue. A single key never extrapolates.
+_Avoid_: cycle as the umbrella, repeat, clamp (that is Hold)
 
 ## Text box
 
 **Text box**:
-The rectangle a Text layer lays its glyphs out in (`TextParams.box_w`/`box_h`,
-composition pixels, local — before `scale`). Text is the only visual kind with
-no intrinsic size, and the box is what supplies one: the preview's resize
-handles write it, the transform anchor is taken over it, and the font size in
-the inspector is what reaches the frame at any box size. It lays out; it never
-magnifies — enlarging a title must not enlarge its letters. Whole-layer
-magnification is still `scale`, which is also the only animatable one of the two
-(ADR 0049).
-_Avoid_: text frame, bounding box, text bounds (those are the measured glyphs)
+The rectangle a Text layer lays out in (`TextParams.box_w`/`box_h`). It lays
+out and never magnifies; magnification is `scale`. See ADR 0049.
+_Avoid_: text frame, bounding box, text bounds (the measured glyphs)
 
 **Resize mode**:
-Which of Auto width, Auto height or Fixed a Text layer is in — **read off**
-which box fields are set (`(null, null)`, `(set, null)`, `(set, set)`), never
-stored. Same discipline as linked scale: the state is its own consequences, so
-no flag can contradict them. `(null, set)` is not a fourth mode — a gesture
-backfills the width in the same commit, and a writer that cannot measure
-refuses.
-_Avoid_: resize enum, box mode, auto-size flag
+Auto width, Auto height or Fixed, read off which box fields are set; never stored.
+_Avoid_: resize enum, auto-size flag
 
 **Shrink-to-fit**:
-Fixed's answer to text that overruns its box: the largest font size whose
-measured block fits, with every other length authored against the glyphs — the
-outline width, the shadow offsets, the leading and the tracking — multiplied by
-the same factor. Derived at render time and never written back — the layer keeps
-exactly one font size, the one the user set — and floored at 8 px absolute,
-below which the text overflows and is marked instead. Belongs to Fixed alone;
-Auto height overflows horizontally rather than shrinking.
-_Avoid_: auto-fit, scale-to-fit, effective font size (that is the derived
-number, not the behavior)
+Fixed's answer to overrun: the largest font size that fits, with outline,
+shadow, leading and tracking scaled alike. Derived at render, floored at 8 px,
+never written back.
+_Avoid_: auto-fit, effective font size (the derived number)
 
 ## Track placement
 
 **Layer**:
-One placed item in a track — the data object (`Track.layers`, sorted by start)
-that occupies a span of composition time and carries a kind: video, audio,
-image, text, motif, group. The model word — code, commands, ADRs and this file say
-layer. UI word: clip / 片段 on every surface — never *layer* in en-US copy, never 图层
-in zh-CN: 图层 names a compositing stack in an NLE and reads as a synonym for track.
-_Avoid_: layer / 图层 in any UI string (menus, history labels, hints, inspector
-headings); item, element, object
+One placed item in a track (`Track.layers`), with a kind: video, audio, image,
+text, motif, group. The model word. UI word: clip / 片段, never *layer* or 图层.
+_Avoid_: layer / 图层 in UI strings; item, element, object
 
 **Track**:
-The kind-agnostic container a layer sits in — the data object (`Project.tracks`,
-ordered bottom-of-z-stack first). Not something the user provisions: tracks
-appear and disappear around where media is placed (ADR 0042). All Tracks also
-lets the user reorder a whole track from its header; A/B Roll keeps ordering
-clip-centered. The header can delete tracks other than A roll and B roll.
-_Avoid_: channel, layer container, timeline row (that is the lane)
+The kind-agnostic container of layers (`Project.tracks`, bottom of z-stack
+first). Tracks appear and disappear around placement; the user does not
+provision them. See [data-model.md](docs/data-model.md#track).
+_Avoid_: channel, timeline row (that is the lane)
 
 **Lane**:
-A track's rendered row in the timeline — the presentation, not the object
-(`TrackLane.tsx`, `laneEls`). Say lane when the subject is the row on screen and
-track when it is the thing holding layers. Unrelated to a decode engine's
-hardware / software lane, which is a decode path.
-_Avoid_: lane as a synonym for track in data-model or command prose
+A track's rendered row in the timeline (`TrackLane.tsx`): the presentation,
+not the object. Unrelated to a decode lane.
+_Avoid_: lane as a synonym for track in model prose
 
 **Reserved skeleton**:
-The role-stamped tracks a blank project ships with — A roll, B roll, and the
-audio-role tracks derived from them. Non-removable, never swept by cleanup, and
-the reason "no tracks exist" is never a case the UI handles. Carrying a `role`
-is exactly what makes a track part of it.
-_Avoid_: default tracks, system tracks, fixed tracks
+The role-stamped tracks every project has: A roll, B roll and their audio-role
+tracks. Never removed by cleanup. A `role` is what puts a track in it.
+_Avoid_: default tracks, system tracks
 
 **Track display**:
-The app-level filter over which lanes the timeline shows (`display_mode`,
-persisted). **A/B Roll** — the default — keeps only role-stamped tracks, plus at
-most one inline-revealed hidden lane; **All Tracks** keeps every one. Those two
-names are the term at every surface: the View menu radio, the Quick Actions
-toggle, the `T` binding's label, and the `AbRoll` / `AllTracks` enum. Chinese
-leaves A/B Roll untranslated — it is the term the industry says — and calls the
-other 全轨显示. Capitalisation carries the mode/lane distinction: A/B Roll is the
-mode, *A/B-roll tracks* the lanes it keeps.
-_Avoid_: Show All, AB mode, A/B view filter, "Display: A/B Roll only"
+The app-level filter over shown lanes (`display_mode`): **A/B Roll** (default,
+role-stamped tracks only) or **All Tracks** / 全轨显示.
+_Avoid_: Show All, AB mode
 
 **Transient**:
-The `Track.transient` flag, read as *not part of the reserved skeleton* —
-stamped on every track whose `role` is `None`, including one an agent creates
-deliberately. The name predates the meaning and reads like "temporary", which it
-is not: the flag says a track is eligible for cleanup, not that it is doomed.
-The invariant is `transient == (role is None)` at every creation site.
-_Avoid_: temporary track, scratch track, auto track
+`Track.transient`, meaning *not in the reserved skeleton* (`transient == (role is None)`).
+It marks a track eligible for cleanup, not temporary.
+_Avoid_: temporary track, scratch track
 
 **Derived name**:
-The name a track is shown under when it stores none (`label === null`, blank
-counting as absent) — from its `role` for the reserved skeleton, otherwise a
-positional number that renumbers as tracks come and go. Computed at display time
-in the renderer, never stored, because only the renderer can localize it.
-`trackName.ts` is the single answer for every surface.
-_Avoid_: auto label, placeholder name, default label
+A track's display name when it stores none: from its role, else a positional
+number. Computed in the renderer (`trackName.ts`), never stored.
+_Avoid_: auto label, default label
 
 **Cleanup**:
-When the app-level **Automatically delete empty tracks / 自动删除空轨道** preference
-is on (the default), *a track disappears when its last layer leaves it* —
-`transient && !locked`, applied to the track an edit just emptied,
-never as a project-wide sweep. A track that was born empty was never emptied, so
-one an agent creates on purpose survives. Turning the preference off preserves
-emptied tracks across all projects; turning it on does not sweep existing empty
-tracks. Explicit track deletion is independent of this preference.
-_Avoid_: prune (that is the function), auto-delete, garbage collection
+With **Automatically delete empty tracks** / 自动删除空轨道 on (default), a
+transient unlocked track is removed when an edit empties it. Never a sweep.
+_Avoid_: prune (the function), garbage collection
 
 **Marker lane**:
-The permanently reserved row between the ruler and the drop strip that carries a
-composition's markers (`MarkerLane.tsx`). Not a **Lane** in the sense above: it
-belongs to the ruler family — it measures time, windowing the same row pixels on
-the same quantised scroll offset the ticks use — where a lane holds a track's
-layers. Its space is held unconditionally, and the reason is sharper than the
-drop strip's: `markers_visible` governs what the row PAINTS and never whether it
-exists, because `M` force-enables that flag and a row bound to it would reflow
-the timeline under the pointer on every press. Collapsing it is the one thing
-that changes its height, and a user asks for that one. Not a scrub surface — the
-ruler is the sole one, and it stayed sole by giving markers up entirely.
-UI word: the row's header reads Markers / 标记; the row itself is the marker
-lane / 标记轨.
-_Avoid_: marker track (there is no track), ruler markers (they do not live
-there), marker strip (strip is the drop strip's word), timeline marker (that
-names a free marker, not the row)
+The reserved row between the ruler and the drop strip that shows markers
+(`MarkerLane.tsx`). Part of the ruler family, not a Lane; not a scrub surface.
+UI word: Markers / 标记 (header), marker lane / 标记轨.
+_Avoid_: marker track, ruler markers, marker strip
 
 **Drop strip**:
-The permanently reserved row above the topmost lane that turns a drag into a new
-track. Its space is held even when idle so a drag never reflows the timeline.
-Idle it is a dashed rule along the bottom of that row, with a plus in the header
-half — a seam, not a lane — and it lights up only while a drag is live so it
-never reads as an empty lane to manage.
-_Avoid_: add-track row, new-track button, ghost lane, phantom track
+The reserved row above the top lane that turns a drag into a new track. Its
+space is held even when idle.
+_Avoid_: add-track row, ghost lane, phantom track
 
 **Marquee**:
-A rectangle dragged from a blank surface in the timeline. The surface the drag
-STARTED on decides what the box selects — a lane, the drop strip or the scroll
-body selects clips, a keyframe sub-lane row selects keyframes — never the box's
-extent and never a modifier key (ADR 0051). A press too short to become a box is
-the background click, and it clears the same population the box would have taken.
-_Avoid_: lasso (it is not a freeform lasso), box select, rubber band, drag-select
+A box dragged from blank timeline space. The surface it starts on decides what
+it selects (clips or keyframes), never its extent or a modifier. See
+[features.md](docs/features.md#timeline-selection).
+_Avoid_: lasso, rubber band
 
 **Raise**:
-Moving a clip onto a fresh track at the top of the z-stack —
-`move_layers_to_new_track`, reachable by dragging into the drop strip or by the
-*Move to a new track* command. The spawn-at-top gesture, and only that —
-anchored reordering is *Restack*. A raise may also name a landing time, and the
-drag does while the command does not; without one every clip keeps the moment it
-was already at. Each raise empties its source track, which cleanup then removes.
-One history entry, so one undo restores clip and track together.
-_Avoid_: add track and move, promote, bring to front, reorder tracks, restack
+Moving clips onto a fresh track at the top of the z-stack
+(`move_layers_to_new_track`; drop strip or *Move to a new track*). One undo.
+_Avoid_: promote, bring to front, restack
 
 **Restack**:
-Anchored z-reorder of one visual layer — `restack_layer(layer, above|below
-anchor)`, the verb behind the Playhead Panel's stack ordering and the MCP command
-of the same name. Operates on the layer, not its container: a sole occupant
-carries its whole track, a layer sharing its track splits onto a fresh one, and
-a role-stamped source never moves. Anchors are stable layer or track identities,
-never indices; a track reference works through a gap. Audio neither moves nor
-anchors. The op's exact contract lives in data-model.md (ADR 0088).
-_Avoid_: raise (that is spawn-at-top), reorder tracks, move above/below
+Anchored z-reorder of one visual layer: `restack_layer(layer, above|below anchor)`,
+used by the Playhead Panel. Anchors are layer or track identities, never
+indices. Contract in [data-model.md](docs/data-model.md).
+_Avoid_: raise (spawn-at-top), reorder tracks
 
 **Playhead Panel**:
-The A/B Roll context Panel, which takes its name from the origin everything in
-it is measured against. Its two sections name the distance from that origin:
-*Now playing* is the visual stack under the playhead, including persistent
-references for reserved visual tracks even through gaps — the only section
-that restacks — and *Nearby* is the hidden clips in the rest of the ±Δ window, each row carrying
-its signed offset. Δ is the user's to set, from the dial in the Panel's own
-toolbar (`delta_window_us`, app-level); the Panel prints no title, because the
-dock tab is the title. The default layout gives it an area of its own above the
-inspector rather than a tab behind it: A/B Roll is the editing model the app
-defaults to, and *Now playing* is where that model is read from, so a user who
-never finds the tab never learns the model. The code calls the Panel `playhead`
-throughout — the `playhead` kind id, `PlayheadPanel.tsx`, `playheadItems.ts`,
-the `.playhead-*` classes and the `playhead_panel` i18n namespace — so *Nearby*
-now names one section and nothing else. ADR 0044 predates that rename and still
-calls the Panel Nearby, because a decision record records what was decided.
-_Avoid_: Nearby Panel, peek Panel, near-playhead Panel, playhead (bare — that is
-the transport position, not the Panel)
+The A/B Roll context Panel (kind id `playhead`). *Now playing* is the visual
+stack under the playhead and the only section that restacks; *Nearby* lists
+hidden clips within ±Δ (`delta_window_us`).
+_Avoid_: Nearby Panel (Nearby is one section), playhead (bare: the transport position)
 
 **Spawn**:
-The placement verdict meaning *no track can take this, so make one* — the fourth
-`PlacementValidity`, alongside valid, collision and locked. Ranked below
-collision, so a selection that would overlap itself on the one new track still
-refuses.
-_Avoid_: auto-create, insert track, overflow
+The `PlacementValidity` verdict *no track can take this, so make one*, beside
+valid, collision and locked; ranked below collision.
+_Avoid_: auto-create, overflow
 
 **Ripple delete**:
-Delete that also closes what the deletion vacated — *Ripple delete* / *波纹删除*
-in the UI, `Shift+Delete` on the keyboard, where bare `Delete` stays the lift.
-The **hole** is the span a deleted layer vacated *on its own track*: its own
-footprint clipped to its remaining same-class neighbours, so a transition
-partner's overlap is not double-counted and a gap that already sat beside the
-clip is not closed. Every layer on every track of the composition that starts at
-or after the hole moves left by the total length of the holes ahead of it; a
-layer that would start *inside* a hole refuses instead of sliding, as does a
-collision, a link with members on both sides, and a locked layer or lane that
-would have to move (ADR 0062). A selected **Gap** closes under the same closing.
+Delete that also closes what it vacated (*Ripple delete* / 波纹删除,
+`Shift+Delete`; bare `Delete` lifts). The **hole** is a deleted layer's
+footprint on its own track; later layers on every track move left by the holes
+ahead of them. See [features.md](docs/features.md#ripple-delete).
 _Avoid_: ripple trim, implicit ripple
 
 **Gap**:
-The empty span on ONE track between two layer boundaries — its right edge where
-a layer starts, its left where one ends or at composition time 0 — read off
-every layer on the lane whatever its class, so a half-empty combined A/V row is
-not one. The space after a track's last layer is not a gap: it has no right
-edge to close up to. Selectable by a plain click on it (the highlight is the
-selected-clip outline over the span), and the one selection whose `Delete`
-CLOSES rather than lifts: everything after it, on every track, moves left by its
-length through the ripple's own planner, with the ripple's refusals. Named by
-lane plus `[s, e)`, never by an id, and re-derived against every summary — a
-span that stops being exactly that gap drops out of the selection. UI word: Gap
-/ 间隙; the history row is *Closed gap* / *闭合间隙* (ADR 0069).
-_Avoid_: hole (that is the ripple's per-layer measure, clipped to same-class
-neighbours), blank space / 空白 (trailing space is blank and is not a gap), close
-gap as a UI verb (the row is *Ripple delete*; the key is *Delete*)
+The empty span on one track between two layer boundaries (or time 0 and a
+layer). Trailing space is not a gap. Selectable; its `Delete` closes it via
+ripple. UI word: Gap / 间隙; history *Closed gap* / 闭合间隙.
+_Avoid_: hole (ripple's per-layer measure), blank space / 空白
 
 ## Markers
 
 **Free marker**:
-A marker with no anchor (`anchor: null`). It marks a composition's own time and
-behaves in every respect as every marker did before anchoring existed: it stays
-where it was put, it stays in its composition when the clips under it move,
-leave or are deleted, and no edit re-times it. The default, and the right shape
-for a note about the film — a music change, a chapter start.
-_Avoid_: sequence marker, timeline marker (both name the composition, not this
-kind), unanchored, plain marker
+A marker with `anchor: null`: it marks the composition's own time and no edit
+re-times it. The default.
+_Avoid_: sequence marker, timeline marker, unanchored
 
 **Anchored marker**:
-A marker carrying `{ layer, src_us }` — a layer of its own composition plus a
-time in that layer's SOURCE domain. Its `t_us` is derived from that layer's
-source window on every commit, so it follows the clip through moves, trims,
-splits and a crossing into another composition; deleting the clip takes the
-marker with it. The anchor is truth and `t_us` is a stored cache of it, which is
-why every marker reader is unchanged. Not a second kind of marker — one field on
-the one marker. UI word: Anchored / 已锚定.
-_Avoid_: clip marker (implies a second entity beside this one — the thing this
-design exists to not build), source marker, attached marker, pinned marker; and
-do not read it as the tab **Anchor**, which is a different word for the
-`CompositionRef` a timeline was entered through
+A marker with `{ layer, src_us }`; its stored `t_us` is derived from the layer
+on every commit, so it follows the clip and leaves with it. One field on the
+one marker, not a second kind. UI word: Anchored / 已锚定.
+_Avoid_: clip marker, pinned marker; tab **Anchor**
 
 **Hibernating**:
-An anchored marker whose `src_us` has fallen outside its layer's
-`[src_in_us, src_out_us)` window — the clip no longer shows the frame it names,
-usually because a trim or a split moved the window edge past it. Retained in
-state, not painted on the lane, and revived on the exact frame it always named
-the moment the window covers it again. A derived condition recomputed every
-commit, never a stored flag. UI word: Hibernating / 休眠中.
-_Avoid_: lost, deleted, orphaned, broken, dangling (it is none of these — it is
-asleep, and re-extending or undoing wakes it)
+An anchored marker whose `src_us` is outside its layer's source window: kept,
+not painted, revived when the window covers it. Derived, never stored. UI word:
+Hibernating / 休眠中.
+_Avoid_: lost, orphaned, dangling
 
 **Detach / attach**:
-The explicit operations that clear and set a marker's anchor: detach turns an
-anchored marker into an ordinary free marker at the time it currently sits on;
-attach ties a free marker to the clip under it. Never implicit — no gesture,
-patch or edit silently changes an anchor, because a silently-changed anchor is a
-marker that means something other than what the user wrote. UI word: Attach to
-clip / 锚定到片段, Detach / 解除锚定.
-_Avoid_: orphan (a detached marker is an ordinary free marker, not a casualty);
-unlink, unpin, release; link (that is the propagation relationship between
-layers)
+The explicit operations that clear and set a marker's anchor; never implicit.
+UI words: Attach to clip / 锚定到片段, Detach / 解除锚定.
+_Avoid_: orphan, unlink, unpin; link (that is between layers)
 
 **Pause**:
-A stretch of an Audio layer's PLAYED audio whose peak stays under the threshold
-for at least the minimum length. The subject is always the layer that reaches
-the mixer: an `Audio` layer is its own subject, and a `VideoClip` delegates to
-the Audio member of its link that shares its media, else to the link's sole
-Audio member, else it has no subject at all and offers no pause surface. Read
-off the peaks of what plays — the baked effect sibling's when they are ready,
-the media's otherwise — so a pause never disagrees with the waveform drawn
-under it. UI word: Pauses / 停顿.
-_Avoid_: silence / 静默 (the retired name for this), 静音 (that is mute), gap
-(that is the vacated span a deletion leaves on the timeline), 空白 / 间隙 (they
-collide with gap), dead air
+A stretch of an Audio layer's played audio whose peak stays under the
+threshold for the minimum length, read from the peaks of what plays. A
+VideoClip delegates to its linked Audio. UI word: Pauses / 停顿.
+See [features.md](docs/features.md#pauses).
+_Avoid_: silence / 静默, 静音 (mute), gap, dead air
 
 **Pause mark**:
-An anchored REGION marker written by the Pauses section's **Mark pauses** — one
-per pause, spanning its whole range, labelled "Pause" and amber so it reads
-apart from the shot-cut blue on the same clip. A fact about the material, so it
-hibernates when a trim passes it and leaves with the clip. Marking changes no
-timing; the section's **Remove pauses** is the other verb over the same
-detection (`remove_pauses` — cut the pauses out, keeping a pad on each side,
-and close the gaps). UI word: Mark pauses / 标记停顿.
-_Avoid_: cut pauses (as a name for the MARK — the mark cuts nothing; that is
-what Remove is for), pause region as a marker kind (it is an ordinary marker
-with `end_t_us`), gap (that is the vacated span a deletion leaves on the
-timeline)
+An amber anchored region marker per pause, written by **Mark pauses** /
+标记停顿; changes no timing. **Remove pauses** (`remove_pauses`) cuts them out.
+_Avoid_: pause region as a marker kind, cut pauses (for the mark)
 
 ## Shots
 
 **Shot**:
-The span of one SOURCE between two accepted boundaries, in source-absolute
-time. A shot report belongs to a source; every apply step (split, mark) belongs
-to a layer, and the layer's source window is what maps one onto the other. UI
-word: Shot / 镜头.
-_Avoid_: scene (several shots; ffmpeg's filter is named `scene` but what it
-detects is a shot change), segment (a layer a split produced), clip (a layer)
+The span of one source between two accepted boundaries, in source time. Shot
+reports belong to a source; applying (split, mark) belongs to a layer. UI word:
+Shot / 镜头.
+_Avoid_: scene, segment, clip
 
 **Candidate cut**:
-One `cut_scores` entry — a source time at which the frame-change score exceeded
-the floor, together with that score. A measurement, not a decision: which
-candidates become boundaries is what a threshold decides. A candidate the
-threshold accepts is a **shot cut**; UI word: shot cut / 镜头切点 ("Mark shot
-cuts" / 标记镜头切点 is the verb that writes them as anchored markers).
-_Avoid_: cut (an edit), scene change, keyframe (`keyframe_t_us` is a shot's
-cover-frame time, a different thing), score (the number, not the candidate)
+One `cut_scores` entry: a source time whose frame-change score exceeded the
+floor. A threshold decides which become **shot cuts** / 镜头切点.
+_Avoid_: cut (an edit), scene change, keyframe (`keyframe_t_us` is a cover frame)
 
 **Floor scan**:
-The one whole-source detection pass per source, run at `FLOOR_SENSITIVITY`
-(0.05), timing only, and cached. It costs the same as a scan at any other
-threshold, so every threshold at or above the floor is derivable from it
-without another decode, and nothing below it is ever offered. The media pool's
-"Analyze shots" / 分析镜头 warms it. ADR 0057.
-_Avoid_: analysis (the agent's `analyze_clip` report is a different,
-stats-bearing report with its own cache entry), rescan, full scan
+The one cached detection pass per source at `FLOOR_SENSITIVITY` (0.05); every
+higher threshold derives from it. Warmed by *Analyze shots* / 分析镜头. See ADR 0057.
+_Avoid_: analysis (`analyze_clip` is a different report), rescan
 
 **Reduce**:
 The pure Rust re-derivation of a shot list from a floor scan at a threshold and
-a minimum shot length, viewed through a window. Free — no decode, no file — and
-never re-implemented in TypeScript. Stats and flags carry onto a reduced shot
-only when the scan measured that exact span; otherwise they are absent, and
-absent renders as absent, never as zero.
-_Avoid_: filter, re-detect, refine; "reduce" is the word in code and prose alike
+minimum length; never re-implemented in TypeScript.
+_Avoid_: filter, re-detect, refine
 
 **Span measurement**:
-The three-frame sample that gives one shot span its brightness, motion,
-sharpness and event flags. Opt-in, because it spawns an ffmpeg pass per span,
-and cached per (source content hash, source tier) and addressed by span — never
-by detection parameters — so a boundary that survives a threshold move keeps
-its numbers while a reshaped span has none until asked for. One measurement
-function serves both this and `analyze_clip`'s own per-shot pass. UI word:
-Measure shots / 测量镜头.
-_Avoid_: stats pass (in UI copy; fine in code, where `attach_span_stats` and
-`SpanStats` are the names), analysis (that is the agent's report), re-measure
-(a measured span is never re-sampled)
+The opt-in three-frame sample giving a shot span brightness, motion, sharpness
+and flags; cached by span, not by detection parameters. UI word: Measure shots / 测量镜头.
+_Avoid_: stats pass (in UI copy), re-measure
 
 **Canonical cut list**:
-The one list of source boundaries an apply verb consumes — either the
-detector's at given or default parameters, or a list a person reviewed — and
-the only path a boundary takes onto the timeline (mapped, frame-snapped,
-deduplicated once). A split and a mark of the same list land on identical
-frames because there is one list, not because two call sites agree.
-_Avoid_: cut points (in prose; the zh UI word 切点 is fine), split points,
-detected cuts (the list may be the user's, not the detector's)
+The one list of source boundaries an apply verb consumes (detected or
+reviewed), mapped and frame-snapped once, so split and mark land on the same frames.
+_Avoid_: cut points, split points, detected cuts
 
 **Threshold**:
-The score a candidate must exceed to become a boundary. On the wire and on disk
-the field is `sensitivity`, a name that reads backwards — a higher value yields
-FEWER cuts — so no control is labelled with it: the human control is a line
-over the candidates, and its meaning is its position.
-_Avoid_: sensitivity in UI copy, detection strength, granularity (that is the
-minimum shot length, a different knob that fixes a different error)
+The score a candidate must exceed. Stored as `sensitivity`, which reads
+backwards (higher = fewer cuts), so no control is labelled with it.
+_Avoid_: sensitivity in UI copy, granularity (minimum shot length)
 
 ## Inference models
 
 **Model profile**:
-A named speech or video-understanding model, with the configuration needed to
-run it. Built-in profiles own their runtime and auxiliary downloads. Advanced
-settings can adjust the runtime; replacing weights or an endpoint creates an
-independent custom profile. Credentials stay outside the profile.
-_Avoid_: engine as the user's primary selection, automatic model
+A named speech or video-understanding model plus the configuration to run it.
+Replacing weights or an endpoint makes an independent custom profile.
+Credentials stay outside it.
+_Avoid_: engine as the user's selection, automatic model
 
 **Model preparation**:
-Installing a profile's missing files and validating it with a small synthetic
-inference. Only successful preparation makes it the current model. Browsing
-the model list previews a candidate; a failed or cancelled preparation leaves
-the current model intact. Device selection may fall back to CPU with the same
-weights, but a model is never automatically replaced by another model.
+Installing a profile's files and validating it with a small inference; only
+success makes it current. A model is never silently replaced by another.
 _Avoid_: download as a synonym for activation, silent model fallback
 
 ## Descriptions
 
 **Description**:
-What a video-understanding model said about a stretch of one SOURCE: a list of
-described segments, each a source-absolute span with prose and short tags,
-cached per source, purpose and [Description view](#descriptions), and read back
-by media id. Each describe call is a **run** over its window, sampled at the
-view's rate everywhere and described in chunks a model request can hold; a run
-keeps the chunks it finished, and where runs overlap the newest speaks for its
-span. A run is read tidied: one-frame gaps closed and repeated lines merged,
-within the run only. Clip content and individual-shot descriptions have independent
-caches: clip content feeds its own panel section and the search palette; shot
-rows read only shot descriptions, joined by time intersection. Prose has no right answer to check it against,
-so it is never reviewed or edited, only read where it is useful and searched.
-UI word: Describe clip content / 描述片段内容; a row with none
-reads Not described / 未描述.
-_Avoid_: caption or subtitle (spoken words, a Text layer), summary (that is the
-[Clip summary](#descriptions), a few sentences over a whole run), scene
-description in UI copy (the Rust struct is `SceneDescription`, but "scene" is
-the word this glossary keeps away from shots), transcript
+What a video-understanding model said about a stretch of one source: segments
+with prose and tags, cached per source, Description purpose and Description
+view. Each describe call is a **run**; newer runs win where they overlap.
+Read-only: never reviewed or edited. UI word: Describe clip content /
+描述片段内容; none reads Not described / 未描述.
+_Avoid_: caption, subtitle, transcript; scene description in UI copy (`SceneDescription` in Rust)
 
 **Clip summary**:
-Two to four sentences over a whole clip-content run, written once its chunks
-are done when the window is longer than one request; shots and short clips
-have none. The model sees frames from across the window and the run's own
-timeline. It leads the Shots Panel's clip-content section, with the segments
-behind Details. Cleared when the run is re-described. See ADR 0149.
-UI word: the section's lead paragraph; Details (N segments) / 详情（N 段）.
+Two to four sentences over a whole clip-content run longer than one request;
+leads the Shots Panel's clip-content section. Cleared on re-describe. See
+[mcp.md](docs/mcp.md#video-understanding-optional-user-supplied).
 _Avoid_: description (the segments), synopsis
 
 **Description view**:
-The five inputs that key a source's cached description — engine, model, sampling
-rate, focus, interface language — taken together, within one purpose.
-`media://{id}/description` serves clip content and
-`media://{id}/shot-description` serves individual-shot descriptions. Electron
-main injects the four axes a user can
-move — the current model profile (which decides the first two) plus the sampling, the
-focus and the language — into that read and into `describe_clip` alike, so the
-view a gesture writes is the view the shot rows and the search index read back.
-Change any axis and every source reads as 未描述 under the new view; nothing is
-deleted (`descriptions/` is excluded from the disk-LRU sweep), so switching back
-finds the earlier view intact. Settings → Video understanding owns the model
-selection and, in advanced settings, its paths, sampling and focus; Settings → General owns the
-language.
-_Avoid_: default view (there is no privileged one any more), cached description
-(every run is cached; the view decides which is read), baseline
+The five inputs that key a cached description: engine, model, sampling rate,
+focus, interface language. Changing one reads another view; nothing is deleted.
+_Avoid_: default view, baseline
 
 **Description purpose**:
-The operation a description answers: clip content (`clip`) or individual-shot
-identification (`shot`). Independent of prompt focus. It separates disk caches,
-in-flight job identity, progress, errors and renderer results; one purpose never
-satisfies or overwrites the other. Shot rows show only shot-job progress;
-clip-job progress stays on timeline task bands. Legacy mixed caches are not
-reused. See ADR 0122.
+What a description answers: clip content (`clip`) or individual-shot
+identification (`shot`). Purposes have separate caches, jobs and progress and
+never satisfy each other. See [mcp.md](docs/mcp.md#video-understanding-optional-user-supplied).
 
 ## Links and Groups
 
 **Link**:
-A flat set of two or more layers in one composition whose structural edits —
-move, trim, split — fan out to every member (`Link` in `Project.links`; no
-nesting, a layer in at most one). Premiere's Link with any number of members:
-it says "these travel together" and nothing more — no bounds, no timeline of
-its own, no rendering significance, no identity beyond an accent hue. `Ctrl+L`
-toggles it on the selection. A split partitions the link by side of the cut:
-left-side members retain the original link, right-side members form a new one,
-and a side with fewer than two members is unlinked. With Link override, only
-the target splits; its left half keeps its link and its right half is unlinked.
-UI word: Link / 链接.
-_Avoid_: group (that is a composition placed as a layer), bundle, pair (a link
-may hold more than two)
+A flat set of two or more layers in one composition whose move, trim and split
+fan out to every member (`Project.links`; a layer in at most one). No bounds,
+no rendering. UI word: Link / 链接. See ADR 0052.
+_Avoid_: group, bundle, pair
 
 **Group**:
-A composition placed as one layer in another composition — After Effects'
-precomp, Premiere's nest, Resolve's compound clip. It says "this is one
-thing": it has bounds, a duration and a timeline Panel of its own — entering it
-opens a tab beside the film's timeline rather than replacing it — and it
-renders. The word is reserved for exactly this and is never a synonym for a
-link. UI word: Group / 组.
-_Avoid_: group for the propagation relationship (that is a link); nest,
-compound, precomp in UI copy
+A composition placed as one layer in another (AE precomp, Premiere nest). Has
+bounds, a duration and its own timeline Panel; renders. UI word: Group / 组.
+_Avoid_: group for a link; nest, compound, precomp in UI copy
 
 **Composition**:
-A timeline — settings, tracks, markers, transitions and links. The root is
-one and every Group is one, with the same shape: there is no "sub" type,
-so every walk, mutation and validator has one path. Opened, it takes a timeline
-Panel of its own, addressed by its id, so several stand open at once and the
-editor is never looking at exactly one. A model word with no UI word: nothing
-on screen calls a composition one. A Group is "Group / 组", the root is "the
-timeline", and where a gesture crosses between them the destinations name
-themselves — so *Move to… ›* lists "Timeline" and each Group, and its flat form
-(no list behind it) says *Move to timeline*.
-_Avoid_: sub-composition (as a data-model term), sequence, nested timeline;
-composition / 合成 anywhere in UI copy
+A timeline: settings, tracks, markers, transitions, links. The root and every
+Group share one shape. No UI word: the root is "the timeline", others are Groups.
+_Avoid_: sub-composition, sequence, nested timeline; composition / 合成 in UI copy
 
 **Root composition**:
-The composition export renders and a fresh project opens on
-(`Project.root_id`). Unnamed in the UI: it is the timeline.
-_Avoid_: main composition, master sequence, top level (as a noun)
+The composition export renders and a project opens on (`Project.root_id`).
+_Avoid_: main composition, master sequence
 
 **Group layer**:
-The layer a Group occupies in its parent's timeline — a media-bearing layer
-whose source is a composition rather than a file, so trim clamping, split's
-source distribution and keyframe re-basing apply to it verbatim. On screen it
-is the Group clip.
-_Avoid_: nested clip, comp layer, reference layer
+The layer a Group occupies in its parent; its source is a composition. On
+screen: the Group clip.
+_Avoid_: nested clip, comp layer
 
 **Pre-compose**:
-The verb that turns a selection into a Group in place — After Effects' word;
-Premiere says Nest and Resolve says Create Compound Clip. Reserves `Ctrl+G`
-(and, with Ungroup, `Ctrl+Shift+G`), which is why linking sits on `Ctrl+L`.
-UI word: Group / 编组.
-_Avoid_: nest, compound, precomp (as the verb in UI copy); group (bare — that
-is the noun)
+The verb that turns a selection into a Group in place (`Mod+G`; Ungroup is
+`Mod+Shift+G`). UI word: Group / 编组.
+_Avoid_: nest, compound, precomp in UI copy; group (bare: the noun)
 
 **Ungroup**:
-Expanding a Group layer back into its members in place — Resolve's Decompose
-in Place. The inverse of Pre-compose and only that: it is not dissolving a
-link. UI word: Ungroup / 解组.
-_Avoid_: unlink (that dissolves a link), decompose, flatten, un-nest
+Expanding a Group layer back into its members in place; the inverse of
+Pre-compose, not dissolving a link. UI word: Ungroup / 解组.
+_Avoid_: unlink, decompose, flatten
 
 **Orphan**:
-A composition no Group layer references (`ref_count === 0`). Legal, and not a
-leak: Ungroup and deleting the last Group clip both leave the composition
-behind, so one undo brings the work back. Its card in the media pool is where
-it stays visible — dimmed, tagged isolated — and the only surface that can
-remove it, which is what keeps state from holding something no UI can reach
-(the failure ADR 0042 refused for tracks). The pool's *show only unused* filter
-is what finds that card once one name-sorted list has scattered it among the
-media; the filter asks both kinds a plain question — what does nothing point at
-— and is not a second name for this state. The root is never one: nothing may
-reference it at all. UI word: isolated / 已孤立.
-_Avoid_: dangling composition, leaked comp, garbage, unused Group (everything in
-the pool is unused until it is placed; this state is the opposite, and the card
-is dimmed, not a different kind of thing)
+A composition no Group layer references (`ref_count === 0`). Legal; shown
+dimmed in the media pool, its only removal surface. The root is never one. UI
+word: isolated / 已孤立.
+_Avoid_: dangling composition, leaked comp, unused Group
 
 **Render target**:
-The composition the Preview Panel draws: *follow focus* — the timeline holding
-the keyboard, and the default — or one composition it is fixed on while the
-keyboard edits somewhere else. The preview's own choice, never a property of a
-tab, so the target may be a composition with no timeline open at all; that is
-the whole point of fixing one. Export has no target to name: it renders the
-root. UI word: What the preview shows / 预览内容.
-_Avoid_: pinned comp, locked preview (that is the state, not the thing), active
-composition
+The composition the Preview Panel draws: *follow focus* (default) or one fixed
+composition. A preview choice, not a tab property. UI word: What the preview
+shows / 预览内容.
+_Avoid_: pinned comp, active composition
 
 **Anchor**:
-The `CompositionRef` a timeline tab was entered through — the Group clip that
-fixes where this timeline's moment sits in the film. Root-to-local needs none;
-local-to-root does, and that is the direction a scrub inside a Group travels.
-Where a Group is placed more than once the two placements are two answers, and
-the tab says which one it is reading against. UI word: Switch instance / 切换实例.
+The `CompositionRef` a timeline tab was entered through, fixing where its
+moment sits in the film when a Group is placed more than once. UI word: Switch
+instance / 切换实例.
 _Avoid_: path, breadcrumb, parent
 
 **Moment**:
-The single time the whole editor is at, held in root time and read in each
-composition's own coordinates. One number, read many ways: a Group's read-out is
-a projection of it, which is why scrubbing inside a Group moves the film, and
-why a Group not on screen at the moment draws nothing to scrub. Session state,
-never in the project. UI word: Current time / 当前时间.
-_Avoid_: playhead (that is the line drawn for it), global time, sequence time
+The single editor time, held in root time and read in each composition's own
+coordinates. Session state. UI word: Current time / 当前时间. See ADR 0053.
+_Avoid_: playhead (the line drawn for it), global time
 
 **Link override**:
-A session toggle under which every gesture behaves as if `escape_link` were
-set, so a linked clip edits alone without the link being dissolved — Reaper's
-*Grouping enabled*, inverted. Session state, never in the project. UI word:
-Link override / 链接覆盖.
-_Avoid_: unlink mode, solo edit, temporary unlink
+A session toggle under which every gesture acts as if `escape_link` were set:
+linked clips edit alone without unlinking. UI word: Link override / 忽略链接.
+_Avoid_: unlink mode, solo edit
 
 ## Position animation
 
-**XY mode**:
-Position authored through independent horizontal and vertical animation, each with its own timing and easing.
+See ADR 0060.
+
+**XY mode**: Position authored as independent X and Y animation.
 _Avoid_: pathless mode, simple mode
 
-**Path mode**:
-Position authored as a spatial route and a separate progress animation along that route.
+**Path mode**: Position authored as a spatial route plus a progress animation along it.
 _Avoid_: linked XY, vector keyframes
 
-**Motion path**:
-The spatial route followed by a layer's position reference, independent of when the layer reaches each place.
-_Avoid_: trajectory (the observed motion over time), timing curve
+**Motion path**: The spatial route a layer's Position follows, independent of timing.
+_Avoid_: trajectory (observed motion), timing curve
 
-**Path progress**:
-Distance travelled along the motion path as a fraction of its length; its animation controls when the layer reaches each place.
-_Avoid_: node index, speed (speed is its rate of change)
+**Path progress**: Distance along the motion path as a fraction of its length; its animation sets timing.
+_Avoid_: node index, speed
 
-**Position baking**:
-An explicit conversion of motion into independent XY keyframes at chosen sampling times; positions between those samples are an approximation.
+**Position baking**: Explicit conversion of motion to XY keys at chosen samples; approximate between them.
 _Avoid_: lossless conversion, unlinking
 
 **Editable position conversion**:
-The default Path → XY conversion: fit independent temporal curves within a measured pixel-error target, retaining sparse keys at motion changes and static values on constant axes. Sampling measures fidelity; it does not dictate the output key count. Frame baking remains an explicit alternative.
+The default Path → XY conversion: curves fitted within a pixel-error target,
+sparse keys at motion changes. Frame baking is the explicit alternative.
 _Avoid_: exact conversion, one key per sample
 
-**Spatial node mode**:
-How a motion-path node's handles behave: Corner lets them move independently, Smooth keeps them aligned, and Auto derives a smooth direction from neighbouring points. This is distinct from the temporal easing of path progress.
-_Avoid_: keyframe easing, interpolation mode (without specifying space or time)
+**Spatial node mode**: Corner, Smooth or Auto handles on a path node; spatial, not temporal easing.
+_Avoid_: keyframe easing, interpolation mode (unqualified)
 
-**Shape-preserving insertion**:
-Adding a node by subdividing an existing path segment, without changing its geometric route or the progress animation.
+**Shape-preserving insertion**: Adding a path node by subdividing a segment without changing the route or progress.
 _Avoid_: append point, re-smoothing
 
 ## Motifs
 
-**Motif preparation**:
-The Workspace session's background work that persists requested Motif content
-frame ranges. Automatic preparation covers used ranges; explicit Pre-bake
-requests full content and moves it to the queue front. Default preparation
-finishes clips in timeline order (ADR 0109). Ready describes durable coverage of that demand, while
-preview warming describes volatile pictures in memory. See ADR 0108.
-_Avoid_: preview-owned bake queue, cached (when completion or retention matters)
-
 **Motif**:
-A parameterized, time-varying overlay authored as a real web page — a manifest
-island plus `index.html`, served over the `motif:` scheme and captured frame by
-frame while the harness owns the clock (ADR 0017). Built-in, user-authored and
-agent-authored Motifs are the same kind of document on the same render path;
-placed, one is a `Motif` layer whose props are its entire instance state.
-One Motif draws one element with one purpose; an overlay of several elements is
-several layers, planned before any code, staggered on the timeline (ADR 0123).
-_Avoid_: template (that was the SVG predecessor), overlay, animation preset
+A parameterized, time-varying overlay authored as a web page (manifest island +
+`index.html`), served over `motif:` and captured frame by frame under a
+harness-owned clock. Placed, it is a `Motif` layer whose props are its whole
+state. One Motif draws one element ([motif-authoring.md](docs/motif-authoring.md#scope-one-element-or-one-interaction)).
+See [motifs.md](docs/motifs.md), ADR 0017.
+_Avoid_: template, overlay, animation preset
 
-**Motif authoring**:
+**Motif draft**: A retained, editable package, optionally linked to a working directory.
 
-- **Motif draft**: a retained, editable package, optionally linked to an external
-  working directory. Reopening the same directory reuses its draft identity.
-- **Motif revision**: the content hash of a complete validated package. File
-  updates and publication use it to reject stale writes.
-- **Installed Motif**: a published copy with its own identity and version.
-  Publication preserves the draft; subsequent directory edits affect the draft
-  until explicitly published. Copy provenance does not imply an update target.
+**Motif revision**: The content hash of a complete validated package; stale writes are rejected by it.
 
-See [ADR 0094](docs/adr/0094-motif-directory-workspaces-and-file-operations.md).
+**Installed Motif**: A published copy with its own identity and version; publishing keeps the draft.
+See [motif-workspaces.md](docs/motif-workspaces.md).
+
+**Motif preparation**:
+The Workspace session's background work that persists Motif frame ranges:
+used ranges when *Pre-bake motifs* is on, full content on *Pre-bake now*.
+Ready = durable coverage; preview warming = volatile memory. See ADR 0108.
+_Avoid_: preview-owned bake queue
 
 **Motif cover**:
-A saved image of a Motif's default appearance used by the library. Derived
-from the package and regenerated when its content or capture runtime changes;
-independent of a placed layer's props, project frame rate and frame bake.
-_Avoid_: authored cover field, preview bake
+A saved image of a Motif's default appearance for the library; derived from
+the package, independent of placed props.
+_Avoid_: preview bake
 
 **Motif frame reader**:
-The renderer's one way to get a stored Motif frame: read `(cacheKey, frame,
-scaleDiv)` gives a bitmap, or null when the frame is not stored or is invalid.
-Preview reads at the Playback Resolution divisor; export and finalization read
-at 1. Lane choice (the Windows texture lane, otherwise a utility process and a
-reader worker), verification, downscaling and fallback stay behind it. A
-transport failure is never null, so it never drops a frame from coverage. A
-live capture is not a read (ADR 0154).
-_Avoid_: frame transport, CPU read, cached-frame IPC
+The renderer's one way to read a stored Motif frame at a scale divisor; null
+means not stored or invalid, a transport failure is never null. A live capture
+is not a read. See ADR 0154.
+_Avoid_: frame transport, cached-frame IPC
 
 **Props schema (data plane)**:
-A Motif's `props_schema` — the four typed variants (string, color, number, enum)
-its parameters may take. It is the *data* contract and nothing else: validation,
-defaults, lenient migration, persistence, undo and agent drafting all read it,
-and it carries no presentation — no label, order, grouping or widget hint.
-Frozen: a control the vocabulary lacks comes from a params page, never from a
-fifth variant (ADR 0045).
-_Avoid_: prop types, control schema, param spec (that is one entry in it)
+A Motif's `props_schema`: five typed variants (string, color, number, enum,
+media). The data contract only, no presentation. See ADR 0045, ADR 0132.
+_Avoid_: prop types, control schema
 
 **Params page (UI plane)**:
-The optional `params.html` a Motif ships beside its `index.html` to own its whole
-props section of the property panel — labels, order, grouping, conditional rows.
-The file's presence is the only enablement; there is no manifest field. It runs
-in a sandboxed, offline `motif:` frame on an opaque origin and speaks five
-postMessage verbs with the host (init, propsChanged, preview, commit, resize):
-preview overlays the canvas only, and one commit is one undo entry however many
-keys it carries (ADR 0045).
-_Avoid_: params UI, custom panel, plugin UI, settings page
+An optional `params.html` beside `index.html` that owns the Motif's props
+section, in a sandboxed offline frame speaking `motif:*` postMessage verbs. One
+commit is one undo entry. See ADR 0045.
+_Avoid_: params UI, plugin UI
 
 **Fallback form**:
-The props form the host generates from a `props_schema` when the Motif ships no
-params page — one row per prop in the manifest's key order, bare keys title-cased and
-deliberately unlocalized, one key committed per gesture. The default path rather
-than a degraded one: an agent draft or a plain Motif stays editable with zero
-author effort, and the form is frozen at the four variants alongside the schema.
-_Avoid_: generated panel, default form, auto form, generic props form
+The props form the host generates from `props_schema` when there is no params
+page. The default path, not a degraded one.
+_Avoid_: generated panel, auto form
 
 ## Audio effects
 
 **Source audio analysis**:
-Local amplitude measurements of an imported source, before timeline trims,
-mixing and effects. Reports source-absolute times for waveform summaries,
-onset candidates (short energy rises) and energy changes. Candidates suggest
-edit points; they do not identify beats, main melodies or musical sections.
-Distinct from a **Pause**, which describes the audio a layer plays.
-_Avoid_: beat detection, melody detection (for amplitude-only analysis)
+Local amplitude measurements of an imported source: waveform, onset candidates,
+energy changes, in source time. Not beats or melody. Distinct from a Pause.
+_Avoid_: beat detection, melody detection
 
 **Audio effect**:
-An `Effect` on an Audio layer whose `kind` is in the `audio.*` namespace — the
-same record a visual effect uses, with the opposite lifecycle: it is rendered
-once, offline, into a sibling of the media conform, never evaluated per frame.
-The v1 kind is Denoise. UI word: Effects / 效果, Denoise / 降噪.
-_Avoid_: audio filter (that is the ffmpeg graph a bake runs), insert, plugin,
-realtime effect, audio FX
+An `Effect` on an Audio layer with an `audio.*` kind, baked once offline into
+a conform sibling, never evaluated per frame. Denoise is the one kind. UI
+word: Effects / 效果, Denoise / 降噪. See ADR 0063.
+_Avoid_: audio filter (the ffmpeg graph), insert, plugin, realtime effect
 
 **Effective chain**:
-The part of a layer's effect chain a bake actually renders — the enabled,
-catalogued, *complete* audio effects, in stored order. An incomplete effect (a
-Denoise with no sample region) is out of it exactly as a disabled one is, and an
-empty effective chain means the layer plays the raw conform.
-_Avoid_: active chain, resolved chain, enabled effects (completeness is the
-other half of the filter), effect stack
+The enabled, catalogued, complete audio effects of a layer, in order; empty
+means the raw conform plays.
+_Avoid_: active chain, effect stack
 
 **Chain signature**:
-The digest that names one baked artifact: a hash over the media hash, the
-conform format version and the effective chain, shortened to its first 16 hex
-characters in a filename. Two layers with the same media and the same effective
-chain have one signature and therefore share one file.
-_Avoid_: effect hash, cache key, chain id, fingerprint, sig (unqualified)
+The hash over media hash, conform version and effective chain that names one
+bake; equal signatures share one file.
+_Avoid_: effect hash, cache key, fingerprint
 
 **Bake**:
-The ffmpeg run that turns a media conform into the sibling conform its chain
-signature names, and the artifact that run produces. Both the preview mixer and
-the export mixer read the bake instead of the raw conform. UI word: Processing…
-/ 处理中, while one is in flight.
-_Avoid_: render (that is export), pre-render, freeze, bounce, offline job
+The ffmpeg run that writes the conform sibling a chain signature names, and
+that file. Preview and export both read it. UI word: Processing… / 处理中.
+_Avoid_: render, freeze, bounce
 
 **Sample region**:
-The span of SOURCE time a user marks as containing only noise, so Denoise can
-learn its spectrum from it. It says what is *measured*, never what is processed
-— the effect applies to the whole clip — and it is painted by arming Select
-region on the card and dragging on that clip. UI word: Select region / 选区.
-_Avoid_: noise selection, region of effect, in/out marks (those are export
-state), profile range, noise print
+The source span a user marks as noise only, so Denoise can learn from it; the
+effect still applies to the whole clip. UI word: Select region / 选区.
+_Avoid_: noise selection, in/out marks, noise print
 
 ## Captions and subtitles
 
 **Subtitle**:
-A subtitle DOCUMENT — an `.srt`, `.vtt` or `.ass` file — held in the media pool
-as a `Subtitle` item like any other imported file. It is a source, not
-something on the timeline: applying it (`apply_subtitles`, or dragging it onto
-a timeline) lays its cues as Captions, all of them, its time 0 at the chosen
-time. The Captions are copies; the item keeps no tie to them.
-_Avoid_: subtitle for a cue already on the timeline (that is a Caption),
-subtitle layer, subtitle track
+A subtitle document (`.srt`, `.vtt`, `.ass`) held as a `Subtitle` pool item.
+Applying it (`apply_subtitles` or a drag) lays copies of its cues as Captions.
+_Avoid_: subtitle for a cue on the timeline, subtitle track
 
 **Caption**:
-One cue on the timeline: an ordinary `Text` layer on a caption-role track,
-laid there by applying a Subtitle or a transcript. Edited, restyled, merged and
-corrected per cue like any Text layer. UI word: caption / 字幕.
-_Avoid_: subtitle (the document it may have come from), caption layer kind
-(there is none — it is a Text layer)
+One cue on the timeline: an ordinary `Text` layer on a caption-role track. UI
+word: caption / 字幕.
+_Avoid_: subtitle, caption layer kind (there is none)
 
-## Caption correction
-
-**文字校正**:
-The reference-text-assisted correction of transcribed or existing caption text,
-including resegmentation using the timing information available. It applies to
-existing captions as well as newly generated transcripts.
-Matched manuscript line breaks and sentence-ending punctuation determine the
-caption boundaries. Missing word times are estimated within the original cue;
-estimated timing remains distinguished from engine word timing.
-_Avoid_: 强制对齐 (the distinct acoustic timing operation), 文稿对齐 (as the product name)
+**Text correction**:
+Reference-text-assisted correction and resegmentation of caption text, on new
+transcripts or existing captions. Estimated word times stay marked as
+estimates. UI word: Text correction / 文字校正. See [captions.md](docs/captions.md).
+_Avoid_: 强制对齐 (acoustic alignment), 文稿对齐
 
 ## Performance resources
 
 **Workspace session**:
-One opening of a project, identified by a generation independently of its
-directory or project ID. Reopen, Save As and Close end the previous session.
-Queued/running imports retain that session's cache root; stale completions
-cannot update a later session. Valid content-addressed artifacts can outlive
-the session and be adopted again. See ADR 0102.
-_Avoid_: cache lifetime (artifacts and tasks have different lifetimes)
+One opening of a project, identified by a generation. Reopen, Save As and
+Close end it; stale completions cannot reach a later session. See ADR 0102.
+_Avoid_: cache lifetime
 
 **Resource policy**:
-Application-wide intent: memory target, processing effort, temporary cache space
-and background processing during playback. Main derives machine-specific
-allocations; one native authority admits managed working allocations and tasks
-for every renderer/native job on Windows, macOS and Linux. Process-tree memory
-is a separate measured pressure signal. Targets are cooperative, not OS hard caps.
-UI words: Memory target / 内存使用目标; Processing effort / 处理强度;
-Temporary cache space / 临时缓存空间. See ADR 0101.
-_Avoid_: guaranteed RAM cap, CPU percentage cap, total VRAM limit
+App-wide intent: memory target, processing effort, temporary cache space,
+background work during playback. One native authority admits work on every
+platform; targets are cooperative, not OS caps. UI words: Memory target /
+内存使用目标, Processing effort / 处理强度, Temporary cache space / 临时缓存空间.
+See ADR 0101, ADR 0150.
+_Avoid_: guaranteed RAM cap, CPU percentage cap
 
 **Cache budget**:
-The desired combined retention of video pictures, animation pictures, timeline
-thumbnails and waveforms. Active pictures and playback readiness may temporarily
-exceed it. Picture storage can use CPU memory or graphics memory; it is not the
-application's total memory limit.
-Diagnostic word: Preview cache / 预览缓存; an internal allocation, not a preference.
-Categories may borrow unused shares while preserving active
-pictures and playback readiness.
+The desired combined retention of video and animation pictures, thumbnails and
+waveforms; active pictures may exceed it. Not the app's memory limit.
+Diagnostic word: Preview cache / 预览缓存.
 _Avoid_: RAM limit, total memory cap
 
 **Shared graphics buffer budget**:
-The combined allocation allowance for the video and animation buffers used to
-transfer pictures to preview. A buffer remains accounted for while any consumer
-still holds it, including after retirement. Other graphics resources are outside
-this allowance.
-Diagnostic word: Shared texture transfer buffers / 共享纹理传输缓冲,
-shown for the shared-texture transport. Copy-back transport is a separate path.
-This internal allowance is also charged to global working memory.
-_Avoid_: total VRAM limit, graphics card capacity
+The allowance for buffers that carry pictures to preview over the shared-texture
+transport. Diagnostic word: Shared texture transfer buffers / 共享纹理传输缓冲.
+_Avoid_: total VRAM limit
 
 **Performance policy**:
-The legacy preview compatibility input, separate from application resource
-policy and decode throughput evidence. Saved preview values remain valid but
-cannot raise the app ceiling. Internal decoder counts and buffer depths are not
-user preferences. See ADR 0100 for the original contract and ADR 0101 for the
-replacement UI and shared authority.
+The legacy preview compatibility input; saved values cannot raise the app
+ceiling. No UI; see ADR 0101 and
+[performance-settings.md](docs/performance-settings.md#legacy-preview-budgets).
 
 **Computer test profile**:
-A saved experimental workload recommendation with machine, application and
-protocol provenance. Saving does not apply it; restoring defaults retains it.
-Its cache value is copied from the user's settings, not measured by the test.
+A saved experimental workload recommendation with its provenance. Saving does
+not apply it. See [performance-settings.md](docs/performance-settings.md).
 _Avoid_: hardware capacity, optimal configuration, certification
 
 ## Layout themes
 
 **Layout theme**:
-An application-wide preset combining UI typography, dialog dimensions and
-initial window size. Six presets pair 1080p, 2K (1440p) and 4K with Standard or
-Relaxed (宽松); Relaxed adds horizontal room and 10% larger text. Separate from the dark
-color palette, Workspace Dock arrangement and authored Text-layer font size.
-UI word: Layout theme / 布局主题. See [UI tokens](docs/ui-tokens.md).
-_Avoid_: zoom level, font-size setting, color theme, workspace preset
+An app-wide preset of UI typography, dialog sizes and initial window size:
+1080p, 2K or 4K, each Standard or Relaxed / 宽松. Not the color palette or
+Dock layout. UI word: Layout theme / 布局主题. See [ui-tokens.md](docs/ui-tokens.md).
+_Avoid_: zoom level, font-size setting, color theme
 
 ## Agent activity
 
 **Agent view**:
-The lightweight preview, mini timeline and agent panel layout. A user can enter
-or leave it independently of work. A new MCP work session enters it once;
-switching views creates no checkpoint and releases no undo lock (ADR 0065).
-UI word: Agent Mode / 代理模式.
-_Avoid_: session (when referring to layout), private agent panel
+The lightweight preview + mini timeline + agent panel layout, entered and left
+independently of work. UI word: Agent Mode / 代理模式. See [mcp.md](docs/mcp.md#agent-panel-and-lifecycle).
+_Avoid_: session (for the layout)
 
 **Work session**:
-One explicitly begun batch of agent work in the current project opening, with a
-stable ID, owning MCP connection, reason and start/end timestamps. Ending it
-releases its owned undo lock, preserves activity and keeps the current view.
-It does not cancel tools or prohibit subsequent operations.
-_Avoid_: view mode, transport session, agent permission, execution lock
+One explicitly begun batch of agent work with an ID, owning MCP connection
+and reason. Ending it releases its undo lock; it cancels nothing.
+_Avoid_: view mode, agent permission, execution lock
 
 **MCP connection**:
-A registered protocol connection identified independently of client name and
-version. Definite transport close ends its owned work session. Registration and
-last-request time are facts; neither is a heartbeat proving process liveness.
-_Avoid_: online agent (inferred from registration), work session
+A registered protocol connection, identified independently of client name.
+Transport close ends its work session; registration is not a heartbeat.
+_Avoid_: online agent
 
 **Agent activity**:
-A structured record of an MCP call or checkpoint action in this project opening:
-who called, optional work session, operation and objects, execution state,
-duration, error and actual history IDs. Reverted describes an edit's current
-effect, independently of whether its call completed or failed. The bounded
-activity stream retains running calls and does not restore from disk.
-_Avoid_: diagnostic log entry, history entry, permanent transcript
+A structured record of an MCP call or checkpoint action in this opening: who,
+work session, operation, state, duration, error, history IDs. Not persisted.
+_Avoid_: log entry, history entry, transcript
 
 **Tack**:
-A time range an agent points the user at for review — a comment on what
-plays there. It keeps its length and moves with the content it covered,
-placed on read. It is current while its range plays what it played at
-creation, across every track, and outdated (内容已修改) otherwise — nothing
-else: no stale, no hibernating, no pinned clip (ADR 0117). Runtime-only within a
-project opening; not project content, not in history, never exported. The user
-resolves, dismisses or clears it, or converts it into an ordinary marker
-(ADR 0115). Named for the tailor's tack: a temporary thread mark pulled out
-once the seam is sewn. One letter from **Track** — never abbreviate either.
-UI word: Tack / 批注.
-_Avoid_: annotation, agent marker, review marker (it is not a marker), comment;
-标注 (the Motif callout overlay), 备注 (the marker's note field); stale or
-hibernating tack (both states are gone — say outdated)
+A time range an agent points the user at for review. Moves with the content it
+covered; current while that range plays as it did, else outdated (内容已修改).
+Runtime-only, never in the project. UI word: Tack / 批注. See ADR 0115, ADR 0117.
+_Avoid_: annotation, agent marker, review marker, comment; 标注, 备注; stale or hibernating tack
 
 **Review lane**:
-The timeline row below the marker lane that carries tacks, one row the marker
-lane's height; tacks whose chips would overlap share one group chip with a
-count, whose menu lists them. Exists while the review overlay is on and the project opening
-has seen agent review material, so an agent at work never reflows the
-timeline. Belongs to the ruler family like the marker lane; not a scrub
-surface. UI word: the header reads Tacks / 批注; the row is the review lane /
-审阅行.
-_Avoid_: tack track, tack band (the pre-lane rendering), review track
+The row below the marker lane that shows tacks; ruler family, not a scrub
+surface. UI word: Tacks / 批注 (header), review lane / 审阅行.
+_Avoid_: tack track, review track
 
 **Review baseline**:
 The project state the user last accepted, against which agent changes are
-reviewed. Owned by history, reset when a project is opened, advanced only by
-approval; Revert all restores it. One whole snapshot, in effect a private
-checkpoint, but not a checkpoint: never listed, named or deleted. UI word:
-Review baseline / 审阅基线.
-_Avoid_: base checkpoint, base commit, snapshot (unqualified)
+reviewed. Owned by history; reset on open, advanced only by Approve. Not a
+listed checkpoint. UI word: review baseline / 审阅基线.
+_Avoid_: base checkpoint, snapshot (unqualified)
 
 **Unreviewed change**:
-One entity-level difference between the review baseline and the current state
-that an agent-sourced commit touched since the baseline. A difference only the
-user caused is a user change and needs no review. Three classes, as a diff
-reads: added, removed, modified (新增 / 删除 / 修改) — a move to another track
-or time is a modification. Each entity is listed independently, even when
-several moved by the same amount; the list is settled as a whole. Timing is the entity's own
-before/after values; trim descriptions and edge marks additionally show that
-layer's own measured window cuts/extensions. Review infers no operation
-sequence or causal relationship between entities.
-Project-wide entities include an audio role's gain and media-pool membership
-changed by a recorded operation. They have no timeline footprint; unrecorded
-imports, derived media updates and preferences remain outside the diff.
-Current footprints and historical baseline footprints are separate. Removed
-entities have only a labelled historical footprint, never a guessed current
-position or ripple seam. See ADR 0116. UI word: Change / 变更.
-_Avoid_: diff entry, hunk, carried change, carrier, shift group;
-shifted / moved as classes of their own
+One entity-level difference from the review baseline that an agent commit
+touched: added, removed or modified (新增 / 删除 / 修改). No causal inference
+between entities. UI word: Change / 变更. See ADR 0116.
+_Avoid_: diff entry, hunk, carried change; shifted / moved as classes
 
 **Approve**:
-Make the current state the review baseline — all at once, the user's own
-differences with the agent's; there is no per-change approval (ADR 0119).
-Changes nothing in the project and records nothing. UI word: Approve all /
-全部批准.
+Make the current state the review baseline, all at once (no per-change
+approval). Records nothing. UI word: Approve all / 全部批准. See ADR 0115.
 _Avoid_: accept, commit, apply
 
 **Revert all**:
-Restore the review baseline as the current state: one recorded, undoable
-commit by the user, under the history lock like a checkpoint restore. Takes
-the user's own differences since the baseline with the agent's; the baseline
-stays, so undoing it lists the same changes again. Dropping a single change is
-an edit (undo it, or edit it back), not a review action. UI word: Revert all /
-全部撤回.
+Restore the review baseline as one undoable user commit; the baseline stays.
+UI word: Revert all / 全部撤回.
 _Avoid_: reject, discard, rollback
 
 **Review focus**:
-The one tack or change the agent panel and the timelines point at together —
-chosen from a panel row, a review lane chip, a removed clip's ghost or the mini
-timeline's bands. Its row is highlighted, its chip solid, its time range washed
-across the editor's lanes and the clips it covers or follows outlined; the
-editor timeline scrolls it into view but never seeks (Locate does; the agent
-view's Jump only seeks its preview). Historical
-footprints are shown and located explicitly as baseline positions. One for
-both kinds, runtime-only. A change is focused in the set it was named in — the
-Review view's, or a selected call's own while its highlight is up — and the
-focus stays only while that list shows the item: deleted, approved, another
-tab, another row each let it go. No UI word of its own.
-_Avoid_: selection (that is clips'), highlight (the per-activity highlight)
+The one tack or change the agent panel and timelines point at together; scrolls
+into view, never seeks. Runtime-only.
+_Avoid_: selection (clips'), highlight (per-activity)
 
 ## Agent harness
 
-What an agent knows about how a result should look and how a job should run,
-in layers with a fixed precedence: etiquette, craft, style, TASTE, recipe
-(ADR 0123). Styles ship with the app or in the data root and TASTE in the
-project (ADR 0126); craft and recipes ship as skill folders.
+What an agent knows about how a result should look and how a job runs, in
+layers: etiquette, craft, style, TASTE, recipe. See ADR 0046, ADR 0126.
 
 **Craft**:
-Brand-agnostic production rules expressed as numbers or thresholds — title-safe
-area, minimum caption and title hold, cut handles, audio fades, loudness — plus
-named anti-patterns. Lives in the skill's `craft/`. A style may tighten a craft
-number, never loosen it; the user's explicit request may, and the departure is
-reported. Entries are added as observed agent defaults call for them, never in
-one batch.
-_Avoid_: best practices, guidelines, taste (craft is correctness, not look)
+Brand-agnostic production rules as numbers or thresholds (title-safe, minimum
+hold, fades, loudness) plus anti-patterns, in the skill's `craft/`. A style
+may tighten, never loosen them.
+_Avoid_: best practices, taste
 
 **Style**:
-A named look and feel as data — fonts, palette, type scale per graphic role,
-caption style, transition set, motion timings, rhythm — packaged with the
-Motifs it relies on and frozen exemplars, under an identity a project can pin.
-Read by tools and checks; never says what to do in what order.
-_Avoid_: theme (that is the app's layout theme), template, preset (export and
-keyframes own that word), brand
+A named look as data (fonts, palette, type scale per graphic role, caption
+style, transitions, timings), packaged with its Motifs and exemplars; a
+project can pin it. Never prescribes order.
+_Avoid_: theme (layout theme), template, preset, brand
 
 **Project folder**:
-The folder holding `project.json`, which may be an agent's working directory.
-The app writes `project.json`. `Media/` holds the pooled files, recorded by
-path. `Cache/` is derived. `TASTE.md` is the one file an agent edits by hand.
-A relative path a tool takes is read from it (ADR 0152).
+The folder holding `project.json`; may be an agent's working directory.
+`Media/` holds pooled files, `Cache/` is derived, `TASTE.md` is hand-edited.
+Relative tool paths resolve against it. See ADR 0152.
 _Avoid_: project directory
 
 **TASTE**:
-A project's style choice: `TASTE.md` in the project workspace, which extends
-one style and overrides its fields for this project. The agent reads style and
-TASTE merged, with each field's provenance. The user's explicit request
-overrides it. Always written in capitals, as the file is named.
-_Avoid_: taste (lowercase: judgment, not the file), project style, style
-override
+`TASTE.md` in the project: extends one style and overrides its fields. Always
+capitals.
+_Avoid_: taste (lowercase: judgment), project style
 
 **Style Motif**:
-A Motif that draws in a style's vocabulary by carrying its shared prop keys —
-colours such as `ink` and `accent` from the `motif` tokens, `font_<slot>` from
-the `fonts` tokens — so placing or restyling it fills them from the project's
-TASTE. A style names some per graphic role as examples; an agent uses one,
-forks one, or writes its own with the same keys (ADR 0130). Leaves through its
-own `exit` prop over the last half second before its `duration_s`.
-_Avoid_: template (the examples are not one), style asset, theme Motif
+A Motif that carries a style's shared prop keys (`ink`, `accent`,
+`font_<slot>`, ...) so placing or restyling fills them from TASTE, and leaves
+through its own `exit` prop. See ADR 0126.
+_Avoid_: template, theme Motif
 
 **Recipe**:
-How one kind of agent job runs: an ordered subset of the closed stage catalog
-(intake, plan, build, audit, look, critique, handoff), what to do in each stage
-that no tool description says, and an exit condition in the closed signal
-vocabulary (audit.clean, critique.clear, user.confirmed, rounds). Build and its
-checks repeat at most three rounds; what is left becomes tacks and is reported.
-One skill file per kind of job, `recipes/<name>.md`, from which the MCP prompt
-of the same name is generated. Process only: a recipe never names a font or a
-colour.
-_Avoid_: pipeline, workflow, playbook, skill (the skill is the whole bundle)
+How one kind of agent job runs: an ordered subset of the stage catalog
+(intake, plan, build, audit, look, critique, handoff) with an exit condition
+in the signal vocabulary (audit.clean, critique.clear, user.confirmed, rounds).
+One `recipes/<name>.md` per job kind. Never names a font or colour.
+_Avoid_: pipeline, workflow, skill (the whole bundle)
 
 **Graphic role**:
-What a visual layer is for — title, lower third, callout, credit, logo, plate
-(a full-frame background other layers sit on), illustration (a picture: a
-photo, a still, a drawing) — and the key a style's tokens
-and role-specific checks attach to. A Motif has exactly one. Stored as the
-`graphic_role` field on text, Motif and image layers (schema v5), null when
-untagged; a Motif manifest may declare the role its placed layers default to.
-Built-ins are `title`, `lower_third`, `callout`, `credit`, `logo`, `plate`,
-`illustration`, `none`; any other well-formed name is a custom role a taste declares. Caption
-cues carry none — a caption is identified by its caption track.
-_Avoid_: role (a track's role: A roll, B roll, caption, audio roles —
-ADR 0023), kind
+What a visual layer is for (`graphic_role` on text, Motif and image layers):
+title, lower_third, callout, credit, logo, plate, illustration, none, or a
+custom role. Captions carry none.
+_Avoid_: role (a track's role, ADR 0023), kind
 
 **Audit**:
-`check_composition`'s pass over one composition against the craft rules and the
-project's taste, from project data alone. Its **findings** carry a severity —
-`hard` (fix before handoff), `warning` (fix, or tack with the reason), `review`
-(a departure from the style to confirm) — a rule id, a time range, the layers
-and a fix. The host remembers the last audit per composition; it is **fresh**
-while the composition and the taste are unchanged since, which is what the
-session's end and an export report.
-_Avoid_: lint (the implementation's name, not the user's), validation (that is
-the data model refusing a write), review (the user settling changes, ADR 0119)
+`check_composition`'s pass over one composition against craft and TASTE.
+**Findings** have severity `hard`, `warning` or `review`. An audit is
+**fresh** while the composition and TASTE are unchanged.
+_Avoid_: lint, validation (the model refusing a write), review (settling changes)
 
 **Entrance and exit**:
-A Text layer's `intro` and `outro` presets — fade, slide, typewriter — played
-from the layer's own start and into its own end, so a trim or move keeps them.
-Distinct from keyframed opacity or position, which stay where they were set.
-A Motif plays its own; a Style Motif's `exit` prop picks how it leaves.
-_Avoid_: transition (that joins two clips), animation (keyframes)
+A Text layer's `intro` / `outro` presets (fade, slide, typewriter), played
+from its own start and into its own end. A Style Motif uses its `exit` prop.
+_Avoid_: transition (joins two clips), animation (keyframes)

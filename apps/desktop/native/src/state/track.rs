@@ -13,16 +13,14 @@ pub struct Track {
     pub label: Option<String>,
     pub enabled: bool,
     pub locked: bool,
-    /// Track-level audio mute.
-    /// Silences this track's Audio layers in preview AND export; video
-    /// output is unaffected. Toggled via the unrecorded
-    /// `update_track_flags` path so undo never flips it. Defaults to
-    /// `false` for `.vproj` files written before the field existed.
+    /// Track-level audio mute. Not an audio gate: no mixer reads it (audio
+    /// mute/solo is per mixing role, ADR 0023). It still round-trips and
+    /// takes the unrecorded `update_track_flags` patch for back-compat.
+    /// Defaults to `false` for `.vproj` files written before the field existed.
     #[serde(default)]
     pub muted: bool,
-    /// Track-level solo. When ANY enabled track has `solo == true`, only
-    /// solo tracks are audible; `muted` wins over `solo`. Same unrecorded
-    /// toggle path and back-compat default as `muted`.
+    /// Track-level solo. Like `muted`, not an audio gate (ADR 0023). Same
+    /// unrecorded patch path and back-compat default as `muted`.
     #[serde(default)]
     pub solo: bool,
     /// Whether the user (or an agent) is allowed to delete this track. The
@@ -35,13 +33,13 @@ pub struct Track {
     /// the only tracks visible in AB display mode; everything else is hidden.
     /// Set on the two reserved tracks at project creation (the A-roll track →
     /// `ARoll`, B-roll → `BRoll`); a role-stamped track carries no stored
-    /// `label`, its name deriving from the role instead (ADR 0042). The
+    /// `label`, its name deriving from the role instead (`docs/data-model.md#track`). The
     /// `AudioA`/`AudioB` variants stamp the audio side of a roll pair (see
     /// `TrackRole::paired`). `None` for every track created afterwards.
     #[serde(default)]
     pub role: Option<TrackRole>,
     /// `true` marks a track as NOT part of the reserved skeleton, which is
-    /// exactly the cleanup-eligibility flag (ADR 0042; `docs/data-model.md`):
+    /// exactly the cleanup-eligibility flag (`docs/data-model.md#track`):
     /// the invariant is `transient == (role is None)` at every creation site,
     /// so it is stamped on every role-less track — including one an agent adds
     /// through `add_track`, not just an import-spawned one. Cleanup is one

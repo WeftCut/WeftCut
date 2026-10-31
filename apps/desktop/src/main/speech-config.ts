@@ -148,7 +148,7 @@ export interface SpeechSnapshotSources {
 /// Merge the non-secret store config + the secrets into the
 /// `Record<backendTag, BackendConfig>` snapshot every speech call carries
 /// (`speech_config` on `transcribe_clip` / `synthesize_speech`, `speechConfig`
-/// on the speech Settings commands; ADR 0148). Pure — the twin of
+/// on the speech Settings commands; ADR 0036). Pure — the twin of
 /// `modelProfileToVlmSnapshot`. Built per call, so a key saved or a model
 /// switched a moment ago is what the next call sees, with nothing to push.
 ///

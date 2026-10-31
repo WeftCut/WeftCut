@@ -1,303 +1,214 @@
 # Application resource management
 
-Settings → Performance exposes four controls. Internal pool sizes, decoder
-counts and texture slots are not independently editable UI settings.
+One cooperative resource authority governs memory, CPU threads and temporary
+disk on Windows, macOS and Linux ([ADR 0101](adr/0101-cross-platform-application-resource-authority.md)).
+Settings → Performance exposes intent only; pool sizes, decoder counts and
+texture slots are not user settings.
 
 | Control | Meaning |
 | --- | --- |
 | Memory target (1–256 GiB) | Cooperative app target; limits retention and expensive allocations. Brief overshoot is possible. |
-| Processing effort | Low resource use / Balanced / High performance (低占用 / 均衡 / 高性能). Derives background concurrency and codec thread requests from available CPUs. Not a CPU-percentage hard cap. |
-| Temporary cache space (0.25–1024 GiB) | Combined allowance for replaceable thumbnails, filmstrip, waveforms, animation frames and audio effects in cache roots visited this session. |
-| Continue background processing during playback | When disabled, new background jobs wait for playback to stop. Running tasks drain safely. |
+| Processing effort | Low / Balanced / High. Derives controlled-job threads from available CPUs; not a CPU-percentage cap. |
+| Temporary cache space (0.25–1024 GiB) | Combined allowance for replaceable thumbnails, filmstrips, waveforms, Motif frames and audio-effect bakes in cache roots visited this session. |
+| Continue background processing during playback | Off: new background jobs wait for playback to stop; running tasks drain. |
 
-Defaults use detected RAM, available CPUs and disk size on Windows, macOS and Linux.
-Automatic memory uses 35% of RAM, rounded to 256 MiB and bounded to 1–32 GiB.
-Automatic temporary cache space uses 10% of the total size of the open
-Workspace's disk (the profile disk before one opens), rounded to 256 MiB and
-bounded to 4–64 GiB; it is re-measured when a Workspace opens (ADR 0150).
-Explicit values persist unchanged. Restore defaults re-enables automatic intent
-and resets legacy preview preferences while keeping saved test evidence, decode
-engine and playback resolution. Failed edits provide Retry; telemetry failure
-never prevents editing.
+## Derivation
 
-Processing effort derives a controlled-job CPU budget from 25%, 50% or 85%
-of available logical processors respectively, rounded down with a minimum of
-one. Each task requests half that budget, bounded to 1–4 threads; the background
-job-count ceiling is half the budget, bounded to 1–8. These are simultaneous
-constraints, not promises of that many concurrent jobs: memory admission,
-aggregate thread reservations, playback and pressure can reduce concurrency.
-Changing effort applies to new work and newly opened decoder sessions; it does
-not change memory/cache targets, media quality or existing worker thread counts.
+`shared/resource-policy.ts` validates intent (`ResourcePolicy`, version 2) and
+derives the `ResourceAllocation`; `null` fields are automatic.
 
-## Retrying export finalization
+- **Memory**: automatic = 35 % of RAM, rounded down to 256 MiB, clamped to
+  1–32 GiB. Picture retention gets 25 %, admitted work 40 %; the rest is
+  headroom for runtime/DOM, demuxers, drivers and estimation error. Export
+  stream capacity (12.5 %, ≥ 64 MiB) is charged *within* working memory.
+  Picture targets are divided across registered windows.
+- **Effort**: CPU budget = 25 / 50 / 85 % of logical processors (≥ 1). Each task
+  requests half of it (1–4 threads); the background job ceiling is half of it
+  (1–8). These are simultaneous limits, not promised concurrency. Changes apply
+  to new work and newly opened decoder sessions only.
+- **Disk**: automatic = 10 % of the total size of the open Workspace's disk
+  (profile disk before one opens), rounded to 256 MiB, clamped to 4–64 GiB;
+  re-measured when a Workspace opens ([ADR 0150](adr/0150-temporary-cache-space-follows-disk-size.md)).
 
-Video export reserves its stream-copy tail before encoding. Production borrows
-that same memory allowance and returns it when the worker is torn down, so the
-two phases do not consume duplicate reservations. The tail owns no CPU slot
-until it runs. Ordinary RSS pressure blocks new work but allows this admitted
-export to finish. Critically low host memory still blocks the attempt. Temporary
-CPU occupancy waits up to 15 seconds, with finalization ahead of new compute
-tasks; a longer wait returns the retry panel without discarding encoded work.
-
-If writing the final file fails after encoding, the export panel offers **Retry
-finishing export** and **Discard export**. Retry reuses the encoded audio/video;
-it does not encode the timeline again. Opening Performance settings preserves
-this pending export. Mux writes a sibling temporary file and replaces the chosen
-output only after success, preserving an older output on failure.
-
-Keep the editor open to retry. This is session-local recovery, not recovery after
-an application crash or restart. Success, explicit discard and editor cleanup
-release the reservation and remove the encoded intermediates. Closing a window
-with a pending retry asks before discarding it. See [ADR 0104](adr/0104-export-finalization-retains-admission-and-encoded-files.md).
+Restore defaults returns intent to automatic and resets legacy preview
+preferences; saved test evidence, decode engine and playback resolution are
+kept. Opening Settings writes nothing. Failed edits stay visibly unsaved with
+Retry; telemetry failure never blocks editing.
 
 ## Authority and lifecycle
 
-shared/resource-policy.ts validates intent and derives allocation. Main supplies
-host facts, merges partial edits against the latest settings, atomically persists
-them and publishes the effective allocation. Live telemetry never rewrites intent.
+- Main supplies host facts, merges partial edits against the latest settings,
+  persists atomically, then publishes the allocation. Live telemetry never
+  rewrites intent.
+- Each process holds one read-only runtime snapshot (`resourceAllocation()`,
+  `performanceSettings()`), published only by settings bootstrap/commit (main)
+  and hydration (renderer). Consumers read it at admission or maintenance
+  time, never at module init. Lowering a value governs new work and safe
+  eviction; it never revokes a live lease, texture or displayed picture.
+- The native `resources::Governor` is the single working-memory/processing
+  ledger for native jobs and Electron-held leases. Admission precedes the
+  allocation; release follows teardown, including cancellation and errors.
+  IPC owners cannot release other windows' leases; navigation and renderer
+  death return allocations.
+- IPC and the NAPI entry reject non-integer, out-of-range and non-finite
+  thread/memory claims before conversion, so large JS numbers cannot wrap into a
+  smaller reservation.
 
-Already-landed media derivatives are adopted before processing admission. Cache
-hits still publish readiness and restore media paths, but do not reserve a
-background slot or report generation. Playback or memory pressure must not block
-this bookkeeping. Missing/stale artifacts continue through normal admission.
-Hydration of thumbnails, conforms and waveforms is independent of proxy builds.
-Quick proxies survive reopen and are checked against their recipe and file
-format. Artifact producers are shared by cache root, content identity, kind
-and recipe; completion is delivered to each requesting media item.
+## Admission lanes
 
-Thumbnail file renames, directory publication and required stale-directory
-cleanup allow at most six attempts for transient file contention, with 50–800 ms
-exponential backoff (1.55 seconds of waiting per operation). Workspace changes
-interrupt the wait; permanent errors and exhausted retries remain visible job
-failures. Retrying publication does not re-run FFmpeg or restart frame numbering.
+| Lane | Rule |
+| --- | --- |
+| Background | Leaves one interactive slot when more than one exists. A 32-slot entry gate keeps fan-out below the native 256-waiter queue limit; waits are cancellable. |
+| Import preparation | Serial, one thread / 128 MiB; uses the interactive reserve, so metadata, hashing, GOP probes, conforms and waveforms proceed during playback. Long transcodes and thumbnails stay background. |
+| Import lookahead | The renderer keeps at most `max(1, min(cpu_threads, floor(work_mib / 128)))` paths in flight; pressure pauses submission, setting changes resize it. Bounds request buildup, not execution concurrency. |
+| Workspace copy | Separate serial queue, one thread / 8 MiB; does not wait for transcode slots or the preparation lane. |
+| Interactive | On-demand frames, audio effects, audio export, mux. Waits time out after 15 s; renderer requests fail promptly. |
+| User compute | Transcription audio slice/normalize and description frame sampling (`resources::user_compute`). Ignores the background cap and the playback gate; still blocked by memory pressure, a finishing export, or a full CPU/memory budget. While it waits no new background claim is admitted; running derivatives are never interrupted (a killed proxy has no resume). Waits at most 60 s (`USER_COMPUTE_WAIT`; interactive's 15 s fails routinely behind a transcode or a mux), then fails with `resource-capacity-exceeded:` naming the rule (`memory` / `finalization` / `budget`, also the queued job's reason). 128 MiB; frame sampling holds one admission across all its frames. |
+| Export finalization | Stream-copy tail reserved before encoding and lent to production; runs ahead of new compute; ordinary RSS pressure does not block it, critical host memory does ([ADR 0104](adr/0104-export-finalization-retains-admission-and-encoded-files.md)). |
 
-Every project opening owns a generation and frozen cache root. Switch, reopen,
-Save As and Close cancel old imports; native events and TS continuations are
-checked before state updates. Cancellation retains leases until child teardown.
-Interrupted provisional hashes and workspace copies resume on reopen. See ADR 0102.
+Resident decoders keep memory leases and per-session thread caps but no
+exclusive job slot while idle, so a single-core allocation can still start an
+export. Already-landed derivatives are adopted before admission (no slot, no
+generation report). Thumbnail publication retries transient file contention up
+to six attempts (50–800 ms backoff); Workspace changes interrupt the wait.
 
-The native resources::Governor is the single working-memory/processing admission
-authority. Native jobs and Electron-held leases use the same ledger. Admission
-precedes managed expensive allocation; release follows teardown, including
-cancellation and errors. IPC owners cannot release other windows' leases. Full
-navigation and renderer death return allocations and remove listeners.
+## Export working set
 
-Memory projection sets 25% aside for picture retention and 40% for admitted work.
-Remaining headroom covers runtime/DOM, demuxers, code, driver overhead and
-estimation error. Export stream capacity is charged within working memory, not
-an additional independent pool. Picture targets are divided across registered
-windows; each cannot claim a full app target. Legacy preview values remain
-additional upper bounds, so raising the app target need not expand every cache.
+WebCodecs export reserves a fixed per-source window before opening a decoder:
+24 frames in flight + 16 codec-private/reorder surfaces + 64 MiB context, at
+4 bytes/pixel of coded size (8 for the 10-bit lane). Pending packets, live
+pictures and async copies share the 24 credits; consumption returns them.
+Planning blocks split at source activation on the output frame grid, so
+sequential clips never hold simultaneous decoder windows. The 1 GiB memory
+floor does not guarantee 1080p export: it projects to 409 MiB of work, while a
+1080p/8-bit window (381 MiB) plus the composition worker (128 MiB) needs 509 MiB.
+Refusal reports recovery options; it never lowers output quality.
 
-Background jobs leave an interactive processing slot when more than one exists.
-Import preparation uses that reserve through a serial, one-thread/128-MiB lane:
-metadata, source hash, GOP probing, audio conform and waveforms may proceed during
-playback, subject to memory pressure and the common allocation. Long transcodes
-and thumbnails remain background work. Workspace copies have a separate serial
-queue and claim one thread for inline hashing plus 8 MiB for bounded buffers;
-they do not wait for transcode slots or take the preparation lane. Copies may
-proceed during playback, while common CPU/memory limits, memory pressure and
-export finalization priority still apply. Waiting copies are cancellable.
-Import requests use a rolling lookahead of
-`max(1, min(cpu_threads, floor(work_mib / 128)))`, shared
-across selections. This bounds request buildup using the existing preparation
-claim; it is not an execution concurrency target or a benchmark-derived optimum.
-Each completion can submit the next path immediately. Memory pressure pauses
-new submissions and setting changes resize the window without cancelling active
-work. Native preparation remains serial to bound disk I/O.
-Native queues admit at most 256 waiters; a 32-slot background entry gate keeps
-bulk import fan-out below that limit, with cancellation while waiting. Oversized
-jobs fail with an actionable error. Interactive waits time out after 15 seconds;
-renderer allocation requests fail promptly when unavailable. Resident decoders
-retain memory leases and per-session thread caps, but not an exclusive job slot
-while idle, so a single-core allocation can still start export.
+Export suspends preview and releases its idle decoder leases before
+preparation; preview resumes after sink finish/cancel and finalization.
+Waiting for the worker to start instead can deadlock encoder admission.
 
-IPC and the native entry validate integer thread/memory claims before NAPI
-conversion. Out-of-range, fractional and non-finite native claims are rejected;
-large JavaScript numbers cannot wrap into a smaller working-memory reservation.
+## Memory telemetry and pressure
 
-WebCodecs export reserves a fixed per-source window before opening the decoder:
-24 frames in flight plus 16 estimated codec-private/reorder surfaces and 64 MiB
-of context overhead. Frame estimates use coded dimensions and 4 bytes/pixel
-(8 for the 10-bit lane). Pending packets, live pictures and asynchronous copies
-share the 24 credits; dispatch does not acquire additional memory. Consumption
-returns credits locally and wakes a parked producer, including across 60-frame
-planning blocks. Long GOPs therefore do not need to be retained in full. The
-window is internal and fixed for a session; the first version has no adaptive
-sizing or global scheduling in the per-frame path. Targets below the combined
-base working set can still fail admission. The 1 GiB settings floor is for
-lighter workloads, not a guarantee of 1080p source export: it projects to
-409 MiB of working memory, while a 1080p/8-bit WebCodecs window (381 MiB) plus
-the export composition worker (128 MiB) already needs 509 MiB before the native
-encoder. Insufficient admission reports recovery options without changing the
-target or reducing output quality.
+Process-tree RSS (Electron plus native children; Linux thread entries
+excluded) and host available memory are sampled once per second through
+sysinfo. This is a conservative pressure signal, not unique physical RAM or VRAM.
 
-GOP preroll is discarded behind the requested source time, retaining its lower
-PTS neighbour. Planning blocks split at source activation/deactivation on the
-output frame grid, so sequential short clips never reserve simultaneous decoder
-windows just because they fall in the same 60-frame block. Inactive sessions
-close before later sources open. Cancellation and terminal errors wake pending
-consumers/producers, and asynchronous copies
-retain their lease until their frames close. Small diagnostic records preserve
-packet counts, per-source peak credits and capacity-wait time across reuse.
+- macOS host availability = Mach VM free + inactive + purgeable pages ×
+  page size, **without** subtracting compressor pages: sysinfo 0.37 subtracts
+  them, which saturated to zero and blocked all admission on an idle Mac.
+- Failed or invalid samples are *unavailable*, distinct from a valid zero.
+- Each signal expires independently after 10 s (`MEMORY_SAMPLE_TTL_MS`, under
+  the 15 s interactive deadline), including while a query hangs; late results
+  are discarded. Expired signals stop contributing pressure; the reservation
+  ledger keeps limiting work.
+- RSS above target, or host available below 256 MiB (critical), closes new
+  admission and halves picture retention. Recovery: RSS below 80 % of target;
+  host above 512 MiB.
 
-Process-tree resident memory (Electron and native children) is sampled once per
-second through sysinfo on all three OSes. Linux thread entries are excluded:
-they share the owning process's RSS and must not each charge it again.
-Shared mappings between separate processes may still be counted twice;
-this is a conservative pressure signal, not unique physical RAM or dedicated
-VRAM usage. The same sample reports available system RAM, including reclaimable
-pages; raw free pages (notably on macOS) are not a pressure signal. macOS uses
-checked Mach VM free, inactive and purgeable pages without subtracting compressor
-occupancy. Failed or invalid host queries report unavailable rather than zero.
-Brief sample failures preserve known pressure. Process and host readings expire
-independently after 10 seconds, including while a query is hung; stale results
-are discarded. Expired readings are reported as unavailable and stop contributing
-pressure, while the native reservation ledger continues limiting work.
-Usage above target or available system memory below 256 MiB closes new admission
-and halves picture retention. The app signal recovers below 80% of target; the
-host signal recovers above 512 MiB. Both must recover or expire to reopen admission.
-See [ADR 0106](adr/0106-memory-telemetry-expires-and-macos-counts-reclaimable-pages.md).
-
-Export suspends preview and releases its idle decoder leases before preparation
-or native encoder admission. Preview resumes after the whole pipeline, including
-sink finish/cancel and finalization, on success or failure. Waiting until the
-export worker starts can deadlock encoder admission behind preview's leases.
-CI uses the same defaults and pressure policy as the app; platform sampling
-errors must not be hidden behind larger test-only budgets or longer timeouts.
-
-Lowering a setting governs new work and safe eviction. Existing resources remain
-charged until released. The app never kills an export or closes a displayed
-picture to force the target. Chromium and GPU drivers own opaque allocations;
-thread requests, bounded queues, estimates and pressure feedback do not create
-an OS-enforced whole-process RAM, CPU-percentage or dedicated-VRAM hard cap.
+CI uses the same defaults and pressure policy as the app; do not hide platform
+sampling errors behind larger test budgets or longer timeouts.
 
 ## Coverage
 
 | Owner | Enforcement |
 | --- | --- |
-| Workspace source copies | Single-worker FIFO, one-thread/8-MiB admission independent of transcode slots; common pressure/CPU/memory limits and cancellable waits. |
-| Native thumbnails, waveform, conform, proxies, scene analysis, speech extraction | Shared background admission and FFmpeg thread requests. |
-| Import metadata/GOP probes and source hashing | Shared background admission, in-flight source deduplication and session cancellation; metadata probes have a timeout. |
-| On-demand frame/filmstrip extraction, audio effects, audio export and mux | Interactive admission, bounded waits and child-lifetime permits. |
-| Native export video sink | Dimension-based working reservation through finish/cancel; encoder thread caps. |
-| Native preview/export decode on all platforms | Metadata-based reservation before session open; thread cap captured at worker creation. Software and hardware copy-back share the gate. |
-| Renderer/worker WebCodecs decode | Resolution-based reservation before decoder creation; worker requests relay to main. Export pending packets, decoded frames and 10-bit copies share accounting, requesting capacity before long-GOP dispatch and returning it after consumption. Chromium controls internal threads. |
-| Windows shared-texture transport | Video/animation byte ledger charged to global working memory; retired imports retain charges until final release. An additional platform adapter, not the portable authority. |
-| Preview pictures | Video rings, animation including gesture overlays, filmstrip, media posters and waveform share retention. Safe trimming keeps pinned pictures accounted. Waveform metadata is bounded and project-pruned. |
-| Renderer source capability probes | Coalesced by source identity, at most two active, decoder/input leases and cancellation on project changes. |
-| Renderer export | Composition/encoder working frames and streamed animation reserve before canvas/worker creation. Byte backpressure rejects oversized animation packets before allocation. |
-| Playback audio | Per-source bounded PCM lookahead reserved before open and released on disposal. |
-| Local speech/video models | Weight/workspace estimate before spawn; thread arguments capped again after admission; CPU fallback reacquires through the same gate. |
-| File import/archive extraction | Copy/hash/extract holds a shared permit; queued import respects cancellation. |
-| Replaceable disk derivatives | Global LRU across registered roots, including renderer animation stores; writes and settings changes trigger maintenance. |
+| Native thumbnails, waveform, conform, proxies, scene analysis, speech extraction | Background admission and FFmpeg thread requests. |
+| Import probes and source hashing | Background admission, in-flight deduplication, session cancellation; probes time out. |
+| Native export video sink | Dimension-based reservation through finish/cancel; encoder thread caps. |
+| Native preview/export decode | Metadata-based reservation before open; thread cap fixed at worker creation. |
+| Renderer/worker WebCodecs decode | Resolution-based reservation before decoder creation; worker requests relay to main. |
+| Windows shared-texture transport | Video+animation byte ledger charged to working memory; retired imports stay charged until final release. |
+| Preview pictures | Video rings, animation, filmstrip, posters and waveforms share retention; pinned pictures stay accounted. |
+| Renderer source probes | Coalesced per source, at most two active, leased, cancelled on project change. |
+| Renderer export | Composition/encoder frames and streamed animation reserve before canvas/worker creation. |
+| Playback audio | Per-source bounded PCM lookahead reserved before open. |
+| Local speech/video models | Weight/workspace estimate before spawn; threads capped after admission; CPU fallback re-acquires. |
+| Replaceable disk derivatives | Global LRU across registered roots; writes and setting changes trigger maintenance. |
 
-Browser composition, DOM/JS heaps, codec-private surfaces and driver allocations
-are covered by aggregate pressure feedback and headroom, not exact accounting.
-Processing effort bounds controlled jobs/thread requests, not the sum of CPU
-utilization across every browser/native thread. Network transfers retain their
-existing bounded/streaming behavior; this setting is not a bandwidth limiter.
+Browser composition, JS heaps, codec-private surfaces and driver allocations
+are covered only by pressure feedback and headroom.
 
-## Disk safety
+## Disk cache safety
 
-The disk setting covers replaceable temporary derivatives, not all installation
-or workspace bytes. Source media, project files, models, canonical audio conforms,
-proxies and paid/generated assets remain protected. Unvisited or disconnected
-workspace roots are not searched or deleted. Export output size follows format
-and duration, not a cache preference.
+The disk setting covers replaceable derivatives only. Source media, project
+files, models, canonical audio conforms, proxies and paid/generated assets are
+never evicted; unvisited or disconnected Workspace roots are not searched.
+Sweeps may briefly exceed the target and evict to 90 % of it. Fresh empty temp
+directories and filmstrip destinations survive (a writer may be about to use
+them). Sweeps skip symbolic links at every level and do not charge linked
+files; this is not a sandbox against concurrent directory replacement.
 
-Sweeps may temporarily exceed target while writes complete and evict to 90% of
-target. Fresh empty temp directories survive before a writer opens its first
-file. Filmstrip destination directories are retained because a writer may be
-about to use them. Cache readers regenerate evicted derivatives; source assets
-are never sacrificed to satisfy a quota.
+## Legacy preview budgets
 
-Cache sweeps skip symbolic links at the cache root, category roots and nested
-entries. Linked external files are neither charged to the quota nor traversed
-for eviction. This protects existing links; it is not a filesystem sandbox
-against another process concurrently replacing directories during a sweep.
+`performance_policy` / `performance_budget` (preview cache, GPU buffer budget,
+decoder limit, buffer frames) predate the resource authority and remain
+compatibility inputs with no UI: legacy values are extra upper bounds beneath
+the app ceiling and never become total app memory. Their runtime fields live in
+`shared/performance-settings.ts` (`PERFORMANCE_FIELDS`); the default hardware
+preview budget is 5 sessions and 3 × 3840 × 2160 coded pixels
+([playback-perf findings](notes/playback-perf-findings-2026-07.md#hardware-admission)).
+Automatic legacy budgets: cache = RAM/8 within 512 MiB and the 1728 MiB
+baseline (scaled above 32 GiB RAM); GPU transport = dedicated VRAM/8, else
+416 MiB. These are heuristics, not measured optima. The shared-texture limit
+covers transport textures only, not total VRAM.
 
-## Compatibility and optional measurements
+## Computer test (experimental, Windows)
 
-resource_policy is independent of legacy performance_policy. Old preview cache
-numbers never become total application memory. Existing APIs and test profiles
-remain compatibility inputs beneath the global ceiling. Opening Settings writes
-nothing; resource edits do not alter decode quality, export format or models.
+**Settings → Performance → Test this computer** measures simultaneous H.264
+4K/60 playback in an isolated Electron calibration host that builds scenes in
+memory and reuses the production decode, GPU IPC, `Compositor` and
+`PlaybackEngine` (no project, import or derivative jobs). macOS reports it
+unavailable (`platform`); Linux hides it unless a saved profile exists.
 
-Windows adapter diagnostics and the optional H.264 4K/60 benchmark retain their
-narrow scope. Saving evidence is separate from applying it; reset retains it.
-Settings also reports Electron's active graphics-adapter identity independently
-of native capacity measurements. Apple Silicon adapters show shared graphics
-memory; this does not invent dedicated VRAM or increase the application budget.
-The isolated benchmark reserves its full fixed workload in the parent authority
-before launch and releases it on exit/cancel; it cannot bypass the app target.
-Applying a test cannot bypass global admission or certify macOS/Linux, other
-codecs or whole-app memory. See [calibration protocol](controlled-playback-calibration.md).
+- Protocol v1 (`shared/playback-calibration.ts`): always runs counts 1–8 in
+  order; nothing (hardware, history, user budgets, earlier cells) selects a
+  start or skips a cell. Per cell: start at 2 s, 1.5 s warm-up, 8 s sample,
+  4×2 layout in a 3840×2160/60 fps composition on a 1280×720 canvas.
+  Thresholds (≤ 2 % dropped+late, ≤ 100 ms longest hold) are experimental.
+- Decoder identity comes from each session's D3D11 device; missing identity,
+  device change, software fallback or a broken pipeline invalidates the cell.
+- The parent reserves the run's full working set in the authority before
+  launch; insufficient capacity rejects the whole run. A 6-minute watchdog
+  bounds it; app exit cancels it.
+- Recommendation: the contiguous passing prefix sets `maximum`
+  (`preview_gpu_sessions`, `preview_gpu_pixel_area`); only `maximum` is applied.
+  All-slow yields a one-video *conservative* result, not a pass; invalid or
+  missing cells yield none.
+- **Save recommendation** stores the profile (recommendation, current cache
+  budget, machine id, app version, protocol). **Apply test profile** applies it
+  as throughput guards; it is disabled when machine/build/protocol differ.
+  Restore defaults keeps the profile; **Clear test record** deletes it. A test
+  never certifies other codecs, macOS/Linux or whole-app memory.
+- Reference media is generated on first use with the bundled FFmpeg into the
+  app cache (`performance-calibration/`) and reused only when recipe, FFmpeg
+  hash, size and SHA-256 match. Run reports go to the OS temp directory under
+  `weftcut-performance-calibration/run-*`.
 
-## Verification
+Developer runner (from `apps/desktop`, after `napi:build:decode` and
+`build:e2e`): `npm run bench:calibration:reference`, then
+`npm run bench:calibration:controlled [-- --plan-only]`. Reports land in
+`.scratch/performance-calibration/controlled-<timestamp>/`; the CLI never
+applies settings. Past observations:
+[calibration observations](notes/performance-calibration-observations-2026-10-05.md).
 
-Policy/persistence tests cover machine scaling, migration, restart, invalid edits
-and resets. Native tests cover combined memory, single-core mixed workloads,
-pressure recovery, limit reduction and cancellation. IPC tests cover ownership,
-reload and crashes. Cache tests cover retained references, multiple disk roots
-and concurrent writers. Electron E2E checks controls, persistence, real native
-admission, process-tree telemetry and reload cleanup without platform skips.
-These tests join the existing Windows/macOS/Linux CI matrix. Local Windows
-results do not constitute macOS/Linux execution evidence.
+## Hardware view and diagnostics
 
-See [ADR 0101](adr/0101-cross-platform-application-resource-authority.md).
+The Performance page starts with CPU, system memory and the devices reported
+by open preview decode sessions (read from the live preview handle, so probes
+and Chromium's rendering adapter cannot masquerade as decode use). On Linux a
+**Hardware diagnostics** dialog shows per-device identity (DRM sysfs, PCI
+database), memory sources (NVML if loadable, amdgpu sysfs, i915/xe regions;
+Intel free-memory counters deliberately omitted), browser render API status
+and per-backend codec probes. Missing libraries or permissions leave values
+unknown with a reason; nothing is privileged or guessed.
 
-## Linux hardware diagnostics
-
-The hardware view identifies each graphics device independently from its
-rendering and codec capability. DRM sysfs supplies stable device/PCI identity;
-Electron's active vendor/device IDs are matched only when unambiguous. A local
-PCI database supplies names when Chromium omits them. NVIDIA NVML is loaded
-optionally, AMD local-memory counters come from amdgpu sysfs, and Intel i915/xe
-memory-region queries distinguish shared system memory from dedicated memory.
-Missing libraries, driver interfaces and permissions preserve unknown values
-with a reason; no CLI installation, privileged query or guessed capacity is
-required. Intel free-memory counters are deliberately omitted because their
-unprivileged values can be misleading. AMD local-memory capacity is reported as
-the driver's local pool, without asserting that an APU has independent VRAM.
-
-Capacity, whole-device usage/free memory, application resource targets and
-transfer-buffer accounting are different measurements. Opening this page does
-not change the saved policy or allocate a fraction of reported VRAM. A device
-name or Chromium feature flag does not prove that a codec uses that device.
-
-Renderer diagnostics exercise WebGL2 pixel readback and WebGPU buffer readback,
-including software adapters and missing/failed adapter requests. Explicit
-**Test acceleration** checks short synthetic 640×360 8-bit H.264/HEVC/VP9
-sources through the production Standard-engine hardware probes and eligibility
-rules. Encoding diagnostics reuse the FFmpeg encoder registry's real probes
-for H.264 8-bit and HEVC 8/10-bit, without publishing export selections or
-poisoning production capability caches with diagnostic timeouts. These results
-measure availability, not throughput, seek conformance or every clip's current
-backend. Linux export decode remains software; preview uses copy-back.
-
-Inventory refreshes are coalesced and cached for ten seconds. GPU-info changes
-invalidate both inventory and probe evidence. Codec tests are explicit,
-coalesced across windows, and run in a dedicated utility process under common
-processing/memory admission. A 90-second deadline kills the diagnostic process
-group, including FFmpeg children; temporary fixtures are removed and admission
-is released after host exit. Driver calls never block the editor's main thread.
-Timed-out native memory queries remain coalesced until they drain.
-
-**Shared texture transfer buffers** describes the existing Windows shared-texture
-ledger, not total GPU usage. This counter is hidden on copy-back platforms.
-The separate multi-stream playback calibration remains Windows-only; Linux
-codec diagnostics do not apply that calibration's resource recommendations.
-Linux hides the unsupported playback benchmark when no saved profile exists;
-existing profiles remain visible for review, restoration or explicit clearing.
-The performance page starts with CPU, system memory and the devices reported by
-the open preview decode sessions. It reads the existing preview handle, so
-diagnostic probes and Chromium's rendering adapter cannot masquerade as current
-decode use. VAAPI matches its explicit render node; NVDEC is named only when a
-single NVIDIA device is identified. Browser-managed or ambiguous devices remain
-unconfirmed. Paused previews can retain sessions; disposed/failed/unopened
-sessions are omitted. Driver versions, PCI identity,
-memory usage and sources, browser/render API status and per-backend codec probes
-live in a separate **Hardware diagnostics** dialog, including the explicit
-capability test action. Resource controls and cache usage follow the computer
-section. These views do not change the existing decoder selection policy.
+Inventory is cached for 10 s. **Test acceleration** runs 640×360 8-bit
+H.264/HEVC/VP9 fixtures through the production Standard-engine probes and the
+FFmpeg encoder registry probes, in a utility process under common admission,
+with a 90 s deadline that kills the process group. Results measure
+availability, not throughput, and do not poison production capability caches.
+Electron's active graphics adapter is shown independently of native capacity;
+Apple Silicon shows shared graphics memory, never an invented dedicated VRAM.
+These views never change the saved policy or decoder selection. The
+**Shared texture transfer buffers** counter is hidden on copy-back platforms.

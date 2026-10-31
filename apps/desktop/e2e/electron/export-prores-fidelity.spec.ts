@@ -218,7 +218,7 @@ test.describe('export ProRes fidelity gates (Electron)', () => {
   // its output must sit strictly farther from the source.
   test('native pin beats the proxy path on SSIM to source (differential)', async ({}, testInfo) => {
     // No per-OS skip: both legs must run on every platform
-    // (docs/notes/linux-lite-export-off-by-one-tail.md carries the
+    // (docs/notes/export-webcodecs-tail-alignment-2026-07-23.md carries the
     // tail-alignment investigation that once argued for one).
     // Two full exports + analysis. The webcodecs leg additionally blocks on
     // the import-time auto-enqueued full ProRes proxy transcode (blind-spot

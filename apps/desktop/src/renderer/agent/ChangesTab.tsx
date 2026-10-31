@@ -13,7 +13,8 @@ import { setReviewFocus, setReviewHover, useReviewFocus } from './reviewFocus'
 
 /** The Changes tab of the shared agent panel (ADR 0115): what differs from the
  *  Review baseline because an agent touched it, grouped by composition and in
- *  timeline order; locate is the editor's alone (ADR 0065).
+ *  timeline order; locate is the editor's alone
+ *  (docs/mcp.md#agent-panel-and-lifecycle).
  *
  *  The list is settled as a whole, never row by row: Approve all makes the
  *  current state the baseline, Revert all restores the baseline as one

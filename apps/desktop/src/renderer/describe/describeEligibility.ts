@@ -49,7 +49,7 @@ export type DescribeState =
   | "already_running";
 
 /// The order of the checks is the order the instructions get harder: select
-/// something, select a picture clip, then go and split a speed-1 segment off it.
+/// something, then select a picture clip.
 /// `inFlight` is checked LAST — "a run is already going" is only worth saying
 /// about a selection that could otherwise be described.
 ///

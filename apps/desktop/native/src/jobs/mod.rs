@@ -102,7 +102,7 @@ pub const EVENT_ERROR: &str = "media:job_error";
 /// The authority owns thread, memory, playback and pressure checks. For
 /// derivatives only: compute a person is waiting on (transcription audio,
 /// description frames) takes `resources::user_compute` so it never queues
-/// behind them (ADR 0120).
+/// behind them (docs/performance-settings.md#admission-lanes).
 pub(crate) fn ffmpeg_sem() -> &'static crate::resources::BackgroundGate {
     &crate::resources::BackgroundGate
 }

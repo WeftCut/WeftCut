@@ -7,7 +7,8 @@ import {
 /// `"spawn"` is the placement policy's fourth answer: no lane can take this
 /// clip, so one is made for it. It is what the command path has always done
 /// internally (`main/state/commands.ts`'s reverse scan appends a lane when
-/// nothing is free) and what the drop path could not say — see ADR 0042.
+/// nothing is free) and what the drop path could not say — see
+/// docs/features.md#track-placement.
 export type PlacementValidity = "valid" | "collision" | "locked" | "spawn";
 
 /// Placement target standing in for "a lane that does not exist yet" — the drop

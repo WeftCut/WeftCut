@@ -46,8 +46,9 @@ export const HISTORY_SUMMARY = {
   // pause cut's entry. Its own label because "split by shots" would name a
   // detector the edit never ran.
   layerSplitAndRipple: { key: 'history.layer.split_and_ripple', text: 'Split clip and closed the gaps' },
-  // A selected gap closed (ADR 0069). Its own group rather than a `layer.*`
-  // key: the subject of the edit is the gap, and no layer was deleted.
+  // A selected gap closed (docs/features.md#ripple-delete). Its own group
+  // rather than a `layer.*` key: the subject of the edit is the gap, and no
+  // layer was deleted.
   gapClose: { key: 'history.gap.close', text: 'Closed gap' },
   layerUpdate: { key: 'history.layer.update', text: 'Updated clip' },
   layerUpdateParams: { key: 'history.layer.update_params', text: 'Updated clip params' },
@@ -65,7 +66,7 @@ export const HISTORY_SUMMARY = {
   trackMove: { key: 'history.track.move', text: 'Moved track' },
   trackRename: { key: 'history.track.rename', text: 'Renamed track' },
   /** Not `Added caption track`: the cues pack into a caption track already there
-   *  when it has room (ADR 0070), so a track is opened only sometimes and the row
+   *  when it has room (ADR 0026), so a track is opened only sometimes and the row
    *  names what always happened. */
   trackAddCaption: { key: 'history.track.add_caption', text: 'Added captions' },
 

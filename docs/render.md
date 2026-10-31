@@ -1,1048 +1,526 @@
 # Render
 
-The PixiJS + WebCodecs renderer. One module produces every frame the
-user ever sees — in the live preview surface and in the export
-Worker. Preview pixels equal export pixels by construction.
+The PixiJS renderer. One module (`apps/desktop/src/renderer/render/`)
+produces every visual frame — in the preview surface and in the export
+Worker — so preview pixels equal export pixels by construction.
 
-This doc covers the architecture. For the preview-side mount + clock
-+ transport see [`preview.md`](preview.md). For the audio export +
-final mux see [`export.md`](export.md).
+Preview mount, clock, transport and decode engines: [`preview.md`](preview.md).
+Audio: [`audio.md`](audio.md). Audio export and final mux: [`export.md`](export.md).
+Motif capture and caching: [`motifs.md`](motifs.md).
 
 ## Boundaries
 
-- **In scope:** visual compositing — video clips, image overlays,
-  text (including caption cues), color fills, transforms, opacity, blend
-  modes, transitions.
-- **Out of scope:** audio (the buffer-scheduled Web Audio preview mixer
-  + Rust export mixer; [`audio.md`](audio.md)), file muxing (handled by
-  ffmpeg `-c copy`), source probing / proxy generation / waveforms /
-  thumbnails (all Rust-side).
-- **Per-layer effects:** each layer carries an ordered `effects` chain of
-  Pixi filters, drawn from a catalog spanning four picker categories — blur,
-  keying, colour, stylise. Two catalog entries are shaders authored here
-  (chroma key, sharpen); the rest wrap stock Pixi filters. The compositor
-  attaches them to the layer's sprite per frame; the renderer owns the filter
-  *catalog* (`render/effects/effectRegistry.ts`) while the project state holds
-  the effect *instances* and their keyframeable params (authored in the TS
-  actor, mirrored to Rust for export). See
+- **In scope:** visual compositing — video clips, images, text (caption cues
+  are ordinary Text layers), color fills, Motifs, Groups, transforms,
+  opacity, blend modes, per-layer effects, transitions.
+- **Out of scope:** audio, muxing, probing / proxies / waveforms /
+  thumbnails (Rust side).
+- **Per-layer effects** are Pixi filter chains. Project state holds the
+  instances and their keyframeable params; the renderer owns the catalog
+  (`effects/effectRegistry.ts`: blur, chroma key, sharpen, brightness,
+  contrast, saturation; chroma key and sharpen are shaders authored here).
+  `EffectChain` caches filters per layer. See
   [ADR 0027](adr/0027-per-layer-effects-pixi-filter-chains.md).
+- **Crop** is the last filter on a video sprite: after the effect chain,
+  before transition capture, and applied even when preview effects are
+  bypassed. One cached `CropFilter` per layer (`render/CropFilter.ts`,
+  `CompositionNode.stageVisual`) multiplies premultiplied RGBA by an
+  analytically antialiased coverage; export runs the same filter. Preview
+  reads the in-progress draft from `cropEditingStore`.
 
 ## Directory layout
 
 ```
-apps/desktop/src/renderer/render/
-  Compositor.ts              — PixiJS Application owner; shared services; per-frame composite
-  CompositionNode.ts         — one composition INSTANCE's sprites, mixers and Container; the two sweeps
-  compositionWalk.ts         — THE recursive walk over a project's layers (offset + window + per-instance key)
-  clock.ts                   — audio-master clock (anchor-derived; wall fallback)
-  PlaybackEngine.ts          — visual attachment to the session transport
-  decoder/
-    SourceDecoderPool.ts     — per-clip VideoDecoder + ring; refcounted shared mediabunny Input per source; idle-dispose
-    mediaInput.ts            — opens a mediabunny Input over a weftcut-media:// Range CustomSource (AssetRangeSource)
-    PacketPump.ts            — single-flight async packet→decoder loop (getKeyPacket/getNextPacket)
-    probeSourceDecodable.ts  — export pre-flight: can this machine's WebCodecs decode the original?
-    FrameRing.ts             — 1 s lookahead / 0.5 s lookbehind per clip; stores ImageBitmap snapshots
-    scrub.ts                 — debounced scrub coalescer (decode-during-drag)
-  sprite/
-    CompositionRefSprite.ts  — a Group layer's picture: a child CompositionNode rendered to a RenderTexture
-    VideoClipSprite.ts
-    ImageOverlaySprite.ts
-    TextSprite.ts
-    MotifSprite.ts           — binds a Motif's captured PNG frame as a texture
-    ColorSprite.ts
-  fonts/
-    registry.ts              — THE font authority: bundled bytes + OS resolution
-    loadFontsIntoFaceSet.ts  — FontFace registration (document.fonts / self.fonts)
-    lineBreak.ts             — realm-global CJK break hook (see Text layout below)
-  motifs/                    — Motif raster cache + frame descriptor helpers
-                               (capture/cache pipeline covered in motifs.md)
-  worker/
-    exportWorker.ts          — Worker entry; imports Compositor against OffscreenCanvas
-    encoder.ts               — VideoEncoder config + mediabunny Output mux into video.mp4
-    protocol.ts              — postMessage protocol (start/cancel/progress/chunk/done)
-  audio/
-    PreviewAudioEngine.ts    — session transport, clock, PCM preparation/scheduling
-    previewAudioSession.ts   — App/store/meter wiring, independent of panel lifetime
-    AudioGraph.ts            — master bus (meter + soft limiter)
-    AudioMixer.ts            — per-layer buffer-scheduled playback
-    conformSource.ts         — VCONF Range reader (zero decode)
-    chunkSchedule.ts         — pure scheduling math
-    envelope.ts              — sampled-envelope contract (grid/fades in TS;
-                               dB + keyframe math via the eval wasm leaf)
+render/
+  Compositor.ts          Pixi Application owner; shared services; per-frame composite
+  CompositionNode.ts     one composition INSTANCE's sprites and Container
+  compositionWalk.ts     THE recursive walk over a project's layers
+  resolveView.ts         AnimTrack → scalar view per layer (incl. text presets)
+  animated.ts            keyframe resolution via the shared eval wasm
+  PlaybackEngine.ts      visual attachment to the session transport
+  decoder/               preview decode (SourceDecoderPool, FrameRing, PacketPump,
+                         MediaRangeSource, scrub) and export decode (ExportDecoderPool)
+  sprite/                one Sprite per visual kind + CompositionRefSprite (Groups)
+  effects/               filter catalog + chains
+  transitions/           the two-input transition node + RT pool
+  fonts/                 font registry, FontFace loading, CJK line-break hook
+  motifs/                Motif frame reader, prewarm/bake planners, raster cache
+  nv12/ tenbit/ yuv/     owned ingest shaders and export pack passes
+  worker/                export Worker entry, encoder, protocol, native decode relay
+  audio/                 preview audio (audio.md)
 ```
-
-Audio architecture detail (conform cache, envelope contract, the Rust
-export mixer): [`audio.md`](audio.md).
 
 ## Compositor
 
-`Compositor` owns a PixiJS `Application` (or the headless equivalent
-in the export Worker). Its public surface:
+`Compositor` owns a Pixi `Application` (an `OffscreenCanvas` one in the export
+Worker). It is constructed with the mode (`preview` | `export`) and media
+resolvers (`resolveSource`, `proxyAssetUrl`, `originalAssetUrl`), and holds
+what every node shares: the decoder pool, ingest shaders, Motif planners,
+underrun accounting. Main entry points: `setProject(summary, openId?)`,
+`compositeFrame(tUs)`, `setAnchorTime(tUs)`, `naturalSizeOf(layerId)`,
+`textFitOf(layerId)`.
 
-```ts
-class Compositor {
-  // `openId` names the composition to draw; omitted / unknown ⇒ the root.
-  setProject(summary: ProjectSummary, openId?: string | null): void;
-  setMediaSources(urls: Record<MediaId, string>): void;
-  render(tUs: number): void;          // composite one frame at this time
-}
-```
+`setProject` with the same composition reconciles the node: removed layers
+dispose their sprites, new layers spawn one on the next sweep, survivors are
+patched in place. A different composition rebuilds the node, because every
+sprite and decode session belonged to the timeline being left.
 
-The Compositor draws ONE composition through a `CompositionNode`, and holds
-what every node shares: the decoder pool, the ingest shaders, the audio bus,
-the Motif prewarm/bake planners, underrun accounting, presentation state.
+Each frame, every layer's `AnimTrack<T>` properties resolve at layer-local
+time through `resolveView.ts` → `animated.ts` (`resolveAnimated`,
+`resolveAnimatedColor` in OkLab with premultiplied alpha), both calling the
+shared `weftcut-eval` wasm — the same crate Rust links natively, so preview,
+export and Rust share one keyframe engine
+([ADR 0025](adr/0025-shared-eval-wasm-leaf-crate.md)). The curve editor
+samples through the same wasm. Golden fixtures (`animatedGolden.fixture.json`,
+`animatedColorGolden.fixture.json`) are asserted by both the TS and Rust suites.
 
-Each call to `setProject` hands the node a new snapshot: layers that
-disappeared dispose their sprites, new layers spawn a Sprite of the right
-kind on the next sweep, survivors get their `LayerSummary` patched in place.
-Z-order follows the track + within-track index the project summary already
-carries. A `setProject` naming a DIFFERENT composition rebuilds the node
-instead — every sprite, mixer and decode session belonged to the timeline
-being left.
+**Known limit:** the wasm evaluator holds at most 4096 keyframes per animated
+property (`MAX_RESIDENT_KEYFRAMES`, `native/eval/src/lib.rs`). Beyond that the
+preview truncates (one `console.warn`, `MAX_KEYFRAMES` in `renderer/eval`)
+while native export evaluates every key, so the two would diverge; Path-to-XY
+baking refuses a conversion past the bound.
 
-`render(tUs)` walks the node's layers in z-order. For each layer the
-Compositor first resolves the view's `AnimTrack<T>` properties at the
-layer-local time via `render/resolveView.ts` — numeric tracks through
-`render/animated.ts`'s `resolveAnimated`, color tracks through its
-`resolveAnimatedColor` twin (OkLab + premultiplied alpha), both calling
-the shared `weftcut-eval` wasm (the SAME crate Rust links natively, so
-there is one keyframe engine, not a hand-mirrored pair;
-[ADR 0025](adr/0025-shared-eval-wasm-leaf-crate.md)) — then
-hands the resolved scalar view to the sprite to update its texture /
-position / opacity / transform / blend mode. The leaf resolves
-`Bezier{p1,p2}` segments (including every baked named preset — see
-`src/shared/easing.ts`) through one WebKit-`UnitBezier` cubic solver
-(Newton–Raphson with binary-search fallback), and the procedural
-`Elastic`/`Bounce` segments through closed-form Penner math on the same
-libm-only discipline, so spline and parameter curves alike are identical
-in preview, export, and Rust by construction. The curve-graph editor
-overlay samples its curves through the same wasm eval — there is no JS
-solver copy anywhere. The golden-vector fixture
-(`render/animatedGolden.fixture.json`) is a single-source regression:
-the TS suite (`animated.golden.test.ts`, through wasm) and the Rust leaf
-test both assert the wasm/native engine reproduces it, spline and
-procedural cases alike.
-
-**Known limit:** the wasm evaluator holds at most 4096 keyframes **per animated
-property** (one `AnimTrack` — e.g. a single layer's opacity or x, NOT a whole
-track or clip; mirrors `MAXKF` in `native/eval/src/wasm.rs`). It is a
-static-allocation backstop for the no_std wasm. Path-to-XY baking refuses a
-conversion beyond this bound. Beyond 4096 a programmatic track truncates while
-native export still evaluates every keyframe, so the two would diverge;
-`loadTrack` (`MAX_KEYFRAMES`) emits a one-time `console.warn` if a property ever
-exceeds it. A general paged or dynamic track buffer remains future work.
-
-Position resolves through one XY-or-Path interface. Paths compile Line/Cubic
-geometry to a distance table in the Rust eval leaf (adaptive subdivision,
-0.01 px flatness target, depth limit 9). The Wasm adapter caches that table by
-immutable geometry and restores it when another layer used the resident buffer.
-Progress changes reuse the geometry. Preview and the export worker use the same
-resolver; editor-only position previews live outside the project and outside
-the export worker. The tolerance is a subdivision target, not a global error
-bound at arbitrarily large coordinates.
+Position resolves through one XY-or-Path interface. Paths flatten Line/Cubic
+geometry to a distance table in the eval leaf (`path.rs`: 0.01 px target,
+depth limit 9); the wasm adapter caches the table per immutable geometry. The
+tolerance is a subdivision target, not a global error bound.
 
 ### Compositions: the recursive composite
 
-A **Group** is a composition placed as one media-bearing layer
-(`CompositionRef`) in another; the root and every Group share one shape
-(`Project.compositions` + `root_id`), so there is one drawing path, entered at
-a different node ([ADR 0052](adr/0052-link-propagates-group-composes.md)).
+A **Group** is a composition placed as one `CompositionRef` layer in another;
+the root and every Group share one shape, so there is one drawing path
+([ADR 0052](adr/0052-link-propagates-group-composes.md)).
 
-- **One `CompositionNode` per Group LAYER**, not per composition. Two
-  placements of one composition sit at different offsets, so at a single
-  playhead they show two different frames of the same content — two decode
-  positions, two rings, two sets of sprites. Anything a node hands to a shared
-  service is keyed per instance: `instanceKey(path, layerId)`, which is the
-  bare layer id at the root, so a flat project's pool and bake keys are
-  unchanged.
-- **Render to texture.** `CompositionRefSprite` composites its child node into
-  a `RenderTexture` of the composition's own `width × height` and shows it in
-  one `Sprite`, which the parent stages through the same `stageVisual` every
-  other visual kind goes through — so transform, opacity, blend, the effect
-  chain and the transition divert apply to one flat image, and a Group's own
-  transitions resolve inside its frame before the parent sees it. Nesting
-  therefore composes transforms by construction. The target is 8-bit
-  (`bgra8unorm` on WebGPU — the same pipeline constraint the transition node
-  hits), so the 10-bit lane quantizes through a Group.
-- **Time.** Parent `t` ↔ child `t − t_start + src_in`, re-snapped to the
-  shared lattice on the way down (`compositionLocalUs`): grid anchors are
-  `round(frame × 1e6 × den / num)`, so an offset that is itself a difference
-  of anchors lands a µs off the child's own grid, and a child layer starting
-  there would read as not yet active for exactly one frame. Past the
-  composition's `duration_us` the node composites nothing and the texture
-  clears to transparent — overhang is tolerated in state and rendered as
-  nothing.
-- **Audio** runs in the same recursion: a layer inside a Group is placed at
-  its root-time interval, clipped to the Group's window, and reads its source
-  `headUs` in — so the mixers need no notion of Groups. `enabled = false` on
-  the Group layer silences everything below it that same frame.
-- **Preview draws its RENDER TARGET** (`state/compositionAnchorStore.ts`) — the
-  composition it is locked to, or the focused one while it follows focus (the
-  default). The frame size, the fps binding and the engine's clock all follow
-  the target, so entering a Group shows its content unscaled at its own size,
-  while a lock on the root keeps the whole film on screen while a Group's
-  timeline is edited. A locked target may have no timeline Panel at all — that
-  is what locking is for — so its route to the root comes from
-  `pathToComposition` rather than from any Panel's anchor. **Export always draws
-  the root**, whatever has focus and whatever the preview was pointed at: a
-  Group is a source, and a file of one alone is a file nobody asked for.
-- **Every flat `tracks[].layers[]` walk that has to see inside a Group** goes
-  through `compositionWalk.ts` — the export decode set and the emptiness gate
-  (`activeVideoLayers.ts`), the Motif pre-bake (`exportBake.ts`), font
-  collection (`worker/runExport.ts`), the Motif prewarm/bake planners. It
-  reports each leaf at its ROOT-time placement, clipped to the intersection of
-  the entered Groups' windows, with what the clipping cut off the head and
-  tail; a consumer turns that into a source trim. The Compositor's own sweep
-  does not use it: a node walks its one composition and recurses through its
-  child nodes, because it owns sprites per instance. Twin:
-  `native/src/audio/mix.rs` `for_each_audio_layer` — same offset and window
-  convention, same depth cap (`MAX_COMPOSITION_DEPTH`).
+- **One `CompositionNode` per Group layer**, not per composition: two
+  placements of one composition show different frames at one playhead. Shared
+  services key per instance with `instanceKey(path, layerId)` — the bare layer
+  id at the root.
+- **Render to texture.** `CompositionRefSprite` composites its child node
+  into a `RenderTexture` of the composition's size and stages it through the
+  same `stageVisual` as every other kind, so transform, opacity, blend,
+  effects and transitions apply to one flat image. The target is 8-bit
+  (`bgra8unorm` on WebGPU), so the 10-bit lane quantizes through a Group.
+- **Time.** Child `t = parent t − t_start + src_in`, re-snapped to the shared
+  lattice (`compositionLocalUs`) — without the re-snap a child layer starting
+  on an anchor difference reads one frame late. Past the composition's
+  `duration_us` the texture is transparent.
+- **Audio** runs the same recursion (`native/src/audio/mix.rs`
+  `for_each_audio_layer`, same offsets and window, same depth cap
+  `MAX_COMPOSITION_DEPTH`); a disabled Group layer silences everything below.
+- **Preview draws its render target** (`state/compositionAnchorStore.ts`): the
+  locked composition, or the focused one by default. Frame size, fps and
+  clock follow the target. **Export always draws the root.**
+- Every flat walk that must see inside Groups goes through
+  `compositionWalk.ts` (export decode set and emptiness gate in
+  `activeVideoLayers.ts`, Motif pre-bake in `exportBake.ts`, font collection,
+  Motif planners). It reports each leaf at its root-time placement, clipped to
+  the entered Groups' windows, with the head/tail cut. The Compositor's own
+  sweep recurses through child nodes instead, because it owns sprites per
+  instance.
 
 ### Keyframe easing authoring
 
-Easing is shown and edited directly on the timeline. Each animated property's
-keyframe sub-lane draws its value over time as a curve; focusing a property
-expands its lane and exposes a tangent handle on each side of a Spline key —
-left of a key its arriving side (`in`, the arriving cubic's own control point,
-drawn where it sits), right of it the leaving side (`out`). Dragging a handle
-rewrites that ONE side of that key through `setTangent`: the curve follows live
-from the returned track, and a single commit lands on release. A side main
-solves (mode Auto) is drawn greyed (`.kf-handle-auto`); grabbing it makes the
-key Free, the After Effects convention. A key whose continuity is Smooth rotates
-its other side to the same value slope while one is dragged, so the pair is
-already consistent when main's "out wins" re-solve reads it; right-clicking a
-handle offers Smooth / Broken for that key (`ContinuityMenu`). Outside the
-first and last key the track's extrapolation is drawn as a dashed tail
-(`.kf-curve-extrap`) sampled through the same `resolveAnimated` the preview
-runs — the engine owns Loop's jump, PingPong's mirror, Offset's climb and
-Continue's line — from the layer's start to the first key and from the last key
-to the layer's end, and the value range widens to hold it. No ghost diamonds: a
-non-Hold side is announced by one mark beside its end key (`↻ ↔ ⤴ →`,
-`EXTRAP_GLYPH_GAP_PX` from the diamond) on both the collapsed in-clip row and
-the sub-lane.
+User-facing behavior: [`features.md`](features.md#keyframe-curves). Mechanics:
 
-Right-clicking a keyframe or segment opens a two-tier menu (`EasingMenu`).
-Tier 1 is a Base UI menu with the NLE-conventional command list — Linear / Hold
-/ Ease In / Ease Out / Ease In-Out / Smooth — plus, on a track's first or last
-key, the Extrapolate before / after submenus. Linear and Hold write the segment
-class leaving each selected key; a named ease writes `this.out`, `next.in` and
-`Spline`, both sides Free; Smooth marks the selected keys Auto with Smooth
-continuity and leaves the numbers to main's write-time solve — self-maintaining,
-not a one-shot bake — and is checked when every selected key has an Auto side.
-The exact reverse lookup over `(this.out, next.in)` checkmarks the current
-preset (a gallery-only preset checkmarks the "Easing library…" row instead);
-with several keys selected the menu reports no current easing. Every row is a
-batch: the selection is folded per `(layerId, paramKey)` in `keyframeBatch.ts`
-and committed as one `update_param_tracks_multi`. Arming any row — pointer or
-keyboard — previews the same fold, run through the shared tangent solver, on
-every selected group via `easingPreviewStore`, a per-`(layerId, paramKey)` map
-the curve graph and the in-clip diamond row read in place of the committed
-track; the preview is dropped on commit, on leave and on close. Tier 2, behind
-the library row, is the full canonical preset table as a family-grouped grid of
-curve thumbnails, each sampled through the same wasm eval that draws the
-timeline curve; hovering a thumbnail previews it the same way, and an Elastic
-keyframe's amplitude/period sliders sit at the top of the gallery. Keyframe
-markers also glyph-code their outgoing segment class, per the Premiere
-convention: diamond = linear, square = hold, circle = eased (`interpGlyphClass`),
-on both the collapsed in-clip row and the sub-lane dots.
-
-Each expanded sub-lane header also carries an After Effects-style keyframe
-navigator — `◄ ◆ ►` — to the left of the property name. The arrows seek the
-playhead to the previous / next keyframe of that property and select it; the
-middle diamond toggles a keyframe at the playhead (filled when one sits there →
-click removes it; hollow → click adds one at the current value), and is disabled
-when the playhead is off the clip. The navigator acts on the focused clip, or
-the sole keyframed clip when a track row spans several. Unlike the inspector
-stopwatch, which turns a property's animation on or off, the navigator only adds
-and removes keys on an already-animated property.
-
-The same expanded sub-lane header also exposes the property's value at the
-playhead as a compact, editable number field beside the navigator — on the
-focused row only; collapsed rows stay navigator-and-label. Typing a value, or
-stepping it with the arrows, writes a keyframe at the playhead (creating one if
-none sits there, updating it if one does) — the same auto-key the inspector
-performs — and the field is disabled when the playhead is off the clip. The
-inspector's value rows and this timeline field are one shared control,
-`KeyframeField`, driven by each property's descriptor (which widgets — number,
-slider, readout — plus step and bounds); the inspector wraps it with the
-stopwatch, the timeline renders it compact without one.
-
-A colour property's row swaps the value graph for a gradient strip (`ColorLane`).
-The strip is a tiled `<canvas>` spanning the clip, one sample per DEVICE pixel
-column through the same `resolveAnimatedColor` the preview runs, so what the
-lane shows is what the frame shows, OkLab mix and all. It repaints when the
-track, an armed gesture's preview, the zoom, the scroll position or the device
-pixel ratio changes, and only for the tiles the viewport can see. Diamonds sit
-over it with the same glyph coding, selection, menus and extrapolation marks a
-numeric lane has; there are no tangent handles and no curve, because a colour
-has no single axis to plot. The row's header field is the compact swatch rather
-than a number field, bound to the same auto-key rule, and the navigator's middle
-diamond writes the colour the engine resolves at the playhead.
+- Focusing a property expands its sub-lane into a value graph
+  (`timeline/KeyframeCurveGraph.tsx`) with a tangent handle per side of each
+  Spline key. A drag rewrites one side via `setTangent` live and commits once
+  on release. Auto sides draw greyed (`.kf-handle-auto`); grabbing one makes
+  the key Free. With Smooth continuity the other side is rotated to the same
+  slope during the drag; `ContinuityMenu` switches Smooth / Broken.
+- Extrapolation outside the end keys is drawn dashed (`.kf-curve-extrap`),
+  sampled through the same `resolveAnimated` the preview runs, with one mark
+  beside the end key (`↻ ↔ ⤴ →`).
+- `EasingMenu`: tier 1 is Linear / Hold / Ease In / Ease Out / Ease In-Out /
+  Smooth (+ Extrapolate before/after on end keys); tier 2 is the preset
+  gallery, thumbnails sampled through the wasm eval. Every row folds the
+  selection per `(layerId, paramKey)` in `keyframeBatch.ts` and commits one
+  `update_param_tracks_multi`. Arming or hovering a row previews through
+  `easingPreviewStore`, which the curve graph and diamond row read in place of
+  the committed track. Smooth marks keys Auto and leaves the numbers to main's
+  write-time solve.
+- Marker glyph = outgoing segment class (`interpGlyphClass`): diamond linear,
+  square hold, circle eased.
+- The sub-lane header carries the `◄ ◆ ►` navigator and a compact value field;
+  inspector rows and this field are one control (`components/KeyframeField.tsx`),
+  and editing it auto-keys at the playhead.
+- A colour property draws a gradient strip (`timeline/ColorLane.tsx`): tiled
+  canvas, one `resolveAnimatedColor` sample per device-pixel column, repainted
+  only for visible tiles. No curve or tangent handles.
 
 ## Decoder pool
 
-`SourceDecoderPool` is two-tiered. Decoders + frame rings are keyed
-by `layerId` (one `SourceHandle` per clip), while the underlying
-mediabunny `Input` + `EncodedPacketSink` (and the resolved
-`VideoDecoderConfig` from `getDecoderConfig()`) live on a refcounted
-`SourceMedia` keyed by `mediaId`. Multiple clips of the same source —
-including overlapping copies on different tracks — each get their own
-`VideoDecoder` / `FrameRing` / `PacketPump` but share one opened input.
+`SourceDecoderPool` holds one decode handle per **clip** (`layerId`): a
+`SourceHandle` (WebCodecs, the Lite engine) or an `FfmpegSource` (native, the
+Standard engine; [`preview.md`](preview.md#decode-engine)). WebCodecs handles
+of one source share a refcounted `SourceMedia` (mediabunny `Input` +
+`EncodedPacketSink` + decoder config) keyed by `mediaId`, but each owns its
+`VideoDecoder`, `FrameRing` and `PacketPump`.
 
-A decoder is created on first `requestFrameAt(tUs)` against its
-handle and reused for every subsequent request from that clip. The
-hardware-decode fallback path stays the same as before:
-
-- **First-frame error (output count = 0):** reset the decoder with
-  `hardwareAcceleration: 'prefer-software'` and mark the handle as
-  downgraded.
-- **`'Codec reclaimed due to inactivity'`:** close + null the
-  decoder, emit one LogBus warning, lazy-rebuild on next
-  `requestFrameAt`.
-
-Each handle's `FrameRing` caches the most recent 1 s lookahead /
-0.5 s lookbehind. The ring is what the compositor reads — decoder
-threads stay one step ahead of the playhead.
-
-The ring stores `ImageBitmap` snapshots, not `VideoFrame`s.
-`SourceHandle.output` runs `createImageBitmap(frame)` and closes the
-source `VideoFrame` on resolve — this returns the WebCodecs hardware
-decoder's buffer slot to its pool. Caching `VideoFrame`s directly
-would pin the pool (~13 slots on common desktop GPUs) at the ring's
-held count, exhaust it within a few frames, and stall the decoder
-silently. The ffmpeg engine's software lane rings `NativeNv12Frame`s
-instead — its CPU planes must convert in the compositor's own
-`Nv12Ingest` pass, never through `createImageBitmap` (ADR 0032) — and
-the ring treats both kinds alike through their shared `close()`. The
-export-side `ExportFrameStore` keeps `VideoFrame`s because its
-consumer closes them immediately after each encoded frame, so the
-pool stays drained without snapshotting; both stores satisfy a shared
-`FrameStore` interface that returns a `DecodedFrame`
-(`VideoFrame | ImageBitmap | TenBitFrame | NativeNv12Frame`). The union,
-its type guards, and the dims helper live together in
-`renderer/render/decoder/decodedFrame.ts` — a new frame kind extends
-that module first, and the compiler then surfaces every consumer
-branch. Its `BrowserConvertibleFrame` subset (`VideoFrame |
-ImageBitmap` — the kinds a 2D-canvas `drawImage` converts correctly)
-is what `VideoClipSprite.updateFrame` accepts, so routing a CPU-plane
-kind into the snapshot path is a compile error. Frames do not carry
-authoritative timing: each store's entries record `ptsUs`/`durationUs`
-alongside the frame (an `ImageBitmap` has no timestamp field, and
-WebCodecs may null a frame's `duration`). See ADR 0004.
-
-Idle handles are disposed 5 s after the last `requestFrameAt` and
-recreated on demand. The shared `SourceMedia` is freed only once its
-refcount falls to 0 (the last referencing handle has disposed), at
-which point the sample table + any resident GOP-block byte cache are
-released.
+- A handle is created on first request and disposed 5 s after its last
+  (`IDLE_DISPOSE_MS`); `SourceMedia` is freed at refcount 0.
+- `decoderFallback.ts`: a hardware error before any output downgrades the
+  handle once to `prefer-software`; `"Codec reclaimed due to inactivity"`
+  nulls the decoder, logs once, and rebuilds lazily.
+- `FrameRing` keeps 1 s lookahead / 0.5 s lookbehind (with a 10-frame
+  lookahead floor and a byte budget, `frameRingBudget.ts`).
+- The ring stores `ImageBitmap` snapshots, not `VideoFrame`s: `SourceHandle`
+  runs `createImageBitmap(frame)` and closes the frame, returning the hardware
+  decoder's pool slot. Holding `VideoFrame`s would pin the pool (~13 slots)
+  and stall the decoder silently. The native software lane rings
+  `NativeNv12Frame`s, converted only in the compositor's owned `Nv12Ingest`
+  pass (ADR 0032). The export `ExportFrameStore` keeps `VideoFrame`s because
+  its consumer closes each one right after encoding.
+- `decoder/decodedFrame.ts` owns the `DecodedFrame` union
+  (`VideoFrame | ImageBitmap | TenBitFrame | NativeNv12Frame`) and its
+  `BrowserConvertibleFrame` subset (`VideoFrame | ImageBitmap`), the only
+  kinds `VideoClipSprite.updateFrame` accepts — routing a CPU-plane kind into
+  the snapshot path is a compile error. Timing lives beside each frame
+  (`ptsUs`/`durationUs`), never on it.
 
 ### Byte handling
 
-The source is never fully resident in memory. The mediabunny `Input`
-reads through a `weftcut-media://` Range `CustomSource` (`AssetRangeSource`):
-each read issues an HTTP `Range` request and returns exactly the
-requested bytes. The `weftcut-media:` custom protocol handler (registered
-in the main process) honors Range — the same path HTML5 `<video>` seeks
-through — whereas a plain `fetch(url)` buffers the whole body before
-exposing `body.getReader()`, defeating streaming.
-
-One Range caveat: `AssetRangeSource.read` loops, re-issuing Range
-requests until it has the exact byte count mediabunny asked for — a
-single short read would hand the decoder truncated data and wedge it.
-
-mediabunny owns the demux and byte cache; there is no resident sample
-table and no manual block LRU (the prior mp4box era's `sampleAt` /
-`ensureBlocksLoaded` / GOP-block cache are gone). The `PacketPump`
-pulls packets via `getKeyPacket(tsSeconds)` / `getNextPacket(packet)`,
-both of which `await` any uncached Range read natively — a cache miss
-awaits the bytes instead of returning a transient null. The reset
-decision (`decideReset`, ADR 0003) is synchronous and key-packet-free;
-only the reset *action* fetches a key packet. See ADR 0002 for the
-mediabunny demux/mux adoption.
+The source is never resident in memory. `openMediaInput` (`mediaInput.ts`)
+opens a mediabunny `Input` over `MediaRangeSource`, a `CustomSource` that
+issues HTTP `Range` requests against the `weftcut-media://` protocol (16 MiB
+mediabunny cache, network prefetch profile). `read` loops until it has
+exactly the requested bytes, because the protocol caps each 206 body (~1 MB)
+and a short read wedges mediabunny. mediabunny owns demux and byte caching;
+`PacketPump` pulls via `getKeyPacket` / `getNextPacket`, which await uncached
+reads. The reset decision (`decideReset`) is synchronous; only the
+reset action fetches a key packet.
 
 ### Why per-clip decoders
 
-The pool used to key everything by `mediaId` — every clip of the
-same source shared one decoder + ring. That assumed "only one clip
-of a source is under the playhead at a time," which holds for
-sequential cuts on a single track but breaks the moment overlapping
-copies of one source appear on the timeline (a common A/B-roll
-move). `Compositor.setAnchorTime` fires `requestFrameAt(srcTUs_i)`
-for every clip under the playhead; with one shared ring, N
-overlapping clips of the same media wrote N conflicting anchors per
-tick, the ring evicted its own contents, and the decoder reset once
-per overlapping clip per tick — observable as a continuous
-`[weftcut/pixi] decoder reset:` log spam with no clip ever painting
-a stable frame.
-
-Per-clip decoders give each layer a stable anchor + lookahead at the
-cost of a per-clip hardware decode session, well within the 8–32
-concurrent sessions modern Windows H.264 / HEVC stacks expose.
-
-### Future optimisation: shared decoder across sequential cuts
-
-The cost the current design pays is cold-start latency at every cut.
-Blade-splitting one clip into two layers gives each half its own
-decoder, so playback crossing the cut warms a fresh decoder for the
-second half (~100–300 ms first-frame). The pre-refactor design
-happened to hide this because both halves rode one already-warm
-decoder.
-
-The optimisation is to detect "same `mediaId`, contiguous
-source-time, sequential timeline-time" pairs at acquire-time and let
-the second clip continue the first clip's `SourceHandle` across the
-cut boundary instead of constructing its own. Constraints:
-
-- Same `mediaId`.
-- `layer_b.params.src_in_us` ≈
-  `layer_a.params.src_in_us + (layer_a.t_end_us − layer_a.t_start_us)`
-  (source-time stays contiguous across the cut, within one project
-  frame).
-- `layer_b.t_start_us` ≈ `layer_a.t_end_us` (timeline-time also
-  contiguous within one project frame).
-- Neither clip reverses, skips, or rate-changes the source (i.e.
-  default `1.0×` forward playback only).
-
-When all four hold, the cut is functionally a no-op for the decoder
-and a single warm pipeline can serve both layers. When any
-constraint fails — e.g. the user deliberately overlaps two cuts of
-one source on different tracks for split-screen — the current
-per-clip path applies.
-
-v1 doesn't ship this. The "cold decoder at every cut" penalty is
-acceptable for typical timelines; revisit if cuts dominate user
-projects and the latency becomes user-visible during scrub or
-preview.
+Overlapping copies of one source (A/B roll, split screen) need independent
+anchors. With one decoder per `mediaId`, N overlapping clips wrote N
+conflicting anchors per tick, the ring evicted its own contents, and the
+decoder reset every tick — no clip ever painted a stable frame. The cost is a
+decode session per clip (native hardware sessions are capped by main's
+admission budget, `PREVIEW_GPU_MAX_SESSIONS`, hence the pool's
+retained-session reclaim) and a cold decoder at every cut (~100–300 ms first
+frame).
 
 ## Scrub
 
-`scrub.ts`'s `ScrubCoalescer` debounces drag input — a quiet-period
-timer plus a max-wait ceiling, so an unbroken drag still re-targets the
-decoder a few times a second instead of freezing on the last frame
-until the user pauses. On a stable target the `PacketPump` resets to
-the prior key packet (via `getKeyPacket`) and decodes forward to the
-requested frame. The short proxy GOP (ADR 0008) bounds that to a few
-frames, so each re-target lands within ~1 frame-time and decode-during-
-drag works without churn.
+`PlaybackEngine` composites every seek immediately and feeds a
+`ScrubCoalescer` (`decoder/scrub.ts`; the engine configures 50 ms debounce,
+180 ms max-wait), so an unbroken drag still re-targets the decoder a few times
+a second. On a stable target the pump resets to the prior key packet and
+decodes forward. `maxWaitMs` must exceed the worst decode time from a
+keyframe, which the short-GOP proxy ([`preview.md`](preview.md#proxies)) bounds; with a ~1 s GOP every
+fire would flush an unfinished decode.
 
 ## Playhead updates
 
-The engine emits the playhead position once per composition frame during
-playback (`PreviewAudioEngine.emitTime`). That stream fans out through
-`renderer/state/playheadStore.ts` — a zustand store — and deliberately
-never through React state above a leaf component: a frame-rate value in
-App-level state re-renders the entire tree 30–60×/s while playing, which
-is a straight CPU tax in production and, under the React development
-build, additionally ratchets renderer memory (native-side, GC-immune)
-for as long as playback runs.
+The engine emits the playhead once per composition frame
+(`PreviewAudioEngine.emitTime`) into `state/playheadStore.ts` (zustand), never
+into React state above a leaf: a frame-rate value in App state re-renders the
+tree 30–60×/s and, under the dev build, ratchets native renderer memory.
 
-**One moment, many coordinate systems.** The store holds a single time and it
-is ROOT time (ADR 0053). The engine's own clock is the render target's, and a
-timeline Panel's read-out is its composition's, so both ends convert — and both
-convert in exactly one place, `state/playheadProjection.ts`, over the pure
-arithmetic in `render/timeProjection.ts`. That arithmetic is
-`compositionWalk.ts`'s and is not restated: `childFrame` says where a child
-composition's `t = 0` sits in root time and how the placement narrows the
-window, `compositionLocalUs` puts the result back on the shared lattice.
-Reusing them is what keeps a Panel's read-out and the Compositor's own
-recursion in agreement. Two readings exist and the difference matters: an edit
-"at the playhead" takes the composition's CLOCK, which runs whether or not the
-placement shows it there, while a drawn playhead takes the windowed reading and
-is simply absent at a moment its Group is not on screen — a mark that claimed a
-position the Panel is not showing would be a lie. A scrub travels the same road
-backwards, through the anchor the tab was entered by.
+The store holds **root time** (ADR 0053). Conversion to a render target's or a
+Panel's composition time happens only in `state/playheadProjection.ts`, over
+`render/timeProjection.ts` (which reuses `compositionWalk.ts`'s `childFrame`
+and `compositionLocalUs`). An edit "at the playhead" uses the composition's
+clock; a drawn playhead uses the windowed reading and is absent where its
+Group is not on screen. Resolving an anchor walks the summary, so per-frame
+subscribers hoist it with `useAnchorFrame` and subscribe through
+`subscribeLocalPlayhead`.
 
-Resolving an anchor walks the summary, so nothing on the per-frame path may do
-it: a subscriber hoists a frame with `useAnchorFrame` and subscribes through
-`subscribeLocalPlayhead`. N open timelines multiply every per-frame subscriber,
-which is why the tiers below are a budget rather than a preference.
+Consumers pick the cheapest tier (rules in the store header):
 
-Consumers pick the cheapest tier that fits (rules and examples in the
-store's header):
+1. **Event-time read** — `playheadTimeUs()` in handlers. No subscription.
+2. **Transient subscription** — `usePlayheadStore.subscribe` in an effect,
+   mutating a DOM node via ref (playhead line, timecode). Zero React commits.
+3. **Throttled hook** — `usePlayheadTimeUsThrottled()` for value-at-playhead
+   panels; trailing edge, so a pause converges on the exact frame.
+4. **Frame-rate hook** — `usePlayheadTimeUs()`, tiny leaf subtrees only.
 
-1. **Event-time reads** — `playheadTimeUs()` inside handlers (seek
-   shortcuts, insert-at-playhead, drag/blade snapping). No subscription.
-2. **Transient subscriptions** — smooth per-frame visuals (the timeline
-   playhead line, the transport timecode readout) subscribe via
-   `usePlayheadStore.subscribe` in an effect and mutate the DOM node
-   through a ref. Zero React commits during playback.
-3. **Throttled hook** — `usePlayheadTimeUsThrottled()` for panels that
-   show "value at playhead" (inspector, Playhead Panel, keyframe headers).
-   Trailing-edge, so a pause or single seek converges on the exact
-   final frame.
-4. **Frame-rate hook** — `usePlayheadTimeUs()` only for tiny leaf
-   subtrees (agent-mode MiniTimeline).
+A per-frame loop must never read layout: the playhead dirties `style.left`
+each frame, so a `getBoundingClientRect()` in the same rAF forces a full
+reflow. Preview overlays (gizmo, motion path, safe-area guides) read a cached
+rect (`preview/layoutRectCache.ts`), hoist their anchor with
+`useFocusedPlayheadReader`, and skip DOM writes when nothing moved.
 
-When adding any UI that follows the playhead, start at tier 1 and only
-move down the list when the UI genuinely needs to repaint continuously.
-
-A per-frame loop must never READ layout. The timeline playhead dirties
-`style.left` on every frame, so a `getBoundingClientRect()` or `clientWidth`
-from a rAF loop in the same frame forces a synchronous reflow of the whole
-document — a cost that grows with every open track and Panel. The preview
-overlays (the transform gizmo, the motion path, the safe-area guides) therefore
-read a CACHED rect (`preview/layoutRectCache.ts`, invalidated by element and
-window resizes, an ancestor's scroll, a pointer-down and a Dock relayout) and
-hoist their anchor frame with `useFocusedPlayheadReader` instead of resolving
-one per frame. They also compare the frame's inputs against the last drawn ones
-and skip the DOM writes when nothing moved.
-
-Enforcement: `apps/desktop/e2e/scripts/memory-ratchet.mjs` (local-only —
-the phenomenon is dev-bundle-specific, so the prod-built e2e suite
-cannot see it; needs the dev server on port 1420). It replays a 90 s
-playback against a synthesized no-media fixture and fails when the
-post-GC memory floor rises ≥ 30 MB. Run it after touching the playback
-loop, the playhead store, or anything that subscribes per frame.
-
-It takes a scenario argument, each guarding a different per-frame allocation
-class: `text` (the React-subscription ratchet above), `transitions` (the
-two-input node's RenderTexture pool), `text-box` (the shrink-to-fit search
-re-measuring), `groups` (a composition placed twice and once more through a
-nesting Group — three `CompositionNode`s, three render targets). Run the one
-whose class your change touches.
+Guard: `e2e/scripts/memory-ratchet.mjs [text|transitions|text-box|groups]`
+(local only; needs the dev server on port 1420). It plays 90 s of a no-media
+fixture and fails when the post-GC memory floor rises ≥ 30 MB. Run the
+scenario whose allocation class your change touches.
 
 ## Sprite kinds
 
 | Sprite | Source | Notes |
 |---|---|---|
-| `VideoClipSprite` | `FrameRing` snapshot → `Texture` | Consumes the `DecodedFrame` returned by `FrameStore.frameAt` — `ImageBitmap` (WebCodecs preview, native GPU lane) and `VideoFrame` (export) are snapshotted into a sprite-owned canvas before upload (see the snapshot rule below); CPU-plane kinds (`NativeNv12Frame`, `TenBitFrame`) bypass the snapshot entirely — `updateFrame` accepts only the `BrowserConvertibleFrame` subset, and the Compositor routes CPU-plane kinds through their owned ingest shaders to `bindExternalTexture` (ADR 0032). |
-| `ImageOverlaySprite` | `createImageBitmap` / `ImageDecoder` → `Texture` | Two branches. **Still images:** one-shot `createImageBitmap` at sprite spawn (a single-frame source offered to `ImageDecoder` is declined there and lands here, at full resolution); texture cached for the layer's lifetime. **Animated images (GIF, animated WebP, APNG, animated AVIF):** `decodeAnimatedImage` decodes all frames once via WebCodecs `ImageDecoder` (downscaled to composition size; the sprite scales frames back to the source's natural size, which layer transforms are authored against) and caches the resulting `DecodedAnimation` per `mediaId`. Each `render(tUs)` call selects the frame whose cumulative native delay covers `tInLayerUs mod totalDuration` (via `gifFrameIndexAt`) — looping at native speed to fill the layer. The same sprite class and the same `Compositor` run inside the export Worker, so export animation is inherent; the Worker awaits `preloadImages()` before starting the encode loop. |
-| `TextSprite` | PixiJS `Text` (native canvas) | Shadow via drop-shadow filter; outline via stroke option; intro / outro presets are sprite-side animation. Wrap width and the block's placement inside the layout box are the sprite's own — see [Text layout](#text-layout-the-box) below. Caption cues imported from SRT/VTT/ASS files are ordinary `Text` layers and render through this same sprite — no separate subtitle path exists (see [`captions.md`](captions.md)). Bundled fonts (Liberation Sans, Noto Sans SC) are loaded into the export Worker before the encode loop so burned-in captions never tofu. |
-| `MotifSprite` | CDP-captured PNG frame → `Texture` | Binds the Motif's frame for the playhead's layer-relative time (on demand, RAM lookahead, or persisted PNG); frames come from the webcap CDP capture path, not an in-process raster; see [`motifs.md`](motifs.md). |
-| `ColorSprite` | PixiJS `Graphics` rect | Animated fill color. |
+| `VideoClipSprite` | `FrameStore.frameAt` | Browser-convertible frames upload via the snapshot rule below; CPU-plane kinds (`NativeNv12Frame`, `TenBitFrame`) go through owned ingest shaders (ADR 0032). |
+| `ImageOverlaySprite` | `ImageDecoder` / `createImageBitmap` | Raster types go to `sharedAnimatedImageCache` (`animatedImageCache.ts`) first: a multi-frame source is decoded once (capped at composition size, drawn back at natural size) and looped to fill the layer (`gifFrameIndexAt`). Single-frame and bmp/tiff/svg sources take a one-shot full-resolution `createImageBitmap`. The export Worker awaits `preloadImages()` before encoding. |
+| `TextSprite` | Pixi `Text` | Outline = stroke, shadow = `dropShadow`. Box layout below. |
+| `MotifSprite` | captured Motif frame | Binds the frame for the layer-relative time; see [`motifs.md`](motifs.md). |
+| `ColorSprite` | Pixi `Graphics` | Animated fill. |
+| `CompositionRefSprite` | child `CompositionNode` | See Compositions above. |
+
+### Text entrance and exit presets
+
+`TextParams.intro` (`FadeIn | SlideUp | SlideDown | Typewriter`) and `outro`
+(`FadeOut | SlideUp | SlideDown`) are semantic presets, not keyframes: they
+stay attached to the layer's start and end, so trims and moves keep them.
+`shared/textAnimation.ts` (`textAnimationAt`) defines them and `resolveView.ts`
+applies them, so preview and export play the same frames:
+
+- an entrance/exit lasts 400 ms, or a third of the layer if shorter, ease-out
+  cubic; fades multiply the layer's opacity;
+- slides travel half the font size (`SlideUp` rises into place; on exit rises
+  away);
+- `Typewriter` reveals one character per 40 ms over at most half the layer.
+
+Set through `update_layer_params` (`null` clears). The properties panel does
+not expose them.
 
 ### Text layout: the box
 
-Font registration belongs to the document or export Worker's `FontFaceSet`,
-not to an individual Compositor. `loadFontsIntoFaceSet` registers each family
-once per set and shares in-flight loads; a failed family can be retried without
-duplicating successful siblings. Font bytes are session-stable through the
-font registry. Closing and reopening Preview therefore reuses the document's
-fonts, while an export Worker still installs its own copies before rendering.
-This matters for native memory: adding another `FontFace` for the same family
-does not replace the previous face in `document.fonts`, and JavaScript GC cannot
-release faces that the document still owns.
+Decision and rejected options: [ADR 0049](adr/0049-text-box-lays-out-glyphs-it-does-not-scale-them.md).
 
-Text is the only visual kind with no intrinsic size, so `TextParams` carries a
-layout box — `box_w`, `box_h`, in composition pixels, local (pre-`scale`).
-Which fields are set *is* the resize mode; there is no enum to contradict them
-(ADR 0049):
+**Fonts.** Registration belongs to the document's or the export Worker's
+`FontFaceSet`, not to a Compositor. `loadFontsIntoFaceSet` registers each
+family once per set and shares in-flight loads; bytes come from
+`fonts/registry.ts` (bundled Liberation Sans + Noto Sans SC, OS resolution
+otherwise). Re-adding a `FontFace` does not replace the old one and the
+document keeps it alive, so reopening Preview reuses the document's fonts;
+the export Worker installs its own before the encode loop.
 
-| `(box_w, box_h)` | Mode | `wordWrap` |
-|---|---|---|
-| `(null, null)` | Auto width | off |
-| `(set, null)` | Auto height | on |
-| `(set, set)` | Fixed | on |
+**Mode** is read from `(box_w, box_h)`: `(null, null)` Auto width (no wrap),
+`(set, null)` Auto height (wrap), `(set, set)` Fixed (wrap + shrink).
+`TextSprite` coalesces `(null, set)`, bogus `align`/`valign` and non-finite
+box/leading/tracking to safe values, because the failure would be a NaN
+transform — a vanished layer.
 
-`(null, set)` is not a mode. `TextSprite` coalesces it to Auto width — the
-renderer half of a pair whose other half is a structured refusal in
-`main/state/mutations/params.ts`, so a hand-edited project cannot blank the
-frame mid-render. Bogus `align`/`valign` values and non-finite box, leading or
-tracking numbers are coalesced the same way, because the failure they produce
-is a NaN transform, i.e. a layer that vanishes rather than one that looks
-wrong.
+**Placement in the box.** Pixi's block is `maxLineWidth` wide (plus stroke and
+shadow), never `wordWrapWidth`, so `align` only distributes lines within the
+block. `TextSprite.blockAnchorInBox` offsets the block inside the box from
+`align`/`valign` and expresses it as a Pixi `anchor` — not `pivot`, which
+would move the rotation/scale origin. With no box the anchor is unchanged.
+`naturalSizeOf` reports the box, so the gizmo draws the box, not the glyphs;
+a glyphless layer reports one em by one line.
 
-**The block is placed inside the box, and that is not what `align` alone
-does.** Pixi's rendered block is `maxLineWidth` wide (plus stroke and shadow) —
-never `wordWrapWidth` — so `TextStyle.align` only distributes lines *within*
-the block. `TextSprite.blockAnchorInBox` supplies the missing half: it offsets
-the block inside the box from `align` (horizontal) and `valign` (vertical), and
-expresses the result as a Pixi `anchor` renormalized over the block. `anchor`
-rather than `pivot` on purpose — a pivot would also move the point rotation and
-scale turn about, which stays `(x, y)`. With no box the box *is* the block, the
-offset is zero, and the anchor is returned unchanged, so Auto width renders
-bit-for-bit what it did before the box existed.
+**CJK.** `fonts/lineBreak.ts` (`installCjkLineBreaking`) is called
+unconditionally in the `Compositor` constructor, outside the preview-only font
+branch. Gate: `e2e/electron/text-box-cjk-export.spec.ts` exports one CJK
+string auto-wrapped and once with explicit `\n`, and SSIM-compares the two.
 
-`Compositor.naturalSizeOf` asks the sprite for that same rectangle, so the
-on-canvas gizmo draws the box being dragged rather than the glyphs inside it.
-A glyphless layer reports one em by one line rather than nothing, so an emptied
-title still has a box to double-click and a footprint for the Text tool to hit.
-
-**CJK breaking is realm-global, and that decides where it is installed.** Pixi's
-wrap unit is a space-delimited token and `CanvasTextMetrics.canBreakWords`
-returns the style's `breakWords` (false), so an unspaced Chinese sentence is
-one token that never wraps at any width — the box is inert in Chinese.
-`fonts/lineBreak.ts` overrides that static: breakable if the style says so *or*
-the token contains CJK, which wraps Chinese per character and English per word.
-`breakWords: true` is not the alternative; it splits Latin words.
-
-Because the hook is a class static it has to be set in every realm that
-rasterizes text, or preview wraps where export does not. That needs exactly one
-install site, not one per realm: every such realm builds a `Compositor` — the
-export Worker included — so the constructor's unconditional call is
-realm-complete by construction. It sits *outside* the preview-only font branch
-and must stay there; the hook needs neither `document` nor a `FontFaceSet`, and
-gating it on those is the defect itself.
-`e2e/electron/text-box-cjk-export.spec.ts` is the gate: it exports the same CJK
-string twice, relying on auto-wrap once and spelling the line breaks out with
-`\n` the other, and SSIM-compares the two videos. Both legs come from the same
-realm, so it needs no fixture media and no calibrated floor — an export that
-failed to wrap renders one long clipped line and diverges.
-
-**Shrink-to-fit belongs to Fixed alone.** Fixed is the only mode that can fail
-to contain its text, and it responds by shrinking the glyphs: `TextSprite`
-binary-searches the largest whole-pixel font size whose measured block fits the
-box (`textBox.ts`'s `fitFontSize`, measured through
-`CanvasTextMetrics.measureText` — canvas measurement, no rasterization, no GPU)
-and renders at that size. Whole pixels rather than a fractional bisection: the
-search terminates on the range itself with no epsilon to tune, and the set of
-sizes it can mint stays finite, so Pixi's measurement cache cannot become a
-growth term. The floor is an absolute 8 px (`TEXT_BOX_MIN_PX`, the same number
-as the `box_w` drag floor) — at the floor the text overflows and the sprite
-reports it rather than shrinking further, and an authored size already below the
-floor is never *enlarged* toward it. Auto height narrower than one glyph
-overflows **horizontally** instead of shrinking, which is what keeps a caption
-at exactly the size its style asked for.
-
-The factor also multiplies `outline.width`, the shadow's offsets and blur, and
-the leading and tracking: everything authored in pixels *against the glyphs*
-compresses with them, for one reason wearing several faces — an absolute 4 px
-outline around text compressed to 43% reads as a smeared border, and an absolute
-80 px leading over 8 px glyphs reads as broken spacing.
-`native/src/subtitles/layout.rs` already treats an outline as `size * 0.06` at
-import, so an absolute width surviving the compression would contradict the
-importer's own model. Scaling the leading is also what lets the search converge
-at all: an absolute height term no bisection can shrink drives a box shorter than
-one authored line to the floor however small the glyphs get. `line_height: 0`
-means auto — the font's own metrics — and 0 survives any factor, so the default
-path is untouched.
-
-None of this reaches state: the layer keeps exactly the font size the user set,
-because an MCP `content` edit never passes through the renderer, which would
-leave a stored size stale from the next word typed. The search lives inside
-`TextSprite`'s `appliedSig` gate, whose signature already carries every
-measurement input, so an unchanged box costs zero re-measures per frame; the
-winning probe's `TextStyle` becomes the applied style, since `styleKey` is
-per-instance and a freshly minted twin would miss the measurement cache.
-`GizmoProbe.textFitOf` reads the result back for the inspector's reduced-size
-notice and the gizmo's box stroke.
+**Shrink-to-fit** (Fixed only): `textBox.ts` `fitFontSize` binary-searches
+whole-pixel sizes with `CanvasTextMetrics.measureText` — whole pixels so the
+search needs no epsilon and Pixi's measurement cache stays bounded. Floor
+`TEXT_BOX_MIN_PX` = 8 (also the `box_w` drag floor); an authored size below
+it is never enlarged. The factor scales outline, shadow, leading and tracking
+too (`line_height: 0` = font metrics, unaffected); scaling leading is what
+lets the search converge when an absolute leading exceeds `box_h`. The search
+runs inside `TextSprite`'s `appliedSig` gate, so an unchanged box costs no
+re-measure; the winning probe's `TextStyle` is kept so the measurement cache
+hits. `GizmoProbe.textFitOf` exposes the result.
 
 ### Frame upload: the snapshot rule
 
-**Never bind a raw `VideoFrame` to a Pixi texture.** Pixi's default
-WebGPU upload (`copyExternalImageToTexture`) drops the frame's
-`colorSpace` and converts every frame with a fixed BT.709/limited
-formula. For a 601 or full-range frame that is a destructive pixel
-mis-convert — wrong RGB values baked into the composite, which no
-downstream re-tagging can repair — not a recoverable metadata error.
-The browser's 2D-canvas paths (`drawImage`, `createImageBitmap`) do
-honor a **decoder-produced** frame's matrix/range, so both surfaces
-route those through one of them before Pixi ever sees pixels:
+**Never bind a raw `VideoFrame` to a Pixi texture.** Pixi's WebGPU upload
+(`copyExternalImageToTexture`) ignores the frame's `colorSpace` and converts
+with fixed BT.709 limited range — a destructive mis-convert for 601 or
+full-range sources. Chromium's 2D-canvas paths honor a decoder-produced
+frame's matrix and range, so:
 
-- **Preview** converts at decode output: `SourceHandle.output` runs
-  `createImageBitmap(frame)` (which also returns the decoder's buffer
-  slot — ADR 0004), so the `FrameRing` already holds correct RGB.
-- **Export** holds raw `VideoFrame`s for pool-drain reasons, so
-  `VideoClipSprite` snapshots each frame into its sprite-owned
-  `OffscreenCanvas` via a synchronous `drawImage` and binds the canvas.
+- **Preview** converts at decode output (`createImageBitmap` in
+  `SourceHandle`); the ring already holds correct RGB.
+- **Export** keeps `VideoFrame`s, and `VideoClipSprite` draws each into its
+  own `OffscreenCanvas` with `drawImage` before binding.
 
-The delegation stops at decoder-produced frames: a BUFFER-defined
-frame (the native lanes' CPU planes) is converted by Chromium as
-BT.601 regardless of its stamped `colorSpace`, so those ride their own
-frame kinds (`NativeNv12Frame`, `TenBitFrame`) through owned ingest
-shaders on both surfaces instead — never through this snapshot path,
-whose `BrowserConvertibleFrame` parameter excludes them at compile
-time (ADR 0032).
+Buffer-defined frames (native CPU planes) are converted by Chromium as BT.601
+whatever their tag, so they never take this path: they ride
+`NativeNv12Frame` / `TenBitFrame` through owned ingest shaders (ADR 0032),
+enforced by the `BrowserConvertibleFrame` parameter type. This is one gated
+chokepoint of the color model (ADR 0014, which also holds the evidence: the
+perceptual gate scores ~22 without the export snapshot, ≈0 with it).
 
-ADR 0014 records the evidence: reverting the export snapshot scores
-~22 on the perceptual conformance gate vs ≈0 with it.
-
-**The zero-copy alternative is deliberately parked at lowest
-priority, and the preview-side profiling that would justify it says
-no.** `importExternalTexture` does honor the matrix — a standalone
-POC confirmed Chromium samples 601 and 709 to distinct RGB through
-`textureSampleBaseClampToEdge` — so the idea is sound; it just isn't
-worth anything measured. Colour correctness is already handled at
-zero marginal cost, because the snapshot *is* the honoring
-conversion, and the blit it would remove is a rounding error:
-`blitDrawImage` means 0.03 ms per frame at 1080p and 0.02 ms at 4K,
-p95 ≤ 0.2 ms, against a 16.7 ms budget
-([playback-perf](playback-perf.md)). The replacement, meanwhile, is
-heavy — a bespoke Pixi pass re-importing the per-frame
-`GPUExternalTexture` (it expires every frame), a permanent WebGL
-dual-path because export has no `navigator.gpu`, bilinear-only
-sampling with no mips, and a fresh colour-conformance pass.
-
-**Export is the one case that could reopen it**, and it is still
-unmeasured: `__weftcutExportPerf` `compositeMs` is the instrument,
-and 4K export is where the blit would matter. Do not start without
-that number. The staged plan, if it ever arrives, lives in the issue
-tracker, not here.
-
-The snapshot rule is one instance of the project-wide color model —
-color converges once at an explicit, gated chokepoint and the rest of
-the pipeline is color-naive (ADR 0021).
-
-## Motifs
-
-A Motif is a parameterized, time-varying web overlay (a lower-third, a
-countdown, a title card). Because the export Worker has no DOM, a Motif is
-captured to a bitmap on the **main process** for both surfaces: the export
-Worker receives the bitmaps rather than producing them, so one capture path
-feeds preview and export and preview-equals-export holds.
-
-`MotifSprite` obtains the frame for the playhead's layer-relative time
-(captured on demand, from a RAM lookahead ring, or from a persisted PNG
-sequence) and binds it as a texture; the layer transform and opacity are
-applied to the sprite. Capture drives the Motif's page to time `t` in an
-offscreen Electron window and grabs a PNG via the DevTools Protocol
-(`webContents.debugger`, `Page.captureScreenshot`) — a real browser raster.
-The frame is byte-identical across runs and across OS at a fixed `t`, so the
-cache holds one capture per frame index.
-
-A Motif's `index.html` + manifest (+ optional `assets/`) are embedded in the
-Rust binary and served to the host over the `motif:` URI scheme; see
-`crate::motifs` (`native/src/motifs/`). The catalog is surfaced to the
-renderer via the `list_motifs` command and the MCP `list_motifs` tool.
-
-See [`motifs.md`](motifs.md) for the authoring contract, the capture harness,
-and the raster cache.
+**Zero-copy (`importExternalTexture`) is parked.** It does honor the matrix,
+but the blit it would remove costs ~0.03 ms/frame at 1080p and 4K
+([measurement](notes/playback-perf-findings-2026-07.md#the-loop-is-not-the-bottleneck)),
+while the replacement needs a bespoke per-frame external-texture pass, a
+permanent WebGL dual path (export has no `navigator.gpu`) and a new
+conformance pass. Only 4K export could justify it; measure
+`__weftcutExportPerf.compositeMs` first.
 
 ## Export Worker
 
-`exportWorker.ts` is the Worker entry. It receives:
-
-- An `OffscreenCanvas` transferred from the main thread.
-- A `structuredClone`d `ProjectSummary` + media asset URL map.
-- A `VideoEncoderConfig` (built from
-  `defaultEncoderConfig(width, height)` on the main thread).
-- A time range `[startUs, endUs)`.
-
-The Worker mounts a `Compositor` against the OffscreenCanvas, points it at the
-project's ROOT composition (never the editor's open one), walks the output
-frame grid for that half-open range, calls `render(tUs)` for each frame, and
-captures each output `VideoFrame` with
-`timestamp = tUs - startUs` so the encoded video starts at zero. The
-grid uses the exact rational output fps (`frameGrid.ts`), not
-`i * round(1e6 / fps)`, so trim tails and 29.97/59.94-style rates do
-not drift or over-count.
-
-Encoded chunks stream through mediabunny `Output` using an
-`EncodedVideoPacketSource` and an append-only stream target. The Worker
-posts each fMP4 slice as a `chunk` event and waits for a `chunk-ack` after
-the main thread appends it to a temp `video.mp4`; this keeps long exports
-off V8's single-ArrayBuffer size ceiling. Progress events fire on every
-encoded frame; the final `done` event carries perf counters only, because the
-file has already been streamed to disk.
-
-The main thread then optionally awaits the Rust audio-only export into a
-sibling temp audio file and asks Rust to stream-copy mux both into the user's
-chosen output; see [`export.md`](export.md).
+`worker/exportWorker.ts` receives a `start` request (`worker/protocol.ts`):
+an `OffscreenCanvas`, an `ExportProjectSnapshot`, `[startUs, endUs)`, the
+encoder config or native sink `pixFmt`, bit depth, the native-decode media
+set, `allowHwExportDecode` and the font bytes. It mounts a `Compositor` in
+export mode on the **root** composition, installs the fonts, awaits
+`preloadImages()`, and walks the output grid with the exact rational fps
+(`worker/frameGrid.ts`) so trims and 29.97-style rates neither drift nor
+over-count. Motif frames arrive as bounded
+`motif:frame` packets from the renderer and are credited back after use.
+Output streams to the main thread as `chunk` events, each awaiting a
+`chunk-ack`, so no export is bounded by a single `ArrayBuffer`; `done` carries
+only perf counters. The main thread then runs the audio export and mux
+([`export.md`](export.md)).
 
 ### Export decode pipelines (one per media × phase)
 
-The Worker plans `ExportDecoderPool` ranges in 60-frame chunks, starts their
-producers, and immediately consumes via `ring.waitForPts` and frame eviction.
-It awaits source readiness, not dispatch completion: WebCodecs production may
-park on its fixed 24-frame window, and a long GOP may span several planning
-chunks. Blocks split earlier at source activation/deactivation on the output
-grid, so rapid sequential cuts do not open all their decoders simultaneously.
-Ranges on one handle remain serialized. Frame release wakes the
-producer locally; there is no per-frame global admission or polling. The
-window counts pending decode packets, resident pictures and 10-bit copies
-together. See [resource accounting](performance-settings.md).
-A pipeline is one of two handles behind the same
-`ExportDecodeSession` contract, chosen per-acquire by the routing table
-(see §Export source resolution):
+The Worker plans `ExportDecoderPool` ranges in 60-frame chunks
+(`CHUNK_FRAMES`) and consumes concurrently via `ring.waitForPts` and
+eviction. Each producer parks on a fixed window (`EXPORT_FRAME_WINDOW` = 24)
+that counts pending packets, resident pictures and 10-bit copies together
+([resource accounting](performance-settings.md)); a long GOP may span several
+chunks. Blocks also split at source activation/deactivation, so rapid cuts do
+not open all their decoders at once. Ranges on one handle are serialized.
 
-- the WebCodecs `ExportSourceHandle` — an in-worker `VideoDecoder` over the
-  clip's export source (no mid-export `decoder.flush()` — see the EOS-tail
-  notes in `ExportDecoderPool.ts`); eviction keeps the ~13-slot WebCodecs
-  buffer pool drained. Its `hardwareAcceleration` is platform-gated
-  (`hwExportDecodeAllowed`, resolved on the main thread and riding the init
-  protocol as `allowHwExportDecode`): Windows and macOS decode
-  prefer-hardware — both hardware-verified faithful (Windows D3D11/NV12;
-  macOS VideoToolbox NV12, force-tested through the conformance gate before
-  joining the allowlist) — while Linux pins prefer-software, because on
-  Linux/NVIDIA a hardware-decoded `VideoFrame` is an opaque GPU handle every
-  JS read path silently zeros (black frames, no decoder error to trip the
-  HW→SW fallback). The 10-bit lane pins software separately as a correctness
-  requirement, and the error-driven HW→SW downgrade stays as the net for
-  drivers that do error;
-- the native `NativeExportSourceHandle` — a relay client: `decodeRange`
-  becomes an IPC command to a credit-windowed `export_sw` session in the
-  native component, which decodes the **original** and streams NV12/I420P10
-  planes back main → renderer → Worker in-band and in order; the handle
-  returns one credit per frame that leaves the ring. Its ordered `rangeEnd`
-  carries the completed source range and finalizes quantized wait targets
-  without decoding an out-of-range proof frame; `decodeRange` remains
-  dispatch-only so the consumer can keep returning credits. A backward range
-  starts a fresh decode generation and releases the prior generation's frames
-  and credits. Frames convert to RGB in owned shaders, never by the browser
-  (ADR 0032). Transport:
-  [`export-ipc-transport.md`](export-ipc-transport.md); decision record:
-  ADR 0033.
+Two handles implement `ExportDecodeSession`, chosen per media by the routing
+table:
 
-Pipelines are keyed by `exportHandleKey` = `mediaId` + the clip's
-timeline→source offset (`src_in_us − t_start_us`, the *phase*), and the
-Worker groups the chunk's active clips by that key, dispatching ONE
-merged source range per group:
+- **`ExportSourceHandle`** — in-worker `VideoDecoder`, no mid-export
+  `flush()` (only true EOS drains the reorder tail; software decoders withhold
+  trailing frames, e.g. macOS H.264 2–4, so every lane carries a reorder
+  lead-in). Hardware decode is allowed only on Windows and macOS
+  (`hwExportDecodeAllowed`, passed as `allowHwExportDecode`): on Linux/NVIDIA
+  a hardware `VideoFrame` reads back as zeros with no error. The 10-bit lane
+  always pins software.
+- **`NativeExportSourceHandle`** (`worker/nativeExportSource.ts`) — a relay to
+  a credit-windowed native `export_sw` session that decodes the **original**
+  and streams NV12/I420P10 planes back in order, one credit returned per frame
+  leaving the ring. `nd:rangeEnd` closes a range without an out-of-range proof
+  frame; a backward range starts a new generation. Transport:
+  [`export-ipc-transport.md`](export-ipc-transport.md); decision: ADR 0033.
 
-- **Same phase** (a stacked copy, or trims of one pass through the
-  source): every clip wants the same source PTS at the same output time,
-  so one decoder + ring serves them all and the extra copies cost no
-  extra decode. Frame eviction takes the group **minimum** cutoff so no
-  clip drops a frame a sibling still needs.
-- **Different phase** (A/B-roll offsets of one source): the clips want
-  source times a constant gap apart. One shared ring would have to hold
-  the whole gap's worth of `VideoFrame`s — past ~13 frames that deadlocks
-  the decoder's buffer pool — so each phase gets its own pipeline,
-  mirroring the preview's per-clip keying.
-
-The pool used to key handles by bare `mediaId`. Two enabled overlapping
-clips of one source then raced a single handle — their concurrent
-`decodeRange` calls interleaved on the shared packet cursor and each
-clip's per-frame evict dropped frames the other still needed — and the
-export's frame counter froze mid-run. The e2e gate is
-`export_overlap_same_source.e2e.js`: stacked completion + no extra
-dispatch vs the single-clip baseline, and offset completion + shifted
-frame alignment in the offset clip's exclusive region.
-
-With this grouping, dispatch sits on the inherent floor for every
-forward-marching timeline shape — single-clip, sequential re-use,
-different-phase overlap, and mid-GOP range entry, each measured against
-its floor via the worker's `__weftcutExportPerf` counters during
-development.
-Source time per pipeline is `t + phase`, monotonic in `t`, so backward
-re-seeks never fire in normal export; the residual costs — one decode
-pass per phase, and the GOP-key prefix at a mid-GOP entry — are
-properties of the content, not the scheduler.
+Pipelines are keyed by `exportHandleKey` = `mediaId` + phase
+(`src_in_us − t_start_us`), and each chunk dispatches one merged range per
+key. Same phase (stacked copies, trims of one pass) shares one decoder; ring
+eviction takes the group minimum. Different phases get separate pipelines,
+because one ring holding the gap would exhaust the ~13-slot decoder pool and
+deadlock. Keying by bare `mediaId` let overlapping clips race one packet
+cursor and froze the export; gate: `e2e/electron/export_overlap_same_source.spec.ts`.
+Source time per pipeline is monotonic in `t`, so export never seeks backward.
 
 ### Export source resolution
 
-Which engine and which file feed each pipeline is fixed before the Worker
-launches, in two steps.
+**Engine routing.** `resolveExportDecodeRouting` (`exportDecodeRouting.ts`)
+runs once at export start (`app/useExportFlow.ts`) from the project's
+`decodeEngine` setting, native-component presence, composite bit depth and
+each medium's persisted Decode Route, and the table rides into the Worker.
+Nothing re-resolves mid-run; a native session error aborts the export (ADR
+0033). `auto`: WebCodecs-decodable sources stay in-worker, `native-sw` routes
+decode the original natively. `ffmpeg`: every source native. `webcodecs`:
+every source in-worker. Without the component, `ffmpeg` degrades to `auto`
+and nothing routes native. The dialog's "N from originals, M from lossy proxy"
+line comes from the same table (`routingSourceCounts`), and native-routed
+media skip proxy readiness (`proxyWaitScope`).
 
-**Engine routing.** `resolveExportDecodeRouting`
-(`render/exportDecodeRouting.ts`) runs once at export start in
-`useExportFlow` — a pure function of the per-project `decodeEngine` intent
-(`auto` / `ffmpeg` / `webcodecs`), native-component presence, the export's
-composite bit depth, and each medium's persisted Decode Route. It emits a
-per-media routing table that rides the init protocol into the Worker;
-nothing re-resolves mid-run, and cross-engine or cross-source fallback
-mid-export is forbidden — a native session error aborts the export loudly
-(ADR 0033). Under `auto`, decodable sources stay on the in-worker WebCodecs
-path and persisted blind spots route native, exporting the **original** with
-no proxy involved; an `ffmpeg` pin routes every source native; a missing
-component degrades the pin to `auto` (`effectiveSetting`). Native-routed
-media skip the readiness machinery below entirely (`proxyWaitScope`), and
-the export dialog's summary line ("N from originals, M from lossy proxy")
-derives from this same table, so the dialog cannot disagree with the run.
-
-**WebCodecs-lane readiness.** For the media the table leaves on WebCodecs,
-`runExport.ts` resolves each clip's **export** source
-(`exportPlaybackPathFor`): the original for a DirectExport or bypassed
-source, otherwise the source-resolution export master (`proxy_path`).
-Export never reads the quick preview proxy. For any clip whose export
-source is a non-H.264 **original**, a main-thread **pre-flight**
-(`probeSourceDecodable`) configures a decoder and decodes one key packet —
-racing success against the decoder's error callback and a timeout
-(WebCodecs can fail silently). If a source can't be decoded on this
-machine, the Worker is never launched: the export aborts with a retry
-message and `ensure_full_proxy` enqueues a proxy, so the retry succeeds
-from the master. When the import sweep is already probing the same source,
-the gate **defers to that in-flight probe** rather than opening a second
-decoder — concurrent probes contend for the WebCodecs buffer pool and
-false-negative a decodable source (ADR 0013). See ADRs 0010–0011, 0013.
+**WebCodecs readiness** (`exportReadiness.ts`). WebCodecs-routed clips read
+their export source from the Decode Route (`resolveDecode`): the original for
+DirectExport/bypassed sources, otherwise the full export master — never the
+quick preview proxy. DirectExport originals (`sourcesNeedingPreflight`) get a
+main-thread pre-flight (`probeSourceDecodable`): configure, decode one key
+packet, race against the error callback and a deadline (WebCodecs can stall
+silently). A failure aborts before the Worker starts and calls
+`ensure_full_proxy`, so a retry succeeds from the master. The probe memo is
+shared with the import sweep, so an in-flight probe is awaited rather than
+duplicated — concurrent probes contend for the decoder pool and false-negative.
 
 ### Encode exits
 
-`resolveEncodeTarget` (`render/encodeTarget.ts`) is the one seam that decides
-how the Worker's composited frames leave the process: a `NativeTarget { pixFmt }`
-or a `WebCodecsTarget { workerCodec }`. `auto` — the default — always resolves
-native, for every codec and bit depth; WebCodecs is reached only by an explicit
-user pin, and only for an 8-bit delivery codec (H.264/HEVC/AV1) — WebCodecs
-can emit neither an intermediate codec nor 10-bit, so the dialog disables the
-conflicting options (the WebCodecs engine choice while an intermediate or
-10-bit is selected; the intermediate codecs under a WebCodecs pin), and
-`mergeSettings` snaps a stale or hand-edited saved blob that holds such a
-combo back to `auto` on load. If the native sink fails to
-start under `auto`, and the target was an 8-bit non-intermediate to begin with,
-the user gets a consent-gated retry on WebCodecs; a pinned-native, 10-bit, or
-intermediate failure, or a declined retry, is a hard error instead. The engine
-is never swapped silently.
+`resolveEncodeTarget` (`encodeTarget.ts`) returns `NativeTarget { pixFmt }` or
+`WebCodecsTarget { workerCodec }`. `auto` (default) always resolves native.
+WebCodecs is reached only by an explicit pin on an 8-bit H.264/HEVC/AV1
+export; the dialog disables conflicting combinations and `mergeSettings`
+snaps a stale saved combo back to `auto`. If the native sink fails to start
+under `auto` for an 8-bit non-intermediate, the user is offered a WebCodecs
+retry; every other failure is a hard error. The engine never swaps silently.
 
-**Native (default).** The Worker forces the WebGL2 backend (the pack shaders
-below need a GL renderer; the WebCodecs exit prefers WebGPU to match the
-preview surface instead). After compositing, a GPU pack pass — `PackYuvPlanar`
-for yuv420p/yuv422p/yuv422p10le, or the parity-gated `PackYuv420p10` for
-yuv420p10le — writes the target's rawvideo bytes, read back asynchronously
-(PBO + fence, two frames deep, `PboFrameReader`) so the Worker never blocks on
-GPU completion; the bytes stream over the export `chunk`/`chunk-ack` IPC loop
-into a native `ffmpeg` sink (`export/videosink.rs`);
-see [`export-ipc-transport.md`](export-ipc-transport.md) for the transport.
-The sink owns rawvideo input and the ffmpeg child lifecycle; it consumes one
-complete `EncoderPlan` from `export/encoder_registry.rs`. The registry accepts
-library-agnostic intent (codec, bit depth, acceleration, rate control, speed),
-selects only adapters that pass a real one-frame probe, caches that selection,
-and owns every output-side argument: bitrate with optional CBR bounds or CRF
-quality mode, speed, GOP, per-library pixel format/profile mapping, container
-tags, and the output-stream `bt709`/`limited` color tuple. The sink adds the
-matching frame-side `setparams` filter. A removed or unusable encoder library
-therefore yields structured `EncodeUnavailable` attempts; it is never replaced
-by an assumed ffmpeg encoder name.
+**Native (default).** The Worker forces WebGL2 (the pack shaders need GL; the
+WebCodecs exit prefers WebGPU). A GPU pack pass — `PackYuvPlanar` for
+yuv420p / yuv422p / yuv422p10le, `PackYuv420p10` for yuv420p10le — writes
+rawvideo, read back asynchronously two frames deep (`yuv/pboReadback.ts`
+`PboFrameReader`), and streams over `chunk`/`chunk-ack` to the native ffmpeg
+sink (`native/src/export/videosink.rs`). The sink runs one `EncoderPlan` from
+`export/encoder_registry.rs`, which maps codec intent to an adapter that
+passed a real one-frame probe and owns every output argument (rate control,
+GOP, pixel format/profile, `bt709`/`limited` tags). A missing encoder yields
+structured `EncodeUnavailable` attempts, never a guessed encoder name.
 
-10-bit delivery (HEVC Main10 or AV1 10-bit, via the bit-depth selector) and
-ProRes (always 10-bit) composite through an `rgba16float` render target instead
-of the normal 8-bit one; DNxHR stays 8-bit. 10-bit-capable sources (H.264 Hi10P
-and AV1 10-bit originals, detected by ffprobe metadata via `tenBitExportCapable`)
-decode through a CPU-plane lane forced to software — for AV1 this is a
-correctness requirement, since the hardware decoder "succeeds" but emits opaque
-frames that can't `copyTo`. `TenBitIngest` uploads the extracted planes as RG8
-textures and unpacks them into the f16 target via a GLSL pass. A serialized
-copy chain shares the producer's 24-frame window with pending decode packets
-and resident pictures, replacing the older ring-only high-water gate. Copies
-keep their reservation until their input frames close, including after a
-decoder rebuild or cancellation. Each simultaneous 10-bit source carries its
-own ring. The same reorder-margin
-lead-in now applies to every export decode lane: software decoders hold the
-trailing frames of a fed window until more input arrives (Chromium's macOS
-prefer-software H.264 decoder withholds 2, 4 with B-frames), which otherwise
-wedged each short-GOP chunk's final frame against `waitForPts`. This lane ships
-**experimental**: the export-settings UI labels it and confirms the export
-click, since the on-screen preview stays 8-bit/SDR (no HDR/wide-gamut preview
-on the web platform) and the path runs below realtime — especially at 4K —
-with HEVC Main10 source conform still pending (ADR 0022).
+**10-bit** (HEVC Main10 / AV1 10-bit, and ProRes) composites into an
+`rgba16float` target; DNxHR is 8-bit. 10-bit-capable sources (Hi10P, AV1
+10-bit; `tenBitExportCapable`) decode in software through a CPU-plane lane —
+AV1 hardware decode emits opaque frames that cannot `copyTo`. `TenBitIngest`
+uploads planes as `rg8unorm` and unpacks into the f16 target. Copies share the
+24-frame window and hold their reservation until their input frames close.
+The lane is labelled **experimental** and confirmed on click: preview stays
+8-bit SDR and the path runs below realtime (ADR 0022).
 
-**WebCodecs (explicit pin only).** `VideoEncoder` receives each composited
-`VideoFrame` from the PixiJS `OffscreenCanvas`, streams encoded chunks through
-mediabunny `Output`, and the fMP4 slices land on disk via the chunk/
-`writeFile(append)` loop. Color tags are whatever the encoder defaults to —
-this exit has no equivalent assertion.
+**WebCodecs (pin only).** `VideoEncoder` encodes the canvas frames
+(`timestamp = tUs − startUs`, backpressure at `encodeQueueSize > 8`) and
+mediabunny writes fMP4 slices over the same chunk loop. Color tags are the
+encoder's defaults.
 
-**Intermediates.** ProRes (`prores_ks`, profiles proxy/lt/422/hq, `yuv422p10le`)
-and DNxHR (`dnxhd`, profiles lb/sq/hq, `yuv422p`) are native-only and MOV-only —
-the dialog snaps the container to `.mov` and hides the bit-depth/CRF/preset/GOP
-controls, since the profile alone fixes rate control (every frame is a
-keyframe; there is no `-b:v` or `-g`).
+**Intermediates.** ProRes (`prores_ks`, proxy/lt/422/hq, yuv422p10le) and
+DNxHR (`dnxhd`, lb/sq/hq, yuv422p) are native-only and MOV-only; the profile
+fixes rate control, so bit-depth/CRF/preset/GOP controls are hidden.
 
-Earlier revisions routed any codec/container WebCodecs couldn't emit directly
-through an intermediate H.264 encode that ffmpeg then transcoded to the final
-codec; once the native sink generalized to every bit depth and to the
-intermediate codecs themselves, that path became redundant and was deleted.
-
-The standing guard for all of the above is `export_codecs.spec.ts`, which
-exercises AV1/HEVC direct, 10-bit HEVC, pinned-native H.264 with explicit color
-tags, ProRes, and DNxHR through the real app and checks the resulting codec
-shape, container, and (for the 10-bit case) distinct-step counts above the
-8-bit ceiling at the analyzer's gradient-row meter.
-
-Cross-reference: ADR 0022 records the f16-composite + native-encode-exit
-decision and its probe-backed rationale (WebGL2 stock f16, copyTo ingest,
-deferred HDR) — its transport section is superseded;
-[`export-ipc-transport.md`](export-ipc-transport.md) describes the current
-frame transport. ADR 0021 describes the color model this exit's frame+stream
-tagging realizes for export.
-
-### Backpressure
-
-`encoder.encodeQueueSize > 8` → await one tick before submitting the
-next frame. Prevents heap blow-up if the encoder lags decode.
-
-### Hardware fallback
-
-The encoder configures with `hardwareAcceleration: 'prefer-hardware'`
-first. On configure error or a sustained zero-output condition the
-Worker re-configures with `'prefer-software'` and logs a warning.
+Guard: `e2e/electron/export_codecs.spec.ts` (AV1/HEVC, 10-bit HEVC step
+counts above the 8-bit ceiling, pinned-native H.264 tags, ProRes, DNxHR).
 
 ## Preview canvas
 
-The preview draws the composition into one Pixi canvas whose LOGICAL size is
-the composition — every sprite transform, render texture, filter frame and
-`containMap` speak composition pixels — and whose backing store is sized by
-`renderer.resize(width, height, resolution)` alone. A `ResizeObserver` on the
-host (`.pixi-preview-host`) reports the room the panel offers, floored to whole
-device pixels, and the resolution is
+The preview canvas's logical size is the composition; every transform, render
+texture, filter frame and `containMap` speaks composition pixels. Only
+`renderer.resize(w, h, resolution)` sizes the backing store, with
+(`decoder/playbackResolution.ts`, `previewRenderResolution`):
 
 ```
-min(1, scale, knob)     scale = the zoom, or `fit` while the view is Fit
-                        fit   = min(room.width / width, room.height / height)
-                        knob  = Full 1 · 1/2 0.5 · 1/4 0.25
+resolution = min(1, scale, knob)   scale = zoom, or fit in Fit view
+                                   fit   = min(room.w / width, room.h / height)
+                                   knob  = Full 1 · 1/2 0.5 · 1/4 0.25
 ```
 
-(`render/decoder/playbackResolution.ts`). The knob caps the fit rather than
-multiplying it: pixels above the fit are never displayed, so trimming them
-would cost nothing and save nothing, while the knob's real saving — the
-decode divisor — applies regardless; only a knob below the fit shrinks what is
-shown. Below a fit of 1 the canvas element's box is WRITTEN from the fit — the
-Full buffer's size in device pixels, centred in the host and snapped to whole
-device pixels (`fittedCanvasBox`) — so at Full the compositor's blit is a copy
-and the downscale is Pixi's; a knob below the fit draws a smaller buffer into
-that same box and the browser upscales it. That is what makes text sharp: `Text` follows `renderer.resolution`
-(auto-resolution, the `resolutionChange` runner), so glyphs are rasterized at
-the density they are shown at rather than drawn at composition size and shrunk
-by the compositor's bilinear tap, and a text layer that stands still snaps its
-block to the buffer grid (`TextSprite`, preview only; it moves sub-pixel from
-the frame its position changes). At a fit of 1 the inline box is removed and
-CSS's contain-fit owns the canvas (`.pixi-preview-canvas`, container-query
-units); the cap keeps the preview from showing detail the export cannot have
-and makes a panel larger than its composition the exact pre-fit path — the E2E
-gates' case. The decode divisor stays the knob's alone (Full 1, 1/2 2, 1/4 4);
-the fit does not thread into `OutScale`.
-[ADR 0071](adr/0071-the-preview-backing-store-fits-the-display-box.md).
+`room` is the host's (`.pixi-preview-host`) `ResizeObserver` box in whole
+device pixels. The knob caps the fit rather than multiplying it: pixels above
+the fit are never shown, while the knob's real saving — the decode divisor
+(Full 1, 1/2 2, 1/4 4) — applies regardless; the fit never reaches
+`OutScale`. Below a fit of 1, `fittedCanvasBox` writes the canvas box from the
+Full buffer size, centred and device-pixel-snapped, so Pixi does the downscale
+and `Text` (which follows `renderer.resolution`) rasterizes at display
+density; a still text layer snaps its block to the buffer grid (preview only).
+At a fit of 1 CSS contain-fit owns the canvas (`.pixi-preview-canvas`) — the
+E2E gates' case. [ADR 0071](adr/0071-the-preview-backing-store-fits-the-display-box.md).
 
-Preview zoom IS that scale — device pixels per composition pixel, which is
-what makes 100 % mean the composition's own detail. `Fit` is a mode rather than
-a number: the renderer publishes the resolved fit into `previewViewStore` (the
-one place that knows the host's device box) and everything else resolves
-through it, so a resized panel re-fits. Outside the Fit view `fittedCanvasBox`
-writes the zoomed box even when it exceeds the host or the composition; its pan
-is clamped per axis and its origin stays on the device grid. Pan changes only
-the canvas's DOM box; zoom also updates renderer resolution. Both invalidate
-the cached canvas rect so the gizmo, text tools and safe-area guides follow the
-picture. The native decode divisor continues to read only the
-playback-resolution knob.
-[ADR 0072](adr/0072-the-preview-viewport-is-a-gesture-not-a-mode.md).
+Zoom is that scale: device pixels per composition pixel, so 100 % is the
+composition's own detail. `Fit` is a mode; the renderer publishes the resolved
+fit into `previewViewStore`. Outside Fit, `fittedCanvasBox` writes the zoomed
+box even past the host; pan is clamped per axis and stays on the device grid.
+Pan moves only the DOM box; zoom also changes resolution; both invalidate the
+cached canvas rect. Gestures: [`preview.md`](preview.md#interaction).
 
-Two numbers to keep apart:
-
-- **The composition size is the composition's.** Below a fit of 1 Pixi
-  redefines its logical size as `pixels / resolution`, a fraction of a pixel
-  off the composition; `PixiPreview` holds the composition's integers itself
-  and never reads `app.screen` or `renderer.width/height` for them.
-- **Readbacks are pinned to `resolution: 1` at the composition frame** —
-  the colour picker's `captureFrame`, the E2E `sampleComposite`, conformance
-  PNGs — so they are composition-sized whatever the fit or the knob. Text
-  glyphs in such a read are the preview-density textures, upsampled. Filter
-  intermediates are `Filter.defaultOptions.resolution = 1` as well, so a
-  texel-addressed kernel (sharpen) is identical in preview and export.
+- **Composition size is the composition's.** Below a fit of 1 Pixi's logical
+  size becomes `pixels / resolution`, so `PixiPreview` keeps the composition
+  integers itself and never reads `app.screen` or `renderer.width/height`.
+- **Readbacks render at `resolution: 1`** (colour picker `captureFrame`, E2E
+  `sampleComposite`, conformance PNGs), so they are composition-sized at any
+  fit or knob. Filter intermediates are allocated at resolution 1
+  (`Filter.defaultOptions.resolution`), so texel-addressed kernels (sharpen)
+  match between preview and export.
 
 ## Render & Play
 
-A user-triggered affordance ("Render & Play") runs the export
-pipeline into an OS temp `.mp4` and opens an Electron window
-playing the file. The popup HTML lives at `/render-play.html`; the
-URL hash carries the asset src + display path. Each invocation
-allocates a unique window label so multiple plays coexist.
+The export-complete panel offers **Play**, which opens the exported file in a
+secondary window (`useExportFlow.ts` `openRenderPlayPopup`): static
+`/render-play.html`, with the asset URL, display path and localized title in
+the URL hash (the page has no i18next); each window gets a unique
+`render-play-<ts>` label. Beside it, a reveal button (`shell:reveal`) reads
+"Reveal in Finder" / "Reveal in Explorer", and "Show in folder" on Linux,
+where `main/openPath.ts` opens the containing folder through a detached
+`xdg-open` because Electron's `showItemInFolder` wedges GTK file managers.
+Main `stat`s the file first, since `showItemInFolder` ignores a missing file.
 
-This is the WYSIWYG verification path when the user wants to see
-exactly what the export will produce. It uses the same Worker + Rust
-audio + mux pipeline the normal export does — same code, same
-output.
+## Regression gates
 
-The export-complete dialog (`ExportPanel`) offers two actions beside
-Dismiss: "Play", which opens this popup, and a reveal button that
-shows the exported file in the OS file manager over the `shell:reveal`
-IPC. The reveal label names the file manager per OS the way Premiere
-and Resolve do ("Reveal in Finder" / "Reveal in Explorer"); on Linux it
-reads "Show in folder" because that is what happens there — Electron's
-`showItemInFolder` falls back to the in-process XDGOpen that wedges GTK
-file managers, so `main/openPath.ts` opens the containing folder through
-its detached `xdg-open` path instead of selecting the file. Main `stat`s
-the file first: `showItemInFolder` swallows a missing file silently, and
-the check turns "the user moved it" into a rejected promise the renderer
-logs. The popup page is static HTML with no i18next, so its window
-title travels in the URL hash, resolved by the opener in the app locale.
-
-## Fixture suite
-
-`render/fixtures/runFixture.ts` is the reusable fixture runner. Each
-fixture is a small project (a few seconds, hand-picked layers)
-exercising one rendering concern. The runner exports the project
-through the Worker, fishes specific frames out via the Rust
-`extract_video_frame` command, and SSIM-compares each against a
-committed baseline.
-
-The fixture suite is the renderer's regression net — PixiJS is its
-own ground truth (no comparison against ffmpeg), so the fixtures
-must be re-baselined whenever an intentional rendering change lands.
+Pixi is its own ground truth; there is no reference renderer. Rendering
+regressions are caught by Playwright specs that export through the real app
+and analyze the file against its sources — `conformance.spec.ts` (alignment +
+SSIM), `color-conformance.spec.ts`, `transitions-wysiwyg.spec.ts`,
+`group-export-*.spec.ts`, `text-box-cjk-export.spec.ts`. Suite layout and
+analyzer: [`conformance.md`](conformance.md).

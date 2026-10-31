@@ -130,7 +130,7 @@ export function DragGhostChip({
   const { t } = useTranslation();
   const theme = timelineLayerTheme(kind, GHOST_NEUTRAL_SURFACE);
   // Not `!== "valid"`: over the drop strip the verdict is `"spawn"`, a
-  // destination being created rather than a refusal (ADR 0042).
+  // destination being created rather than a refusal.
   const refused = placementRefuses(validity);
   const refusalLabel =
     validity === "collision"

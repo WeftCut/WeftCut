@@ -1,5 +1,5 @@
 // apps/desktop/src/shared/harness.ts
-// The agent harness's closed vocabularies (ADR 0123): the stages a recipe may
+// The agent harness's closed vocabularies (ADR 0046): the stages a recipe may
 // compose and the signals its exit condition may name. One source: the
 // skill-conformance gate validates every shipped recipe against these lists
 // and pins the shipped recipes/README.md to them, so a stage or signal exists

@@ -4,7 +4,7 @@
  * accelerated canvases. Install before authored scripts create their contexts.
  * WebGL and bitmaprenderer contexts keep their original options and backend.
  * (The macOS empty-first-frame case was the host window's size, not the
- * canvas backend: capture.ts §setContentSize, ADR 0142.) */
+ * canvas backend: capture.ts §setContentSize.) */
 export const PNG_CANVAS_RUNTIME_SOURCE = String.raw`
 (() => {
   for (const Canvas of [globalThis.HTMLCanvasElement, globalThis.OffscreenCanvas]) {

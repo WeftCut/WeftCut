@@ -1,43 +1,52 @@
 ---
 status: accepted
 ---
-# 0025 — Shared "WYSIWYG math" in one wasm leaf crate
+
+# Shared "WYSIWYG math" lives in one wasm leaf crate
+
+Date: 2026-06-20
 
 ## Context
-A handful of small, deterministic functions decide *what the user sees and hears*, and each runs on BOTH sides of the renderer↔Rust process boundary:
 
-- **frame snap** (`snap_frame_round`/floor/ceil): the actor snaps every timeline mutation to the frame grid; the renderer snaps drag-ghost / seek / playhead.
-- **keyframe eval** (`value_at` / `resolveAnimated` + `unit_bezier`): the renderer composites every animated layer per frame (preview + export); Rust evaluates keyframed audio gain/pan for export.
-- **audio envelope** (`db_to_linear`): the Rust export mixer; the renderer's audio preview.
-- **role gate** (`role_audible` mute/solo decision): the Rust export mix selection; the renderer's audio-preview gating.
+Small deterministic functions decide what the user sees and hears, and each
+runs on both sides of the renderer/Rust boundary: frame snap (actor commits vs
+drag ghost/seek), keyframe eval (renderer composite vs Rust audio export),
+dB-to-linear, pan law, fade ramp and the role mute/solo gate (export mix vs
+preview gating). Hand-mirrored Rust + TS copies drifted on edits, silently
+breaking the frame-grid storage invariant, preview/export parity or
+audibility. Cross-language goldens only caught drift after the fact.
 
-These were hand-mirrored Rust + TypeScript copies. Identical math in two languages drifts on edits — a change that lands on one side but not the other silently breaks the storage invariant (snap), preview-vs-export parity (keyframes), or audibility (role gate). Cross-language golden fixtures were added as a drift tripwire, but a tripwire is not a fix: it catches drift after the fact rather than preventing it.
-
-The wasm boundary cost was measured before committing: a resident-ABI `value_at` runs ~0.59× the JS cost (wasm is *faster*), and per-frame impact is under 0.5% of the frame budget — so sharing one implementation costs nothing in the hot path.
+Measured before committing: a resident-ABI wasm `value_at` costs ~0.59x the JS
+version, and per-frame impact is under 0.5% of the frame budget.
 
 ## Decision
-The math lives once, in a dependency-light Rust leaf crate **`weftcut-eval`** (`apps/desktop/native/eval/`), compiled two ways:
 
-- **Natively** as an `rlib` the `weftcut` napi crate links: `state/time.rs`, `state/animated.rs`, `audio/envelope.rs`, and `audio/mix.rs` delegate to it (behavior byte-identical).
-- **To `wasm32`** as a `cdylib`: a build script (`scripts/build-eval-wasm.mjs`) compiles it and base64-embeds the bytes into a generated TS module; the renderer loads it once via `initEval()` (awaited before the first composite) and calls it in place of the deleted TS twins. The four cross-language goldens become single-source regression + wasm-smoke tests.
-
-Design constraints that keep the leaf small and the boundary cheap:
-
-- **Resident scalar ABI.** Keyframes cross into wasm once (cached by a handle keyed on the IPC-materialized array reference); per call only scalars cross. Times are `f64` µs and rates are `i32` num/den — **never i64**, to avoid BigInt marshaling.
-- **Leaf dependency budget.** `core`/`std` (`no_std` only on wasm32, so the native build needs no hand-rolled panic handler), plus `libm` for `10^(db/20)` and `serde` behind a feature. Forbidden: `imbl`, `uuid`, `napi`, `tokio`, `ts-rs`, `schemars`.
-- **`Rational` stays in the napi crate.** It is used inside a `#[derive(JsonSchema)]` type and the leaf forbids schemars, so the leaf snap functions take primitive `(num, den)` instead — which also matches the wasm/TS ABI. `Interpolation` (serde, no schemars) does move into the leaf.
-- **Gains are `f32`.** `db_to_linear -> f32`, matching `Envelope::scale` and the gain Web Audio quantizes to; both cross-language sides assert the role-gain golden at f32 width.
-
-One intentional JS copy of `unit_bezier` remains in `render/animated.ts` — used only by the curve-graph editor overlay, a UI path with no Rust hot-path twin.
+- The math lives once in the Rust leaf crate **`weftcut-eval`**
+  (`apps/desktop/native/eval/`): an `rlib` the napi crate delegates to
+  (`state/time.rs`, `audio/envelope.rs`, `audio/mix.rs`, ...) and a `wasm32`
+  `cdylib` that `scripts/build-eval-wasm.mjs` base64-embeds into a generated
+  TS module, loaded once by `initEval()` before the first composite.
+- **Resident scalar ABI.** Keyframes cross into wasm once (cached by handle);
+  per call only scalars cross. Times are `f64` us, rates `i32` num/den, never
+  `i64` (no BigInt marshaling); exact rationals cross as two `f64` safe
+  integers.
+- **Leaf dependency budget.** `core` + `libm` (+ optional `serde`); `no_std`
+  on wasm32 only. Forbidden: `imbl`, `uuid`, `napi`, `tokio`, `ts-rs`,
+  `schemars`. So `Rational` (a `JsonSchema` type) stays in the napi crate and
+  the leaf takes `(num, den)` primitives.
+- **Gains are `f32`** (`db_to_linear`), matching `Envelope::scale` and Web
+  Audio; goldens assert at f32 width.
 
 ## Consequences
-- **+** One source of truth for the WYSIWYG math: the renderer and the Rust actor/export run the same compiled function, so preview, export, and committed state cannot drift. The goldens now prove the wasm reproduces the fixtures rather than that two copies happen to agree.
-- **+** No measurable hot-path cost (resident eval ≈ JS, often faster); the renderer mounts behind a one-time `initEval()`.
-- **−** A build step: the renderer now depends on a generated, gitignored wasm module, wired into `predev`/`prebuild`/`pretest` (so a Rust toolchain with the `wasm32-unknown-unknown` target is required to build or test the renderer).
-- **−** The Rust + TS engines were unified by moving the renderer onto wasm; the leaf's `no_std` discipline is enforced by the per-build wasm compile, not by review.
-- **−** The wasm resident buffer is a fixed 256 keyframes **per animated property** (no heap in the no_std build); beyond that the preview truncates while native export evaluates all keyframes, so they would diverge. Unreachable in manual authoring (a backstop, not a product limit); `loadTrack` warns once if hit. Revisit (an upstream per-property cap, or a linear-memory upload path) only if dense/programmatic keyframes are introduced.
-- **+** The audio pan law (`pan_coeffs`) and fade ramp (`fade_multiplier`) live in
-  the leaf as well, so export and the renderer share one pan law. The renderer pans
-  through a native coefficient matrix mixer (`ChannelSplitter → GainNodes →
-  ChannelMerger` — up to four gains, two for mono) rather than the browser
-  `StereoPannerNode`; see `docs/audio.md` §Preview mixer.
+
+- Preview, export and committed state run the same compiled function; the
+  goldens now prove the wasm reproduces the fixtures.
+- Building or testing the renderer needs a Rust toolchain with
+  `wasm32-unknown-unknown`: `dev`, `build`, `typecheck` and `test` run
+  `npm run build:wasm` first. The per-build wasm compile enforces `no_std`.
+- The wasm build has no heap, so each animated property holds at most
+  `MAX_RESIDENT_KEYFRAMES` (4096) keyframes resident; beyond that the preview
+  truncates (with a one-time warning in `loadTrack`) while native export
+  evaluates all of them. Path progress enforces the cap at authoring.
+- New shared math (exact time mapping, motion-path compile) goes into the leaf,
+  not into a second TS copy.

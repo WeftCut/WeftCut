@@ -1,5 +1,5 @@
-# Bench output is local evidence, never committed (ADR 0123: the bench is
-# local and outside CI).
+# Bench output is local evidence, never committed (the bench is local and
+# outside CI).
 results/
 # Fixture downloads and trims (fixtures/fetch.mjs); also covered by the root .cache/ rule.
 .cache/

@@ -2,170 +2,63 @@
 status: accepted
 ---
 
-# The composition frame grid is enforced structurally, with one leaf implementation, and off-grid data on disk is repaired on load rather than rejected
+# The frame grid is enforced structurally, with one leaf implementation, and off-grid data on disk is repaired on load
+
+Date: 2026-07-25
 
 ## Context
 
-Composition rate is rational (`{num, den}`), timeline times are integer
-microseconds, and a canonical time is `round(i × 1e6 × den / num)` for an
-integer frame index `i`. Every mutator was supposed to snap, and
-`docs/data-model.md` documented that as an invariant — but nothing checked it,
-and three write paths did not honour it: a trim clamped against
-`duration − 1 µs` or against an arbitrary media duration, `add_transition`
-storing a raw duration and extending `t_end_us` by it, and marker times never
-snapped at all. The ruler painted a fourth grid of its own, multiplying a
-pre-rounded frame duration.
-
-Underneath that, the grid had no single implementation. `snap_frame_round`
-lived in the shared `weftcut-eval` leaf (ADR 0025), but `snap_frame_floor` in
-the same leaf **truncated** its output while an independent TypeScript
-`snapFrameFloor` rounded half-up — one name, two different numbers at
-fractional rates, with a caller double-snapping to paper over it. Frame
-indexing, output timestamps, tick generation, the last-frame anchor, and
-frame stepping each had their own local arithmetic.
+Composition rate is rational (`{num, den}`), timeline times are integer µs, and
+a canonical time is `round(i × 1e6 × den / num)`. Snapping was a per-mutator
+convention that nothing checked: trims, `add_transition` and markers each wrote
+sub-frame times, and the grid had several implementations — a truncating Rust
+`snap_frame_floor` beside a half-up TypeScript `snapFrameFloor` (one name, two
+results at fractional rates), plus local arithmetic for ticks, stepping and the
+last-frame anchor. TypeScript doubles are not a safe home for the arithmetic: a
+24 h timeline at 60000/1001 evaluates `frame × 1e6 × den ≈ 5.18e15`, only 1.7×
+under 2^53.
 
 ## Decision
 
-### One implementation in the leaf, and index policy is separate from output policy
-
-All grid primitives — `time_us_at_frame`, `frame_index_floor/_round/_ceil`,
-`frame_count`, `snap_frame_floor/_round/_ceil` — live in `weftcut-eval` with
-i128 arithmetic and cross the scalars-only wasm ABI. `src/renderer/frames.ts`
-is a typed wrapper and the single surface for the renderer, the timeline UI,
-and the main-process actor (through `src/main/state/snap.ts`). Nothing
-reimplements a primitive in TypeScript: JS doubles have a real ceiling here —
-a 24 h timeline at 60000/1001 evaluates `frame × 1e6 × den ≈ 5.18e15`, only
-1.7× under 2^53.
-
-Index selection (`floor` / `nearest` / `ceil`) and output rounding are
-**separate policies**. Choosing a frame is a policy; the microsecond value of
-a frame boundary is always half-up. There is no truncating variant, which is
-what collapsed the two `snapFrameFloor` semantics into one.
-
-The nominal frame duration survives as `approxFrameDurUs`, named so its
-non-accumulability is visible at the call site. It is legal for
-display/estimate decisions only — a ruler's tick-spacing choice, a progress
-readout — never as a time step.
-
-### The invariant is a validation backstop, not a per-mutator convention
-
-`validate` rejects any layer endpoint, `composition.duration_us`, or marker
-time that is not canonical, so a mutator that forgets to snap fails loudly
-instead of quietly persisting a sub-frame time. The endpoint predicate is
-**keyed by layer kind**, so a kind can have its own grid without a sweep over
-call sites. [ADR 0038](0038-rate-locks-audio-authors-on-samples-ndf-stays-honest.md)
-takes that seam live: audio moved to the 48 kHz sample lattice, and the lookup
-grew from one predicate to a shared function with three call sites.
-
-Two fields are deliberately outside the rule:
-
-- **`transition.duration_us`** is a *distance* between two canonical
-  boundaries, and at fractional rates a distance is not itself a boundary
-  time (a one-frame transition at 30000/1001 is 33_367 µs at cut frame 0 and
-  33_366 µs at cut frame 1). What is enforced is the pre-existing
-  `overlap == duration_us`; canonical participant endpoints then make the
-  duration a whole frame count automatically.
-- **Keyframe `t_us`** is snapped on write but not enforced. Trim and split
-  rebase keys by a *delta*, which is a difference of canonical times and so
-  not canonical itself. Re-snapping the shifted set would run
-  dedupe-last-wins over it and silently merge two keys that landed on one
-  frame — losing authored data to satisfy a rule whose violation is
-  invisible (a ≤ half-frame offset on an interpolated value).
-
-### Off-grid data already on disk is repaired on load
-
-`project_open` reaches the actor through `replace_state`, which runs the same
-validator as every mutation. A hard rule alone would therefore make any
-project written by an older build — or by the trim bug this work fixed —
-refuse to **open**. So `parseProject` snaps every grid-bound field inside its
-single normalize pass, beside the additive-field backfills: one pass, one
-place, because a second normalize site is how blank-screen-on-open bugs
-happen. It re-derives each transition duration from the repaired geometry (an
-endpoint moving by 1 µs changes what the duration must be), widens a span the
-snap collapsed so the repair can never manufacture an `InvalidLayerRange`,
-and reports what it moved so a migrated project is visible rather than
-mysterious. The pass is idempotent by construction — every write is a snap.
-
-**Repair on load, reject on edit.** The same off-grid value opens fine from
-disk and fails as a mutation argument.
-
-### The ruler's cost is bounded by the viewport
-
-Tick generation is a pure model (`renderer/timeline/rulerModel.ts`) taking
-rate, zoom, scroll offset, and viewport width, returning a windowed tick set
-with overscan. Scroll position reaches it through a dedicated store that only
-the ruler's tick set subscribes to — never React state on the timeline root,
-which would re-render the whole tree per wheel event (the regression class the
-memory ratchet exists to catch). Node count went from 216 001 at one hour and
-5 184 001 at 24 hours to ~61 in both cases; no canvas fallback was needed.
+- **One implementation.** `time_us_at_frame`, `frame_index_floor/_round/_ceil`,
+  `frame_count` and `snap_frame_floor/_round/_ceil` live in `weftcut-eval`
+  (i128) and cross the scalars-only wasm ABI; `renderer/frames.ts` is the only
+  TypeScript surface (main reaches it through `main/state/snap.ts`). Nothing
+  reimplements a primitive.
+- **Index policy is separate from output rounding.** Choosing a frame
+  (floor / nearest / ceil) is a policy; a boundary's µs value is always half-up.
+  There is no truncating variant. The nominal frame length is
+  `approxFrameDurUs`, for display and estimates only, never a time step.
+- **Validation is the backstop.** The commit validator rejects any layer
+  endpoint, `composition.duration_us` or marker time that is not canonical on
+  its field's grid. The endpoint grid is chosen per layer kind
+  (`gridForLayerKind`), which is how audio sits on the 48 kHz lattice
+  (ADR 0038). Grid errors carry `snap_to`.
+- **Deliberately unenforced.** `transition.duration_us` / `extended_us` are
+  distances, not boundary times (a one-frame transition at 30000/1001 is
+  33 367 µs at one cut and 33 366 µs at the next), so only `overlap ==
+  duration_us` is enforced. Keyframe `t_us` is snapped on write but not
+  enforced: trim and split rebase keys by a delta, and re-snapping would
+  dedupe-merge two keys landing on one frame, losing authored data.
+- **Repair on load, reject on edit.** `project_open` runs the same validator,
+  so `parseProject` snaps every grid-bound field in its single normalize pass
+  (`repairGrid` in `main/state/serialize.ts`), re-derives transition durations
+  from the repaired geometry, and reports what moved. Negative starts are a
+  separate bound (`NegativeLayerStart`), not a grid rule.
 
 ## Consequences
 
-- A mutator can no longer persist an off-grid visual endpoint, and the
-  property test over the actor's command matrix at eight rates is what proves
-  it. That test caught `duplicate_layer` offsetting both edges by a raw
-  microsecond delta.
-- Markers now quantize, so a marker dropped mid-frame moves up to half a
-  frame — matching Premiere/Resolve. A transition or region marker request
-  below half a frame is rejected rather than rounded to nothing.
-- Composition `fps` changes re-snap marker times along with layer endpoints;
-  without that the new marker rule would fail every fps change on any project
-  holding a marker. `fps` is now immutable once a layer exists
-  ([ADR 0038](0038-rate-locks-audio-authors-on-samples-ndf-stays-honest.md)), so
-  that path serves layer-less projects only.
-- The grid repair reports to the status log. The report is captured during the
-  parse and emitted only after the workspace commit, because that commit rotates
-  the per-workspace LogBus — emitting where the repair happens drops the row into
-  the bus being discarded.
-- Timeline time is bounded below by zero as a *separate* rule
-  (`NegativeLayerStart`), never folded into the grid predicate: a negative time is
-  usually perfectly canonical (`-1_000_000` is frame -30 at 30 fps), so reporting
-  it as off-grid points at the wrong fix. It repairs on load like the grid rules,
-  but the repair is not a uniform clamp — see `docs/data-model.md`, since lifting
-  an entirely-negative layer would collide with the head of its track and
-  manufacture the `LayerOverlap` that repair-on-load exists to prevent.
-- Both grid errors carry `snap_to`, the value the caller should have sent,
-  computed where the lattice is already in hand rather than by each consumer.
-- Timeline zoom (`pxPerSec`) remains React state on the timeline root, so a
-  ctrl+wheel zoom still re-renders the tree — the same cost class as the
-  scroll path this work fixed, and the remaining half of it.
+- A mutator that forgets to snap fails loudly; the actor-wide property test at
+  eight rates (`main/state/__tests__/pbt/grid-invariant.test.ts`) and the
+  cross-language golden (`renderer/snapFrameGolden.fixture.json`) gate it.
+- Markers quantize (up to half a frame), as in Premiere/Resolve; a transition
+  or region below half a frame is refused, not rounded to nothing.
+- The repair report is emitted after the workspace commit, because that commit
+  rotates the per-workspace LogBus.
+- The ruler's tick model (`renderer/timeline/rulerModel.ts`) is windowed to the
+  viewport and fed scroll from its own store, not timeline-root React state:
+  ~61 nodes at any length instead of 5 184 001 at 24 h. Zoom (`pxPerSec`) is
+  still root React state, so ctrl+wheel re-renders the tree.
 
-## Where this lives
-
-- `native/eval/src/lib.rs` (the primitives), `native/eval/src/wasm.rs` (the
-  scalars-only ABI), `src/renderer/eval/index.ts` (the ABI twin — a missing
-  entry is a runtime `undefined`), `src/renderer/frames.ts` (the surface),
-  `src/main/state/snap.ts` (the main-process re-export).
-- `src/main/state/validate.ts` (the backstop + the kind-keyed endpoint
-  predicate), `src/main/state/serialize.ts` (`repairGrid` inside `parseProject`),
-  `src/main/state/mutations/{trim,transitions,markers,duplicate}.ts`. The grid
-  lookup itself is `gridForLayerKind` in `src/main/state/snap.ts` (ADR 0038).
-- `src/renderer/timeline/{rulerModel.ts,TimelineRuler.tsx}`,
-  `src/renderer/state/timelineScrollStore.ts`.
-- Gates: `src/renderer/snapFrameGolden.fixture.json` (cross-language golden,
-  asserted from both TS and Rust), `src/main/state/__tests__/pbt/grid-invariant.test.ts`
-  (the actor-wide property), `src/renderer/timeline/rulerModel.test.ts`
-  (bounded count at 10 s / 1 h / 24 h), `e2e/scripts/ruler-node-count.mjs`
-  (opt-in, `npm run e2e -- --ruler-gate`).
-
-## Industry baseline
-
-No single standard prescribes how an NLE timeline behaves. These interoperable
-and de-facto professional behaviours are the comparison points this decision and
-[ADR 0038](0038-rate-locks-audio-authors-on-samples-ndf-stays-honest.md) were
-measured against — comparison points, not a requirement to copy another editor's
-UI or storage model.
-
-- [SMPTE ST 12-1](https://pub.smpte.org/latest/st12-1/st0012-1-2014.pdf) —
-  timecode rates and time-address semantics.
-- [OpenTimelineIO `RationalTime` / `TimeRange`](https://opentimelineio.readthedocs.io/en/v0.17.0/api/python/opentimelineio.opentime.html)
-  — rational time and explicit exclusive-end ranges.
-- [Adobe sequence settings](https://helpx.adobe.com/premiere/desktop/edit-projects/change-clip-sequence/sequence-presets-and-settings.html)
-  — a sequence timebase fixed after creation.
-- [Adobe timecode settings](https://helpx.adobe.com/uk/premiere/desktop/edit-projects/change-clip-sequence/sequence-settings-reference.html)
-  — DF/NDF and sample-level audio display.
-- [Final Cut Pro project settings](https://support.apple.com/en-mide/guide/final-cut-pro/ver1b946a4ff/mac)
-  — locking project fps once a timeline is non-empty.
-- [Final Cut Pro trimming](https://support.apple.com/guide/final-cut-pro/trim-ver8e3f33db/mac)
-  and [subframes](https://support.apple.com/en-ca/guide/final-cut-pro/ver8e3f3850/mac)
-  — one-frame video precision, finer-than-frame audio precision.
+Rejected: refusing off-grid files on open (older projects would not open); a
+TypeScript twin of the primitives (precision ceiling, and twins drift).

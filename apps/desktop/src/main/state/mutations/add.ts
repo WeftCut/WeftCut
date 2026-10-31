@@ -143,7 +143,8 @@ export function applyAddGroupLayer(p: Project, idGen: IdGen, sourceCompositionId
 /** Insert a new track with Track::new() defaults at `position` (default: end).
  *  `role` is always null here, so `transient` — "not part of the reserved
  *  skeleton" — is always true: every track this mints is a cleanup candidate the
- *  moment it empties (ADR 0042). Lands in `compositionId`, the root by default. */
+ *  moment it empties (docs/data-model.md#track). Lands in `compositionId`, the
+ *  root by default. */
 export function applyAddTrack(p: Project, idGen: IdGen, label: string | null, position?: number, compositionId?: Uuid | null): Uuid {
   const c = scopeComposition(p, compositionId)
   const id = idGen()

@@ -96,7 +96,7 @@ export interface ContentDeps {
   readZipEntries(archivePath: string): Promise<readonly ZipEntry[]>;
   /**
    * Unpack a bzip2- or gzip-compressed tar into a directory (the Rust
-   * `content_extract_archive` command in production — ADR 0043/0073). Unlike
+   * `content_extract_archive` command in production — ADR 0039). Unlike
    * the zip lane, whose entries flow through this module's guard, tar
    * traversal containment lives in the extractor itself (the `tar` crate
    * refuses entries escaping the dest); the adapter must throw on refusal.
@@ -109,7 +109,7 @@ export interface ContentDeps {
    * out and before it is renamed into place — so a throw here leaves no
    * manifest and the item never reads installed. Present on macOS only, where
    * it ad-hoc re-signs Mach-O files whose upstream signature is invalid
-   * (contentSign.ts, ADR 0075); absent everywhere else.
+   * (contentSign.ts, ADR 0039); absent everywhere else.
    */
   sealInstall?(stagingDir: string): Promise<void>;
   join(...parts: string[]): string;
@@ -645,7 +645,7 @@ export function sweepStalePartials(
 
 /**
  * The speech-config entries that installed managed content should create —
- * the ADR 0039/0043 consumer's decision logic, pure so the only-if-blank rule
+ * the ADR 0039 consumer's decision logic, pure so the only-if-blank rule
  * is testable. Per backend: every `speech`-tagged item must be installed to
  * form an entry (a half pair configures nothing), and an existing entry with
  * ANY non-blank path wins outright — a manual path is never overwritten, and
@@ -706,7 +706,7 @@ export function speechAutofillPlan(
 }
 
 /**
- * The vlm-config entries installed managed content should create — the ADR 0055
+ * The vlm-config entries installed managed content should create — the VLM
  * twin of {@link speechAutofillPlan}, with the same only-if-blank rule: an
  * existing entry with ANY non-blank path wins outright, so a manual path is
  * never overwritten and a partially-manual entry is left entirely alone.

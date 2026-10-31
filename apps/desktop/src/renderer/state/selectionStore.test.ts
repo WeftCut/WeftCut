@@ -313,7 +313,7 @@ describe("media selection", () => {
   });
 });
 
-// ── the gap kind (ADR 0069) ──────────────────────────────────────────────────
+// ── the gap kind ─────────────────────────────────────────────────────────────
 
 describe("gap selection", () => {
   const lane = [
