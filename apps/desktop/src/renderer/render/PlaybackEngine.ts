@@ -90,10 +90,7 @@ export class PlaybackEngine {
       const start = stageNow();
       const tUs = this.audio.positionUs();
       stageAdd(STAGE.ClockTick, start);
-      const anchor = stageNow();
-      this.compositor.setAnchorTime(tUs);
-      stageAdd(STAGE.Anchor, anchor);
-      this.compositor.compositeFrame(tUs);
+      this.compositor.compositePlaybackFrame(tUs);
     } catch (error) {
       console.error("[weftcut/pixi] presentation tick failed:", error);
     } finally { stageAdd(STAGE.TickTotal, t0); stageFrameEnd(); }
