@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { AppInput } from "../components/AppInput";
 import { AppIcon } from "../components/AppIcon";
 import { LoaderCircle } from "lucide-react";
@@ -96,9 +96,32 @@ export function ExportPanel({
   const separator = outputPath ? Math.max(outputPath.lastIndexOf("/"), outputPath.lastIndexOf("\\")) : -1;
   const filename = outputPath?.slice(separator + 1) || state.job?.filename;
   const directory = outputPath?.slice(0, separator + 1);
+  const encoderLoad = state.kind === 'progress' && !cancelling ? state.job?.encoder_load : undefined;
+  const deviceLabel = encoderLoad ? t(encoderLoad.device === 'gpu' ? 'export.device_gpu' : 'export.device_cpu') : null;
+  const load = encoderLoad?.utilization_percent;
+  const loadLabel = typeof load === 'number' && Number.isFinite(load) && load >= 0 && load <= 100
+    ? `${Math.round(load)}%` : t('export.load_unavailable');
   const percent = !cancelling && state.kind === "progress" ? Math.max(0, Math.min(100, Math.round(state.progress.progress * 100))) : undefined;
+  const progressValue = state.kind === 'progress' ? state.progress.progress : null;
+  const estimateReceivedAt = useMemo(() => performance.now(), [state.job?.job_id, progressValue]);
+  const [estimateClock, setEstimateClock] = useState(0);
+  useEffect(() => {
+    if (state.kind !== 'progress') return;
+    const timer = setTimeout(() => setEstimateClock(performance.now()), 30_000);
+    return () => clearTimeout(timer);
+  }, [estimateReceivedAt, state.kind]);
+  const remainingMs = state.job?.estimated_remaining_ms;
+  const remainingSeconds = estimateClock < estimateReceivedAt + 30_000
+    && typeof remainingMs === 'number' && Number.isFinite(remainingMs) && remainingMs > 0
+    ? Math.ceil(remainingMs / 1_000) : null;
+  const remainingTime = remainingSeconds === null ? null : remainingSeconds >= 3_600
+    ? t('export.time_hours_minutes', { hours: Math.floor(remainingSeconds / 3_600), minutes: Math.floor(remainingSeconds % 3_600 / 60) })
+    : remainingSeconds >= 60
+      ? t('export.time_minutes_seconds', { minutes: Math.floor(remainingSeconds / 60), seconds: remainingSeconds % 60 })
+      : t('export.time_seconds', { seconds: remainingSeconds });
   const title = cancelling ? t("export.title") : state.kind === "complete" ? t("export.notify_done_title")
-    : state.kind === "error" ? t(retryable ? "export.pending_title" : "export.notify_failed_title") : t("export.title");
+    : state.kind === "error" ? t(retryable ? "export.pending_title" : "export.notify_failed_title")
+      : deviceLabel ? `${t('export.title')} · ${deviceLabel}` : t("export.title");
   const phase = cancelling ? t("export.cancelling") : state.kind === "progress" ? t("export.phase_encode")
     : state.kind === "finalizing" ? t(FINALIZE_STEP_KEY[state.step])
       : state.kind === "preparing" ? state.message ?? t("export.phase_prepare") : t("export.starting");
@@ -118,6 +141,9 @@ export function ExportPanel({
       <div className="export-progress-body">
         {!dismissable && (
           <section className="export-work" aria-label={phase}>
+            {encoderLoad && <p className="export-progress-detail" title={t(encoderLoad.device === 'gpu' ? 'export.load_gpu_hint' : 'export.load_cpu_hint')}>
+              {encoderLoad.encoder} · {t(encoderLoad.device === 'gpu' ? 'export.load_gpu_label' : 'export.load_cpu_label')} {loadLabel}
+            </p>}
             <div className="export-phase-row">
               <p className="export-progress-status" role="status">
                 {percent === undefined && <span className="export-wait" role="progressbar" aria-label={phase}>
@@ -131,6 +157,11 @@ export function ExportPanel({
               role="progressbar" aria-label={phase} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
               <div className="progress-fill" style={percent === undefined ? undefined : { width: `${percent}%` }} />
             </div>}
+            {percent !== undefined && state.kind === 'progress' && <p className="export-progress-detail export-time-estimate">
+              {state.progress.progress >= 1 ? t('export.time_frames_done')
+                : remainingTime === null ? t('export.time_calculating')
+                  : t('export.time_remaining', { time: remainingTime })}
+            </p>}
           </section>
         )}
         {!cancelling && state.kind === "error" && (

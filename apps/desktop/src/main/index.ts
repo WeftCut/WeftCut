@@ -1,3 +1,4 @@
+import { createExportTelemetry } from "./exportTelemetry";
 import { ExportJobs, exportPathExists, suggestExportName } from "./exportJobs";
 import path from 'node:path'
 import { diagnosticOwner, recordDiagnostic, recordProjectDiagnostic } from './diagnostics'
@@ -26,6 +27,7 @@ import { motifContentHash } from './motif/contentHash.js'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
 import electronUpdater from 'electron-updater'
 import { createUpdates } from './updates.js'
+import { createServerRestart } from './serverRestart.js';
 import { createUpdateResume } from './updateResume.js'
 import { mediaMimeForExt } from './mediaMime.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
@@ -80,6 +82,7 @@ import { openExportSw, decodeRangeExportSw, returnCreditExportSw, closeExportSw,
 import { loadNativeDecode } from './native-decode.js'
 import { mainWindowGeometryDefaults, MAIN_WINDOW_LABEL } from './mainWindowConfig.js'
 import { DEFAULT_LAYOUT_THEME, layoutThemeArgument, readLayoutTheme } from '../shared/layout-theme.js'
+import { revealServerFile } from './serverFileReveal.js';
 import { openPathRobust, revealPathRobust } from './openPath.js'
 import {
   planMigration, runCopy, verify, rollback,
@@ -995,6 +998,7 @@ app.whenReady().then(async () => {
   })
 
   const exportJobs = new ExportJobs({ host: () => tsHost, send: emitToRenderer,
+    telemetry: createExportTelemetry(),
     exportPreferences: () => appSettings.get(),
     generation: () => workspaceEvents.requireCurrent(),
     native: async (channel, args) => JSON.parse(await backend!.invoke(channel, JSON.stringify(args))),
@@ -1197,6 +1201,7 @@ app.whenReady().then(async () => {
   // (the host serves state views from the actor and injects compute slices).
   const { startMcpHost } = await import('./mcp/index.js')
   const mcpHost = await startMcpHost(backend, {
+    ...(process.env.WEFTCUT_SERVER ? { prepareEditorRestart: () => serverRestart() } : {}),
     getTsHost: () => tsHost,
     getSpeech,
     getVlm,
@@ -1339,7 +1344,19 @@ app.whenReady().then(async () => {
     clear: () => fs.rmSync(resumePath, { force: true }),
   })
   const resumeAfterUpdate = updateResume.take()
-  const updates = createUpdates(app.isPackaged && process.platform !== 'darwin'
+  const restartIntent = path.join(process.env.XDG_RUNTIME_DIR ?? '/data/run', 'editor-restart.json');
+  const serverRestart = createServerRestart({
+    busy: () => !!exportJobs.isActive() || (computeJobs?.running() ?? 0) > 0 || !!tsHost?.projectOperationPending?.(),
+    hold: () => exportJobs.holdForRestart(),
+    saveResume: () => updateResume.save(app.getVersion(), tsHost?.openedProject()?.dir ?? null),
+    clearResume: () => updateResume.clear(),
+    flushSettings: () => { workspaceStore?.flush(); windowGeometryStore?.flush(); },
+    writeIntent: () => fs.writeFileSync(restartIntent, JSON.stringify({ pid: process.pid }), { mode: 0o600 }),
+    clearIntent: () => fs.rmSync(restartIntent, { force: true }),
+    shutdown: async () => { await tsHost?.shutdown(); quitFlushed = true; },
+    quit: () => app.quit(),
+  });
+  const updates = createUpdates(app.isPackaged && process.platform !== 'darwin' && !process.env.WEFTCUT_SERVER
     ? electronUpdater.autoUpdater : null, {
     installOnQuit: () => appSettings.get().auto_install_updates_on_quit !== false,
     skippedVersion: () => appSettings.get().skipped_update_version,
@@ -2213,6 +2230,7 @@ app.whenReady().then(async () => {
   // only: showItemInFolder never dispatches to a protocol handler, so unlike
   // shell:open there is no scheme allowlist to enforce here.
   ipcMain.handle('shell:reveal', async (_e, { target }: { target: string }) => {
+    if (process.env.WEFTCUT_SERVER === '1') { await revealServerFile(target); return }
     const err = await revealPathRobust(target)
     if (err) throw new Error(err)
   })
@@ -2847,6 +2865,9 @@ app.whenReady().then(async () => {
 // No platform test, for the same reason the gate carries none — a windowless
 // WeftCut is never a state to leave running.
 app.on('window-all-closed', () => app.quit())
+if (process.env.WEFTCUT_SERVER) {
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => { void app.whenReady().then(() => app.quit()) });
+}
 
 // Flush the TS actor's debounced autosave before the process exits — an edit made
 // inside the 500ms autosave debounce window would otherwise be lost on quit

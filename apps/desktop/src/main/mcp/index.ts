@@ -55,7 +55,12 @@ export interface SessionReaperOptions {
 const REAPER_DEFAULTS: Required<SessionReaperOptions> = { graceMs: 90_000, idleMs: 30 * 60_000, sweepMs: 15_000 }
 
 /** Host-level seams, forwarded verbatim to every per-session `buildMcpServer`. */
-export type McpHostOptions = McpServerOptions & { sessionReaper?: SessionReaperOptions }
+export type McpHostOptions = McpServerOptions & {
+  sessionReaper?: SessionReaperOptions;
+  /** Server-only authenticated admin action, not a project/MCP mutation. */
+  prepareEditorRestart?: () => Promise<() => void>;
+  restoreEditorWindow?: () => void;
+}
 
 export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}): Promise<McpHost> {
   let auth: McpAuth = loadOrInitAuth()
@@ -123,6 +128,31 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
     }
     next()
   })
+
+  if (opts.restoreEditorWindow) appExpress.post('/mcp/editor-window', (req, res) => {
+    if (![ `127.0.0.1:${port}`, `localhost:${port}` ].includes(req.headers.host ?? '')) {
+      res.status(403).json({ error: 'invalid_host' }); return;
+    }
+    if (req.body?.action !== 'restore' || Object.keys(req.body).length !== 1) {
+      res.status(400).json({ error: 'invalid_action' }); return;
+    }
+    try { opts.restoreEditorWindow!(); res.json({ status: 'restored' }); }
+    catch { res.status(503).json({ error: 'window_unavailable' }); }
+  });
+  if (opts.prepareEditorRestart) appExpress.post('/mcp/editor-restart', async (req, res) => {
+    if (![ `127.0.0.1:${port}`, `localhost:${port}` ].includes(req.headers.host ?? '')) {
+      res.status(403).json({ error: 'invalid_host' }); return;
+    }
+    try {
+      const commit = await opts.prepareEditorRestart!();
+      res.once('finish', commit);
+      res.status(202).json({ status: 'restarting' });
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      res.status(['export_busy', 'editor_busy', 'app_closing'].includes(code ?? '') ? 409 : 500)
+        .json({ error: code ?? 'restart_save_failed' });
+    }
+  });
 
   appExpress.all('/mcp', async (req, res) => {
     const sid = req.headers['mcp-session-id'] as string | undefined
