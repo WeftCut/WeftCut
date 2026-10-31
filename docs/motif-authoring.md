@@ -32,7 +32,7 @@ and a leader line tied to a moving object. An interaction Motif:
 - exposes its text as props;
 - exposes its key times as number props named `cue_<name>_s`, in seconds of
   its own time, so the user can retime it in the inspector. Trimming the
-  layer's head advances `src_in_us` and leaves cues where they were in the
+  layer's head advances its source in-point and leaves cues where they were in the
   Motif's time; retime by changing the cue prop.
 
 Anything that enters, holds and leaves on its own is still its own layer.
