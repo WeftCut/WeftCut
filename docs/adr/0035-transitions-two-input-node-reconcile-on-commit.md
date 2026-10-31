@@ -4,171 +4,63 @@ status: accepted
 
 # Every transition kind renders through one two-input compositor node, and ordinary edits reconcile transitions on commit
 
+Date: 2026-07-24
+
 ## Context
 
-A transition authorizes a specific timeline overlap between two same-track
-layers that the no-overlap invariant would otherwise reject; the overlap span
-must equal the transition's duration so validation can reason about it. Three
-kinds ship: Crossfade, and Wipe and Slide, each carrying a direction — the
-**motion** direction, never the reveal side (see the
-[CONTEXT.md glossary](../../CONTEXT.md#transitions)).
+A transition authorizes an overlap between two same-track visual layers that
+the no-overlap invariant would otherwise reject; the overlap must equal the
+transition's duration. Kinds: Crossfade, Wipe and Slide (Wipe/Slide carry a
+motion direction; see CONTEXT.md § Transitions).
 
-Two questions needed settling. First, *how kinds render*: crossfade looked
-completable on the cheap by ramping the incoming layer's per-layer `opacity`
-across the overlap, but wipe and slide are two-input operations — each output
-pixel is a function of *both* clips at once — so they can never ride the
-per-layer path. Second, *how ordinary edits interact with a transition*: a
-trim, move, split, or delete that breaks the authorized overlap would
-otherwise be rejected by validation with an error naming an invariant the
-user never touched, deadlocking the timeline around every transition.
+Wipe and Slide are two-input operations — each output pixel depends on both
+clips — so they cannot ride the per-layer opacity path. A crossfade done as an
+opacity ramp on the incoming layer would be a second evaluation semantics and
+darkens alpha content mid-window (both layers below unity let the background
+through). Separately, a trim, move, split or delete that breaks the
+authorized overlap would fail validation with an invariant the user never
+touched, deadlocking the timeline around every transition.
 
 ## Decision
 
-### One two-input compositor node for every kind
+**One node.** During a transition window the Compositor diverts both
+participants into `TransitionNodeManager` (`render/transitions/`). Each side
+renders, with its own transform, opacity and effect chain, into a
+composition-sized render texture; one full-frame quad mixes the two
+premultiplied captures with the kind's shader (GLSL + WGSL) at the first
+participant's stage slot. Progress is linear `(t − overlapStart) / duration`.
+Side RTs come from a pool sized by concurrent transitions × 2 and are never
+allocated per frame (memory-ratchet `transitions` scenario). Preview and
+export share the node.
 
-During an active transition window the Compositor diverts both participating
-layers from normal drawing into a `TransitionNodeManager` node
-(`src/renderer/render/transitions/`). Each side renders — with its own
-transform, opacity, and effects filter chain already applied — into a
-composition-sized offscreen render texture, and a single full-frame quad
-composites the two captures with the kind's fragment shader (GLSL and WGSL
-twins; two texture uniforms + linear progress + direction) at the first
-participant's stage slot, so the transition sits at its track's z-position.
-Crossfade is the degenerate `mix()` case; Wipe sweeps a hard boundary across
-the frame; Slide translates the incoming capture in over the outgoing one.
-
-Supporting choices:
-
-- **Composition-space full-frame semantics.** The wipe/slide boundary sweeps
-  the full frame, not the source bounds; uncovered regions stay transparent,
-  and the mix runs on premultiplied captures — which is what makes alpha
-  content (titles, transparent Motifs) blend without a mid-transition dip.
-- **Pooled render textures.** Side RTs come from a pool sized by the
-  concurrent active transitions (×2), reused across frames, never allocated
-  per frame — the playback-loop memory-ratchet red line governs this path.
-- **Fixed linear progress**: `(t − overlapStart) / duration`, not
-  keyframeable. Easing is a future additive parameter reusing the keyframe
-  bézier infrastructure.
-- **Preview and export share the node**, so WYSIWYG holds by construction and
-  is gated: the transitions e2e asserts exported frames within 1/255 of
-  preview on solid-color fixtures.
-
-### Placement, participants, and handle
-
-> **Superseded (placement only) by
-> [ADR 0048](0048-transition-overlap-by-placement-not-extension.md).** The
-> default add now opens the overlap by moving the incoming layer left — both
-> trimmed ranges stay sacred — and a per-transition `extended_us` records any
-> borrowed tail so inverse operations route by provenance. Extension survives
-> only behind an explicit request, which narrows the handle pre-check below
-> to those paths. The two-input node, Policy B reconcile, and the split truth
-> table stand unchanged.
-
-Alignment is **start-at-cut**: the window occupies the incoming
-layer's first `duration` microseconds, and `add_transition` auto-extends only
-the outgoing layer forward, pulling its tail source handle to open the
-authorized overlap. The handle is pre-checked **before the transition id is
-minted** — insufficient tail media throws
-`TransitionInsufficientHandle { available_us }` instead of burning an id;
-free-duration outgoing layers (image, text, Motif) have unlimited handle.
-Participants are visual layer kinds only; audio participants are rejected
-with a named error at both the mutation and validation seams. No silent
-duration clamping anywhere: ask for 1 s, get 1 s or a structured error.
-
-### Ordinary edits reconcile transitions on commit (Policy B)
-
-The per-transition invariant — participants exist, same track, visual-only,
-overlap exactly equals duration, duration within both layers — is **one
-shared predicate with two callers** (`src/main/state/validate.ts`):
-`validateTransitions` fails on it, `reconcileTransitions` drops on it, so the
-two can never drift. Structural corruption no layer edit can produce
-(duplicate transition id, self-reference, a layer in two transitions) stays
+**Reconcile on commit (Policy B).** The per-transition invariant
+(participants exist, same track, visual only, overlap = duration, duration
+within both layers) is one predicate with two callers in
+`main/state/validate.ts`: `validateTransitions` fails on it,
+`reconcileTransitions` drops on it. Reconcile runs inside every commit (and
+`dryRun`) after the mutation and before validate; each drop emits a status
+row and lands in the same history entry as the edit. A drop never shrinks the
+outgoing layer back. Layer mutations stay transition-blind. Structural
+corruption (duplicate id, self-reference, a layer in two transitions) stays
 validate-only.
 
-Reconcile runs inside every commit's `produce()` — after the mutation apply,
-before validate — and in `dryRun`, so a dry-run of an edit across a
-transition edge predicts the real succeed-with-drop outcome. Every dropped
-transition emits a LogBus status row, and the drop lands in the same history
-snapshot as the edit, so one undo restores both. Reconcile removal does
-**not** shrink the outgoing layer back — the user's edit defines the new
-shape; only explicit `remove_transition` keeps its shrink-back. The layer
-mutations themselves (trim / move / split / delete / track ops) stay
-transition-blind.
-
-Two consequences of remove-only reconcile are deliberate, and test-pinned as
-a truth table in `src/main/state/reconcile.test.ts`:
-
-- **Split inside a transition is blocked atomically.** A from-side split, or
-  a to-side split inside the overlap, leaves the overlap region covered by a
-  non-participant piece; after the reconcile drop the overlap is unauthorized,
-  so validate's `LayerOverlap` rejects the whole commit — state and
-  transition untouched. This is geometrically necessary, and honest: the edit
-  is semantically ambiguous in a linear NLE. A to-side split beyond the
-  overlap commits normally, the transition riding the left half.
-- **Group moves preserve transitions.** Moving a group containing both
-  participants preserves the overlap, so the transition survives without any
-  group-awareness in reconcile.
-
-## Considered options
-
-- **Opacity-ramp completion path for crossfade.** *Rejected.* Ramping the
-  incoming layer's effective `opacity` across the overlap would have created
-  two evaluation semantics for one feature (crossfade on the per-layer path,
-  wipe/slide on a node the feature needs anyway), and on alpha content it
-  produces the classic mid-transition darkening artifact — both layers below
-  unity opacity mid-window lets the background bleed through wherever either
-  source carries transparency.
-- **Block edits that break a transition (Policy A).** Rejected: every
-  transition would deadlock the timeline around it, surfacing invariant
-  errors for edits the user reads as ordinary.
-- **Transition-aware mutations — the transition rides the trim (Policy C).**
-  *Deferred, upgrade path open.* Individual mutations can later become
-  transition-aware (Premiere-style), with reconcile degrading to a backstop;
-  nothing in Policy B forecloses it.
-- **Shrink the outgoing layer back on reconcile drop.** Rejected: the user's
-  edit defines the new shape; a shrink-back would fight the gesture that
-  triggered the drop.
+Placement of the overlap is ADR 0048's.
 
 ## Consequences
 
-- One evaluation semantics for all kinds; adding a kind (Push is the named
-  next) is an enum variant plus a shader, not new plumbing.
-- Side RTs are 8-bit (`rgba8unorm` on WebGL, `bgra8unorm` on WebGPU — Pixi's
-  WebGPU pipelines hard-code bgra8unorm color targets), so the 10-bit export
-  lane quantizes through a transition window. Accepted for v1: float RTs
-  would need `EXT_color_buffer_float`, which preview's WebGL fallback can't
-  assume.
-- A blocked in-transition split surfaces as the generic `LayerOverlap` error,
-  not a transition-specific message — recorded as post-v1 debt.
-- The reconcile pass runs on every commit and silently mutates state, so it
-  is the fuzz target: the PBT op pool includes the three transition
-  operations, with the property that every surviving transition satisfies the
-  shared predicate.
-- Deferred surface (Push, wipe softness, easing, alignment variants,
-  freeze-frame handles, audio equal-power crossfade, Policy C) is tracked
-  post-v1. **Superseded in part by
-  [ADR 0048](0048-transition-overlap-by-placement-not-extension.md):** the
-  alignment variants dissolve (overlap placement is end-at-cut geometry;
-  mixed `extended_us` covers center), Policy C dissolves at the gesture
-  layer under the chip's pointer capture, and chip drag-resize ships as the
-  chip's two placement-independent edges. Authoring surfaces (palette
-  command, Transitions panel, cut context menu) add argumentlessly against
-  the nearest eligible cut.
+- Adding a kind is an enum variant plus a shader.
+- Side RTs are 8-bit (`rgba8unorm` on WebGL, `bgra8unorm` on WebGPU, whose
+  Pixi pipelines hard-code bgra8 targets), so the 10-bit export lane
+  quantizes inside a transition window. Float RTs would need
+  `EXT_color_buffer_float`, which preview's WebGL fallback cannot assume.
+- A split inside the overlap leaves it covered by a non-participant; after the
+  drop, validate's `LayerOverlap` rejects the whole commit. That is
+  geometrically necessary; the generic error message is known debt. A group
+  move containing both participants keeps the transition. Truth table:
+  `main/state/reconcile.test.ts`.
+- Reconcile silently mutates state on every commit, so the PBT invariant
+  suite includes the transition ops.
 
-## References
-
-- [`CONTEXT.md`](../../CONTEXT.md#transitions) — the Transition direction
-  glossary entry; the placement vocabulary (Overlap placement,
-  extended_us / borrowed handle) is ADR 0048's.
-- `src/main/state/validate.ts` (the shared predicate +
-  `reconcileTransitions`), `src/main/state/actor.ts` (commit + dryRun
-  callers, LogBus drop rows), `src/main/state/mutations/transitions.ts`
-  (handle pre-check, add/update/remove).
-- `src/renderer/render/transitions/` — `TransitionNodes.ts`,
-  `TransitionRtPool.ts`, `transitionSources.ts`, `activeTransitions.ts`.
-- `native/src/state/transition.rs` — the deserialize-only serde wire
-  contract (TS is the sole writer).
-- Gates: `e2e/electron/transitions-wysiwyg.spec.ts` (preview + export, same
-  assertions), the memory-ratchet `transitions` scenario,
-  `src/main/state/reconcile.test.ts` (the split truth table), the PBT
-  invariant-fuzz suite.
+Rejected: opacity-ramp crossfade (above); blocking edits that break a
+transition (Policy A — deadlock); shrink-back on drop (fights the user's
+gesture).
