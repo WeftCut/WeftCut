@@ -87,6 +87,7 @@ export interface AppSettings {
   /// its component is present, else WebCodecs); `ffmpeg` (Standard) plays every
   /// format; `webcodecs` (Lite) is lightweight but supports fewer formats.
   decode_engine: "auto" | "ffmpeg" | "webcodecs";
+  decode_device?: string;
   /// Preview playback resolution. `full` ships every decoded frame at source
   /// size; `half`/`quarter` have the native decoder downscale each frame
   /// BEFORE it crosses IPC, which is where a 4K software-lane preview spends
@@ -178,6 +179,7 @@ export interface AppSettingsPatch {
   prebake_motifs?: boolean;
   preview_effects_enabled?: boolean;
   decode_engine?: "auto" | "ffmpeg" | "webcodecs";
+  decode_device?: string;
   playback_resolution?: PlaybackResolution;
   media_pool_layout?: MediaPoolLayout;
   timeline_wheel_axis?: TimelineWheelAxis;
@@ -199,6 +201,7 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   default_export_preset_id: 'builtin:match',
   export_auto_overwrite: false,
   auto_install_updates_on_quit: true,
+  skipped_update_version: undefined,
   layout_theme: DEFAULT_LAYOUT_THEME,
   resource_policy: { ...DEFAULT_RESOURCE_POLICY },
   resource_allocation: resolveResourcePolicy(DEFAULT_RESOURCE_POLICY),
@@ -223,6 +226,7 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   prebake_motifs: false,
   preview_effects_enabled: true,
   decode_engine: "auto",
+  decode_device: "auto",
   playback_resolution: "full",
   media_pool_layout: "large",
   // Horizontal, matching Premiere's `Timeline Mouse Scrolling` default and

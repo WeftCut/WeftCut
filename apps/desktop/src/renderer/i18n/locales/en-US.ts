@@ -17,6 +17,9 @@ const enUS = {
     normal: 'Resources available.', usage: 'App memory: about {{used}} GiB.', waiting: '{{count}} tasks waiting.',
   },
   hardware: {
+    preferred_decode_device: "Preview decoding device (test override)",
+    decode_auto: "Automatic · prefer hardware decoding",
+    decode_device_hint: "CPU or a specific GPU for Standard/FFmpeg preview. Changes reopen preview decoders. Unsupported formats fall back to CPU; the current device above shows actual use. Vulkan rendering and export encoding are separate settings.",
     "probe_heading": "Decode and encode acceleration",
     "test_complete": "Detection complete",
     "current_decode_device": "Current decoding device",

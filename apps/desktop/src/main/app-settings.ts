@@ -1,4 +1,5 @@
 import { changeExportPresets, readExportPresets, exportPresetLibrary, DEFAULT_EXPORT_PRESET_ID } from '../shared/export-presets';
+import { readDecodeDevice, validDecodeDevice } from '../shared/decode-device';
 // App-level preferences persisted at <userData>/app_settings.json, owned by the
 // Electron main process. One value across every project (no per-project override).
 //
@@ -127,6 +128,7 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
         : parsed.decode_engine === 'ffmpeg' || parsed.decode_engine === 'webcodecs' || parsed.decode_engine === 'auto'
           ? parsed.decode_engine
           : d.decode_engine,
+      decode_device: readDecodeDevice(parsed.decode_device),
       // Additive field: every app_settings.json written before it existed has
       // no key here, so an unrecognized/absent value MUST land on the default
       // ("full") rather than undefined — the renderer reads it straight into a
@@ -314,6 +316,10 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
       if (patch.prebake_motifs !== undefined) current.prebake_motifs = patch.prebake_motifs
       if (patch.preview_effects_enabled !== undefined) current.preview_effects_enabled = patch.preview_effects_enabled
       if (patch.decode_engine !== undefined) current.decode_engine = patch.decode_engine
+      if (patch.decode_device !== undefined) {
+        if (!validDecodeDevice(patch.decode_device)) throw new Error('Invalid decoding device');
+        current.decode_device = readDecodeDevice(patch.decode_device);
+      }
       if (patch.playback_resolution !== undefined) current.playback_resolution = patch.playback_resolution
       if (patch.media_pool_layout !== undefined) current.media_pool_layout = patch.media_pool_layout
       if (patch.timeline_wheel_axis !== undefined) current.timeline_wheel_axis = patch.timeline_wheel_axis

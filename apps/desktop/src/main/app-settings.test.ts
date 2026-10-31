@@ -47,6 +47,17 @@ function memFs(seed: Record<string, string> = {}) {
 const store = (seed?: Record<string, string>) => createAppSettingsStore({ ...memFs(seed), path: PATH, dir: DIR })
 
 describe('app-settings store', () => {
+  it('persists machine-local decoding device and rejects unsafe selectors atomically', () => {
+    const { fs, files } = memFs(); const deps = { fs, path: PATH, dir: DIR };
+    const s = createAppSettingsStore(deps);
+    for (const decode_device of ['cpu', '0000:01:00.0', '0000:04:00.0', 'auto']) {
+      s.apply({ decode_device });
+      expect(createAppSettingsStore(deps).get().decode_device).toBe(decode_device);
+    }
+    const before = files.get(PATH);
+    expect(() => s.apply({ decode_device: '/dev/anything' })).toThrow('Invalid decoding device');
+    expect(files.get(PATH)).toBe(before);
+  });
   it.each([undefined, null, 'true', 1, false])('defaults export overwrite off for absent or invalid saved value %s', value => {
     expect(store({ [PATH]: JSON.stringify({ export_auto_overwrite: value }) }).get().export_auto_overwrite).toBe(false);
   });

@@ -19,6 +19,9 @@ const zhCN: Resources = {
     normal: '资源可用。', usage: '应用内存约 {{used}} GiB。', waiting: '{{count}} 个任务等待中。',
   },
   hardware: {
+    preferred_decode_device: "预览解码设备（测试覆盖）",
+    decode_auto: "自动 · 优先硬件解码",
+    decode_device_hint: "选择 CPU 或指定 GPU 用于 Standard/FFmpeg 预览。更改后重新打开解码器。不支持的格式回退到 CPU；上方显示实际设备。Vulkan 渲染和导出编码是独立设置。",
     "probe_heading": "编解码加速",
     "test_complete": "检测完成",
     "current_decode_device": "当前解码设备",
