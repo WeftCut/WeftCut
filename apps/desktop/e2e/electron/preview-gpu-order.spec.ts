@@ -34,7 +34,7 @@ import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers
 //   * copy-back (Linux nvdec/vaapi, macOS videotoolbox) — the lane left
 //     UNFORCED so `pickInitialLane`'s real probe resolves it, exactly as
 //     production does and exactly as decode-bench's `native-copyback` strategy
-//     already did (docs/decode-bench.md §Unforced resolution). No slots, no
+//     already did (docs/decode-bench.md §Strategies). No slots, no
 //     barrier, no shared texture; the copy-back frame rides the same
 //     `SwTransport` the control does. That makes it a full-strength test of
 //     PRESENTATION ORDER on real hardware and no test at all of the
@@ -556,8 +556,8 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
   // `pickInitialLane`'s real one-frame probe resolves it the way production
   // does, and the resolved HW frame is copied back and shipped over the SAME
   // `SwTransport` the control uses. decode-bench's `native-copyback` strategy
-  // has driven exactly this since ADR 0034; this is that pattern, applied to the
-  // order check (docs/decode-bench.md §Unforced resolution).
+  // drives exactly this (ADR 0029); this is that pattern, applied to the
+  // order check (docs/decode-bench.md §Strategies).
   //
   // Deliberately ONE cell, not a mirror of the seven above:
   //   * no pool sweep — a copy-back lane owns no slots to sweep, so poolSize is

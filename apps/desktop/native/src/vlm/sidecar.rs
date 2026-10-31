@@ -211,7 +211,7 @@ fn apply_device(args: &mut Vec<OsString>, device: Option<&str>) {
 /// cannot talk the model out of the language it was asked for. On-screen text is
 /// the one thing kept in its own language — quoted inside a sentence in the
 /// asked-for one, because a model shown a title card otherwise answered with the
-/// card's words alone (ADR 0149).
+/// card's words alone (docs/notes/descriptions-vlm-facts.md).
 pub fn build_prompt(frames: &[TimedFrame], focus: Focus, language: &Language) -> String {
     let mut lines = vec![
         "You are analyzing frames sampled from a single video clip.".to_string(),

@@ -4,8 +4,8 @@
 //! - **Transcription** — [`Transcriber`] trait → `transcribe_clip` MCP tool.
 //! - **Text-to-speech** — [`Synthesizer`] trait → `synthesize_speech` MCP tool.
 //!
-//! Selection generalizes "has an API key" to "the preferred backend that is
-//! *available*". Each [`backend::SpeechBackend`] declares its
+//! A backend runs only when it is *available*, which generalizes "has an API
+//! key". Each [`backend::SpeechBackend`] declares its
 //! [`backend::Locality`] (Cloud/Local) and [`backend::Capabilities`]; its
 //! config (an API key, or a local engine's binary/model paths) lives in
 //! [`config::BackendConfig`], and [`config::availability`] decides whether it

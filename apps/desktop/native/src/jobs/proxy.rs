@@ -31,7 +31,7 @@ const PROXY_HEIGHT_CAP: u32 = 2160;
 /// B-frames would push the proxy's last PTS past the source duration and the
 /// auto-pause last-frame snap would land two frames early. A denser-keyframe
 /// proxy is ~50% larger, but proxies are local-only and export re-encodes. See
-/// ADR 0008.
+/// docs/preview.md §Proxies.
 /// Shared with the quick (scrub) proxy.
 pub const PROXY_GOP_FRAMES: u32 = 6;
 
@@ -43,7 +43,8 @@ pub const PROXY_GOP_FRAMES: u32 = 6;
 /// Current format: export master, source-resolution H.264 capped at 2160p,
 /// High profile, `-bf 0` (PTS=DTS), short fixed GOP (`PROXY_GOP_FRAMES`), and
 /// source color tags asserted with `+write_colr` so mediabunny reads a `colr`
-/// atom. See ADR 0008, 0011, 0014.
+/// atom. See ADR 0011, 0014 and
+/// docs/preview.md §Proxies.
 pub const PROXY_FORMAT_VERSION: u32 = crate::cache::FULL_PROXY_FORMAT_VERSION;
 
 /// Output-side ffmpeg args asserting the SOURCE's ffprobe color tags on a

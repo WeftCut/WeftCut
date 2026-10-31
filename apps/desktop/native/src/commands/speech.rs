@@ -1,7 +1,7 @@
 //! Speech-backend Settings commands. Key MATERIAL never crosses this surface
 //! outward — status reports presence only, and the key `settings_test_provider`
 //! uses arrives in the injected `speechConfig` snapshot (built by Electron main
-//! from safeStorage + the config store at call time, ADR 0148), never returned.
+//! from safeStorage + the config store at call time, ADR 0036), never returned.
 //! `set`/`clear` are handled in the Electron main process (safeStorage + the
 //! TS store), so they have no dispatch arm here.
 

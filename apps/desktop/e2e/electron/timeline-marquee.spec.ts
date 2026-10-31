@@ -240,7 +240,7 @@ async function assertClearOfAutoScroll(page: Page, ...points: Pt[]): Promise<voi
 /// The overlay assertion after the FIRST step is what separates "the box never
 /// armed" from "the box armed and took nothing", and it reads `data-kind` because
 /// the anchor surface — not the geometry — is what decides which population the
-/// box is sweeping (ADR 0051).
+/// box is sweeping (docs/features.md#timeline-selection).
 async function dragBox(
   page: Page,
   from: Pt,

@@ -175,7 +175,7 @@ async function regionOf(
 }
 
 /// One layer's bake state, off the baker's snapshot route. Bake state is a
-/// derivation the baker alone holds (ADR 0063 decision 8), so there is nowhere
+/// derivation the baker alone holds (ADR 0063), so there is nowhere
 /// else to read it from — the project carries no path and no status.
 interface LayerFxState {
   desired_sig: string | null

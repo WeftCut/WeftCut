@@ -325,7 +325,7 @@ impl CacheLayout {
     /// Fast preview-first proxy for a hashed media file. The `q4` segment is
     /// the recipe version — bump it whenever the quick-proxy ffmpeg args
     /// change, so stale cached proxies are regenerated rather than reused.
-    /// Current recipe: 720p cap, short scrub GOP (ADR 0008), and source color
+    /// Current recipe: 720p cap, short scrub GOP (docs/preview.md §Proxies), and source color
     /// tags asserted with the mp4 `colr` atom written so proxy decodes aren't
     /// misread as bt709/limited.
     pub fn quick_proxy(&self, hash: &str) -> PathBuf {

@@ -62,7 +62,7 @@ const CJK=/[㐀-鿿豈-﫿　-〿＀-￯]/;
 async function loadFace(weight,size,family){ if(document.fonts&&document.fonts.load) await document.fonts.load(`${weight} ${size}px ${family}`).catch(()=>{}); }
 // end clipping-common
 
-// A network that grows, talks, and remembers (ADR 0134). One node grows; it
+// A network that grows, talks, and remembers. One node grows; it
 // links to a neighbour and a signal crosses; the network spreads out from it;
 // signals run through it, with an optional lens on one junction; then one set
 // of nodes lights up together and holds. Each step starts at a cue prop, set to

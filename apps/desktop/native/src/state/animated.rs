@@ -342,7 +342,7 @@ impl<T: Clone + PartialEq> Animated<T> {
     /// NOTE: like `animating_runs`, may now return times outside `[0, duration]`
     /// (out-of-range keyframes are valid). No consumer today; re-audit if revived.
     ///
-    /// See `docs/data-model.md` §4.
+    /// See `docs/data-model.md` § Animated values.
     pub fn hold_step_times(&self) -> Vec<TimeUs> {
         let Animated::Keyframed(kfs, _) = self else {
             return Vec::new();

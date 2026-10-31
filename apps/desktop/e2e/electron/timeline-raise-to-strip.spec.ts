@@ -124,7 +124,7 @@ test.describe('timeline drop strip — an existing clip', () => {
       expect(laneIdsBefore.has(spawnedLaneId!)).toBe(false)
       expect(after.tracks.map((t) => t.id)).not.toContain(sourceLaneId)
       // Spawned, so role-less, and appended — the tail of the vector is the top of
-      // the z-stack, which is the only spawn point (ADR 0042).
+      // the z-stack, which is the only spawn point (docs/features.md#track-placement).
       expect(after.tracks.find((t) => t.id === spawnedLaneId)!.role).toBeNull()
       expect(after.tracks.at(-1)!.id).toBe(spawnedLaneId)
       // Nothing else moved, and no second lane was minted on the way.

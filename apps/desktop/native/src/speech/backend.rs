@@ -31,7 +31,7 @@ pub enum SpeechBackend {
     /// `whisper-server`, speaches, vLLM, LocalAI, or a hosted provider — at a
     /// URL the user gives (STT only). Its own backend rather than a URL on
     /// `OpenAi`: that tag is a wire constraint and TTS shares its key, while
-    /// this one carries its own URL, model, optional key and timeout (ADR 0146).
+    /// this one carries its own URL, model, optional key and timeout (ADR 0036).
     ByoEndpoint,
 }
 
@@ -55,13 +55,12 @@ impl Locality {
     }
 }
 
-/// The order the resolver walks after honoring the caller's `preferred` hint.
-/// All three backends have working impls (OpenAI cloud; whisper.cpp / FunASR
-/// CLI sidecars). OpenAI leads: with both a key and a local engine configured
-/// and no preference set, cloud wins — it needs no local model download and
-/// its quality is the known baseline; users who want local-first say so via
-/// the Settings preferred engine. The user's own endpoint comes last: it is
-/// only ever used when selected (selection is strict), never as a substitute.
+/// The order speech synthesis walks after honoring the caller's `preferred`
+/// hint, and the order of [`SpeechBackend::all`]. Transcription does not walk
+/// it: it runs only the selected model (selection is strict). OpenAI leads:
+/// with both a key and a local engine configured and no preference set, cloud
+/// wins — it needs no local model download and its quality is the known
+/// baseline. The user's own endpoint comes last.
 pub const DEFAULT_ORDER: &[SpeechBackend] = &[
     SpeechBackend::OpenAi,
     SpeechBackend::WhisperCpp,

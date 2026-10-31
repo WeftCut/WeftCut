@@ -1,5 +1,5 @@
 // Idempotent decode-bench fixture generator. Synthesizes the fixture matrix
-// (docs/decode-bench.md §What it measures) with ffmpeg:
+// (docs/decode-bench.md §Scenarios) with ffmpeg:
 // 60 s testsrc2, 30 fps, GOP 240, bt709/limited, no audio. Skips existing
 // outputs (delete a file or pass --force to regenerate). Uses $FFMPEG/$FFPROBE
 // when set, else ffmpeg + ffprobe on PATH (`npm run ffmpeg:fetch` from
@@ -32,7 +32,7 @@ const COLOR = ["-color_primaries", "bt709", "-color_trc", "bt709",
   "-colorspace", "bt709", "-color_range", "tv"];
 const X265_GOP = "keyint=240:min-keyint=240:scenecut=0";
 
-/// One row per matrix line in docs/decode-bench.md §What it measures.
+/// One row per matrix line in docs/decode-bench.md §Scenarios.
 /// `encoder` is checked against `ffmpeg -encoders` so a lean ffmpeg build
 /// degrades to a skip, not a crash.
 export const BENCH_MATRIX = [

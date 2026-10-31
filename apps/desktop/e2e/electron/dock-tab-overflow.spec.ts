@@ -100,7 +100,7 @@ async function setWindowWidth(app: ElectronApplication, width: number): Promise<
 /**
  * Overflow on a tab strip is announced at BOTH ends by a floating overlay, and
  * nowhere else — the hidden-tabs dropdown is gone, and reaching a Panel by name
- * belongs to the View menu (ADR 0050).
+ * belongs to the View menu (docs/features.md#strip-overflow).
  *
  * This has to be an e2e: jsdom reports every layout measurement as zero, so
  * "does it overflow", "where does a step land" and "did an activated tab come to

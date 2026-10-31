@@ -50,7 +50,8 @@ export const LEGS = {
 /// Metal lanes, Motif capture on the GPU host, every @serial spec (the
 /// determinism PNGs come from there), the per-OS ffmpeg build's codec matrix,
 /// and the export conformance gates that only a real GPU holds to the strict
-/// SSIM floor (electron-ci §WEFTCUT_E2E_SSIM_FLOOR). ADR 0141 is the decision.
+/// SSIM floor (electron-ci §WEFTCUT_E2E_SSIM_FLOOR). e2e/README.md
+/// §How CI spreads one run across runners has the why.
 ///
 /// Rules, asserted in scripts/e2e-split.test.mjs: a listed spec exists, is
 /// listed once, has no @serial test (the serial project is never sliced and

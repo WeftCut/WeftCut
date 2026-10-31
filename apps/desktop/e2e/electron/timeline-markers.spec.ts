@@ -201,7 +201,7 @@ test('markers are authorable from the keyboard and the lane — no MCP client an
 
     // Give the composition real duration BEFORE parking the playhead. The
     // ruler seek clamps to the last frame anchor, and an empty composition's
-    // autofitted duration is 0 (ADR 0005) — so over an empty timeline the park
+    // autofitted duration is 0 (docs/data-model.md#composition) — so over an empty timeline the park
     // below silently snaps back to frame 0. A layer via the renderer's own
     // command bridge keeps this spec's premise: still no MCP client anywhere.
     await invokeCmd(page, 'add_color_layer', { tStartUs: 0, durationUs: 5_000_000 })

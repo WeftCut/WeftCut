@@ -294,7 +294,7 @@ unsafe fn attach_hw_device(
 /// FFmpeg color metadata carried alongside each decoded frame, as canonical
 /// FFmpeg string names (`bt709`, `bt470bg`, `smpte170m`, `tv`/`pc`, …) so they
 /// match the ffprobe-sourced tags the rest of the app uses (single color model,
-/// ADR 0021). `None` where the stream leaves the value unspecified.
+/// ADR 0014). `None` where the stream leaves the value unspecified.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SwColorTags {
     pub matrix: Option<String>,
@@ -1730,7 +1730,7 @@ mod tests {
     #[test]
     fn videotoolbox_copyback_ships_nv12_transport_shape() {
         // The copy-back lane must ship the exact NV12 byte shape the software
-        // lane does — same transport, no new IPC (ADR 0029/0034).
+        // lane does — same transport, no new IPC (ADR 0029).
         use super::DecodeAccel;
         let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_h264.mp4");
         let mut s = SwVideoStream::open_with_accel(
