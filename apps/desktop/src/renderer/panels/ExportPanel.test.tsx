@@ -159,3 +159,37 @@ it("shows cancellation while cleanup drains, with no retry or repeated cancel ac
   expect(screen.queryByRole("button")).toBeNull();
   expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBeNull();
 });
+
+describe("ExportPanel stalled encoder", () => {
+  // The native sink's text when its watchdog stopped the encoder.
+  const STALLED = "ffmpeg stdin: ffmpeg-stalled: ffmpeg made no progress for 400 s and was stopped";
+
+  it("says the encoder stopped responding and points at the software encoder", async () => {
+    render(<ExportPanel state={{ kind: "error", detail: STALLED }} onClose={vi.fn()} />);
+    expect(screen.getByText("The encoder stopped responding, so the export was stopped.")).toBeTruthy();
+    expect(screen.getByText(/set Video encoder to Software on the Video tab/)).toBeTruthy();
+    expect(screen.queryByText(/Check the technical details/)).toBeNull();
+    await userEvent.click(screen.getByText("Technical details"));
+    expect(document.querySelector(".export-error-details pre")?.textContent).toBe(STALLED);
+  });
+
+  it("says the same in zh-CN", async () => {
+    await i18n.changeLanguage("zh-CN");
+    render(<ExportPanel state={{ kind: "error", detail: `Finalize failed: ffmpeg wait: ${STALLED.slice(14)}` }} onClose={vi.fn()} />);
+    expect(screen.getByText("编码器停止响应，导出已停止。")).toBeTruthy();
+    expect(screen.getByText(/“视频”页将“视频编码器”设为“软件”/)).toBeTruthy();
+  });
+
+  it("keeps the finalization retry hint when only finishing is retried", () => {
+    render(<ExportPanel state={{ kind: "error", detail: `ffmpeg mux: ${STALLED.slice(14)}`, onRetry: vi.fn(async () => {}) }} onClose={vi.fn()} />);
+    expect(screen.getByText("The encoder stopped responding, so the export was stopped.")).toBeTruthy();
+    expect(screen.getByText(/Retry finishing the export without encoding again/)).toBeTruthy();
+    expect(screen.queryByText(/set Video encoder to Software/)).toBeNull();
+  });
+
+  it("leaves other failures with the generic hint", () => {
+    render(<ExportPanel state={{ kind: "error", detail: "ffmpeg exited 1" }} onClose={vi.fn()} />);
+    expect(screen.queryByText(/encoder stopped responding/)).toBeNull();
+    expect(screen.getByText(/Check the technical details/)).toBeTruthy();
+  });
+});

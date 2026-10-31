@@ -132,6 +132,18 @@ accident, closing the window asks before discarding, and success, discard or
 editor teardown releases the reservation and deletes the intermediates
 (`render/exportFinalization.ts`). Intermediates are not in the cache LRU.
 
+## Failure messages
+
+A failed export's panel leads with a summary and keeps the raw error under
+**Technical details**. A resource refusal (`resource-capacity-exceeded`)
+says what to wait for or which Performance setting to raise. A stalled
+encoder, an ffmpeg child its progress watchdog stopped (`ffmpeg-stalled`;
+[architecture.md](architecture.md#3-ffmpeg-never-composites)), reads "The
+encoder stopped responding" and suggests exporting again with **Video
+encoder** set to **Software** on the Video tab; when only finishing can be
+retried, the retry hint replaces that suggestion. Anything else gets the
+generic hint.
+
 ## Export jobs (UI and MCP)
 
 Both entry points submit to `ExportJobs` and control the same job; editing is
@@ -183,5 +195,5 @@ create/update/rename/delete operations in main. Names are capped at
 
 Gates: [`conformance.md`](conformance.md). Export-specific specs under
 `apps/desktop/e2e/electron/`: `export_codecs`, `export_eos_tail`,
-`export-finalization-retry`, `export-resource-admission`, `export-presets`,
-`mcp-export`.
+`export-finalization-retry`, `export-resource-admission`,
+`export-stalled-encoder`, `export-presets`, `mcp-export`.

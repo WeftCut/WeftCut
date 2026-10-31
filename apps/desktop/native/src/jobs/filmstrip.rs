@@ -10,10 +10,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use crate::ffmpeg::ffmpeg_is_installed;
+use crate::ffmpeg::{ffmpeg_is_installed, Bound};
 use anyhow::{Context, Result};
-
-use crate::process::NoConsoleWindow;
 
 use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path, CacheLayout};
 
@@ -84,11 +82,7 @@ pub async fn extract_tile(
     let _resources = crate::resources::interactive(128)
         .await
         .map_err(anyhow::Error::msg)?;
-    let output = crate::ffmpeg::command()
-        .no_console_window()
-        // Reap on future-drop so no orphan keeps writing the tile temp; see
-        // hwaccel.rs.
-        .kill_on_drop(true)
+    let output = crate::ffmpeg::command(Bound::Timeout(crate::ffmpeg::FRAME_TIMEOUT))
         .args([
             "-y",
             "-hide_banner",

@@ -10,8 +10,9 @@
 //! - the **thread clamp** against the admitted allocation, applied after the
 //!   admission wait and immediately before spawn (see [`ChildRun::threads`]);
 //! - **conhost suppression** (`no_console_window`);
-//! - **`kill_on_drop(true)`** (the same landmine as ffmpeg in `jobs/hwaccel.rs`):
-//!   a timed-out or cancelled future drops the child, which reaps it;
+//! - **`kill_on_drop(true)`** (the same landmine as ffmpeg's owner in
+//!   `ffmpeg/child.rs`): a timed-out or cancelled future drops the child, which
+//!   reaps it;
 //! - the **timeout** and the **exit status** classification, reported as a
 //!   neutral [`SidecarFailure`] each subsystem maps onto its own error type with
 //!   its own wording.

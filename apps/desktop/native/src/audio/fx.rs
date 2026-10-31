@@ -21,9 +21,8 @@ use tokio::task::JoinHandle;
 
 use crate::audio::conform_reader::ConformReader;
 use crate::cache::{claim_temp, discard_temp, promote_temp};
-use crate::ffmpeg::ffmpeg_is_installed;
+use crate::ffmpeg::{ffmpeg_is_installed, Bound};
 use crate::jobs::conform::{read_header, CONFORM_FORMAT_VERSION, HEADER_LEN, MAGIC};
-use crate::process::NoConsoleWindow;
 
 /// Pooled RMS over a conform frame range, in dBFS relative to a full-scale
 /// sample. `None` when the range holds no frames or is digitally silent — a
@@ -244,7 +243,7 @@ pub(super) async fn render_cancellable(
         permit = crate::resources::interactive(128) => permit.map_err(anyhow::Error::msg)?,
     };
     // Finish fallible output setup before starting a child. Once spawned, every
-    // error/cancellation path below explicitly kills and reaps it.
+    // error/cancellation path below explicitly stops and reaps it.
     let mut f = tokio::fs::File::create(&tmp)
         .await
         .with_context(|| format!("create {}", tmp.display()))?;
@@ -256,11 +255,7 @@ pub(super) async fn render_cancellable(
     head.extend_from_slice(&0u64.to_le_bytes()); // frame_count patched below
     f.write_all(&head).await.context("write bake header")?;
     check_cancelled(cancel)?;
-    let mut child = crate::ffmpeg::command()
-        .no_console_window()
-        // Reap on future-drop so a cancelled bake takes its ffmpeg with it;
-        // see hwaccel.rs.
-        .kill_on_drop(true)
+    let mut child = crate::ffmpeg::command(Bound::watchdog())
         .args(["-hide_banner", "-nostats", "-loglevel", "error"])
         .args(["-skip_initial_bytes", &HEADER_LEN.to_string()])
         .args([
@@ -281,9 +276,9 @@ pub(super) async fn render_cancellable(
         .spawn()
         .context("spawn ffmpeg for audio fx bake")?;
 
-    let mut stdout = child.stdout.take().expect("stdout was piped");
+    let mut stdout = child.take_stdout().expect("stdout was piped");
 
-    let stderr = child.stderr.take().expect("stderr was piped");
+    let stderr = child.take_stderr().expect("stderr was piped");
     let stderr_task = tokio::spawn(async move {
         let mut bytes = Vec::new();
         let mut stderr = stderr;
@@ -307,12 +302,13 @@ pub(super) async fn render_cancellable(
         _ = cancelled(cancel) => Err(anyhow::anyhow!("export cancelled")),
         result = stream => result,
     };
-    if stream_result.is_err() {
-        let _ = child.start_kill();
-    }
-    let status = tokio::select! {
-        _ = cancelled(cancel) => { let _ = child.start_kill(); child.wait().await },
-        result = child.wait() => result,
+    let status = if stream_result.is_err() {
+        child.stop().await
+    } else {
+        tokio::select! {
+            _ = cancelled(cancel) => child.stop().await,
+            result = child.wait() => result,
+        }
     };
     let stderr = stderr_task.await.unwrap_or_default();
     check_cancelled(cancel)?;
@@ -351,8 +347,8 @@ pub(super) async fn render_cancellable(
 }
 
 /// Live bake tasks by job key. The baker cancels a superseded bake by key
-/// (docs/audio.md §Clip effects) — aborting drops the render future, which
-/// reaps ffmpeg through `kill_on_drop` and discards the temp.
+/// (docs/audio.md §Clip effects) — aborting drops the render future, whose
+/// ffmpeg owner stops the child, and discards the temp.
 #[allow(clippy::type_complexity)]
 fn live_jobs() -> &'static Mutex<HashMap<String, (u64, JoinHandle<()>)>> {
     static S: OnceLock<Mutex<HashMap<String, (u64, JoinHandle<()>)>>> = OnceLock::new();

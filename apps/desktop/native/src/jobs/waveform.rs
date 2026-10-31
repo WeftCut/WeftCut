@@ -6,11 +6,9 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use crate::ffmpeg::ffmpeg_is_installed;
+use crate::ffmpeg::{ffmpeg_is_installed, Bound};
 use anyhow::{anyhow, Context, Result};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
-
-use crate::process::NoConsoleWindow;
 
 use crate::cache::{discard_temp, promote_temp, temp_path, CacheLayout};
 use crate::state::{MediaItem, MediaKind};
@@ -347,12 +345,8 @@ pub async fn run_from_input(
     let tmp = temp_path(&dest);
     let _ = tokio::fs::remove_file(&tmp).await;
 
-    let mut cmd = crate::ffmpeg::command_with_threads(1);
-    cmd.no_console_window()
-        // Reap on future-drop so no orphan keeps writing the shared temp; see
-        // hwaccel.rs.
-        .kill_on_drop(true)
-        .args(["-hide_banner", "-nostats", "-loglevel", "error"]);
+    let mut cmd = crate::ffmpeg::command_with_threads(1, Bound::watchdog());
+    cmd.args(["-hide_banner", "-nostats", "-loglevel", "error"]);
     match input {
         WaveformInput::Media(media) => {
             cmd.arg("-i").arg(&media.path_abs);
@@ -398,9 +392,9 @@ pub async fn run_from_input(
         .spawn()
         .context("spawn ffmpeg for waveform")?;
 
-    let mut stdout = child.stdout.take().expect("stdout was piped");
+    let mut stdout = child.take_stdout().expect("stdout was piped");
     let mut stderr_task = tokio::spawn(super::conform::drain_stderr(
-        child.stderr.take().expect("stderr was piped"),
+        child.take_stderr().expect("stderr was piped"),
     ));
     let operation = async {
         // Downmix target is 2ch; a mono source still decodes to 2 identical channels
@@ -441,8 +435,7 @@ pub async fn run_from_input(
     // handles have closed before the spool directory is removed on Windows.
     let result = operation.await;
     if result.is_err() {
-        let _ = child.kill().await;
-        let _ = child.wait().await;
+        let _ = child.stop().await;
         stderr_task.abort();
         discard_temp(&dest);
     }

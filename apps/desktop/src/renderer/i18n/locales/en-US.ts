@@ -1916,6 +1916,8 @@ const enUS = {
     complete: "Exported to {{path}}",
     failed: "Export failed: {{detail}}",
     resource_unavailable: "There aren't enough resources available to finish exporting. Wait for other processing tasks to finish and retry. If it still fails, increase the Memory target in Settings > Performance.",
+    encoder_stalled: "The encoder stopped responding, so the export was stopped.",
+    encoder_stalled_hint: "Export again. If it stops again, set Video encoder to Software on the Video tab of the export settings, then export.",
     open_settings: "Open settings",
     technical_details: "Technical details",
     dismiss: "Dismiss",
