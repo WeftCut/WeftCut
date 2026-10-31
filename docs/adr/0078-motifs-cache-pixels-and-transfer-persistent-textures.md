@@ -4,117 +4,60 @@ status: accepted
 
 # Motifs cache lossless pixels and transfer persistent textures
 
-> **Revised by [ADR 0154](0154-motif-frames-are-read-at-preview-scale-through-one-reader.md).**
-> The CPU path for cached frames is gone: off Windows, and on Windows when a
-> slot cannot be used, a utility process reads, verifies and downscales the
-> frame and posts it to a renderer worker; full RGBA no longer crosses
-> `motif:read`, and the preload's `ImageData` path is deleted. The texture
-> lane now uploads frames scaled to the Playback Resolution divisor into slots
-> sized for it. Live capture keeps its texture and PNG paths.
+Date: 2026-10-27
 
-This revises ADR 0017's **PNG-only capture output**, while preserving its single
-HTML renderer and deterministic clock takeover. PNG decoding and whole-pixel
-IPC both consume a substantial part of a frame budget. Motifs now persist a
-versioned LZ4/straight-RGBA frame file (zstd since ADR 0145). Old PNG caches are ignored and frames
-are regenerated; there is no migration or duplicate PNG persistence. Frames remain
-independent files: atomic replacement, interrupted bakes and existing
-content-directory GC stay simple; packing an entire clip would introduce
-shared mutable indexes without addressing the measured bottleneck.
+## Context
 
-On Windows, the core addon reads/decompresses on a worker and uploads to a
-bounded persistent D3D11 transport pool. Slot handles are shared once, and
-per-frame messages carry leases. Chromium OSR output can also be copied into
-that pool entirely on the GPU. This capability belongs to the core, not the
-optional FFmpeg decode component. Other platforms and failures retain CPU/PNG
-paths. Preview and export use the same frame reader; no author-visible engine
-choice is introduced.
+ADR 0017's capture output was PNG. On Windows (Electron 44, D3D11), a 1080p
+frame read cost ~31 ms as PNG against ~27 ms as LZ4 RGBA: bitmap creation fell
+from 27 to 3.3 ms, but 8.3 MB of ordinary IPC ate the gain. Shared OSR texture
+capture took 41.6 ms against 63.8 ms for PNG; native bake readback took a dense
+1080p Canvas from 169.8 to 76.6 ms/frame
+([findings](../../poc/motif-frame-cache/FINDINGS.md),
+[bake](../../poc/motif-frame-cache/BAKE-FINDINGS.md)). LZ4 left a 4.0 GB cache
+on a 10,337-frame lyric video and a 32 KB floor for a blank 1080p frame; zstd
+level 1 was 31–69% smaller on every measured directory at LZ4's encode speed,
+0–5 ms slower to decode, and level 3 saved only 2–7% more
+([footprint](../../poc/motif-frame-cache/FOOTPRINT-FINDINGS.md)).
 
-Playback uses three independently leased transport lanes. Each lane waits for
-its own read-completion acknowledgment before reuse; disk prewarming admits
-three concurrent reads for fully baked content, while live capture retains its
-single-request limit. [ADR 0098](0098-motif-frame-admission-follows-per-frame-coverage.md)
-replaces that full-content gate with shared per-frame read/capture admission.
-The 128 MiB/eight-pool allocation limit includes imports
-in progress and retired textures until Electron releases their references.
-Failed leases retire only their own lane; renderer close cancels queued work.
+The first texture captured from a new compositor surface can be the previous
+or uninitialised surface even after two native rAFs: rAFs fence layout and
+commit, not the compositor's raster.
 
-The consumer lifetime is a **document**, not its longer-lived WebContents.
-Navigation retires the old transport generation, and preload releases all of
-its imports on `pagehide`, including late arrivals. Disk reads and captures
-bind that document at IPC admission, so work finishing after navigation cannot
-lease slots to the replacement preload. Reloading with cached bitmaps and
-in-flight reads is covered by the real-GPU transport regression.
+## Decision
 
-Allocation waits for outstanding references are capped at 250 ms. Exhaustion
-uses the existing CPU/PNG path; subsequent allocations fail promptly until a
-reference release frees budget. The native pools stay alive until Electron's
-release callback, so recovery never recycles a texture still being read.
+- **One `.wfrm` file per frame.** 52-byte header (magic, dimensions, codec,
+  BLAKE3 of the pixels) + straight RGBA8, written as codec 2 (zstd level 1);
+  codec 1 (LZ4) stays readable. Files are independent and atomically replaced.
+  PNG caches are ignored and regenerate; there is no migration.
+- **Windows moves pixels as persistent D3D11 textures.** The core addon (not
+  the optional FFmpeg component) owns bounded pools; handles are shared once
+  and per-frame messages carry a slot lease. Bakes read the OSR texture on a
+  native worker and encode `.wfrm` directly. Straight alpha is premultiplied
+  for import.
+- **A consumer completes the GPU read before acknowledging a slot**; a failed
+  or timed-out consumer retires the texture instead of permitting reuse.
+  Native pools outlive every Electron import. The consumer lifetime is a
+  document: navigation retires its transport generation.
+- **A texture is leased only from a proven surface.** `OffscreenFrames` fences
+  each new surface — main-frame navigation, size change, GPU process restart —
+  with one full `Page.captureScreenshot` readback, and never fences a frame on
+  a proven surface. A clipped readback is not a fence.
+- **The PNG host forces CPU-backed 2D canvases** (`willReadFrequently: true`):
+  Electron 44 bitmap OSR can omit an accelerated canvas after navigation,
+  which exported transparent frames.
 
-The Motif read-completion barrier transfers the ImageBitmap to a dedicated
-worker, completes the read there, and returns ownership before acknowledging
-the source slot. This keeps synchronous GPU readback off the UI thread without
-weakening the completion fence. Worker failure rejects outstanding reads and
-uses the synchronous barrier for subsequent requests. The synthetic concurrent
-frame test checks colors and alpha after repeated slot reuse.
+## Consequences
 
-The tradeoffs are potentially larger frame files than PNG and explicit GPU
-ownership. A consumer must complete the GPU read before acknowledging a slot;
-a failed/timed-out consumer retires its texture instead of permitting reuse.
-Native pools outlive every Electron import. Straight PNG alpha is premultiplied
-for texture import; captured OSR textures already carry premultiplied pixels.
-Viewport changes settle before rendering, and OSR always waits two native rAFs
-without changing virtual time. Static seeks restart the capturer because
-invalidate alone need not produce a shared texture. See the reproducible
-[conformance and performance evidence](../../poc/motif-frame-cache/FINDINGS.md).
+- The cache key namespace (`surface-v3`) discards frames baked before the
+  surface fence and the canvas policy.
+- One readback per navigation, size change and GPU restart.
+- Older app versions read codec 2 frames as corrupt and re-render them.
+- The addon links libzstd on every platform under the glibc floor (ADR 0143).
+- Off Windows, and when a slot cannot be used, frames take the utility lane
+  (ADR 0154).
 
-[ADR 0138](0138-a-motif-texture-is-leased-only-from-a-proven-surface.md)
-generalises the following paragraph: the lease fences every new surface
-(navigation, size change, GPU restart), not only the first capture after
-navigation.
-
-The first GPU capture after navigation additionally fences the entire surface
-with a CDP screenshot readback. Two native rAFs settle layout but can still leave
-OSR holding the initial, pre-setup document while compositor raster work is
-pending. Restarting the capturer can return that surface and bake it permanently.
-A clipped readback is insufficient: tiles outside the clip may remain stale.
-The full readback costs one PNG capture per navigation; subsequent frames retain
-the GPU path. The `surface-v2` cache-key namespace invalidates old baked frames
-without changing the frame file format or the authored Motif.
-
-The PNG fallback host requests CPU-backed 2D canvas contexts before authored
-scripts run (`willReadFrequently: true`). On Windows/Electron 44, bitmap OSR can
-omit an accelerated canvas after navigation even though its DOM pixels, bounds,
-and opacity are correct. Repeated screenshots, double rAF, and invalidation do
-not recover that canvas; ordinary DOM content still captures correctly. Under
-load a shared-texture failure switches the session to this backend, so an export
-can finish successfully with transparent frames unless the fallback also has a
-correct canvas backing policy. Shared-texture capture retains accelerated 2D;
-WebGL context options are unchanged. The `surface-v3` frame namespace and cover
-runtime hash discard previously cached blank captures. Fallback transitions log
-their reason. This is not a blanket rejection of transparent pixels: authored
-fade-outs and empty frames remain valid.
-
-Switching from cached RGBA to captured BGRA can retire a GPU pool while
-Chromium still holds its final reference and the export's memory credit.
-Transport retries transient resource-admission failures within the same bounded
-250 ms wait used for GPU byte capacity. A persistent admission failure keeps
-its original resource error; it must not turn into a fallback that bypasses the
-export plan. No memory limits are raised and no live pool is released early.
-
-Baking also consumes the OSR lease directly on Windows. A persistent native
-worker reuses a D3D11 staging texture, reads premultiplied RGBA/BGRA, converts
-to straight RGBA and encodes the existing LZ4 frame format. Main atomically
-writes it before acknowledging persistence. There is no format migration.
-The alpha round trip preserves every valid premultiplied channel; straight RGB
-can differ from Chromium's PNG unpremultiplication by one without changing
-composited pixels. Unsupported hardware or failed readback retains the PNG
-writer. In PNG capture mode, main stores the original captured PNG through the
-existing codec without a renderer encode round trip. Disk errors remain bake
-failures, not reasons to recapture.
-
-A renderer frame broker shares L0 hits and in-flight capture between preview,
-prewarm and baking. Each consumer gets an owned bitmap clone; cancelling one
-sprite cannot close another consumer's frame. A bake joining an admitted
-capture can attach persistence until texture consumption begins. Later joins
-and L0 hits use bitmap persistence, avoiding another capture. Overlay gestures
-have a separate broker. See the [bake benchmark](../../poc/motif-frame-cache/BAKE-FINDINGS.md).
+Rejected: packing a clip into one file (shared mutable index, no gain on the
+measured bottleneck); inter-frame deltas (grow moving content, lose frame
+independence); unsynchronised texture capture after paint (returned old
+surfaces).

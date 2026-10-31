@@ -4,67 +4,51 @@ status: accepted
 
 # Motifs render as web pages captured via CDP, deterministic by clock takeover
 
-The PNG-only output decision below is revised by [ADR 0078](0078-motifs-cache-pixels-and-transfer-persistent-textures.md).
-The HTML authoring model and deterministic clock takeover still apply.
+Date: 2026-06-10
 
 ## Context
 
-ADR 0015's SVG `render(t)` engine bounded authoring to what SVG expresses, and
-the in-webview HTML alternative is structurally dead: every `<foreignObject>`
-raster is cross-origin-tainted in WebView2 (unreadable, un-encodable,
-un-uploadable). Templates were rebuilt as **Motifs** around the one
-DOM-to-bitmap path that grants full web fidelity *and* clean pixels.
+An SVG `render(t)` engine bounds authoring to what SVG expresses. An
+in-webview HTML route is dead: every `<foreignObject>` raster is
+cross-origin-tainted in WebView2 (unreadable, un-encodable, un-uploadable).
+The export Worker has no DOM, so whatever produces preview pixels must hand
+the Worker finished bitmaps. And a web page runs its own clock, which breaks
+scrubbing, re-export and preview == export.
 
 ## Decision
 
-- **One capture path for every Motif.** A Motif is a normal HTML/CSS/JS page,
-  loaded as the **top-level document of a single reused offscreen Electron
-  `BrowserWindow`** and captured over the DevTools Protocol via
-  `webContents.debugger` (`Page.captureScreenshot` — a real browser raster, not
-  a canvas read-back, so taint never applies). There is no per-Motif engine
-  field and no tiering.
-- **Determinism by clock takeover, not cooperation.** The harness stubs
-  `performance.now`/`Date.now`/timers/`requestAnimationFrame`, seeks
-  CSS/WAAPI animations via `getAnimations()` + `currentTime`, and drives the
-  page to each composition frame: a Motif renders as a **pure function of
-  `t`** and never advances itself. The seek stays re-seekable (pause + set,
-  never cancel/commit). With the clock frozen and capture confined to the
-  `webContents.debugger` screenshot, the result is **byte-identical** — across
-  repeated runs *and* across operating systems (verified on a 3-OS
-  Windows/Linux/macOS matrix). Determinism is exact, not merely perceptual.
-- **Window-as-isolation.** Isolation comes from the dedicated offscreen
-  `BrowserWindow`, capability denial on the `motif:` origin, and a
-  `default-src 'none'` CSP
-  (fully offline) — not from an inner sandboxed iframe.
-
-## Alternatives considered and rejected
-
-- **Engine tiering** (a per-Motif `"svg" | "satori" | "webview"` field):
-  three renderers to keep pixel-consistent, and authors must learn which tier
-  allows what. The untrusted-upload sandbox is needed anyway, so uniform JS
-  adds no new security cost.
-- **Real-time capture** (screen-record the live page): no scrubbing, export
-  bound to wall-clock, preview ≠ export.
-- **Record-once-then-replay**: bake is realtime-bound, every prop edit is a
-  full re-bake, and runs jitter against each other. (Remotion and
-  timesnap/timecut reached the same conclusion: own the clock.)
-- **Inner opaque-origin sandboxed iframe** for stronger upload isolation:
-  awkward asset/runtime delivery; deferred in favor of the offline
-  window-as-isolation model.
+- **One capture path for every Motif.** A Motif is a normal HTML/CSS/JS page
+  loaded as the top-level document of one reused offscreen Electron
+  `BrowserWindow` and captured over the DevTools Protocol via
+  `webContents.debugger` — a real browser raster, so taint never applies. No
+  per-Motif engine field, no tiering. The portable output is lossless PNG
+  from `Page.captureScreenshot` with a transparent backdrop; Windows takes
+  shared OSR textures from the same compositor (ADR 0078).
+- **Determinism by clock takeover, not cooperation.** The injected runtime
+  owns `performance.now` / `Date.now` / timers / `requestAnimationFrame` and
+  seeks CSS/WAAPI animations (`getAnimations()`, pause + `currentTime`, never
+  cancel or commit, so seeking back works). A Motif is a pure function of `t`
+  and never advances itself. 2D/DOM captures at a fixed `t` are byte-identical
+  across runs and across Windows/Linux/macOS.
+- **Window-as-isolation.** Isolation is the dedicated offscreen window, no
+  preload / Node on the `motif:` origin, and a `default-src 'none'` CSP
+  (offline) — not an inner sandboxed iframe.
 
 ## Consequences
 
-- **Capture is round-trip-bound, not pixel-bound.** Warm sustained capture
-  measured ~92 ms/frame (~11 fps) regardless of resolution — 120² costs about
-  what 960² does, so a low-res preview tier buys nothing. No taint-free
-  smooth on-demand live preview exists on this platform.
-- Live preview is therefore the **RAM-preview model**: choppy-cold on-demand
-  capture (L0), a playhead-lookahead prewarmer (L1), and a persisted PNG bake
-  (L2), surfaced by a warming/ready status. Cost is managed by **cache dedup,
-  not a second renderer** — a static overlay collapses to one capture.
-- Export reuses the same captures (main process captures, the DOM-less Worker
-  receives bitmaps) — preview pixels equal export pixels by construction.
-- Capture output is lossless PNG with a forced-transparent CDP backdrop, so
-  overlays keep real alpha.
+- Capture is round-trip-bound, not pixel-bound: warm sustained capture
+  measured ~92 ms/frame (~11 fps) at any resolution (120² ≈ 960²). A
+  low-resolution live tier buys nothing, so preview is a RAM-preview model
+  (on-demand L0, lookahead L1, persisted L2) whose cost is managed by
+  content-frame reuse, not a second renderer.
+- Export reuses the same captures: main captures, the Worker receives
+  bitmaps; preview pixels equal export pixels by construction.
+- GPU-rendered scenes (WebGL, KTX2 transcoding to hardware formats) are
+  repeatable per machine, not bit-identical across GPUs. The authoring
+  contract (absolute `t`) still holds.
 
-The living design is [`docs/motifs.md`](../motifs.md).
+Rejected: engine tiering (three renderers to keep pixel-consistent);
+real-time screen capture (no scrubbing, export bound to wall clock);
+record-once-then-replay (realtime-bound bake, full re-bake per prop edit;
+Remotion and timecut reached the same conclusion); inner opaque-origin iframe
+(awkward asset delivery for no isolation gain over the offline window).
