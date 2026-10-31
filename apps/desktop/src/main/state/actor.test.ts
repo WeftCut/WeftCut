@@ -2479,7 +2479,7 @@ describe('creation defaults follow the target composition', () => {
 })
 
 // The media pool's Group drop at all three surfaces — dispatch, the renderer
-// channel, the MCP tool — because this is the one creation op whose scope
+// channel, `add_layers` — because this is the one creation op whose scope
 // argument is a cross-check AND whose subject is a composition too (ADR 0052).
 describe('dispatch: add_group_layer', () => {
   function withOneGroup() {
@@ -2536,19 +2536,17 @@ describe('dispatch: add_group_layer', () => {
     expect(actor.historyStatus().len).toBe(len)
   })
 
-  it('routes the renderer channel and the MCP tool onto the same arm', () => {
+  it('the renderer channel and add_layers place the same Group layer', () => {
     const { actor, groupId, rootTrackId } = withOneGroup()
     const viaChannel = actor.command('add_group_layer', {
       sourceCompositionId: groupId, trackId: rootTrackId, tStartUs: 2_000_000, compositionId: actor.snapshot().root_id,
     })
     expect(viaChannel.ok).toBe(true)
 
-    const viaMcp = actor.mcpCall('add_group_layer', JSON.stringify({
-      source_composition_id: groupId, track_id: rootTrackId, t_start_us: 6_000_000,
-    }))
+    const viaMcp = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: rootTrackId, t_start_us: 6_000_000, content: { kind: 'group', composition_id: groupId } }] }))
     expect(viaMcp.ok).toBe(true)
     if (!viaMcp.ok) return
-    const layerId = (JSON.parse(viaMcp.result.content[0]!.text) as { layer_id: string }).layer_id
+    const layerId = (JSON.parse(viaMcp.result.content[0]!.text) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
     expect(placedIn(actor, rootTrackId).map((l) => l.id)).toEqual([viaChannel.ok ? viaChannel.value : null, layerId])
     // Both instances point at the one composition.
     for (const l of placedIn(actor, rootTrackId)) {

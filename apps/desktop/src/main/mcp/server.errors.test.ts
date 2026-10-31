@@ -80,9 +80,9 @@ describe('handleCallTool — every route answers a refusal as an isError result'
     // A detector must exist for the arm to get as far as the subject check.
     const host = tsHostStub({ compute: { detectPauses: vi.fn(async () => { throw new Error('the subject check comes first') }) } })
     const track = root(host.actor.snapshot()).tracks[0].id
-    const added = host.actor.mcpCall('add_color_layer', JSON.stringify({ track_id: track, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 }))
+    const added = host.actor.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: track, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] }))
     if (!added.ok) throw new Error(added.error.message)
-    const layerId = (JSON.parse(added.result.content[0].text) as { layer_id: string }).layer_id
+    const layerId = (JSON.parse(added.result.content[0].text) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
     const out = asErr(await handleCallTool(fakeBackend(), () => host, 'remove_pauses', { layer_id: layerId }))
     expect(out.structuredContent.code).toBe('invalid_params')
     expect(out.content[0].text).toContain('plays no sound')
@@ -97,10 +97,10 @@ describe('handleCallTool — every route answers a refusal as an isError result'
   it('a TS actor refusal (stale id) is a result; the mapper\'s data rides in structuredContent', async () => {
     const ts = tsHostStub()
     const trackId = root(ts.actor.snapshot()).tracks[0].id
-    const args = { track_id: trackId, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 }
-    const first = await handleCallTool(fakeBackend(), () => ts, 'add_color_layer', args)
+    const args = { layers: [{ track_id: trackId, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] }
+    const first = await handleCallTool(fakeBackend(), () => ts, 'add_layers', args)
     expect(isToolError(first)).toBe(false)
-    const out = asErr(await handleCallTool(fakeBackend(), () => ts, 'add_color_layer', args))
+    const out = asErr(await handleCallTool(fakeBackend(), () => ts, 'add_layers', args))
     expect(out.content[0].text).toContain('layer overlap')
     expect(out.structuredContent).toMatchObject({ code: 'invalid_params', error: 'LayerOverlap', track: trackId })
     expect(Array.isArray(out.structuredContent.options)).toBe(true)

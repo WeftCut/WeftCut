@@ -418,10 +418,6 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
       adjusted: adjusted([['anchor_t_start_us', c.args.anchor_t_start_us, anchor?.t_start_us]]),
     }
   },
-  add_group_layer: (c) => {
-    const rec = layerRecord(c.after, str(c.value)) ?? { layer_id: str(c.value) }
-    return { ...rec, adjusted: adjusted([['t_start_us', c.args.t_start_us, (rec as LayerRecord).t_start_us]]) }
-  },
   ungroup_layer: (c) => ({
     layer_id: str(c.args.layer_id),
     layers: layerRecords(c.after, newLayerIds(c.before, c.after)),

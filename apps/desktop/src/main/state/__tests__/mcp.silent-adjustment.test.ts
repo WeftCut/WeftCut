@@ -26,14 +26,14 @@ const refusal = (r: ReturnType<Actor['mcpCall']>): string => {
 }
 const layerOf = (a: Actor, id: string) => root(a.snapshot()).tracks.flatMap((t) => t.layers).find((l) => l.id === id)!
 function colorLayer(a: Actor, track: string, t0: number, t1: number): string {
-  return ok(call(a, 'add_color_layer', { track_id: track, color: { r: 1, g: 2, b: 3, a: 255 }, t_start_us: t0, t_end_us: t1 })).layer_id as string
+  return (ok(call(a, 'add_layers', { layers: [{ track_id: track, t_start_us: t0, t_end_us: t1, content: { kind: 'color', color: { r: 1, g: 2, b: 3, a: 255 } } }] })).layers as Array<{ layer_id: string }>)[0]!.layer_id as string
 }
 const FRAME = 33_333 // one frame at 30 fps, rounded
 
 describe('a grid snap is applied and echoed', () => {
-  it('add_color_layer at an off-grid start lands on the frame and says so', () => {
+  it('add_layers at an off-grid start lands on the frame and says so', () => {
     const a = freshActor()
-    const rec = ok(call(a, 'add_color_layer', { track_id: aRollId(a), color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 350_000, t_end_us: 3_000_000 }))
+    const rec = (ok(call(a, 'add_layers', { layers: [{ track_id: aRollId(a), t_start_us: 350_000, t_end_us: 3_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] })).layers as Array<Record<string, unknown>>)[0]!
     expect(rec.t_start_us).toBe(366_667)
     expect(rec.adjusted).toEqual([{ field: 't_start_us', requested: 350_000, applied: 366_667, reason: 'grid' }])
   })

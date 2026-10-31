@@ -76,7 +76,7 @@ describe('handleCallTool flip routing', () => {
   it('routes a mutation tool to the TS actor (state changes)', async () => {
     const ts = tsHostStub()
     const track = root(ts.actor.snapshot()).tracks[0].id
-    const out: any = await handleCallTool(fakeBackend(async () => { throw new Error('rust must not be called') }), () => ts, 'add_color_layer', { track_id: track, color: { r: 0, g: 0, b: 0, a: 1 }, t_start_us: 0, t_end_us: 1_000_000 })
+    const out: any = await handleCallTool(fakeBackend(async () => { throw new Error('rust must not be called') }), () => ts, 'add_layers', { layers: [{ track_id: track, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 1 } } }] })
     expect(out.content[0].type).toBe('text') // a uuid
     const layers = root(ts.actor.snapshot()).tracks.reduce((n: number, t: any) => n + t.layers.length, 0)
     expect(layers).toBe(1)
@@ -120,7 +120,7 @@ describe('handleCallTool flip routing', () => {
   })
   it('no tsHost → forwards everything to the backend', async () => {
     const spy = vi.fn(async () => '{"ok":true,"result":{"content":[]}}')
-    await handleCallTool(fakeBackend(spy), () => null, 'add_color_layer', {})
+    await handleCallTool(fakeBackend(spy), () => null, 'add_layers', {})
     expect(spy).toHaveBeenCalled()
   })
   it('resolves the { layer, media } slice for a clip-audio tool and forwards it to the backend', async () => {

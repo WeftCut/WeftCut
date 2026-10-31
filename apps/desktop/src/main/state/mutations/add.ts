@@ -9,8 +9,7 @@ import { DEFAULT_CAPTION_FONT_FAMILY } from '../../../shared/fonts'
 import { staticPosition } from '../../../shared/position'
 
 /** THE Color constructor — every creation path funnels here, including the two
- *  MCP ones that take the size straight off an agent's JSON (`actor.ts`
- *  add_layer / the layer-spec builder). So the extent policy has to hold here and
+ *  MCP ones (`actor.ts` add_layers / the layer-spec builder). So the extent policy has to hold here and
  *  not only in `applyParamsPatch`: a layer BORN 1920.7 px wide would otherwise
  *  never meet the check that an edit to the same field must pass. */
 export function colorParams(color: Rgba, width: number, height: number): LayerParams {
@@ -121,9 +120,11 @@ export function compositionRefPath(p: Project, from: Uuid, target: Uuid): Uuid[]
  *    would catch it on commit, but the renderer greys the drop target on the same
  *    rule and this is what makes the two agree;
  *  - a source with nothing inside it → `InvalidArgument`: its `duration_us` is 0,
- *    so the only window available would be an empty one.
+ *    so the only window available would be an empty one;
+ *  - a `tEndUs` past the source's length → `InvalidArgument`: the window would
+ *    overhang into nothing. Omitted, the layer spans the whole composition.
  */
-export function applyAddGroupLayer(p: Project, idGen: IdGen, sourceCompositionId: Uuid, trackId: Uuid, tStartUs: number): Uuid {
+export function applyAddGroupLayer(p: Project, idGen: IdGen, sourceCompositionId: Uuid, trackId: Uuid, tStartUs: number, tEndUs?: number): Uuid {
   const source = compositionOf(p, sourceCompositionId)
   if (source.id === p.root_id) throw new CommandFailure({ error: 'RootComposition', composition: source.id })
   const dest = locateTrack(p, trackId)
@@ -132,12 +133,15 @@ export function applyAddGroupLayer(p: Project, idGen: IdGen, sourceCompositionId
   if (reached !== null)
     throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'CompositionCycle', path: [dest.comp.id, ...reached] } })
   if (source.duration_us <= 0)
-    throw new CommandFailure({ error: 'InvalidArgument', field: 'source_composition_id', detail: `composition ${source.id} holds no content` })
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'composition_id', detail: `composition ${source.id} holds no content` })
+  const span = tEndUs === undefined ? source.duration_us : tEndUs - tStartUs
+  if (span > source.duration_us)
+    throw new CommandFailure({ error: 'InvalidArgument', field: 't_end_us', detail: `composition ${source.id} lasts ${source.duration_us} µs; a ${span} µs span would show nothing past its end` })
   const params: LayerParams = {
-    kind: 'CompositionRef', composition: source.id, src_in_us: 0, src_out_us: source.duration_us,
+    kind: 'CompositionRef', composition: source.id, src_in_us: 0, src_out_us: span,
     transform: defaultTransform(source.width / 2, source.height / 2), opacity: { mode: 'Static', value: 1 }, blend_mode: 'Normal',
   }
-  return applyAddLayer(p, idGen, trackId, params, tStartUs, tStartUs + source.duration_us)
+  return applyAddLayer(p, idGen, trackId, params, tStartUs, tStartUs + span)
 }
 
 /** Insert a new track with Track::new() defaults at `position` (default: end).
@@ -154,6 +158,10 @@ export function applyAddTrack(p: Project, idGen: IdGen, label: string | null, po
   c.tracks.splice(at, 0, track)
   return id
 }
+
+/** The colour a marker is born with when its creator names none — the
+ *  timeline's marker blue. */
+export const DEFAULT_MARKER_COLOR: Rgba = { r: 0, g: 128, b: 255, a: 255 }
 
 /** Marker inserted t-sorted. Times land on the composition frame grid via
  *  `snapMarkerTimes`, which also rejects a collapsed region — before the id is

@@ -4,7 +4,7 @@
   "project": { "width": 1280, "height": 720, "fps": { "num": 30, "den": 1 } },
   "setup": [
     { "tool": "add_track", "args": { "label": "Background" }, "as": "bg" },
-    { "tool": "add_color_layer", "args": { "track_id": "{ref:bg.track_id}", "width": 1280, "height": 720, "color": { "r": 20, "g": 24, "b": 38, "a": 255 }, "t_start_us": 0, "t_end_us": 4000000 } }
+    { "tool": "add_layers", "args": { "layers": [{ "track_id": "{ref:bg.track_id}", "t_start_us": 0, "t_end_us": 4000000, "content": { "kind": "color", "color": { "r": 20, "g": 24, "b": 38, "a": 255 } } }] } }
   ],
   "prompt": "There's a dark background clip in my WeftCut project. Put the title \"Hello Bench\" over it for the first two seconds.",
   "checklist": [

@@ -6,7 +6,7 @@ skill. It contains a working demo, Three.js 0.186.1, bundled loaders and local
 decoder JS/WASM. Import it with **Import Motif**, or call
 `open_motif_draft { "source": { "kind": "zip", "path": "<absolute path to three-model.zip>" } }` over MCP.
 The result includes `{ "draft_id": "...", "revision": "..." }`; importing does not publish or place it.
-Preview the draft, then place it with `add_motif_layer` as needed.
+Preview the draft, then place it with `add_layers` as needed.
 
 ## Use your own model
 

@@ -26,10 +26,10 @@ const refusal = (r: ReturnType<Actor['mcpCall']>): string => {
   return r.error.message
 }
 function colorLayer(a: Actor): string {
-  return ok(call(a, 'add_color_layer', { track_id: aRollId(a), color: { r: 1, g: 2, b: 3, a: 255 }, t_start_us: 0, t_end_us: 2_000_000 })).layer_id as string
+  return (ok(call(a, 'add_layers', { layers: [{ track_id: aRollId(a), t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'color', color: { r: 1, g: 2, b: 3, a: 255 } } }] })).layers as Array<{ layer_id: string }>)[0]!.layer_id as string
 }
 function textLayer(a: Actor): string {
-  return ok(call(a, 'add_text_layer', { track_id: aRollId(a), t_start_us: 0, t_end_us: 2_000_000, content: 'hi' })).layer_id as string
+  return (ok(call(a, 'add_layers', { layers: [{ track_id: aRollId(a), t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'text', content: 'hi' } }] })).layers as Array<{ layer_id: string }>)[0]!.layer_id as string
 }
 const layerOf = (a: Actor, id: string) => root(a.snapshot()).tracks.flatMap((t) => t.layers).find((l) => l.id === id)!
 
@@ -217,7 +217,7 @@ describe('keyframe writers — one range, one easing rule', () => {
   /** A title with a blur whose `strength` is already Static, which is what makes
    *  an effect param keyframable at all. */
   function blurredTitle(a: Actor): { layer: string; key: string } {
-    const layer = ok(call(a, 'add_text_layer', { track_id: aRollId(a), t_start_us: 0, t_end_us: 2_000_000, content: 'Title' })).layer_id as string
+    const layer = (ok(call(a, 'add_layers', { layers: [{ track_id: aRollId(a), t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'text', content: 'Title' } }] })).layers as Array<{ layer_id: string }>)[0]!.layer_id as string
     const effect = ok(call(a, 'add_effect', { layer_id: layer, kind: 'blur' })).effect_id as string
     ok(call(a, 'update_effect', { layer_id: layer, effect_id: effect, patch: { params: { strength: { mode: 'Static', value: 8 } } } }))
     return { layer, key: `effects[${effect}].params[strength]` }
@@ -243,7 +243,7 @@ describe('keyframe writers — one range, one easing rule', () => {
     // Its p2 is stored on the NEXT key; with no next key the arriving side is
     // dropped and the call would still report success.
     const a = freshActor()
-    const layer = ok(call(a, 'add_text_layer', { track_id: aRollId(a), t_start_us: 0, t_end_us: 2_000_000, content: 'Title' })).layer_id as string
+    const layer = (ok(call(a, 'add_layers', { layers: [{ track_id: aRollId(a), t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'text', content: 'Title' } }] })).layers as Array<{ layer_id: string }>)[0]!.layer_id as string
     const bezier = { kind: 'Bezier', p1: [0.4, 0], p2: [0.2, 0.9] }
     expect(refusal(call(a, 'set_keyframe', { layer_id: layer, param_key: 'opacity', t_us: 0, value: 1, interp: bezier }))).toContain('p2')
     ok(call(a, 'set_keyframe', { layer_id: layer, param_key: 'opacity', t_us: 0, value: 1 }))

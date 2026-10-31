@@ -24,7 +24,7 @@ const test = base.extend<{ motifSession: { page: Page; client: Client } }>({
 })
 
 test('MCP motif tools are advertised and callable', async ({ motifSession: { page, client } }) => {
-  // add_motif_layer places into the open project; project tools refuse on the
+  // add_layers places into the open project; project tools refuse on the
   // start screen, so create one first.
   await test.step('Create an editable project', async () => {
     await newProject(page, { parentFolder: tmpDir('weftcut-mcp-motif-'), name: 'mcp-motif', canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 } })
@@ -37,11 +37,11 @@ test('MCP motif tools are advertised and callable', async ({ motifSession: { pag
     }))
   })
 
-  // list_motifs, add_motif_layer, preview_motif must appear in listTools
+  // list_motifs, add_layers, preview_motif must appear in listTools
   const toolsResult = await client.listTools()
   const names = toolsResult.tools.map((t) => t.name)
   expect(names).toContain('list_motifs')
-  expect(names).toContain('add_motif_layer')
+  expect(names).toContain('add_layers')
   expect(names).toContain('preview_motif')
 
   // list_motifs returns the catalog
@@ -53,12 +53,12 @@ test('MCP motif tools are advertised and callable', async ({ motifSession: { pag
   const countdown = catalog.find((m: { id: string }) => m.id === 'countdown')
   expect(countdown).toBeDefined()
 
-  // add_motif_layer places a layer and returns its record
+  // add_layers places a Motif layer and returns its record
   const addResult = await client.callTool({
-    name: 'add_motif_layer',
-    arguments: { motif_id: 'countdown', t_start_us: 0 },
+    name: 'add_layers',
+    arguments: { layers: [{ t_start_us: 0, t_end_us: 5_000_000, content: { kind: 'motif', motif_id: 'countdown' } }] },
   })
-  const layerId = (JSON.parse((addResult.content[0] as { type: string; text: string }).text) as { layer_id: string }).layer_id
+  const layerId = (JSON.parse((addResult.content[0] as { type: string; text: string }).text) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
   expect(layerId).toMatch(/^[0-9a-f-]{36}$/)
 
   // preview_motif returns image content (JS-side capture)

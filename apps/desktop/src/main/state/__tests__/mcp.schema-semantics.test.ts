@@ -10,7 +10,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import {
   MCP_TOOL_DEFS, LAYER_PARAMS_KEYS, LAYER_PARAM_KINDS, PARAM_KEYS, EFFECT_PARAM_KEY_PATTERN,
-  parseLayerParamsPatch, McpArgError,
+  parseLayerParamsPatch, McpArgError, ADD_LAYER_KINDS,
 } from '../mcp-commands'
 import { MOTIF_TOOL_DEFS } from '../../mcp/motifToolDefs'
 import { mergeMcpCatalog } from '../../mcp/mcpCatalog'
@@ -131,8 +131,14 @@ describe('enums where the parser has one', () => {
   it('trim_layer.edge advertises in | out', () => {
     expect(def('trim_layer').properties.edge.enum).toEqual(['in', 'out'])
   })
-  it('add_audio_layer.role and the params role share the mixing buses, with no null in the enum', () => {
-    expect(def('add_audio_layer').properties.role.enum).toEqual(['dialogue', 'music', 'sfx', 'voiceover'])
+  it('add_layers audio role and the params role share the mixing buses, with no null in the enum', () => {
+    const arm = def('add_layers').properties.layers.items.properties.content.oneOf.find((a: Schema) => a.properties.kind.const === 'audio')
+    expect(arm.properties.role.enum).toEqual(['dialogue', 'music', 'sfx', 'voiceover'])
+  })
+  it('add_layers content kinds are the parser\'s, one oneOf arm each', () => {
+    const content = def('add_layers').properties.layers.items.properties.content
+    expect(content.properties.kind.enum).toEqual([...ADD_LAYER_KINDS])
+    expect(content.oneOf.map((a: Schema) => a.properties.kind.const)).toEqual([...ADD_LAYER_KINDS])
   })
 })
 
@@ -153,8 +159,8 @@ describe('null arms are advertised only where null means something omission does
     'set_marker_anchor.layer_id',
     'set_project_settings.patch.proxy_override.value', 'set_project_settings.patch.shot_review', 'set_project_settings.patch.pause_review',
     'update_layer_params.patch.crop', 'update_layer_params.patch.box_w', 'update_layer_params.patch.box_h', 'update_layer_params.patch.shadow',
-    // null clears the role; on a Motif add it overrides the manifest's with none.
-    'update_layer_params.patch.graphic_role', 'add_motif_layer.graphic_role',
+    // null clears the role.
+    'update_layer_params.patch.graphic_role',
     'update_layer_params.patch.intro', 'update_layer_params.patch.outro',
     'update_effect.patch.params.*',
   ])

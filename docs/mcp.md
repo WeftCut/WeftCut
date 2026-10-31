@@ -138,7 +138,7 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   `update_*` per resource with optional fields; a field's set and clear are one
   tool taking `null`. A rename is a break: the old name gets `unknown tool`
   (ADR 0074). `RETIRED_MCP_TOOL_NAMES` (`main/mcp/toolAliases.ts`) resolves
-  only `add_motif`, `checkpoint`, `set_composition`, `compositions_delete`.
+  only `checkpoint`, `set_composition`, `compositions_delete`.
 - Before adding a tool, check an existing tool's arguments: two verbs that
   differ by one boolean are one tool with a flag.
 - **No silent no-op, no silent degrade.** A write that would ignore, drop or
@@ -350,14 +350,22 @@ rasterised once to a 2048-px PNG), `delete_media` (`force` cascades like
 `rename_track`, `move_track`, `set_track_flags` (`enabled`/`locked`; no
 mute/solo — audio mixes by role, ADR 0023).
 
-Layers: `add_color_layer`, `add_video_layer` (Video or Image; with
-`auto_pair_audio_on_import` it also lands and links the dialogue Audio on the
-same track's audio lane, atomically), `add_audio_layer` (the only path for
-audio-only media; never paired; sample-lattice endpoints; `role` defaults to
-`music`), `add_text_layer` (born in the style's tokens for its
-`graphic_role`), `add_motif_layer` (props validated against `props_schema`;
-omitted props take style tokens, then manifest defaults; a `media` prop names
-`"<media_id>"` or `"<media_id>@<t_us>"`), `update_layer` (`label`, `null`
+Layers: `add_layers` places 1–50 layers in one recorded edit, all or nothing
+(spec D5). Shared fields sit flat on each layer (`track_id`, `t_start_us`,
+`t_end_us`, `label`, a creation-time `transform`); `content` is a one-level
+`oneOf` on `kind`: `video` (a Video item; the source window is `src_in_us`
+plus the span at rate 1; `audio` defaults to `auto_pair_audio_on_import` and
+`linked` lands and links the dialogue Audio on the same track's audio lane),
+`image` (a still), `audio` (the only path for audio-only media; never paired;
+sample-lattice endpoints; `role` defaults to `music`), `text` (born in the
+style's tokens for its `graphic_role`), `color` (the composition's size),
+`motif` (props validated against `props_schema`; omitted props take style
+tokens, then manifest defaults; a `media` prop names `"<media_id>"` or
+`"<media_id>@<t_us>"`) and `group` (another instance of an existing
+composition; refuses root, cycles, empty; `t_end_us` defaults to its length).
+A layer without `track_id` opens a fresh track inside the same commit, in
+`composition_id` (else the root); with one, `composition_id` cross-checks it.
+Keys outside a kind's arm are refused, not dropped. `update_layer` (`label`, `null`
 clears it, and `locked`; `t_start_us` / `t_end_us` are refused naming
 `move_layer` / `trim_layer`, which carry link siblings and the source window;
 anything else is refused naming the right tool),
@@ -491,13 +499,13 @@ remove, one edit; below two members dissolves), `delete_link`. Membership is
 read from `project://links`.
 
 Groups ([features.md](features.md#groups)): `create_group` (pre-compose;
-never partial), `add_group_layer` (another instance of an existing
-composition; refuses root, cycles, empty), `add_group_members` (into a Group's
+never partial), `add_layers` kind `group` (another instance), `add_group_members` (into a Group's
 composition, keeping screen position), `ungroup_layer` (plain Groups only,
 `GroupNotPlain`), `rename_composition`, `delete_composition` (orphans only,
 `CompositionInUse`).
 
-Markers and composition: `add_marker`, `update_marker` (`end_t_us: null`
+Markers and composition: `add_marker` (`color` defaults to the timeline's
+marker blue; `note` as `update_marker` takes it), `update_marker` (`end_t_us: null`
 turns a region back into a point; no other field takes null),
 `delete_marker`, `set_marker_anchor`. A marker is the user's content — agents add one only when
 asked, and use tacks otherwise. An anchored marker stores `{ layer, src_us }`

@@ -46,7 +46,7 @@ describe('MCP set_scale_linked', () => {
 
   it('a divergent single-axis update_layer_params clears the flag in the same commit', () => {
     const a = freshActor()
-    const id = a.mcpCall('add_color_layer', JSON.stringify({ track_id: aRollId(a), color: { r: 1, g: 2, b: 3, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 }))
+    const id = a.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: aRollId(a), t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 1, g: 2, b: 3, a: 255 } } }] }))
     expect(id.ok).toBe(true) // Color has no transform — used below for the rejection case
     const text = addTextLayer(a)
     expect(textTransform(a, text).scale_linked).toBe(true)
@@ -62,7 +62,7 @@ describe('MCP set_scale_linked', () => {
 
   it('rejects a kind without a transform (Color) with a structured error', () => {
     const a = freshActor()
-    const add = a.mcpCall('add_color_layer', JSON.stringify({ track_id: aRollId(a), color: { r: 1, g: 2, b: 3, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 }))
+    const add = a.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: aRollId(a), t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 1, g: 2, b: 3, a: 255 } } }] }))
     expect(add.ok).toBe(true)
     if (!add.ok) return
     const colorId = add.result.content[0].text

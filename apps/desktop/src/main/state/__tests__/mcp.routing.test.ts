@@ -5,7 +5,7 @@
 // Coverage:
 // table-exec tools (add_track, delete_layers, trim_layer, move_layer,
 // create_link, set_role_gain, undo/redo) and dedicated-exec tools
-// (add_color_layer, add_marker, split_layer, set_keyframe, add_track).
+// (add_layers, add_marker, split_layer, set_keyframe, add_track).
 import { describe, it, expect } from 'vitest'
 import { freshActor, aRollId, bRollId } from './pbt/harness'
 import { root } from './fixtures/project'
@@ -18,15 +18,10 @@ function totalLayerCount(actor: ReturnType<typeof freshActor>): number {
 
 /** Add a color layer via the MCP adapter and assert it succeeded. Returns the new layer id. */
 function addColorLayerMcp(actor: ReturnType<typeof freshActor>, trackId: string, t0 = 0, t1 = 2_000_000): string {
-  const r = actor.mcpCall('add_color_layer', JSON.stringify({
-    track_id: trackId,
-    color: { r: 10, g: 20, b: 30, a: 255 },
-    t_start_us: t0,
-    t_end_us: t1,
-  }))
-  expect(r.ok, 'setup add_color_layer must succeed').toBe(true)
+  const r = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: trackId, t_start_us: t0, t_end_us: t1, content: { kind: 'color', color: { r: 10, g: 20, b: 30, a: 255 } } }] }))
+  expect(r.ok, 'setup add_layers must succeed').toBe(true)
   if (!r.ok) throw new Error('setup failed')
-  return idOf(r.result.content[0].text, 'layer_id')
+  return placedId(r.result.content[0].text)
 }
 
 /** Every mutator answers with the committed record (mcp-results.ts); the id a
@@ -35,6 +30,10 @@ function idOf(text: string, key: string): string {
   const v = (JSON.parse(text) as Record<string, unknown>)[key]
   expect(typeof v, `${key} in ${text}`).toBe('string')
   return v as string
+}
+/** `add_layers` answers `{ layers: [...] }`; the first placed layer's id. */
+function placedId(text: string): string {
+  return idOf(JSON.stringify((JSON.parse(text) as { layers: unknown[] }).layers[0]), 'layer_id')
 }
 
 const SHORT_STILL_ID = '00000000-0000-7000-8000-000000000101'
@@ -45,22 +44,17 @@ function addShortStillMedia(actor: ReturnType<typeof freshActor>, mediaId = SHOR
   return mediaId
 }
 
-// ── Dedicated-exec: add_color_layer ──────────────────────────────────────────
+// ── Dedicated-exec: add_layers ───────────────────────────────────────────────
 
-describe('MCP adapter routing — add_color_layer (dedicated)', () => {
+describe('MCP adapter routing — add_layers (dedicated)', () => {
   it('valid call routes, returns a layer id, and the layer appears in state', () => {
     const a = freshActor()
     const trackId = aRollId(a)
-    const r = a.mcpCall('add_color_layer', JSON.stringify({
-      track_id: trackId,
-      color: { r: 255, g: 0, b: 0, a: 255 },
-      t_start_us: 0,
-      t_end_us: 3_000_000,
-    }))
+    const r = a.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: trackId, t_start_us: 0, t_end_us: 3_000_000, content: { kind: 'color', color: { r: 255, g: 0, b: 0, a: 255 } } }] }))
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    // result is a text block containing the new layer UUID
-    const layerId = idOf(r.result.content[0].text, 'layer_id')
+    // result is a text block naming the new layer UUID
+    const layerId = placedId(r.result.content[0].text)
     expect(typeof layerId).toBe('string')
     expect(layerId.length).toBeGreaterThan(0)
     // state mutation: one layer exists on the A-roll track
@@ -72,12 +66,7 @@ describe('MCP adapter routing — add_color_layer (dedicated)', () => {
 
   it('malformed track_id (not a UUID) → structured invalid_params error, no throw, no layer added', () => {
     const a = freshActor()
-    const r = a.mcpCall('add_color_layer', JSON.stringify({
-      track_id: 'not-a-uuid',
-      color: { r: 0, g: 0, b: 0, a: 255 },
-      t_start_us: 0,
-      t_end_us: 1_000_000,
-    }))
+    const r = a.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: 'not-a-uuid', t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] }))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('invalid_params')
@@ -86,12 +75,7 @@ describe('MCP adapter routing — add_color_layer (dedicated)', () => {
 
   it('malformed color (string instead of {r,g,b,a}) → structured invalid_params error, no throw', () => {
     const a = freshActor()
-    const r = a.mcpCall('add_color_layer', JSON.stringify({
-      track_id: aRollId(a),
-      color: '#ff0000',
-      t_start_us: 0,
-      t_end_us: 1_000_000,
-    }))
+    const r = a.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: aRollId(a), t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: '#ff0000' } }] }))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('invalid_params')
@@ -99,26 +83,21 @@ describe('MCP adapter routing — add_color_layer (dedicated)', () => {
   })
 })
 
-// ── Dedicated-exec: add_video_layer with Image media ─────────────────────────
+// ── Dedicated-exec: add_layers with Image media ──────────────────────────────
 
-describe('MCP adapter routing — add_video_layer Image media (dedicated)', () => {
+describe('MCP adapter routing — add_layers Image media (dedicated)', () => {
   it('routes still images to ImageOverlay so timeline duration is not capped by probe duration', () => {
     const a = freshActor()
     const trackId = aRollId(a)
     const mediaId = addShortStillMedia(a)
-    // A still has no source window: one sent is refused, never dropped.
-    const windowed = a.mcpCall('add_video_layer', JSON.stringify({ track_id: trackId, media_id: mediaId, src_in_us: 0, src_out_us: 5_000_000, t_start_us: 0, t_end_us: 5_000_000 }))
+    // A still is kind image: as a video it is refused, never dropped.
+    const windowed = a.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: trackId, t_start_us: 0, t_end_us: 5_000_000, content: { kind: 'video', media_id: mediaId, src_in_us: 0 } }] }))
     expect(windowed.ok).toBe(false)
     if (!windowed.ok) expect(windowed.error.message).toContain('no source window')
-    const r = a.mcpCall('add_video_layer', JSON.stringify({
-      track_id: trackId,
-      media_id: mediaId,
-      t_start_us: 0,
-      t_end_us: 5_000_000,
-    }))
+    const r = a.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: trackId, t_start_us: 0, t_end_us: 5_000_000, content: { kind: 'image', media_id: mediaId } }] }))
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    const layerId = idOf(r.result.content[0].text, 'layer_id')
+    const layerId = placedId(r.result.content[0].text)
     const track = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
     expect(track.layers).toHaveLength(1)
     expect(track.layers[0].id).toBe(layerId)
@@ -592,7 +571,7 @@ describe('MCP adapter routing — unknown tool', () => {
 describe('MCP adapter routing — invalid JSON args', () => {
   it('broken JSON string → structured invalid_params error, no throw', () => {
     const a = freshActor()
-    const r = a.mcpCall('add_color_layer', '{broken json')
+    const r = a.mcpCall('add_layers', '{broken json')
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('invalid_params')

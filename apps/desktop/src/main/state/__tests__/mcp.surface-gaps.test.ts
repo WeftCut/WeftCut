@@ -41,9 +41,11 @@ function text(r: ReturnType<Actor['mcpCall']>): string {
 }
 function json<T>(r: ReturnType<Actor['mcpCall']>): T { return JSON.parse(text(r)) as T }
 /** One id out of a mutator's record — every write answers with the committed
- *  record, so the id is a field of it, not the whole text. */
+ *  record, so the id is a field of it, not the whole text (`add_layers`: of
+ *  its first placed layer). */
 function id(r: ReturnType<Actor['mcpCall']>, key: string): string {
-  const v = json<Record<string, unknown>>(r)[key]
+  const body = json<{ layers?: Array<Record<string, unknown>> } & Record<string, unknown>>(r)
+  const v = (body.layers?.[0] ?? body)[key]
   expect(typeof v, `${key} in ${text(r)}`).toBe('string')
   return v as string
 }
@@ -59,10 +61,7 @@ function layerCount(a: Actor): number {
 /** Three colour clips end to end on the A roll, ids in timeline order. */
 function threeClips(a: Actor): string[] {
   const track = aRoll(a)
-  return [0, 1, 2].map((i) => id(call(a, 'add_color_layer', {
-    track_id: track, t_start_us: i * 1_000_000, t_end_us: (i + 1) * 1_000_000,
-    color: { r: 1, g: 2, b: 3, a: 255 },
-  }), 'layer_id'))
+  return [0, 1, 2].map((i) => id(call(a, 'add_layers', { layers: [{ track_id: track, t_start_us: i * 1_000_000, t_end_us: (i + 1) * 1_000_000, content: { kind: 'color', color: { r: 1, g: 2, b: 3, a: 255 } } }] }), 'layer_id'))
 }
 
 describe('delete_layers', () => {
@@ -78,7 +77,7 @@ describe('delete_layers', () => {
   it('refuses the whole batch when a member sits on a locked track, deleting no part of it', () => {
     const a = actorWithPool()
     const [first, second] = threeClips(a)
-    const onB = id(call(a, 'add_color_layer', { track_id: bRoll(a), t_start_us: 0, t_end_us: 1_000_000, color: { r: 9, g: 9, b: 9, a: 255 } }), 'layer_id')
+    const onB = id(call(a, 'add_layers', { layers: [{ track_id: bRoll(a), t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 9, g: 9, b: 9, a: 255 } } }] }), 'layer_id')
     expect(call(a, 'set_track_flags', { track_id: bRoll(a), locked: true }).ok).toBe(true)
     expect(call(a, 'delete_layers', { layer_ids: [first, second, onB] }).ok).toBe(false)
     expect(layerCount(a)).toBe(4)
@@ -104,11 +103,8 @@ describe('delete_layers', () => {
 describe('separate_audio_to_new_track', () => {
   /** A paired A/V clip on the A roll: video + linked dialogue audio, one track. */
   function pairedClip(a: Actor): { video: string; audio: string } {
-    const r = json<{ video_layer_id: string; audio_layer_id: string; link_id: string }>(call(a, 'add_video_layer', {
-      media_id: VIDEO_WITH_SOUND, src_in_us: 0, src_out_us: 4_000_000,
-      t_start_us: 0, t_end_us: 4_000_000, track_id: aRoll(a),
-    }))
-    return { video: r.video_layer_id, audio: r.audio_layer_id }
+    const r = json<{ layers: Array<{ layer_id: string; linked: { audio_layer_id: string } }> }>(call(a, 'add_layers', { layers: [{ t_start_us: 0, t_end_us: 4_000_000, track_id: aRoll(a), content: { kind: 'video', media_id: VIDEO_WITH_SOUND, src_in_us: 0 } }] })).layers[0]!
+    return { video: r.layer_id, audio: r.linked.audio_layer_id }
   }
 
   it('moves the layer to a brand-new track and returns that track id', () => {
@@ -142,23 +138,17 @@ describe('separate_audio_to_new_track', () => {
 describe('set_project_settings', () => {
   it('turning auto_pair_audio_on_import off actually stops the pairing', () => {
     const a = actorWithPool()
-    const paired = call(a, 'add_video_layer', {
-      media_id: VIDEO_WITH_SOUND, src_in_us: 0, src_out_us: 4_000_000,
-      t_start_us: 0, t_end_us: 4_000_000, track_id: aRoll(a),
-    })
-    // Default-on: the call returns the triple, and two layers landed.
+    const paired = call(a, 'add_layers', { layers: [{ t_start_us: 0, t_end_us: 4_000_000, track_id: aRoll(a), content: { kind: 'video', media_id: VIDEO_WITH_SOUND, src_in_us: 0 } }] })
+    // Default-on: the call names the linked audio, and two layers landed.
     expect(text(paired)).toContain('audio_layer_id')
     expect(layerCount(a)).toBe(2)
 
     expect(call(a, 'set_project_settings', { patch: { auto_pair_audio_on_import: false } }).ok).toBe(true)
     expect(a.snapshot().settings.auto_pair_audio_on_import).toBe(false)
-    const solo = call(a, 'add_video_layer', {
-      media_id: VIDEO_WITH_SOUND, src_in_us: 0, src_out_us: 4_000_000,
-      t_start_us: 0, t_end_us: 4_000_000, track_id: bRoll(a),
-    })
-    // One shape whether paired or not: the triple is present with nulls, and
-    // exactly one more layer is on the timeline.
-    expect(json<{ audio_layer_id: string | null; link_id: string | null; audio: unknown }>(solo)).toMatchObject({ audio_layer_id: null, link_id: null, audio: null })
+    const solo = call(a, 'add_layers', { layers: [{ t_start_us: 0, t_end_us: 4_000_000, track_id: bRoll(a), content: { kind: 'video', media_id: VIDEO_WITH_SOUND, src_in_us: 0 } }] })
+    // One shape whether paired or not: `linked` is null, and exactly one more
+    // layer is on the timeline.
+    expect(json<{ layers: Array<{ linked: unknown }> }>(solo).layers[0]).toMatchObject({ linked: null })
     expect(layerCount(a)).toBe(3)
   })
 
@@ -253,7 +243,7 @@ describe('captions with word timing', () => {
   it('restyle_captions patches every caption and leaves a non-caption Text layer alone', () => {
     const a = actorWithPool()
     id(call(a, 'apply_transcripts', { transcripts: [TRANSCRIPT] }), 'caption_track_id')
-    const title = id(call(a, 'add_text_layer', { track_id: aRoll(a), t_start_us: 0, t_end_us: 1_000_000, content: 'Title' }), 'layer_id')
+    const title = id(call(a, 'add_layers', { layers: [{ track_id: aRoll(a), t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'text', content: 'Title' } }] }), 'layer_id')
 
     expect(call(a, 'restyle_captions', { font_size_px: 40, outline_width: 3 }).ok).toBe(true)
     for (const cue of captionLayers(a)) {

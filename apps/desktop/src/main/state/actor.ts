@@ -8,7 +8,7 @@ import { blankProject, eachLayer, rootComposition } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch, type ReviewState, type OpDiff } from './history'
 import { mcpActor } from './mcp-actor'
-import { HISTORY_SUMMARY, groupAddMembersSummary, groupCreateSummary, layersEnabledSummary, moveToCompositionSummary, pastedLayersSummary, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
+import { HISTORY_SUMMARY, addedLayersSummary, groupAddMembersSummary, groupCreateSummary, layersEnabledSummary, moveToCompositionSummary, pastedLayersSummary, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
 import { validate, reconcileMarkers, reconcileTransitions, type DroppedMarker, type DroppedTransition } from './validate'
 import { gridForLayerKind, snapFrameCeil, snapFrameRound, snapOnGrid } from './snap'
@@ -20,7 +20,7 @@ import { keyTimeUs } from '../../shared/keyframe'
 import { buildLimits } from './mutations/captionSegments'
 import type { Tokens } from '../taste/schema'
 import { checkComposition } from '../lint/checkComposition'
-import { applyAddGroupLayer, applyAddLayer, applyAddMarker, applyAddTrack, colorParams, textParamsDefault } from './mutations/add'
+import { DEFAULT_MARKER_COLOR, applyAddGroupLayer, applyAddLayer, applyAddMarker, applyAddTrack, colorParams, textParamsDefault } from './mutations/add'
 import { applyMoveLayer, applyMoveLayers, applyMoveLayersToNewTrack, type MovePlacement } from './mutations/move'
 import { applyShiftLayers, applyShiftLayersFrom, type ShiftLayersResult } from './mutations/shift'
 import { formatSrt, formatVtt } from '../../shared/subtitleFormat'
@@ -46,7 +46,7 @@ import { videoClipParams, audioParams, imageOverlayParams, mediaExtent, applySep
   applySetMediaDerivatives, applySetMediaWorkspacePaths, applySetMediaHash, referencingLayers,
   type MediaDerivativesPatch, type WorkspacePaths } from './mutations/media'
 import type { MediaItem } from './model'
-import { applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
+import { applyParamsPatch, applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
 import { applySetScaleLinked, enforceScaleLinkInvariant } from './mutations/scaleLink'
 import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
 import { applyAddCaptionTrack, applyRestyleCaptions, captionTracks, type Cue, type CaptionStylePatch, applyMergeCaptions, type MergeCaptionsResult } from './mutations/captions'
@@ -54,9 +54,9 @@ import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { mediaPropProblem } from '../../shared/motifs/mediaProp'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, toolEmpty, toolText, checkEffectPatchAgainst, checkEffectParamValues, GRAPHIC_ROLE_VIDEO_REFUSAL, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, mcpDef, type McpCallResult, type TrackValue , SCOPED_PROJECT_VIEWS} from './mcp-commands'
+import { mapCommandError, MCP_ARG_PARSERS, toolEmpty, toolText, checkEffectPatchAgainst, checkEffectParamValues, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, mcpDef, type AddLayerSpec, type McpCallResult, type McpToolErrorJson, type TrackValue , SCOPED_PROJECT_VIEWS} from './mcp-commands'
 import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto, setTangent, setContinuity, setExtrapolation } from './keyframeEdits'
-import { MCP_RESULT_READERS, adjusted, keyframeByIdResult, layerRecord, linkRecord, markerRecord, newLayerIds, paramTrackResult, setKeyframeResult, toolRecord, type ResultCtx } from './mcp-results'
+import { MCP_RESULT_READERS, adjusted, keyframeByIdResult, linkRecord, markerRecord, newLayerIds, paramTrackResult, setKeyframeResult, toolRecord, type ResultCtx } from './mcp-results'
 import { readLayerTrack, parseEffectParamKey } from './mutations/params'
 import { effectsCatalogView } from '../../shared/effects/catalogView'
 import { applySetPosition, applyTranslatePath } from './mutations/position'
@@ -72,10 +72,6 @@ setAutoFreeze(true) // snapshots are frozen — accidental mutation throws.
 export type Clock = () => string
 export type DiffHint = { kind: 'Coarse' } | { kind: 'Layer'; id: Uuid } | { kind: 'Composition' }
 export interface ChangeEvent { op_id: Uuid; history_op_id?: Uuid; actor: Actor; timestamp: string; summary: string; affected: EntityRef[]; new_snapshot: Project; diff_hint: DiffHint; replaced?: true }
-
-/** `add_video_layer` over an Image with a source window: a still has none. */
-const IMAGE_SOURCE_WINDOW_REFUSAL = (media: string): string =>
-  `media ${media} is an Image: a still has no source window, so src_in_us / src_out_us would be dropped. Omit them; t_start_us / t_end_us place the still`
 
 /** The lattice a layer's keys are written on, as a snap of a layer-local µs:
  *  the frame grid of its composition, or 48 kHz samples for Audio — the snap
@@ -962,7 +958,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // it was born on. Taken on trust exactly as `add_markers` takes its rows —
         // the caller derives `t_us` from the anchor it supplies, and this commit's
         // reconcile re-derives it right back.
-        case 'add_marker': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, parseNum(a.t_us, 't_us'), parseNumOpt(a.end_t_us, 'end_t_us') ?? null, (a.label as string) ?? 'm', { r: 0, g: 128, b: 255, a: 255 }, comp, typeof a.note === 'string' ? a.note : undefined, (a.anchor as MarkerAnchor | null | undefined) ?? null)) } }
+        case 'add_marker': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => applyAddMarker(d, idGen, parseNum(a.t_us, 't_us'), parseNumOpt(a.end_t_us, 'end_t_us') ?? null, (a.label as string) ?? 'm', DEFAULT_MARKER_COLOR, comp, typeof a.note === 'string' ? a.note : undefined, (a.anchor as MarkerAnchor | null | undefined) ?? null)) } }
         // shift_layers — one delta over a set: the named layers (+ link partners
         // unless escaped) or everything starting at/after a time. One commit,
         // one undo; the value names what moved so the refs can too.
@@ -1327,7 +1323,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const rows = (a.markers as Array<{ t_us: number; end_t_us?: number | null; label?: string; color?: Rgba; anchor?: MarkerAnchor | null }>) ?? []
           const comp = compositionArg(a)
           return { ok: true, value: commit(HISTORY_SUMMARY.markerAddShots, markerRefs, { kind: 'Coarse' }, (d) =>
-            rows.map((m) => applyAddMarker(d, idGen, parseNum(m.t_us, 't_us'), m.end_t_us ?? null, m.label ?? 'Shot', m.color ?? { r: 0, g: 128, b: 255, a: 255 }, comp, undefined, m.anchor ?? null))) }
+            rows.map((m) => applyAddMarker(d, idGen, parseNum(m.t_us, 't_us'), m.end_t_us ?? null, m.label ?? 'Shot', m.color ?? DEFAULT_MARKER_COLOR, comp, undefined, m.anchor ?? null))) }
         }
         case 'links_create': return { ok: true, value: commit(HISTORY_SUMMARY.linkCreate, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyLinksCreate(d, idGen, a.layers as Uuid[], (a.reassign as boolean) ?? false)) }
         case 'links_dissolve': commit(HISTORY_SUMMARY.linkDissolve, linkMemberRefs(a.link as Uuid), { kind: 'Coarse' }, (d) => applyLinksDissolve(d, a.link as Uuid)); return { ok: true, value: null }
@@ -1335,8 +1331,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'links_remove_members': commit(HISTORY_SUMMARY.linkRemoveMembers, layerRefs(a.layers as Uuid[]), { kind: 'Coarse' }, (d) => applyLinksRemoveMembers(d, a.link as Uuid, a.layers as Uuid[])); return { ok: true, value: null }
         // Groups (ADR 0052) — one commit each; the row points at the Group layer,
         // and at the members too where the op has a set of them. The result is
-        // ONE shape always (not the branch-dependent shape add_video_layer has),
-        // so a caller never sniffs it.
+        // ONE shape always, so a caller never sniffs it.
         case 'groups_create': {
           const layers = [...new Set((a.layers as Uuid[]) ?? [])]
           const r = commit(groupCreateSummary(layers.length), (g: GroupCreateResult) => layerRef(g.layerId), { kind: 'Coarse' },
@@ -1369,9 +1364,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
             (d) => applyMoveLayersToComposition(d, idGen, layers, dest.id, anchor, anchorTStartUs, toTrack))
           return { ok: true, value: null }
         }
-        // Placing an existing composition: a creation op, so it carries a scope —
-        // but `track` already fixes the composition, which makes `composition_id`
-        // the cross-check add_video_layer's is. The row is a plain layer add,
+        // Placing an existing composition (the media pool's drop): a creation op,
+        // so it carries a scope — but `track` already fixes the composition, which
+        // makes `composition_id` a cross-check. The row is a plain layer add,
         // because that is what this does: pre-compose is the op that makes a Group.
         case 'add_group_layer': {
           const track = parseUuid(a.track, 'track')
@@ -1767,6 +1762,138 @@ export function createActor(opts: ActorOptions): ActorHandle {
     return given && typeof given === 'object' && !Array.isArray(given) ? { ...styled, ...(given as Record<string, unknown>) } : given ?? styled
   }
 
+  /** One `add_layers` entry, resolved before the recipe: its params built
+   *  against the composition it lands in, every pool / catalog refusal raised.
+   *  `group` places a composition (`applyAddGroupLayer` owns those refusals);
+   *  `audio` is the auto-paired dialogue layer, null for none. */
+  interface AddLayerPlan {
+    spec: AddLayerSpec; track: Uuid | null; t0: number; t1: number | null
+    params: LayerParams | null; group: Uuid | null; audio: LayerParams | null
+    transform: LayerParamsPatch | null; label: string | null
+    /** A Motif's content shortened the requested end (`adjusted` reason `content`). */
+    clamped: boolean
+  }
+  function planAddLayer(l: AddLayerSpec, snap: Project, scope: Composition, compositionId: Uuid | null): AddLayerPlan {
+    let comp = scope
+    if (l.track !== null) {
+      const t = locateTrack(snap, l.track)
+      if (!t) throw new CommandFailure({ error: 'TrackNotFound', track: l.track })
+      checkTrackInComposition(l.track, compositionId)
+      comp = t.comp
+    }
+    const c = l.content
+    const at = l.at
+    const t0 = l.t_start_us
+    let t1 = l.t_end_us
+    // A source window is the in point plus the span AS STORED: each layer's
+    // edges snap to its own lattice, so the window is derived after the snap
+    // and plays at rate 1 (T25).
+    const span = (kind: LayerParams['kind']): number => {
+      const g = gridForLayerKind(kind, comp.fps)
+      return snapOnGrid(t1!, g) - snapOnGrid(t0, g)
+    }
+    const media = (id: Uuid): MediaItem => {
+      const item = snap.media_pool[id]
+      if (item === undefined) throw new CommandFailure({ error: 'MediaNotFound', media: id })
+      return item
+    }
+    let params: LayerParams | null = null
+    let group: Uuid | null = null
+    let audio: LayerParams | null = null
+    let clamped = false
+    switch (c.kind) {
+      case 'video': {
+        const item = media(c.media)
+        // An audio-only VideoClip draws nothing and the mixer reads Audio
+        // layers only (native/src/audio/mix.rs): a success for a clip that
+        // neither shows nor plays. Each wrong kind names the right one.
+        if (item.kind === 'Audio') throw new McpArgError(`${at}: media ${c.media} is audio-only: a visual layer over it would draw nothing, and the mixer reads Audio layers only, so it would be silent as well. Use kind audio with the same span and src_in_us.`, `${at}.content.media_id`)
+        if (item.kind === 'Subtitle') throw new McpArgError(`${at}: media ${c.media} is a subtitle document, not a picture. Use apply_subtitles to lay its cues onto the caption tracks, or kind text for a single title.`, `${at}.content.media_id`)
+        if (item.kind === 'Image') throw new McpArgError(`${at}: media ${c.media} is an Image: a still has no source window. Use kind image.`, `${at}.content.media_id`)
+        const hasAudio = item.metadata.audio != null
+        if (c.audio === 'linked' && !hasAudio) throw new McpArgError(`${at}.content.audio: media ${c.media} has no audio stream to link; omit audio or send "none"`, `${at}.content.audio`)
+        const pair = c.audio === 'linked' || (c.audio === null && hasAudio && snap.settings.auto_pair_audio_on_import === true)
+        params = videoClipParams(c.media, c.src_in_us, c.src_in_us + span('VideoClip'), mediaExtent(item))
+        if (pair) audio = { ...audioParams(c.media, c.src_in_us, c.src_in_us + span('Audio')), role: 'dialogue' }
+        break
+      }
+      case 'image': {
+        const item = media(c.media)
+        if (item.kind !== 'Image') throw new McpArgError(`${at}: media ${c.media} is a ${item.kind} item, not an Image. A Video is kind video, an Audio item kind audio, a subtitle document apply_subtitles.`, `${at}.content.media_id`)
+        params = imageOverlayParams(c.media, mediaExtent(item), c.graphic_role)
+        break
+      }
+      case 'audio': {
+        const item = media(c.media)
+        // Refused HERE with the kind named: downstream, the validator only
+        // knows a source range does not fit, which reads as arithmetic.
+        if (item.kind !== 'Audio' && !(item.kind === 'Video' && item.metadata.audio != null))
+          throw new McpArgError(`${at}: media ${c.media} carries no audio (kind ${item.kind}${item.kind === 'Video' ? ', no audio stream' : ''}), so there is nothing for an Audio layer to play. A picture is kind video or image; a subtitle document goes through apply_subtitles.`, `${at}.content.media_id`)
+        const base = audioParams(c.media, c.src_in_us, c.src_in_us + span('Audio'))
+        params = c.role === null ? base : { ...base, role: c.role as AudioRole }
+        break
+      }
+      // prodTextParams is the production channel's: a title placed by an
+      // agent and one placed in the UI are the same layer, in the style's
+      // tokens for its role (T4).
+      case 'text': params = prodTextParams({ content: c.content, graphic_role: c.graphic_role }, comp, opts.defaultTextFont?.(), opts.tasteTokens?.()); break
+      // The composition's canvas, as the UI path sizes it (T13).
+      case 'color': params = colorParams(c.color, comp.width, comp.height); break
+      case 'motif': {
+        const manifest = motifCatalog.get(c.motif_id)
+        if (!manifest) throw new McpArgError(`${at}.content.motif_id: unknown motif_id '${c.motif_id}' — call list_motifs for the catalog`, `${at}.content.motif_id`)
+        let props: Record<string, unknown>
+        try {
+          props = canonicalizeProps(manifest, styledMotifProps(manifest, c.props))
+          const problem = mediaPropProblem(manifest.props_schema, props, snap.media_pool)
+          if (problem) throw new MotifPropError(problem)
+        } catch (err) {
+          if (err instanceof MotifPropError) throw new McpArgError(`${at}.content.props: invalid props: ${err.detail}`, `${at}.content.props`)
+          throw err
+        }
+        const end = resolveMotifTEndUs(t0, t1, manifest.default_duration_s, resolveMotifMaxDurUs(manifest, props))
+        clamped = end !== t1
+        t1 = end
+        params = motifLayerParams(manifest.id, manifest.version, props, manifest.size, c.graphic_role ?? manifest.graphic_role ?? null)
+        break
+      }
+      case 'group': group = c.composition; break
+    }
+    let transform: LayerParamsPatch | null = null
+    if (l.transform !== null) {
+      const { scale, ...rest } = l.transform
+      const kind = params?.kind ?? 'CompositionRef'
+      transform = { kind, ...rest, ...(scale !== undefined ? { scale_x: scale, scale_y: scale } : {}) } as LayerParamsPatch
+    }
+    return { spec: l, track: l.track, t0, t1, params, group, audio, transform, label: l.label, clamped }
+  }
+  type PlacedLayer = { layer_id: Uuid; track_id: Uuid; linked: { audio_layer_id: Uuid; link_id: Uuid } | null }
+  /** The auto-paired audio of an `add_layers` video collided with an Audio
+   *  layer already on the lane: the case agents misdiagnosed for three
+   *  sessions running, so the cause and the ways out go IN THE MESSAGE
+   *  (clients drop error.data). Null for any other refusal. */
+  function pairedAudioOverlap(err: unknown, snap: Project, paired: ReadonlySet<Uuid>): McpToolErrorJson | null {
+    if (!(err instanceof CommandFailure) || err.err.error !== 'ValidationFailed' || err.err.detail.rule !== 'LayerOverlap') return null
+    const d = err.err.detail
+    const ours = paired.has(d.a) ? 'a' : paired.has(d.b) ? 'b' : null
+    if (ours === null) return null
+    const existing = locateLayer(snap, ours === 'a' ? d.b : d.a)?.layer
+    if (!existing || existing.params.kind !== 'Audio') return null
+    const [t0, t1] = ours === 'a' ? [d.a_start, d.a_end] : [d.b_start, d.b_end]
+    const tail = existing.t_start_us < t0
+    return { code: 'invalid_params',
+      message: `paired-audio overlap: the video fits, but its linked dialogue Audio at [${t0}, ${t1}) µs on track ${d.track}'s audio lane meets Audio layer ${existing.id}${existing.label ? ` '${existing.label}'` : ''} at [${existing.t_start_us}, ${existing.t_end_us}) µs. Nothing was committed (the batch is atomic). Options: create_new_track — omit track_id and the pair lands together on a fresh track; ${tail ? 'trim_layer / split_layer / ' : ''}move_layer the blocking audio layer; or send audio: "none".`,
+      data: {
+        error: 'LayerOverlap', collided: 'paired_audio', track: d.track,
+        blocking_layer: existing.id, blocking_label: existing.label,
+        blocking_range_us: [existing.t_start_us, existing.t_end_us], requested_range_us: [t0, t1],
+        options: [
+          { action: 'create_new_track', note: 'omit track_id: the pair lands together on a fresh track' },
+          ...(tail ? [{ action: 'trim_existing', layer_id: existing.id, edge: 'out', new_t_us: t0 }, { action: 'split_at_t', layer_id: existing.id, at_t_us: t0 }] : []),
+        ],
+      } }
+  }
+
   function mcpCall(name: string, argsJson: string, client?: string): McpCallResult {
     return recordingAs(mcpActor(client), () => mcpCallAsAgent(name, argsJson))
   }
@@ -1781,159 +1908,56 @@ export function createActor(opts: ActorOptions): ActorHandle {
     const before = current()
     const cursorBefore = history.status().cursor
     const ctx = (value: unknown): ResultCtx => ({ args: a, value, before, after: current(), history: history.status(), cursorBefore, entryAt: (i) => history.entryAt(i) })
-    /** A freshly placed layer: its envelope plus the grid's adjustments to the
-     *  span the caller asked for. */
-    const addedLayer = (id: Uuid, req: { t_start_us?: unknown; t_end_us?: unknown }): Record<string, unknown> => {
-      const rec = layerRecord(current(), id) ?? { layer_id: id }
-      return { ...rec, adjusted: adjusted([['t_start_us', req.t_start_us, (rec as { t_start_us?: number }).t_start_us], ['t_end_us', req.t_end_us, (rec as { t_end_us?: number }).t_end_us]]) }
-    }
-    /** `add_video_layer`'s ONE shape, paired or not: the triple is always
-     *  present (nulls for an unpaired add) so a caller never branches on it. */
-    const addedVideo = (videoId: Uuid, audioId: Uuid | null, linkId: Uuid | null, req: { t_start_us?: unknown; t_end_us?: unknown }): Record<string, unknown> => ({
-      ...addedLayer(videoId, req), video_layer_id: videoId, audio_layer_id: audioId, link_id: linkId,
-      audio: audioId === null ? null : layerRecord(current(), audioId),
-    })
     try {
       // Dedicated arms for explicit-param tools. Fall through to the
       // table path for mechanical tools.
       switch (name) {
-        case 'add_color_layer': {
-          const p = mcpDef('add_color_layer').parseDedicated!(a)
-          checkTrackInComposition(p.track as string, p.composition_id as string | null)
-          const params = colorParams(p.color as Rgba, (p.width as number | undefined) ?? 1920, (p.height as number | undefined) ?? 1080)
-          const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, p.track as string, params, p.t_start_us as number, p.t_end_us as number))
-          return { ok: true, result: toolRecord(addedLayer(id, p)) }
-        }
-        case 'add_video_layer': {
-          const p = mcpDef('add_video_layer').parseDedicated!(a)
-          const track = p.track as string
-          checkTrackInComposition(track, p.composition_id as string | null)
-          const media = p.media as string
-          const srcIn = p.src_in_us as number | null
-          const srcOut = p.src_out_us as number | null
-          const t0 = p.t_start_us as number
-          const t1 = p.t_end_us as number
+        // One batch of new layers in ONE commit (spec D5): every layer, every
+        // track a layer spawns, every auto-paired audio and its link land in a
+        // single recipe, so a refusal anywhere discards the whole draft and a
+        // success is one undo step. What reads the pool or the Motif catalog and
+        // can refuse is planned first, against the composition each layer lands
+        // in (`planAddLayer`).
+        case 'add_layers': {
+          const p = mcpDef('add_layers').parseDedicated!(a) as { composition_id: Uuid | null; layers: AddLayerSpec[] }
           const snap = current()
-          const item = snap.media_pool[media]
-          // An id that names nothing is MediaNotFound FIRST: the source-window
-          // rule below would otherwise demand src_in_us/src_out_us for a media
-          // that does not exist.
-          if (item === undefined) return { ok: false, error: mapCommandError({ error: 'MediaNotFound', media }, name) }
-          // Audio-only media must not fall through to videoClipParams: a
-          // VideoClip over an mp3 draws nothing, and the mixer folds only Audio
-          // layers (native/src/audio/mix.rs), so it is silent too — a success
-          // report for a clip that neither shows nor plays. Name the tool that
-          // does place it instead.
-          if (item.kind === 'Audio' || item.kind === 'Subtitle') {
-            return { ok: false, error: { code: 'invalid_params', message: item.kind === 'Audio'
-              ? `media ${media} is audio-only: a visual layer over it would draw nothing, and the mixer reads Audio layers only, so it would be silent as well. Use add_audio_layer with the same track, span and source window.`
-              : `media ${media} is a subtitle document, not a picture. Use apply_subtitles to lay its cues onto the caption tracks, or add_text_layer for a single title.` } }
-          }
-          const role = p.graphic_role as string | null | undefined
-          if (item.kind === 'Image') {
-            // A still has no source window: one sent would be dropped.
-            if (srcIn !== null || srcOut !== null) return { ok: false, error: { code: 'invalid_params', message: IMAGE_SOURCE_WINDOW_REFUSAL(media), data: { field: srcIn !== null ? 'src_in_us' : 'src_out_us' } } }
-            const imageId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, imageOverlayParams(media, mediaExtent(current().media_pool[media]), role ?? null), t0, t1))
-            return { ok: true, result: toolRecord(addedVideo(imageId, null, null, p)) }
-          }
-          // A VideoClip carries no graphic role: a tagged picture is an Image.
-          if (role != null) return { ok: false, error: { code: 'invalid_params', message: GRAPHIC_ROLE_VIDEO_REFUSAL(media) } }
-          // An Image never needed them, so the schema stopped requiring them;
-          // a Video still does, and says so rather than defaulting to a window
-          // nobody chose.
-          if (srcIn === null || srcOut === null) {
-            return { ok: false, error: { code: 'invalid_params', message: `src_in_us and src_out_us are required for Video media ${media}: they are the in/out points in the source; only an Image may omit them` } }
-          }
-          const vParams = videoClipParams(media, srcIn, srcOut, mediaExtent(item))
-          const shouldPair = (snap.settings.auto_pair_audio_on_import === true) && (item.kind === 'Video') && (item.metadata.audio != null)
-          if (!shouldPair) {
-            const videoId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, vParams, t0, t1))
-            return { ok: true, result: toolRecord(addedVideo(videoId, null, null, p)) }
-          }
-          // Paired A/V: ONE commit — video + dialogue audio on the SAME track
-          // (a track holds one visual and one audio lane, so the pair shares a
-          // combined row exactly like production add_media_layer) + the pair
-          // link. Any failure discards the whole draft: the call commits or
-          // rejects as a unit — splitting it into separate commits strands the
-          // video on the timeline when the audio placement fails.
-          const aParams = { ...audioParams(media, srcIn, srcOut), role: 'dialogue' as const }
+          const scope = scopeComposition(snap, p.composition_id)
+          const plans = p.layers.map((l) => planAddLayer(l, snap, scope, p.composition_id))
+          const minted = plans.reduce((n, pl) => n + (pl.audio ? 2 : 1), 0)
+          const summary = plans.length > 1 ? addedLayersSummary(minted) : plans[0]!.audio ? HISTORY_SUMMARY.layerAddAvPair : HISTORY_SUMMARY.layerAdd
+          const pairedAudio = new Set<Uuid>()
+          let placed: PlacedLayer[]
           try {
-            const ids = commit(HISTORY_SUMMARY.layerAddAvPair, (r: { video_layer_id: Uuid; audio_layer_id: Uuid; link_id: Uuid }) => layerRefs([r.video_layer_id, r.audio_layer_id]), { kind: 'Coarse' }, (d) => {
-              const videoId = applyAddLayer(d, idGen, track, vParams, t0, t1)
-              const audioId = applyAddLayer(d, idGen, track, aParams, t0, t1)
-              const linkId = applyLinksCreate(d, idGen, [videoId, audioId], false)
-              return { video_layer_id: videoId, audio_layer_id: audioId, link_id: linkId }
-            })
-            return { ok: true, result: toolRecord(addedVideo(ids.video_layer_id, ids.audio_layer_id, ids.link_id, p)) }
+            placed = commit(summary, (r: PlacedLayer[]) => layerRefs(r.flatMap((x) => x.linked ? [x.layer_id, x.linked.audio_layer_id] : [x.layer_id])), { kind: 'Coarse' }, (d) => plans.map((pl): PlacedLayer => {
+              // `label: null` leaves a spawned lane's name to its position (docs/data-model.md#track).
+              const track = pl.track ?? applyAddTrack(d, idGen, null, undefined, scope.id)
+              const id = pl.group !== null
+                ? applyAddGroupLayer(d, idGen, pl.group, track, pl.t0, pl.t1 ?? undefined)
+                : applyAddLayer(d, idGen, track, pl.params!, pl.t0, pl.t1!)
+              const layer = requireLayer(d, id).layer
+              if (pl.label !== null) layer.label = pl.label
+              if (pl.transform !== null) applyParamsPatch(layer, pl.transform)
+              if (pl.audio === null) return { layer_id: id, track_id: track, linked: null }
+              // The pair shares the track: one visual and one audio lane per track.
+              const audioId = applyAddLayer(d, idGen, track, pl.audio, pl.t0, pl.t1!)
+              pairedAudio.add(audioId)
+              return { layer_id: id, track_id: track, linked: { audio_layer_id: audioId, link_id: applyLinksCreate(d, idGen, [id, audioId], false) } }
+            }))
           } catch (err) {
-            if (err instanceof CommandFailure && err.err.error === 'ValidationFailed' && err.err.detail.rule === 'LayerOverlap') {
-              const d = err.err.detail
-              // One of the colliding pair is PRE-EXISTING (the other is a layer
-              // this discarded draft minted); its lane says which half of the
-              // pair collided. Audio lane blocked while the video lane was free
-              // is exactly the case agents misdiagnosed for three sessions
-              // running — name the cause and the ways out IN THE MESSAGE
-              // (clients drop error.data).
-              const existing = [...eachLayer(snap)].map((e) => e.layer).find((l) => l.id === d.a || l.id === d.b)
-              if (existing && existing.params.kind === 'Audio') {
-                return { ok: false, error: {
-                  code: 'invalid_params',
-                  message: `paired-audio overlap: the video fits, but auto_pair_audio_on_import also places a dialogue Audio layer at [${t0}, ${t1}) µs on the target track's audio lane, where Audio layer ${existing.id}${existing.label ? ` '${existing.label}'` : ''} already occupies [${existing.t_start_us}, ${existing.t_end_us}) µs. Nothing was committed (the pair is atomic). Options: create_new_track and retry add_video_layer with the new track_id (the pair lands together on one track); trim_existing / split_at_t / move_layer the blocking audio layer; or set settings.auto_pair_audio_on_import=false.`,
-                  data: {
-                    error: 'LayerOverlap', collided: 'paired_audio', track: d.track,
-                    blocking_layer: existing.id, blocking_label: existing.label,
-                    blocking_range_us: [existing.t_start_us, existing.t_end_us],
-                    requested_range_us: [t0, t1],
-                    options: [
-                      { action: 'create_new_track', note: 'then retry add_video_layer with the new track_id' },
-                      { action: 'trim_existing', layer_id: existing.id, new_t_end_us: t0 },
-                      { action: 'split_at_t', layer_id: existing.id, at_t_us: t0 },
-                    ],
-                  },
-                } }
-              }
+            const refusal = pairedAudioOverlap(err, snap, pairedAudio)
+            if (refusal) return { ok: false, error: refusal }
+            throw err // any other refusal → outer catch → mapCommandError
+          }
+          const after = current()
+          return { ok: true, result: toolRecord({ layers: placed.map((x, i) => {
+            const l = requireLayer(after, x.layer_id).layer
+            const pl = plans[i]!
+            return {
+              layer_id: x.layer_id, track_id: x.track_id, t_start_us: l.t_start_us, t_end_us: l.t_end_us,
+              adjusted: [...adjusted([['t_start_us', pl.spec.t_start_us, l.t_start_us]]), ...adjusted([['t_end_us', pl.spec.t_end_us, l.t_end_us]], pl.clamped ? 'content' : 'grid')],
+              linked: x.linked,
             }
-            throw err // visual-lane overlap etc. → outer catch → mapCommandError
-          }
-        }
-        // The audio-lane twin of add_video_layer, and the only way audio-only
-        // media reaches the timeline. Deliberately unpaired and unlinked: what
-        // this places is a standalone cue, so there is no partner for the
-        // atomic-triple dance above — one commit, one layer, one id back.
-        case 'add_audio_layer': {
-          const p = mcpDef('add_audio_layer').parseDedicated!(a)
-          const track = p.track as string
-          checkTrackInComposition(track, p.composition_id as string | null)
-          const media = p.media as string
-          const item = current().media_pool[media]
-          if (item === undefined) return { ok: false, error: mapCommandError({ error: 'MediaNotFound', media }, name) }
-          // A pool item with no audio stream cannot be read as sound. Refuse it
-          // HERE with the media kind named: the validator downstream only knows
-          // that a source range does not fit, which reads as an arithmetic
-          // mistake rather than as the wrong file.
-          if (item.kind !== 'Audio' && !(item.kind === 'Video' && item.metadata.audio != null)) {
-            return { ok: false, error: { code: 'invalid_params', message: `media ${media} carries no audio (kind ${item.kind}${item.kind === 'Video' ? ', no audio stream' : ''}), so there is nothing for an Audio layer to play. A picture goes on the timeline with add_video_layer; a subtitle document with apply_subtitles.` } }
-          }
-          const role = (p.role as AudioRole | null) ?? undefined
-          const base = audioParams(media, p.src_in_us as number, p.src_out_us as number)
-          const params = role === undefined ? base : { ...base, role }
-          const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
-            applyAddLayer(d, idGen, track, params, p.t_start_us as number, p.t_end_us as number))
-          return { ok: true, result: toolRecord(addedLayer(id, p)) }
-        }
-        // Shares prodTextParams with the production channel rather than minting
-        // a second default family — a title authored by an agent and one
-        // authored in the UI must be the same layer. The composition comes from
-        // the TRACK (the factory centres the text in frame, so it needs the real
-        // canvas, not add_color_layer's 1920x1080 fallback).
-        case 'add_text_layer': {
-          const p = mcpDef('add_text_layer').parseDedicated!(a)
-          const track = p.track as string
-          checkTrackInComposition(track, p.composition_id as string | null)
-          const params = prodTextParams({ content: p.content, x: p.x, y: p.y, graphic_role: p.graphic_role }, requireTrack(current(), track).comp, opts.defaultTextFont?.(), opts.tasteTokens?.())
-          const id = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) =>
-            applyAddLayer(d, idGen, track, params, p.t_start_us as number, p.t_end_us as number))
-          return { ok: true, result: toolRecord(addedLayer(id, p)) }
+          }) }) }
         }
         // Both caption arms hand the dispatch its `project_id` from the state
         // they just read. The production channels carry one because the UI
@@ -1973,14 +1997,15 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // then have to notice and clean up.
         case 'add_marker': {
           const p = mcpDef('add_marker').parseDedicated!(a)
-          const color = p.color as Rgba
+          const color = (p.color as Rgba | null) ?? DEFAULT_MARKER_COLOR
           const tUs = p.t_us as number
           const endT = (p.end_t_us as number | undefined) ?? null
           const label = p.label as string
+          const note = (p.note as string | null) ?? undefined
           const anchorLayer = (p.anchor_layer_id as Uuid | null) ?? null
           const comp = compositionArg(p)
           const id = commit(HISTORY_SUMMARY.markerAdd, markerRef, { kind: 'Coarse' }, (d) => {
-            const marker = applyAddMarker(d, idGen, tUs, endT, label, color, comp)
+            const marker = applyAddMarker(d, idGen, tUs, endT, label, color, comp, note)
             if (anchorLayer !== null) applyAttachMarker(d, marker, anchorLayer)
             return marker
           })
@@ -2252,37 +2277,6 @@ export function createActor(opts: ActorOptions): ActorHandle {
             // that exists, and travels as an `isError` result like every other.
             return { ok: false, error: { code: 'invalid_params', message: err instanceof Error ? err.message : String(err) } }
           }
-        }
-        case 'add_motif_layer': {
-          // add_motif_layer MCP arm: pure TS, dedicated mcpCall.
-          const p = mcpDef('add_motif_layer').parseDedicated!(a)
-          const motifId = p.motif_id as string
-          const manifest = motifCatalog.get(motifId)
-          if (!manifest) return { ok: false, error: { code: 'invalid_params', message: `unknown motif_id '${motifId}' — call list_motifs for the catalog` } }
-          // Canonicalize props BEFORE any commit (reject-before-commit gate).
-          let canonicalProps: Record<string, unknown>
-          try {
-            canonicalProps = canonicalizeProps(manifest, styledMotifProps(manifest, p.props))
-            const media = mediaPropProblem(manifest.props_schema, canonicalProps, current().media_pool)
-            if (media) throw new MotifPropError(media)
-          } catch (err) {
-            if (err instanceof MotifPropError) return { ok: false, error: { code: 'invalid_params', message: `invalid props: ${err.detail}` } }
-            throw err
-          }
-          const tStartUs = p.t_start_us as number
-          const tEndUsRaw = (p.t_end_us as number | null | undefined) ?? null
-          const resolvedEnd = resolveMotifTEndUs(tStartUs, tEndUsRaw, manifest.default_duration_s, resolveMotifMaxDurUs(manifest, canonicalProps))
-          if (resolvedEnd <= tStartUs) return { ok: false, error: { code: 'invalid_params', message: `t_end_us ${resolvedEnd} must be greater than t_start_us ${tStartUs}` } }
-          // An explicit role (null included) overrides the manifest's.
-          const role = p.graphic_role as string | null | undefined
-          const params = motifLayerParams(manifest.id, manifest.version, canonicalProps, manifest.size, role !== undefined ? role : manifest.graphic_role ?? null)
-          const trackId = (p.track_id as string | null | undefined) ?? null
-          const compositionId = p.composition_id as string | null
-          if (trackId !== null) checkTrackInComposition(trackId, compositionId)
-          const scope = scopeComposition(current(), compositionId)
-          const track = trackId ?? commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, null, undefined, scope.id))
-          const layerId = commit(HISTORY_SUMMARY.layerAdd, layerRef, { kind: 'Coarse' }, (d) => applyAddLayer(d, idGen, track, params, tStartUs, resolvedEnd))
-          return { ok: true, result: toolRecord(addedLayer(layerId, { t_start_us: tStartUs, t_end_us: tEndUsRaw })) }
         }
       }
       const parse = MCP_ARG_PARSERS[name]

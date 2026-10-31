@@ -64,7 +64,7 @@ describe('merge_captions', () => {
     const over = call(a, 'merge_captions', { layer_ids: [one, three] }) // Two sits between
     expect(!over.ok && over.error.message).toContain('collides')
     expect(call(a, 'merge_captions', { layer_ids: [one] }).ok).toBe(false)
-    const title = body<{ layer_id: string }>(call(a, 'add_text_layer', { track_id: root(a.snapshot()).tracks[1].id, content: 'T', t_start_us: 0, t_end_us: 500_000 }))
+    const title = body<{ layers: Array<{ layer_id: string }> }>(call(a, 'add_layers', { layers: [{ track_id: root(a.snapshot()).tracks[1].id, t_start_us: 0, t_end_us: 500_000, content: { kind: 'text', content: 'T' } }] })).layers[0]!
     const mixed = call(a, 'merge_captions', { layer_ids: [one, title.layer_id] })
     expect(!mixed.ok && mixed.error.message).toContain('not a caption')
     // Two then Three: a one-second gap, spanned.
@@ -81,7 +81,7 @@ describe('restyle_captions { layer_ids }', () => {
     expect(r).toEqual({ captions: 3, restyled: 1 })
     expect((layer(a, one)!.params as TextParams).font.size_px).toBe(99)
     expect((layer(a, two)!.params as TextParams).font.size_px).not.toBe(99)
-    const title = body<{ layer_id: string }>(call(a, 'add_text_layer', { track_id: root(a.snapshot()).tracks[1].id, content: 'T', t_start_us: 0, t_end_us: 500_000 }))
+    const title = body<{ layers: Array<{ layer_id: string }> }>(call(a, 'add_layers', { layers: [{ track_id: root(a.snapshot()).tracks[1].id, t_start_us: 0, t_end_us: 500_000, content: { kind: 'text', content: 'T' } }] })).layers[0]!
     const bad = call(a, 'restyle_captions', { font_size_px: 12, layer_ids: [title.layer_id] })
     expect(!bad.ok && bad.error.message).toContain('update_layer_params')
   })

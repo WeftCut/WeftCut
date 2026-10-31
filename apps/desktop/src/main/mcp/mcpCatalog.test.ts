@@ -14,7 +14,7 @@ describe('mergeMcpCatalog', () => {
     const rust = [
       { name: 'ping' }, { name: 'import_media' },          // native + hybrid (kept)
       { name: 'read_motif' },                         // motif in Rust — must be dropped
-      { name: 'add_track' }, { name: 'add_motif_layer' },   // TS-executed (dropped from rust side)
+      { name: 'add_track' }, { name: 'add_layers' },   // TS-executed (dropped from rust side)
     ]
     const merged = mergeMcpCatalog(rust, [...tsDefs, ...motifDefs])
     const names = merged.map((t) => t.name)
@@ -23,7 +23,7 @@ describe('mergeMcpCatalog', () => {
     expect(names).toContain('ping')                           // rust-native kept
     expect(names).toContain('import_media')                   // hybrid kept
     expect(names).toContain('add_track')                      // ts kept (from TS table)
-    expect(names).toContain('add_motif_layer')
+    expect(names).toContain('add_layers')
     // The Rust entry for read_motif was dropped; only the TS motif def survives.
     expect(names.filter((n) => n === 'read_motif').length).toBe(1)
   })

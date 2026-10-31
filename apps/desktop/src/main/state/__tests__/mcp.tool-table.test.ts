@@ -15,7 +15,7 @@ const EXPECTED_TOOL_NAMES = new Set<string>([
   'move_layer', 'shift_layers', 'restack_layer', 'trim_layer', 'delete_layers', 'ripple_delete_gap',
   'separate_audio_to_new_track', 'restyle_captions', 'merge_captions',
   'create_link', 'delete_link',
-  'create_group', 'add_group_members', 'move_layers_to_composition', 'add_group_layer', 'ungroup_layer', 'rename_composition', 'delete_composition',
+  'create_group', 'add_group_members', 'move_layers_to_composition', 'ungroup_layer', 'rename_composition', 'delete_composition',
   'add_effect', 'update_effect', 'move_effect', 'delete_effect',
   'add_transition', 'update_transition', 'delete_transition',
   'update_composition', 'set_project_settings',
@@ -25,9 +25,8 @@ const EXPECTED_TOOL_NAMES = new Set<string>([
   // dedicated-exec tools — auto_split_by_shot and remove_pauses are TS-owned
   // HYBRID defs (they route 'hybrid', not to an actor arm) that carry a
   // parseDedicated for the bijection required-scalar gate.
-  'add_color_layer', 'add_video_layer', 'add_audio_layer', 'add_text_layer', 'split_layer', 'add_marker',
+  'add_layers', 'split_layer', 'add_marker',
   'apply_transcripts', 'correct_caption_text',
-  'add_motif_layer',
   'set_keyframe', 'get_param_track', 'delete_keyframe', 'update_keyframe',
   'smooth_keyframes', 'clear_keyframes', 'set_param_track', 'set_extrapolation',
   'update_link', 'read_project',
@@ -65,7 +64,7 @@ describe('MCP tool table projections', () => {
 
   it('dedicated-exec defs have no parseArgs', () => {
     const dedicated = MCP_TOOL_DEFS.filter((d) => d.exec === 'dedicated')
-    expect(dedicated.length).toBe(34)
+    expect(dedicated.length).toBe(30)
     for (const d of dedicated) {
       expect(d.parseArgs, `${d.name} should not have parseArgs`).toBeUndefined()
     }
@@ -73,7 +72,7 @@ describe('MCP tool table projections', () => {
 
   it('table-exec defs all have parseArgs', () => {
     const table = MCP_TOOL_DEFS.filter((d) => d.exec === 'table')
-    expect(table.length).toBe(52)
+    expect(table.length).toBe(51)
     for (const d of table) {
       expect(d.parseArgs, `${d.name} should have parseArgs`).toBeDefined()
     }

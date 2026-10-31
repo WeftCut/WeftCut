@@ -163,7 +163,7 @@ pub(super) async fn ping(_b: &Backend, _args: EmptyArgs) -> Result<ToolResult, M
 }
 
 // Track and layer mutation tools (add_track, remove_track, move_track,
-// add_color_layer, add_video_layer, update_layer, update_layer_params,
+// add_layers, update_layer, update_layer_params,
 // move_layer, trim_layer, delete_layers, split_layer, paste_layers) are
 // absent — they are served by the TS actor.
 

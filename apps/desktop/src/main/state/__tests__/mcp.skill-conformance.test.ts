@@ -105,8 +105,6 @@ const KNOWN_NON_TOOLS = new Set([
   'media', 't_us',
   // Motif props the skill and motif-authoring.md name.
   'seed', 'ground',
-  // SKILL.md — Text entrance/exit patch fields
-  'intro', 'outro',
   // SKILL.md, motif-workspaces.md — update_motif_files partial-edit fields
   'edits', 'old', 'new',
   // craft/rules.md — finding severities and the caption tokens that tighten rules

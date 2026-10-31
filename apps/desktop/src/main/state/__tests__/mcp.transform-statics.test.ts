@@ -17,14 +17,14 @@ function actorWithPool() {
   return createActor({ initial: p, idGen: gen, clock: () => '<TS>' })
 }
 const call = (a: ActorHandle, tool: string, args: Record<string, unknown>) => a.mcpCall(tool, JSON.stringify(args))
-const addedId = (r: ReturnType<ActorHandle['mcpCall']>): string => { if (!r.ok) throw new Error(r.error.message); return (JSON.parse(r.result.content[0].text) as { layer_id: string }).layer_id }
+const addedId = (r: ReturnType<ActorHandle['mcpCall']>): string => { if (!r.ok) throw new Error(r.error.message); return (JSON.parse(r.result.content[0].text) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id }
 const layerOf = (a: ActorHandle, id: string): Layer => { for (const t of root(a.snapshot()).tracks) { const l = t.layers.find((x) => x.id === id); if (l) return l } throw new Error(id) }
 type Visual = { transform: { rotation_deg: { mode: string; value?: number }; anchor_x: { mode: string; value?: number }; anchor_y: { mode: string; value?: number } } }
 
 describe('static rotation and pivot', () => {
   it('a VideoClip takes rotation_deg and the anchor pair as Static values, quantised', () => {
     const a = actorWithPool()
-    const id = addedId(call(a, 'add_video_layer', { track_id: root(a.snapshot()).tracks[0].id, media_id: VIDEO, src_in_us: 0, src_out_us: 2_000_000, t_start_us: 0, t_end_us: 2_000_000 }))
+    const id = addedId(call(a, 'add_layers', { layers: [{ track_id: root(a.snapshot()).tracks[0].id, t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'video', media_id: VIDEO, src_in_us: 0 } }] }))
     const r = call(a, 'update_layer_params', { layer_id: id, patch: { kind: 'VideoClip', rotation_deg: 15.04, anchor_x: 0, anchor_y: 1.00004 } })
     expect(r.ok, r.ok ? '' : r.error.message).toBe(true)
     const t = (layerOf(a, id).params as unknown as Visual).transform
@@ -35,7 +35,7 @@ describe('static rotation and pivot', () => {
 
   it('a Text layer takes them too (ADR 0049 withholds only scale from Text)', () => {
     const a = actorWithPool()
-    const id = addedId(call(a, 'add_text_layer', { track_id: root(a.snapshot()).tracks[1].id, content: 'Tilt', t_start_us: 0, t_end_us: 1_000_000 }))
+    const id = addedId(call(a, 'add_layers', { layers: [{ track_id: root(a.snapshot()).tracks[1].id, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'text', content: 'Tilt' } }] }))
     expect(call(a, 'update_layer_params', { layer_id: id, patch: { kind: 'Text', rotation_deg: -90 } }).ok).toBe(true)
     expect((layerOf(a, id).params as unknown as Visual).transform.rotation_deg).toEqual({ mode: 'Static', value: -90 })
     const scale = call(a, 'update_layer_params', { layer_id: id, patch: { kind: 'Text', scale_x: 2 } })
@@ -44,7 +44,7 @@ describe('static rotation and pivot', () => {
 
   it('a keyframed rotation collapses to the Static value, like x and y do', () => {
     const a = actorWithPool()
-    const id = addedId(call(a, 'add_video_layer', { track_id: root(a.snapshot()).tracks[0].id, media_id: VIDEO, src_in_us: 0, src_out_us: 2_000_000, t_start_us: 0, t_end_us: 2_000_000 }))
+    const id = addedId(call(a, 'add_layers', { layers: [{ track_id: root(a.snapshot()).tracks[0].id, t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'video', media_id: VIDEO, src_in_us: 0 } }] }))
     expect(call(a, 'set_keyframe', { layer_id: id, param_key: 'rotation_deg', t_us: 0, value: 0 }).ok).toBe(true)
     expect(call(a, 'set_keyframe', { layer_id: id, param_key: 'rotation_deg', t_us: 1_000_000, value: 90 }).ok).toBe(true)
     expect((layerOf(a, id).params as unknown as Visual).transform.rotation_deg.mode).toBe('Keyframed')
@@ -54,10 +54,10 @@ describe('static rotation and pivot', () => {
 
   it('a Color layer has no transform and is refused naming its set; a non-finite value is refused', () => {
     const a = actorWithPool()
-    const c = addedId(call(a, 'add_color_layer', { track_id: root(a.snapshot()).tracks[0].id, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 }))
+    const c = addedId(call(a, 'add_layers', { layers: [{ track_id: root(a.snapshot()).tracks[0].id, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] }))
     const r = call(a, 'update_layer_params', { layer_id: c, patch: { kind: 'Color', rotation_deg: 10 } })
     expect(!r.ok && r.error.message).toContain('not a Color param')
-    const v = addedId(call(a, 'add_video_layer', { track_id: root(a.snapshot()).tracks[1].id, media_id: VIDEO, src_in_us: 0, src_out_us: 2_000_000, t_start_us: 0, t_end_us: 2_000_000 }))
+    const v = addedId(call(a, 'add_layers', { layers: [{ track_id: root(a.snapshot()).tracks[1].id, t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'video', media_id: VIDEO, src_in_us: 0 } }] }))
     const bad = call(a, 'update_layer_params', { layer_id: v, patch: { kind: 'VideoClip', anchor_x: 'left' } })
     expect(bad.ok).toBe(false)
   })

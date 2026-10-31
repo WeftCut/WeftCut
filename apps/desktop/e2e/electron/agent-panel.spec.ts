@@ -55,7 +55,7 @@ test('agent panel separates views, work sessions and connection lifetime', async
     expect((await other.client.callTool({ name: 'begin_agent_session', arguments: { reason: 'Other work' } })).isError).toBe(true)
     await other.client.readResource({ uri: 'project://current' })
 
-    await call('add_color_layer', { track_id: trackId, color: { r: 28, g: 76, b: 128, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 })
+    await call('add_layers', { layers: [{ track_id: trackId, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 28, g: 76, b: 128, a: 255 } } }] })
     await client.readResource({ uri: 'project://current' })
     await client.readResource({ uri: 'project://tracks' })
     // The owner's own restore passes its own lock.
@@ -68,7 +68,7 @@ test('agent panel separates views, work sessions and connection lifetime', async
     await page.getByRole('button', { name: 'End work session', exact: true }).click()
     await expect.poll(async () => (await snapshot()).session).toBeNull()
     await expect(page.locator('.agent-mode-shell')).toHaveCount(0)
-    await call('add_color_layer', { track_id: trackId, color: { r: 51, g: 102, b: 153, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 })
+    await call('add_layers', { layers: [{ track_id: trackId, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 51, g: 102, b: 153, a: 255 } } }] })
     expect((await snapshot()).activities.at(-1)?.session_id).toBeNull()
 
     await call('begin_agent_session', { reason: 'Check the result' })
@@ -183,7 +183,7 @@ test('changes: an agent edit is listed, highlighted and counted until reverted o
     // The work session pins the Review baseline; the agent's clip is the one change.
     expect((await call('begin_agent_session', { reason: 'Add a title card' })).isError).not.toBe(true)
     await expect(page.locator('.agent-mode-shell')).toBeVisible()
-    expect((await call('add_color_layer', { track_id: trackId, color: { r: 28, g: 76, b: 128, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 })).isError).not.toBe(true)
+    expect((await call('add_layers', { layers: [{ track_id: trackId, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 28, g: 76, b: 128, a: 255 } } }] })).isError).not.toBe(true)
     await expect(page.getByRole('tab', { name: /Changes/ })).toHaveText('Changes1')
     await expect(page.getByTestId('mini-change')).toHaveCount(1)
     await page.locator('.agent-exit-button').click()

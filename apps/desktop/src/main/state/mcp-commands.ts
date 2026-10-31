@@ -309,9 +309,87 @@ export function parseGraphicRoleOpt(v: unknown, field = 'graphic_role'): string 
   if (problem) throw new McpArgError(problem, field)
   return v as string | null
 }
-/** `add_video_layer` over a Video with a role: a VideoClip stores none. */
-export const GRAPHIC_ROLE_VIDEO_REFUSAL = (media: string): string =>
-  `graphic_role applies to an Image item, and media ${media} is a Video: a VideoClip carries no graphic role. Omit graphic_role, or place a still with an Image item`
+// ── add_layers: one batch of new layers ─────────────────────────────────────
+// The wire kinds, one per thing an agent places; each names the fields of its
+// `content` arm. Strict on keys: a field another kind takes (`src_in_us` on an
+// image, `graphic_role` on a video) would otherwise be dropped in silence.
+export const ADD_LAYER_KINDS = ['video', 'image', 'audio', 'text', 'color', 'motif', 'group'] as const
+export type AddLayerKind = (typeof ADD_LAYER_KINDS)[number]
+const ADD_LAYER_CONTENT_KEYS: Record<AddLayerKind, readonly string[]> = {
+  video: ['media_id', 'src_in_us', 'audio'], image: ['media_id', 'graphic_role'], audio: ['media_id', 'src_in_us', 'role'],
+  text: ['content', 'graphic_role'], color: ['color'], motif: ['motif_id', 'props', 'graphic_role'], group: ['composition_id'],
+}
+export const ADD_LAYERS_MAX = 50
+const ADD_LAYER_KEYS: readonly string[] = ['track_id', 't_start_us', 't_end_us', 'label', 'transform', 'content']
+const ADD_LAYER_TRANSFORM_KEYS: readonly string[] = ['x', 'y', 'scale', 'rotation_deg', 'opacity']
+export type AddLayerContent =
+  | { kind: 'video'; media: string; src_in_us: number; audio: 'linked' | 'none' | null }
+  | { kind: 'image'; media: string; graphic_role: string | null }
+  | { kind: 'audio'; media: string; src_in_us: number; role: string | null }
+  | { kind: 'text'; content: string; graphic_role: string | undefined }
+  | { kind: 'color'; color: Rgba }
+  | { kind: 'motif'; motif_id: string; props: Record<string, unknown> | null; graphic_role: string | undefined }
+  | { kind: 'group'; composition: string }
+export interface AddLayerTransform { x?: number; y?: number; scale?: number; rotation_deg?: number; opacity?: number }
+export interface AddLayerSpec {
+  /** `layers[i]`, the prefix every refusal about this layer names. */
+  at: string
+  track: string | null; t_start_us: number; t_end_us: number | null; label: string | null
+  transform: AddLayerTransform | null; content: AddLayerContent
+}
+function refuseUnknownKeys(o: Record<string, unknown>, allowed: readonly string[], at: string, what: string): void {
+  const extra = Object.keys(o).filter((k) => !allowed.includes(k))
+  if (extra.length > 0) throw new McpArgError(`${at}: ${extra.join(', ')} ${extra.length === 1 ? 'is' : 'are'} not a field of ${what} (fields: ${allowed.join(', ')})`, `${at}.${extra[0]}`)
+}
+/** A `graphic_role` inside `content`: a role name, or absent. `null` would say
+ *  no more than omission, so it is refused rather than accepted as a no-op. */
+function parseContentRole(v: unknown, field: string): string | undefined {
+  if (v === null) throw new McpArgError(`${field}: omit it for an untagged layer; null is not a role`, field)
+  return parseGraphicRoleOpt(v, field) ?? undefined
+}
+function parseAddLayerContent(v: unknown, at: string): AddLayerContent {
+  const c = parseObj(v, at)
+  const kind = parseOneOf(c.kind, ADD_LAYER_KINDS, `${at}.kind`) as AddLayerKind
+  refuseUnknownKeys(c, ['kind', ...ADD_LAYER_CONTENT_KEYS[kind]], at, `a ${kind} layer's content`)
+  const f = (k: string) => `${at}.${k}`
+  switch (kind) {
+    case 'video': return { kind, media: parseUuid(c.media_id, f('media_id')), src_in_us: parseNum(c.src_in_us, f('src_in_us')),
+      audio: c.audio === undefined ? null : parseOneOf(c.audio, ['linked', 'none'], f('audio')) as 'linked' | 'none' }
+    case 'image': return { kind, media: parseUuid(c.media_id, f('media_id')), graphic_role: parseContentRole(c.graphic_role, f('graphic_role')) ?? null }
+    case 'audio': return { kind, media: parseUuid(c.media_id, f('media_id')), src_in_us: parseNum(c.src_in_us, f('src_in_us')),
+      role: c.role === undefined ? null : parseOneOf(c.role, [...AUDIO_ROLES], f('role')) }
+    case 'text': return { kind, content: parseStr(c.content, f('content')), graphic_role: parseContentRole(c.graphic_role, f('graphic_role')) }
+    case 'color': return { kind, color: parseRgba(c.color, f('color')) }
+    case 'motif': return { kind, motif_id: parseStr(c.motif_id, f('motif_id')), props: c.props === undefined ? null : parseObj(c.props, f('props')), graphic_role: parseContentRole(c.graphic_role, f('graphic_role')) }
+    case 'group': return { kind, composition: parseUuid(c.composition_id, f('composition_id')) }
+  }
+}
+function parseAddLayerTransform(v: unknown, at: string, kind: AddLayerKind): AddLayerTransform | null {
+  if (v === undefined) return null
+  const o = parseObj(v, at)
+  refuseUnknownKeys(o, ADD_LAYER_TRANSFORM_KEYS, at, 'transform')
+  if (Object.keys(o).length === 0) throw new McpArgError(`${at} names no field; omit it for the default placement`, at)
+  if (kind === 'color' || kind === 'audio') throw new McpArgError(`${at}: a ${kind} layer has no transform`, at)
+  if (kind === 'text' && o.scale !== undefined) throw new McpArgError(`${at}.scale: a text layer has no scale; size it with update_layer_params font_size_px or box_w`, `${at}.scale`)
+  const t: AddLayerTransform = {}
+  for (const k of ADD_LAYER_TRANSFORM_KEYS) if (o[k] !== undefined) t[k as keyof AddLayerTransform] = parseNum(o[k], `${at}.${k}`)
+  return t
+}
+function parseAddLayer(v: unknown, at: string): AddLayerSpec {
+  const o = parseObj(v, at)
+  refuseUnknownKeys(o, ADD_LAYER_KEYS, at, 'a layer')
+  const content = parseAddLayerContent(o.content, `${at}.content`)
+  const t0 = parseNum(o.t_start_us, `${at}.t_start_us`)
+  const t1 = o.t_end_us === undefined ? null : parseNum(o.t_end_us, `${at}.t_end_us`)
+  if (t1 === null && content.kind !== 'group') throw new McpArgError(`${at}.t_end_us is required for a ${content.kind} layer; only a group defaults its end`, `${at}.t_end_us`)
+  if (t1 !== null && t1 <= t0) throw new McpArgError(`${at}.t_end_us ${t1} must be greater than t_start_us ${t0}`, `${at}.t_end_us`)
+  return {
+    at, content, t_start_us: t0, t_end_us: t1,
+    track: o.track_id === undefined ? null : parseUuid(o.track_id, `${at}.track_id`),
+    label: o.label === undefined ? null : parseStr(o.label, `${at}.label`),
+    transform: parseAddLayerTransform(o.transform, `${at}.transform`, content.kind),
+  }
+}
 
 const LAYER_PATCH_KEYS: readonly string[] = ['label', 'locked']
 /** `update_layer`'s envelope patch: the name and the lock. `enabled` is
@@ -1167,26 +1245,23 @@ const TRACK_ID_SCHEMA = ID_SCHEMA('Track')
 const LAYER_IDS_SCHEMA = (what: string) => ({ type: 'array', items: { type: 'string' }, description: what })
 const US_SCHEMA = (what: string) => ({ type: 'integer', description: `${what}, µs.` })
 const T_START_SCHEMA = US_SCHEMA('Timeline start')
-const T_END_SCHEMA = US_SCHEMA('Timeline end (exclusive)')
 const SRC_IN_SCHEMA = US_SCHEMA('Source in point')
 const SRC_OUT_SCHEMA = US_SCHEMA('Source out point (exclusive)')
 const ESCAPE_LINK_SCHEMA = { type: 'boolean', description: 'Act on this layer alone, leaving its link partners in place. Default false.' }
 const RGBA_SCHEMA = { type: 'object', description: 'Colour, integer channels 0..255.', properties: { r: { type: 'integer', description: 'Red 0..255.' }, g: { type: 'integer', description: 'Green 0..255.' }, b: { type: 'integer', description: 'Blue 0..255.' }, a: { type: 'integer', description: 'Alpha 0..255; 255 opaque.' } }, required: ['r', 'g', 'b', 'a'] }
 // What the layer is for. Any well-formed name is stored; one outside the
 // built-ins is a custom role the project's taste should declare (lint, not here).
-// A null arm only where null differs from omission: the patch (clears) and
-// add_motif_layer (untagged instead of the manifest's role).
+// A null arm only where null differs from omission: the patch (clears).
 const GRAPHIC_ROLE_SCHEMA = { type: 'string', pattern: GRAPHIC_ROLE_PATTERN.source, description: `What the layer is for: ${BUILTIN_GRAPHIC_ROLES.join(', ')}, or a custom name.` }
 // The composition scope (ADR 0052): the tools that CREATE take it to say where,
 // and the caption tools that address a composition's captions as a body take it
 // to say which. Every layer-addressed tool derives its composition from the
-// layer id — an agent editing inside a Group never names the Group. Three
-// spellings of one optional field: the second for tools whose required
-// `track_id` already fixes the composition, where the id is a cross-check
-// rather than a choice; the third for a read or an edit over existing captions.
+// layer id — an agent editing inside a Group never names the Group. Two
+// spellings of one optional field: the second for a read or an edit over
+// existing captions. (`add_layers` spells its own: a spawn target, and a
+// cross-check for a layer that names its track.)
 const COMPOSITION_ID_SCHEMA = { type: 'string', description: 'Composition to create in — a Group\'s id from `project://compositions`; omit for the root.' }
 const CAPTIONS_COMPOSITION_ID_SCHEMA = { type: 'string', description: 'Composition whose captions are meant — a Group\'s id from `project://compositions`; omit for the root.' }
-const TRACK_COMPOSITION_ID_SCHEMA = { type: 'string', description: 'Optional composition check for track_id; mismatch rejects. track_id fixes the composition.' }
 export function parseCompositionIdOpt(v: unknown): string | null {
   return v === undefined || v === null ? null : parseUuid(v, 'composition_id')
 }
@@ -1429,9 +1504,51 @@ const LAYER_PARAM_FIELD_SCHEMAS: Readonly<Record<string, Record<string, unknown>
   motif_id: { type: 'string', description: 'Motif id from list_motifs.' },
   motif_version: { type: 'integer', description: 'Motif version to bind.' },
   props: { type: 'object', description: "Motif props, matched against its props_schema." },
-  graphic_role: { ...GRAPHIC_ROLE_SCHEMA, type: ['string', 'null'], description: 'Graphic role (see add_text_layer); null clears.' },
+  graphic_role: { ...GRAPHIC_ROLE_SCHEMA, type: ['string', 'null'], description: 'Graphic role; null clears.' },
   intro: { type: ['string', 'null'], enum: [...TEXT_INTROS, null], description: 'Entrance played from the layer start (400 ms, or a third of a short layer); null: none.' },
   outro: { type: ['string', 'null'], enum: [...TEXT_OUTROS, null], description: 'Exit played into the layer end; null: none.' },
+}
+// add_layers: the shared fields sit flat on the layer; what differs by kind is
+// one `content` object, a one-level `oneOf` on `kind`, each arm carrying its
+// own notes so the tool description need not.
+const ADD_LAYER_TRANSFORM_SCHEMA = {
+  type: 'object', description: 'Static placement at creation, as update_layer_params writes it. Not on color or audio; text takes no scale.',
+  properties: {
+    x: { type: 'number', description: 'Anchor x, composition px.' }, y: { type: 'number', description: 'Anchor y, composition px.' },
+    scale: { type: 'number', description: 'Uniform scale factor; 1 = native size.' },
+    rotation_deg: LAYER_PARAM_FIELD_SCHEMAS.rotation_deg, opacity: { type: 'number', description: 'Opacity 0..1.' },
+  },
+  additionalProperties: false,
+}
+const addLayerArm = (kind: AddLayerKind, what: string, props: Record<string, unknown>, required: string[]) =>
+  ({ properties: { kind: { const: kind, description: what }, ...props }, required: ['kind', ...required], additionalProperties: false })
+const ADD_LAYER_CONTENT_SCHEMA = {
+  type: 'object', description: 'What the layer is; `kind` picks the fields.',
+  properties: { kind: { type: 'string', enum: [...ADD_LAYER_KINDS], description: 'The layer kind.' } },
+  required: ['kind'],
+  oneOf: [
+    addLayerArm('video', 'A Video item. Its source window is `src_in_us` plus the span, at rate 1.', {
+      media_id: ID_SCHEMA('Video media'), src_in_us: SRC_IN_SCHEMA,
+      audio: { type: 'string', enum: ['linked', 'none'], description: "`linked`: also place its audio as a linked dialogue Audio layer (refused without an audio stream); `none`: picture only. Default: settings `auto_pair_audio_on_import`." },
+    }, ['media_id', 'src_in_us']),
+    addLayerArm('image', 'An Image item, a still over the span.', { media_id: ID_SCHEMA('Image media'), graphic_role: GRAPHIC_ROLE_SCHEMA }, ['media_id']),
+    addLayerArm('audio', "An Audio item, or a Video item's audio alone: unlinked, on the track's audio lane; window `src_in_us` plus the span, edges on the 48 kHz lattice.", {
+      media_id: ID_SCHEMA('Media'), src_in_us: SRC_IN_SCHEMA,
+      role: { type: 'string', enum: ['dialogue', 'music', 'sfx', 'voiceover'], description: 'Mixing bus; default music.' },
+    }, ['media_id', 'src_in_us']),
+    addLayerArm('text', "A Text layer centred in frame, born in the style's tokens for its `graphic_role` (`project://taste`). Restyle with update_layer_params.", {
+      content: { type: 'string', description: 'The text; newlines are honoured.' }, graphic_role: GRAPHIC_ROLE_SCHEMA,
+    }, ['content']),
+    addLayerArm('color', "A solid block the composition's size.", { color: { ...RGBA_SCHEMA, description: 'Fill colour.' } }, ['color']),
+    addLayerArm('motif', "A Motif. Omitted props take the style's tokens, then the manifest's defaults; unknown props refuse.", {
+      motif_id: { type: 'string', description: 'Motif id from `list_motifs`.' },
+      props: { type: 'object', description: "Props matched against the Motif's `props_schema`." },
+      graphic_role: { ...GRAPHIC_ROLE_SCHEMA, description: `${GRAPHIC_ROLE_SCHEMA.description} Omitted: the manifest's.` },
+    }, ['motif_id']),
+    addLayerArm('group', 'Another instance of an existing composition, windowed from its start. Refused: the root, a cycle, an empty composition.', {
+      composition_id: { type: 'string', description: "The composition to place, a Group's id from `project://compositions`." },
+    }, ['composition_id']),
+  ],
 }
 const LAYER_PARAMS_PATCH_SCHEMA = {
   type: 'object',
@@ -1693,20 +1810,6 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       anchor_t_start_us: parseNum(a.anchor_t_start_us, 'anchor_t_start_us'),
       to_track: parseDestTrackOpt(a.to_track_id),
     } }) },
-  { name: 'add_group_layer', exec: 'table', annotations: ANN_WRITE,
-    description: "Place an EXISTING composition on a track as one more Group layer (`create_group` makes a NEW one). `source_composition_id` is what gets placed (ids and reference counts: `project://compositions`); `track_id` and `t_start_us` are where. The layer is windowed over the whole composition (`src_in_us: 0`, `src_out_us: duration_us`) with an identity transform; trim it afterwards for a slice. Instances are independent and all show the same content. Refuses before creating anything: the root (`RootComposition`), a composition that already reaches this track's composition, itself included (`CompositionCycle`), and an empty composition (`InvalidArgument`).",
-    inputSchema: { type: 'object', properties: {
-      source_composition_id: { type: 'string', description: "The composition to place — a Group's id from `project://compositions`, never the root." },
-      track_id: TRACK_ID_SCHEMA,
-      t_start_us: T_START_SCHEMA,
-      composition_id: TRACK_COMPOSITION_ID_SCHEMA,
-    }, required: ['source_composition_id', 't_start_us', 'track_id'] },
-    parseArgs: (a) => ({ op: 'add_group_layer', args: {
-      source_composition: parseUuid(a.source_composition_id, 'source_composition_id'),
-      track: parseUuid(a.track_id, 'track_id'),
-      t_start_us: parseNum(a.t_start_us, 't_start_us'),
-      composition_id: parseCompositionIdOpt(a.composition_id),
-    } }) },
   { name: 'ungroup_layer', exec: 'table', annotations: ANN_WRITE,
     description: "Expand a Group layer back into its members, in place. Refuses unless the Group is PLAIN — identity transform, static opacity 1, no effects, Normal blend (`GroupNotPlain { reason }`), because those apply to the composite and would be discarded; reset them first or keep the Group. Members intersecting the Group's `[src_in_us, src_out_us)` window are copied into the parent at the same on-screen time, trimmed to the window; members wholly outside are dropped. The composition's tracks become fresh tracks at the Group's z position; inner links and transitions carry over. The composition is removed when nothing else references it. One undo restores the Group.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string', description: 'The Group layer (its params.kind is CompositionRef).' } }, required: ['layer_id'] },
@@ -1825,7 +1928,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       type: 'object',
       description: "Settings patch. Only the fields you include are applied; `null` has a per-field meaning given below and is never 'unset'.",
       properties: {
-        auto_pair_audio_on_import: { type: 'boolean', description: 'Whether `add_video_layer` also places and links the source\'s audio. Default on; off places a video silent.' },
+        auto_pair_audio_on_import: { type: 'boolean', description: 'The default of `add_layers` video `audio`: on places and links the source\'s audio, off places a video silent. Default on.' },
         prefer_proxies: { type: 'boolean', description: 'Whether preview reads generated proxies rather than the original media. A playback preference; export always reads the original.' },
         proxy_override: { type: 'object', description: "Per-media exception to `prefer_proxies`, read back as `settings.proxy_overrides[media_id]`. An unknown media id is refused.", properties: { media_id: { type: 'string', description: 'A pool media id.' }, value: { type: ['boolean', 'null'], description: 'true / false pins the item; null removes the exception.' } }, required: ['media_id', 'value'] },
         shot_review: { type: ['object', 'null'], description: "Shot-detection parameters `analyze_clip` / `auto_split_by_shot` run at, or `null` for the defaults. `sensitivity` in [0, 1]; `min_shot_us` > 0.", properties: { sensitivity: { type: 'number', description: 'Cut sensitivity 0..1.' }, min_shot_us: US_SCHEMA('Shortest shot kept') }, required: ['sensitivity', 'min_shot_us'] },
@@ -1916,7 +2019,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       }
     } },
   { name: 'restyle_captions', exec: 'table', annotations: ANN_SET,
-    description: "Restyle the captions in one recorded edit — EVERY Text layer on every caption-role track in every composition, so multiplied caption lanes stay one look, or only `layer_ids` (each must be a caption). Omitted or `null` fields are left alone. `outline_width: 0` removes the outline; a positive width adds or resizes one (keeping its colour, black if it had none). Sizes are composition px. A Text layer from `add_text_layer` is not a caption — style it with `update_layer_params`.",
+    description: "Restyle the captions in one recorded edit — EVERY Text layer on every caption-role track in every composition, so multiplied caption lanes stay one look, or only `layer_ids` (each must be a caption). Omitted or `null` fields are left alone. `outline_width: 0` removes the outline; a positive width adds or resizes one (keeping its colour, black if it had none). Sizes are composition px. A Text layer from `add_layers` is not a caption — style it with `update_layer_params`.",
     inputSchema: { type: 'object', properties: {
       font_family: { type: 'string', description: 'Font family for every caption.' },
       font_size_px: { type: 'number', description: 'Font size, composition px.' },
@@ -1956,36 +2059,24 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { op: 'update_role_flags', args: { role: parseRole(a.role), patch: { muted, solo } } }
     } },
   // ── dedicated-exec — parseDedicated validates and maps MCP args; behavior lives in actor.ts arms ──
-  { name: 'add_color_layer', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Add a solid-color layer to a track and return its record — `layer_id`, `track_id`, the span as committed, `adjusted` for any grid snap. `t_start_us` and `t_end_us` are timeline microseconds (start inclusive, end exclusive). Layer cannot overlap existing layers on the same track.",
-    inputSchema: { type: 'object', properties: { color: { ...RGBA_SCHEMA, description: 'Fill colour.' }, height: { type: 'integer', description: 'Block height, px; default 1080.' }, t_end_us: T_END_SCHEMA, t_start_us: T_START_SCHEMA, track_id: TRACK_ID_SCHEMA, width: { type: 'integer', description: 'Block width, px; default 1920.' }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['color', 't_end_us', 't_start_us', 'track_id'] },
-    parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), color: parseRgba(a.color, 'color'),
-      width: parseNumOpt(a.width, 'width'), height: parseNumOpt(a.height, 'height'),
-      t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
-      composition_id: parseCompositionIdOpt(a.composition_id) }) },
-  { name: 'add_video_layer', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Add a visual layer from an imported `Video` or `Image` item onto a track and return its record; an audio-only item is refused and pointed at `add_audio_layer`. Video: `src_in_us`/`src_out_us` are the source in/out points, `t_start_us`/`t_end_us` the timeline span. Image: an ImageOverlay over the timeline range; `src_in_us`/`src_out_us` are refused. When a Video has an audio stream and `auto_pair_audio_on_import` is on (the default), a linked dialogue Audio layer lands on the SAME track's audio lane, committed atomically — an occupied lane rejects the whole call naming the blocker. The record always carries `audio_layer_id`/`link_id`/`audio` (null when unpaired).",
-    inputSchema: { type: 'object', properties: { media_id: ID_SCHEMA('Media'), src_in_us: { type: 'integer', description: 'Source in point, µs. Required for Video; refused for an Image.' }, src_out_us: { type: 'integer', description: 'Source out point (exclusive), µs. Required for Video; refused for an Image.' }, t_end_us: T_END_SCHEMA, t_start_us: T_START_SCHEMA, track_id: TRACK_ID_SCHEMA, graphic_role: { ...GRAPHIC_ROLE_SCHEMA, description: `${GRAPHIC_ROLE_SCHEMA.description} Image only.` }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['media_id', 't_end_us', 't_start_us', 'track_id'] },
-    parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), media: parseUuid(a.media_id, 'media_id'),
-      src_in_us: parseNumOpt(a.src_in_us, 'src_in_us') ?? null, src_out_us: parseNumOpt(a.src_out_us, 'src_out_us') ?? null,
-      graphic_role: parseGraphicRoleOpt(a.graphic_role),
-      t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
-      composition_id: parseCompositionIdOpt(a.composition_id) }) },
-  { name: 'add_audio_layer', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Add an Audio layer from an imported item onto a track's audio lane and return its record — music, a sound effect, a voice track, or a video file's audio on its own. The only way audio-only media reaches the timeline (`add_video_layer` refuses it). `media_id` is an `Audio` item or a `Video` item with an audio stream; `Image` and `Subtitle` are refused. The layer stands ALONE — no auto-pair, no link — on the track's audio lane (every track has one, beside its visual lane). `src_in_us`/`src_out_us` are source in/out, `t_start_us`/`t_end_us` the timeline span; both snap to the 48 kHz sample lattice. `role` (default `music`) picks the mixing bus — a property of the clip, not its track.",
-    inputSchema: { type: 'object', properties: { media_id: ID_SCHEMA('Media'), src_in_us: SRC_IN_SCHEMA, src_out_us: SRC_OUT_SCHEMA, t_end_us: T_END_SCHEMA, t_start_us: T_START_SCHEMA, track_id: TRACK_ID_SCHEMA, role: { type: 'string', enum: ['dialogue', 'music', 'sfx', 'voiceover'], description: 'Mixing bus for the clip. Defaults to `music`.' }, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['media_id', 'src_in_us', 'src_out_us', 't_end_us', 't_start_us', 'track_id'] },
-    parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), media: parseUuid(a.media_id, 'media_id'),
-      src_in_us: parseNum(a.src_in_us, 'src_in_us'), src_out_us: parseNum(a.src_out_us, 'src_out_us'),
-      t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
-      role: a.role === undefined || a.role === null ? null : parseRole(a.role),
-      composition_id: parseCompositionIdOpt(a.composition_id) }) },
-  { name: 'add_text_layer', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Add a Text layer — a title, a lower third, a credit — and return its record. Born at the app default text font (bundled caption font when unset), 72 px, opaque white, centre-aligned and centred in frame. `x`/`y` (both or neither) override placement and are the layer's ANCHOR point, not clamped to frame. Everything else — font, size, colour, outline, layout box, alignment — is `update_layer_params { kind: 'Text' }`. It cannot overlap another visual layer on the track. Subtitles from a document are `apply_subtitles`; this is the one-off.",
-    inputSchema: { type: 'object', properties: { content: { type: 'string', description: 'The text to display. Newlines are honoured.' }, t_end_us: T_END_SCHEMA, t_start_us: T_START_SCHEMA, track_id: TRACK_ID_SCHEMA, x: { type: 'number', description: "Anchor x in composition pixels. Give it with `y` or not at all; omitted, the layer is centred in frame." }, y: { type: 'number', description: 'Anchor y in composition pixels. Give it with `x` or not at all.' }, graphic_role: GRAPHIC_ROLE_SCHEMA, composition_id: TRACK_COMPOSITION_ID_SCHEMA }, required: ['content', 't_end_us', 't_start_us', 'track_id'] },
-    parseDedicated: (a) => ({ track: parseUuid(a.track_id, 'track_id'), content: parseStr(a.content, 'content'),
-      x: parseNumOpt(a.x, 'x'), y: parseNumOpt(a.y, 'y'), graphic_role: parseGraphicRoleOpt(a.graphic_role),
-      t_start_us: parseNum(a.t_start_us, 't_start_us'), t_end_us: parseNum(a.t_end_us, 't_end_us'),
-      composition_id: parseCompositionIdOpt(a.composition_id) }) },
+  { name: 'add_layers', exec: 'dedicated', annotations: ANN_WRITE,
+    description: "Place 1–50 layers in ONE recorded edit, all or nothing: any refusal commits none. `content.kind` picks what each layer is. A layer without `track_id` gets a fresh track in the same edit; layers on one lane cannot overlap. A Video with an audio stream also lands its dialogue Audio on the same track's audio lane, linked (`audio`); an occupied audio lane refuses naming the blocker. Audio-only media is kind `audio`, a still kind `image`; a subtitle document is `apply_subtitles`. Returns `{ layers: [{ layer_id, track_id, t_start_us, t_end_us, adjusted, linked }] }` in input order; `adjusted` lists grid snaps, `linked` is `{ audio_layer_id, link_id }` or null.",
+    inputSchema: { type: 'object', properties: {
+      composition_id: { type: 'string', description: "Composition a layer without `track_id` opens its track in (a Group's id); omit for the root. A named track must belong to it." },
+      layers: { type: 'array', minItems: 1, maxItems: ADD_LAYERS_MAX, description: 'The layers, placed in order.', items: { type: 'object', properties: {
+        track_id: { type: 'string', description: 'Track to place on; omit for a fresh track.' },
+        t_start_us: T_START_SCHEMA,
+        t_end_us: { type: 'integer', description: "Timeline end (exclusive), µs. Required except for a group, which defaults to its composition's length." },
+        label: { type: 'string', description: 'Clip name.' },
+        transform: ADD_LAYER_TRANSFORM_SCHEMA,
+        content: ADD_LAYER_CONTENT_SCHEMA,
+      }, required: ['t_start_us', 'content'], additionalProperties: false } },
+    }, required: ['layers'] },
+    parseDedicated: (a) => {
+      const layers = asNonEmptyArray(a.layers, 'layers', 'send at least one layer') as unknown[]
+      if (layers.length > ADD_LAYERS_MAX) throw new McpArgError(`layers holds ${layers.length}; at most ${ADD_LAYERS_MAX} per call`, 'layers')
+      return { composition_id: parseCompositionIdOpt(a.composition_id), layers: layers.map((l, i) => parseAddLayer(l, `layers[${i}]`)) }
+    } },
   // The two caption tools that carry WORD timing. Both are dedicated because
   // both take the project id the production channels pass for staleness — an
   // agent has no reason to hold one, so the arm supplies it from the state it
@@ -2048,12 +2139,12 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { ...common, at_t_us: cuts }
     } },
   { name: 'add_marker', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Add a marker (point or region) to a composition's timeline — the root, or the Group named by `composition_id`. Returns the marker record (`marker_id`, `t_us` as snapped). Set `end_t_us` to make it a region marker. Set `anchor_layer_id` to have the mark FOLLOW a clip instead of standing at a fixed time; omit it for an ordinary marker.",
+    description: "Add a marker (point or region) to a composition's timeline — the root, or the Group named by `composition_id`. Returns the marker record (`marker_id`, `t_us` as snapped). Set `end_t_us` to make it a region marker. Set `anchor_layer_id` to have the mark FOLLOW a clip instead of standing at a fixed time; omit it for an ordinary marker. `color` defaults to the timeline's marker blue.",
     inputSchema: { type: 'object', properties: { anchor_layer_id: { type: 'string',
       description: 'Clip the marker should follow — a layer of the same composition with a source window (VideoClip, Audio, Group). Tied as `set_marker_anchor` would tie it, refused for the same reasons (no marker is created). Omit for a fixed marker.' },
-      color: { ...RGBA_SCHEMA, description: 'Marker colour.' }, end_t_us: US_SCHEMA('Region end, timeline; omit for a point marker'), label: { type: 'string', description: 'Short name shown on the marker lane.' }, t_us: US_SCHEMA('Marker time, timeline'), composition_id: COMPOSITION_ID_SCHEMA }, required: ['color', 'label', 't_us'] },
-    parseDedicated: (a) => ({ color: parseRgba(a.color, 'color'), t_us: parseNum(a.t_us, 't_us'),
-      end_t_us: parseNumOpt(a.end_t_us, 'end_t_us'), label: parseStr(a.label, 'label'),
+      color: { ...RGBA_SCHEMA, description: 'Marker colour; omit for the default.' }, end_t_us: US_SCHEMA('Region end, timeline; omit for a point marker'), label: { type: 'string', description: 'Short name shown on the marker lane.' }, note: { type: 'string', description: 'Long text, shown only in the marker panel.' }, t_us: US_SCHEMA('Marker time, timeline'), composition_id: COMPOSITION_ID_SCHEMA }, required: ['label', 't_us'] },
+    parseDedicated: (a) => ({ color: a.color === undefined ? null : parseRgba(a.color, 'color'), t_us: parseNum(a.t_us, 't_us'),
+      end_t_us: parseNumOpt(a.end_t_us, 'end_t_us'), label: parseStr(a.label, 'label'), note: a.note === undefined ? null : parseStr(a.note, 'note'),
       anchor_layer_id: a.anchor_layer_id != null ? parseUuid(a.anchor_layer_id, 'anchor_layer_id') : null,
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
   { name: 'set_keyframe', exec: 'dedicated', annotations: ANN_SET,
@@ -2135,28 +2226,6 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         throw new McpArgError(`set_extrapolation needs at least one of before, after (each ${EXTRAPOLATE_OPTIONS}) — nothing to write`)
       return p
     } },
-  { name: 'add_motif_layer', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Add a Motif layer and return its record. Read list_motifs for motif_id and props_schema. Omitted track_id creates a fresh track; omitted props take the style's tokens (project://taste), else defaults. Unknown props reject.",
-    inputSchema: { type: 'object',
-      properties: {
-        motif_id: { type: 'string', description: 'Motif id from `list_motifs` (built-ins: "countdown", "lower-third", "text-fx"; a style\'s role Motifs: `project://taste` → motifs).' },
-        t_start_us: { type: 'integer', description: 'Layer start in timeline microseconds.' },
-        t_end_us: { type: 'integer', description: 'Layer end in timeline microseconds. Defaults to `t_start_us + default_duration_s * 1_000_000` when omitted.' },
-        track_id: { type: 'string', description: 'Target track id. If omitted, a fresh track is spawned; it carries no stored name and is displayed by its position.' },
-        props: { type: 'object', description: 'Motif props as a JSON object. Keys must match the motif\'s `props_schema`; unknown keys reject; missing keys fill from defaults. Omit entirely to use all defaults.' },
-        graphic_role: { ...GRAPHIC_ROLE_SCHEMA, type: ['string', 'null'], description: `${GRAPHIC_ROLE_SCHEMA.description} Omitted: the manifest's; null: none.` },
-        composition_id: { type: 'string', description: 'The composition the spawned track opens in (a Group\'s id); omit for the root. With `track_id` set, the track must belong to it.' },
-      },
-      required: ['motif_id', 't_start_us'] },
-    parseDedicated: (a) => ({
-      motif_id: parseStr(a.motif_id, 'motif_id'),
-      t_start_us: parseNum(a.t_start_us, 't_start_us'),
-      t_end_us: parseNumOpt(a.t_end_us, 't_end_us') ?? null,
-      track_id: a.track_id != null ? parseUuid(a.track_id, 'track_id') : null,
-      props: a.props != null ? parseObj(a.props, 'props') : null,
-      graphic_role: parseGraphicRoleOpt(a.graphic_role),
-      composition_id: parseCompositionIdOpt(a.composition_id),
-    }) },
   { name: 'create_checkpoint', exec: 'dedicated', annotations: ANN_WRITE,
     description: "Create a named checkpoint of the current state and return `{ checkpoint_id, label }`. It lasts for this project opening only: opening another project or quitting drops it. It survives later commits (unlike the redo tail); `project://history` lists checkpoints and the agent panel shows each with a Restore button. `begin_agent_session` already makes one. Unrecorded.",
     inputSchema: { type: 'object', properties: { label: { type: 'string', description: 'Checkpoint name.' } }, required: ['label'] },
@@ -2406,7 +2475,7 @@ const DEF_BY_NAME: Map<string, McpToolDef> = new Map(MCP_TOOL_DEFS.map((d) => [d
 export function mcpDef(name: string): McpToolDef { const d = DEF_BY_NAME.get(name); if (!d) throw new Error(`no MCP def for ${name}`); return d }
 
 /** MCP tool → internal dispatch op + renamed args. Projection of MCP_TOOL_DEFS.
- *  Explicit-param tools (add_color_layer/add_video_layer/add_marker/split_layer
+ *  Explicit-param tools (add_layers/add_marker/split_layer
  *  etc.) are NOT here — they have dedicated arms in actor.mcpCall. */
 export const MCP_ARG_PARSERS: Record<string, (a: Record<string, unknown>, idGen?: IdGen) => { op: string; args: Record<string, unknown> }> =
   Object.fromEntries(MCP_TOOL_DEFS.flatMap((d) => d.parseArgs ? [[d.name, d.parseArgs] as const] : []))

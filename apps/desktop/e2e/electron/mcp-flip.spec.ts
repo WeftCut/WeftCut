@@ -49,7 +49,7 @@ test('TS actor: MCP mutate → resource read reflects it; blocked tool rejects',
       const tracks = JSON.parse((before.contents[0] as { text: string }).text) as Array<{ id: string }>
       expect(tracks.length).toBeGreaterThan(0)
       // Mutate via the TS actor.mcpCall path.
-      const added = await client.callTool({ name: 'add_color_layer', arguments: { track_id: tracks[0].id, color: { r: 0, g: 0, b: 0, a: 1 }, t_start_us: 0, t_end_us: 1_000_000 } })
+      const added = await client.callTool({ name: 'add_layers', arguments: { layers: [{ track_id: tracks[0].id, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 1 } } }] } })
       expect((added.content as Array<{ type: string }>)[0].type).toBe('text')
       // The mirror reflects the mutation on the next read.
       const after = await client.readResource({ uri: 'project://current' })

@@ -41,16 +41,16 @@ describe('composition scope — MCP tools', () => {
     expect(errorOf(r)).toMatch(/lives in composition .*destination is in composition/)
     expect(actor.historyStatus().len).toBe(len)
   })
-  it('add_color_layer { composition_id } lands inside the Group; a track elsewhere and an unknown composition refuse', () => {
+  it('add_layers { composition_id } lands inside the Group; a track elsewhere and an unknown composition refuse', () => {
     const { actor, groupId } = mk()
     const gB = groupOf(actor, groupId).tracks[1].id
-    const ok = actor.mcpCall('add_color_layer', JSON.stringify({ track_id: gB, composition_id: groupId, color: BLUE, t_start_us: 0, t_end_us: 1_000_000 }))
+    const ok = actor.mcpCall('add_layers', JSON.stringify({ composition_id: groupId, layers: [{ track_id: gB, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: BLUE } }] }))
     expect(ok.ok).toBe(true)
     expect(groupOf(actor, groupId).tracks[1].layers).toHaveLength(1)
-    const wrong = actor.mcpCall('add_color_layer', JSON.stringify({ track_id: root(actor.snapshot()).tracks[1].id, composition_id: groupId, color: BLUE, t_start_us: 0, t_end_us: 1_000_000 }))
+    const wrong = actor.mcpCall('add_layers', JSON.stringify({ composition_id: groupId, layers: [{ track_id: root(actor.snapshot()).tracks[1].id, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: BLUE } }] }))
     expect(wrong.ok).toBe(false)
     expect(errorOf(wrong)).toMatch(/belongs to composition/)
-    const ghost = actor.mcpCall('add_color_layer', JSON.stringify({ track_id: gB, composition_id: '00000000-0000-7000-8000-00000000dead', color: BLUE, t_start_us: 0, t_end_us: 1_000_000 }))
+    const ghost = actor.mcpCall('add_layers', JSON.stringify({ composition_id: '00000000-0000-7000-8000-00000000dead', layers: [{ track_id: gB, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: BLUE } }] }))
     expect(ghost.ok).toBe(false)
     expect(errorOf(ghost)).toMatch(/composition .* not found/)
   })

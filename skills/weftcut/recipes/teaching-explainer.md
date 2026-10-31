@@ -56,7 +56,7 @@ timetable says.
 2. **Caption.** Transcribe after tightening, and pass the envelope to
    `apply_transcripts` as it comes. The cues are built to the style's
    limits.
-3. **Place overlays** with `add_motif_layer`.
+3. **Place overlays** with `add_layers`.
    - Leave colour and font props unset: the style's tokens fill them.
    - Set `duration_s` to the layer's length.
    - Move and size the layer with `update_layer_params`. Its x and y are

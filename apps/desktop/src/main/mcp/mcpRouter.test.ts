@@ -6,16 +6,13 @@ import { MOTIF_TOOL_DEFS } from './motifToolDefs'
 
 describe('routeMcpTool', () => {
   it('routes ported mutations + reads to ts', () => {
-    for (const t of ['add_color_layer', 'set_keyframe', 'undo', 'get_param_track', 'export_captions'])
+    for (const t of ['add_layers', 'set_keyframe', 'undo', 'get_param_track', 'export_captions'])
       expect(routeMcpTool(t), t).toBe('ts')
   })
   it('routes import_media + apply_subtitles + synthesize_speech to the native-compute → TS-write hybrid', () => {
     expect(routeMcpTool('import_media')).toBe('hybrid')
     expect(routeMcpTool('apply_subtitles')).toBe('hybrid')
     expect(routeMcpTool('synthesize_speech')).toBe('hybrid')
-  })
-  it('add_motif_layer routes to ts (pure TS mutation)', () => {
-    expect(routeMcpTool('add_motif_layer')).toBe('ts')
   })
   it('routes the 5 MCP motif tools to the motif route', () => {
     for (const t of ['list_motifs', 'read_motif', 'open_motif_draft', 'delete_motif', 'install_motif'])

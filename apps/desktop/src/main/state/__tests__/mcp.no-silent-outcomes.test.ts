@@ -104,6 +104,8 @@ const id = (r: Record<string, unknown>, key: string): string => {
   if (typeof v !== 'string') throw new Error(`fixture: no ${key} in ${JSON.stringify(r)}`)
   return v
 }
+/** The one layer an `add_layers` call of one placed. */
+const added = (r: Record<string, unknown>): string => id((r.layers as Array<Record<string, unknown>>)[0]!, 'layer_id')
 
 async function world(): Promise<World> {
   const idGen = seededGen()
@@ -137,29 +139,29 @@ async function world(): Promise<World> {
   // The settings the probes flip, and a pinned root duration to unpin.
   await must(w, 'set_project_settings', { patch: { auto_pair_audio_on_import: false, shot_review: { sensitivity: 0.5, min_shot_us: S }, pause_review: { threshold_amp: 0.05, min_pause_us: S, pad_us: 100_000 } } })
   await must(w, 'rename_track', { track_id: tA, label: 'A cam' })
-  const c = id(await must(w, 'add_color_layer', { track_id: tA, color: red, t_start_us: 0, t_end_us: 2 * S }), 'layer_id')
-  const c2 = id(await must(w, 'add_color_layer', { track_id: tA, color: red, t_start_us: 2 * S, t_end_us: 4 * S }), 'layer_id')
+  const c = added(await must(w, 'add_layers', { layers: [{ track_id: tA, t_start_us: 0, t_end_us: 2 * S, content: { kind: 'color', color: red } }] }))
+  const c2 = added(await must(w, 'add_layers', { layers: [{ track_id: tA, t_start_us: 2 * S, t_end_us: 4 * S, content: { kind: 'color', color: red } }] }))
   await must(w, 'update_layer', { layer_id: c, patch: { label: 'C' } })
-  const x = id(await must(w, 'add_text_layer', { track_id: tB, content: 'Title', t_start_us: 0, t_end_us: 2 * S }), 'layer_id')
+  const x = added(await must(w, 'add_layers', { layers: [{ track_id: tB, t_start_us: 0, t_end_us: 2 * S, content: { kind: 'text', content: 'Title' } }] }))
   const tV = id(await must(w, 'add_track', {}), 'track_id')
-  const vl = id(await must(w, 'add_video_layer', { track_id: tV, media_id: VIDEO, src_in_us: 0, src_out_us: 4 * S, t_start_us: 0, t_end_us: 4 * S }), 'layer_id')
+  const vl = added(await must(w, 'add_layers', { layers: [{ track_id: tV, t_start_us: 0, t_end_us: 4 * S, content: { kind: 'video', media_id: VIDEO, src_in_us: 0 } }] }))
   const tAu = id(await must(w, 'add_track', {}), 'track_id')
-  const al = id(await must(w, 'add_audio_layer', { track_id: tAu, media_id: AUDIO, src_in_us: 0, src_out_us: 4 * S, t_start_us: 0, t_end_us: 4 * S, role: 'dialogue' }), 'layer_id')
+  const al = added(await must(w, 'add_layers', { layers: [{ track_id: tAu, t_start_us: 0, t_end_us: 4 * S, content: { kind: 'audio', media_id: AUDIO, src_in_us: 0, role: 'dialogue' } }] }))
   const link = id(await must(w, 'create_link', { layer_ids: [vl, al] }), 'link_id')
   const link2 = id(await must(w, 'create_link', { layer_ids: [c2, x] }), 'link_id')
   const tT = id(await must(w, 'add_track', {}), 'track_id')
-  const t1 = id(await must(w, 'add_color_layer', { track_id: tT, color: red, t_start_us: 0, t_end_us: 2 * S }), 'layer_id')
-  const t2 = id(await must(w, 'add_color_layer', { track_id: tT, color: red, t_start_us: 2 * S, t_end_us: 4 * S }), 'layer_id')
+  const t1 = added(await must(w, 'add_layers', { layers: [{ track_id: tT, t_start_us: 0, t_end_us: 2 * S, content: { kind: 'color', color: red } }] }))
+  const t2 = added(await must(w, 'add_layers', { layers: [{ track_id: tT, t_start_us: 2 * S, t_end_us: 4 * S, content: { kind: 'color', color: red } }] }))
   const transition = id(await must(w, 'add_transition', { from_layer_id: t1, to_layer_id: t2, duration_us: 500_000 }), 'transition_id')
-  const tail = id(await must(w, 'add_color_layer', { track_id: tT, color: red, t_start_us: 6 * S, t_end_us: 7 * S }), 'layer_id')
-  await must(w, 'add_color_layer', { track_id: tT, color: red, t_start_us: 8 * S, t_end_us: 9 * S })
+  const tail = added(await must(w, 'add_layers', { layers: [{ track_id: tT, t_start_us: 6 * S, t_end_us: 7 * S, content: { kind: 'color', color: red } }] }))
+  await must(w, 'add_layers', { layers: [{ track_id: tT, t_start_us: 8 * S, t_end_us: 9 * S, content: { kind: 'color', color: red } }] })
   const tG = id(await must(w, 'add_track', {}), 'track_id')
-  const inner = id(await must(w, 'add_color_layer', { track_id: tG, color: red, t_start_us: 0, t_end_us: 2 * S }), 'layer_id')
+  const inner = added(await must(w, 'add_layers', { layers: [{ track_id: tG, t_start_us: 0, t_end_us: 2 * S, content: { kind: 'color', color: red } }] }))
   const grouped = await must(w, 'create_group', { layer_ids: [inner], label: 'Grp' })
   const group = id(grouped, 'layer_id'), groupComp = id(grouped, 'composition_id')
   const groupTrack = actor.snapshot().compositions[groupComp]!.tracks[0]!.id
   const groupTrack2 = id(await must(w, 'add_track', { composition_id: groupComp }), 'track_id')
-  const cap = id(await must(w, 'add_text_layer', { track_id: tB, content: 'a caption', t_start_us: 2 * S, t_end_us: 3 * S, graphic_role: 'caption' }), 'layer_id')
+  const cap = added(await must(w, 'add_layers', { layers: [{ track_id: tB, t_start_us: 2 * S, t_end_us: 3 * S, content: { kind: 'text', content: 'a caption', graphic_role: 'caption' } }] }))
   const marker = id(await must(w, 'add_marker', { t_us: S, label: 'm', color: red, anchor_layer_id: al }), 'marker_id')
   const region = id(await must(w, 'add_marker', { t_us: S, end_t_us: 2 * S, label: 'r', color: red }), 'marker_id')
   const k0 = id(await must(w, 'set_keyframe', { layer_id: x, param_key: 'opacity', t_us: 0, value: 1 }), 'keyframe_id')
@@ -236,10 +238,6 @@ const CASES: Record<string, Case> = {
     // The second lane of the Group: the call alone lands on the first.
     to_track_id: val((i) => i.groupTrack2),
   } },
-  add_group_layer: { base: (i) => ({ source_composition_id: i.groupComp, t_start_us: 8 * S, track_id: i.tA }), values: {
-    // A cross-check: the track's own composition is the only one that passes.
-    composition_id: val((i) => i.groupComp, { refuses: true }),
-  } },
   rename_composition: { base: (i) => ({ composition_id: i.groupComp }), values: { label: lit('Renamed') } },
   update_effect: { base: (i) => ({ layer_id: i.vl, effect_id: i.effect, patch: {} }), values: {
     'patch.enabled': lit(false), 'patch.params': lit({ strength: { mode: 'Static', value: 7 } }),
@@ -274,25 +272,13 @@ const CASES: Record<string, Case> = {
   set_marker_anchor: { base: (i) => ({ marker_id: i.marker, layer_id: i.vl }), values: {} },
   delete_media: { base: () => ({ media_id: VIDEO }), values: { force: lit(true) } },
   set_role_flags: { base: () => ({ role: 'music' }), values: { muted: lit(true), solo: lit(true) } },
-  add_color_layer: { base: (i) => ({ track_id: i.tA, color: RGBA, t_start_us: 10 * S, t_end_us: 11 * S }), values: {
-    width: lit(500), height: lit(500), composition_id: val((i) => i.groupComp, { refuses: true }),
-  } },
-  add_video_layer: { base: (i) => ({ track_id: i.tA, media_id: VIDEO, t_start_us: 10 * S, t_end_us: 12 * S }), values: {
-    src_in_us: lit(S, { with: () => ({ src_out_us: 3 * S }) }), src_out_us: lit(3 * S, { with: () => ({ src_in_us: S }) }),
-    // A still carries the role; a VideoClip refuses one.
-    graphic_role: lit('logo', { with: () => ({ media_id: IMAGE }) }),
-    composition_id: val((i) => i.groupComp, { refuses: true, with: () => ({ media_id: IMAGE }) }),
-  } },
-  add_audio_layer: { base: (i) => ({ track_id: i.tA, media_id: AUDIO, src_in_us: 0, src_out_us: S, t_start_us: 10 * S, t_end_us: 11 * S }), values: {
-    role: lit('sfx'), composition_id: val((i) => i.groupComp, { refuses: true }),
-  } },
-  add_text_layer: { base: (i) => ({ track_id: i.tA, content: 'T', t_start_us: 10 * S, t_end_us: 11 * S }), values: {
-    x: lit(100, { with: () => ({ y: 100 }) }), y: lit(100, { with: () => ({ x: 100 }) }),
-    graphic_role: lit('lower_third'), composition_id: val((i) => i.groupComp, { refuses: true }),
+  add_layers: { base: () => ({ layers: [{ t_start_us: 10 * S, t_end_us: 11 * S, content: { kind: 'color', color: RGBA } }] }), values: {
+    // The spawn target: the layer's fresh track opens inside the Group, not the root.
+    composition_id: val((i) => i.groupComp),
   } },
   split_layer: { base: (i) => ({ layer_id: i.vl, at_t_us: [2 * S] }), values: { escape_link: lit(true) } },
-  add_marker: { base: () => ({ t_us: 5 * S, label: 'n', color: RGBA }), values: {
-    end_t_us: lit(6 * S), anchor_layer_id: val((i) => i.vl, { with: () => ({ t_us: 3 * S }) }),
+  add_marker: { base: () => ({ t_us: 5 * S, label: 'n' }), values: {
+    color: lit(RGBA), note: lit('why'), end_t_us: lit(6 * S), anchor_layer_id: val((i) => i.vl, { with: () => ({ t_us: 3 * S }) }),
     composition_id: val((i) => i.groupComp, { with: () => ({ t_us: S }) }),
   } },
   begin_agent_session: { base: () => ({ reason: 'cutting' }), values: { lock: lit(false) } },
@@ -321,7 +307,6 @@ const EXCEPTIONS: Record<string, string> = {
   remove_pauses: 'reads native waveform peaks (hybrids.test.ts covers the pause parameters)',
   apply_transcripts: 'needs a transcript payload per source layer; mcp.captions-tools.test.ts covers source_layer_ids / composition_id',
   correct_caption_text: 'needs a caption-correction model run; mcp.captions-tools.test.ts covers the scope arguments',
-  add_motif_layer: 'needs the Motif catalog the app loads at start (add-motif.test.ts covers t_end_us, track_id, props, graphic_role)',
   install_motif: 'publishes into the user Motif store on disk (motif tests cover target_id / expected_version)',
   export_motif: 'reads the user Motif store on disk; the path refusals are pinned in mcp.error-vocabulary and motifTools tests',
   create_export_preset: 'writes the app preference store (exportPresetTools.test.ts)',

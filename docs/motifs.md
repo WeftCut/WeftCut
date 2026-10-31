@@ -328,7 +328,7 @@ independent of placed props, project fps and frame bakes.
 
 ## Agent surface
 
-`add_motif_layer` places a Motif by props only and resolves built-ins, installed
+`add_layers` (kind `motif`) places a Motif by props only and resolves built-ins, installed
 Motifs and drafts. `list_motifs` (mirrored by `motifs://current`) returns the
 manifest-only catalog with `status` (`builtin | installed | draft`),
 `content_hash` and `target_id`. Authoring uses `open_motif_draft`,

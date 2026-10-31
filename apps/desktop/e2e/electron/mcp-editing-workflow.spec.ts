@@ -50,14 +50,12 @@ test('MCP creates, trims and moves clips, then exports the edited timeline', asy
     const track = await call<{ track_id: string }>('add_track', { label: 'Sequence' })
     // Synthetic solid clips make the exported edit observable without external
     // media, fonts, codec-specific source seeking, or calibrated SSIM floors.
-    const red = await call<LayerRecord>('add_color_layer', {
-      track_id: track.track_id, width: 640, height: 360, color: { r: 255, g: 0, b: 0, a: 255 },
-      t_start_us: 0, t_end_us: 3_000_000,
-    })
-    const green = await call<LayerRecord>('add_color_layer', {
-      track_id: track.track_id, width: 640, height: 360, color: { r: 0, g: 255, b: 0, a: 255 },
-      t_start_us: 4_000_000, t_end_us: 6_000_000,
-    })
+    // One call, one recorded edit; each block is the composition's 640x360.
+    const [red, green] = (await call<{ layers: LayerRecord[] }>('add_layers', { layers: [
+      { track_id: track.track_id, t_start_us: 0, t_end_us: 3_000_000, content: { kind: 'color', color: { r: 255, g: 0, b: 0, a: 255 } } },
+      { track_id: track.track_id, t_start_us: 4_000_000, t_end_us: 6_000_000, content: { kind: 'color', color: { r: 0, g: 255, b: 0, a: 255 } } },
+    ] })).layers
+    if (!red || !green) throw new Error('add_layers placed fewer than two layers')
     expect(await call<LayerRecord>('trim_layer', {
       layer_id: red.layer_id, edge: 'out', new_t_us: 1_000_000,
     })).toMatchObject({ layer_id: red.layer_id, t_start_us: 0, t_end_us: 1_000_000 })

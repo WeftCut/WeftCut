@@ -1,13 +1,11 @@
 // apps/desktop/src/main/state/__tests__/mcp.layer-adds.test.ts
-// The three creation/flag tools an agent reaches for on ordinary work, plus the
-// refusal that stops the mistake they replace.
+// `add_layers` — the one tool that places new layers — and `set_track_flags`.
 //
-// Audio-only media, a plain title, and a track's lock were all reachable from
-// the UI and from nowhere else: an agent asked to drop a music bed, name a
-// title, or edit a locked track had no tool and either failed or — worse for
-// `add_video_layer` over an mp3 — got a success report for a clip that neither
-// shows nor plays. These pin the placements, the mixing bus a cue lands on, the
-// anchor a title is placed by, and the lock's two directions.
+// Every kind lands from one call, a layer without a track opens one inside the
+// same commit (T5), a mixed batch is one history entry, and any refusal rolls
+// the whole batch back. The media-kind gates keep their refusals: audio-only
+// media as a picture once got a success report for a clip that neither shows
+// nor plays.
 import { describe, it, expect } from 'vitest'
 import { createActor } from '../actor'
 import { seededGen } from '../ids'
@@ -20,6 +18,8 @@ const VIDEO_WITH_SOUND = '00000000-0000-0000-0000-0000000000a2'
 const SILENT_IMAGE = '00000000-0000-0000-0000-0000000000a3'
 const SUBTITLE = '00000000-0000-0000-0000-0000000000a4'
 const SILENT_VIDEO = '00000000-0000-0000-0000-0000000000a5'
+const NOWHERE = '00000000-0000-7000-8000-00000000dead'
+const BLACK = { r: 0, g: 0, b: 0, a: 255 }
 
 /** Blank project + every pool shape the media-kind gates discriminate on: the
  *  four kinds, and a Video whose probe found no audio stream. */
@@ -35,221 +35,274 @@ function actorWithPool() {
 }
 
 type Actor = ReturnType<typeof actorWithPool>
+interface Placed { layer_id: string; track_id: string; t_start_us: number; t_end_us: number; adjusted: Array<{ field: string; requested: number; applied: number; reason: string }>; linked: { audio_layer_id: string; link_id: string } | null }
 
 function call(a: Actor, tool: string, args: Record<string, unknown>) {
   return a.mcpCall(tool, JSON.stringify(args))
 }
+const add = (a: Actor, layers: unknown[], extra: Record<string, unknown> = {}) => call(a, 'add_layers', { ...extra, layers })
 function aRoll(a: Actor): string { return root(a.snapshot()).tracks[0].id }
 function bRoll(a: Actor): string { return root(a.snapshot()).tracks[1].id }
 
-/** The tool answers with the new layer's record; its `layer_id` is what the
- *  next call needs. Fail loudly rather than returning a placeholder a later
- *  assertion would silently pass against. */
-function addedId(r: ReturnType<Actor['mcpCall']>): string {
+/** The placed records, in input order. Fails loudly on a refusal. */
+function placed(r: ReturnType<Actor['mcpCall']>): Placed[] {
   expect(r.ok, r.ok ? '' : `${r.error.code}: ${r.error.message}`).toBe(true)
   if (!r.ok) throw new Error('call failed')
-  const rec = JSON.parse(r.result.content[0].text) as { layer_id?: unknown }
-  expect(typeof rec.layer_id, r.result.content[0].text).toBe('string')
-  return rec.layer_id as string
+  return (JSON.parse(r.result.content[0].text) as { layers: Placed[] }).layers
+}
+function refusal(r: ReturnType<Actor['mcpCall']>): string {
+  expect(r.ok).toBe(false)
+  if (r.ok) throw new Error('expected refusal')
+  expect(r.error.code).toBe('invalid_params')
+  return r.error.message
 }
 function layerOf(a: Actor, id: string): Layer {
-  for (const t of root(a.snapshot()).tracks) {
-    const l = t.layers.find((x) => x.id === id)
-    if (l) return l
-  }
+  for (const c of Object.values(a.snapshot().compositions))
+    for (const t of c.tracks) { const l = t.layers.find((x) => x.id === id); if (l) return l }
   throw new Error(`layer ${id} not found`)
 }
 function layerCount(a: Actor): number {
-  return root(a.snapshot()).tracks.reduce((n, t) => n + t.layers.length, 0)
+  return Object.values(a.snapshot().compositions).reduce((n, c) => n + c.tracks.reduce((m, t) => m + t.layers.length, 0), 0)
 }
+const trackCount = (a: Actor) => root(a.snapshot()).tracks.length
 
-const AUDIO_ARGS = { media_id: AUDIO, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000 }
+const span = (t0: number, t1: number) => ({ t_start_us: t0, t_end_us: t1 })
+const color = (track: string | undefined, t0: number, t1: number) => ({ ...(track ? { track_id: track } : {}), ...span(t0, t1), content: { kind: 'color', color: BLACK } })
 
-describe('add_audio_layer', () => {
-  it('places an Audio layer on the named track, on the music bus by default', () => {
+describe('add_layers: every kind', () => {
+  it('video: the source window is src_in_us plus the span, and its audio pairs onto the same track, linked', () => {
     const a = actorWithPool()
-    const id = addedId(call(a, 'add_audio_layer', { ...AUDIO_ARGS, track_id: aRoll(a) }))
-    const l = layerOf(a, id)
-    expect(l.params).toMatchObject({ kind: 'Audio', media: AUDIO, src_in_us: 0, src_out_us: 4_000_000, role: 'music' })
-    expect([l.t_start_us, l.t_end_us]).toEqual([0, 4_000_000])
-    expect(root(a.snapshot()).tracks[0].layers.map((x) => x.id)).toEqual([id])
+    const [v] = placed(add(a, [{ track_id: aRoll(a), ...span(1_000_000, 5_000_000), content: { kind: 'video', media_id: VIDEO_WITH_SOUND, src_in_us: 2_000_000 } }]))
+    expect(layerOf(a, v.layer_id).params).toMatchObject({ kind: 'VideoClip', src_in_us: 2_000_000, src_out_us: 6_000_000 })
+    expect(v.linked).not.toBeNull()
+    const audio = layerOf(a, v.linked!.audio_layer_id)
+    expect(audio.params).toMatchObject({ kind: 'Audio', role: 'dialogue', src_in_us: 2_000_000, src_out_us: 6_000_000 })
+    expect(root(a.snapshot()).tracks[0].layers.map((l) => l.id).sort()).toEqual([v.layer_id, v.linked!.audio_layer_id].sort())
+    expect([...root(a.snapshot()).links.find((l) => l.id === v.linked!.link_id)!.members].sort()).toEqual([v.layer_id, v.linked!.audio_layer_id].sort())
   })
 
-  it("honours an explicit role — the mixing bus is the clip's, not its track's", () => {
+  it("video: `audio: 'none'` places the picture alone; `linked` without an audio stream refuses", () => {
     const a = actorWithPool()
-    const id = addedId(call(a, 'add_audio_layer', { ...AUDIO_ARGS, track_id: aRoll(a), role: 'sfx' }))
-    expect((layerOf(a, id).params as { role: string }).role).toBe('sfx')
+    const [v] = placed(add(a, [{ track_id: aRoll(a), ...span(0, 1_000_000), content: { kind: 'video', media_id: VIDEO_WITH_SOUND, src_in_us: 0, audio: 'none' } }]))
+    expect(v.linked).toBeNull()
+    expect(layerCount(a)).toBe(1)
+    expect(refusal(add(a, [{ track_id: bRoll(a), ...span(0, 1_000_000), content: { kind: 'video', media_id: SILENT_VIDEO, src_in_us: 0, audio: 'linked' } }]))).toContain('no audio stream')
+    expect(layerCount(a)).toBe(1)
   })
 
-  it('rejects an unknown role at the boundary instead of storing it', () => {
+  it('image: an ImageOverlay over the span, with its graphic role', () => {
     const a = actorWithPool()
-    const r = call(a, 'add_audio_layer', { ...AUDIO_ARGS, track_id: aRoll(a), role: 'narration' })
-    expect(r.ok).toBe(false)
-    expect(layerCount(a)).toBe(0)
+    const [i] = placed(add(a, [{ track_id: bRoll(a), ...span(0, 3_000_000), content: { kind: 'image', media_id: SILENT_IMAGE, graphic_role: 'logo' } }]))
+    expect(layerOf(a, i.layer_id).params).toMatchObject({ kind: 'ImageOverlay', media: SILENT_IMAGE, graphic_role: 'logo' })
+    expect(i.linked).toBeNull()
   })
 
-  it('shares a composition with a paired video clip: the cue takes a free audio lane', () => {
+  it('audio: on the music bus by default, an explicit role honoured, a video item taken for its sound alone', () => {
     const a = actorWithPool()
-    // auto_pair_audio_on_import is on by default, so the video already claimed
-    // the A roll's audio lane; the cue goes on the other track's.
-    const video = call(a, 'add_video_layer', {
-      media_id: VIDEO_WITH_SOUND, src_in_us: 0, src_out_us: 4_000_000,
-      t_start_us: 0, t_end_us: 4_000_000, track_id: aRoll(a),
+    const [m, s, d] = placed(add(a, [
+      { track_id: aRoll(a), ...span(0, 4_000_000), content: { kind: 'audio', media_id: AUDIO, src_in_us: 0 } },
+      { track_id: bRoll(a), ...span(0, 4_000_000), content: { kind: 'audio', media_id: AUDIO, src_in_us: 1_000_000, role: 'sfx' } },
+      { ...span(0, 2_000_000), content: { kind: 'audio', media_id: VIDEO_WITH_SOUND, src_in_us: 0 } },
+    ]))
+    expect(layerOf(a, m.layer_id).params).toMatchObject({ kind: 'Audio', media: AUDIO, src_in_us: 0, src_out_us: 4_000_000, role: 'music' })
+    expect(layerOf(a, s.layer_id).params).toMatchObject({ role: 'sfx', src_in_us: 1_000_000, src_out_us: 5_000_000 })
+    expect(layerOf(a, d.layer_id).params).toMatchObject({ kind: 'Audio', media: VIDEO_WITH_SOUND })
+  })
+
+  it('text: centred in the composition it lands in; transform x/y place the anchor, unclamped', () => {
+    const a = actorWithPool()
+    const [c, off] = placed(add(a, [
+      { track_id: aRoll(a), ...span(0, 2_000_000), content: { kind: 'text', content: 'Chapter One' } },
+      { track_id: bRoll(a), ...span(0, 2_000_000), transform: { x: -200, y: 900 }, content: { kind: 'text', content: 'off the edge' } },
+    ]))
+    const pos = (id: string) => (layerOf(a, id).params as unknown as { transform: { position: { x: { value: number }; y: { value: number } } } }).transform.position
+    expect(layerOf(a, c.layer_id).params).toMatchObject({ kind: 'Text', content: 'Chapter One' })
+    expect([pos(c.layer_id).x.value, pos(c.layer_id).y.value]).toEqual([960, 540])
+    expect([pos(off.layer_id).x.value, pos(off.layer_id).y.value]).toEqual([-200, 900])
+  })
+
+  it('color: sized to the composition, not to a 1920x1080 default (T13)', () => {
+    const a = actorWithPool()
+    expect(call(a, 'update_composition', { patch: { width: 1080, height: 1920 } }).ok).toBe(true)
+    const [c] = placed(add(a, [color(aRoll(a), 0, 1_000_000)]))
+    expect(layerOf(a, c.layer_id).params).toMatchObject({ kind: 'Color', width: 1080, height: 1920 })
+  })
+
+  it("motif: the manifest's role, and an end past its content shortened with reason `content`", () => {
+    const a = actorWithPool()
+    const [m] = placed(add(a, [{ ...span(0, 8_000_000), content: { kind: 'motif', motif_id: 'countdown' } }]))
+    expect(layerOf(a, m.layer_id).params).toMatchObject({ kind: 'Motif', motif_id: 'countdown' })
+    expect(m.t_end_us).toBe(5_000_000)
+    expect(m.adjusted).toEqual([{ field: 't_end_us', requested: 8_000_000, applied: 5_000_000, reason: 'content' }])
+    expect(refusal(add(a, [{ ...span(0, 1_000_000), content: { kind: 'motif', motif_id: 'no-such-motif' } }]))).toContain('list_motifs')
+    expect(refusal(add(a, [{ ...span(0, 1_000_000), content: { kind: 'motif', motif_id: 'countdown', props: { nope: 1 } } }]))).toContain('invalid props')
+  })
+
+  it("group: another instance of a composition, spanning it whole unless t_end_us says less, never past its end", () => {
+    const a = actorWithPool()
+    const [inner] = placed(add(a, [color(aRoll(a), 0, 2_000_000)]))
+    const g = JSON.parse((call(a, 'create_group', { layer_ids: [inner.layer_id] }) as { ok: true; result: { content: Array<{ text: string }> } }).result.content[0].text) as { composition_id: string }
+    const group = { kind: 'group', composition_id: g.composition_id }
+    const [part, whole] = placed(add(a, [{ ...span(4_000_000, 5_000_000), content: group }, { t_start_us: 8_000_000, content: group }]))
+    expect(layerOf(a, part.layer_id).params).toMatchObject({ kind: 'CompositionRef', src_in_us: 0, src_out_us: 1_000_000 })
+    expect([whole.t_start_us, whole.t_end_us]).toEqual([8_000_000, 10_000_000])
+    expect(layerOf(a, whole.layer_id).params).toMatchObject({ src_out_us: 2_000_000 })
+    expect(refusal(add(a, [{ ...span(12_000_000, 15_000_000), content: { kind: 'group', composition_id: g.composition_id } }]))).toContain('show nothing past its end')
+  })
+})
+
+describe('add_layers: a spawn, a batch, one entry', () => {
+  it('a layer without track_id opens its own fresh track in the same commit (T5)', () => {
+    const a = actorWithPool()
+    const tracks = trackCount(a)
+    const cursor = a.historyStatus().cursor
+    const [x, y] = placed(add(a, [color(undefined, 0, 1_000_000), color(undefined, 0, 1_000_000)]))
+    expect(trackCount(a)).toBe(tracks + 2)
+    expect(x.track_id).not.toBe(y.track_id)
+    expect(a.historyStatus().cursor).toBe(cursor + 1)
+  })
+
+  it('composition_id is the spawn target, and the cross-check for a named track', () => {
+    const a = actorWithPool()
+    const [inner] = placed(add(a, [color(aRoll(a), 0, 2_000_000)]))
+    const g = JSON.parse((call(a, 'create_group', { layer_ids: [inner.layer_id] }) as { ok: true; result: { content: Array<{ text: string }> } }).result.content[0].text) as { composition_id: string }
+    const [s] = placed(add(a, [color(undefined, 0, 1_000_000)], { composition_id: g.composition_id }))
+    expect(a.snapshot().compositions[g.composition_id]!.tracks.some((t) => t.id === s.track_id)).toBe(true)
+    expect(refusal(add(a, [color(bRoll(a), 5_000_000, 6_000_000)], { composition_id: g.composition_id }))).toContain('belongs to composition')
+    expect(refusal(add(a, [color(undefined, 0, 1_000_000)], { composition_id: NOWHERE }))).toContain(NOWHERE)
+  })
+
+  it('a mixed batch — named lanes, a spawn, a pair, a label, a transform — is ONE history entry, undone in one step', () => {
+    const a = actorWithPool()
+    const tracks = trackCount(a)
+    const cursor = a.historyStatus().cursor
+    const out = placed(add(a, [
+      { track_id: aRoll(a), ...span(0, 4_000_000), label: 'Interview', content: { kind: 'video', media_id: VIDEO_WITH_SOUND, src_in_us: 0 } },
+      { track_id: bRoll(a), ...span(0, 2_000_000), content: { kind: 'text', content: 'Title', graphic_role: 'title' } },
+      { ...span(1_000_000, 3_000_000), transform: { x: 100, y: 200, scale: 0.5, rotation_deg: 10, opacity: 0.8 }, content: { kind: 'image', media_id: SILENT_IMAGE } },
+    ]))
+    expect(out).toHaveLength(3)
+    expect(layerCount(a)).toBe(4)
+    expect(trackCount(a)).toBe(tracks + 1)
+    expect(layerOf(a, out[0].layer_id).label).toBe('Interview')
+    expect(layerOf(a, out[2].layer_id).params).toMatchObject({
+      transform: { scale_x: { value: 0.5 }, scale_y: { value: 0.5 }, rotation_deg: { value: 10 }, position: { x: { value: 100 }, y: { value: 200 } } },
+      opacity: { value: 0.8 },
     })
-    expect(video.ok).toBe(true)
-    const cue = addedId(call(a, 'add_audio_layer', { ...AUDIO_ARGS, track_id: bRoll(a) }))
-    expect((layerOf(a, cue).params as { kind: string }).kind).toBe('Audio')
-  })
-
-  it("takes a video item's own audio, with no picture", () => {
-    const a = actorWithPool()
-    const id = addedId(call(a, 'add_audio_layer', {
-      ...AUDIO_ARGS, media_id: VIDEO_WITH_SOUND, track_id: aRoll(a),
-    }))
-    expect(layerOf(a, id).params).toMatchObject({ kind: 'Audio', media: VIDEO_WITH_SOUND })
-  })
-
-  it('refuses media with nothing to play, naming the kind, and commits nothing', () => {
-    const a = actorWithPool()
-    const r = call(a, 'add_audio_layer', { ...AUDIO_ARGS, media_id: SILENT_IMAGE, track_id: aRoll(a) })
-    expect(r.ok).toBe(false)
-    if (r.ok) throw new Error('expected refusal')
-    expect(r.error.message).toContain('Image')
+    const status = a.historyStatus()
+    expect(status.cursor).toBe(cursor + 1)
+    const head = a.historyView(1).ops[0] as { label_key?: string; label_args?: Record<string, number> }
+    expect(head.label_key).toBe('history.layer.add_multi')
+    expect(head.label_args).toEqual({ count: 4 })
+    expect(call(a, 'undo', {}).ok).toBe(true)
     expect(layerCount(a)).toBe(0)
+    expect(trackCount(a)).toBe(tracks)
   })
 
-  it('refuses a video that carries no audio stream, saying which half is missing', () => {
+  it('one refusal rolls back the whole batch: no layer, no spawned track, no entry', () => {
     const a = actorWithPool()
-    const r = call(a, 'add_audio_layer', { ...AUDIO_ARGS, media_id: SILENT_VIDEO, track_id: aRoll(a) })
-    expect(r.ok).toBe(false)
-    if (r.ok) throw new Error('expected refusal')
-    expect(r.error.message).toContain('no audio stream')
+    const tracks = trackCount(a)
+    const cursor = a.historyStatus().cursor
+    const msg = refusal(add(a, [
+      color(undefined, 0, 1_000_000),
+      color(aRoll(a), 0, 2_000_000),
+      color(aRoll(a), 1_000_000, 3_000_000), // collides with the one before it
+    ]))
+    expect(msg).toContain('layer overlap')
+    expect(layerCount(a)).toBe(0)
+    expect(trackCount(a)).toBe(tracks)
+    expect(a.historyStatus().cursor).toBe(cursor)
+  })
+
+  it('reports grid snaps per layer', () => {
+    const a = actorWithPool()
+    const [c] = placed(add(a, [color(aRoll(a), 350_000, 3_000_000)]))
+    expect(c.adjusted).toEqual([{ field: 't_start_us', requested: 350_000, applied: c.t_start_us, reason: 'grid' }])
+  })
+})
+
+describe('add_layers: the shape is strict', () => {
+  it.each([
+    ['a field another kind takes', [{ ...span(0, 1_000_000), content: { kind: 'image', media_id: SILENT_IMAGE, src_in_us: 0 } }], 'src_in_us'],
+    ['a source out point (derived, never sent)', [{ ...span(0, 1_000_000), content: { kind: 'video', media_id: SILENT_VIDEO, src_in_us: 0, src_out_us: 1_000_000 } }], 'src_out_us'],
+    ['a missing end on a non-group kind', [{ t_start_us: 0, content: { kind: 'color', color: BLACK } }], 't_end_us is required'],
+    ['an end before the start', [{ ...span(2_000_000, 1_000_000), content: { kind: 'color', color: BLACK } }], 'must be greater'],
+    ['a transform on a colour block', [{ ...span(0, 1_000_000), transform: { x: 1 }, content: { kind: 'color', color: BLACK } }], 'no transform'],
+    ['a scale on text', [{ ...span(0, 1_000_000), transform: { scale: 2 }, content: { kind: 'text', content: 'T' } }], 'no scale'],
+    ['an empty transform', [{ ...span(0, 1_000_000), transform: {}, content: { kind: 'text', content: 'T' } }], 'names no field'],
+    ['a null graphic role', [{ ...span(0, 1_000_000), content: { kind: 'text', content: 'T', graphic_role: null } }], 'null is not a role'],
+    ['an unknown kind', [{ ...span(0, 1_000_000), content: { kind: 'shape' } }], 'kind must be one of'],
+    ['an empty batch', [], 'at least one'],
+    ['51 layers', Array.from({ length: 51 }, (_, i) => color(undefined, i * 1_000_000, (i + 1) * 1_000_000)), 'at most 50'],
+  ])('refuses %s, committing nothing', (_what, layers, says) => {
+    const a = actorWithPool()
+    expect(refusal(add(a, layers as unknown[]))).toContain(says)
     expect(layerCount(a)).toBe(0)
   })
 })
 
-describe('add_video_layer media-kind guard', () => {
-  it('refuses audio-only media and names the tool that places it', () => {
+describe('add_layers media-kind guards', () => {
+  const kindRefusal = (content: Record<string, unknown>) => {
     const a = actorWithPool()
-    const r = call(a, 'add_video_layer', {
-      media_id: AUDIO, src_in_us: 0, src_out_us: 4_000_000,
-      t_start_us: 0, t_end_us: 4_000_000, track_id: aRoll(a),
-    })
-    expect(r.ok).toBe(false)
-    if (r.ok) throw new Error('expected refusal')
-    expect(r.error.message).toContain('add_audio_layer')
-    // The failure mode this guard exists for is a VideoClip over an mp3 that
-    // COMMITS, so the emptiness of the timeline is the assertion that matters.
+    const msg = refusal(add(a, [{ track_id: aRoll(a), ...span(0, 4_000_000), content }]))
+    // The failure these guard against is a layer that COMMITS, so the empty
+    // timeline is the assertion that matters.
     expect(layerCount(a)).toBe(0)
-  })
-
-  it('refuses a subtitle document and points at the caption importer', () => {
-    const a = actorWithPool()
-    const r = call(a, 'add_video_layer', {
-      media_id: SUBTITLE, src_in_us: 0, src_out_us: 4_000_000,
-      t_start_us: 0, t_end_us: 4_000_000, track_id: aRoll(a),
-    })
-    expect(r.ok).toBe(false)
-    if (r.ok) throw new Error('expected refusal')
-    expect(r.error.message).toContain('apply_subtitles')
-    expect(layerCount(a)).toBe(0)
-  })
-})
-
-// Not found is the FIRST thing said about a media id that names nothing, on
-// both add tools, wet and rehearsed alike — never a rule about the media's
-// kind ("src_in_us and src_out_us are required for Video media <id>") for a
-// media that does not exist.
-describe('an unknown media id is MediaNotFound before any other rule', () => {
-  const NOWHERE = '00000000-0000-7000-8000-00000000dead'
-  function refusal(r: ReturnType<Actor['mcpCall']>): string {
-    expect(r.ok).toBe(false)
-    if (r.ok) throw new Error('expected refusal')
-    expect(r.error.code).toBe('invalid_params')
-    return r.error.message
+    return msg
   }
-
-  it('add_video_layer names the pool and the importer, not the source window', () => {
-    const a = actorWithPool()
-    const msg = refusal(call(a, 'add_video_layer', { media_id: NOWHERE, t_start_us: 0, t_end_us: 4_000_000, track_id: aRoll(a) }))
-    expect(msg).toContain(`media ${NOWHERE} not found`)
-    expect(msg).toContain('project://media')
-    expect(msg).not.toContain('src_in_us')
-    expect(layerCount(a)).toBe(0)
+  it('audio-only media as video names kind audio', () => {
+    expect(kindRefusal({ kind: 'video', media_id: AUDIO, src_in_us: 0 })).toContain('kind audio')
   })
-
-  it('add_audio_layer says the same', () => {
-    const a = actorWithPool()
-    const msg = refusal(call(a, 'add_audio_layer', { media_id: NOWHERE, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000, track_id: aRoll(a) }))
-    expect(msg).toContain(`media ${NOWHERE} not found`)
-    expect(layerCount(a)).toBe(0)
+  it('a subtitle document as video points at the caption importer', () => {
+    expect(kindRefusal({ kind: 'video', media_id: SUBTITLE, src_in_us: 0 })).toContain('apply_subtitles')
   })
-
+  it('an Image as video names kind image', () => {
+    expect(kindRefusal({ kind: 'video', media_id: SILENT_IMAGE, src_in_us: 0 })).toContain('kind image')
+  })
+  it('a Video as image names kind video', () => {
+    expect(kindRefusal({ kind: 'image', media_id: SILENT_VIDEO })).toContain('kind video')
+  })
+  it('media with nothing to play as audio names its kind, and which half is missing', () => {
+    expect(kindRefusal({ kind: 'audio', media_id: SILENT_IMAGE, src_in_us: 0 })).toContain('Image')
+    expect(kindRefusal({ kind: 'audio', media_id: SILENT_VIDEO, src_in_us: 0 })).toContain('no audio stream')
+  })
+  it('an unknown media id is MediaNotFound before any other rule', () => {
+    for (const content of [{ kind: 'video', media_id: NOWHERE, src_in_us: 0 }, { kind: 'audio', media_id: NOWHERE, src_in_us: 0 }, { kind: 'image', media_id: NOWHERE }]) {
+      const msg = kindRefusal(content)
+      expect(msg).toContain(`media ${NOWHERE} not found`)
+      expect(msg).toContain('project://media')
+    }
+  })
 })
 
-describe('a collision names the layer that was already there', () => {
+describe('add_layers collisions', () => {
   it('a request placed BEFORE an existing clip still names that clip, with options that exist', () => {
     // validate reports the colliding pair earliest-start first, so a request
     // starting before the blocker arrives with the roles swapped: the message
     // would name the caller's own layer — one the discarded draft never
     // committed — and every option it offers would then be LayerNotFound.
     const a = actorWithPool()
-    const track = root(a.snapshot()).tracks[0].id
-    const existing = JSON.parse((a.mcpCall('add_video_layer', JSON.stringify({
-      track_id: track, media_id: SILENT_VIDEO, t_start_us: 3_000_000, t_end_us: 10_000_000, src_in_us: 0, src_out_us: 7_000_000,
-    })) as { ok: true; result: { content: Array<{ text: string }> } }).result.content[0].text).video_layer_id as string
-    const r = a.mcpCall('add_color_layer', JSON.stringify({ track_id: track, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 5_000_000 }))
+    const track = aRoll(a)
+    const [existing] = placed(add(a, [{ track_id: track, ...span(3_000_000, 10_000_000), content: { kind: 'video', media_id: SILENT_VIDEO, src_in_us: 0 } }]))
+    const r = add(a, [color(track, 0, 5_000_000)])
     expect(r.ok).toBe(false)
     if (r.ok) throw new Error('expected a refusal')
-    expect(r.error.message).toContain(existing)
+    expect(r.error.message).toContain(existing.layer_id)
     expect(r.error.message).toContain('[0, 5000000)')
     const data = r.error.data as { blocking_layer: string; requested_range_us: [number, number]; options: Array<{ layer_id?: string }> }
-    expect(data.blocking_layer).toBe(existing)
+    expect(data.blocking_layer).toBe(existing.layer_id)
     expect(data.requested_range_us).toEqual([0, 5_000_000])
-    for (const o of data.options) if (o.layer_id !== undefined) expect(o.layer_id).toBe(existing)
-  })
-})
-
-describe('add_text_layer', () => {
-  it('creates a Text layer centred in the composition it landed in', () => {
-    const a = actorWithPool()
-    const id = addedId(call(a, 'add_text_layer', {
-      track_id: aRoll(a), t_start_us: 0, t_end_us: 2_000_000, content: 'Chapter One',
-    }))
-    const params = layerOf(a, id).params as {
-      kind: string; content: string; font: { size_px: number }
-      transform: { position: { mode: string; x: { value: number }; y: { value: number } } }
-    }
-    expect(params.kind).toBe('Text')
-    expect(params.content).toBe('Chapter One')
-    expect(params.font.size_px).toBe(72)
-    expect([params.transform.position.x.value, params.transform.position.y.value]).toEqual([960, 540])
-  })
-
-  it('places the anchor at an explicit x/y, unclamped by the frame', () => {
-    const a = actorWithPool()
-    const id = addedId(call(a, 'add_text_layer', {
-      track_id: aRoll(a), t_start_us: 0, t_end_us: 2_000_000, content: 'off the edge', x: -200, y: 900,
-    }))
-    const pos = (layerOf(a, id).params as { transform: { position: { x: { value: number }; y: { value: number } } } }).transform.position
-    expect([pos.x.value, pos.y.value]).toEqual([-200, 900])
-  })
-
-  it('refuses half a point rather than guessing the other axis', () => {
-    const a = actorWithPool()
-    const r = call(a, 'add_text_layer', {
-      track_id: aRoll(a), t_start_us: 0, t_end_us: 2_000_000, content: 'half', x: 100,
-    })
-    expect(r.ok).toBe(false)
-    expect(layerCount(a)).toBe(0)
+    for (const o of data.options) if (o.layer_id !== undefined) expect(o.layer_id).toBe(existing.layer_id)
   })
 })
 
 describe('set_track_flags', () => {
+  const title = (a: Actor, track: string) => placed(add(a, [{ track_id: track, ...span(0, 2_000_000), content: { kind: 'text', content: 'title' } }]))[0].layer_id
+
   it('locks a track, which then refuses an edit to the layer on it, and unlocks it again', () => {
     const a = actorWithPool()
     const track = aRoll(a)
-    const id = addedId(call(a, 'add_text_layer', { track_id: track, t_start_us: 0, t_end_us: 2_000_000, content: 'title' }))
+    const id = title(a, track)
 
     expect(call(a, 'set_track_flags', { track_id: track, locked: true }).ok).toBe(true)
     expect(root(a.snapshot()).tracks[0].locked).toBe(true)
@@ -288,7 +341,7 @@ describe('set_track_flags', () => {
   it('is unrecorded: undo walks past it', () => {
     const a = actorWithPool()
     const track = aRoll(a)
-    addedId(call(a, 'add_text_layer', { track_id: track, t_start_us: 0, t_end_us: 2_000_000, content: 'title' }))
+    title(a, track)
     expect(call(a, 'set_track_flags', { track_id: track, locked: true }).ok).toBe(true)
     // The one recorded edit here is the text layer, so undo removes THAT and
     // leaves the lock standing — the same contract set_role_flags carries.

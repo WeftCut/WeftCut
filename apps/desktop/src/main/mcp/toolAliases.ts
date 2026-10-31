@@ -15,13 +15,10 @@
  *
  *  The table is CLOSED to new entries (ADR 0074): since the one-verb-per-resource
  *  pass, a rename is a break like a merge — the old name is dropped and the
- *  catalog the client re-reads is the whole contract. The four below predate
- *  that decision and stay for the clients that learned them. */
+ *  catalog the client re-reads is the whole contract. The three below predate
+ *  that decision and stay for the clients that learned them (`add_motif` went
+ *  with `add_motif_layer`, its target, when `add_layers` replaced it). */
 export const RETIRED_MCP_TOOL_NAMES: Readonly<Record<string, string>> = {
-  // `add_motif` read as a sibling of `install_motif` (which adds a motif to the
-  // app) when it is in fact a sibling of `add_video_layer` (which adds a clip to
-  // the timeline).
-  add_motif: 'add_motif_layer',
   // A bare noun in a family whose other members were verb-first
   // (`restore_checkpoint`), and the name the production op already carried.
   checkpoint: 'create_checkpoint',

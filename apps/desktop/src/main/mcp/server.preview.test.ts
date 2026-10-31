@@ -1,5 +1,5 @@
 // apps/desktop/src/main/mcp/server.preview.test.ts
-// `preview_motif` renders what `add_motif_layer` would place: the props
+// `preview_motif` renders what `add_layers` (kind motif) would place: the props
 // go through the same canonicaliser the placement uses, so an omitted prop
 // takes its manifest default (a lower third previews WITH its text), and an
 // unknown id or prop is refused before any capture.
@@ -35,7 +35,7 @@ function host() {
 const backend = { mcpCallTool: async () => { throw new Error('rust must not be called') }, mcpReadResource: async () => '{}', mcpCatalog: async () => RUST_CATALOG } as any
 type Res = { isError?: boolean; content: Array<{ type: string; text?: string; data?: string }> }
 
-describe('preview_motif renders what add_motif_layer would place', () => {
+describe('preview_motif renders what add_layers would place', () => {
   it('omitted props take the manifest defaults, and the size is the motif\'s own', async () => {
     capture.mockClear()
     const out = await handleCallTool(backend, host, 'preview_motif', { id: 'lower-third', local_t_s: 1 }) as Res

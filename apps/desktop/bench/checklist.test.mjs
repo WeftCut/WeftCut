@@ -367,7 +367,7 @@ describe('task files', () => {
   const fixtureIds = new Set(JSON.parse(fs.readFileSync(path.join(HERE, 'fixtures', 'fixtures.json'), 'utf8')).fixtures.map((f) => f.id))
 
   it('found the tool registry', () => {
-    for (const t of ['import_media', 'add_track', 'add_video_layer', 'read_project']) assert.ok(tools.has(t), t)
+    for (const t of ['import_media', 'add_track', 'add_layers', 'read_project']) assert.ok(tools.has(t), t)
   })
 
   for (const file of files) {

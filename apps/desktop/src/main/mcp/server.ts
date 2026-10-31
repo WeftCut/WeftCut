@@ -639,7 +639,7 @@ async function dispatchTool(
     const source = tsHost?.motifTool('read_motif', {id:motifId}) as {revision:string;diagnostic?:string} | undefined
     if(source?.diagnostic)return toolErrorResult({code:'invalid_params',message:source.diagnostic})
     if(a.expected_revision && a.expected_revision!==source?.revision)return toolErrorResult({code:'invalid_params',message:'Motif revision conflict'})
-    // Props canonicalised against the manifest exactly as `add_motif_layer` does:
+    // Props canonicalised against the manifest exactly as `add_layers` does:
     // missing keys take the schema defaults (a lower third previews WITH its
     // text), an unknown key is refused naming it.
     let props: Record<string, unknown> = (a.props ?? {}) as Record<string, unknown>

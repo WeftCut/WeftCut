@@ -195,18 +195,16 @@ it.
 - Rough cut: `analyze_clip` or `auto_split_by_shot`, then trim and delete
   segments — `delete_layers` with `ripple: true` when the gap a cut leaves
   should close behind it.
-- Music, sound effects, a separate voice track: `add_audio_layer`. It is the
-  only tool that places audio-only media — `add_video_layer` builds a visual
-  layer and refuses an audio file.
+- Placing clips, titles, music, stills: one `add_layers` call for the whole
+  batch.
 - Music alignment: `analyze_audio` reads a media item's source waveform
   energy, onset candidates and energy changes, at most 60 s per call, outside
   existing trims too; its description gives the slip that lands one at a
   timeline time. Audition: amplitude onsets do not identify beats or main
   melodies.
-- A title, a lower third, a credit: `add_text_layer` with its `graphic_role`;
-  it is born in the project's style, entrance and exit included. Adjust it
-  with `update_layer_params` (`intro`/`outro` set the motion). Subtitles from
-  a document are `apply_subtitles`.
+- A title, a lower third, a credit: a text layer with its `graphic_role`.
+  Adjust it with `update_layer_params`. Subtitles from a document are
+  `apply_subtitles`.
 - A track that refuses every edit is locked: `set_track_flags` clears the lock
   (and hides or shows a track's output). A layer carries its own lock, which
   `update_layer` clears.
@@ -269,7 +267,7 @@ moving footage stays a video layer.
 3. Use `preview_motif` at start, middle and near the end, plus non-default props.
    Check its returned revision and any diagnostics. Fix invalid sources before
    publishing; do not treat the last valid frame as the current source.
-4. **The user approves publication.** Place the draft with `add_motif_layer`
+4. **The user approves publication.** Place the draft with `add_layers`
    when useful and ask the user to review it. After confirmation, call
    `install_motif` with the reviewed revision. To overwrite another publication,
    explicitly supply its target id and current version. The draft remains

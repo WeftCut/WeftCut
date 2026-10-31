@@ -294,9 +294,9 @@ describe('following', () => {
   it('follows a layer with no source window by its offset into it', async () => {
     const m = multi()
     const root = () => m.actor.snapshot().compositions[m.actor.snapshot().root_id]!
-    const r = m.actor.mcpCall('add_color_layer', JSON.stringify({ track_id: root().tracks[0]!.id, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 9_000_000, t_end_us: 11_000_000 }))
+    const r = m.actor.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: root().tracks[0]!.id, t_start_us: 9_000_000, t_end_us: 11_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] }))
     if (!r.ok) throw new Error(r.error.message)
-    const color = (r.result.structuredContent as { layer_id: string }).layer_id
+    const color = (r.result.structuredContent as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
     const id = await m.tack(9_500_000, 10_500_000)
     expect(m.view(id).follows).toEqual({ layer_id: color, t_us: 9_500_000 })
     m.mcp('delete_layers', { layer_ids: [m.c.C], ripple: true })
@@ -349,7 +349,7 @@ describe('outdated', () => {
     m.mcp('undo', {})
     expect(m.view(id).outdated).toBe(false)
     const gap = await m.tack(8_500_000, 9_500_000)
-    m.mcp('add_color_layer', { track_id: root().tracks[0]!.id, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 9_000_000, t_end_us: 10_000_000 })
+    m.mcp('add_layers', { layers: [{ track_id: root().tracks[0]!.id, t_start_us: 9_000_000, t_end_us: 10_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] })
     expect(m.view(gap).outdated, 'filled gap').toBe(true)
     m.mcp('move_layer', { layer_id: m.c.C, new_t_start_us: 12_000_000, new_track_id: root().tracks[0]!.id })
     expect(m.view(id)).toMatchObject({ t_us: 1_500_000, outdated: true, follows: { layer_id: m.c.A } })

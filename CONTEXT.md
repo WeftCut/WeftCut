@@ -215,8 +215,15 @@ _Avoid_: auto-fit, effective font size (the derived number)
 
 **Layer**:
 One placed item in a track (`Track.layers`), with a kind: video, audio, image,
-text, motif, group. The model word. UI word: clip / 片段, never *layer* or 图层.
+text, color, motif, group — the `kind`s `add_layers` places. The model word. UI
+word: clip / 片段, never *layer* or 图层.
 _Avoid_: layer / 图层 in UI strings; item, element, object
+
+**Auto-pair**:
+A video layer placed with its source's audio as a linked dialogue Audio layer
+on the same track, in the same commit (`auto_pair_audio_on_import`; per call,
+`add_layers` `audio: "linked" | "none"`).
+_Avoid_: auto-link
 
 **Track**:
 The kind-agnostic container of layers (`Project.tracks`, bottom of z-stack

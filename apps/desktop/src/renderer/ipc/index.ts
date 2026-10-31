@@ -3199,7 +3199,7 @@ export async function getMotifCover(id: string, contentHash: string): Promise<Bl
   return new Blob([bytes as BlobPart], { type: "image/png" });
 }
 
-/// Add a motif layer. Mirrors the MCP `add_motif_layer` tool's behavior:
+/// Add a motif layer (the UI twin of `add_layers` kind `motif`):
 /// - `t_end_us` defaults to `t_start_us + default_duration_s * 1e6`.
 /// - `track_id` defaults to first existing Video track or auto-creates
 ///   one labeled "Motifs".

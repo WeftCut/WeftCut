@@ -43,9 +43,9 @@ describe('a retired tool name, over the wire', () => {
   it('is absent from the catalog the same client reads', async () => {
     const client = await connected()
     const names = (await client.listTools()).tools.map((t) => t.name)
-    for (const retired of ['checkpoint', 'add_motif', 'set_composition', 'compositions_delete'])
+    for (const retired of ['checkpoint', 'set_composition', 'compositions_delete'])
       expect(names, retired).not.toContain(retired)
-    for (const now of ['create_checkpoint', 'add_motif_layer', 'update_composition', 'delete_composition'])
+    for (const now of ['create_checkpoint', 'update_composition', 'delete_composition'])
       expect(names, now).toContain(now)
   })
 

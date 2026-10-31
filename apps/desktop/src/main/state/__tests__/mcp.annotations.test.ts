@@ -73,9 +73,9 @@ describe('the read set', () => {
     const gen = seededGen()
     const actor = createActor({ initial: blankProject(gen, 'reads'), idGen: gen, clock: () => '<TS>' })
     const aRoll = root(actor.snapshot()).tracks[0].id
-    const added = actor.mcpCall('add_color_layer', JSON.stringify({ track_id: aRoll, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 }))
+    const added = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: aRoll, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] }))
     if (!added.ok) throw new Error(added.error.message)
-    const layerId = (JSON.parse(added.result.content[0].text) as { layer_id: string }).layer_id
+    const layerId = (JSON.parse(added.result.content[0].text) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
     const argsFor: Record<string, Record<string, unknown>> = {
       get_frame_interpolation_capabilities: { layer_ids: [layerId], purpose: 'Preview' },
       read_project: { view: 'current' },
@@ -106,7 +106,7 @@ describe('the destructive set', () => {
     }
     for (const n of destructive) expect(n, 'a destructive read is a contradiction').not.toMatch(/^(get_|list_|read_)/)
     // Creation and setting are writes, not destruction.
-    for (const n of ['add_color_layer', 'set_position', 'update_layer_params', 'create_link', 'set_project_settings']) expect(ann(n).destructiveHint).toBe(false)
+    for (const n of ['add_layers', 'set_position', 'update_layer_params', 'create_link', 'set_project_settings']) expect(ann(n).destructiveHint).toBe(false)
   })
 
   it('a set is idempotent, a creation is not', () => {
@@ -153,9 +153,9 @@ describe('the wire and the activity service read the same fact', () => {
     const { client, agent, actor } = await connected()
     const aRoll = root(actor.snapshot()).tracks[0].id
     await client.callTool({ name: 'read_project', arguments: { view: 'current' } })
-    await client.callTool({ name: 'add_color_layer', arguments: { track_id: aRoll, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 } })
-    const kinds = Object.fromEntries(agent.snapshot().activities.filter((a) => a.tool === 'read_project' || a.tool === 'add_color_layer').map((a) => [a.tool, a.kind]))
-    expect(kinds).toEqual({ read_project: 'read', add_color_layer: 'operation' })
+    await client.callTool({ name: 'add_layers', arguments: { layers: [{ track_id: aRoll, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] } })
+    const kinds = Object.fromEntries(agent.snapshot().activities.filter((a) => a.tool === 'read_project' || a.tool === 'add_layers').map((a) => [a.tool, a.kind]))
+    expect(kinds).toEqual({ read_project: 'read', add_layers: 'operation' })
   })
 })
 
@@ -168,7 +168,7 @@ describe('an unrecorded mutator says so', () => {
     // walks past all three.
     for (const n of ['begin_agent_session', 'end_agent_session']) expect(desc(n), n).toContain('Unrecorded')
     // and a recorded edit does not carry the word
-    for (const n of ['add_color_layer', 'delete_layers', 'rename_composition', 'set_role_gain']) expect(desc(n), n).not.toContain('Unrecorded')
+    for (const n of ['add_layers', 'delete_layers', 'rename_composition', 'set_role_gain']) expect(desc(n), n).not.toContain('Unrecorded')
   })
   it('ANN_READ is what the TS reads carry', () => {
     for (const n of ['read_project', 'get_param_track', 'export_captions']) expect(MCP_TOOL_DEFS.find((d) => d.name === n)!.annotations).toBe(ANN_READ)

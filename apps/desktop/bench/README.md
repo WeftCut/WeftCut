@@ -61,7 +61,7 @@ interactive session on the same account.
   "setup": [
     { "tool": "import_media", "args": { "path": "{fixture:fixture-id}" }, "as": "media1" },
     { "tool": "read_project", "args": { "view": "tracks" }, "as": "tracks" },
-    { "tool": "add_video_layer", "args": { "media_id": "{ref:media1.media_id}", "track_id": "{ref:tracks[role=ARoll].id}" } }
+    { "tool": "add_layers", "args": { "layers": [{ "track_id": "{ref:tracks[role=ARoll].id}", "t_start_us": 0, "t_end_us": 4000000, "content": { "kind": "video", "media_id": "{ref:media1.media_id}", "src_in_us": 0 } }] } }
   ],
   "prompt": "what the user would type",
   "taste": "---\nextends: clipping\n---\n",   // optional: the project's TASTE.md

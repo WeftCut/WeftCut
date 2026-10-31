@@ -62,7 +62,7 @@ describe('serveProjectResource', () => {
   it('serves a single layer for project://layers/{id}', () => {
     const actor = mkActor()
     const track = root(actor.snapshot()).tracks[0].id
-    const r = actor.mcpCall('add_color_layer', JSON.stringify({ track_id: track, color: { r: 0, g: 0, b: 0, a: 1 }, t_start_us: 0, t_end_us: 1_000_000 }))
+    const r = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: track, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 1 } } }] }))
     expect(r.ok).toBe(true)
     const layerId = root(actor.snapshot()).tracks.flatMap((t) => t.layers)[0].id
     expect(JSON.parse(text(serveProjectResource(`project://layers/${layerId}`, actor))).id).toBe(layerId)
@@ -228,12 +228,12 @@ describe('project://tracks lists envelopes', () => {
     const gen = uuidV7Gen()
     const actor = createActor({ initial: blankProject(gen, 'env'), idGen: gen, clock: () => '<TS>' })
     const aRoll = root(actor.snapshot()).tracks[0].id
-    const added = actor.mcpCall('add_color_layer', JSON.stringify({ track_id: aRoll, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 2_000_000 }))
+    const added = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: aRoll, t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] }))
     if (!added.ok) throw new Error(added.error.message)
-    const layerId = (JSON.parse(added.result.content[0].text) as { layer_id: string }).layer_id
-    const title = actor.mcpCall('add_text_layer', JSON.stringify({ track_id: root(actor.snapshot()).tracks[1].id, content: 'Hi', t_start_us: 0, t_end_us: 2_000_000 }))
+    const layerId = (JSON.parse(added.result.content[0].text) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
+    const title = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: root(actor.snapshot()).tracks[1].id, t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'text', content: 'Hi' } }] }))
     if (!title.ok) throw new Error(title.error.message)
-    const titleId = (JSON.parse(title.result.content[0].text) as { layer_id: string }).layer_id
+    const titleId = (JSON.parse(title.result.content[0].text) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
     const link = actor.mcpCall('create_link', JSON.stringify({ layer_ids: [layerId, titleId] }))
     if (!link.ok) throw new Error(link.error.message)
     const effect = actor.mcpCall('add_effect', JSON.stringify({ layer_id: titleId, kind: 'blur' }))
@@ -271,7 +271,7 @@ describe('project://tracks lists envelopes', () => {
     p.media_pool[MID] = mediaItemTemplate(MID, 'Video', 4_000_000)
     const actor = createActor({ initial: p, idGen: gen, clock: () => '<TS>' })
     const aRoll = root(actor.snapshot()).tracks[0].id
-    const added = actor.mcpCall('add_video_layer', JSON.stringify({ track_id: aRoll, media_id: MID, src_in_us: 500_000, src_out_us: 2_500_000, t_start_us: 0, t_end_us: 2_000_000 }))
+    const added = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: aRoll, t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'video', media_id: MID, src_in_us: 500_000 } }] }))
     if (!added.ok) throw new Error(added.error.message)
     const tracks = JSON.parse(text(serveProjectResource('project://tracks', actor))) as Array<Record<string, unknown> & { layers: Array<Record<string, unknown>> }>
     const row = tracks[0].layers[0]

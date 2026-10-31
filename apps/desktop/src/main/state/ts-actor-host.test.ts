@@ -359,9 +359,9 @@ describe('createTsActorHost — persistence-route integration', () => {
     expect(host.actor.snapshot()).toBe(snapshot)
     expect(host.actor.historyStatus()).toEqual(history)
     expect(host.actor.command('add_text_layer', { trackId, tStartUs: 1_000_000, durationUs: 1_000_000 }).ok).toBe(true)
-    const spec = { content: 'Title', track_id: trackId, t_start_us: 2_000_000, t_end_us: 3_000_000 }
+    const spec = { layers: [{ track_id: trackId, t_start_us: 2_000_000, t_end_us: 3_000_000, content: { kind: 'text', content: 'Title' } }] }
     expect(fonts()).toEqual([DEFAULT_CAPTION_FONT_FAMILY, 'Example Sans'])
-    expect(host.actor.mcpCall('add_text_layer', JSON.stringify(spec)).ok).toBe(true)
+    expect(host.actor.mcpCall('add_layers', JSON.stringify(spec)).ok).toBe(true)
     await host.handleInvoke('app_settings_set', { patch: { default_text_font: '' } })
     expect(host.actor.command('add_text_layer', { trackId, tStartUs: 3_000_000, durationUs: 1_000_000 }).ok).toBe(true)
     expect(fonts()).toEqual([DEFAULT_CAPTION_FONT_FAMILY, 'Example Sans', 'Example Sans', DEFAULT_CAPTION_FONT_FAMILY])
