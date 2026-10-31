@@ -8,7 +8,8 @@ import type { TsActorHost } from './state/ts-actor-host';
 import { rootComposition } from './state/model';
 import { snapFrameRound } from './state/snap';
 import { resolveExportRequest, resolveExportOptions, EXPORT_COMPATIBILITY, ExportValidationError } from '../shared/exportValidation';
-import { exportTerminal, exportWire, type ExportJob, type ExportRun } from '../shared/exportJob';
+import { exportTerminal, exportWire, type ExportJob, type ExportRun, type ExportEncoderLoad } from '../shared/exportJob';
+import { ExportTimeEstimate } from './exportTimeEstimate';
 
 /** Rendered stills: JPEG bytes per time, or one labelled sheet of them. */
 export interface StillsResult {
@@ -25,6 +26,8 @@ interface Entry {
   session: string; renderer?: string; dispatched: boolean; cancelling: boolean;
   published: boolean; prepared?: boolean; timer?: ReturnType<typeof setTimeout>; preparation: Promise<void>;
   publishing?: Promise<string>; finishing?: Promise<void>;
+  timing?: ExportTimeEstimate;
+  telemetry?: ExportEncoderLoad; telemetryAt?: number; telemetryPending?: boolean; telemetrySampleAt?: number;
 }
 interface Deps {
   host: () => TsActorHost | null;
@@ -33,6 +36,7 @@ interface Deps {
   exportPreferences?: () => ExportPresetPreferences;
   readyTimeoutMs?: number;
   generation?: () => number;
+  telemetry?: (videoOutput: string) => Promise<ExportEncoderLoad | null>;
 }
 const canonical = (v: unknown): string => JSON.stringify(v, (_k, value: unknown) => value && typeof value === 'object' && !Array.isArray(value)
   ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))) : value);
@@ -95,6 +99,13 @@ export class ExportJobs {
     else pending.resolve({ frames: p.frames ?? [], ...(p.sheet ? { sheet: p.sheet } : {}) });
   }
   isActive() { return !!this.active; }
+  /** Synchronous gate: no new export may race a graceful editor restart. */
+  holdForRestart(): () => void {
+    this.assertWritable();
+    if (this.stopping) throw new ExportJobError('app_closing', 'The application is closing');
+    this.stopping = true;
+    return () => { this.stopping = false; };
+  }
   assertWritable() {
     if (this.active) throw new ExportJobError('export_busy', 'An export is active; finish or discard it before editing or switching projects', this.status());
   }
@@ -139,7 +150,12 @@ export class ExportJobs {
   status(id?: string): ExportJob | null {
     const j = id ? this.entries.get(id) : this.active;
     if (id && !j) throw new ExportJobError('not_found', `Unknown export job ${id}`);
-    return j ? structuredClone({ ...j.view, can_cancel: !exportTerminal(j.view.state), can_retry: j.view.state === 'awaiting_retry' && !j.cancelling }) : null;
+    return j ? structuredClone({ ...j.view,
+      ...(j.view.state === 'rendering' && !j.cancelling ? j.timing?.snapshot(performance.now()) : {}),
+      ...(j.view.state === 'rendering' && !j.cancelling && j.telemetry ? {
+        encoder_load: { ...j.telemetry, utilization_percent: performance.now() - (j.telemetryAt ?? 0) < 10_000 ? j.telemetry.utilization_percent : null },
+      } : {}),
+      can_cancel: !exportTerminal(j.view.state), can_retry: j.view.state === 'awaiting_retry' && !j.cancelling }) : null;
   }
   private notify(j: Entry) { this.deps.send('export:status', this.status(j.view.job_id)); }
   start(args: Record<string, unknown>, agent = true): Promise<ExportJob> {
@@ -240,6 +256,18 @@ export class ExportJobs {
   }
   async update(id: string, token: string, update: Partial<ExportJob>) {
     const j = this.owned(id, token);
+    if (update.state === 'rendering') {
+      const now = performance.now();
+      if (j.view.state !== 'rendering') j.timing = new ExportTimeEstimate(now);
+      if (typeof update.progress === 'number') j.timing?.observe(update.progress, now);
+      if (this.deps.telemetry && !j.cancelling && !j.telemetryPending && now - (j.telemetrySampleAt ?? -Infinity) >= 3_000) {
+        j.telemetryPending = true; j.telemetrySampleAt = now;
+        void this.deps.telemetry(j.video).then(sample => {
+          if (this.active !== j || j.cancelling || j.view.state !== 'rendering') return;
+          j.telemetry = sample ?? undefined; j.telemetryAt = performance.now(); this.notify(j);
+        }).catch(() => { j.telemetry = undefined; }).finally(() => { j.telemetryPending = false; });
+      }
+    }
     if (typeof update.progress === 'number' && Number.isFinite(update.progress)) j.view.progress = Math.max(0, Math.min(1, update.progress));
     if (typeof update.duration_us === 'number') j.view.duration_us = update.duration_us;
     if (update.state && exportTerminal(update.state)) {

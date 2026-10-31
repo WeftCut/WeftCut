@@ -1,3 +1,4 @@
+import { createExportTelemetry } from "./exportTelemetry";
 import { ExportJobs, exportPathExists, suggestExportName } from "./exportJobs";
 import path from 'node:path'
 import { diagnosticOwner, recordDiagnostic, recordProjectDiagnostic } from './diagnostics'
@@ -995,6 +996,7 @@ app.whenReady().then(async () => {
   })
 
   const exportJobs = new ExportJobs({ host: () => tsHost, send: emitToRenderer,
+    telemetry: createExportTelemetry(),
     exportPreferences: () => appSettings.get(),
     generation: () => workspaceEvents.requireCurrent(),
     native: async (channel, args) => JSON.parse(await backend!.invoke(channel, JSON.stringify(args))),
