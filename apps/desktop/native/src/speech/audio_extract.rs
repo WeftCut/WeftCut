@@ -25,10 +25,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use crate::ffmpeg::ffmpeg_is_installed;
+use crate::ffmpeg::{ffmpeg_is_installed, Bound};
 use anyhow::{Context, Result};
-
-use crate::process::NoConsoleWindow;
 
 use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path, CacheLayout};
 use crate::resources::{UserComputeBlock, UserComputeCaller};
@@ -121,17 +119,12 @@ pub async fn extract_audio_window_with_observer(
     // pre-roll (a window deep into a long file would otherwise decode from 0),
     // and the output-side -ss is the sample-accurate remainder transcription
     // needs; an input-side seek alone is only as precise as the index.
-    let mut command = crate::ffmpeg::command();
-    command
-        .no_console_window()
-        // Reap on future-drop so no orphan keeps writing the slice temp; see
-        // jobs/hwaccel.rs.
-        .kill_on_drop(true)
-        .args(["-y", "-hide_banner", "-nostats", "-loglevel", "error"]);
+    let mut command = crate::ffmpeg::command(Bound::TemporarilyUnbounded);
+    command.args(["-y", "-hide_banner", "-nostats", "-loglevel", "error"]);
     if let Some(coarse_s) = &coarse_s {
         command.args(["-ss", coarse_s]);
     }
-    let child = command
+    let output = command
         .arg("-i")
         .arg(source)
         .args([
@@ -153,12 +146,9 @@ pub async fn extract_audio_window_with_observer(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
         .spawn()
-        .context("spawn ffmpeg for audio extract")?;
-
-    let output = child
-        .wait_with_output()
+        .context("spawn ffmpeg for audio extract")?
+        .output()
         .await
         .context("await ffmpeg for audio extract")?;
     if !output.status.success() {

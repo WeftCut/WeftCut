@@ -158,42 +158,28 @@ impl CacheLayout {
         })
     }
 
-    /// Keep the caller's resource permit alive until cancellation has killed
+    /// Keep the caller's resource permit alive until cancellation has stopped
     /// and reaped the child, not merely until its output future is dropped.
+    /// A child spawned with a timeout fails with "media probe timed out".
+    #[cfg(feature = "jobs")]
     pub async fn command_output(
         &self,
-        command: &mut tokio::process::Command,
-    ) -> Result<std::process::Output> {
-        self.command_output_timeout(command, None).await
-    }
-    pub async fn command_output_timeout(
-        &self,
-        command: &mut tokio::process::Command,
-        timeout: Option<std::time::Duration>,
+        command: &mut crate::ffmpeg::FfmpegCommand,
     ) -> Result<std::process::Output> {
         self.check_active()?;
-        let mut child = command.kill_on_drop(true).spawn()?;
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-        let output = drain_bounded(stdout, 8 * 1024 * 1024);
-        let errors = drain_bounded(stderr, 64 * 1024);
-        let deadline = async {
-            match timeout {
-                Some(duration) => tokio::time::sleep(duration).await,
-                None => std::future::pending().await,
-            }
-        };
+        let mut child = command.spawn()?;
+        let output = drain_bounded(child.take_stdout(), 8 * 1024 * 1024);
+        let errors = drain_bounded(child.take_stderr(), 64 * 1024);
         let wait = async {
             tokio::select! {
-                _ = deadline => {
-                    child.kill().await?;
-                    child.wait().await?;
-                    anyhow::bail!("media probe timed out")
+                status = child.wait() => match status {
+                    Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+                        anyhow::bail!("media probe timed out")
+                    }
+                    status => Ok(status?),
                 },
-                status = child.wait() => Ok(status?),
                 _ = self.cancelled() => {
-                    child.kill().await?;
-                    child.wait().await?;
+                    child.stop().await?;
                     anyhow::bail!("workspace cancelled")
                 }
             }
@@ -526,6 +512,7 @@ impl CacheLayout {
 
 /// Keep draining after the retained diagnostic/probe bound so a verbose child
 /// cannot deadlock on a full pipe or grow the process heap without a bound.
+#[cfg(feature = "jobs")]
 async fn drain_bounded<R: tokio::io::AsyncRead + Unpin>(
     pipe: Option<R>,
     limit: usize,
@@ -809,6 +796,7 @@ mod tests {
         assert_eq!(events[1].1["entries"], serde_json::json!([]));
     }
 
+    #[cfg(feature = "jobs")]
     #[tokio::test]
     async fn command_pipe_drains_beyond_retained_bound() {
         use tokio::io::AsyncWriteExt;

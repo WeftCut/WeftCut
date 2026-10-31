@@ -7,10 +7,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use crate::ffmpeg::ffmpeg_is_installed;
+use crate::ffmpeg::{ffmpeg_is_installed, Bound};
 use anyhow::{Context, Result};
-
-use crate::process::NoConsoleWindow;
 
 use crate::cache::{cached_ok, claim_temp, discard_temp, promote_temp_retry, CacheLayout};
 use crate::jobs::hwaccel;
@@ -74,12 +72,8 @@ fn can_remux(media: &MediaItem, source_gop_secs: Option<f64>) -> bool {
 }
 
 async fn run_remux(cache: &CacheLayout, media: &MediaItem, tmp: &PathBuf) -> Result<()> {
-    let mut command = crate::ffmpeg::command();
+    let mut command = crate::ffmpeg::command(Bound::TemporarilyUnbounded);
     let command = command
-        .no_console_window()
-        // Reap the child if this future is dropped (runtime shutdown) — an
-        // orphan would keep writing the shared `<dest>.tmp`; see hwaccel.rs.
-        .kill_on_drop(true)
         .args(["-y", "-hide_banner", "-nostats", "-loglevel", "error", "-i"])
         .arg(&media.path_abs)
         .args([

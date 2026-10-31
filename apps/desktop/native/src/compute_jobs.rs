@@ -9,9 +9,10 @@
 //!
 //! There is no terminal event: the tool call resolving is the terminal signal,
 //! and the host already owns that promise. Cancelling drops the tool future;
-//! every child it owns (ffmpeg, whisper.cpp, sherpa-onnx, llama-mtmd-cli) is
-//! spawned with `kill_on_drop`, and an HTTP request is aborted by the drop, so
-//! cancellation needs no cooperation from the work itself.
+//! every child it owns ends with the drop (ffmpeg through its owner in
+//! `crate::ffmpeg`; whisper.cpp, sherpa-onnx and llama-mtmd-cli are spawned with
+//! `kill_on_drop`), and an HTTP request is aborted by the drop, so cancellation
+//! needs no cooperation from the work itself.
 
 use std::collections::HashMap;
 use std::future::Future;

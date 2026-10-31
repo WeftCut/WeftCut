@@ -17,13 +17,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use crate::ffmpeg::ffmpeg_is_installed;
+use crate::ffmpeg::{ffmpeg_is_installed, Bound};
 use anyhow::{Context, Result};
 
 use tokio::io::{AsyncBufReadExt, BufReader};
 use uuid::Uuid;
 
-use crate::process::NoConsoleWindow;
 use tracing::{info, warn};
 
 use crate::state::Project;
@@ -156,8 +155,7 @@ async fn mix_and_encode(
         _ = cancellation.cancelled() => anyhow::bail!("export cancelled"),
         permit = crate::resources::interactive(128) => permit.map_err(anyhow::Error::msg)?,
     };
-    let mut cmd = crate::ffmpeg::command();
-    cmd.no_console_window();
+    let mut cmd = crate::ffmpeg::command(Bound::TemporarilyUnbounded);
     cmd.args(["-y", "-hide_banner", "-nostats"])
         .args(["-f", "f32le", "-ar", "48000", "-ac", "2", "-i", "-"])
         // −1 dB sample-peak ceiling answers overlap summing past full scale;
@@ -170,15 +168,14 @@ async fn mix_and_encode(
     }
     cmd.args(["-threads", &crate::resources::task_threads().to_string()])
         .arg(output);
-    cmd.stdin(Stdio::piped())
+    cmd.media_on_stdin()
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+        .stderr(Stdio::piped());
 
     info!("audio mix+encode starting → {}", output.display());
     let mut child = cmd.spawn().context("spawn ffmpeg")?;
-    let mut stdin = child.stdin.take().context("take ffmpeg stdin")?;
-    let stderr = child.stderr.take().context("take ffmpeg stderr")?;
+    let mut stdin = child.take_stdin().context("take ffmpeg stdin")?;
+    let stderr = child.take_stderr().context("take ffmpeg stderr")?;
     let stderr_task = tokio::spawn(async move {
         let mut reader = BufReader::new(stderr).lines();
         let mut tail: Vec<String> = Vec::new();
@@ -244,15 +241,9 @@ async fn mix_and_encode(
     // join it and reap ffmpeg before returning either failure or cancellation.
     drop(rx);
     drop(stdin);
-    if cancellation.is_cancelled() {
-        let _ = child.start_kill();
-    }
     let mixer_result = mix_task.await.context("join mixer");
     let status = tokio::select! {
-        _ = cancellation.cancelled() => {
-            let _ = child.start_kill();
-            child.wait().await
-        },
+        _ = cancellation.cancelled() => child.stop().await,
         status = child.wait() => status,
     }
     .context("await ffmpeg")?;
@@ -340,8 +331,7 @@ pub async fn mux_to_file(
             }),
         ),
     };
-    let mut cmd = crate::ffmpeg::command();
-    cmd.no_console_window();
+    let mut cmd = crate::ffmpeg::command(Bound::TemporarilyUnbounded);
     // Write beside the destination so committing is atomic on the same volume.
     // A failed mux must not truncate an existing user file or leave a partial
     // file that looks like a completed export. TempPath drops the open handle
@@ -370,8 +360,7 @@ pub async fn mux_to_file(
     cmd.args(mux_args(video_path, audio_path, target));
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+        .stderr(Stdio::piped());
     if has_audio {
         info!(
             "ffmpeg mux: {} + {} → {}",
@@ -387,7 +376,7 @@ pub async fn mux_to_file(
         );
     }
     let mut child = cmd.spawn().context("spawn ffmpeg mux")?;
-    let stderr = child.stderr.take().context("take ffmpeg stderr")?;
+    let stderr = child.take_stderr().context("take ffmpeg stderr")?;
     let stderr_task = tokio::spawn(async move {
         let mut reader = BufReader::new(stderr).lines();
         let mut tail: Vec<String> = Vec::new();
@@ -400,10 +389,7 @@ pub async fn mux_to_file(
         tail.join("\n")
     });
     let status = tokio::select! {
-        _ = cancellation.cancelled() => {
-            let _ = child.start_kill();
-            child.wait().await
-        },
+        _ = cancellation.cancelled() => child.stop().await,
         status = child.wait() => status,
     }
     .context("await ffmpeg mux")?;

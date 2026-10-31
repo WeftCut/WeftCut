@@ -6,12 +6,10 @@
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
+use std::time::{Duration, UNIX_EPOCH};
 
-use crate::process::NoConsoleWindow;
-use std::time::UNIX_EPOCH;
-
-use crate::ffmpeg::{ffprobe_is_installed, ffprobe_path};
+use crate::ffmpeg::{ffprobe_is_installed, Bound, FfmpegCommand};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use tracing::warn;
@@ -78,8 +76,7 @@ pub fn probe_metadata(path: &Path) -> MediaMetadata {
         return MediaMetadata::default();
     }
 
-    let output = Command::new(ffprobe_path())
-        .no_console_window()
+    let output = FfmpegCommand::ffprobe(Bound::TemporarilyUnbounded)
         .args([
             "-v",
             "quiet",
@@ -91,7 +88,7 @@ pub fn probe_metadata(path: &Path) -> MediaMetadata {
         .arg(path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output();
+        .output_sync();
 
     let output = match output {
         Ok(o) if o.status.success() => o,
@@ -126,9 +123,8 @@ pub async fn probe_metadata_scoped(
     if !ffprobe_is_installed() {
         return Ok(MediaMetadata::default());
     }
-    let mut command = tokio::process::Command::new(ffprobe_path());
+    let mut command = FfmpegCommand::ffprobe(Bound::Timeout(Duration::from_secs(30)));
     command
-        .no_console_window()
         .args([
             "-threads",
             "1",
@@ -143,9 +139,7 @@ pub async fn probe_metadata_scoped(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let output = cache
-        .command_output_timeout(&mut command, Some(std::time::Duration::from_secs(30)))
-        .await?;
+    let output = cache.command_output(&mut command).await?;
     anyhow::ensure!(
         output.status.success(),
         "ffprobe failed: {}",
@@ -174,9 +168,8 @@ pub async fn probe_max_keyframe_gap_secs_scoped(
     if !ffprobe_is_installed() {
         return None;
     }
-    let mut command = tokio::process::Command::new(ffprobe_path());
+    let mut command = FfmpegCommand::ffprobe(Bound::Timeout(Duration::from_secs(30)));
     let command = command
-        .no_console_window()
         .args([
             "-threads",
             "1",
@@ -196,10 +189,7 @@ pub async fn probe_max_keyframe_gap_secs_scoped(
         .arg(path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let output = cache
-        .command_output_timeout(command, Some(std::time::Duration::from_secs(30)))
-        .await
-        .ok()?;
+    let output = cache.command_output(command).await.ok()?;
     if !output.status.success() {
         return None;
     }

@@ -2058,13 +2058,14 @@ mod compute_job_tests {
     }
 
     async fn ffmpeg(args: &[&str], out: &Path) {
-        let status = crate::ffmpeg::command()
+        let status = crate::ffmpeg::command(crate::ffmpeg::Bound::TemporarilyUnbounded)
             .args(["-y", "-hide_banner", "-loglevel", "error"])
             .args(args)
             .arg(out)
-            .status()
+            .output()
             .await
-            .unwrap();
+            .unwrap()
+            .status;
         assert!(status.success(), "fixture ffmpeg failed: {status}");
     }
 

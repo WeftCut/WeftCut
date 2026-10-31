@@ -17,9 +17,8 @@
 use std::path::Path;
 use std::process::Stdio;
 
-use crate::ffmpeg::ffmpeg_is_installed;
+use crate::ffmpeg::{ffmpeg_is_installed, Bound};
 
-use crate::process::NoConsoleWindow;
 use crate::resources::{UserComputeBlock, UserComputeCaller};
 
 use super::describer::TimedFrame;
@@ -179,9 +178,7 @@ pub async fn sample_frames(
 
         // -ss BEFORE -i = fast keyframe seek (matches spike.mjs + jobs/frame.rs);
         // description is robust to thumbnail-grade seek accuracy.
-        let output = crate::ffmpeg::command()
-            .no_console_window()
-            .kill_on_drop(true)
+        let output = crate::ffmpeg::command(Bound::TemporarilyUnbounded)
             .args([
                 "-nostdin",
                 "-hide_banner",

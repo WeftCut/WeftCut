@@ -22,28 +22,32 @@
 //! Every ffmpeg/ffprobe spawn in this crate resolves through `ffmpeg_path()` /
 //! `ffprobe_path()` here. Importing the sidecar crate's versions re-opens the
 //! hole.
+//!
+//! Spawning and stopping those children lives in [`child`].
 
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+mod child;
+
+use std::path::PathBuf;
+use std::process::Stdio;
 
 use anyhow::{Context, Result};
 use ffmpeg_sidecar::{download::auto_download, version::ffmpeg_version_with_path};
 use parking_lot::Mutex;
 use tracing::{info, warn};
 
-use crate::process::NoConsoleWindow;
+pub(crate) use child::{Bound, FfmpegCommand, SyncFfmpegChild};
 
-/// All production ffmpeg builders start here. Both decoder and filter thread
-/// defaults follow the cross-platform allocation; encoder callers also put
-/// `-threads` before their output (input and output options have separate scope).
-pub fn command() -> tokio::process::Command {
-    command_with_threads(crate::resources::task_threads())
+/// The usual ffmpeg builder. Both decoder and filter thread defaults follow the
+/// cross-platform allocation; encoder callers also put `-threads` before their
+/// output (input and output options have separate scope).
+pub(crate) fn command(bound: Bound) -> FfmpegCommand {
+    command_with_threads(crate::resources::task_threads(), bound)
 }
 
 /// Use the CPU claim of a narrower admission lane rather than the default
 /// multi-thread transcode allocation. Output encoders still need their own cap.
-pub(crate) fn command_with_threads(threads: u32) -> tokio::process::Command {
-    let mut command = tokio::process::Command::new(ffmpeg_path());
+pub(crate) fn command_with_threads(threads: u32, bound: Bound) -> FfmpegCommand {
+    let mut command = FfmpegCommand::ffmpeg(bound);
     let threads = threads.max(1).to_string();
     command.args([
         "-threads",
@@ -188,25 +192,25 @@ pub fn refused_shadow() -> Option<PathBuf> {
     resolve("ffmpeg").refused_shadow
 }
 
-fn is_installed(path: &Path) -> bool {
-    Command::new(path)
+fn is_installed(mut command: FfmpegCommand) -> bool {
+    command
         .arg("-version")
-        .no_console_window()
+        .stdin(Stdio::null())
         .stderr(Stdio::null())
         .stdout(Stdio::null())
-        .status()
-        .map(|s| s.success())
+        .output_sync()
+        .map(|output| output.status.success())
         .unwrap_or(false)
 }
 
 /// `ffmpeg -version` succeeds on the resolved binary.
 pub fn ffmpeg_is_installed() -> bool {
-    is_installed(&ffmpeg_path())
+    is_installed(FfmpegCommand::ffmpeg(Bound::TemporarilyUnbounded))
 }
 
 /// `ffprobe -version` succeeds on the resolved binary.
 pub fn ffprobe_is_installed() -> bool {
-    is_installed(&ffprobe_path())
+    is_installed(FfmpegCommand::ffprobe(Bound::TemporarilyUnbounded))
 }
 
 pub async fn bootstrap() -> Result<BootstrapStatus> {

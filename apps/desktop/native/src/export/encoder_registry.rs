@@ -21,8 +21,6 @@ use tokio::sync::Mutex;
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
 
-use crate::process::NoConsoleWindow;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum VideoCodec {
@@ -610,9 +608,7 @@ impl CapabilityProbe for FfmpegCapabilityProbe {
             BitDepth::Ten => "color=c=black:s=640x360:d=0.1:r=30,format=yuv420p10le",
         };
 
-        let mut cmd = crate::ffmpeg::command();
-        cmd.no_console_window();
-        cmd.kill_on_drop(true);
+        let mut cmd = crate::ffmpeg::command(crate::ffmpeg::Bound::Timeout(PROBE_TIMEOUT));
         cmd.args([
             "-y",
             "-hide_banner",
@@ -638,10 +634,12 @@ impl CapabilityProbe for FfmpegCapabilityProbe {
         let child = cmd
             .spawn()
             .map_err(|error| format!("spawn failed: {error}"))?;
-        let output = timeout(PROBE_TIMEOUT, child.wait_with_output())
-            .await
-            .map_err(|_| format!("probe timed out after {}s", PROBE_TIMEOUT.as_secs()))?
-            .map_err(|error| format!("wait failed: {error}"))?;
+        let output = child.output().await.map_err(|error| match error.kind() {
+            std::io::ErrorKind::TimedOut => {
+                format!("probe timed out after {}s", PROBE_TIMEOUT.as_secs())
+            }
+            _ => format!("wait failed: {error}"),
+        })?;
         if output.status.success() {
             return Ok(());
         }

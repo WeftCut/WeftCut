@@ -35,13 +35,12 @@ pub(crate) mod sim;
 /// per-(source, tier) sidecar. Owns the one measurement function; [`attach_stats`]
 /// is its other caller.
 pub(crate) mod stats;
-use crate::ffmpeg::ffmpeg_is_installed;
+use crate::ffmpeg::{ffmpeg_is_installed, Bound};
 use async_trait::async_trait;
 use image::RgbImage;
 use serde::{Deserialize, Serialize};
 
 use crate::cache::CacheLayout;
-use crate::process::NoConsoleWindow;
 use crate::state::MediaItem;
 
 /// Downscaled width for per-shot stat frames. Luma / Laplacian / SSIM are
@@ -147,9 +146,7 @@ impl ShotDetector for FfmpegShotDetector {
         // backslash escaping, and `file=-` collides with the null muxer on
         // stdout. So run at info level and parse the captured stderr.
         let vf = format!("select='gt(scene,{})',metadata=print", opts.sensitivity);
-        let output = crate::ffmpeg::command()
-            .no_console_window()
-            .kill_on_drop(true)
+        let output = crate::ffmpeg::command(Bound::TemporarilyUnbounded)
             .args([
                 "-nostdin",
                 "-hide_banner",
@@ -630,9 +627,7 @@ pub(crate) async fn extract_rgb(video: &Path, t_us: i64, dest: &Path) -> Result<
         .acquire()
         .await
         .context("acquire ffmpeg slot")?;
-    let output = crate::ffmpeg::command()
-        .no_console_window()
-        .kill_on_drop(true)
+    let output = crate::ffmpeg::command(Bound::TemporarilyUnbounded)
         .args([
             "-nostdin",
             "-hide_banner",

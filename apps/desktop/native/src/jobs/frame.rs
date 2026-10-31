@@ -9,10 +9,8 @@
 use std::path::PathBuf;
 use std::process::Stdio;
 
-use crate::ffmpeg::ffmpeg_is_installed;
+use crate::ffmpeg::{ffmpeg_is_installed, Bound};
 use anyhow::{Context, Result};
-
-use crate::process::NoConsoleWindow;
 
 use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path, CacheLayout};
 use crate::state::{MediaItem, MediaKind, TimeUs};
@@ -55,11 +53,7 @@ pub async fn extract(cache: &CacheLayout, media: &MediaItem, t_us: TimeUs) -> Re
     let _resources = crate::resources::interactive(128)
         .await
         .map_err(anyhow::Error::msg)?;
-    let output = crate::ffmpeg::command()
-        .no_console_window()
-        // Reap on future-drop so no orphan keeps writing the frame temp; see
-        // hwaccel.rs.
-        .kill_on_drop(true)
+    let output = crate::ffmpeg::command(Bound::TemporarilyUnbounded)
         .args([
             "-y",
             "-hide_banner",
