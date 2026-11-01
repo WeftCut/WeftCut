@@ -313,7 +313,7 @@ fn median(values: &mut [f64]) -> Option<f64> {
     }
     values.sort_by(f64::total_cmp);
     let mid = values.len() / 2;
-    Some(if values.len() % 2 == 0 {
+    Some(if values.len().is_multiple_of(2) {
         (values[mid - 1] + values[mid]) / 2.0
     } else {
         values[mid]
@@ -519,8 +519,10 @@ mod tests {
             ..ok()
         }
     }
+    /// A run of samples replaced by what `f` makes.
+    type Edit = (std::ops::Range<usize>, fn() -> Sample);
     /// `n` ok samples with `f` applied at `range`; the first has no SSIM.
-    fn stream(n: usize, edits: &[(std::ops::Range<usize>, fn() -> Sample)]) -> Vec<Sample> {
+    fn stream(n: usize, edits: &[Edit]) -> Vec<Sample> {
         let mut s: Vec<Sample> = (0..n).map(|_| ok()).collect();
         for (range, f) in edits {
             for k in range.clone() {
