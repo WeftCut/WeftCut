@@ -263,7 +263,9 @@ fn expand_voiceover(args: Option<&Map<String, Value>>) -> Result<PromptResult, M
     steps.push(format!(
         "Call `synthesize_speech` with `text: <the script>`{extra}. A script longer than the tool takes goes in several calls, split at paragraph boundaries, in order."
     ));
-    steps.push("Report where the voiceover landed and whether it was `cached` (no new charge).".into());
+    steps.push(
+        "Report where the voiceover landed and whether it was `cached` (no new charge).".into(),
+    );
     let steps = steps
         .iter()
         .enumerate()
@@ -353,7 +355,8 @@ mod tests {
                 );
             }
         }
-        let body = message_text(&expand(NAME_CUT_PAUSES, None).expect("expand").messages[0]).to_string();
+        let body =
+            message_text(&expand(NAME_CUT_PAUSES, None).expect("expand").messages[0]).to_string();
         assert!(body.contains("read `project://tracks`"));
         assert!(body.contains("ask the user which one"));
     }
@@ -483,7 +486,10 @@ mod tests {
             "the sentence names one voice once"
         );
         assert!(body.contains("Settings → API keys"));
-        assert!(!body.contains("target_track_id"), "no track named, no track step");
+        assert!(
+            !body.contains("target_track_id"),
+            "no track named, no track step"
+        );
         assert!(
             !body.contains("MissingKey"),
             "no token names the model cannot act on"
@@ -493,7 +499,11 @@ mod tests {
     #[cfg(feature = "speech")]
     #[test]
     fn voiceover_takes_a_track_by_name() {
-        let a = args(&[("script", json!("hi")), ("voice", json!("nova")), ("track", json!("Narration"))]);
+        let a = args(&[
+            ("script", json!("hi")),
+            ("voice", json!("nova")),
+            ("track", json!("Narration")),
+        ]);
         let r = expand("voiceover", Some(&a)).expect("expand voiceover");
         let body = message_text(&r.messages[0]);
         assert!(body.contains("\"Narration\""));

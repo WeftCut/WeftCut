@@ -1475,13 +1475,14 @@ mod tests {
 
     #[cfg(feature = "mcp")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn mcp_catalog_lists_ping_but_no_ts_tools() {
+    async fn mcp_catalog_lists_native_tools_but_no_ts_tools() {
         // Rust catalog is native/compute/hybrid only.
         // `add_track` and `apply_subtitles` are TS-defined and must NOT appear here.
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
         b.init().await.unwrap();
         let cat = b.mcp_catalog().await.unwrap();
-        assert!(cat.contains("\"ping\""));
+        assert!(cat.contains("\"analyze_audio\""));
+        assert!(!cat.contains("\"ping\""), "ping is removed");
         assert!(!cat.contains("\"apply_subtitles\""));
         assert!(
             !cat.contains("\"add_track\""),

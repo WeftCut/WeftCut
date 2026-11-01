@@ -180,15 +180,19 @@ mod tests {
     use super::*;
 
     /// The table feeds both surfaces from one source — every advertised tool
-    /// must be dispatchable. Smoke: catalog is non-empty and `ping` dispatches.
+    /// must be dispatchable. Smoke: a read tool with no required argument
+    /// dispatches through the table.
     #[tokio::test]
-    async fn ping_dispatches_to_pong() {
+    async fn a_listed_tool_dispatches() {
         use std::sync::Arc;
         let b = Backend::new_for_test(Arc::new(crate::events::VecEventSink::new()));
         b.init().await.unwrap();
-        let r = dispatch_tool(&b, "ping", "{}").await.unwrap();
-        let v = serde_json::to_value(&r).unwrap();
-        assert_eq!(v["content"][0]["text"], "pong");
+        let err = dispatch_tool(&b, "analyze_audio", "{}").await.unwrap_err();
+        assert_ne!(
+            err.code,
+            super::super::wire::McpErrorCode::NotFound,
+            "a listed tool must dispatch (an argument refusal is fine)"
+        );
     }
 
     #[tokio::test]
