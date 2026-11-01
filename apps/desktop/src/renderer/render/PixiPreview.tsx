@@ -1003,8 +1003,8 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 /// pixiPreviewFlag.ts, which most of them are threaded straight into.
 async function handlePixiExport(
   opts: {
-    resourcePlan?: import("../../shared/export-resources").ExportResourcePlan | undefined;
-    finalizationToken?: string | undefined;
+    resourcePlan: import("../../shared/export-resources").ExportResourcePlan;
+    finalizationToken: string;
     onProgress?: (encoded: number, total: number) => void;
     encoderConfig?: VideoEncoderConfig;
     outputFps?: { num: number; den: number };

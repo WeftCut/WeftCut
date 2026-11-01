@@ -1534,6 +1534,14 @@ app.whenReady().then(async () => {
       if (parent !== undefined) motifGpu?.closeExport(_e.sender, parent);
       args = { ...rest, finalizationId: parent };
     }
+    if (channel === 'export_project_audio_only') {
+      // The mix borrows from its export's admitted plan: only this sender's
+      // live token names it, never a renderer-supplied lease number.
+      const { finalizationToken, finalizationId: _id, finalization_id: _alias, ...rest } = args ?? {};
+      const parent = resolveExportFinalization(_e.sender.id, finalizationToken);
+      if (parent === undefined) throw new Error('The audio mix needs an admitted export plan');
+      args = { ...rest, finalizationId: parent };
+    }
     if (channel === 'motif_get_cover') return motifCovers.get(args.id, args.contentHash)
     if (channel === 'motif_bake_session') {
       if (!motifAdmissionOpen && wsCache) throw new Error('Project is changing; retry after it opens')

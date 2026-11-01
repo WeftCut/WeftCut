@@ -102,6 +102,7 @@ vi.mock("react-i18next", () => ({
 }));
 
 import { createExportRunner, queuedExportMessage } from "./exportRunner";
+import { EXPORT_AUDIO_MIX_MIB } from "../../shared/export-resources";
 import { capabilityOf, RendererCannotDrawError, type RendererCapability } from "../render/rendererCapability";
 
 const GPU = capabilityOf("webgpu", true);
@@ -418,6 +419,84 @@ describe("exportRunner", () => {
     });
     expect(bridge.log).toContain("invoke ensure_export_audio_conform");
     expect(bridge.log).not.toContain("invoke export_video_sink_start");
+  });
+
+  // Issue 21: right after import a quick proxy holds the only CPU slot. A
+  // fresh audio claim waited 15 s behind it and failed the export busy; the
+  // mix must instead run under the export's admitted plan.
+  describe("the audio mix borrows the export's admitted plan", () => {
+    function recordPlans() {
+      const plans: Array<{ id: string; options: number[] }> = [];
+      const waiters = new Set<(event: { id: string } & Record<string, unknown>) => void>();
+      let admit = () => { };
+      const held = new Promise<void>((resolve) => { admit = resolve; });
+      Object.assign(window.api.resources, {
+        onExportWaiting: (cb: (event: { id: string } & Record<string, unknown>) => void) => { waiters.add(cb); return () => waiters.delete(cb); },
+        planExport: vi.fn(async (request: { id: string; options: number[] }) => {
+          plans.push(request);
+          bridge.log.push(`plan ${request.options.join(",")}`);
+          return 0;
+        }),
+      });
+      /// The next plan request blocks, queued behind a quick proxy, until `admit`.
+      const blockNext = () => {
+        vi.mocked(window.api.resources.planExport).mockImplementationOnce(async (request: { id: string; options: number[] }) => {
+          plans.push(request);
+          bridge.log.push(`plan ${request.options.join(",")}`);
+          for (const cb of waiters) cb({ id: request.id, kind: "blocked", reason: "busy", requestedMiB: request.options[0]!, availableMiB: 0, workMiB: 512, revision: 1,
+            holders: [{ kind: "quick_proxy", media_id: "media-2", mib: 128, threads: 1 }] });
+          await held;
+          return 0;
+        });
+      };
+      return { plans, blockNext, admit: () => admit() };
+    }
+
+    it("mixes a full export's audio under its working-set plan, after admission", async () => {
+      const project = summary([track("track-v", "Video", [COLOR_LAYER]), track("track-a", "Audio", [AUDIO_LAYER])]);
+      const { useProjectStore } = await import("../state/projectStore");
+      act(() => useProjectStore.getState().apply(project));
+      bridge.answers.set("project_summary", () => project);
+      bridge.answers.set("ensure_export_audio_fx", () => ({ waiting: [], failed: [] }));
+      const audio = vi.fn((_args: unknown) => true);
+      bridge.answers.set("export_project_audio_only", audio);
+      const { plans } = recordPlans();
+      const previewRef = createRef<PreviewSurfaceHandle>();
+      previewRef.current = { suspendForExport: () => () => { }, runPixiExport: async () => ({ framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 }) } as unknown as PreviewSurfaceHandle;
+      const { result } = mount(previewRef);
+      await act(async () => result.current.runExportWithSettings({
+        ...DEFAULT_EXPORT_SETTINGS, encoderEngine: "native", includeVideo: true,
+        audio: { ...DEFAULT_EXPORT_SETTINGS.audio, include: true },
+      }, "/out/movie.mp4"));
+      expect(result.current.exportState?.kind).toBe("complete");
+      expect(audio).toHaveBeenCalledOnce();
+      const workingSet = plans.at(-1)!;
+      expect(audio.mock.calls[0]![0]).toMatchObject({ finalizationToken: workingSet.id });
+      expect(bridge.log.indexOf(`plan ${workingSet.options.join(",")}`)).toBeLessThan(bridge.log.indexOf("invoke export_project_audio_only"));
+      expect(Math.min(...workingSet.options)).toBeGreaterThanOrEqual(EXPORT_AUDIO_MIX_MIB);
+    });
+
+    it("queues an audio-only export for its plan, then mixes under it", async () => {
+      bridge.answers.set("project_summary", () => summary([track("track-a", "Audio", [AUDIO_LAYER])]));
+      bridge.answers.set("ensure_export_audio_fx", () => ({ waiting: [], failed: [] }));
+      const audio = vi.fn((_args: unknown) => true);
+      bridge.answers.set("export_project_audio_only", audio);
+      const { plans, blockNext, admit } = recordPlans();
+      blockNext();
+      const { result } = mount();
+      let run!: Promise<void>;
+      act(() => { run = result.current.runExportWithSettings({ ...DEFAULT_EXPORT_SETTINGS, includeVideo: false, includeAudio: true }, "/out/mix.m4a"); });
+      await waitFor(() => expect(result.current.exportState).toMatchObject({
+        kind: "preparing", queued: { reason: "busy", holders: [{ kind: "quick_proxy" }] },
+        message: "Waiting for proxy generation to finish; the export starts automatically",
+      }));
+      expect(audio).not.toHaveBeenCalled();
+      await act(async () => { admit(); await run; });
+      expect(plans).toEqual([expect.objectContaining({ options: [EXPORT_AUDIO_MIX_MIB] })]);
+      expect(audio.mock.calls[0]![0]).toMatchObject({ finalizationToken: plans[0]!.id });
+      expect(window.api.resources.release).toHaveBeenCalledWith(plans[0]!.id);
+      expect(result.current.exportState?.kind).toBe("complete");
+    });
   });
 
   it("lets an export with nothing to bake through the gate", async () => {

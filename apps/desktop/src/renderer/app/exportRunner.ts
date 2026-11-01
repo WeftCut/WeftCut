@@ -73,7 +73,7 @@ import { useDecodeComponentStore } from "../settings/decodeComponentStore";
 import { rootCompositionOf, useProjectStore } from "../state/projectStore";
 
 import type { TFunction } from 'i18next';
-import type { ExportResourceBlock } from "../../shared/export-resources";
+import { EXPORT_AUDIO_MIX_MIB, type ExportResourceBlock } from "../../shared/export-resources";
 import type { ExportRun } from '../../shared/exportJob';
 /// The status-bar detail for an exception out of a readiness gate. A proxy or
 /// conform failure names its media through `prepareDetail`; any other
@@ -109,8 +109,9 @@ function audioLayerLabel(summary: ProjectSummary | null, layerId: string): strin
 
 /** The holder an export queued for admission names, by ledger kind. */
 const QUEUED_HOLDER: Record<string, string> = {
-  proxy: "export.holder_proxy", proxy_decision: "export.holder_proxy", waveform: "export.holder_waveform",
-  filmstrip: "export.holder_thumbnails", shots: "export.holder_shots", import: "export.holder_import",
+  proxy: "export.holder_proxy", quick_proxy: "export.holder_proxy", proxy_bypass: "export.holder_proxy",
+  proxy_decision: "export.holder_proxy", waveform: "export.holder_waveform",
+  filmstrip: "export.holder_thumbnails", thumbnails: "export.holder_thumbnails", shots: "export.holder_shots", import: "export.holder_import",
   model: "export.holder_model", export: "export.holder_export",
 };
 /** The panel's sentence for a queued export: memory, else the largest holder
@@ -337,6 +338,17 @@ export function createExportRunner(deps: {
     let retained = false;
     exportController = controller;
     const onCancel = deps.cancel;
+    // Admission (the audio-only export's plan; else the metadata preflight's,
+    // then the working set's) waits as long as the budget is held (the job
+    // reads queued); cancel is the only way out of the wait. Everything the
+    // export claims afterwards, the audio mix included, borrows from the plan.
+    let queued = false;
+    const onQueued = (block: ExportResourceBlock) => {
+      queued = true;
+      const message = queuedExportMessage(t, block);
+      setExportState({ kind: "preparing", labels: [message], message, onCancel,
+        queued: { reason: block.reason === "budget-too-small" ? "busy" : block.reason, holders: block.holders ?? [] } });
+    };
     // Name the run for the log mirror before any state can transition.
 
     // Idle preview decoders retain leases. Yield before preparation/encoder
@@ -438,7 +450,10 @@ export function createExportRunner(deps: {
           setExportState({ kind: "error", detail: fx.detail });
           return;
         }
+        let audioPlan: { token: string; release: () => void } | undefined;
         try {
+          audioPlan = await admitExportResources([{ memoryMiB: EXPORT_AUDIO_MIX_MIB, workerMiB: 0, motifBufferBytes: 0, frameWindows: {} }],
+            false, exportController.signal, onQueued);
           setExportState({ kind: "starting" });
           const produced = await exportProjectAudioOnly(
             path,
@@ -449,6 +464,7 @@ export function createExportRunner(deps: {
               channels: settings.audio.channels,
             },
             { startUs, endUs },
+            audioPlan.token,
           );
           if (!produced) {
             // No audio layers in range → Rust wrote nothing. Surface it rather
@@ -460,10 +476,16 @@ export function createExportRunner(deps: {
             return;
           }
         } catch (e) {
+          if (exportController.signal.aborted) {
+            setExportState(null);
+            return;
+          }
           const msg = e instanceof Error ? e.message : String(e);
           console.error("[weftcut/pixi] audio-only export failed:", e);
           setExportState({ kind: "error", detail: `Audio export failed: ${msg}` });
           return;
+        } finally {
+          audioPlan?.release();
         }
         retained = true;
         await finalize(async () => { }, async () => { }, endUs - startUs);
@@ -612,36 +634,31 @@ export function createExportRunner(deps: {
       let nativeSink = target.engine === "native";
       let sinkTarget = target.engine === "native" ? target : null;
 
-      // Admission (the metadata preflight's, then the working set's) waits as
-      // long as the budget is held (the job reads queued); cancel is the only
-      // way out of the wait.
-      let queued = false;
-      const onQueued = (block: ExportResourceBlock) => {
-        queued = true;
-        const message = queuedExportMessage(t, block);
-        setExportState({ kind: "preparing", labels: [message], message, onCancel,
-          queued: { reason: block.reason === "budget-too-small" ? "busy" : block.reason, holders: block.holders ?? [] } });
-      };
       setExportState({ kind: "preparing", labels: [t("export.plan_resources")], message: t("export.plan_resources"), onCancel });
       const resourcePlans = await prepareExportResourcePlans({
         summary, media: useProjectStore.getState().mediaById,
         routing: decodeRouting, ...exportRange, bitDepth: compositeBitDepth(settings), nativeEncoder: nativeSink,
         outputWidth: dims.width, outputHeight: dims.height, signal: exportController.signal, waiting: onQueued,
+        audio: settings.audio.include,
       });
+
+      const finalizationReservation = await admitExportResources(resourcePlans, nativeSink, exportController.signal, onQueued);
+      releaseFinalization = finalizationReservation.release;
+      if (queued) setExportState({ kind: "preparing", labels: [], onCancel });
+
       let audioProduced = false;
-      // Finish audio before video production. Once encoding completes, retry
-      // needs only immutable files and cannot accidentally mix a newer timeline.
+      // Finish audio before video production, under the admitted plan: no
+      // video child exists yet, so the mix borrows the plan's memory instead of
+      // a fresh claim that a running derivative could refuse. Once encoding
+      // completes, retry needs only immutable files and cannot accidentally mix
+      // a newer timeline.
       if (settings.audio.include) {
         setExportState({ kind: "preparing", labels: [t("export.prepare_audio")], message: t("export.finalize_audio") });
         audioProduced = await exportProjectAudioOnly(tempAudioPath, {
           codec: settings.audio.codec, bitrate: settings.audio.bitrate,
           sampleRate: settings.audio.sampleRate, channels: settings.audio.channels,
-        }, exportRange);
+        }, exportRange, finalizationReservation.token);
       }
-
-      const finalizationReservation = await admitExportResources(resourcePlans, nativeSink, exportController.signal, onQueued);
-      releaseFinalization = finalizationReservation.release;
-      if (queued) setExportState({ kind: "preparing", labels: [], onCancel });
 
       // Native-sink path: start the native-encode video sink (ffmpeg, frames
       // streamed over IPC) before the Worker starts. On the WebCodecs path the

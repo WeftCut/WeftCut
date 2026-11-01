@@ -1305,17 +1305,21 @@ export interface AudioExportSpec {
 
 /// Audio-only export at `outputPath` (extension picks the muxer: .m4a for AAC,
 /// .mka for Opus). `range` trims the audio to the export window (null = whole
-/// project). Awaitable; emits no events.
+/// project). The mix borrows its memory from the export's admitted plan, named
+/// by `finalizationToken` (`admitExportResources`); it never claims fresh
+/// resources. Awaitable; emits no events.
 export async function exportProjectAudioOnly(
   outputPath: string,
   audio: AudioExportSpec,
   range: { startUs: number; endUs: number } | null,
+  finalizationToken: string,
 ): Promise<boolean> {
   return invoke<boolean>("export_project_audio_only", {
     outputPath,
     audio,
     startUs: range?.startUs ?? null,
     endUs: range?.endUs ?? null,
+    finalizationToken,
   });
 }
 

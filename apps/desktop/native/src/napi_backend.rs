@@ -1018,6 +1018,7 @@ impl Backend {
                     a.start_us,
                     a.end_us,
                     a.layer_audio_sources,
+                    a.finalization_id,
                 )
                 .await)
             }

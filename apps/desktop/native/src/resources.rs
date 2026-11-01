@@ -11,7 +11,9 @@ use tokio::sync::Notify;
 use crate::logs::{LogBusSlot, LogCategory, LogEntryInput, LogLevel, LogSource};
 mod export_plan;
 mod memory;
-pub use export_plan::interactive_export;
+pub use export_plan::{export_audio, interactive_export};
+#[cfg(test)]
+pub(crate) use export_plan::{release_test_export_plan, test_export_plan, EXPORT_AUDIO_MIX_MIB};
 
 #[derive(Clone, Deserialize)]
 pub struct Limits {
@@ -588,10 +590,13 @@ impl Drop for FinalizationPermit {
         self.governor.finish_finalization(self.id);
     }
 }
+/// The mux tail of an admitted export. It already holds its memory; it waits
+/// for one CPU slot, ahead of every fresh claim, for as long as a running
+/// derivative keeps it (no deadline: a proxy build takes minutes, and a 15 s
+/// bound failed the export into awaiting_retry). Cancelling the export ends
+/// the wait (`mux_to_file` selects on it); only real exhaustion refuses.
 pub async fn continue_finalization(id: u32) -> Result<FinalizationPermit, String> {
-    tokio::time::timeout(std::time::Duration::from_secs(15), governor().acquire_finalization(id))
-        .await
-        .map_err(|_| "resource-capacity-exceeded: Processing resources are busy; retry finishing the export when they recover".to_string())?
+    governor().acquire_finalization(id).await
 }
 #[cfg_attr(test, allow(dead_code))]
 #[napi]

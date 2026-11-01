@@ -81,5 +81,20 @@ ran for minutes. The rule now:
   `user_waiting` rule, counted in `export_waiting`).
 - Running derivatives keep their leases: nothing is paused or pre-empted.
 
-Child claims that borrow from the admitted plan, and the queued finalization,
-keep their 15 s bounds: they fit by construction.
+Child claims that borrow from the admitted plan keep their 15 s bounds: they
+fit by construction.
+
+No export work claims fresh resources outside the plan: the audio mix runs
+after admission, before any video child, and borrows its 128 MiB from the plan
+(no thread: the encoder after it needs the plan's). Every plan of an export with
+audio is at least that large; an audio-only export is admitted for that one
+plan. Before this, the mix took a fresh interactive claim between the metadata
+preflight and admission, so on a one-thread budget a quick proxy refused it and
+the export failed busy after 15 s without ever reading `queued`.
+
+The queued finalization (the mux) has no deadline either. It holds its memory
+but needs one CPU slot, and a WebCodecs plan holds none: on a one-thread budget
+a proxy build running beside the admitted export held that slot for minutes, and
+the 15 s bound failed the export into `awaiting_retry`. It now waits ahead of
+every fresh claim (`finalization_waiting`) until the slot frees or the export is
+cancelled; only critical host memory refuses it.

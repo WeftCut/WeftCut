@@ -21,7 +21,7 @@ import { rootCompositionOf } from "../../ipc/compositions";
 import { exportMotifPlanner } from "../exportMotifSource";
 import { motifLayersToBake } from "../exportBake";
 import { MotifFrameProducer } from "./motifStream";
-import { acquireExportResources, exportBufferBytes } from '../resourceClient';
+import { acquireExportResources } from '../resourceClient';
 import { exportFrameCount } from "./frameGrid";
 import { ffprobeColorToWebCodecs } from "../decoder/ffprobeColorSpace";
 import { hwExportDecodeAllowed, type ExportDecodeRouting } from "../exportDecodeRouting";
@@ -33,8 +33,10 @@ import type {
 } from "./protocol";
 
 export interface RunExportInit {
-  resourcePlan?: import("../../../shared/export-resources").ExportResourcePlan | undefined;
-  finalizationToken?: string | undefined;
+  /// The admitted plan (`admitExportResources`) and its token. Every claim
+  /// this run makes, the worker's working set first, borrows from it.
+  resourcePlan: import("../../../shared/export-resources").ExportResourcePlan;
+  finalizationToken: string;
   /// Live project summary from the Zustand store.
   summary: ProjectSummary;
   /// Media lookup, also from the store. Required for asset URL
@@ -208,12 +210,11 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
 
   // 4. Spawn the Worker. Vite resolves the URL at bundle time via
   // `new URL(..., import.meta.url) + type: "module"`.
-  // Reserve composition/encoder working frames separately from streamed motifs.
-  // The global working-memory authority rejects an export too large for the
-  // target before either the canvas or worker allocates its buffers.
-  const pixelBytes = comp.width * comp.height * (init.bitDepth === 10 ? 8 : 4);
-  const motifBufferBytes = init.resourcePlan?.motifBufferBytes ?? (hasMotifs ? Math.max(pixelBytes, Math.floor(exportBufferBytes() / 2)) : 0);
-  const releaseResources = await acquireExportResources(init.resourcePlan?.workerMiB ?? (64 + (pixelBytes * 8 + motifBufferBytes) / 1048576), 0, init.finalizationToken, init.signal);
+  // The composition/encoder working frames and the motif stream buffer are
+  // borrowed from the admitted plan, which sized them, before either the
+  // canvas or worker allocates its buffers.
+  const motifBufferBytes = init.resourcePlan.motifBufferBytes;
+  const releaseResources = await acquireExportResources(init.resourcePlan.workerMiB, 0, init.finalizationToken, init.signal);
   let worker: Worker;
   try { init.signal?.throwIfAborted(); worker = new Worker(
     new URL("./exportWorker.ts", import.meta.url),
@@ -268,7 +269,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     keyframeIntervalSec: init.keyframeIntervalSec ?? 1,
     canvas: offscreen,
     motifStream: hasMotifs,
-    frameWindows: init.resourcePlan?.frameWindows,
+    frameWindows: init.resourcePlan.frameWindows,
     bitDepth: init.bitDepth ?? 8,
     // Platform gate for the 8-bit WebCodecs decode lane (the Worker can't
     // read the OS itself) — see hwExportDecodeAllowed for the allowlist.
@@ -300,9 +301,9 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     const workerResources = new Map<string, () => void>();
     const motifProducer = hasMotifs ? new MotifFrameProducer({
       maxBytes: motifBufferBytes,
-      maxFrames: init.resourcePlan?.motifFrames ?? 3,
+      maxFrames: init.resourcePlan.motifFrames ?? 3,
       totalFrames: exportFrameCount(Math.max(0, startUs), Math.min(comp.duration_us, endUs), outFpsNum, outFpsDen),
-      plan: exportMotifPlanner(summary, Math.max(0, startUs), outFpsNum, outFpsDen, init.resourcePlan ? init.finalizationToken : undefined),
+      plan: exportMotifPlanner(summary, Math.max(0, startUs), outFpsNum, outFpsDen, init.finalizationToken),
       send: packet => worker.postMessage({ type: "motif:frame", packet } satisfies ExportRequest,
         [...new Set(Object.values(packet.frames).map(frame => frame.bitmap))]),
       fail: error => { cleanup(); reject(error); },
@@ -468,7 +469,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
             path: ev.path,
             outFormat: ev.outFormat,
             creditWindow: ev.creditWindow,
-            finalizationToken: init.resourcePlan ? init.finalizationToken : undefined,
+            finalizationToken: init.finalizationToken,
           })
           .then((info) => {
             worker.postMessage({
@@ -491,7 +492,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
       } else if (ev.type === "nd:returnCredit") {
         window.api.exportSw.returnCredit({ sessionId: ev.sessionId, credits: ev.credits });
       } else if (ev.type === 'resource:acquire') {
-        void acquireExportResources(ev.memoryMiB, ev.threads, init.resourcePlan ? init.finalizationToken : undefined, resourceWaits.signal).then(release => {
+        void acquireExportResources(ev.memoryMiB, ev.threads, init.finalizationToken, resourceWaits.signal).then(release => {
           if (disposed) { release(); return; }
           workerResources.set(ev.id, release);
           worker.postMessage({ type: 'resource:result', id: ev.id } satisfies ExportRequest);

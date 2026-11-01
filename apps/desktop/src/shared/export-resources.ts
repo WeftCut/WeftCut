@@ -23,6 +23,11 @@ export function resourceFailureReason(error: unknown): ResourceWaitReason | unde
   return match?.[1] as ResourceWaitReason | undefined;
 }
 
+/** Working memory of the audio mix + encode tail. It runs under its export's
+ * admitted plan and borrows from it (native `resources::EXPORT_AUDIO_MIX_MIB`),
+ * so every plan of an export with audio is at least this large. */
+export const EXPORT_AUDIO_MIX_MIB = 128;
+
 export const EXPORT_FRAME_WINDOW = 24;
 export const EXPORT_PRIVATE_FRAMES = 16;
 export function exportDecoderMiB(width: number, height: number, tenBit: boolean, frames: number): number {

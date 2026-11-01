@@ -18,6 +18,10 @@ use crate::napi_backend::Backend;
 /// effect-chain siblings (ADR 0063). The baker owns which layers have one and
 /// gates the export until every bake has landed, so an absent entry here
 /// means "no effects", never "not ready yet".
+///
+/// `plan` is the export's admitted resource plan; the mix borrows its working
+/// memory from it (`resources::export_audio`).
+#[allow(clippy::too_many_arguments)]
 pub async fn export_project_audio_only(
     backend: &Backend,
     project: crate::state::Project,
@@ -26,6 +30,7 @@ pub async fn export_project_audio_only(
     start_us: Option<i64>,
     end_us: Option<i64>,
     layer_audio_sources: Option<std::collections::HashMap<uuid::Uuid, String>>,
+    plan: u32,
 ) -> Result<bool, String> {
     let path = PathBuf::from(output_path);
     let window = match (start_us, end_us) {
@@ -43,6 +48,7 @@ pub async fn export_project_audio_only(
         &audio,
         window,
         overrides.as_ref(),
+        plan,
         &backend.export_cancel,
     )
     .await

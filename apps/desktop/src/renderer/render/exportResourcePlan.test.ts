@@ -38,6 +38,10 @@ describe('export working-set plans', () => {
   });
   it('uses native metadata estimates and keeps an admitted tail for source-free exports', () => {
     expect(buildExportResourcePlans({sources:{},clips:[],workerMiB:32,encoderMiB:0,motifBufferBytes:0})[0]!.memoryMiB).toBe(64);
+    // The audio mix borrows from the plan before any video child exists: a
+    // floor, not an addend.
+    expect(buildExportResourcePlans({sources:{},clips:[],workerMiB:32,encoderMiB:0,motifBufferBytes:0,audioMiB:128})[0]!.memoryMiB).toBe(128);
+    expect(buildExportResourcePlans({sources:{},clips:[],workerMiB:300,encoderMiB:0,motifBufferBytes:0,audioMiB:128})[0]!.memoryMiB).toBe(300);
     const plan=buildExportResourcePlans({sources:{a:{width:1,height:1,tenBit:false,minimumFrames:24,nativeMiB:456}},
       clips:[{key:'a',mediaId:'a',start:0,end:1}],workerMiB:100,encoderMiB:200,motifBufferBytes:0});
     expect(plan).toHaveLength(1); expect(plan[0]!.memoryMiB).toBe(756);
