@@ -96,6 +96,8 @@ or leave a tack on it that says why it stays. Keep a `review` finding only if
 the departure was meant, and say so. When `end_agent_session` hands findings
 back, settle them the same way and end again. The audit cannot see pixels:
 after placing overlays, look at the layers you placed with `render_frames`.
+If it refuses effects the host cannot draw, pass `without: ["effects"]`; never
+edit the project just to look.
 
 ## Working rhythm
 

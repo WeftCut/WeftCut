@@ -12,8 +12,9 @@ import { exportTerminal, exportWire, type ExportJob, type ExportRun } from '../s
 
 /** Rendered stills: JPEG bytes per time, or one labelled sheet of them. */
 export interface StillsResult {
-  /** Without `sheet`, each frame's JPEG; with it, the times and sizes only. */
-  frames: Array<{ t_us: number; width: number; height: number; jpeg?: Uint8Array }>;
+  /** Without `sheet`, each frame's JPEG; with it, the times and sizes only.
+   *  `omitted`: what `without` skipped on this frame (it held effects). */
+  frames: Array<{ t_us: number; width: number; height: number; jpeg?: Uint8Array; omitted?: string[] }>;
   sheet?: { width: number; height: number; jpeg: Uint8Array };
 }
 
@@ -79,8 +80,9 @@ export class ExportJobs {
   /** `render_frames`: the root at each time, rendered by the export pipeline
    *  in the app window and handed back as JPEGs (one contact sheet with
    *  `sheet`). Never alongside an export; the renderer must have announced the
-   *  open project's session. */
-  async renderStills(req: { times_us: number[]; width: number; sheet: boolean }): Promise<StillsResult> {
+   *  open project's session. `without: ['effects']` draws them with effects
+   *  skipped; export has no such switch. */
+  async renderStills(req: { times_us: number[]; width: number; sheet: boolean; without?: ['effects'] }): Promise<StillsResult> {
     const h = this.host();
     if (this.active) throw new ExportJobError('export_active', 'An export is running; render frames after it finishes');
     if (!this.ready || this.ready.session !== this.session(h)) throw new ExportJobError('renderer_unavailable', 'The app window is not ready to render this project yet; retry in a moment');

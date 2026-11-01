@@ -924,6 +924,8 @@ async function renderFrames(backend: Backend, getTsHost: () => TsActorHost | nul
   if (!Number.isInteger(width) || (width as number) < 160 || (width as number) > 1920) throw new ExportJobError('invalid_params', 'width must be an integer from 160 to 1920')
   const sheet = args.sheet === undefined ? true : args.sheet
   if (typeof sheet !== 'boolean') throw new ExportJobError('invalid_params', 'sheet must be a boolean')
+  const without = args.without
+  if (without !== undefined && (!Array.isArray(without) || without.length !== 1 || without[0] !== 'effects')) throw new ExportJobError('invalid_params', 'without must be ["effects"]: effects are the one thing render_frames can skip')
   let samples: Array<{ t_us: number; layer_id?: string; why?: string }>
   if (ids !== undefined) {
     if (!Array.isArray(ids) || !ids.length || ids.length > 12 || ids.some((x) => typeof x !== 'string' || !x)) throw new ExportJobError('invalid_params', 'layer_ids must be 1 to 12 layer ids')
@@ -941,12 +943,15 @@ async function renderFrames(backend: Backend, getTsHost: () => TsActorHost | nul
     if (!Array.isArray(times) || !times.length || times.length > 24 || times.some((t) => !Number.isInteger(t) || (t as number) < 0)) throw new ExportJobError('invalid_params', 't_us must be 1 to 24 non-negative integers')
     samples = (times as number[]).map((t_us) => ({ t_us }))
   }
-  const r = await jobs.renderStills({ times_us: samples.map((s) => s.t_us), width: width as number, sheet })
+  const r = await jobs.renderStills({ times_us: samples.map((s) => s.t_us), width: width as number, sheet, ...(without ? { without: ['effects'] as ['effects'] } : {}) })
   const near = (t: number) => samples.reduce((best, s) => (Math.abs(s.t_us - t) < Math.abs(best.t_us - t) ? s : best), samples[0]!)
   const frames = r.frames.map((f) => { const s = near(f.t_us); return { t_us: f.t_us, ...(s.layer_id ? { layer_id: s.layer_id, why: s.why } : {}) } })
   const b64 = (u: Uint8Array) => Buffer.from(u.buffer, u.byteOffset, u.byteLength).toString('base64')
   const images = r.sheet ? [{ type: 'image', data: b64(r.sheet.jpeg), mimeType: 'image/jpeg' }] : r.frames.map((f) => ({ type: 'image', data: b64(f.jpeg!), mimeType: 'image/jpeg' }))
-  const record = { frames, ...(r.sheet ? { sheet: { width: r.sheet.width, height: r.sheet.height, columns: Math.min(4, frames.length) } } : {}) }
+  // With `without`, `omitted` always answers: what was skipped on some frame
+  // (each one labelled on the sheet), or [] when none held it.
+  const omitted = without ? [...new Set(r.frames.flatMap((f) => f.omitted ?? []))] : undefined
+  const record = { frames, ...(omitted ? { omitted } : {}), ...(r.sheet ? { sheet: { width: r.sheet.width, height: r.sheet.height, columns: Math.min(4, frames.length) } } : {}) }
   return { content: [...images, { type: 'text', text: JSON.stringify(record) }] } as unknown as ServerResult
 }
 

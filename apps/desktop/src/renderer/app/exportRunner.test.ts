@@ -472,7 +472,8 @@ describe("exportRunner", () => {
   // plain frame renders as before.
   describe("on the canvas renderer", () => {
     const DARK: LayerSummary = { ...COLOR_LAYER, id: "layer-dark", t_start_us: 1_000_000, effects: [{ id: "fx-1", kind: "brightness", enabled: true, params: {} }] };
-    type RunOpts = { startUs: number; encoderConfig: VideoEncoderConfig; nativeSinkPixFmt?: string; onStill?: (s: { width: number; height: number; jpeg: ArrayBuffer }) => void };
+    const CROPPED: LayerSummary = { ...COLOR_LAYER, id: "layer-crop", kind: "VideoClip", t_start_us: 1_000_000, params: { kind: "VideoClip", crop: { x: 0.1, y: 0, w: 0.9, h: 1 } } as never };
+    type RunOpts = { startUs: number; encoderConfig: VideoEncoderConfig; nativeSinkPixFmt?: string; stills?: { width: number; effects?: boolean }; onStill?: (s: { width: number; height: number; jpeg: ArrayBuffer }) => void };
     function stillsPreview(rendered: number[], runs: RunOpts[] = []) {
       const previewRef = createRef<PreviewSurfaceHandle>();
       previewRef.current = {
@@ -498,20 +499,61 @@ describe("exportRunner", () => {
       const { result } = mount(stillsPreview(rendered), CANVAS);
       const err = await result.current.runner.runStills({ times_us: [500_000, 1_500_000], width: 640, settings: DEFAULT_EXPORT_SETTINGS }, new AbortController().signal).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(RendererCannotDrawError);
+      // Effects are all it lacks, so the refusal offers to look without them.
       expect((err as RendererCannotDrawError).fault).toEqual({
         error: "RendererCannotDraw", renderer: "canvas", missing: ["effects"], layer_ids: ["layer-dark"], needs: "WebGPU or WebGL2", t_us: [1_500_000],
+        options: [{ action: "render_without_effects", tool: "render_frames", without: ["effects"] }],
       });
       expect((err as Error).message).toContain("layer-dark");
+      expect((err as Error).message).toContain('without: ["effects"]');
       expect(rendered).toEqual([]);
+    });
+
+    it("render_frames without effects draws with effects off and marks the frames that held one", async () => {
+      await load(summary([track("track-v", "Video", [COLOR_LAYER, DARK])]));
+      const rendered: number[] = [];
+      const runs: RunOpts[] = [];
+      const { result } = mount(stillsPreview(rendered, runs), CANVAS);
+      const frames = await result.current.runner.runStills({ times_us: [500_000, 1_500_000], width: 640, settings: DEFAULT_EXPORT_SETTINGS, without: ["effects"] }, new AbortController().signal);
+      expect(rendered).toEqual([500_000, 1_500_000]);
+      expect(runs.map((r) => r.stills)).toEqual([{ width: 640, effects: false }, { width: 640, effects: false }]);
+      expect(frames.map((f) => [f.t_us, f.omitted])).toEqual([[500_000, undefined], [1_500_000, ["effects"]]]);
+    });
+
+    it("render_frames without effects still refuses a crop, and offers no without", async () => {
+      await load(summary([track("track-v", "Video", [COLOR_LAYER, DARK]), track("track-c", "Video", [CROPPED])]));
+      for (const without of [["effects" as const], undefined]) {
+        const rendered: number[] = [];
+        const { result } = mount(stillsPreview(rendered), CANVAS);
+        const err = await result.current.runner.runStills({ times_us: [1_500_000], width: 640, settings: DEFAULT_EXPORT_SETTINGS, ...(without ? { without } : {}) }, new AbortController().signal).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(RendererCannotDrawError);
+        const fault = (err as RendererCannotDrawError).fault;
+        expect(fault).toMatchObject({ error: "RendererCannotDraw", missing: without ? ["crop"] : ["effects", "crop"] });
+        expect(fault).not.toHaveProperty("options");
+        expect((err as Error).message).not.toContain("without:");
+        expect(rendered).toEqual([]);
+      }
+    });
+
+    it("render_frames without effects on a GPU host still skips them, labelled", async () => {
+      await load(summary([track("track-v", "Video", [COLOR_LAYER, DARK])]));
+      const runs: RunOpts[] = [];
+      const { result } = mount(stillsPreview([], runs), GPU);
+      const frames = await result.current.runner.runStills({ times_us: [1_500_000], width: 640, settings: DEFAULT_EXPORT_SETTINGS, without: ["effects"] }, new AbortController().signal);
+      expect(runs[0]!.stills).toEqual({ width: 640, effects: false });
+      expect(frames[0]!.omitted).toEqual(["effects"]);
     });
 
     it("render_frames renders a plain frame", async () => {
       await load(summary([track("track-v", "Video", [COLOR_LAYER, DARK])]));
       const rendered: number[] = [];
-      const { result } = mount(stillsPreview(rendered), CANVAS);
+      const runs: RunOpts[] = [];
+      const { result } = mount(stillsPreview(rendered, runs), CANVAS);
       const frames = await result.current.runner.runStills({ times_us: [500_000], width: 640, settings: DEFAULT_EXPORT_SETTINGS }, new AbortController().signal);
       expect(frames.map((f) => f.t_us)).toEqual([500_000]);
+      expect(frames[0]).not.toHaveProperty("omitted");
       expect(rendered).toEqual([500_000]);
+      expect(runs[0]!.stills).toEqual({ width: 640 });
     });
 
     it("an export whose range holds an effect fails before encoding, typed", async () => {

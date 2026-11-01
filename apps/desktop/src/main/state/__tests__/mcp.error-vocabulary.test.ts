@@ -409,6 +409,57 @@ describe('the export, render and Motif file routes refuse in the model', () => {
     expect(r.content![0]!.text).toContain(L1)
   })
 
+  it('a RendererCannotDraw that lacks only effects passes on its without option and names it in the text', async () => {
+    const host = rawHost()
+    const fault = { error: 'RendererCannotDraw', renderer: 'canvas', missing: ['effects'], layer_ids: [L1], needs: 'WebGPU or WebGL2', t_us: [2_000_000],
+      options: [{ action: 'render_without_effects', tool: 'render_frames', without: ['effects'] }] }
+    const message = `render_frames refused: … layer(s) ${L1} carry them at t_us 2000000. To look anyway, pass without: ["effects"]: the frames render with effects skipped, and the answer lists them as omitted.`
+    host.exportJobs = { renderStills: async () => { throw new ExportJobError('renderer_cannot_draw', message, fault) } }
+    const r = await handleCallTool(rawBackend(), () => host as never, 'render_frames', { t_us: [2_000_000] }) as Answer
+    expect(r.isError).toBe(true)
+    assertInModel('render_frames', {}, r)
+    expect(r.structuredContent).toMatchObject({ code: 'invalid_request', ...fault })
+    expect(r.content![0]!.text).toContain('without: ["effects"]')
+  })
+
+  it('render_frames { without: ["effects"] } asks the renderer to skip them and answers omitted, [] when no frame held one', async () => {
+    const host = rawHost()
+    const seen: unknown[] = []
+    let frames: Array<{ t_us: number; width: number; height: number; jpeg: Uint8Array; omitted?: string[] }> = []
+    host.exportJobs = { renderStills: async (req: unknown) => { seen.push(req); return { frames } } }
+    frames = [{ t_us: 0, width: 4, height: 2, jpeg: new Uint8Array(4) }, { t_us: 500_000, width: 4, height: 2, jpeg: new Uint8Array(4), omitted: ['effects'] }]
+    const record = (r: Answer) => JSON.parse(r.content!.at(-1)!.text!) as Record<string, unknown>
+    const skipped = await handleCallTool(rawBackend(), () => host as never, 'render_frames', { t_us: [0, 500_000], sheet: false, without: ['effects'] }) as Answer
+    expect(skipped.isError).toBeFalsy()
+    expect(seen[0]).toMatchObject({ without: ['effects'] })
+    expect(record(skipped)).toMatchObject({ omitted: ['effects'] })
+    frames = [{ t_us: 0, width: 4, height: 2, jpeg: new Uint8Array(4) }]
+    expect(record(await handleCallTool(rawBackend(), () => host as never, 'render_frames', { t_us: [0], sheet: false, without: ['effects'] }) as Answer)).toMatchObject({ omitted: [] })
+    // Not asked, not answered: a plain render carries no omitted and sends no switch.
+    const plain = await handleCallTool(rawBackend(), () => host as never, 'render_frames', { t_us: [0], sheet: false }) as Answer
+    expect(record(plain)).not.toHaveProperty('omitted')
+    expect(seen[2]).not.toHaveProperty('without')
+  })
+
+  it('render_frames refuses a without other than ["effects"] as InvalidArgument', async () => {
+    const host = rawHost()
+    host.exportJobs = { renderStills: async () => { throw new Error('must not render') } }
+    for (const without of [['crop'], ['effects', 'transitions'], [], 'effects']) {
+      const r = await handleCallTool(rawBackend(), () => host as never, 'render_frames', { t_us: [0], without }) as Answer
+      expect(r.isError).toBe(true)
+      assertInModel('render_frames', {}, r)
+      expect(r.structuredContent).toMatchObject({ code: 'invalid_params', error: 'InvalidArgument' })
+      expect(r.content![0]!.text).toContain('["effects"]')
+    }
+  })
+
+  it('start_export takes no without: it is refused as an unknown argument that render_frames takes', async () => {
+    const r = await handleCallTool(rawBackend(), () => rawHost() as never, 'start_export', { without: ['effects'] }) as Answer
+    expect(r.isError).toBe(true)
+    expect(r.structuredContent).toMatchObject({ code: 'invalid_params', error: 'UnknownArgument', field: 'without' })
+    expect(r.content![0]!.text).toContain('render_frames takes without')
+  })
+
   it('a failed export job reports its cause without the IPC wrapper', async () => {
     const host = rawHost()
     const r = await handleCallTool(rawBackend(), () => host as never, 'start_export', {}) as Answer

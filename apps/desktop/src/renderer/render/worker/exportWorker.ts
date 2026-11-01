@@ -173,12 +173,14 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     );
   }
   // The same backstop for content: refuse what this renderer cannot draw
-  // rather than composite the frames without it.
+  // rather than composite the frames without it. Effects a still was asked to
+  // skip (`stills.effects: false`) are not drawn, so not asked for.
+  const effects = stills?.effects !== false;
   {
     const summary = req.project.summary as ProjectSummary;
     const refusal = cannotDraw(
       capabilityOf(rendererNameOf(app.renderer.name), app.renderer.name === "webgl"),
-      drawNeeds(summary, summary.root_id, req.startUs, req.endUs),
+      drawNeeds(summary, summary.root_id, req.startUs, req.endUs, undefined, effects),
     );
     if (refusal) throw new Error(cannotDrawMessage(refusal, stills ? "render_frames" : "export"));
   }
@@ -225,6 +227,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     width: req.project.width,
     height: req.project.height,
     mode: "export",
+    effects,
     pool: exportPool,
     proxyAssetUrl: (mediaId: string) =>
       req.project.proxyAssetUrls[mediaId] ??

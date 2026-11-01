@@ -910,8 +910,13 @@ Export jobs are application-session jobs shared with the UI (ADR 0111).
   canvas renderer, which draws no clip effects, crops or transitions. A
   `render_frames` call whose frames hold any of them is refused before drawing:
   `invalid_request`, `RendererCannotDraw { renderer, missing, layer_ids, t_us,
-  needs }`; frames without them render as usual. An export whose range holds
-  them fails before encoding with the same variant on the job's `error`.
+  needs }`; frames without them render as usual. When effects are all it
+  lacks, the refusal's `options` offer `without: ["effects"]`: the call then
+  draws with effects skipped (the preview's effects-off mode, on any host, no
+  project edit) and answers `omitted: ["effects"]`, or `omitted: []` when no
+  frame held one, each skipped frame labelled "effects off" on the sheet; crops
+  and transitions still refuse. An export whose range holds them fails before
+  encoding with the same variant on the job's `error`; export takes no `without`.
   `encoder_engine` / `decode_engine: auto` pick what the host runs: no WebGL
   means WebCodecs encode (8-bit H.264/HEVC/AV1 at a bitrate) and no native
   decode; anything else fails as `EncoderUnavailable` naming `encoder_engine`.

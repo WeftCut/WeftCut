@@ -71,8 +71,9 @@ export interface RunExportInit {
   nativeSinkPixFmt?: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le";
   /// Present ⇒ no encoder: every frame in the range comes back through
   /// `onStill` as a JPEG `width` px wide (`render_frames`). `writeChunk` is
-  /// never called.
-  stills?: { width: number; quality?: number };
+  /// never called. `effects: false` composites with clip effects skipped
+  /// (`render_frames { without: ["effects"] }`); an export never sets it.
+  stills?: { width: number; quality?: number; effects?: boolean };
   onStill?: (still: { index: number; tUs: number; width: number; height: number; jpeg: ArrayBuffer }) => void;
   /// Per-media decode routing table (see exportDecodeRouting.ts). Native
   /// entries decode their ORIGINAL via the napi session; everything else
@@ -273,7 +274,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     // read the OS itself) — see hwExportDecodeAllowed for the allowlist.
     allowHwExportDecode: hwExportDecodeAllowed(rendererOS),
     ...(init.nativeSinkPixFmt ? { nativeSink: { pixFmt: init.nativeSinkPixFmt } } : {}),
-    ...(init.stills ? { stills: { width: init.stills.width, quality: init.stills.quality ?? 0.85 } } : {}),
+    ...(init.stills ? { stills: { width: init.stills.width, quality: init.stills.quality ?? 0.85, ...(init.stills.effects === false ? { effects: false } : {}) } } : {}),
     ...(Object.keys(tenBitMedia).length > 0 ? { tenBitMedia } : {}),
     // The routing table's native slice (see above); absent when nothing
     // routes native so the WebCodecs path is unchanged. `outFormat` follows

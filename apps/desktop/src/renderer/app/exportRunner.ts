@@ -33,6 +33,7 @@ import {
   rendererCapability,
   RendererCannotDrawError,
   type DrawNeeds,
+  type OmittableFeature,
   type RendererCannotDraw,
   type RendererCapability,
 } from "../render/rendererCapability";
@@ -259,11 +260,13 @@ export function createExportRunner(deps: {
   /// `render_frames`: the composition at each time, rendered by the export
   /// pipeline (same decode routing, Motif frames and compositor) and handed
   /// back as JPEGs instead of encoded. One frame-long range per time. Never
-  /// alongside an export, and invisible to the export panel.
+  /// alongside an export, and invisible to the export panel. `without:
+  /// ["effects"]` composites with clip effects skipped (the preview's
+  /// effects-off mode) and marks each frame that held one `omitted`.
   async function runStills(
-    request: { times_us: number[]; width: number; settings: ExportRun["settings"] },
+    request: { times_us: number[]; width: number; settings: ExportRun["settings"]; without?: readonly OmittableFeature[] },
     signal: AbortSignal,
-  ): Promise<Array<{ t_us: number; width: number; height: number; jpeg: ArrayBuffer }>> {
+  ): Promise<Array<{ t_us: number; width: number; height: number; jpeg: ArrayBuffer; omitted?: OmittableFeature[] }>> {
     if (runningRef.current || pendingFinalization.current) throw new Error("an export is running; render frames after it finishes");
     runningRef.current = true;
     const restorePreview = previewRef.current?.suspendForExport();
@@ -275,16 +278,20 @@ export function createExportRunner(deps: {
       const times = [...new Set(request.times_us.map((t) => Math.max(0, Math.min(Math.round(t), Math.max(0, comp.duration_us - frameUs)))))].sort((a, b) => a - b);
       if (!times.length) return [];
       // Refuse before rendering anything when a requested frame holds content
-      // this renderer cannot draw; frames without it render as usual.
+      // this renderer cannot draw; frames without it render as usual. Effects
+      // the caller asked to skip are not asked of the renderer.
+      const effects = !request.without?.includes("effects");
       const cap = await capability();
-      const refusedAt = times.filter((t) => cannotDraw(cap, drawNeeds(summary, summary.root_id, t, t + frameUs)) !== null);
+      const refusedAt = times.filter((t) => cannotDraw(cap, drawNeeds(summary, summary.root_id, t, t + frameUs, undefined, effects)) !== null);
       const needs: DrawNeeds = new Map();
-      for (const t of refusedAt) drawNeeds(summary, summary.root_id, t, t + frameUs, needs);
+      for (const t of refusedAt) drawNeeds(summary, summary.root_id, t, t + frameUs, needs, effects);
       const refusal = cannotDraw(cap, needs);
       if (refusal) throw new RendererCannotDrawError({ ...refusal, t_us: refusedAt });
+      // The frames whose picture the skip changed: never a silent degrade.
+      const omittedAt = new Set(effects ? [] : times.filter((t) => drawNeeds(summary, summary.root_id, t, t + frameUs).has("effects")));
       const gate = await videoGate(summary, times[0]!, times.at(-1)! + frameUs, request.settings, cap, signal, () => { });
       if (!gate.ok) throw new Error(gate.detail ?? "render cancelled");
-      const out: Array<{ t_us: number; width: number; height: number; jpeg: ArrayBuffer }> = [];
+      const out: Array<{ t_us: number; width: number; height: number; jpeg: ArrayBuffer; omitted?: OmittableFeature[] }> = [];
       for (const t of times) {
         if (signal.aborted) throw new Error("render cancelled");
         const range = { startUs: t, endUs: t + frameUs };
@@ -305,11 +312,11 @@ export function createExportRunner(deps: {
             signal,
             bitDepth: 8,
             decodeRouting: gate.decodeRouting,
-            stills: { width: request.width },
+            stills: effects ? { width: request.width } : { width: request.width, effects: false },
             onStill: (s) => { if (!got) got = { width: s.width, height: s.height, jpeg: s.jpeg }; },
           });
           if (!got) throw new Error(`no frame rendered at ${t} µs`);
-          out.push({ t_us: t, ...(got as { width: number; height: number; jpeg: ArrayBuffer }) });
+          out.push({ t_us: t, ...(got as { width: number; height: number; jpeg: ArrayBuffer }), ...(omittedAt.has(t) ? { omitted: ["effects" as const] } : {}) });
         } finally {
           reservation.release();
         }

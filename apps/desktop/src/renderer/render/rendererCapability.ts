@@ -27,6 +27,12 @@ export type RendererName = "webgpu" | "webgl" | "canvas";
 export type DrawFeature = "effects" | "crop" | "transitions";
 export const DRAW_FEATURES: readonly DrawFeature[] = ["effects", "crop", "transitions"];
 
+/// What `render_frames { without }` may knowingly skip. Effects only: an
+/// uncropped frame, or one cut where a transition blends, would mislead a
+/// framing check, so crop and transitions still refuse (issue 19). Export
+/// never skips anything.
+export type OmittableFeature = "effects";
+
 /// What a refused frame needs from the host.
 export const RENDERER_NEEDS = "WebGPU or WebGL2";
 
@@ -152,19 +158,32 @@ export function cannotDraw(cap: RendererCapability, needs: DrawNeeds): RendererC
   return { error: "RendererCannotDraw", renderer: cap.renderer, missing, layer_ids: layerIds, needs: RENDERER_NEEDS };
 }
 
+/// True when effects are all a refusal lacks: then, and only then, does
+/// `render_frames` offer `without: ["effects"]`.
+export function onlyEffectsMissing(r: Pick<RendererCannotDraw, "missing">): boolean {
+  return r.missing.length === 1 && r.missing[0] === "effects";
+}
+
+/// The refusal's way out for `render_frames` when effects are the sole blocker.
+export const RENDER_WITHOUT_EFFECTS = { action: "render_without_effects", tool: "render_frames", without: ["effects"] } as const;
+
 /// The agent-facing sentence for a refusal (`render_frames`, and the worker's
 /// backstop). The UI words its own through i18n.
 export function cannotDrawMessage(r: RendererCannotDraw & { t_us?: number[] }, what: string): string {
   const list = (xs: readonly (string | number)[]) => xs.length > 6 ? `${xs.slice(0, 6).join(", ")} and ${xs.length - 6} more` : xs.join(", ");
   const at = r.t_us?.length ? ` at t_us ${list(r.t_us)}` : " in the requested span";
-  return `${what} refused: this host renders with the ${r.renderer} fallback (no ${r.needs}), which cannot draw ${r.missing.join(" or ")}, and layer(s) ${list(r.layer_ids)} carry them${at}. Nothing was drawn without them. Frames without these features render; drawing them needs ${r.needs} (a GPU with hardware acceleration on).`;
+  const skip = what === "render_frames" && onlyEffectsMissing(r) ? ' To look anyway, pass without: ["effects"]: the frames render with effects skipped, and the answer lists them as omitted.' : "";
+  return `${what} refused: this host renders with the ${r.renderer} fallback (no ${r.needs}), which cannot draw ${r.missing.join(" or ")}, and layer(s) ${list(r.layer_ids)} carry them${at}. Nothing was drawn without them. Frames without these features render; drawing them needs ${r.needs} (a GPU with hardware acceleration on).${skip}`;
 }
 
 /// `render_frames` refused because the host's renderer cannot draw what the
-/// requested frames hold; `fault` is the typed refusal the MCP mapper passes on.
+/// requested frames hold; `fault` is the typed refusal the MCP mapper passes on,
+/// with `options` naming `without: ["effects"]` when effects are all it lacks.
 export class RendererCannotDrawError extends Error {
-  constructor(readonly fault: RendererCannotDraw & { t_us?: number[] }) {
+  readonly fault: RendererCannotDraw & { t_us?: number[] };
+  constructor(fault: RendererCannotDraw & { t_us?: number[] }) {
     super(cannotDrawMessage(fault, "render_frames"));
     this.name = "RendererCannotDrawError";
+    this.fault = onlyEffectsMissing(fault) ? { ...fault, options: [RENDER_WITHOUT_EFFECTS] } : fault;
   }
 }

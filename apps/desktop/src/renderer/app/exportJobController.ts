@@ -3,7 +3,7 @@ import { listen } from '@/bridge/events';
 import { projectSummary } from '../ipc';
 import { exportTerminal, type ExportJob, type ExportRun } from '../../shared/exportJob';
 import { createExportRunner } from './exportRunner';
-import { RendererCannotDrawError } from '../render/rendererCapability';
+import { RendererCannotDrawError, type OmittableFeature } from '../render/rendererCapability';
 import { composeStillsSheet } from './stillsSheet';
 import type { ExportState } from '../panels/ExportPanel';
 
@@ -109,7 +109,7 @@ export function createExportJobController(deps: Omit<Parameters<typeof createExp
         }),
         // `render_frames`: export-path stills for an agent, queued behind any
         // export so the two never share the pipeline.
-        listen<{ request_id: string; renderer_token: string; times_us: number[]; width: number; sheet: boolean; settings: ExportRun['settings']; timeout_ms?: number }>('render_frames:run', ({ payload: r }) => {
+        listen<{ request_id: string; renderer_token: string; times_us: number[]; width: number; sheet: boolean; settings: ExportRun['settings']; timeout_ms?: number; without?: OmittableFeature[] }>('render_frames:run', ({ payload: r }) => {
           if (disposed || r.renderer_token !== token) return;
           void enqueue(undefined, async () => {
             const reply = (body: Record<string, unknown>) => invoke('export_job_stills', { request_id: r.request_id, renderer_token: token, ...body });
@@ -119,7 +119,7 @@ export function createExportJobController(deps: Omit<Parameters<typeof createExp
               const frames = await runner.runStills(r, AbortSignal.timeout(r.timeout_ms ?? 60_000));
               const sheet = r.sheet && frames.length > 0 ? await composeStillsSheet(frames) : null;
               await reply(sheet
-                ? { frames: frames.map(({ t_us, width, height }) => ({ t_us, width, height })), sheet: { ...sheet, jpeg: new Uint8Array(sheet.jpeg) } }
+                ? { frames: frames.map(({ t_us, width, height, omitted }) => ({ t_us, width, height, ...(omitted ? { omitted } : {}) })), sheet: { ...sheet, jpeg: new Uint8Array(sheet.jpeg) } }
                 : { frames: frames.map((f) => ({ ...f, jpeg: new Uint8Array(f.jpeg) })) });
             } catch (error) {
               await reply({ error: error instanceof Error ? error.message : String(error), ...(error instanceof RendererCannotDrawError ? { fault: error.fault } : {}) }).catch(reportError);
