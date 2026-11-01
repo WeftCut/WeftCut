@@ -32,7 +32,7 @@ const ALL_CHANNELS: readonly string[] = [
   'review_view', 'review_activity_view', 'review_approve_all', 'review_revert_all',
   'agent_tacks_set_status', 'agent_tacks_delete',
   // motif route (TS authoring + read + install + staleness)
-  'list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'begin_file_upload', 'write_file_chunk', 'read_file_transfer', 'delete_file_transfer',
+  'list_motifs', 'read_motif', 'open_motif_draft', 'copy_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif',
   'motif_staleness_report', 'acknowledge_motif_staleness',
   // pure native (no project actor)
   'ping', 'mux_export', 'export_video_sink_start', 'export_video_sink_finish',
@@ -265,7 +265,7 @@ describe('routeChannel', () => {
     }
   })
   it('routes motif authoring/read/install/staleness channels to the motif route', () => {
-    for (const ch of ['list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'begin_file_upload', 'write_file_chunk', 'read_file_transfer', 'delete_file_transfer', 'motif_staleness_report', 'acknowledge_motif_staleness'])
+    for (const ch of ['list_motifs', 'read_motif', 'open_motif_draft', 'copy_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'motif_staleness_report', 'acknowledge_motif_staleness'])
       expect(routeChannel(ch).kind, ch).toBe('motif')
   })
   it('never routes a category-A state mutation to rust', () => {

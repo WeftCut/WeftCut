@@ -1,7 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { writeFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { PNG } from 'pngjs';
@@ -19,7 +18,7 @@ test('MCP workspace: linked edits, binary round-trip, revision conflicts and ret
         const info = await page.evaluate(() => (window as any).api.mcp.getInfo());
         await client.connect(new StreamableHTTPClientTransport(new URL(info.url), { requestInit: { headers: { Authorization: `Bearer ${info.bearer_token}` } } }));
         const names = (await client.listTools()).tools.map(t => t.name);
-        for (const old of ['write_motif_draft', 'amend_motif_draft', 'get_motif_source', 'import_motif', 'preview_motif_draft', 'create_edit_draft'])
+        for (const old of ['write_motif_draft', 'amend_motif_draft', 'get_motif_source', 'import_motif', 'preview_motif_draft', 'create_edit_draft', 'begin_file_upload', 'write_file_chunk', 'read_file_transfer', 'delete_file_transfer', 'copy_motif_draft'])
             expect(names).not.toContain(old);
         const call = async (name: string, args: Record<string, unknown> = {}) => {
             const result = await client.callTool({ name, arguments: args });
@@ -50,18 +49,16 @@ test('MCP workspace: linked edits, binary round-trip, revision conflicts and ret
         expect(green.revision).not.toBe(draft.revision);
         const stale = await client.callTool({ name: 'update_motif_files', arguments: { draft_id: draft.draft_id, expected_revision: draft.revision, files: [{ path: 'color.txt', text: 'black' }] } });
         expect(stale.isError).toBe(true);
-        const bytes = Buffer.from('blue'), upload = await call('begin_file_upload', { size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
-        await call('write_file_chunk', { file_id: upload.file_id, offset: 0, base64: bytes.toString('base64') });
-        const edited = await call('update_motif_files', { draft_id: draft.draft_id, expected_revision: green.revision, files: [{ path: 'color.txt', file_id: upload.file_id }] });
+        const edited = await call('update_motif_files', { draft_id: draft.draft_id, expected_revision: green.revision, files: [{ path: 'color.txt', base64: Buffer.from('blue').toString('base64') }] });
         expect(readFileSync(path.join(directory, 'color.txt'), 'utf8')).toBe('blue');
-        const file = await call('read_motif', { id: draft.draft_id, path: 'color.txt' });
-        expect((await call('read_file_transfer', { file_id: file.file_id })).base64).toBe(bytes.toString('base64'));
+        expect((await call('read_motif', { id: draft.draft_id, path: 'color.txt' })).text).toBe('blue');
         expect((await preview(draft.draft_id)).color).toEqual([0, 0, 255, 255]);
         const published = await call('install_motif', { draft_id: draft.draft_id, expected_revision: edited.revision });
         expect(published.motif_id).not.toBe(draft.draft_id);
         expect(await call('install_motif', { draft_id: draft.draft_id, expected_revision: edited.revision })).toEqual(published);
-        const exported = await call('export_motif', { id: published.motif_id });
-        const copied = await call('open_motif_draft', { source: { kind: 'zip', file_id: exported.file_id } });
+        const zip = path.join(tmpDir('motif-export-'), 'published.zip');
+        await call('export_motif', { id: published.motif_id, path: zip });
+        const copied = await call('open_motif_draft', { source: { kind: 'zip', path: zip } });
         expect((await preview(copied.draft_id)).color).toEqual([0, 0, 255, 255]);
         writeFileSync(path.join(directory, 'manifest.json'), '{broken');
         expect((await call('read_motif', { id: draft.draft_id })).diagnostic).toBeTruthy();

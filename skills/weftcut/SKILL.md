@@ -243,14 +243,10 @@ moving footage stays a video layer.
    whether the app can read your folder? Try it: one `open_motif_draft` with the
    folder's absolute path answers the question. Fall back to step 2 only when the
    app refuses the path.
-2. When the app cannot read your folder, start an empty draft or import an
-   uploaded ZIP. Use `read_motif` for inventory or file content, then
-   `update_motif_files` for a batch of file writes, uploaded file references
-   or deletions. To change part of a file, send `edits` (exact `old` → `new`
-   pairs) instead of the whole file. Always pass the revision you read. Upload binary bytes with
-   `begin_file_upload` and `write_file_chunk`; `read_file_transfer` downloads
-   content or reports upload progress. `delete_file_transfer` releases temporary
-   files after use. Uploads are not model-specific.
+2. When the app cannot read your folder, start an empty draft. Use `read_motif`
+   for inventory or file text, then `update_motif_files` for a batch of file
+   writes or deletions. To change part of a file, send `edits` (exact `old` →
+   `new` pairs) instead of the whole file. Always pass the revision you read.
 3. Use `preview_motif` at start, middle and near the end, plus non-default props.
    Check its returned revision and any diagnostics. Fix invalid sources before
    publishing; do not treat the last valid frame as the current source.
@@ -260,8 +256,7 @@ moving footage stays a video layer.
    explicitly supply its target id and current version. The draft remains
    editable; publishing the same revision again does not increment the version.
    Remove trial layers afterwards unless the user wants them kept.
-5. `export_motif` produces a complete ZIP (downloadable or saved to a local
-   path). `delete_motif` removes a draft/publication; unlinking a directory
+5. `export_motif` saves a complete ZIP to a local path. `delete_motif` removes a draft/publication; unlinking a directory
    never deletes the author's source folder.
 
 **Three.js Motifs** use local dependencies and relative URLs; no CDN access.

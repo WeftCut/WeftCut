@@ -1426,10 +1426,6 @@ const zhCN: Resources = {
     "open_motif_draft": "打开 Motif 草稿",
     "update_motif_files": "编辑 Motif 文件",
     "export_motif": "导出 Motif",
-    "begin_file_upload": "开始文件上传",
-    "write_file_chunk": "上传文件分块",
-    "read_file_transfer": "读取文件分块",
-    "delete_file_transfer": "删除临时文件",
     "preview_motif": "预览 Motif 草稿",
     "install_motif": "安装 Motif",
     "delete_motif": "删除 Motif"

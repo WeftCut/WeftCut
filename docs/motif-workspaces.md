@@ -1,9 +1,8 @@
-# Motif workspaces and file transfers
+# Motif workspaces
 
 The Motif tools are list_motifs, open_motif_draft, read_motif,
 update_motif_files, preview_motif, install_motif, export_motif and
-delete_motif, plus the generic transfers begin_file_upload, write_file_chunk,
-read_file_transfer and delete_file_transfer. No tool is specific to a file
+delete_motif. They take paths and inline text; no tool is specific to a file
 format or model type.
 
 ## Local directory workflow
@@ -32,7 +31,6 @@ Other mutually exclusive source variants:
 ```json
 {"source":{"kind":"motif","id":"countdown"}}
 {"source":{"kind":"zip","path":"C:/work/package.zip"}}
-{"source":{"kind":"zip","file_id":"<completed upload id>"}}
 {"source":{"kind":"empty","name":"My Motif"}}
 ```
 
@@ -40,23 +38,20 @@ Copying a publication or built-in creates a draft without choosing a
 publication target. Opening an existing draft returns that draft. ZIP and empty
 sources create app-owned editable drafts.
 
-## Remote/file-only workflow
+## Without a shared folder
 
-read_motif with an id returns manifest, status, revision and file inventory
-(path, size, SHA-256); it does not dump code or binary content. With path and
-encoding="text", it returns UTF-8 text up to 256 KiB. Omit encoding (or use
-"file") for a temporary downloadable file_id. The in-app HTML editor submits
-its HTML and manifest together through the same file transaction.
+When the app cannot read the agent's folder, edit an app-owned draft through
+the tools. read_motif with an id returns manifest, status, revision and file
+inventory (path, size, SHA-256); it does not dump code or binary content. With
+path, a UTF-8 file returns its text (up to 256 KiB; a larger text file is
+refused, not truncated) and a binary file returns only its size and SHA-256.
+The in-app HTML editor submits its HTML and manifest together through the same
+file transaction.
 
-Upload files with begin_file_upload (size up to 256 MiB, lowercase SHA-256),
-then write_file_chunk (file_id, offset, canonical base64). Chunks are at most
-256 KiB decoded and contiguous; identical retries are accepted. Completion is
-automatic at the declared size, and SHA-256 must match before attachment.
-read_file_transfer returns a bounded base64 range, next_offset, eof,
-received_bytes and complete; it also reports progress after a dropped upload
-response. Transfers survive restart, expire after 24 hours and reserve at most
-512 MiB / 64 files. delete_file_transfer releases storage; attached files have
-already been copied into the draft.
+Small binary assets go inline: an update_motif_files entry `{path, base64}`
+carries the whole file as canonical base64, at most 256 KiB decoded per entry
+and 4 MiB per call; invalid base64 is refused. Anything larger travels as a
+package: a directory draft, or a ZIP the app can read (`{kind:'zip', path}`).
 
 Batch edits through update_motif_files:
 
@@ -67,15 +62,15 @@ Batch edits through update_motif_files:
   "files":[
     {"path":"scene.js","text":"/* replacement source */"},
     {"path":"index.html","edits":[{"old":"font-size: 56px","new":"font-size: 48px"}]},
-    {"path":"assets/model.glb","file_id":"<completed upload id>"},
+    {"path":"assets/logo.png","base64":"iVBORw0KGgo..."},
     {"path":"assets/old.png","delete":true}
   ]
 }
 ```
 
-Each entry has exactly one operation: text (the whole file), file_id, edits or
-delete. Edits change part of an existing UTF-8 file: each `old` must occur
-exactly once in the text the previous edit left, or the whole batch is refused
+Each entry has exactly one operation: text (the whole file), base64, edits or
+delete; any other key is refused. Edits change part of an existing UTF-8 file:
+each `old` must occur exactly once in the text the previous edit left, or the whole batch is refused
 with the edit's number; read the file again and resend. Prefer edits to
 resending a file you have already written; creating a file still takes text.
 The complete resulting package is validated before writes. Stale revisions
@@ -99,13 +94,15 @@ publications update its recorded publication, with a version conflict check.
 To replace a different publication, supply target_id and expected_version from
 read_motif. Built-ins cannot be overwritten. The same successful revision and
 target can be retried without bumping the version; placed trial layers rebind
-to the publication. To create a separate publication, first copy the draft's
-ZIP into a new draft. Source provenance never implicitly chooses an overwrite.
+to the publication. To create a separate publication, first copy the draft:
+export_motif it to a ZIP path and open that ZIP as a new draft (the app's
+"Save as new" copies in one internal step). Source provenance never implicitly
+chooses an overwrite.
 
-export_motif produces a complete ZIP and returns a downloadable file_id, or
-writes an absolute local `.zip` path in an existing folder; an existing file
-is refused, never overwritten. It accepts expected_revision. Deleting a draft
-removes app-owned data and its association, never linked author files.
+export_motif writes a complete ZIP to path, which is required: an absolute
+local `.zip` path in an existing folder; an existing file is refused, never
+overwritten. It accepts expected_revision. Deleting a draft removes app-owned
+data and its association, never linked author files.
 Published content is a snapshot independent of later draft edits.
 
 Captures pin companion URLs under a revision path, so a source edit cannot

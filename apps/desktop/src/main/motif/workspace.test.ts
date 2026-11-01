@@ -71,26 +71,76 @@ it('refuses an edit that does not match exactly once, and changes nothing in the
     expect(readFileSync(path.join(directory, 'index.html'), 'utf8')).toContain('one');
     expect(workspace.read(draft.draft_id).revision).toBe(draft.revision);
 });
-it('uploads, edits, reads and exports binary companions through public tools without filesystem access', () => {
-    const store = new UserMotifStore(temp());
-    const call = (name: string, args: Record<string, unknown> = {}) => runMotifTool(name, args, { store, builtins: [], motifLayers: () => [], dispatchRebind: () => { }, emitChanged: () => { }, refreshCatalog: () => { }, emitLog: () => { } }) as any;
+function tools(store: UserMotifStore) {
+    return (name: string, args: Record<string, unknown> = {}) => runMotifTool(name, args, { store, builtins: [], motifLayers: () => [], dispatchRebind: () => { }, emitChanged: () => { }, refreshCatalog: () => { }, emitLog: () => { } }) as any;
+}
+it('writes, reads and exports binary companions through public tools without a shared folder', () => {
+    const store = new UserMotifStore(temp()), call = tools(store);
     const draft = call('open_motif_draft', { source: { kind: 'empty', name: 'Files' } });
     const bytes = Buffer.from([0, 255, 1]), sha256 = createHash('sha256').update(bytes).digest('hex');
-    const upload = call('begin_file_upload', { size: bytes.length, sha256 });
-    call('write_file_chunk', { file_id: upload.file_id, offset: 0, base64: bytes.toString('base64') });
-    const edited = call('update_motif_files', { draft_id: draft.draft_id, expected_revision: draft.revision, files: [{ path: 'assets/model.glb', file_id: upload.file_id }, { path: 'scene.js', text: 'hello' }] });
-    call('delete_file_transfer', { file_id: upload.file_id });
+    const edited = call('update_motif_files', { draft_id: draft.draft_id, expected_revision: draft.revision, files: [{ path: 'assets/model.glb', base64: bytes.toString('base64') }, { path: 'scene.js', text: 'hello' }] });
+    expect(store.readFile(draft.draft_id, 'assets/model.glb')).toEqual(bytes);
     const info = call('read_motif', { id: draft.draft_id });
     expect(info.html).toBeUndefined();
-    const file = call('read_motif', { id: draft.draft_id, path: 'assets/model.glb' });
-    expect(call('read_file_transfer', { file_id: file.file_id }).base64).toBe(bytes.toString('base64'));
-    const zip = call('export_motif', { id: draft.draft_id, expected_revision: edited.revision });
-    const imported = call('open_motif_draft', { source: { kind: 'zip', file_id: zip.file_id } });
+    // A binary file answers its size and digest only; a UTF-8 file its text.
+    expect(call('read_motif', { id: draft.draft_id, path: 'assets/model.glb' })).toEqual({ id: draft.draft_id, revision: edited.revision, path: 'assets/model.glb', size: 3, sha256 });
+    expect(call('read_motif', { id: draft.draft_id, path: 'scene.js' }).text).toBe('hello');
+    expect(() => call('read_motif', { id: draft.draft_id, path: 'scene.js', encoding: 'text' })).toThrow(/takes no encoding/);
+    const out = path.join(temp(), 'files.zip');
+    expect(call('export_motif', { id: draft.draft_id, expected_revision: edited.revision, path: out })).toEqual({ id: draft.draft_id, revision: edited.revision, path: out });
+    expect(() => call('export_motif', { id: draft.draft_id })).toThrow(/needs path/);
+    const imported = call('open_motif_draft', { source: { kind: 'zip', path: out } });
     expect(store.readFile(imported.draft_id, 'assets/model.glb')).toEqual(bytes);
     call('update_motif_files', { draft_id: draft.draft_id, expected_revision: edited.revision, files: [{ path: 'scene.js', text: 'replaced' }, { path: 'assets/model.glb', delete: true }] });
     expect(store.readFile(draft.draft_id, 'assets/model.glb')).toBeNull();
-    for (const name of ['write_motif_draft', 'amend_motif_draft', 'create_edit_draft', 'import_motif', 'get_motif_source'])
+    for (const name of ['write_motif_draft', 'amend_motif_draft', 'create_edit_draft', 'import_motif', 'get_motif_source', 'begin_file_upload', 'write_file_chunk', 'read_file_transfer', 'delete_file_transfer'])
         expect(() => call(name, {})).toThrow(/unhandled/);
+});
+it('bounds and checks the inline base64 form, and names the replacement for the file_id arms', () => {
+    const store = new UserMotifStore(temp()), call = tools(store);
+    const draft = call('open_motif_draft', { source: { kind: 'empty', name: 'Caps' } });
+    const write = (files: unknown[]) => call('update_motif_files', { draft_id: draft.draft_id, expected_revision: draft.revision, files });
+    const kib = (n: number) => Buffer.alloc(n * 1024, 7).toString('base64');
+    expect(write([{ path: 'a.bin', base64: kib(256) }]).revision).not.toBe(draft.revision);
+    const again = call('read_motif', { id: draft.draft_id }).revision;
+    const writeAgain = (files: unknown[]) => call('update_motif_files', { draft_id: draft.draft_id, expected_revision: again, files });
+    expect(() => writeAgain([{ path: 'b.bin', base64: kib(257) }])).toThrow(/over 256 KiB decoded/);
+    expect(() => writeAgain(Array.from({ length: 17 }, (_, i) => ({ path: `p${i}.bin`, base64: kib(256) })))).toThrow(/over 4 MiB/);
+    for (const bad of ['not base64!', 'AAA', 'AA==\n', 'A A='])
+        expect(() => writeAgain([{ path: 'c.bin', base64: bad }]), bad).toThrow(/invalid base64/);
+    expect(() => writeAgain([{ path: 'c.bin', base64: 'AA==', text: 'x' }])).toThrow(/exactly one/);
+    expect(() => writeAgain([{ path: 'c.bin', file_id: '00000000-0000-0000-0000-000000000000' }])).toThrow(/file_id uploads are gone; send \{path, base64\}/);
+    expect(() => writeAgain([{ path: 'c.bin', text: 'x', mode: 'w' }])).toThrow(/not mode/);
+    expect(() => call('open_motif_draft', { source: { kind: 'zip', file_id: 'x' } })).toThrow(/\{kind:'zip', path\}/);
+    expect(store.readFile(draft.draft_id, 'b.bin')).toBeNull();
+    expect(call('read_motif', { id: draft.draft_id }).revision).toBe(again);
+});
+it('refuses a text file over 256 KiB rather than truncating it', () => {
+    const store = new UserMotifStore(temp()), call = tools(store);
+    const draft = call('open_motif_draft', { source: { kind: 'empty', name: 'Big' } });
+    call('update_motif_files', { draft_id: draft.draft_id, expected_revision: draft.revision, files: [{ path: 'big.js', text: 'x'.repeat(256 * 1024 + 1) }] });
+    expect(() => call('read_motif', { id: draft.draft_id, path: 'big.js' })).toThrow(/257 KiB of text, over read_motif's 256 KiB/);
+});
+it('copies any Motif, a linked draft included, into an independent app-owned draft (the UI "save as new")', () => {
+    const store = new UserMotifStore(temp()), call = tools(store), directory = folder();
+    mkdirSync(path.join(directory, 'assets'));
+    writeFileSync(path.join(directory, 'assets', 'a.bin'), Buffer.from([1, 2, 3]));
+    const draft = call('open_motif_draft', { source: { kind: 'directory', path: directory } });
+    // Opening the draft id resumes it; the internal copy channel does not.
+    expect(call('open_motif_draft', { source: { kind: 'motif', id: draft.draft_id } }).draft_id).toBe(draft.draft_id);
+    const copy = call('copy_motif_draft', { id: draft.draft_id });
+    expect(copy.draft_id).not.toBe(draft.draft_id);
+    expect(store.readFile(copy.draft_id, 'assets/a.bin')).toEqual(Buffer.from([1, 2, 3]));
+    expect(store.readHtml(copy.draft_id)).toContain('one');
+    const copied = call('read_motif', { id: copy.draft_id });
+    expect(copied.status).toBe('draft');
+    expect(copied.directory).toBeUndefined();
+    // Edits to the copy stay in the copy.
+    call('update_motif_files', { draft_id: copy.draft_id, expected_revision: copy.revision, files: [{ path: 'index.html', text: '<html><body>copy</body></html>' }] });
+    expect(readFileSync(path.join(directory, 'index.html'), 'utf8')).toContain('one');
+    // An invalid linked draft is refused, not copied from its last valid snapshot.
+    writeFileSync(path.join(directory, 'manifest.json'), '{broken');
+    expect(() => call('copy_motif_draft', { id: draft.draft_id })).toThrow();
 });
 it('reports invalid linked edits without losing the draft, blocks publication and recovers after repair', () => {
     const store = new UserMotifStore(temp()), workspace = new MotifWorkspace(store, []), directory = folder();

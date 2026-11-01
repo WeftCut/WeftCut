@@ -3,7 +3,7 @@ import { composeMotifHtml } from '../../shared/motifs/catalog';
 const invoke = vi.fn();
 vi.mock('@/bridge/ipc', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 vi.mock('@/bridge/events', () => ({ listen: vi.fn() }));
-import { getMotifSource, amendMotifDraft, createEditDraft, importMotif, installMotif } from './index';
+import { getMotifSource, amendMotifDraft, createEditDraft, copyMotifDraft, importMotif, installMotif } from './index';
 beforeEach(() => invoke.mockReset());
 describe('Motif editor uses the public file contracts', () => {
     it('retains the target version observed before update confirmation', async () => {
@@ -20,6 +20,12 @@ describe('Motif editor uses the public file contracts', () => {
         await importMotif('C:/scene.zip');
         expect(invoke).toHaveBeenLastCalledWith('open_motif_draft', { source: { kind: 'zip', path: 'C:/scene.zip' } });
     });
+    it('copies a draft through the internal main-process channel, not MCP file transfers', async () => {
+        invoke.mockResolvedValue({ draft_id: 'copy', revision: 'r' });
+        expect(await copyMotifDraft('draft')).toBe('copy');
+        expect(invoke).toHaveBeenCalledTimes(1);
+        expect(invoke).toHaveBeenLastCalledWith('copy_motif_draft', { id: 'draft' });
+    });
     it('retains the read revision and submits one manifest/HTML transaction', async () => {
         const manifest = { id: 'a', name: 'A', version: 1, size: [64, 64] as [
                 number,
@@ -28,6 +34,7 @@ describe('Motif editor uses the public file contracts', () => {
         const html = composeMotifHtml(manifest, '<body>hello</body>');
         invoke.mockResolvedValueOnce({ manifest, text: html, revision: 'old' }).mockResolvedValueOnce({ revision: 'new' });
         const source = await getMotifSource('a');
+        expect(invoke).toHaveBeenNthCalledWith(1, 'read_motif', { id: 'a', path: 'index.html' });
         expect(await amendMotifDraft('a', source.html, source.revision)).toBe('new');
         expect(invoke).toHaveBeenLastCalledWith('update_motif_files', expect.objectContaining({ draft_id: 'a', expected_revision: 'old', files: expect.arrayContaining([{ path: 'index.html', text: html }]) }));
     });

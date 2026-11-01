@@ -124,8 +124,9 @@ export const AUDIO_FX_CHANNELS: ReadonlySet<string> = new Set([
 ])
 
 /** Motif catalog-read + authoring + install + staleness channels, served in TS
- *  by runMotifTool. */
-export const MOTIF_CHANNELS: ReadonlySet<string> = new Set(['list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'begin_file_upload', 'write_file_chunk', 'read_file_transfer', 'delete_file_transfer', 'motif_staleness_report', 'acknowledge_motif_staleness'])
+ *  by runMotifTool. `copy_motif_draft` (the app's "save as new") is
+ *  renderer-only: MCP clients copy with `open_motif_draft`. */
+export const MOTIF_CHANNELS: ReadonlySet<string> = new Set(['list_motifs', 'read_motif', 'open_motif_draft', 'copy_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'motif_staleness_report', 'acknowledge_motif_staleness'])
 
 /** Native read/compute handlers that receive their project state slice (a MediaItem
  *  or the full Project) as an injected call argument — the TS host forwards it

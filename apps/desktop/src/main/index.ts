@@ -1137,10 +1137,13 @@ app.whenReady().then(async () => {
   })
 
   // Motif file watch: on any disk change under <dataRoot>/motifs/, refresh
-  // the actor catalog (so a disk-written Motif is placeable via add_motif)
+  // the actor catalog (so a disk-written Motif is placeable via add_layers)
   // AND emit motifs:changed (renderer resync → ?v= host buster).
   const motifWorkspace = new MotifWorkspace(motifStore, motifBuiltins)
-  motifWatcher = spawnMotifWatcher(dataRoot.motifsDir, () => {
+  // The MCP file-transfer tools are gone; releases up to 0.5.6 left their
+  // temporary uploads (up to 512 MiB) under `.transfers/`. Nothing reads it.
+  fs.rm(path.join(motifStore.root(), '.transfers'), { recursive: true, force: true }, () => {})
+  motifWatcher =spawnMotifWatcher(dataRoot.motifsDir, () => {
     motifWorkspace.syncLinked()
     tsHost?.refreshMotifCatalog()
     emitToRenderer('motifs:changed', {})

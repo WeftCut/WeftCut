@@ -3238,7 +3238,7 @@ export interface MotifSource {
 }
 
 export async function getMotifSource(id: string): Promise<MotifSource> {
-  const file=await invoke<{manifest:MotifManifest;revision:string;text:string}>('read_motif',{id,path:'index.html',encoding:'text'});
+  const file=await invoke<{manifest:MotifManifest;revision:string;text:string}>('read_motif',{id,path:'index.html'});
   return {manifest:file.manifest,revision:file.revision,html:file.text};
 }
 
@@ -3282,11 +3282,10 @@ export async function createEditDraft(sourceId: string): Promise<string> {
   return (await invoke<{draft_id:string}>('open_motif_draft',{source:{kind:'motif',id:sourceId}})).draft_id;
 }
 
-/** Explicit independent copy; opening a draft id itself resumes that draft. */
+/** Explicit independent copy of any Motif, drafts included (opening a draft id
+ *  resumes that draft). Main copies the package in one internal call. */
 export async function copyMotifDraft(id:string):Promise<string> {
-  const transfer=await invoke<{file_id:string}>('export_motif',{id});
-  try {return (await invoke<{draft_id:string}>('open_motif_draft',{source:{kind:'zip',file_id:transfer.file_id}})).draft_id;}
-  finally {await invoke('delete_file_transfer',{file_id:transfer.file_id});}
+  return (await invoke<{draft_id:string}>('copy_motif_draft',{id})).draft_id;
 }
 
 /// Import a Motif ZIP package from the OS dialog.

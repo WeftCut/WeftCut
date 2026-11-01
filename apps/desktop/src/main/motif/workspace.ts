@@ -28,9 +28,23 @@ export interface TextEdit {
 export interface FileChange {
     path: string;
     text?: string;
-    file_id?: string;
+    /** Canonical base64 of the whole file: the one inline form for binary bytes. */
+    base64?: string;
     delete?: boolean;
     edits?: TextEdit[];
+}
+/** The inline binary form's bounds: one entry, and one call's entries together. */
+export const INLINE_FILE_BYTES = 256 * 1024;
+export const INLINE_CALL_BYTES = 4 * 1024 * 1024;
+const CHANGE_KEYS: ReadonlySet<string> = new Set(['path', 'text', 'base64', 'edits', 'delete']);
+/** Decode one `{path, base64}` entry: canonical base64 only, bounded before decoding. */
+function inlineBytes(filePath: string, base64: string): Buffer {
+    if (base64.length > Math.ceil(INLINE_FILE_BYTES / 3) * 4)
+        throw new Error(`${filePath}: base64 is over 256 KiB decoded; open a directory draft or a {kind:'zip', path} source for larger files`);
+    const bytes = Buffer.from(base64, 'base64');
+    if (bytes.toString('base64') !== base64)
+        throw new Error(`${filePath}: invalid base64; send the file's canonical base64 (A-Z a-z 0-9 + /, = padding, no whitespace)`);
+    return bytes;
 }
 /** Apply edits in order, each against the text the previous one left. A miss or
  *  an ambiguous match refuses the whole batch, so a client resends a small diff
@@ -196,6 +210,8 @@ export class MotifWorkspace {
     open(source: DraftSource) {
         if (!source || typeof source !== 'object' || !['directory', 'zip', 'motif', 'empty'].includes(source.kind))
             throw new Error('Invalid draft source');
+        if (source.kind === 'zip' && 'file_id' in source)
+            throw new Error("A ZIP source is {kind:'zip', path} with an absolute app-machine path; file_id uploads are gone");
         const allowed = source.kind === 'motif' ? ['kind', 'id'] : source.kind === 'empty' ? ['kind', 'name'] : ['kind', 'path'];
         if (Object.keys(source).some(k => !allowed.includes(k)))
             throw new Error('Source must specify exactly one source kind');
@@ -240,6 +256,15 @@ export class MotifWorkspace {
         }
         return opened;
     }
+    /** An independent app-owned draft from any Motif's complete package (the app's
+     *  "save as new"): no linked directory, no source and no publication target. */
+    copy(id: string) {
+        const info = this.read(id);
+        if (info.diagnostic)
+            throw new Error(info.diagnostic);
+        const files = motifSourceFiles(this.store, this.builtins, id).filter(f => f.path !== 'index.html' && f.path.split('/')[0].toLowerCase() !== 'target');
+        return this.openFiles([{ path: 'index.html', bytes: Buffer.from(info.html) }, ...files]);
+    }
     openFiles(files: MotifFile[], directory?: string) {
         const preliminary = normalize(files, 'draft');
         const id = this.fresh(preliminary.manifest.name);
@@ -270,7 +295,7 @@ export class MotifWorkspace {
                 ...(state.publication ? { target_id: state.publication.id } : {}) };
         });
     }
-    update(id: string, expected: string, changes: FileChange[], resolveFile?: (id: string) => Buffer) {
+    update(id: string, expected: string, changes: FileChange[]) {
         const info = this.read(id), state = this.state(id);
         if (info.status !== 'draft')
             throw new Error('Only drafts can be edited; open a draft first');
@@ -280,22 +305,37 @@ export class MotifWorkspace {
             throw new Error('Provide 1–10000 file changes');
         const original = state.directory ? readMotifDirectory(state.directory) : this.store.packageFiles(id);
         const files = new Map(original.map(f => [f.path, f.bytes])), touched = new Set<string>();
+        let inline = 0;
         for (const change of changes) {
+            if (!change || typeof change !== 'object')
+                throw new Error('Each file change is an object with a path');
+            if ('file_id' in change)
+                throw new Error(`${String(change.path)}: file_id uploads are gone; send {path, base64} (at most 256 KiB decoded), or write the draft's linked directory`);
+            const unknown = Object.keys(change).find(k => !CHANGE_KEYS.has(k));
+            if (unknown !== undefined)
+                throw new Error(`${String(change.path)}: a file change takes path plus one of text, base64, edits or delete:true, not ${unknown}`);
             if (typeof change.path !== 'string' || !motifFileSegments(change.path) || change.path.split('/')[0].toLowerCase() === 'target')
                 throw new Error('Invalid file path');
             if (touched.has(change.path.toLowerCase()))
                 throw new Error('Duplicate file change: ' + change.path);
             touched.add(change.path.toLowerCase());
             const hasEdits = Array.isArray(change.edits) && change.edits.length > 0;
-            const kinds = Number(typeof change.text === 'string') + Number(typeof change.file_id === 'string') + Number(change.delete === true) + Number(hasEdits);
+            const kinds = Number(typeof change.text === 'string') + Number(typeof change.base64 === 'string') + Number(change.delete === true) + Number(hasEdits);
             if (kinds !== 1 || (change.edits !== undefined && !hasEdits))
-                throw new Error('Each file change needs exactly one of text, file_id, edits or delete:true');
+                throw new Error('Each file change needs exactly one of text, base64, edits or delete:true');
             if (change.delete)
                 files.delete(change.path);
             else if (hasEdits)
                 files.set(change.path, applyEdits(change.path, files.get(change.path), change.edits!));
+            else if (change.base64 !== undefined) {
+                const bytes = inlineBytes(change.path, change.base64);
+                inline += bytes.length;
+                if (inline > INLINE_CALL_BYTES)
+                    throw new Error('base64 entries total over 4 MiB decoded in one call; split the batch, or open a directory draft');
+                files.set(change.path, bytes);
+            }
             else
-                files.set(change.path, change.text !== undefined ? Buffer.from(change.text) : resolveFile ? resolveFile(change.file_id!) : (() => { throw new Error('No file transfer available'); })());
+                files.set(change.path, Buffer.from(change.text!));
         }
         const next = [...files].map(([path, bytes]) => ({ path, bytes }));
         normalize(next, id); // validate the complete transaction before changing anything

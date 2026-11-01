@@ -194,7 +194,7 @@ Save As, `open_project` and `create_project` land, cleared on Close Project.
 **No project open ⇒ every project tool refuses** with `NoProjectOpen` and
 dispatches nothing. Default-deny: only `APP_SCOPE_TOOLS` /
 `APP_SCOPE_RESOURCES` in `main/mcp/mutationTools.ts` answer — `ping`, the
-Motif library and file-transfer tools, the export preset tools,
+Motif library tools, the export preset tools,
 `get_export_status`, `cancel_export`, `retry_export`, `open_project`,
 `create_project`, `read_project` for views `session` / `effects` / `taste`, and
 the resources `project://session`, `project://taste`, `effects://catalog`,
@@ -598,15 +598,17 @@ Frame sampling is the only interpolation, so there is no tool for it. Video,
 Audio, animated ImageOverlay, Motif and CompositionRef retime; static images,
 Text and Color do not.
 
-Motifs ([motif-workspaces.md](motif-workspaces.md)): `list_motifs`,
-`open_motif_draft`, `read_motif`, `update_motif_files` (revision-checked
-batch; exact-match `edits`), `preview_motif` (whole canvas scaled to bounds,
-never cropped; `id`, no alias; `local_t_s` is seconds from the Motif's start, not timeline time), `install_motif` (publishes; replacing another
-target needs its version), `export_motif` (with `path`: an absolute `.zip` in
-an existing folder; an existing file is `PathExists`, never overwritten;
-annotated destructive), `delete_motif`, and the transfer tools
-`begin_file_upload` (≤ 256 MiB), `write_file_chunk` (≤ 256 KiB decoded),
-`read_file_transfer`, `delete_file_transfer`.
+Motifs ([motif-workspaces.md](motif-workspaces.md)) take paths, not file
+handles: `list_motifs`, `open_motif_draft`, `read_motif` (a path answers UTF-8
+text ≤ 256 KiB, or `{size, sha256}` for a binary file), `update_motif_files`
+(revision-checked batch; exact-match `edits`; the one inline binary form is an
+entry `{path, base64}`, ≤ 256 KiB decoded each and ≤ 4 MiB per call),
+`preview_motif` (whole canvas scaled to bounds, never cropped; `id`, no alias;
+`local_t_s` is seconds from the Motif's start, not timeline time),
+`install_motif` (publishes; replacing another target needs its version),
+`export_motif` (`path` required: an absolute `.zip` in an existing folder; an
+existing file is `PathExists`, never overwritten; annotated destructive) and
+`delete_motif`.
 
 ### Workflow / safety
 

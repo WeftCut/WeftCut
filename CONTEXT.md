@@ -554,6 +554,8 @@ See [motifs.md](docs/motifs.md), ADR 0017.
 _Avoid_: template, overlay, animation preset
 
 **Motif draft**: A retained, editable package, optionally linked to a working directory.
+Agents reach its files by path or inline in `update_motif_files` (text, or base64 up to 256 KiB); there are no file handles.
+_Avoid_: upload, file transfer
 
 **Motif revision**: The content hash of a complete validated package; stale writes are rejected by it.
 

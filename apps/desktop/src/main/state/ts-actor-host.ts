@@ -569,7 +569,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   }
 
   function runMotif(name: string, args: Record<string, unknown>): unknown {
-    if (!["list_motifs", "read_motif", "read_file_transfer", "motif_staleness_report"].includes(name)) deps.exportJobs?.assertWritable()
+    if (!["list_motifs", "read_motif", "motif_staleness_report"].includes(name)) deps.exportJobs?.assertWritable()
     if (!deps.motifStore) throw new Error('motifTool: motifStore not configured')
     const motifToolDeps: MotifToolDeps = {
       store: deps.motifStore,
