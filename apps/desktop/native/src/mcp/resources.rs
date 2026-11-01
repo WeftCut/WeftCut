@@ -414,8 +414,8 @@ async fn read_description_resource(
 }
 
 /// Serve `media://{id}/analysis` — the deterministic shot-layer view for the
-/// tool's DEFAULT detection params (sensitivity 0.4, min_shot_us 500000, all
-/// passes). Unlike `media://{id}/description`, the shot layer is ALWAYS
+/// tool's DEFAULT detection params (sensitivity 0.4, min_shot_us 500000, the
+/// default shots + stats + events passes; no opt-in spans). Unlike `media://{id}/description`, the shot layer is ALWAYS
 /// computable, so a cache miss COMPUTES on demand (a whole-source scan) and
 /// writes it through, then returns — it never reports "not computed yet"
 /// (mirrors `serve_frame`'s on-demand `jobs::extract_frame`). Idempotent pure

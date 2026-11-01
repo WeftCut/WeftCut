@@ -467,8 +467,21 @@ One line per tool with a near neighbour: why both exist (convention 6).
   relative within a source) and the flags with their thresholds — `black`
   (all three below luma 0.02), `freeze` (SSIM ≥ 0.985 across them), `fade` (a
   monotonic luma ramp ≥ 0.15 touching below 0.10). Defaults `sensitivity=0.4`,
-  `min_shot_us=500000` (`shot_default_opts`). Stats are advisory (proxy
-  decode); flags are deterministic.
+  `min_shot_us=500000` (`shot_default_opts`), `passes` shots, stats, events.
+  Stats are advisory (proxy decode); flags are deterministic. Spots inside a
+  shot are the opt-in `passes: ["spans"]`: one decode of the same input
+  (720p proxy preferred) sampled every `step_us` (default 500000,
+  100000–10000000) at 160 px, measured with the same luma / Laplacian / SSIM,
+  answers `spans: [{ kind, src_start_us, src_end_us, value }]` sorted by
+  start. `dark`: mean luma < 0.08 for ≥ 0.5 s, `value` the mean luma;
+  `soft`: sharpness < 35 % of the source's median (non-dark samples) for
+  ≥ 1 s, `value` the mean sharpness over that median; `frozen`: adjacent-sample
+  SSIM ≥ 0.985 for ≥ 1 s, `value` the lowest SSIM. Each measurement stands for
+  one step, consecutive ones merge before the minimum applies, a dark sample
+  counts only as dark, and a span reaching the last sample ends at the source
+  duration. A layer's spans are clipped to its window. Cached per (source,
+  tier, `step_us`) beside the shot report; `compare_frames` stays the tool for
+  one targeted pair.
 - `compare_frames` — pHash Hamming distance + MSSIM of two source frames
   (`{ media_id | layer_id, src_us }` each);
   `similar` = `phash_hamming <= 10 && ssim >= 0.5`. Cross-aspect pairs lean on

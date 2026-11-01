@@ -18,7 +18,10 @@
 //! list from it at any higher threshold with no I/O, and [`is_report_cached`] is
 //! the read-only probe for whether that pass has already run. What it does NOT
 //! own is measuring a span the scan never sampled — that, and the sidecar those
-//! measurements accumulate in, belong to [`stats`].
+//! measurements accumulate in, belong to [`stats`]. Nor does it own the
+//! opt-in in-shot defect scan (dark / soft / frozen spans at any point of the
+//! source): that is [`spans`], which shares this module's metric functions,
+//! constants, tier pick and sidecar protocol.
 //!
 //! ffmpeg's `scene` score is an internal detail — the public surface says
 //! "shot" / "cut".
@@ -31,6 +34,9 @@ use anyhow::{Context, Result};
 /// Pairwise perceptual frame similarity (pHash + MSSIM) behind the standalone
 /// `compare_frames` tool — a pure function, not part of the cut/stats pipeline.
 pub(crate) mod sim;
+/// The opt-in in-shot defect scan (dark / soft / frozen spans) and its
+/// per-(source, tier, step) sidecar beside the VSHOT reports.
+pub mod spans;
 /// The on-demand pass that measures spans a scan never sampled, and its own
 /// per-(source, tier) sidecar. Owns the one measurement function; [`attach_stats`]
 /// is its other caller.
@@ -55,6 +61,23 @@ const BLACK_LUMA: f64 = 0.02; // mean luma below this ⇒ effectively black
 const FREEZE_SSIM: f64 = 0.985; // adjacent-sample SSIM at/above this ⇒ no motion
 const FADE_DARK_LUMA: f64 = 0.10; // one boundary end must be near-black for a fade
 const FADE_MIN_DELTA: f64 = 0.15; // and the luma ramp must span at least this much
+
+// In-shot defect spans ([`spans`]): one whole-source decode sampled every
+// `step_us`, each measurement standing for one step. A run of consecutive
+// qualifying samples becomes a span once it lasts the minimum. Frozen reuses
+// `FREEZE_SSIM`; the luma / sharpness / SSIM are the per-shot stat functions.
+const SPAN_DARK_LUMA: f64 = 0.08; // sample mean luma below this ⇒ dark
+const SPAN_DARK_MIN_US: i64 = 500_000; // a dark run must last at least this
+const SPAN_FROZEN_MIN_US: i64 = 1_000_000; // a frozen run must last at least this
+const SPAN_SOFT_RATIO: f64 = 0.35; // sharpness below this × the source median ⇒ soft
+const SPAN_SOFT_MIN_US: i64 = 1_000_000; // a soft run must last at least this
+/// Downscaled width of the span scan's frames: smaller than the per-shot
+/// stat frames, because the scan decodes a frame every step of the source.
+const SPAN_FRAME_WIDTH: u32 = 160;
+/// The `analyze_clip` spans pass's default sampling step.
+pub const DEFAULT_SPAN_STEP_US: i64 = 500_000;
+/// The sampling steps the spans pass accepts, inclusive.
+pub const SPAN_STEP_RANGE_US: std::ops::RangeInclusive<i64> = 100_000..=10_000_000;
 
 /// Tuning for one shot-detection run.
 pub struct ShotOpts {
@@ -306,15 +329,23 @@ fn find_cached_report(
     media: &MediaItem,
     opts: &ShotOpts,
 ) -> Option<(std::path::PathBuf, &'static str)> {
+    find_cached_sidecar(cache, media, |tier| {
+        cache.shot(&cache_key(&media.file_hash_blake3, tier, opts))
+    })
+}
+
+/// The tier walk [`find_cached_report`] states, for any per-tier sidecar:
+/// `sidecar(tier)` names the file a scan on that tier would have written. The
+/// spans pass ([`spans`]) finds its sidecar the same way.
+fn find_cached_sidecar(
+    cache: &CacheLayout,
+    media: &MediaItem,
+    sidecar: impl Fn(&'static str) -> std::path::PathBuf,
+) -> Option<(std::path::PathBuf, &'static str)> {
     let (_video, current) = pick_source(cache, media);
     std::iter::once(current)
         .chain(TIERS.into_iter().filter(move |tier| *tier != current))
-        .map(|tier| {
-            (
-                cache.shot(&cache_key(&media.file_hash_blake3, tier, opts)),
-                tier,
-            )
-        })
+        .map(|tier| (sidecar(tier), tier))
         .find(|(path, _)| crate::cache::cached_ok(path))
 }
 

@@ -104,9 +104,21 @@ pub(super) struct SourceCut {
     pub score: f32,
 }
 
+/// One in-shot defect span, source-absolute: the wire view of
+/// `jobs::shot::spans::DefectSpan`.
+#[cfg(feature = "jobs")]
+#[derive(Debug, Serialize)]
+pub(super) struct SourceSpan {
+    pub kind: jobs::shot::spans::SpanKind,
+    pub src_start_us: i64,
+    pub src_end_us: i64,
+    pub value: f64,
+}
+
 /// `analyze_clip` and `media://{id}/analysis`: the shot report in source time,
 /// with the media it describes and, for a layer, that layer's mapping. The
 /// cached `ShotReport` keeps its own field names; this is its wire view.
+/// `spans` is present only when the spans pass ran.
 #[cfg(feature = "jobs")]
 #[derive(Debug, Serialize)]
 pub(super) struct SourceShotReport<'a> {
@@ -115,6 +127,8 @@ pub(super) struct SourceShotReport<'a> {
     pub mapping: Option<LayerMapping>,
     pub shots: Vec<SourceShot<'a>>,
     pub cut_scores: Vec<SourceCut>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spans: Option<Vec<SourceSpan>>,
 }
 
 #[cfg(feature = "jobs")]
@@ -149,7 +163,24 @@ impl<'a> SourceShotReport<'a> {
                     score: c.score,
                 })
                 .collect(),
+            spans: None,
         }
+    }
+
+    /// Attach the spans pass's answer, already clipped to the answer's window.
+    pub fn with_spans(mut self, spans: &[jobs::shot::spans::DefectSpan]) -> Self {
+        self.spans = Some(
+            spans
+                .iter()
+                .map(|s| SourceSpan {
+                    kind: s.kind,
+                    src_start_us: s.t_start_us,
+                    src_end_us: s.t_end_us,
+                    value: s.value,
+                })
+                .collect(),
+        );
+        self
     }
 }
 
@@ -469,6 +500,7 @@ pub(super) enum ShotPass {
     Shots,
     Stats,
     Events,
+    Spans,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -484,9 +516,13 @@ pub(super) struct AnalyzeClipArgs {
     /// Minimum shot duration (microseconds); cuts closer than this are merged.
     /// Default 500000 (0.5 seconds).
     pub min_shot_us: Option<i64>,
-    /// Which passes to run. Default all; `["shots"]` is timing only (no frame
-    /// sampling).
+    /// Which passes to run. Default shots, stats, events; `["shots"]` is
+    /// timing only (no frame sampling). `"spans"` is opt-in: one sampled
+    /// decode of the source for dark / soft / frozen spans.
     pub passes: Option<Vec<ShotPass>>,
+    /// The spans pass's sampling step (microseconds), 100000..=10000000.
+    /// Default 500000. Needs `"spans"` in `passes`.
+    pub step_us: Option<i64>,
     /// Injected by the TS MCP host (sole state owner) — see DetectPausesArgs.
     #[serde(default)]
     #[schemars(skip)]
@@ -525,15 +561,38 @@ pub(super) async fn analyze_clip(
         ));
     }
 
-    // Passes: default all. "shots" is always the base; "stats"/"events" gate
-    // the per-shot frame sampling.
-    let (want_stats, want_events) = match &args.passes {
-        None => (true, true),
+    // Passes: default shots + stats + events. "shots" is always the base;
+    // "stats"/"events" gate the per-shot frame sampling; "spans" is opt-in and
+    // runs its own sampled decode, so `["spans"]` alone extracts no per-shot
+    // frames and answers timing-only shots beside the spans.
+    let (want_stats, want_events, want_spans) = match &args.passes {
+        None => (true, true, false),
         Some(passes) => (
             passes.contains(&ShotPass::Stats),
             passes.contains(&ShotPass::Events),
+            passes.contains(&ShotPass::Spans),
         ),
     };
+    let step_us = match args.step_us {
+        Some(step) if !want_spans => {
+            return Err(McpToolError::invalid_params(
+                format!("step_us {step} paces the spans pass, which this call does not run — add \"spans\" to passes, or drop step_us"),
+                None,
+            ))
+        }
+        Some(step) => step,
+        None => jobs::shot::DEFAULT_SPAN_STEP_US,
+    };
+    if !jobs::shot::SPAN_STEP_RANGE_US.contains(&step_us) {
+        return Err(McpToolError::invalid_params(
+            format!(
+                "step_us {step_us} must be in [{}, {}] (0.1 s to 10 s)",
+                jobs::shot::SPAN_STEP_RANGE_US.start(),
+                jobs::shot::SPAN_STEP_RANGE_US.end()
+            ),
+            None,
+        ));
+    }
 
     let opts = jobs::shot::ShotOpts {
         sensitivity,
@@ -549,18 +608,35 @@ pub(super) async fn analyze_clip(
     let source_report = jobs::shot::cached_source_report(&b.cache, target.media, &opts)
         .await
         .map_err(|e| McpToolError::internal_error(format!("shot analysis: {e:#}"), None))?;
-    let report = match target.span() {
-        (from, Some(to)) if target.layer.is_some() => {
-            jobs::shot::clip_report(&source_report, from, to)
-        }
-        _ => source_report,
+    // The spans pass: its own whole-source sidecar, clipped the same way.
+    let source_spans = if want_spans {
+        Some(
+            jobs::shot::spans::cached_source_spans(&b.cache, target.media, step_us)
+                .await
+                .map_err(|e| McpToolError::internal_error(format!("span scan: {e:#}"), None))?
+                .spans,
+        )
+    } else {
+        None
+    };
+    let window = match target.span() {
+        (from, Some(to)) if target.layer.is_some() => Some((from, to)),
+        _ => None,
+    };
+    let report = match window {
+        Some((from, to)) => jobs::shot::clip_report(&source_report, from, to),
+        None => source_report,
+    };
+    let spans = match (source_spans, window) {
+        (Some(spans), Some((from, to))) => Some(jobs::shot::spans::clip_spans(&spans, from, to)),
+        (spans, _) => spans,
     };
 
-    ToolResult::json(&SourceShotReport::new(
-        target.media.id,
-        target.mapping(),
-        &report,
-    ))
+    let answer = SourceShotReport::new(target.media.id, target.mapping(), &report);
+    ToolResult::json(&match &spans {
+        Some(spans) => answer.with_spans(spans),
+        None => answer,
+    })
 }
 
 /// One side of a `compare_frames` pair. `#[schemars(skip)]` on the injected
@@ -1368,6 +1444,158 @@ mod tests {
         };
         let m = serde_json::to_value(LayerMapping::of(&layer, 10_000_000, &retimed)).unwrap();
         assert_eq!(m["rate"], serde_json::json!({ "num": 2, "den": 1 }));
+    }
+
+    /// The spans pass through the handler, served from seeded sidecars (the
+    /// source does not exist, so any decode would fail): `["spans"]` alone
+    /// answers timing-only shots plus the spans clipped to the layer's source
+    /// window under `src_*` names, beside its mapping; without the pass there
+    /// is no `spans` key; `step_us` without the pass or out of range refuses.
+    #[cfg(feature = "jobs")]
+    #[tokio::test]
+    async fn analyze_clip_spans_pass_answers_window_clipped_spans() {
+        use crate::jobs::shot::spans::{self, DefectSpan, SpanKind, SpanReport};
+        use crate::jobs::shot::{self, Shot, ShotOpts, ShotReport};
+        use crate::state::{new_id, Layer, LayerParams, MediaKind, Transform, VideoClipParams};
+        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
+        b.init().await.unwrap();
+        let mut media = audio_media("spans-handler");
+        media.kind = MediaKind::Video;
+        media.metadata.duration_us = Some(20_000_000);
+        let hash = media.file_hash_blake3.clone();
+
+        // A clip at timeline 30 s playing source [4 s, 12 s].
+        let layer = Layer {
+            id: new_id(),
+            label: None,
+            t_start_us: 30_000_000,
+            t_end_us: 38_000_000,
+            enabled: true,
+            locked: false,
+            metadata: Default::default(),
+            params: LayerParams::VideoClip(VideoClipParams {
+                timing: Default::default(),
+                media: media.id,
+                src_in_us: 4_000_000,
+                src_out_us: 12_000_000,
+                transform: Transform::default(),
+                opacity: Default::default(),
+                crop: None,
+                flip_h: false,
+                flip_v: false,
+                blend_mode: Default::default(),
+                fade_in_us: 0,
+                fade_out_us: 0,
+            }),
+            effects: Vec::new(),
+        };
+
+        // No proxy exists, so both sidecars sit on the "orig" tier.
+        let shot_of = |stats| ShotOpts {
+            sensitivity: shot::DEFAULT_SENSITIVITY,
+            min_shot_us: shot::DEFAULT_MIN_SHOT_US,
+            stats,
+            events: stats,
+        };
+        let whole = ShotReport {
+            shots: vec![Shot {
+                index: 0,
+                t_start_us: 0,
+                t_end_us: 20_000_000,
+                keyframe_t_us: 10_000_000,
+                brightness: None,
+                motion: None,
+                sharpness: None,
+                flags: Vec::new(),
+            }],
+            cut_scores: Vec::new(),
+        };
+        for stats in [false, true] {
+            let path = b
+                .cache
+                .shot(&shot::cache_key(&hash, "orig", &shot_of(stats)));
+            shot::write_json_atomic(&path, &whole, "shot report")
+                .await
+                .unwrap();
+        }
+        let d = |kind, t_start_us, t_end_us, value| DefectSpan {
+            kind,
+            t_start_us,
+            t_end_us,
+            value,
+        };
+        let seeded = SpanReport {
+            step_us: shot::DEFAULT_SPAN_STEP_US,
+            spans: vec![
+                d(SpanKind::Dark, 0, 5_000_000, 0.02),
+                d(SpanKind::Frozen, 6_000_000, 7_000_000, 0.99),
+                d(SpanKind::Soft, 10_000_000, 15_000_000, 0.2),
+                d(SpanKind::Dark, 16_000_000, 17_000_000, 0.01),
+            ],
+        };
+        let path = b
+            .cache
+            .shot(&spans::cache_key(&hash, "orig", shot::DEFAULT_SPAN_STEP_US));
+        shot::write_json_atomic(&path, &seeded, "span report")
+            .await
+            .unwrap();
+
+        let args = |passes: Option<Vec<ShotPass>>, step_us| AnalyzeClipArgs {
+            media_id: None,
+            layer_id: Some(layer.id.to_string()),
+            sensitivity: None,
+            min_shot_us: None,
+            passes,
+            step_us,
+            layer: Some(layer.clone()),
+            media: Some(media.clone()),
+        };
+        let body = |r: ToolResult| -> serde_json::Value {
+            match &r.content[0] {
+                crate::mcp::wire::ContentBlock::Text { text } => {
+                    serde_json::from_str(text).unwrap()
+                }
+                #[allow(unreachable_patterns)]
+                _ => panic!("expected a text block"),
+            }
+        };
+
+        let got = body(
+            analyze_clip(&b, args(Some(vec![ShotPass::Spans]), None))
+                .await
+                .unwrap(),
+        );
+        assert_eq!(
+            got["spans"],
+            serde_json::json!([
+                { "kind": "dark", "src_start_us": 4_000_000, "src_end_us": 5_000_000, "value": 0.02 },
+                { "kind": "frozen", "src_start_us": 6_000_000, "src_end_us": 7_000_000, "value": 0.99 },
+                { "kind": "soft", "src_start_us": 10_000_000, "src_end_us": 12_000_000, "value": 0.2 },
+            ])
+        );
+        assert_eq!(got["mapping"]["src_in_us"], 4_000_000);
+        assert_eq!(got["mapping"]["t_start_us"], 30_000_000);
+        assert_eq!(got["shots"][0]["src_start_us"], 4_000_000);
+        assert!(got["shots"][0]["brightness"].is_null(), "no per-shot stats");
+
+        // The default passes leave spans out of the answer.
+        let got = body(analyze_clip(&b, args(None, None)).await.unwrap());
+        assert!(got.get("spans").is_none(), "{got}");
+
+        let err = analyze_clip(&b, args(None, Some(250_000)))
+            .await
+            .expect_err("step_us without the spans pass");
+        assert!(
+            err.message.contains("step_us") && err.message.contains("\"spans\""),
+            "{}",
+            err.message
+        );
+        for step in [99_999, 10_000_001] {
+            let err = analyze_clip(&b, args(Some(vec![ShotPass::Spans]), Some(step)))
+                .await
+                .expect_err("step_us out of range");
+            assert!(err.message.contains("must be in"), "{}", err.message);
+        }
     }
 
     #[cfg(feature = "speech")]

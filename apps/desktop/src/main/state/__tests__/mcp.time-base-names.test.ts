@@ -36,7 +36,7 @@ const CATALOG = mergeMcpCatalog(
 const DURATIONS: ReadonlySet<string> = new Set([
   'duration_us', 'delta_us', 'pad_us', 'min_pause_us', 'min_shot_us',
   'fade_in_us', 'fade_out_us', 'extended_us', 'available_us', 'removed_us',
-  'wait_s', 'retry_after_s',
+  'wait_s', 'retry_after_s', 'step_us',
 ])
 
 /** Names stored in project files or export presets that this rule would
