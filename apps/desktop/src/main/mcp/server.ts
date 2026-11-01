@@ -52,7 +52,6 @@ import { mcpInstructions } from './instructions.js'
 import { AgentServiceError } from '../agent/activity.js'
 import { effectsCatalogView } from '../../shared/effects/catalogView.js'
 import { withLog, NO_MCP_LOG, type McpCommitWindow, type McpLogDeps, type McpRowSummary } from './withLog.js'
-import { withCanonicalToolName } from './toolAliases.js'
 import { TACK_TOOLS, isTacksUri, readTacksResource, readTacksView, runTackTool } from './tackTools.js'
 import { heldForAudit } from '../lint/audits.js'
 import { ComputeCancelledError, type ComputeCaller } from '../compute/jobs.js'
@@ -1114,10 +1113,6 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
     const rust = (await rustCatalog(backend)).tools
     return { tools: mergeMcpCatalog(rust, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS, ...EXPORT_TOOL_DEFS]) } as unknown as ServerResult
   }, log, clientInfo))
-  // A retired tool name is rewritten to the advertised one BEFORE `track`, so
-  // the log row, the activity service's read/write split and the dispatcher all
-  // read the same single name (`toolAliases.ts`).
-  //
   // A clip-compute call also gets its registry caller (ADR 0121), built here
   // because only this closure holds the session: its transport is what tells a
   // cancel from a disconnect, and its activity row is the one the phases go to.
@@ -1131,7 +1126,7 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
     return handleCallTool(backend, getTsHost, name, (req.params.arguments ?? {}) as Record<string, unknown>, getSpeech, getVlm, peaksPathFor, client, compute)
   }, log, clientInfo)
   server.setRequestHandler(CallToolRequestSchema, (req: CallToolRequest, extra: unknown) =>
-    callTool(withCanonicalToolName(req), extra))
+    callTool(req, extra))
   server.setRequestHandler(ListResourcesRequestSchema, track('resources/list', async () => {
     const cat = await rustCatalog(backend)
     const tsHost = getTsHost()

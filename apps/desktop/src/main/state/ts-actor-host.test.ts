@@ -77,7 +77,6 @@ describe('createTsActorHost — persistence-route integration', () => {
 
     const deps = {
       send: (event: string, payload: unknown) => { sent.push({ event, payload }) },
-      mcpNotify: () => {},
       fileExists: (p: string) => memFs.exists(p),
       fs: memFs,
       join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/'),
@@ -180,10 +179,9 @@ describe('createTsActorHost — persistence-route integration', () => {
     } finally { host.stop() }
   })
 
-  it('publishes versioned full views and receipts without changing raw results or MCP payloads', async () => {
+  it('publishes versioned full views and receipts without changing raw results', async () => {
     const { deps, sent } = makeInMemoryDeps()
-    const mcpNotify = vi.fn()
-    const host = createTsActorHost({ ...deps, mcpNotify })
+    const host = createTsActorHost(deps)
     host.start()
     try {
       expect(host.publication()).toEqual({ version: { session: 0, revision: 0 }, summary: null })
@@ -197,7 +195,6 @@ describe('createTsActorHost — persistence-route integration', () => {
       expect(view.version).toEqual(added.publication)
       expect(view.summary?.compositions[view.summary.root_id].markers[0].id).toBe(added.value)
       expect(sent.filter(row => row.event === 'project:changed').at(-1)?.payload).toMatchObject({ publication: added.publication })
-      expect(mcpNotify.mock.calls.at(-1)?.[0]).not.toHaveProperty('publication')
       expect(await host.handleInvoke('project_publication', {})).toEqual(view)
       expect(await host.handleInvoke('project_summary', {})).toEqual(view.summary)
       expect(await host.published(() => host.handleInvoke('project_summary', {}))).toEqual({ value: view.summary, publication: null })

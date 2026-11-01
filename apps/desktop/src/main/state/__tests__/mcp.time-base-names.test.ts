@@ -7,7 +7,6 @@
 //
 // - `t_*` timeline-absolute, `src_*` source-absolute, `local_*` layer-local;
 // - a bare `*_us` / `*_s` is a duration, and only the names in DURATIONS are;
-// - a few timeline names put a role word before the base (ROLE_QUALIFIED);
 // - one unit spelling per kind: `_us` or `_s`, never `_ms` / `_sec`.
 //
 // It walks every input property of the merged catalog (TS, Motif, export and
@@ -38,17 +37,6 @@ const DURATIONS: ReadonlySet<string> = new Set([
   'duration_us', 'delta_us', 'pad_us', 'min_pause_us', 'min_shot_us',
   'fade_in_us', 'fade_out_us', 'extended_us', 'available_us', 'removed_us',
   'wait_s', 'retry_after_s',
-])
-
-/** Timeline names with a role word before `t_`: each carries its base. The
- *  movers merged into `move_layers` (spec ticket 09), which lands its seed at
- *  a plain `t_start_us`; what is left names a role no plain base would. */
-const ROLE_QUALIFIED: ReadonlyMap<string, string> = new Map([
-  ['at_t_us', 'split_layer: the cut points'],
-  ['new_t_us', 'trim_layer: where the edge lands'],
-  ['anchor_t_start_us', 'move_layers_to_composition: where the anchor layer lands, on the destination clock'],
-  ['from_t_us', 'shift_layers: the sweep origin'],
-  ['end_t_us', 'markers and tacks: a region end, the stored marker field'],
 ])
 
 /** Names stored in project files or export presets that this rule would
@@ -103,7 +91,7 @@ function allowed(name: string): string | null {
   if (!TIME_NAME.test(name)) return 'not a time'
   if (BASE.test(name)) return 'base'
   if (DURATIONS.has(name)) return 'duration'
-  return ROLE_QUALIFIED.get(name) ?? null
+  return null
 }
 
 describe('every time-valued name on the MCP surface says its time base', () => {
@@ -124,7 +112,7 @@ describe('every time-valued name on the MCP surface says its time base', () => {
 
   it('every exception is still on the surface, so the lists only shrink', () => {
     const seen = new Set([...inputs, ...docs].map(([k]) => k))
-    const stale = [...DURATIONS, ...ROLE_QUALIFIED.keys(), ...STORED_NAMES.keys()].filter((k) => !seen.has(k))
+    const stale = [...DURATIONS, ...STORED_NAMES.keys()].filter((k) => !seen.has(k))
     expect(stale, 'exceptions nothing uses').toEqual([])
   })
 

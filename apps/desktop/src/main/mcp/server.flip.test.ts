@@ -116,14 +116,6 @@ describe('handleCallTool flip routing', () => {
     expect(ts.actor.snapshot().media_pool[MID]).toBeTruthy()
     expect(ts.hybridDeps.enqueueDerivatives).toHaveBeenCalledTimes(1)
   })
-  it('forwards a plain rust-routed tool to the backend', async () => {
-    // ping is the one live rust-native tool with no clip-slice injection — it falls
-    // straight through to the backend.
-    const ts = tsHostStub()
-    const spy = vi.fn(async () => '{"ok":true,"result":{"content":[{"type":"text","text":"pong"}]}}')
-    await handleCallTool(fakeBackend(spy), () => ts, 'ping', {})
-    expect(spy).toHaveBeenCalledWith('ping', JSON.stringify({}))
-  })
   it('no tsHost → forwards everything to the backend', async () => {
     const spy = vi.fn(async () => '{"ok":true,"result":{"content":[]}}')
     await handleCallTool(fakeBackend(spy), () => null, 'add_layers', {})

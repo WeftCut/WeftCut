@@ -67,7 +67,7 @@ describe('tack records', () => {
     await expect(s.create(bad)).rejects.toThrow(/tacks\[1\]\.t_us/)
     for (const [entry, pattern] of [
       [s.input({ t_us: -1 }), /tacks\[1\]\.t_us/],
-      [s.input({ end_t_us: 2_000_000 }), /tacks\[1\]\.end_t_us/],
+      [s.input({ end_t_us: 2_000_000 }), /tacks\[1\]\.t_end_us/],
       [s.input({ composition_id: '00000000-0000-7000-8000-00000000dead' }), /CompositionNotFound|not found/],
     ] as const) await expect(s.create([s.input(), entry])).rejects.toThrow(pattern)
     expect(s.service.tacks.size).toBe(0)
@@ -112,10 +112,10 @@ describe('placement over one clip', () => {
   it('stays current through a trim outside its range, is outdated by one into it, and recovers on undo', async () => {
     const s = setup()
     const [id] = await s.create([s.input({ t_us: 2_000_000, end_t_us: 3_000_000 })])
-    s.mcp('trim_layer', { layer_id: s.clip, edge: 'in', new_t_us: 1_500_000 })
-    s.mcp('trim_layer', { layer_id: s.clip, edge: 'out', new_t_us: 4_000_000 })
+    s.mcp('trim_layer', { layer_id: s.clip, edge: 'in', t_edge_us: 1_500_000 })
+    s.mcp('trim_layer', { layer_id: s.clip, edge: 'out', t_edge_us: 4_000_000 })
     expect(s.view(id!)).toMatchObject({ t_us: 2_000_000, end_t_us: 3_000_000, outdated: false })
-    s.mcp('trim_layer', { layer_id: s.clip, edge: 'in', new_t_us: 2_500_000 })
+    s.mcp('trim_layer', { layer_id: s.clip, edge: 'in', t_edge_us: 2_500_000 })
     // Its starting frame is gone, so nothing moves it: it keeps its place.
     expect(s.view(id!)).toMatchObject({ t_us: 2_000_000, end_t_us: 3_000_000, outdated: true, follows: null })
     s.mcp('undo', {})
@@ -128,7 +128,7 @@ describe('placement over one clip', () => {
       s.input({ t_us: 2_000_000, end_t_us: 4_000_000 }),
       s.input({ t_us: 4_000_000 }),
     ])
-    s.mcp('split_layer', { layer_id: s.clip, at_t_us: [3_000_000] })
+    s.mcp('split_layer', { layer_id: s.clip, t_cut_us: [3_000_000] })
     expect(s.view(region!)).toMatchObject({ t_us: 2_000_000, end_t_us: 4_000_000, outdated: true, follows: { layer_id: s.clip } })
     // The right piece is a new layer: what plays at the point is not the clip it was.
     expect(s.view(point!)).toMatchObject({ t_us: 4_000_000, outdated: true, follows: null })
@@ -167,7 +167,7 @@ describe('placement over one clip', () => {
     // edit within the Group's shown stretch outdates it, one past it does not.
     const [outer] = await create({ t_us: 1_000_000, end_t_us: 2_000_000 })
     expect(service.tacks.views().find(t => t.id === outer)).toMatchObject({ outdated: false, follows: { layer_id: refLayerId } })
-    mcp('trim_layer', { layer_id: inner, edge: 'out', new_t_us: 3_000_000 })
+    mcp('trim_layer', { layer_id: inner, edge: 'out', t_edge_us: 3_000_000 })
     expect(service.tacks.views().find(t => t.id === outer)!.outdated).toBe(false)
     mcp('update_layer_params', { layer_id: inner, patch: { kind: 'VideoClip', flip_h: true } })
     expect(service.tacks.views().find(t => t.id === outer)!.outdated).toBe(true)
@@ -301,7 +301,7 @@ describe('following', () => {
     expect(m.view(id).follows).toEqual({ layer_id: color, t_us: 9_500_000 })
     m.mcp('delete_layers', { layer_ids: [m.c.C], ripple: true })
     expect(m.view(id)).toMatchObject({ t_us: 8_500_000, end_t_us: 9_500_000, outdated: false })
-    m.mcp('trim_layer', { layer_id: color, edge: 'out', new_t_us: 9_000_000 })
+    m.mcp('trim_layer', { layer_id: color, edge: 'out', t_edge_us: 9_000_000 })
     expect(m.view(id)).toMatchObject({ t_us: 8_500_000, outdated: true, follows: { layer_id: color } })
   })
 
@@ -368,12 +368,12 @@ describe('outdated', () => {
     const id = await m.tack(3_500_000, 4_500_000)
     const aRoll = () => m.actor.snapshot().compositions[m.actor.snapshot().root_id]!.tracks[0]!.id
     m.mcp('move_layers', { layer_ids: [m.c.D], t_start_us: 6_500_000, track_id: aRoll() })
-    m.mcp('trim_layer', { layer_id: m.c.B, edge: 'out', new_t_us: 4_800_000 })
+    m.mcp('trim_layer', { layer_id: m.c.B, edge: 'out', t_edge_us: 4_800_000 })
     m.mcp('update_layer_params', { layer_id: m.c.A, patch: { kind: 'VideoClip', flip_h: true } })
     expect(m.view(id).outdated).toBe(false)
     for (const [name, args] of [
-      ['trim_layer', { layer_id: m.c.B, edge: 'out', new_t_us: 4_200_000 }],
-      ['split_layer', { layer_id: m.c.B, at_t_us: [4_000_000] }],
+      ['trim_layer', { layer_id: m.c.B, edge: 'out', t_edge_us: 4_200_000 }],
+      ['split_layer', { layer_id: m.c.B, t_cut_us: [4_000_000] }],
       ['update_layer_params', { layer_id: m.c.B, patch: { kind: 'VideoClip', flip_h: true } }],
     ] as const) {
       m.mcp(name, args)

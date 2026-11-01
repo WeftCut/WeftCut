@@ -163,12 +163,12 @@ async function world(): Promise<World> {
   const groupTrack2 = id(await must(w, 'add_track', { composition_id: groupComp }), 'track_id')
   const cap = added(await must(w, 'add_layers', { layers: [{ track_id: tB, t_start_us: 2 * S, t_end_us: 3 * S, content: { kind: 'text', content: 'a caption', graphic_role: 'caption' } }] }))
   const marker = id(await must(w, 'add_marker', { t_us: S, label: 'm', color: red, anchor_layer_id: al }), 'marker_id')
-  const region = id(await must(w, 'add_marker', { t_us: S, end_t_us: 2 * S, label: 'r', color: red }), 'marker_id')
+  const region = id(await must(w, 'add_marker', { t_us: S, t_end_us: 2 * S, label: 'r', color: red }), 'marker_id')
   const k0 = id(await must(w, 'set_keyframe', { layer_id: x, param_key: 'opacity', t_us: 0, value: 1 }), 'keyframe_id')
   const k1 = id(await must(w, 'set_keyframe', { layer_id: x, param_key: 'opacity', t_us: S, value: 0.5 }), 'keyframe_id')
   const effect = id(await must(w, 'add_effect', { layer_id: vl, kind: 'blur' }), 'effect_id')
   await must(w, 'update_composition', { patch: { duration_us: 30 * S } })
-  const tack = id({ tack: ((await must(w, 'create_tacks', { tacks: [{ label: 'look', t_us: 0 }] })).tack_ids as string[])[0] }, 'tack')
+  const tack = id({ tack: ((await must(w, 'create_tacks', { tacks: [{ label: 'look', t_us: 0 }] })).tacks as Array<{ tack_id: string }>)[0]!.tack_id }, 'tack')
   return { actor, agent, host, ids: { tA, tB, tV, tT, c, c2, x, cap, tail, vl, al, t1, t2, link, link2, group, groupComp, groupTrack, groupTrack2, groupInner: inner, marker, region, k0, k1, effect, transition, tack } }
 }
 
@@ -218,7 +218,7 @@ const CASES: Record<string, Case> = {
   } },
   rename_layer: { base: (i) => ({ layer_id: i.c, label: 'C' }), values: { label: lit('New') } },
   set_layer_flags: { base: (i) => ({ layer_ids: [i.c] }), values: { enabled: lit(false), locked: lit(true) } },
-  shift_layers: { base: () => ({ from_t_us: 0, delta_us: S }), values: {
+  shift_layers: { base: () => ({ t_from_us: 0, delta_us: S }), values: {
     track_ids: val((i) => [i.tT]),
     composition_id: val((i) => i.groupComp),
   } },
@@ -235,7 +235,7 @@ const CASES: Record<string, Case> = {
   retime_layers: { base: (i) => ({ layer_ids: [i.al] }), values: {
     target: lit({ kind: 'Rate', value: { num: 2, den: 1 } }), preserve_pitch: lit(false),
   } },
-  trim_layer: { base: (i) => ({ layer_id: i.vl, edge: 'out', new_t_us: 3 * S }), values: { escape_link: lit(true) } },
+  trim_layer: { base: (i) => ({ layer_id: i.vl, edge: 'out', t_edge_us: 3 * S }), values: { escape_link: lit(true) } },
   delete_layers: { base: (i) => ({ layer_ids: [i.tail] }), values: { ripple: lit(true) } },
   create_link: { base: (i) => ({ layer_ids: [i.vl, i.c] }), values: { reassign: lit(true) } },
   update_link: { base: (i) => ({ link_id: i.link }), values: {
@@ -243,7 +243,7 @@ const CASES: Record<string, Case> = {
     reassign: lit(true, { with: (i) => ({ add_layer_ids: [i.c2] }) }),
   } },
   create_group: { base: (i) => ({ layer_ids: [i.c] }), values: { label: lit('G2') } },
-  move_layers_to_composition: { base: (i) => ({ layer_ids: [i.c], anchor_layer_id: i.c, anchor_t_start_us: 3 * S, to_composition_id: i.groupComp }), values: {
+  move_layers_to_composition: { base: (i) => ({ layer_ids: [i.c], anchor_layer_id: i.c, t_start_us: 3 * S, to_composition_id: i.groupComp }), values: {
     // The second lane of the Group: the call alone lands on the first.
     to_track_id: val((i) => i.groupTrack2),
   } },
@@ -276,7 +276,7 @@ const CASES: Record<string, Case> = {
     'patch.pause_review': lit({ threshold_db: -20, min_pause_us: 2 * S, pad_us: 50_000 }),
   } },
   update_marker: { base: (i) => ({ marker_id: i.region, patch: {} }), values: {
-    'patch.t_us': lit(1_500_000), 'patch.end_t_us': lit(3 * S), 'patch.label': lit('x'), 'patch.note': lit('y'), 'patch.color': lit(RGBA),
+    'patch.t_us': lit(1_500_000), 'patch.t_end_us': lit(3 * S), 'patch.label': lit('x'), 'patch.note': lit('y'), 'patch.color': lit(RGBA),
   } },
   set_marker_anchor: { base: (i) => ({ marker_id: i.marker, layer_id: i.vl }), values: {} },
   delete_media: { base: () => ({ media_id: VIDEO }), values: { force: lit(true) } },
@@ -285,9 +285,9 @@ const CASES: Record<string, Case> = {
     // The spawn target: the layer's fresh track opens inside the Group, not the root.
     composition_id: val((i) => i.groupComp),
   } },
-  split_layer: { base: (i) => ({ layer_id: i.vl, at_t_us: [2 * S] }), values: { escape_link: lit(true) } },
+  split_layer: { base: (i) => ({ layer_id: i.vl, t_cut_us: [2 * S] }), values: { escape_link: lit(true) } },
   add_marker: { base: () => ({ t_us: 5 * S, label: 'n' }), values: {
-    color: lit(RGBA), note: lit('why'), end_t_us: lit(6 * S), anchor_layer_id: val((i) => i.vl, { with: () => ({ t_us: 3 * S }) }),
+    color: lit(RGBA), note: lit('why'), t_end_us: lit(6 * S), anchor_layer_id: val((i) => i.vl, { with: () => ({ t_us: 3 * S }) }),
     composition_id: val((i) => i.groupComp, { with: () => ({ t_us: S }) }),
   } },
   begin_agent_session: { base: () => ({ reason: 'cutting' }), values: { lock: lit(false) } },
@@ -421,12 +421,12 @@ describe('the audit probes refuse or change state', () => {
     expect(fingerprint(w)).toBe(before)
   })
 
-  it('T15: update_marker takes no null on label, note, colour or time; end_t_us: null makes a point', async () => {
+  it('T15: update_marker takes no null on label, note, colour or time; t_end_us: null makes a point', async () => {
     const w = await world()
     const before = fingerprint(w)
     for (const k of ['label', 'note', 'color', 't_us']) expect((await call(w, 'update_marker', { marker_id: w.ids.region, patch: { [k]: null } })).isError, k).toBe(true)
     expect(fingerprint(w)).toBe(before)
-    expect((await must(w, 'update_marker', { marker_id: w.ids.region, patch: { end_t_us: null } })).end_t_us).toBeNull()
+    expect((await must(w, 'update_marker', { marker_id: w.ids.region, patch: { t_end_us: null } })).t_end_us).toBeNull()
   })
 
   it('T1: rename_layer and set_layer_flags refuse the times, naming move_layers and trim_layer', async () => {

@@ -1526,7 +1526,6 @@ const enUS = {
     "apply_subtitles": "Apply subtitles",
     "auto_split_by_shot": "Split into shots",
     "remove_pauses": "Remove pauses",
-    "ping": "Check connection",
     "resources/read": "Read resource",
     "resources/list": "List resources",
     "tools/list": "List tools",

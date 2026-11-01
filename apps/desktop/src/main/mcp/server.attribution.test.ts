@@ -82,7 +82,7 @@ describe('MCP client attribution', () => {
   it("the host's checkpoint and restore pin-rows name the client", () => {
     const emitLog = vi.fn()
     const deps = {
-      send: () => {}, mcpNotify: () => {}, fileExists: () => false,
+      send: () => {}, fileExists: () => false,
       fs: { exists: () => false, readFile: () => '', writeFile: () => {}, mkdirp: () => {}, copyFile: () => {}, readdir: () => [], rm: () => {} },
       join: (...p: string[]) => p.join('/'),
       napi: { commitWorkspace: async () => {}, pushRecent: () => {}, setLastNewProjectParent: () => {}, enqueueJobsForMedia: async () => {} },

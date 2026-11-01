@@ -117,7 +117,7 @@ describe('move_layers { insert: true }: the ripple move', () => {
     const v = video(a, tA, 0, 10 * S)
     const au = audio(a, tA, 0, 10 * S)
     idOf(a.dispatch('links_create', { layers: [v, au] }))
-    const split = ok(call(a, 'split_layer', { layer_id: v, at_t_us: [6 * S] }))
+    const split = ok(call(a, 'split_layer', { layer_id: v, t_cut_us: [6 * S] }))
     const [, tailV] = split.layer_ids as string[]
     const tailA = (split.siblings as Array<{ segments: string[] }>)[0]!.segments[1]!
     const len = a.historyStatus().len

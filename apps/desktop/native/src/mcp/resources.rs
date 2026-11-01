@@ -20,7 +20,6 @@ use crate::state::{MediaId, MediaItem};
 
 use super::wire::{McpToolError, ResourceContent, ResourceDef, ResourceResult};
 
-const URI_PROJECT: &str = "project://current";
 const URI_COMPOSITION: &str = "project://composition";
 const URI_MEDIA: &str = "project://media";
 const URI_TRACKS: &str = "project://tracks";
@@ -225,8 +224,8 @@ pub(crate) async fn read_resource(
                 }),
             }
         }
-        // project://current / composition /
-        // media / tracks / markers / history / layers/{id} are served directly by
+        // project://composition / media / tracks / markers / settings /
+        // history / layers/{id} are served directly by
         // the TS MCP host (the sole state owner) and never reach this reader.
         other => {
             return Err(McpToolError::resource_not_found(
@@ -549,11 +548,6 @@ struct ResourceDescriptor {
 
 const STATIC_RESOURCES: &[ResourceDescriptor] = &[
     ResourceDescriptor {
-        uri: URI_PROJECT,
-        name: "Current project",
-        description: "The full open WeftCut project as JSON. Re-fetch after change events.",
-    },
-    ResourceDescriptor {
         uri: URI_COMPOSITION,
         name: "Composition",
         description: "Canvas size, fps, sample rate, color space, background.",
@@ -576,7 +570,7 @@ const STATIC_RESOURCES: &[ResourceDescriptor] = &[
     ResourceDescriptor {
         uri: URI_COMPOSITIONS,
         name: "Compositions",
-        description: "Every composition — the root and each Group — with id, label, duration_us and ref_count (how many CompositionRef layers place it). project://tracks?composition=<id> and project://markers?composition=<id> read one of them; unscoped they read the root.",
+        description: "Every composition — the root and each Group — with composition_id, label, duration_us and ref_count (how many CompositionRef layers place it). project://tracks?composition=<id> and project://markers?composition=<id> read one of them; unscoped they read the root.",
     },
     ResourceDescriptor {
         uri: URI_HISTORY,
@@ -775,12 +769,12 @@ mod stateless_tests {
     #[tokio::test]
     async fn project_views_are_not_served_by_rust() {
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
-        let err = read_resource(&b, "project://current", "{}")
+        let err = read_resource(&b, "project://tracks", "{}")
             .await
             .unwrap_err();
         assert!(
             err.message.contains("TS-served") || err.message.contains("unknown"),
-            "project://current must report it is TS-served; got: {}",
+            "project://tracks must report it is TS-served; got: {}",
             err.message
         );
     }

@@ -42,7 +42,7 @@ describe('replay', () => {
   it('plays the same after a head trim outside the range, though the trim moved every keyframe', () => {
     const s = setup()
     const pb = recordPlayback(s.actor.snapshot(), s.root(), 5 * S, 6 * S)
-    s.mcp('trim_layer', { layer_id: s.clip, edge: 'in', new_t_us: S })
+    s.mcp('trim_layer', { layer_id: s.clip, edge: 'in', t_edge_us: S })
     expect(replay(s.actor.snapshot(), pb)).toMatchObject({ t_us: 5 * S, same: true })
   })
 

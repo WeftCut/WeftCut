@@ -231,15 +231,23 @@ describe('up state', () => {
     expect((await open.client.listPrompts()).prompts).toHaveLength(1)
   })
 
-  it('forwards the app change feed to the stdio client', async () => {
+  it('annotates the synthetic tools: status reads, launch is safe to repeat', async () => {
+    open = await harness({ appUp: false })
+    const tools = (await open.client.listTools()).tools
+    const ann = (n: string) => tools.find((t) => t.name === n)?.annotations
+    expect(ann('weftcut_status')).toEqual({ readOnlyHint: true, openWorldHint: false })
+    expect(ann('launch_weftcut')).toEqual({ destructiveHint: false, idempotentHint: true, openWorldHint: false })
+  })
+
+  it('forwards app notifications to the stdio client verbatim', async () => {
     open = await harness({ appUp: true })
     await open.client.listTools() // establishes the bridge
     await open.appServer()!.notification({
-      method: 'notifications/weftcut/change',
-      params: { summary: 'moved a clip' },
+      method: 'notifications/example/forwarded',
+      params: { note: 'any method the app sends' },
     })
     await settle()
-    expect(open.notified).toContain('notifications/weftcut/change')
+    expect(open.notified).toContain('notifications/example/forwarded')
   })
 
   it('weftcut_status reports running', async () => {

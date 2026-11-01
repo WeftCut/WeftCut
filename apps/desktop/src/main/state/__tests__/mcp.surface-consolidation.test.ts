@@ -183,11 +183,11 @@ describe('read_project', () => {
   it('serves the project views the resources serve, as text', () => {
     const a = actorWithPool()
     const [c1] = threeClips(a)
-    const tracks = json<Array<{ id: string; layers: Array<{ id: string }> }>>(call(a, 'read_project', { view: 'tracks' }))
-    expect(tracks.map((t) => t.id)).toEqual(root(a.snapshot()).tracks.map((t) => t.id))
+    const tracks = json<Array<{ track_id: string; layers: Array<{ layer_id: string }> }>>(call(a, 'read_project', { view: 'tracks' }))
+    expect(tracks.map((t) => t.track_id)).toEqual(root(a.snapshot()).tracks.map((t) => t.id))
     expect(json<{ id: string }>(call(a, 'read_project', { view: 'layer', id: c1 })).id).toBe(c1)
     expect(json<{ ops: unknown[] }>(call(a, 'read_project', { view: 'history' })).ops.length).toBeGreaterThan(0)
-    expect(json<Array<{ id: string; ref_count: number }>>(call(a, 'read_project', { view: 'compositions' }))).toHaveLength(1)
+    expect(json<Array<{ composition_id: string; ref_count: number }>>(call(a, 'read_project', { view: 'compositions' }))).toHaveLength(1)
     expect(Object.keys(json<Record<string, unknown>>(call(a, 'read_project', { view: 'media' })))).toEqual(expect.arrayContaining([IMAGE, VIDEO]))
   })
 
@@ -198,6 +198,17 @@ describe('read_project', () => {
     // `invalid_params`: `not_found` is the unknown-TOOL code, which the host
     // escalates to a JSON-RPC error; an unknown composition is a bad argument.
     expect(refusal(call(a, 'read_project', { view: 'tracks', composition_id: NOWHERE })).code).toBe('invalid_params')
+  })
+
+  it('refuses composition_id on a view it does not narrow, as the resource refuses ?composition=', () => {
+    const a = actorWithPool()
+    const rootId = a.snapshot().root_id
+    for (const view of ['compositions', 'media', 'settings', 'history']) {
+      const e = refusal(call(a, 'read_project', { view, composition_id: rootId }))
+      expect(e.code, view).toBe('invalid_params')
+      expect(e.message, view).toMatch(/takes no composition_id/)
+    }
+    expect(refusal(call(a, 'read_project', { view: 'current' })).message).toMatch(/view must be one of/)
   })
 })
 

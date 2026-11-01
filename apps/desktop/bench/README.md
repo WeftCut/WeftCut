@@ -306,8 +306,8 @@ One folder per run, `<out>/<timestamp>/<task>__<driver>-<model>__r<n>/`:
 | `driver-stderr.log` | The client's stderr. |
 | `app.log` | The app's main-process stdout/stderr (job and admission messages). |
 | `media-jobs.json` | The `media:job_*` events recorded from setup to the baseline. |
-| `baseline.json` | `project://current` after setup, before the agent. |
-| `final.json` | `project://current` after the agent exits. |
+| `baseline.json` | the project (its saved `project.json`) after setup, before the agent. |
+| `final.json` | the project (its saved `project.json`) after the agent exits. |
 | `review-diff.json` | `diffProjects(baseline, final)`: what the agent changed, independent of what it says it changed (`final_message` in `run.json`). |
 | `workdir/` | Whatever the agent wrote in its working directory (a Motif package, for example), if anything. |
 | `proxy.log` | Remote host: the proxy's syncs and path rewrites, one JSON line each. |

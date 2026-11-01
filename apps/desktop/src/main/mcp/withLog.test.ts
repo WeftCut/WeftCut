@@ -90,7 +90,7 @@ function fakeBackend(callToolJson = '{"ok":false,"error":{"code":"invalid_params
   return {
     mcpCallTool: async () => callToolJson,
     mcpReadResource: async () => '{"ok":true,"result":{"contents":[]}}',
-    mcpCatalog: async () => '{"tools":[{"name":"ping"}],"resources":[{"uri":"project://current"}]}',
+    mcpCatalog: async () => '{"tools":[{"name":"ping"}],"resources":[{"uri":"project://compiled"}]}',
     mcpListPrompts: async () => '[]',
     mcpGetPrompt: async () => '{"ok":true,"result":{"messages":[]}}',
   } as any
@@ -147,7 +147,7 @@ const HANDLER_SPECS: Array<[unknown, string, Record<string, unknown>]> = [
   [ListToolsRequestSchema, 'tools/list', {}],
   [CallToolRequestSchema, 'ping', { name: 'ping', arguments: {} }],
   [ListResourcesRequestSchema, 'resources/list', {}],
-  [ReadResourceRequestSchema, 'resources/read', { uri: 'project://current' }],
+  [ReadResourceRequestSchema, 'resources/read', { uri: 'project://compiled' }],
   [ListPromptsRequestSchema, 'prompts/list', {}],
   [GetPromptRequestSchema, 'prompts/get', { name: 'edit_plan' }],
 ]

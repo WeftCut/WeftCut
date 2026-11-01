@@ -73,10 +73,6 @@ describe('against the live Rust catalog', () => {
   it('a complete call passes', () => {
     expect(argProblemMessage('import_media', schemaOf('import_media'), { paths: ['C:/x.mp4'] })).toBeNull()
   })
-
-  it('ping takes nothing and refuses nothing', () => {
-    expect(argProblemMessage('ping', schemaOf('ping'), {})).toBeNull()
-  })
 })
 
 describe('argProblemMessage', () => {

@@ -140,7 +140,6 @@ macro_rules! tool_table {
 tool_table! {
     #[cfg(feature = "jobs")]
     "analyze_audio" => ("Analyze original source audio from cached waveform peaks; local, read-only, no model. Returns bounded peak/RMS waveform bins, onset candidates and signed energy changes (dB), all in source µs (`src_*`), plus resolution and event counts. Choose music edit/alignment points, including outside a clip's trim. These are amplitude measurements, not beats, bars or melody recognition. At most 60 s per call; max_points affects only the summary. Peaks are cache-limited, not true-peak or LUFS. To land `src_us` at timeline T on a layer: `src_in_us = src_us - (T - t_start_us) * rate` (`rate` from project://tracks, 1 when absent).", super::audio_analysis::AnalyzeAudioArgs, super::audio_analysis::analyze_audio, ToolAnnotations::READ),
-    "ping" => ("Liveness check. Returns 'pong' to confirm the WeftCut MCP server is reachable.", super::EmptyArgs, tools::ping, ToolAnnotations::READ),
     // begin_agent_session routes to the TS actor ('ts' MCP tool) and is supplied
     // by the TS def; mergeMcpCatalog filters it out of the Rust side.
     #[cfg(feature = "jobs")]
@@ -204,8 +203,9 @@ mod tests {
     #[test]
     fn catalog_advertises_tools_resources_prompts() {
         let cat = catalog();
-        assert!(cat.tools.iter().any(|t| t.name == "ping"));
-        assert!(cat.resources.iter().any(|r| r.uri == "project://current"));
+        #[cfg(feature = "jobs")]
+        assert!(cat.tools.iter().any(|t| t.name == "import_media"));
+        assert!(cat.resources.iter().any(|r| r.uri == "project://compiled"));
         assert!(cat.prompts.iter().any(|p| p.name == "cut-pauses"));
     }
 

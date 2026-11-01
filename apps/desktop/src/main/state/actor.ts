@@ -400,8 +400,8 @@ export function createActor(opts: ActorOptions): ActorHandle {
     for (const cb of subs) {
       try { cb(e) }
       catch (err) {
-        // A throwing subscriber (e.g. the autosave serialize, or the mcpNotify
-        // relay) must not starve later subscribers. Warn and continue — cf.
+        // A throwing subscriber (e.g. the autosave serialize) must not starve
+        // later subscribers. Warn and continue — cf.
         // feedback_ui_actor_bridge, feedback_async_block_on_in_async.
         console.warn('[actor] change subscriber threw; continuing', err)
       }
@@ -2104,7 +2104,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             return marker
           })
           const rec = markerRecord(current(), id) ?? { marker_id: id }
-          return { ok: true, result: toolRecord({ ...rec, adjusted: adjusted([['t_us', tUs, (rec as { t_us?: number }).t_us], ['end_t_us', endT, (rec as { end_t_us?: number | null }).end_t_us]]) }) }
+          return { ok: true, result: toolRecord({ ...rec, adjusted: adjusted([['t_us', tUs, (rec as { t_us?: number }).t_us], ['t_end_us', endT, (rec as { t_end_us?: number | null }).t_end_us]]) }) }
         }
         case 'split_layer': {
           const p = mcpDef('split_layer').parseDedicated!(a)
@@ -2114,7 +2114,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const result = commit(HISTORY_SUMMARY.layerSplit,
             (r: { layer_ids: Uuid[] }) => layerRefs(r.layer_ids), { kind: 'Coarse' },
             (d) => applySplitLayerBatch(d, idGen, layer, p.at_t_us as number[], p.escape_link as boolean))
-          return { ok: true, result: toolRecord({ ...result, siblings: splitSiblings(before, current(), layer, result.layer_ids) }) }
+          return { ok: true, result: toolRecord({ layer_ids: result.layer_ids, t_cut_us: result.at_t_us, siblings: splitSiblings(before, current(), layer, result.layer_ids) }) }
         }
         case 'create_checkpoint': {
           const p = mcpDef('create_checkpoint').parseDedicated!(a)

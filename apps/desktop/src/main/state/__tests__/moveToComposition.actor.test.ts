@@ -143,7 +143,7 @@ describe('move_layers_to_composition — MCP tool', () => {
     const { actor, aRoll, inside } = grouped()
     const p = color(actor, aRoll, 6 * S, 7 * S)
     const r = actor.mcpCall('move_layers_to_composition', JSON.stringify({
-      layer_ids: [p], to_composition_id: inside, anchor_layer_id: p, anchor_t_start_us: 4 * S,
+      layer_ids: [p], to_composition_id: inside, anchor_layer_id: p, t_start_us: 4 * S,
     }))
     expect(r.ok && (r.result.structuredContent as { layers: Array<{ layer_id: string; composition_id: string; t_start_us: number }> }).layers)
       .toEqual([expect.objectContaining({ layer_id: p, composition_id: inside, t_start_us: 4 * S })])
@@ -155,7 +155,7 @@ describe('move_layers_to_composition — MCP tool', () => {
     const p = color(actor, aRoll, 6 * S, 7 * S)
     const lanesBefore = lanesOf(actor, inside).length
     expect(actor.mcpCall('move_layers_to_composition', JSON.stringify({
-      layer_ids: [p], to_composition_id: inside, anchor_layer_id: p, anchor_t_start_us: 4 * S, to_track_id: 'spawn',
+      layer_ids: [p], to_composition_id: inside, anchor_layer_id: p, t_start_us: 4 * S, to_track_id: 'spawn',
     })).ok).toBe(true)
     const lanes = lanesOf(actor, inside)
     expect(lanes).toHaveLength(lanesBefore + 1)
@@ -165,7 +165,7 @@ describe('move_layers_to_composition — MCP tool', () => {
   it('refusals arrive as invalid_params with a message that says what and why', () => {
     const { actor, inside, group } = grouped()
     const cycle = actor.mcpCall('move_layers_to_composition', JSON.stringify({
-      layer_ids: [group], to_composition_id: inside, anchor_layer_id: group, anchor_t_start_us: 0,
+      layer_ids: [group], to_composition_id: inside, anchor_layer_id: group, t_start_us: 0,
     }))
     expect(cycle.ok).toBe(false)
     if (!cycle.ok) {
@@ -175,7 +175,7 @@ describe('move_layers_to_composition — MCP tool', () => {
 
     // An in-composition landing is move_layers', and the message says so.
     const sameComp = actor.mcpCall('move_layers_to_composition', JSON.stringify({
-      layer_ids: [group], to_composition_id: actor.snapshot().root_id, anchor_layer_id: group, anchor_t_start_us: 0,
+      layer_ids: [group], to_composition_id: actor.snapshot().root_id, anchor_layer_id: group, t_start_us: 0,
     }))
     expect(sameComp.ok).toBe(false)
     if (!sameComp.ok) expect(sameComp.error.message).toMatch(/already in composition .*move_layers/)
@@ -184,9 +184,9 @@ describe('move_layers_to_composition — MCP tool', () => {
     // one worth pinning: the literal is not a uuid, so a lax parser would read a
     // typo as "no opinion" and bounce a move the caller meant to pin to a lane.
     for (const args of [
-      { layer_ids: 'not-an-array', to_composition_id: inside, anchor_layer_id: group, anchor_t_start_us: 0 },
-      { layer_ids: [group], to_composition_id: inside, anchor_layer_id: group, anchor_t_start_us: 'soon' },
-      { layer_ids: [group], to_composition_id: inside, anchor_layer_id: group, anchor_t_start_us: 0, to_track_id: 'spwan' },
+      { layer_ids: 'not-an-array', to_composition_id: inside, anchor_layer_id: group, t_start_us: 0 },
+      { layer_ids: [group], to_composition_id: inside, anchor_layer_id: group, t_start_us: 'soon' },
+      { layer_ids: [group], to_composition_id: inside, anchor_layer_id: group, t_start_us: 0, to_track_id: 'spwan' },
     ]) {
       const bad = actor.mcpCall('move_layers_to_composition', JSON.stringify(args))
       expect(bad.ok, JSON.stringify(args)).toBe(false)

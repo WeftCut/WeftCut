@@ -1,7 +1,7 @@
 // apps/desktop/bench/checklist.test.mjs — `node --test bench/checklist.test.mjs`
 //
 // The checklist evaluator against small hand-built projects in the
-// `project://current` shape, plus a lint over every bench task file so a typo
+// project.json shape, plus a lint over every bench task file so a typo
 // in a check kind, a regex or a setup tool name fails here rather than
 // mid-run.
 

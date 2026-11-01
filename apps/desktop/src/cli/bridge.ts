@@ -23,8 +23,8 @@ export interface BridgeDeps {
   makeTransport?: (auth: McpAuth) => Transport
   onUp: () => void
   onDown: () => void
-  /// Server-initiated notifications from the app (the weftcut/change feed),
-  /// forwarded verbatim to the stdio client.
+  /// Server-initiated notifications from the app, forwarded verbatim to the
+  /// stdio client.
   onNotification: (n: { method: string; params?: unknown }) => void
   /// The downstream client's name (what the agent's client declared to the
   /// shim), once it has initialized. The app attributes every edit to the name

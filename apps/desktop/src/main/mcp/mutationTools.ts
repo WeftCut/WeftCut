@@ -29,7 +29,7 @@ export const MOTIF_TOOLS: ReadonlySet<string> = new Set(['list_motifs', 'read_mo
  *
  *  Liveness, the Motif LIBRARY (its store, not placed layers — `install_motif`
  *  rebinds nothing while no project is open), and the two ways INTO a project. */
-export const APP_SCOPE_TOOLS: ReadonlySet<string> = new Set([...EXPORT_PRESET_TOOLS, 'get_export_status', 'cancel_export', 'retry_export', 'ping', 'list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'preview_motif', 'open_project', 'create_project'])
+export const APP_SCOPE_TOOLS: ReadonlySet<string> = new Set([...EXPORT_PRESET_TOOLS, 'get_export_status', 'cancel_export', 'retry_export', 'list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'preview_motif', 'open_project', 'create_project'])
 
 /** `read_project` views the host answers without the actor's project. */
 const APP_SCOPE_VIEWS: ReadonlySet<string> = new Set(['session', 'effects', 'taste'])

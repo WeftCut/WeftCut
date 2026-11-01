@@ -51,6 +51,7 @@ const SYNTHETIC_TOOLS: Tool[] = [
       'project it has open. Returns the endpoint state and what to do next when it is not running. ' +
       'Costs nothing; call this first when WeftCut tools appear to be missing or failing.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
   },
   {
     name: 'launch_weftcut',
@@ -61,6 +62,8 @@ const SYNTHETIC_TOOLS: Tool[] = [
       'when already running — reports that instead of launching twice. Use after ' +
       'weftcut_status says the app is not running.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    // Starts a process on this machine; a second call while it runs reports that.
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
 ]
 
@@ -185,8 +188,9 @@ export function createShim(opts: ShimOptions): Shim {
     onDown: broadcastCatalogChanged,
     clientName: () => server.getClientVersion()?.name,
     onNotification: (n) => {
-      // The app's change feed (notifications/weftcut/change), forwarded so a
-      // shim-connected agent sees edits exactly like an HTTP-direct one.
+      // The app's notifications (resources/list_changed and the like),
+      // forwarded verbatim so a shim-connected agent sees what an HTTP-direct
+      // one does.
       server.notification(n as { method: string; params?: Record<string, unknown> }).catch(() => {})
     },
   })

@@ -54,8 +54,6 @@ export interface TsActorHostDeps {
   onWorkspaceOpened?: () => void
   /** mainWindow.webContents.send('evt:'+event, payload) */
   send: (event: string, payload: unknown) => void
-  /** mcpHost.notifyChange(payload) — the mcp:change relay. */
-  mcpNotify: (payload: unknown) => void
   /** notifications/resources/list_changed to every MCP session: the pool's
    *  files or their names changed, and with them the `media://{id}` list; or a
    *  Motif publication was proposed, approved or rejected (`motifs://current`). */
@@ -225,10 +223,9 @@ export interface TsActorHost {
   stop: () => void
 }
 
-/** Mints the `project:changed` wire payload — the shape the renderer event and
- *  the `notifications/weftcut/change` relay both see. `affected` carries the
- *  refs themselves: an agent watching the feed decides from the ids whether an
- *  edit touched its own work, which a count cannot tell it. */
+/** Mints the `project:changed` wire payload the renderer reads. `affected`
+ *  carries the refs themselves, so a reader decides from the ids whether an
+ *  edit touched what it shows, which a count cannot tell it. */
 export function mapChangeEvent(e: ChangeEvent): { op_id: string; actor_kind: 'user' | 'agent'; client: string | null; summary: string; timestamp: string; affected: EntityRef[] } {
   const actor_kind = e.actor.kind === 'Agent' ? 'agent' : 'user'
   const client = e.actor.kind === 'Agent' ? e.actor.client : null
@@ -620,8 +617,6 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       replacementOccurred ||= e.replaced === true
       deferredChange = { event: e, traceId }
     } else publishChange(e, traceId, e.replaced === true)
-    // MCP retains its existing public notification schema.
-    if (emitting) deps.mcpNotify(mapChangeEvent(e))
     const listed = mediaListKey(actor.snapshot().media_pool)
     if (listed !== listedMedia) {
       listedMedia = listed

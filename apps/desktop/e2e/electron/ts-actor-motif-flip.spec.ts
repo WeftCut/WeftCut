@@ -93,18 +93,16 @@ test('TS actor: MCP add_layers returns the layer id + the summary reflects a Mot
       const record = (JSON.parse(content[0]!.text ?? '{}') as { layers: Array<{ layer_id?: string }> }).layers[0] ?? {}
       expect(record.layer_id && record.layer_id.length).toBeTruthy()
 
-      // The `project://current` state view (served by the TS MCP host) reflects a Motif layer.
-      const after = await client.readResource({ uri: 'project://current' })
-      // The raw project: the root timeline lives under `compositions[root_id]`.
-      type WireTrack = { layers: Array<{ id: string; params: { kind: string; motif_id?: string } }> }
-      const proj = JSON.parse((after.contents[0] as { text: string }).text) as {
-        root_id: string; compositions: Record<string, { tracks: WireTrack[] }>
-      }
-      const motifs = proj.compositions[proj.root_id]!.tracks.flatMap((t) => t.layers).filter((l) => l.params.kind === 'Motif')
+      // The `project://tracks` state view (served by the TS MCP host) reflects a
+      // Motif layer, its envelope naming the Motif it plays.
+      const after = await client.readResource({ uri: 'project://tracks' })
+      type WireTrack = { layers: Array<{ layer_id: string; kind: string; motif_id?: string }> }
+      const rows = JSON.parse((after.contents[0] as { text: string }).text) as WireTrack[]
+      const motifs = rows.flatMap((t) => t.layers).filter((l) => l.kind === 'Motif')
       expect(motifs.length).toBe(1)
-      expect(motifs[0]!.params.motif_id ?? 'countdown').toBe('countdown')
+      expect(motifs[0]!.motif_id).toBe('countdown')
       // The returned record names the LAYER id, present in the project.
-      expect(motifs.some((l) => l.id === record.layer_id)).toBe(true)
+      expect(motifs.some((l) => l.layer_id === record.layer_id)).toBe(true)
     } finally {
       await client.close()
     }

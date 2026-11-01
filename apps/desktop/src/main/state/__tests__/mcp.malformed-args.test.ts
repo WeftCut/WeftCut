@@ -7,7 +7,7 @@ import { root } from './fixtures/project'
 function makeDeps() {
   const noopFs = { exists: () => false, readFile: () => '', writeFile: () => {}, mkdirp: () => {}, copyFile: () => {}, readdir: () => [], rm: () => {} }
   return {
-    send: () => {}, mcpNotify: () => {}, fileExists: () => false,
+    send: () => {}, fileExists: () => false,
     fs: noopFs as any, join: (...p: string[]) => p.join('/'),
     napi: { commitWorkspace: async () => {}, pushRecent: () => {}, setLastNewProjectParent: () => {}, enqueueJobsForMedia: () => {} } as any,
     compute: { probeMedia: async () => '{}', hashMediaSource: async () => 'h', parseSubtitles: async () => '{}', synthesizeSpeechCompute: async () => '{}' },

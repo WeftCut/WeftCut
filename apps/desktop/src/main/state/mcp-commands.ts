@@ -470,7 +470,7 @@ const MOVE_LAYERS_KEYS: readonly string[] = ['layer_ids', 't_start_us', 'delta_u
  *  none of them), the name and flags to each other. */
 const LAYER_ENVELOPE_OWNER: Readonly<Record<string, string>> = {
   t_start_us: 'move a layer with move_layers { layer_ids, t_start_us }; both carry link partners and the source window',
-  t_end_us: 'change one edge with trim_layer { layer_id, edge, new_t_us }; it carries link partners and the source window',
+  t_end_us: 'change one edge with trim_layer { layer_id, edge, t_edge_us }; it carries link partners and the source window',
   label: 'the name is rename_layer { layer_id, label }',
   enabled: 'visibility is set_layer_flags { layer_ids, enabled }',
   locked: 'the lock is set_layer_flags { layer_ids, locked }',
@@ -710,7 +710,7 @@ export function parseEffectPatch(v: unknown): EffectPatch {
 }
 
 /** Strict update_marker patch — same lie-prevention as parseEffectPatch.
- *  Absent = "don't touch"; the one null is `end_t_us: null`, which turns a
+ *  Absent = "don't touch"; the one null is `t_end_us: null`, which turns a
  *  region back into a point. Every other field refuses null: a null that meant
  *  "leave it" would answer success for a write that wrote nothing.
  *
@@ -718,18 +718,18 @@ export function parseEffectPatch(v: unknown): EffectPatch {
  *  other unknown key: an anchor is established only by the dedicated
  *  attach/detach ops, which is what keeps the pair (`anchor`, `t_us`) from ever
  *  being written apart (see `MarkerPatch`). */
-const MARKER_PATCH_KEYS: readonly string[] = ['t_us', 'end_t_us', 'label', 'note', 'color']
+const MARKER_PATCH_KEYS: readonly string[] = ['t_us', 't_end_us', 'label', 'note', 'color']
 export function parseMarkerPatch(v: unknown): MarkerPatch {
   const o = parseObj(v, 'patch')
   const keys = Object.keys(o)
   if (keys.length === 0) throw new McpArgError(`patch names no field; update_marker writes ${MARKER_PATCH_KEYS.join(', ')}`, 'patch')
   for (const k of keys) {
     if (!MARKER_PATCH_KEYS.includes(k))
-      throw new McpArgError(`invalid patch: unknown key '${k}' — expected { t_us?, end_t_us?, label?, note?, color? }`, 'patch')
+      throw new McpArgError(k === 'end_t_us' ? "invalid patch: 'end_t_us' is not a field any more — the region end is t_end_us" : `invalid patch: unknown key '${k}' — expected { t_us?, t_end_us?, label?, note?, color? }`, 'patch')
   }
   const out: MarkerPatch = {}
   if ('t_us' in o) out.t_us = parseNum(o.t_us, 'patch.t_us')
-  if ('end_t_us' in o) out.end_t_us = o.end_t_us === null ? null : parseNum(o.end_t_us, 'patch.end_t_us')
+  if ('t_end_us' in o) out.end_t_us = o.t_end_us === null ? null : parseNum(o.t_end_us, 'patch.t_end_us')
   if ('label' in o) out.label = parseStr(o.label, 'patch.label')
   if ('note' in o) out.note = parseStr(o.note, 'patch.note')
   if ('color' in o) out.color = parseRgba(o.color, 'patch.color')
@@ -1033,10 +1033,10 @@ function commandErrorArm(e: CommandError, tool?: string): McpToolErrorJson {
     ]
     if (requestStartsInside) {
       prose.push(`trim_layer ${d.a} edge 'out' to ${d.b_start}`, `split_layer ${d.a} at ${d.b_start} and delete the right half`)
-      options.push({ action: 'trim_existing', layer_id: d.a, edge: 'out', new_t_us: d.b_start }, { action: 'split_at_t', layer_id: d.a, at_t_us: d.b_start })
+      options.push({ action: 'trim_existing', layer_id: d.a, edge: 'out', t_edge_us: d.b_start }, { action: 'split_at_t', layer_id: d.a, t_cut_us: [d.b_start] })
     } else if (requestCoversHead) {
       prose.push(`trim_layer ${d.a} edge 'in' to ${d.b_end}`)
-      options.push({ action: 'trim_existing', layer_id: d.a, edge: 'in', new_t_us: d.b_end })
+      options.push({ action: 'trim_existing', layer_id: d.a, edge: 'in', t_edge_us: d.b_end })
     }
     return { code: 'invalid_params', message:
       `layer overlap on track ${d.track}: the requested range [${d.b_start}, ${d.b_end}) µs collides with layer ${d.a} at [${d.a_start}, ${d.a_end}) µs. Layers of the same class collide per track (each track has ONE visual lane and ONE audio lane — a track that looks empty can still hold audio, e.g. another clip's auto-paired dialogue). Nothing was committed. Options: ${prose.join('; ')}.`,
@@ -1217,7 +1217,7 @@ function commandErrorArm(e: CommandError, tool?: string): McpToolErrorJson {
   // so a new variant cannot fall through to a bare name. ──
   switch (e.error) {
     case 'ShiftLinkStraddles':
-      return { code: 'invalid_params', message: `link ${e.link} has a member starting before ${e.from_t_us} µs and another at or after it: a sweep from that time would move one and not the other, slipping their sync. Move the whole link with move_layers { layer_ids }, or pick a from_t_us that does not split the link; project://links lists its members`, data: { error: 'ShiftLinkStraddles', link: e.link, from_t_us: e.from_t_us } }
+      return { code: 'invalid_params', message: `link ${e.link} has a member starting before ${e.from_t_us} µs and another at or after it: a sweep from that time would move one and not the other, slipping their sync. Move the whole link with move_layers { layer_ids }, or pick a t_from_us that does not split the link; project://links lists its members`, data: { error: 'ShiftLinkStraddles', link: e.link, t_from_us: e.from_t_us } }
     case 'RetimeRejected': return { code: 'invalid_params', message: `${retimeRefusal(e.reason)}. Nothing was changed`, data: { error: e.error, ...e.reason } }
     case 'TrackNotFound':
       return { code: 'invalid_params', message: `track ${e.track} not found — project://tracks lists the current tracks; a track disappears when its last layer leaves it, so an id read before a delete or a move may be gone` }
@@ -1226,7 +1226,7 @@ function commandErrorArm(e: CommandError, tool?: string): McpToolErrorJson {
     case 'MarkerNotFound':
       return { code: 'invalid_params', message: `marker ${e.marker} not found — project://markers lists the composition's markers (add composition=<id> for a Group's)` }
     case 'TransitionNotFound':
-      return { code: 'invalid_params', message: `transition ${e.transition} not found — the composition's \`transitions\` in project://current list them; deleting either participant removes its transition` }
+      return { code: 'invalid_params', message: `transition ${e.transition} not found — project://transitions lists them; deleting either participant removes its transition` }
     case 'TransitionLayersNotAdjacent':
       return { code: 'invalid_params', message: `layers ${e.from} (outgoing) and ${e.to} (incoming) are not adjacent on one track: the outgoing layer must END exactly where the incoming one STARTS, on the same track (or already overlap by exactly ${e.duration} µs to attach as-is). move_layers / trim_layer them to meet, then retry; project://tracks shows both spans`, data: { error: 'TransitionLayersNotAdjacent', from: e.from, to: e.to, duration_us: e.duration } }
     case 'CheckpointNotFound':
@@ -1244,13 +1244,13 @@ function commandErrorArm(e: CommandError, tool?: string): McpToolErrorJson {
     case 'TrackLocked':
       return { code: 'invalid_params', message: `track ${e.track} is locked and refuses edits to the layers on it (a locked track blocks the WHOLE batch it appears in). set_track_flags { track_id: "${e.track}", locked: false } clears it; a layer's own \`locked\` is separate (set_layer_flags)`, data: { error: 'TrackLocked', track: e.track, options: [{ action: 'unlock_track', tool: 'set_track_flags', track_id: e.track, locked: false }] } }
     case 'SplitOutsideLayer':
-      return { code: 'invalid_params', message: `split at ${e.at_t} µs is outside layer ${e.layer}: at_t_us must be strictly inside the layer's span (t_start_us, t_end_us) — project://layers/${e.layer} has the span. Nothing was split`, data: { error: 'SplitOutsideLayer', layer: e.layer, at_t_us: e.at_t } }
+      return { code: 'invalid_params', message: `split at ${e.at_t} µs is outside layer ${e.layer}: t_cut_us must be strictly inside the layer's span (t_start_us, t_end_us) — project://layers/${e.layer} has the span. Nothing was split`, data: { error: 'SplitOutsideLayer', layer: e.layer, t_cut_us: e.at_t } }
     case 'LinkLockedMember':
       return { code: 'invalid_params', message: `layer ${e.touched} moves with link ${e.link}, whose member ${e.locked_layer} is locked, so the whole link refuses. Unlock it (set_layer_flags { layer_ids: ["${e.locked_layer}"], locked: false }) or pass escape_link: true to move ${e.touched} alone`, data: { error: 'LinkLockedMember', link: e.link, locked_layer: e.locked_layer, touched: e.touched } }
     case 'LayerParamsKindMismatch':
       return { code: 'invalid_params', message: `layer ${e.layer} is a ${e.actual} layer, not ${e.patch}: send patch.kind "${e.actual}" (project://tracks reports each layer's kind). Nothing was changed`, data: { error: 'LayerParamsKindMismatch', layer: e.layer, actual: e.actual, patch: e.patch } }
     case 'LinkNotFound':
-      return { code: 'invalid_params', message: `link ${e.link} not found — the composition's \`links\` in project://current list them (a layer's record carries its link_id); a link dissolves by itself when it falls below two members` }
+      return { code: 'invalid_params', message: `link ${e.link} not found — project://links lists them (a layer's record and envelope carry its link_id); a link dissolves by itself when it falls below two members` }
     case 'LayerAlreadyLinked':
       return { code: 'invalid_params', message: `layer ${e.layer} is already a member of link ${e.existing}: pass reassign: true to move it into the new link (its old link dissolves below two members), or update_link ${e.existing} instead`, data: { error: 'LayerAlreadyLinked', layer: e.layer, existing: e.existing, options: [{ action: 'retry_with_reassign', reassign: true }] } }
     case 'LinkCreateNeedsTwoLayers':
@@ -1664,9 +1664,13 @@ const LAYER_PARAMS_PATCH_SCHEMA = {
 /** The `project://*` views `read_project` serves — one per state-view resource
  *  the TS host answers (`resource-views.ts`), so the two never disagree on what
  *  an agent can read. The Rust-compute resources are not here. */
-export const READ_PROJECT_VIEWS = ['current', 'composition', 'compositions', 'media', 'tracks', 'layer', 'markers', 'links', 'transitions', 'settings', 'history', 'session', 'effects', 'tacks', 'taste', 'media_thumbnail', 'media_frame'] as const
+export const READ_PROJECT_VIEWS = ['composition', 'compositions', 'media', 'tracks', 'layer', 'markers', 'links', 'transitions', 'settings', 'history', 'session', 'effects', 'tacks', 'taste', 'media_thumbnail', 'media_frame'] as const
 /** The views that take `composition_id` — the per-composition resources. */
 export const SCOPED_PROJECT_VIEWS: ReadonlySet<string> = new Set(['composition', 'tracks', 'markers', 'links', 'transitions'])
+/** Every view `composition_id` narrows: the per-composition ones, plus `tacks`,
+ *  which the MCP host filters by it. Any other view refuses the argument, as
+ *  the resource refuses a `?composition=` it would not read. */
+const COMPOSITION_ID_VIEWS: ReadonlySet<string> = new Set([...SCOPED_PROJECT_VIEWS, 'tacks'])
 export type ReadProjectView = (typeof READ_PROJECT_VIEWS)[number]
 
 /** Where an argument the keyframe tools do not take belongs instead. */
@@ -1821,18 +1825,18 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       } } }
     } },
   { name: 'shift_layers', exec: 'table', annotations: ANN_WRITE,
-    description: "Shift every layer starting at or after `from_t_us` by one `delta_us`, as one recorded edit — on `track_ids`, or on every track of the composition. A positive delta opens room there (the ripple insert); a negative one closes `[from_t_us + delta_us, from_t_us)` the way `delete_layers { ripple: true }` closes a hole, refusing by the same names (`RippleInsideHole`: a layer starts inside the span; `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer`) and keeping each carried transition. A link the sweep would split is `ShiftLinkStraddles`; a start before 0 refuses. Each layer snaps on its own grid. To move named layers, `move_layers`. Returns `{ moved: [layer records], delta_us }`.",
+    description: "Shift every layer starting at or after `t_from_us` by one `delta_us`, as one recorded edit — on `track_ids`, or on every track of the composition. A positive delta opens room there (the ripple insert); a negative one closes `[t_from_us + delta_us, t_from_us)` the way `delete_layers { ripple: true }` closes a hole, refusing by the same names (`RippleInsideHole`: a layer starts inside the span; `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer`) and keeping each carried transition. A link the sweep would split is `ShiftLinkStraddles`; a start before 0 refuses. Each layer snaps on its own grid. To move named layers, `move_layers`. Returns `{ moved: [layer records], delta_us }`.",
     inputSchema: { type: 'object', properties: {
-      from_t_us: US_SCHEMA('Shift every layer starting at or after this time, timeline'),
-      delta_us: { type: 'integer', description: 'Signed shift, µs; positive opens room, negative closes the span before from_t_us. Not 0.' },
+      t_from_us: US_SCHEMA('Shift every layer starting at or after this time, timeline'),
+      delta_us: { type: 'integer', description: 'Signed shift, µs; positive opens room, negative closes the span before t_from_us. Not 0.' },
       track_ids: { type: 'array', items: { type: 'string' }, description: 'Only these tracks. Omit for every track.' },
       composition_id: { ...COMPOSITION_ID_SCHEMA, description: 'The composition to sweep; omit for the root.' },
-    }, required: ['from_t_us', 'delta_us'] },
+    }, required: ['t_from_us', 'delta_us'] },
     parseArgs: (a) => {
-      refuseUnknownArgs(a, ['from_t_us', 'delta_us', 'track_ids', 'composition_id'], 'shift_layers', { layer_ids: 'named layers move with move_layers', escape_link: 'named layers move with move_layers' })
+      refuseUnknownArgs(a, ['t_from_us', 'delta_us', 'track_ids', 'composition_id'], 'shift_layers', { layer_ids: 'named layers move with move_layers', escape_link: 'named layers move with move_layers', from_t_us: 'the sweep origin is t_from_us' })
       const delta = parseIntNum(a.delta_us, 'delta_us')
       if (delta === 0) throw new McpArgError('delta_us is 0 — nothing would move', 'delta_us')
-      return { op: 'shift_layers', args: { from_t_us: parseIntNum(a.from_t_us, 'from_t_us'), tracks: a.track_ids === undefined || a.track_ids === null ? null : asArray(a.track_ids, 'track_ids').map((s) => parseUuid(s, 'track_ids')), composition_id: parseCompositionIdOpt(a.composition_id), delta_us: delta, strict: true } }
+      return { op: 'shift_layers', args: { from_t_us: parseIntNum(a.t_from_us, 't_from_us'), tracks: a.track_ids === undefined || a.track_ids === null ? null : asArray(a.track_ids, 'track_ids').map((s) => parseUuid(s, 'track_ids')), composition_id: parseCompositionIdOpt(a.composition_id), delta_us: delta, strict: true } }
     } },
   { name: 'restack_layer', exec: 'table', annotations: ANN_SET,
     description: "Restack a visual layer above/below a stable layer or track anchor. Supply exactly one anchor; track anchors work through gaps. A sole occupant carries its track; shared or reserved sources split onto a fresh track. Reserved tracks stay put. Audio, cross-composition and self-anchors reject. Already in place records nothing. One undo step.",
@@ -1869,9 +1873,12 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { op: 'retime_layers_mcp', args: { layers: asNonEmptyArray(a.layer_ids, 'layer_ids', 'name at least one clip').map(s => parseUuid(s, 'layer_ids')), target: hasTarget ? parseRetimeTarget(a.target) : null, preserve_pitch: preservePitch } }
     } },
   { name: 'trim_layer', exec: 'table', annotations: ANN_SET,
-    description: "Trim an edge to new_t_us. Source time follows the clip rate; keyframes remain glued to content. Aligned linked edges follow unless escape_link. Refuses targets outside the legal source/timeline window. Returns committed spans, trimmed siblings and grid adjustments.",
-    inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, edge: { type: 'string', enum: ['in', 'out'], description: 'Which edge moves: in = t_start_us, out = t_end_us.' }, new_t_us: US_SCHEMA('Where the edge lands, timeline'), escape_link: ESCAPE_LINK_SCHEMA }, required: ['edge', 'layer_id', 'new_t_us'] },
-    parseArgs: (a) => ({ op: 'trim_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), edge: parseOneOf(a.edge, ['in', 'out'], 'edge'), new_t_us: parseNum(a.new_t_us, 'new_t_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false), strict: true } }) },
+    description: "Trim an edge to t_edge_us. Source time follows the clip rate; keyframes remain glued to content. Aligned linked edges follow unless escape_link. Refuses targets outside the legal source/timeline window. Returns committed spans, trimmed siblings and grid adjustments.",
+    inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, edge: { type: 'string', enum: ['in', 'out'], description: 'Which edge moves: in = t_start_us, out = t_end_us.' }, t_edge_us: US_SCHEMA('Where the edge lands, timeline'), escape_link: ESCAPE_LINK_SCHEMA }, required: ['edge', 'layer_id', 't_edge_us'] },
+    parseArgs: (a) => {
+      refuseUnknownArgs(a, ['layer_id', 'edge', 't_edge_us', 'escape_link'], 'trim_layer', { new_t_us: 'where the edge lands is t_edge_us' })
+      return { op: 'trim_layer', args: { layer: parseUuid(a.layer_id, 'layer_id'), edge: parseOneOf(a.edge, ['in', 'out'], 'edge'), new_t_us: parseNum(a.t_edge_us, 't_edge_us'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false), strict: true } }
+    } },
   // One delete tool over two actor ops: `ripple` is the whole difference between
   // them, and the surface says so rather than making an agent pick a verb it can
   // only tell apart by reading two descriptions. Empty `layer_ids` splits — the
@@ -1936,21 +1943,24 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       group_layer: parseUuid(a.group_layer_id, 'group_layer_id'),
     } }) },
   { name: 'move_layers_to_composition', exec: 'table', annotations: ANN_WRITE,
-    description: "Move selected layers into another composition. The anchor lands at anchor_t_start_us; other members retain offsets. Lane assignment is per source track: omit to_track_id to find space, use spawn for fresh lanes, or name a free unlocked lane. Refuses mixed source compositions, locks, cycles, negative starts and membership changes involving retimed Groups. Internal links/transitions move; straddling ones are cut. Markers stay; compositions autofit; Group windows stay fixed.",
+    description: "Move selected layers into another composition. The anchor starts at t_start_us; other members retain offsets. Lane assignment is per source track: omit to_track_id to find space, use spawn for fresh lanes, or name a free unlocked lane. Refuses mixed source compositions, locks, cycles, negative starts and membership changes involving retimed Groups. Internal links/transitions move; straddling ones are cut. Markers stay; compositions autofit; Group windows stay fixed.",
     inputSchema: { type: 'object', properties: {
       layer_ids: { type: 'array', items: { type: 'string' }, description: 'The layers to move; at least one, all in one composition.' },
       to_composition_id: { type: 'string', description: 'The destination composition (`project://compositions`). The root is allowed — that is the move back out of a Group.' },
-      anchor_layer_id: { type: 'string', description: 'Which member `anchor_t_start_us` positions; every other member keeps its offset from it.' },
-      anchor_t_start_us: { type: 'integer', description: "The anchor's start time on the DESTINATION's clock — absolute, not a delta." },
+      anchor_layer_id: { type: 'string', description: 'Which member `t_start_us` positions; every other member keeps its offset from it.' },
+      t_start_us: { type: 'integer', description: "The anchor's start time on the DESTINATION's clock — absolute, not a delta." },
       to_track_id: { type: 'string', description: 'A lane id (locked or occupied REFUSES), "spawn" for a fresh top lane, or omit to bounce to the nearest free lane.' },
-    }, required: ['anchor_layer_id', 'anchor_t_start_us', 'layer_ids', 'to_composition_id'] },
-    parseArgs: (a) => ({ op: 'move_layers_to_composition', args: {
-      layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')),
-      to_composition: parseUuid(a.to_composition_id, 'to_composition_id'),
-      anchor_layer: parseUuid(a.anchor_layer_id, 'anchor_layer_id'),
-      anchor_t_start_us: parseNum(a.anchor_t_start_us, 'anchor_t_start_us'),
-      to_track: parseDestTrackOpt(a.to_track_id),
-    } }) },
+    }, required: ['anchor_layer_id', 't_start_us', 'layer_ids', 'to_composition_id'] },
+    parseArgs: (a) => {
+      refuseUnknownArgs(a, ['layer_ids', 'to_composition_id', 'anchor_layer_id', 't_start_us', 'to_track_id'], 'move_layers_to_composition', { anchor_t_start_us: "the anchor's start is t_start_us" })
+      return { op: 'move_layers_to_composition', args: {
+        layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')),
+        to_composition: parseUuid(a.to_composition_id, 'to_composition_id'),
+        anchor_layer: parseUuid(a.anchor_layer_id, 'anchor_layer_id'),
+        anchor_t_start_us: parseNum(a.t_start_us, 't_start_us'),
+        to_track: parseDestTrackOpt(a.to_track_id),
+      } }
+    } },
   { name: 'ungroup_layer', exec: 'table', annotations: ANN_WRITE,
     description: "Expand a Group layer back into its members, in place. Refuses unless the Group is PLAIN — identity transform, static opacity 1, no effects (`GroupNotPlain { reason }`), because those apply to the composite and would be discarded; reset them first or keep the Group. Members intersecting the Group's `[src_in_us, src_out_us)` window are copied into the parent at the same on-screen time, trimmed to the window; members wholly outside are dropped. The composition's tracks become fresh tracks at the Group's z position; inner links and transitions carry over. The composition is removed when nothing else references it. One undo restores the Group.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string', description: 'The Group layer (its params.kind is CompositionRef).' } }, required: ['layer_id'] },
@@ -2081,13 +2091,13 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'update_project_settings', args: { patch: parseProjectSettingsPatch(a.patch) } }) },
   // ── table-exec: markers ──────────────────────────────────────────────────
   { name: 'update_marker', exec: 'table', annotations: ANN_SET,
-    description: "Update a marker. Setting `t_us` re-sorts the marker list. On a marker ANCHORED to a clip, `t_us` names the time the mark should read and moves the ANCHOR to make it read that, so the mark keeps following its clip from the new offset — a time outside that clip's span is refused, and `t_us` together with `end_t_us` is refused (an anchored region's end follows its anchor by itself; patch one or the other).",
+    description: "Update a marker. Setting `t_us` re-sorts the marker list. On a marker ANCHORED to a clip, `t_us` names the time the mark should read and moves the ANCHOR to make it read that, so the mark keeps following its clip from the new offset — a time outside that clip's span is refused, and `t_us` together with `t_end_us` is refused (an anchored region's end follows its anchor by itself; patch one or the other).",
     inputSchema: { type: 'object', properties: { marker_id: ID_SCHEMA('Marker'), patch: {
       type: 'object',
       description: 'Marker patch; only fields you set apply. The anchor is `set_marker_anchor`\'s, not patchable here.',
       properties: {
         t_us: US_SCHEMA('New time, timeline'),
-        end_t_us: { type: ['integer', 'null'], description: 'Region end, timeline µs (exclusive); a point marker becomes a region. null turns a region back into a point.' },
+        t_end_us: { type: ['integer', 'null'], description: 'Region end, timeline µs (exclusive); a point marker becomes a region. null turns a region back into a point.' },
         label: { type: 'string', description: 'Short name — what the marker lane and the search palette show. Keep it to a few words; long text belongs in `note`.' },
         note: { type: 'string', description: 'Long text, shown only in the marker panel.' },
         color: { ...RGBA_SCHEMA, description: 'Marker colour.' },
@@ -2120,7 +2130,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'remove_media', args: { media: parseUuid(a.media_id, 'media_id'), force: parseBoolOpt(a.force, 'force', false) } }) },
   // ── table-exec: history ──────────────────────────────────────────────────
   { name: 'undo', exec: 'table', annotations: ANN_DESTRUCTIVE,
-    description: "Undo the newest edit by anyone: history is shared, so it may be the user's — check `undone.actor`, and `redo` puts it back. `NothingToUndo` at the origin. Only timeline edits record — layers, tracks, markers, transitions, links, and media removals that cascade. Outside the stack and untouched by undo: media imports, the composition envelope (`update_composition`), project settings (`set_project_settings`), track and role flags, and loading a project (which resets history). Answers `undone`: the op reverted.",
+    description: "Undo the newest edit by anyone: history is shared, so it may be the user's — check `undone.actor`, and `redo` puts it back. `NothingToUndo` at the origin. Only timeline edits record — layers, tracks, markers, transitions, links, Groups, role gains (`set_role_gain`), and media removals that cascade. Outside the stack and untouched by undo: media imports, the composition envelope (`update_composition`), project settings (`set_project_settings`), track and role flags, and loading a project (which resets history). Answers `undone`: the op reverted.",
     inputSchema: { type: 'object', properties: {}, required: [] },
     parseArgs: () => ({ op: 'undo', args: {} }) },
   { name: 'jump_to', exec: 'table', annotations: ANN_DESTRUCTIVE,
@@ -2263,29 +2273,33 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       }
     } },
   { name: 'split_layer', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Split at sorted, grid-snapped times in one atomic edit. Each half retains its mapped content window. Linked members are cut too and form a separate link per segment unless escape_link. Returns layer_ids, the actual at_t_us and `siblings: [{ layer_id, segments }]`, each link partner cut with it.",
+    description: "Split at sorted, grid-snapped times in one atomic edit. Each half retains its mapped content window. Linked members are cut too and form a separate link per segment unless escape_link. Returns layer_ids, the actual t_cut_us and `siblings: [{ layer_id, segments }]`, each link partner cut with it.",
     inputSchema: { type: 'object', properties: {
-      at_t_us: { type: 'array', items: { type: 'integer' }, minItems: 1, description: 'Interior timeline cuts, µs; snapped, sorted, deduplicated. Any invalid cut rejects all.' },
+      t_cut_us: { type: 'array', items: { type: 'integer' }, minItems: 1, description: 'Interior timeline cuts, µs; snapped, sorted, deduplicated. Any invalid cut rejects all.' },
       escape_link: ESCAPE_LINK_SCHEMA, layer_id: LAYER_ID_SCHEMA,
-    }, required: ['layer_id', 'at_t_us'] },
+    }, required: ['layer_id', 't_cut_us'] },
     parseDedicated: (a) => {
+      refuseUnknownArgs(a, ['layer_id', 't_cut_us', 'escape_link'], 'split_layer', { at_t_us: 'the cut times are t_cut_us' })
       const common = { layer: parseUuid(a.layer_id, 'layer_id'), escape_link: parseBoolOpt(a.escape_link, 'escape_link', false) }
-      const cuts = asNonEmptyArray(a.at_t_us, 'at_t_us', 'provide at least one cut').map((v, i) => {
-        const at = parseNum(v, `at_t_us[${i}]`)
-        if (!Number.isSafeInteger(at)) throw new McpArgError(`at_t_us[${i}] must be an integer microsecond`, 'at_t_us')
+      const cuts = asNonEmptyArray(a.t_cut_us, 't_cut_us', 'provide at least one cut').map((v, i) => {
+        const at = parseNum(v, `t_cut_us[${i}]`)
+        if (!Number.isSafeInteger(at)) throw new McpArgError(`t_cut_us[${i}] must be an integer microsecond`, 't_cut_us')
         return at
       })
       return { ...common, at_t_us: cuts }
     } },
   { name: 'add_marker', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Add a marker (point or region) to a composition's timeline — the root, or the Group named by `composition_id`. Returns the marker record (`marker_id`, `t_us` as snapped). Set `end_t_us` to make it a region marker. Set `anchor_layer_id` to have the mark FOLLOW a clip instead of standing at a fixed time; omit it for an ordinary marker. `color` defaults to the timeline's marker blue.",
+    description: "Add a marker (point or region) to a composition's timeline — the root, or the Group named by `composition_id`. Returns the marker record (`marker_id`, `t_us` as snapped). Set `t_end_us` to make it a region marker. Set `anchor_layer_id` to have the mark FOLLOW a clip instead of standing at a fixed time; omit it for an ordinary marker. `color` defaults to the timeline's marker blue.",
     inputSchema: { type: 'object', properties: { anchor_layer_id: { type: 'string',
       description: 'Clip the marker should follow — a layer of the same composition with a source window (VideoClip, Audio, Group). Tied as `set_marker_anchor` would tie it, refused for the same reasons (no marker is created). Omit for a fixed marker.' },
-      color: { ...RGBA_SCHEMA, description: 'Marker colour; omit for the default.' }, end_t_us: US_SCHEMA('Region end, timeline; omit for a point marker'), label: { type: 'string', description: 'Short name shown on the marker lane.' }, note: { type: 'string', description: 'Long text, shown only in the marker panel.' }, t_us: US_SCHEMA('Marker time, timeline'), composition_id: COMPOSITION_ID_SCHEMA }, required: ['label', 't_us'] },
-    parseDedicated: (a) => ({ color: a.color === undefined ? null : parseRgba(a.color, 'color'), t_us: parseNum(a.t_us, 't_us'),
-      end_t_us: parseNumOpt(a.end_t_us, 'end_t_us'), label: parseStr(a.label, 'label'), note: a.note === undefined ? null : parseStr(a.note, 'note'),
+      color: { ...RGBA_SCHEMA, description: 'Marker colour; omit for the default.' }, t_end_us: US_SCHEMA('Region end, timeline; omit for a point marker'), label: { type: 'string', description: 'Short name shown on the marker lane.' }, note: { type: 'string', description: 'Long text, shown only in the marker panel.' }, t_us: US_SCHEMA('Marker time, timeline'), composition_id: COMPOSITION_ID_SCHEMA }, required: ['label', 't_us'] },
+    parseDedicated: (a) => {
+      refuseUnknownArgs(a, ['anchor_layer_id', 'color', 't_end_us', 'label', 'note', 't_us', 'composition_id'], 'add_marker', { end_t_us: 'the region end is t_end_us' })
+      return { color: a.color === undefined ? null : parseRgba(a.color, 'color'), t_us: parseNum(a.t_us, 't_us'),
+      end_t_us: parseNumOpt(a.t_end_us, 't_end_us'), label: parseStr(a.label, 'label'), note: a.note === undefined ? null : parseStr(a.note, 'note'),
       anchor_layer_id: a.anchor_layer_id != null ? parseUuid(a.anchor_layer_id, 'anchor_layer_id') : null,
-      composition_id: parseCompositionIdOpt(a.composition_id) }) },
+      composition_id: parseCompositionIdOpt(a.composition_id) }
+    } },
   { name: 'set_keyframe', exec: 'dedicated', annotations: ANN_SET,
     description: "Insert or update one key on a layer param by time (`t_us`, timeline-absolute), snapped to the frame first: a key on that frame is updated in place, id kept. On a Static track the first key replaces the static value, which is not kept — key the start value too, or use set_param_track. `value` is typed by `param_key`: a number, or {r,g,b,a} (0..255) for \"color\"; an effect param needs no prior write and must sit in its catalog range. `easing` eases the segment leaving the key, or on the last key the one arriving at it; omitted, a new key inherits the easing of the segment it splits. Returns the key (`keyframe_id`, `t_us`, `local_t_us`). Sides, continuity, Auto tangents: update_keyframe.",
     inputSchema: { type: 'object', properties: { easing: EASING_SCHEMA, layer_id: LAYER_ID_SCHEMA, param_key: PARAM_KEY_SCHEMA, t_us: US_SCHEMA('Key time, timeline-absolute'), value: TRACK_VALUE_SCHEMA }, required: ['layer_id', 'param_key', 't_us', 'value'] },
@@ -2420,7 +2434,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { composition_id: parseCompositionIdOpt(a.composition_id), range: t0 === undefined ? null : [t0, t1] }
     } },
   { name: 'create_tacks', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Point the user at time ranges to review — a pause to check, a shot to judge, a cut to decide. Not a marker: it lives in the agent panel for this project opening only; the user resolves, dismisses or clears it; use it unless the user asked for markers. Create after your edits; all or none. It comments on what plays in its range on every track: it moves with that content and is outdated once the range plays anything else. Describe content, never times: the panel shows the live place. One place, one tack. Returns `{ tack_ids, hints? }`; your later edits report your moved or outdated tacks as `affected_tacks`. `TackLimit` past 1000. Unrecorded; works while history is locked.",
+    description: "Point the user at time ranges to review — a pause to check, a shot to judge, a cut to decide. Not a marker: it lives in the agent panel for this project opening only; the user resolves, dismisses or clears it; use it unless the user asked for markers. Create after your edits; all or none. It comments on what plays in its range on every track: it moves with that content and is outdated once the range plays anything else. Describe content, never times: the panel shows the live place. One place, one tack. Returns `{ tacks, hints? }` as project://tacks reads them; later edits report your moved or outdated ones as `affected_tacks`. `TackLimit` past 1000. Unrecorded; works while history is locked.",
     inputSchema: { type: 'object', properties: {
       tacks: { type: 'array', minItems: 1, description: 'The tacks to create, validated together: one refusal creates none.',
         items: { type: 'object', additionalProperties: false, required: ['label', 't_us'], properties: {
@@ -2428,7 +2442,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
           body: { type: 'string', maxLength: TACK_BODY_LIMIT, description: 'Plain-text detail; default empty.' },
           kind: { type: 'string', enum: [...TACK_KINDS], description: 'note (default) informs; issue flags a problem; question asks the user to decide.' },
           t_us: US_SCHEMA('Start, on the composition timeline'),
-          end_t_us: US_SCHEMA('Range end, timeline; omit for a point'),
+          t_end_us: US_SCHEMA('Range end, timeline; omit for a point'),
           composition_id: { type: 'string', description: "A Group's composition; omit for the root." },
         } } },
     }, required: ['tacks'] },
@@ -2502,7 +2516,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     } },
   // ── dedicated-exec: reads, for a client without MCP resources ─────────────
   { name: 'read_project', exec: 'dedicated', annotations: ANN_READ,
-    description: "The `project://*` views as a tool result, for clients without resources. `view`: `current`, `composition`, `compositions`, `media` (with `id`, one item's card), `tracks` (layer envelopes), `layer` (needs `id`), `markers`, `links`, `transitions`, `settings` (preferences + metadata), `history`, `session` (who holds the session), `effects` (effects catalog), `tacks` (review tacks; `composition_id` narrows), `taste` (style tokens + provenance), `media_thumbnail` / `media_frame` (an IMAGE; `id` is the media id, `media_frame` takes `src_us`). `composition`, `tracks`, `markers`, `links`, `transitions` take `composition_id` for a Group's, the root when omitted. JSON views answer as text.",
+    description: "The `project://*` views as a tool result, for clients without resources. `view`: `composition`, `compositions`, `media` (with `id`, one item's card), `tracks` (layer envelopes), `layer` (needs `id`), `markers`, `links`, `transitions`, `settings` (preferences, role mix, metadata), `history`, `session` (who holds the session), `effects` (effects catalog), `tacks` (review tacks; `composition_id` narrows), `taste` (style tokens + provenance), `media_thumbnail` / `media_frame` (an IMAGE; `id` is the media id, `media_frame` takes `src_us`). `composition`, `tracks`, `markers`, `links`, `transitions` take `composition_id` for a Group's (root if omitted); others refuse it. JSON views answer as text.",
     inputSchema: { type: 'object', properties: {
       view: { type: 'string', enum: [...READ_PROJECT_VIEWS], description: 'Which view to read.' },
       id: { type: 'string', description: 'The layer id for view `layer`; the media id for `media` (optional) / `media_thumbnail` / `media_frame`.' },
@@ -2517,6 +2531,8 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       if (view === 'media_frame' && (a.src_us === undefined || a.src_us === null)) throw new McpArgError("view 'media_frame' needs `src_us` — the frame time in the source, µs (media_thumbnail takes none)", 'src_us')
       const src_us = view === 'media_frame' ? parseNum(a.src_us, 'src_us') : null
       const takesId = needsId || (view === 'media' && a.id !== undefined && a.id !== null)
+      if (a.composition_id !== undefined && a.composition_id !== null && !COMPOSITION_ID_VIEWS.has(view))
+        throw new McpArgError(`view '${view}' takes no composition_id — it reads the whole project; composition_id narrows ${[...COMPOSITION_ID_VIEWS].join(', ')}`, 'composition_id')
       return { view, id: takesId ? parseUuid(a.id, 'id') : null, src_us, composition_id: parseCompositionIdOpt(a.composition_id) }
     } },
   // ── projects — executed by the MCP host (`mcp/projectTools.ts`), not the
@@ -2586,14 +2602,13 @@ function parseCreateProject(a: Record<string, unknown>): Record<string, unknown>
  *  the times as integers — what `TackStore` validates against the project. */
 function parseTackInput(v: unknown, field: string): Record<string, unknown> {
   const o = parseObj(v, field)
-  const keys = ['label', 'body', 'kind', 't_us', 'end_t_us', 'composition_id']
-  for (const k of Object.keys(o)) if (!keys.includes(k)) throw new McpArgError(`${field}: unknown key '${k}'; expected ${keys.join(', ')}`, field)
+  strictKeys(o, ['label', 'body', 'kind', 't_us', 't_end_us', 'composition_id'], field, { end_t_us: 'the range end is t_end_us' })
   return {
     label: parseTackLabel(o.label, `${field}.label`),
     body: o.body === undefined || o.body === null ? '' : parseTackBody(o.body, `${field}.body`),
     kind: o.kind === undefined || o.kind === null ? 'note' : parseOneOf(o.kind, TACK_KINDS, `${field}.kind`),
     t_us: parseIntNum(o.t_us, `${field}.t_us`),
-    end_t_us: o.end_t_us === undefined || o.end_t_us === null ? null : parseIntNum(o.end_t_us, `${field}.end_t_us`),
+    end_t_us: o.t_end_us === undefined || o.t_end_us === null ? null : parseIntNum(o.t_end_us, `${field}.t_end_us`),
     composition_id: o.composition_id === undefined || o.composition_id === null ? null : parseUuid(o.composition_id, `${field}.composition_id`),
   }
 }

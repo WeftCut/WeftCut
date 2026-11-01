@@ -126,10 +126,9 @@ function emitToRenderer(event: string, payload: unknown): void {
   if (wc.isDestroyed()) return
   wc.send('evt:' + event, payload)
 }
-// The MCP host is started after `backend.init()`, but the `onEvent` closure
-// (which taps `mcp:change`) is constructed in the `new Backend(...)` call
-// BEFORE the host exists. Hold it module-scoped and set it right after
-// `startMcpHost` resolves.
+// The MCP host is started after `backend.init()`, but the closures that reach
+// it (the TS actor host's resource-list relay) are built BEFORE the host
+// exists. Hold it module-scoped and set it right after `startMcpHost` resolves.
 let mcpHostRef: import('./mcp/index.js').McpHost | null = null
 let tsHost: import('./state/ts-actor-host.js').TsActorHost | null = null
 // The clip-compute job registry (ADR 0121). Module-scoped for the `onEvent`
@@ -684,12 +683,6 @@ app.whenReady().then(async () => {
       // the job events reach no MCP session themselves.
       if (event === 'media:job_started' || event === 'media:job_complete' || event === 'media:job_error') recordDerivativeJob(event, payload)
       if (event === 'log:entry') recordProjectDiagnostic(payload)
-      // `mcp:change` is consumed by the MCP host (relayed as an in-protocol
-      // streamable-HTTP notification to connected agents), NOT forwarded to the renderer.
-      if (event === 'mcp:change') {
-        mcpHostRef?.notifyChange(payload)
-        return
-      }
       // A clip-compute job's phase: the registry owns it and publishes its own
       // `compute_jobs:changed` to the renderer, so the raw event goes no further.
       if (event === 'compute:job_phase') {
@@ -783,7 +776,7 @@ app.whenReady().then(async () => {
   // TS actor host: constructed unconditionally; must start BEFORE startMcpHost so
   // the actor (the sole owner of project state — it serves every MCP state view and
   // injects the slice each Rust compute call needs) is ready before any MCP read can
-  // run. mcpNotify uses mcpHostRef?.notifyChange (optional), so the host wires up
+  // run. mcpResourcesChanged uses mcpHostRef (optional), so the host wires up
   // cleanly before the MCP host exists.
   const [{ createTsActorHost }, { initEval }] = await Promise.all([
     import('./state/ts-actor-host.js'),
@@ -1057,7 +1050,6 @@ app.whenReady().then(async () => {
       }
     },
     send: (event, payload) => emitToRenderer(event, payload),
-    mcpNotify: (payload) => mcpHostRef?.notifyChange(payload),
     mcpResourcesChanged: () => mcpHostRef?.notifyResourceListChanged(),
     fileExists: (p) => fs.existsSync(p),
     fs: nodeFs,

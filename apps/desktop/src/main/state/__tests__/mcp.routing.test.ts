@@ -164,7 +164,7 @@ describe('MCP adapter routing — split_layer (dedicated)', () => {
 
     const r = a.mcpCall('split_layer', JSON.stringify({
       layer_id: layerId,
-      at_t_us: [2_000_000],
+      t_cut_us: [2_000_000],
     }))
     expect(r.ok).toBe(true)
     if (!r.ok) return
@@ -182,7 +182,7 @@ describe('MCP adapter routing — split_layer (dedicated)', () => {
     const a = freshActor()
     const r = a.mcpCall('split_layer', JSON.stringify({
       layer_id: 123,
-      at_t_us: [1_000_000],
+      t_cut_us: [1_000_000],
     }))
     expect(r.ok).toBe(false)
     if (r.ok) return
@@ -261,7 +261,7 @@ describe('MCP adapter routing — trim_layer (table)', () => {
     const r = a.mcpCall('trim_layer', JSON.stringify({
       layer_id: layerId,
       edge: 'out',
-      new_t_us: 2_000_000,
+      t_edge_us: 2_000_000,
     }))
     expect(r.ok).toBe(true)
     const track = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
@@ -273,7 +273,7 @@ describe('MCP adapter routing — trim_layer (table)', () => {
     const r = a.mcpCall('trim_layer', JSON.stringify({
       layer_id: 999,
       edge: 'out',
-      new_t_us: 1_000_000,
+      t_edge_us: 1_000_000,
     }))
     expect(r.ok).toBe(false)
     if (r.ok) return

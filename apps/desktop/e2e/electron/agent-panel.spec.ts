@@ -33,7 +33,7 @@ test('agent panel separates views, work sessions and connection lifetime', async
     const { client, transport } = await connect('Panel test agent')
     const call = (name: string, args: Record<string, unknown> = {}) => client.callTool({ name, arguments: args })
     const trackResource = await client.readResource({ uri: 'project://tracks' })
-    const trackId = JSON.parse((trackResource.contents[0] as { text: string }).text)[0].id as string
+    const trackId = JSON.parse((trackResource.contents[0] as { text: string }).text)[0].track_id as string
     expect((await call('begin_agent_session', { reason: 'Interview rough cut' })).isError).not.toBe(true)
     await expect(page.locator('.agent-mode-shell')).toBeVisible()
     // One status row: the session's reason is its live state, End beside it.
@@ -53,10 +53,10 @@ test('agent panel separates views, work sessions and connection lifetime', async
     expect((await snapshot()).checkpoints).toHaveLength(1)
     const other = await connect('Second client')
     expect((await other.client.callTool({ name: 'begin_agent_session', arguments: { reason: 'Other work' } })).isError).toBe(true)
-    await other.client.readResource({ uri: 'project://current' })
+    await other.client.readResource({ uri: 'project://settings' })
 
     await call('add_layers', { layers: [{ track_id: trackId, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 28, g: 76, b: 128, a: 255 } } }] })
-    await client.readResource({ uri: 'project://current' })
+    await client.readResource({ uri: 'project://settings' })
     await client.readResource({ uri: 'project://tracks' })
     // The owner's own restore passes its own lock.
     expect((await call('restore_checkpoint', { checkpoint_id: first.checkpoint_id })).isError).not.toBe(true)
@@ -105,7 +105,7 @@ test('tacks: listed in the panel, chipped in the review lane, converted into one
     const info = await page.evaluate(() => (window as any).api.mcp.getInfo()) as { url: string; bearer_token: string }
     client = new Client({ name: 'Tack test agent', version: '1.0' })
     await client.connect(new StreamableHTTPClientTransport(new URL(info.url), { requestInit: { headers: { Authorization: `Bearer ${info.bearer_token}` } } }))
-    const created = await client.callTool({ name: 'create_tacks', arguments: { tacks: [{ label: 'Long pause', body: 'Keep the breath?', kind: 'question', t_us: 0, end_t_us: 1_000_000 }] } })
+    const created = await client.callTool({ name: 'create_tacks', arguments: { tacks: [{ label: 'Long pause', body: 'Keep the breath?', kind: 'question', t_us: 0, t_end_us: 1_000_000 }] } })
     expect(created.isError).not.toBe(true)
     const markers = async () => {
       const s = await invokeCmd<{ root_id: string; compositions: Record<string, { markers: Array<{ label: string; note: string }> }> }>(page, 'project_summary', {})
@@ -178,7 +178,7 @@ test('changes: an agent edit is listed, highlighted and counted until reverted o
     await client.connect(new StreamableHTTPClientTransport(new URL(info.url), { requestInit: { headers: { Authorization: `Bearer ${info.bearer_token}` } } }))
     const call = (name: string, args: Record<string, unknown> = {}) => client!.callTool({ name, arguments: args })
     const trackResource = await client.readResource({ uri: 'project://tracks' })
-    const trackId = JSON.parse((trackResource.contents[0] as { text: string }).text)[0].id as string
+    const trackId = JSON.parse((trackResource.contents[0] as { text: string }).text)[0].track_id as string
 
     // The work session pins the Review baseline; the agent's clip is the one change.
     expect((await call('begin_agent_session', { reason: 'Add a title card' })).isError).not.toBe(true)

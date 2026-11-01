@@ -23,13 +23,13 @@ function contents(out: unknown) {
 }
 
 describe('handleReadResource', () => {
-  it('serves project://current from the actor without calling the backend', async () => {
+  it('serves project://settings from the actor without calling the backend', async () => {
     const ts = tsHostStub()
     const spy = vi.fn(async () => '{"ok":true,"result":{"contents":[]}}')
-    const out = await handleReadResource(fakeBackend(spy), () => ts, 'project://current')
+    const out = await handleReadResource(fakeBackend(spy), () => ts, 'project://settings')
     expect(spy).not.toHaveBeenCalled()
     expect(contents(out)[0].mimeType).toBe('application/json')
-    expect(JSON.parse(contents(out)[0].text).project_id).toBe(ts.actor.snapshot().project_id)
+    expect(JSON.parse(contents(out)[0].text).metadata).toEqual(ts.actor.snapshot().metadata)
   })
   it('serves project://history from the actor (no backend call)', async () => {
     const ts = tsHostStub()

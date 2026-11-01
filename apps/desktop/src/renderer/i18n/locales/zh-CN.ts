@@ -1340,7 +1340,6 @@ const zhCN: Resources = {
     "apply_subtitles": "应用字幕",
     "auto_split_by_shot": "按镜头分割",
     "remove_pauses": "移除停顿",
-    "ping": "检查连接",
     "resources/read": "读取资源",
     "resources/list": "列出资源",
     "tools/list": "读取工具列表",

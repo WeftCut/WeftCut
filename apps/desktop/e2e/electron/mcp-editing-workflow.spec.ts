@@ -57,22 +57,22 @@ test('MCP creates, trims and moves clips, then exports the edited timeline', asy
     ] })).layers
     if (!red || !green) throw new Error('add_layers placed fewer than two layers')
     expect(await call<LayerRecord>('trim_layer', {
-      layer_id: red.layer_id, edge: 'out', new_t_us: 1_000_000,
+      layer_id: red.layer_id, edge: 'out', t_edge_us: 1_000_000,
     })).toMatchObject({ layer_id: red.layer_id, t_start_us: 0, t_end_us: 1_000_000 })
     expect(await call<LayerRecord>('trim_layer', {
-      layer_id: green.layer_id, edge: 'in', new_t_us: 5_000_000,
+      layer_id: green.layer_id, edge: 'in', t_edge_us: 5_000_000,
     })).toMatchObject({ layer_id: green.layer_id, t_start_us: 5_000_000, t_end_us: 6_000_000 })
     expect((await call<{ layers: LayerRecord[] }>('move_layers', {
       layer_ids: [green.layer_id], t_start_us: 1_000_000,
     })).layers[0]).toMatchObject({ layer_id: green.layer_id, track_id: track.track_id,
       t_start_us: 1_000_000, t_end_us: 2_000_000 })
 
-    const tracks = await read<Array<{ id: string; layers: Array<{ id: string; t_start_us: number; t_end_us: number }> }>>('project://tracks')
-    expect(tracks.find(t => t.id === track.track_id)?.layers.map(l => ({
-      id: l.id, t_start_us: l.t_start_us, t_end_us: l.t_end_us,
+    const tracks = await read<Array<{ track_id: string; layers: Array<{ layer_id: string; t_start_us: number; t_end_us: number }> }>>('project://tracks')
+    expect(tracks.find(t => t.track_id === track.track_id)?.layers.map(l => ({
+      layer_id: l.layer_id, t_start_us: l.t_start_us, t_end_us: l.t_end_us,
     }))).toEqual([
-      { id: red.layer_id, t_start_us: 0, t_end_us: 1_000_000 },
-      { id: green.layer_id, t_start_us: 1_000_000, t_end_us: 2_000_000 },
+      { layer_id: red.layer_id, t_start_us: 0, t_end_us: 1_000_000 },
+      { layer_id: green.layer_id, t_start_us: 1_000_000, t_end_us: 2_000_000 },
     ])
     expect(await read('project://composition')).toMatchObject({
       width: 640, height: 360, fps: { num: 30, den: 1 }, duration_us: 2_000_000,

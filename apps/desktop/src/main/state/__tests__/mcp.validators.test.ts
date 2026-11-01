@@ -405,8 +405,12 @@ describe('parseEffectPatch', () => {
 
 describe('parseMarkerPatch', () => {
   it('accepts a full valid patch', () => {
-    const p = { t_us: 1, end_t_us: 2, label: 'x', color: { r: 0, g: 0, b: 0, a: 255 } }
-    expect(parseMarkerPatch(p)).toEqual(p)
+    const color = { r: 0, g: 0, b: 0, a: 255 }
+    // The wire's t_end_us lands on the stored field, end_t_us.
+    expect(parseMarkerPatch({ t_us: 1, t_end_us: 2, label: 'x', color })).toEqual({ t_us: 1, end_t_us: 2, label: 'x', color })
+  })
+  it('refuses the old end_t_us spelling, naming t_end_us', () => {
+    expect(() => parseMarkerPatch({ end_t_us: 2 })).toThrow(/t_end_us/)
   })
   it('rejects a string patch', () => { expect(() => parseMarkerPatch('t_us=1')).toThrow(McpArgError) })
   it('rejects unknown keys', () => { expect(() => parseMarkerPatch({ time_us: 1 })).toThrow(/unknown key 'time_us'/) })

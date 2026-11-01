@@ -46,15 +46,15 @@ test('TS actor: MCP mutate → resource read reflects it; blocked tool rejects',
     try {
       // A read resource — the `project://*` state views are served by the TS MCP host.
       const before = await client.readResource({ uri: 'project://tracks' })
-      const tracks = JSON.parse((before.contents[0] as { text: string }).text) as Array<{ id: string }>
+      const tracks = JSON.parse((before.contents[0] as { text: string }).text) as Array<{ track_id: string }>
       expect(tracks.length).toBeGreaterThan(0)
       // Mutate via the TS actor.mcpCall path.
-      const added = await client.callTool({ name: 'add_layers', arguments: { layers: [{ track_id: tracks[0].id, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 1 } } }] } })
+      const added = await client.callTool({ name: 'add_layers', arguments: { layers: [{ track_id: tracks[0].track_id, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 1 } } }] } })
       expect((added.content as Array<{ type: string }>)[0].type).toBe('text')
       // The mirror reflects the mutation on the next read.
-      const after = await client.readResource({ uri: 'project://current' })
-      const proj = JSON.parse((after.contents[0] as { text: string }).text) as { root_id: string; compositions: Record<string, { tracks: Array<{ layers: unknown[] }> }> }
-      expect(proj.compositions[proj.root_id]!.tracks.reduce((n, t) => n + t.layers.length, 0)).toBe(1)
+      const after = await client.readResource({ uri: 'project://tracks' })
+      const rows = JSON.parse((after.contents[0] as { text: string }).text) as Array<{ layers: unknown[] }>
+      expect(rows.reduce((n, t) => n + t.layers.length, 0)).toBe(1)
       // A failed hybrid answers with an `isError` RESULT, never a JSON-RPC
       // rejection — the refusal is the tool's answer, and the model reads it.
       const refused = await client.callTool({ name: 'import_media', arguments: { path: '/nope.mp4' } })

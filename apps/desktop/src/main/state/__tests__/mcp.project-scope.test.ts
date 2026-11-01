@@ -33,7 +33,7 @@ const backend = { mcpCallTool: async () => { throw new Error('a refused call mus
 
 const PINNED_APP_SCOPE = [
   'list_export_presets', 'create_export_preset', 'update_export_preset', 'delete_export_preset',
-  'get_export_status', 'cancel_export', 'retry_export', 'ping',
+  'get_export_status', 'cancel_export', 'retry_export',
   'list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'preview_motif',
   'open_project', 'create_project',
 ]
@@ -59,7 +59,6 @@ function host(recents: { parent?: string | null } = {}) {
   const workspaceDir = vi.fn((): string | null => null)
   const ts = createTsActorHost({
     send: (event: string, payload: unknown) => { sent.push([event, payload]) },
-    mcpNotify: () => {},
     fileExists: (p: string) => fs.exists(p),
     fs,
     join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/'),
@@ -109,7 +108,7 @@ describe('no project open: every other tool refuses and commits nothing', () => 
 
   it('refuses every read_project view but session and effects', async () => {
     const { ts } = host()
-    for (const view of ['current', 'composition', 'compositions', 'media', 'tracks', 'markers', 'links', 'transitions', 'settings', 'history']) {
+    for (const view of ['composition', 'compositions', 'media', 'tracks', 'markers', 'links', 'transitions', 'settings', 'history']) {
       const out = await call(ts, 'read_project', { view })
       expect(out.structuredContent?.error, view).toBe('NoProjectOpen')
     }

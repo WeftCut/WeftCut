@@ -154,7 +154,8 @@ describe('handleCallTool — every route answers a refusal as an isError result'
 
   it('a Rust envelope refusal is a result', async () => {
     const backend = fakeBackend(async () => '{"ok":false,"error":{"code":"invalid_params","message":"layer x not found","data":{"layer":"x"}}}')
-    const out = asErr(await handleCallTool(backend, () => tsHostStub(), 'ping', {}))
+    // Bare core: with a host every Rust tool gets its slice resolved first.
+    const out = asErr(await handleCallTool(backend, () => null, 'synthesize_speech', { text: 'hi', voice: 'alloy' }))
     expect(out.content[0].text).toBe('layer x not found')
     // A route that names no variant gets the code's own.
     expect(out.structuredContent).toEqual({ code: 'invalid_params', message: 'layer x not found', layer: 'x', error: 'InvalidArgument' })
@@ -168,7 +169,7 @@ describe('handleCallTool — every route answers a refusal as an isError result'
 
   it('a bare-core call (no host) still answers a refusal as a result', async () => {
     const backend = fakeBackend(async () => '{"ok":false,"error":{"code":"invalid_params","message":"stub"}}')
-    const out = asErr(await handleCallTool(backend, () => null, 'ping', {}))
+    const out = asErr(await handleCallTool(backend, () => null, 'synthesize_speech', { text: 'hi', voice: 'alloy' }))
     expect(out.content[0].text).toBe('stub')
   })
 

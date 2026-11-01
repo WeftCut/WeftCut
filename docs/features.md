@@ -240,7 +240,7 @@ a *Group*, not a link ([CONTEXT.md](../CONTEXT.md#links-and-groups),
   get a new link, a non-spanning member joins its temporal side, and a side left
   with one member is unlinked. Under Link override (or `escape_link`) only the
   target splits; its left half stays linked and its right half is free.
-  `split_layer` takes an `at_t_us` array and applies every cut in one commit. The
+  `split_layer` takes a `t_cut_us` array and applies every cut in one commit. The
   shot-apply discard (§ Shot review) is the one place a delete travels a link.
 - **Duplicate** (`paste_layers`) clones every member handed to it and links the
   clones to each other, never to their sources, as one undo step. Other clones
@@ -302,7 +302,7 @@ precision (one sample is 0.042 px at the 2000 px/s ceiling); the inspector's
 audio fields switch units (timecode / ms / samples); the ruler stays frame-based.
 
 Mutations: `apps/desktop/src/main/state/mutations/links.ts`, with fan-out in
-`move.ts` / `trim.ts` / `split.ts`. Agents read links from `project://current`
+`move.ts` / `trim.ts` / `split.ts`. Agents read links from `project://links`
 (no list tool).
 
 ## Groups
@@ -583,7 +583,7 @@ is no longer exactly a gap when it arrives, the actor refuses (`GapNotFound`)
 rather than re-measuring. History row: *Closed gap*.
 
 **Agents:** `delete_layers { layer_ids, ripple: true }`, and for a gap
-`shift_layers { from_t_us, delta_us < 0 }` — one edge and a length, through the
+`shift_layers { t_from_us, delta_us < 0 }` — one edge and a length, through the
 same planner, so whatever starts inside the span is named instead of
 `GapNotFound`. `move_layers { insert: true }` closes a moved set's span with
 the same planner and opens room at its landing. The internal

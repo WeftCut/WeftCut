@@ -66,7 +66,7 @@ describe('the read set', () => {
     const byAnnotation = merged.filter((t) => (t.annotations as Ann | undefined)?.readOnlyHint === true).map((t) => t.name).sort()
     const byRegex = [...merged.filter((t) => OLD_RULE.test(t.name)).map((t) => t.name), ...READS_BEYOND_THE_REGEX].sort()
     expect(byAnnotation).toEqual(byRegex)
-    for (const n of ['read_project', 'get_param_track', 'preview_motif', 'extract_clip_audio', 'detect_pauses', 'ping']) expect(byAnnotation).toContain(n)
+    for (const n of ['read_project', 'get_param_track', 'preview_motif', 'extract_clip_audio', 'detect_pauses']) expect(byAnnotation).toContain(n)
   })
 
   it('every TS read tool commits nothing — the snapshot and the history are what they were', () => {
@@ -77,7 +77,7 @@ describe('the read set', () => {
     if (!added.ok) throw new Error(added.error.message)
     const layerId = (JSON.parse(added.result.content[0].text) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
     const argsFor: Record<string, Record<string, unknown>> = {
-      read_project: { view: 'current' },
+      read_project: { view: 'settings' },
       get_param_track: { layer_id: layerId, param_key: 'color' }, // a Color layer animates its colour
       export_captions: { format: 'srt' },
       check_composition: {},
@@ -152,7 +152,7 @@ describe('the wire and the activity service read the same fact', () => {
     const byName = new Map(tools.map((t) => [t.name, t.annotations as Ann | undefined]))
     expect(byName.get('read_project')?.readOnlyHint).toBe(true)
     expect(byName.get('delete_layers')?.destructiveHint).toBe(true)
-    expect(byName.get('ping')?.readOnlyHint).toBe(true)
+    expect(byName.get('get_param_track')?.readOnlyHint).toBe(true)
     expect(byName.get('list_motifs')?.readOnlyHint).toBe(true)
     expect(tools.every((t) => t.annotations !== undefined)).toBe(true)
   })
@@ -160,7 +160,7 @@ describe('the wire and the activity service read the same fact', () => {
   it('a read tool is logged as a read, a write as an operation — from the catalog, not the name', async () => {
     const { client, agent, actor } = await connected()
     const aRoll = root(actor.snapshot()).tracks[0].id
-    await client.callTool({ name: 'read_project', arguments: { view: 'current' } })
+    await client.callTool({ name: 'read_project', arguments: { view: 'settings' } })
     await client.callTool({ name: 'add_layers', arguments: { layers: [{ track_id: aRoll, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] } })
     const kinds = Object.fromEntries(agent.snapshot().activities.filter((a) => a.tool === 'read_project' || a.tool === 'add_layers').map((a) => [a.tool, a.kind]))
     expect(kinds).toEqual({ read_project: 'read', add_layers: 'operation' })

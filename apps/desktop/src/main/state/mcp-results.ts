@@ -96,14 +96,14 @@ export function trackRecord(p: Project, id: Uuid): TrackRecord | null {
 }
 
 export interface MarkerRecord {
-  marker_id: Uuid; composition_id: Uuid; t_us: number; end_t_us: number | null
+  marker_id: Uuid; composition_id: Uuid; t_us: number; t_end_us: number | null
   label: string; note: string; color: { r: number; g: number; b: number; a: number }
   anchor: { layer: Uuid; src_us: number } | null
 }
 export function markerRecord(p: Project, id: Uuid): MarkerRecord | null {
   for (const c of Object.values(p.compositions)) {
     const m = c.markers.find((x) => x.id === id)
-    if (m) return { marker_id: m.id, composition_id: c.id, t_us: m.t_us, end_t_us: m.end_t_us, label: m.label, note: m.note, color: m.color, anchor: m.anchor }
+    if (m) return { marker_id: m.id, composition_id: c.id, t_us: m.t_us, t_end_us: m.end_t_us, label: m.label, note: m.note, color: m.color, anchor: m.anchor }
   }
   return null
 }
@@ -479,7 +479,7 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
     return {
       to_composition_id: str(c.args.to_composition_id), layers: records,
       pruned_tracks: prunedTrackIds(c.before, c.after),
-      adjusted: adjusted([['anchor_t_start_us', c.args.anchor_t_start_us, anchor?.t_start_us]]),
+      adjusted: adjusted([['t_start_us', c.args.anchor_t_start_us, anchor?.t_start_us]]),
     }
   },
   ungroup_layer: (c) => ({
@@ -528,7 +528,7 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
   update_marker: (c) => {
     const rec = markerRecord(c.after, str(c.args.marker_id)) ?? { marker_id: str(c.args.marker_id) }
     const patch = obj(c.args.patch)
-    return { ...rec, adjusted: adjusted([['t_us', patch.t_us, (rec as MarkerRecord).t_us], ['end_t_us', patch.end_t_us, (rec as MarkerRecord).end_t_us]]) }
+    return { ...rec, adjusted: adjusted([['t_us', patch.t_us, (rec as MarkerRecord).t_us], ['t_end_us', patch.end_t_us, (rec as MarkerRecord).t_end_us]]) }
   },
   delete_marker: (c) => ({ marker_id: str(c.args.marker_id) }),
   set_marker_anchor: (c) => ({ ...(markerRecord(c.after, str(c.args.marker_id)) ?? { marker_id: str(c.args.marker_id) }) }),

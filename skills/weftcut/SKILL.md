@@ -31,7 +31,8 @@ WeftCut is a desktop video editor; the user watches the same project live, and e
 ## Session etiquette
 
 1. Read `project://tracks` before your first mutation — never write against a
-   guessed state; `project://current` is the whole project when you need it.
+   guessed state. Its envelopes say what each layer is (media, text, role,
+   Motif, Group); `project://layers/{id}` has one layer in full.
    The project open in the app is the one the user means: edit it in place.
    Creating a new project and re-importing their media leaves them with a
    copy they did not ask for.
@@ -85,7 +86,8 @@ it is the project the user means. Compare it with `project.dir` in
 `open_project`.
 
 - `project.json` is the app's to write; it autosaves over any edit of yours.
-  Read the project through `project://current` or `read_project`.
+  Read the project through its resources (`project://tracks`,
+  `project://layers/{id}`, …) or `read_project`.
 - `Media/` holds the project's media. Never rename, move or overwrite a file
   there: the pool records it by that path and by its bytes, and a file changed
   there goes unavailable. New media goes under a new name, through
@@ -149,8 +151,8 @@ over its span, including just after cuts and shot changes under it.
 Read → analyze → mutate → **verify**: every mutator answers with the committed
 record — the ids it minted, the span as it landed, `adjusted` for any grid snap,
 the link `siblings` it carried along — so check that answer first, and re-read
-`project://tracks` or `project://current` only for what the record does not
-carry, before reporting the edit done.
+`project://tracks` or `project://layers/{id}` only for what the record does
+not carry, before reporting the edit done.
 
 Common flows, one line each — parameters and caveats live in the tool
 descriptions. A time's name says its clock: `t_*` timeline, `src_*` source,

@@ -106,8 +106,6 @@ runs the same stop once the app's pipe to it closes, or by a kill-on-close job
      receipt is applied ([ADR 0114](adr/0114-project-view-publication.md)).
    - **Autosave**: a debounced write of `project.json` plus periodic
      `Backups/` copies (`src/main/state/autosave.ts`).
-   - **MCP change feed**: notifications to subscribed agents
-     ([mcp.md](mcp.md#change-feed)).
 
 ## Process boundaries
 

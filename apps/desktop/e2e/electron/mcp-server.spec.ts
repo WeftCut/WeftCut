@@ -40,8 +40,9 @@ test('external MCP client connects, calls tools, and bearer is enforced', async 
   const toolsResult = await client.listTools()
   expect(toolsResult.tools.map((t) => t.name)).toContain('add_track')
 
-  const pong = await client.callTool({ name: 'ping', arguments: {} })
-  expect(JSON.stringify(pong.content)).toContain('pong')
+  // An app-scope read answers with no project open.
+  const session = await client.readResource({ uri: 'project://session' })
+  expect(JSON.parse((session.contents[0] as { text: string }).text)).toMatchObject({ project: null })
 
   // The app booted to its start screen: no project is open, so a project tool
   // is refused with the remedy in its text and commits nothing into the
@@ -61,7 +62,7 @@ test('external MCP client connects, calls tools, and bearer is enforced', async 
   const after = (await page.evaluate(() => (window as any).api.backend.invoke('project_summary', {}))) as { track_count: number }
   expect(after.track_count).toBe(before.track_count + 1)
 
-  const proj = await client.readResource({ uri: 'project://current' })
+  const proj = await client.readResource({ uri: 'project://tracks' })
   expect(proj.contents[0].mimeType).toBe('application/json')
 
   // The keyframe record through the REAL SDK client (its schema validation

@@ -184,13 +184,13 @@ describe('the ripple remedies are per tool', () => {
 describe('LayerOverlap options are validated against the geometry', () => {
   const overlap = (a: [number, number], b: [number, number]): CommandError =>
     ({ error: 'ValidationFailed', detail: { rule: 'LayerOverlap', track: T1, a: L1, a_start: a[0], a_end: a[1], b: L2, b_start: b[0], b_end: b[1] } })
-  const actions = (e: CommandError) => ((mapCommandError(e).data as { options: Array<{ action: string; edge?: string; new_t_us?: number; at_t_us?: number }> }).options)
+  const actions = (e: CommandError) => ((mapCommandError(e).data as { options: Array<{ action: string; edge?: string; t_edge_us?: number; t_cut_us?: number[] }> }).options)
 
   it('a request starting inside the blocker: trim its tail or split it there, plus the two that always work', () => {
     const opts = actions(overlap([0, 3_000_000], [2_000_000, 5_000_000]))
     expect(opts.map((o) => o.action)).toEqual(['create_new_track', 'move_layers', 'trim_existing', 'split_at_t'])
-    expect(opts[2]).toMatchObject({ edge: 'out', new_t_us: 2_000_000 })
-    expect(opts[3]).toMatchObject({ at_t_us: 2_000_000 })
+    expect(opts[2]).toMatchObject({ edge: 'out', t_edge_us: 2_000_000 })
+    expect(opts[3]).toMatchObject({ t_cut_us: [2_000_000] })
   })
 
   it('a request starting at or before the blocker: never a split at the start, never a trim to the start', () => {
@@ -199,7 +199,7 @@ describe('LayerOverlap options are validated against the geometry', () => {
     // START is what moves.
     const opts = actions(overlap([0, 3_000_000], [0, 1_000_000]))
     expect(opts.map((o) => o.action)).toEqual(['create_new_track', 'move_layers', 'trim_existing'])
-    expect(opts[2]).toMatchObject({ edge: 'in', new_t_us: 1_000_000 })
+    expect(opts[2]).toMatchObject({ edge: 'in', t_edge_us: 1_000_000 })
     const msg = mapCommandError(overlap([0, 3_000_000], [0, 1_000_000])).message
     expect(msg).not.toContain('split_layer')
     expect(msg).toContain("trim_layer " + L1 + " edge 'in' to 1000000")
@@ -345,7 +345,7 @@ function assertInModel(tool: string, args: Record<string, unknown>, r: Answer) {
 describe('mcp.error-vocabulary over the whole catalog', () => {
   it('the catalog is the merged one: TS, Motif, export, render and Rust tools are all swept', () => {
     const names = new Set(CATALOG.map((t) => t.name))
-    for (const n of ['undo', 'install_motif', 'export_motif', 'start_export', 'render_frames', 'list_export_presets', 'ping', 'detect_pauses', 'analyze_audio']) expect(names.has(n), n).toBe(true)
+    for (const n of ['undo', 'install_motif', 'export_motif', 'start_export', 'render_frames', 'list_export_presets', 'detect_pauses', 'analyze_audio']) expect(names.has(n), n).toBe(true)
   })
 
   for (const tool of CATALOG) {

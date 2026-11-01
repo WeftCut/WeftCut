@@ -28,9 +28,8 @@ describe('routeMcpTool', () => {
     expect(routeMcpTool('preview_motif')).toBe('rust')
   })
   it('routes the live rust-native tools to rust', () => {
-    // Link reads come from the project://current summary resource (it includes
-    // `links`), not an MCP tool.
-    for (const t of ['ping', 'detect_pauses', 'transcribe_clip'])
+    // Link reads come from project://links, not an MCP tool.
+    for (const t of ['compare_frames', 'detect_pauses', 'transcribe_clip'])
       expect(routeMcpTool(t), t).toBe('rust')
   })
   it('routes the TS-owned hybrid defs to the hybrid orchestrator (Rust compute + TS writes)', () => {
@@ -59,7 +58,7 @@ describe('merged ListTools is a clean catalog↔handler bijection', () => {
   // Simulate a Rust catalog that still advertises TS-executed names — the merge
   // must stay a duplicate-free union where every name routes to exactly one engine.
   const rust4a = [...MCP_TOOLS].map((n) => ({ name: n })).concat(
-    [{ name: 'ping' }, { name: 'list_motifs' }, { name: 'read_motif' }, { name: 'preview_motif' },
+    [{ name: 'list_motifs' }, { name: 'read_motif' }, { name: 'preview_motif' },
      { name: 'detect_pauses' }, { name: 'transcribe_clip' }, { name: 'import_media' }, { name: 'apply_subtitles' },
      { name: 'install_motif' }, { name: 'motif_staleness_report' }, { name: 'acknowledge_motif_staleness' }, { name: 'synthesize_speech' }],
   )

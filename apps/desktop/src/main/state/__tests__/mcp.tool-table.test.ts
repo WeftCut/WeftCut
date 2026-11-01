@@ -140,7 +140,7 @@ describe('MCP tool table projections', () => {
     expect(() => MCP_ARG_PARSERS['move_layers']({ layer_ids: [u1], delta_us: 0 })).toThrow(/nothing would move/)
     expect(() => MCP_ARG_PARSERS['move_layers']({ layer_ids: [u1], new_t_start_us: 0, track_id: t })).toThrow(/t_start_us/)
     expect(() => MCP_ARG_PARSERS['move_layers']({ layer_ids: [u1], t_start_us: 0, escape_link: 'true' })).toThrow()
-    expect(() => MCP_ARG_PARSERS['shift_layers']({ layer_ids: [u1], from_t_us: 0, delta_us: 5 })).toThrow(/move_layers/)
+    expect(() => MCP_ARG_PARSERS['shift_layers']({ layer_ids: [u1], t_from_us: 0, delta_us: 5 })).toThrow(/move_layers/)
     expect(() => MCP_ARG_PARSERS['shift_layers']({ delta_us: 5 })).toThrow()
   })
 
@@ -168,7 +168,7 @@ describe('MCP tool table projections', () => {
 
   it('parseBoolOpt hardening: escape_link rejects non-boolean', () => {
     const u = '00000000-0000-7000-8000-000000000001'
-    expect(() => MCP_ARG_PARSERS['trim_layer']({ layer_id: u, edge: 'in', new_t_us: 0, escape_link: 'true' })).toThrow()
+    expect(() => MCP_ARG_PARSERS['trim_layer']({ layer_id: u, edge: 'in', t_edge_us: 0, escape_link: 'true' })).toThrow()
   })
 
   it('asArray hardening: layer_ids rejects non-array', () => {

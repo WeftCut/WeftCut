@@ -85,7 +85,7 @@ describe('a clamp is refused before any write', () => {
   it('trim_layer past the other edge is refused with the legal window — a one-frame clip never lands', () => {
     const a = freshActor()
     const id = colorLayer(a, aRollId(a), 0, 3_000_000)
-    const msg = refusal(call(a, 'trim_layer', { layer_id: id, edge: 'out', new_t_us: 0 }))
+    const msg = refusal(call(a, 'trim_layer', { layer_id: id, edge: 'out', t_edge_us: 0 }))
     expect(msg).toContain('cannot be trimmed to 0')
     expect(msg).toMatch(/t_end_us may land within \[33333, ∞\]/)
     expect(msg).toContain('never clamped')
@@ -95,8 +95,8 @@ describe('a clamp is refused before any write', () => {
   it('trim_layer IN past the out edge is refused too, and a legal trim still lands', () => {
     const a = freshActor()
     const id = colorLayer(a, aRollId(a), 0, 3_000_000)
-    expect(refusal(call(a, 'trim_layer', { layer_id: id, edge: 'in', new_t_us: 5_000_000 }))).toMatch(/t_start_us may land within \[0, 2966667\]/)
-    const rec = ok(call(a, 'trim_layer', { layer_id: id, edge: 'in', new_t_us: 1_000_000 }))
+    expect(refusal(call(a, 'trim_layer', { layer_id: id, edge: 'in', t_edge_us: 5_000_000 }))).toMatch(/t_start_us may land within \[0, 2966667\]/)
+    const rec = ok(call(a, 'trim_layer', { layer_id: id, edge: 'in', t_edge_us: 1_000_000 }))
     expect(rec.t_start_us).toBe(1_000_000)
     expect(rec.adjusted).toEqual([])
   })
@@ -107,7 +107,7 @@ describe('a clamp is refused before any write', () => {
     expect(root(a.snapshot()).markers).toEqual([])
     const id = ok(call(a, 'add_marker', { t_us: 1_000_000, label: 'm', color: { r: 0, g: 0, b: 0, a: 255 } })).marker_id as string
     expect(refusal(call(a, 'update_marker', { marker_id: id, patch: { t_us: -1 } }))).toContain('t_us -1')
-    expect(refusal(call(a, 'update_marker', { marker_id: id, patch: { end_t_us: -5 } }))).toContain('end_t_us -5')
+    expect(refusal(call(a, 'update_marker', { marker_id: id, patch: { t_end_us: -5 } }))).toContain('t_end_us -5')
     expect(root(a.snapshot()).markers[0].t_us).toBe(1_000_000)
   })
 })

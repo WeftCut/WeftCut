@@ -13,7 +13,7 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
 - **Streamable HTTP on `127.0.0.1:<port>/mcp`**, hosted in the Electron main
   process (`express` + the SDK's `StreamableHTTPServerTransport`,
   `main/mcp/index.ts`). Each `initialize` mints a session (`Mcp-Session-Id`);
-  in-protocol notifications (the change feed) ride the same connection.
+  in-protocol notifications (progress, list changes) ride the same connection.
 - **The Rust core is transport-free**: it provides its tools, resources,
   prompts and wire types over napi (`mcpCatalog`, `mcpCallTool`,
   `mcpReadResource`, `mcpListPrompts`, `mcpGetPrompt`); main forwards its output
@@ -30,11 +30,12 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   package.json. The shim re-reads `mcp_auth.json` on every (re)connect, so port
   re-picks and token rotations self-heal and its config carries no URL or token.
 - **Shim catalog = synthetic ∪ (app reachable ? real catalog : ∅).** Always
-  present: `weftcut_status` (endpoint state, next steps, a `Project:` line) and
-  `launch_weftcut` (detached GUI spawn, bounded wait). `tools/list_changed`
+  present: `weftcut_status` (endpoint state, next steps, a `Project:` line;
+  read-only) and `launch_weftcut` (detached GUI spawn, bounded wait;
+  idempotent). `tools/list_changed`
   fires on every bridge transition, so one session upgrades when the app comes
-  up and degrades when it closes. While bridged the change feed is forwarded
-  verbatim. Subcommands: `info` (exit 3 when the app is down), `print-config`,
+  up and degrades when it closes. While bridged the app's notifications are
+  forwarded verbatim. Subcommands: `info` (exit 3 when the app is down), `print-config`,
   `list-tools`, `help`.
 - Port and bearer token persist in `<userData>/mcp_auth.json`; an occupied
   saved port falls back to a fresh one and rewrites the file. One server per
@@ -98,8 +99,7 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
 - Every MCP call records as `Agent { client }`, `client` being the name the
   client declared in `initialize` (control chars stripped, ≤ 64 UTF-8 bytes,
   `mcp` when absent; through the shim, the downstream client's name). UI edits
-  record as `User`. The tag shows in history, checkpoints, the change feed and
-  the status log.
+  record as `User`. The tag shows in history, checkpoints and the status log.
 - No edit locks or per-agent state; a conflicting commit fails its invariants
   and the agent re-reads and retries.
 - The work session owns the history lock (`begin_agent_session`, `lock: true`
@@ -141,15 +141,14 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
 - **Names** follow `<verb>_<resource>`, `delete_*` for every removal, one
   `update_*` per resource with optional fields; a field's set and clear are one
   tool taking `null`. A rename is a break: the old name gets `unknown tool`
-  (ADR 0074). `RETIRED_MCP_TOOL_NAMES` (`main/mcp/toolAliases.ts`) resolves
-  only `checkpoint`, `set_composition`, `compositions_delete`.
+  (ADR 0074), with no exceptions.
 - Before adding a tool, check an existing tool's arguments: two verbs that
   differ by one boolean are one tool with a flag.
 - **No silent no-op, no silent degrade.** A write that would ignore, drop or
   not apply an argument refuses: an empty patch, a flag call naming no flag, a
   `null` on a field where null means nothing, a time a few µs off a key. A
   `null` arm is advertised only where it means something (`label: null`
-  clears, `end_t_us: null` makes a point). A read or render that delivers less
+  clears, `t_end_us: null` makes a point). A read or render that delivers less
   than asked refuses, or says so in a typed field. Gate:
   `mcp.no-silent-outcomes.test.ts` sends every optional and nullable field of
   every write tool (TS, Motif, export, Rust) alone on a fixture project and
@@ -157,8 +156,8 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   explicit list, each with a reason.
 - **The time base is in the name.** `t_*` is timeline-absolute (the owning
   composition's clock), `src_*` source-absolute (the media file's own time),
-  `local_*` layer-local (µs from the layer's `t_start_us`); a few names put a
-  role word before the base (`at_t_us`, `from_t_us`, `end_t_us`). A bare
+  `local_*` layer-local (µs from the layer's `t_start_us`); a role word comes
+  after the base (`t_cut_us`, `t_edge_us`, `t_from_us`, `t_end_us`). A bare
   `_us` / `_s` is a duration (`duration_us`, `pad_us`, `delta_us`). A result
   in source time for a layer carries that layer's `mapping { layer_id,
   t_start_us, src_in_us, rate: {num, den}, source_phase? }`: timeline
@@ -197,7 +196,7 @@ Save As, `open_project` and `create_project` land, cleared on Close Project.
 
 **No project open ⇒ every project tool refuses** with `NoProjectOpen` and
 dispatches nothing. Default-deny: only `APP_SCOPE_TOOLS` /
-`APP_SCOPE_RESOURCES` in `main/mcp/mutationTools.ts` answer — `ping`, the
+`APP_SCOPE_RESOURCES` in `main/mcp/mutationTools.ts` answer — the
 Motif library tools, the export preset tools,
 `get_export_status`, `cancel_export`, `retry_export`, `open_project`,
 `create_project`, `read_project` for views `session` / `effects` / `taste`, and
@@ -221,18 +220,21 @@ exists.
 
 ## Resources
 
+The rows of `tracks`, `compositions`, `markers`, `links`, `transitions` and
+`tacks` name ids the way edit records do (`layer_id`, `track_id`,
+`composition_id`, `marker_id`, `link_id`, `transition_id`, `tack_id`).
+
 | URI | Returns |
 |---|---|
-| `project://current` | full Project JSON |
-| `project://composition` | one composition's settings only (no tracks); `?composition=<id>` for a Group's |
-| `project://compositions` | every composition with `ref_count` (Group layers pointing at it; 0 = root or orphan) |
+| `project://composition` | one composition's settings only (`composition_id`, no tracks); `?composition=<id>` for a Group's |
+| `project://compositions` | every composition (`composition_id`, label, duration) with `ref_count` (Group layers pointing at it; 0 = root or orphan) |
 | `project://media` | media pool, each row with its `derivatives` |
-| `project://tracks` | a composition's tracks (`enabled`, `locked`, `role`) with layer **envelopes** (`media_id`, `rate` when ≠ 1) — what an agent plans timeline edits against |
+| `project://tracks` | a composition's tracks (`track_id`, `enabled`, `locked`, `role`) with layer **envelopes** keyed like the edit records (`layer_id`, `effects[].effect_id`) and carrying what tells layers apart: `media_id`, Text `content` (first 80 chars), Audio `role`, `motif_id`, a Group's `composition_id`, `rate` when ≠ 1 — what an agent plans timeline edits against |
 | `project://layers/{id}` | one layer in full, from any composition; stored key times as `local_t_us` |
-| `project://markers` | a composition's markers, with `anchor_layer`, `anchor_src_us`, `hibernating` |
-| `project://links` | a composition's links `{ id, members }` |
-| `project://transitions` | a composition's transitions |
-| `project://settings` | editing preferences plus `metadata`; `modified_at` moves on every recorded edit and is restored by undo/redo/restore — compare for change, not order |
+| `project://markers` | a composition's markers as marker records (`marker_id`, `t_us`, `t_end_us`, `anchor`) |
+| `project://links` | a composition's links as link records `{ link_id, composition_id, members }` |
+| `project://transitions` | a composition's transitions as transition records (`transition_id`, `from_layer_id`, `to_layer_id`) |
+| `project://settings` | editing preferences, `audio_roles` (role gain / mute / solo) and `metadata`; `modified_at` moves on every recorded edit and is restored by undo/redo/restore — compare for change, not order |
 | `project://taste` | the merged style (`extends` in `TASTE.md`, else `weftcut-default`) + overrides: roles, tokens, example `motifs` per role, `fonts` resolved against installed families, provenance, diagnostics, revision. Pixel tokens are for a 1080-px frame. Read fresh every call; the app never writes `TASTE.md` |
 | `project://session` | active work session (or null), recent sessions, history lock, `project`, `recent_projects`, `default_parent_folder` |
 | `project://tacks` | the opening's tacks, oldest first (see *Tacks*) |
@@ -429,9 +431,9 @@ landing is one of `t_start_us` / `delta_us`, and `track_id` moves only the seed
   "Move the part after 1:30 to the start" is `split_layer` + one `move_layers
   { t_start_us: 0, insert: true }`. Answers `{ layers, rippled, track?,
   pruned_tracks }`. Nearest sibling: `shift_layers`, which takes no names.
-- `shift_layers { from_t_us, delta_us, track_ids?, composition_id? }` sweeps
+- `shift_layers { t_from_us, delta_us, track_ids?, composition_id? }` sweeps
   every layer starting at or after a time. Positive opens room (the ripple
-  insert); negative closes `[from_t_us + delta_us, from_t_us)` through the
+  insert); negative closes `[t_from_us + delta_us, t_from_us)` through the
   ripple planner, so a gap closes with one edge and a layer starting inside the
   span is `RippleInsideHole`, not a silent overlap; carried transitions keep
   their frame count. An empty sweep refuses.
@@ -607,7 +609,7 @@ composition, keeping screen position), `ungroup_layer` (plain Groups only,
 `CompositionInUse`).
 
 Markers and composition: `add_marker` (`color` defaults to the timeline's
-marker blue; `note` as `update_marker` takes it), `update_marker` (`end_t_us: null`
+marker blue; `note` as `update_marker` takes it), `update_marker` (`t_end_us: null`
 turns a region back into a point; no other field takes null),
 `delete_marker`, `set_marker_anchor`. A marker is the user's content — agents add one only when
 asked, and use tacks otherwise. An anchored marker stores `{ layer, src_us }`
@@ -672,7 +674,6 @@ none is an MCP tool, so no client approves its own proposal.
 
 ### Workflow / safety
 
-- `ping` — liveness; app-scoped, so it separates "host down" from "refused".
 - `begin_agent_session { reason, lock?, force? }` — a batch the user agreed to:
   one Pre-agent checkpoint, the review baseline pinned to it, one switch to the
   agent view and, unless `lock: false`, the history lock with `reason` shown in
@@ -709,13 +710,14 @@ content (ADR 0115): runtime review state of the project opening, not in
 history, not saved, untouched by undo, restore and the history lock; opening
 a project clears them. It comments on **what plays in its range** on every
 track and is either current or `outdated`, derived on read; the range moves
-with its content (ADR 0117). A read gives the stored record plus
-`composition_id`, `t_us`, `end_t_us` (null only when its composition is gone),
+with its content (ADR 0117). A read gives the stored record (keyed
+`tack_id`) plus `composition_id`, `t_us`, `t_end_us` (null only when its composition is gone),
 `outdated` and `follows` (the layer the range moves with now, or null).
 
 - `create_tacks` — a validated batch (all or none; refusals name the index);
   `label` ≤ 200 chars, `body` ≤ 4000, `kind` `note`/`issue`/`question`; times
-  land on the frame grid. Soft `hints` flag labels that name a time, ranges
+  land on the frame grid. Answers `{ tacks, hints? }`, each tack as a read
+  gives it. Soft `hints` flag labels that name a time, ranges
   over gap only, and duplicates of the client's own open tacks. At most 1000
   per opening (`TackLimit`; nothing is evicted).
 - `update_tack` — label, body, kind, `status` (`open`/`resolved`/`dismissed`).
@@ -941,22 +943,6 @@ lives only in `structuredContent`.
 - Arguments are checked before dispatch on every route: TS parsers, or the
   advertised schema for motif and Rust-parsed tools, so all missing fields are
   named at once in the tool's own vocabulary.
-
-## Change feed
-
-Every actor commit is relayed to every live session as
-`notifications/weftcut/change` with the compact summary the renderer's
-`project:changed` carries (`mapChangeEvent` in `main/state/ts-actor-host.ts`):
-
-```json
-{ "op_id": "...", "actor_kind": "agent", "client": "claude-code",
-  "summary": "Moved 'intro' to 4.20s", "affected": [{ "kind": "Layer", "id": "7f3a..." }],
-  "timestamp": "..." }
-```
-
-`actor_kind` / `client` follow the history actor (MCP edits are `agent` with
-the client name). `affected` lets an agent tell whether an edit reached its
-own work. The notification is a hint; read `project://current` for state.
 
 ## Speech (optional, user-supplied)
 

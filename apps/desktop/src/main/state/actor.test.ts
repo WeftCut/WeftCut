@@ -188,7 +188,7 @@ describe('dispatch: split + links', () => {
     const result = channel === 'blade'
       ? actor.command('split_layer_linked', { layerId: layer, atTUs: 2_000_000, escapeLink: false })
       : channel === 'mcp'
-        ? actor.mcpCall('split_layer', JSON.stringify({ layer_id: layer, at_t_us: [2_000_000] }))
+        ? actor.mcpCall('split_layer', JSON.stringify({ layer_id: layer, t_cut_us: [2_000_000] }))
         : actor.dispatch('split_layer_multi', { layer, at_t_us_list: [2_000_000, 4_000_000] })
     expect(result.ok).toBe(true)
     const after = actor.snapshot()
@@ -206,7 +206,7 @@ describe('dispatch: split + links', () => {
       const response = JSON.parse(result.result.content[0].text)
       expect(response.layer_ids[0]).toBe(layer)
       expect(response.layer_ids).toHaveLength(2)
-      expect(response.at_t_us).toEqual([2_000_000])
+      expect(response.t_cut_us).toEqual([2_000_000])
     }
     expect(actor.dispatch('undo', {}).ok).toBe(true)
     expect(actor.snapshot()).toEqual(before)

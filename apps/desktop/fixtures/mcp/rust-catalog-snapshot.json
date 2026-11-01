@@ -38,17 +38,6 @@
       }
     },
     {
-      "name": "ping",
-      "description": "Liveness check. Returns 'pong' to confirm the WeftCut MCP server is reachable.",
-      "inputSchema": {
-        "type": "object"
-      },
-      "annotations": {
-        "readOnlyHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
       "name": "detect_pauses",
       "description": "Find the pauses in the audio a clip plays — the stretches nobody is speaking — from the pre-computed waveform. Read-only: the writes are `remove_pauses` (cut them, or a reviewed subset via its `pauses`) and `create_tacks` (point the user at them). A pause is a run where every channel's peak stays below `threshold_db` (dBFS, default -34) for at least `min_pause_us` (default 500000); a louder run under 80 ms inside it (a click, a cough) does not end it. `layer_id` is an Audio layer, or a VideoClip, read through the linked Audio member that plays (refused when it plays no sound). Returns `{ pauses: [{ t_start_us, t_end_us }], noise_floor_db, peaks_source }`, timeline µs, sorted; `noise_floor_db` is the 10th-percentile peak (null in silence; a threshold reads well 6 dB above it); `peaks_source` is \"raw\" or \"fx\" (baked effect chain). Refused (`DerivativeNotReady` with the waveform's `state`) until ready: retry after `retry_after_s`; `failed` names its reason.",
       "inputSchema": {
@@ -398,12 +387,6 @@
   ],
   "resources": [
     {
-      "uri": "project://current",
-      "name": "Current project",
-      "description": "The full open WeftCut project as JSON. Re-fetch after change events.",
-      "mimeType": "application/json"
-    },
-    {
       "uri": "project://composition",
       "name": "Composition",
       "description": "Canvas size, fps, sample rate, color space, background.",
@@ -430,7 +413,7 @@
     {
       "uri": "project://compositions",
       "name": "Compositions",
-      "description": "Every composition — the root and each Group — with id, label, duration_us and ref_count (how many CompositionRef layers place it). project://tracks?composition=<id> and project://markers?composition=<id> read one of them; unscoped they read the root.",
+      "description": "Every composition — the root and each Group — with composition_id, label, duration_us and ref_count (how many CompositionRef layers place it). project://tracks?composition=<id> and project://markers?composition=<id> read one of them; unscoped they read the root.",
       "mimeType": "application/json"
     },
     {

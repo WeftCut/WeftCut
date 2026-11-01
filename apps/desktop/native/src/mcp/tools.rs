@@ -25,7 +25,6 @@ use crate::napi_backend::Backend;
 use crate::state::{LayerId, LayerParams};
 
 use super::wire::{McpToolError, ToolResult};
-use super::EmptyArgs;
 
 // ============================================================
 // Shared helpers
@@ -152,14 +151,6 @@ impl<'a> SourceShotReport<'a> {
                 .collect(),
         }
     }
-}
-
-// ============================================================
-// Liveness
-// ============================================================
-
-pub(super) async fn ping(_b: &Backend, _args: EmptyArgs) -> Result<ToolResult, McpToolError> {
-    Ok(ToolResult::text("pong"))
 }
 
 // Track and layer mutation tools (add_track, delete_track, move_track,
