@@ -6,7 +6,6 @@ import { changeExportPresets, defaultExportPreset, exportPresetLibrary, patchExp
 import { exportWire } from '../../shared/exportJob';
 import { ExportValidationError } from '../../shared/exportValidation';
 import { ExportJobError } from '../exportJobs';
-import { exportPresetSettingsSchema } from './exportTools';
 
 const builtinNames: Record<string, string> = { match: 'Match project', hd: '720p HD Landscape', fullhd: '1080p Full HD Landscape', uhd: '4K UHD Landscape' };
 const record = (p: ExportPreset, defaultId: string) => ({ id: p.id, name: p.id.startsWith('builtin:') ? builtinNames[p.name] : p.name,
@@ -24,8 +23,8 @@ export async function runExportPresetTool(host: TsActorHost, name: string, args:
     if (!preset) throw new ExportJobError('preset_not_found', `Unknown export preset ${id}; list_export_presets lists the ids`);
     return preset;
   };
-  if (name === 'list_export_presets') return { ...exportWire({ presets: library.map(p => record(p, defaultId)),
-    default_preset_id: defaultId, name_limit: EXPORT_PRESET_NAME_LIMIT }, true) as object, settings_schema: exportPresetSettingsSchema() };
+  if (name === 'list_export_presets') return exportWire({ presets: library.map(p => record(p, defaultId)),
+    default_preset_id: defaultId, name_limit: EXPORT_PRESET_NAME_LIMIT }, true);
   const parseName = (): string => {
     if (typeof args.name !== 'string' || !args.name.trim() || args.name.trim().length > EXPORT_PRESET_NAME_LIMIT)
       throw new ExportValidationError(`name must contain 1–${EXPORT_PRESET_NAME_LIMIT} characters`);
@@ -49,16 +48,24 @@ export async function runExportPresetTool(host: TsActorHost, name: string, args:
       values: args.settings === undefined ? structuredClone(base.values) : patchValues(base) };
     id = preset.id;
     patch = { export_preset_change: { kind: 'create', preset } };
+  } else if (name === 'update_export_preset') {
+    const p = find(args.preset_id);
+    id = p.id;
+    if (args.default !== undefined && args.default !== true) throw new ExportValidationError('default takes only true; to change the default, set default: true on another preset (builtin:match is the fallback)');
+    if (args.name === undefined && args.settings === undefined && args.default === undefined) throw new ExportValidationError('update_export_preset needs at least one of name, settings, default');
+    const edits = args.name !== undefined || args.settings !== undefined;
+    if (edits && id.startsWith('builtin:')) throw new ExportValidationError('Built-in export presets are read-only; create a personal copy with create_export_preset { base_preset_id }');
+    // Rename, values and default land in one settings write: all or none.
+    patch = {
+      ...(edits ? { export_preset_change: { kind: 'update' as const, id,
+        ...(args.name !== undefined ? { name: parseName() } : {}), ...(args.settings !== undefined ? { values: patchValues(p) } : {}) } } : {}),
+      ...(args.default === true ? { default_export_preset_id: id } : {}),
+    };
   } else {
     const p = find(args.preset_id);
     id = p.id;
-    if (name === 'set_default_export_preset') patch = { default_export_preset_id: id };
-    else {
-      if (id.startsWith('builtin:')) throw new ExportValidationError('Built-in export presets are read-only; create a personal copy');
-      if (name === 'update_export_preset') patch = { export_preset_change: { kind: 'update', id, values: patchValues(p) } };
-      else if (name === 'rename_export_preset') patch = { export_preset_change: { kind: 'rename', id, name: parseName() } };
-      else patch = { export_preset_change: { kind: 'delete', id } };
-    }
+    if (id.startsWith('builtin:')) throw new ExportValidationError('Built-in export presets are read-only; create a personal copy');
+    patch = { export_preset_change: { kind: 'delete', id } };
   }
   // Shared validation provides the same duplicate-name and compatibility rules as UI writes.
   if (patch.export_preset_change) {

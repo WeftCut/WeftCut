@@ -30,7 +30,7 @@ test('MCP manages the shared preset library and exports by preset ID with per-jo
     expect(library.presets).toHaveLength(4);
     const { preset } = await call('create_export_preset', { name: 'MCP draft', base_preset_id: 'builtin:fullhd',
       settings: { custom_bitrate: 2_000_000, resolution_height: null } });
-    await call('set_default_export_preset', { preset_id: preset.id });
+    await call('update_export_preset', { preset_id: preset.id, default: true });
     await call('create_project', { parent_folder: tmpDir('weftcut-mcp-preset-project-'),
       name: 'Preset export', width: 640, height: 360, fps_num: 30, fps_den: 1 });
     const trackId = await invokeCmd<string>(page, 'add_track', {});
@@ -45,7 +45,7 @@ test('MCP manages the shared preset library and exports by preset ID with per-jo
     await page.keyboard.press('ControlOrMeta+e');
     await page.getByRole('button', { name: 'Preset', exact: true }).click();
     await expect(page.getByRole('menuitemradio', { name: /^MCP draft/ })).toBeVisible();
-    await call('rename_export_preset', { preset_id: preset.id, name: 'MCP review' });
+    await call('update_export_preset', { preset_id: preset.id, name: 'MCP review' });
     await expect(page.getByRole('menuitemradio', { name: /^MCP review/ })).toBeVisible();
     await call('update_export_preset', { preset_id: preset.id, settings: { audio: { bitrate: 128_000 } } });
     await page.getByRole('menuitemradio', { name: /^MCP review/ }).click();
@@ -111,7 +111,7 @@ test('MCP export reconnects, reports the actual renamed file, and retries public
     const output = path.join(tmpDir('weftcut-mcp-export-output-'), 'clip.mp4');
     writeFileSync(output, 'original');
     const options = await call('get_export_options');
-    expect(options.settings_schema.properties.encoder_engine).toBeTruthy();
+    expect(options).not.toHaveProperty('settings_schema');
     const request = { request_id: 'first-export', output_path: output, settings: { encoder_engine: 'native', hw_accel: 'software', include_audio: false } };
     const started = await call('start_export', request);
     expect(started.state).toBe('preparing');

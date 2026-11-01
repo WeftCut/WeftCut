@@ -83,7 +83,7 @@ start and reveals it in the Timeline; inline text edits commit on blur via
 stores `null` (no outline); colour commits are debounced. `restyle_captions`
 also takes `font_family` and `layer_ids` (MCP only). `merge_captions` folds
 cues of one lane into the earliest; `export_captions` returns an SRT/VTT body
-(MCP only).
+(MCP only), with `range` clipped to a range export's span and shifted to 0.
 
 ## Text correction / 文字校正
 

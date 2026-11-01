@@ -1,4 +1,4 @@
-import { EXPORT_TOOL_DEFS, EXPORT_TOOLS, EXPORT_PRESET_TOOLS, EXPORT_STATUS_MAX_WAIT_S, exportRefusal, exportSettingsSchema, unknownExportArguments } from "./exportTools";
+import { EXPORT_TOOL_DEFS, EXPORT_TOOLS, EXPORT_PRESET_TOOLS, EXPORT_STATUS_MAX_WAIT_S, exportRefusal, unknownExportArguments } from "./exportTools";
 import { describeFault } from "./faultText";
 import { beatSamples } from "./frameSamples";
 import { runExportPresetTool } from './exportPresetTools';
@@ -417,7 +417,7 @@ async function dispatchTool(
     if (name === 'render_frames') return await renderFrames(backend, getTsHost, tsHost!, jobs, args);
     for (const field of ['job_id','filename']) if (args[field] !== undefined && (typeof args[field] !== 'string' || !args[field])) throw new ExportJobError('invalid_params',`${field} must be a nonempty string`);
     if (['cancel_export','retry_export'].includes(name) && typeof args.job_id !== 'string') throw new ExportJobError('invalid_params','job_id is required');
-    const result = name === 'get_export_options' ? {...await jobs.options(args.preset_id) as Record<string,unknown>, settings_schema:exportSettingsSchema()}
+    const result = name === 'get_export_options' ? await jobs.options(args.preset_id) as Record<string,unknown>
       : name === 'start_export' ? await jobs.start(args)
       : name === 'get_export_status' ? null
       : name === 'retry_export' ? await jobs.retry(args.job_id as string, args.filename as string | undefined)

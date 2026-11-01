@@ -42,6 +42,36 @@ describe('export_captions', () => {
     const fmt = call(a, 'export_captions', { format: 'ass' })
     expect(fmt.ok).toBe(false)
   })
+
+  it('a range (start_export\'s) clips cues to it and shifts them to 0, so the SRT lines up with a range export', () => {
+    const { a } = captioned()
+    // 1.5 s – 4.5 s at 30 fps: One and Three are clipped, Two kept whole.
+    const out = body<{ cues: number; body: string; range: unknown }>(call(a, 'export_captions', { format: 'srt', range: { t_start_us: 1_500_000, t_end_us: 4_500_000 } }))
+    expect(out.range).toEqual({ t_start_us: 1_500_000, t_end_us: 4_500_000 })
+    expect(out.cues).toBe(3)
+    expect(out.body).toBe('1\n00:00:00,000 --> 00:00:00,500\nOne\n\n2\n00:00:00,500 --> 00:00:01,500\nTwo\n\n3\n00:00:02,500 --> 00:00:03,000\nThree\n')
+    // Cues outside the range are dropped; the range snaps to the frame grid.
+    const inner = body<{ cues: number; body: string; range: unknown }>(call(a, 'export_captions', { format: 'srt', range: { t_start_us: 2_000_010, t_end_us: 3_000_000 } }))
+    expect(inner).toMatchObject({ cues: 1, range: { t_start_us: 2_000_000, t_end_us: 3_000_000 } })
+    expect(inner.body).toBe('1\n00:00:00,000 --> 00:00:01,000\nTwo\n')
+    expect(body<{ range?: unknown }>(call(a, 'export_captions', { format: 'srt' }))).not.toHaveProperty('range')
+  })
+
+  it('refuses a malformed range and arguments it does not take, naming range', () => {
+    const { a } = captioned()
+    for (const args of [
+      { format: 'srt', range: { t_start_us: 3_000_000, t_end_us: 1_000_000 } },
+      { format: 'srt', range: { t_start_us: 0 } },
+      { format: 'srt', range: { start_us: 0, end_us: 1_000_000 } },
+      { format: 'srt', range: { t_start_us: 0, t_end_us: 10 } },
+    ]) {
+      const r = call(a, 'export_captions', args)
+      expect(r.ok, JSON.stringify(args)).toBe(false)
+      expect(!r.ok && r.error.code).toBe('invalid_params')
+    }
+    const flat = call(a, 'export_captions', { format: 'srt', t_start_us: 0, t_end_us: 1_000_000 })
+    expect(!flat.ok && flat.error.message).toContain('range { t_start_us, t_end_us }')
+  })
 })
 
 describe('merge_captions', () => {

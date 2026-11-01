@@ -32,7 +32,7 @@ const resources = mergeMcpResources(rust.resources as never, HOST_RESOURCE_DEFS 
 const backend = { mcpCallTool: async () => { throw new Error('a refused call must not reach the backend') }, mcpReadResource: async () => { throw new Error('a refused read must not reach the backend') }, mcpCatalog: async () => RUST_CATALOG } as any
 
 const PINNED_APP_SCOPE = [
-  'list_export_presets', 'create_export_preset', 'update_export_preset', 'rename_export_preset', 'delete_export_preset', 'set_default_export_preset',
+  'list_export_presets', 'create_export_preset', 'update_export_preset', 'delete_export_preset',
   'get_export_status', 'cancel_export', 'retry_export', 'ping',
   'list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'preview_motif',
   'open_project', 'create_project',

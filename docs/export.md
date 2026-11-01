@@ -174,7 +174,8 @@ of a preset. Built-ins (`builtin:match`, `builtin:hd` 720p, `builtin:fullhd`
 1080p, `builtin:uhd` 2160p) are read-only and seed explicit bitrates for
 standard and high frame rates. Personal presets and `default_export_preset_id`
 live in `app_settings.json`; library changes are individual
-create/update/rename/delete operations in main. Names are capped at
+create/update/delete operations in main, an update carrying a new name,
+new values or both. Names are capped at
 `EXPORT_PRESET_NAME_LIMIT` (40).
 
 - **Copy, not reference.** Applying a preset copies its values into the dialog

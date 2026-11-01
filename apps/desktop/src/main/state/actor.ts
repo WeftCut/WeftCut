@@ -2115,11 +2115,19 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const trackId = p.track_id as string | null
           const lanes = comp.tracks.filter((t) => t.role === 'Caption' && (trackId === null || t.id === trackId))
           if (trackId !== null && lanes.length === 0) return { ok: false, error: { code: 'invalid_params', message: `track ${trackId} is not a caption track of this composition — project://tracks lists them (role "Caption")` } }
-          const cues = lanes.flatMap((t) => t.layers).filter((l) => l.params.kind === 'Text')
+          const all = lanes.flatMap((t) => t.layers).filter((l) => l.params.kind === 'Text')
             .map((l) => ({ start_us: l.t_start_us, end_us: l.t_end_us, text: (l.params as TextParams).content }))
             .sort((x, y) => x.start_us - y.start_us)
+          // A range snaps as start_export's does, so the cues line up with
+          // the file it wrote: inside cues kept, edge cues clipped, all
+          // shifted so the range starts at 0.
+          const asked = p.range as { t_start_us: number; t_end_us: number } | null
+          const range = asked && { t_start_us: snapFrameRound(asked.t_start_us, comp.fps.num, comp.fps.den), t_end_us: snapFrameRound(asked.t_end_us, comp.fps.num, comp.fps.den) }
+          if (range && range.t_end_us <= range.t_start_us) throw new McpArgError(`range ${asked!.t_start_us}–${asked!.t_end_us} µs is empty after frame snapping`, 'range')
+          const cues = range ? all.filter((c) => c.end_us > range.t_start_us && c.start_us < range.t_end_us)
+            .map((c) => ({ ...c, start_us: Math.max(c.start_us, range.t_start_us) - range.t_start_us, end_us: Math.min(c.end_us, range.t_end_us) - range.t_start_us })) : all
           const format = p.format as 'srt' | 'vtt'
-          return { ok: true, result: toolRecord({ format, cues: cues.length, body: format === 'vtt' ? formatVtt(cues) : formatSrt(cues) }) }
+          return { ok: true, result: toolRecord({ format, cues: cues.length, body: format === 'vtt' ? formatVtt(cues) : formatSrt(cues), ...(range ? { range } : {}) }) }
         }
         case 'restore_checkpoint': {
           const p = mcpDef('restore_checkpoint').parseDedicated!(a)

@@ -440,7 +440,9 @@ tracks, ADR 0026, [captions.md](captions.md#ingestion)), `correct_caption_text` 
 `correction_script`; may split or merge word-timed cues), `restyle_to_taste`
 (Text and Motif layers back to style tokens; groups `look`/`position`/`motion`,
 default look + motion), `restyle_captions` (every caption in the project, or
-`layer_ids`), `merge_captions`, `export_captions` (SRT/WebVTT body; a read).
+`layer_ids`), `merge_captions`, `export_captions` (SRT/WebVTT body; a read;
+`range` takes `start_export`'s span, snaps it the same way, clips cues to it
+and shifts them to 0).
 
 **Graphic role.** Text, ImageOverlay and Motif layers carry `graphic_role`:
 `null` or a name matching `^[a-z][a-z0-9_]{0,31}$`. Built-ins: `title`,
@@ -725,11 +727,13 @@ neither blocks the user or an export.
 Export jobs are application-session jobs shared with the UI (ADR 0111).
 
 - Presets (app-scoped, the export dialog's library): `list_export_presets`,
-  `create_export_preset`, `update_export_preset`, `rename_export_preset`,
-  `delete_export_preset`, `set_default_export_preset`. Built-ins
-  (`builtin:match`, `builtin:hd`, `builtin:fullhd`, `builtin:uhd`) are
-  read-only and adapt to the project; names are unique, ≤ 40 chars; presets
-  store no engines, paths or ranges.
+  `create_export_preset`, `update_export_preset`, `delete_export_preset`.
+  `update_export_preset` takes any of `name`, `settings` and `default: true`
+  and writes them together (one `update` change plus the default in one
+  settings write). Built-ins (`builtin:match`, `builtin:hd`, `builtin:fullhd`,
+  `builtin:uhd`) are read-only apart from `default: true` and adapt to the
+  project; names are unique, ≤ 40 chars; presets store no engines, paths or
+  ranges. The settings schema is in the tools' input schemas, not in results.
 - Jobs: `get_export_options`, `start_export`, `get_export_status`,
   `retry_export` (an `awaiting_retry` finalization), `cancel_export`. With
   `preset_id`, its values then per-job `settings`; otherwise saved project

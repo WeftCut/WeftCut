@@ -99,7 +99,9 @@ describe('the destructive set', () => {
   it('is every removal and revert, and no read', () => {
     const destructive = merged.filter((t) => (t.annotations as Ann | undefined)?.destructiveHint === true).map((t) => t.name)
     for (const n of ['delete_layers', 'delete_track', 'delete_media', 'delete_marker', 'delete_effect', 'delete_transition', 'delete_link',
-      'delete_composition', 'delete_keyframe', 'delete_motif',
+      'delete_composition', 'delete_keyframe', 'delete_motif', 'delete_export_preset',
+      // Discards the export's output.
+      'cancel_export',
       // Whole-track replacers: what they discard, undo is the way back to.
       'set_param_track', 'set_position',
       'remove_pauses', 'auto_split_by_shot', 'undo', 'redo', 'jump_to', 'restore_checkpoint']) {

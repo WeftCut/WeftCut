@@ -419,9 +419,9 @@ describe('the export, render and Motif file routes refuse in the model', () => {
   })
 
   it('an unknown export argument names the key and the tool that takes it', async () => {
-    const r = await handleCallTool(rawBackend(), () => rawHost() as never, 'update_export_preset', { preset_id: 'p', settings: {}, name: 'x' }) as Answer
-    expect(r.structuredContent).toMatchObject({ code: 'invalid_params', error: 'UnknownArgument', field: 'name' })
-    expect(r.content![0]!.text).toContain('rename_export_preset takes name')
+    const r = await handleCallTool(rawBackend(), () => rawHost() as never, 'update_export_preset', { preset_id: 'p', settings: {}, request_id: 'x' }) as Answer
+    expect(r.structuredContent).toMatchObject({ code: 'invalid_params', error: 'UnknownArgument', field: 'request_id' })
+    expect(r.content![0]!.text).toContain('start_export takes request_id')
   })
 })
 

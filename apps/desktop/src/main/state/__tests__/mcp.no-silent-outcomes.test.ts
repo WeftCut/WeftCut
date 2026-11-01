@@ -319,6 +319,7 @@ const EXCEPTIONS: Record<string, string> = {
   install_motif: 'proposes from a draft in the user Motif store on disk (workspace.publication.test.ts covers target_id / expected_version)',
   export_motif: 'reads the user Motif store on disk; the path refusals are pinned in mcp.error-vocabulary and motifTools tests',
   create_export_preset: 'writes the app preference store (exportPresetTools.test.ts)',
+  update_export_preset: 'writes the app preference store; exportPresetTools.test.ts covers name / settings / default alone and together',
   start_export: 'its fields shape an asynchronous job that needs the renderer (exportJobs.test.ts; the pre-reservation refusals in this file)',
   retry_export: 'needs a job awaiting finalization retry (exportJobs.test.ts)',
   create_project: 'replaces the open workspace (projectTools / workspace-orchestrator tests)',
@@ -506,6 +507,16 @@ describe('the audit probes refuse or change state', () => {
     await must(w, 'cancel_export', { job_id: started })
     // Once it ended, the same call still reads it.
     expect((await call(w, 'get_export_status', {})).structuredContent).toMatchObject({ job: { job_id: started } })
+  })
+
+  it('ME16 / ME10: get_export_options answers the extension, not the settings schema; output_path names the rule', async () => {
+    const w = await world()
+    const options = await must(w, 'get_export_options', {})
+    expect(options).not.toHaveProperty('settings_schema')
+    expect(options).toMatchObject({ extension: 'mp4' })
+    const outputPath = (EXPORT_TOOL_DEFS.find((d) => d.name === 'start_export')!.inputSchema.properties as Record<string, { description: string }>).output_path!.description
+    expect(outputPath).toMatch(/extension must match the container/)
+    expect(outputPath).toContain('get_export_options')
   })
 
   it('ME17/ME20: preview_motif takes motif_id, no alias, and is schema-checked', async () => {

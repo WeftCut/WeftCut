@@ -2326,17 +2326,30 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { label: { type: 'string', description: 'Checkpoint name.' } }, required: ['label'] },
     parseDedicated: (a) => ({ label: parseStr(a.label, 'label') }) },
   { name: 'export_captions', exec: 'dedicated', annotations: ANN_READ,
-    description: "The captions of a composition as a subtitle document — `format` `srt` or `vtt` — read from every caption lane (or one `track_id`) in time order, with the cue text as it stands. Returns `{ format, cues, body }`; write `body` to a file yourself. Records nothing.",
+    description: "The captions of a composition as a subtitle document — `format` `srt` or `vtt` — read from every caption lane (or one `track_id`) in time order, with the cue text as it stands. `range` (start_export's) clips cues to it and shifts them to 0, in step with a range export. Returns `{ format, cues, body }`, plus the snapped `range`; write `body` to a file yourself. Records nothing.",
     inputSchema: { type: 'object', properties: {
       format: { type: 'string', enum: ['srt', 'vtt'], description: 'SubRip or WebVTT.' },
       track_id: { type: 'string', description: 'One caption lane only; omit for every caption lane of the composition.' },
       composition_id: CAPTIONS_COMPOSITION_ID_SCHEMA,
+      range: { type: 'object', description: 'Snapped to the frame grid as start_export snaps it; omit for all cues.',
+        properties: { t_start_us: US_SCHEMA('Inclusive start, timeline'), t_end_us: US_SCHEMA('Exclusive end, timeline') }, required: ['t_start_us', 't_end_us'], additionalProperties: false },
     }, required: ['format'] },
-    parseDedicated: (a) => ({
-      format: parseOneOf(a.format, ['srt', 'vtt'], 'format'),
-      track_id: a.track_id === undefined || a.track_id === null ? null : parseUuid(a.track_id, 'track_id'),
-      composition_id: parseCompositionIdOpt(a.composition_id),
-    }) },
+    parseDedicated: (a) => {
+      refuseUnknownArgs(a, ['format', 'track_id', 'composition_id', 'range'], 'export_captions', { start_us: 'a span is range { t_start_us, t_end_us }', t_start_us: 'a span is range { t_start_us, t_end_us }', t_end_us: 'a span is range { t_start_us, t_end_us }' })
+      let range: { t_start_us: number; t_end_us: number } | null = null
+      if (a.range !== undefined && a.range !== null) {
+        const r = parseObj(a.range, 'range')
+        refuseUnknownKeys(r, ['t_start_us', 't_end_us'], 'range', 'export_captions range (timeline µs)')
+        range = { t_start_us: parseIntNum(r.t_start_us, 'range.t_start_us'), t_end_us: parseIntNum(r.t_end_us, 'range.t_end_us') }
+        if (range.t_start_us < 0 || range.t_end_us <= range.t_start_us) throw new McpArgError(`range must be a nonempty half-open span from t_start_us ≥ 0, got ${range.t_start_us}–${range.t_end_us}`, 'range')
+      }
+      return {
+        format: parseOneOf(a.format, ['srt', 'vtt'], 'format'),
+        track_id: a.track_id === undefined || a.track_id === null ? null : parseUuid(a.track_id, 'track_id'),
+        composition_id: parseCompositionIdOpt(a.composition_id),
+        range,
+      }
+    } },
   { name: 'restore_checkpoint', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
     description: "Restore a named checkpoint. Records a new history entry — undo will return to the pre-restore state. Errors with CheckpointNotFound if the id doesn't exist. The agent panel preserves activity and inserts a restore boundary; only edits with known history provenance are marked reverted.",
     inputSchema: { type: 'object', properties: { checkpoint_id: ID_SCHEMA('Checkpoint') }, required: ['checkpoint_id'] },
