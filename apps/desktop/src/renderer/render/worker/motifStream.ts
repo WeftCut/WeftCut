@@ -26,6 +26,8 @@ export class MotifFrameProducer {
   private next = 0;
   private bytes = 0;
   private pumping = false;
+  private reading = 0;
+  private readers: { resolve(): void; reject(error: Error): void }[] = [];
   readonly stats = { peakBytes: 0, framesRead: 0 };
 
   constructor(private readonly deps: {
@@ -35,6 +37,7 @@ export class MotifFrameProducer {
     fail(error: unknown): void;
     maxBytes?: number;
     maxFrames?: number;
+    maxConcurrentReads?: number;
   }) {}
 
   start(): void { this.pump(); }
@@ -47,7 +50,24 @@ export class MotifFrameProducer {
     this.pump();
   }
 
-  dispose(): void { this.controller.abort(); }
+  dispose(): void {
+    this.controller.abort();
+    for (const reader of this.readers.splice(0)) reader.reject(new Error('export cancelled'));
+  }
+
+  private async read(task: MotifReadTask): Promise<ImageBitmap> {
+    const limit = Math.max(1, this.deps.maxConcurrentReads ?? this.deps.maxFrames ?? 3);
+    if (this.reading >= limit) await new Promise<void>((resolve, reject) => this.readers.push({ resolve, reject }));
+    else this.reading++;
+    try {
+      this.controller.signal.throwIfAborted();
+      return await task.read(this.controller.signal);
+    } finally {
+      const next = this.readers.shift();
+      if (next) next.resolve(); // hand over the same execution credit
+      else this.reading--;
+    }
+  }
 
   private pump(): void {
     if (this.pumping || this.controller.signal.aborted) return;
@@ -77,12 +97,19 @@ export class MotifFrameProducer {
   private async load(index: number, tasks: MotifReadTask[]): Promise<void> {
     const packet: MotifFramePacket = { index, frames: {} };
     try {
-      for (const task of tasks) {
-        if (this.controller.signal.aborted) break;
-        const bitmap = await task.read(this.controller.signal);
-        packet.frames[task.layerId] = { frame: task.frame, bitmap };
-        this.stats.framesRead++;
-      }
+      let next = 0;
+      const loadTasks = async () => {
+        while (!this.controller.signal.aborted && next < tasks.length) {
+          const task = tasks[next++]!;
+          const bitmap = await this.read(task);
+          if (this.controller.signal.aborted) { bitmap.close(); return; }
+          packet.frames[task.layerId] = { frame: task.frame, bitmap };
+          this.stats.framesRead++;
+        }
+      };
+      // Frame/byte credits already cover every bitmap in this packet. Share
+      // execution credits across ALL packets: not N workers per frame.
+      if (tasks.length) await Promise.all(Array.from({ length: Math.min(tasks.length, Math.max(1, this.deps.maxConcurrentReads ?? 1)) }, loadTasks));
       if (this.controller.signal.aborted) closeMotifPacket(packet);
       else this.deps.send(packet); // transfers ownership; keep credit reserved
     } catch (error) {
