@@ -143,7 +143,7 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   tool taking `null`. A rename is a break: the old name gets `unknown tool`
   (ADR 0074), with no exceptions.
 
-Six rules hold across the surface, each with its gate (ADR 0155 records the
+Six rules hold across the surface, each with its gate (ADR 0156 records the
 first two):
 
 1. **No silent no-op, no silent degrade.** A write that would ignore, drop or

@@ -57,7 +57,7 @@ test('TS actor: MCP mutate → resource read reflects it; blocked tool rejects',
       expect(rows.reduce((n, t) => n + t.layers.length, 0)).toBe(1)
       // A failed hybrid answers with an `isError` RESULT, never a JSON-RPC
       // rejection — the refusal is the tool's answer, and the model reads it.
-      const refused = await client.callTool({ name: 'import_media', arguments: { path: '/nope.mp4' } })
+      const refused = await client.callTool({ name: 'import_media', arguments: { paths: ['/nope.mp4'] } })
       expect(refused.isError).toBe(true)
       expect((refused.content as Array<{ type: string; text: string }>)[0].text).toContain('nope.mp4')
     } finally {

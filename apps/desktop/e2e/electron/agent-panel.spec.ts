@@ -181,7 +181,8 @@ test('changes: an agent edit is listed, highlighted and counted until reverted o
     const trackId = JSON.parse((trackResource.contents[0] as { text: string }).text)[0].track_id as string
 
     // The work session pins the Review baseline; the agent's clip is the one change.
-    expect((await call('begin_agent_session', { reason: 'Add a title card' })).isError).not.toBe(true)
+    // lock: false leaves the user's history free, so the panel can revert it.
+    expect((await call('begin_agent_session', { reason: 'Add a title card', lock: false })).isError).not.toBe(true)
     await expect(page.locator('.agent-mode-shell')).toBeVisible()
     expect((await call('add_layers', { layers: [{ track_id: trackId, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 28, g: 76, b: 128, a: 255 } } }] })).isError).not.toBe(true)
     await expect(page.getByRole('tab', { name: /Changes/ })).toHaveText('Changes1')

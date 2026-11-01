@@ -736,7 +736,7 @@ _Avoid_: view mode, agent permission, execution lock
 **Silent outcome**:
 A call that answers success while it ignored, dropped or did not apply part of
 what it was asked, or delivered less than asked. The MCP surface never has one:
-the call refuses, or a typed field says what is missing. See ADR 0155.
+the call refuses, or a typed field says what is missing. See ADR 0156.
 _Avoid_: best effort, soft failure
 
 **MCP connection**:

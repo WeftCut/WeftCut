@@ -20,7 +20,7 @@ test('export waits for transient working memory before starting production', asy
       const native = process.getBuiltinModule('module').createRequire(addon)(addon)
       const { cpu_threads, waiting } = JSON.parse(native.resourcesSnapshot())
       return { cpu_threads, waiting }
-    }, addon)).toEqual({ cpu_threads: 0, waiting: 0 })
+    }, addon), { timeout: 30_000 }).toEqual({ cpu_threads: 0, waiting: 0 })
     await page.evaluate(() => {
       ;(window as any).__exportWaits = []
       window.api.resources.onExportWaiting(event => (window as any).__exportWaits.push(event))
@@ -31,6 +31,9 @@ test('export waits for transient working memory before starting production', asy
       const trace = { before: null as any, during: null as any, released: false }
       ;(globalThis as any).__decodeAdmissionTrace = trace
       ipcMain._invokeHandlers.set('resources:plan-export', (event: any, request: any) => {
+        // The metadata preflight admits one small plan first; the competitor
+        // meets the working-set admission, once.
+        if (trace.before || (request.options.length === 1 && request.options[0] === 64)) return handler(event, request)
         const lease = native.resourcesReserve(0, 651)
         trace.before = JSON.parse(native.resourcesSnapshot())
         setTimeout(() => {
@@ -122,7 +125,8 @@ test('the minimum target rejects an unfit 1080p export and recovers after a sett
   } finally { await app.close() }
 })
 
-test('native admission timeout offers resource recovery instead of a generic encoder error', async ({}, testInfo) => {
+test('a native export behind a held processing slot queues, names the wait, and starts when the slot frees', async () => {
+  test.setTimeout(90_000)
   const { app, page } = await launchApp({ locale: 'zh-CN' })
   try {
     await newProject(page, { parentFolder: tmpDir('weftcut-native-busy-'), name: 'Native busy', canvas: { width: 320, height: 240, fpsNum: 30, fpsDen: 1 } })
@@ -134,12 +138,26 @@ test('native admission timeout offers resource recovery instead of a generic enc
       native.resourcesConfigure(JSON.stringify({ ...allocation, cpu_threads: 1, task_threads: 1, background_jobs: 1 }))
       ;(globalThis as any).__busyProcessingReservation = native.resourcesReserve(1, 64)
     }, { addon, allocation: settings.resource_allocation })
-    const result = await driveExport(page, { outputAbsPath: path.join(tmpDir('weftcut-native-busy-out-'), 'out.mp4'), settings: { encoderEngine: 'native', audio: { include: false } } }, { hook: 'exportTimeline' })
-    await testInfo.attach('native-admission-timeout', { body: JSON.stringify(result), contentType: 'application/json' })
-    expect(result.done.ok).toBe(false)
-    expect(result.done.error).toContain('resource-capacity-exceeded')
-    await expect(page.locator('.export-progress-status')).toContainText('请等待其他处理任务结束后重试')
-    await expect(page.locator('.export-progress-panel').getByRole('button', { name: '打开设置', exact: true })).toBeVisible()
+    await page.evaluate(outputAbsPath => {
+      const w = window as any
+      w.__busyWaits = []; w.__busyDone = null
+      window.api.resources.onExportWaiting(event => w.__busyWaits.push(event))
+      void w.__weftcutTest.exportTimeline({ outputAbsPath, settings: { encoderEngine: 'native', audio: { include: false } } })
+        .then(() => { w.__busyDone = { ok: true } }, (error: unknown) => { w.__busyDone = { ok: false, error: String(error) } })
+    }, path.join(tmpDir('weftcut-native-busy-out-'), 'out.mp4'))
+    // Admission has no deadline: the export reads queued, says it starts by
+    // itself, and is still waiting well past the old 15 s bound.
+    await page.waitForFunction(() => (window as any).__busyWaits.some((e: any) => e.reason === 'busy'))
+    await expect(page.locator('.export-progress-panel')).toContainText('之后将自动开始导出')
+    await page.waitForTimeout(16_000)
+    expect(await page.evaluate(() => (window as any).__busyDone)).toBeNull()
+    await app.evaluate((_electron, addon) => {
+      const native = process.getBuiltinModule('module').createRequire(addon)(addon)
+      native.resourcesRelease((globalThis as any).__busyProcessingReservation)
+      ;(globalThis as any).__busyProcessingReservation = undefined
+    }, addon)
+    await page.waitForFunction(() => (window as any).__busyDone !== null, undefined, { timeout: 30_000 })
+    expect(await page.evaluate(() => (window as any).__busyDone)).toEqual({ ok: true })
   } finally {
     try {
       await app.evaluate((_electron, addon) => {

@@ -84,10 +84,10 @@ test('MCP creates, trims and moves clips, then exports the edited timeline', asy
       settings: { encoder_engine: 'native', hw_accel: 'software', include_audio: false, fps: 30 },
     })
     jobId = started.job_id
-    await expect.poll(async () => (await call<{ state: string }>('get_export_status', {
+    await expect.poll(async () => (await call<{ job: { state: string } }>('get_export_status', {
       job_id: jobId,
-    })).state, { timeout: 60_000 }).toBe('completed')
-    const completed = await call<{ output_path: string }>('get_export_status', { job_id: jobId })
+    })).job.state, { timeout: 60_000 }).toBe('completed')
+    const { job: completed } = await call<{ job: { output_path: string } }>('get_export_status', { job_id: jobId })
     expect(completed.output_path).toBe(output)
     expect(statSync(completed.output_path).size).toBeGreaterThan(100)
 
