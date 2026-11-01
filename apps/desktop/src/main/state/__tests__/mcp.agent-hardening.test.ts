@@ -130,7 +130,7 @@ describe('update_effect — strict patch (issue 02)', () => {
     const { a, layerId, effectId } = actorWithEffect()
     const r = a.mcpCall('update_effect', JSON.stringify({
       layer_id: layerId, effect_id: effectId,
-      patch: JSON.stringify({ params: { strength: { mode: 'Static', value: 8 } } }), // string, not object
+      patch: JSON.stringify({ params: { strength: 8 } }), // string, not object
     }))
     expect(r.ok).toBe(false)
     if (r.ok) return
@@ -142,7 +142,7 @@ describe('update_effect — strict patch (issue 02)', () => {
   it('an unknown patch key → invalid_params naming the key, effect unchanged', () => {
     const { a, layerId, effectId } = actorWithEffect()
     const r = a.mcpCall('update_effect', JSON.stringify({
-      layer_id: layerId, effect_id: effectId, patch: { paramz: { strength: { mode: 'Static', value: 8 } } },
+      layer_id: layerId, effect_id: effectId, patch: { paramz: { strength: 8 } },
     }))
     expect(r.ok).toBe(false)
     if (r.ok) return
@@ -153,7 +153,7 @@ describe('update_effect — strict patch (issue 02)', () => {
   it('a malformed param value → invalid_params naming the param, effect unchanged', () => {
     const { a, layerId, effectId } = actorWithEffect()
     const r = a.mcpCall('update_effect', JSON.stringify({
-      layer_id: layerId, effect_id: effectId, patch: { params: { strength: 8 } }, // bare number, not an AnimTrack
+      layer_id: layerId, effect_id: effectId, patch: { params: { strength: 'eight' } }, // a string, not a number
     }))
     expect(r.ok).toBe(false)
     if (r.ok) return
@@ -175,12 +175,12 @@ describe('update_effect — strict patch (issue 02)', () => {
     const effectId = (eff.result.structuredContent as { effect_id: string }).effect_id
     expect(a.mcpCall('update_effect', JSON.stringify({
       layer_id: layerId, effect_id: effectId,
-      patch: { params: { feather: { mode: 'Static', value: 2 }, shrink: { mode: 'Static', value: 1 } } },
+      patch: { params: { feather: 2, shrink: 1 } },
     })).ok).toBe(true)
 
     const r = a.mcpCall('update_effect', JSON.stringify({
       layer_id: layerId, effect_id: effectId,
-      patch: { params: { feather: { mode: 'Static', value: 4 }, shrink: null, despill: null } },
+      patch: { params: { feather: 4, shrink: null, despill: null } },
     }))
     expect(r.ok).toBe(true)
     expect(effectParams(a, layerId)).toEqual({ feather: { mode: 'Static', value: 4 } })
@@ -190,7 +190,7 @@ describe('update_effect — strict patch (issue 02)', () => {
     const { a, layerId, effectId } = actorWithEffect()
     const r = a.mcpCall('update_effect', JSON.stringify({
       layer_id: layerId, effect_id: effectId,
-      patch: { enabled: false, params: { strength: { mode: 'Static', value: 8 } } },
+      patch: { enabled: false, params: { strength: 8 } },
     }))
     expect(r.ok).toBe(true)
     const layer = root(a.snapshot()).tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)!

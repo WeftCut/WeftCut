@@ -66,8 +66,10 @@ function keyedText(a: Actor): { layerId: string; keys: Key[] } {
     expect(call(a, 'set_keyframe', { layer_id: layerId, param_key: 'opacity', t_us: t, value: v }).ok).toBe(true)
   return { layerId, keys: readKeys(a, layerId) }
 }
+/** get_param_track's keys with the parallel ids and preset ids zipped back on. */
 function readKeys(a: Actor, layerId: string): Key[] {
-  return json<{ keyframes: Key[] }>(call(a, 'get_param_track', { layer_id: layerId, param_key: 'opacity' })).keyframes
+  const r = json<{ track: { value: Array<Omit<Key, 'id' | 'preset_id'>> }; keyframe_ids: string[]; preset_ids: Array<string | null> }>(call(a, 'get_param_track', { layer_id: layerId, param_key: 'opacity' }))
+  return r.track.value.map((k, i) => ({ ...k, id: r.keyframe_ids[i]!, ...(r.preset_ids[i] === null ? {} : { preset_id: r.preset_ids[i]! }) }))
 }
 
 describe('update_keyframe', () => {

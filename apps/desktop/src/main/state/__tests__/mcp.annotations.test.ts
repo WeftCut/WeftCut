@@ -99,13 +99,15 @@ describe('the destructive set', () => {
   it('is every removal and revert, and no read', () => {
     const destructive = merged.filter((t) => (t.annotations as Ann | undefined)?.destructiveHint === true).map((t) => t.name)
     for (const n of ['delete_layers', 'delete_track', 'delete_media', 'delete_marker', 'delete_effect', 'delete_transition', 'delete_link',
-      'delete_composition', 'delete_keyframe', 'delete_motif', 'clear_keyframes',
+      'delete_composition', 'delete_keyframe', 'delete_motif',
+      // Whole-track replacers: what they discard, undo is the way back to.
+      'set_param_track', 'set_position',
       'remove_pauses', 'auto_split_by_shot', 'undo', 'redo', 'jump_to', 'restore_checkpoint', 'install_motif']) {
       expect(destructive, n).toContain(n)
     }
     for (const n of destructive) expect(n, 'a destructive read is a contradiction').not.toMatch(/^(get_|list_|read_)/)
     // Creation and setting are writes, not destruction.
-    for (const n of ['add_layers', 'set_position', 'update_layer_params', 'create_link', 'set_project_settings']) expect(ann(n).destructiveHint).toBe(false)
+    for (const n of ['add_layers', 'translate_position', 'update_layer_params', 'create_link', 'set_project_settings']) expect(ann(n).destructiveHint).toBe(false)
   })
 
   it('a set is idempotent, a creation is not', () => {

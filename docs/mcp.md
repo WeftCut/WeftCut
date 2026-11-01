@@ -374,16 +374,20 @@ exactly the named layers, one edit; nothing is expanded). Both refuse a key they
 do not take naming its owner — `t_start_us` → `move_layers`, `t_end_us` →
 `trim_layer` (they carry link partners and the source window), a param →
 `update_layer_params`.
-Other layer edits: `update_layer_params` (one closed `oneOf` variant per kind; static transform
-writes replace keyframes; Text has no scale fields — a bigger title is a
-bigger box, ADR 0049; Text `intro` (`FadeIn`/`SlideUp`/`SlideDown`/
+Other layer edits: `update_layer_params` (one closed `oneOf` variant per kind; a static
+write replaces that field's animation, `x`/`y` included; it answers each
+patched field as committed under `params`; `scale_linked` links the scale pair
+after the scale fields — `true` copies the `scale_x` track onto `scale_y`, keys
+included, `false` unlinks — and while linked one axis sent writes both; Text
+has no scale fields — a bigger title is a bigger box, ADR 0049, and a Static
+`set_param_track` on a Text scale is refused with the same words; Text `intro` (`FadeIn`/`SlideUp`/`SlideDown`/
 `Typewriter`) and `outro` (`FadeOut`/`SlideUp`/`SlideDown`) presets stay on the
 layer's edges and play in preview and export alike,
 [render.md](render.md#text-entrance-and-exit-presets); VideoClip `crop` is a
 normalized source rect, `null` resets; `src_in_us` on VideoClip, Audio, Motif
 and Group is a **slip** — the window moves at its length, the span stays —
 and there is no `src_out_us`: a window's length is changed by `trim_layer`, its
-rate by `retime_layers`), `set_scale_linked`, `trim_layer`, `restack_layer` (anchored
+rate by `retime_layers`), `trim_layer`, `restack_layer` (anchored
 z-reorder, [features.md](features.md#track-placement)), `split_layer` (an array of cuts, one atomic edit),
 `auto_split_by_shot` (the cached shot scan at `analyze_clip`'s defaults) — both
 split link partners in lockstep and answer `siblings: [{ layer_id, segments }]`
@@ -449,8 +453,8 @@ Position and motion paths:
 
 VideoClip, ImageOverlay, Text, Motif and CompositionRef layers have one active
 `Transform.position` representation: `XY` (independent `x`/`y` animation) or
-`Path` (timestamp-free geometry plus a scalar `progress` animation). Text's
-position is its anchor; other kinds use the unrotated top-left (ADR 0060).
+`Path` (timestamp-free geometry plus a scalar `progress` animation). For every
+kind the position is the transform anchor's location (ADR 0112).
 
 - `set_position { layer_id, position }` replaces the complete record in one
   undo entry. Its keys are timed `local_t_us`, **layer-local microseconds**,
@@ -458,13 +462,17 @@ position is its anchor; other kinds use the unrotated top-left (ADR 0060).
   the answer echoes them the same way. Keys need only
   `{local_t_us, value}`; nodes need only `{ point }` (handles default to zero,
   `segment` to `"Line"`, `tangent_mode` to `"Corner"`). WeftCut generates every
-  node and key id; sending `id` is refused. It replaces motion; it does not fit
-  or bake. Bounds: 1–128 nodes, coordinates within ±10 million px.
+  node and key id; sending `id` is refused. It replaces motion (annotated
+  destructive); it does not fit or bake. Bounds: 1–128 nodes, coordinates
+  within ±10 million px. A static `update_layer_params` `x`/`y` flattens XY
+  animation too.
 - `progress` is a fraction, **not percentages**: 0 start, 1 end, by distance.
   At most 4096 keys; only `Hold`, `Loop`, `PingPong` extrapolation (`Offset` /
   `Continue` refused).
-- `translate_path { layer_id, dx, dy }` moves every node (Path mode only),
-  keeping handles and progress.
+- `translate_position { layer_id, dx, dy }` offsets the position in either
+  mode as one undo step: every XY key (or the static value), or every path node
+  with its handles and progress. Nearest sibling: `set_position`, which
+  replaces the record.
 - In Path mode `x`/`y` writes are rejected; animate `path_progress`. Return to
   XY by sending XY tracks to `set_position`.
 
@@ -491,35 +499,60 @@ timeline-absolute times.
 
 Effects (visual kinds are realtime Pixi filters on the five visual kinds;
 `audio.*` kinds are offline bakes on Audio layers, ADR 0027 / ADR 0063):
-`add_effect` (unknown kinds refused; the kind must match the layer kind,
-`EffectKindNotApplicable`), `update_effect` (static values; `null` removes a
-param key), `move_effect`, `delete_effect`. `audio.*` params are static only
-(`AudioEffectParamStatic`). A visual param is keyframed as
-`effects[<id>].params[<key>]`, but only after `update_effect` set it once
-(`UnknownKeyframeParam` otherwise).
+`add_effect { kind, params? }` (unknown kinds refused; the kind must match the
+layer kind, `EffectKindNotApplicable`; `params` sets values at creation, so one
+call adds a working effect), `update_effect { patch: { enabled?, params? } }`
+(params as plain numbers, `{ "strength": 8 }`; `null` unsets a key; a value
+written to a keyframed param replaces its keys), `move_effect`,
+`delete_effect`. Param values are numbers in the catalog's ranges
+(`effects://catalog`), and an unset param IS its catalog default
+(`src/shared/effects/params.ts`): the effect record answers it, and a visual
+param is keyframed as `effects[<id>].params[<key>]` with no prior write. An id
+that names no effect on the layer is `EffectNotFound`. `audio.*` params are
+static only (`AudioEffectParamStatic`).
 
 Keyframes (timeline-absolute µs; record: [data-model.md](data-model.md#animated-values),
-ADR 0058): `get_param_track` (read ids before editing), `set_keyframe`
-(insert-or-update; the time snaps to the layer's lattice first, so a write a
-few µs off a key updates that key and keeps its id), `update_keyframe` (one
-key, applied in order: time — onto a frame another key holds is refused,
-`KeyframeOccupied` naming it — easing,
-sides with `out` last, continuity; easing presets from
-`src/shared/easing.ts::EASING_PRESETS`), `delete_keyframe`, `smooth_keyframes`,
-`set_extrapolation`, `clear_keyframes`, `set_param_track` (whole track in one
-entry; keys need only `{t_us, value}`). Bulk authoring
-(`set_param_track`, `set_position`) refuses caller ids, including ids copied
-from a read (also omit `local_t_us` and `preset_id`): WeftCut allocates UUIDs
-because native export requires them, and project load rejects a non-UUID
-keyframe id rather than regenerating it. Every replacement mints fresh ids, so
-these tools are not idempotent. Values are typed by `param_key` (`{r,g,b,a}`
-for `color`).
+ADR 0058) are five tools over one track write:
+- `get_param_track` answers `track` in exactly `set_param_track`'s write
+  shape, so a read-edit-write round trip sends it back unchanged, with
+  `keyframe_ids`, `local_t_us` and `preset_ids` parallel to its keys.
+- `set_param_track` replaces the whole track in one entry (annotated
+  destructive): `{mode: "Static", value}` holds one value,
+  `{mode: "Keyframed", value: [keys], extrapolate?}` animates (Hold/Hold when
+  omitted; `path_progress` takes Hold, Loop and PingPong only). Keys need only
+  `{t_us, value}`; `easing` or `in`/`out`/`segment`/`continuity` shape them.
+  Two keys that snap onto one frame are refused naming both
+  (`KeyframesShareFrame`). It answers the committed keys `{keyframe_id, t_us,
+  value}`.
+- `set_keyframe` inserts or updates by time; the time snaps to the layer's
+  lattice first, so a write a few µs off a key updates that key and keeps its
+  id. On a Static track the first key replaces the static value, which is not
+  kept.
+- `update_keyframe` changes one key by id, applied in order: time (onto a
+  frame another key holds is refused, `KeyframeOccupied` naming it), easing,
+  sides with `out` last, continuity, `smooth: true` (Auto tangents on both
+  sides).
+- `delete_keyframe`; deleting the last key collapses the track to Static.
+
+One easing vocabulary, `easing`, serves `set_keyframe`, `update_keyframe` and
+a `set_param_track` key: a preset `{"preset": "<id>"}` from
+`src/shared/easing.ts::EASING_PRESETS`, or a raw `{"kind": "Hold" | "Linear" |
+"Bezier" | "Elastic" | "Bounce", …}`. It eases the segment leaving the key; on
+the last key, which has none, the segment arriving at it, so keys authored in
+time order each carry the easing of the move into them. A lone key has no
+segment, and refuses one. Bulk authoring (`set_param_track`, `set_position`)
+refuses caller ids: WeftCut allocates UUIDs because native export requires
+them, and project load rejects a non-UUID keyframe id rather than
+regenerating it. Every replacement mints fresh ids, so these tools are not
+idempotent. Values are typed by `param_key` (`{r,g,b,a}` for `color`).
 
 Valid `param_key`: VideoClip/ImageOverlay/Text/Motif/CompositionRef →
 `scale_x, scale_y, rotation_deg, anchor_x, anchor_y, opacity`, plus `x, y` in
 **XY mode only**, or `path_progress` in **Path mode only** (where `x`/`y`
-writes are rejected). Text/Color → `color`; Audio → `gain_db, pan`. Keying one
-scale axis of a scale-linked layer clears the link in the same commit.
+writes are rejected). Text/Color → `color`; Audio → `gain_db, pan`. On a
+scale-linked layer a keyframe tool's write to one scale axis is the linked
+Scale: the other axis takes a copy (fresh ids) in the same commit, as the UI
+fans it out.
 
 Transitions (ADR 0048): `add_transition` (`placement: "overlap"` moves the
 incoming layer left so both play their trimmed ranges; `"extend"` borrows

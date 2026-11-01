@@ -20,7 +20,7 @@ import { EFFECT_KINDS, effectParamSpecs } from '../../shared/effects/params'
 import { positionProblem } from '../../shared/position'
 import { sortKeys } from './canonical'
 import { CANVAS_MAX, CANVAS_MIN, DEFAULT_CANVAS, FPS_OPTIONS, canvasSizeError, validateProjectName } from '../../shared/newProject'
-import { EASING_PRESETS, ELASTIC_DEFAULT_AMPLITUDE, ELASTIC_DEFAULT_PERIOD, cloneInterp, presetIdForSegment } from '../../shared/easing'
+import { EASING_PRESETS, ELASTIC_DEFAULT_AMPLITUDE, ELASTIC_DEFAULT_PERIOD, applySegmentEasing, cloneInterp, presetIdForSegment } from '../../shared/easing'
 import { TACK_BODY_LIMIT, TACK_KINDS, TACK_LABEL_LIMIT, TACK_STATUSES } from '../../shared/agent-activity'
 
 /** `cancelled`: a clip-compute job ended by an explicit cancel (ADR 0121) —
@@ -47,71 +47,64 @@ const EASE_DIRS = new Set<string>(['In', 'Out', 'InOut'])
 const isPair = (v: unknown): v is [number, number] =>
   Array.isArray(v) && v.length === 2 && typeof v[0] === 'number' && typeof v[1] === 'number'
 
-function parseEaseDir(v: unknown, kind: string): EaseDir {
+function parseEaseDir(v: unknown, kind: string, field: string): EaseDir {
   if (typeof v !== 'string' || !EASE_DIRS.has(v))
-    throw new McpArgError(`invalid interp: ${kind} needs dir 'In' | 'Out' | 'InOut', got ${String(v)}`)
+    throw new McpArgError(`invalid ${field}: ${kind} needs dir 'In' | 'Out' | 'InOut', got ${String(v)}`)
   return v as EaseDir
 }
 
-/** Validate an Interpolation — the closed wire union single-sourced in
+/** Validate a raw easing kind — the closed wire union single-sourced in
  *  src/shared/easing.ts (Hold | Linear | Bezier | Elastic | Bounce). Elastic
  *  amplitude/period may be omitted and take the shared authoring defaults, so
  *  the parsed value is always a complete wire object. Bezier control-point x
  *  is gated to [0, 1] — x is segment time, and the solver is single-valued
- *  only on that range. Throws McpArgError on malformed input → invalid_params. */
-export function parseInterp(v: unknown): Interpolation {
-  if (v === null || typeof v !== 'object') throw new McpArgError(`invalid interp: not an object`)
+ *  only on that range. `field` names the argument in the refusal (`easing`, or
+ *  a key's `segment`). Throws McpArgError on malformed input → invalid_params. */
+export function parseInterp(v: unknown, field = 'easing'): Interpolation {
+  if (v === null || typeof v !== 'object') throw new McpArgError(`invalid ${field}: not an object`)
   const o = v as Record<string, unknown>
   const kind = o.kind
-  if (typeof kind !== 'string') {
-    if (typeof o.preset === 'string')
-      throw new McpArgError(`invalid interp: preset ids are a update_keyframe payload — this argument takes a raw kind ${INTERP_KINDS}`)
-    throw new McpArgError(`invalid interp: missing 'kind' (${INTERP_KINDS})`)
-  }
+  if (typeof kind !== 'string') throw new McpArgError(`invalid ${field}: missing 'kind' (${INTERP_KINDS})`)
   if (kind === 'Hold' || kind === 'Linear') return { kind }
   if (kind === 'Bezier') {
     const p1 = o.p1
     const p2 = o.p2
-    if (!isPair(p1) || !isPair(p2)) throw new McpArgError(`invalid interp: Bezier needs p1/p2 as [number, number]`)
-    if (!(p1[0] >= 0 && p1[0] <= 1)) throw new McpArgError(`invalid interp: Bezier p1[0] (x) must be within [0, 1], got ${p1[0]} — x is segment time; only y may overshoot`)
-    if (!(p2[0] >= 0 && p2[0] <= 1)) throw new McpArgError(`invalid interp: Bezier p2[0] (x) must be within [0, 1], got ${p2[0]} — x is segment time; only y may overshoot`)
+    if (!isPair(p1) || !isPair(p2)) throw new McpArgError(`invalid ${field}: Bezier needs p1/p2 as [number, number]`)
+    if (!(p1[0] >= 0 && p1[0] <= 1)) throw new McpArgError(`invalid ${field}: Bezier p1[0] (x) must be within [0, 1], got ${p1[0]} — x is segment time; only y may overshoot`)
+    if (!(p2[0] >= 0 && p2[0] <= 1)) throw new McpArgError(`invalid ${field}: Bezier p2[0] (x) must be within [0, 1], got ${p2[0]} — x is segment time; only y may overshoot`)
     return { kind: 'Bezier', p1, p2 }
   }
   if (kind === 'Elastic') {
-    const dir = parseEaseDir(o.dir, 'Elastic')
-    const amplitude = o.amplitude === undefined || o.amplitude === null ? ELASTIC_DEFAULT_AMPLITUDE : parseNum(o.amplitude, 'interp.amplitude')
-    if (amplitude < 1) throw new McpArgError(`invalid interp: Elastic amplitude must be >= 1, got ${amplitude} (omit it for the default ${ELASTIC_DEFAULT_AMPLITUDE})`)
-    const period = o.period === undefined || o.period === null ? ELASTIC_DEFAULT_PERIOD : parseNum(o.period, 'interp.period')
-    if (period <= 0) throw new McpArgError(`invalid interp: Elastic period must be > 0, got ${period} (omit it for the default ${ELASTIC_DEFAULT_PERIOD})`)
+    const dir = parseEaseDir(o.dir, 'Elastic', field)
+    const amplitude = o.amplitude === undefined || o.amplitude === null ? ELASTIC_DEFAULT_AMPLITUDE : parseNum(o.amplitude, `${field}.amplitude`)
+    if (amplitude < 1) throw new McpArgError(`invalid ${field}: Elastic amplitude must be >= 1, got ${amplitude} (omit it for the default ${ELASTIC_DEFAULT_AMPLITUDE})`)
+    const period = o.period === undefined || o.period === null ? ELASTIC_DEFAULT_PERIOD : parseNum(o.period, `${field}.period`)
+    if (period <= 0) throw new McpArgError(`invalid ${field}: Elastic period must be > 0, got ${period} (omit it for the default ${ELASTIC_DEFAULT_PERIOD})`)
     return { kind: 'Elastic', dir, amplitude, period }
   }
-  if (kind === 'Bounce') return { kind: 'Bounce', dir: parseEaseDir(o.dir, 'Bounce') }
+  if (kind === 'Bounce') return { kind: 'Bounce', dir: parseEaseDir(o.dir, 'Bounce', field) }
   if (kind === 'EaseIn' || kind === 'EaseOut')
-    throw new McpArgError(`invalid interp: '${kind}' is not a kind — named eases are presets (update_keyframe takes {"preset":"${kind === 'EaseIn' ? 'ease_in' : 'ease_out'}"}); kinds: ${INTERP_KINDS}`)
-  throw new McpArgError(`invalid interp: unknown kind '${kind}' — expected ${INTERP_KINDS}`)
+    throw new McpArgError(`invalid ${field}: '${kind}' is not a kind — named eases are presets ({"preset":"${kind === 'EaseIn' ? 'ease_in' : 'ease_out'}"}); kinds: ${INTERP_KINDS}`)
+  throw new McpArgError(`invalid ${field}: unknown kind '${kind}' — expected ${INTERP_KINDS}`)
 }
 
-/** Optional variant: undefined passes through (set_keyframe's interp is Option). */
-export function parseInterpOpt(v: unknown): Interpolation | undefined {
-  return v === undefined ? undefined : parseInterp(v)
-}
-
-/** update_keyframe's payload union: {"preset":"<id>"} bakes to a fresh
- *  copy of the canonical table entry's params (cloneInterp — the table IS the
- *  params, nothing is re-derived here); anything else parses as a raw
- *  Interpolation. Exactly one of preset/kind: both together is ambiguous and
- *  rejects. The unknown-preset error carries the full live id list in the
- *  MESSAGE — the client drops error.data, so options must ride the message. */
-export function parseEasing(v: unknown): Interpolation {
-  if (v === null || typeof v !== 'object') throw new McpArgError(`invalid interp: not an object`)
+/** The one easing vocabulary (`set_keyframe`, `update_keyframe` and a
+ *  `set_param_track` key): {"preset":"<id>"} bakes to a fresh copy of the
+ *  canonical table entry's params (cloneInterp — the table IS the params,
+ *  nothing is re-derived here); anything else parses as a raw kind. Exactly one
+ *  of preset/kind: both together is ambiguous and rejects. The unknown-preset
+ *  error carries the full live id list in the MESSAGE — the client drops
+ *  error.data, so options must ride the message. */
+export function parseEasing(v: unknown, field = 'easing'): Interpolation {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) throw new McpArgError(`invalid ${field}: not an object`)
   const o = v as Record<string, unknown>
   if (o.preset === undefined || o.preset === null) {
-    if (o.kind === undefined) throw new McpArgError(`invalid interp: send {"preset":"<id>"} or a raw kind ${INTERP_KINDS}`)
-    return parseInterp(v)
+    if (o.kind === undefined) throw new McpArgError(`invalid ${field}: send {"preset":"<id>"} or a raw kind ${INTERP_KINDS}`)
+    return parseInterp(v, field)
   }
-  if (o.kind !== undefined) throw new McpArgError(`invalid interp: send either {"preset":"<id>"} or a raw {"kind":...}, not both`)
+  if (o.kind !== undefined) throw new McpArgError(`invalid ${field}: send either {"preset":"<id>"} or a raw {"kind":...}, not both`)
   const hit = typeof o.preset === 'string' ? EASING_PRESETS.find((p) => p.id === o.preset) : undefined
-  if (!hit) throw new McpArgError(`invalid interp: unknown preset '${String(o.preset)}' — presets: ${EASING_PRESETS.map((p) => p.id).join(', ')}`)
+  if (!hit) throw new McpArgError(`invalid ${field}: unknown preset '${String(o.preset)}' — presets: ${EASING_PRESETS.map((p) => p.id).join(', ')}`)
   return cloneInterp(hit.interp)
 }
 
@@ -120,14 +113,17 @@ const CONTINUITIES: readonly Continuity[] = ['Smooth', 'Broken']
 const EXTRAPOLATES: readonly Extrapolate[] = ['Hold', 'Loop', 'PingPong', 'Offset', 'Continue']
 const CONTINUITY_OPTIONS = `'Smooth' | 'Broken'`
 const EXTRAPOLATE_OPTIONS = EXTRAPOLATES.map((e) => `'${e}'`).join(' | ')
-const KEY_SHAPE = '{t_us, value, in?: {x, y, mode}, out?: {x, y, mode}, continuity?, segment?: {kind, ...}} (IDs are generated)'
+const KEY_SHAPE = '{t_us, value, easing?, in?: {x, y, mode}, out?: {x, y, mode}, continuity?, segment?: {kind, ...}} (IDs are generated)'
 const TANGENT_X_RULE = `x is the fraction of the segment's time span and must be within [0, 1]; only y may overshoot`
 
 /** One side of a key as stored: unit-square coords (x gated to [0, 1] — the
- *  cubic is single-valued in time only there) + a mode. */
+ *  cubic is single-valued in time only there) + a mode. An Auto side's numbers
+ *  are solved on write, so it may omit them: they start at the identity and the
+ *  solve replaces them. */
 function parseTangent(v: unknown, side: 'in' | 'out'): Tangent {
   if (v === null || typeof v !== 'object') throw new McpArgError(`invalid track: keyframe "${side}" must be a tangent {x, y, mode}`)
   const o = v as Record<string, unknown>
+  if (o.mode === 'Auto' && o.x === undefined && o.y === undefined) return { ...(side === 'in' ? IN_IDENTITY : OUT_IDENTITY), mode: 'Auto' }
   if (typeof o.x !== 'number' || !Number.isFinite(o.x) || typeof o.y !== 'number' || !Number.isFinite(o.y))
     throw new McpArgError(`invalid track: keyframe "${side}" needs finite x and y`)
   if (o.x < 0 || o.x > 1) throw new McpArgError(`invalid track: keyframe "${side}".x is ${o.x} — ${TANGENT_X_RULE}`)
@@ -156,12 +152,13 @@ export function parseSegment(v: unknown): Segment {
   const o = v as Record<string, unknown>
   if (o.kind === 'Spline') return { kind: 'Spline' }
   if (o.kind === 'Bezier') throw new McpArgError(NO_BEZIER_SEGMENT)
-  const i = parseInterp(v)
+  if (o.preset !== undefined) throw new McpArgError(`invalid track: a segment is a class {kind, ...}; a preset is the key's \`easing\` {"preset":"<id>"}`)
+  const i = parseInterp(v, 'segment')
   // Narrowing only: parseInterp mints Bezier from kind 'Bezier' alone, refused above.
   if (i.kind === 'Bezier') throw new McpArgError(NO_BEZIER_SEGMENT)
   return i
 }
-const NO_BEZIER_SEGMENT = `invalid track: a stored segment has no 'Bezier' kind — send {"kind":"Spline"} and put the cubic on this key's out and the next key's in`
+const NO_BEZIER_SEGMENT = `invalid track: a stored segment has no 'Bezier' kind — send the key's \`easing\` {"kind":"Bezier","p1","p2"} (or a preset), or {"kind":"Spline"} with the cubic on this key's out and the next key's in`
 
 /** `field` prefixes the message so a key inside a track and a bare tool arg
  *  both read in their own terms. */
@@ -205,10 +202,6 @@ export function parseTrackValue(v: unknown, paramKey: string, field: string): Tr
   return v
 }
 
-/** Optional variant: undefined/null → undefined (absent). */
-export function parseTrackValueOpt(v: unknown, paramKey: string, field: string): TrackValue | undefined {
-  return v === undefined || v === null ? undefined : parseTrackValue(v, paramKey, field)
-}
 
 /** Authoring inputs carry values and curves, never externally minted identities. */
 function authoringFields(o: Record<string, unknown>, allowed: string[], field: string): void {
@@ -219,23 +212,28 @@ function authoringFields(o: Record<string, unknown>, allowed: string[], field: s
 
 /** Materialize the ID-free authoring shape into the complete stored record.
  *  The actor supplies its ID generator; no user ID can reach native export.
- *  Stored project parsing remains strict and does not use these defaults. */
-function parseAnimatedTrackWith<T>(v: unknown, parseValue: (v: unknown, field: string) => T, idGen: IdGen, keyTime: 't_us' | 'local_t_us' = 't_us'): Animated<T> {
+ *  Stored project parsing remains strict and does not use these defaults.
+ *  `easing` keys are `set_param_track`'s alone (`withEasing`). */
+function parseAnimatedTrackWith<T>(v: unknown, parseValue: (v: unknown, field: string) => T, idGen: IdGen, keyTime: 't_us' | 'local_t_us' = 't_us', withEasing = false): Animated<T> {
   if (v === null || typeof v !== 'object') throw new McpArgError(`invalid track: not an object`)
   const o = v as Record<string, unknown>
   authoringFields(o, ['mode', 'value', 'extrapolate'], 'track')
-  if (o.mode === 'Static') return { mode: 'Static', value: parseValue(o.value, 'invalid track: Static value') }
+  if (o.mode === 'Static') {
+    if (o.extrapolate !== undefined) throw new McpArgError(`invalid track: a Static track has no extrapolate — it holds one value; extrapolation is a Keyframed track's`)
+    return { mode: 'Static', value: parseValue(o.value, 'invalid track: Static value') }
+  }
   if (o.mode === 'Keyframed') {
     if (!Array.isArray(o.value)) throw new McpArgError(`invalid track: Keyframed value must be an array`)
-    const kfs: Keyframe<T>[] = o.value.map((raw, i) => {
+    const fields = [keyTime, 'time_fraction', 'value', ...(withEasing ? ['easing'] : []), 'in', 'out', 'continuity', 'segment']
+    const entries = o.value.map((raw, i) => {
       if (raw === null || typeof raw !== 'object') throw new McpArgError(`invalid track: keyframe must be an object`)
       const k = raw as Record<string, unknown>
       if ('interp' in k)
-        throw new McpArgError(`invalid track: keyframe carries the retired per-segment "interp" field — a key is ${KEY_SHAPE}; the easing of a segment is this key's segment + out and the next key's in`)
-      authoringFields(k, [keyTime, 'time_fraction', 'value', 'in', 'out', 'continuity', 'segment'], `keyframe[${i}]`)
+        throw new McpArgError(`invalid track: keyframe[${i}] carries "interp", which is not a key field — a key is ${KEY_SHAPE}; its easing is \`easing\` (a preset or a raw kind)`)
+      authoringFields(k, fields, `keyframe[${i}]`)
       if (!Number.isSafeInteger(k[keyTime])) throw new McpArgError(`invalid track: keyframe ${keyTime} must be an integer number of microseconds`)
       const value = parseValue(k.value, `invalid track: keyframe[${i}].value`)
-      return {
+      const key: Keyframe<T> = {
         id: idGen(), t_us: k[keyTime] as number, value,
         ...(k.time_fraction === undefined ? {} : { time_fraction: parseTimeFraction(k.time_fraction) }),
         in: k.in === undefined ? { ...IN_IDENTITY, mode: 'Free' } : parseTangent(k.in, 'in'),
@@ -243,29 +241,62 @@ function parseAnimatedTrackWith<T>(v: unknown, parseValue: (v: unknown, field: s
         continuity: k.continuity === undefined ? 'Broken' : parseContinuity(k.continuity, 'invalid track: keyframe continuity'),
         segment: k.segment === undefined ? { kind: 'Linear' } : parseSegment(k.segment),
       }
+      return { i, key, easing: k.easing === undefined ? undefined : parseEasing(k.easing, `keyframe[${i}].easing`), sent: { in: k.in !== undefined, out: k.out !== undefined || k.segment !== undefined } }
     })
+    applyKeyEasings(entries)
     let extrapolate: Extrapolation = { ...HOLD_EXTRAPOLATION }
     if (o.extrapolate !== undefined && o.extrapolate !== null) {
       if (typeof o.extrapolate !== 'object') throw new McpArgError(`invalid track: extrapolate must be {before, after}`)
       const e = o.extrapolate as Record<string, unknown>
       extrapolate = { before: parseExtrapolate(e.before, 'invalid track: extrapolate.before'), after: parseExtrapolate(e.after, 'invalid track: extrapolate.after') }
     }
-    return { mode: 'Keyframed', value: kfs, extrapolate }
+    return { mode: 'Keyframed', value: entries.map((e) => e.key), extrapolate }
   }
   throw new McpArgError(`invalid track: unknown mode '${String(o.mode)}'`)
 }
 
-/** A layer param's track, values typed by `paramKey` (`parseTrackValue`). */
-export function parseAnimatedTrack(v: unknown, paramKey: string, idGen: IdGen = uuidV7Gen()): AnimatedTrack {
-  return isColorParam(paramKey)
-    ? parseAnimatedTrackWith<Rgba>(v, (x, f) => parseTrackValue(x, paramKey, f) as Rgba, idGen)
-    : parseAnimatedTrackWith<number>(v, (x, f) => parseTrackValue(x, paramKey, f) as number, idGen)
+/** The segment a key's `easing` eases: the one LEAVING it, or — on the last
+ *  key, which has none — the one ARRIVING at it (`easingSegment`, the rule
+ *  `set_keyframe` and `update_keyframe` share). An easing writes the left key's
+ *  `out` + `segment` and the right key's `in`, so a key that also sends those
+ *  sides, or two easings on one segment, is refused naming both: either would
+ *  otherwise overwrite the other in silence. In time order, as the actor sorts. */
+function applyKeyEasings<T>(entries: Array<{ i: number; key: Keyframe<T>; easing: Interpolation | undefined; sent: { in: boolean; out: boolean } }>): void {
+  if (!entries.some((e) => e.easing)) return
+  const order = [...entries].sort((a, b) => a.key.t_us - b.key.t_us)
+  const easedBy = new Map<number, number>() // left position → the entry index that eased it
+  order.forEach((e, j) => {
+    if (!e.easing) return
+    const at = `keyframe[${e.i}].easing`
+    const left = easingSegment(j, order.length)
+    if (left === null) throw new McpArgError(`${at}: a track of one key has no segment to ease — add the key it moves to`, at)
+    const l = order[left]!
+    const r = order[left + 1]!
+    if (l.sent.out) throw new McpArgError(`${at} writes keyframe[${l.i}]'s out and segment, which keyframe[${l.i}] also sends — send one or the other`, at)
+    if (r.sent.in) throw new McpArgError(`${at} writes keyframe[${r.i}]'s in, which keyframe[${r.i}] also sends — send one or the other`, at)
+    const prior = easedBy.get(left)
+    if (prior !== undefined) throw new McpArgError(`${at} and keyframe[${prior}].easing both ease the segment from keyframe[${l.i}] to keyframe[${r.i}] (the last key's easing eases the segment arriving at it) — send one`, at)
+    easedBy.set(left, e.i)
+    const [lk, rk] = applySegmentEasing(l.key, r.key, e.easing)
+    l.key = lk
+    r.key = rk!
+  })
 }
 
-/** The scalar-only form — effect params (`update_effect`), whose values are
- *  numbers whatever the param is named. */
-export function parseAnimatedF64(v: unknown, idGen: IdGen = uuidV7Gen()): Animated<number> {
-  return parseAnimatedTrackWith<number>(v, parseNum, idGen)
+/** The left key of the segment an `easing` on key `j` of `n` eases: its own
+ *  leaving segment, or on the last key the one arriving at it; null for a lone
+ *  key. One rule for `set_keyframe`, `update_keyframe` and `set_param_track`. */
+export function easingSegment(j: number, n: number): number | null {
+  if (n < 2) return null
+  return j < n - 1 ? j : j - 1
+}
+
+/** `set_param_track`'s track, values typed by `paramKey` (`parseTrackValue`),
+ *  keys taking `easing`. */
+export function parseAnimatedTrack(v: unknown, paramKey: string, idGen: IdGen = uuidV7Gen()): AnimatedTrack {
+  return isColorParam(paramKey)
+    ? parseAnimatedTrackWith<Rgba>(v, (x, f) => parseTrackValue(x, paramKey, f) as Rgba, idGen, 't_us', true)
+    : parseAnimatedTrackWith<number>(v, (x, f) => parseTrackValue(x, paramKey, f) as number, idGen, 't_us', true)
 }
 
 /** A `set_position` track: its keys are timed `local_t_us`, µs from the
@@ -438,6 +469,13 @@ export const LAYER_PARAMS_KEYS: Readonly<Record<string, readonly string[]>> = {
   CompositionRef: keysOf('CompositionRef', { src_in_us: true, src_out_us: true, x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, blend_mode: true }),
 }
 export const LAYER_PARAM_KINDS: readonly string[] = Object.keys(LAYER_PARAMS_KEYS)
+/** The kinds whose patch writes `scale_x`/`scale_y` also take `scale_linked`,
+ *  the Linked scale flag — not a stored param of the patch type, so it is
+ *  split off by the parser and applied by the actor after the scale fields. */
+const SCALE_LINK_KINDS: ReadonlySet<string> = new Set(LAYER_PARAM_KINDS.filter((k) => LAYER_PARAMS_KEYS[k]!.includes('scale_x')))
+/** Every key one kind's patch accepts: its `LAYER_PARAMS_KEYS` row, plus
+ *  `scale_linked` where the kind has a scale pair. */
+export const layerPatchKeys = (kind: string): readonly string[] => SCALE_LINK_KINDS.has(kind) ? [...LAYER_PARAMS_KEYS[kind]!, 'scale_linked'] : LAYER_PARAMS_KEYS[kind]!
 const TEXT_ALIGN_OPTIONS = ['Left', 'Center', 'Right'] as const
 const VALIGN_OPTIONS = ['Top', 'Middle', 'Bottom'] as const
 const BLEND_MODE_OPTIONS = ['Normal', 'Multiply', 'Screen', 'Overlay', 'Darken', 'Lighten', 'Add', 'Difference'] as const
@@ -477,7 +515,7 @@ function parseLayerParamValue(k: string, v: unknown): unknown {
       return { color: parseRgba(o.color, `${field}.color`), offset_x: parseNum(o.offset_x, `${field}.offset_x`), offset_y: parseNum(o.offset_y, `${field}.offset_y`), blur: parseNum(o.blur, `${field}.blur`) }
     }
     case 'color': case 'outline_color': return parseRgba(v, field)
-    case 'flip_h': case 'flip_v': case 'mute': return parseBool(v, field)
+    case 'flip_h': case 'flip_v': case 'mute': case 'scale_linked': return parseBool(v, field)
     case 'align': return parseOneOf(v, TEXT_ALIGN_OPTIONS, field)
     case 'valign': return parseOneOf(v, VALIGN_OPTIONS, field)
     case 'blend_mode': return parseOneOf(v, BLEND_MODE_OPTIONS, field)
@@ -488,29 +526,37 @@ function parseLayerParamValue(k: string, v: unknown): unknown {
   }
 }
 
+/** ADR 0049's rule for a Text layer's scale, in the words both paths refuse
+ *  with — `update_layer_params` and a Static `set_param_track`: the box lays
+ *  out, `scale` magnifies, and magnification is animated, never set. */
+export const TEXT_SCALE_RULE = "a Text layer's static scale stays 1 — a bigger title is a bigger font_size_px or box_w (ADR 0049); animate scale with keys"
+
 /** `update_layer_params`'s patch: `kind` names one of the seven kinds, every
  *  other key is in that kind's set, and every value is the type the kind
  *  stores. Ranges and shape rules (a positive font size, the text-box modes, a
  *  non-zero scale) stay the mutation's — it names them better than a table could. */
-export function parseLayerParamsPatch(v: unknown): LayerParamsPatch {
+export function parseLayerParamsPatch(v: unknown): LayerParamsPatch & { scale_linked?: boolean } {
   const o = parseObj(v, 'patch')
   const kind = o.kind
   if (typeof kind !== 'string' || !(kind in LAYER_PARAMS_KEYS))
     throw new McpArgError(`patch.kind must be one of ${LAYER_PARAM_KINDS.join(' | ')}, got ${typeof kind === 'string' ? `'${kind}'` : describeValue(kind)} — it has to match the layer's kind, which project://tracks reports`, 'patch')
-  const allowed = LAYER_PARAMS_KEYS[kind]
+  const allowed = layerPatchKeys(kind)
   const fields = Object.keys(o).filter((k) => k !== 'kind')
   if (fields.length === 0) throw new McpArgError(`patch names no field; a ${kind} patch writes ${allowed.join(', ')}`, 'patch')
   for (const k of fields) {
     if (allowed.includes(k)) continue
     const elsewhere = Object.entries(LAYER_PARAMS_KEYS).filter(([, ks]) => ks.includes(k)).map(([kk]) => kk)
-    const hint = k in LAYER_ENVELOPE_OWNER ? ` (${LAYER_ENVELOPE_OWNER[k]})`
+    const hint = kind === 'Text' && k.startsWith('scale_') ? ` (${TEXT_SCALE_RULE})`
+      : k in LAYER_ENVELOPE_OWNER ? ` (${LAYER_ENVELOPE_OWNER[k]})`
       : k === 'src_out_us' ? ' (the window end follows src_in_us, which slips it at its length; trim_layer changes the length)'
       : elsewhere.length > 0 ? ` ('${k}' belongs to ${elsewhere.join(', ')})` : ''
     throw new McpArgError(`invalid patch: '${k}' is not a ${kind} param — a ${kind} patch writes ${allowed.join(', ')}${hint}`, 'patch')
   }
   const out: Record<string, unknown> = { kind }
   for (const k of fields) out[k] = parseLayerParamValue(k, o[k])
-  return out as LayerParamsPatch
+  if (out.scale_linked === true && typeof out.scale_x === 'number' && typeof out.scale_y === 'number' && out.scale_x !== out.scale_y)
+    throw new McpArgError(`patch: scale_linked true with scale_x ${out.scale_x} and scale_y ${out.scale_y} names two scales for one link — send one axis (both take it) or equal values`, 'patch.scale_linked')
+  return out as LayerParamsPatch & { scale_linked?: boolean }
 }
 
 /** `add_effect`'s kind: one of the two catalogs' (`shared/effects/params.ts`).
@@ -538,17 +584,17 @@ export function checkEffectParamValues(kind: string, key: string, values: readon
  *  value outside the catalogued range is refused, naming the set or the
  *  bound. A kind no catalog knows passes untouched. Called by the actor arm,
  *  which is the only place the kind is known. */
-export function checkEffectPatchAgainst(kind: string, patch: EffectPatch): void {
+export function checkEffectPatchAgainst(kind: string, patch: EffectPatch, field = 'patch.params'): void {
   if (!patch.params) return
   const specs = effectParamSpecs(kind)
   if (specs === null) return
   for (const [k, track] of Object.entries(patch.params)) {
-    if (!(k in specs)) throw new McpArgError(`invalid patch: '${k}' is not a param of effect kind '${kind}' — its params are ${Object.keys(specs).join(', ')}`, 'patch')
+    if (!(k in specs)) throw new McpArgError(`invalid ${field}: '${k}' is not a param of effect kind '${kind}' — its params are ${Object.keys(specs).join(', ')}`, field)
     if (track === null) continue
     const [lo, hi] = specs[k].range
     const values = track.mode === 'Static' ? [track.value] : track.value.map((kf) => kf.value)
     for (const value of values) {
-      if (value < lo || value > hi) throw new McpArgError(`invalid patch: params['${k}'] ${value} is outside '${kind}'.${k}'s range [${lo}, ${hi}]`, 'patch')
+      if (value < lo || value > hi) throw new McpArgError(`invalid ${field}: ${k} ${value} is outside '${kind}'.${k}'s range [${lo}, ${hi}] — effects://catalog lists every param's range`, field)
     }
   }
 }
@@ -580,38 +626,54 @@ export function parsePosition(v: unknown, idGen: IdGen = uuidV7Gen()): Record<st
   return o
 }
 
-/** Strict update_effect patch — mirrors EffectPatch (mutations/effects.ts).
- *  Unknown keys and malformed values reject; applyUpdateEffect would otherwise
- *  silently skip them.
- *
- *  A `null` inside `params` is the one null that is NOT "don't touch": it is a
- *  removal, and it passes through so the caller can put a param back to unset.
- *  A null `params` / `enabled` field still means "don't touch". */
+/** An effect's params on the wire: `{ <key>: <number> }`, a static value per
+ *  key — `add_effect`'s initial values and `update_effect`'s merge. `null`
+ *  (update only) removes a key, back to its catalog default. An animated param
+ *  is the keyframe tools' (`effects[<id>].params[<key>]`). */
+function parseEffectParamValues(v: unknown, field: string, nullRemoves: boolean): Record<string, number | null> {
+  const p = parseObj(v, field)
+  if (Object.keys(p).length === 0) throw new McpArgError(`${field} names no param — omit it`, field)
+  const out: Record<string, number | null> = {}
+  for (const [k, pv] of Object.entries(p)) {
+    if (pv === null && nullRemoves) { out[k] = null; continue }
+    if (typeof pv === 'number' && Number.isFinite(pv)) { out[k] = pv; continue }
+    const wrapped = pv !== null && typeof pv === 'object' && 'mode' in (pv as object)
+    throw new McpArgError(`${field}['${k}'] must be a number${nullRemoves ? ' (or null to unset it)' : ''}, got ${describeValue(pv)}${wrapped ? ` — send the value itself, {"${k}": <number>}; animate a param with set_keyframe or set_param_track on effects[<effect_id>].params[${k}]` : ''}`, field)
+  }
+  return out
+}
+
+const staticEffectParams = (params: Record<string, number | null>): Record<string, Animated<number> | null> =>
+  Object.fromEntries(Object.entries(params).map(([k, v]) => [k, v === null ? null : { mode: 'Static' as const, value: v }]))
+
+/** `add_effect`'s `params`, checked against the kind it names: every key is
+ *  one of the kind's and every value inside its range, before the effect is
+ *  added — so the call adds the effect with these values, or nothing. */
+export function parseAddEffectParams(v: unknown, kind: string): Record<string, Animated<number>> | null {
+  if (v === undefined) return null
+  const params = staticEffectParams(parseEffectParamValues(v, 'params', false)) as Record<string, Animated<number>>
+  checkEffectPatchAgainst(kind, { params }, 'params')
+  return params
+}
+
+/** Strict update_effect patch — `{ enabled?, params? }`, at least one, with
+ *  params as plain numbers (`parseEffectParamValues`). Unknown keys and
+ *  malformed values reject; `applyUpdateEffect` would otherwise silently skip
+ *  them. A null `enabled` or `params` means nothing omission does not, so it is
+ *  refused; the one null is a param's, which unsets it. */
 export function parseEffectPatch(v: unknown): EffectPatch {
   const o = parseObj(v, 'patch')
   for (const k of Object.keys(o)) {
     if (k !== 'enabled' && k !== 'params')
-      throw new McpArgError(`invalid patch: unknown key '${k}' — expected { enabled?: boolean, params?: { "<param>": { "mode": "Static", "value": <number> } | null } }`)
+      throw new McpArgError(`invalid patch: unknown key '${k}' — expected { enabled?: boolean, params?: { "<param>": <number> | null } }`, 'patch')
   }
+  if (o.enabled === undefined && o.params === undefined) throw new McpArgError('patch names no field; update_effect writes enabled, params', 'patch')
   const out: EffectPatch = {}
-  if (o.enabled !== undefined && o.enabled !== null) {
-    if (typeof o.enabled !== 'boolean') throw new McpArgError(`invalid patch: enabled must be a boolean`)
+  if (o.enabled !== undefined) {
+    if (typeof o.enabled !== 'boolean') throw new McpArgError(`invalid patch: enabled must be a boolean, got ${describeValue(o.enabled)}`, 'patch.enabled')
     out.enabled = o.enabled
   }
-  if (o.params !== undefined && o.params !== null) {
-    const p = parseObj(o.params, 'patch.params')
-    const params: Record<string, Animated<number> | null> = {}
-    for (const [k, pv] of Object.entries(p)) {
-      if (pv === null) { params[k] = null; continue } // removal, not a malformed track
-      try {
-        if (parseObj(pv, 'effect param').mode === 'Keyframed')
-          throw new McpArgError('update_effect takes Static values only; animate effects with set_keyframe or set_param_track')
-        params[k] = parseAnimatedF64(pv)
-      }
-      catch (e) { throw new McpArgError(`invalid patch: params['${k}']: ${e instanceof McpArgError ? e.mcpMessage : String(e)}`) }
-    }
-    out.params = params
-  }
+  if (o.params !== undefined) out.params = staticEffectParams(parseEffectParamValues(o.params, 'patch.params', true))
   return out
 }
 
@@ -823,30 +885,30 @@ export function toolEmpty(): ToolResultJson { return { content: [] } }
  *  via its own canonicalize() of both sides, so this stays green. */
 export function toolJson(v: unknown): ToolResultJson { return { content: [{ type: 'text', text: JSON.stringify(sortKeys(v)) }] } }
 
-/** get_param_track result shape (NOT the raw Animated serde): Static →
- *  {mode,value}; Keyframed → {mode, extrapolate, keyframes:[{id, t_us
- *  (timeline-absolute = local + t_start), local_t_us (stored base), value, in,
- *  out, continuity, segment, preset_id?}]}. preset_id is the exact-match reverse
- *  lookup of the segment LEAVING the key (this key's segment + out, the next
- *  key's in) against the canonical easing table — present only when that
- *  segment IS a table entry's (a hand-tuned curve carries none, and the last key
- *  has no leaving segment; the field is omitted, never null). Caller wraps in
- *  toolJson (sorted keys, mirrors Rust json!/BTreeMap). */
-export function shapeGetParamTrack<T>(track: Animated<T>, tStartUs: number): unknown {
-  if (track.mode === 'Static') return { mode: 'Static', value: track.value }
+/** get_param_track's answer: `track` in exactly `set_param_track`'s write
+ *  shape — Static `{mode, value}`, or Keyframed `{mode, value: [{t_us
+ *  (timeline-absolute = local + t_start), value, time_fraction?, in, out,
+ *  continuity, segment}], extrapolate}` — so a read-edit-write round trip sends
+ *  it back unchanged. What the write does not take rides beside it, parallel to
+ *  the keys: `keyframe_ids`, `local_t_us` (the stored base) and `preset_ids`, the
+ *  exact-match reverse lookup of the segment LEAVING each key (this key's
+ *  segment + out, the next key's in) against the canonical easing table — null
+ *  for a hand-tuned curve and for the last key. Caller wraps in toolJson. */
+export function shapeGetParamTrack<T>(track: Animated<T>, tStartUs: number): Record<string, unknown> {
+  if (track.mode === 'Static') return { track: { mode: 'Static', value: track.value }, keyframe_ids: [], local_t_us: [], preset_ids: [] }
+  const keys = track.value
   return {
-    mode: 'Keyframed',
-    extrapolate: track.extrapolate,
-    keyframes: track.value.map((k, i) => {
-      const next = track.value[i + 1]
-      const presetId = next === undefined ? undefined : presetIdForSegment(k, next)
-      return {
-        id: k.id, t_us: k.t_us + tStartUs, local_t_us: k.t_us, value: k.value,
+    track: {
+      mode: 'Keyframed', extrapolate: track.extrapolate,
+      value: keys.map((k) => ({
+        t_us: k.t_us + tStartUs, value: k.value,
         ...(k.time_fraction === undefined ? {} : { time_fraction: k.time_fraction }),
         in: k.in, out: k.out, continuity: k.continuity, segment: k.segment,
-        ...(presetId === undefined ? {} : { preset_id: presetId }),
-      }
-    }),
+      })),
+    },
+    keyframe_ids: keys.map((k) => k.id),
+    local_t_us: keys.map((k) => k.t_us),
+    preset_ids: keys.map((k, i) => { const next = keys[i + 1]; return next === undefined ? null : presetIdForSegment(k, next) ?? null }),
   }
 }
 
@@ -868,7 +930,7 @@ const hasLayerSet = (tool: string | undefined): boolean => tool === RIPPLE_TOOL.
 /** The animatable param keys, per kind — what `set_keyframe` and friends may
  *  name. Stated as data here for the `UnknownKeyframeParam` arm, which has no
  *  layer in hand and so lists every kind's set. */
-const KEYFRAME_PARAM_KEYS = `visual kinds (VideoClip, ImageOverlay, Text, Motif, CompositionRef): x, y (or path_progress in Path mode), scale_x, scale_y, rotation_deg, anchor_x, anchor_y, opacity; Text and Color: color; Audio: gain_db, pan; an effect param: effects[<effect_id>].params[<key>] once update_effect has set it`
+const KEYFRAME_PARAM_KEYS = `visual kinds (VideoClip, ImageOverlay, Text, Motif, CompositionRef): x, y (or path_progress in Path mode), scale_x, scale_y, rotation_deg, anchor_x, anchor_y, opacity; Text and Color: color; Audio: gain_db, pan; an effect param: effects[<effect_id>].params[<key>], a key of its kind in effects://catalog (unset, it reads as the catalog default)`
 
 /** CommandError → MCP error JSON. Every variant has an arm: a refusal names the
  *  id or field it could not honour, the read that lists valid ones, and the
@@ -1108,7 +1170,7 @@ function commandErrorArm(e: CommandError, tool?: string): McpToolErrorJson {
     } }
   }
   if (e.error === 'AudioEffectParamStatic') {
-    return { code: 'invalid_params', message: `effect ${e.effect} param '${e.param}' belongs to an audio.* effect, whose params are STATIC ONLY: an audio effect is a whole-clip offline bake, so there is no per-frame value to animate. Send it with update_effect as {"${e.param}": {"mode": "Static", "value": <number>}}; set_keyframe and a Keyframed update_layer_param_track are rejected on it`, data: {
+    return { code: 'invalid_params', message: `effect ${e.effect} param '${e.param}' belongs to an audio.* effect, whose params are STATIC ONLY: an audio effect is a whole-clip offline bake, so there is no per-frame value to animate. Send it with update_effect as {"params": {"${e.param}": <number>}}; set_keyframe and a Keyframed set_param_track are refused on it`, data: {
       error: 'AudioEffectParamStatic', effect: e.effect, param: e.param,
     } }
   }
@@ -1168,7 +1230,7 @@ function commandErrorArm(e: CommandError, tool?: string): McpToolErrorJson {
       // caller that holds it (`server.ts`, `historyLockedRefusal`).
       return { code: 'invalid_request', message: `history is locked: ${e.reason}. undo, redo, jump_to and restore_checkpoint are blocked while the work session that locked it runs; edits still record. Wait for that session to end, or ask the user (the Agent panel's Unlock clears it)`, data: { error: 'HistoryLocked', reason: e.reason, options: [{ action: 'wait_for_session_end' }, { action: 'ask_user' }] } }
     case 'EmptyKeyframeTrack':
-      return { code: 'invalid_params', message: `param '${e.param_key}' on layer ${e.layer} is Keyframed with no keys — a track needs at least one; set_keyframe adds one, clear_keyframes collapses it to Static`, data: { error: 'EmptyKeyframeTrack', layer: e.layer, param_key: e.param_key } }
+      return { code: 'invalid_params', message: `param '${e.param_key}' on layer ${e.layer} is Keyframed with no keys — a track needs at least one; set_keyframe adds one, set_param_track {"mode":"Static","value":v} holds one value`, data: { error: 'EmptyKeyframeTrack', layer: e.layer, param_key: e.param_key } }
     case 'UnknownKeyframeParam':
       return { code: 'invalid_params', message: `'${e.param_key}' is not an animatable param of layer ${e.layer} (its kind decides — project://tracks reports it). Animatable keys: ${KEYFRAME_PARAM_KEYS}. Static text/colour/box fields are update_layer_params`, data: { error: 'UnknownKeyframeParam', layer: e.layer, param_key: e.param_key } }
     case 'EffectNotFound':
@@ -1281,50 +1343,43 @@ export function parseDestTrackOpt(v: unknown): string | null {
   if (v === 'spawn') return 'spawn'
   return parseUuid(v, 'to_track_id')
 }
-const INTERP_SCHEMA = {
-  type: 'object',
-  description: 'Easing: {"kind":"Hold"} | {"kind":"Linear"} | {"kind":"Bezier","p1":[x,y],"p2":[x,y]} | {"kind":"Elastic","dir",amplitude?,period?} | {"kind":"Bounce","dir"}.',
-  properties: {
-    kind: { type: 'string', enum: ['Hold', 'Linear', 'Bezier', 'Elastic', 'Bounce'], description: 'Easing kind of the segment leaving the key.' },
-    p1: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Bezier only: first control point [x, y]; x within [0, 1].' },
-    p2: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Bezier only: second control point [x, y]; x within [0, 1].' },
-    dir: { type: 'string', enum: ['In', 'Out', 'InOut'], description: 'Elastic/Bounce only: easing direction.' },
-    amplitude: { type: 'number', description: `Elastic only: overshoot amplitude, >= 1. Omit for the default ${ELASTIC_DEFAULT_AMPLITUDE}.` },
-    period: { type: 'number', description: `Elastic only: oscillation period, > 0. Omit for the default ${ELASTIC_DEFAULT_PERIOD}.` },
-  },
-  required: ['kind'],
+// The one easing vocabulary: a preset, or a raw kind. `required` is empty —
+// the two forms share no mandatory field; the exactly-one-of rule is
+// parseEasing's. The preset enum derives from the canonical table, so the
+// advertised ids can never drift from what bakes.
+const EASE_PARAM_SCHEMAS = {
+  dir: { type: 'string', enum: ['In', 'Out', 'InOut'], description: 'Elastic/Bounce only: easing direction.' },
+  amplitude: { type: 'number', description: `Elastic only: overshoot amplitude, >= 1. Omit for the default ${ELASTIC_DEFAULT_AMPLITUDE}.` },
+  period: { type: 'number', description: `Elastic only: oscillation period, > 0. Omit for the default ${ELASTIC_DEFAULT_PERIOD}.` },
 }
-// update_keyframe's interp: the raw INTERP_SCHEMA kinds PLUS the preset
-// form. `required` is empty — the two forms share no mandatory field; the
-// exactly-one-of rule is parseEasing's. The preset enum derives from the
-// canonical table, so the advertised ids can never drift from what bakes.
 const EASING_SCHEMA = {
   type: 'object',
-  description: 'Either {"preset":"<id>"} — a canonical named preset, baked to its params — or a raw kind (same forms as set_keyframe interp).',
+  description: 'Easing of the segment leaving the key (on the last key, the one arriving at it): {"preset":"<id>"} or a raw {"kind":...}. Writes this key\'s out/segment and the next key\'s in.',
   properties: {
-    preset: { type: 'string', enum: EASING_PRESETS.map((p) => p.id), description: 'Preset id from the canonical easing table (e.g. "ease_in_out", "ease_out_expo", "ease_in_out_bounce").' },
-    ...INTERP_SCHEMA.properties,
+    preset: { type: 'string', enum: EASING_PRESETS.map((p) => p.id), description: 'Preset id from the canonical easing table (e.g. "ease_in_out", "ease_out_expo"); read back in preset_ids.' },
+    kind: { type: 'string', enum: ['Hold', 'Linear', 'Bezier', 'Elastic', 'Bounce'], description: 'A raw easing kind, instead of a preset.' },
+    p1: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Bezier only: first control point [x, y]; x within [0, 1].' },
+    p2: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Bezier only: second control point [x, y]; x within [0, 1].' },
+    ...EASE_PARAM_SCHEMAS,
   },
   required: [],
 }
 const TANGENT_SCHEMA = {
   type: 'object',
-  description: 'One side of a key: {x, y} in the owning segment\'s unit square (x = fraction of its time span, y of its value span), plus `mode` — "Auto" (solved on every write) or "Free" (authored). `in` is stored un-mirrored.',
+  description: 'One side of a key: {x, y} in the owning segment\'s unit square (x = fraction of its time span, y of its value span), plus `mode` — "Auto" (solved on every write; x/y may be omitted) or "Free" (authored). `in` is stored un-mirrored.',
   properties: {
     x: { type: 'number', description: "Fraction of the segment's time span, 0..1." },
     y: { type: 'number', description: "Fraction of the segment's value span; may overshoot." },
     mode: { type: 'string', enum: ['Auto', 'Free'], description: 'Auto: solved on every write. Free: as authored.' },
   },
-  required: ['x', 'y', 'mode'],
+  required: ['mode'],
 }
 const SEGMENT_SCHEMA = {
   type: 'object',
   description: 'Class of the segment LEAVING the key: Spline (reads the tangents) | Hold | Linear | Elastic (dir, amplitude?, period?) | Bounce (dir).',
   properties: {
     kind: { type: 'string', enum: ['Spline', 'Hold', 'Linear', 'Elastic', 'Bounce'], description: 'Class of the segment leaving the key; only Spline reads the tangents.' },
-    dir: INTERP_SCHEMA.properties.dir,
-    amplitude: INTERP_SCHEMA.properties.amplitude,
-    period: INTERP_SCHEMA.properties.period,
+    ...EASE_PARAM_SCHEMAS,
   },
   required: ['kind'],
 }
@@ -1338,12 +1393,9 @@ const TANGENT_XY_SCHEMA = {
   },
   required: ['x', 'y'],
 }
-const EXTRAPOLATE_SCHEMA = {
-  type: 'string', enum: [...EXTRAPOLATES],
-}
 const EXTRAPOLATION_SCHEMA = {
   type: 'object',
-  description: 'What the track does outside its keys, per side: Hold | Loop | PingPong | Offset | Continue (see set_extrapolation).',
+  description: 'Outside the keys, per side: Hold (end value) | Loop (repeat from the first key) | PingPong | Offset (each cycle adds last − first) | Continue (end velocity). Period = last − first; path_progress takes Hold/Loop/PingPong.',
   properties: {
     before: { type: 'string', enum: [...EXTRAPOLATES], description: 'Before the first key.' },
     after: { type: 'string', enum: [...EXTRAPOLATES], description: 'After the last key.' },
@@ -1355,10 +1407,6 @@ const EXTRAPOLATION_SCHEMA = {
 const TRACK_VALUE_SCHEMA = {
   type: ['number', 'object'],
   description: 'Typed by `param_key`: a number for scalar params (x, y, path_progress, scale_x, scale_y, rotation_deg, anchor_x, anchor_y, opacity, gain_db, pan, effect params), {r,g,b,a} (0..255) for "color". Path mode takes path_progress (a fraction) instead of x/y.',
-}
-const TRACK_VALUE_OPT_SCHEMA = {
-  ...TRACK_VALUE_SCHEMA,
-  description: "The value to hold, typed by `param_key`; omit for the first keyframe's value.",
 }
 /** The track record with its value slot typed per caller. Only the layer-param
  *  union is advertised today: `update_effect` describes its (scalar) params in one
@@ -1376,6 +1424,7 @@ function animTrackSchema(value: Record<string, unknown>, staticTypes: string[], 
           type: 'object',
           properties: {
             t_us: US_SCHEMA('Key time, timeline'), value,
+            easing: { type: 'object', description: 'As set_keyframe\'s `easing`: {"preset":"<id>"} or a raw {"kind":...}; replaces this key\'s out/segment and the next key\'s in.' },
             time_fraction: { type: 'object', description: 'Optional exact sub-microsecond remainder; keeps retimed keys unsnapped.', properties: { num: { type: 'integer', description: '0 <= num < den.' }, den: { type: 'integer', description: 'Positive denominator; reduced fraction.' } }, required: ['num', 'den'], additionalProperties: false },
             in: { ...TANGENT_SCHEMA, description: 'Optional arriving tangent; defaults to identity, Free.' }, out: { ...TANGENT_SCHEMA, description: 'Optional leaving tangent; defaults to identity, Free.' },
             continuity: { type: 'string', enum: ['Smooth', 'Broken'], description: 'Defaults to Broken. Smooth keeps both Free sides at equal slopes on write.' },
@@ -1440,6 +1489,10 @@ const POSITION_SCHEMA = {
     progress: { ...SCALAR_TRACK_SCHEMA, description: 'Path mode: distance along the route, 0..1 (Hold / Loop / PingPong extrapolation only).' },
   },
   required: ['mode'],
+  oneOf: [
+    { properties: { mode: { const: 'XY', description: 'XY needs both tracks.' } }, required: ['mode', 'x', 'y'] },
+    { properties: { mode: { const: 'Path', description: 'Path needs the route and its progress.' } }, required: ['mode', 'path', 'progress'] },
+  ],
 }
 
 /** `param_key`: the animatable params by name, or an effect param by path.
@@ -1472,7 +1525,7 @@ const LAYER_PARAM_FIELD_SCHEMAS: Readonly<Record<string, Record<string, unknown>
     offset_y: { type: 'number', description: 'Vertical offset, composition px.' },
     blur: { type: 'number', minimum: 0, description: 'Blur radius, composition px; 0 is hard-edged.' },
   }, required: ['color', 'offset_x', 'offset_y', 'blur'] },
-  x: { type: 'number', description: "The anchor point's x, composition px: the centre unless anchor_x moves it. Refused in Path mode: set_position / translate_path." },
+  x: { type: 'number', description: "The anchor point's x, composition px: the centre unless anchor_x moves it. Refused in Path mode: translate_position / set_position." },
   y: { type: 'number', description: "The anchor point's y, composition px (refused in Path mode)." },
   opacity: { type: 'number', description: 'Opacity 0..1.' },
   align: { type: 'string', enum: [...TEXT_ALIGN_OPTIONS], description: 'Horizontal alignment inside the box.' },
@@ -1492,6 +1545,7 @@ const LAYER_PARAM_FIELD_SCHEMAS: Readonly<Record<string, Record<string, unknown>
   src_in_us: { type: 'integer', description: 'Source in point, µs — a slip: the window moves and keeps its length, so the span is unchanged. Its end follows; change the length with trim_layer.' },
   scale_x: { type: 'number', description: 'Horizontal scale factor; 1 = native size.' },
   scale_y: { type: 'number', description: 'Vertical scale factor; 1 = native size.' },
+  scale_linked: { type: 'boolean', description: 'After the scale fields: true links the pair, copying the scale_x track onto scale_y (destructive to an animated scale_y); false unlinks.' },
   rotation_deg: { type: 'number', description: 'Rotation, degrees clockwise.' },
   anchor_x: { type: 'number', description: 'Anchor (pivot), fraction of the width: 0 left, 0.5 centre (default), 1 right.' },
   anchor_y: { type: 'number', description: 'Anchor (pivot), fraction of the height: 0 top, 0.5 centre (default), 1 bottom.' },
@@ -1503,7 +1557,7 @@ const LAYER_PARAM_FIELD_SCHEMAS: Readonly<Record<string, Record<string, unknown>
   gain_db: { type: 'number', description: 'Gain, dB; written Static, replacing any keyframes.' },
   pan: { type: 'number', description: 'Stereo pan, -1 (left) .. 1 (right); written Static.' },
   mute: { type: 'boolean', description: 'Silence the clip.' },
-  role: { type: 'string', enum: ['dialogue', 'music', 'sfx', 'voiceover'], description: 'Mixing bus.' },
+  role: { type: 'string', enum: ['dialogue', 'music', 'sfx', 'voiceover'], description: 'Audio role, whose gain and flags fold into the mix.' },
   width: { type: 'integer', description: 'Colour block width, px.' },
   height: { type: 'integer', description: 'Colour block height, px.' },
   blend_mode: { type: 'string', enum: [...BLEND_MODE_OPTIONS], description: 'How the Group composites over what lies below.' },
@@ -1562,7 +1616,7 @@ const LAYER_PARAMS_PATCH_SCHEMA = {
   properties: { kind: { type: 'string', enum: [...LAYER_PARAM_KINDS], description: "The layer's params.kind, as project://tracks reports it." } },
   required: ['kind'],
   oneOf: LAYER_PARAM_KINDS.map((kind) => ({
-    properties: { kind: { const: kind, description: `Fields of a ${kind} layer.` }, ...Object.fromEntries(LAYER_PARAMS_KEYS[kind].map((k) => [k, LAYER_PARAM_FIELD_SCHEMAS[k]])) },
+    properties: { kind: { const: kind, description: `Fields of a ${kind} layer.` }, ...Object.fromEntries(layerPatchKeys(kind).map((k) => [k, LAYER_PARAM_FIELD_SCHEMAS[k]])) },
     required: ['kind'],
     additionalProperties: false,
   })),
@@ -1576,6 +1630,19 @@ export const READ_PROJECT_VIEWS = ['current', 'composition', 'compositions', 'me
 export const SCOPED_PROJECT_VIEWS: ReadonlySet<string> = new Set(['composition', 'tracks', 'markers', 'links', 'transitions'])
 export type ReadProjectView = (typeof READ_PROJECT_VIEWS)[number]
 
+/** Where an argument the keyframe tools do not take belongs instead. */
+const KEYFRAME_ARG_OWNERS: Readonly<Record<string, string>> = {
+  interp: 'the easing is `easing`, a preset or a raw kind',
+  keyframe_id: 'a key by id is update_keyframe / delete_keyframe',
+  value: 'a value by time is set_keyframe; a whole track is set_param_track',
+  track: 'a whole track is set_param_track',
+  extrapolate: 'extrapolation is the Keyframed track\'s `extrapolate` in set_param_track',
+  before: 'extrapolation is the Keyframed track\'s `extrapolate` in set_param_track',
+  after: 'extrapolation is the Keyframed track\'s `extrapolate` in set_param_track',
+  smooth: 'Auto tangents on one key are update_keyframe { smooth: true }',
+  local_t_us: 'key times are t_us, timeline-absolute',
+}
+
 // ── Single-source MCP tool table ─────────────────────────────────────────────
 // Every scalar and patch arg of a table-exec entry is parser-gated in parseArgs:
 // uuid/number/enum/boolean scalars through parseX, patch objects through parseObj
@@ -1583,8 +1650,16 @@ export type ReadProjectView = (typeof READ_PROJECT_VIEWS)[number]
 // The dedicated stubs exist only so the MCP_TOOLS projection stays complete;
 // their behavior lives in actor.ts arms.
 export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
-  {name:'set_position',exec:'table',annotations:ANN_WRITE,description:"Replace a layer's position outright: XY tracks, or a motion path with a scalar `progress` track. Existing XY animation is replaced only by this explicit call. IDs are generated; omit all node/key ids. Keys need only local_t_us/value (Linear, identity tangents); nodes need only point (Line, Corner, zero handles). One undo step.",inputSchema:{type:'object',properties:{layer_id:LAYER_ID_SCHEMA,position:POSITION_SCHEMA},required:['layer_id','position']},parseArgs:(a,idGen)=>({op:'set_position',args:{layer:parseUuid(a.layer_id,'layer_id'),position:parsePosition(a.position,idGen)}})},
-  {name:'translate_path',exec:'table',annotations:ANN_WRITE,description:"Translate the entire spatial path in composition pixels, preserving its geometry and progress animation. Requires Path mode. One undo step.",inputSchema:{type:'object',properties:{layer_id:LAYER_ID_SCHEMA,dx:{type:'number',description:'Shift in x, composition px.'},dy:{type:'number',description:'Shift in y, composition px.'}},required:['layer_id','dx','dy']},parseArgs:a=>({op:'translate_path',args:{layer:parseUuid(a.layer_id,'layer_id'),dx:parseNum(a.dx,'dx'),dy:parseNum(a.dy,'dy')}})},
+  {name:'set_position',exec:'table',annotations:ANN_DESTRUCTIVE,description:"Replace a layer's position outright, motion included: XY tracks, or a motion path with a scalar `progress` track. Keys are timed `local_t_us` (layer-local) and need only local_t_us/value (Linear, identity tangents); nodes need only point (Line, Corner, zero handles); IDs are generated, so omit them. A static `update_layer_params` x/y also flattens XY animation; `translate_position` offsets it instead. One undo step; returns the position as committed.",inputSchema:{type:'object',properties:{layer_id:LAYER_ID_SCHEMA,position:POSITION_SCHEMA},required:['layer_id','position']},parseArgs:(a,idGen)=>({op:'set_position',args:{layer:parseUuid(a.layer_id,'layer_id'),position:parsePosition(a.position,idGen)}})},
+  { name: 'translate_position', exec: 'table', annotations: ANN_WRITE,
+    description: "Offset a layer's position by (dx, dy) composition px as one undo step, keeping its motion: in XY mode every x/y key (or the static value), in Path mode every node (handles and progress kept). Returns the position as committed, as set_position does.",
+    inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, dx: { type: 'number', description: 'Shift in x, composition px.' }, dy: { type: 'number', description: 'Shift in y, composition px.' } }, required: ['layer_id', 'dx', 'dy'] },
+    parseArgs: (a) => {
+      refuseUnknownArgs(a, ['layer_id', 'dx', 'dy'], 'translate_position')
+      const dx = parseNum(a.dx, 'dx'), dy = parseNum(a.dy, 'dy')
+      if (dx === 0 && dy === 0) throw new McpArgError('translate_position by (0, 0) moves nothing — send a non-zero dx or dy', 'dx')
+      return { op: 'translate_position', args: { layer: parseUuid(a.layer_id, 'layer_id'), dx, dy } }
+    } },
   // ── table-exec: tracks ───────────────────────────────────────────────────
   { name: 'add_track', exec: 'table', annotations: ANN_WRITE,
     description: "Add a track and return its record (`track_id`, `index`, `composition_id`). Tracks are kind-agnostic — any layer kind goes on any track. A track disappears when its last layer leaves it (deleted or moved away), so place a layer rather than reserving a track; a track created empty survives until it has been filled and emptied.",
@@ -1669,13 +1744,12 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { op: 'set_layer_flags', args: { layers: asNonEmptyArray(a.layer_ids, 'layer_ids', 'name at least one layer').map((s) => parseUuid(s, 'layer_ids')), enabled, locked } }
     } },
   { name: 'update_layer_params', exec: 'table', annotations: ANN_SET,
-    description: "Patch static fields of one clip. Path mode rejects independent x/y writes. Text has no scale fields; resize its box. Animated fields become Static; use set_param_track for animation. `src_in_us` slips the source window (span kept); retime_layers changes playback rate. Fields are kind-specific (schema variants). Returns the updated clip; locked clips and invalid values are refused.",
+    description: "Patch static fields of one layer; fields are kind-specific (schema variants). A static write replaces that field's animation, x/y included (Path mode refuses x/y: translate_position); set_param_track animates. `scale_linked` links the scale pair; while linked, one axis writes both. Text has no scale fields: resize its box. `src_in_us` slips the source window (span kept); retime_layers changes the rate. Returns the layer with `params`, each patched field as committed (values are quantized); locked layers and invalid values are refused.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, patch: LAYER_PARAMS_PATCH_SCHEMA }, required: ['layer_id', 'patch'] },
-    parseArgs: (a) => ({ op: 'update_layer_params', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch: parseLayerParamsPatch(a.patch) } }) },
-  { name: 'set_scale_linked', exec: 'table', annotations: ANN_SET,
-    description: "Toggle a layer's uniform-scale link (visual kinds only). `linked=true` snaps `scale_y` to a whole-track copy of `scale_x` — keyframes included — in the same commit; `linked=false` clears only the flag. While linked, any write that leaves the two tracks unequal (a single-axis `update_layer_params`, `set_keyframe`, `delete_keyframe`, `set_param_track`) clears the flag in that commit — write both axes identically to keep it.",
-    inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, linked: { type: 'boolean', description: 'true links scale_y to scale_x; false clears the flag only.' } }, required: ['layer_id', 'linked'] },
-    parseArgs: (a) => ({ op: 'set_scale_linked', args: { layer: parseUuid(a.layer_id, 'layer_id'), linked: parseBool(a.linked, 'linked') } }) },
+    parseArgs: (a) => {
+      const { scale_linked, ...patch } = parseLayerParamsPatch(a.patch)
+      return { op: 'update_layer_params', args: { layer: parseUuid(a.layer_id, 'layer_id'), patch, link_fan_out: true, ...(scale_linked === undefined ? {} : { scale_linked }) } }
+    } },
   // The agent's move, in `paste_layers`' vocabulary: `layer_ids[0]` is the seed
   // the landing names, `t_start_us` | `delta_us` say where, `track_id` moves
   // only the seed. `insert` is the ripple move. Strict: a key no arm reads is
@@ -1852,17 +1926,26 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     parseArgs: (a) => ({ op: 'compositions_delete', args: { composition: parseUuid(a.composition_id, 'composition_id') } }) },
   // ── table-exec: effects ──────────────────────────────────────────────────
   { name: 'add_effect', exec: 'table', annotations: ANN_WRITE,
-    description: "Append an effect to a layer's chain (applied last) and return its record (`effect_id`, `kind`, `index`). `kind` is the catalog key. Visual kinds (\"blur\", \"chromakey\", \"brightness\", \"contrast\", \"saturation\", \"sharpen\") go on visual layers: the colour trio take `amount` in [-100, 100] (percent offset, 0 = no change), \"sharpen\" takes `amount` in [0, 100]. Audio kinds are the `audio.*` namespace, for Audio layers ONLY, and their params are STATIC ONLY (`set_keyframe` on one is `AudioEffectParamStatic`); a kind on the wrong layer kind is `EffectKindNotApplicable`. The one audio kind is \"audio.denoise\": `strength` dB [1, 40] (default 12), `margin` dB [0, 20] (default 8), and `profile_in_us`/`profile_out_us`, SOURCE-time bounds of a noise-only span ≥ 250000 µs — it does nothing until both are set. The effect is created with no params: set a static value with `update_effect` first, then (visual only) `set_keyframe` on `effects[<id>].params[<key>]`. `effects://catalog` (or `read_project { view: \"effects\" }`) lists every kind's params, defaults and ranges.",
-    inputSchema: { type: 'object', properties: { kind: { type: 'string', enum: [...EFFECT_KINDS], description: 'Catalog key: visual kinds on visual layers, audio.* on Audio layers.' }, layer_id: LAYER_ID_SCHEMA }, required: ['kind', 'layer_id'] },
-    parseArgs: (a) => ({ op: 'add_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), kind: parseEffectKind(a.kind) } }) },
+    description: "Append an effect to a layer's chain (applied last), with `params` as plain numbers, and return its record (`effect_id`, `kind`, `index`, `params`). An unset param is its catalog default (`effects://catalog`: every kind's params, defaults and ranges), and can be keyframed at once as `effects[<effect_id>].params[<key>]`. Visual kinds (\"blur\", \"chromakey\", \"brightness\", \"contrast\", \"saturation\", \"sharpen\") go on visual layers; the colour trio and sharpen default to 0, no change; chromakey's key colour `keyR`/`keyG`/`keyB` is 0..1, not 0..255. `audio.*` kinds go on Audio layers ONLY, params STATIC ONLY (`AudioEffectParamStatic`); a kind on the wrong layer kind is `EffectKindNotApplicable`. \"audio.denoise\" (`strength`, `margin` dB) does nothing until `profile_in_us`/`profile_out_us`, SOURCE-time bounds of a noise-only span ≥ 250000 µs, are set.",
+    inputSchema: { type: 'object', properties: {
+      kind: { type: 'string', enum: [...EFFECT_KINDS], description: 'Catalog key: visual kinds on visual layers, audio.* on Audio layers.' },
+      layer_id: LAYER_ID_SCHEMA,
+      params: { type: 'object', description: 'Initial values, param key → number, each within its catalog range, e.g. {"amount": -20}. Omitted keys take the catalog default.', additionalProperties: { type: 'number', description: 'A static value.' } },
+    }, required: ['kind', 'layer_id'] },
+    parseArgs: (a) => {
+      refuseUnknownArgs(a, ['layer_id', 'kind', 'params'], 'add_effect')
+      const kind = parseEffectKind(a.kind)
+      const params = parseAddEffectParams(a.params, kind)
+      return { op: 'add_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), kind, ...(params ? { params } : {}) } }
+    } },
   { name: 'update_effect', exec: 'table', annotations: ANN_SET,
-    description: "Update an effect: patch is `{ enabled?, params? }` where params is `{ paramKey: { \"mode\": \"Static\", \"value\": <number> } }` (v1 params are scalar). A `null` param value removes the key (back to unset/default). For keyframed params use set_keyframe with param_key \"effects[<effect_id>].params[<key>]\". An unparseable patch (non-object, unknown key, malformed param value) rejects with invalid_params — it never partially applies.",
+    description: "Update an effect: patch is `{ enabled?, params? }`, at least one; params merge key by key as plain numbers, `null` unsetting a key back to its catalog default. A value written to a keyframed param replaces its keys; animate with set_keyframe on `effects[<effect_id>].params[<key>]`. Unknown keys and out-of-range values are refused, never partially applied. Returns the effect record.",
     inputSchema: { type: 'object', properties: { effect_id: ID_SCHEMA('Effect'), layer_id: LAYER_ID_SCHEMA, patch: {
       type: 'object',
-      description: 'Effect patch. Only fields you set are applied; `params` merges key-by-key, and a null value removes its key.',
+      description: 'Effect patch; only the fields sent are applied.',
       properties: {
         enabled: { type: 'boolean', description: 'false bypasses the effect, true applies it.' },
-        params: { type: 'object', description: 'Param key → AnimTrack, or null to remove the key. v1 effect params are scalar, e.g. {"strength": {"mode":"Static","value":8}}.', additionalProperties: { type: ['object', 'null'], description: 'An AnimTrack — {"mode":"Static","value":<number>} for a v1 param — or null to unset the key. Keyframe a visual effect param through set_keyframe instead.' } },
+        params: { type: 'object', description: 'Param key → number, or null to unset it, e.g. {"strength": 8}.', additionalProperties: { type: ['number', 'null'], description: 'A static value, or null for the catalog default.' } },
       },
     } }, required: ['effect_id', 'layer_id', 'patch'] },
     parseArgs: (a) => ({ op: 'update_effect', args: { layer: parseUuid(a.layer_id, 'layer_id'), effect: parseUuid(a.effect_id, 'effect_id'), patch: parseEffectPatch(a.patch) } }) },
@@ -2019,10 +2102,10 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // the tokens come from the host's taste, which the actor reads through its
   // `tasteTokens` option.
   { name: 'restyle_to_taste', exec: 'dedicated', annotations: ANN_SET,
-    description: "Reset Text and style Motif layers to the project's style tokens (project://taste), one edit: text takes its role's tokens (untagged: `none`), captions the caption tokens, a Motif its token-backed props. Select by exactly one of `layer_ids`, `graphic_role`, `captions: true` (the last two within `composition_id`). `groups`: `look` (face, size, colour, outline, shadow, box), `position`, `motion` (intro/outro); default look + motion (placement kept); returns `{ restyled, unchanged }`",
+    description: "Reset Text and style Motif layers to the project's style tokens (project://taste), one edit: text takes its role's tokens (untagged: `none`), captions the caption tokens, a Motif its token-backed props. Select by exactly one of `layer_ids`, `graphic_role`, `captions: true` (the last two within `composition_id`). `groups`: `look` (face, size, colour, outline, shadow, box), `position`, `motion` (intro/outro); default look + motion (placement kept); `position` moves Text only. Returns `{ restyled, unchanged }`.",
     inputSchema: { type: 'object', properties: {
-      layer_ids: { type: 'array', minItems: 1, items: { type: 'string' }, description: 'Text layers to restyle.' },
-      graphic_role: { type: 'string', description: 'Every Text layer with this role.' },
+      layer_ids: { type: 'array', minItems: 1, items: { type: 'string' }, description: 'Text or Motif layers to restyle.' },
+      graphic_role: { type: ['string', 'null'], description: 'Every Text or Motif layer with this role; null selects the untagged ones.' },
       captions: { type: 'boolean', description: 'Every caption.' },
       composition_id: { type: 'string', description: "A Group's composition; omit for the root." },
       groups: { type: 'array', minItems: 1, items: { type: 'string', enum: [...RESTYLE_GROUPS] }, description: 'Default look, motion.' },
@@ -2068,11 +2151,11 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // ── table-exec: audio roles ──────────────────────────────────────────────
   { name: 'set_role_gain', exec: 'table', annotations: ANN_SET,
     description: "Set an audio role's mix gain (dB). role ∈ {dialogue,music,sfx,voiceover}. Recorded (undoable). Folds into every layer of that role at mix time.",
-    inputSchema: { type: 'object', properties: { gain_db: { type: 'number', description: 'Bus gain, dB; 0 = unity.' }, role: { type: 'string', enum: ['dialogue', 'music', 'sfx', 'voiceover'], description: 'The mixing bus.' } }, required: ['gain_db', 'role'] },
+    inputSchema: { type: 'object', properties: { gain_db: { type: 'number', description: 'Role gain, dB; 0 = unity.' }, role: { type: 'string', enum: ['dialogue', 'music', 'sfx', 'voiceover'], description: 'The audio role.' } }, required: ['gain_db', 'role'] },
     parseArgs: (a) => ({ op: 'set_role_gain', args: { role: parseRole(a.role), gain_db: parseNum(a.gain_db, 'gain_db') } }) },
   { name: 'set_role_flags', exec: 'table', annotations: ANN_SET,
     description: "Mute/solo an audio role; omit one flag to leave it alone, and name at least one. role ∈ {dialogue,music,sfx,voiceover}. Mute wins over solo; any solo silences non-soloed roles. Gates preview AND export. Unrecorded (undo does not revert it) and not in the review diff — restore the flags before handing back. A mix change the user reviews is `set_role_gain`.",
-    inputSchema: { type: 'object', properties: { role: { type: 'string', enum: ['dialogue', 'music', 'sfx', 'voiceover'], description: 'The mixing bus.' }, muted: { type: 'boolean', description: 'Silence the bus. Omitted leaves it alone.' }, solo: { type: 'boolean', description: 'Play this bus alone. Omitted leaves it alone.' } }, required: ['role'] },
+    inputSchema: { type: 'object', properties: { role: { type: 'string', enum: ['dialogue', 'music', 'sfx', 'voiceover'], description: 'The audio role.' }, muted: { type: 'boolean', description: 'Silence the role. Omitted leaves it alone.' }, solo: { type: 'boolean', description: 'Play this role alone. Omitted leaves it alone.' } }, required: ['role'] },
     parseArgs: (a) => {
       const muted = parseBoolTriState(a.muted, 'muted')
       const solo = parseBoolTriState(a.solo, 'solo')
@@ -2169,24 +2252,30 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       anchor_layer_id: a.anchor_layer_id != null ? parseUuid(a.anchor_layer_id, 'anchor_layer_id') : null,
       composition_id: parseCompositionIdOpt(a.composition_id) }) },
   { name: 'set_keyframe', exec: 'dedicated', annotations: ANN_SET,
-    description: "Insert or update a keyframe on a layer param; `t_us` is timeline-absolute. A Static track is lifted to Keyframed; a key on the snapped frame is updated in place, id kept. Returns the key (`keyframe_id`, `t_us`). `value` is typed by `param_key`: a number for scalars, `{r,g,b,a}` (0..255) for \"color\"; an effect param must sit in its catalogued range (`effects://catalog`). `interp` eases the segment LEAVING this key (Hold | Linear | Bezier {p1,p2} | Elastic | Bounce); omitted, it inherits the preceding segment's. A Bezier on the LAST key is refused — its p2 lands on the next key, so add that key first. One side, the continuity or a preset: `update_keyframe`; Auto tangents: `smooth_keyframes`.",
-    inputSchema: { type: 'object', properties: { interp: INTERP_SCHEMA, layer_id: LAYER_ID_SCHEMA, param_key: PARAM_KEY_SCHEMA, t_us: US_SCHEMA('Key time, timeline-absolute'), value: TRACK_VALUE_SCHEMA }, required: ['layer_id', 'param_key', 't_us', 'value'] },
+    description: "Insert or update one key on a layer param by time (`t_us`, timeline-absolute), snapped to the frame first: a key on that frame is updated in place, id kept. On a Static track the first key replaces the static value, which is not kept — key the start value too, or use set_param_track. `value` is typed by `param_key`: a number, or {r,g,b,a} (0..255) for \"color\"; an effect param needs no prior write and must sit in its catalog range. `easing` eases the segment leaving the key, or on the last key the one arriving at it; omitted, a new key inherits the easing of the segment it splits. Returns the key (`keyframe_id`, `t_us`, `local_t_us`). Sides, continuity, Auto tangents: update_keyframe.",
+    inputSchema: { type: 'object', properties: { easing: EASING_SCHEMA, layer_id: LAYER_ID_SCHEMA, param_key: PARAM_KEY_SCHEMA, t_us: US_SCHEMA('Key time, timeline-absolute'), value: TRACK_VALUE_SCHEMA }, required: ['layer_id', 'param_key', 't_us', 'value'] },
     parseDedicated: (a) => {
+      refuseUnknownArgs(a, ['layer_id', 'param_key', 't_us', 'value', 'easing'], 'set_keyframe', KEYFRAME_ARG_OWNERS)
       const paramKey = parseStr(a.param_key, 'param_key')
       return { layer: parseUuid(a.layer_id, 'layer_id'), param_key: paramKey,
-        t_us: parseNum(a.t_us, 't_us'), value: parseTrackValue(a.value, paramKey, 'value'), interp: parseInterpOpt(a.interp) }
+        t_us: parseNum(a.t_us, 't_us'), value: parseTrackValue(a.value, paramKey, 'value'), easing: a.easing === undefined ? null : parseEasing(a.easing) }
     } },
   { name: 'get_param_track', exec: 'dedicated', annotations: ANN_READ,
-    description: "Read a layer param's animation track — the record to inspect before editing keys. Returns {\"mode\":\"Static\",\"value\":v} or {\"mode\":\"Keyframed\",\"extrapolate\":{before, after},\"keyframes\":[{id, t_us, local_t_us, time_fraction?, value, in, out, continuity, segment, preset_id?}]}. `t_us` is timeline-absolute, `local_t_us` layer-local; `value` is typed by `param_key`. Per key, `in`/`out` are the arriving/leaving tangents {x, y, mode} in the segment's unit square (\"Auto\" = solved on write, \"Free\" = authored), `continuity` is \"Smooth\" | \"Broken\", `segment` is the class of the segment leaving the key (\"Spline\" | \"Hold\" | \"Linear\" | \"Elastic\" | \"Bounce\"; only Spline reads tangents), and `preset_id` names the easing preset the leaving segment exactly matches (absent on a hand-tuned curve and the last key). Position params are mode-specific: x/y in XY mode, path_progress in Path mode (a fraction, not a percentage).",
+    description: "Read a layer param's animation. `track` is exactly set_param_track's shape, to edit and send back as is: {\"mode\":\"Static\",\"value\":v} or {\"mode\":\"Keyframed\",\"value\":[{t_us, value, time_fraction?, in, out, continuity, segment}],\"extrapolate\"}, `t_us` timeline-absolute. Beside it, parallel to the keys: `keyframe_ids` (for update_keyframe / delete_keyframe), `local_t_us` (layer-local) and `preset_ids` (the easing preset the segment leaving each key matches, else null). `in`/`out` are tangents {x, y, mode} (\"Auto\" solved on write, \"Free\" authored); `segment` is {kind, …}, the class of the segment leaving the key — only Spline reads the tangents. An unset effect param reads as its catalog default. Position params are mode-specific: x/y in XY mode, path_progress in Path mode (a fraction).",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, param_key: PARAM_KEY_SCHEMA }, required: ['layer_id', 'param_key'] },
-    parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key') }) },
+    parseDedicated: (a) => {
+      refuseUnknownArgs(a, ['layer_id', 'param_key'], 'get_param_track', KEYFRAME_ARG_OWNERS)
+      return { layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key') }
+    } },
   { name: 'delete_keyframe', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
-    description: "Remove a keyframe by id from a layer param. Get the id from get_param_track. When it was the last key, the track collapses to Static holding that key's value.",
+    description: "Remove a keyframe by id from a layer param (`keyframe_ids` in get_param_track). When it was the last key, the track collapses to Static holding that key's value. Returns the track's `mode` and `keyframe_ids`, or the static `value`.",
     inputSchema: { type: 'object', properties: { keyframe_id: ID_SCHEMA('Keyframe'), layer_id: LAYER_ID_SCHEMA, param_key: PARAM_KEY_SCHEMA }, required: ['keyframe_id', 'layer_id', 'param_key'] },
-    parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), keyframe_id: parseUuid(a.keyframe_id, 'keyframe_id'),
-      param_key: parseStr(a.param_key, 'param_key') }) },
+    parseDedicated: (a) => {
+      refuseUnknownArgs(a, ['layer_id', 'param_key', 'keyframe_id'], 'delete_keyframe', KEYFRAME_ARG_OWNERS)
+      return { layer: parseUuid(a.layer_id, 'layer_id'), keyframe_id: parseUuid(a.keyframe_id, 'keyframe_id'), param_key: parseStr(a.param_key, 'param_key') }
+    } },
   { name: 'update_keyframe', exec: 'dedicated', annotations: ANN_SET,
-    description: "Change one keyframe in one commit — any of: `t_us` (move it, timeline-absolute, snapped to the frame; the track re-sorts; a frame another key holds is refused, `KeyframeOccupied`), `easing` (the segment LEAVING the key: {\"preset\":\"<id>\"} from the canonical table, read back as `preset_id`, or a raw kind {\"kind\":\"Hold\"} | {\"kind\":\"Linear\"} | {\"kind\":\"Bezier\",\"p1\":[x,y],\"p2\":[x,y]} | {\"kind\":\"Elastic\",\"dir\",amplitude?,period?} | {\"kind\":\"Bounce\",\"dir\"}; writes this key's out tangent and the next key's in tangent, both Free), `in` / `out` (one side's tangent {x, y}, stored Free — x within [0, 1], y may overshoot — its segment becoming Spline; a side written on an Auto key frees the whole key), `continuity` (\"Smooth\" re-derives in from out, \"Broken\" changes no number). At least one; applied in that order. Auto tangents on one or every key: `smooth_keyframes`.",
+    description: "Change one keyframe by id in one commit — any of: `t_us` (move it, timeline-absolute, snapped to the frame; the track re-sorts; a frame another key holds is refused, `KeyframeOccupied`), `easing` (as set_keyframe's: the segment leaving the key, or on the last key the one arriving at it; read back in preset_ids), `in` / `out` (one side's tangent {x, y}, stored Free — x within [0, 1], y may overshoot — its segment becoming Spline; a side written on an Auto key frees the whole key), `continuity` (\"Smooth\" re-derives in from out, \"Broken\" changes no number), `smooth: true` (both sides Auto, solved on write and kept smooth as neighbours move; the adjacent segments become Spline). At least one; applied in that order, `smooth` alone or with `t_us`. Returns the key.",
     inputSchema: { type: 'object', properties: {
       keyframe_id: ID_SCHEMA('Keyframe'),
       layer_id: LAYER_ID_SCHEMA,
@@ -2196,56 +2285,41 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       in: TANGENT_XY_SCHEMA,
       out: TANGENT_XY_SCHEMA,
       continuity: { type: 'string', enum: ['Smooth', 'Broken'], description: 'Smooth keeps the two sides at one slope (re-derived from `out`); Broken lets them differ.' },
+      smooth: { type: 'boolean', const: true, description: 'Auto tangents on both sides, Smooth continuity. Only true; a side written later frees the key.' },
     }, required: ['keyframe_id', 'layer_id', 'param_key'] },
     parseDedicated: (a) => {
+      refuseUnknownArgs(a, ['layer_id', 'param_key', 'keyframe_id', 't_us', 'easing', 'in', 'out', 'continuity', 'smooth'], 'update_keyframe', KEYFRAME_ARG_OWNERS)
+      const opt = <T>(k: string, f: (v: unknown) => T): T | null => {
+        if (a[k] === null) throw new McpArgError(`update_keyframe: ${k} is null, which is not a value — omit it to leave the key's ${k} alone`, k)
+        return a[k] === undefined ? null : f(a[k])
+      }
+      const smooth = opt('smooth', (v) => {
+        if (v !== true) throw new McpArgError(`smooth takes only true (Auto tangents); a key leaves Auto when a side is written — send in or out`, 'smooth')
+        return true
+      })
       const p = {
         layer: parseUuid(a.layer_id, 'layer_id'), keyframe_id: parseUuid(a.keyframe_id, 'keyframe_id'), param_key: parseStr(a.param_key, 'param_key'),
-        t_us: parseNumOpt(a.t_us, 't_us') ?? null,
-        easing: a.easing === undefined || a.easing === null ? null : parseEasing(a.easing),
-        in: a.in === undefined || a.in === null ? null : parseTangentXy(a.in, 'in'),
-        out: a.out === undefined || a.out === null ? null : parseTangentXy(a.out, 'out'),
-        continuity: a.continuity === undefined || a.continuity === null ? null : parseContinuity(a.continuity),
+        t_us: opt('t_us', (v) => parseNum(v, 't_us')),
+        easing: opt('easing', (v) => parseEasing(v)),
+        in: opt('in', (v) => parseTangentXy(v, 'in')),
+        out: opt('out', (v) => parseTangentXy(v, 'out')),
+        continuity: opt('continuity', (v) => parseContinuity(v)),
+        smooth: smooth ?? false,
       }
-      if (p.t_us === null && p.easing === null && p.in === null && p.out === null && p.continuity === null)
-        throw new McpArgError(`update_keyframe needs at least one of t_us, easing, in, out, continuity — nothing to change`)
+      const shaping = (['easing', 'in', 'out', 'continuity'] as const).filter((k) => p[k] !== null)
+      if (p.smooth && shaping.length > 0)
+        throw new McpArgError(`update_keyframe: smooth sets both sides Auto, which ${shaping.join(', ')} would overwrite — send smooth alone (or with t_us)`, 'smooth')
+      if (p.t_us === null && shaping.length === 0 && !p.smooth)
+        throw new McpArgError(`update_keyframe needs at least one of t_us, easing, in, out, continuity, smooth — nothing to change`)
       return p
     } },
-  { name: 'smooth_keyframes', exec: 'dedicated', annotations: ANN_SET,
-    description: "Set Auto tangents (clamped monotone, solved on write and kept smooth as neighbours move) on one key, or every key when `keyframe_id` is omitted. Both sides of each key go Auto with Smooth continuity, and the adjacent segments become Spline. get_param_track reads the solved coordinates back with mode \"Auto\".",
-    inputSchema: { type: 'object', properties: { keyframe_id: { type: 'string', description: 'One key to smooth; omit for every key of the track.' }, layer_id: LAYER_ID_SCHEMA, param_key: PARAM_KEY_SCHEMA }, required: ['layer_id', 'param_key'] },
-    parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key'),
-      keyframe_id: a.keyframe_id != null ? parseUuid(a.keyframe_id, 'keyframe_id') : null }) },
-  { name: 'clear_keyframes', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
-    description: "Collapse a param's animation back to a single Static value. `value` (optional) is the value to hold, typed by `param_key` — a number, or {r,g,b,a} (integers 0..255) for \"color\"; when omitted, defaults to the first keyframe's value. No-op on an already-Static track.",
-    inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, param_key: PARAM_KEY_SCHEMA, value: TRACK_VALUE_OPT_SCHEMA }, required: ['layer_id', 'param_key'] },
-    parseDedicated: (a) => {
-      const paramKey = parseStr(a.param_key, 'param_key')
-      return { layer: parseUuid(a.layer_id, 'layer_id'), param_key: paramKey, value: parseTrackValueOpt(a.value, paramKey, 'value') }
-    } },
-  { name: 'set_param_track', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Replace a whole animation track in one undo step. Static: {mode:'Static',value:v}. Keyframed: {mode:'Keyframed',value:[{t_us,value,...}],extrapolate?}. Key times are timeline-absolute; retain time_fraction on retimed keys. IDs are generated; omit id (including on copied read records). Keys default to Linear, identity Free tangents and Broken continuity; optional in/out/segment/continuity author custom curves. Extrapolate defaults to Hold/Hold. Auto/Smooth tangents are solved on write. Returns the committed keys with generated IDs and snapped times. For individual changes use set_keyframe/update_keyframe.",
+  { name: 'set_param_track', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
+    description: "Replace a whole param track in one undo step, discarding its keys: {\"mode\":\"Static\",\"value\":v}, or {\"mode\":\"Keyframed\",\"value\":[keys],\"extrapolate\"?} (Hold/Hold when omitted). A key needs only {t_us (timeline-absolute), value}; `easing` (as set_keyframe's) or in/out/segment/continuity shape the curve, else Linear. get_param_track's `track` is this shape and round-trips as is; IDs are generated, so omit them. Two keys snapping onto one frame are refused, naming both. A Text layer's static scale stays 1 (ADR 0049). Returns the committed keys `{keyframe_id, t_us, value}` and `extrapolate`, or the static `value`.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, param_key: PARAM_KEY_SCHEMA, track: ANIM_TRACK_SCHEMA }, required: ['layer_id', 'param_key', 'track'] },
     parseDedicated: (a, idGen) => {
+      refuseUnknownArgs(a, ['layer_id', 'param_key', 'track'], 'set_param_track', KEYFRAME_ARG_OWNERS)
       const paramKey = parseStr(a.param_key, 'param_key')
       return { layer: parseUuid(a.layer_id, 'layer_id'), param_key: paramKey, track: parseAnimatedTrack(a.track, paramKey, idGen) }
-    } },
-  { name: 'set_extrapolation', exec: 'dedicated', annotations: ANN_SET,
-    description: "Set what a keyframed track does outside its keys: `before` the first and/or `after` the last (at least one; the other keeps its value). \"Hold\" (the end value, default), \"Loop\" (repeat from the first key — a visible jump when first ≠ last), \"PingPong\" (alternate cycles run backwards), \"Offset\" (each cycle adds the last-minus-first delta), \"Continue\" (carry the last segment's end velocity on as a line). The period is last.t − first.t; a single-key track never extrapolates. Refused on a Static track. For path_progress, only Hold / Loop / PingPong are supported. Reads back as `extrapolate` on `get_param_track`.",
-    inputSchema: { type: 'object', properties: {
-      after: { ...EXTRAPOLATE_SCHEMA, description: 'After the last key; modes as described by this tool.' },
-      before: { ...EXTRAPOLATE_SCHEMA, description: 'Before the first key; modes as described by this tool.' },
-      layer_id: LAYER_ID_SCHEMA,
-      param_key: PARAM_KEY_SCHEMA,
-    }, required: ['layer_id', 'param_key'] },
-    parseDedicated: (a) => {
-      const p = {
-        layer: parseUuid(a.layer_id, 'layer_id'), param_key: parseStr(a.param_key, 'param_key'),
-        before: a.before === undefined || a.before === null ? null : parseExtrapolate(a.before, 'before'),
-        after: a.after === undefined || a.after === null ? null : parseExtrapolate(a.after, 'after'),
-      }
-      if (p.before === null && p.after === null)
-        throw new McpArgError(`set_extrapolation needs at least one of before, after (each ${EXTRAPOLATE_OPTIONS}) — nothing to write`)
-      return p
     } },
   { name: 'create_checkpoint', exec: 'dedicated', annotations: ANN_WRITE,
     description: "Create a named checkpoint of the current state and return `{ checkpoint_id, label }`. It lasts for this project opening only: opening another project or quitting drops it. It survives later commits (unlike the redo tail); `project://history` lists checkpoints and the agent panel shows each with a Restore button. `begin_agent_session` already makes one. Unrecorded.",

@@ -188,7 +188,7 @@ describe('update_effect — params are the kind\'s, inside its range', () => {
   it('an unknown param key is refused naming the kind\'s params, and nothing is stored', () => {
     const a = freshActor()
     const { layerId, effectId } = blurred(a)
-    const msg = refusal(call(a, 'update_effect', { layer_id: layerId, effect_id: effectId, patch: { params: { wobble: { mode: 'Static', value: 1 } } } }))
+    const msg = refusal(call(a, 'update_effect', { layer_id: layerId, effect_id: effectId, patch: { params: { wobble: 1 } } }))
     expect(msg).toContain("'wobble'")
     expect(msg).toContain('strength')
     expect(layerOf(a, layerId).effects[0].params).toEqual({})
@@ -197,15 +197,15 @@ describe('update_effect — params are the kind\'s, inside its range', () => {
   it('a value outside the range is refused naming the bound', () => {
     const a = freshActor()
     const { layerId, effectId } = blurred(a)
-    const msg = refusal(call(a, 'update_effect', { layer_id: layerId, effect_id: effectId, patch: { params: { strength: { mode: 'Static', value: 500 } } } }))
+    const msg = refusal(call(a, 'update_effect', { layer_id: layerId, effect_id: effectId, patch: { params: { strength: 500 } } }))
     expect(msg).toContain('[0, 100]')
     expect(layerOf(a, layerId).effects[0].params).toEqual({})
   })
 
-  it('a keyframed value outside the range is refused too; an in-range write and a removal land', () => {
+  it('an in-range write and a removal land', () => {
     const a = freshActor()
     const { layerId, effectId } = blurred(a)
-    ok(call(a, 'update_effect', { layer_id: layerId, effect_id: effectId, patch: { params: { strength: { mode: 'Static', value: 12 } } } }))
+    ok(call(a, 'update_effect', { layer_id: layerId, effect_id: effectId, patch: { params: { strength: 12 } } }))
     expect(layerOf(a, layerId).effects[0].params.strength).toEqual({ mode: 'Static', value: 12 })
     ok(call(a, 'update_effect', { layer_id: layerId, effect_id: effectId, patch: { params: { strength: null } } }))
     expect(layerOf(a, layerId).effects[0].params).toEqual({})
@@ -219,12 +219,11 @@ describe('update_effect — params are the kind\'s, inside its range', () => {
 })
 
 describe('keyframe writers — one range, one easing rule', () => {
-  /** A title with a blur whose `strength` is already Static, which is what makes
-   *  an effect param keyframable at all. */
+  /** A title with a blur whose `strength` was never written: it reads as its
+   *  catalog default, and is keyframable as it stands. */
   function blurredTitle(a: Actor): { layer: string; key: string } {
     const layer = (ok(call(a, 'add_layers', { layers: [{ track_id: aRollId(a), t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'text', content: 'Title' } }] })).layers as Array<{ layer_id: string }>)[0]!.layer_id as string
     const effect = ok(call(a, 'add_effect', { layer_id: layer, kind: 'blur' })).effect_id as string
-    ok(call(a, 'update_effect', { layer_id: layer, effect_id: effect, patch: { params: { strength: { mode: 'Static', value: 8 } } } }))
     return { layer, key: `effects[${effect}].params[strength]` }
   }
 
@@ -239,21 +238,24 @@ describe('keyframe writers — one range, one easing rule', () => {
     ok(call(a, 'set_keyframe', { layer_id: layer, param_key: key, t_us: 1_000_000, value: 60 }))
     // The documented round trip — read the track, edit it, send it back — is
     // held to the same range as the key-at-a-time writer.
-    const track = ok(call(a, 'get_param_track', { layer_id: layer, param_key: key }))
-    const edited = { mode: 'Keyframed', value: (track.keyframes as Array<Record<string, unknown>>).map(({ id: _id, local_t_us: _local, preset_id: _preset, ...k }, i) => (i === 1 ? { ...k, value: 500 } : k)) }
+    const { track } = ok(call(a, 'get_param_track', { layer_id: layer, param_key: key })) as { track: { value: Array<Record<string, unknown>> } }
+    const edited = { ...track, value: track.value.map((k, i) => (i === 1 ? { ...k, value: 500 } : k)) }
     expect(refusal(call(a, 'set_param_track', { layer_id: layer, param_key: key, track: edited }))).toContain('[0, 100]')
   })
 
-  it('a Bezier on the last key is refused, and lands once a later key exists', () => {
-    // Its p2 is stored on the NEXT key; with no next key the arriving side is
-    // dropped and the call would still report success.
+  it('a Bezier on a lone key is refused (no segment); authored in time order, each key eases the move into it', () => {
+    // Its p2 is stored on the key the segment arrives at; a lone key has no
+    // segment at all, so the call would drop it under a success report.
     const a = freshActor()
     const layer = (ok(call(a, 'add_layers', { layers: [{ track_id: aRollId(a), t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'text', content: 'Title' } }] })).layers as Array<{ layer_id: string }>)[0]!.layer_id as string
     const bezier = { kind: 'Bezier', p1: [0.4, 0], p2: [0.2, 0.9] }
-    expect(refusal(call(a, 'set_keyframe', { layer_id: layer, param_key: 'opacity', t_us: 0, value: 1, interp: bezier }))).toContain('p2')
+    expect(refusal(call(a, 'set_keyframe', { layer_id: layer, param_key: 'opacity', t_us: 0, value: 1, easing: bezier }))).toMatch(/one key, which has no segment to ease/)
+    expect(refusal(call(a, 'set_keyframe', { layer_id: layer, param_key: 'opacity', t_us: 0, value: 1, interp: bezier }))).toMatch(/takes no `interp` — the easing is `easing`/)
     ok(call(a, 'set_keyframe', { layer_id: layer, param_key: 'opacity', t_us: 0, value: 1 }))
-    ok(call(a, 'set_keyframe', { layer_id: layer, param_key: 'opacity', t_us: 1_000_000, value: 0 }))
-    ok(call(a, 'set_keyframe', { layer_id: layer, param_key: 'opacity', t_us: 0, value: 1, interp: bezier }))
+    ok(call(a, 'set_keyframe', { layer_id: layer, param_key: 'opacity', t_us: 1_000_000, value: 0, easing: bezier }))
+    const read = ok(call(a, 'get_param_track', { layer_id: layer, param_key: 'opacity' })) as { track: { value: Array<{ out: unknown; in: unknown }> } }
+    expect(read.track.value[0]!.out).toEqual({ x: 0.4, y: 0, mode: 'Free' })
+    expect(read.track.value[1]!.in).toEqual({ x: 0.2, y: 0.9, mode: 'Free' })
   })
 })
 

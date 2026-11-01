@@ -1,6 +1,6 @@
 // apps/desktop/src/main/state/__tests__/mcp.transform-statics.test.ts
 // Static rotation and pivot through update_layer_params — one patch, not a
-// set_keyframe followed by clear_keyframes.
+// set_keyframe followed by a Static set_param_track.
 import { describe, it, expect } from 'vitest'
 import { createActor, type ActorHandle } from '../actor'
 import { seededGen } from '../ids'

@@ -398,7 +398,8 @@ carry a stable `id`, relative handles, the outgoing `segment` (Line | Cubic) and
 solver stores resolved handles for every reader. `progress` 0–1 traverses by
 distance and is keyframed as `path_progress`; independent `x`/`y` writes are
 refused in Path mode. `set_position` replaces the record atomically,
-`translate_path` moves all nodes, and a split keeps the whole route and progress
+a path translation moves all nodes (UI `translate_path`; MCP
+`translate_position` offsets either mode), and a split keeps the whole route and progress
 on both halves. Conversion previews never write state; applying one is a single
 record replacement.
 
@@ -407,8 +408,9 @@ are structural twins (same mode and, if keyframed, the same `(t_us, value, in,
 out, continuity, segment)` sequence and `extrapolate`; key ids differ). Enforced
 on **results** (`mutations/scaleLink.ts`): after any write touching a linked
 layer's scale, a twin check in the same commit clears the flag on divergence.
-`set_scale_linked { linked: true }` copies `scale_x` over `scale_y` with fresh
-ids. The load pass backfills a missing flag from the twin check and repairs a
+Linking (UI `set_scale_linked`, MCP `update_layer_params { scale_linked }`)
+copies `scale_x` over `scale_y` with fresh ids; while linked, both surfaces fan
+a one-axis write out to the pair, so the twins stay twins. The load pass backfills a missing flag from the twin check and repairs a
 lying one. Rust carries it for wire fidelity only.
 
 ## Animated values
@@ -639,8 +641,7 @@ Command contracts not stated elsewhere:
 | `replace_state(snapshot)` | project open / new; full validation; resets history |
 
 Agent keyframe tools (`get_param_track`, `set_keyframe`, `update_keyframe`,
-`delete_keyframe`, `smooth_keyframes`, `set_extrapolation`, `clear_keyframes`,
-`set_param_track`) read the track, apply a pure transform, and write the whole
+`delete_keyframe`, `set_param_track`) read the track, apply a pure transform, and write the whole
 track back. Their times are timeline-absolute, converted to layer-local at the
 boundary. The transform math is shared with the timeline UI and locked Rust↔TS by
 a golden fixture.

@@ -249,8 +249,9 @@ const CASES: Record<string, Case> = {
     to_track_id: val((i) => i.groupTrack2),
   } },
   rename_composition: { base: (i) => ({ composition_id: i.groupComp }), values: { label: lit('Renamed') } },
+  add_effect: { base: (i) => ({ layer_id: i.vl, kind: 'blur' }), values: { params: lit({ strength: 20 }) } },
   update_effect: { base: (i) => ({ layer_id: i.vl, effect_id: i.effect, patch: {} }), values: {
-    'patch.enabled': lit(false), 'patch.params': lit({ strength: { mode: 'Static', value: 7 } }),
+    'patch.enabled': lit(false), 'patch.params': lit({ strength: 7 }),
   } },
   add_transition: { base: (i) => ({ from_layer_id: i.c, to_layer_id: i.c2, duration_us: 500_000 }), values: {
     kind: lit('Wipe', { with: () => ({ direction: 'left', placement: 'extend' }) }),
@@ -292,14 +293,12 @@ const CASES: Record<string, Case> = {
     composition_id: val((i) => i.groupComp, { with: () => ({ t_us: S }) }),
   } },
   begin_agent_session: { base: () => ({ reason: 'cutting' }), values: { lock: lit(false) } },
-  set_keyframe: { base: (i) => ({ layer_id: i.x, param_key: 'opacity', t_us: 500_000, value: 0.25 }), values: { interp: lit({ kind: 'Hold' }) } },
+  set_keyframe: { base: (i) => ({ layer_id: i.x, param_key: 'opacity', t_us: 500_000, value: 0.25 }), values: { easing: lit({ preset: 'ease_in' }) } },
   update_keyframe: { base: (i) => ({ layer_id: i.x, param_key: 'opacity', keyframe_id: i.k0 }), values: {
     t_us: lit(500_000), easing: lit({ kind: 'Hold' }), out: lit({ x: 0.3, y: 0.1 }), continuity: lit('Smooth'),
     in: val(() => ({ x: 0.6, y: 0.9 }), { with: (i) => ({ keyframe_id: i.k1 }) }),
+    smooth: lit(true),
   } },
-  smooth_keyframes: { base: (i) => ({ layer_id: i.x, param_key: 'opacity' }), values: { keyframe_id: val((i) => i.k0) } },
-  clear_keyframes: { base: (i) => ({ layer_id: i.x, param_key: 'opacity' }), values: { value: lit(0.3) } },
-  set_extrapolation: { base: (i) => ({ layer_id: i.x, param_key: 'opacity' }), values: { before: lit('Loop'), after: lit('PingPong') } },
   update_tack: { base: (i) => ({ tack_id: i.tack, patch: {} }), values: {
     'patch.label': lit('other'), 'patch.body': lit('why'), 'patch.kind': lit('issue'), 'patch.status': lit('resolved'),
   } },
@@ -462,6 +461,26 @@ describe('the audit probes refuse or change state', () => {
     expect(r.isError).toBe(true)
     expect(r.structuredContent).toMatchObject({ code: 'invalid_params', error: 'KeyframeOccupied', keyframe_id: k2 })
     expect(text(r)).toContain(k2)
+    expect(fingerprint(w)).toBe(before)
+  })
+
+  it('set_param_track with two keys that snap onto one frame refuses, naming both; nothing is written', async () => {
+    const w = await world()
+    const before = fingerprint(w)
+    const r = await call(w, 'set_param_track', { layer_id: w.ids.x, param_key: 'opacity', track: { mode: 'Keyframed', value: [{ t_us: 0, value: 1 }, { t_us: S, value: 0.5 }, { t_us: S + 10, value: 0 }] } })
+    expect(r.isError).toBe(true)
+    expect(r.structuredContent).toMatchObject({ code: 'invalid_params', error: 'KeyframesShareFrame', keys: [1, 2], t_us: S })
+    expect(text(r)).toMatch(/track\.value\[1\].*track\.value\[2\]/)
+    expect(fingerprint(w)).toBe(before)
+  })
+
+  it('update_effect refuses a null `enabled` or `params` and an empty patch, which the schema does not advertise', async () => {
+    const w = await world()
+    const before = fingerprint(w)
+    for (const patch of [{ enabled: null }, { params: null }, {}]) {
+      const r = await call(w, 'update_effect', { layer_id: w.ids.vl, effect_id: w.ids.effect, patch })
+      expect(r.isError, JSON.stringify(patch)).toBe(true)
+    }
     expect(fingerprint(w)).toBe(before)
   })
 

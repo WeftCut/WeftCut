@@ -3,7 +3,7 @@ import type { RetimeTarget } from '../../shared/timeMapping'
 // apps/desktop/src/main/state/actor.ts
 import { produce, setAutoFreeze } from 'immer'
 import { assertLockedLayersUnchanged } from './layerLocks'
-import type { Animated, AudioRole, Composition, Continuity, Extrapolate, Interpolation, LayerParams, MarkerAnchor, MotifRebindEntry, Project, Rational, Rgba, TransitionKind, Uuid , TextParams} from './model'
+import type { Animated, AudioRole, Composition, Continuity, Interpolation, LayerParams, MarkerAnchor, MotifRebindEntry, Project, Rational, Rgba, TransitionKind, Uuid , TextParams} from './model'
 import { blankProject, eachLayer, rootComposition } from './model'
 import type { IdGen } from './ids'
 import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch, type ReviewState, type OpDiff } from './history'
@@ -47,19 +47,19 @@ import { videoClipParams, audioParams, imageOverlayParams, mediaExtent, applySep
   type MediaDerivativesPatch, type WorkspacePaths } from './mutations/media'
 import type { MediaItem } from './model'
 import { applyParamsPatch, applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
-import { applySetScaleLinked, enforceScaleLinkInvariant } from './mutations/scaleLink'
+import { applySetScaleLinked, copyTrackFreshIds, enforceScaleLinkInvariant, transformOf } from './mutations/scaleLink'
 import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
 import { applyAddCaptionTrack, applyRestyleCaptions, captionTracks, type Cue, type CaptionStylePatch, applyMergeCaptions, type MergeCaptionsResult } from './mutations/captions'
 import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
 import { mediaPropProblem } from '../../shared/motifs/mediaProp'
 import { parseMechanical, prodColorParams, prodTextParams, prodMediaLayer, resolveDurationUs, pickFreeOverlayTrack, demoColor } from './commands'
-import { mapCommandError, MCP_ARG_PARSERS, toolEmpty, toolText, checkEffectPatchAgainst, checkEffectParamValues, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, mcpDef, type AddLayerSpec, type McpCallResult, type McpToolErrorJson, type TrackValue , SCOPED_PROJECT_VIEWS} from './mcp-commands'
-import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto, setTangent, setContinuity, setExtrapolation } from './keyframeEdits'
-import { MCP_RESULT_READERS, adjusted, keyframeByIdResult, linkRecord, markerRecord, newLayerIds, paramTrackResult, setKeyframeResult, splitSiblings, toolRecord, type ResultCtx } from './mcp-results'
+import { mapCommandError, MCP_ARG_PARSERS, toolEmpty, toolText, checkEffectPatchAgainst, checkEffectParamValues, parseUuid, parseNum, parseNumOpt, parseStr, parseBool, parseTransitionKind, parseTransitionKindOpt, parseTransitionPlacement, McpArgError, shapeGetParamTrack, keyframePresent, mcpDef, easingSegment, TEXT_SCALE_RULE, type AddLayerSpec, type McpCallResult, type McpToolErrorJson, type TrackValue , SCOPED_PROJECT_VIEWS} from './mcp-commands'
+import { upsertKeyframe, removeKeyframe, retimeKeyframe, setSegmentEasing, setAuto, setTangent, setContinuity } from './keyframeEdits'
+import { MCP_RESULT_READERS, adjusted, committedTrackResult, keyframeByIdResult, linkRecord, markerRecord, newLayerIds, paramTrackResult, setKeyframeResult, splitSiblings, toolRecord, type ResultCtx } from './mcp-results'
 import { readLayerTrack, parseEffectParamKey } from './mutations/params'
 import { effectsCatalogView } from '../../shared/effects/catalogView'
-import { applySetPosition, applyTranslatePath } from './mutations/position'
+import { applySetPosition, applyTranslatePath, applyTranslatePosition } from './mutations/position'
 import { applyTextCorrection, applyTranscripts } from './mutations/textCorrection'
 import { CORRECTION_SCRIPT_MAX, type TextCorrectionExpectation } from '../../shared/textCorrectionRequest'
 import type { TranscriptPayload } from '../../shared/captionTiming'
@@ -76,6 +76,19 @@ export interface ChangeEvent { op_id: Uuid; history_op_id?: Uuid; actor: Actor; 
 /** The lattice a layer's keys are written on, as a snap of a layer-local µs:
  *  the frame grid of its composition, or 48 kHz samples for Audio — the snap
  *  `applyUpdateLayerParamTrack` applies at write time. */
+/** MCP's linked Scale (CONTEXT "Linked scale"), the UI fan-out's rule: while
+ *  the layer is linked and stays linked, a patch naming one scale axis writes
+ *  that value to both. `linkTo === false` unlinks first, so the axis lands
+ *  alone; two axes sent are taken as sent (unequal ones clear the link). */
+function fanOutLinkedScale(p: Project, layer: Uuid, patch: LayerParamsPatch, linkTo: boolean | undefined): LayerParamsPatch {
+  const t = (() => { const l = locateLayer(p, layer)?.layer; return l ? transformOf(l) : null })()
+  if (!t || linkTo === false || (linkTo !== true && t.scale_linked !== true)) return patch
+  const o = patch as { scale_x?: number; scale_y?: number }
+  if ((o.scale_x === undefined) === (o.scale_y === undefined)) return patch
+  const v = (o.scale_x ?? o.scale_y) as number
+  return { ...patch, scale_x: v, scale_y: v } as LayerParamsPatch
+}
+
 function keyLatticeOf(p: Project, layer: Uuid): (localUs: number) => number {
   const loc = locateLayer(p, layer)
   if (!loc) return (t) => t
@@ -1414,8 +1427,20 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // the plural batch is legitimately mid-divergence between its scale_x
         // and scale_y entries, and a per-entry check would unlink every linked
         // fan-out write.
-        case 'update_layer_params': commit(HISTORY_SUMMARY.layerUpdateParams, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => { applyUpdateLayerParams(d, a.layer as Uuid, a.patch as LayerParamsPatch, motifCatalog); enforceScaleLinkInvariant(d, a.layer as Uuid) }); return { ok: true, value: null }
+        // `link_fan_out` and `scale_linked` arrive from MCP only (the UI fans
+        // its linked Scale out itself and toggles the link through
+        // `set_scale_linked`): while the layer stays linked, one axis sent
+        // writes both, and `scale_linked` lands after the scale fields.
+        case 'update_layer_params': commit(HISTORY_SUMMARY.layerUpdateParams, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => {
+          const layer = a.layer as Uuid
+          const linkTo = a.scale_linked as boolean | undefined
+          const patch = a.link_fan_out === true ? fanOutLinkedScale(d, layer, a.patch as LayerParamsPatch, linkTo) : a.patch as LayerParamsPatch
+          applyUpdateLayerParams(d, layer, patch, motifCatalog)
+          if (linkTo !== undefined) applySetScaleLinked(d, idGen, layer, linkTo)
+          enforceScaleLinkInvariant(d, layer)
+        }); return { ok: true, value: null }
         case 'set_position': commit(HISTORY_SUMMARY.layerKeyframeParams, [{kind:'Layer',id:a.layer as Uuid}], {kind:'Layer',id:a.layer as Uuid},d=>applySetPosition(d,a.layer as Uuid,a.position as PositionAnimation,a.geometry_only===true)); return {ok:true,value:null}
+        case 'translate_position': commit(HISTORY_SUMMARY.layerKeyframeParams, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Layer', id: a.layer as Uuid }, (d) => applyTranslatePosition(d, a.layer as Uuid, a.dx as number, a.dy as number)); return { ok: true, value: null }
         case 'translate_path': commit(HISTORY_SUMMARY.layerKeyframeParams, [{kind:'Layer',id:a.layer as Uuid}], {kind:'Layer',id:a.layer as Uuid},d=>applyTranslatePath(d,a.layer as Uuid,a.dx as number,a.dy as number)); return {ok:true,value:null}
         case 'update_path_transform': commit(HISTORY_SUMMARY.layerKeyframeParams,[{kind:'Layer',id:a.layer as Uuid}],{kind:'Layer',id:a.layer as Uuid},d=>{
           applyTranslatePath(d,a.layer as Uuid,a.dx as number,a.dy as number)
@@ -1469,7 +1494,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // Track ref is what makes the row name the lane it renamed.
         case 'rename_track': commit(HISTORY_SUMMARY.trackRename, [{ kind: 'Track', id: a.track as Uuid }], { kind: 'Coarse' }, (d) => applyRenameTrack(d, a.track as Uuid, (a.label as string) ?? null)); return { ok: true, value: null }
         case 'update_track_flags': updateTrackFlags(a.track as Uuid, a.patch as TrackFlagsPatch); return { ok: true, value: null }
-        case 'add_effect': return { ok: true, value: commit(HISTORY_SUMMARY.effectAdd, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyAddEffect(d, idGen, a.layer as Uuid, a.kind as string)) }
+        // `params` (MCP): the initial values, checked against the kind by the
+        // parser, land in the same commit as the effect.
+        case 'add_effect': return { ok: true, value: commit(HISTORY_SUMMARY.effectAdd, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => {
+          const id = applyAddEffect(d, idGen, a.layer as Uuid, a.kind as string)
+          if (a.params) applyUpdateEffect(d, a.layer as Uuid, id, { params: a.params as Record<string, Animated<number>> })
+          return id
+        }) }
         case 'update_effect': commit(HISTORY_SUMMARY.effectUpdate, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyUpdateEffect(d, a.layer as Uuid, a.effect as Uuid, a.patch as EffectPatch)); return { ok: true, value: null }
         case 'move_effect': commit(HISTORY_SUMMARY.effectReorder, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyMoveEffect(d, a.layer as Uuid, a.effect as Uuid, parseNum(a.new_index, 'new_index'))); return { ok: true, value: null }
         case 'remove_effect': commit(HISTORY_SUMMARY.effectRemove, [{ kind: 'Layer', id: a.layer as Uuid }], { kind: 'Coarse' }, (d) => applyRemoveEffect(d, a.layer as Uuid, a.effect as Uuid)); return { ok: true, value: null }
@@ -1926,6 +1957,25 @@ export function createActor(opts: ActorOptions): ActorHandle {
   function mcpCall(name: string, argsJson: string, client?: string): McpCallResult {
     return recordingAs(mcpActor(client), () => mcpCallAsAgent(name, argsJson))
   }
+  /** A keyframe tool's track write. On a linked layer a scale track is the
+   *  linked Scale (CONTEXT): the other axis takes a fresh-id copy in the same
+   *  commit, the UI fan-out's rule (`renderer/keyframe/fanOut.ts`), so the link
+   *  holds whichever surface wrote it. */
+  function writeTrack(layer: string, paramKey: string, track: Animated<TrackValue>): DispatchResult {
+    const l = locateLayer(current(), layer as Uuid)?.layer
+    if ((paramKey === 'scale_x' || paramKey === 'scale_y') && l && transformOf(l)?.scale_linked === true) {
+      const other = paramKey === 'scale_x' ? 'scale_y' : 'scale_x'
+      return dispatch('update_layer_param_tracks', { layer, entries: [[paramKey, track], [other, copyTrackFreshIds(track as Animated<number>, idGen)]] })
+    }
+    return dispatch('update_layer_param_track', { layer, param_key: paramKey, track })
+  }
+  /** `easing` on key `j`: the segment it leaves, or on the last key the one
+   *  arriving at it (`easingSegment`, the rule `set_param_track` keys share). */
+  function easeKey<T extends TrackValue>(track: Animated<T> & { mode: 'Keyframed' }, j: number, easing: Interpolation, paramKey: string): Animated<T> {
+    const left = easingSegment(j, track.value.length)
+    if (left === null) throw new McpArgError(`easing: '${paramKey}' holds one key, which has no segment to ease — add the key it moves to or from (on the last key, easing eases the segment arriving at it)`, 'easing')
+    return setSegmentEasing(track, track.value[left]!.id, easing)
+  }
   function mcpCallAsAgent(name: string, argsJson: string): McpCallResult {
     let a: Record<string, unknown>
     try { a = JSON.parse(argsJson) as Record<string, unknown> }
@@ -2133,28 +2183,22 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // refuses a caller that mixed them.
           const { tStartUs, track } = readLayerTrack(current(), layer, paramKey)
           checkEffectKeyframeValues(current(), layer, paramKey, [p.value], 'value')
-          const easing = p.interp as Interpolation | undefined
           // Snapped to the layer's lattice FIRST, so "a key at the same frame"
           // is the key the write-time snap would land on: a time a few µs off
           // an existing key updates that key (its id stays), never a second key
           // the snap then dedupes away.
           const rel = keyLatticeOf(current(), layer)((p.t_us as number) - tStartUs)
-          const next = upsertKeyframe(track, rel, p.value as TrackValue, easing, idGen)
-          // A Bezier's p2 shapes the ARRIVAL at the next key and is stored there;
-          // on the last key it has nowhere to land and would be dropped under a
-          // success report. The other kinds write only this key's leaving side.
-          if (easing?.kind === 'Bezier' && next.mode === 'Keyframed' && next.value[next.value.length - 1]?.t_us === rel)
-            throw new McpArgError(`interp: a Bezier on the last key of '${paramKey}' has no next key for its p2 to land on — add the later key first, then set this key's interp`, 'interp')
-          const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
+          let next = upsertKeyframe(track, rel, p.value as TrackValue, undefined, idGen)
+          const easing = p.easing as Interpolation | null
+          if (easing && next.mode === 'Keyframed') next = easeKey(next, next.value.findIndex((k) => keyTimeUs(k) === rel), easing, paramKey)
+          const r = writeTrack(layer, paramKey, next)
           if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
           return { ok: true, result: toolRecord(setKeyframeResult(layer, paramKey, track, readLayerTrack(current(), layer, paramKey), p.t_us)) }
         }
         case 'get_param_track': {
           const p = mcpDef('get_param_track').parseDedicated!(a)
-          const layer = p.layer as string
-          const paramKey = p.param_key as string
-          const { tStartUs, track } = readLayerTrack(current(), layer, paramKey)
-          return { ok: true, result: toolRecord(shapeGetParamTrack(track, tStartUs) as Record<string, unknown>) }
+          const { tStartUs, track } = readLayerTrack(current(), p.layer as string, p.param_key as string)
+          return { ok: true, result: toolRecord(shapeGetParamTrack(track, tStartUs)) }
         }
         case 'delete_keyframe': {
           const p = mcpDef('delete_keyframe').parseDedicated!(a)
@@ -2162,10 +2206,9 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const keyframeId = p.keyframe_id as string
           const paramKey = p.param_key as string
           const { track } = readLayerTrack(current(), layer, paramKey)
-          if (!keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}'`)
+          if (!keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}' — get_param_track lists its keyframe_ids`)
           const fallback = track.mode === 'Static' ? track.value : (track.value[0]?.value ?? 0)
-          const next = removeKeyframe(track, keyframeId, fallback)
-          const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
+          const r = writeTrack(layer, paramKey, removeKeyframe(track, keyframeId, fallback))
           if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
           return { ok: true, result: toolRecord(paramTrackResult(layer, paramKey, readLayerTrack(current(), layer, paramKey))) }
         }
@@ -2175,13 +2218,14 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const keyframeId = p.keyframe_id as string
           const paramKey = p.param_key as string
           const { tStartUs, track } = readLayerTrack(current(), layer, paramKey)
-          if (!keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}'`)
+          if (!keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}' — get_param_track lists its keyframe_ids`)
           // One key, several aspects, one commit — applied in the order the
           // description promises: retime first (so an easing lands on the
           // segment the key now leaves), then the segment easing, then the
           // sides — `out` last, so a Smooth request re-derives `in` from the
           // `out` just written, the "out wins" order the write-time solve
-          // settles the pair in — then continuity.
+          // settles the pair in — then continuity, then Auto (`smooth`, which
+          // the parser admits only alone or with the retime).
           let next = track
           const tUs = p.t_us as number | null
           if (tUs !== null) {
@@ -2195,42 +2239,17 @@ export function createActor(opts: ActorOptions): ActorHandle {
             next = retimeKeyframe(next, keyframeId, rel)
           }
           const easing = p.easing as Interpolation | null
-          if (easing) next = setSegmentEasing(next, keyframeId, easing)
+          if (easing && next.mode === 'Keyframed') next = easeKey(next, next.value.findIndex((k) => k.id === keyframeId), easing, paramKey)
           const inXy = p.in as { x: number; y: number } | null
           const outXy = p.out as { x: number; y: number } | null
           const continuity = p.continuity as Continuity | null
           if (inXy) next = setTangent(next, keyframeId, 'in', inXy)
           if (outXy) next = setTangent(next, keyframeId, 'out', outXy)
           if (continuity) next = setContinuity(next, keyframeId, continuity)
-          const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
+          if (p.smooth === true) next = setAuto(next, [keyframeId])
+          const r = writeTrack(layer, paramKey, next)
           if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
           return { ok: true, result: toolRecord(keyframeByIdResult(layer, paramKey, keyframeId, readLayerTrack(current(), layer, paramKey))) }
-        }
-        case 'smooth_keyframes': {
-          const p = mcpDef('smooth_keyframes').parseDedicated!(a)
-          const layer = p.layer as string
-          const paramKey = p.param_key as string
-          const { track } = readLayerTrack(current(), layer, paramKey)
-          const keyframeId = p.keyframe_id as string | null
-          if (keyframeId !== null && !keyframePresent(track, keyframeId)) throw new McpArgError(`keyframe ${keyframeId} not found on layer ${layer} param '${paramKey}'`)
-          // One key, or every key: Auto on both sides + Smooth, neighbours splined;
-          // the actor's write step solves the coordinates.
-          const ids = keyframeId !== null ? [keyframeId] : track.mode === 'Keyframed' ? track.value.map((k) => k.id) : []
-          const next = setAuto(track, ids)
-          const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
-          if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
-          return { ok: true, result: toolRecord(paramTrackResult(layer, paramKey, readLayerTrack(current(), layer, paramKey))) }
-        }
-        case 'clear_keyframes': {
-          const p = mcpDef('clear_keyframes').parseDedicated!(a)
-          const layer = p.layer as string
-          const paramKey = p.param_key as string
-          const { track } = readLayerTrack(current(), layer, paramKey)
-          if (track.mode === 'Static') return { ok: true, result: toolRecord(paramTrackResult(layer, paramKey, { tStartUs: 0, track })) } // no-op, no commit
-          const value = (p.value as TrackValue | undefined) ?? track.value[0]?.value ?? 0
-          const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: { mode: 'Static', value } })
-          if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
-          return { ok: true, result: toolRecord(paramTrackResult(layer, paramKey, readLayerTrack(current(), layer, paramKey))) }
         }
         case 'set_param_track': {
           const p = mcpDef('set_param_track').parseDedicated!(a, idGen)
@@ -2239,27 +2258,31 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const { tStartUs } = readLayerTrack(current(), layer, paramKey) // validate layer+param; current discarded
           const input = p.track as Animated<TrackValue>
           checkEffectKeyframeValues(current(), layer, paramKey, input.mode === 'Static' ? [input.value] : input.value.map((k) => k.value), 'track')
+          // ADR 0049, the same rule `update_layer_params` refuses with: a Text
+          // layer's box lays out, its scale magnifies, and only animated.
+          if (input.mode === 'Static' && input.value !== 1 && (paramKey === 'scale_x' || paramKey === 'scale_y') && locateLayer(current(), layer as Uuid)?.layer.params.kind === 'Text')
+            throw new McpArgError(`param '${paramKey}' on layer ${layer}: ${TEXT_SCALE_RULE}`, 'track')
           const shifted: Animated<TrackValue> = input.mode === 'Keyframed'
             ? { ...input, value: input.value.map((k) => ({ ...k, t_us: k.t_us - tStartUs })) }
             : input
-          const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: shifted })
+          // Two keys on one frame would be deduped to one by the write-time
+          // snap — the value of the other dropped under a success report — so
+          // the pair is refused, naming both.
+          if (shifted.mode === 'Keyframed') {
+            const lattice = keyLatticeOf(current(), layer)
+            const seen = new Map<number, number>()
+            for (const [i, k] of shifted.value.entries()) {
+              const at = k.time_fraction ? keyTimeUs(k) : lattice(k.t_us)
+              const j = seen.get(at)
+              if (j !== undefined) return { ok: false, error: { code: 'invalid_params',
+                message: `track.value[${j}] (t_us ${shifted.value[j]!.t_us + tStartUs}) and track.value[${i}] (t_us ${k.t_us + tStartUs}) land on one frame, t_us ${at + tStartUs}, and a track holds one key per frame — drop one or move it to another frame`,
+                data: { error: 'KeyframesShareFrame', keys: [j, i], t_us: at + tStartUs } } }
+              seen.set(at, i)
+            }
+          }
+          const r = writeTrack(layer, paramKey, shifted)
           if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
-          return { ok: true, result: toolRecord(paramTrackResult(layer, paramKey, readLayerTrack(current(), layer, paramKey))) }
-        }
-        case 'set_extrapolation': {
-          const p = mcpDef('set_extrapolation').parseDedicated!(a)
-          const layer = p.layer as string
-          const paramKey = p.param_key as string
-          const { track } = readLayerTrack(current(), layer, paramKey)
-          if (track.mode === 'Static')
-            throw new McpArgError(`param '${paramKey}' on layer ${layer} is Static — extrapolation applies to a keyframed track; add keys first (set_keyframe)`)
-          const next = setExtrapolation(track, {
-            before: (p.before as Extrapolate | null) ?? undefined,
-            after: (p.after as Extrapolate | null) ?? undefined,
-          })
-          const r = dispatch('update_layer_param_track', { layer, param_key: paramKey, track: next })
-          if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
-          return { ok: true, result: toolRecord(paramTrackResult(layer, paramKey, readLayerTrack(current(), layer, paramKey))) }
+          return { ok: true, result: toolRecord(committedTrackResult(layer, paramKey, readLayerTrack(current(), layer, paramKey))) }
         }
         case 'update_link': {
           const p = mcpDef('update_link').parseDedicated!(a)

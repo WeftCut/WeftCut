@@ -23,6 +23,7 @@ import type { HistoryOpRef, HistoryStatus } from './history'
 import { sortKeys } from './canonical'
 import { compositionSettings, localKeyTimes } from './resource-views'
 import type { ToolResultJson } from './mcp-commands'
+import { effectParamDefault, effectParamSpecs } from '../../shared/effects/params'
 
 // ── Records ──────────────────────────────────────────────────────────────────
 
@@ -140,8 +141,14 @@ export function effectRecord(p: Project, layerId: Uuid, effectId: Uuid): EffectR
   const index = hit.layer.effects.findIndex((e) => e.id === effectId)
   if (index < 0) return null
   const e = hit.layer.effects[index]
-  // An animated param's keys are stored layer-local: `local_t_us` on the wire.
-  return { effect_id: e.id, layer_id: layerId, kind: e.kind, enabled: e.enabled, index, params: localKeyTimes(e.params) as Record<string, unknown> }
+  // The params as they take effect, in update_effect's write shape: a static
+  // param is its number, an unset one its catalog default (an unset region
+  // bound, which has none, stays absent), an animated one its track (keys
+  // layer-local: `local_t_us` on the wire).
+  const params: Record<string, unknown> = {}
+  for (const k of Object.keys(effectParamSpecs(e.kind) ?? {})) { const d = effectParamDefault(e.kind, k); if (d !== null) params[k] = d }
+  for (const [k, track] of Object.entries(e.params)) params[k] = track.mode === 'Static' ? track.value : localKeyTimes(track)
+  return { effect_id: e.id, layer_id: layerId, kind: e.kind, enabled: e.enabled, index, params }
 }
 
 export interface MediaRecord {
@@ -353,26 +360,29 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
     const params = located(c.after, str(c.args.layer_id))?.layer.params
     return { ...layerOf(c), ...(params && 'transform' in params ? { position: localKeyTimes(params.transform.position) } : {}) }
   },
-  translate_path: (c) => layerOf(c),
-  // A Motif whose props shortened its content pulls the layer's end (and its
-  // source offset) in; the record says so, since the caller sent neither.
+  translate_position: (c) => {
+    const params = located(c.after, str(c.args.layer_id))?.layer.params
+    return { ...layerOf(c), ...(params && 'transform' in params ? { position: localKeyTimes(params.transform.position) } : {}) }
+  },
+  // Each patched field as committed (`authoredValue` quantizes on the way in),
+  // and the scale pair with its link whenever the patch touched scale — a
+  // linked write sets the axis the caller did not send. A Motif whose props
+  // shortened its content pulls the layer's end (and its source offset) in;
+  // the record says so, since the caller sent neither.
   update_layer_params: (c) => {
-    const rec = layerOf(c)
     const id = str(c.args.layer_id)
     const prev = located(c.before, id)
     const next = located(c.after, id)
-    if (!prev || !next || next.layer.params.kind !== 'Motif') return rec
     const patch = obj(c.args.patch)
+    const scaled = 'scale_x' in patch || 'scale_y' in patch || 'scale_linked' in patch
+    const keys = [...Object.keys(patch).filter((k) => k !== 'kind'), ...(scaled ? ['scale_x', 'scale_y', 'scale_linked'] : [])]
+    const rec = { ...layerOf(c), ...(next ? { params: Object.fromEntries([...new Set(keys)].map((k) => [k, committedParam(next.layer, k)])) } : {}) }
+    if (!prev || !next || next.layer.params.kind !== 'Motif') return rec
     const pairs: Array<readonly [string, unknown, number]> = [['t_end_us', prev.layer.t_end_us, next.layer.t_end_us]]
     if (patch.src_in_us === undefined) pairs.push(['src_in_us', (prev.layer.params as { src_in_us: number }).src_in_us, (next.layer.params as { src_in_us: number }).src_in_us])
     return { ...rec, adjusted: adjusted(pairs, 'content') }
   },
   restack_layer: (c) => layerOf(c),
-  set_scale_linked: (c) => {
-    const hit = located(c.after, str(c.args.layer_id))
-    const params = hit?.layer.params as { transform?: { scale_linked: boolean } } | undefined
-    return { ...layerOf(c), scale_linked: params?.transform?.scale_linked ?? null }
-  },
   rename_layer: (c) => layerOf(c),
   // `layers` is the set as it moved, seed first, each with `adjusted` against
   // where the request put it (the seed's delta from its own start); `rippled`
@@ -492,10 +502,10 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
     const rec = transitionRecord(c.after, str(c.value)) ?? { transition_id: str(c.value) }
     return { ...rec, moved: movedLayers(c.before, c.after), adjusted: adjusted([['duration_us', c.args.duration_us, (rec as TransitionRecord).duration_us]]) }
   },
-  update_transition: (c) => ({
-    ...(transitionRecord(c.after, str(c.args.transition_id)) ?? { transition_id: str(c.args.transition_id) }),
-    moved: movedLayers(c.before, c.after),
-  }),
+  update_transition: (c) => {
+    const rec = transitionRecord(c.after, str(c.args.transition_id)) ?? { transition_id: str(c.args.transition_id) }
+    return { ...rec, moved: movedLayers(c.before, c.after), adjusted: adjusted([['duration_us', c.args.duration_us, (rec as TransitionRecord).duration_us]]) }
+  },
   delete_transition: (c) => {
     const was = transitionRecord(c.before, str(c.args.transition_id))
     return {
@@ -547,6 +557,19 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
   set_role_flags: (c) => ({ role: str(c.args.role), ...(c.after.audio_roles[str(c.args.role)] ?? {}) }),
 }
 
+/** One `update_layer_params` field as the layer now stores it: a transform or
+ *  envelope track as its static value (the write is static), anything else as
+ *  stored. Position reads its XY track; a Path-mode layer refuses x/y first. */
+function committedParam(layer: Layer, key: string): unknown {
+  const p = layer.params as unknown as Record<string, unknown> & { transform?: Record<string, unknown> & { position: { mode: string; x?: unknown; y?: unknown } } }
+  const t = p.transform
+  const raw = t && (key === 'x' || key === 'y') ? t.position[key]
+    : t && key in t ? t[key]
+    : p[key]
+  const track = raw as { mode?: unknown; value?: unknown } | null | undefined
+  return track !== null && typeof track === 'object' && track.mode === 'Static' && 'value' in track ? track.value : raw ?? null
+}
+
 // ── Helpers for the dedicated arms in actor.mcpCall ─────────────────────────
 
 interface AnimatedLike { mode: string; value: unknown; extrapolate?: unknown }
@@ -562,6 +585,18 @@ export function paramTrackResult(layerId: Uuid, paramKey: string, read: { tStart
     layer_id: layerId, param_key: paramKey, mode: read.track.mode,
     ...(read.track.mode === 'Keyframed'
       ? { keyframes: keys.length, keyframe_ids: keys.map((k) => k.id), extrapolate: read.track.extrapolate ?? null }
+      : { value: read.track.value }),
+  }
+}
+
+/** `set_param_track`'s answer: the track as committed — every key with its
+ *  minted id and its snapped timeline time — or the static value. */
+export function committedTrackResult(layerId: Uuid, paramKey: string, read: { tStartUs: number; track: AnimatedLike }): Record<string, unknown> {
+  const keys = keysOf(read.track)
+  return {
+    layer_id: layerId, param_key: paramKey, mode: read.track.mode,
+    ...(read.track.mode === 'Keyframed'
+      ? { keyframes: keys.map((k) => ({ keyframe_id: k.id, t_us: k.t_us + read.tStartUs, value: k.value })), extrapolate: read.track.extrapolate ?? null }
       : { value: read.track.value }),
   }
 }

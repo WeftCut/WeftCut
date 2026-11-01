@@ -15,6 +15,7 @@ import { positionTrack, setPositionTrack } from '../../../shared/position'
 // carries" — in the shared record module, so this lens layer and the MCP
 // parser read the same predicate and neither depends on the other.
 import { isColorParam, MAX_RESIDENT_KEYFRAMES, type TrackValue } from '../../../shared/keyframe'
+import { effectParamDefault } from '../../../shared/effects/params'
 import type { MotifCatalog } from '../../../shared/motifs/catalog'
 import { canonicalizeProps, MotifPropError, resolveMotifMaxDurUs } from '../../../shared/motifs/catalog'
 import { mediaPropProblem } from '../../../shared/motifs/mediaProp'
@@ -594,11 +595,26 @@ export function resolveAnimatedRgba(layer: Layer, key: string): Animated<Rgba> |
  *  keyframe tools for timeline-absolute↔layer-local conversion. Read-only (no
  *  commit, no id mint).
  *
+ *  An effect param resolves on the effect it names (EffectNotFound when the
+ *  layer has none by that id), and an unset param of a catalogued kind reads as
+ *  `Static(<catalog default>)` — the value the render and the inspector use for
+ *  it (`shared/effects/params.ts`) — so it can be keyed with no prior write.
+ *
  *  The track's value type is decided by the KEY, so the union it answers is
  *  already narrowed for the caller: `color` reads through `rgbaLens`' sibling,
  *  every other key through `f64Lens`'. */
 export function readLayerTrack(p: Project, id: Uuid, paramKey: string): { tStartUs: number; track: Animated<TrackValue> } {
   const { layer } = requireLayer(p, id)
+  const eff = parseEffectParamKey(paramKey)
+  if (eff) {
+    const e = layer.effects.find((x) => x.id === eff[0])
+    if (!e) throw new CommandFailure({ error: 'EffectNotFound', effect: eff[0] })
+    const stored = e.params[eff[1]]
+    const dflt = effectParamDefault(e.kind, eff[1])
+    if (stored) return { tStartUs: layer.t_start_us, track: stored }
+    if (dflt !== null) return { tStartUs: layer.t_start_us, track: { mode: 'Static', value: dflt } }
+    throw new CommandFailure({ error: 'UnknownKeyframeParam', layer: id, param_key: paramKey })
+  }
   const track: Animated<TrackValue> | null = isColorParam(paramKey)
     ? resolveAnimatedRgba(layer, paramKey)
     : resolveAnimatedF64(layer, paramKey)
@@ -721,10 +737,10 @@ export function applyUpdateLayerParamTrack(p: Project, id: Uuid, paramKey: strin
       const e = layer.effects.find((x) => x.id === eff[0])
       // A placeholder that lives for two statements: it exists only so the
       // re-resolve below finds the key present, and `lens.set(track)` overwrites
-      // it unconditionally. NOT a default — the effect registry's `default` is
-      // the default, applied at render (`EffectChain`) and in the inspector
-      // (`EffectParamField`), and absent-means-default is the contract because
-      // main cannot read that pixi-dependent registry at all.
+      // it unconditionally. NOT a default — the catalog's `default`
+      // (`shared/effects/params.ts`) is, applied at render (`EffectChain`), in
+      // the inspector (`EffectParamField`) and by the MCP read (`readLayerTrack`):
+      // absent means default.
       if (e && !(eff[1] in e.params)) e.params[eff[1]] = { mode: 'Static', value: 0 }
     }
   }

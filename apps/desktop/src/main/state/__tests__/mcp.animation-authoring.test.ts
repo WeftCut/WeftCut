@@ -84,7 +84,7 @@ describe('MCP animation authoring owns identities', () => {
 
   it('keeps animated effect authoring on the keyframe tools', () => {
     expect(() => parseEffectPatch({ params: { strength: { mode: 'Keyframed', value: [{ t_us: 0, value: 1 }] } } })).toThrow(/set_keyframe or set_param_track/)
-    expect(parseEffectPatch({ params: { strength: { mode: 'Static', value: 1 } } })).toEqual({ params: { strength: { mode: 'Static', value: 1 } } })
+    expect(parseEffectPatch({ params: { strength: 1 } })).toEqual({ params: { strength: { mode: 'Static', value: 1 } } })
   })
 
   it('does not advertise stored ids as bulk authoring inputs', () => {

@@ -3,9 +3,9 @@
 // get_param_track: update_keyframe { easing } (presets bake to the canonical table
 // params in state and the exact-match reverse lookup surfaces the id),
 // update_keyframe { in / out } (a side lands Free with the numbers sent, the segment
-// it shapes goes Spline, Smooth re-derives `in` from `out`) and
-// set_extrapolation (the stored track evaluates past its last key through the
-// shared engine). The parser-level rejection matrix lives in
+// it shapes goes Spline, Smooth re-derives `in` from `out`) and a track's
+// `extrapolate` written back through set_param_track (the stored track
+// evaluates past its last key through the shared engine). The parser-level rejection matrix lives in
 // mcp.validators.test.ts; the rejection cases here additionally pin that a
 // rejected write leaves the key untouched.
 import { describe, it, expect } from 'vitest'
@@ -56,15 +56,26 @@ function setTangents(a: ReturnType<typeof freshActor>, layerId: string, keyframe
   return a.mcpCall('update_keyframe', JSON.stringify({ layer_id: layerId, param_key: 'opacity', keyframe_id: keyframeId, ...args }))
 }
 
-function setExtrapolationCall(a: ReturnType<typeof freshActor>, layerId: string, args: Record<string, unknown>) {
-  return a.mcpCall('set_extrapolation', JSON.stringify({ layer_id: layerId, param_key: 'opacity', ...args }))
-}
-
-function readKeys(a: ReturnType<typeof freshActor>, layerId: string): KfEntry[] {
+type Read = { track: { mode: string; value: Array<Omit<KfEntry, 'id' | 'local_t_us' | 'preset_id'>>; extrapolate: { before: string; after: string } }; keyframe_ids: string[]; local_t_us: number[]; preset_ids: Array<string | null> }
+function readTrack(a: ReturnType<typeof freshActor>, layerId: string): Read {
   const r = a.mcpCall('get_param_track', JSON.stringify({ layer_id: layerId, param_key: 'opacity' }))
   expect(r.ok, 'get_param_track must succeed').toBe(true)
   if (!r.ok) throw new Error('get_param_track failed')
-  return (JSON.parse(r.result.content[0].text) as { keyframes: KfEntry[] }).keyframes
+  return JSON.parse(r.result.content[0].text) as Read
+}
+
+/** The read-edit-write round trip: get_param_track's `track` with one side of
+ *  its extrapolation changed, sent back through set_param_track as is. */
+function setExtrapolationCall(a: ReturnType<typeof freshActor>, layerId: string, sides: Record<string, unknown>) {
+  const { track } = readTrack(a, layerId)
+  return a.mcpCall('set_param_track', JSON.stringify({ layer_id: layerId, param_key: 'opacity', track: { ...track, extrapolate: { ...track.extrapolate, ...sides } } }))
+}
+
+/** The keys with the parallel arrays zipped back in, `preset_id` absent where
+ *  the read says null. */
+function readKeys(a: ReturnType<typeof freshActor>, layerId: string): KfEntry[] {
+  const r = readTrack(a, layerId)
+  return r.track.value.map((k, i) => ({ ...k, id: r.keyframe_ids[i]!, local_t_us: r.local_t_us[i]!, ...(r.preset_ids[i] === null ? {} : { preset_id: r.preset_ids[i]! }) }))
 }
 
 function setEasing(a: ReturnType<typeof freshActor>, layerId: string, keyframeId: string, interp: unknown) {
@@ -177,7 +188,7 @@ describe('update_keyframe { in / out / continuity } → get_param_track (per-sid
 
   it('writing a side of an Auto key frees the whole key; the other side keeps its solved numbers, mode Free', () => {
     const { a, layerId } = withKeyedOpacity([[0, 0], [1_000_000, 0.5], [2_000_000, 1]])
-    expect(a.mcpCall('smooth_keyframes', JSON.stringify({ layer_id: layerId, param_key: 'opacity' })).ok).toBe(true)
+    for (const k of readKeys(a, layerId)) expect(setTangents(a, layerId, k.id, { smooth: true }).ok).toBe(true)
     const mid = readKeys(a, layerId)[1]
     expect(mid.in.mode).toBe('Auto')
     expect(mid.out.mode).toBe('Auto')
@@ -186,7 +197,7 @@ describe('update_keyframe { in / out / continuity } → get_param_track (per-sid
     expect(keys[1].out).toEqual({ x: 0.5, y: 0.5, mode: 'Free' })
     expect(keys[1].in.mode).toBe('Free')
     expect(keys[1].in.x).toBe(2 / 3)
-    // Smooth (set by smooth_keyframes) re-derives in.y from the written out:
+    // Smooth (set by `smooth: true`) re-derives in.y from the written out:
     // the same slope, over the arriving segment — here 2/3 again.
     expect(keys[1].in.y).toBeCloseTo(2 / 3, 9)
     expect(keys[1].continuity).toBe('Smooth')
@@ -241,10 +252,10 @@ describe('update_keyframe { in / out / continuity } → get_param_track (per-sid
   })
 })
 
-describe('set_extrapolation → get_param_track → the shared engine', () => {
+describe('a track\'s extrapolate, round-tripped through set_param_track → the shared engine', () => {
   it('writes one side and keeps the other; both read back on get_param_track', () => {
     const { a, layerId } = withKeyedOpacity()
-    const read = () => (JSON.parse((a.mcpCall('get_param_track', JSON.stringify({ layer_id: layerId, param_key: 'opacity' })) as { ok: true; result: { content: Array<{ text: string }> } }).result.content[0].text) as { extrapolate: { before: string; after: string } }).extrapolate
+    const read = () => readTrack(a, layerId).track.extrapolate
     expect(read()).toEqual({ before: 'Hold', after: 'Hold' })
     expect(setExtrapolationCall(a, layerId, { after: 'Loop' }).ok).toBe(true)
     expect(read()).toEqual({ before: 'Hold', after: 'Loop' })
@@ -267,15 +278,15 @@ describe('set_extrapolation → get_param_track → the shared engine', () => {
     expect(at(1_000_000)).toBeCloseTo(0.5, 9)
   })
 
-  it('refuses a Static track naming the fix, an unknown mode naming the five, and an empty patch', () => {
+  it('refuses extrapolation on a Static track naming why, and an unknown mode naming the five', () => {
     const { a, layerId } = withKeyedOpacity()
+    const { track } = readTrack(a, layerId)
     const cases: Array<[string, Record<string, unknown>, RegExp]> = [
-      ['x', { after: 'Loop' }, /param 'x' on layer .* is Static — extrapolation applies to a keyframed track; add keys first \(set_keyframe\)/],
-      ['opacity', { after: 'Cycle' }, /after must be one of 'Hold' \| 'Loop' \| 'PingPong' \| 'Offset' \| 'Continue', got Cycle/],
-      ['opacity', {}, /at least one of before, after \(each 'Hold' \| 'Loop' \| 'PingPong' \| 'Offset' \| 'Continue'\)/],
+      ['x', { mode: 'Static', value: 0, extrapolate: { before: 'Hold', after: 'Loop' } }, /a Static track has no extrapolate/],
+      ['opacity', { ...track, extrapolate: { before: 'Hold', after: 'Cycle' } }, /extrapolate\.after must be one of 'Hold' \| 'Loop' \| 'PingPong' \| 'Offset' \| 'Continue', got Cycle/],
     ]
     for (const [paramKey, args, msgRe] of cases) {
-      const r = a.mcpCall('set_extrapolation', JSON.stringify({ layer_id: layerId, param_key: paramKey, ...args }))
+      const r = a.mcpCall('set_param_track', JSON.stringify({ layer_id: layerId, param_key: paramKey, track: args }))
       expect(r.ok, JSON.stringify(args)).toBe(false)
       if (r.ok) continue
       expect(r.error.code).toBe('invalid_params')

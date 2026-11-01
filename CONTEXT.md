@@ -162,7 +162,9 @@ _Avoid_: trim (time), resize (dimensions)
 
 **Linked scale**:
 A layer state (`Transform.scale_linked`) where the two scale tracks are edited
-as one "Scale". Not a keyframe mode; any write that diverges the pair clears it.
+as one "Scale": a write to one axis writes both, in the UI and over MCP
+(`update_layer_params { scale_linked }` sets it). Not a keyframe mode; any
+write that diverges the pair clears it.
 _Avoid_: uniform-scale mode, scale lock
 
 ## Keyframes
@@ -175,7 +177,7 @@ _Avoid_: handle (the drawn thing), influence, velocity
 
 **Auto**:
 The tangent mode whose numbers are solved (clamped monotone) when the track is
-written; the other mode is **Free**. Smooth in `smooth_keyframes` means set Auto.
+written; the other mode is **Free**. `update_keyframe { smooth: true }` means set Auto.
 _Avoid_: smooth as a mode, auto-bezier
 
 **Continuity**:
@@ -188,6 +190,13 @@ The span between two adjacent keys, with its class stored on the LEFT key:
 Spline, Hold, Linear, Elastic or Bounce. A named preset is a Spline with known
 tangents, not a class.
 _Avoid_: interpolation as the stored thing, easing type; a layer a split produced
+
+**Easing**:
+The shape one argument writes onto one segment: a named preset or a raw kind
+(Hold, Linear, Bezier, Elastic, Bounce). On a key it eases the segment leaving
+that key — on the last key, the one arriving at it. Stored as the segment class
+plus tangents, never as itself.
+_Avoid_: interp, interpolation (the argument)
 
 **Extrapolation**:
 What a track does outside its first and last key (`extrapolate { before, after }`):

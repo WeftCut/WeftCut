@@ -9,9 +9,9 @@ import { root } from './fixtures/project'
 const EXPECTED_TOOL_NAMES = new Set<string>([
   'retime_layers',
   // table-exec tools — counts are asserted below, not duplicated in labels.
-  'set_position', 'translate_path',
+  'set_position', 'translate_position',
   'add_track', 'delete_track', 'rename_track', 'paste_layers', 'move_track', 'set_track_flags',
-  'rename_layer', 'set_layer_flags', 'update_layer_params', 'set_scale_linked',
+  'rename_layer', 'set_layer_flags', 'update_layer_params',
   'move_layers', 'shift_layers', 'restack_layer', 'trim_layer', 'delete_layers',
   'restyle_captions', 'merge_captions',
   'create_link', 'delete_link',
@@ -27,8 +27,7 @@ const EXPECTED_TOOL_NAMES = new Set<string>([
   // parseDedicated for the bijection required-scalar gate.
   'add_layers', 'split_layer', 'add_marker',
   'apply_transcripts', 'correct_caption_text',
-  'set_keyframe', 'get_param_track', 'delete_keyframe', 'update_keyframe',
-  'smooth_keyframes', 'clear_keyframes', 'set_param_track', 'set_extrapolation',
+  'set_keyframe', 'get_param_track', 'delete_keyframe', 'update_keyframe', 'set_param_track',
   'update_link', 'read_project',
   'create_checkpoint', 'restore_checkpoint', 'begin_agent_session', 'end_agent_session', 'export_captions', 'open_project', 'create_project',
   'create_tacks', 'update_tack', 'delete_tacks', 'check_composition', 'restyle_to_taste',
@@ -64,7 +63,7 @@ describe('MCP tool table projections', () => {
 
   it('dedicated-exec defs have no parseArgs', () => {
     const dedicated = MCP_TOOL_DEFS.filter((d) => d.exec === 'dedicated')
-    expect(dedicated.length).toBe(30)
+    expect(dedicated.length).toBe(27)
     for (const d of dedicated) {
       expect(d.parseArgs, `${d.name} should not have parseArgs`).toBeUndefined()
     }
@@ -72,7 +71,7 @@ describe('MCP tool table projections', () => {
 
   it('table-exec defs all have parseArgs', () => {
     const table = MCP_TOOL_DEFS.filter((d) => d.exec === 'table')
-    expect(table.length).toBe(46)
+    expect(table.length).toBe(45)
     for (const d of table) {
       expect(d.parseArgs, `${d.name} should have parseArgs`).toBeDefined()
     }

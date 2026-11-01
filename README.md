@@ -112,7 +112,7 @@ Lower thirds, countdowns, karaoke text and animated title cards are the obvious 
 <br/><sub>Agent: `move_layers` · `trim_layer` · `split_layer` · `shift_layers` · `create_link` · `create_group` · `move_layers_to_composition`</sub>
 
 **Keyframes** — animate any parameter, with bézier easing, a curve editor, tangent control, motion paths and extrapolation.
-<br/><sub>Agent: `set_keyframe` · `update_keyframe` · `smooth_keyframes` · `set_extrapolation`</sub>
+<br/><sub>Agent: `set_keyframe` · `update_keyframe` · `set_param_track` · `get_param_track`</sub>
 
 **Speech and captions** — transcribe a clip and get editable caption layers packed onto your caption tracks; import SRT/VTT/ASS into the media pool and drop it where it starts. Transcription runs against a cloud provider, or entirely on your machine once you let the app fetch a local engine (whisper.cpp, FunASR) — or an agent can pull the raw audio out and run its own model. Text-to-speech for scratch voiceover.
 <br/><sub>Agent: `transcribe_clip` · `extract_clip_audio` · `apply_transcripts` · `apply_subtitles` · `synthesize_speech`</sub>
