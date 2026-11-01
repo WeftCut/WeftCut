@@ -14,7 +14,11 @@ export async function acquireRenderResources(memoryMiB: number, threads = 0, fin
 
 /** Export can race finite background work for memory, just as the native
  * encoder races it for CPU. Wait without holding another lease or changing
- * the authority's limits. Preview admission keeps its fail-fast behavior. */
+ * the authority's limits. Preview admission keeps its fail-fast behavior.
+ * The 15 s retry is for claims that borrow from an admitted plan
+ * (`finalizationToken`): they fit by construction and wait only for a sibling
+ * child's teardown. An export's own working set is admitted without a
+ * deadline (`admitExportResources`, `admitExportMetadata`). */
 export async function acquireExportResources(memoryMiB: number, threads = 0, finalizationToken?: string, signal?: AbortSignal): Promise<() => void> {
   const deadline = Date.now() + 15_000;
   for (;;) {
@@ -61,12 +65,13 @@ export async function reserveExportFinalization(): Promise<{ token?: string; rel
   } };
 }
 
-/** Register the wait observer before IPC so an immediate rejection is visible. */
+/** Register the wait observer before IPC so an immediate rejection is visible.
+ * Admission waits until it is admitted or `signal` aborts; it has no deadline. */
 export async function admitExportResources(plans: import('../../shared/export-resources').ExportResourcePlan[], nativeEncoder: boolean,
-  signal: AbortSignal, waiting: (reason: import('../../shared/export-resources').ResourceWaitReason) => void) {
+  signal: AbortSignal, waiting: (block: import('../../shared/export-resources').ExportResourceBlock) => void) {
   signal.throwIfAborted();
   const token = crypto.randomUUID();
-  const off = window.api.resources.onExportWaiting(event => { if (event.id === token) waiting(event.reason); });
+  const off = window.api.resources.onExportWaiting(({ id, ...block }) => { if (id === token) waiting(block); });
   const cancel = () => window.api.resources.release(token);
   signal.addEventListener('abort', cancel, { once: true });
   try {
@@ -75,4 +80,13 @@ export async function admitExportResources(plans: import('../../shared/export-re
     let live = true;
     return { token, plan: plans[index]!, release: () => { if (live) { live = false; cancel(); } } };
   } finally { off(); signal.removeEventListener('abort', cancel); }
+}
+
+/** The metadata preflight's admission: sources are read before the export's
+ * working set can be sized, so this reads them under its own smallest plan
+ * (64 MiB, the plan floor), queued like the export's and with no deadline. */
+export async function admitExportMetadata(signal: AbortSignal, waiting: (block: import('../../shared/export-resources').ExportResourceBlock) => void): Promise<() => void> {
+  if (typeof window === 'undefined' || !window.api?.resources) return () => {};
+  const reservation = await admitExportResources([{ memoryMiB: 64, workerMiB: 0, motifBufferBytes: 0, frameWindows: {} }], false, signal, waiting);
+  return reservation.release;
 }

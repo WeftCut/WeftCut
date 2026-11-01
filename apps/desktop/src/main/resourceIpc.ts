@@ -1,6 +1,6 @@
 import { admitExport } from './exportAdmission';
 import type { ExportPlanRequest } from '../shared/export-resources';
-import { tryExportPlan, waitForResourceChange, releaseResourceId, decoderResourceMiB } from './resources';
+import { tryExportPlan, waitForResourceChange, releaseResourceId, decoderResourceMiB, queueExport } from './resources';
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { resourceAllocation } from '../shared/resource-policy';
 import type { ResourceStatus } from '../shared/resource-policy';
@@ -73,7 +73,7 @@ export function installResourceIpc(onDiagnostic?: (snapshot: { status: ResourceS
     owner.pending.set(request.id, controller);
     try {
       const admitted = await admitExport(request, {
-        tryPlan: tryExportPlan, wait: waitForResourceChange, release: releaseResourceId,
+        tryPlan: tryExportPlan, wait: waitForResourceChange, release: releaseResourceId, queue: queueExport,
         waiting: block => { if (!event.sender.isDestroyed()) event.sender.send('resources:export-waiting', { id: request.id, ...block }); },
       }, controller.signal);
       if (controller.signal.aborted) { releaseResourceId(admitted.id); controller.signal.throwIfAborted(); }

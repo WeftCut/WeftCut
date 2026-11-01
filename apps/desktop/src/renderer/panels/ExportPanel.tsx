@@ -28,7 +28,8 @@ export type ExportState = ExportPhase & { job?: import('../../shared/exportJob')
 type ExportPhase =
   // Readiness waits and frame export provide their own cancellation handler.
   | { kind: "starting" }
-  | { kind: "preparing"; labels: string[]; message?: string; onCancel?: () => void }
+  // `queued`: admission waits for the resource budget (the job's `queued` state).
+  | { kind: "preparing"; labels: string[]; message?: string; onCancel?: () => void; queued?: NonNullable<import('../../shared/exportJob').ExportJob['queued']> }
   | { kind: "progress"; progress: ExportProgress; onCancel?: () => void }
   // The tail after the last frame is encoded: flush the native sink, render
   // audio, stream-copy mux. It used to be invisible — the panel sat frozen at

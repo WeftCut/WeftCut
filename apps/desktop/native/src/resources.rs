@@ -102,6 +102,9 @@ struct State {
     /// User-compute claims currently queued. While non-zero, no new background
     /// claim is admitted, so freed capacity goes to the person waiting.
     user_waiting: u32,
+    /// Exports queued for admission. The same rule as `user_waiting`: while
+    /// non-zero, no new background claim is admitted.
+    export_waiting: u32,
     playing: bool,
     pressured: bool,
     critical: bool,
@@ -142,6 +145,7 @@ impl Governor {
                 waiting: 0,
                 finalization_waiting: 0,
                 user_waiting: 0,
+                export_waiting: 0,
                 playing: false,
                 pressured: false,
                 critical: false,
@@ -199,9 +203,11 @@ impl Governor {
             || claim.background
                 && (bg >= s.limits.background_jobs
                     || s.playing && !s.limits.background_playback
-                    // Queued background work yields to user compute. Running
-                    // derivatives keep their leases; only new admissions wait.
-                    || s.user_waiting > 0)
+                    // Queued background work yields to user compute and to a
+                    // queued export. Running derivatives keep their leases;
+                    // only new admissions wait.
+                    || s.user_waiting > 0
+                    || s.export_waiting > 0)
         {
             return None;
         }
@@ -615,6 +621,7 @@ impl Governor {
             "background_active": s.leases.values().filter(|c| c.background).count(),
             "background_limit": s.limits.background_jobs, "waiting": s.waiting,
             "user_compute_waiting": s.user_waiting,
+            "export_waiting": s.export_waiting,
             "finalization_waiting": s.finalization_waiting,
             "reserved_mib": s.leases.values().map(|c| c.mib).sum::<u64>(),
             "work_mib": s.limits.work_mib,

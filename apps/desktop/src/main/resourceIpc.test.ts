@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   handles: new Map<string, (...args: any[]) => any>(),
   listeners: new Map<string, (...args: any[]) => any>(),
-  plan: vi.fn(), wait: vi.fn(), releaseId: vi.fn(), quit: [] as (() => void)[], reserve: vi.fn(), reserveFinalization: vi.fn(), activity: vi.fn(), memory: vi.fn(), windows: vi.fn(() => [] as any[]),
+  plan: vi.fn(), wait: vi.fn(), releaseId: vi.fn(), queue: vi.fn(), leave: vi.fn(), quit: [] as (() => void)[], reserve: vi.fn(), reserveFinalization: vi.fn(), activity: vi.fn(), memory: vi.fn(), windows: vi.fn(() => [] as any[]),
 }));
 vi.mock('electron', () => ({
   ipcMain: { handle: (name: string, fn: any) => mocks.handles.set(name, fn), on: (name: string, fn: any) => mocks.listeners.set(name, fn) },
@@ -13,7 +13,7 @@ vi.mock('electron', () => ({
 }));
 vi.mock('./resources', async importOriginal => ({
   ...await importOriginal<object>(), reserveResources: mocks.reserve, reserveExportFinalization: mocks.reserveFinalization, setResourceActivity: mocks.activity,
-  tryExportPlan: mocks.plan, waitForResourceChange: mocks.wait, releaseResourceId: mocks.releaseId, processTreeMemory: mocks.memory, resourceSnapshot: () => ({ active: 0, waiting: 0, reserved_mib: 0, cpu_threads: 0 }),
+  tryExportPlan: mocks.plan, waitForResourceChange: mocks.wait, releaseResourceId: mocks.releaseId, queueExport: mocks.queue, processTreeMemory: mocks.memory, resourceSnapshot: () => ({ active: 0, waiting: 0, reserved_mib: 0, cpu_threads: 0 }),
 }));
 import { installResourceIpc, resolveExportFinalization } from './resourceIpc';
 import { MEMORY_SAMPLE_TTL_MS } from './resources';
@@ -25,6 +25,7 @@ beforeEach(() => {
   mocks.windows.mockReturnValue([]);
   mocks.memory.mockResolvedValue({ processMib: 100, availableMib: 2048 });
   mocks.reserve.mockImplementation(() => vi.fn());
+  mocks.queue.mockReturnValue(mocks.leave);
   installResourceIpc();
 });
 afterEach(() => { mocks.quit.splice(0).forEach(fn => fn()); vi.useRealTimers(); });
@@ -194,11 +195,13 @@ it.each(['release', 'destroyed', 'navigation'])('cancels queued admission on %s 
   const pending=mocks.handles.get('resources:plan-export')!({sender:owner},planRequest);
   const rejected=expect(pending).rejects.toThrow();
   expect(mocks.handles.get('resources:status')!({sender:owner}).waiting).toBe(1);
+  expect(mocks.queue).toHaveBeenCalledOnce(); expect(mocks.leave).not.toHaveBeenCalled();
   if(action==='release') mocks.listeners.get('resources:release')!({sender:owner},'plan-a');
   else if(action==='navigation') owner.emit('did-start-navigation',{isMainFrame:true,isSameDocument:false});
   else owner.emit('destroyed');
   await rejected;
   expect(mocks.handles.get('resources:status')!({sender:owner}).waiting).toBe(0);
+  expect(mocks.leave).toHaveBeenCalledOnce();
   expect(mocks.releaseId).not.toHaveBeenCalled();
   expect(() => resolveExportFinalization(33,'plan-a')).toThrow('expired');
   owner.emit('destroyed');

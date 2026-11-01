@@ -192,6 +192,9 @@ first two):
      needed_mib, allowed_mib, setting, memory_target_mib }`, which no wait
      admits.
    - `get_export_status { wait_s ≤ 60 }` blocks until the job's state changes.
+     An export never fails busy: it waits in `queued`, with `queued: { reason,
+     holders }` in the same holder shape, until admitted or cancelled; while it
+     waits no new background claim is admitted.
    Gates: `derivative-jobs.test.ts`, `faultText.test.ts`, the governor's holder
    tests (`native/src/resources.rs`).
 5. **Guidance reaches every transport.** Both transports send the same
@@ -884,8 +887,9 @@ Export jobs are application-session jobs shared with the UI (ADR 0111).
   `range` is `{ t_start_us, t_end_us }`, timeline µs, half-open.
   Reuse a `request_id` only when unsure a request arrived; different arguments
   under one id fail. Conflict policy `rename` (default) or `fail`; MCP never
-  overwrites. Settings, `output_path` (absolute, in an existing folder, the
-  extension `get_export_options` reports) and an `on_conflict: fail` collision
+  overwrites. Settings, `output_path` (absolute, in an existing folder or the
+  project's own `output/`, created on demand; the extension
+  `get_export_options` reports) and an `on_conflict: fail` collision
   are checked before a job exists and refused as `invalid_params`
   (`PathExists`, `PathNotFound`, `InvalidArgument`). `get_export_status`
   answers `{ job }`: the job named, else the active one, else the most recent;

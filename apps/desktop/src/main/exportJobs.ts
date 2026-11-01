@@ -45,6 +45,16 @@ export async function exportPathExists(file: string): Promise<boolean> {
   try { await fs.lstat(file); return true; } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return false; throw e; }
 }
 
+/** The renderer's account of a queued admission, kept to the wire shape. */
+function exportQueued(value: unknown): NonNullable<ExportJob['queued']> {
+  const v = value as { reason?: unknown; holders?: unknown } | undefined;
+  const reason = v?.reason === 'busy' || v?.reason === 'pressure' || v?.reason === 'host-pressure' ? v.reason : 'busy';
+  const holders = (Array.isArray(v?.holders) ? v.holders : []).slice(0, 16).flatMap((h: Record<string, unknown>) =>
+    h && typeof h.kind === 'string' && typeof h.mib === 'number' && typeof h.threads === 'number'
+      ? [{ kind: h.kind, ...(typeof h.media_id === 'string' ? { media_id: h.media_id } : {}), mib: h.mib, threads: h.threads }] : []);
+  return { reason, holders };
+}
+
 /** Suggest only: the UI adopts the name explicitly and publication rechecks it. */
 export async function suggestExportName(file: string): Promise<string | null> {
   const { dir, name, ext } = path.parse(file);
@@ -76,13 +86,15 @@ export class ExportJobs {
     if (!this.ready || this.ready.session !== this.session(h)) throw new ExportJobError('renderer_unavailable', 'The app window is not ready to render this project yet; retry in a moment');
     const settings = await this.savedSettings(h);
     const id = randomUUID(), token = this.ready.token;
+    // The renderer stops at the same deadline: its admission waits have none.
+    const timeout_ms = 60_000 + 20_000 * req.times_us.length;
     return new Promise<StillsResult>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.stills.delete(id);
         reject(new ExportJobError('render_timeout', `Rendering ${req.times_us.length} frame(s) did not finish in time`));
-      }, 60_000 + 20_000 * req.times_us.length);
+      }, timeout_ms);
       this.stills.set(id, { token, resolve, reject, timer });
-      this.deps.send('render_frames:run', { request_id: id, renderer_token: token, ...req, settings });
+      this.deps.send('render_frames:run', { request_id: id, renderer_token: token, ...req, settings, timeout_ms });
     });
   }
   /** The renderer's answer to `render_frames:run`. */
@@ -260,9 +272,9 @@ export class ExportJobs {
   }
   /** The resolved settings and the destination file of a start request:
    *  settings validated, an explicit `output_path` absolute and in a folder
-   *  that exists (the UI's is created), its extension the one the settings
-   *  write (`get_export_options`), and no file there under `on_conflict:
-   *  fail`. */
+   *  that exists (the UI's is created, and so is the project's own output/),
+   *  its extension the one the settings write (`get_export_options`), and no
+   *  file there under `on_conflict: fail`. */
   private async plan(h: TsActorHost, preset: ExportPreset | undefined, a: Record<string, unknown>, agent: boolean, policy: Entry['policy']) {
     const resolved = resolveExportRequest(await this.savedSettings(h, preset), agent ? exportWire(a.settings, false) : a.settings,
       this.composition(h), (agent ? exportWire(a.range, false) : a.range) as ExportJob['range'] | undefined, !agent || a.allow_experimental_10bit === true, snapFrameRound);
@@ -274,9 +286,14 @@ export class ExportJobs {
     } else {
       if (typeof a.output_path !== 'string' || !path.isAbsolute(a.output_path)) throw new ExportValidationError(`output_path must be an absolute file path, got ${JSON.stringify(a.output_path)}`);
       destination = path.resolve(a.output_path);
-      if (!agent) await fs.mkdir(path.dirname(destination), { recursive: true });
-      else if (!(await fs.stat(path.dirname(destination)).then(st => st.isDirectory(), () => false)))
-        throw new ExportJobError('output_parent_missing', `${path.dirname(destination)} is not an existing folder; an export is written only into a folder that already exists`, { path: path.dirname(destination) });
+      const parent = path.dirname(destination);
+      const isFolder = () => fs.stat(parent).then(st => st.isDirectory(), () => false);
+      // The project's own output/ is the default path's folder: made on demand,
+      // and only it (never a folder above it).
+      const own = path.relative(path.join(h.openedProject()!.dir, 'output'), parent) === '';
+      if (!agent) await fs.mkdir(parent, { recursive: true });
+      else if (!await isFolder() && !(own && await fs.mkdir(parent).then(isFolder, isFolder)))
+        throw new ExportJobError('output_parent_missing', `${parent} is not an existing folder; an export is written only into a folder that already exists`, { path: parent });
     }
     if (path.extname(destination).toLowerCase() !== `.${resolved.extension}`) throw new ExportValidationError(`output_path must end in .${resolved.extension}, the extension these settings write (get_export_options reports it); got ${path.basename(destination)}`);
     if (policy === 'fail' && await exportPathExists(destination)) throw new ExportJobError('output_conflict', `${destination} already exists and on_conflict is fail; nothing is overwritten`, { path: destination });
@@ -306,8 +323,9 @@ export class ExportJobs {
     if (update.state && exportTerminal(update.state)) {
       if (update.state === 'completed' && !j.published) throw new ExportJobError('invalid_state', 'Export cannot complete before publication');
       await this.finish(j, j.published ? 'completed' : j.cancelling ? 'cancelled' : update.state, update.error?.message, update.error?.code, update.error);
-    } else if (update.state && ['preparing', 'rendering', 'finalizing', 'awaiting_retry'].includes(update.state)) {
+    } else if (update.state && ['queued', 'preparing', 'rendering', 'finalizing', 'awaiting_retry'].includes(update.state)) {
       j.view.state = update.state; j.view.error = update.error;
+      if (update.state === 'queued') j.view.queued = exportQueued(update.queued); else delete j.view.queued;
       if (!j.cancelling) j.view.phase = update.phase && ['sink', 'audio', 'mux'].includes(update.phase) ? update.phase : update.state;
       this.notify(j);
     }

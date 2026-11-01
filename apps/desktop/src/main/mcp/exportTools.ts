@@ -54,7 +54,7 @@ export const EXPORT_TOOL_DEFS = [
   definition('get_export_options', 'Read effective export settings and composition limits. Optional preset_id previews that preset without changing project settings; otherwise uses saved project settings, then the global default.', schema({ preset_id: presetId }), true, true),
   definition('start_export', 'Start an asynchronous export. Use one request_id per intent; reuse it when reconnecting. Settings, path, extension and an on_conflict: fail collision are refused before a job exists. get_export_status { wait_s } reports the actual completed path.', schema({
     request_id: { ...id, maxLength: 200, description: 'Unique export intent id. Reuse with identical arguments after reconnecting.' },
-    output_path: { ...id, description: 'Absolute candidate file path in an existing folder. Its extension must match the container (.mp4, .mov, .mkv; audio-only .m4a, Opus .mka): get_export_options reports it as extension. Omit for project/output/project-name.ext.' },
+    output_path: { ...id, description: 'Absolute candidate file path in an existing folder or the project output/. Its extension must match the container (.mp4, .mov, .mkv; audio-only .m4a, Opus .mka): get_export_options reports it as extension. Omit for project/output/project-name.ext.' },
     on_conflict: { enum: ['rename', 'fail'], description: 'Default rename adds a number. Fail requires the exact name. Neither overwrites.' },
     preset_id: presetId,
     settings: { ...exportSettingsSchema(), description: 'Partial per-job overrides, applied after preset_id. Without preset_id, uses saved project settings then the global default. Does not change the preset or saved project settings.' },
@@ -67,7 +67,7 @@ export const EXPORT_TOOL_DEFS = [
     width: { type: 'integer', minimum: 160, maximum: 1920, description: 'Frame width in px; default 640.' },
     sheet: { type: 'boolean', description: 'One contact sheet (default true) or one image per frame.' },
   }), true, true),
-  definition('get_export_status', 'Read an export job as { job }. Omit job_id for the active job, else the most recent one; job is null only when none has run. wait_s blocks until its state changes. Records survive MCP reconnects until the app exits.', schema({ job_id: id, wait_s: { type: 'integer', minimum: 0, maximum: EXPORT_STATUS_MAX_WAIT_S, description: 'Block up to this many seconds for a state change.' } }), true, true),
+  definition('get_export_status', 'Read an export job as { job }. Omit job_id for the active job, else the most recent one; job is null only when none has run. wait_s blocks until its state changes. queued waits for resources; job.queued names the holders. Records survive MCP reconnects until the app exits.', schema({ job_id: id, wait_s: { type: 'integer', minimum: 0, maximum: EXPORT_STATUS_MAX_WAIT_S, description: 'Block up to this many seconds for a state change.' } }), true, true),
   definition('retry_export', 'Retry only finalization of an awaiting_retry job. Optional filename changes the basename in the same directory; keep its extension.', schema({ job_id: id, filename: { ...id, description: 'New basename including matching extension. Directory and encoded settings cannot change.' } }, ['job_id']), false, false),
   definition('cancel_export', 'Cancel or discard an export from either entry point. Cancellation drains active work before releasing the project edit lock; wait on get_export_status until terminal.', schema({ job_id: id }, ['job_id']), false, true, true),
 ];

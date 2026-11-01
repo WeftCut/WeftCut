@@ -99,6 +99,41 @@ it('get_export_status { wait_s }: wakes on a state change, not on progress, and 
   expect(Date.now() - before).toBeLessThan(1_000);
 });
 
+it('a job waiting for admission reads queued with its holders, and get_export_status { wait_s } wakes when it is admitted', async () => {
+  const s = await setup(); s.ready(); const job = await s.jobs.start({});
+  const proxy = { kind: 'proxy', media_id: 'm-1', mib: 900, threads: 1 };
+  let woke = false;
+  const entering = s.jobs.waitForStateChange(job.job_id, 5_000).then(() => { woke = true; });
+  await s.jobs.update(job.job_id, 'renderer', { state: 'queued', queued: { reason: 'busy', holders: [proxy] } });
+  await entering; expect(woke).toBe(true);
+  expect(s.jobs.status(job.job_id)).toMatchObject({ state: 'queued', phase: 'queued', can_cancel: true, queued: { reason: 'busy', holders: [proxy] } });
+  // A new holder list while still queued is no state change.
+  woke = false;
+  const admitted = s.jobs.waitForStateChange(undefined, 5_000).then(() => { woke = true; });
+  await s.jobs.update(job.job_id, 'renderer', { state: 'queued', queued: { reason: 'busy', holders: [proxy, { kind: 'waveform', mib: 128, threads: 1 }] } });
+  await new Promise(r => setTimeout(r, 10));
+  expect(woke).toBe(false);
+  expect(s.jobs.latest()?.queued?.holders).toHaveLength(2);
+  await s.jobs.update(job.job_id, 'renderer', { state: 'rendering', progress: 0 });
+  await admitted;
+  expect(s.jobs.status(job.job_id)).toMatchObject({ state: 'rendering' });
+  expect(s.jobs.status(job.job_id)).not.toHaveProperty('queued');
+  await s.jobs.cancel(job.job_id); await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
+});
+
+it('an explicit path into the project\'s own output/ creates that folder; any other missing folder still refuses', async () => {
+  const s = await setup(); s.ready();
+  const output = path.join(s.dir, 'output');
+  await expect(fs.stat(output)).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(s.jobs.start({ output_path: path.join(output, 'nested', 'cut.mp4') })).rejects.toMatchObject({ code: 'output_parent_missing' });
+  await expect(fs.stat(output)).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(s.jobs.start({ output_path: path.join(s.dir, 'other', 'cut.mp4') })).rejects.toMatchObject({ code: 'output_parent_missing', data: { path: path.join(s.dir, 'other') } });
+  const job = await s.jobs.start({ output_path: path.join(output, 'cut.mp4') });
+  expect(job).toMatchObject({ state: 'preparing', output_path: path.join(output, 'cut.mp4') });
+  expect((await fs.stat(output)).isDirectory()).toBe(true);
+  await s.jobs.cancel(job.job_id); await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
+});
+
 it('keeps admission during cancellation until the renderer acknowledges cleanup', async () => {
   const s = await setup(); s.ready(); const job = await s.jobs.start({});
   await s.jobs.cancel(job.job_id); expect(s.jobs.isActive()).toBe(true);

@@ -7,6 +7,7 @@ interface NativeResources {
   resourcesConfigure(json: string): void;
   resourcesPlanExport(options: string, nativeEncoder: boolean): string;
   resourcesWaitForChange(revision: number): Promise<void>;
+  resourcesExportWaiting(entered: boolean): void;
   resourcesReserve(threads: number, memoryMiB: number, finalizationId?: number): number;
   resourcesRelease(id: number): void;
   resourcesReserveFinalization(): number;
@@ -33,6 +34,14 @@ export function tryExportPlan(options: number[], nativeEncoder: boolean): import
 }
 export function waitForResourceChange(revision: number): Promise<void> { return getNative().resourcesWaitForChange(revision); }
 export function releaseResourceId(id: number): void { getNative().resourcesRelease(id); }
+/** Queue an export waiting for admission: no new background claim is admitted
+ * until every queued export leaves. Returns the leave, safe to call twice. */
+export function queueExport(): () => void {
+  const owner = getNative();
+  owner.resourcesExportWaiting(true);
+  let live = true;
+  return () => { if (live) { live = false; owner.resourcesExportWaiting(false); } };
+}
 export function reserveDecoderResources(path: string, finalizationId?: number): () => void {
   if (!native) return () => {}; // isolated managers/tests; app bootstrap installs the authority
   const decode = createRequire(import.meta.url)('@weftcut/native-decode') as {

@@ -101,7 +101,7 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: translate, i18n: { resolvedLanguage: "en-US" } }),
 }));
 
-import { createExportRunner } from "./exportRunner";
+import { createExportRunner, queuedExportMessage } from "./exportRunner";
 import { capabilityOf, RendererCannotDrawError, type RendererCapability } from "../render/rendererCapability";
 
 const GPU = capabilityOf("webgpu", true);
@@ -547,5 +547,20 @@ describe("exportRunner", () => {
       expect(result.current.exportState).toMatchObject({ kind: "error", code: "encoder_unavailable", fault: { error: "EncoderUnavailable", option: "encoder_engine" } });
       expect((result.current.exportState as { detail: string }).detail).toContain("encoder_engine");
     });
+  });
+});
+
+describe("queued export message", () => {
+  const block = { kind: "blocked", reason: "busy", requestedMiB: 800, availableMiB: 100, workMiB: 1024, revision: 1 } as const;
+  const t = translate as unknown as TFunction;
+  it("names the largest holder it knows, waiting without a deadline", () => {
+    expect(queuedExportMessage(t, { ...block, holders: [{ kind: "proxy", media_id: "m-1", mib: 900, threads: 1 }] }))
+      .toBe("Waiting for proxy generation to finish; the export starts automatically");
+    expect(queuedExportMessage(t, { ...block, holders: [{ kind: "editor", mib: 900, threads: 1 }, { kind: "waveform", mib: 64, threads: 1 }] }))
+      .toBe("Waiting for waveform generation to finish; the export starts automatically");
+  });
+  it("falls back to other processing, and memory reasons say memory", () => {
+    expect(queuedExportMessage(t, block)).toBe(enUS.export.wait_resources);
+    expect(queuedExportMessage(t, { ...block, reason: "host-pressure", holders: [{ kind: "proxy", mib: 900, threads: 1 }] })).toBe(enUS.export.wait_memory);
   });
 });

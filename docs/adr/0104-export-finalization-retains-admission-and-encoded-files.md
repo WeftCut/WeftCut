@@ -64,3 +64,22 @@ claims. Two export failures came from admitting stages independently:
   threads return to the governor when the encoder closes.
 - Preview suspends for the export and retires its Motif GPU caches before
   admission.
+
+## Note (2026-11-01): export admission has no deadline
+
+"Temporary contention waits up to 15 s" no longer holds. An export started
+while a proxy build held the budget failed busy after 15 s, though the build
+ran for minutes. The rule now:
+
+- An export waits for admission until it is admitted or cancelled. The job
+  reads `queued` with the holders; `get_export_status { wait_s }` and the export
+  panel show the wait. The metadata preflight that sizes the plans is admitted
+  the same way.
+- `budget-too-small` (a static minimum above the working allowance) still
+  refuses at once.
+- While an export waits, the governor admits no new background claim (the
+  `user_waiting` rule, counted in `export_waiting`).
+- Running derivatives keep their leases: nothing is paused or pre-empted.
+
+Child claims that borrow from the admitted plan, and the queued finalization,
+keep their 15 s bounds: they fit by construction.

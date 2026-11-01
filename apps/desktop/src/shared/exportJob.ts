@@ -1,6 +1,9 @@
 import type { ExportSettings } from './exportSettings';
+import type { ResourceWaitReason } from './export-resources';
+import type { ResourceHolder } from './resource-policy';
 
-export type ExportJobState = 'preparing' | 'rendering' | 'finalizing' | 'awaiting_retry' | 'completed' | 'failed' | 'cancelled';
+/** `queued`: admission waits for the resource budget, for as long as it takes. */
+export type ExportJobState = 'queued' | 'preparing' | 'rendering' | 'finalizing' | 'awaiting_retry' | 'completed' | 'failed' | 'cancelled';
 export interface ExportJob {
   job_id: string;
   state: ExportJobState;
@@ -14,6 +17,9 @@ export interface ExportJob {
   phase?: string;
   progress?: number;
   duration_us?: number;
+  /** While `queued`: why admission waits and what holds the budget, largest
+   *  first (the `ResourceBusy` holders). */
+  queued?: { reason: Exclude<ResourceWaitReason, 'budget-too-small'>; holders: ResourceHolder[] };
   /** A typed failure also carries its variant (`error`) and data, flat. */
   error?: { code: string; message: string; [key: string]: unknown };
 }

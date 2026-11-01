@@ -199,6 +199,28 @@ pub fn resources_plan_export(options_json: String, native_encoder: bool) -> napi
         .to_string())
 }
 
+impl Governor {
+    /// An export enters while it waits for admission and leaves when it is
+    /// admitted, refused or cancelled. While any waits, new background claims
+    /// are refused; leaving wakes them.
+    fn export_waiting(&self, entered: bool) {
+        let mut s = self.state.lock().unwrap();
+        if entered {
+            s.export_waiting += 1;
+            return;
+        }
+        s.export_waiting = s.export_waiting.saturating_sub(1);
+        drop(s);
+        self.notify_change();
+    }
+}
+
+#[cfg_attr(test, allow(dead_code))] // Called through NAPI, not the Rust test binary.
+#[napi]
+pub fn resources_export_waiting(entered: bool) {
+    governor().export_waiting(entered);
+}
+
 /// Register before checking the revision: releases between rejection and wait
 /// cannot be lost. A bounded native wait also bounds abandoned IPC requests.
 #[cfg_attr(test, allow(dead_code))] // Called through NAPI, not the Rust test binary.
@@ -370,6 +392,48 @@ mod tests {
         assert_eq!(g.snapshot().reserved_mib, 64);
         drop(tail);
         g.release(id);
+        assert_eq!(g.snapshot().active, 0);
+    }
+    #[tokio::test]
+    async fn a_queued_export_holds_back_new_background_work_until_it_leaves() {
+        let g = Governor::new();
+        g.configure(Limits {
+            cpu_threads: 4,
+            background_jobs: 4,
+            ..Limits::default()
+        })
+        .unwrap();
+        let proxy = g.acquire(true, 900).await.unwrap();
+        assert_eq!(g.reserve_export(&[800], false)["kind"], "blocked");
+        g.export_waiting(true);
+        let background = Claim {
+            threads: 1,
+            mib: 64,
+            background: true,
+        };
+        // It fits the ledger, but a queued export goes first. The running
+        // proxy keeps its lease; interactive work is unaffected.
+        assert!(g.reserve(background).is_none());
+        let interactive = g
+            .reserve(Claim {
+                background: false,
+                ..background
+            })
+            .unwrap();
+        g.release(interactive);
+        let authority = g.clone();
+        let queued = tokio::spawn(async move { authority.acquire(true, 64).await });
+        tokio::task::yield_now().await;
+        assert!(!queued.is_finished());
+        assert_eq!(g.snapshot().active, 1, "the proxy still holds its lease");
+        g.export_waiting(false);
+        let admitted = tokio::time::timeout(std::time::Duration::from_secs(1), queued)
+            .await
+            .expect("leaving wakes queued background work")
+            .unwrap()
+            .unwrap();
+        drop(admitted);
+        drop(proxy);
         assert_eq!(g.snapshot().active, 0);
     }
     #[test]

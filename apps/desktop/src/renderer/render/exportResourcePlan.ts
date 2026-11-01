@@ -1,5 +1,5 @@
 import { resourceAllocation } from '../../shared/resource-policy';
-import { resourceBlockError } from '../../shared/export-resources';
+import { resourceBlockError, type ExportResourceBlock } from '../../shared/export-resources';
 import type { MediaSummary, ProjectSummary } from '../ipc';
 import type { ExportDecodeRouting } from './exportDecodeRouting';
 import { rootCompositionOf } from '../ipc/compositions';
@@ -11,7 +11,7 @@ import { convertFileSrc } from '@/bridge/ipc';
 import { tenBitExportCapable } from './exportSettings';
 import { forEachLayerInTime, instanceKey } from './compositionWalk';
 import { motifLayersToBake } from './exportBake';
-import { acquireExportResources, exportBufferBytes } from './resourceClient';
+import { admitExportMetadata, exportBufferBytes } from './resourceClient';
 import { EXPORT_FRAME_WINDOW, exportDecoderMiB, minimumExportFrames, type ExportResourcePlan } from '../../shared/export-resources';
 
 export interface ExportSourceDemand { width: number; height: number; tenBit: boolean; minimumFrames: number; nativeMiB?: number }
@@ -56,11 +56,14 @@ export function buildExportResourcePlans(input: {
 
 /** Metadata-only preflight: no decoder, canvas, encoder or video worker exists
  * yet. Read the actual decode target's coded dimensions and AVC level; persisted
- * display dimensions are not sufficient for a safe allocation. */
+ * display dimensions are not sufficient for a safe allocation. The reads run
+ * under one metadata admission that waits, queued, until admitted or
+ * cancelled (`waiting` sees each block), never failing busy. */
 export async function prepareExportResourcePlans(input: {
   summary: ProjectSummary; media: ReadonlyMap<string, MediaSummary>; routing?: ExportDecodeRouting | undefined;
   startUs: number; endUs: number; bitDepth: 8|10; nativeEncoder: boolean;
   outputWidth: number; outputHeight: number; signal: AbortSignal;
+  waiting?: (block: ExportResourceBlock) => void;
 }): Promise<ExportResourcePlan[]> {
   const comp=rootCompositionOf(input.summary);
   const clips=selectActiveVideoLayers(input.summary,input.startUs,input.endUs-1).map(l => ({
@@ -68,13 +71,14 @@ export async function prepareExportResourcePlans(input: {
     start:Math.max(input.startUs,l.tStartUs), end:Math.min(input.endUs,l.tEndUs),
   }));
   const sources: Record<string,ExportSourceDemand>={};
-  for (const id of new Set(clips.map(c => c.mediaId))) {
+  const ids=new Set(clips.map(c => c.mediaId));
+  const releaseMetadata = ids.size ? await admitExportMetadata(input.signal, input.waiting ?? (() => {})) : () => {};
+  try {
+  for (const id of ids) {
     input.signal.throwIfAborted();
     const media=input.media.get(id); if (!media) throw new Error(`Missing export source: ${id}`);
     const native=input.routing?.routes[id];
     const tenBit=input.bitDepth===10 && tenBitExportCapable(media);
-    const releaseMetadata = await acquireExportResources(16, 0, undefined, input.signal);
-    try {
     if (native?.engine==='native') {
       sources[id]={width:0,height:0,tenBit,minimumFrames:24,nativeMiB:await window.api.resources.estimateDecoder(native.sourcePath)};
     } else {
@@ -87,8 +91,8 @@ export async function prepareExportResourcePlans(input: {
         sources[id]={width:config.codedWidth,height:config.codedHeight,tenBit,minimumFrames:minimumExportFrames(config)};
       } finally { opened.dispose(); }
     }
-    } finally { releaseMetadata(); }
   }
+  } finally { releaseMetadata(); }
   input.signal.throwIfAborted();
   const pixels=comp.width*comp.height*(input.bitDepth===10?8:4);
   const motifs=motifLayersToBake(input.summary,input.startUs,input.endUs,comp.fps_num,comp.fps_den);
