@@ -358,8 +358,6 @@ pub enum GroupNotPlainReason {
     Transform,
     Opacity,
     Effects,
-    #[serde(rename = "blend_mode")]
-    BlendMode,
 }
 
 impl std::fmt::Display for GroupNotPlainReason {
@@ -368,7 +366,6 @@ impl std::fmt::Display for GroupNotPlainReason {
             Self::Transform => "transform",
             Self::Opacity => "opacity",
             Self::Effects => "effects",
-            Self::BlendMode => "blend_mode",
         })
     }
 }

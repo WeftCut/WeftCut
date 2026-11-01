@@ -635,7 +635,7 @@ Command contracts not stated elsewhere:
 | `groups_create(ids, label?)` | pre-compose into a new composition with the parent's settings and the A/B skeleton; never partial (locks refuse first); inside links and transitions move, straddling ones are trimmed / reconciled away; anchored markers follow their layer |
 | `add_group_layer(source, track_id, t_start_us)` | window `[0, duration_us)`, identity transform; refuses the root, a cycle, an empty source before any write |
 | `groups_add_members(ids, group_layer_id)` | members land at `t_start_us − group.t_start_us + group.src_in_us` (overhang possible); delegates the crossing to `move_layers_to_composition` |
-| `groups_ungroup(layer_id)` | only a plain Group (identity transform, static opacity 1, no effects, Normal) else `GroupNotPlain`; members inside the window copy in trimmed, outside dropped; the composition goes with its last reference |
+| `groups_ungroup(layer_id)` | only a plain Group (identity transform, static opacity 1, no effects) else `GroupNotPlain`; members inside the window copy in trimmed, outside dropped; the composition goes with its last reference |
 | `set_composition(patch, composition_id?)` | never recorded; lattice fields cascade; `fps` behind the lock |
 | `restore_checkpoint` | records a new entry (clears redo) |
 | `replace_state(snapshot)` | project open / new; full validation; resets history |

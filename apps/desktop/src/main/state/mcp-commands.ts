@@ -499,7 +499,7 @@ export const LAYER_PARAMS_KEYS: Readonly<Record<string, readonly string[]>> = {
   Motif: keysOf('Motif', { x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, src_in_us: true, motif_id: true, motif_version: true, props: true, graphic_role: true }),
   Color: keysOf('Color', { color: true, width: true, height: true }),
   Audio: keysOf('Audio', { src_in_us: true, src_out_us: true, gain_db: true, pan: true, fade_in_us: true, fade_out_us: true, mute: true, role: true }),
-  CompositionRef: keysOf('CompositionRef', { src_in_us: true, src_out_us: true, x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, blend_mode: true }),
+  CompositionRef: keysOf('CompositionRef', { src_in_us: true, src_out_us: true, x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true }),
 }
 export const LAYER_PARAM_KINDS: readonly string[] = Object.keys(LAYER_PARAMS_KEYS)
 /** The kinds whose patch writes `scale_x`/`scale_y` also take `scale_linked`,
@@ -511,7 +511,6 @@ const SCALE_LINK_KINDS: ReadonlySet<string> = new Set(LAYER_PARAM_KINDS.filter((
 export const layerPatchKeys = (kind: string): readonly string[] => SCALE_LINK_KINDS.has(kind) ? [...LAYER_PARAMS_KEYS[kind]!, 'scale_linked'] : LAYER_PARAMS_KEYS[kind]!
 const TEXT_ALIGN_OPTIONS = ['Left', 'Center', 'Right'] as const
 const VALIGN_OPTIONS = ['Top', 'Middle', 'Bottom'] as const
-const BLEND_MODE_OPTIONS = ['Normal', 'Multiply', 'Screen', 'Overlay', 'Darken', 'Lighten', 'Add', 'Difference'] as const
 
 function parseOneOf(v: unknown, options: readonly string[], field: string): string {
   if (typeof v !== 'string' || !options.includes(v)) throw new McpArgError(`${field} must be one of ${options.join(' | ')}, got ${describeValue(v)}`, field)
@@ -551,7 +550,6 @@ function parseLayerParamValue(k: string, v: unknown): unknown {
     case 'flip_h': case 'flip_v': case 'mute': case 'scale_linked': return parseBool(v, field)
     case 'align': return parseOneOf(v, TEXT_ALIGN_OPTIONS, field)
     case 'valign': return parseOneOf(v, VALIGN_OPTIONS, field)
-    case 'blend_mode': return parseOneOf(v, BLEND_MODE_OPTIONS, field)
     case 'role': return parseRole(v)
     case 'props': return parseObj(v, field)
     case 'src_in_us': case 'src_out_us': case 'fade_in_us': case 'fade_out_us': case 'motif_version': return parseIntNum(v, field)
@@ -582,6 +580,7 @@ export function parseLayerParamsPatch(v: unknown): LayerParamsPatch & { scale_li
     const hint = kind === 'Text' && k.startsWith('scale_') ? ` (${TEXT_SCALE_RULE})`
       : k in LAYER_ENVELOPE_OWNER ? ` (${LAYER_ENVELOPE_OWNER[k]})`
       : k === 'src_out_us' ? ' (the window end follows src_in_us, which slips it at its length; trim_layer changes the length)'
+      : k === 'blend_mode' ? ' (no layer takes a blend mode yet: every layer composites Normal)'
       : elsewhere.length > 0 ? ` ('${k}' belongs to ${elsewhere.join(', ')})` : ''
     throw new McpArgError(`invalid patch: '${k}' is not a ${kind} param — a ${kind} patch writes ${allowed.join(', ')}${hint}`, 'patch')
   }
@@ -1601,7 +1600,6 @@ const LAYER_PARAM_FIELD_SCHEMAS: Readonly<Record<string, Record<string, unknown>
   role: { type: 'string', enum: ['dialogue', 'music', 'sfx', 'voiceover'], description: 'Audio role, whose gain and flags fold into the mix.' },
   width: { type: 'integer', description: 'Colour block width, px.' },
   height: { type: 'integer', description: 'Colour block height, px.' },
-  blend_mode: { type: 'string', enum: [...BLEND_MODE_OPTIONS], description: 'How the Group composites over what lies below.' },
   motif_id: { type: 'string', description: 'Motif id from list_motifs.' },
   motif_version: { type: 'integer', description: 'Motif version to bind.' },
   props: { type: 'object', description: "Motif props, matched against its props_schema." },
@@ -1954,7 +1952,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       to_track: parseDestTrackOpt(a.to_track_id),
     } }) },
   { name: 'ungroup_layer', exec: 'table', annotations: ANN_WRITE,
-    description: "Expand a Group layer back into its members, in place. Refuses unless the Group is PLAIN — identity transform, static opacity 1, no effects, Normal blend (`GroupNotPlain { reason }`), because those apply to the composite and would be discarded; reset them first or keep the Group. Members intersecting the Group's `[src_in_us, src_out_us)` window are copied into the parent at the same on-screen time, trimmed to the window; members wholly outside are dropped. The composition's tracks become fresh tracks at the Group's z position; inner links and transitions carry over. The composition is removed when nothing else references it. One undo restores the Group.",
+    description: "Expand a Group layer back into its members, in place. Refuses unless the Group is PLAIN — identity transform, static opacity 1, no effects (`GroupNotPlain { reason }`), because those apply to the composite and would be discarded; reset them first or keep the Group. Members intersecting the Group's `[src_in_us, src_out_us)` window are copied into the parent at the same on-screen time, trimmed to the window; members wholly outside are dropped. The composition's tracks become fresh tracks at the Group's z position; inner links and transitions carry over. The composition is removed when nothing else references it. One undo restores the Group.",
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string', description: 'The Group layer (its params.kind is CompositionRef).' } }, required: ['layer_id'] },
     parseArgs: (a) => ({ op: 'groups_ungroup', args: { layer: parseUuid(a.layer_id, 'layer_id') } }) },
   { name: 'rename_composition', exec: 'table', annotations: ANN_SET,

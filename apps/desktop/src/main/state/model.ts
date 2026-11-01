@@ -22,6 +22,8 @@ export interface Rgba { r: number; g: number; b: number; a: number }
 export type ColorSpace = 'Bt709' | 'Bt601' | 'Bt2020' | 'SRgb'
 export type AudioRole = 'dialogue' | 'music' | 'sfx' | 'voiceover'
 export type TrackRole = 'ARoll' | 'BRoll' | 'AudioA' | 'AudioB' | 'Caption'
+/** Stored on every visual kind and always Normal: no renderer draws another
+ *  mode and no surface writes one. Rendering, UI and MCP land together. */
 export type BlendMode =
   | 'Normal' | 'Multiply' | 'Screen' | 'Overlay' | 'Darken' | 'Lighten' | 'Add' | 'Difference'
 

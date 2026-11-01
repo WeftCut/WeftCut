@@ -310,7 +310,7 @@ Mutations: `apps/desktop/src/main/state/mutations/links.ts`, with fan-out in
 A *Group* is a composition placed as one layer — a precomp / nest
 ([ADR 0052](adr/0052-link-propagates-group-composes.md)). Its params are a
 `CompositionRef`: a source window `[src_in_us, src_out_us)` in the composition's
-own time, plus transform, opacity and blend. At rate 1, parent time `t` maps to
+own time, plus transform and opacity. At rate 1, parent time `t` maps to
 `t − t_start_us + src_in_us` (a retimed Group scales it — [Retime](#retime));
 nesting composes. Pre-compose, ungroup, add to
 Group and move to another composition are each one history entry and are the
@@ -332,7 +332,7 @@ the whole set.
 
 **Ungroup** (`groups_ungroup`; MCP `ungroup_layer`; `Mod+Shift+G`) puts members
 back in the parent at the same on-screen time. Allowed only on a **plain** Group
-layer — identity transform, static opacity 1, no effects, Normal blend —
+layer — identity transform, static opacity 1, no effects —
 otherwise `GroupNotPlain { reason }` names the field (those apply to the
 composite and have no per-member equivalent) — and only at rate 1. Members intersecting the window
 are copied in at `t + t_start_us − src_in_us`, trimmed to the window (source and

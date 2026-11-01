@@ -14,9 +14,6 @@
 // on a renderer that cannot draw them. The worker re-asks with the renderer it
 // actually got (`capabilityOf`), so a context lost between the probe and the
 // run refuses too instead of drawing the frame wrong.
-//
-// Blend modes are not a row: a Group's `blend_mode` is not on the summary and
-// no renderer applies it today.
 import { isWebGLSupported, isWebGPUSupported } from "pixi.js";
 
 import { VISUAL_EFFECT_PARAMS } from "../../shared/effects/params";

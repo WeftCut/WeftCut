@@ -205,7 +205,7 @@ export type CommandError =
   // Ungroup refuses a Group layer whose transform / opacity / effects are not the
   // identity: expanding would discard them silently. `reason` names the first
   // non-plain field so the caller can clear it or keep the Group.
-  | { error: 'GroupNotPlain'; layer: Uuid; reason: 'transform' | 'opacity' | 'effects' | 'blend_mode' }
+  | { error: 'GroupNotPlain'; layer: Uuid; reason: 'transform' | 'opacity' | 'effects' }
   // `compositions_delete` on a composition some Group layer still references.
   | { error: 'CompositionInUse'; composition: Uuid; ref_count: number }
   // The root is never renamed or deleted: it has no name in the UI and export

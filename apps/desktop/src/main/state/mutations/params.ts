@@ -1,7 +1,7 @@
 import { sourceIn, sourceOut, layerRate, layerRateNumber, writeSourceWindow } from '../../../renderer/layerTiming'
 import { approximateTime, exactTime, subtractTime, addTime, multiplyTime } from '../../../renderer/timeMapping'
 import { canonicalCrop, cropProblem, type CropRect } from '../../../shared/crop'
-import type { Animated, AudioParams, AudioRole, BlendMode, ColorParams, CompositionRefParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextAlign, TextAnimPreset, TextParams, Uuid, VAlign, VideoClipParams , Shadow} from '../model'
+import type { Animated, AudioParams, AudioRole, ColorParams, CompositionRefParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextAlign, TextAnimPreset, TextParams, Uuid, VAlign, VideoClipParams , Shadow} from '../model'
 import { CommandFailure } from '../errors'
 import { TEXT_INTROS, TEXT_OUTROS } from '../../../shared/textAnimation'
 import { snapFrameFloor, snapFrameCeil, gridForLayerKind, snapOnGrid } from '../snap'
@@ -43,11 +43,10 @@ export type LayerParamsPatch =
    *  gesture (ADR 0052 §6), so this path can set the window a trim drag would
    *  not.
    *
-   *  `blend_mode` is the ONE patchable blend field in this table, and only
-   *  because the Ungroup gate names it: `groupNotPlainReason` refuses a
-   *  non-Normal blend, and a reason no command can reach is a dead branch.
-   *  Every other kind stores `blend_mode` and no surface writes it yet. */
-  | { kind: 'CompositionRef'; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; blend_mode?: BlendMode }
+   *  No kind's patch writes `blend_mode`: every kind stores it, always Normal,
+   *  and no renderer draws another mode yet. Rendering, UI and MCP land
+   *  together when one does. */
+  | { kind: 'CompositionRef'; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number }
 
 const stat = <T>(value: T): Animated<T> => ({ mode: 'Static', value })
 
@@ -106,10 +105,6 @@ function authoredTransform(patch: {
  *  this is the only site that needs them as data. */
 const TEXT_ALIGNS: readonly TextAlign[] = ['Left', 'Center', 'Right']
 const VALIGNS: readonly VAlign[] = ['Top', 'Middle', 'Bottom']
-/** `BlendMode`'s variants as values, for the same reason: MCP hands this arm
- *  untyped JSON, and an unrecognised mode reaches the renderer's blend table as
- *  `undefined`, i.e. a layer composited by no rule at all. */
-const BLEND_MODES: readonly BlendMode[] = ['Normal', 'Multiply', 'Screen', 'Overlay', 'Darken', 'Lighten', 'Add', 'Difference']
 
 /** apply_params_patch — kind-matched field merge. Refuses a discriminant
  *  mismatch and a value the kind cannot store (an enum outside its variants, a
@@ -368,12 +363,6 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
     case 'CompositionRef': {
       const g = p as CompositionRefParams
       const a = authoredTransform(patch)
-      // Checked before the first write, like the Text arm's enums and for the
-      // same reason: a refused patch must leave the project byte-identical.
-      if (patch.blend_mode !== undefined && !BLEND_MODES.includes(patch.blend_mode)) {
-        throw new CommandFailure({ error: 'InvalidArgument', field: 'blend_mode',
-          detail: `blend_mode must be one of ${BLEND_MODES.join(' | ')}` })
-      }
       writeWindow(layer, g, patch.src_in_us, patch.src_out_us)
       if (a.x !== undefined) setPositionTrack(g.transform.position, 'x', stat(a.x))
       if (a.y !== undefined) setPositionTrack(g.transform.position, 'y', stat(a.y))
@@ -383,7 +372,6 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       if (a.rotation_deg !== undefined) g.transform.rotation_deg = stat(a.rotation_deg)
       if (a.anchor_x !== undefined) g.transform.anchor_x = stat(a.anchor_x)
       if (a.anchor_y !== undefined) g.transform.anchor_y = stat(a.anchor_y)
-      if (patch.blend_mode !== undefined) g.blend_mode = patch.blend_mode
       return
     }
     case 'Color': {

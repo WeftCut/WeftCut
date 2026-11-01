@@ -99,8 +99,13 @@ describe('update_layer_params — unknown keys are refused, naming the kind\'s s
 
   it('Motif and CompositionRef are kinds the parser knows', () => {
     expect(parseLayerParamsPatch({ kind: 'Motif', props: { title: 'x' } })).toEqual({ kind: 'Motif', props: { title: 'x' } })
-    expect(parseLayerParamsPatch({ kind: 'CompositionRef', blend_mode: 'Multiply' })).toEqual({ kind: 'CompositionRef', blend_mode: 'Multiply' })
-    expect(() => parseLayerParamsPatch({ kind: 'CompositionRef', blend_mode: 'Burn' })).toThrow(/Normal \| Multiply/)
+    expect(parseLayerParamsPatch({ kind: 'CompositionRef', opacity: 0.5 })).toEqual({ kind: 'CompositionRef', opacity: 0.5 })
+  })
+
+  it('refuses blend_mode on every kind: no layer takes one until a renderer draws it', () => {
+    for (const kind of ['CompositionRef', 'VideoClip', 'Text']) {
+      expect(() => parseLayerParamsPatch({ kind, blend_mode: 'Multiply' })).toThrow(/'blend_mode' is not a .* param.*every layer composites Normal/)
+    }
   })
 
   it('a well-formed patch still applies', () => {

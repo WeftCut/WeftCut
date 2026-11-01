@@ -86,7 +86,6 @@ describe('update_layer_params advertises one variant per kind, from the table th
         if (k === 'font_weight') probe[k] = 700
         if (k === 'align') probe[k] = 'Left'
         if (k === 'valign') probe[k] = 'Top'
-        if (k === 'blend_mode') probe[k] = 'Normal'
         if (k === 'role') probe[k] = 'music'
         if (k === 'graphic_role') probe[k] = 'title'
         if (k === 'intro') probe[k] = 'FadeIn'
