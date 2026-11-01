@@ -238,26 +238,22 @@ moving footage stays a video layer.
    motifs/<name>/) with index.html, manifest.json and companion code/assets,
    never beside it. Call `open_motif_draft` with a directory source once;
    keep editing the folder with your normal file tools. The app watches changes.
-   Opening the same directory reuses its draft. Use an existing Motif or ZIP
-   source to copy a package; copying does not select an update target. Unsure
-   whether the app can read your folder? Try it: one `open_motif_draft` with the
-   folder's absolute path answers the question. Fall back to step 2 only when the
-   app refuses the path.
+   Unsure whether the app can read your folder? One `open_motif_draft` with its
+   absolute path answers that. Fall back to step 2 only when the app refuses it.
 2. When the app cannot read your folder, start an empty draft. Use `read_motif`
    for inventory or file text, then `update_motif_files` for a batch of file
    writes or deletions. To change part of a file, send `edits` (exact `old` →
    `new` pairs) instead of the whole file. Always pass the revision you read.
-3. Use `preview_motif` at start, middle and near the end, plus non-default props.
-   Check its returned revision and any diagnostics. Fix invalid sources before
-   publishing; do not treat the last valid frame as the current source.
-4. **The user approves publication.** Place the draft with `add_layers`
-   when useful and ask the user to review it. After confirmation, call
-   `install_motif` with the reviewed revision. To overwrite another publication,
-   explicitly supply its target id and current version. The draft remains
-   editable; publishing the same revision again does not increment the version.
-   Remove trial layers afterwards unless the user wants them kept.
-5. `export_motif` saves a complete ZIP to a local path. `delete_motif` removes a draft/publication; unlinking a directory
-   never deletes the author's source folder.
+3. `preview_motif` the start, middle and near the end in one call, then once
+   more with non-default props. Fix invalid sources before publishing.
+4. **Publication waits for the user's approval in the app.** Place the draft
+   with `add_layers` when useful, then `install_motif` the reviewed revision:
+   it only proposes. Tell the user to approve it in WeftCut's Motifs panel and
+   stop; do not poll and do not report it published. `list_motifs` shows the
+   outcome and any note. Remove trial layers afterwards unless the user wants
+   them kept.
+5. `export_motif` saves a complete ZIP to a local path. `delete_motif` removes a
+   draft/publication; it never deletes a linked source folder.
 
 **Three.js Motifs** use local dependencies and relative URLs; no CDN access.
 Read `motif-three-model.md` and start from `templates/three-model.zip` beside

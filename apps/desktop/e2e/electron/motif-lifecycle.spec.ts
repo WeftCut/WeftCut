@@ -154,8 +154,8 @@ test('motif authoring: open_motif_draft → install → list → delete', async 
     expect(found!.status).toBe('installed')
     console.log('[lifecycle] list_motifs found installed motif:', found!.id)
 
-    // delete_motif — the motif tool expects { id }
-    await invoke(page, 'delete_motif', { id: publishedId })
+    // delete_motif — the motif tool expects { motif_id }
+    await invoke(page, 'delete_motif', { motif_id: publishedId })
 
     // Confirm gone from catalog.
     const catalogAfter = (await invoke(page, 'list_motifs', {})) as Array<{ id: string }>

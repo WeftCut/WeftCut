@@ -3177,6 +3177,14 @@ export interface MotifSummary {
   target_id?: string;
   source_id?: string;
   diagnostic?: string;
+  /// A draft's latest proposed publication (an agent's `install_motif`).
+  publication?: {
+    state: "awaiting_approval" | "approved" | "rejected";
+    proposal_id: string;
+    revision: string;
+    note?: string;
+    version?: number;
+  };
   /// True when a `params.html` sits next to this Motif's `index.html`, i.e. the
   /// Motif owns its parameter UI and the property panel embeds that page
   /// instead of generating the fallback form. Presence of the file is the whole
@@ -3238,40 +3246,43 @@ export interface MotifSource {
 }
 
 export async function getMotifSource(id: string): Promise<MotifSource> {
-  const file=await invoke<{manifest:MotifManifest;revision:string;text:string}>('read_motif',{id,path:'index.html'});
+  const file=await invoke<{manifest:MotifManifest;revision:string;text:string}>('read_motif',{motif_id:id,path:'index.html'});
   return {manifest:file.manifest,revision:file.revision,html:file.text};
 }
 
 /// Write a draft from authored `{ manifest, html }`. Returns the assigned draft id.
 export async function writeMotifDraft(manifest: MotifManifest, html: string): Promise<string> {
-  const draft = await invoke<{draft_id:string;revision:string}>('open_motif_draft', {source:{kind:'empty',name:manifest.name}});
-  await invoke('update_motif_files',{draft_id:draft.draft_id,expected_revision:draft.revision,files:[{path:'manifest.json',text:JSON.stringify(manifest)},{path:'index.html',text:html}]});
-  return draft.draft_id;
+  const draft = await invoke<{motif_id:string;revision:string}>('open_motif_draft', {source:{kind:'empty',name:manifest.name}});
+  await invoke('update_motif_files',{motif_id:draft.motif_id,expected_revision:draft.revision,files:[{path:'manifest.json',text:JSON.stringify(manifest)},{path:'index.html',text:html}]});
+  return draft.motif_id;
 }
 
-/// Install a draft. `mode` is `{ kind: "new" }` or `{ kind: "update", target_id }`.
+/// The user's own Install / Update: publishes directly (`publish_motif`, the
+/// renderer-only channel). An agent's `install_motif` only proposes; the
+/// user approves it on the Motif panel's card (`approveMotifProposal`).
+/// `mode` is `{ kind: "new" }` or `{ kind: "update", target_id }`.
 export async function installMotif(
   draftId: string,
   mode: { kind: "new" } | { kind: "update"; target_id: string },
   expectedRevision?: string,
   expectedTargetVersion?: number,
 ): Promise<string> {
-  const draft=await invoke<{revision:string}>('read_motif',{id:draftId});
-  const target=mode.kind==='update'?await invoke<{manifest:MotifManifest}>('read_motif',{id:mode.target_id}):null;
-  const result=await invoke<{motif_id:string}>('install_motif',{draft_id:draftId,expected_revision:expectedRevision??draft.revision,
+  const draft=await invoke<{revision:string}>('read_motif',{motif_id:draftId});
+  const target=mode.kind==='update'?await invoke<{manifest:MotifManifest}>('read_motif',{motif_id:mode.target_id}):null;
+  const result=await invoke<{motif_id:string}>('publish_motif',{motif_id:draftId,expected_revision:expectedRevision??draft.revision,
     ...(mode.kind==='update'?{target_id:mode.target_id,expected_version:expectedTargetVersion??target!.manifest.version}:{})});
   return result.motif_id;
 }
 
 export async function deleteMotif(id: string): Promise<void> {
-  await invoke("delete_motif", { id });
+  await invoke("delete_motif", { motif_id: id });
 }
 
 /// Overwrite an existing draft from its full edited source (in-app source panel).
 /// Keeps the draft id stable; the backend re-parses the manifest island, forces
 /// id/version, re-composes, and emits `motifs:changed`.
 export async function amendMotifDraft(draftId:string,source:string,expectedRevision:string):Promise<string> {
-  const result=await invoke<{revision:string}>('update_motif_files',{draft_id:draftId,expected_revision:expectedRevision,
+  const result=await invoke<{revision:string}>('update_motif_files',{motif_id:draftId,expected_revision:expectedRevision,
     files:[{path:'index.html',text:source},{path:'manifest.json',text:JSON.stringify(parseManifestIsland(source))}]});
   return result.revision;
 }
@@ -3279,24 +3290,62 @@ export async function amendMotifDraft(draftId:string,source:string,expectedRevis
 /// Open a working draft seeded from an installed/built-in Motif (Edit). Built-in
 /// → forced fork (no Update target). Returns the working draft id.
 export async function createEditDraft(sourceId: string): Promise<string> {
-  return (await invoke<{draft_id:string}>('open_motif_draft',{source:{kind:'motif',id:sourceId}})).draft_id;
+  return (await invoke<{motif_id:string}>('open_motif_draft',{source:{kind:'motif',motif_id:sourceId}})).motif_id;
 }
 
 /** Explicit independent copy of any Motif, drafts included (opening a draft id
- *  resumes that draft). Main copies the package in one internal call. */
+ *  with `kind: 'motif'` resumes that draft instead). One main-process copy. */
 export async function copyMotifDraft(id:string):Promise<string> {
-  return (await invoke<{draft_id:string}>('copy_motif_draft',{id})).draft_id;
+  return (await invoke<{motif_id:string}>('open_motif_draft',{source:{kind:'copy',motif_id:id}})).motif_id;
 }
 
 /// Import a Motif ZIP package from the OS dialog.
 /// Copies a snapshot into a new draft and returns its id.
 export async function importMotif(path: string): Promise<string> {
-  return (await invoke<{draft_id:string}>('open_motif_draft',{source:{kind:'zip',path}})).draft_id;
+  return (await invoke<{motif_id:string}>('open_motif_draft',{source:{kind:'zip',path}})).motif_id;
 }
 
 /// Export the complete package (built-in, installed or draft) as one ZIP folder.
 export async function exportMotif(id: string, path: string): Promise<void> {
-  await invoke("export_motif", { id, path });
+  await invoke("export_motif", { motif_id: id, path });
+}
+
+/// An agent's proposed publication (`install_motif`), waiting for the user's
+/// approval on the Motif panel (ADR 0046). Mirrors `ProposalCard` in
+/// `src/main/motif/workspace.ts`.
+export interface MotifProposal {
+  /// The draft it was proposed from.
+  motif_id: string;
+  proposal_id: string;
+  state: "awaiting_approval";
+  revision: string;
+  target: { id: string; version: number } | { new_id: string };
+  proposed_at: string;
+  /// The id the frozen package previews under.
+  preview_id: string;
+  manifest: MotifManifest;
+  /// Against the current published version; null for a first publication.
+  diff: {
+    files: { added: string[]; removed: string[]; changed: string[] };
+    props: { added: string[]; removed: string[]; changed: string[] };
+  } | null;
+  /// Layer ids of this project that approval rebinds.
+  rebinds: string[];
+}
+
+export async function listMotifProposals(): Promise<MotifProposal[]> {
+  return invoke<MotifProposal[]>("list_motif_proposals");
+}
+
+/// Approve: publishes the proposed revision and rebinds the trial layers.
+/// Returns the published id.
+export async function approveMotifProposal(draftId: string, proposalId: string): Promise<string> {
+  return (await invoke<{ motif_id: string }>("approve_motif_proposal", { motif_id: draftId, proposal_id: proposalId })).motif_id;
+}
+
+/// Reject: the draft stays; the note reaches the agent through list_motifs.
+export async function rejectMotifProposal(draftId: string, proposalId: string, note?: string): Promise<void> {
+  await invoke("reject_motif_proposal", { motif_id: draftId, proposal_id: proposalId, ...(note ? { note } : {}) });
 }
 
 /// One row of the on-open staleness report (docs/motifs.md "User Motifs"):

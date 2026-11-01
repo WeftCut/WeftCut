@@ -17,6 +17,7 @@ import { mapCommandError, McpArgError, type McpErrorCode, type McpToolErrorJson 
 import type { CommandError } from '../state/errors.js'
 import { describeFault } from './faultText.js'
 import { RESOURCE_NOT_FOUND } from '../state/resource-views.js'
+import { MotifRefusal } from '../motif/refusal.js'
 
 export interface ToolErrorResult {
   isError: true
@@ -109,6 +110,7 @@ const ARG_FAULT = /\b(missing field|invalid type|unknown field|unknown variant|i
  *  its failures are the caller's (the motif store's are). */
 export function thrownToToolError(err: unknown, fallback: McpErrorCode = 'internal', tool?: string): McpToolErrorJson {
   if (err instanceof McpArgError) return err.toJson()
+  if (err instanceof MotifRefusal) return { code: err.code, message: err.message, data: err.data }
   const e = err as { code?: unknown; message?: unknown; data?: unknown } | null
   const raw = typeof e?.message === 'string' ? e.message : String(err)
   if (typeof e?.code === 'number') {

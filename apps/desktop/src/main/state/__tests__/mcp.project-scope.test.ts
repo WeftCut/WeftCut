@@ -13,7 +13,7 @@ import { mergeMcpCatalog, mergeMcpResources } from '../../mcp/mcpCatalog'
 import { HOST_RESOURCE_DEFS } from '../../mcp/hostResources'
 import { APP_SCOPE_RESOURCES, APP_SCOPE_TOOLS, MOTIF_TOOLS } from '../../mcp/mutationTools'
 import { handleCallTool, handleReadResource, sessionView } from '../../mcp/server'
-import { NO_PROJECT_OPEN_MESSAGE } from '../../mcp/toolResult'
+import { NO_PROJECT_OPEN_MESSAGE, UnknownToolError } from '../../mcp/toolResult'
 import { createTsActorHost } from '../ts-actor-host'
 import { PROJECT_OPENED_EVENT } from '../../../shared/project-events'
 
@@ -90,11 +90,12 @@ describe('no project open: every other tool refuses and commits nothing', () => 
     const before = ts.actor.snapshot()
     const len = ts.actor.historyStatus().len
     const checkpoints = ts.actor.listCheckpoints().length
-    const gated = [
-      ...merged.map((t) => t.name).filter((n) => !APP_SCOPE_TOOLS.has(n)),
-      'motif_staleness_report', 'acknowledge_motif_staleness',
-    ]
+    const gated = merged.map((t) => t.name).filter((n) => !APP_SCOPE_TOOLS.has(n))
     expect(gated.length).toBeGreaterThan(50)
+    // The staleness and approval channels are the renderer's: over MCP they
+    // are unknown tools (ME8), on the start screen as anywhere else.
+    for (const name of ['motif_staleness_report', 'acknowledge_motif_staleness', 'approve_motif_proposal', 'publish_motif'])
+      await expect(call(ts, name, {}), name).rejects.toBeInstanceOf(UnknownToolError)
     for (const name of gated) {
       const out = await call(ts, name, { reason: 'x', label: 'x', layer_id: 'x' })
       expect(out.isError, name).toBe(true)

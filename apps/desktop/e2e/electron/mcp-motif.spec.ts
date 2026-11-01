@@ -64,7 +64,7 @@ test('MCP motif tools are advertised and callable', async ({ motifSession: { pag
   // preview_motif returns image content (JS-side capture)
   const previewResult = await test.step('Capture a Motif preview over MCP', () => client.callTool({
     name: 'preview_motif',
-    arguments: { id: 'countdown', local_t_s: 0 },
+    arguments: { motif_id: 'countdown', local_t_s: [0, 1.5] },
   }))
   expect(previewResult.content[0]).toMatchObject({ type: 'image', mimeType: 'image/png' })
 

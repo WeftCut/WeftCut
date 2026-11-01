@@ -15,11 +15,12 @@ export const HYBRID_TOOLS: ReadonlySet<string> = new Set([
   'remove_pauses',
 ])
 
-/** Motif catalog-read + authoring + install + staleness tools, served in TS by
- *  runMotifTool. The advertised members take their defs from TS
- *  MOTIF_TOOL_DEFS (mcpCatalog dedups by name); the two staleness tools are
- *  unadvertised. The Rust catalog carries no motif arms. */
-export const MOTIF_TOOLS: ReadonlySet<string> = new Set(['list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'motif_staleness_report', 'acknowledge_motif_staleness'])
+/** Motif catalog-read + authoring + proposal tools, served in TS by
+ *  runMotifTool, with their defs in TS MOTIF_TOOL_DEFS (mcpCatalog dedups by
+ *  name). The Rust catalog carries no motif arms. The approval and staleness
+ *  channels are the renderer's alone (router `MOTIF_CHANNELS`): no MCP
+ *  client can approve its own proposal (ADR 0046). */
+export const MOTIF_TOOLS: ReadonlySet<string> = new Set(['list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif'])
 
 /** The tools that answer while no project is open — default-deny: every tool
  *  NOT named here is refused with `NoProjectOpen` on the start screen, so a new

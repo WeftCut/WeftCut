@@ -331,10 +331,12 @@ independent of placed props, project fps and frame bakes.
 `add_layers` (kind `motif`) places a Motif by props only and resolves built-ins, installed
 Motifs and drafts. `list_motifs` (mirrored by `motifs://current`) returns the
 manifest-only catalog with `status` (`builtin | installed | draft`),
-`content_hash` and `target_id`. Authoring uses `open_motif_draft`,
-`read_motif`, `update_motif_files`, `preview_motif`, `install_motif`,
-`export_motif` and `delete_motif` ([`motif-workspaces.md`](motif-workspaces.md)).
-Agents never drive the renderer directly.
+`revision` and `target_id`; a draft with a proposal carries `publication`.
+Authoring uses `open_motif_draft`, `read_motif`, `update_motif_files`,
+`preview_motif`, `install_motif`, `export_motif` and `delete_motif`
+([`motif-workspaces.md`](motif-workspaces.md)). `install_motif` only proposes:
+the user approves or rejects the proposal on its card in the Motifs panel
+(ADR 0046). Agents never drive the renderer directly.
 
 ## Security
 

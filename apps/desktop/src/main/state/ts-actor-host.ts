@@ -57,7 +57,8 @@ export interface TsActorHostDeps {
   /** mcpHost.notifyChange(payload) — the mcp:change relay. */
   mcpNotify: (payload: unknown) => void
   /** notifications/resources/list_changed to every MCP session: the pool's
-   *  files or their names changed, and with them the `media://{id}` list. */
+   *  files or their names changed, and with them the `media://{id}` list; or a
+   *  Motif publication was proposed, approved or rejected (`motifs://current`). */
   mcpResourcesChanged?: () => void
   /** fs.existsSync, for buildProjectSummary's media-availability checks. */
   fileExists: (absPath: string) => boolean
@@ -569,7 +570,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   }
 
   function runMotif(name: string, args: Record<string, unknown>): unknown {
-    if (!["list_motifs", "read_motif", "motif_staleness_report"].includes(name)) deps.exportJobs?.assertWritable()
+    if (!["list_motifs", "read_motif", "list_motif_proposals", "motif_staleness_report"].includes(name)) deps.exportJobs?.assertWritable()
     if (!deps.motifStore) throw new Error('motifTool: motifStore not configured')
     const motifToolDeps: MotifToolDeps = {
       store: deps.motifStore,
@@ -585,6 +586,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       dispatchRebind: (updates: MotifRebindEntry[]) => { const r = actor.dispatch('rebind_motif', { updates }); if (!r.ok) throw new Error(JSON.stringify(r.error)) },
       emitChanged: () => deps.send('motifs:changed', {}),
       refreshCatalog: () => refreshMotifCatalog(),
+      notifyAgents: () => deps.mcpResourcesChanged?.(),
       emitLog: (entry) => { try { deps.emitLog?.(entry) } catch (err) { console.warn('[ts-actor-host] emitLog failed (motif)', err) } },
     }
     return runMotifTool(name, args, motifToolDeps)

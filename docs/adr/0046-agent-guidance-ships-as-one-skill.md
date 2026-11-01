@@ -71,3 +71,15 @@ prevent); a skill series (standing context per description); marketplace-first
 distribution (drift on day one); growing the `initialize` instructions into a
 harness (they stay ten lines of etiquette); numeric taste scores as a gate;
 agent self-review as the Motif install gate.
+
+## Note (2026-11-01): the app enforces the Motif install gate
+
+The decision stands as written; the code now holds it on the construction
+rung instead of in skill prose. `install_motif` only proposes: it freezes the
+draft's revision as a pending publication and answers `awaiting_approval`,
+leaving the library untouched. The user approves or rejects it on a card in
+the Motifs panel (the proposed package in the preview player, its props, the
+change against the installed version, the clips that will rebind). Approval,
+rejection and the user's own Install are renderer-only channels, so no MCP
+client can approve its own proposal. See
+[motif-workspaces.md](../motif-workspaces.md#review-publication-and-export).

@@ -18,9 +18,11 @@ describe('routeMcpTool', () => {
     for (const t of ['list_motifs', 'read_motif', 'open_motif_draft', 'delete_motif', 'install_motif'])
       expect(routeMcpTool(t), t).toBe('motif')
   })
-  it('routes motif_staleness_report and acknowledge_motif_staleness to the motif route', () => {
-    expect(routeMcpTool('motif_staleness_report')).toBe('motif')
-    expect(routeMcpTool('acknowledge_motif_staleness')).toBe('motif')
+  it('the staleness and approval channels are the renderer\'s, never MCP motif tools (ME8, ADR 0046)', () => {
+    for (const t of ['motif_staleness_report', 'acknowledge_motif_staleness', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal']) {
+      expect(MOTIF_TOOLS.has(t), t).toBe(false)
+      expect(routeMcpTool(t), t).not.toBe('motif')
+    }
   })
   it('preview_motif stays rust (special-cased capture in server.ts)', () => {
     expect(routeMcpTool('preview_motif')).toBe('rust')

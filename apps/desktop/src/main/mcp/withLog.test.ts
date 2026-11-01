@@ -323,7 +323,7 @@ describe('oversized args are elided before the payload leaves TS', () => {
   it("a 40 KB file body keeps the row under Rust's 4 KB cap with its revision intact", async () => {
     const { entries, deps } = collector()
     const html = 'x'.repeat(40 * 1024)
-    await decoratedCallTool(deps)('update_motif_files', {draft_id:'draft',expected_revision:'revision',files:[{path:'index.html',text:html}]})
+    await decoratedCallTool(deps)('update_motif_files', {motif_id:'draft',expected_revision:'revision',files:[{path:'index.html',text:html}]})
 
     const details = detailsOf(entries[0])
     expect(JSON.stringify(details).length).toBeLessThan(4096)

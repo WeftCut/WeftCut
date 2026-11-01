@@ -316,7 +316,7 @@ const EXCEPTIONS: Record<string, string> = {
   remove_pauses: 'reads native waveform peaks (hybrids.test.ts covers the pause parameters)',
   apply_transcripts: 'needs a transcript payload per source layer; mcp.captions-tools.test.ts covers source_layer_ids / composition_id',
   correct_caption_text: 'needs a caption-correction model run; mcp.captions-tools.test.ts covers the scope arguments',
-  install_motif: 'publishes into the user Motif store on disk (motif tests cover target_id / expected_version)',
+  install_motif: 'proposes from a draft in the user Motif store on disk (workspace.publication.test.ts covers target_id / expected_version)',
   export_motif: 'reads the user Motif store on disk; the path refusals are pinned in mcp.error-vocabulary and motifTools tests',
   create_export_preset: 'writes the app preference store (exportPresetTools.test.ts)',
   start_export: 'its fields shape an asynchronous job that needs the renderer (exportJobs.test.ts; the pre-reservation refusals in this file)',
@@ -508,13 +508,16 @@ describe('the audit probes refuse or change state', () => {
     expect((await call(w, 'get_export_status', {})).structuredContent).toMatchObject({ job: { job_id: started } })
   })
 
-  it('ME17: preview_motif takes id, not the motif_id alias, and is schema-checked', async () => {
+  it('ME17/ME20: preview_motif takes motif_id, no alias, and is schema-checked', async () => {
     const w = await world()
-    const alias = await call(w, 'preview_motif', { motif_id: 'lower-third', local_t_s: 0 })
+    const alias = await call(w, 'preview_motif', { id: 'lower-third', local_t_s: [0] })
     expect(alias.isError).toBe(true)
-    expect(text(alias)).toContain('motif_id')
-    const untyped = await call(w, 'preview_motif', { id: 'lower-third', local_t_s: '1' })
+    expect(text(alias)).toContain('does not take id')
+    const untyped = await call(w, 'preview_motif', { motif_id: 'lower-third', local_t_s: 1 })
     expect(untyped.isError).toBe(true)
     expect(text(untyped)).toContain('local_t_s')
+    const tooMany = await call(w, 'preview_motif', { motif_id: 'lower-third', local_t_s: Array.from({ length: 25 }, (_, i) => i / 10) })
+    expect(tooMany.isError).toBe(true)
+    expect(text(tooMany)).toContain('1–24')
   })
 })

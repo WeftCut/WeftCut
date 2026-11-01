@@ -323,3 +323,40 @@
 
 .motif-bake-dot.is-queued { background: var(--muted-foreground); }
 .motif-bake-dot.is-paused, .motif-bake-dot.is-retrying { background: var(--warning); }
+
+/* An agent's proposed publication, waiting for the user (MotifProposalCard). */
+.motif-proposals {
+  display: flex;
+  flex-direction: column;
+  gap: calc(8 * var(--ui-px));
+  margin-bottom: calc(12 * var(--ui-px));
+}
+.motif-proposal-card {
+  display: flex;
+  flex-direction: column;
+  gap: calc(6 * var(--ui-px));
+  padding: calc(10 * var(--ui-px));
+  border: 1px solid var(--border);
+  border-radius: calc(6 * var(--ui-px));
+}
+.motif-proposal-head {
+  display: flex;
+  align-items: baseline;
+  gap: calc(8 * var(--ui-px));
+}
+.motif-proposal-target,
+.motif-proposal-detail {
+  font-size: var(--font-size-caption);
+  color: var(--muted-foreground);
+}
+.motif-proposal-note {
+  display: flex;
+  flex-direction: column;
+  gap: calc(4 * var(--ui-px));
+  font-size: var(--font-size-caption);
+}
+.motif-proposal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: calc(6 * var(--ui-px));
+}

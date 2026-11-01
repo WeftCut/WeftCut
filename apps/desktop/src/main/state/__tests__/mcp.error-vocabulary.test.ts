@@ -30,6 +30,7 @@ import { createMediaImporter } from '../mediaImport'
 import { uuidV7Gen } from '../ids'
 import { blankProject, rootComposition } from '../model'
 import { root } from './fixtures/project'
+import { MotifRefusal, revisionConflict } from '../../motif/refusal'
 
 vi.mock('../../motif/capture.js', () => ({ captureMotifFrameB64: async () => { throw new Error("Error invoking remote method 'motif:capture': Error: capture failed") } }))
 
@@ -370,7 +371,7 @@ describe('the export, render and Motif file routes refuse in the model', () => {
     const host = rawHost()
     const target = join(mkdtempSync(join(tmpdir(), 'weftcut-vocab-')), 'no-such-folder', 'card.zip')
     host.motifTool = () => { writeFileSync(target, 'zip'); return null }
-    const r = await handleCallTool(rawBackend(), () => host as never, 'export_motif', { id: 'card', path: target }) as Answer
+    const r = await handleCallTool(rawBackend(), () => host as never, 'export_motif', { motif_id: 'card', path: target }) as Answer
     expect(r.isError).toBe(true)
     assertInModel('export_motif', {}, r)
     expect(r.structuredContent).toMatchObject({ code: 'invalid_params', error: 'PathNotFound', path: target })
@@ -421,5 +422,19 @@ describe('the export, render and Motif file routes refuse in the model', () => {
     const r = await handleCallTool(rawBackend(), () => rawHost() as never, 'update_export_preset', { preset_id: 'p', settings: {}, name: 'x' }) as Answer
     expect(r.structuredContent).toMatchObject({ code: 'invalid_params', error: 'UnknownArgument', field: 'name' })
     expect(r.content![0]!.text).toContain('rename_export_preset takes name')
+  })
+})
+
+describe('a Motif store refusal keeps its variant and data', () => {
+  it('install_motif on a taken id is MotifIdTaken with the options; a stale revision names current_revision', async () => {
+    const host = rawHost()
+    host.motifTool = () => { throw new MotifRefusal("Motif id 'badge' is taken", { error: 'MotifIdTaken', id: 'badge', holder: 'installed', options: ['rename', 'replace'] }) }
+    const taken = await handleCallTool(rawBackend(), () => host as never, 'install_motif', { motif_id: 'badge-draft', expected_revision: 'r' }) as Answer
+    assertInModel('install_motif', {}, taken)
+    expect(taken.structuredContent).toMatchObject({ code: 'invalid_params', error: 'MotifIdTaken', id: 'badge', options: ['rename', 'replace'] })
+    host.motifTool = () => { throw revisionConflict('abc', 'read it again') }
+    const stale = await handleCallTool(rawBackend(), () => host as never, 'update_motif_files', { motif_id: 'd', expected_revision: 'old', files: [{ path: 'a', text: 'b' }] }) as Answer
+    expect(stale.structuredContent).toMatchObject({ error: 'RevisionConflict', current_revision: 'abc' })
+    expect(stale.content![0]!.text).toContain('abc')
   })
 })

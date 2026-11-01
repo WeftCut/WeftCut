@@ -200,8 +200,8 @@ Motif library tools, the export preset tools,
 the resources `project://session`, `project://taste`, `effects://catalog`,
 `motifs://current`. One predicate (`servesWithoutProject`) serves both gates;
 `mcp.project-scope` sweeps the whole catalog. `install_motif` with no project
-open republishes the library entry and rebinds no layers. The renderer is not
-gated.
+open proposes as usual; approved then, it rebinds no layers. The renderer is
+not gated.
 
 Agents open or create a project **only when the user asked for that one**;
 otherwise they ask. `project://session` reports `project` (null when none),
@@ -599,16 +599,46 @@ Audio, animated ImageOverlay, Motif and CompositionRef retime; static images,
 Text and Color do not.
 
 Motifs ([motif-workspaces.md](motif-workspaces.md)) take paths, not file
-handles: `list_motifs`, `open_motif_draft`, `read_motif` (a path answers UTF-8
-text ≤ 256 KiB, or `{size, sha256}` for a binary file), `update_motif_files`
-(revision-checked batch; exact-match `edits`; the one inline binary form is an
-entry `{path, base64}`, ≤ 256 KiB decoded each and ≤ 4 MiB per call),
-`preview_motif` (whole canvas scaled to bounds, never cropped; `id`, no alias;
-`local_t_s` is seconds from the Motif's start, not timeline time),
-`install_motif` (publishes; replacing another target needs its version),
-`export_motif` (`path` required: an absolute `.zip` in an existing folder; an
-existing file is `PathExists`, never overwritten; annotated destructive) and
-`delete_motif`.
+handles, and name their subject `motif_id` on every tool: `list_motifs`
+(rows without HTML or `content_hash`; a draft with a proposal carries
+`publication`), `open_motif_draft` (`kind: 'motif'` resumes a draft id and
+copies any other id, `kind: 'copy'` copies any Motif, drafts included; a copy
+answers `source: {id, version}`; `empty` is 960×540, 5 s, no props),
+`read_motif` (a path answers UTF-8 text ≤ 256 KiB, or `{size, sha256}` for a
+binary file), `update_motif_files` (revision-checked batch; exact-match
+`edits`; the one inline binary form is an entry `{path, base64}`, ≤ 256 KiB
+decoded each and ≤ 4 MiB per call), `preview_motif` (`local_t_s`: 1–24 times
+in seconds from the Motif's start, not timeline time, on one labelled PNG
+contact sheet; each frame the whole canvas scaled to bounds, 640 wide by
+default, never cropped; reads and syncs only that Motif), `install_motif`
+(proposes; see below), `export_motif` (`path` required: an absolute `.zip` in
+an existing folder; an existing file is `PathExists`, never overwritten;
+annotated destructive) and `delete_motif`. A stale `expected_revision` on any
+of them refuses `RevisionConflict` with `current_revision`.
+
+**Publication waits for the user (ADR 0046).** `install_motif` freezes the
+draft's revision as a pending publication and answers `{state:
+"awaiting_approval", proposal_id, revision, target: {id, version} |
+{new_id}}`; the library is not touched. The user approves or rejects it on a
+card in the app's Motifs panel (preview with editable props, the change
+against the installed version, the clips that will rebind); a status-bar note
+points to it. Approval publishes version N from the frozen package and rebinds
+the trial layers; rejection keeps the draft and stores the user's note. The
+draft row's `publication: {state: awaiting_approval | approved | rejected,
+note?, version?, rebound?: [{layer_id, dropped_props}]}` reports the outcome,
+and every transition sends `notifications/resources/list_changed`; there is no
+blocking wait, so an agent tells the user to review and does not poll. A newer
+proposal from the same draft supersedes the older (`superseded_proposal_id`).
+A first publication takes its id from the manifest name; an id someone holds
+refuses `MotifIdTaken {id, holder, options}` (rename the draft, or replace with
+`target_id` + `expected_version`), never a numbered `-2`. Draft ids carry a
+`-draft` suffix so the name's own id stays free; a draft from an earlier
+release that holds its name's id is not its own collision: approval moves it
+to `<id>-draft` (reported as `publication.renamed_draft {from, to}`; a held
+`<id>-draft` refuses `DraftIdTaken` naming the holder) and publishes `<id>`. Approval, rejection and the
+user's own Install are renderer-only channels (`approve_motif_proposal`,
+`reject_motif_proposal`, `publish_motif`), as are the two staleness channels:
+none is an MCP tool, so no client approves its own proposal.
 
 ### Workflow / safety
 

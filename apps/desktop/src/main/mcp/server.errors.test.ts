@@ -138,7 +138,7 @@ describe('handleCallTool — every route answers a refusal as an isError result'
   })
 
   it('a motif-store failure is the caller\'s: invalid_params with the store\'s message', async () => {
-    const out = asErr(await handleCallTool(fakeBackend(), () => tsHostStub(), 'install_motif', { draft_id: 'd1', expected_revision: 'r' }))
+    const out = asErr(await handleCallTool(fakeBackend(), () => tsHostStub(), 'install_motif', { motif_id: 'd1', expected_revision: 'r' }))
     expect(out.content[0].text).toBe("unknown draft 'd1'")
     expect(out.structuredContent.code).toBe('invalid_params')
   })
@@ -166,7 +166,7 @@ describe('handleCallTool — every route answers a refusal as an isError result'
   it('the preview capture failing is a result too', async () => {
     // A catalogued id, so the refusal comes from the CAPTURE and not from the
     // unknown-id check that now precedes it.
-    const out = asErr(await handleCallTool(fakeBackend(), () => tsHostStub({ motifTool: () => [{ id: 'x', props_schema: {}, size: [10, 10] }] }), 'preview_motif', { id: 'x', local_t_s: 0 }))
+    const out = asErr(await handleCallTool(fakeBackend(), () => tsHostStub({ motifTool: () => ({ manifest: { id: 'x', props_schema: {}, size: [10, 10] }, revision: 'r' }) }), 'preview_motif', { motif_id: 'x', local_t_s: [0] }))
     expect(out.content[0].text).toContain('no renderer')
   })
 
@@ -190,11 +190,11 @@ describe('the routes with no parser of their own are still gated', () => {
     // a lookup for `undefined` — a store error for what is a bad argument.
     const touched: string[] = []
     const host = () => tsHostStub({ motifTool: (name) => { touched.push(name); return [] } })
-    const mode = asErr(await handleCallTool(fakeBackend(), host, 'install_motif', { draft_id: 'd1', expected_revision: 17 }))
+    const mode = asErr(await handleCallTool(fakeBackend(), host, 'install_motif', { motif_id: 'd1', expected_revision: 17 }))
     expect(mode.structuredContent.code).toBe('invalid_params')
     expect(mode.content[0].text).toContain('expected_revision')
     const missing = asErr(await handleCallTool(fakeBackend(), host, 'install_motif', {}))
-    expect(missing.content[0].text).toContain('draft_id')
+    expect(missing.content[0].text).toContain('motif_id')
     expect(touched).toEqual([])
   })
 

@@ -43,6 +43,7 @@ import {
 import { PlayheadTimecode } from "../preview/PlayheadTimecode";
 import { DroppedFramesIndicator } from "../preview/DroppedFramesIndicator";
 import { RendererLimitIndicator } from "../preview/RendererLimitIndicator";
+import { MotifProposalIndicator } from "../motifs/MotifProposalIndicator";
 import { AudioPlaybackStatus } from "../preview/AudioPlaybackStatus";
 import { usePlaybackStore } from "../state/playbackStore";
 import {
@@ -172,6 +173,7 @@ export function PreviewSection({
         <span className="preview-meta-cell">
           <AudioPlaybackStatus phase={phase} error={playbackError} />
           <RendererLimitIndicator />
+          <MotifProposalIndicator />
           <DroppedFramesIndicator />
           <span className="preview-meta" aria-hidden="true">
             {comp && (

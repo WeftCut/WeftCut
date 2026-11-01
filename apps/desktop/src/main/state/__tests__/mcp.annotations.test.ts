@@ -102,12 +102,14 @@ describe('the destructive set', () => {
       'delete_composition', 'delete_keyframe', 'delete_motif',
       // Whole-track replacers: what they discard, undo is the way back to.
       'set_param_track', 'set_position',
-      'remove_pauses', 'auto_split_by_shot', 'undo', 'redo', 'jump_to', 'restore_checkpoint', 'install_motif']) {
+      'remove_pauses', 'auto_split_by_shot', 'undo', 'redo', 'jump_to', 'restore_checkpoint']) {
       expect(destructive, n).toContain(n)
     }
     for (const n of destructive) expect(n, 'a destructive read is a contradiction').not.toMatch(/^(get_|list_|read_)/)
     // Creation and setting are writes, not destruction.
     for (const n of ['add_layers', 'translate_position', 'update_layer_params', 'create_link', 'set_project_settings']) expect(ann(n).destructiveHint).toBe(false)
+    // install_motif only proposes: the library changes when the user approves in the app (ADR 0046).
+    expect(ann('install_motif').destructiveHint).toBe(false)
   })
 
   it('a set is idempotent, a creation is not', () => {

@@ -27,7 +27,8 @@ import { captureMotifFrameB64 } from '../motif/capture.js'
 import { APP_SCOPE_RESOURCES, HYBRID_TOOLS, routeMcpTool, servesWithoutProject } from './mutationTools.js'
 import { canonicalizeProps, MotifPropError, type Manifest } from '../../shared/motifs/catalog.js'
 import { mediaPropProblem } from '../../shared/motifs/mediaProp.js'
-import { shapeMotifMcpResult } from './motifResult.js'
+import { agentMotifRow, shapeMotifMcpResult } from './motifResult.js'
+import { composeMotifSheet } from './motifSheet.js'
 import { runHybrid } from '../state/hybrids.js'
 import { CLIP_SLICE_TOOLS, resolveClipSliceArgs, resolvePauseComputeArgs, TWO_SLICE_TOOLS, resolveTwoSliceArgs } from '../state/clip-slice-forward.js'
 import { serveProjectResource, buildResourceInjection, RESOURCE_NOT_FOUND } from '../state/resource-views.js'
@@ -143,6 +144,10 @@ const NO_PEAKS_PATH: PeaksPathProvider = () => null
 
 /** The arguments `preview_motif` takes: its advertised schema's, no alias. */
 const PREVIEW_MOTIF_ARGS: ReadonlySet<string> = new Set(Object.keys((MOTIF_TOOL_DEFS.find((d) => d.name === 'preview_motif')!.inputSchema as { properties: Record<string, unknown> }).properties))
+/** A `preview_motif` frame's width when no bound is given, and the most
+ *  frames one sheet holds: `render_frames`' own. */
+const PREVIEW_FRAME_WIDTH = 640
+const PREVIEW_MAX_FRAMES = 24
 
 /** One clip-compute tool call: resolve the `{ layer, media }` slice from the
  *  actor (the sole state owner), inject the engine-selection hints the stateless
@@ -617,36 +622,39 @@ async function dispatchTool(
     // route === 'rust' → fall through (other reads are served by the backend).
   }
   if (name === 'preview_motif') {
-    const a = args as { id: string; local_t_s: number; props?: unknown; expected_revision?: string; width?: number | null; height?: number | null }
-    // One frame per call, at a time the caller names: an H4 run sent
-    // `times_s: [...]`, got the t = 0 frame (nothing drawn yet) and concluded
-    // the Motif was broken.
+    const a = args as { motif_id: string; local_t_s: number[]; props?: unknown; expected_revision?: string; width?: number | null; height?: number | null }
+    // The schema check every motif tool runs: `motif_id` and 1–24 times
+    // present and typed, an argument it does not take named, all together.
     const unknown = Object.keys(args).filter((k) => !PREVIEW_MOTIF_ARGS.has(k))
-    if (unknown.length) return toolErrorResult({ code: 'invalid_params', message: `preview_motif does not take ${unknown.join(', ')}; it renders one frame per call at local_t_s`, data: { field: unknown[0] } })
-    // The schema check every motif tool runs: `id` and `local_t_s` present and
-    // typed, named together.
+    if (unknown.length) return toolErrorResult({ code: 'invalid_params', message: `preview_motif does not take ${unknown.join(', ')}; it takes motif_id and local_t_s (1–24 seconds from the Motif's start), with optional props, width, height and expected_revision`, data: { field: unknown[0] } })
     const refused = await refuseBadArgs(backend, name, args)
     if (refused) return refused
-    const motifId = a.id
-    // The catalog entry, as `list_motifs` reports it — it IS the manifest plus a
-    // few catalog fields, so it serves both the advertised default size and the
-    // props defaults below. A bare-core call (no host) has no catalog to ask:
-    // 480 is its floor and the props go through as sent.
-    const entry = tsHost
-      ? (tsHost.motifTool('list_motifs', {}) as Array<Record<string, unknown> & { id: string; size?: [number, number] }>).find((m) => m.id === motifId)
-      : undefined
-    if (tsHost && !entry) return toolErrorResult({ code: 'invalid_params', message: `unknown Motif id '${motifId}' — list_motifs reports the built-in, installed and draft ids` })
-    const source = tsHost?.motifTool('read_motif', {id:motifId}) as {revision:string;diagnostic?:string} | undefined
-    if(source?.diagnostic)return toolErrorResult({code:'invalid_params',message:source.diagnostic})
-    if(a.expected_revision && a.expected_revision!==source?.revision)return toolErrorResult({code:'invalid_params',message:'Motif revision conflict'})
+    if (a.local_t_s.length < 1 || a.local_t_s.length > PREVIEW_MAX_FRAMES || a.local_t_s.some((t) => typeof t !== 'number' || !Number.isFinite(t) || t < 0))
+      return toolErrorResult({ code: 'invalid_params', message: `preview_motif: local_t_s must be 1–${PREVIEW_MAX_FRAMES} non-negative seconds from the Motif's start, got ${JSON.stringify(a.local_t_s).slice(0, 80)}`, data: { field: 'local_t_s' } })
+    const motifId = a.motif_id
+    // One Motif read: its manifest serves the canvas size and the props
+    // defaults, and only this draft's linked folder is synced (not every
+    // linked draft's, as a catalog listing would). A bare-core call (no host)
+    // has no store to ask: 480 is its floor and the props go through as sent.
+    let entry: { manifest: Manifest; revision: string; diagnostic?: string } | undefined
+    if (tsHost) {
+      try { entry = tsHost.motifTool('read_motif', { motif_id: motifId }) as typeof entry }
+      catch (e) {
+        if (/unknown motif id/i.test(String(e))) return toolErrorResult({ code: 'invalid_params', message: `unknown Motif id '${motifId}' — list_motifs reports the built-in, installed and draft ids`, data: { error: 'MotifNotFound', id: motifId } })
+        throw e
+      }
+      if (!entry) return toolErrorResult({ code: 'invalid_params', message: `unknown Motif id '${motifId}' — list_motifs reports the built-in, installed and draft ids`, data: { error: 'MotifNotFound', id: motifId } })
+      if (entry.diagnostic) return toolErrorResult({ code: 'invalid_params', message: entry.diagnostic })
+      if (a.expected_revision && a.expected_revision !== entry.revision) return toolErrorResult({ code: 'invalid_params', message: `Motif revision conflict: the current revision is ${entry.revision}; preview without expected_revision, or read it again`, data: { error: 'RevisionConflict', current_revision: entry.revision } })
+    }
     // Props canonicalised against the manifest exactly as `add_layers` does:
     // missing keys take the schema defaults (a lower third previews WITH its
     // text), an unknown key is refused naming it.
     let props: Record<string, unknown> = (a.props ?? {}) as Record<string, unknown>
     if (entry) {
       try {
-        props = canonicalizeProps(entry as unknown as Manifest, a.props ?? null)
-        const media = mediaPropProblem((entry as unknown as Manifest).props_schema, props, tsHost?.actor.snapshot().media_pool ?? {})
+        props = canonicalizeProps(entry.manifest, a.props ?? null)
+        const media = mediaPropProblem(entry.manifest.props_schema, props, tsHost?.actor.snapshot().media_pool ?? {})
         if (media) throw new MotifPropError(media)
       }
       catch (e) { if (e instanceof MotifPropError) return toolErrorResult({ code: 'invalid_params', message: `invalid props for '${motifId}': ${e.detail} — list_motifs reports its props_schema` }); throw e }
@@ -657,19 +665,27 @@ async function dispatchTool(
     const snap = tsHost?.actor.snapshot()
     const rootFps = snap?.compositions?.[snap.root_id]?.fps
     // The page always renders at the Motif's own canvas, as a placed layer
-    // does; width/height only bound the returned image, which keeps the
-    // aspect ratio (a smaller viewport would crop the page to its top-left
-    // corner, and agents read that as a broken Motif). Upscaling stops at 2×.
-    const [canvasW, canvasH] = entry?.size ?? [a.width ?? 480, a.height ?? 480]
-    const fits = [a.width != null ? a.width / canvasW : null, a.height != null ? a.height / canvasH : null].filter((f): f is number => f !== null)
-    const scale = fits.length ? Math.min(2, ...fits) : 1
-    const b64 = await captureMotifFrameB64({
-      motifId, tSec: a.local_t_s ?? 0, propsJson: JSON.stringify(props),
-      width: canvasW, height: canvasH, scale, settleRafs: null, contentHash: source?.revision ?? '',
-      ...(rootFps ? { fpsNum: rootFps.num, fpsDen: rootFps.den } : {}),
-    })
+    // does; width/height only bound each frame, which keeps the aspect ratio
+    // (a smaller viewport would crop the page to its top-left corner, and
+    // agents read that as a broken Motif). Upscaling stops at 2×. With no
+    // bound a frame is 640 wide, as `render_frames` draws its sheet.
+    const [canvasW, canvasH] = entry?.manifest.size ?? [a.width ?? 480, a.height ?? 480]
+    const bounds = a.width == null && a.height == null ? { width: PREVIEW_FRAME_WIDTH, height: null } : { width: a.width ?? null, height: a.height ?? null }
+    const fits = [bounds.width != null ? bounds.width / canvasW : null, bounds.height != null ? bounds.height / canvasH : null].filter((f): f is number => f !== null)
+    const scale = Math.min(2, ...fits)
+    const frames: Array<{ tSec: number; png: Uint8Array }> = []
+    for (const tSec of a.local_t_s) {
+      const b64 = await captureMotifFrameB64({
+        motifId, tSec, propsJson: JSON.stringify(props),
+        width: canvasW, height: canvasH, scale, settleRafs: null, contentHash: entry?.revision ?? '',
+        ...(rootFps ? { fpsNum: rootFps.num, fpsDen: rootFps.den } : {}),
+      })
+      frames.push({ tSec, png: new Uint8Array(Buffer.from(b64, 'base64')) })
+    }
+    const sheet = composeMotifSheet(frames)
     const image = [Math.round(canvasW * scale), Math.round(canvasH * scale)]
-    return { content: [{ type: 'image', data: b64, mimeType: 'image/png' }, {type:'text',text:JSON.stringify({id:motifId,revision:source?.revision,canvas:[canvasW,canvasH],image})}] } as unknown as ServerResult
+    const record = { motif_id: motifId, revision: entry?.revision, canvas: [canvasW, canvasH], image, local_t_s: a.local_t_s, sheet: { width: sheet.width, height: sheet.height, columns: sheet.columns } }
+    return { content: [{ type: 'image', data: Buffer.from(sheet.png).toString('base64'), mimeType: 'image/png' }, { type: 'text', text: JSON.stringify(record) }] } as unknown as ServerResult
   }
   // Decided HERE, from the catalog this process advertises, rather than left to
   // the backend's `not_found` envelope: the name is known or it is not, and a
@@ -756,7 +772,7 @@ export async function handleReadResource(
     }
     if (uri === 'motifs://current') {
       const raw = tsHost.motifTool('list_motifs', {}) as Array<Record<string, unknown>>
-      const list = raw.map((e) => { const { html: _html, ...rest } = e; return rest })
+      const list = raw.map(agentMotifRow)
       return { contents: [{ uri: 'motifs://current', mimeType: 'application/json', text: JSON.stringify(list) }] } as unknown as ServerResult
     }
     // A resource read has no isError slot, so the start-screen refusal is the

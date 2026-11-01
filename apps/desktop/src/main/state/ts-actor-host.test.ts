@@ -800,7 +800,7 @@ describe('createTsActorHost — persistence-route integration', () => {
     const host = createTsActorHost({ ...deps, motifStore, motifBuiltins: [] })
     host.start()
     const manifest = { id: 'x', name: 'Foo', version: 1, size: [10, 10], default_duration_s: 1, fonts: [], props_schema: {} }
-    const {draft_id:id} = await host.handleInvoke('open_motif_draft', { source:{kind:'empty',name:manifest.name} }) as {draft_id:string}
+    const {motif_id:id} = await host.handleInvoke('open_motif_draft', { source:{kind:'empty',name:manifest.name} }) as {motif_id:string}
     expect(typeof id).toBe('string')
     expect(motifStore.getDraft(id)).not.toBeNull()
     expect(sent.some((s) => s.event === 'motifs:changed')).toBe(true)

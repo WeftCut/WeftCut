@@ -465,3 +465,19 @@
   color: var(--color-gray-500);
   line-height: 1.4;
 }
+
+/* An agent's Motif publication awaits approval: same low key as the
+   renderer-limit note, a button only so a click opens the Motifs panel. */
+.motif-proposal-status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-caption);
+  color: var(--muted-foreground);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.motif-proposal-status:hover { color: var(--foreground); }

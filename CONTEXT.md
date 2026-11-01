@@ -562,6 +562,18 @@ _Avoid_: upload, file transfer
 **Installed Motif**: A published copy with its own identity and version; publishing keeps the draft.
 See [motif-workspaces.md](docs/motif-workspaces.md).
 
+**Motif proposal**: An agent's request to publish one revision of a draft (`install_motif`), frozen
+when made and pending until the user decides. It replaces an installed Motif at a stated version, or
+takes a new id from the draft's name; a taken id is refused, never numbered. A newer proposal from
+the same draft supersedes it. Its state rides the draft row as `publication` (a Motif field, not the
+export sense of *Publication*). See ADR 0046.
+_Avoid_: install request, pending install, publish request
+
+**Approval**: The user's decision on a Motif proposal, made on its card in the Motifs panel:
+approve publishes the frozen revision and rebinds the trial layers; reject keeps the draft with the
+user's note. Only the app decides; no MCP tool approves. UI word: Approve / 批准, Reject / 拒绝.
+_Avoid_: confirm, accept, review (a review is the tacks' word)
+
 **Motif preparation**:
 The Workspace session's background work that persists Motif frame ranges:
 used ranges when *Pre-bake motifs* is on, full content on *Pre-bake now*.
