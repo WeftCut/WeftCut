@@ -1560,7 +1560,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
           // An agent's run passes its script and corrects text only; the
           // dialog's corrects against the project manuscript and may re-segment.
           const mode: CorrectionMode = typeof a.script === 'string' ? { kind: 'text_only', script: a.script } : { kind: 'manuscript' }
-          return { ok: true, value: commit(HISTORY_SUMMARY.captionCorrect, refs, { kind: 'Coarse' }, d => applyTextCorrection(d, idGen, comp.id, a.layer_ids as string[] | null, a.expected as TextCorrectionExpectation | undefined, mode)) }
+          // A changed cue is re-wrapped at the style's line length, the one
+          // `apply_transcripts` builds to.
+          const tokens = opts.tasteTokens?.()
+          const maxChars = tokens ? captionLimits(tokens).max_chars : undefined
+          return { ok: true, value: commit(HISTORY_SUMMARY.captionCorrect, refs, { kind: 'Coarse' }, d => applyTextCorrection(d, idGen, comp.id, a.layer_ids as string[] | null, a.expected as TextCorrectionExpectation | undefined, mode, maxChars)) }
         }
         case 'apply_transcripts': {
           if (a.project_id !== current().project_id) throw new CommandFailure({ error: 'InvalidArgument', field: 'project_id', detail: 'The project has changed' })

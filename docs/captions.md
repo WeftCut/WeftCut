@@ -112,7 +112,15 @@ single misread Chinese numerals (五老师 / 吴老师) when two exact tokens ma
 each side and the reference has one spelling. Quantity/ordinal contexts,
 numeric targets, negation and ambiguous colloquial numbers are preserved;
 extra speech stays, unmatched manuscript text is not inserted, conflicting
-repeated contexts abstain. No acoustic model, network or forced alignment.
+repeated contexts abstain. Latin-script words the ASR misheard are replaced
+as a run: 1–4 unmatched caption words take the 1–4 unmatched script words
+between the same anchors, two exact words on each side, in one sentence
+("with the media" / "Wikimedia"); never when either run is empty or holds a
+number word, digit or negation. No acoustic model, network or forced alignment.
+
+A cue whose text changed is re-wrapped (`breakLines`) at the style's
+`max_chars`; one whose text did not change, spacing aside, is left byte for
+byte. Punctuation comes from the script, its line breaks never.
 
 Resegmentation: manuscript line breaks and sentence-ending punctuation set
 caption boundaries (ASR boundaries may join; pauses and length add none).

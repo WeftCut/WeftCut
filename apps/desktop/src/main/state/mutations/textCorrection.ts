@@ -3,11 +3,11 @@ import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { scopeComposition, locateLayer, cloneLayer } from './helpers'
 import { gridForLayerKind, snapOnGrid } from '../snap'
-import { alignedShare, createTextCorrector, type CorrectedText } from '../../../shared/textCorrection'
+import { alignedShare, createTextCorrector, type CorrectedText, type CorrectionPiece } from '../../../shared/textCorrection'
 import { CAPTION_TIMING_KEY, readCaptionTiming, type CaptionTiming, type CaptionWord, type TranscriptPayload } from '../../../shared/captionTiming'
 import { applyAddCaptionTrack, type Cue } from './captions'
 import type { TextCorrectionExpectation } from '../../../shared/textCorrectionRequest'
-import { settleShortCues, planCues, type CaptionLimits, type PlannedCue } from './captionSegments'
+import { breakLines, settleShortCues, planCues, type CaptionLimits, type PlannedCue } from './captionSegments'
 
 export function sourceSignature(layer: Layer): string {
   return JSON.stringify([layer.t_start_us, layer.t_end_us, layer.params.kind === 'VideoClip' || layer.params.kind === 'Audio'
@@ -89,7 +89,49 @@ function wordSpans(text: string, words: CaptionWord[], offset: number, startUs: 
 }
 
 interface TimedPiece extends CaptionWord {
-  referenceSentence?: number; breakAfter?: boolean; cue: number; estimated: boolean
+  referenceSentence?: number; breakAfter?: boolean; cue: number; estimated: boolean; substituted?: boolean
+}
+
+/** A cue's own line break stays where it was: the corrector spaces matched
+ *  words as the script does, and the script's line breaks never enter a cue.
+ *  `source[from, to)` is what `text` replaces; `separators` are the joins
+ *  between cues in it, which are not the cue's. */
+function keepBreaks(text: string, source: string, from: number, to: number, separators?: ReadonlySet<number>): string {
+  if (text.includes('\n')) return text
+  for (let k = source.indexOf('\n', from); k >= 0 && k < to; k = source.indexOf('\n', k + 1)) {
+    if (!separators?.has(k)) return text.replace(/\s*$/u, '\n')
+  }
+  return text
+}
+
+const flat = (s: string) => s.replace(/\s+/gu, ' ').trim()
+const EAST_ASIAN = '\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}\\u3000-\\u303f\\uff00-\\uffef'
+// A line break between East Asian characters joins them without a space.
+const EAST_ASIAN_BREAK = new RegExp(`(?<=[${EAST_ASIAN}])\\s*\\n\\s*(?=[${EAST_ASIAN}])`, 'gu')
+
+/** A cue's text after correction. Only spacing changed: the cue as it was,
+ *  byte for byte. Changed: re-wrapped at the style's line length, or with
+ *  its own line breaks where they were when no length is known. */
+function settleText(before: string, after: string, maxChars?: number): string {
+  if (flat(after) === flat(before)) return before
+  return maxChars && maxChars > 0 ? breakLines(after.replace(EAST_ASIAN_BREAK, ''), maxChars) : after
+}
+
+/** `source[from, to)` with the corrector's pieces that start in it applied.
+ *  A piece running past `to` applies only when what it covers there is
+ *  punctuation or space: words never move between cues. */
+function applyPieces(source: string, pieces: CorrectionPiece[], from: number, to: number): string {
+  let text = source.slice(from, to)
+  for (const piece of [...pieces].reverse()) {
+    if (piece.start < from || piece.start >= to) continue
+    // The end may include the separator newline; only punctuation/whitespace
+    // can be clipped from it without moving semantic content across cues.
+    if (piece.end > to && /[\p{L}\p{N}]/u.test(source.slice(to, piece.end))) continue
+    const end = Math.min(piece.end, to)
+    const replacement = keepBreaks(piece.end > to ? piece.text.trimEnd() : piece.text, source, piece.start, end)
+    text = text.slice(0, piece.start - from) + replacement + text.slice(end - from)
+  }
+  return text
 }
 
 /** Keep engine word times where possible. A manuscript break inside an engine
@@ -116,17 +158,20 @@ function timedPieces(result: CorrectedText, spans: TextSpan[]): TimedPiece[] | n
       previous.text += piece.text; previous.end_us = Math.max(previous.end_us, last.end_us)
       previous.breakAfter = piece.breakAfter
       previous.referenceSentence = piece.referenceSentence ?? previous.referenceSentence
-      previous.estimated ||= hits.some(w => w.estimated)
+      previous.estimated ||= hits.some(w => w.estimated) || !!piece.substituted
+      previous.substituted ||= piece.substituted
     } else out.push({ text: piece.text, start_us: startUs, end_us: last.end_us,
-      cue: first.cue, estimated: hits.some(w => w.estimated) || startUs !== first.start_us,
-      referenceSentence: piece.referenceSentence, breakAfter: piece.breakAfter })
+      // A substituted run spans the cue words it replaced; its words are not
+      // the engine's.
+      cue: first.cue, estimated: hits.some(w => w.estimated) || startUs !== first.start_us || !!piece.substituted,
+      referenceSentence: piece.referenceSentence, breakAfter: piece.breakAfter, substituted: piece.substituted })
   }
   if (out.length && result.pieces[0]!.start > 0) out[0]!.text = result.text.slice(0, result.pieces[0]!.start) + out[0]!.text
   return out
 }
 
-function resegment(p: Project, c: Composition, track: Track, group: Layer[], ids: IdGen, correct: ReturnType<typeof createTextCorrector>): number {
-  const spans: TextSpan[] = [], originals: string[] = []
+function resegment(p: Project, c: Composition, track: Track, group: Layer[], ids: IdGen, correct: ReturnType<typeof createTextCorrector>, maxChars?: number): number {
+  const spans: TextSpan[] = [], originals: string[] = [], separators = new Set<number>()
   const independent = new Map<number, CorrectedText['pieces'][number]>()
   let text = ''
   for (const [cue, l] of group.entries()) {
@@ -148,16 +193,20 @@ function resegment(p: Project, c: Composition, track: Track, group: Layer[], ids
         offset += ch.length; return span
       })
     }
-    spans.push(...ws); text += l.params.content + '\n'
+    spans.push(...ws); separators.add(text.length + l.params.content.length); text += l.params.content + '\n'
   }
   const result = correct(text.trimEnd())
   result.pieces = result.pieces.map(piece => {
     const local = independent.get(piece.start)
-    return local?.referenceSentence !== undefined && (piece.referenceSentence === undefined || piece.breakAfter && local.breakAfter)
+    // Only a piece over the same words: a run substituted on one side alone
+    // would drop or repeat the words the other side covers.
+    const own = local?.referenceSentence !== undefined && local.tokens === piece.tokens && (piece.referenceSentence === undefined || piece.breakAfter && local.breakAfter)
       ? { ...local, end: piece.end } : piece
+    return { ...own, text: keepBreaks(own.text, text, own.start, own.end, separators) }
   })
+  const fallback = () => correctIndividually(group, correct, maxChars)
   const words = timedPieces(result, spans)
-  if (!words?.length) return correctIndividually(group, correct)
+  if (!words?.length) return fallback()
   const chunks: TimedPiece[][] = []
   let chunk: TimedPiece[] = []
   for (let i = 0; i < words.length; i++) {
@@ -174,16 +223,17 @@ function resegment(p: Project, c: Composition, track: Track, group: Layer[], ids
     const ws = chunks[i]!, a = ws[0]!, b = ws[ws.length - 1]!
     const start = i === 0 ? first.t_start_us : snapOnGrid(a.start_us, grid)
     const end = i === chunks.length - 1 ? last.t_end_us : snapOnGrid(Math.min(b.end_us, chunks[i + 1]![0]!.start_us), grid)
-    if (end <= start || start < first.t_start_us || end > last.t_end_us || (replacements.length && start < replacements[replacements.length - 1]!.t_end_us)) return correctIndividually(group, correct)
-    const content = ws.map(w => w.text).join('').trim()
-    if (!content) return correctIndividually(group, correct)
+    if (end <= start || start < first.t_start_us || end > last.t_end_us || (replacements.length && start < replacements[replacements.length - 1]!.t_end_us)) return fallback()
+    const built = ws.map(w => w.text).join('').trim()
+    if (!built) return fallback()
+    const content = settleText(originals[i] ?? '', built, maxChars)
     const template = group[a.cue]!
     const replacement = cloneLayer(template)
     replacement.id = group[i]?.id ?? ids()
     replacement.t_start_us = start; replacement.t_end_us = end
     if (replacement.params.kind === 'Text') replacement.params.content = content
     const meta: CaptionTiming = { version: 1, text: content, duration_us: end - start, provenance: ws.some(w => w.estimated) ? 'interpolated_from_cue' : 'exact',
-      words: ws.map(w => ({ text: w.text.trim(), start_us: Math.max(0, w.start_us - start), end_us: Math.max(0, w.end_us - start) })) }
+      words: ws.flatMap(w => timedWords(w, start)) }
     // Groups only combine timing from the same source; keep its invalidation guard.
     const source = timingFor(p, first)?.source
     if (source) meta.source = source
@@ -196,7 +246,21 @@ function resegment(p: Project, c: Composition, track: Track, group: Layer[], ids
   return group.length
 }
 
-function correctIndividually(layers: Layer[], correct: ReturnType<typeof createTextCorrector>): number {
+/** A timed piece as the cue's words, relative to `start`. A substituted run's
+ *  words share its time by length, so each is found in the text again. */
+function timedWords(w: TimedPiece, start: number): CaptionWord[] {
+  const text = w.text.trim(), parts = w.substituted ? text.split(/\s+/u) : [text]
+  if (parts.length < 2) return [{ text, start_us: Math.max(0, w.start_us - start), end_us: Math.max(0, w.end_us - start) }]
+  const total = parts.reduce((n, s) => n + s.length, 0), duration = w.end_us - w.start_us
+  let at = 0
+  return parts.map(s => {
+    const from = w.start_us + Math.round(duration * at / total)
+    at += s.length
+    return { text: s, start_us: Math.max(0, from - start), end_us: Math.max(0, w.start_us + Math.round(duration * at / total) - start) }
+  })
+}
+
+function correctIndividually(layers: Layer[], correct: ReturnType<typeof createTextCorrector>, maxChars?: number): number {
   // Matching may cross old cue boundaries even when the timestamps cannot.
   // Apply only edits wholly owned by one cue; never move words between cues.
   let combined = ''
@@ -211,19 +275,14 @@ function correctIndividually(layers: Layer[], correct: ReturnType<typeof createT
   for (let i = 0; i < layers.length; i++) {
     const l = layers[i]!, range = ranges[i]!
     if (l.params.kind !== 'Text') continue
-    let text = range.text
-    for (const piece of [...result.pieces].reverse()) {
-      if (piece.start < range.start || piece.start >= range.end) continue
-      // The end may include the separator newline; only punctuation/whitespace
-      // can be clipped from it without moving semantic content across cues.
-      if (piece.end > range.end && /[\p{L}\p{N}]/u.test(combined.slice(range.end, piece.end))) continue
-      const replacement = piece.end > range.end ? piece.text.trimEnd() : piece.text
-      text = text.slice(0, piece.start - range.start) + replacement + text.slice(Math.min(piece.end, range.end) - range.start)
-    }
+    let text = applyPieces(combined, result.pieces, range.start, range.end)
     // A repeated take may be outside the group alignment's best local path.
     // Reacquire each cue independently as well, retaining the contextual fixes
-    // above for words that straddled the old ASR cue boundary.
-    text = correct(text).text
+    // above for words that straddled the old ASR cue boundary. Substituted
+    // runs are the group's alone: the cue without its neighbours has less
+    // context, and must neither redo nor add one.
+    const own = correct(text).pieces.filter(piece => !piece.substituted)
+    text = settleText(l.params.content, applyPieces(text, own, 0, text.length), maxChars)
     if (text !== l.params.content) {
       l.params.content = text
       // Stale text mapping is intentionally not relabelled as engine timing.
@@ -256,7 +315,10 @@ export interface CorrectionResult {
   changes: Array<{ layer_id: string; before: string; after: string }>
 }
 
-export function applyTextCorrection(p: Project, ids: IdGen, compositionId: string, layerIds: string[] | null, expected?: TextCorrectionExpectation, mode: CorrectionMode = { kind: 'manuscript' }): CorrectionResult {
+/** `maxChars` is the caption style's line length: a cue whose text changed is
+ *  re-wrapped to it. Without it, a changed cue keeps its line breaks where
+ *  they were. A cue whose text did not change is left as it was. */
+export function applyTextCorrection(p: Project, ids: IdGen, compositionId: string, layerIds: string[] | null, expected?: TextCorrectionExpectation, mode: CorrectionMode = { kind: 'manuscript' }, maxChars?: number): CorrectionResult {
   const c = scopeComposition(p, compositionId)
   const script = mode.kind === 'text_only' ? mode.script : p.settings.correction_script ?? ''
   if (!script.trim()) throw invalid(mode.kind === 'text_only' ? 'script' : 'correction_script')
@@ -282,8 +344,13 @@ export function applyTextCorrection(p: Project, ids: IdGen, compositionId: strin
   if (mode.kind === 'text_only') {
     if (matchRatio < CORRECTION_MIN_MATCH) throw new CommandFailure({ error: 'InvalidArgument', field: 'script', detail: `Only ${Math.round(matchRatio * 100)}% of the caption words align to the script (at least ${CORRECTION_MIN_MATCH * 100}% needed). Pass the full verbatim transcript of what is said in these captions, not notes or a glossary; nothing was changed` })
     // Text only: each cue is corrected in place, never split, merged or retimed.
+    // A track's targets are aligned together, in time order, so a neighbouring
+    // cue's words can anchor a fix; each cue still takes only its own edits.
     let changed = 0
-    for (const { l } of targets) changed += correctIndividually([l], correct)
+    for (const track of c.tracks) {
+      const group = targets.filter(x => x.t === track).map(x => x.l).sort((a, b) => a.t_start_us - b.t_start_us)
+      if (group.length) changed += correctIndividually(group, correct, maxChars)
+    }
     return { changed, match_ratio: roundRatio(matchRatio), changes: listChanges(c, before) }
   }
   let changed = 0
@@ -293,7 +360,7 @@ export function applyTextCorrection(p: Project, ids: IdGen, compositionId: strin
       const first = original[i++]!
       if (!selected.has(first.id)) continue
       if (!canResegment(c, first)) {
-        changed += correctIndividually([first], correct); continue
+        changed += correctIndividually([first], correct, maxChars); continue
       }
       const group = [first], style = styleKey(first), source = JSON.stringify(timingFor(p, first)?.source)
       while (i < original.length) {
@@ -301,7 +368,7 @@ export function applyTextCorrection(p: Project, ids: IdGen, compositionId: strin
         if (!selected.has(next.id) || !canResegment(c, next) || styleKey(next) !== style || JSON.stringify(nt?.source) !== source || next.t_start_us < last.t_end_us) break
         group.push(next); i++
       }
-      changed += resegment(p, c, track, group, ids, correct)
+      changed += resegment(p, c, track, group, ids, correct, maxChars)
     }
   }
   return { changed, match_ratio: roundRatio(matchRatio), changes: listChanges(c, before) }
