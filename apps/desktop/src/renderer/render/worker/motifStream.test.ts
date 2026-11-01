@@ -10,6 +10,41 @@ function deferred<T>() {
 }
 
 describe("Motif export credits", () => {
+  it('overlaps independent elements but shares three execution credits across packets', async () => {
+    const waits = Array.from({ length: 6 }, () => deferred<ImageBitmap>());
+    let active = 0, peak = 0, started = 0;
+    const send = vi.fn(), fail = vi.fn();
+    const producer = new MotifFrameProducer({ totalFrames: 2, maxFrames: 3, maxConcurrentReads: 3, send, fail,
+      plan: index => ['plate', 'title', 'illustration'].map((layerId, n) => ({ layerId, frame: index, bytes: 16,
+        read: async () => { active++; started++; peak = Math.max(peak, active);
+          try { return await waits[index * 3 + n]!.promise; } finally { active--; } },
+      })),
+    });
+    producer.start();
+    await vi.waitFor(() => expect(started).toBe(3));
+    expect(active).toBe(3);
+    for (const wait of waits.slice(0, 3)) wait.resolve(bitmap());
+    await vi.waitFor(() => expect(started).toBe(6));
+    expect(peak).toBe(3);
+    for (const wait of waits.slice(3)) wait.resolve(bitmap());
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    expect(Object.keys(send.mock.calls[0]![0].frames)).toEqual(['plate', 'title', 'illustration']);
+    for (const [packet] of send.mock.calls) closeMotifPacket(packet);
+    producer.dispose(); expect(fail).not.toHaveBeenCalled();
+  });
+  it('closes late parallel reads after failure and never starts queued reads', async () => {
+    const waits = [deferred<ImageBitmap>(), deferred<ImageBitmap>(), deferred<ImageBitmap>()];
+    const late = bitmap(), fail = vi.fn(), send = vi.fn(), queued = vi.fn(async () => bitmap());
+    const producer = new MotifFrameProducer({ totalFrames: 1, maxFrames: 3, maxConcurrentReads: 3, send, fail,
+      plan: () => [...waits.map((w, n) => ({ layerId: String(n), frame: 0, bytes: 16, read: () => w.promise })),
+        { layerId: 'queued', frame: 0, bytes: 16, read: queued }],
+    });
+    producer.start(); waits[0]!.reject(new Error('broken resource'));
+    await vi.waitFor(() => expect(fail).toHaveBeenCalledOnce());
+    waits[1]!.resolve(late); waits[2]!.resolve(bitmap());
+    await vi.waitFor(() => expect(late.close).toHaveBeenCalledOnce());
+    expect(queued).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
+  });
   it("stops admission immediately if transferring a packet fails", () => {
     const plan = vi.fn(() => []), fail = vi.fn();
     const producer = new MotifFrameProducer({ totalFrames: 1000, plan, fail,

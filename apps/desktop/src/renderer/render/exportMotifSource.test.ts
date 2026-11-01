@@ -117,6 +117,36 @@ describe('streamed Motif selection', () => {
     await expect(task.read(new AbortController().signal)).rejects.toThrow('capture failed');
   });
 
+  it('stops optional PNG encoding and write retries after quota exhaustion, but keeps exact pixels and cache reads', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const b = bitmap();
+    vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: b, persisted: false });
+    vi.mocked(sharedMotifFrameCache.writeFrame).mockRejectedValue(new Error('motif-disk-capacity: quota reached'));
+    const png = vi.fn(async () => new Blob(['pixels']));
+    vi.stubGlobal('OffscreenCanvas', class {
+      width = 480; height = 480;
+      getContext() { return { drawImage: vi.fn() }; }
+      convertToBlob = png;
+    });
+    const planner = exportMotifPlanner(summary(), 0, 30, 1);
+    const signal = new AbortController().signal;
+    expect(await planner(0)[0]!.read(signal)).toBe(b);
+    expect(await planner(1)[0]!.read(signal)).toBe(b);
+    expect(await planner(2)[0]!.read(signal)).toBe(b);
+    expect(png).toHaveBeenCalledOnce();
+    expect(sharedMotifFrameCache.writeFrame).toHaveBeenCalledOnce();
+    expect(warning).toHaveBeenCalledOnce();
+    expect(vi.mocked(captureMotifFrameResult).mock.calls[1]?.[9]?.bake).toBeUndefined();
+    expect(b.close).not.toHaveBeenCalled();
+    vi.mocked(sharedMotifFrameCache.readBitmap).mockResolvedValue(b);
+    expect(await planner(3)[0]!.read(signal)).toBe(b);
+    expect(captureMotifFrameResult).toHaveBeenCalledTimes(3);
+    // A new export retries persistence; the failure isn't a process-wide flag.
+    vi.mocked(sharedMotifFrameCache.readBitmap).mockResolvedValue(null);
+    await exportMotifPlanner(summary(), 0, 30, 1)(0)[0]!.read(signal);
+    expect(png).toHaveBeenCalledTimes(2);
+  });
+
   it('cancels an admitted capture and skips cache writes for late results', async () => {
     let resolve!: (v: CapturedFrame) => void;
     vi.mocked(captureMotifFrameResult).mockReturnValue(new Promise(r => { resolve = r; }));
