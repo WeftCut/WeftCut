@@ -555,7 +555,7 @@ const STATIC_RESOURCES: &[ResourceDescriptor] = &[
     ResourceDescriptor {
         uri: URI_MEDIA,
         name: "Media pool",
-        description: "All imported media items keyed by id.",
+        description: "The media pool keyed by media id; each row is the item with its `media_id` and `derivatives` (waveform, conform, thumbnails, proxy: pending, running, ready or failed).",
     },
     ResourceDescriptor {
         uri: URI_TRACKS,

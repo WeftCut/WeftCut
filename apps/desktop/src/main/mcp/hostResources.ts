@@ -41,7 +41,7 @@ export const HOST_RESOURCE_DEFS = [
  *  form-style query: expand with a Group's id, or leave it out for the root. */
 export const HOST_RESOURCE_TEMPLATES = [
   { uriTemplate: 'project://layers/{id}', name: 'Layer', mimeType: APP_JSON,
-    description: "One layer in full — envelope, params (kind-specific, with every animated track), effects — from whichever composition holds it. Key times are `local_t_us`, µs from the layer's start." },
+    description: "One layer in full — layer_id, envelope, params (kind-specific, with every animated track), effects (effect_id, kind, enabled, params) — from whichever composition holds it. Key times are `local_t_us`, µs from the layer's start." },
   { uriTemplate: 'project://composition{?composition}', name: 'Composition settings', mimeType: APP_JSON,
     description: "A composition's settings by id (a Group's, from project://compositions); the root when the query is omitted." },
   { uriTemplate: 'project://tracks{?composition}', name: 'Tracks of a composition', mimeType: APP_JSON,

@@ -194,8 +194,9 @@ _Avoid_: interpolation as the stored thing, easing type; a layer a split produce
 **Easing**:
 The shape one argument writes onto one segment: a named preset or a raw kind
 (Hold, Linear, Bezier, Elastic, Bounce). On a key it eases the segment leaving
-that key — on the last key, the one arriving at it. Stored as the segment class
-plus tangents, never as itself.
+that key — on the last key, the one arriving at it — so keys written in time
+order each carry the move into them; a lone key has no segment and refuses one.
+Stored as the segment class plus tangents, never as itself.
 _Avoid_: interp, interpolation (the argument)
 
 **Extrapolation**:
@@ -731,6 +732,12 @@ _Avoid_: session (for the layout)
 One explicitly begun batch of agent work with an ID, owning MCP connection
 and reason. Ending it releases its undo lock; it cancels nothing.
 _Avoid_: view mode, agent permission, execution lock
+
+**Silent outcome**:
+A call that answers success while it ignored, dropped or did not apply part of
+what it was asked, or delivered less than asked. The MCP surface never has one:
+the call refuses, or a typed field says what is missing. See ADR 0155.
+_Avoid_: best effort, soft failure
 
 **MCP connection**:
 A registered protocol connection, identified independently of client name.

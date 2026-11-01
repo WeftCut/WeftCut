@@ -30,11 +30,11 @@
 
 import type { Page } from '@playwright/test'
 
-/** The wire shape of a pool item, as far as readiness reads it
- *  (`MediaItem` in src/main/state/model.ts, `DecodeRoute` in
- *  src/shared/decode-route.ts). */
+/** The wire shape of a `project://media` row, as far as readiness reads it
+ *  (`MediaItem` in src/main/state/model.ts with its id as `media_id`,
+ *  `DecodeRoute` in src/shared/decode-route.ts). */
 interface MediaWire {
-  id: string
+  media_id: string
   label: string | null
   kind: 'Video' | 'Audio' | 'Image' | 'Subtitle'
   file_hash_blake3: string
@@ -145,12 +145,12 @@ export async function waitForMedia(opts: {
       const derivatives: Record<string, Outcome> = {}
       for (const [kind, isLanded] of expected(m, landed)) {
         if (isLanded) derivatives[kind] = 'landed'
-        else if (ended(m.id, kind, 'media:job_error')) derivatives[kind] = 'failed'
-        else if (ended(m.id, kind, 'media:job_complete')) derivatives[kind] = 'complete'
-        else pending.push(`${m.label ?? m.id}:${kind}`)
-        if (derivatives[kind]) settled.add(`${m.id}:${kind}`)
+        else if (ended(m.media_id, kind, 'media:job_error')) derivatives[kind] = 'failed'
+        else if (ended(m.media_id, kind, 'media:job_complete')) derivatives[kind] = 'complete'
+        else pending.push(`${m.label ?? m.media_id}:${kind}`)
+        if (derivatives[kind]) settled.add(`${m.media_id}:${kind}`)
       }
-      return { media_id: m.id, label: m.label, kind: m.kind, route: m.decode_route.route, derivatives }
+      return { media_id: m.media_id, label: m.label, kind: m.kind, route: m.decode_route.route, derivatives }
     })
     const running = [...open].filter(([, n]) => n > 0).map(([key]) => key)
     pending.push(...running.filter((key) => !settled.has(key)).map((key) => `${key} (job running)`))

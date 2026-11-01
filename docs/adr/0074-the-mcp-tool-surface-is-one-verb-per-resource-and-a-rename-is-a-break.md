@@ -28,10 +28,8 @@ one tool in context for the life of the product.
   (`remove_media`, `links_create`) do not move; the tool table maps them.
 - **A rename is a break, with no exceptions.** A renamed or merged tool does
   not dispatch under its old name; the client gets `unknown tool` and re-reads
-  the catalog. There is no retired-name table. (Amended 2026-11-01: the four
-  aliases that predated this decision — `add_motif`, `checkpoint`,
-  `set_composition`, `compositions_delete` — and `toolAliases.ts` that
-  resolved them are deleted.) A renamed argument is refused naming its
+  the catalog. There is no retired-name table and no alias, not even for a
+  name older than this decision. A renamed argument is refused naming its
   replacement, never accepted.
 - **The wire is snake_case throughout**, including motion-path nodes
   (`in_handle`, `out_handle`, `tangent_mode`), with no schema-upgrade step for

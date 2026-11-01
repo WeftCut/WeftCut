@@ -395,7 +395,7 @@
     {
       "uri": "project://media",
       "name": "Media pool",
-      "description": "All imported media items keyed by id.",
+      "description": "The media pool keyed by media id; each row is the item with its `media_id` and `derivatives` (waveform, conform, thumbnails, proxy: pending, running, ready or failed).",
       "mimeType": "application/json"
     },
     {
@@ -441,39 +441,39 @@
       "description": "Cut the pauses out of a clip and close the gaps, tightening it. Or tack them first, so the user reviews every pause before any of it goes.",
       "arguments": [
         {
-          "name": "layer_id",
-          "description": "Target Audio layer id, or the VideoClip that plays it — a VideoClip is resolved to the Audio layer of its link.",
-          "required": true
+          "name": "clip",
+          "description": "The clip to tighten, as you would name it: its label, or what it shows or says. Omit for the clip you mean in the conversation.",
+          "required": false
         },
         {
           "name": "threshold_db",
-          "description": "Peak threshold, dBFS (≤ 0). Default -34.",
+          "description": "Peak threshold, dBFS (≤ 0). Omit for the default.",
           "required": false
         },
         {
           "name": "min_pause_us",
-          "description": "Shortest pause to cut, in microseconds. Default 500000 (0.5s).",
+          "description": "Shortest pause to cut, in microseconds. Omit for the default.",
           "required": false
         },
         {
           "name": "pad_us",
-          "description": "Microseconds of each pause kept on EACH side when removing. Default 100000 (100ms); 0 erases each pause whole.",
+          "description": "Microseconds of each pause kept on each side when cutting. Omit for the default.",
           "required": false
         }
       ]
     },
     {
       "name": "auto-caption",
-      "description": "Transcribe a video or audio layer with the configured engine, then lay the transcript on the caption tracks with its word timing.",
+      "description": "Transcribe a clip with the configured engine, then lay the transcript on the caption tracks with its word timing.",
       "arguments": [
         {
-          "name": "layer_id",
-          "description": "Target VideoClip or Audio layer id.",
-          "required": true
+          "name": "clip",
+          "description": "The clip to caption, as you would name it: its label, or what it shows or says. Omit for the clip you mean in the conversation.",
+          "required": false
         },
         {
           "name": "language",
-          "description": "Optional ISO-639-1 language hint (en, zh, etc.). Auto-detect when omitted.",
+          "description": "Optional language hint (en, zh, …). Auto-detect when omitted.",
           "required": false
         }
       ]
@@ -484,12 +484,12 @@
       "arguments": [
         {
           "name": "script",
-          "description": "Text to speak. tts-1 caps a single call at 4096 chars; for longer scripts split into paragraphs.",
+          "description": "Text to speak.",
           "required": true
         },
         {
           "name": "voice",
-          "description": "OpenAI voice: alloy, echo, fable, onyx, nova, or shimmer. Required — `synthesize_speech` takes no default.",
+          "description": "OpenAI voice: alloy, echo, fable, onyx, nova, or shimmer.",
           "required": true
         },
         {
@@ -498,8 +498,8 @@
           "required": false
         },
         {
-          "name": "target_track_id",
-          "description": "Optional track id. Defaults to the topmost track whose audio lane is free, else a new 'Voiceover' track.",
+          "name": "track",
+          "description": "Optional track to place it on, by its name. Omit for the default lane.",
           "required": false
         }
       ]

@@ -133,9 +133,11 @@ export function localKeyTimes(v: unknown): unknown {
   return Object.fromEntries(Object.entries(v).map(([k, x]) => [k === 't_us' ? 'local_t_us' : k, localKeyTimes(x)]))
 }
 
-/** `project://layers/{id}`: the layer in full, key times `local_t_us`. */
+/** `project://layers/{id}`: the layer in full, key times `local_t_us`, keyed
+ *  as the edit records are: `layer_id`, and `effect_id` on each effect. */
 export function layerView(layer: Layer): unknown {
-  return localKeyTimes(layer)
+  const { id, effects, ...rest } = layer
+  return localKeyTimes({ layer_id: id, ...rest, effects: effects.map(({ id: effect_id, ...e }) => ({ effect_id, ...e })) })
 }
 
 /** `project://tracks`: every track with its flags and its layers as envelopes.
@@ -220,9 +222,14 @@ export function mediaCard(p: Project, id: string): Record<string, unknown> | nul
     resources: MEDIA_SUBRESOURCES[item.kind].map((r) => `${PREFIX_MEDIA}${id}/${r}`) }
 }
 
-/** `project://media`: the pool, each row with its `derivatives`. */
+/** `project://media`: the pool keyed by media id, each row the stored item
+ *  with `media_id` for its id (the key `import_media` answers) and its
+ *  `derivatives`. */
 function mediaRows(p: Project): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(p.media_pool).map(([id, item]) => [id, { ...item, derivatives: derivativeStates(item) }]))
+  return Object.fromEntries(Object.entries(p.media_pool).map(([key, item]) => {
+    const { id, ...stored } = item
+    return [key, { media_id: id, ...stored, derivatives: derivativeStates(item) }]
+  }))
 }
 
 export function serveProjectResource(

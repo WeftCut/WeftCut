@@ -30,53 +30,21 @@ WeftCut is a desktop video editor; the user watches the same project live, and e
 
 ## Session etiquette
 
-1. Read `project://tracks` before your first mutation — never write against a
-   guessed state. Its envelopes say what each layer is (media, text, role,
-   Motif, Group); `project://layers/{id}` has one layer in full.
-   The project open in the app is the one the user means: edit it in place.
-   Creating a new project and re-importing their media leaves them with a
-   copy they did not ask for.
-   If your client cannot read MCP resources, `read_project` returns the same
-   views as a tool result.
-2. A small change (a handful of tool calls) needs no ceremony: edit, verify,
-   report.
-3. A batch job (rough-cutting a video, a pause pass, building a caption
-   track) uses a work session: ASK whether to begin the batch and enter the
-   lightweight agent view unless already authorized, then call
-   `begin_agent_session`. It creates a checkpoint once per session and locks
-   the user's undo until `end_agent_session`, which you call when finished
-   (also on failure); `lock: false` leaves undo free.
-   Manual view switching neither starts nor ends work. The user can end work
-   or unlock locally; closing your connection ends its owned session, and the
-   app closes a session whose connection has gone quiet. If `begin_agent_session`
-   answers `AgentSessionBusy`, the message names the holder — wait, or take over
-   with `begin_agent_session { force: true }` when that holder is gone.
-   None of these cancels running calls or prohibits later tools. Do not infer
-   that a session ended because the user returned to the editor.
-4. Errors are instructions: WeftCut errors name the cause and list concrete
-   options. Pick one; never retry a rejected call verbatim.
-5. A commit can also fail because the user (or another agent) edited
-   concurrently — re-read the resource and reapply.
-6. Export with `get_export_options`, then `start_export`. Generate one unique
-   `request_id` per export intent and reuse it after a reconnect. Call
-   `get_export_status { wait_s: 60 }` until completion, failure or `awaiting_retry`; a transport
-   disconnect does not cancel the job. Report the completed `output_path` and
-   `filename`. An omitted path uses the project's output folder; conflicts
-   add a number by default. Use `on_conflict: "fail"` for a strict name.
-   Settings use snake_case and override only this job. Editing stays locked
-   while exporting or awaiting retry. Use `retry_export` to retry finalization,
-   optionally with a new same-directory filename, or `cancel_export` to
-   discard. UI and MCP can control each other's jobs. Native encoder failure
-   returns an error; choose changed settings for a new request rather than
-   waiting for an interactive fallback prompt.
+The ten lines above are the etiquette; this is what they leave out.
 
-Export presets are shared with the export dialog. Use `list_export_presets`
-for IDs and portable settings; `create_export_preset`, `update_export_preset`
-and `delete_export_preset` manage the application library even without a
-project. Pass `preset_id` to `get_export_options` to preview or `start_export`
-to use one; per-job settings override it. Omitting the ID keeps saved project
-settings, falling back to the global default. Library edits do not rewrite
-project settings or jobs already admitted.
+- The project open in the app is the one the user means: edit it in place.
+  A new project with their media re-imported is a copy they did not ask for.
+  `project://tracks` says what each layer is (media, text, role, Motif,
+  Group); without resource support, `read_project` serves the same views.
+- A small change (a handful of calls) needs no ceremony: edit, verify, report.
+- A batch job (a rough cut, a pause pass, a caption track) runs in a work
+  session. Ask before you begin one unless the user already agreed; it moves
+  them to the agent view and locks their undo until you end it, so end it on
+  failure too. Switching views neither starts nor ends work, and a user back in
+  the editor has not ended your session. If another agent holds the session,
+  ask the user before taking it over.
+- Export when the user asks for a file, and report the completed output's path.
+  A dropped connection does not cancel an export; its status answers again.
 
 ## Working in the project folder
 
@@ -86,22 +54,16 @@ it is the project the user means. Compare it with `project.dir` in
 `open_project`.
 
 - `project.json` is the app's to write; it autosaves over any edit of yours.
-  Read the project through its resources (`project://tracks`,
-  `project://layers/{id}`, …) or `read_project`.
+  Read the project through its resources or `read_project`.
 - `Media/` holds the project's media. Never rename, move or overwrite a file
-  there: the pool records it by that path and by its bytes, and a file changed
-  there goes unavailable. New media goes under a new name, through
+  there: the pool would lose it. New media goes in under a new name, through
   `import_media`. `Cache/` is derived data; leave it unread.
-- `TASTE.md` is the one file you edit by hand. `project://taste` names where
-  it goes even before it exists. Its tokens reach new layers; call
-  `restyle_to_taste` for the layers already placed.
-- A file the user mentions goes to `import_media` as it is: absolute, or
-  relative to the project folder. A file the pool already holds answers its
-  existing record (`existing: true`), so importing is also how a file is
-  matched to its media id. A file from anywhere else is copied into `Media/`.
-- Each pooled file is also a resource, `media://{id}`: a short card with its
-  path, length and the layers using it (`read_project` view `media` with
-  `id` reads the same).
+- `TASTE.md` is the one file you edit by hand (`project://taste` names where
+  it goes). Its tokens reach new layers; `restyle_to_taste` brings placed ones
+  back to it.
+- A file the user mentions goes to `import_media` as it is. Importing a file
+  the pool already holds answers its existing record, so it is also how a file
+  is matched to its media id.
 
 ## Batch jobs
 
@@ -118,108 +80,68 @@ build inside the work session → check the result against the plan and with
 Whatever is still wrong after the third becomes tacks on the ranges it
 concerns and is named in your report — never retried silently.
 
-**Style.** The project's style is `project://taste`: its tokens are already
-the defaults new text and transcript captions take. Tag what you create with a
-`graphic_role` — title, lower_third, callout, credit, logo, plate, illustration — rather than
-styling it by hand; the role is what gives it the style's look and its
-entrance. A role outside those must be declared in the project's TASTE.md.
-After hand edits, `restyle_to_taste` puts layers back to the style.
+**Style.** The project's style is `project://taste`; its tokens are already
+the defaults new text and captions take. Tag what you create with a
+`graphic_role` rather than styling it by hand: the role gives it the style's
+look and entrance. A role outside the built-ins must be declared in TASTE.md.
 
-**Style Motifs.** A style that is mostly drawn (paper, stamps, highlighter)
-lists example Motifs per role in the taste's motifs. They are examples, not a
-template: place one, fork it, or write a new Motif when the video needs
-something they do not show. The style reaches any Motif through its shared
-props (colours such as ink and accent, and font_ props). Leave them unset
-when placing, and keep them in a fork. A Motif that has a duration_s prop
-plays its exit before its layer ends: set duration_s to the layer's length,
-and its exit prop. A set of elements leaves by ending their layers one after
-another. *Style Motifs* in `motif-authoring.md` says how to write one.
+**Style Motifs.** A style that is mostly drawn lists example Motifs per role.
+They are examples, not a template: place one, fork it, or write a new Motif
+when the video needs something they do not show. Leave the style's shared
+props unset when placing, and keep them in a fork. *Style Motifs* in
+`motif-authoring.md` says how to write one.
 
-**Checks.** `check_composition` reports what breaks the craft rules
-(`craft/rules.md`) or departs from the style. Fix every `hard` finding. Fix a
-`warning`, or leave a tack on it that says why it stays. A `review` finding is
-a departure from the style: keep it only if it was meant, and say so.
-`end_agent_session` runs the check itself when your last one no longer
-matches the timeline. If that finds `hard` or `warning` findings, it keeps
-the session open and returns them: settle them as above, then call it again.
-The audit cannot see pixels: after placing overlays, look at what export
-will render with `render_frames`. Pass the layer ids, and each one is sampled
-over its span, including just after cuts and shot changes under it.
+**Checks.** Fix every `hard` finding of `check_composition`. Fix a `warning`,
+or leave a tack on it that says why it stays. Keep a `review` finding only if
+the departure was meant, and say so. When `end_agent_session` hands findings
+back, settle them the same way and end again. The audit cannot see pixels:
+after placing overlays, look at the layers you placed with `render_frames`.
 
 ## Working rhythm
 
-Read → analyze → mutate → **verify**: every mutator answers with the committed
-record — the ids it minted, the span as it landed, `adjusted` for any grid snap,
-the link `siblings` it carried along — so check that answer first, and re-read
-`project://tracks` or `project://layers/{id}` only for what the record does
-not carry, before reporting the edit done.
+Read → analyze → mutate → **verify** from the committed record each edit
+answers; re-read only for what the record does not carry, before reporting the
+edit done. A time's name says its clock: `t_*` timeline, `src_*` source,
+`local_*` layer-local.
 
-Common flows, one line each — parameters and caveats live in the tool
-descriptions. A time's name says its clock: `t_*` timeline, `src_*` source,
-`local_*` layer-local; a source-time answer carries the `mapping` that places
-it.
+Which tool for a job — the descriptions carry the rest:
 
-- Animation: `set_keyframe` one key by time, `set_param_track` a whole track;
-  `get_param_track` reads the track in that write shape, so edit and send it back.
-- Cut pauses: `remove_pauses` cuts the pauses out of a clip and closes the
-  gaps, as one undoable edit, keeping `pad_us` at both ends (or review first:
-  `detect_pauses` → one `create_tacks` batch, then `remove_pauses { pauses }`
-  with the kept ones; both in the `/cut-pauses` prompt).
-- Reorder: `move_layers`; `insert: true` moves a part and closes the gap
-  behind it. Make room or close a gap: `shift_layers` from a time.
-- Captions, after any pause cut: `transcribe_clip` → inspect the `segments` →
-  `apply_transcripts` with its answer's transcripts as they came (also
-  `/auto-caption`). Cues come out within the style's caption limits; do not
-  break lines or split cues by hand. A subtitle FILE: `import_media` it, then
-  `apply_subtitles`. Correcting names and jargon:
-  `correct_caption_text { script }` with the full verbatim transcript.
-  Caption look: edit the caption tokens, then `restyle_to_taste`.
-- Retime: `retime_layers`, with the link partners too.
-- Captions with your own speech model: `extract_clip_audio` returns a 16 kHz
-  mono source WAV block (at most 60 s of source per call) and the window's
-  mapping; place each WAV offset by it, then `apply_transcripts` with `word_timing:
-  "exact"` (or `"none"` and empty `words` if your model gives cue times only).
-- Voiceover: `synthesize_speech` appends a spoken script to the timeline
-  (also `/voiceover`).
-- Rough cut: `analyze_clip` or `auto_split_by_shot`, then trim and delete
-  segments — `delete_layers` with `ripple: true` when the gap a cut leaves
-  should close behind it.
-- Placing clips, titles, music, stills: one `add_layers` call for the whole
-  batch.
-- Music alignment: `analyze_audio` onsets, then slip the clip with
-  `update_layer_params { src_in_us }`. Onsets are not beats: audition.
+- Animation: `set_keyframe` for one key, `set_param_track` for a whole track,
+  read back with `get_param_track`.
+- Cut pauses: `remove_pauses`, or review first with `detect_pauses` and one
+  `create_tacks` batch (the `/cut-pauses` prompt).
+- Reorder: `move_layers`; make room or close a gap: `shift_layers`.
+- Captions, after any pause cut: `transcribe_clip` → read the `segments` →
+  `apply_transcripts` (the `/auto-caption` prompt). Leave line breaks and cue
+  lengths to the style. A subtitle file: `import_media`, then
+  `apply_subtitles`. Names and jargon: `correct_caption_text`. Caption look:
+  the caption tokens, then `restyle_to_taste`.
+- Your own speech model: `extract_clip_audio`, then `apply_transcripts`.
+- Voiceover: `synthesize_speech` (the `/voiceover` prompt).
+- Rough cut: `analyze_clip` or `auto_split_by_shot`, then trim and
+  `delete_layers` with `ripple: true` where the gap should close.
+- Placing clips, titles, music, stills: one `add_layers` call for the batch.
+- Music alignment: `analyze_audio` onsets, then slip the clip. Onsets are not
+  beats: audition.
 - A title, a lower third, a credit: a text layer with its `graphic_role`.
-  Adjust it with `update_layer_params`. Subtitles from a document are
-  `apply_subtitles`.
-- A track that refuses every edit is locked: `set_track_flags` clears the lock
-  (and hides or shows a track's output). A layer carries its own lock, which
-  `set_layer_flags` clears.
-- Going back further than one undo: `jump_to { op_id }`, an op of `project://history`.
 
 ## Pointing the user at something
 
-Tacks are how you point the user at something to review — a pause to check, a
-shot to judge, a cut to decide. Create them once the session's edits are done:
-`create_tacks` places a whole batch in one call. A tack comments on what
-plays in its range, on every track: it moves with that content when it moves
-together, and turns outdated as soon as anything in the range plays
-differently — a clip trimmed, deleted, added or changed there, by you or the
-user. Describe the content in label and body,
-never a timecode — the panel shows each tack's live place. One place, one tack: several things to say
-about the same shot go in one tack's body, not one tack each. Tacks live in the agent panel for this project
-opening only — never in the project, its history or an export — so leaving
-them costs the user nothing.
+Tacks point the user at something to review — a pause to check, a shot to
+judge, a cut to decide. Create them once the session's edits are done, in one
+`create_tacks` batch. Describe the content, never a timecode. One place, one
+tack: several things to say about the same shot go in one body. Tacks live in
+the agent panel for this opening only, so leaving them costs the user nothing.
 
-Markers are the user's content: saved, undoable, exported. Create one with
-`add_marker` only when the user asks for markers — never as a review mark.
+Markers are the user's content: saved, undoable, exported. Use `add_marker`
+only when the user asks for markers — never as a review mark.
 
-A tack's status tells you what the user decided: resolved (they acted on it) or
-dismissed (it does not matter), while open is still waiting. Read
-`project://tacks` before acting on your earlier tacks, and use `update_tack` to
-resolve one you fixed yourself. When an edit's result lists one of yours in
-`affected_tacks` as outdated, or `end_agent_session` returns it in
-`tacks_to_review`, it no longer describes what plays there: resolve it if your
-edit settled it, otherwise delete it and tack the new content again.
+A tack's status is the user's answer: resolved (they acted), dismissed (it
+does not matter), open (still waiting). Read `project://tacks` before acting
+on your earlier tacks; `update_tack` resolves one you fixed yourself. A tack of
+yours that an edit's `affected_tacks` or `end_agent_session`'s
+`tacks_to_review` reports outdated no longer describes what plays there:
+resolve it if your edit settled it, else delete it and tack the new content.
 
 ## Motifs (animated overlays)
 
@@ -229,33 +151,23 @@ One Motif draws one element, or one interaction of elements that move because
 of each other. For overlay work with more than one element, plan the layers
 before writing code. A concept scene is a Group of a plate, one layer per
 independent element, and at most a few interaction Motifs (*Scope* in
-`motif-authoring.md`). A Motif shows a still from the media pool through a
-`media` prop (`"<media_id>"`, or `"<media_id>@<t_us>"` for a video frame);
-moving footage stays a video layer.
+`motif-authoring.md`). A still from the media pool goes in through a `media`
+prop; moving footage stays a video layer.
 
 1. Prefer a self-contained folder inside your working directory (for example
-   motifs/<name>/) with index.html, manifest.json and companion code/assets,
-   never beside it. Call `open_motif_draft` with a directory source once;
-   keep editing the folder with your normal file tools. The app watches changes.
-   Unsure whether the app can read your folder? One `open_motif_draft` with its
-   absolute path answers that. Fall back to step 2 only when the app refuses it.
-2. When the app cannot read your folder, start an empty draft. Use `read_motif`
-   for inventory or file text, then `update_motif_files` for a batch of file
-   writes or deletions. To change part of a file, send `edits` (exact `old` →
-   `new` pairs) instead of the whole file. Always pass the revision you read.
-3. `preview_motif` the start, middle and near the end in one call, then once
-   more with non-default props. Fix invalid sources before publishing.
-4. **Publication waits for the user's approval in the app.** Place the draft
-   with `add_layers` when useful, then `install_motif` the reviewed revision:
-   it only proposes. Tell the user to approve it in WeftCut's Motifs panel and
-   stop; do not poll and do not report it published. `list_motifs` shows the
-   outcome and any note. Remove trial layers afterwards unless the user wants
-   them kept.
-5. `export_motif` saves a complete ZIP to a local path. `delete_motif` removes a
-   draft/publication; it never deletes a linked source folder.
+   motifs/<name>/) and one `open_motif_draft` with its absolute path; keep
+   editing the folder with your normal file tools. Only when the app refuses
+   it, work through `read_motif` and `update_motif_files`
+   (`motif-workspaces.md`, *Without a shared folder*).
+2. `preview_motif` the start, middle and near the end in one call, then once
+   more with non-default props. Fix invalid sources before proposing.
+3. **Motif publication waits for the user's approval in the app.** Place the
+   draft with `add_layers` when useful, then `install_motif` the reviewed
+   revision: it only proposes. Tell the user to approve it in WeftCut's Motifs
+   panel and stop; do not poll and do not report it published. `list_motifs`
+   shows the outcome and any note. Remove trial layers afterwards unless the
+   user wants them kept.
+4. `export_motif` and `delete_motif` only when the user asks.
 
-**Three.js Motifs** use local dependencies and relative URLs; no CDN access.
-Read `motif-three-model.md` and start from `templates/three-model.zip` beside
-this file for Draco/KTX2. Await decoding in setup; local/Blob Workers and WASM
-are available there, ordinary JS eval is not. Create fresh decoder loaders per
-setup, derive animation from absolute time and keep `settle_rafs: 2`.
+**Three.js Motifs**: read `motif-three-model.md` and start from
+`templates/three-model.zip` beside this file.

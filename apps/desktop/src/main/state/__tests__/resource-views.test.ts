@@ -67,7 +67,10 @@ describe('serveProjectResource', () => {
     const r = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: track, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 1 } } }] }))
     expect(r.ok).toBe(true)
     const layerId = root(actor.snapshot()).tracks.flatMap((t) => t.layers)[0].id
-    expect(JSON.parse(text(serveProjectResource(`project://layers/${layerId}`, actor))).id).toBe(layerId)
+    const full = JSON.parse(text(serveProjectResource(`project://layers/${layerId}`, actor)))
+    // Keyed as the edit records are: `layer_id`, never a bare `id`.
+    expect(full.layer_id).toBe(layerId)
+    expect('id' in full).toBe(false)
   })
   it('throws not-found for an absent layer id', () => {
     expect(() => serveProjectResource('project://layers/gone', mkActor())).toThrow(/not found/)
@@ -169,7 +172,7 @@ describe('serveProjectResource across compositions', () => {
     const actor = createActor({ initial: p, idGen: gen })
     const inner = p.compositions[groupId].tracks[0].layers[0]
     const text = (r: ReturnType<typeof serveProjectResource>) => (r as { contents: Array<{ text: string }> }).contents[0].text
-    expect(JSON.parse(text(serveProjectResource(`project://layers/${inner.id}`, actor))).id).toBe(inner.id)
+    expect(JSON.parse(text(serveProjectResource(`project://layers/${inner.id}`, actor))).layer_id).toBe(inner.id)
     expect(JSON.parse(text(serveProjectResource('project://tracks', actor)))).toHaveLength(root(p).tracks.length)
     const comp = JSON.parse(text(serveProjectResource('project://composition', actor)))
     expect(comp.composition_id).toBe(p.root_id)
@@ -288,6 +291,8 @@ describe('project://tracks lists envelopes', () => {
     // The full record is still one read away.
     const full = JSON.parse(text(serveProjectResource(`project://layers/${titleId}`, actor)))
     expect(full.params.kind).toBe('Text')
+    expect(full.effects.map((e: { effect_id: string }) => e.effect_id)).toEqual([(textRow.effects as Array<{ effect_id: string }>)[0]!.effect_id])
+    expect('id' in full.effects[0]).toBe(false)
     expect(full.params.opacity.mode).toBe('Keyframed')
     // Stored key times are layer-local, and the wire names them so.
     expect(full.params.opacity.value[0]).toMatchObject({ local_t_us: 0 })

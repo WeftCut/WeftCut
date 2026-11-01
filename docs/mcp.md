@@ -142,51 +142,68 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   `update_*` per resource with optional fields; a field's set and clear are one
   tool taking `null`. A rename is a break: the old name gets `unknown tool`
   (ADR 0074), with no exceptions.
-- Before adding a tool, check an existing tool's arguments: two verbs that
-  differ by one boolean are one tool with a flag.
-- **No silent no-op, no silent degrade.** A write that would ignore, drop or
-  not apply an argument refuses: an empty patch, a flag call naming no flag, a
-  `null` on a field where null means nothing, a time a few µs off a key. A
-  `null` arm is advertised only where it means something (`label: null`
-  clears, `t_end_us: null` makes a point). A read or render that delivers less
-  than asked refuses, or says so in a typed field. Gate:
-  `mcp.no-silent-outcomes.test.ts` sends every optional and nullable field of
-  every write tool (TS, Motif, export, Rust) alone on a fixture project and
-  fails unless the state changed or the call refused; its exceptions are an
-  explicit list, each with a reason.
-- **The time base is in the name.** `t_*` is timeline-absolute (the owning
-  composition's clock), `src_*` source-absolute (the media file's own time),
-  `local_*` layer-local (µs from the layer's `t_start_us`); a role word comes
-  after the base (`t_cut_us`, `t_edge_us`, `t_from_us`, `t_end_us`). A bare
-  `_us` / `_s` is a duration (`duration_us`, `pad_us`, `delta_us`). A result
-  in source time for a layer carries that layer's `mapping { layer_id,
-  t_start_us, src_in_us, rate: {num, den}, source_phase? }`: timeline
-  `t = t_start_us + (src − src_in_us − source_phase.in) / rate`.
-  `project://tracks` envelopes carry `media_id` and `rate` (when ≠ 1) for the
-  same sum. Gate: `mcp.time-base-names.test.ts` walks every input property
-  and every result key a description documents; its exceptions are explicit
-  lists.
-- **Background state is readable.** No agent should need `sleep`, `pgrep` or a
-  cache listing to learn what the app is doing:
-  - A media card (`media://{id}`, each `project://media` row, the
-    `import_media` answer) carries `derivatives`: `waveform` / `conform`
-    (audio), `thumbnails` / `proxy` (video; no `proxy` for a Bypass route),
-    each `"pending" | "running" | "ready" | { "failed": "<reason>" }`. Main
-    keeps the job events no MCP session receives
-    (`main/state/derivative-jobs.ts`). Shot detection is not a derivative: the
-    call that needs it runs it.
-  - A "not ready" refusal (`DerivativeNotReady`) carries `{ media_id,
-    derivative, state, retry_after_s }`; a failed job says so with its
-    `reason` and `retry_after_s: null`, and `import_media` of the same file
-    re-runs it.
-  - A busy admission (`ResourceBusy`) names its `holders` (`[{ kind,
-    media_id?, mib, threads }]`, from the native ledger) and `retry_after_s`.
-    A claim larger than the whole working allowance is `ResourceBudget {
-    needed_mib, allowed_mib, setting, memory_target_mib }`, which no wait
-    admits.
-  - `get_export_status { wait_s ≤ 60 }` blocks until the job's state changes.
-  Gates: `derivative-jobs.test.ts`, `faultText.test.ts`, the governor's holder
-  tests (`native/src/resources.rs`).
+
+Six rules hold across the surface, each with its gate (ADR 0155 records the
+first two):
+
+1. **No silent no-op, no silent degrade.** A write that would ignore, drop or
+   not apply an argument refuses: an empty patch, a flag call naming no flag, a
+   `null` on a field where null means nothing, a time a few µs off a key. A
+   `null` arm is advertised only where it means something (`label: null`
+   clears, `t_end_us: null` makes a point). A read or render that delivers less
+   than asked refuses, or says so in a typed field. Gate:
+   `mcp.no-silent-outcomes.test.ts` sends every optional and nullable field of
+   every write tool (TS, Motif, export, Rust) alone on a fixture project and
+   fails unless the state changed or the call refused; its exceptions are an
+   explicit list, each with a reason.
+2. **The time base is in the name.** `t_*` is timeline-absolute (the owning
+   composition's clock), `src_*` source-absolute (the media file's own time),
+   `local_*` layer-local (µs from the layer's `t_start_us`); a role word comes
+   after the base (`t_cut_us`, `t_edge_us`, `t_from_us`, `t_end_us`). A bare
+   `_us` / `_s` is a duration (`duration_us`, `pad_us`, `delta_us`). A result
+   in source time for a layer carries that layer's `mapping { layer_id,
+   t_start_us, src_in_us, rate: {num, den}, source_phase? }`: timeline
+   `t = t_start_us + (src − src_in_us − source_phase.in) / rate`.
+   `project://tracks` envelopes carry `media_id` and `rate` (when ≠ 1) for the
+   same sum. Gate: `mcp.time-base-names.test.ts` walks every input property
+   and every result key a description documents; its exceptions are explicit
+   lists (stored names whose rename is a project or preset migration).
+3. **One error mapper on every route.** Every refusal, from TS, Rust, export,
+   render, Motif or file IO, leaves in one shape through one mapper, and no
+   result text carries Electron's IPC wrapper, a bare errno or an event name no
+   MCP client receives (*Error model*). Gate: `mcp.error-vocabulary` over the
+   whole catalog.
+4. **Background state is readable.** No agent should need `sleep`, `pgrep` or a
+   cache listing to learn what the app is doing:
+   - A media card (`media://{id}`, each `project://media` row, the
+     `import_media` answer) carries `derivatives`: `waveform` / `conform`
+     (audio), `thumbnails` / `proxy` (video; no `proxy` for a Bypass route),
+     each `"pending" | "running" | "ready" | { "failed": "<reason>" }`. Main
+     keeps the job events no MCP session receives
+     (`main/state/derivative-jobs.ts`). Shot detection is not a derivative: the
+     call that needs it runs it.
+   - A "not ready" refusal (`DerivativeNotReady`) carries `{ media_id,
+     derivative, state, retry_after_s }`; a failed job says so with its
+     `reason` and `retry_after_s: null`, and `import_media` of the same file
+     re-runs it.
+   - A busy admission (`ResourceBusy`) names its `holders` (`[{ kind,
+     media_id?, mib, threads }]`, from the native ledger) and `retry_after_s`.
+     A claim larger than the whole working allowance is `ResourceBudget {
+     needed_mib, allowed_mib, setting, memory_target_mib }`, which no wait
+     admits.
+   - `get_export_status { wait_s ≤ 60 }` blocks until the job's state changes.
+   Gates: `derivative-jobs.test.ts`, `faultText.test.ts`, the governor's holder
+   tests (`native/src/resources.rs`).
+5. **Guidance reaches every transport.** Both transports send the same
+   `initialize` instructions, whose last line names the app version, so a
+   stale skill copy is detectable (*Connection UX*). The skill carries process
+   only (ADR 0046): skill or prompt prose that restates a tool's contract is a
+   review failure, fixed in the description. Gates: `instructions.test.ts`
+   (the etiquette equals the skill's head), `mcp.skill-conformance` (every
+   name the skill uses is advertised).
+6. **A tool names its nearest sibling** in *Siblings* below: one line on why
+   both exist. Before adding a tool, check an existing tool's arguments: two
+   verbs that differ by one boolean are one tool with a flag. Review gate.
 
 ### Projects and the no-project rule
 
@@ -220,17 +237,21 @@ exists.
 
 ## Resources
 
-The rows of `tracks`, `compositions`, `markers`, `links`, `transitions` and
-`tacks` name ids the way edit records do (`layer_id`, `track_id`,
-`composition_id`, `marker_id`, `link_id`, `transition_id`, `tack_id`).
+Every read names ids the way edit records do (`media_id`, `layer_id`,
+`track_id`, `effect_id`, `composition_id`, `marker_id`, `link_id`,
+`transition_id`, `tack_id`); no row answers a bare `id`. Two stored shapes
+keep their own key: a marker's `anchor { layer, src_us }` and the work
+session record in `project://session`. Inside `project://layers/{id}`, keys and
+path nodes keep their stored `id` (`get_param_track` answers them as
+`keyframe_ids`).
 
 | URI | Returns |
 |---|---|
 | `project://composition` | one composition's settings only (`composition_id`, no tracks); `?composition=<id>` for a Group's |
 | `project://compositions` | every composition (`composition_id`, label, duration) with `ref_count` (Group layers pointing at it; 0 = root or orphan) |
-| `project://media` | media pool, each row with its `derivatives` |
+| `project://media` | the media pool keyed by media id; each row is the item with its `media_id` and `derivatives` |
 | `project://tracks` | a composition's tracks (`track_id`, `enabled`, `locked`, `role`) with layer **envelopes** keyed like the edit records (`layer_id`, `effects[].effect_id`) and carrying what tells layers apart: `media_id`, Text `content` (first 80 chars), Audio `role`, `motif_id`, a Group's `composition_id`, `rate` when ≠ 1 — what an agent plans timeline edits against |
-| `project://layers/{id}` | one layer in full, from any composition; stored key times as `local_t_us` |
+| `project://layers/{id}` | one layer in full (`layer_id`, params, effects with `effect_id`), from any composition; stored key times as `local_t_us` |
 | `project://markers` | a composition's markers as marker records (`marker_id`, `t_us`, `t_end_us`, `anchor`) |
 | `project://links` | a composition's links as link records `{ link_id, composition_id, members }` |
 | `project://transitions` | a composition's transitions as transition records (`transition_id`, `from_layer_id`, `to_layer_id`) |
@@ -308,6 +329,103 @@ deleted entities keep a name).
   `set_role_flags`, `update_composition`, `set_project_settings`, checkpoints,
   work sessions, the history lock and the tack verbs. Every other edit is one
   recorded commit.
+
+### Siblings
+
+One line per tool with a near neighbour: why both exist (convention 6).
+
+- `move_layers` vs `shift_layers`: a named set and its link partners vs every
+  layer from a time on, named by none.
+- `move_layers` vs `trim_layer`: a move keeps the window and changes placement;
+  a trim changes one edge of the window.
+- `move_layers` vs `move_layers_to_composition`: within one composition vs into
+  another (the only crossing besides the Group tools).
+- `move_layers` vs `paste_layers`: one landing vocabulary; a move relocates the
+  set, a paste copies it.
+- `paste_layers` vs `add_layers`: copies existing layers with their params,
+  keys and effects vs places new content from media, text or a Motif.
+- `trim_layer` vs `retime_layers`: a trim changes the source window and the
+  span; a retime keeps the window and changes the rate, so the span follows.
+- `split_layer` vs `auto_split_by_shot`: cuts at the times given vs at the
+  cached shot scan's boundaries.
+- `delete_layers { ripple: true }` vs `shift_layers` with a negative delta:
+  removes layers and closes their spans vs closes an empty gap.
+- `remove_pauses` vs `delete_layers { ripple: true }`: finds, splits and closes
+  pauses inside one clip vs deletes whole layers.
+- `detect_pauses` vs `remove_pauses`: the same detection, read-only vs cut.
+- `detect_pauses` vs `analyze_audio`: pauses in what plays (effect bake, link
+  member) vs onsets and energy of a media item's source audio.
+- `rename_layer` / `set_layer_flags` vs `update_layer_params`: a layer's
+  envelope (label, enabled, locked) vs its kind's params.
+- `set_layer_flags` vs `set_track_flags`: the named layers vs a whole track,
+  whose lock refuses every edit on it.
+- `set_track_flags` vs `set_role_flags`: a track's `enabled` / `locked` vs
+  mute and solo per audio role (audio mixes by role, ADR 0023).
+- `set_role_gain` vs an Audio layer's `gain_db`: the role's fold over every
+  clip in it vs one clip.
+- `restack_layer` vs `move_track`: one layer's z-order among the tracks vs a
+  whole track's place.
+- `update_layer_params` vs `set_param_track`: static values for several fields
+  of one kind (each flattens that field's animation) vs one param's whole
+  track, static or keyed.
+- `set_param_track` vs `set_keyframe`: replaces the whole track vs inserts or
+  updates one key by time.
+- `set_keyframe` vs `update_keyframe`: by time, value first vs by id, for
+  retime, easing, sides and continuity.
+- `set_position` vs `set_param_track`: the position record (XY or Path, keys
+  in `local_t_us`) vs one scalar track in timeline `t_us`.
+- `set_position` vs `translate_position`: replaces the record vs offsets it in
+  either mode.
+- `add_effect` vs `update_effect`: adds a working effect with its params vs
+  patches one already on the layer.
+- `create_group` vs `add_layers` kind `group` vs `add_group_members`:
+  pre-composes layers into a new composition vs places another instance of one
+  vs moves layers into an existing Group.
+- `ungroup_layer` vs `delete_composition`: dissolves a plain Group layer into
+  its members vs removes a composition nothing places.
+- `delete_media` vs `delete_layers`: removes a pool item (`force` cascades to
+  its layers) vs removes placed layers, leaving the pool.
+- `update_marker` vs `set_marker_anchor`: a marker's time, range, label, note,
+  colour vs whether it follows a clip.
+- `add_marker` vs `create_tacks`: the user's saved content, only when asked vs
+  a review mark of this opening, recorded nowhere.
+- `update_tack` vs `delete_tacks`: text, kind and status vs place (a tack's
+  place is fixed; delete and re-create to move one).
+- `apply_transcripts` vs `apply_subtitles`: an engine's transcript with word
+  timing vs a `Subtitle` item's cues as authored.
+- `transcribe_clip` vs `extract_clip_audio`: the app's engine transcribes vs
+  you get the source audio for your own model.
+- `correct_caption_text` vs `update_layer_params`: words aligned from a
+  verbatim script across every cue vs one Text layer's content.
+- `restyle_to_taste` vs `update_layer_params`: back to the style's tokens vs a
+  hand-set value.
+- `analyze_clip` vs `describe_clip`: deterministic shot boundaries and stats vs
+  a model's description of what is in the shots.
+- `compare_frames` vs `render_frames`: two source frames compared by numbers vs
+  the composed output as JPEGs.
+- `render_frames` vs `preview_motif`: the timeline as export renders it vs one
+  Motif's own canvas at its own times.
+- `render_frames` vs `check_composition`: pixels to look at vs findings from
+  project data against craft and taste.
+- `undo` vs `jump_to` vs `restore_checkpoint`: one op back vs to any op of the
+  history window vs to a named state that survives eviction.
+- `create_checkpoint` vs `begin_agent_session`: begin already makes one, so a
+  separate checkpoint is a restore point the user names.
+- `read_project` vs the resources: the same views through one function, for
+  clients without resource support.
+- `open_project` vs `create_project`: an existing folder vs a new project.
+- `update_composition` vs `set_project_settings`: one composition's canvas,
+  fps and duration vs project-wide editing preferences.
+- `list_export_presets` vs `get_export_options`: the preset library vs the
+  resolved settings one job would use.
+- `start_export` vs `export_captions`: a rendered file as a job vs a caption
+  body answered inline.
+- `list_motifs` vs `read_motif`: the catalog rows vs one Motif's files.
+- `open_motif_draft` vs `update_motif_files`: opens or copies a draft (a
+  linked folder you edit with your own tools) vs writes its files when the app
+  cannot read your folder.
+- `install_motif` vs `export_motif`: proposes a publication the user approves
+  in the app vs saves a ZIP to a path.
 
 ### Analysis tools
 
@@ -430,7 +548,7 @@ landing is one of `t_start_us` / `delta_us`, and `track_id` moves only the seed
   `t_start_us` is read on the closed timeline, i.e. where it starts afterwards.
   "Move the part after 1:30 to the start" is `split_layer` + one `move_layers
   { t_start_us: 0, insert: true }`. Answers `{ layers, rippled, track?,
-  pruned_tracks }`. Nearest sibling: `shift_layers`, which takes no names.
+  pruned_tracks }`.
 - `shift_layers { t_from_us, delta_us, track_ids?, composition_id? }` sweeps
   every layer starting at or after a time. Positive opens room (the ripple
   insert); negative closes `[t_from_us + delta_us, t_from_us)` through the
@@ -503,8 +621,7 @@ kind the position is the transform anchor's location (ADR 0112).
   `Continue` refused).
 - `translate_position { layer_id, dx, dy }` offsets the position in either
   mode as one undo step: every XY key (or the static value), or every path node
-  with its handles and progress. Nearest sibling: `set_position`, which
-  replaces the record.
+  with its handles and progress.
 - In Path mode `x`/`y` writes are rejected; animate `path_progress`. Return to
   XY by sending XY tracks to `set_position`.
 
@@ -698,10 +815,6 @@ none is an MCP tool, so no client approves its own proposal.
   opening another project or quitting drops it. `restore_checkpoint` records the
   restore (clears redo). `project://history` lists checkpoints; deleting one is
   the History panel's.
-- Siblings: `create_checkpoint` vs `begin_agent_session` — begin already makes a
-  checkpoint, so a separate one is a restore point the user names.
-  `restore_checkpoint` vs `jump_to` — a named state that survives eviction vs a
-  row of the stack.
 
 ### Tacks
 
@@ -802,17 +915,22 @@ Export jobs are application-session jobs shared with the UI (ADR 0111).
 
 ### Prompts
 
-User-invoked workflows (slash menu / command palette), `native/src/mcp/prompts.rs`:
+User-invoked workflows (slash menu / command palette), `native/src/mcp/prompts.rs`.
+A person invoking one has no ids, so no prompt asks for one: a `clip` (or
+`track`) argument names it in words, or is left out, and the body's first step
+has the agent find it in `project://tracks` and ask when none or several fit.
+A prompt body carries steps and tool names only; each tool's contract stays
+in its description (convention 5).
 
-- `/auto-caption` — `transcribe_clip` → `apply_transcripts` with its
-  `transcripts` as they came.
-- `/cut-pauses` — one `remove_pauses` call, with the review-first alternative
-  (`detect_pauses` → one `create_tacks` batch of region tacks) and what each
-  ripple refusal means.
-- `/voiceover` — `synthesize_speech`, splitting scripts over 4096 chars at
-  paragraphs.
-
-Each closes with the missing-key recovery hint.
+- `/cut-pauses { clip?, threshold_db?, min_pause_us?, pad_us? }` — one
+  `remove_pauses` call, or review first: `detect_pauses` → one `create_tacks`
+  batch of region tacks → `remove_pauses { pauses }` with the ranges the user
+  kept.
+- `/auto-caption { clip?, language? }` — `transcribe_clip` →
+  `apply_transcripts` with its `transcripts` as they came; never an uploading
+  `backend` without the user's consent.
+- `/voiceover { script, voice, speed?, track? }` — `synthesize_speech`,
+  splitting a long script at paragraphs.
 
 ## Agent panel and lifecycle
 

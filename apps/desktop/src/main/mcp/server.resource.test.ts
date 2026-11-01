@@ -158,6 +158,9 @@ describe('one media item as a resource', () => {
       expect(card.derivatives).toEqual({ waveform: { failed: 'Disk quota exceeded' }, conform: 'running' })
       const pool = JSON.parse(contents(await handleReadResource(fakeBackend(async () => { throw new Error('no backend') }), () => ts, 'project://media'))[0].text)
       expect(pool[MID].derivatives.waveform).toEqual({ failed: 'Disk quota exceeded' })
+      // A row names its id as `import_media` and the card do.
+      expect(pool[MID].media_id).toBe(MID)
+      expect('id' in pool[MID]).toBe(false)
       const reader = fakeBackend(async () => JSON.stringify({ ok: false, error: { code: 'not_found', message: `waveform not generated yet for media ${MID} — the import's background jobs are still generating it; retry in a few seconds`, data: { error: 'DerivativeNotReady', media_id: MID, derivative: 'waveform' } } }))
       const refused = await handleReadResource(reader, () => ts, `media://${MID}/waveform`).then(() => null, (e: Error & { data?: unknown }) => e)
       expect(refused?.message).toContain('waveform failed for media')

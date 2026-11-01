@@ -185,10 +185,12 @@ describe('read_project', () => {
     const [c1] = threeClips(a)
     const tracks = json<Array<{ track_id: string; layers: Array<{ layer_id: string }> }>>(call(a, 'read_project', { view: 'tracks' }))
     expect(tracks.map((t) => t.track_id)).toEqual(root(a.snapshot()).tracks.map((t) => t.id))
-    expect(json<{ id: string }>(call(a, 'read_project', { view: 'layer', id: c1 })).id).toBe(c1)
+    expect(json<{ layer_id: string }>(call(a, 'read_project', { view: 'layer', id: c1 })).layer_id).toBe(c1)
     expect(json<{ ops: unknown[] }>(call(a, 'read_project', { view: 'history' })).ops.length).toBeGreaterThan(0)
     expect(json<Array<{ composition_id: string; ref_count: number }>>(call(a, 'read_project', { view: 'compositions' }))).toHaveLength(1)
-    expect(Object.keys(json<Record<string, unknown>>(call(a, 'read_project', { view: 'media' })))).toEqual(expect.arrayContaining([IMAGE, VIDEO]))
+    const pool = json<Record<string, { media_id: string }>>(call(a, 'read_project', { view: 'media' }))
+    expect(Object.keys(pool)).toEqual(expect.arrayContaining([IMAGE, VIDEO]))
+    expect(pool[VIDEO]!.media_id).toBe(VIDEO)
   })
 
   it('refuses an unknown view or a layer view without an id, and reports an unknown composition as not found', () => {

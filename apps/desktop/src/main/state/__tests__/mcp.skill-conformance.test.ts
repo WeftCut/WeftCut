@@ -76,13 +76,10 @@ const promptNames = new Set(rust.prompts.map((p) => p.name))
 // Every entry must occur in the sources (pruned below) and must never collide
 // with a live tool name (checked below).
 const KNOWN_NON_TOOLS = new Set([
-  'request_id', 'awaiting_retry', 'output_path', 'filename',
-  // SKILL.md — tool params
-  'pad_us', 'threshold_db', 'segments', 'preset_id',
-  // SKILL.md — the mapping block a source-time answer carries
-  'mapping',
-  // SKILL.md — fields of a mutator's committed record (mcp-results.ts)
-  'adjusted', 'siblings',
+  // SKILL.md, recipes/ — a tool param and a result field
+  'threshold_db', 'segments',
+  // SKILL.md — a field of a mutator's committed record (mcp-results.ts)
+  'adjusted',
   // SKILL.md — tack feedback: a mutating call's and end_agent_session's
   // result fields (activity.ts, server.ts)
   'affected_tacks', 'tacks_to_review',
@@ -105,8 +102,8 @@ const KNOWN_NON_TOOLS = new Set([
   'media', 't_us',
   // Motif props the skill and motif-authoring.md name.
   'seed', 'ground',
-  // SKILL.md, motif-workspaces.md — update_motif_files partial-edit fields
-  'edits', 'old', 'new',
+  // motif-workspaces.md — an update_motif_files partial-edit field
+  'old',
   // craft/rules.md — finding severities and the caption tokens that tighten rules
   'hard', 'warning', 'review', 'max_chars_per_line', 'max_lines', 'min_cue_s', 'max_cue_s',
   // recipes/README.md — recipe frontmatter keys
