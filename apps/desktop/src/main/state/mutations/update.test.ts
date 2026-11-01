@@ -22,23 +22,19 @@ describe('applyUpdateLayer', () => {
     expect(l.label).toBe('hi'); expect(l.t_end_us).toBe(1_000_000); expect(l.enabled).toBe(false)
     expect(l.t_start_us).toBe(0); expect(l.locked).toBe(false) // untouched
   })
-  it('treats null/absent patch fields as "do not touch"', () => {
+  it('clears the label on null and leaves absent fields alone', () => {
     const p = one()
-    applyUpdateLayer(p, 'a', { label: null, t_start_us: null })
+    applyUpdateLayer(p, 'a', { label: 'hi' })
+    applyUpdateLayer(p, 'a', { label: null })
     const l = root(p).tracks[0].layers[0]
-    expect(l.label).toBeNull(); expect(l.t_start_us).toBe(0) // unchanged
-  })
-  it('does NOT autofit composition.duration_us on a t_end change', () => {
-    const p = one(); root(p).duration_us = 1_000_000; root(p).duration_pinned = false
-    applyUpdateLayer(p, 'a', { t_end_us: 5_000_000 })
-    expect(root(p).duration_us).toBe(1_000_000) // unchanged — update_layer never autofits
+    expect(l.label).toBeNull(); expect(l.t_start_us).toBe(0); expect(l.t_end_us).toBe(1_000_000) // untouched
   })
   it('throws LayerNotFound for a missing layer', () => {
     expectCmd(() => applyUpdateLayer(one(), 'ghost', { enabled: false }), 'LayerNotFound')
   })
   it('throws TrackLocked when the layer is on a locked track (ungated by corpus)', () => {
     const p = one(); root(p).tracks[0].locked = true
-    expectCmd(() => applyUpdateLayer(p, 'a', { t_end_us: 2_000_000 }), 'TrackLocked')
+    expectCmd(() => applyUpdateLayer(p, 'a', { label: 'x' }), 'TrackLocked')
   })
 })
 

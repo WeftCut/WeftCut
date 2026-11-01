@@ -100,5 +100,5 @@ export function withDerivativeState(err: { message: string; data?: unknown }): {
       data: { ...d, derivative, state: 'failed', reason: state.failed, retry_after_s: null },
     }
   }
-  return { message: err.message, data: { ...d, derivative, state, retry_after_s: DERIVATIVE_RETRY_AFTER_S[state] } }
+  return { message: err.message, data: { ...d, derivative, state, retry_after_s: state === 'ready' ? null : DERIVATIVE_RETRY_AFTER_S[state] } }
 }
