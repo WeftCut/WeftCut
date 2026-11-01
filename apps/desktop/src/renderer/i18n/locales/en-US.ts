@@ -2525,6 +2525,11 @@ const enUS = {
       desc: "Snap around mid gray",
       params: { amount: "Amount" },
     },
+    highlights: {
+      name: "Highlights",
+      desc: "Adjust bright tones with a soft transition, protecting darker tones",
+      params: { amount: "Adjustment strength (%)" },
+    },
     saturation: {
       name: "Saturation",
       desc: "Color intensity, down to gray",

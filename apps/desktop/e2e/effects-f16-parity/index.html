@@ -236,6 +236,34 @@ void main(){ float v = vUV.x < 0.5 ? 0.4 : 0.6; finalColor=vec4(v,v,v,1.0); }`;
           // type-annotation-free JS by contract, and a unit test replays this
           // loading path). Unlike the colour trio, here the shared source is
           // the point: the maths is the shader.
+          const highlightsText = fsMod.readFileSync(pathMod.resolve(__dirname, "../../src/renderer/render/effects/filters/highlightsSources.ts"), "utf8").replace(/^export /gm, "");
+          const HL = new Function(highlightsText + "\nreturn { HIGHLIGHTS_FRAG_GL };")();
+          function highlightsThrough(amount) {
+            const target = RenderTexture.create({ width: W, height: H, format: "rgba16float" });
+            const stage = new Container();
+            const sprite = new Sprite(srcRT);
+            sprite.filters = [new Filter({
+              glProgram: GlProgram.from({ vertex: defaultFilterVert, fragment: HL.HIGHLIGHTS_FRAG_GL, name: "highlights-gate" }),
+              resources: { highlightsUniforms: new UniformGroup({ uAmount: { value: amount, type: "f32" } }) },
+            })];
+            stage.addChild(sprite);
+            renderer.render({ container: stage, target });
+            return readRedRow(target);
+          }
+          phase("highlights", () => {
+            const zero = highlightsThrough(0);
+            const lower = highlightsThrough(-40);
+            const lift = highlightsThrough(40);
+            let zeroMaxDiff=0, protectedMaxDiff=0, monotonic=true;
+            for (let i=0;i<W;i++) {
+              zeroMaxDiff=Math.max(zeroMaxDiff,Math.abs(zero[i]-sourceReds[i]));
+              if(sourceReds[i]<=.25) protectedMaxDiff=Math.max(protectedMaxDiff,Math.abs(lower[i]-zero[i]));
+              if(i && lower[i]<lower[i-1]) monotonic=false;
+            }
+            return { distinct:new Set(lower).size, zeroMaxDiff, protectedMaxDiff, monotonic,
+              sourceAtBright:zero[768], lowerAtBright:lower[768], liftAtBright:lift[768] };
+          });
+
           const sharpenText = fsMod
             .readFileSync(pathMod.resolve(__dirname, "../../src/renderer/render/effects/filters/sharpenSources.ts"), "utf8")
             .replace(/^export /gm, "");

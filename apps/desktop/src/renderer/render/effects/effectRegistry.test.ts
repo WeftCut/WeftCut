@@ -4,6 +4,7 @@ import { BlurFilter, ColorMatrixFilter } from "pixi.js";
 import { getDescriptor } from "./effectRegistry";
 import { ChromaKeyFilter } from "./filters/ChromaKeyFilter";
 import { SharpenFilter } from "./filters/SharpenFilter";
+import { HighlightsFilter } from "./filters/HighlightsFilter";
 import { writeBrightness, writeContrast, writeSaturation } from "./filters/colorMatrices";
 
 import { listEffects } from "./effectRegistry";
@@ -145,6 +146,19 @@ describe("the colour-matrix trio", () => {
     for (const kind of Object.keys(TRIO)) {
       expect(byKind.get(kind)?.category, kind).toBe("color");
     }
+  });
+});
+
+describe("highlights", () => {
+  it("builds a HighlightsFilter with a neutral, keyframeable scalar amount", () => {
+    const d = getDescriptor("highlights")!;
+    expect(d.category).toBe("color");
+    expect(d.params.amount!.range).toEqual([-100, 100]);
+    expect(d.params.amount!.default).toBe(0);
+    const f = d.create() as HighlightsFilter;
+    expect(f).toBeInstanceOf(HighlightsFilter);
+    d.params.amount!.apply(f, -35);
+    expect((f.resources as Record<string, { uniforms: Record<string, number> }>).highlightsUniforms!.uniforms.uAmount).toBe(-35);
   });
 });
 

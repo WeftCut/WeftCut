@@ -383,6 +383,10 @@ param key), `move_effect`, `delete_effect`. `audio.*` params are static only
 `effects[<id>].params[<key>]`, but only after `update_effect` set it once
 (`UnknownKeyframeParam` otherwise).
 
+`highlights` uses `amount` in `[-100, 100]` as adjustment strength (0 neutral):
+negative compresses bright tones, positive brightens them. Darker tones are
+protected; the percentage does not promise an equal pixel-brightness change.
+
 Keyframes (timeline-absolute µs; record: [data-model.md](data-model.md#animated-values),
 ADR 0058): `get_param_track` (read ids before editing), `set_keyframe`
 (insert-or-update), `update_keyframe` (one key, applied in order: time, easing,

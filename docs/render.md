@@ -18,7 +18,8 @@ Motif capture and caching: [`motifs.md`](motifs.md).
 - **Per-layer effects** are Pixi filter chains. Project state holds the
   instances and their keyframeable params; the renderer owns the catalog
   (`effects/effectRegistry.ts`: blur, chroma key, sharpen, brightness,
-  contrast, saturation; chroma key and sharpen are shaders authored here).
+  contrast, highlights, saturation; chroma key, highlights and sharpen are
+  shaders authored here).
   `EffectChain` caches filters per layer. See
   [ADR 0027](adr/0027-per-layer-effects-pixi-filter-chains.md).
 - **Crop** is the last filter on a video sprite: after the effect chain,
@@ -27,6 +28,16 @@ Motif capture and caching: [`motifs.md`](motifs.md).
   `CompositionNode.stageVisual`) multiplies premultiplied RGBA by an
   analytically antialiased coverage; export runs the same filter. Preview
   reads the in-progress draft from `cropEditingStore`.
+
+## Highlights
+
+The Highlights effect uses a percentage for adjustment strength, not a
+guaranteed change in pixel brightness. Negative values compress bright tones, positive values
+brighten them, and 0 is neutral. A smooth transition protects darker tones,
+including at -100. RGB scales together until SDR gamut clipping; alpha is kept.
+This custom SDR tone curve is not a match for another editor's private formula
+and cannot recover detail clipped during recording. Both graphics backends
+share the same curve; the source and parity tests specify its calibration.
 
 ## Directory layout
 
