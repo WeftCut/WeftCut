@@ -3,6 +3,7 @@ import { buildExportResourcePlans, peakDecoderMiB, prepareExportResourcePlans } 
 import { exportDecoderMiB, minimumExportFrames, type ExportResourceBlock } from '../../shared/export-resources';
 import type { MediaSummary, ProjectSummary } from '../ipc';
 import type { ExportDecodeRouting } from './exportDecodeRouting';
+import { hydrateResourceAllocation, resolveResourcePolicy, DEFAULT_RESOURCE_POLICY } from '../../shared/resource-policy';
 
 describe('export working-set plans', () => {
   it('fits the real 2304 MiB Main10 target by reducing dispatch, retaining private surfaces and quality', () => {
@@ -97,6 +98,20 @@ describe('metadata preflight admission', () => {
     expect(b.estimateDecoder).toHaveBeenCalledOnce();
     // The metadata admission is returned once the sources are read.
     expect(b.release).toHaveBeenCalledOnce();
+  });
+
+  it('an export that cannot fit even at its lower bound is refused before it queues', async () => {
+    // 1024 MiB target → 409 MiB of work; a 1080p source and a native 1080p
+    // encoder need more than that whatever the coded size and DPB turn out to be.
+    hydrateResourceAllocation(resolveResourcePolicy({ ...DEFAULT_RESOURCE_POLICY, memory_mib: 1024 }));
+    try {
+      const b = bridge();
+      const big = new Map([['m1', { id: 'm1', label: 'clip', path: '/media/clip.mp4', width: 1920, height: 1080 } as unknown as MediaSummary]]);
+      const big1080 = { ...input(new AbortController().signal, () => {}), media: big, routing: undefined, nativeEncoder: true, outputWidth: 1920, outputHeight: 1080,
+        summary: { ...summary, compositions: { root: { ...summary.compositions.root!, width: 1920, height: 1080 } } } as ProjectSummary };
+      await expect(prepareExportResourcePlans(big1080)).rejects.toThrow(/resource-capacity-exceeded/);
+      expect(b.planExport).not.toHaveBeenCalled();
+    } finally { hydrateResourceAllocation(resolveResourcePolicy(DEFAULT_RESOURCE_POLICY)); }
   });
 
   it('cancelling the queued wait rejects and withdraws the request', async () => {

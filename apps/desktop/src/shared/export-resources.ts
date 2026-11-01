@@ -34,6 +34,10 @@ export function exportDecoderMiB(width: number, height: number, tenBit: boolean,
   return Math.ceil(64 + width * height * (tenBit ? 8 : 4) * (frames + EXPORT_PRIVATE_FRAMES) / 1048576);
 }
 
+/** The fewest frames `minimumExportFrames` answers: a one-picture DPB plus
+ * the eight-picture headroom. */
+export const EXPORT_MIN_FRAMES = 9;
+
 /** AVC Annex A DPB bound + the existing eight-picture pipeline headroom.
  * Unknown codecs/levels keep the shipping 24 credits. Private/reference surface
  * accounting remains 16 pictures even when the dispatch window is smaller.
