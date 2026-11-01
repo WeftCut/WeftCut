@@ -480,7 +480,7 @@ describe('hybrids keep the mechanical line — a wrong attribution is worse', ()
 
     const both = Promise.all([
       call('apply_subtitles', { media_id: sub }),
-      call('import_media', { path: 'C:/media/clip.mp4' }),
+      call('import_media', { paths: ['C:/media/clip.mp4'] }),
     ])
     release()
     await both

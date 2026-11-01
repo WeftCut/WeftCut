@@ -137,7 +137,7 @@ async function world(): Promise<World> {
   const [tA, tB] = [r.tracks[0]!.id, r.tracks[1]!.id]
   const red = { r: 200, g: 0, b: 0, a: 255 }
   // The settings the probes flip, and a pinned root duration to unpin.
-  await must(w, 'set_project_settings', { patch: { auto_pair_audio_on_import: false, shot_review: { sensitivity: 0.5, min_shot_us: S }, pause_review: { threshold_amp: 0.05, min_pause_us: S, pad_us: 100_000 } } })
+  await must(w, 'set_project_settings', { patch: { auto_pair_audio_on_import: false, shot_review: { sensitivity: 0.5, min_shot_us: S }, pause_review: { threshold_db: -26, min_pause_us: S, pad_us: 100_000 } } })
   await must(w, 'rename_track', { track_id: tA, label: 'A cam' })
   const c = added(await must(w, 'add_layers', { layers: [{ track_id: tA, t_start_us: 0, t_end_us: 2 * S, content: { kind: 'color', color: red } }] }))
   const c2 = added(await must(w, 'add_layers', { layers: [{ track_id: tA, t_start_us: 2 * S, t_end_us: 4 * S, content: { kind: 'color', color: red } }] }))
@@ -204,7 +204,6 @@ interface Case {
   nullRefuses?: readonly string[]
 }
 const RGBA = { r: 1, g: 2, b: 3, a: 255 }
-const SCRIPT = 'a caption'
 
 const CASES: Record<string, Case> = {
   add_track: { base: () => ({}), values: { label: lit('L'), composition_id: val((i) => i.groupComp) } },
@@ -274,8 +273,7 @@ const CASES: Record<string, Case> = {
     'patch.auto_pair_audio_on_import': lit(true), 'patch.prefer_proxies': lit(true),
     'patch.proxy_override': lit({ media_id: VIDEO, value: true }),
     'patch.shot_review': lit({ sensitivity: 0.25, min_shot_us: 2 * S }),
-    'patch.pause_review': lit({ threshold_amp: 0.1, min_pause_us: 2 * S, pad_us: 50_000 }),
-    'patch.correction_script': lit(SCRIPT),
+    'patch.pause_review': lit({ threshold_db: -20, min_pause_us: 2 * S, pad_us: 50_000 }),
   } },
   update_marker: { base: (i) => ({ marker_id: i.region, patch: {} }), values: {
     'patch.t_us': lit(1_500_000), 'patch.end_t_us': lit(3 * S), 'patch.label': lit('x'), 'patch.note': lit('y'), 'patch.color': lit(RGBA),
@@ -309,13 +307,12 @@ const CASES: Record<string, Case> = {
  *  the reason. Keep each one honest: where the behaviour is pinned instead. */
 const EXCEPTIONS: Record<string, string> = {
   restyle_to_taste: 'needs the app host\'s project style (project://taste); mcp.taste-defaults.test.ts covers its scopes',
-  restyle_captions: 'needs a Caption track, which only apply_transcripts / apply_subtitles create; issue 14 deletes the tool',
   synthesize_speech: 'needs a TTS engine; every field is checked by the Rust parser and covered in native tts tests',
   apply_subtitles: 'parses a subtitle document through native compute (hybrids.test.ts)',
   auto_split_by_shot: 'reads a native shot scan (hybrids.test.ts covers min_shot_us / drop_short)',
   remove_pauses: 'reads native waveform peaks (hybrids.test.ts covers the pause parameters)',
-  apply_transcripts: 'needs a transcript payload per source layer; mcp.captions-tools.test.ts covers source_layer_ids / composition_id',
-  correct_caption_text: 'needs a caption-correction model run; mcp.captions-tools.test.ts covers the scope arguments',
+  apply_transcripts: 'needs a transcript payload per source layer; mcp.captions-tools.test.ts covers source / composition_id',
+  correct_caption_text: 'needs captions to correct; mcp.captions-tools.test.ts covers script and the scope arguments',
   install_motif: 'proposes from a draft in the user Motif store on disk (workspace.publication.test.ts covers target_id / expected_version)',
   export_motif: 'reads the user Motif store on disk; the path refusals are pinned in mcp.error-vocabulary and motifTools tests',
   create_export_preset: 'writes the app preference store (exportPresetTools.test.ts)',

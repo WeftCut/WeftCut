@@ -80,8 +80,9 @@ flattened in time order. Activating a cue selects its layer, seeks to its
 start and reveals it in the Timeline; inline text edits commit on blur via
 `update_layer_params`. The style row (size, outline width, colour) calls
 `restyle_captions` over all caption tracks in one undo step; outline width 0
-stores `null` (no outline); colour commits are debounced. `restyle_captions`
-also takes `font_family` and `layer_ids` (MCP only). `merge_captions` folds
+stores `null` (no outline); colour commits are debounced. It is the panel's
+channel, not an MCP tool: an agent changes the caption tokens and calls
+`restyle_to_taste { captions: true }`. `merge_captions` folds
 cues of one lane into the earliest; `export_captions` returns an SRT/VTT body
 (MCP only), with `range` clipped to a range export's span and shifted to 0.
 
@@ -95,6 +96,14 @@ Scope: selected captions, else all captions of the open composition; a locked
 target refuses the whole run; inputs that changed while the dialog awaited a
 save refuse rather than apply stale. Re-running on unchanged input records
 nothing.
+
+An agent's run (`correct_caption_text { script }`) passes the full verbatim
+transcript per call; the manuscript setting is the dialog's and not on the MCP
+surface. It corrects text only — each cue in place, never split, merged or
+retimed (resegmentation below is the dialog's) — and refuses when under half
+of the caption words align to the script (`CORRECTION_MIN_MATCH`), the sign of
+notes or a glossary passed as one. It answers `changed`, `match_ratio` and up
+to 20 `changes { layer_id, before, after }`.
 
 Matching (`shared/textCorrection.ts`) aligns caption text to the manuscript
 locally, with gaps on either side. It corrects context-supported Chinese

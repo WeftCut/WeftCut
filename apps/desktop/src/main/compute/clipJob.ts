@@ -12,6 +12,9 @@ export interface ClipJobSpec {
   layer_id: string
   media_id: string
   window: { t_start_us: number; t_end_us: number }
+  /** A describe job's source window, µs — what a media-addressed job (no
+   *  layer to place it) is known by. */
+  src_window?: { src_start_us: number; src_end_us: number }
 }
 
 /** What each arg a clip-compute call may carry is to its job (every advertised
@@ -27,13 +30,16 @@ type ArgRole = 'answer' | 'fresh' | 'span'
 export const ARG_ROLES = {
   transcribe_clip: {
     backend: 'answer', preferred_backend: 'answer', language: 'answer', normalize_audio: 'answer',
-    word_timestamps: 'answer', speech_config: 'answer',
-    layer_id: 'span', t_start_us: 'span', t_end_us: 'span',
+    word_timestamps: 'answer', speech_config: 'answer', model_languages: 'answer',
+    // `layer_ids` never reaches a job: the host runs one job per id, named
+    // in `layer_id`.
+    layer_ids: 'span', layer_id: 'span', t_start_us: 'span', t_end_us: 'span',
   },
   describe_clip: {
     backend: 'answer', preferred_backend: 'answer', language: 'answer', fps: 'answer', focus: 'answer',
     vlm_config: 'answer', purpose: 'answer', refresh: 'fresh',
-    layer_id: 'span', src_start_us: 'span', src_end_us: 'span',
+    // A media-addressed call has no layer, so it runs as a plain call.
+    media_id: 'span', layer_id: 'span', src_start_us: 'span', src_end_us: 'span',
   },
 } as const satisfies Record<ComputeTool, Record<string, ArgRole>>
 
@@ -72,9 +78,22 @@ const BLAKE3 = /^[0-9a-f]{64}$/
 export function clipJobSpec(tool: ComputeTool, args: Record<string, unknown>): ClipJobSpec | null {
   const layer = args.layer as Layer | null | undefined
   const media = args.media as MediaItem | null | undefined
-  if (!layer || !media) return null
-  const params = layer.params as unknown as Partial<Record<string, unknown>>
+  if (!media) return null
   const identity = BLAKE3.test(media.file_hash_blake3) ? `blake3:${media.file_hash_blake3}` : `media:${media.id}`
+  const answer = Object.entries(ARG_ROLES[tool]).filter(([, role]) => role !== 'span')
+    .map(([k]) => [k, args[k] ?? DEFAULTS[k] ?? null])
+  // A pooled video described by `media_id`: no layer, so the source window
+  // (the whole item by default) is the identity — the same `source` triple a
+  // layer-addressed run over that span keys by, so the two join.
+  if (!layer) {
+    if (tool !== 'describe_clip') return null
+    const srcStart = typeof args.src_start_us === 'number' ? args.src_start_us : 0
+    const srcEnd = typeof args.src_end_us === 'number' ? args.src_end_us : media.metadata?.duration_us ?? null
+    if (srcEnd === null || srcEnd <= srcStart) return null
+    const key = createHash('sha256').update(JSON.stringify([tool, [identity, srcStart, srcEnd], answer])).digest('hex')
+    return { tool, key, args, layer_id: '', media_id: media.id, window: { t_start_us: srcStart, t_end_us: srcEnd }, src_window: { src_start_us: srcStart, src_end_us: srcEnd } }
+  }
+  const params = layer.params as unknown as Partial<Record<string, unknown>>
   const mapping = [params.src_in_us ?? null, params.time_map ?? null, params.source_phase ?? null, params.content_window ?? null]
   let tStart: number, tEnd: number, source: unknown[]
   if (tool === 'describe_clip') {
@@ -89,8 +108,7 @@ export function clipJobSpec(tool: ComputeTool, args: Record<string, unknown>): C
     tEnd = typeof args.t_end_us === 'number' ? args.t_end_us : layer.t_end_us
     source = [identity, tStart - layer.t_start_us, tEnd - layer.t_start_us, ...mapping]
   }
-  const answer = Object.entries(ARG_ROLES[tool]).filter(([, role]) => role !== 'span')
-    .map(([k]) => [k, args[k] ?? DEFAULTS[k] ?? null])
   const key = createHash('sha256').update(JSON.stringify([tool, source, answer])).digest('hex')
-  return { tool, key, args, layer_id: layer.id, media_id: media.id, window: { t_start_us: tStart, t_end_us: tEnd } }
+  const srcWindow = tool === 'describe_clip' ? { src_window: { src_start_us: source[1] as number, src_end_us: source[2] as number } } : {}
+  return { tool, key, args, layer_id: layer.id, media_id: media.id, window: { t_start_us: tStart, t_end_us: tEnd }, ...srcWindow }
 }

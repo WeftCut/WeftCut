@@ -60,7 +60,7 @@ import { MCP_RESULT_READERS, adjusted, committedTrackResult, keyframeByIdResult,
 import { readLayerTrack, parseEffectParamKey } from './mutations/params'
 import { effectsCatalogView } from '../../shared/effects/catalogView'
 import { applySetPosition, applyTranslatePath, applyTranslatePosition } from './mutations/position'
-import { applyTextCorrection, applyTranscripts } from './mutations/textCorrection'
+import { applyTextCorrection, applyTranscripts, sourceSignature, type CorrectionMode } from './mutations/textCorrection'
 import { CORRECTION_SCRIPT_MAX, type TextCorrectionExpectation } from '../../shared/textCorrectionRequest'
 import type { TranscriptPayload } from '../../shared/captionTiming'
 import type { PositionAnimation } from '../../shared/position'
@@ -1557,7 +1557,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
           if (a.project_id !== current().project_id) throw new CommandFailure({ error: 'InvalidArgument', field: 'project_id', detail: 'The project has changed' })
           const comp = scopeComposition(current(), a.composition_id as string)
           const refs: EntityRef[] = comp.tracks.filter(t => t.role === 'Caption').map(t => ({ kind: 'Track', id: t.id }))
-          return { ok: true, value: commit(HISTORY_SUMMARY.captionCorrect, refs, { kind: 'Coarse' }, d => applyTextCorrection(d, idGen, comp.id, a.layer_ids as string[] | null, a.expected as TextCorrectionExpectation | undefined)) }
+          // An agent's run passes its script and corrects text only; the
+          // dialog's corrects against the project manuscript and may re-segment.
+          const mode: CorrectionMode = typeof a.script === 'string' ? { kind: 'text_only', script: a.script } : { kind: 'manuscript' }
+          return { ok: true, value: commit(HISTORY_SUMMARY.captionCorrect, refs, { kind: 'Coarse' }, d => applyTextCorrection(d, idGen, comp.id, a.layer_ids as string[] | null, a.expected as TextCorrectionExpectation | undefined, mode)) }
         }
         case 'apply_transcripts': {
           if (a.project_id !== current().project_id) throw new CommandFailure({ error: 'InvalidArgument', field: 'project_id', detail: 'The project has changed' })
@@ -2045,18 +2048,30 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // to send the id could only ever send the right one or a wrong one.
         case 'apply_transcripts': {
           const p = mcpDef('apply_transcripts').parseDedicated!(a)
+          // The envelope names its clip as `source { layer_id, signature }`;
+          // the staleness check reads it in the actor's own terms. A source
+          // with no signature (a transcript of your own) is tagged with the
+          // clip as it is now.
+          const snap = current()
+          const transcripts = (p.transcripts as Array<Record<string, unknown>>).map((t) => {
+            const { source, ...rest } = t as { source?: { layer_id: string; signature?: string } }
+            if (!source) return rest
+            const found = locateLayer(snap, source.layer_id)
+            return { ...rest, source: { id: source.layer_id, signature: source.signature ?? (found ? sourceSignature(found.layer) : ''), project_id: snap.project_id, composition_id: found?.comp.id ?? '' } }
+          })
           const r = dispatch('apply_transcripts', {
-            project_id: current().project_id, transcripts: p.transcripts,
-            source_ids: p.source_ids, composition_id: p.composition_id,
+            project_id: snap.project_id, transcripts,
+            source_ids: [], composition_id: p.composition_id,
           })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
-          return { ok: true, result: toolRecord({ caption_track_id: r.value as string, cues: newLayerIds(before, current()).length }) }
+          const cues = newLayerIds(before, current()).map((id) => locateLayer(current(), id)!.layer).sort((x, y) => x.t_start_us - y.t_start_us).map((l) => l.id)
+          return { ok: true, result: toolRecord({ caption_track_id: r.value as string, cue_layer_ids: cues }) }
         }
         case 'correct_caption_text': {
           const p = mcpDef('correct_caption_text').parseDedicated!(a)
           const r = dispatch('correct_caption_text', {
             project_id: current().project_id, layer_ids: p.layer_ids,
-            composition_id: p.composition_id,
+            composition_id: p.composition_id, script: p.script,
           })
           if (!r.ok) return { ok: false, error: mapCommandError(r.error, name) }
           return { ok: true, result: toolRecord(r.value as Record<string, unknown>) }

@@ -38,10 +38,8 @@ pub(crate) fn catalog() -> Vec<PromptDef> {
                 required: true,
             },
             PromptArgDef {
-                name: "threshold_amp".into(),
-                description: Some(
-                    "Peak amplitude threshold in [0.0, 1.0]. Default 0.02 (≈ -34 dBFS).".into(),
-                ),
+                name: "threshold_db".into(),
+                description: Some("Peak threshold, dBFS (≤ 0). Default -34.".into()),
                 required: false,
             },
             PromptArgDef {
@@ -119,7 +117,7 @@ pub(crate) fn catalog() -> Vec<PromptDef> {
                 PromptArgDef {
                     name: "target_track_id".into(),
                     description: Some(
-                        "Optional Audio track id. Defaults to the first existing Audio track or a new 'Voiceover' track."
+                        "Optional track id. Defaults to the topmost track whose audio lane is free, else a new 'Voiceover' track."
                             .into(),
                     ),
                     required: false,
@@ -159,7 +157,7 @@ pub(crate) fn expand(
 
 fn expand_cut_pauses(args: Option<&Map<String, Value>>) -> Result<PromptResult, McpToolError> {
     let layer_id = require_str(args, "layer_id")?;
-    let threshold = optional_str(args, "threshold_amp");
+    let threshold = optional_str(args, "threshold_db");
     let min_pause = optional_str(args, "min_pause_us");
     let pad = optional_str(args, "pad_us");
 
@@ -167,7 +165,7 @@ fn expand_cut_pauses(args: Option<&Map<String, Value>>) -> Result<PromptResult, 
     // rides along with `remove_pauses` and never with `detect_pauses`.
     let mut extra = String::new();
     if let Some(t) = &threshold {
-        extra.push_str(&format!(", `threshold_amp: {t}`"));
+        extra.push_str(&format!(", `threshold_db: {t}`"));
     }
     if let Some(m) = &min_pause {
         extra.push_str(&format!(", `min_pause_us: {m}`"));
@@ -187,11 +185,12 @@ Steps:
 A refusal is whole and lands before any write, so the clip comes back UNSPLIT with nothing recorded — fix what it names and call again. `RippleInsideHole` means a layer on another track STARTS inside one of the pauses, so the gap cannot close over it: either ripple that layer away too, or take the review-first route below and let the human decide. `RippleCollision`, `RippleLinkStraddles` and `RippleLockedLayer` / `TrackLocked` each name the layer that blocked. `InvalidArgument` means the clip is one pause end to end — removing every part of it is a `delete_layers`, not an edit to it — or that `pad_us` is too large for `min_pause_us`, which needs `2 × pad_us` to stay below it.
 
 REVIEW FIRST — the alternative when the pauses should be seen before any of them goes:
-1. Call `detect_pauses` with `layer_id: \"{layer_id}\"`{extra}. Same walk over the same peaks, but it commits nothing: it returns `{{ pauses: [{{ t_start_us, t_end_us }}, ...], noise_floor_amp, peaks_source }}` — timeline-absolute ranges where the audio stays below threshold for the requested duration, the measured noise floor, and which peaks file the numbers came from. If it finds nothing, `noise_floor_amp` says why: a threshold near the floor plus 6 dB is the one that reads pauses as a listener would.
+1. Call `detect_pauses` with `layer_id: \"{layer_id}\"`{extra}. Same walk over the same peaks, but it commits nothing: it returns `{{ pauses: [{{ t_start_us, t_end_us }}, ...], noise_floor_db, peaks_source }}` — timeline-absolute ranges where the audio stays below threshold for the requested duration, the measured noise floor (dBFS), and which peaks file the numbers came from. If it finds nothing, `noise_floor_db` says why: a threshold 6 dB above the floor is the one that reads pauses as a listener would.
 2. Call `create_tacks` ONCE with `tacks: [...]`, one entry per pause: `t_us: <pause.t_start_us>`, `end_t_us: <pause.t_end_us>` and a short `label` (e.g. \"pause\") — setting `end_t_us` is what makes the tack a REGION spanning the pause rather than a point at its start. Each tack follows what plays in its range: a ripple upstream moves it with the audio it describes, and an edit inside the pause marks it outdated rather than leaving it to mean something it no longer does. Tacks are review marks, not project content: they record nothing, leave the user's markers alone, and the user resolves, dismisses or clears them in the agent panel. Do not use `add_marker` here — markers are the user's, created only when they ask for markers.
 3. Report how many pauses were tacked and their total duration, and leave what becomes of them to the human. Reading `project://tacks` later shows what they decided: a tack `resolved` or `dismissed` is their answer, `open` is still waiting.
+4. To cut what they approved, call `remove_pauses` with `layer_id: \"{layer_id}\"` and `pauses: [{{ t_start_us, t_end_us }}, ...]` — the ranges of the tacks they did not dismiss, as detected. It cuts exactly those, with the same pad and frame rules, and detects nothing again.
 
-Defaults if the agent leaves args off: threshold_amp = 0.02 (-34 dBFS), min_pause_us 500 ms, pad_us 100 ms per side (`remove_pauses` only); `detect_pauses` alone also takes bridge_us 80 ms (two pauses closer than that read as one) — tuned for podcast-style speech with quick breath-pause cuts. Loosen for music (lower threshold, longer min) or tighten for talking-head (higher threshold)."
+Defaults if the agent leaves args off: threshold_db -34 dBFS, min_pause_us 500 ms, pad_us 100 ms per side (`remove_pauses` only). A louder run under 80 ms (a click, a cough) never ends a pause; that bridge is fixed, so what was reviewed is what gets cut. Tuned for podcast-style speech with quick breath-pause cuts. Loosen for music (lower threshold, longer min) or tighten for talking-head (higher threshold)."
     );
     Ok(PromptResult {
         description: Some(
@@ -216,11 +215,11 @@ fn expand_auto_caption(args: Option<&Map<String, Value>>) -> Result<PromptResult
 "Auto-caption the clip on layer `{layer_id}` using the configured transcription engine.
 
 Steps:
-1. Call `transcribe_clip` with `layer_id: \"{layer_id}\"`{language_clause}. The tool extracts the layer's audio (mono 16 kHz WAV), transcribes it with the configured engine (cloud OpenAI Whisper, or local whisper.cpp / FunASR), and returns a JSON envelope `{{ backend, segments, language, word_timing }}` with all timestamps already shifted to timeline-absolute microseconds. `segments` carry the cues, each with its per-word spans in `words`.
-2. Inspect the `segments` text. Fix obvious mistakes you can spot — proper nouns, technical terms, on-screen text that should match exactly. Don't rewrite the prose. Keep every cue's `words` array as it came (edit a word's `text`, never its times).
-3. Call `apply_transcripts` with `transcripts: [<the envelope: segments + word_timing>]` and `source_layer_ids: [\"{layer_id}\"]`. The cues land as editable Text layers on the caption tracks, packing where there is room, and KEEP their word timing — which is what `correct_caption_text` later needs to re-segment a corrected cue. The tool returns the id of the caption track the first cue landed on.
+1. Call `transcribe_clip` with `layer_ids: [\"{layer_id}\"]`{language_clause}. It reads the audio that plays (a VideoClip through its linked Audio member), transcribes it with the selected engine, and returns `{{ transcripts: [{{ source, backend, segments, language, word_timing }}] }}` with every time already timeline-absolute microseconds. `segments` carry the cues, each with its per-word spans in `words`.
+2. Inspect the `segments` text. Fix obvious mistakes you can spot — proper nouns, technical terms, on-screen text that should match exactly. Don't rewrite the prose. Keep every cue's `words` array as it came (edit a word's `text`, never its times), and keep `source`.
+3. Call `apply_transcripts` with `transcripts` as they came. The cues land as editable Text layers on the caption tracks, packing where there is room, keep their word timing, and are built to the style's caption limits. It returns `{{ caption_track_id, cue_layer_ids }}`. If the clip was cut or trimmed since step 1, it refuses: transcribe again.
 
-If `transcribe_clip` refuses because no backend is configured or its key is missing or invalid, tell the user to add an OpenAI API key or configure a local engine under Settings → Transcription; the refusal names what is missing. If `PayloadTooLarge`, narrow the window with `t_start_us`/`t_end_us` and call again — the cloud Whisper per-request cap is ~13 minutes of mono 16 kHz audio (local engines have no upload cap)."
+If `transcribe_clip` refuses because the selected model cannot run, tell the user what it names (Settings → Transcription); a ready local engine it lists may be passed as `backend`. Do not pick `backend: \"openai\"` or `\"byo_endpoint\"` yourself: they upload the audio, so they need the user's consent. If it refuses with `LanguageNotCovered`, the selected model does not speak that language; offer the options it lists. If `PayloadTooLarge`, narrow the window with `t_start_us`/`t_end_us` and call again — the cloud Whisper per-request cap is ~13 minutes of mono 16 kHz audio (local engines have no upload cap)."
     );
     Ok(PromptResult {
         description: Some("Auto-caption a clip via transcribe_clip + apply_transcripts.".into()),
@@ -309,7 +308,7 @@ mod tests {
         let cs = cat.iter().find(|p| p.name == NAME_CUT_PAUSES).unwrap();
         let layer = cs.arguments.iter().find(|a| a.name == "layer_id").unwrap();
         assert!(layer.required);
-        for optional in ["threshold_amp", "min_pause_us", "pad_us"] {
+        for optional in ["threshold_db", "min_pause_us", "pad_us"] {
             let arg = cs
                 .arguments
                 .iter()
@@ -341,21 +340,18 @@ mod tests {
     }
 
     /// Pad is what makes *Remove* keep part of each pause instead of erasing
-    /// it, so the defaults paragraph has to name it — and the bridge — or an
-    /// agent never learns those two knobs exist.
+    /// it, so the defaults paragraph has to name it; the bridge is a constant,
+    /// stated as one, so no agent tunes a review the cut would not repeat.
     #[test]
-    fn cut_pauses_names_the_pad_and_bridge_defaults() {
+    fn cut_pauses_names_the_pad_default_and_the_fixed_bridge() {
         let a = args(&[("layer_id", json!("xyz"))]);
         let result = expand(NAME_CUT_PAUSES, Some(&a)).expect("expand");
         let body = message_text(&result.messages[0]);
         assert!(body.contains("pad_us"));
         assert!(body.contains("100000"), "the pad default, in µs");
         assert!(body.contains("pass 0 to erase pauses whole"));
-        assert!(body.contains("bridge_us 80 ms"));
-        assert!(
-            body.contains("`detect_pauses` alone also takes bridge_us"),
-            "bridge_us belongs to detect_pauses only"
-        );
+        assert!(!body.contains("bridge_us"), "the bridge is not a parameter");
+        assert!(body.contains("that bridge is fixed"));
         assert!(body.contains("min_pause_us 500 ms"));
     }
 
@@ -431,6 +427,8 @@ mod tests {
             "no recipe may tell the agent to mark for review"
         );
         assert!(!body.contains("One call per pause"));
+        // The reviewed subset is cut as reviewed, not re-detected.
+        assert!(review_half.contains("`pauses: [{ t_start_us, t_end_us }, ...]`"));
     }
 
     /// `pad_us` shapes the cut, not the detection, so it must reach
@@ -440,13 +438,13 @@ mod tests {
     fn cut_pauses_passes_through_optional_args_to_the_tool_that_takes_them() {
         let a = args(&[
             ("layer_id", json!("xyz")),
-            ("threshold_amp", json!("0.05")),
+            ("threshold_db", json!("-28")),
             ("min_pause_us", json!("1000000")),
             ("pad_us", json!("200000")),
         ]);
         let result = expand(NAME_CUT_PAUSES, Some(&a)).expect("expand");
         let body = message_text(&result.messages[0]);
-        assert!(body.contains("`threshold_amp: 0.05`"));
+        assert!(body.contains("`threshold_db: -28`"));
         assert!(body.contains("`min_pause_us: 1000000`"));
         assert_eq!(
             body.matches("`pad_us: 200000`").count(),
@@ -489,6 +487,10 @@ mod tests {
             !body.contains("MissingKey") && !body.contains("InvalidKey"),
             "no token names the model cannot act on"
         );
+        // The batch shape, and no uploading engine picked without consent.
+        assert!(body.contains("`layer_ids: [\"00000000-0000-7000-8000-000000000001\"]`"));
+        assert!(body.contains("they upload the audio"));
+        assert!(!body.contains("source_layer_ids"));
     }
 
     #[cfg(feature = "speech")]

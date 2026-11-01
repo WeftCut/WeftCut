@@ -159,21 +159,19 @@ it.
 
 - Animation: `set_keyframe` one key by time, `set_param_track` a whole track;
   `get_param_track` reads the track in that write shape, so edit and send it back.
-- Cut pauses: `remove_pauses` cuts every pause out of a clip and closes the
-  gaps, as one undoable edit — `pad_us` of each pause stays at both ends, so
-  the speech either side keeps its breath (or let the user review them first:
-  `detect_pauses` → one `create_tacks` batch, a region tack per pause; both
-  packaged as the `/cut-pauses` prompt).
+- Cut pauses: `remove_pauses` cuts the pauses out of a clip and closes the
+  gaps, as one undoable edit, keeping `pad_us` at both ends (or review first:
+  `detect_pauses` → one `create_tacks` batch, then `remove_pauses { pauses }`
+  with the kept ones; both in the `/cut-pauses` prompt).
 - Reorder: `move_layers`; `insert: true` moves a part and closes the gap
   behind it. Make room or close a gap: `shift_layers` from a time.
-- Captions: `transcribe_clip` → inspect the returned `segments` → `apply_transcripts`,
-  passing the envelope's `segments` and `word_timing` through (also
-  `/auto-caption`). The cues come out within the style's caption limits, so
-  do not break lines or split cues by hand. A subtitle FILE the user already has: `import_media` it,
-  then `apply_subtitles { media_id, t_start_us? }` — the whole document, its
-  time 0 at `t_start_us`. Correcting names and jargon: put the script or
-  notes in `set_project_settings { correction_script }`, then
-  `correct_caption_text`. Restyle every caption at once with `restyle_captions`.
+- Captions, after any pause cut: `transcribe_clip` → inspect the `segments` →
+  `apply_transcripts` with its answer's transcripts as they came (also
+  `/auto-caption`). Cues come out within the style's caption limits; do not
+  break lines or split cues by hand. A subtitle FILE: `import_media` it, then
+  `apply_subtitles`. Correcting names and jargon:
+  `correct_caption_text { script }` with the full verbatim transcript.
+  Caption look: edit the caption tokens, then `restyle_to_taste`.
 - Retime: `retime_layers`, with the link partners too.
 - Captions with your own speech model: `extract_clip_audio` returns a 16 kHz
   mono source WAV block (at most 60 s of source per call) and the window's

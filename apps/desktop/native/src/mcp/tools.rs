@@ -172,14 +172,11 @@ pub(super) struct DetectPausesArgs {
     /// Target Audio layer id. A VideoClip id is accepted by the host, which
     /// resolves it to the Audio layer of its link before the call.
     pub layer_id: String,
-    /// Peak amplitude threshold in [0.0, 1.0]. Anything strictly below this
-    /// counts as quiet. Default 0.02 (≈ -34 dBFS).
-    pub threshold_amp: Option<f32>,
+    /// Peak threshold, dBFS (≤ 0). Anything strictly below it counts as
+    /// quiet. Default -34.
+    pub threshold_db: Option<f32>,
     /// Shortest pause to surface, in microseconds. Default 500000 (0.5s).
     pub min_pause_us: Option<i64>,
-    /// A loud run shorter than this (µs) inside a quiet run does not end the
-    /// pause. Default 80000 (80ms). Must be ≥ 0 and below `min_pause_us`.
-    pub bridge_us: Option<i64>,
     /// Injected by the TS MCP host (sole state owner) — the SUBJECT Audio layer
     /// resolved by `layer_id`, its `MediaItem`, and the peaks file the mixer
     /// would read. `#[schemars(skip)]` keeps them OUT of the advertised tool
@@ -217,11 +214,33 @@ pub(super) enum PeaksSource {
 #[derive(Debug, Serialize, JsonSchema)]
 pub(super) struct DetectPausesResult {
     pub pauses: Vec<PauseRegion>,
-    /// 10th percentile of the folded peaks inside the layer's source window;
-    /// 0.0 when the window holds no peak. The referent the UI's threshold
-    /// readout and its Auto button are computed against.
-    pub noise_floor_amp: f32,
+    /// 10th percentile of the folded peaks inside the layer's source window,
+    /// dBFS; `None` when the window holds no peak or only digital silence. The
+    /// referent the UI's threshold readout and its Auto button are computed
+    /// against.
+    pub noise_floor_db: Option<f32>,
     pub peaks_source: PeaksSource,
+}
+
+/// The pause threshold an omitted `threshold_db` resolves to, dBFS — on the
+/// agent's path and the Pauses section's alike.
+pub(super) const DEFAULT_PAUSE_THRESHOLD_DB: f32 = -34.0;
+
+/// A loud run shorter than this inside a quiet run (a click, a cough) does not
+/// end the pause. A constant, not a parameter: a tuned bridge on the review
+/// read would make `remove_pauses` cut a different set from the one reviewed.
+pub(super) const PAUSE_BRIDGE_US: i64 = 80_000;
+
+/// dBFS → linear peak amplitude, the unit the peaks file holds.
+#[cfg(feature = "jobs")]
+fn amp_from_db(db: f32) -> f32 {
+    10f32.powf(db / 20.0)
+}
+
+/// Linear peak amplitude → dBFS, `None` for silence (no finite level).
+#[cfg(feature = "jobs")]
+fn db_from_amp(amp: f32) -> Option<f32> {
+    (amp > 0.0).then(|| (20.0 * amp.log10() * 10.0).round() / 10.0)
 }
 
 #[cfg(feature = "jobs")]
@@ -264,30 +283,20 @@ pub(super) async fn detect_pauses(
         )
     })?;
 
-    let threshold_amp = args.threshold_amp.unwrap_or(0.02);
+    let threshold_db = args.threshold_db.unwrap_or(DEFAULT_PAUSE_THRESHOLD_DB);
     let min_pause_us = args.min_pause_us.unwrap_or(500_000);
-    let bridge_us = args.bridge_us.unwrap_or(80_000);
-    if !(0.0..=1.0).contains(&threshold_amp) {
+    if !threshold_db.is_finite() || threshold_db > 0.0 {
         return Err(McpToolError::invalid_params(
-            format!("threshold_amp {threshold_amp} must be in [0.0, 1.0]"),
+            format!("threshold_db {threshold_db} must be a finite dBFS value at or below 0"),
             None,
         ));
     }
-    if min_pause_us <= 0 {
+    let threshold_amp = amp_from_db(threshold_db);
+    if min_pause_us <= PAUSE_BRIDGE_US {
         return Err(McpToolError::invalid_params(
-            format!("min_pause_us {min_pause_us} must be positive"),
-            None,
-        ));
-    }
-    if bridge_us < 0 {
-        return Err(McpToolError::invalid_params(
-            format!("bridge_us {bridge_us} must be at least 0"),
-            None,
-        ));
-    }
-    if bridge_us >= min_pause_us {
-        return Err(McpToolError::invalid_params(
-            format!("bridge_us {bridge_us} must be below min_pause_us {min_pause_us}"),
+            format!(
+                "min_pause_us {min_pause_us} must be above {PAUSE_BRIDGE_US} (a louder run shorter than that does not end a pause)"
+            ),
             None,
         ));
     }
@@ -323,7 +332,7 @@ pub(super) async fn detect_pauses(
         &peaks_file.peaks,
         threshold_amp,
         ((min_pause_us as f64) * timing.rate()).round().max(1.0) as i64,
-        ((bridge_us as f64) * timing.rate()).round().max(0.0) as i64,
+        ((PAUSE_BRIDGE_US as f64) * timing.rate()).round().max(0.0) as i64,
         src_in_us,
         src_out_us,
         layer.t_start_us,
@@ -341,35 +350,152 @@ pub(super) async fn detect_pauses(
         pause.t_end_us = map(pause.t_end_us).min(layer.t_end_us);
     }
     pauses.retain(|p| p.t_start_us < p.t_end_us);
-    let noise_floor_amp = noise_floor_p10(
+    let noise_floor_db = db_from_amp(noise_floor_p10(
         &peaks_file.peaks,
         src_in_us,
         src_out_us,
         peaks_file.sample_rate,
         peaks_file.frames_per_peak,
-    );
+    ));
 
     ToolResult::json(&DetectPausesResult {
         pauses,
-        noise_floor_amp,
+        noise_floor_db,
         peaks_source,
     })
 }
 
+/// A video a source-analysis tool reads: a pooled item, or the source a
+/// VideoClip plays (which clips the answer and adds the layer's mapping).
+#[cfg(feature = "jobs")]
+pub(super) struct VideoTarget<'a> {
+    pub media: &'a crate::state::MediaItem,
+    /// The layer, its `src_in_us` and timing — `None` for a media-addressed call.
+    pub layer: Option<(
+        &'a crate::state::Layer,
+        i64,
+        i64,
+        &'a crate::state::timing::TimingFields,
+    )>,
+}
+
+#[cfg(feature = "jobs")]
+impl VideoTarget<'_> {
+    /// The source span the answer covers: the layer's played source, or the
+    /// whole item (`None` end when its duration is unknown).
+    pub fn span(&self) -> (i64, Option<i64>) {
+        match self.layer {
+            Some((_, src_in, src_out, timing)) => (
+                timing.content_time(src_in, 0.0).floor() as i64,
+                Some(timing.source_end(src_out).ceil() as i64),
+            ),
+            None => (0, self.media.metadata.duration_us),
+        }
+    }
+    pub fn mapping(&self) -> Option<LayerMapping> {
+        self.layer
+            .map(|(layer, src_in, _, timing)| LayerMapping::of(layer, src_in, timing))
+    }
+}
+
+/// Resolve `media_id` / `layer_id` against the host-injected slice: one of
+/// them names the video (both: the layer must play that media). `what` is the
+/// tool's name for the refusals; `side` prefixes them (compare_frames).
+#[cfg(feature = "jobs")]
+pub(super) fn resolve_video_target<'a>(
+    media_id: Option<&str>,
+    layer_id: Option<&str>,
+    layer: Option<&'a crate::state::Layer>,
+    media: Option<&'a crate::state::MediaItem>,
+    what: &str,
+    side: &str,
+) -> Result<VideoTarget<'a>, McpToolError> {
+    let at = |f: &str| format!("{side}{f}");
+    let wanted = media_id
+        .map(|m| parse_uuid(m, &at("media_id")))
+        .transpose()?;
+    let layer = match layer_id {
+        None => None,
+        Some(id) => {
+            let id = parse_uuid(id, &at("layer_id"))?;
+            let l = layer.ok_or_else(|| {
+                McpToolError::invalid_params(format!("{side}layer {id} not found"), None)
+            })?;
+            match &l.params {
+                LayerParams::VideoClip(p) => Some((l, p.media, p.src_in_us, p.src_out_us, &p.timing)),
+                _ => {
+                    return Err(McpToolError::invalid_params(
+                        format!("{side}layer {id} is not a VideoClip — {what} reads video; pass a VideoClip, or the media_id of a pooled video"),
+                        None,
+                    ))
+                }
+            }
+        }
+    };
+    let media_id = match (&layer, wanted) {
+        (None, None) => {
+            return Err(McpToolError::invalid_params(
+                format!(
+                    "{what}: name {side}media_id (a pooled video) or {side}layer_id (a VideoClip)"
+                ),
+                None,
+            ))
+        }
+        (Some((l, m, ..)), Some(w)) if *m != w => {
+            return Err(McpToolError::invalid_params(
+                format!(
+                    "{side}layer {} plays media {m}, not {side}media_id {w}",
+                    l.id
+                ),
+                None,
+            ))
+        }
+        (Some((_, m, ..)), _) => *m,
+        (None, Some(w)) => w,
+    };
+    let media = media.filter(|m| m.id == media_id).ok_or_else(|| {
+        McpToolError::invalid_params(
+            format!("{side}media {media_id} is not in the pool — project://media lists it"),
+            None,
+        )
+    })?;
+    if !matches!(media.kind, crate::state::MediaKind::Video) {
+        return Err(McpToolError::invalid_params(
+            format!("{side}media {media_id} is not a video — {what} needs a video source"),
+            None,
+        ));
+    }
+    Ok(VideoTarget {
+        media,
+        layer: layer.map(|(l, _, src_in, src_out, timing)| (l, src_in, src_out, timing)),
+    })
+}
+
+/// Which `analyze_clip` passes run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum ShotPass {
+    Shots,
+    Stats,
+    Events,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(super) struct AnalyzeClipArgs {
-    /// Target VideoClip layer id.
-    pub layer_id: String,
+    /// A pooled video, scanned whole (placed or not).
+    pub media_id: Option<String>,
+    /// A VideoClip: the answer is clipped to the source it plays and carries
+    /// its `mapping`.
+    pub layer_id: Option<String>,
     /// Cut sensitivity in [0.0, 1.0]: a frame whose shot-change score exceeds
     /// this starts a new shot. Lower = more (finer) cuts. Default 0.4.
     pub sensitivity: Option<f32>,
     /// Minimum shot duration (microseconds); cuts closer than this are merged.
     /// Default 500000 (0.5 seconds).
     pub min_shot_us: Option<i64>,
-    /// Which passes to run — a subset of `["shots", "stats", "events"]`.
-    /// Default all. Drop `"stats"` / `"events"` to skip per-shot frame sampling
-    /// and return timing only.
-    pub passes: Option<Vec<String>>,
+    /// Which passes to run. Default all; `["shots"]` is timing only (no frame
+    /// sampling).
+    pub passes: Option<Vec<ShotPass>>,
     /// Injected by the TS MCP host (sole state owner) — see DetectPausesArgs.
     #[serde(default)]
     #[schemars(skip)]
@@ -384,37 +510,14 @@ pub(super) async fn analyze_clip(
     b: &Backend,
     args: AnalyzeClipArgs,
 ) -> Result<ToolResult, McpToolError> {
-    let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
-    let layer = args
-        .layer
-        .as_ref()
-        .ok_or_else(|| McpToolError::invalid_params(format!("layer {layer_id} not found"), None))?;
-
-    // Video-only: shots are a pixel concept. Reject anything else with an
-    // actionable message (mirrors detect_pauses).
-    let (media_id, src_in_us, src_out_us, timing) = match &layer.params {
-        LayerParams::VideoClip(p) => (p.media, p.src_in_us, p.src_out_us, &p.timing),
-        _ => {
-            return Err(McpToolError::invalid_params(
-                format!(
-                    "layer {layer_id} kind is not analyzable for shots — pass a VideoClip layer"
-                ),
-                None,
-            ));
-        }
-    };
-    let media = args.media.as_ref().ok_or_else(|| {
-        McpToolError::invalid_params(
-            format!("layer {layer_id} references missing media {media_id}"),
-            None,
-        )
-    })?;
-    if !matches!(media.kind, crate::state::MediaKind::Video) {
-        return Err(McpToolError::invalid_params(
-            format!("media {media_id} is not a video — analyze_clip needs a video source"),
-            None,
-        ));
-    }
+    let target = resolve_video_target(
+        args.media_id.as_deref(),
+        args.layer_id.as_deref(),
+        args.layer.as_ref(),
+        args.media.as_ref(),
+        "analyze_clip",
+        "",
+    )?;
 
     let sensitivity = args.sensitivity.unwrap_or(0.4);
     if !(0.0..=1.0).contains(&sensitivity) {
@@ -431,22 +534,15 @@ pub(super) async fn analyze_clip(
         ));
     }
 
-    // Passes: default all. Unknown tags are rejected so a typo never silently
-    // drops a pass. "shots" is always the base; "stats"/"events" gate the
-    // per-shot frame sampling.
-    let (mut want_stats, mut want_events) = (true, true);
-    if let Some(passes) = &args.passes {
-        want_stats = passes.iter().any(|p| p == "stats");
-        want_events = passes.iter().any(|p| p == "events");
-        for p in passes {
-            if !matches!(p.as_str(), "shots" | "stats" | "events") {
-                return Err(McpToolError::invalid_params(
-                    format!("unknown pass {p:?}; expected \"shots\", \"stats\", or \"events\""),
-                    None,
-                ));
-            }
-        }
-    }
+    // Passes: default all. "shots" is always the base; "stats"/"events" gate
+    // the per-shot frame sampling.
+    let (want_stats, want_events) = match &args.passes {
+        None => (true, true),
+        Some(passes) => (
+            passes.contains(&ShotPass::Stats),
+            passes.contains(&ShotPass::Events),
+        ),
+    };
 
     let opts = jobs::shot::ShotOpts {
         sensitivity,
@@ -456,32 +552,35 @@ pub(super) async fn analyze_clip(
     };
     // Content-addressed write-through: compute the WHOLE-source report once
     // (keyed by source hash + params, `jobs::shot::cache_key`), cache it, then
-    // clip to THIS layer's window. A second call on any layer of the same source
+    // clip to a layer's window. A second call on any layer of the same source
     // with the same params hits the sidecar and skips the ffmpeg scan; the cache
     // shares no namespace with the video-understanding `description` sidecar.
-    let source_report = jobs::shot::cached_source_report(&b.cache, media, &opts)
+    let source_report = jobs::shot::cached_source_report(&b.cache, target.media, &opts)
         .await
         .map_err(|e| McpToolError::internal_error(format!("shot analysis: {e:#}"), None))?;
-    let report = jobs::shot::clip_report(
-        &source_report,
-        timing.content_time(src_in_us, 0.0).floor() as i64,
-        timing.source_end(src_out_us).ceil() as i64,
-    );
+    let report = match target.span() {
+        (from, Some(to)) if target.layer.is_some() => {
+            jobs::shot::clip_report(&source_report, from, to)
+        }
+        _ => source_report,
+    };
 
     ToolResult::json(&SourceShotReport::new(
-        media_id,
-        Some(LayerMapping::of(layer, src_in_us, timing)),
+        target.media.id,
+        target.mapping(),
         &report,
     ))
 }
 
 /// One side of a `compare_frames` pair. `#[schemars(skip)]` on the injected
 /// `layer` / `media` keeps each side's ADVERTISED schema exactly
-/// `{ layer_id, src_us }`; serde still deserializes the host-injected slice.
+/// `{ media_id?, layer_id?, src_us }`; serde still deserializes the slice.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(super) struct FrameRef {
-    /// Target VideoClip layer id.
-    pub layer_id: String,
+    /// A pooled video (placed or not).
+    pub media_id: Option<String>,
+    /// Or a VideoClip, read for its source.
+    pub layer_id: Option<String>,
     /// Source-absolute microseconds of the frame to sample (the space
     /// `analyze_clip`'s `src_keyframe_us` uses).
     pub src_us: i64,
@@ -502,45 +601,26 @@ pub(super) struct CompareFramesArgs {
     pub b: FrameRef,
 }
 
-/// Resolve one `FrameRef` to `(source_path, src_us)`: the layer must be a VideoClip
-/// whose media is a video (same guards as `analyze_clip`). `side` ("a" / "b") is
-/// folded into every error so the agent knows which frame is at fault.
+/// Resolve one `FrameRef` to `(source_path, src_us)` through the same target
+/// rule as `analyze_clip`. `side` ("a" / "b") is folded into every error so
+/// the agent knows which frame is at fault.
 #[cfg(feature = "jobs")]
 fn resolve_frame_ref(r: &FrameRef, side: &str) -> Result<(std::path::PathBuf, i64), McpToolError> {
-    let layer_id = parse_uuid(&r.layer_id, &format!("{side}.layer_id"))?;
-    let layer = r.layer.as_ref().ok_or_else(|| {
-        McpToolError::invalid_params(format!("{side}: layer {layer_id} not found"), None)
-    })?;
-    let media_id = match &layer.params {
-        LayerParams::VideoClip(p) => p.media,
-        _ => {
-            return Err(McpToolError::invalid_params(
-                format!("{side}: layer {layer_id} is not a VideoClip — compare_frames compares video frames only"),
-                None,
-            ));
-        }
-    };
-    let media = r.media.as_ref().ok_or_else(|| {
-        McpToolError::invalid_params(
-            format!("{side}: layer {layer_id} references missing media {media_id}"),
-            None,
-        )
-    })?;
-    if !matches!(media.kind, crate::state::MediaKind::Video) {
-        return Err(McpToolError::invalid_params(
-            format!(
-                "{side}: media {media_id} is not a video — compare_frames needs a video source"
-            ),
-            None,
-        ));
-    }
+    let target = resolve_video_target(
+        r.media_id.as_deref(),
+        r.layer_id.as_deref(),
+        r.layer.as_ref(),
+        r.media.as_ref(),
+        "compare_frames",
+        &format!("{side}."),
+    )?;
     if r.src_us < 0 {
         return Err(McpToolError::invalid_params(
             format!("{side}.src_us {} must be >= 0", r.src_us),
             None,
         ));
     }
-    Ok((media.path_abs.clone(), r.src_us))
+    Ok((target.media.path_abs.clone(), r.src_us))
 }
 
 /// `compare_frames` — pairwise perceptual similarity of two video frames.
@@ -580,8 +660,9 @@ pub(super) async fn compare_frames(
 )]
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(super) struct ImportMediaArgs {
-    /// Path to a video / audio / image / subtitle file the host can read: absolute, or relative to the open project's folder.
-    pub path: String,
+    /// 1–50 video / audio / image / subtitle files the host can read: absolute, or relative to the open project's folder.
+    #[schemars(length(min = 1, max = 50))]
+    pub paths: Vec<String>,
 }
 
 /// `import_media` Rust handler is a stub — the tool routes through the hybrid
@@ -756,10 +837,10 @@ mod tests {
     #[cfg(feature = "jobs")]
     const US_PER_PEAK: i64 = 10_000;
 
-    /// The shipped `bridge_us` default, so the fixtures below exercise the
-    /// number the tool actually runs with.
+    /// The shipped bridge, so the fixtures below exercise the number the tool
+    /// actually runs with.
     #[cfg(feature = "jobs")]
-    const BRIDGE: i64 = 80_000;
+    const BRIDGE: i64 = PAUSE_BRIDGE_US;
 
     #[cfg(feature = "jobs")]
     fn flat_peaks(n: usize, amp: f32) -> Vec<f32> {
@@ -1099,9 +1180,8 @@ mod tests {
             &b,
             DetectPausesArgs {
                 layer_id: layer_id.to_string(),
-                threshold_amp: None,
+                threshold_db: None,
                 min_pause_us: None,
-                bridge_us: None,
                 layer: Some(layer),
                 media: None,
                 peaks_path: None,
@@ -1119,28 +1199,42 @@ mod tests {
 
     #[cfg(feature = "jobs")]
     #[tokio::test]
-    async fn detect_pauses_refuses_bridge_at_or_over_min_pause() {
+    async fn detect_pauses_refuses_a_min_pause_inside_the_bridge_and_a_positive_threshold() {
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
         b.init().await.unwrap();
-        let layer = audio_layer(0, 2_000_000);
-        let err = detect_pauses(
-            &b,
+        let call = |threshold_db: Option<f32>, min_pause_us: Option<i64>| {
+            let layer = audio_layer(0, 2_000_000);
             DetectPausesArgs {
                 layer_id: layer.id.to_string(),
-                threshold_amp: None,
-                min_pause_us: Some(500_000),
-                bridge_us: Some(500_000),
+                threshold_db,
+                min_pause_us,
                 layer: Some(layer),
                 media: Some(audio_media("no-such-waveform")),
                 peaks_path: None,
-            },
-        )
-        .await
-        .expect_err("bridge_us == min_pause_us is refused");
-        assert_eq!(
-            err.message,
-            "bridge_us 500000 must be below min_pause_us 500000"
+            }
+        };
+        let err = detect_pauses(&b, call(None, Some(PAUSE_BRIDGE_US)))
+            .await
+            .expect_err("a minimum the bridge would swallow is refused");
+        assert!(
+            err.message
+                .starts_with("min_pause_us 80000 must be above 80000"),
+            "{}",
+            err.message
         );
+        let err = detect_pauses(&b, call(Some(3.0), None))
+            .await
+            .expect_err("a threshold above full scale is refused");
+        assert!(err.message.starts_with("threshold_db 3"), "{}", err.message);
+    }
+
+    #[cfg(feature = "jobs")]
+    #[test]
+    fn pause_levels_convert_between_dbfs_and_amplitude() {
+        assert!((amp_from_db(DEFAULT_PAUSE_THRESHOLD_DB) - 0.019_95).abs() < 1e-4);
+        assert_eq!(db_from_amp(0.0), None);
+        assert_eq!(db_from_amp(1.0), Some(0.0));
+        assert_eq!(db_from_amp(0.004), Some(-48.0));
     }
 
     /// Decision 11: detection reads what PLAYS. When the host injects a ready
@@ -1166,9 +1260,8 @@ mod tests {
             &b,
             DetectPausesArgs {
                 layer_id: layer.id.to_string(),
-                threshold_amp: None,
+                threshold_db: None,
                 min_pause_us: None,
-                bridge_us: None,
                 layer: Some(layer),
                 media: Some(audio_media("raw-waveform-never-built")),
                 peaks_path: Some(fx_peaks.to_string_lossy().into_owned()),
@@ -1183,11 +1276,11 @@ mod tests {
         assert_eq!(body["pauses"].as_array().unwrap().len(), 1);
         assert_eq!(body["pauses"][0]["t_start_us"], 500_000);
         assert_eq!(body["pauses"][0]["t_end_us"], 1_500_000);
-        let floor = body["noise_floor_amp"]
+        let floor = body["noise_floor_db"]
             .as_f64()
             .expect("a floor is reported");
         assert!(
-            (floor - 0.004).abs() < 0.0005,
+            (floor + 48.0).abs() < 1.0,
             "the floor is the room tone, not the speech over it; got {floor}"
         );
 
@@ -1198,9 +1291,8 @@ mod tests {
             &b,
             DetectPausesArgs {
                 layer_id: layer.id.to_string(),
-                threshold_amp: None,
+                threshold_db: None,
                 min_pause_us: None,
-                bridge_us: None,
                 layer: Some(layer),
                 media: Some(audio_media("raw-waveform-never-built")),
                 peaks_path: Some(dir.join("missing.v4.peaks").to_string_lossy().into_owned()),
@@ -1322,18 +1414,12 @@ mod tests {
             fade_in_us: 0,
             fade_out_us: 0,
         });
-        let resolved = resolve_clip_video_source(Some(&layer), Some(&media), layer.id, None, None)
+        let target = layer_target(&layer, &media);
+        let resolved = resolve_clip_video_source(&target, None, None)
             .expect("a valid fractional endpoint must not be refused as beyond the source window");
         assert_eq!(resolved.source_in_us, 0);
         assert_eq!(resolved.source_out_us, 2_000_001);
-        assert!(resolve_clip_video_source(
-            Some(&layer),
-            Some(&media),
-            layer.id,
-            None,
-            Some(2_000_002)
-        )
-        .is_err());
+        assert!(resolve_clip_video_source(&target, None, Some(2_000_002)).is_err());
     }
 
     #[cfg(feature = "speech")]
@@ -1360,22 +1446,65 @@ mod tests {
             fade_in_us: 0,
             fade_out_us: 0,
         });
-        let resolved = resolve_clip_video_source(Some(&layer), Some(&media), layer.id, None, None)
+        let target = layer_target(&layer, &media);
+        let resolved = resolve_clip_video_source(&target, None, None)
             .expect("the default window is the layer's own and must resolve");
         assert_eq!(resolved.source_in_us, 0);
         assert_eq!(resolved.source_out_us, 215_197_848);
-        let inner = resolve_clip_video_source(
-            Some(&layer),
-            Some(&media),
-            layer.id,
-            Some(1_000_000),
-            Some(2_000_000),
-        )
-        .expect("an inner window maps as is");
+        let inner = resolve_clip_video_source(&target, Some(1_000_000), Some(2_000_000))
+            .expect("an inner window maps as is");
         assert_eq!(
             (inner.source_in_us, inner.source_out_us),
             (1_000_000, 2_000_000)
         );
+    }
+
+    #[cfg(feature = "speech")]
+    fn layer_target<'a>(
+        layer: &'a crate::state::Layer,
+        media: &'a crate::state::MediaItem,
+    ) -> VideoTarget<'a> {
+        let id = layer.id.to_string();
+        resolve_video_target(
+            None,
+            Some(&id),
+            Some(layer),
+            Some(media),
+            "describe_clip",
+            "",
+        )
+        .expect("a VideoClip of a video resolves")
+    }
+
+    /// M7: pooled media is described and scanned without a layer — the whole
+    /// item by default, no mapping; a layer of another media is refused.
+    #[cfg(feature = "speech")]
+    #[test]
+    fn media_addressed_targets_cover_the_whole_item_without_a_mapping() {
+        let mut media = audio_media("pooled-video");
+        media.kind = crate::state::MediaKind::Video;
+        media.metadata.duration_us = Some(9_000_000);
+        let id = media.id.to_string();
+        let target = resolve_video_target(Some(&id), None, None, Some(&media), "describe_clip", "")
+            .expect("a pooled video resolves by id");
+        assert!(target.mapping().is_none());
+        assert_eq!(target.span(), (0, Some(9_000_000)));
+        let resolved = resolve_clip_video_source(&target, None, None).unwrap();
+        assert_eq!(
+            (resolved.source_in_us, resolved.source_out_us),
+            (0, 9_000_000)
+        );
+        assert!(resolve_clip_video_source(&target, None, Some(9_000_001)).is_err());
+        let err = resolve_video_target(None, None, None, Some(&media), "describe_clip", "")
+            .err()
+            .expect("naming nothing refuses");
+        assert!(err.message.contains("media_id"), "{}", err.message);
+        let other = crate::state::new_id().to_string();
+        let err =
+            resolve_video_target(Some(&other), None, None, Some(&media), "analyze_clip", "a.")
+                .err()
+                .expect("a media id the host did not inject is not in the pool");
+        assert!(err.message.starts_with("a.media"), "{}", err.message);
     }
 
     // Subtitle cue-shift + parse coverage lives in the subtitles module tests +
@@ -1386,33 +1515,73 @@ mod tests {
 // Cloud tools: transcribe_clip + synthesize_speech. Gated on feature = "speech".
 // ============================================================
 
+/// The engines `transcribe_clip { backend }` names (the stable wire tags).
+#[cfg(feature = "speech")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum SpeechEngineArg {
+    Openai,
+    WhisperCpp,
+    Funasr,
+    ByoEndpoint,
+}
+
+#[cfg(feature = "speech")]
+impl SpeechEngineArg {
+    fn backend(self) -> speech::SpeechBackend {
+        match self {
+            Self::Openai => speech::SpeechBackend::OpenAi,
+            Self::WhisperCpp => speech::SpeechBackend::WhisperCpp,
+            Self::Funasr => speech::SpeechBackend::FunAsr,
+            Self::ByoEndpoint => speech::SpeechBackend::ByoEndpoint,
+        }
+    }
+}
+
 #[cfg(feature = "speech")]
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+// Required on the wire an agent reads; defaulted for the host's own per-layer
+// call, which names one `layer_id` instead.
+#[schemars(extend("required" = ["layer_ids"]))]
 pub(super) struct TranscribeClipArgs {
-    /// Target VideoClip or Audio layer id.
-    pub layer_id: String,
-    /// Optional transcription window start in timeline microseconds.
-    /// Defaults to the layer's `t_start_us`. Must lie within the layer.
+    /// VideoClip or Audio layers to transcribe (1–20); one envelope each, in
+    /// this order. A VideoClip is read through its linked Audio member.
+    #[serde(default)]
+    #[schemars(length(min = 1, max = 20), extend("default" = null))]
+    pub layer_ids: Vec<String>,
+    /// Injected by the TS MCP host, once per item of `layer_ids`: the layer
+    /// this run reads (the subject Audio member for a VideoClip). Never
+    /// advertised.
+    #[serde(default)]
+    #[schemars(skip)]
+    pub layer_id: Option<String>,
+    /// Optional window start, timeline µs; one layer only. Defaults to the
+    /// layer's `t_start_us`. Must lie within the layer.
     #[serde(default)]
     pub t_start_us: Option<i64>,
-    /// Optional transcription window end in timeline microseconds.
-    /// Defaults to the layer's `t_end_us`. Must lie within the layer.
+    /// Optional window end (exclusive), timeline µs; one layer only. Defaults
+    /// to the layer's `t_end_us`. Must lie within the layer.
     #[serde(default)]
     pub t_end_us: Option<i64>,
-    /// Optional ISO-639-1 language hint (`"en"`, `"zh"`). Auto-detect when omitted.
+    /// Spoken language, BCP-47 (`"en"`, `"zh-CN"`). Auto-detect when omitted.
     #[serde(default)]
     pub language: Option<String>,
-    /// Strict engine override: `"openai"` | `"whisper_cpp"` | `"funasr"` |
-    /// `"byo_endpoint"`. That engine serves or the call errors; nothing is
-    /// substituted. Omitted: the user's preferred engine, then availability.
+    /// Strict engine override; that engine serves or the call errors.
+    /// `openai` and `byo_endpoint` upload the audio.
     #[serde(default)]
-    pub backend: Option<String>,
+    pub backend: Option<SpeechEngineArg>,
     /// Injected by the TS MCP host from the user's Settings preferred-engine —
     /// a SOFT hint (falls back by availability), unlike the agent-visible
     /// strict `backend` above. Unknown tags are ignored. Never advertised.
     #[serde(default)]
     #[schemars(skip)]
     pub preferred_backend: Option<String>,
+    /// Injected by the TS MCP host: the languages the selected model covers,
+    /// keyed by backend tag (an engine absent here covers any). Never
+    /// advertised.
+    #[serde(default, skip_serializing)]
+    #[schemars(skip)]
+    pub model_languages: speech::ModelLanguages,
     /// Injected by the TS MCP host: the merged speech backend config snapshot
     /// (cloud key + local paths + the active endpoint), keyed by backend tag —
     /// stateless like describe_clip's `vlm_config` (ADR 0036). Never advertised,
@@ -1452,29 +1621,39 @@ pub(super) struct TranscribeClipArgs {
 pub(crate) struct SynthesizeSpeechArgs {
     /// Text to synthesize. tts-1 caps at 4096 characters.
     pub text: String,
-    /// Voice identifier. tts-1 accepts: alloy, echo, fable, onyx, nova, shimmer.
-    pub voice: String,
+    /// The tts-1 voice.
+    pub voice: VoiceArg,
     /// 0.25..4.0 for tts-1. Omit to use the provider default (~1.0).
     #[serde(default)]
     pub speed: Option<f32>,
-    /// Optional Audio track id. If omitted, lands on the first existing Audio
-    /// track or auto-creates one labeled "Voiceover".
+    /// A Group's composition to place in; omit for the root.
     #[cfg_attr(
         not(feature = "test-noop"),
         expect(
             dead_code,
-            reason = "placement is applied TS-side; kept for wire-schema stability"
+            reason = "placement is applied TS-side; kept for the wire schema"
+        )
+    )]
+    #[serde(default)]
+    pub composition_id: Option<String>,
+    /// Track to place on. Omitted: the topmost unlocked track whose audio lane
+    /// is free across the clip, else a new 'Voiceover' track.
+    #[cfg_attr(
+        not(feature = "test-noop"),
+        expect(
+            dead_code,
+            reason = "placement is applied TS-side; kept for the wire schema"
         )
     )]
     #[serde(default)]
     pub target_track_id: Option<String>,
-    /// Optional timeline start in microseconds. Defaults to the composition's
-    /// current `duration_us` so the voiceover appends at the end.
+    /// Timeline start, µs. Defaults to the composition's `duration_us`, so
+    /// the voiceover appends at the end.
     #[cfg_attr(
         not(feature = "test-noop"),
         expect(
             dead_code,
-            reason = "placement is applied TS-side; kept for wire-schema stability"
+            reason = "placement is applied TS-side; kept for the wire schema"
         )
     )]
     #[serde(default)]
@@ -1484,6 +1663,33 @@ pub(crate) struct SynthesizeSpeechArgs {
     #[serde(default)]
     #[schemars(skip)]
     pub speech_config: std::collections::HashMap<String, speech::config::BackendConfig>,
+}
+
+/// The tts-1 voices `synthesize_speech { voice }` takes.
+#[cfg(feature = "speech")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum VoiceArg {
+    Alloy,
+    Echo,
+    Fable,
+    Onyx,
+    Nova,
+    Shimmer,
+}
+
+#[cfg(feature = "speech")]
+impl VoiceArg {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Alloy => "alloy",
+            Self::Echo => "echo",
+            Self::Fable => "fable",
+            Self::Onyx => "onyx",
+            Self::Nova => "nova",
+            Self::Shimmer => "shimmer",
+        }
+    }
 }
 
 /// Shared source-audio coordinates for transcription and model-free extraction.
@@ -1768,7 +1974,15 @@ async fn transcribe_clip_job(
     args: TranscribeClipArgs,
     job: &JobReporter,
 ) -> Result<ToolResult, McpToolError> {
-    let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
+    let layer_id = parse_uuid(
+        args.layer_id.as_deref().ok_or_else(|| {
+            McpToolError::invalid_params(
+                "transcribe_clip runs one layer of `layer_ids` at a time; the host names it",
+                None,
+            )
+        })?,
+        "layer_id",
+    )?;
     let resolved = resolve_clip_audio_source(
         args.layer.as_ref(),
         args.media.as_ref(),
@@ -1776,36 +1990,43 @@ async fn transcribe_clip_job(
         args.t_start_us,
         args.t_end_us,
     )?;
-
-    let (explicit, preferred) = engine_choice::<speech::SpeechBackend>(
-        args.backend.as_deref(),
-        args.preferred_backend.as_deref(),
-    )?;
-
-    let (used_backend, transcriber) = {
-        let cfg = &args.speech_config;
-        match explicit.or(preferred) {
-            Some(b) => (
-                b,
-                // Strict-resolution failures are the caller's/config's to fix
-                // (wrong choice or missing key/binary/model) → invalid_request,
-                // not internal_error.
-                speech::resolve_transcriber_exact(b, cfg)
-                    .map_err(|e| McpToolError::invalid_request(e.to_string(), None))?,
-            ),
-            // The shared message names the Settings remedy a person acts on; an
-            // agent has a path of its own, so the tool names that too.
-            None => speech::resolve_transcriber(preferred, cfg).ok_or_else(|| {
-                McpToolError::invalid_request(
-                    format!(
-                        "{}; or call `extract_clip_audio` and transcribe its WAV with a speech model of your own",
-                        speech::NO_TRANSCRIBER_CONFIGURED
-                    ),
-                    None,
-                )
-            })?,
-        }
+    let language = match args.language.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(tag) => Some(speech::primary_language(tag).ok_or_else(|| {
+            McpToolError::invalid_params(
+                format!("language {tag:?} is not a BCP-47 tag (\"en\", \"zh-CN\")"),
+                None,
+            )
+        })?),
     };
+
+    let (_, preferred) =
+        engine_choice::<speech::SpeechBackend>(None, args.preferred_backend.as_deref())?;
+    let cfg = &args.speech_config;
+    let (used_backend, transcriber) = match args.backend.map(SpeechEngineArg::backend) {
+        // Strict-resolution failures are the caller's/config's to fix (wrong
+        // choice or missing key/binary/model) → invalid_request.
+        Some(b) => (
+            b,
+            speech::resolve_transcriber_exact(b, cfg)
+                .map_err(|e| McpToolError::invalid_request(e.to_string(), None))?,
+        ),
+        // No `backend`: the model selected in Settings, strictly (ADR 0064);
+        // the refusal names it as the selection and lists the ways out.
+        None => speech::resolve_selected_transcriber(preferred, cfg).map_err(|m| {
+            McpToolError::invalid_request(
+                format!(
+                    "{m}; or call `extract_clip_audio` and transcribe its WAV with a speech model you already have"
+                ),
+                None,
+            )
+        })?,
+    };
+    if let Some(lang) = &language {
+        if !speech::covers_language(&args.model_languages, used_backend, lang) {
+            return Err(language_not_covered(used_backend, lang, "requested", &args));
+        }
+    }
 
     // One slice, so extraction counts 0/1 once admitted and 1/1 when the WAV
     // is ready; a cache hit skips straight to 1/1.
@@ -1833,7 +2054,7 @@ async fn transcribe_clip_job(
     .map_err(|e| McpToolError::internal_error(format!("transcription audio: {e:#}"), None))?;
     let request = speech::TranscribeRequest {
         audio_path: prepared.path.clone(),
-        language: args.language,
+        language: language.clone(),
         want_word_timing: args.word_timestamps.unwrap_or(true),
     };
     // Normalize the backend's raw style → one Transcript (in the WAV's own
@@ -1861,6 +2082,22 @@ async fn transcribe_clip_job(
         }
     }
     transcript.shift(resolved.timeline_start_us);
+    if let Some(detected) = transcript
+        .language
+        .as_deref()
+        .and_then(speech::primary_language)
+    {
+        if language.is_none()
+            && !speech::covers_language(&args.model_languages, used_backend, &detected)
+        {
+            return Err(language_not_covered(
+                used_backend,
+                &detected,
+                "detected",
+                &args,
+            ));
+        }
+    }
 
     let result = TranscribeClipResult {
         backend: used_backend.as_str(),
@@ -1872,21 +2109,112 @@ async fn transcribe_clip_job(
     ToolResult::json(&result)
 }
 
+/// NEW-9: a model that does not cover the clip's language answers garbage, so
+/// the call refuses with the ways out instead — another ready engine that
+/// covers it (flagged when it uploads), a model to select, or the language the
+/// model does cover.
+#[cfg(feature = "speech")]
+fn language_not_covered(
+    used: speech::SpeechBackend,
+    language: &str,
+    how: &str,
+    args: &TranscribeClipArgs,
+) -> McpToolError {
+    let covers = args
+        .model_languages
+        .get(used.as_str())
+        .map(|l| l.join(", "))
+        .unwrap_or_default();
+    let mut options: Vec<String> = speech::DEFAULT_ORDER
+        .iter()
+        .copied()
+        .filter(|b| {
+            *b != used
+                && b.capabilities().transcription
+                && speech::unavailable_reason(*b, &args.speech_config).is_none()
+                && speech::covers_language(&args.model_languages, *b, language)
+        })
+        .map(|b| {
+            let uploads = if b.locality().is_network() {
+                " (uploads the audio — only with the user's consent)"
+            } else {
+                ""
+            };
+            format!("`backend: \"{}\"`{uploads}", b.as_str())
+        })
+        .collect();
+    options.push(format!(
+        "select a model that covers {language} in Settings → Transcription"
+    ));
+    if how == "requested" {
+        options.push(format!("omit `language` if the speech is in {covers}"));
+    }
+    McpToolError::invalid_request(
+        format!(
+            "the {} model covers {covers}, and the speech is {how} as {language}; its transcript would be wrong. Options: {}",
+            used.as_str(),
+            options.join("; ")
+        ),
+        Some(serde_json::json!({
+            "error": "LanguageNotCovered",
+            "backend": used.as_str(),
+            "languages": args.model_languages.get(used.as_str()),
+            "language": language,
+        })),
+    )
+}
+
 // ============================================================
 // Video-understanding tool: describe_clip. Gated on feature = "speech" (reuses
 // jobs ffmpeg for frame sampling + the speech HTTP client for cloud/BYO). The
 // architectural twin of transcribe_clip; see native/src/vlm/.
 // ============================================================
 
+/// The engines `describe_clip { backend }` names (the stable wire tags).
+#[cfg(feature = "speech")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum VlmEngineArg {
+    Qwen3Vl,
+    MinicpmV,
+    ByoEndpoint,
+}
+
+#[cfg(feature = "speech")]
+impl VlmEngineArg {
+    fn tag(self) -> &'static str {
+        match self {
+            Self::Qwen3Vl => "qwen3_vl",
+            Self::MinicpmV => "minicpm_v",
+            Self::ByoEndpoint => "byo_endpoint",
+        }
+    }
+}
+
+/// `describe_clip { focus }`.
+#[cfg(feature = "speech")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum FocusArg {
+    General,
+    ShotType,
+}
+
 #[cfg(feature = "speech")]
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(super) struct DescribeClipArgs {
-    /// Cache purpose: clip content (default) or individual shot identification.
-    /// Independent of prompt focus; results are never shared across purposes.
+    /// Cache purpose: clip content (default) or individual shot identification
+    /// — the app's shot rows' namespace. Not advertised (M19).
     #[serde(default)]
+    #[schemars(skip)]
     pub purpose: crate::vlm::DescriptionPurpose,
-    /// Target VideoClip layer id.
-    pub layer_id: String,
+    /// A pooled video, described whole by default (placed or not).
+    #[serde(default)]
+    pub media_id: Option<String>,
+    /// Or a VideoClip: the default window is the source it plays, and the
+    /// answer carries its `mapping`.
+    #[serde(default)]
+    pub layer_id: Option<String>,
     /// Optional window start, source-absolute microseconds (the space the
     /// answer's segments and `analyze_clip`'s shots use). Defaults to the start
     /// of the source the layer plays. Must lie within it.
@@ -1904,19 +2232,18 @@ pub(super) struct DescribeClipArgs {
     /// false).
     #[serde(default)]
     pub refresh: bool,
-    /// `"general"` or `"shot-type"` (biases `tags` toward shot type / camera).
-    /// Default: the app's setting, else `"general"`. Cache key.
+    /// `shot-type` biases `tags` toward shot type / camera. Default: the app's
+    /// setting, else `general`. Cache key.
     #[serde(default)]
-    pub focus: Option<String>,
+    pub focus: Option<FocusArg>,
     /// BCP-47 tag the `text` and `tags` come back in (`"en-US"`, `"zh-CN"`,
     /// `"ja"`). Default: the app's UI language. Cache key.
     #[serde(default)]
     pub language: Option<String>,
-    /// Strict engine override: `"qwen3_vl"` | `"minicpm_v"` | `"byo_endpoint"`.
-    /// That engine serves or the call errors; nothing is substituted. Omitted:
-    /// the user's preferred engine, then availability.
+    /// Strict engine override; that engine serves or the call errors.
+    /// `byo_endpoint` uploads frames.
     #[serde(default)]
-    pub backend: Option<String>,
+    pub backend: Option<VlmEngineArg>,
     /// Injected by the TS MCP host from the user's Settings preferred VLM engine
     /// — a SOFT hint (falls back by availability). Never advertised.
     #[serde(default)]
@@ -1953,69 +2280,56 @@ struct ResolvedClipVideo {
     /// Source-absolute microseconds: the window to describe.
     source_in_us: i64,
     source_out_us: i64,
-    mapping: LayerMapping,
+    mapping: Option<LayerMapping>,
 }
 
-/// Find a VideoClip layer and resolve the source window to describe: the
-/// requested one, which must lie inside the source the layer plays, or that
-/// whole source by default. Video-only (frames, not audio).
+/// Resolve the source window to describe: the requested one, which must lie
+/// inside the source the layer plays (or the whole item, media-addressed), or
+/// that whole span by default.
 #[cfg(feature = "speech")]
 fn resolve_clip_video_source(
-    layer: Option<&crate::state::Layer>,
-    media: Option<&crate::state::MediaItem>,
-    layer_id: LayerId,
+    target: &VideoTarget<'_>,
     src_start_arg: Option<i64>,
     src_end_arg: Option<i64>,
 ) -> Result<ResolvedClipVideo, McpToolError> {
-    use crate::state::VideoClipParams;
-
-    let layer = layer
-        .ok_or_else(|| McpToolError::invalid_params(format!("layer {layer_id} not found"), None))?;
-
-    let (media_id, src_in_us, src_out_us, timing) = match &layer.params {
-        LayerParams::VideoClip(VideoClipParams {
-            timing,
-            media,
-            src_in_us,
-            src_out_us,
-            ..
-        }) => (*media, *src_in_us, *src_out_us, timing),
-        _ => {
-            return Err(McpToolError::invalid_params(
-                format!("layer {layer_id} kind is not describable — pass a VideoClip layer"),
-                None,
-            ));
+    let (span_in, source_end, default_in, default_out) = match target.layer {
+        Some((layer, src_in_us, src_out_us, timing)) => {
+            // The default window is the source the layer plays, its endpoints
+            // mapped from the layer's own: the envelope sits on the frame grid
+            // and the source window does not, so the last frame can map up to a
+            // frame past `src_out_us` by rounding alone, and the end stops at
+            // the source's.
+            let source_end = timing.source_end(src_out_us).ceil() as i64;
+            let default_out = (timing
+                .content_time(src_in_us, (layer.t_end_us - layer.t_start_us) as f64)
+                .round() as i64)
+                .min(source_end);
+            (
+                timing.content_time(src_in_us, 0.0).floor() as i64,
+                source_end,
+                timing.content_time(src_in_us, 0.0).round() as i64,
+                default_out,
+            )
+        }
+        None => {
+            let end = target.media.metadata.duration_us.ok_or_else(|| {
+                McpToolError::invalid_params(
+                    format!(
+                        "media {} has no known duration — pass src_start_us and src_end_us",
+                        target.media.id
+                    ),
+                    None,
+                )
+            });
+            match (end, src_end_arg) {
+                (Ok(end), _) => (0, end, 0, end),
+                (Err(_), Some(end)) => (0, end, 0, end),
+                (Err(e), None) => return Err(e),
+            }
         }
     };
-
-    let media = media.ok_or_else(|| {
-        McpToolError::invalid_params(
-            format!(
-                "layer {layer_id} references missing media {media_id} (project state is inconsistent)",
-            ),
-            None,
-        )
-    })?;
-    if !matches!(media.kind, crate::state::MediaKind::Video) {
-        return Err(McpToolError::invalid_params(
-            format!("media {media_id} is not a video — describe_clip needs a video source"),
-            None,
-        ));
-    }
-
-    // The default window is the source the layer plays, its endpoints mapped
-    // from the layer's own: the envelope sits on the frame grid and the source
-    // window does not, so the last frame can map up to a frame past
-    // `src_out_us` by rounding alone, and the end stops at the source's.
-    let source_end = timing.source_end(src_out_us).ceil() as i64;
-    let default_in = timing.content_time(src_in_us, 0.0).round() as i64;
-    let default_out = (timing
-        .content_time(src_in_us, (layer.t_end_us - layer.t_start_us) as f64)
-        .round() as i64)
-        .min(source_end);
     // An explicit window is checked against the same span `analyze_clip`
     // clips its shots to, so any shot it returned is a valid window.
-    let span_in = timing.content_time(src_in_us, 0.0).floor() as i64;
     let source_in = src_start_arg.unwrap_or(default_in);
     let source_out = src_end_arg.unwrap_or(default_out);
     if source_out <= source_in {
@@ -2027,21 +2341,26 @@ fn resolve_clip_video_source(
         ));
     }
     if source_in < span_in || source_out > source_end {
+        let whose = if target.layer.is_some() {
+            "the source the layer plays"
+        } else {
+            "the media"
+        };
         return Err(McpToolError::invalid_params(
             format!(
-                "description window [{source_in}, {source_out}] is outside the source the layer plays [{span_in}, {source_end}]",
+                "description window [{source_in}, {source_out}] is outside {whose} [{span_in}, {source_end}]",
             ),
             None,
         ));
     }
 
     Ok(ResolvedClipVideo {
-        media_id,
-        source_path: media.path_abs.clone(),
-        source_hash: media.file_hash_blake3.clone(),
+        media_id: target.media.id,
+        source_path: target.media.path_abs.clone(),
+        source_hash: target.media.file_hash_blake3.clone(),
         source_in_us: source_in,
         source_out_us: source_out,
-        mapping: LayerMapping::of(layer, src_in_us, timing),
+        mapping: target.mapping(),
     })
 }
 
@@ -2051,7 +2370,8 @@ fn resolve_clip_video_source(
 #[derive(Debug, Serialize)]
 struct DescribeClipResult {
     media_id: crate::state::MediaId,
-    mapping: LayerMapping,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mapping: Option<LayerMapping>,
     #[serde(flatten)]
     description: crate::vlm::SceneDescription,
 }
@@ -2096,17 +2416,18 @@ async fn describe_clip_job(
 ) -> Result<ToolResult, McpToolError> {
     use crate::vlm;
 
-    let layer_id = parse_uuid(&args.layer_id, "layer_id")?;
-    let resolved = resolve_clip_video_source(
+    let target = resolve_video_target(
+        args.media_id.as_deref(),
+        args.layer_id.as_deref(),
         args.layer.as_ref(),
         args.media.as_ref(),
-        layer_id,
-        args.src_start_us,
-        args.src_end_us,
+        "describe_clip",
+        "",
     )?;
+    let resolved = resolve_clip_video_source(&target, args.src_start_us, args.src_end_us)?;
 
     let (explicit, preferred) = engine_choice::<vlm::VlmBackend>(
-        args.backend.as_deref(),
+        args.backend.map(VlmEngineArg::tag),
         args.preferred_backend.as_deref(),
     )?;
 
@@ -2142,7 +2463,10 @@ async fn describe_clip_job(
                 source_hash: resolved.source_hash,
                 window: [resolved.source_in_us, resolved.source_out_us],
                 fps: args.fps.unwrap_or(vlm::DEFAULT_FPS),
-                focus: vlm::Focus::parse(args.focus.as_deref()),
+                focus: vlm::Focus::parse(args.focus.map(|f| match f {
+                    FocusArg::General => "general",
+                    FocusArg::ShotType => "shot-type",
+                })),
                 language: vlm::Language::parse(args.language.as_deref()),
                 purpose: args.purpose,
                 refresh: args.refresh,
@@ -2186,7 +2510,8 @@ pub(crate) async fn synthesize_speech_audio(
     let synthesizer = speech::resolve_synthesizer(None, &args.speech_config)
         .ok_or_else(|| McpToolError::invalid_request(speech::NO_SYNTHESIZER_CONFIGURED, None))?;
 
-    let cache_key = speech::backends::openai::tts_cache_key(&args.text, &args.voice, args.speed);
+    let cache_key =
+        speech::backends::openai::tts_cache_key(&args.text, args.voice.as_str(), args.speed);
     // Cache extension hardcoded "mp3": the only TTS provider pins
     // `response_format=mp3`. The `debug_assert!` below trips in dev the first time
     // a provider returns a different format — fix the extension-from-response here.
@@ -2197,7 +2522,7 @@ pub(crate) async fn synthesize_speech_audio(
         let resp = synthesizer
             .synthesize(speech::SynthesizeRequest {
                 text: args.text.clone(),
-                voice: args.voice.clone(),
+                voice: args.voice.as_str().to_string(),
                 speed: args.speed,
             })
             .await

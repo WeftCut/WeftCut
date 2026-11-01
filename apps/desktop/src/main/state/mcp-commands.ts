@@ -1,4 +1,6 @@
 import { RESTYLE_GROUPS } from './mutations/restyleTaste'
+import { CORRECTION_SCRIPT_MAX } from '../../shared/textCorrectionRequest'
+import { pauseAmpFromDb } from '../../shared/pauseLevel'
 import { TEXT_INTROS, TEXT_OUTROS } from '../../shared/textAnimation'
 import { validateTimeFraction } from '../../renderer/layerTiming'
 import { readExactTime } from '../../renderer/timeMapping'
@@ -350,6 +352,37 @@ const ADD_LAYER_CONTENT_KEYS: Record<AddLayerKind, readonly string[]> = {
   text: ['content', 'graphic_role'], color: ['color'], motif: ['motif_id', 'props', 'graphic_role'], group: ['composition_id'],
 }
 export const ADD_LAYERS_MAX = 50
+/** `remove_pauses { pauses }`: one detection's worth of reviewed ranges. */
+export const REMOVE_PAUSES_MAX = 1000
+
+/** `remove_pauses { pauses }`: the reviewed ranges, shape-checked (the hybrid
+ *  checks them against the clip), or undefined to detect. They replace
+ *  detection, so the detection parameters may not ride along. */
+export function parseReviewedPauses(a: Record<string, unknown>): Array<{ t_start_us: number; t_end_us: number }> | undefined {
+  if (a.pauses === undefined || a.pauses === null) return undefined
+  if (a.threshold_db !== undefined || a.min_pause_us !== undefined) throw new McpArgError('pauses replaces detection — send it without threshold_db / min_pause_us', 'pauses')
+  const list = asNonEmptyArray(a.pauses, 'pauses', 'send at least one pause, or omit it to detect')
+  if (list.length > REMOVE_PAUSES_MAX) throw new McpArgError(`pauses holds ${list.length}; at most ${REMOVE_PAUSES_MAX} per call`, 'pauses')
+  return list.map((p, i) => {
+    const o = parseObj(p, `pauses[${i}]`)
+    strictKeys(o, ['t_start_us', 't_end_us'], `pauses[${i}]`)
+    const t_start_us = o.t_start_us, t_end_us = o.t_end_us
+    if (!Number.isSafeInteger(t_start_us) || !Number.isSafeInteger(t_end_us) || (t_start_us as number) < 0 || (t_end_us as number) <= (t_start_us as number))
+      throw new McpArgError(`pauses[${i}] must be { t_start_us, t_end_us } whole timeline µs with t_start_us < t_end_us`, 'pauses')
+    return { t_start_us: t_start_us as number, t_end_us: t_end_us as number }
+  })
+}
+
+/** Refuse a key a tool does not take, so nothing an agent sends is silently
+ *  dropped. A key the surface renamed or folded names what replaced it (no
+ *  alias: the old spelling never dispatches). */
+export function strictKeys(o: Record<string, unknown>, allowed: readonly string[], where: string, replaced: Readonly<Record<string, string>> = {}): void {
+  for (const k of Object.keys(o)) {
+    if (allowed.includes(k)) continue
+    const instead = replaced[k]
+    throw new McpArgError(instead ? `${where}: '${k}' is not an argument any more — ${instead}` : `${where}: unknown key '${k}'; expected ${allowed.join(', ')}`, k)
+  }
+}
 const ADD_LAYER_KEYS: readonly string[] = ['track_id', 't_start_us', 't_end_us', 'label', 'transform', 'content']
 const ADD_LAYER_TRANSFORM_KEYS: readonly string[] = ['x', 'y', 'scale', 'rotation_deg', 'opacity']
 export type AddLayerContent =
@@ -719,19 +752,19 @@ const AUDIO_ROLES = new Set(['dialogue', 'music', 'sfx', 'voiceover'])
  *  a settings change that changed nothing. */
 const PROJECT_SETTINGS_KEYS = new Set([
   'auto_pair_audio_on_import', 'prefer_proxies', 'proxy_override',
-  'shot_review', 'pause_review', 'correction_script',
+  'shot_review', 'pause_review',
 ])
 export function parseProjectSettingsPatch(v: unknown): Record<string, unknown> {
   const patch = parseObj(v, 'patch')
   const keys = Object.keys(patch)
   if (keys.length === 0) throw new McpArgError('patch names no setting; a call that changes nothing would still report success', 'patch')
   for (const k of keys) {
+    if (k === 'correction_script') throw new McpArgError("correction_script is not an MCP setting — pass the transcript to correct_caption_text { script }", 'patch')
     if (!PROJECT_SETTINGS_KEYS.has(k)) throw new McpArgError(`unknown setting '${k}'; set_project_settings writes ${[...PROJECT_SETTINGS_KEYS].join(', ')}`, 'patch')
   }
   const out: Record<string, unknown> = {}
   if ('auto_pair_audio_on_import' in patch) out.auto_pair_audio_on_import = parseBoolTriState(patch.auto_pair_audio_on_import, 'auto_pair_audio_on_import')
   if ('prefer_proxies' in patch) out.prefer_proxies = parseBoolTriState(patch.prefer_proxies, 'prefer_proxies')
-  if ('correction_script' in patch) out.correction_script = parseStr(patch.correction_script, 'correction_script')
   if ('proxy_override' in patch) {
     const o = patch.proxy_override
     out.proxy_override = o === null ? null : (() => {
@@ -742,9 +775,14 @@ export function parseProjectSettingsPatch(v: unknown): Record<string, unknown> {
   // Passed through as sent: the actor refuses a malformed tuple whole, naming
   // the field and the bound it missed, which is a better error than a shape
   // check here could give.
-  for (const k of ['shot_review', 'pause_review'] as const) {
-    if (k in patch) out[k] = patch[k] === null ? null : parseObj(patch[k], k)
-  }
+  if ('shot_review' in patch) out.shot_review = patch.shot_review === null ? null : parseObj(patch.shot_review, 'shot_review')
+  if ('pause_review' in patch) out.pause_review = patch.pause_review === null ? null : (() => {
+    const o = parseObj(patch.pause_review, 'pause_review')
+    strictKeys(o, ['threshold_db', 'min_pause_us', 'pad_us'], 'pause_review', { threshold_amp: 'send threshold_db (dBFS)' })
+    const db = parseNum(o.threshold_db, 'pause_review.threshold_db')
+    if (!(db <= 0)) throw new McpArgError(`pause_review.threshold_db ${db} must be at or below 0 dBFS`, 'pause_review.threshold_db')
+    return { threshold_amp: pauseAmpFromDb(db), min_pause_us: o.min_pause_us, pad_us: o.pad_us }
+  })()
   return out
 }
 
@@ -1275,15 +1313,18 @@ export function keyframePresent(track: { mode: string; value: unknown }, id: str
  *  be a second list that knows nothing the table does not). The spec's defaults are `readOnlyHint: false`, `destructiveHint: true`,
  *  `idempotentHint: false`; each constant states only what differs from them,
  *  and every def carries one, which the type enforces. */
-export interface ToolAnnotations { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean }
+export interface ToolAnnotations { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean }
+// `openWorldHint: false` on every TS tool: they act on this machine's project
+// only (the spec's default is true). The tools that may reach a cloud engine
+// are Rust's (transcribe, describe, synthesize) and say so there.
 /** A read: commits nothing; the agent panel folds it as a quick read. */
-export const ANN_READ: ToolAnnotations = { readOnlyHint: true }
+export const ANN_READ: ToolAnnotations = { readOnlyHint: true, openWorldHint: false }
 /** A write that creates or shifts — calling it twice does it twice. */
-export const ANN_WRITE: ToolAnnotations = { destructiveHint: false }
+export const ANN_WRITE: ToolAnnotations = { destructiveHint: false, openWorldHint: false }
 /** A write that sets state — the same call twice leaves the same state. */
-export const ANN_SET: ToolAnnotations = { destructiveHint: false, idempotentHint: true }
+export const ANN_SET: ToolAnnotations = { destructiveHint: false, idempotentHint: true, openWorldHint: false }
 /** A write that removes or reverts: what it takes away, undo (or a checkpoint) is the way back to. */
-export const ANN_DESTRUCTIVE: ToolAnnotations = { destructiveHint: true }
+export const ANN_DESTRUCTIVE: ToolAnnotations = { destructiveHint: true, openWorldHint: false }
 
 export interface McpToolDef {
   name: string
@@ -2027,7 +2068,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // composition renders at, this one owns the preferences the EDITOR works by,
   // and both are setup rather than editing, so neither records.
   { name: 'set_project_settings', exec: 'table', annotations: ANN_SET,
-    description: "Update the project's editing preferences; only the fields you send apply, and an unknown key or an empty patch is refused. Unrecorded — preferences are setup, patched into every history snapshot, so undo walks past them (the `update_composition` contract). Fields: `auto_pair_audio_on_import`, `prefer_proxies`, `proxy_override`, `shot_review`, `pause_review` (the last two validated and refused as a whole, against the detectors' own bounds; `null` clears one back to defaults), `correction_script` (what `correct_caption_text` corrects against). Returns `{ settings, changed }`; `changed` names the fields that moved (empty: all already set). Read current values from `project://settings`.",
+    description: "Update the project's editing preferences; only the fields you send apply, and an unknown key or an empty patch is refused. Unrecorded — preferences are setup, patched into every history snapshot, so undo walks past them (the `update_composition` contract). Fields: `auto_pair_audio_on_import`, `prefer_proxies`, `proxy_override`, `shot_review`, `pause_review` (the last two validated and refused as a whole, against the detectors' own bounds; `null` clears one back to defaults). Returns `{ settings, changed }`; `changed` names the fields that moved (empty: all already set). Read current values from `project://settings`.",
     inputSchema: { type: 'object', properties: { patch: {
       type: 'object',
       description: "Settings patch. Only the fields you include are applied; `null` has a per-field meaning given below and is never 'unset'.",
@@ -2036,8 +2077,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         prefer_proxies: { type: 'boolean', description: 'Whether preview reads generated proxies rather than the original media. A playback preference; export always reads the original.' },
         proxy_override: { type: 'object', description: "Per-media exception to `prefer_proxies`, read back as `settings.proxy_overrides[media_id]`. An unknown media id is refused.", properties: { media_id: { type: 'string', description: 'A pool media id.' }, value: { type: ['boolean', 'null'], description: 'true / false pins the item; null removes the exception.' } }, required: ['media_id', 'value'] },
         shot_review: { type: ['object', 'null'], description: "Shot-detection parameters `analyze_clip` / `auto_split_by_shot` run at, or `null` for the defaults. `sensitivity` in [0, 1]; `min_shot_us` > 0.", properties: { sensitivity: { type: 'number', description: 'Cut sensitivity 0..1.' }, min_shot_us: US_SCHEMA('Shortest shot kept') }, required: ['sensitivity', 'min_shot_us'] },
-        pause_review: { type: ['object', 'null'], description: "Pause parameters `detect_pauses` / `remove_pauses` run at, or `null` for their defaults. `threshold_amp` in [0, 1], `min_pause_us` > 0, `pad_us` >= 0 with `2 * pad_us < min_pause_us`.", properties: { threshold_amp: { type: 'number', description: 'Peak amplitude below which audio counts as a pause, 0..1.' }, min_pause_us: US_SCHEMA('Shortest pause detected'), pad_us: US_SCHEMA('Kept on each side of a cut pause') }, required: ['threshold_amp', 'min_pause_us', 'pad_us'] },
-        correction_script: { type: 'string', description: "Reference text `correct_caption_text` corrects against — the script, notes, the spelling of every name. Must be set before that call." },
+        pause_review: { type: ['object', 'null'], description: "The Pauses section's parameters, or `null` for the defaults. `threshold_db` ≤ 0, `min_pause_us` > 0, `pad_us` >= 0 with `2 * pad_us < min_pause_us`.", properties: { threshold_db: { type: 'number', description: 'Peak level below which audio counts as a pause, dBFS.' }, min_pause_us: US_SCHEMA('Shortest pause detected'), pad_us: US_SCHEMA('Kept on each side of a cut pause') }, required: ['threshold_db', 'min_pause_us', 'pad_us'] },
       },
     } }, required: ['patch'] },
     parseArgs: (a) => ({ op: 'update_project_settings', args: { patch: parseProjectSettingsPatch(a.patch) } }) },
@@ -2122,28 +2162,6 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         groups,
       }
     } },
-  { name: 'restyle_captions', exec: 'table', annotations: ANN_SET,
-    description: "Restyle the captions in one recorded edit — EVERY Text layer on every caption-role track in every composition, so multiplied caption lanes stay one look, or only `layer_ids` (each must be a caption). Omitted or `null` fields are left alone. `outline_width: 0` removes the outline; a positive width adds or resizes one (keeping its colour, black if it had none). Sizes are composition px. A Text layer from `add_layers` is not a caption — style it with `update_layer_params`.",
-    inputSchema: { type: 'object', properties: {
-      font_family: { type: 'string', description: 'Font family for every caption.' },
-      font_size_px: { type: 'number', description: 'Font size, composition px.' },
-      color: { ...RGBA_SCHEMA, description: 'Text colour.' },
-      outline_width: { type: 'number', description: '0 removes the outline; a positive width (composition px) adds or resizes it.' },
-      layer_ids: LAYER_IDS_SCHEMA('Only these captions. Omit for every caption in the project.'),
-    }, required: [] },
-    parseArgs: (a) => {
-      const patch = {
-        font_family: parseStrOpt(a.font_family, 'font_family'),
-        font_size_px: parseNumOpt(a.font_size_px, 'font_size_px') ?? null,
-        color: a.color === undefined || a.color === null ? null : parseRgba(a.color, 'color'),
-        outline_width: parseNumOpt(a.outline_width, 'outline_width') ?? null,
-      }
-      if (Object.values(patch).every((v) => v === null || v === undefined)) throw new McpArgError('patch names no style — send at least one of font_family, font_size_px, color, outline_width; a call that changes nothing would still report success', 'font_family')
-      return { op: 'restyle_captions', args: {
-        layer_ids: a.layer_ids === undefined || a.layer_ids === null ? null : asNonEmptyArray(a.layer_ids, 'layer_ids', 'omit it to restyle every caption, or name at least one').map((s) => parseUuid(s, 'layer_ids')),
-        patch,
-      } }
-    } },
   { name: 'merge_captions', exec: 'table', annotations: ANN_DESTRUCTIVE,
     description: "Merge two or more captions of ONE caption lane into the earliest, as one recorded edit: its span becomes the union, its text the texts joined by a line break in time order, its style stays; the others are deleted. A gap between them is spanned. Refuses a layer that is not a caption, captions on different lanes, and a union that would overlap another cue of the lane (`LayerOverlap`). Returns the merged caption's record with `removed`.",
     inputSchema: { type: 'object', properties: { layer_ids: LAYER_IDS_SCHEMA('Two or more captions on one caption track.') }, required: ['layer_ids'] },
@@ -2186,19 +2204,20 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // agent has no reason to hold one, so the arm supplies it from the state it
   // is already reading.
   { name: 'apply_transcripts', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Lay transcripts on the caption tracks, keeping per-word timing (`correct_caption_text` re-segments by it); returns `{ caption_track_id, cues }`. Pass `transcribe_clip`'s envelope as is, or your own cues with `word_timing: 'none'`, unsplit: cues are built to the style's caption limits (lines broken, long segments split). Cues pack into the existing caption tracks, opening a lane only when all collide, and snap to frames. `source_layer_ids`, parallel to `transcripts`, tags each cue with its clip so corrections group by take. At most 1000 transcripts. One recorded edit.",
+    description: "Lay transcripts on the caption tracks of `composition_id` (root by default), keeping per-word timing. Pass `transcribe_clip`'s `transcripts` as is, or your own cues with `word_timing: 'none'`, unsplit: cues are built to the style's caption limits (lines broken, long segments split). A transcript whose `source` clip changed since it was transcribed (trimmed, cut, moved) is refused: transcribe it again. Cues pack into the existing caption tracks, opening a lane only when all collide, and snap to frames. Returns `{ caption_track_id, cue_layer_ids }`, cues in time order. At most 1000 transcripts. One recorded edit.",
     inputSchema: { type: 'object', properties: {
-      transcripts: { type: 'array', description: "One entry per transcribed clip, in the shape `transcribe_clip` returns.", items: {
+      transcripts: { type: 'array', maxItems: 1000, description: "`transcribe_clip`'s `transcripts`, or your own in that shape.", items: {
         type: 'object',
         properties: {
-          word_timing: { type: 'string', enum: ['exact', 'interpolated_from_cue', 'none'], description: "`transcribe_clip`'s field of the same name: where the word offsets came from. `none` stores cues with no word timing." },
-          segments: { type: 'array', description: 'Cues, with timeline-absolute microsecond bounds.', items: {
+          source: { type: 'object', description: 'The clip it was transcribed from, as `transcribe_clip` names it; a `signature` that no longer matches refuses.', properties: { layer_id: { type: 'string', description: 'The layer that was read.' }, signature: { type: 'string', description: 'Its state when read.' } }, required: ['layer_id'] },
+          word_timing: { type: 'string', enum: ['exact', 'interpolated_from_cue', 'none'], description: "Where the word offsets came from. `none` stores cues with no word timing." },
+          segments: { type: 'array', description: 'Cues, timeline µs.', items: {
             type: 'object',
             properties: {
-              text: { type: 'string', description: 'The cue text.' }, t_start_us: US_SCHEMA('Cue start, timeline-absolute'), t_end_us: US_SCHEMA('Cue end (exclusive), timeline-absolute'),
-              words: { type: 'array', description: 'Word offsets, timeline-absolute like the cue. Empty is allowed.', items: {
+              text: { type: 'string', description: 'The cue text.' }, t_start_us: US_SCHEMA('Cue start, timeline'), t_end_us: US_SCHEMA('Cue end (exclusive), timeline'),
+              words: { type: 'array', description: 'Word offsets, timeline µs like the cue. Empty is allowed.', items: {
                 type: 'object',
-                properties: { text: { type: 'string', description: 'The word.' }, t_start_us: US_SCHEMA('Word start, timeline-absolute'), t_end_us: US_SCHEMA('Word end (exclusive), timeline-absolute') },
+                properties: { text: { type: 'string', description: 'The word.' }, t_start_us: US_SCHEMA('Word start, timeline'), t_end_us: US_SCHEMA('Word end (exclusive), timeline') },
                 required: ['text', 't_start_us', 't_end_us'],
               } },
             },
@@ -2207,26 +2226,44 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
         },
         required: ['word_timing', 'segments'],
       } },
-      source_layer_ids: { type: 'array', items: { type: 'string' }, description: 'Parallel to `transcripts`: the layer each was transcribed from.' },
-      composition_id: COMPOSITION_ID_SCHEMA,
+      composition_id: CAPTIONS_COMPOSITION_ID_SCHEMA,
     }, required: ['transcripts'] },
-    parseDedicated: (a) => ({
-      transcripts: asArray(a.transcripts, 'transcripts').map((t) => parseObj(t, 'transcripts')),
-      source_ids: a.source_layer_ids === undefined || a.source_layer_ids === null
-        ? [] : asArray(a.source_layer_ids, 'source_layer_ids').map((x) => parseUuid(x, 'source_layer_ids')),
-      composition_id: parseCompositionIdOpt(a.composition_id),
-    }) },
+    parseDedicated: (a) => {
+      strictKeys(a, ['transcripts', 'composition_id'], 'apply_transcripts', { source_layer_ids: "each transcript names its clip in `source`" })
+      const list = asArray(a.transcripts, 'transcripts')
+      if (list.length > 1000) throw new McpArgError(`transcripts holds ${list.length}; at most 1000 per call`, 'transcripts')
+      return {
+        transcripts: list.map((t, i) => {
+          const o = parseObj(t, `transcripts[${i}]`)
+          // The envelope's informational fields ride along unread.
+          strictKeys(o, ['source', 'word_timing', 'segments', 'backend', 'fallback', 'language', 'input_normalization'], `transcripts[${i}]`)
+          if (o.source === undefined || o.source === null) return o
+          const src = parseObj(o.source, `transcripts[${i}].source`)
+          strictKeys(src, ['layer_id', 'signature'], `transcripts[${i}].source`)
+          return { ...o, source: { layer_id: parseUuid(src.layer_id, `transcripts[${i}].source.layer_id`), ...(src.signature === undefined ? {} : { signature: parseStr(src.signature, `transcripts[${i}].source.signature`) }) } }
+        }),
+        composition_id: parseCompositionIdOpt(a.composition_id),
+      }
+    } },
   { name: 'correct_caption_text', exec: 'dedicated', annotations: ANN_WRITE,
-    description: "Correct the captions against the project's reference text — `set_project_settings { correction_script }` — and re-segment the cues the correction changed. Returns `{ changed }`, counting a re-segmented group whole. Refused while the script is blank (`InvalidArgument`, field `correction_script`). Every caption in the composition by default; `layer_ids` narrows it (a non-caption id refuses the call). A cue with word timing (see `apply_transcripts`) may be SPLIT or MERGED to match the new wording, each timed from its words; one without it is corrected in place. Refuses whole, before any write, if a target or its track is locked. One recorded edit.",
+    description: "Correct caption TEXT against `script`, the full verbatim transcript of what is said (not notes or a glossary): each cue's words are aligned to it and misheard words, names and terms replaced. Cue segmentation and timing never change. Refuses (`InvalidArgument`, field `script`) when under half of the caption words align to it. Every caption in `composition_id` (root by default); `layer_ids` narrows it (a non-caption id refuses). Returns `{ changed, match_ratio, changes: [{ layer_id, before, after }] }`, at most 20 listed (`changed` counts all). Refuses whole, before any write, if a target or its track is locked. One recorded edit; nothing to change records nothing.",
     inputSchema: { type: 'object', properties: {
+      script: { type: 'string', maxLength: CORRECTION_SCRIPT_MAX, description: 'The full verbatim transcript of the speech these captions show, correctly spelled.' },
       layer_ids: { type: 'array', items: { type: 'string' }, description: 'The captions to correct. Omit for every caption in the composition.' },
       composition_id: CAPTIONS_COMPOSITION_ID_SCHEMA,
-    }, required: [] },
-    parseDedicated: (a) => ({
-      layer_ids: a.layer_ids === undefined || a.layer_ids === null
-        ? null : asArray(a.layer_ids, 'layer_ids').map((x) => parseUuid(x, 'layer_ids')),
-      composition_id: parseCompositionIdOpt(a.composition_id),
-    }) },
+    }, required: ['script'] },
+    parseDedicated: (a) => {
+      strictKeys(a, ['script', 'layer_ids', 'composition_id'], 'correct_caption_text')
+      const script = parseStr(a.script, 'script')
+      if (!script.trim()) throw new McpArgError('script is blank — pass the full verbatim transcript the captions should match', 'script')
+      if (script.length > CORRECTION_SCRIPT_MAX) throw new McpArgError(`script is ${script.length} characters; at most ${CORRECTION_SCRIPT_MAX}`, 'script')
+      return {
+        script,
+        layer_ids: a.layer_ids === undefined || a.layer_ids === null
+          ? null : asNonEmptyArray(a.layer_ids, 'layer_ids', 'omit it to correct every caption, or name at least one').map((x) => parseUuid(x, 'layer_ids')),
+        composition_id: parseCompositionIdOpt(a.composition_id),
+      }
+    } },
   { name: 'split_layer', exec: 'dedicated', annotations: ANN_WRITE,
     description: "Split at sorted, grid-snapped times in one atomic edit. Each half retains its mapped content window. Linked members are cut too and form a separate link per segment unless escape_link. Returns layer_ids, the actual at_t_us and `siblings: [{ layer_id, segments }]`, each link partner cut with it.",
     inputSchema: { type: 'object', properties: {
@@ -2448,14 +2485,23 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { layer_id: { type: 'string', description: 'The VideoClip to split.' }, min_shot_us: US_SCHEMA('Shortest shot to keep; default 500000'), drop_short: { type: 'boolean', description: 'Also delete segments shorter than min_shot_us, with the overlapping members of their link. Default false.' } }, required: ['layer_id'] },
     parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), min_shot_us: parseNumOpt(a.min_shot_us, 'min_shot_us'), drop_short: parseBoolOpt(a.drop_short, 'drop_short', false) }) },
   { name: 'remove_pauses', exec: 'dedicated', annotations: ANN_DESTRUCTIVE,
-    description: "Remove detected pauses and ripple downstream clips as one edit. Audio or VideoClip with linked audio. Defaults match detect_pauses; pad_us keeps 100000 µs on each side, while edge pauses trim entirely. Link members are cut together. Returns surviving_layer_ids, removed and removed_us. Refuses locks, ripple collisions, straddling links and an entirely silent clip. Review with detect_pauses and anchored markers first.",
+    description: "Cut pauses out of the audio a clip plays and ripple downstream, as one edit. `layer_id` is an Audio layer, or a VideoClip read through its linked Audio member; link members are cut together, on the frame grid when picture is linked. `pauses` cuts exactly those ranges (`detect_pauses` output, e.g. the subset the user kept); without it the clip is detected at `threshold_db` / `min_pause_us` (detect_pauses' defaults). `pad_us` keeps 100000 µs of each pause on each side; a pause at a clip edge trims whole. Returns `{ surviving_layer_ids, removed, removed_us }`. To review first: `detect_pauses`, then one `create_tacks` batch. Refuses whole, before any write: `RippleInsideHole` (a layer on another track starts inside a pause), `RippleCollision`, `RippleLinkStraddles`, `RippleLockedLayer` / `TrackLocked`, `InvalidArgument` (pad too large, a pause outside the clip or overlapping another, a clip silent end to end).",
     inputSchema: { type: 'object', properties: {
       layer_id: { type: 'string', description: 'Target Audio layer id, or a VideoClip id that delegates to its linked Audio layer.' },
-      threshold_amp: { type: 'number', description: "Peak amplitude threshold in [0.0, 1.0], the same parameter `detect_pauses` takes. Omit to use that tool's own default." },
-      min_pause_us: { type: 'integer', description: "Shortest pause worth removing, in microseconds — the same parameter `detect_pauses` takes. Omit to use that tool's own default." },
+      pauses: { type: 'array', minItems: 1, maxItems: REMOVE_PAUSES_MAX, description: 'Timeline ranges to cut, as `detect_pauses` returned them; replaces detection, so not with `threshold_db` / `min_pause_us`.', items: { type: 'object', properties: {
+        t_start_us: US_SCHEMA('Pause start, timeline'), t_end_us: US_SCHEMA('Pause end (exclusive), timeline'),
+      }, required: ['t_start_us', 't_end_us'], additionalProperties: false } },
+      threshold_db: { type: 'number', description: "Peak threshold, dBFS (≤ 0), as `detect_pauses` takes it. Omit for its default." },
+      min_pause_us: { type: 'integer', description: "Shortest pause worth removing, µs, as `detect_pauses` takes it. Omit for its default." },
       pad_us: { type: 'integer', description: 'Microseconds of each pause KEPT on each side. Default 100000; 0 erases each pause whole. Must satisfy 2 * pad_us < min_pause_us.' },
     }, required: ['layer_id'] },
-    parseDedicated: (a) => ({ layer: parseUuid(a.layer_id, 'layer_id'), threshold_amp: parseNumOpt(a.threshold_amp, 'threshold_amp'), min_pause_us: parseNumOpt(a.min_pause_us, 'min_pause_us'), pad_us: parseNumOpt(a.pad_us, 'pad_us') }) },
+    parseDedicated: (a) => {
+      strictKeys(a, ['layer_id', 'pauses', 'threshold_db', 'min_pause_us', 'pad_us'], 'remove_pauses', { threshold_amp: 'send threshold_db (dBFS)' })
+      const pauses = parseReviewedPauses(a)
+      const threshold_db = parseNumOpt(a.threshold_db, 'threshold_db')
+      if (threshold_db !== undefined && !(threshold_db <= 0)) throw new McpArgError(`threshold_db ${threshold_db} must be at or below 0 dBFS`, 'threshold_db')
+      return { layer: parseUuid(a.layer_id, 'layer_id'), threshold_db, min_pause_us: parseNumOpt(a.min_pause_us, 'min_pause_us'), pad_us: parseNumOpt(a.pad_us, 'pad_us'), ...(pauses ? { pauses } : {}) }
+    } },
   // ── dedicated-exec: reads, for a client without MCP resources ─────────────
   { name: 'read_project', exec: 'dedicated', annotations: ANN_READ,
     description: "The `project://*` views as a tool result, for clients without resources. `view`: `current`, `composition`, `compositions`, `media` (with `id`, one item's card), `tracks` (layer envelopes), `layer` (needs `id`), `markers`, `links`, `transitions`, `settings` (preferences + metadata), `history`, `session` (who holds the session), `effects` (effects catalog), `tacks` (review tacks; `composition_id` narrows), `taste` (style tokens + provenance), `media_thumbnail` / `media_frame` (an IMAGE; `id` is the media id, `media_frame` takes `src_us`). `composition`, `tracks`, `markers`, `links`, `transitions` take `composition_id` for a Group's, the root when omitted. JSON views answer as text.",

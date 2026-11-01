@@ -132,8 +132,12 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   for Rust tools. Every schema property has an explicit `type` (clients coerce
   untyped fields to strings). Every tool has `annotations` — `readOnlyHint`
   on reads, `destructiveHint` on writes (true for removals and reverts),
-  `idempotentHint` on sets — and the agent panel's read/write split reads the
-  same flag.
+  `idempotentHint` on sets (and `import_media`), `openWorldHint: false` on
+  every tool that stays on this machine and `true` on `transcribe_clip`,
+  `describe_clip` and `synthesize_speech`, whose engine may upload — and the
+  agent panel's read/write split reads the same flag. An argument a tool does
+  not take is refused naming the accepted set (a renamed one names its
+  replacement), never dropped.
 - **Names** follow `<verb>_<resource>`, `delete_*` for every removal, one
   `update_*` per resource with optional fields; a field's set and clear are one
   tool taking `null`. A rename is a break: the old name gets `unknown tool`
@@ -313,22 +317,37 @@ deleted entities keep a name).
 - `detect_pauses` — pauses from the peaks of what plays: the baked effect
   sibling's when ready, else the media's (`peaks_source` `fx`/`raw`). A
   VideoClip resolves to its linked Audio member sharing its media
-  ([features.md](features.md#pauses)). `noise_floor_amp` is what to derive a
-  threshold from. Defaults `threshold_amp=0.02`, `min_pause_us=500000`,
-  `bridge_us=80000`.
-- `remove_pauses` — the same detection, then cut each pause's core (keeping
-  `pad_us`, default 100 ms, at each end) and close the gaps, as one recorded
-  edit. Linked partners are cut on the frame grid together. Refuses whole with
-  `delete_layers { ripple: true }`'s refusals by name. For review first, use
-  `detect_pauses` + one `create_tacks` batch.
+  ([features.md](features.md#pauses)). Levels are dBFS: `threshold_db`
+  (default -34) and `noise_floor_db`, what to derive a threshold from (null in
+  silence). `min_pause_us` defaults to 500000. The 80 ms bridge (a louder run
+  that does not end a pause) is a constant, as in the UI, so a reviewed
+  detection is the set a cut repeats.
+- `remove_pauses` — the same detection, or `pauses` (reviewed
+  `detect_pauses` ranges, cut exactly as given), then cut each pause's core
+  (keeping `pad_us`, default 100 ms, at each end) and close the gaps, as one
+  recorded edit. Linked partners are cut on the frame grid together. Refuses
+  whole with `delete_layers { ripple: true }`'s refusals by name, and a
+  reviewed pause outside the clip, overlapping another or no longer than its
+  pad. For review first, use `detect_pauses` + one `create_tacks` batch, then
+  `remove_pauses { pauses }` with the ranges the user kept. The project's
+  `pause_review` setting speaks `threshold_db` too (stored as amplitude).
+- `analyze_clip`, `describe_clip`, `compare_frames` read a video's SOURCE and
+  are addressed like it: `media_id` (a pooled item, placed or not — B-roll is
+  scanned and described without scratch layers) or `layer_id` (a VideoClip:
+  the answer is clipped to the source it plays and carries its `mapping`).
+  Either way the answer is `src_*`.
 - `analyze_clip` — deterministic shot boundaries (`src_start_us`,
   `src_end_us`, `src_keyframe_us`), `cut_scores` (`src_us`) and per-shot
-  brightness / motion / sharpness and `black` / `freeze` / `fade` flags for a
-  VideoClip, with `media_id` and the layer's `mapping`. Defaults `sensitivity=0.4`,
+  stats from three frames (near each end and the midpoint): `brightness`
+  (midpoint mean luma 0..1), `motion` (1 − SSIM of the end frames),
+  `sharpness` (variance of the Laplacian of 0..1 luma, about 0.001–0.05;
+  relative within a source) and the flags with their thresholds — `black`
+  (all three below luma 0.02), `freeze` (SSIM ≥ 0.985 across them), `fade` (a
+  monotonic luma ramp ≥ 0.15 touching below 0.10). Defaults `sensitivity=0.4`,
   `min_shot_us=500000` (`shot_default_opts`). Stats are advisory (proxy
   decode); flags are deterministic.
 - `compare_frames` — pHash Hamming distance + MSSIM of two source frames
-  (`{ layer_id, src_us }` each);
+  (`{ media_id | layer_id, src_us }` each);
   `similar` = `phash_hamming <= 10 && ssim >= 0.5`. Cross-aspect pairs lean on
   the pHash.
 - `describe_clip`, `transcribe_clip`, `extract_clip_audio` — see *Speech* and
@@ -339,13 +358,16 @@ deleted entities keep a name).
 Each maps to an actor command ([data-model.md](data-model.md) "Mutation
 surface").
 
-Media and tracks: `import_media` (absolute or project-relative path; a file
-the pool already holds — same file or same bytes — answers `existing: true`,
-or relinks a missing item and answers `relinked: true`; files outside `Media/`
-are copied in, ADR 0151, and the answer's `path` / `path_rel` name the pooled
-copy — reserved under `Media/` when the copy is queued, with `copying: true`
-until it lands; subtitle documents become `Subtitle` items; `.svg` is
-rasterised once to a 2048-px PNG), `delete_media` (`force` cascades like
+Media and tracks: `import_media { paths }` (1–50 absolute or
+project-relative paths, every one checked before any is imported — a
+directory or missing file refuses the call; answers `media: [record]` in path
+order; a file the pool already holds — same file or same bytes — answers
+`existing: true`, so the tool is idempotent, or relinks a missing item and
+answers `relinked: true`; files outside `Media/` are copied in, ADR 0151, and
+each record's `path` / `path_rel` name the pooled copy — reserved under
+`Media/` when the copy is queued, with `copying: true` until it lands;
+subtitle documents become `Subtitle` items; `.svg` is rasterised once to a
+2048-px PNG), `delete_media` (`force` cascades like
 `delete_layers`), `add_track`, `delete_track` (A/B roll protected),
 `rename_track`, `move_track` (refuses the reserved A roll / B roll —
 `TrackReserved`, they keep their place as `restack_layer` keeps them — and a
@@ -433,14 +455,20 @@ A gap closes with `shift_layers` and a negative delta, by the same rules
 depends on the tool: only `delete_layers` and `move_layers` have a
 `layer_ids` to widen.
 
-Captions: `apply_transcripts` (keeps word timing; builds cues to the style's
+Captions: one scope rule for the family — `composition_id`, the root when
+omitted. `apply_transcripts` (keeps word timing; builds cues to the style's
 caption limits — line breaks, `max_lines`, `max_cue_s`, `min_cue_s`; ≤ 1000
-transcripts), `apply_subtitles` (lays a whole `Subtitle` item onto caption
-tracks, ADR 0026, [captions.md](captions.md#ingestion)), `correct_caption_text` (against
-`correction_script`; may split or merge word-timed cues), `restyle_to_taste`
-(Text and Motif layers back to style tokens; groups `look`/`position`/`motion`,
-default look + motion), `restyle_captions` (every caption in the project, or
-`layer_ids`), `merge_captions`, `export_captions` (SRT/WebVTT body; a read;
+transcripts; refuses a transcript whose `source` signature no longer matches
+its clip; answers `cue_layer_ids` in time order), `apply_subtitles` (lays a
+whole `Subtitle` item onto caption tracks, ADR 0026,
+[captions.md](captions.md#ingestion)), `correct_caption_text { script }`
+(the full verbatim transcript, passed per call; text only, never cue
+boundaries or timing; refuses when under half the caption words align to it;
+answers `changes: [{ layer_id, before, after }]`, ≤ 20 listed),
+`restyle_to_taste` (Text and Motif layers back to style tokens; groups
+`look`/`position`/`motion`, default look + motion — a caption look change is a
+caption-token edit plus `{ captions: true }`; the panel's explicit restyle is
+not an MCP tool), `merge_captions`, `export_captions` (SRT/WebVTT body; a read;
 `range` takes `start_export`'s span, snaps it the same way, clips cues to it
 and shifts them to 0).
 
@@ -774,8 +802,8 @@ Export jobs are application-session jobs shared with the UI (ADR 0111).
 
 User-invoked workflows (slash menu / command palette), `native/src/mcp/prompts.rs`:
 
-- `/auto-caption` — `transcribe_clip` → `apply_transcripts` with the clip as
-  `source_layer_ids`.
+- `/auto-caption` — `transcribe_clip` → `apply_transcripts` with its
+  `transcripts` as they came.
 - `/cut-pauses` — one `remove_pauses` call, with the review-first alternative
   (`detect_pauses` → one `create_tacks` batch of region tacks) and what each
   ripple refusal means.
@@ -938,22 +966,32 @@ OpenAI-compatible transcription server (ADR 0036). Keys live in `safeStorage`;
 main injects the selected model's config into every call that resolves an
 engine, so the Rust resolver is stateless. Transcription uses the model
 selected in Settings → Transcription (a picker that activates a model only
-after its downloads install and a minimal inference succeeds) and otherwise
-errors naming the remedy; nothing is substituted (ADR 0064). An OpenAI key
-also enables `synthesize_speech`; TTS picks by preference, then a default
-order. Unconfigured speech tools stay listed and
-refuse naming the Settings panel.
+after its downloads install and a minimal inference succeeds); nothing is
+substituted (ADR 0064). When it cannot run and the call names no `backend`,
+the refusal says it is the model selected in Settings, names what is missing,
+and lists the options: repair or reselect it, a ready local engine to pass as
+`backend`, or an engine that uploads (`openai`, `byo_endpoint`) — only with the
+user's consent. An OpenAI key also enables
+`synthesize_speech`; TTS picks by preference, then a default order.
+Unconfigured speech tools stay listed and refuse naming the Settings panel.
 
-- `transcribe_clip` — a timeline-absolute transcript envelope `{ backend,
-  segments (with words), language, word_timing }` for a layer window, ready for
-  `apply_transcripts`. `word_timing` is `exact` (engine token offsets) or
-  `interpolated_from_cue`. Retimed times are projected by the playback rate.
+- `transcribe_clip { layer_ids }` — one timeline-absolute envelope per layer,
+  in order: `{ source { layer_id, signature }, backend, segments (with
+  words), language, word_timing }`, ready for `apply_transcripts`; a
+  layer that refuses goes to `failed` with its message. A VideoClip is read
+  through its linked Audio member, the audio that plays (the rule
+  `detect_pauses`, `remove_pauses` and `extract_clip_audio` share).
+  `word_timing` is `exact` (engine token offsets) or `interpolated_from_cue`.
+  Retimed times are projected by the playback rate. `language` is BCP-47 (the
+  engine gets its primary subtag); a model whose catalog entry lists its
+  languages (`paraformer-zh`: `zh`) refuses a requested or detected language
+  outside them, `LanguageNotCovered`, with the ready engines that cover it.
   Network engines get audio over 10 min in pieces cut at the quietest 200 ms
   near each mark. `backend` is a **strict** override (that engine or an error
-  naming the missing piece); without it the selected model serves the call or
-  it errors. `word_timestamps` defaults to true;
+  naming the missing piece). `word_timestamps` defaults to true;
   `normalize_audio` (default false) applies constant gain toward −3 dBFS
-  (≤ +24 dB) to a private copy and reports it.
+  (≤ +24 dB) to a private copy and reports it. A retry after a client timeout
+  joins the running job.
 - `extract_clip_audio` — for an agent with its own speech model: a JSON block
   plus a base64 mono 16 kHz 16-bit WAV of the **original source audio** (before
   gain, effects, mix), ≤ 60 s of source per call; the block's window is
@@ -961,8 +999,11 @@ refuse naming the Settings panel.
   so offset `w` maps to `t_start_us + w / rate`. Resolves no backend, uploads nothing, needs
   nothing configured.
 - `synthesize_speech` — OpenAI tts-1 to `Cache/voiceover/<hash>.mp3`,
-  imported and placed on an Audio track (default start: composition end;
-  `cached` means no API call was billed).
+  imported and placed as a voiceover Audio layer in `composition_id` (root by
+  default; start: that composition's end; lane: `target_track_id`, else the
+  topmost unlocked track whose audio lane is free across the clip, else a new
+  "Voiceover" track). One placement or none: a refused placement takes the
+  new pool row back out. `cached` means no API call was billed.
 - `byo_endpoint` posts multipart WAV to the user's full URL, asks for
   `verbose_json` with word and segment timestamps, retries once as `srt` on
   400/415/422 or a missing `segments` array, and remembers the working format
@@ -984,16 +1025,18 @@ Qwen3-VL and MiniCPM-V (`llama-mtmd-cli` sidecars) and an OpenAI-compatible
 endpoint (a hosted VLM is the same describer with another URL). All get the
 same sampled frames with `<t s>` markers.
 
-- `describe_clip` — `{ backend, model, summary?, media_id, mapping,
+- `describe_clip` — `{ backend, model, summary?, media_id, mapping?,
   segments: [{ src_start_us, src_end_us, text, tags }] }` for a source window
-  (`src_start_us`/`src_end_us`, default the source the layer plays), sampled at `fps` everywhere in the window (never sparser
+  (`src_start_us`/`src_end_us`, default the whole item, or the source the
+  layer plays), sampled at `fps` everywhere in the window (never sparser
   for longer windows), described in chunks (16 frames locally; 1–64 and up to
   8 concurrent for an endpoint). Over 3600 frames is refused naming the longest
   window that fits. `fps`, `focus` and `language` default to the app's
   settings, injected by main into calls and into both description resources.
-  `purpose` `clip` (default) or `shot` keep separate caches: describing a
-  clip does not mark its shots described, and legacy mixed-purpose entries are
-  ignored.
+  The app's `purpose` `clip` (default) or `shot` keep separate caches (not an
+  MCP argument): describing a clip does not mark its shots described, and
+  legacy mixed-purpose entries are ignored. `byo_endpoint` uploads frames;
+  the two local engines do not.
 - Results are cached as runs of finished chunks, resumable after a cancel or
   failure; `refresh` redoes an exact window (ADR 0147). Runs read tidied, and a
   `clip` window longer than one request gets a `summary`

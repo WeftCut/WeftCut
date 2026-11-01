@@ -220,7 +220,7 @@ describe('text correction through project state', () => {
     const script = '今天介绍自动剪辑功能。它可以节省时间。'
     expect(actor.command('set_correction_script', { project_id: projectId, text: script }).ok).toBe(true)
     const before = actor.snapshot(), count = actor.historyStatus().len
-    expect(actor.command('correct_caption_text', { project_id: projectId, composition_id: compositionId, layer_ids: null })).toEqual({ ok: true, value: { changed: 1 } })
+    expect(actor.command('correct_caption_text', { project_id: projectId, composition_id: compositionId, layer_ids: null })).toMatchObject({ ok: true, value: { changed: 1 } })
     expect(actor.historyStatus().len).toBe(count + 1)
     expect(actor.dispatch('undo', {}).ok).toBe(true)
     expect(actor.snapshot().compositions).toEqual(before.compositions)

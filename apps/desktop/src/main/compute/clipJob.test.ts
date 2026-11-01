@@ -76,6 +76,19 @@ describe('clipJobSpec', () => {
     expect(advertised.filter(k => !(k in ARG_ROLES[tool as keyof typeof ARG_ROLES]))).toEqual([])
   })
 
+  it('runs a media-addressed description as a job keyed by media + source window', () => {
+    const pooled = media({ metadata: { duration_us: 9_000_000 } })
+    const spec = clipJobSpec('describe_clip', { layer: null, media: pooled, media_id: 'm1' })!
+    expect(spec).toMatchObject({ layer_id: '', media_id: 'm1', src_window: { src_start_us: 0, src_end_us: 9_000_000 } })
+    // The same source span through a layer is the same question, so it joins.
+    const through = clipJobSpec('describe_clip', { layer: layer(), media: pooled, src_start_us: 0, src_end_us: 9_000_000 })!
+    expect(through.key).toBe(spec.key)
+    expect(clipJobSpec('describe_clip', { layer: null, media: pooled, src_start_us: 1_000_000 })!.key).not.toBe(spec.key)
+    // No known length and no end: Rust refuses it, so it runs plain.
+    expect(clipJobSpec('describe_clip', { layer: null, media: media({ metadata: { duration_us: null } }) })).toBeNull()
+    expect(clipJobSpec('transcribe_clip', { layer: null, media: pooled })).toBeNull()
+  })
+
   it('never joins a refresh to a run that may answer from before it', () => {
     const plain = key({}, 'describe_clip')
     expect(key({ refresh: false }, 'describe_clip')).toBe(plain)

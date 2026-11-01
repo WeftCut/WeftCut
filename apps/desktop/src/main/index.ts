@@ -2,7 +2,7 @@ import { ExportJobs, exportPathExists, suggestExportName } from "./exportJobs";
 import path from 'node:path'
 import { diagnosticOwner, recordDiagnostic, recordProjectDiagnostic } from './diagnostics'
 import { sourceSignature } from './state/mutations/textCorrection.js'
-import { locateLayer } from './state/mutations/helpers.js'
+import { resolvePauseSubject } from './state/pauseSubject.js'
 import fs from 'node:fs'
 import os from 'node:os'
 import { configureResources, backgroundResourcePause, onBackgroundResourceChange, retainRasterDirectories, resourceSnapshot } from './resources.js'
@@ -97,7 +97,7 @@ import { resignInvalidMachO, type ContentSignDeps } from './contentSign.js'
 import { ContentQueue } from './contentQueue.js'
 import { createModelFeature } from './model-feature.js'
 import { ModelManager } from './model-manager.js'
-import { MODEL_EVENTS, type ModelUseRequest, type ModelFamily } from '../shared/inference-models.js'
+import { MODEL_EVENTS, speechModelLanguages, type ModelUseRequest, type ModelFamily } from '../shared/inference-models.js'
 import { stalledEncoderLimitMs } from './exportE2EStall.js'
 
 const require_ = createRequire(import.meta.url)
@@ -944,7 +944,7 @@ app.whenReady().then(async () => {
     // exists; by the time a hybrid can run, it does. The import is local for
     // the same chunking reason the renderer's dispatch states below — a
     // top-level one would pull the MCP SDK into the entry chunk.
-    detectPauses: async (args: { layer_id: string; threshold_amp?: number; min_pause_us?: number }) => {
+    detectPauses: async (args: { layer_id: string; threshold_db?: number; min_pause_us?: number }) => {
       if (!tsHost) throw new Error('detect_pauses: the project actor is not started yet')
       const { callClipComputeTool } = await import('./mcp/server.js')
       // The two engine seams belong to transcribe/describe; a peaks read picks
@@ -1154,7 +1154,7 @@ app.whenReady().then(async () => {
   // `clipCompute` dispatch in `backend:invoke`: the injection is what decides
   // which engine serves a call, so two definitions of it would be two answers
   // to the same question depending on who asked.
-  const getSpeech = (): { config: Record<string, unknown>; preferred: string | null } => {
+  const getSpeech = (): { config: Record<string, unknown>; preferred: string | null; languages?: Record<string, readonly string[]> } => {
     // Read at call time, every time: the model store owns the selection and
     // safeStorage the keys, so a snapshot is never staler than the call.
     const profile = models?.active('speech')
@@ -1172,6 +1172,12 @@ app.whenReady().then(async () => {
         endpointKey: profile?.endpoint ? keys[profile.keyTag ?? ''] : null,
       }),
       preferred: profile?.backend ?? null,
+      // The selected model's catalog languages: a monolingual model refuses a
+      // clip in another language instead of returning garbage (R1 NEW-9).
+      languages: (() => {
+        const langs = profile ? speechModelLanguages(profile.id) : null
+        return langs && profile ? { [profile.backend]: langs } : undefined
+      })(),
     }
   }
   const getVlm = (): {
@@ -1875,8 +1881,10 @@ app.whenReady().then(async () => {
     if (tsHost && CLIP_COMPUTE_CHANNELS.has(channel)) {
       const { [COMPUTE_REQUEST_ID_ARG]: requestId, ...toolArgs } = (args ?? {}) as Record<string, unknown>
       const before = tsHost.actor.snapshot()
-      const located = channel === 'transcribe_clip' ? locateLayer(before, (toolArgs as { layer_id?: string }).layer_id ?? '') : null
-      const source = located ? { id: located.layer.id, signature: sourceSignature(located.layer), project_id: before.project_id, composition_id: located.comp.id } : undefined
+      // The layer the transcript was read from: a VideoClip's linked Audio
+      // member, the same subject `callClipComputeTool` resolves.
+      const heard = channel === 'transcribe_clip' ? resolvePauseSubject((toolArgs as { layer_id?: string }).layer_id ?? '', before) : null
+      const source = heard?.ok ? { id: heard.subject.id, signature: sourceSignature(heard.subject), project_id: before.project_id, composition_id: heard.composition.id } : undefined
       let result: Awaited<ReturnType<typeof callClipComputeTool>>
       try {
         result = await callClipComputeTool(

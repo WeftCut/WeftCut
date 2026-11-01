@@ -21,7 +21,7 @@ import type { Composition, Layer, Project, Uuid } from './model'
 import { eachLayer } from './model'
 import type { HistoryOpRef, HistoryStatus } from './history'
 import { sortKeys } from './canonical'
-import { compositionSettings, localKeyTimes } from './resource-views'
+import { compositionSettings, localKeyTimes, mcpSettings } from './resource-views'
 import type { ToolResultJson } from './mcp-commands'
 import { effectParamDefault, effectParamSpecs } from '../../shared/effects/params'
 
@@ -523,7 +523,7 @@ export const MCP_RESULT_READERS: Record<string, ResultReader> = {
   // `changed` is what separates "set to what it already was" from a write that
   // landed: both succeed (a caller stating the state it wants is not at fault),
   // but only one of them changed anything.
-  set_project_settings: (c) => ({ settings: c.after.settings as unknown as Record<string, unknown>, changed: changedKeys(c.before.settings, c.after.settings) }),
+  set_project_settings: (c) => ({ settings: mcpSettings(c.after.settings), changed: changedKeys(c.before.settings, c.after.settings) }),
   // ── markers ──
   update_marker: (c) => {
     const rec = markerRecord(c.after, str(c.args.marker_id)) ?? { marker_id: str(c.args.marker_id) }

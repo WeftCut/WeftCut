@@ -1,4 +1,5 @@
 import type { ServerResult } from '@modelcontextprotocol/sdk/types.js'
+import { pauseDbFromAmp } from '../../shared/pauseLevel'
 import type { ActorHandle } from './actor'
 import type { Animated, Composition, Layer, MediaItem, Project } from './model'
 import { mediaRecord } from './mcp-results'
@@ -133,7 +134,16 @@ export function trackEnvelopes(c: Composition): Array<Record<string, unknown>> {
  *  without the whole `project://current`. `metadata.modified_at` is the dirty
  *  signal and moves on every recorded commit. */
 export function settingsView(p: Project): Record<string, unknown> {
-  return { ...p.settings, metadata: p.metadata }
+  return { ...mcpSettings(p.settings), metadata: p.metadata }
+}
+
+/** The settings as the MCP surface speaks them: the pause threshold in dBFS
+ *  (stored as amplitude), and without the caption-correction manuscript, which
+ *  is the Text correction dialog's and not an MCP setting (an agent passes its
+ *  transcript to `correct_caption_text { script }`). */
+export function mcpSettings(s: Project['settings']): Record<string, unknown> {
+  const { correction_script: _script, pause_review, ...rest } = s
+  return { ...rest, pause_review: pause_review === null ? null : { threshold_db: pauseDbFromAmp(pause_review.threshold_amp), min_pause_us: pause_review.min_pause_us, pad_us: pause_review.pad_us } }
 }
 
 /** The views a `?composition=<id>` query scopes — one per composition-owned

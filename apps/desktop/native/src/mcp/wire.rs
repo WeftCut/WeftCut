@@ -188,20 +188,42 @@ pub struct ToolAnnotations {
     pub destructive_hint: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub idempotent_hint: Option<bool>,
+    /// The spec defaults it to true; a tool that stays on this machine says
+    /// `false`, one that may reach a cloud engine `true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_world_hint: Option<bool>,
 }
 
 impl ToolAnnotations {
-    /// A read: commits nothing.
+    /// A read: commits nothing, on this machine.
     pub const READ: Self = Self {
         read_only_hint: Some(true),
         destructive_hint: None,
         idempotent_hint: None,
+        open_world_hint: Some(false),
+    };
+    /// A read whose engine may be a cloud or remote one (it uploads).
+    pub const READ_OPEN: Self = Self {
+        open_world_hint: Some(true),
+        ..Self::READ
     };
     /// A write that creates — twice is twice, nothing removed.
     pub const WRITE: Self = Self {
         read_only_hint: None,
         destructive_hint: Some(false),
         idempotent_hint: None,
+        open_world_hint: Some(false),
+    };
+    /// A write through a cloud engine.
+    pub const WRITE_OPEN: Self = Self {
+        open_world_hint: Some(true),
+        ..Self::WRITE
+    };
+    /// A write a repeat leaves as it was (an import of a pooled file answers
+    /// `existing`).
+    pub const WRITE_IDEMPOTENT: Self = Self {
+        idempotent_hint: Some(true),
+        ..Self::WRITE
     };
 }
 

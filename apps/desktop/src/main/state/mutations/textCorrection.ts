@@ -3,7 +3,7 @@ import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { scopeComposition, locateLayer, cloneLayer } from './helpers'
 import { gridForLayerKind, snapOnGrid } from '../snap'
-import { createTextCorrector, type CorrectedText } from '../../../shared/textCorrection'
+import { alignedShare, createTextCorrector, type CorrectedText } from '../../../shared/textCorrection'
 import { CAPTION_TIMING_KEY, readCaptionTiming, type CaptionTiming, type CaptionWord, type TranscriptPayload } from '../../../shared/captionTiming'
 import { applyAddCaptionTrack, type Cue } from './captions'
 import type { TextCorrectionExpectation } from '../../../shared/textCorrectionRequest'
@@ -234,9 +234,32 @@ function correctIndividually(layers: Layer[], correct: ReturnType<typeof createT
   return changed
 }
 
-export function applyTextCorrection(p: Project, ids: IdGen, compositionId: string, layerIds: string[] | null, expected?: TextCorrectionExpectation): { changed: number } {
-  const c = scopeComposition(p, compositionId), script = p.settings.correction_script ?? ''
-  if (!script.trim()) throw invalid('correction_script')
+/** The least share of caption words that must align to an agent's script
+ *  (`correct_caption_text { script }`) before anything is corrected: below it
+ *  the script is not the transcript of these captions (R1b: spelling notes
+ *  passed as the script merged cues and added stray text). */
+export const CORRECTION_MIN_MATCH = 0.5
+/** Most `before` / `after` pairs an answer lists; `changed` counts them all. */
+export const CORRECTION_CHANGES_LISTED = 20
+
+/** How a correction run reads its manuscript and what it may change. The Text
+ *  correction dialog corrects against the project's manuscript and may
+ *  re-segment by word timing; an agent passes its script and changes text
+ *  only — cue boundaries and timing stay exactly as they are. */
+export type CorrectionMode =
+  | { kind: 'manuscript' }
+  | { kind: 'text_only'; script: string }
+
+export interface CorrectionResult {
+  changed: number
+  match_ratio: number
+  changes: Array<{ layer_id: string; before: string; after: string }>
+}
+
+export function applyTextCorrection(p: Project, ids: IdGen, compositionId: string, layerIds: string[] | null, expected?: TextCorrectionExpectation, mode: CorrectionMode = { kind: 'manuscript' }): CorrectionResult {
+  const c = scopeComposition(p, compositionId)
+  const script = mode.kind === 'text_only' ? mode.script : p.settings.correction_script ?? ''
+  if (!script.trim()) throw invalid(mode.kind === 'text_only' ? 'script' : 'correction_script')
   if (layerIds !== null && (!Array.isArray(layerIds) || !layerIds.length || layerIds.some(id => typeof id !== 'string'))) throw invalid('layer_ids')
   const wanted = layerIds === null ? null : new Set(layerIds)
   const targets = c.tracks.flatMap(t => t.role === 'Caption' ? t.layers.filter(l => l.params.kind === 'Text' && (!wanted || wanted.has(l.id))).map(l => ({ t, l })) : [])
@@ -254,6 +277,15 @@ export function applyTextCorrection(p: Project, ids: IdGen, compositionId: strin
   // Refuse whole if any target is locked: the advertised count stays truthful.
   if (targets.some(({ t, l }) => t.locked || l.locked)) throw new CommandFailure({ error: 'InvalidArgument', field: 'layer_ids', detail: 'Unlock the selected captions before correcting text' })
   const selected = new Set(targets.map(x => x.l.id)), correct = createTextCorrector(script)
+  const before = new Map(targets.map(({ l }) => [l.id, l.params.kind === 'Text' ? l.params.content : '']))
+  const matchRatio = alignedShare(correct, targets.map(({ l }) => before.get(l.id)!).join('\n'))
+  if (mode.kind === 'text_only') {
+    if (matchRatio < CORRECTION_MIN_MATCH) throw new CommandFailure({ error: 'InvalidArgument', field: 'script', detail: `Only ${Math.round(matchRatio * 100)}% of the caption words align to the script (at least ${CORRECTION_MIN_MATCH * 100}% needed). Pass the full verbatim transcript of what is said in these captions, not notes or a glossary; nothing was changed` })
+    // Text only: each cue is corrected in place, never split, merged or retimed.
+    let changed = 0
+    for (const { l } of targets) changed += correctIndividually([l], correct)
+    return { changed, match_ratio: roundRatio(matchRatio), changes: listChanges(c, before) }
+  }
   let changed = 0
   for (const track of c.tracks) {
     const original = [...track.layers]
@@ -272,5 +304,20 @@ export function applyTextCorrection(p: Project, ids: IdGen, compositionId: strin
       changed += resegment(p, c, track, group, ids, correct)
     }
   }
-  return { changed }
+  return { changed, match_ratio: roundRatio(matchRatio), changes: listChanges(c, before) }
+}
+
+const roundRatio = (r: number): number => Math.round(r * 100) / 100
+
+/** The captions whose text a run changed, in track then time order, capped at
+ *  `CORRECTION_CHANGES_LISTED`. A re-segmented cue that kept its id is listed
+ *  by it; one that went away is not (`changed` still counts it). */
+function listChanges(c: Composition, before: ReadonlyMap<string, string>): CorrectionResult['changes'] {
+  const out: CorrectionResult['changes'] = []
+  for (const t of c.tracks) for (const l of t.layers) {
+    const was = before.get(l.id)
+    if (was === undefined || l.params.kind !== 'Text' || l.params.content === was) continue
+    if (out.length < CORRECTION_CHANGES_LISTED) out.push({ layer_id: l.id, before: was, after: l.params.content })
+  }
+  return out
 }

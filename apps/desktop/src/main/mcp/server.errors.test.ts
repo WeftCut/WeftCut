@@ -68,10 +68,19 @@ const asErr = (r: unknown): ErrResult => { expect(isToolError(r), JSON.stringify
 describe('handleCallTool — every route answers a refusal as an isError result', () => {
   it("a hybrid arm's own argument refusal (import_media of a directory) is invalid_params naming the path, and nothing was probed or written", async () => {
     const host = tsHostStub({ statPath: () => ({ kind: 'directory', readable: true }) })
-    const out = asErr(await handleCallTool(fakeBackend(), () => host, 'import_media', { path: 'C:/clips' }))
+    const out = asErr(await handleCallTool(fakeBackend(), () => host, 'import_media', { paths: ['C:/clips'] }))
     expect(out.structuredContent.code).toBe('invalid_params')
     expect(out.content[0].text).toContain('C:/clips')
     expect(out.content[0].text).toContain('is a directory')
+    expect(host.hybridDeps.compute.probeMedia).not.toHaveBeenCalled()
+    expect(Object.keys(host.actor.snapshot().media_pool)).toEqual([])
+  })
+
+  it('import_media checks every path before importing any: one bad path imports nothing', async () => {
+    const host = tsHostStub({ statPath: ((p: string) => p.endsWith('clips') ? { kind: 'directory', readable: true } : { kind: 'file', readable: true }) as never })
+    const out = asErr(await handleCallTool(fakeBackend(), () => host, 'import_media', { paths: ['C:/a.mp4', 'C:/clips'] }))
+    expect(out.content[0].text).toContain('is a directory')
+    expect(out.content[0].text).toContain('C:/clips')
     expect(host.hybridDeps.compute.probeMedia).not.toHaveBeenCalled()
     expect(Object.keys(host.actor.snapshot().media_pool)).toEqual([])
   })
@@ -110,7 +119,7 @@ describe('handleCallTool — every route answers a refusal as an isError result'
     // remove_pauses on a layer that does not exist: the hybrid resolves the
     // subject first and throws — the thrown text must NOT reach the agent as a
     // raw JSON struct.
-    const ts = tsHostStub({ compute: { detectPauses: vi.fn(async () => ({ pauses: [], noise_floor_amp: 0, peaks_source: 'raw' })) } })
+    const ts = tsHostStub({ compute: { detectPauses: vi.fn(async () => ({ pauses: [], noise_floor_db: null, peaks_source: 'raw' })) } })
     const out = asErr(await handleCallTool(fakeBackend(), () => ts, 'remove_pauses', { layer_id: NOWHERE }))
     expect(out.content[0].text).not.toMatch(/^\{/)
     expect(out.content[0].text).toContain(NOWHERE)
@@ -132,7 +141,7 @@ describe('handleCallTool — every route answers a refusal as an isError result'
 
   it('a compute failure inside a hybrid is a result, not a throw, and keeps the message', async () => {
     const ts = tsHostStub({ compute: { probeMedia: vi.fn(async () => { throw new Error('open C:/nope.mp4: no such file (os error 2)') }) } })
-    const out = asErr(await handleCallTool(fakeBackend(), () => ts, 'import_media', { path: 'C:/nope.mp4' }))
+    const out = asErr(await handleCallTool(fakeBackend(), () => ts, 'import_media', { paths: ['C:/nope.mp4'] }))
     expect(out.content[0].text).toContain('nope.mp4')
     expect(out.structuredContent.code).toBe('internal')
   })

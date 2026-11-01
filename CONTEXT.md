@@ -361,8 +361,9 @@ _Avoid_: orphan, unlink, unpin; link (that is between layers)
 
 **Pause**:
 A stretch of an Audio layer's played audio whose peak stays under the
-threshold for the minimum length, read from the peaks of what plays. A
-VideoClip delegates to its linked Audio. UI word: Pauses / 停顿.
+threshold (dBFS) for the minimum length, read from the peaks of what plays. A
+VideoClip delegates to its linked Audio — the **audio subject** rule that
+transcription and audio extraction share. UI word: Pauses / 停顿.
 See [features.md](docs/features.md#pauses).
 _Avoid_: silence / 静默, 静音 (mute), gap, dead air
 
@@ -655,7 +656,9 @@ _Avoid_: subtitle, caption layer kind (there is none)
 **Text correction**:
 Reference-text-assisted correction and resegmentation of caption text, on new
 transcripts or existing captions. Estimated word times stay marked as
-estimates. UI word: Text correction / 文字校正. See [captions.md](docs/captions.md).
+estimates. An agent passes the **script** (the full verbatim transcript) per
+call and corrects text only, never cue boundaries. UI word: Text correction /
+文字校正. See [captions.md](docs/captions.md).
 _Avoid_: 强制对齐 (acoustic alignment), 文稿对齐
 
 ## Performance resources

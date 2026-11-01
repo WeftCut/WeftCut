@@ -30,7 +30,7 @@ export const EXPORT_STATUS_MAX_WAIT_S = 60;
 const schema = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
 const id = { type: 'string', minLength: 1, description: 'Application-session export job id.' };
 const definition = (name: string, description: string, inputSchema: Record<string, unknown>, readOnlyHint: boolean, idempotentHint: boolean, destructiveHint = false): CatalogTool & { description: string; inputSchema: Record<string, unknown> } => ({
-  name, description, inputSchema, annotations: readOnlyHint ? { readOnlyHint: true } : { readOnlyHint: false, destructiveHint, idempotentHint },
+  name, description, inputSchema, annotations: readOnlyHint ? { readOnlyHint: true, openWorldHint: false } : { readOnlyHint: false, destructiveHint, idempotentHint, openWorldHint: false },
 });
 function exportPresetSettingsSchema(): Record<string, unknown> {
   const settings = exportSettingsSchema();

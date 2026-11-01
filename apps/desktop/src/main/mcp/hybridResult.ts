@@ -29,13 +29,19 @@ export function shapeHybridResult(result: unknown): ToolResultJson {
  *  `derivatives` is the state of each background job, as on `media://{id}`.
  *  `after` is the snapshot once the call has committed. */
 export function shapeImportResult(outcome: ImportOutcome, after: Project): ToolResultJson {
+  return toolRecord(importRecord(outcome, after))
+}
+
+/** One import's record (see `shapeImportResult`); `import_media { paths }`
+ *  answers one per path, in order. */
+export function importRecord(outcome: ImportOutcome, after: Project): Record<string, unknown> {
   const base = mediaRecord(after, outcome.mediaId)
-  if (!base) return toolRecord({ media_id: outcome.mediaId })
+  if (!base) return { media_id: outcome.mediaId }
   const record = { ...base, derivatives: derivativeStates(after.media_pool[outcome.mediaId]!) }
   const pooled = outcome.copying
     ? { path: outcome.copying.path_abs, path_rel: outcome.copying.path_rel, copying: true }
     : { path_rel: after.media_pool[outcome.mediaId]!.path_rel }
   const relinked = outcome.disposition === 'relinked' ? { relinked: true } : {}
-  if (outcome.existing) return toolRecord({ ...record, ...pooled, existing: true, ...relinked })
-  return toolRecord(outcome.sameContentAs.length > 0 ? { ...record, ...pooled, same_content_as: outcome.sameContentAs, ...relinked } : { ...record, ...pooled, ...relinked })
+  if (outcome.existing) return { ...record, ...pooled, existing: true, ...relinked }
+  return outcome.sameContentAs.length > 0 ? { ...record, ...pooled, same_content_as: outcome.sameContentAs, ...relinked } : { ...record, ...pooled, ...relinked }
 }

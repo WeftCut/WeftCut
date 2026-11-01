@@ -30,7 +30,9 @@ import { mediaPropProblem } from '../../shared/motifs/mediaProp.js'
 import { agentMotifRow, shapeMotifMcpResult } from './motifResult.js'
 import { composeMotifSheet } from './motifSheet.js'
 import { runHybrid } from '../state/hybrids.js'
-import { CLIP_SLICE_TOOLS, resolveClipSliceArgs, resolvePauseComputeArgs, TWO_SLICE_TOOLS, resolveTwoSliceArgs } from '../state/clip-slice-forward.js'
+import { CLIP_SLICE_TOOLS, HEARD_SLICE_TOOLS, resolveClipSliceArgs, resolveHeardSliceArgs, resolvePauseComputeArgs, TWO_SLICE_TOOLS, resolveTwoSliceArgs } from '../state/clip-slice-forward.js'
+import { resolvePauseSubject } from '../state/pauseSubject.js'
+import { sourceSignature } from '../state/mutations/textCorrection.js'
 import { serveProjectResource, buildResourceInjection, RESOURCE_NOT_FOUND } from '../state/resource-views.js'
 import { withDerivativeState } from '../state/derivative-jobs.js'
 import type { TsActorHost } from '../state/ts-actor-host.js'
@@ -42,7 +44,7 @@ import { NO_PROJECT_OPEN_MESSAGE, noProjectOpenResult, toolErrorResult, thrownTo
 import { toolRecord } from '../state/mcp-results.js'
 import { mcpActor } from '../state/mcp-actor.js'
 import { argProblemMessage } from './argCheck.js'
-import { shapeHybridResult, shapeImportResult } from './hybridResult.js'
+import { importRecord, shapeHybridResult } from './hybridResult.js'
 import { PROJECT_TOOLS, runProjectTool } from './projectTools.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
 import { HOST_RESOURCE_DEFS, HOST_RESOURCE_TEMPLATES, mediaResourceDefs } from './hostResources.js'
@@ -99,6 +101,9 @@ function unwrap(json: string): unknown { return unwrapEnvelope(JSON.parse(json) 
 export type SpeechProvider = () => {
   config: Record<string, unknown>
   preferred: string | null
+  /** The languages the selected model covers, by backend tag (its catalog
+   *  entry's); absent → the engine is taken to cover any. */
+  languages?: Record<string, readonly string[]>
 }
 const NO_SPEECH: SpeechProvider = () => ({ config: {}, preferred: null })
 
@@ -183,6 +188,7 @@ export async function callClipComputeTool(
   // (spec Decisions 1 and 11).
   const merged = name === 'detect_pauses'
     ? resolvePauseComputeArgs(args, tsHost.actor.snapshot(), peaksPathFor)
+    : HEARD_SLICE_TOOLS.has(name) ? resolveHeardSliceArgs(name, args, tsHost.actor.snapshot())
     : resolveClipSliceArgs(args, tsHost.actor.snapshot())
   // ADR 0064: inject the explicitly selected model backend. None stays unset;
   // native resolution does not choose another configured model implicitly.
@@ -192,6 +198,7 @@ export async function callClipComputeTool(
   if (name === 'transcribe_clip') {
     const speech = getSpeech()
     merged.speech_config = speech.config
+    if (speech.languages) merged.model_languages = speech.languages
     if (merged.backend == null && speech.preferred && speech.preferred !== 'auto') {
       merged.preferred_backend = speech.preferred
     }
@@ -227,6 +234,48 @@ export async function callClipComputeTool(
   const release = COMPUTE_TOOLS.has(name) ? beginModelUse() : () => {}
   try { return unwrap(await backend.mcpCallTool(name, JSON.stringify(merged))) as ServerResult }
   finally { release() }
+}
+
+/** `transcribe_clip { layer_ids }`: one clip-compute run per layer, in order,
+ *  each answered with the `source` `apply_transcripts` checks — the layer that
+ *  was read (a VideoClip's linked Audio member) and its signature at the start
+ *  of the run. A layer that refuses goes to `failed` with its message, so one
+ *  bad id does not throw away the runs before it; the call is an error only
+ *  when every layer refused. */
+async function transcribeLayers(
+  backend: Backend, tsHost: TsActorHost, args: Record<string, unknown>,
+  getSpeech: SpeechProvider, getVlm: VlmProvider, peaksPathFor: PeaksPathProvider, compute?: ComputeCaller,
+): Promise<ServerResult> {
+  const { layer_ids: ids, ...rest } = args as { layer_ids: string[] } & Record<string, unknown>
+  if (!Array.isArray(ids) || ids.length === 0) return toolErrorResult({ code: 'invalid_params', message: 'transcribe_clip: layer_ids names no layer', data: { field: 'layer_ids' } })
+  if (new Set(ids).size !== ids.length) return toolErrorResult({ code: 'invalid_params', message: 'transcribe_clip: layer_ids names a layer twice', data: { field: 'layer_ids' } })
+  if (ids.length > 1 && (rest.t_start_us != null || rest.t_end_us != null))
+    return toolErrorResult({ code: 'invalid_params', message: 'transcribe_clip: t_start_us / t_end_us narrow one layer\'s window — send them with a single layer id', data: { field: 't_start_us' } })
+  const transcripts: Array<Record<string, unknown>> = []
+  const failed: Array<{ layer_id: string; message: string }> = []
+  let firstFailure: ServerResult | null = null
+  for (const id of ids) {
+    const snapshot = tsHost.actor.snapshot()
+    const subject = resolvePauseSubject(id, snapshot)
+    const source = subject.ok ? { layer_id: subject.subject.id, signature: sourceSignature(subject.subject) } : null
+    let result: ServerResult
+    try { result = await callClipComputeTool(backend, tsHost, 'transcribe_clip', { ...rest, layer_id: id }, getSpeech, getVlm, peaksPathFor, compute) }
+    catch (e) {
+      if (!(e instanceof McpArgError)) throw e
+      result = toolErrorResult(e.toJson())
+    }
+    const r = result as { isError?: boolean; content?: Array<{ text?: string }> }
+    const text = r.content?.[0]?.text ?? ''
+    if (r.isError || !source) {
+      failed.push({ layer_id: id, message: text || 'the layer plays no sound' })
+      firstFailure ??= result
+      continue
+    }
+    transcripts.push({ source, ...(JSON.parse(text) as Record<string, unknown>) })
+  }
+  if (transcripts.length === 0 && ids.length === 1 && firstFailure) return firstFailure
+  if (transcripts.length === 0) return toolErrorResult({ code: 'invalid_request', message: `transcribe_clip: every layer refused — ${failed.map((f) => `${f.layer_id}: ${f.message}`).join('; ')}`, data: { failed } })
+  return toolRecord({ transcripts, ...(failed.length ? { failed } : {}) }) as unknown as ServerResult
 }
 
 /** What an agent reads for a cancelled job. Only a job someone ELSE cancelled
@@ -571,9 +620,16 @@ async function dispatchTool(
       const by = mcpActor(client)
       // An import answers its outcome over the committed media record; the
       // importer is the host's, so it joins imports of the same file in flight.
+      // Every path is checked by name before any is imported, so a typo in
+      // the fifth refuses the batch with nothing written; then one import per
+      // path, in order, each answered with its pooled record.
       if (name === 'import_media') {
-        const outcome = await tsHost.mediaImporter.ensureImported(args.path as string, { by })
-        return shapeImportResult(outcome, tsHost.actor.snapshot()) as unknown as ServerResult
+        const paths = args.paths as string[]
+        if (new Set(paths).size !== paths.length) throw new McpArgError('paths names a file twice', 'paths')
+        paths.forEach((p, i) => tsHost.mediaImporter.checkPath(p, `paths[${i}]`))
+        const media: Array<Record<string, unknown>> = []
+        for (const p of paths) media.push(importRecord(await tsHost.mediaImporter.ensureImported(p, { by }), tsHost.actor.snapshot()))
+        return toolRecord({ media }) as unknown as ServerResult
       }
       // Native-compute → TS-write.
       const hybridActor = tsHost.hybridDeps.actor
@@ -611,6 +667,11 @@ async function dispatchTool(
       const unheld = await refuseUnheldSources(tsHost, name, [(merged.a as { media?: unknown }).media, (merged.b as { media?: unknown }).media])
       if (unheld) return unheld
       return unwrapToolEnvelope(await backend.mcpCallTool(name, JSON.stringify(merged)), name)
+    }
+    if (name === 'transcribe_clip') {
+      const refused = await refuseBadArgs(backend, name, args)
+      if (refused) return refused
+      return transcribeLayers(backend, tsHost, args, getSpeech, getVlm, peaksPathFor, compute)
     }
     if (CLIP_SLICE_TOOLS.has(name)) {
       const refused = await refuseBadArgs(backend, name, args)

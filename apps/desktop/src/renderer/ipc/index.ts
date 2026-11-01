@@ -2842,12 +2842,12 @@ export type PeaksSource = "raw" | "fx";
 /// sets a threshold from, and which peaks were read. Mirrors Rust
 /// `DetectPausesResult`.
 ///
-/// `noise_floor_amp` is the 10th percentile of the peaks inside the subject's
-/// source window, as a peak amplitude in [0, 1]; `0` when the window holds no
-/// peak at all.
+/// `noise_floor_db` is the 10th percentile of the peaks inside the subject's
+/// source window, dBFS; `null` when the window holds no peak at all or only
+/// digital silence.
 export interface DetectPausesResult {
   pauses: PauseRegion[];
-  noise_floor_amp: number;
+  noise_floor_db: number | null;
   peaks_source: PeaksSource;
 }
 
@@ -2865,12 +2865,12 @@ export interface DetectPausesResult {
 /// (`properties/PausesSection.tsx`).
 export async function detectPauses(args: {
   layerId: string;
-  thresholdAmp?: number;
+  thresholdDb?: number;
   minPauseUs?: number;
 }): Promise<DetectPausesResult> {
   return invoke<DetectPausesResult>("detect_pauses", {
     layer_id: args.layerId,
-    ...(args.thresholdAmp === undefined ? {} : { threshold_amp: args.thresholdAmp }),
+    ...(args.thresholdDb === undefined ? {} : { threshold_db: args.thresholdDb }),
     ...(args.minPauseUs === undefined ? {} : { min_pause_us: args.minPauseUs }),
   });
 }
@@ -2888,12 +2888,12 @@ export async function detectPauses(args: {
 /// threshold — re-tuning and re-running costs no undo steps.
 export async function markPauses(args: {
   layerId: string;
-  thresholdAmp?: number;
+  thresholdDb?: number;
   minPauseUs?: number;
 }): Promise<{ markers: number; marker_ids: string[] }> {
   return invoke<{ markers: number; marker_ids: string[] }>("mark_pauses", {
     layer_id: args.layerId,
-    ...(args.thresholdAmp === undefined ? {} : { threshold_amp: args.thresholdAmp }),
+    ...(args.thresholdDb === undefined ? {} : { threshold_db: args.thresholdDb }),
     ...(args.minPauseUs === undefined ? {} : { min_pause_us: args.minPauseUs }),
   });
 }
@@ -2938,13 +2938,13 @@ export interface RemovePausesResult {
 /// text block (`main/state/hybrids.ts` states that contract).
 export async function removePauses(args: {
   layerId: string;
-  thresholdAmp?: number;
+  thresholdDb?: number;
   minPauseUs?: number;
   padUs?: number;
 }): Promise<RemovePausesResult> {
   const json = await invoke<string>("remove_pauses", {
     layer_id: args.layerId,
-    ...(args.thresholdAmp === undefined ? {} : { threshold_amp: args.thresholdAmp }),
+    ...(args.thresholdDb === undefined ? {} : { threshold_db: args.thresholdDb }),
     ...(args.minPauseUs === undefined ? {} : { min_pause_us: args.minPauseUs }),
     ...(args.padUs === undefined ? {} : { pad_us: args.padUs }),
   });

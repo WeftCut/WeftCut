@@ -180,7 +180,7 @@ describe('set_project_settings', () => {
     const a = actorWithPool()
     // 2 * pad_us >= min_pause_us would leave every pause with nothing to cut.
     expect(call(a, 'set_project_settings', { patch: {
-      pause_review: { threshold_amp: 0.02, min_pause_us: 100_000, pad_us: 60_000 },
+      pause_review: { threshold_db: -34, min_pause_us: 100_000, pad_us: 60_000 },
     } }).ok).toBe(false)
     expect(a.snapshot().settings.pause_review).toBe(null)
   })
@@ -231,38 +231,14 @@ describe('captions with word timing', () => {
     expect(timing.words.map((w) => w.text)).toEqual(['hello', 'there'])
   })
 
-  it('correct_caption_text refuses while the reference text is blank, and corrects once it is set', () => {
+  it('correct_caption_text refuses a blank script, and corrects against one it is given', () => {
     const a = actorWithPool()
     id(call(a, 'apply_transcripts', { transcripts: [TRANSCRIPT] }), 'caption_track_id')
-    expect(errorOf(call(a, 'correct_caption_text', {}))).toContain('correction_script')
+    expect(errorOf(call(a, 'correct_caption_text', { script: ' ' }))).toContain('script')
 
-    expect(call(a, 'set_project_settings', { patch: { correction_script: 'Hello there. Second cue.' } }).ok).toBe(true)
-    const r = json<{ changed: number }>(call(a, 'correct_caption_text', {}))
+    const r = json<{ changed: number }>(call(a, 'correct_caption_text', { script: 'Hello there. Second cue.' }))
     expect(r.changed).toBeGreaterThan(0)
     expect(captionLayers(a).map((l) => (l.params as { content: string }).content).join(' ')).toContain('Hello there')
-  })
-
-  it('restyle_captions patches every caption and leaves a non-caption Text layer alone', () => {
-    const a = actorWithPool()
-    id(call(a, 'apply_transcripts', { transcripts: [TRANSCRIPT] }), 'caption_track_id')
-    const title = id(call(a, 'add_layers', { layers: [{ track_id: aRoll(a), t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'text', content: 'Title' } }] }), 'layer_id')
-
-    expect(call(a, 'restyle_captions', { font_size_px: 40, outline_width: 3 }).ok).toBe(true)
-    for (const cue of captionLayers(a)) {
-      const p = cue.params as { font: { size_px: number }; outline: { width: number } | null }
-      expect(p.font.size_px).toBe(40)
-      expect(p.outline?.width).toBe(3)
-    }
-    const titleLayer = tracks(a).flatMap((t) => t.layers).find((l) => l.id === title)!
-    expect((titleLayer.params as { font: { size_px: number } }).font.size_px).toBe(72)
-  })
-
-  it('restyle_captions with outline_width 0 removes the outline', () => {
-    const a = actorWithPool()
-    id(call(a, 'apply_transcripts', { transcripts: [TRANSCRIPT] }), 'caption_track_id')
-    expect(call(a, 'restyle_captions', { outline_width: 2 }).ok).toBe(true)
-    expect(call(a, 'restyle_captions', { outline_width: 0 }).ok).toBe(true)
-    for (const cue of captionLayers(a)) expect((cue.params as { outline: unknown }).outline).toBe(null)
   })
 })
 

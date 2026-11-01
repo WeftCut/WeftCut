@@ -13,7 +13,7 @@ const EXPECTED_TOOL_NAMES = new Set<string>([
   'add_track', 'delete_track', 'rename_track', 'paste_layers', 'move_track', 'set_track_flags',
   'rename_layer', 'set_layer_flags', 'update_layer_params',
   'move_layers', 'shift_layers', 'restack_layer', 'trim_layer', 'delete_layers',
-  'restyle_captions', 'merge_captions',
+  'merge_captions',
   'create_link', 'delete_link',
   'create_group', 'add_group_members', 'move_layers_to_composition', 'ungroup_layer', 'rename_composition', 'delete_composition',
   'add_effect', 'update_effect', 'move_effect', 'delete_effect',
@@ -71,7 +71,7 @@ describe('MCP tool table projections', () => {
 
   it('table-exec defs all have parseArgs', () => {
     const table = MCP_TOOL_DEFS.filter((d) => d.exec === 'table')
-    expect(table.length).toBe(45)
+    expect(table.length).toBe(44)
     for (const d of table) {
       expect(d.parseArgs, `${d.name} should have parseArgs`).toBeDefined()
     }

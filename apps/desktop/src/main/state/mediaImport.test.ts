@@ -632,7 +632,7 @@ describe('ensureImported', () => {
       const message = await refused(deps)
       expect(message).toContain('C:/clips')
       expect(message).toContain('is a directory')
-      expect(message).toContain('ONE media file')
+      expect(message).toContain('list the ones inside in paths')
       expect(Object.keys(actor.snapshot().media_pool)).toEqual([])
     })
 

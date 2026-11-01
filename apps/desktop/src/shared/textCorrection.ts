@@ -207,3 +207,14 @@ export function createTextCorrector(script: string): (text: string) => Corrected
   }
   return correct
 }
+
+/** How much of `text` aligns to the manuscript: the share of its word tokens
+ *  the corrector placed on a reference token (an exact match or an accepted
+ *  correction). Notes, a glossary or another take's script align little; the
+ *  full verbatim transcript of what is said aligns most of it. 1 for a text
+ *  with no words. */
+export function alignedShare(correct: (text: string) => CorrectedText, text: string): number {
+  const pieces = correct(text).pieces
+  if (!pieces.length) return 1
+  return pieces.filter((p) => p.referenceSentence !== undefined).length / pieces.length
+}

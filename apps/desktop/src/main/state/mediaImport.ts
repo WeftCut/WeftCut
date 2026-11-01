@@ -72,6 +72,9 @@ export interface MediaImporter {
    *  `by` attributes this call's writes; a call that joins another import in
    *  flight writes nothing under it. */
   ensureImported(asked: string, opts?: { by?: Actor }): Promise<ImportOutcome>
+  /** Refuse a path `ensureImported` would refuse by name, before anything is
+   *  read or written; answers the absolute path. */
+  checkPath(asked: string, field?: string): string
 }
 
 export function createMediaImporter(deps: MediaImportDeps): MediaImporter {
@@ -85,6 +88,7 @@ export function createMediaImporter(deps: MediaImportDeps): MediaImporter {
     ensureImported(asked, { by } = {}) {
       return ensureImported(asked, deps, (command, args) => deps.actor.dispatch(command, args, by), inFlight, reserved)
     },
+    checkPath(asked, field) { return checkImportPath(asked, deps, field) },
   }
 }
 
@@ -100,6 +104,25 @@ async function enqueueCopy(deps: MediaImportDeps, reserved: Reservations, mediaI
 
 /** An actor write attributed to the importing caller. */
 type Write = (command: string, args: Record<string, unknown>) => ReturnType<ActorHandle['dispatch']>
+
+/** What `import_media` refuses a path for, decided by name before any read
+ *  or write, and the absolute path it imports. Stat FIRST: the probe is
+ *  stat-only when ffprobe is absent, so a folder would pass it, land a pool row
+ *  with null metadata and a pending hash, and only then die in the hash pass
+ *  with the OS's own locale text. `field` is the argument the refusal names
+ *  (`paths[2]` in a batch, whose every path is checked before any import). */
+export function checkImportPath(asked: string, deps: Pick<MediaImportDeps, 'workspaceDir' | 'statPath' | 'platform'>, field = 'path'): string {
+  const projectDir = deps.workspaceDir()
+  const path = absoluteSource(projectDir, asked, deps.platform ?? process.platform)
+  if (path === null) throw new McpArgError(`path ${asked} is relative and no project is open to read it from — pass the absolute path of the file`, field)
+  const facts = deps.statPath(path)
+  if (facts === null && path !== asked) throw new McpArgError(`path ${asked} names nothing in the project folder ${projectDir} — a relative path is read from there; pass the absolute path of the file`, field)
+  if (facts === null) throw new McpArgError(`path ${path} does not exist, or is not reachable from this machine — import_media takes media FILES (project://media lists what is already imported)`, field)
+  if (facts.kind === 'directory') throw new McpArgError(`path ${path} is a directory — import_media takes files; list the ones inside in paths`, field)
+  if (facts.kind !== 'file') throw new McpArgError(`path ${path} is not a regular file — import_media takes a media file`, field)
+  if (!facts.readable) throw new McpArgError(`path ${path} is not readable by this process — check its permissions, then retry`, field)
+  return path
+}
 
 async function ensureImported(asked: string, deps: MediaImportDeps, write: Write, inFlight: Map<string, Promise<string>>, reserved: Reservations): Promise<ImportOutcome> {
   if (deps.canImport?.() === false) throw new Error('Project is changing; retry importing after it opens')
@@ -122,21 +145,8 @@ async function ensureImported(asked: string, deps: MediaImportDeps, write: Write
     const realPath = deps.realPath ?? ((p: string) => p)
     const platform = deps.platform ?? process.platform
     const fileKey = deps.fileKey ?? spelledKey(realPath, platform)
-    const projectDir = deps.workspaceDir()
-    const resolved = absoluteSource(projectDir, asked, platform)
-    if (resolved === null) throw new McpArgError(`path ${asked} is relative and no project is open to read it from — pass the absolute path of the file`, 'path')
-    let path = resolved
+    let path = checkImportPath(asked, deps)
     const assertCurrent = captureImportSession(deps)
-    // Stat FIRST. The probe is stat-only when ffprobe is absent, so a folder
-    // would pass it, land a pool row with null metadata and a pending hash,
-    // and only then die in the hash pass with the OS's own locale text. What
-    // the path IS is decided here, by name, before any read or write.
-    const facts = deps.statPath(path)
-    if (facts === null && path !== asked) throw new McpArgError(`path ${asked} names nothing in the project folder ${projectDir} — a relative path is read from there; pass the absolute path of the file`, 'path')
-    if (facts === null) throw new McpArgError(`path ${path} does not exist, or is not reachable from this machine — import_media takes the absolute path of ONE media file (project://media lists what is already imported)`, 'path')
-    if (facts.kind === 'directory') throw new McpArgError(`path ${path} is a directory — import_media takes ONE media file; call it once per file inside`, 'path')
-    if (facts.kind !== 'file') throw new McpArgError(`path ${path} is not a regular file — import_media takes a media file`, 'path')
-    if (!facts.readable) throw new McpArgError(`path ${path} is not readable by this process — check its permissions, then retry`, 'path')
     // A drawing comes in as an SVG and goes into the pool as a PNG of it.
     if (/\.svg$/i.test(path)) {
       if (!deps.rasterizeSvg) throw new McpArgError(`path ${path} is an SVG, which this host cannot draw — import a PNG of it`, 'path')

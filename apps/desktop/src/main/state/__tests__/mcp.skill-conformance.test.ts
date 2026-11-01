@@ -78,7 +78,7 @@ const promptNames = new Set(rust.prompts.map((p) => p.name))
 const KNOWN_NON_TOOLS = new Set([
   'request_id', 'awaiting_retry', 'output_path', 'filename',
   // SKILL.md — tool params
-  'pad_us', 'threshold_amp', 't_start_us', 'segments', 'word_timing', 'preset_id',
+  'pad_us', 'threshold_db', 'segments', 'preset_id',
   // SKILL.md — the mapping block a source-time answer carries
   'mapping',
   // SKILL.md — fields of a mutator's committed record (mcp-results.ts)

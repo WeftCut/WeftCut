@@ -156,6 +156,7 @@ export class ComputeJobs {
     const purpose = spec.args.purpose === 'shot' ? 'shot' : 'clip'
     const job: ComputeJob = {
       job_id: id, tool: spec.tool, layer_id: spec.layer_id, media_id: spec.media_id, window: { ...spec.window },
+      ...(spec.src_window ? { src_window: { ...spec.src_window } } : {}),
       ...(spec.tool === 'describe_clip' ? { purpose } : {}),
       phase: { kind: 'queued', reason: null }, phase_since: at, started_at: at,
       origin: caller.client !== undefined ? { kind: 'agent', client: caller.client } : { kind: 'user' },
