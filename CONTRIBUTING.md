@@ -14,11 +14,15 @@ low-quality PR may be closed without a detailed review.
 **Open an issue first, and wait for it to be accepted,** for anything else:
 
 - a new capability, setting or MCP tool
-- any change to the UI
+- any change to the UI, small fixes included
 - a large change of any kind, refactors and performance work included
 
+An issue is accepted once the maintainer says so in it. An open issue alone is
+not acceptance.
+
 Issues labelled [`help wanted`](https://github.com/WeftCut/WeftCut/labels/help%20wanted)
-are good places to start. Questions and early ideas go in
+are good places to start. They can be broad, so say in the issue which piece you
+want to take and wait for it to be accepted. Questions and early ideas go in
 [Discussions](https://github.com/WeftCut/WeftCut/discussions), and security
 reports follow [SECURITY.md](SECURITY.md).
 
@@ -39,14 +43,16 @@ reports follow [SECURITY.md](SECURITY.md).
    can have open here.
 2. **One topic per PR.** A cross-fork PR can only target `main`, so a stack
    repeats its prerequisite's diff. Send the next one after the first has merged.
-3. **Start from the latest `main`** and run `npm run check` there. It runs the
-   local equivalent of CI's `checks` and `rust-test` jobs; add
-   `-- --skip-rust` when nothing under `apps/desktop/native/` changed. Run the
-   E2E specs your change touches as well. See
+3. **Start from the latest `main`** and run `npm run check` there. It rebuilds
+   the native addons and runs the local equivalent of CI's `checks` and
+   `rust-test` jobs. `npm run check -- --skip-rust` runs the TypeScript half
+   against the addons you already built, so use it only when they match your
+   tree. Run the E2E specs your change touches as well. See
    [testing](docs/agents/testing.md) for setup and layers.
 4. **Fill in the [PR template](.github/pull_request_template.md).** The evidence
    the change needs:
-   - A bug fix: a regression test that fails without the fix.
+   - A bug fix: a regression test that fails without the fix. Where a test cannot
+     be written, say how you verified it.
    - Performance work: before and after numbers, how they were measured, and on
      what hardware.
    - A platform claim: name the platforms you actually ran it on.
@@ -67,7 +73,8 @@ reports follow [SECURITY.md](SECURITY.md).
 
 ## Left to the maintainer
 
-Raise these in your issue or PR description and they will be handled on `main`:
+Raise these in your issue or PR description, and the maintainer decides how they
+land:
 
 - **Version numbers.** Merging a version bump publishes a release.
 - **`.github/`,** workflows and CI configuration.
