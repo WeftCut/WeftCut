@@ -9,8 +9,8 @@ not scattered by neglect.
 
 `npm run check` (repo root) runs, in order, rustfmt, both addon builds, the
 typecheck, build-script tests, the MCP catalog check, unit tests, Clippy and every
-Rust test, with the environment each one needs. It stops at the first failure and
-needs a finished `npm run bootstrap`. `npm run check -- --skip-rust` runs the
+Rust test, with the environment each one needs. It runs every step, lists the
+failures at the end, and needs a finished `npm run bootstrap`. `npm run check -- --skip-rust` runs the
 TypeScript half against the addons already built, so a stale addon fails or passes
 it wrongly (see [below](#the-addon-is-rebuilt-by-nothing-but-napibuild)). E2E stays
 separate: run the specs your change touches.

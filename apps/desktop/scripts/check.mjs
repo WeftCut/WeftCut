@@ -28,6 +28,8 @@ if (missing.length > 0) {
   process.exit(1)
 }
 
+// Every step runs, so one red gate cannot hide another.
+const failed = []
 for (const step of steps) {
   console.log(`\n=== ${step.name}`)
   const options = { cwd: ROOT, env: { ...process.env, ...step.env }, stdio: 'inherit' }
@@ -37,9 +39,10 @@ for (const step of steps) {
     isWindows && step.command === 'npm'
       ? spawnSync(`npm ${step.args.join(' ')}`, { ...options, shell: true })
       : spawnSync(step.command, step.args, options)
-  if (result.status !== 0) {
-    console.error(`\ncheck failed at: ${step.name}`)
-    process.exit(result.status ?? 1)
-  }
+  if (result.status !== 0) failed.push(step.name)
+}
+if (failed.length > 0) {
+  console.error(`\ncheck failed: ${failed.join(', ')}`)
+  process.exit(1)
 }
 console.log(`\ncheck passed: ${steps.length} steps`)
