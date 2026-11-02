@@ -12,7 +12,7 @@
 </p>
 
 > [!NOTE]
-> WeftCut is still under active development, so some features and UI/UX may change before v1.0.0. Join us to improve the project!
+> WeftCut is still under active development, so some features and UI/UX may change before v1.0.0. Join us to improve the project: start with the [contributing guide](CONTRIBUTING.md).
 
 <p align="center">
   <a href="https://github.com/WeftCut/WeftCut/releases/latest"><img alt="Download the latest release" src="https://img.shields.io/github/v/release/WeftCut/WeftCut?style=flat-square&label=Download&labelColor=475569&color=6696E6&logo=github&logoColor=white" /></a>
@@ -188,7 +188,7 @@ Start with **[architecture](docs/architecture.md)** for the system map, or **[MC
 
 ## Community
 
-Join the [WeftCut Discord community](https://discord.gg/SjsFCpzDe) to share feedback, discuss feature ideas, and get help. Please use [GitHub Issues](https://github.com/WeftCut/WeftCut/issues) for bug reports and feature requests so they can be tracked.
+Join the [WeftCut Discord community](https://discord.gg/SjsFCpzDe) to share feedback, discuss feature ideas, and get help. Please use [GitHub Issues](https://github.com/WeftCut/WeftCut/issues) for bug reports and feature requests so they can be tracked. Before opening a pull request, read the [contributing guide](CONTRIBUTING.md).
 
 ## Maintainer
 
