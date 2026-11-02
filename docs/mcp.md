@@ -194,7 +194,9 @@ first two):
    - `get_export_status { wait_s ≤ 60 }` blocks until the job's state changes.
      An export never fails busy: it waits in `queued`, with `queued: { reason,
      holders }` in the same holder shape, until admitted or cancelled; while it
-     waits no new background claim is admitted.
+     waits no new background claim is admitted. An admitted export whose mux
+     waits for a CPU slot reads `queued` the same way, then returns to
+     `finalizing`.
    Gates: `derivative-jobs.test.ts`, `faultText.test.ts`, the governor's holder
    tests (`native/src/resources.rs`).
 5. **Guidance reaches every transport.** Both transports send the same

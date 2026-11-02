@@ -263,6 +263,36 @@ describe("exportRunner", () => {
     expect(suspended).toBe(false);
   });
 
+  it("a mux behind a running derivative reads queued, names it, and returns to finalizing", async () => {
+    const project = summary([track("track-v", "Video", [COLOR_LAYER])]);
+    const { useProjectStore } = await import("../state/projectStore");
+    act(() => useProjectStore.getState().apply(project));
+    bridge.answers.set("project_summary", () => project);
+    const previewRef = createRef<PreviewSurfaceHandle>();
+    previewRef.current = { suspendForExport: () => () => { }, runPixiExport: async () => ({ framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 }) } as unknown as PreviewSurfaceHandle;
+    const { result } = mount(previewRef);
+    const wait = (payload: unknown) => act(async () => { for (const handler of bridge.handlers.get("export:mux_wait") ?? []) handler({ payload }); });
+    const holders = [{ kind: "proxy", media_id: "m-1", mib: 900, threads: 2 }];
+    let finishMux: (() => void) | undefined;
+    bridge.answers.set("mux_export", () => new Promise<void>((resolve) => { finishMux = resolve; }));
+    let run!: Promise<unknown>;
+    act(() => {
+      run = result.current.runExportWithSettings({
+        ...DEFAULT_EXPORT_SETTINGS, encoderEngine: "native", includeVideo: true,
+        audio: { ...DEFAULT_EXPORT_SETTINGS.audio, include: false },
+      }, "/out/movie.mp4");
+    });
+    await act(async () => { await vi.waitFor(() => expect(finishMux).toBeDefined()); });
+    await wait({ waiting: true, holders });
+    expect(result.current.exportState).toMatchObject({ kind: "preparing", queued: { reason: "busy", holders }, onCancel: expect.any(Function),
+      message: "Waiting for proxy generation to finish; the file is written automatically" });
+    await wait({ waiting: false });
+    expect(result.current.exportState).toMatchObject({ kind: "finalizing", step: "mux" });
+    await act(async () => { finishMux!(); await run; });
+    expect(result.current.exportState?.kind).toBe("complete");
+    expect(bridge.handlers.get("export:mux_wait") ?? []).toHaveLength(0);
+  });
+
   it("retains encoded files after mux failure and retries only mux, then cleans up", async () => {
     const project = summary([track("track-v", "Video", [COLOR_LAYER])]);
     const { useProjectStore } = await import("../state/projectStore");

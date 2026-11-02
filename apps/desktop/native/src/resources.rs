@@ -399,7 +399,12 @@ impl Governor {
             id,
         })
     }
-    async fn acquire_finalization(self: &Arc<Self>, id: u32) -> Result<FinalizationPermit, String> {
+    /// `on_wait` runs once if the tail has to wait, with what occupies the CPU.
+    async fn acquire_finalization(
+        self: &Arc<Self>,
+        id: u32,
+        on_wait: impl FnOnce(Vec<HolderUse>),
+    ) -> Result<FinalizationPermit, String> {
         // Already admitted work needs a queue entry only while CPU is occupied.
         // A full background queue must not block an otherwise runnable tail.
         match self.start_finalization(id) {
@@ -407,15 +412,20 @@ impl Governor {
             Err(FinalizationBlocked::Failed(message)) => return Err(message.into()),
             Err(FinalizationBlocked::CpuBusy) => {}
         }
-        let waiting = {
+        let (waiting, occupying) = {
             let mut s = self.state.lock().unwrap();
             if s.waiting >= 256 {
                 return Err("resource-capacity-exceeded: Too many queued tasks; retry when current work finishes".into());
             }
             s.waiting += 1;
             s.finalization_waiting += 1;
-            FinalizationWaiting(self.clone())
+            let occupying = Self::holder_uses(&s)
+                .into_iter()
+                .filter(|u| u.threads > 0)
+                .collect();
+            (FinalizationWaiting(self.clone()), occupying)
         };
+        on_wait(occupying);
         loop {
             let notified = self.changed.notified();
             tokio::pin!(notified);
@@ -598,8 +608,12 @@ impl Drop for FinalizationPermit {
 /// derivative keeps it (no deadline: a proxy build takes minutes, and a 15 s
 /// bound failed the export into awaiting_retry). Cancelling the export ends
 /// the wait (`mux_to_file` selects on it); only real exhaustion refuses.
-pub async fn continue_finalization(id: u32) -> Result<FinalizationPermit, String> {
-    governor().acquire_finalization(id).await
+/// `on_wait` names what the tail is waiting behind, once, if it has to wait.
+pub async fn continue_finalization(
+    id: u32,
+    on_wait: impl FnOnce(Vec<HolderUse>),
+) -> Result<FinalizationPermit, String> {
+    governor().acquire_finalization(id, on_wait).await
 }
 pub fn governor() -> &'static Arc<Governor> {
     static INSTANCE: OnceLock<Arc<Governor>> = OnceLock::new();
@@ -1446,7 +1460,7 @@ mod tests {
         .unwrap();
         let id = g.reserve_finalization().unwrap();
         let busy = g.acquire(true, 128).await.unwrap();
-        let pending = g.acquire_finalization(id);
+        let pending = g.acquire_finalization(id, |_| {});
         tokio::pin!(pending);
         assert!(
             tokio::time::timeout(std::time::Duration::from_millis(10), &mut pending)
@@ -1492,7 +1506,7 @@ mod tests {
         })
         .await
         .unwrap();
-        let permit = g.acquire_finalization(id).await.unwrap();
+        let permit = g.acquire_finalization(id, |_| {}).await.unwrap();
         assert_eq!(g.snapshot().cpu_threads, 1);
         assert_eq!(g.snapshot().waiting, 256);
         queued.abort_all();
@@ -1515,13 +1529,13 @@ mod tests {
         let id = g.reserve_finalization().unwrap();
         assert!(tokio::time::timeout(
             std::time::Duration::from_millis(10),
-            g.acquire_finalization(id)
+            g.acquire_finalization(id, |_| {})
         )
         .await
         .is_err());
         assert_eq!(g.snapshot().waiting, 0);
         assert_eq!(g.state.lock().unwrap().finalization_waiting, 0);
-        let pending = g.acquire_finalization(id);
+        let pending = g.acquire_finalization(id, |_| {});
         tokio::pin!(pending);
         assert!(
             tokio::time::timeout(std::time::Duration::from_millis(10), &mut pending)
@@ -1961,7 +1975,7 @@ mod tests {
             })
             .unwrap();
         let id = g.reserve_finalization().unwrap();
-        let mut mux = Box::pin(g.acquire_finalization(id));
+        let mut mux = Box::pin(g.acquire_finalization(id, |_| {}));
         assert!(matches!(
             mux.as_mut().poll(&mut Context::from_waker(Waker::noop())),
             Poll::Pending
@@ -1979,6 +1993,53 @@ mod tests {
         assert_eq!(g.snapshot().active, 0);
         assert_eq!(g.snapshot().waiting, 0);
         assert_eq!(user_waiting(&g), 0);
+    }
+    #[tokio::test]
+    async fn a_tail_behind_the_cpu_names_what_occupies_it_and_a_free_one_says_nothing() {
+        use std::future::Future;
+        use std::task::{Context, Poll, Waker};
+        let g = Governor::new();
+        g.configure(Limits {
+            work_mib: 512,
+            cpu_threads: 2,
+            ..Limits::default()
+        })
+        .unwrap();
+        let id = g.reserve_finalization().unwrap();
+        drop(
+            g.acquire_finalization(id, |_| panic!("a free CPU has no wait"))
+                .await
+                .unwrap(),
+        );
+        let busy = HOLDER.sync_scope(
+            Holder {
+                kind: "proxy",
+                media_id: Some("m1".into()),
+            },
+            || {
+                g.reserve(Claim {
+                    threads: 2,
+                    mib: 64,
+                    background: false,
+                })
+            },
+        );
+        let seen = std::sync::Mutex::new(Vec::new());
+        let mut mux = Box::pin(g.acquire_finalization(id, |holders| {
+            *seen.lock().unwrap() = holders;
+        }));
+        assert!(matches!(
+            mux.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        // The tail's own lease holds memory, not the CPU: it is not the holder.
+        let holders = std::mem::take(&mut *seen.lock().unwrap());
+        assert_eq!(holders.len(), 1);
+        assert_eq!(holders[0].holder.kind, "proxy");
+        assert_eq!(holders[0].threads, 2);
+        g.release(busy.unwrap());
+        drop(mux.await.unwrap());
+        g.release(id);
     }
     #[tokio::test]
     async fn user_compute_observer_follows_the_blocking_reason() {

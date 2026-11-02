@@ -87,6 +87,7 @@ pub async fn mux_export(
         audio_required,
         staging_output,
         &backend.export_cancel,
+        backend.events.as_ref(),
     )
     .await
     .map_err(|e| format!("{e:#}"))

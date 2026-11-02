@@ -1662,6 +1662,8 @@ const zhCN: Resources = {
     wait_resources: "正在等待其他处理任务释放资源，之后将自动开始导出",
     wait_memory: "正在等待可用内存恢复，之后将自动开始导出",
     wait_holder: "正在等待{{holder}}完成，之后将自动开始导出",
+    wait_holder_mux: "正在等待{{holder}}完成，之后将自动写出文件",
+    wait_resources_mux: "正在等待其他处理任务完成，之后将自动写出文件",
     holder_proxy: "代理生成",
     holder_waveform: "波形生成",
     holder_thumbnails: "缩略图生成",

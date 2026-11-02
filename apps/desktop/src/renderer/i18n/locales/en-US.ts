@@ -1870,6 +1870,8 @@ const enUS = {
     wait_resources: "Waiting for other processing to release resources; the export starts automatically",
     wait_memory: "Waiting for memory to become available; the export starts automatically",
     wait_holder: "Waiting for {{holder}} to finish; the export starts automatically",
+    wait_holder_mux: "Waiting for {{holder}} to finish; the file is written automatically",
+    wait_resources_mux: "Waiting for other processing to finish; the file is written automatically",
     holder_proxy: "proxy generation",
     holder_waveform: "waveform generation",
     holder_thumbnails: "thumbnail generation",

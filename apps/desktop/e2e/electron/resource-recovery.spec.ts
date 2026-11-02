@@ -74,14 +74,27 @@ test('completed encoding waits for the occupied processing slot before mux', asy
         if (request.channel !== 'mux_export') return handler(event, request)
         trace.muxes++
         const slot = native.resourcesReserve(1, 64)
-        setTimeout(() => { native.resourcesRelease(slot); trace.released = true }, 250)
+        setTimeout(() => { native.resourcesRelease(slot); trace.released = true }, 1_500)
         return handler(event, request)
       })
     }, { addon, allocation: settings.resource_allocation })
+    await page.evaluate(() => {
+      const w = window as any
+      w.__muxWaits = []; w.__muxPanel = []
+      window.api.on('export:mux_wait', (wait: unknown) => w.__muxWaits.push(wait))
+      setInterval(() => {
+        const text = document.querySelector('.export-progress-panel')?.textContent
+        if (text) w.__muxPanel.push(text)
+      }, 50)
+    })
     const result = await driveExport(page, { outputAbsPath: path.join(tmpDir('weftcut-mux-slot-out-'), 'out.mp4'), settings: { audio: { include: false } } }, { hook: 'exportTimeline' })
     await testInfo.attach('slot-export', { body: JSON.stringify(result), contentType: 'application/json' })
     expect(result.done.ok, result.done.error).toBe(true)
     expect(await app.evaluate(() => (globalThis as any).__muxSlotTrace)).toEqual({ muxes: 1, released: true })
+    // The wait is visible: the job reads queued and says the file comes next.
+    const seen = await page.evaluate(() => ({ waits: (window as any).__muxWaits, panel: (window as any).__muxPanel }))
+    expect(seen.waits.map((w: any) => w.waiting)).toEqual([true, false])
+    expect(seen.panel.some((text: string) => text.includes('the file is written automatically'))).toBe(true)
   } finally { await app.close() }
 })
 

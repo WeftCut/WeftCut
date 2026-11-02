@@ -11,6 +11,7 @@ import type { CropRect } from '../../shared/crop';
 
 import { invoke } from "@/bridge/ipc";
 import type { PositionAnimation } from '../../shared/position';
+import type { ResourceHolder } from '../../shared/resource-policy';
 import { TACK_DELETE_CHANNEL, TACK_SET_STATUS_CHANNEL, type TackDeleteSelector, type TackStatus } from '../../shared/agent-activity';
 import {
   COMPUTE_CANCELLED_FIELD,
@@ -1322,6 +1323,11 @@ export async function exportProjectAudioOnly(
     finalizationToken,
   });
 }
+
+/// The mux tail started or stopped waiting for a CPU slot (its plan already
+/// holds the memory). `holders` is what occupies the CPU.
+export const EXPORT_MUX_WAIT = "export:mux_wait";
+export type ExportMuxWait = { waiting: true; holders: ResourceHolder[] } | { waiting: false };
 
 /// Mux `video` + `audio` into `output` — always a stream-copy. Every export
 /// path (WebCodecs direct-encode, or the native-encode video sink) already

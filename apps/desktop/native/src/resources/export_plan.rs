@@ -474,7 +474,7 @@ mod tests {
             )
             .unwrap();
         let authority = g.clone();
-        let finish = tokio::spawn(async move { authority.acquire_finalization(id).await });
+        let finish = tokio::spawn(async move { authority.acquire_finalization(id, |_| {}).await });
         tokio::task::yield_now().await;
         assert!(!finish.is_finished());
         assert_eq!(g.snapshot().reserved_mib, 800);

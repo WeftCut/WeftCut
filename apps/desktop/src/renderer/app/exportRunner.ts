@@ -15,6 +15,8 @@ import {
   exportVideoSinkWrite,
   MEDIA_JOB_EVENTS,
   muxExport,
+  EXPORT_MUX_WAIT,
+  type ExportMuxWait,
   projectSummary,
   type MediaJobEvent,
   type MediaSummary,
@@ -122,6 +124,13 @@ export function queuedExportMessage(t: TFunction, block: ExportResourceBlock): s
   return holder ? t("export.wait_holder", { holder: t(holder) }) : t("export.wait_resources");
 }
 
+/** The panel's sentence for a mux tail waiting on a CPU slot: the render is
+ *  done, so what starts automatically is writing the file. */
+export function queuedMuxMessage(t: TFunction, holders: ExportResourceBlock["holders"] = []): string {
+  const holder = holders.map((h) => QUEUED_HOLDER[h.kind]).find(Boolean);
+  return holder ? t("export.wait_holder_mux", { holder: t(holder) }) : t("export.wait_resources_mux");
+}
+
 export function createExportRunner(deps: {
   previewRef: React.RefObject<PreviewSurfaceHandle | null>;
   proxyStateRef: React.MutableRefObject<Map<string, ProxyState>>;
@@ -145,11 +154,21 @@ export function createExportRunner(deps: {
   let state: ExportState | null = null;
   let exportController = new AbortController();
   const setExportState = (next: ExportState | null) => { state = next; deps.onState(next); };
+  /// A mux behind a running derivative reads queued and names it, as admission
+  /// does, then returns to the step it was on.
+  async function watchMuxWait(mux: () => Promise<void>) {
+    const off = await listen<ExportMuxWait>(EXPORT_MUX_WAIT, ({ payload }) => {
+      if (!payload.waiting) { setExportState({ kind: "finalizing", step: "mux", onCancel: deps.cancel }); return; }
+      const message = queuedMuxMessage(t, payload.holders);
+      setExportState({ kind: "preparing", labels: [message], message, onCancel: deps.cancel, queued: { reason: "busy", holders: payload.holders } });
+    });
+    try { await mux(); } finally { off(); }
+  }
   async function finalize(mux: () => Promise<void>, cleanup: () => Promise<void>, durationUs: number) {
     let muxed = false;
     let actual = '';
     const finalization = createExportFinalization({
-      mux: async () => { if (!muxed) { await mux(); muxed = true; } actual = await deps.publish(); },
+      mux: async () => { if (!muxed) { await watchMuxWait(mux); muxed = true; } actual = await deps.publish(); },
       cleanup: async () => { await cleanup(); pendingFinalization.current = null; },
       onRunning: () => setExportState({ kind: 'finalizing', step: 'mux', onCancel: deps.cancel }),
       onFailure: detail => setExportState({ kind: 'error', detail, onRetry: async () => { await finalization.retry(); }, onDiscard: async () => { await finalization.discard(); setExportState(null); } }),

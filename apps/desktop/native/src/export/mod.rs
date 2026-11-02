@@ -310,6 +310,7 @@ pub async fn mux_to_file(
     audio_required: bool,
     staging_output: bool,
     cancellation: &cancellation::ExportCancellation,
+    events: &dyn crate::events::EventSink,
 ) -> Result<()> {
     cancellation.check()?;
     if !ffmpeg_is_installed() {
@@ -319,10 +320,23 @@ pub async fn mux_to_file(
     if audio_required && !has_audio {
         anyhow::bail!("The encoded audio file is missing; cannot finish this export");
     }
+    let waited = std::sync::atomic::AtomicBool::new(false);
     let _continuation = tokio::select! {
         _ = cancellation.cancelled() => anyhow::bail!("export cancelled"),
-        permit = crate::resources::continue_finalization(finalization_id) => permit.map_err(anyhow::Error::msg)?,
+        permit = crate::resources::continue_finalization(finalization_id, |holders| {
+            waited.store(true, std::sync::atomic::Ordering::Relaxed);
+            events.emit(
+                crate::events::EVENT_EXPORT_MUX_WAIT,
+                serde_json::json!({ "waiting": true, "holders": holders }),
+            );
+        }) => permit.map_err(anyhow::Error::msg)?,
     };
+    if waited.load(std::sync::atomic::Ordering::Relaxed) {
+        events.emit(
+            crate::events::EVENT_EXPORT_MUX_WAIT,
+            serde_json::json!({ "waiting": false }),
+        );
+    }
     let mut cmd = crate::ffmpeg::command(Bound::watchdog());
     // Write beside the destination so committing is atomic on the same volume.
     // A failed mux must not truncate an existing user file or leave a partial
