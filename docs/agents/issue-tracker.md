@@ -1,6 +1,8 @@
 # Issue tracker: Local Markdown
 
-Issues and specs (you may know a spec as a PRD) for this repo live as markdown files in `.scratch/`.
+This is the maintainer's local workflow. `.scratch/` is gitignored, so contributors use [GitHub issues](https://github.com/WeftCut/WeftCut/issues) as described in [`CONTRIBUTING.md`](../../CONTRIBUTING.md).
+
+The maintainer's issues and specs (you may know a spec as a PRD) live as markdown files in `.scratch/`.
 
 ## Conventions
 

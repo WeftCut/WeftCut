@@ -5,6 +5,16 @@ each layer. There is **no single `tests/` directory** — that's deliberate (see
 [Why not one directory](#why-not-one-directory)). Tests are grouped by *runner*,
 not scattered by neglect.
 
+## Before a PR
+
+`npm run check` (repo root) runs, in order, rustfmt, both addon builds, the
+typecheck, build-script tests, the MCP catalog check, unit tests, Clippy and every
+Rust test, with the environment each one needs. It runs every step, lists the
+failures at the end, and needs a finished `npm run bootstrap`. `npm run check -- --skip-rust` runs the
+TypeScript half against the addons already built, so a stale addon fails or passes
+it wrongly (see [below](#the-addon-is-rebuilt-by-nothing-but-napibuild)). E2E stays
+separate: run the specs your change touches.
+
 ## The layers
 
 | Layer | Location | Runner | Command (cwd) |
@@ -44,8 +54,8 @@ and validate all three platforms' Clippy gates before releasing. A floating
 `stable` changed from 1.98.1 to 1.99.0 between v0.2.1 candidate runs and introduced
 new `async_trait` macro lint failures without any Rust source change.
 
-Four crates under `apps/desktop/native/` (workspace root `weftcut`, members
-`eval`, `conversion` and `decode`). Run from **`apps/desktop`** — both CI and the commands below
+Five crates under `apps/desktop/native/` (workspace root `weftcut`, members
+`eval`, `conversion`, `decode` and `reaper`). Run from **`apps/desktop`** — both CI and the commands below
 resolve `native/Cargo.toml` and `resources/` relative to it, not the repo root.
 The `test-noop` feature stubs the `napi_*` / ThreadsafeFunction symbols a
 standalone `cargo test` can't link:
@@ -53,6 +63,7 @@ standalone `cargo test` can't link:
 ```bash
 cargo test -p weftcut-eval --manifest-path native/Cargo.toml           # eval crate (pure)
 cargo test -p weftcut-conversion --manifest-path native/Cargo.toml     # offline fitting (pure)
+cargo test -p weftcut-reaper --manifest-path native/Cargo.toml         # ffmpeg child reaper
 cargo test --manifest-path native/Cargo.toml --lib --bins --features test-noop # root napi crate + conformance analyzer
 # decode crate — the repo's only ffmpeg-next consumer: needs FFMPEG_DIR to build
 # AND the bundled libav*.so on the loader path at run (its cargo-test binary has
