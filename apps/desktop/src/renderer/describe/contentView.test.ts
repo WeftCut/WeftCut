@@ -6,8 +6,8 @@ const summary = (summaries: readonly RunSummary[], start: number, end: number) =
 
 describe('contentForWindow', () => {
   it('returns the summary and intersecting segments from one record without inventing a lead', () => {
-    const first = { t_start_us: 0, t_end_us: 2_000_000, text: 'hallway', tags: [] };
-    const second = { t_start_us: 2_000_000, t_end_us: 4_000_000, text: 'door', tags: [] };
+    const first = { src_start_us: 0, src_end_us: 2_000_000, text: 'hallway', tags: [] };
+    const second = { src_start_us: 2_000_000, src_end_us: 4_000_000, text: 'door', tags: [] };
     const content = { segments: [second, first], summaries: [{ window: [0, 4_000_000] as [number, number], text: 'A hallway and a door.' }] };
     expect(contentForWindow(content, 0, 2_000_000)).toEqual({ summary: 'A hallway and a door.', segments: [first] });
     expect(contentForWindow({ ...content, summaries: [] }, 0, 2_000_000)).toEqual({ summary: null, segments: [first] });

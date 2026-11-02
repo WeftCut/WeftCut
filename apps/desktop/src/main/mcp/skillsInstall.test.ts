@@ -30,29 +30,33 @@ function seedUserData(userData: string, body: string): string {
 }
 
 describe('installSkills', () => {
-  it('copies the packaged tree into <userData>/skills and reports it installed', () => {
+  it('copies the packaged tree into <userData>/skills and reports it current', () => {
     const userData = tmpDir()
     const source = stageSkills(tmpDir(), 'skill v1')
     const got = installSkills({ resourcesSkills: source, devSkills: 'X:\\nope', isPackaged: true, userDataDir: userData })
-    expect(got).toEqual({ state: 'installed', dir: path.join(userData, 'skills') })
+    expect(got).toEqual({ state: 'current', dir: path.join(userData, 'skills') })
     expect(fs.readFileSync(path.join(got.dir!, 'weftcut', 'SKILL.md'), 'utf8')).toBe('skill v1')
     expect(fs.readFileSync(path.join(got.dir!, 'weftcut', 'motif-authoring.md'), 'utf8')).toBe('doc for skill v1')
   })
 
-  it('refreshes shipped files on every start but keeps what the user added', () => {
+  it('mirrors the bundle on every start: an upgrade leaves no file the release removed', () => {
     const userData = tmpDir()
     const source = stageSkills(tmpDir(), 'skill v1')
+    fs.writeFileSync(path.join(source, 'weftcut', 'retired.md'), 'dropped in v2')
     const opts = { resourcesSkills: source, devSkills: 'X:\\nope', isPackaged: true, userDataDir: userData }
-    installSkills(opts)
-    const mine = path.join(userData, 'skills', 'mine', 'SKILL.md')
-    fs.mkdirSync(path.dirname(mine), { recursive: true })
-    fs.writeFileSync(mine, 'my own skill')
+    expect(installSkills(opts).state).toBe('current')
+    const skills = path.join(userData, 'skills')
+    expect(fs.existsSync(path.join(skills, 'weftcut', 'retired.md'))).toBe(true)
 
+    // The next release: one file removed, the rest rewritten.
+    fs.rmSync(path.join(source, 'weftcut', 'retired.md'))
     stageSkills(source, 'skill v2')
-    installSkills(opts)
+    expect(installSkills(opts)).toEqual({ state: 'current', dir: skills })
 
-    expect(fs.readFileSync(path.join(userData, 'skills', 'weftcut', 'SKILL.md'), 'utf8')).toBe('skill v2')
-    expect(fs.readFileSync(mine, 'utf8')).toBe('my own skill')
+    expect(fs.readFileSync(path.join(skills, 'weftcut', 'SKILL.md'), 'utf8')).toBe('skill v2')
+    expect(fs.existsSync(path.join(skills, 'weftcut', 'retired.md'))).toBe(false)
+    // No staging or retired tree is left beside it either.
+    expect(fs.readdirSync(userData)).toEqual(['skills'])
   })
 
   it('names the fault so dev-before-build reads differently from a broken install', () => {
@@ -95,11 +99,11 @@ describe('installSkills', () => {
   })
 
   it('a destination it cannot write reports copy_failed against whatever is there', () => {
-    const userData = tmpDir()
+    const userData = path.join(tmpDir(), 'userData')
     const source = stageSkills(tmpDir(), 'skill v1')
-    // A plain file where the skills directory belongs: cpSync throws, and there
-    // is nothing installable underneath it.
-    fs.writeFileSync(path.join(userData, 'skills'), 'not a directory')
+    // A plain file where the userData directory belongs: staging throws, and
+    // there is nothing installable underneath it.
+    fs.writeFileSync(userData, 'not a directory')
     expect(installSkills({ resourcesSkills: source, devSkills: 'X:\\nope', isPackaged: true, userDataDir: userData })).toEqual({
       state: 'unavailable',
       dir: null,

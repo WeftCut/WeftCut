@@ -92,7 +92,7 @@ export function TrackLane({
   isExpanded: boolean;
   selectedLayerId: string | null;
   selectedLayerIds: ReadonlySet<string>;
-  /// The selected gap when it sits on THIS lane, else null (ADR 0069). Timeline
+  /// The selected gap when it sits on THIS lane, else null. Timeline
   /// narrows it per lane so a gap selection re-renders the lane it is on and
   /// leaves the others' props untouched.
   selectedGap: GapSelection | null;
@@ -465,7 +465,7 @@ export function TrackLane({
   // splitter stop their own pointerdown, so only the background reaches here —
   // and a locked chip, which does not stop it and is background as far as
   // selection is concerned. The lane's id rides along so a press that never
-  // becomes a box can select the gap under it (ADR 0069).
+  // becomes a box can select the gap under it.
   const { onPointerDown: onMarqueeDown } = useMarqueeAnchor({
     kind: "clip",
     trackId: track.id,
@@ -516,9 +516,10 @@ export function TrackLane({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      {/* The selected gap (ADR 0069). It takes pointer events only to carry
-          its tooltip; every press on it bubbles to the lane's own pointerdown
-          and contextmenu, which resolve it as lane background: clicking a
+      {/* The selected gap (docs/features.md#ripple-delete). It takes pointer
+          events only to carry its tooltip; every press on it bubbles to the
+          lane's own pointerdown and contextmenu, which resolve it as lane
+          background: clicking a
           selected gap re-selects it (a no-op commit), dragging from it starts a
           box, right-clicking it opens its menu. Below the blocks in z, since it
           can never overlap one. */}

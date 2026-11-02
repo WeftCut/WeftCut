@@ -63,8 +63,8 @@ export function defaultVoiceoverTrackId(
 
 /// Every track a voiceover may be sent to, in the order the picker lists them.
 /// Every track, not only the audio-role ones: a track carries no kind
-/// restriction (ADR 0042), so filtering here would hide destinations the actor
-/// accepts.
+/// restriction (docs/data-model.md#track), so filtering here would hide
+/// destinations the actor accepts.
 export function voiceoverTrackOptions(
   root: CompositionSummary | null,
 ): readonly TrackSummary[] {

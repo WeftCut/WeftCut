@@ -70,12 +70,15 @@ export default defineConfig({
     define: {
       'process.env.WEFTCUT_BUILD_COMMIT': JSON.stringify(buildCommit),
       'process.env.WEFTCUT_BUILD_VERSION': JSON.stringify(buildVersion),
+      // Main-side E2E seams (the Motif reader utility's read hold) check this;
+      // a production build folds them away, like the renderer's VITE_WEFTCUT_E2E.
+      'process.env.WEFTCUT_E2E_BUILD': JSON.stringify(process.env.VITE_WEFTCUT_E2E === '1' ? '1' : '0'),
     },
     build: {
       outDir: 'out/main',
       lib: { entry: process.env.VITE_WEFTCUT_E2E === '1'
-        ? { index: 'src/main/entry.ts', calibration: 'src/main/calibration-host.ts', hardwareProbe: 'src/main/hardware-probe-host.ts', decodeProbe: 'src/main/decode-probe-host.ts' }
-        : { index: 'src/main/entry.ts', hardwareProbe: 'src/main/hardware-probe-host.ts', decodeProbe: 'src/main/decode-probe-host.ts' } },
+        ? { index: 'src/main/entry.ts', calibration: 'src/main/calibration-host.ts', hardwareProbe: 'src/main/hardware-probe-host.ts', decodeProbe: 'src/main/decode-probe-host.ts', motifReader: 'src/main/motif-reader-host.ts' }
+        : { index: 'src/main/entry.ts', hardwareProbe: 'src/main/hardware-probe-host.ts', decodeProbe: 'src/main/decode-probe-host.ts', motifReader: 'src/main/motif-reader-host.ts' } },
       // Externalize native + node-resolved deps. `@modelcontextprotocol/sdk`
       // ships ESM with subpath `.js` imports (e.g. `…/sdk/server/index.js`);
       // the regex keeps those subpaths external too, so Node resolves them from

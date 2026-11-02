@@ -18,13 +18,13 @@
 /// each adapt through a one-screen mapper instead of this file learning either.
 ///
 /// Two entry points, one closing. `planRipple` derives its holes from the layers
-/// a deletion vacates; `planRippleGap` takes a gap the user selected AS the hole
-/// (ADR 0069). From the merge on the two are the same function, which is what
+/// a deletion vacates; `planRippleGap` takes a gap the user selected AS the
+/// hole. From the merge on the two are the same function, which is what
 /// makes a selected gap inherit every refusal a ripple has — a layer starting
 /// inside the span on another track, a landing that collides, a link reaching
 /// across, a lock that would have to move — with no second vocabulary.
 ///
-/// ADR 0062.
+/// See docs/features.md#ripple-delete.
 import { layerOverlapClass, shiftOnGrids, type OverlapClass } from '../grid'
 import type { CommandError, Rational, TimeUs, Uuid } from '../../shared/commandErrors'
 import { isGapOn } from './gap'
@@ -147,8 +147,8 @@ export function planRipple(view: RippleView, deleted: readonly Uuid[]): RipplePl
 }
 
 /**
- * The plan for closing a selected gap, or the refusal that says why not
- * (ADR 0069). The gap is the hole — no layer is deleted — so the closing is
+ * The plan for closing a selected gap, or the refusal that says why not.
+ * The gap is the hole — no layer is deleted — so the closing is
  * `planRipple`'s from the merge on: a layer starting inside the span on another
  * track, a landing that collides, a link reaching across the cut and a lock that
  * would have to move all refuse exactly as they do for a deletion.
@@ -165,6 +165,18 @@ export function planRippleGap(view: RippleView, gap: RippleGap): RipplePlan {
   if (!isGapOn(track.layers, gap.s, gap.e))
     return { ok: false, refusal: { error: 'GapNotFound', track: gap.track, s: gap.s, e: gap.e } }
   return planClosing(view, indexOf(view), new Set(), [{ s: gap.s, e: gap.e }])
+}
+
+/**
+ * The plan for closing a span named by ONE edge and a length — `shift_layers`'
+ * sweep with a negative delta, which closes `[s, e)` with `e` the sweep origin.
+ * Unlike `planRippleGap` the span need not be a gap: whatever starts inside it
+ * is `RippleInsideHole`, whatever reaches into it from before and is landed on
+ * is `RippleCollision`, so the caller learns by name what stands in the way
+ * instead of being told the span is not empty.
+ */
+export function planRippleSpan(view: RippleView, hole: RippleHole): RipplePlan {
+  return planClosing(view, indexOf(view), new Set(), [{ s: hole.s, e: hole.e }])
 }
 
 /** Every layer in the view by id, with its lane and class. */
@@ -213,7 +225,7 @@ function planClosing(view: RippleView, index: Map<Uuid, Placed>, doomed: Readonl
   //
   // The one exception is the ORIGIN: a layer starting at 0 when the hole starts
   // at 0 stays, because time 0 is a boundary nothing crosses, so it is anchored
-  // ahead of the cut in the only way a layer at 0 can be (ADR 0062). A LINKED
+  // ahead of the cut in the only way a layer at 0 can be. A LINKED
   // partner of a deleted layer gets no such pass: it is not anchored, it is the
   // other half of the thing being deleted, and naming it is the point.
   const linkedToDoomed = new Set<Uuid>()

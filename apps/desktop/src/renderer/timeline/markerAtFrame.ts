@@ -87,9 +87,10 @@ export function markerAnchorFor(
 /// half-open, so the last legal landing is the start of the last frame it shows.
 ///
 /// A FREE marker is bounded BELOW only. `composition.duration_us` is a derived
-/// high-water mark of the layers (ADR 0005) that markers neither move nor are
-/// validated against, so a ceiling taken from it would shrink when a clip is
-/// deleted and retroactively forbid a mark that was placed legally.
+/// high-water mark of the layers (docs/data-model.md#composition) that
+/// markers neither move nor are validated against, so a ceiling taken from it
+/// would shrink when a clip is deleted and retroactively forbid a mark that
+/// was placed legally.
 export interface MarkerDragBoundsUs {
   minUs: number;
   /// `null` = unbounded above.

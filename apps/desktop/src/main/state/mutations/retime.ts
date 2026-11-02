@@ -1,5 +1,5 @@
 import type { Animated, Layer, Project } from '../model';
-import type { FrameInterpolation, RetimeTarget, TimingFields } from '../../../shared/timeMapping';
+import type { RetimeTarget } from '../../../shared/timeMapping';
 import { TimeMappingError } from '../../../shared/timeMapping';
 import { planRetime, type RetimeClip } from '../../../renderer/retimePlan';
 import { addTime, exactTime, multiplyTime, ZERO_TIME } from '../../../renderer/timeMapping';
@@ -69,22 +69,4 @@ export function applyPreservePitch(p: Project, ids: readonly string[], preserve:
     if (layer.params.kind !== 'Audio' && layer.params.kind !== 'CompositionRef') throw new CommandFailure({ error: 'InvalidArgument', field: 'layer_ids', detail: `Clip ${id} has no independent audio timing policy` });
     layer.params.preserve_pitch = preserve;
   }
-}
-
-export function interpolationCapabilities(p: Project, ids: readonly string[], purpose: 'Preview' | 'Export') {
-  return { purpose, layers: ids.map(id => {
-    const { layer } = requireLayer(p, id);
-    const visual = layer.params.kind !== 'Audio' && canRetime(p, layer);
-    return { layer_id: id, modes: ['FrameSampling', 'FrameBlending', 'OpticalFlow'].map(kind => ({ kind,
-      available: visual && kind === 'FrameSampling', reason: !visual ? 'NoTemporalVisualContent' : kind === 'FrameSampling' ? null : 'NotImplemented' })) };
-  }) };
-}
-export function applyFrameInterpolation(p: Project, ids: readonly string[], interpolation: FrameInterpolation) {
-  if (!ids.length || interpolation?.kind !== 'FrameSampling') throw new CommandFailure({ error: 'InvalidArgument', field: 'interpolation', detail: 'Only FrameSampling is available in this build' });
-  for (const id of new Set(ids)) {
-    const { layer } = requireLayer(p, id);
-    if (layer.params.kind === 'Audio' || !canRetime(p, layer)) throw new CommandFailure({ error: 'InvalidArgument', field: 'layer_ids', detail: `Clip ${id} has no temporal visual content` });
-    (layer.params as TimingFields).frame_interpolation = { kind: 'FrameSampling' };
-  }
-  return { layer_ids: [...new Set(ids)], interpolation };
 }

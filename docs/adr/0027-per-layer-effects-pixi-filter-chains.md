@@ -2,112 +2,55 @@
 status: accepted
 ---
 
-# Per-layer effects are Pixi filter chains: Rust owns instances, the renderer owns the catalog
+# Per-layer effects are Pixi filter chains: project state owns instances, the renderer owns the catalog
+
+Date: 2026-06-21
 
 ## Context
 
-The IR-driven per-layer effects subsystem was deleted in the PixiJS
-migration. Reintroducing it has to satisfy three pulls at once:
+pixi.js and pixi-filters are a large maintained body of GPU filters; we want
+to consume them, not reimplement them. Effects must also reuse the existing
+keyframe engine (`Animated<T>` + the shared eval leaf), undo and the MCP
+surface, and must not quantize the 10-bit export composite (`rgba16float`).
 
-- **Consume the community ecosystem.** pixi.js + pixi-filters are a large,
-  maintained body of GPU filters. We want to use them, not reimplement them.
-- **Stay coherent with the 10-bit path.** The export composites into
-  `rgba16float` (ADR 0022); a filter must not silently quantize the signal.
-- **Ride existing infrastructure.** Keyframes (`Animated<T>` + the shared
-  `weftcut-eval` leaf crate, ADR 0025), undo, the actor/MCP surface, and the
-  dual-engine discipline already exist; effects should reuse them, not fork
-  them.
+Measured: PixiJS's `pixi.js/unsafe-eval` no-eval polyfill renders every
+*filtered* object empty on the WebGPU backend, and both preview and the 8-bit
+export prefer WebGPU. Without real `new Function()` shader codegen the effects
+subsystem is dead.
 
 ## Decision
 
-A per-layer effect is a **Pixi filter** attached to the layer's sprite. The
-ownership split is the load-bearing decision:
-
-- **Rust owns effect _instances_.** `Layer.effects: Vec<Effect>` (ordered =
-  filter-chain order); each `Effect { id, kind, enabled, params:
-  BTreeMap<String, Animated<f64>> }`. The actor exposes `add_effect` /
-  `update_effect` / `move_effect` / `remove_effect` (recorded/undoable) and
-  the same four as MCP tools. Rust does **not** know what a `kind` means and
-  does not validate it.
-- **The renderer owns the _catalog_.** `render/effects/effectRegistry.ts`
-  maps a `kind` string → an `EffectDescriptor` (a stock Pixi `Filter`
-  factory + per-param apply glue + a fidelity tier). `EffectChain` caches
-  filter instances per layer and pushes the per-frame-resolved params in;
-  the Compositor sets `sprite.filters` from it. Unknown `kind` → skipped +
-  warned.
-
-The two halves join on the `kind` string. **Adding a community filter is one
-catalog entry — zero Rust / IPC / undo change.**
-
-Supporting decisions:
-
-- **v1 params are scalar `Animated<f64>` only** — effects reuse the existing
-  keyframe machinery (no new engine twin); a keyframe addresses an effect
-  param via the path `effects[<id>].params[<key>]`. The broader `ParamValue`
-  sum type (color / bool / enum) and `Animated<Rgba>` are deferred.
-- **Working space stays display-referred gamma BT.709** (ADR 0021); filters
-  operate in gamma space. A descriptor reserves a `colorspace` field for a
-  future linear/HDR bracket.
-- **10-bit precision** is preserved by bumping the export realm's global
-  Pixi `TexturePool` to `rgba16float` once at init so stock filters run
-  unmodified at full precision (ADR 0022; never `clear(true)` a live
-  `FilterSystem`). A fidelity tier (`f16-verified` vs `precision-reduced`),
-  classified by a GL-parity gate, labels filters whose own shader bands.
-- **A preview-effects escape hatch** (`preview_effects_enabled` AppSetting,
-  default on) lets preview skip filters; export ignores it and is always full
-  quality. It is a global bypass rather than a scrub-triggered one — the
-  Compositor reads it once per composite in preview mode, and nothing consults
-  `Compositor.scrubbing`.
-- **`'unsafe-eval'` is granted in the packaged renderer CSP** (and the
-  `pixi.js/unsafe-eval` no-eval polyfill dropped). The polyfill renders every
-  *filtered* object EMPTY on the **WebGPU** backend — and both the preview
-  and the 8-bit export prefer WebGPU — so the effects subsystem is dead under
-  the polyfill. PixiJS's real `new Function()` shader codegen needs
-  `'unsafe-eval'`; filters then render on WebGPU and WebGL alike. The grant
-  widens the eval surface but not the content surface (the renderer still
-  loads no remote or inline script), so the practical XSS vector stays
-  closed. See [`security.md`](../security.md).
+- **Instances live in project state.** `Layer.effects: Effect[]` (order =
+  chain order), `Effect { id, kind, enabled, params: Record<string,
+  Animated<number>> }`, written by the TS actor (`add_effect` /
+  `update_effect` / `move_effect` / `remove_effect`, recorded) and mirrored by
+  a Rust serde twin (`native/src/state/effect.rs`). Params are scalar
+  `Animated<f64>`; a keyframe addresses `effects[<id>].params[<key>]`.
+- **The catalog lives in the renderer.** `render/effects/effectRegistry.ts`
+  maps `kind` → descriptor (filter factory, per-param apply, fidelity tier
+  `f16-verified` | `precision-reduced`). State does not interpret `kind`; an
+  unknown kind is stored and skipped with a warning by the renderer. Adding a
+  filter is one registry entry — no state, IPC or undo change.
+- The one kind rule state enforces is the `audio.*` namespace: audio kinds
+  only on Audio layers, other kinds never on them (`EffectKindNotApplicable`),
+  and audio params are static (`AudioEffectParamStatic`) — audio effects are
+  offline bakes (ADR 0063), not filters.
+- **10-bit:** the export Worker sets Pixi's global `TexturePool` format to
+  `rgba16float` once at init, so stock filters run unmodified at full
+  precision. Never `TexturePool.clear(true)` on a live `FilterSystem`.
+- **CSP:** the packaged renderer CSP grants `'unsafe-eval'` and the polyfill
+  is not imported (`renderer/main.tsx`). See [`security.md`](../security.md).
+- `preview_effects_enabled` (AppSetting, default on) lets preview skip
+  filters; export ignores it. It has no UI: each effect's own `enabled`
+  toggle already serves A/B comparison.
 
 ## Consequences
 
-- The effects subsystem ships v1 with a single filter (Blur), wired on
-  every visual sprite kind (clip / image / color / text / Motif), drivable
-  from MCP and undoable, and rendering correctly in preview (WebGPU) and
-  export. (All five kinds join the per-frame `Compositor.stageVisual` seam —
-  a Motif's filter sits on its Pixi `Sprite`, compositing on top of the
-  CDP-baked frame just like any other texture.)
-- The catalog grows filter-by-filter with no engine churn; each new filter is
-  gated by the parity gate before it is advertised as `f16-verified`.
-- Granting `'unsafe-eval'` is an accepted, documented security trade made to
-  keep the WebGPU backend.
-- **`preview_effects_enabled` stays an AppSetting / MCP escape hatch — no UI
-  control is surfaced for it.** A global effects bypass is not how editors
-  answer effect cost: the established answer is caching or pre-rendering, and
-  where a global bypass does exist it reads as an A/B comparison tool. WeftCut
-  already serves that need at the granularity that matters, because every
-  effect carries its own `enabled` toggle in the inspector — so a second,
-  coarser switch would buy a comparison the inspector already makes while
-  putting a preview-wide "not what you will export" mode one click away.
-  Caching the preview is the real answer to effect cost, and it is post-v1.
-- **The `audio.*` namespace is the one kind-ownership rule the command layer
-  enforces.** Audio effects are offline conform bakes rather than filters
-  ([ADR 0063](0063-audio-effects-are-baked-conform-siblings.md)), and the two
-  lifecycles share nothing but this record — so `add_effect` refuses an
-  `audio.*` kind on a non-Audio layer and any other kind on an Audio one
-  (`EffectKindNotApplicable`), and an `audio.*` param may not be keyframed
-  (`AudioEffectParamStatic`). Everything else stays as stated above: an unknown
-  non-audio kind is accepted, stored, and skipped with a warning by the
-  renderer that owns the catalog.
-- **Deferred:** more filters; `ParamValue` / animated color; a full
-  filtered-10-bit-export e2e; a linear/HDR working space; a preview cache /
-  background render. `Speed` is time remapping, not a filter, and is out of
-  `layer.effects`. Tracked in the release-target issues — the basic
-  colour-correction catalog in v1, the rest post-v1.
+- Filters work on WebGPU and WebGL alike; the eval surface widens, but the
+  renderer still loads no remote or inline script.
+- Working space stays display-gamma BT.709 (descriptor `colorspace:
+  "display-gamma"`); a linear/HDR bracket would be a new descriptor value.
+- `Speed` is time remapping, not a filter, and is not in `layer.effects`.
 
-## References
-
-- ADR 0021 — color converges at ingest; working space = output space.
-- ADR 0022 — 10-bit float16 composite (the rgba16float pool technique reused).
-- ADR 0025 — shared `weftcut-eval` wasm leaf crate (the keyframe engine reused).
-- [`render.md`](../render.md), [`data-model.md`](../data-model.md),
-  [`mcp.md`](../mcp.md), [`security.md`](../security.md).
+Rejected: keeping the no-eval polyfill (no filters on WebGPU); a Rust-side
+catalog (every new filter would touch state, IPC and undo).

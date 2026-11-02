@@ -57,10 +57,19 @@ export interface ModelDefinition {
   backend: ModelBackend;
   locality: "local" | "online";
   artifacts: readonly string[];
+  /** Spoken languages a speech model covers, as primary BCP-47 subtags.
+   *  Absent: any (a multilingual model, or one the user serves). Transcription
+   *  refuses a clip in a language outside it rather than return garbage. */
+  languages?: readonly string[];
+}
+/** The languages a speech profile covers, from its catalog entry; `null` when
+ *  unknown (a custom profile, or a multilingual model). */
+export function speechModelLanguages(profileId: string): readonly string[] | null {
+  return MODEL_DEFINITIONS.find((d) => d.id === profileId && d.family === "speech")?.languages ?? null;
 }
 export const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   { id: "whisper-base", name: "Whisper Base", family: "speech", backend: "whisper_cpp", locality: "local", artifacts: ["whisper-cpp-runtime", "whisper-model-base"] },
-  { id: "paraformer-zh", name: "Paraformer 中文", family: "speech", backend: "funasr", locality: "local", artifacts: ["funasr-runtime", "funasr-model-paraformer-zh"] },
+  { id: "paraformer-zh", name: "Paraformer 中文", family: "speech", backend: "funasr", locality: "local", artifacts: ["funasr-runtime", "funasr-model-paraformer-zh"], languages: ["zh"] },
   { id: "openai-whisper", name: "OpenAI Whisper", family: "speech", backend: "openai", locality: "online", artifacts: [] },
   // Any OpenAI-compatible transcription server (whisper.cpp's whisper-server,
   // speaches, vLLM, a hosted provider) — the speech twin of `vlm-online`.

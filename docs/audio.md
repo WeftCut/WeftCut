@@ -1,94 +1,44 @@
 # Audio
 
-One model, two paths. The project's audio model — per-layer trim,
-placement, `gain_db`, `pan`, fades, mute — is evaluated **once** into
-sampled envelopes, and two thin renderers consume the same control
-points: a Web Audio graph plays them in the preview, a Rust mixer
-writes them at export. Neither path re-derives the model, so preview
-and export cannot disagree about what a curve means; the only thing
-either path owns is playback (or encoding) mechanics.
-
-Decision records: [ADR 0019](adr/0019-audio-mixes-in-rust-over-conform-pcm.md)
-and [ADR 0087](adr/0087-preview-audio-belongs-to-the-editor-session.md) (session transport).
-
-Both paths read the same bytes: a **conform cache** holds every
-audio-bearing source as canonical PCM, produced once at import. The
-preview never decodes audio; the export never decodes audio; decode
-variance between Chromium/Electron and ffmpeg is out of the picture entirely.
+One model, two thin renderers. Per-layer trim, placement, `gain_db`, `pan`,
+fades and mute are evaluated once into sampled envelopes; a Web Audio graph
+plays them in preview and a Rust block mixer writes them at export. Both read
+the same bytes — a **conform cache** of canonical PCM made once at import — so
+neither path decodes audio and Chromium/ffmpeg decode differences never reach a
+mix. Why: [ADR 0019](adr/0019-audio-mixes-in-rust-over-conform-pcm.md) (engine),
+[0023](adr/0023-audio-mixes-by-role-not-track.md) (roles),
+[0038](adr/0038-rate-locks-audio-authors-on-samples-ndf-stays-honest.md)
+(sample lattice), [0063](adr/0063-audio-effects-are-baked-conform-siblings.md)
+(baked effects).
 
 ## The authoring grid
 
-Audio layer edges — `t_start_us` and `t_end_us` — are quantized to **exact
-48 kHz sample boundaries**, `round(i × 1e6 / 48000)`, ~20.83 µs apart. Video
-layers stay on the composition frame grid; audio does not, and that asymmetry is
-the point.
+Audio layer edges and audio automation sit on the **48 kHz sample lattice**,
+`round(i × 1e6 / 48000)` (~20.83 µs); video layers stay on the frame grid. It
+is the mixer's own lattice (`us_to_frame` in `audio/mix.rs`), so the stored
+microsecond is the sample that plays. `composition.sample_rate` is only the
+export target. `gridForLayerKind` (`renderer/grid.ts`, re-exported by
+`main/state/snap.ts`) is the single choice for the commit validator, every
+mutation snap and load repair; see [data-model.md](data-model.md).
 
-It is the same lattice the mixer renders on. `mix.rs` already converts
-`t_start_us` / `src_in_us` / `src_out_us` to 48 kHz sample frames, so choosing
-samples for authoring makes the two *literally one lattice* — **there is no
-rounding at the render seam**. The stored microsecond is the sample that plays.
-Before this, the authoring model was strictly coarser than the engine beneath it,
-and raising the video fps silently changed how precisely audio could be placed.
+- Drags snap to a visible quantum; sample precision comes from nudge commands
+  (1 sample, 1 ms) and the inspector's timecode/ms/samples fields.
+- A grouped A/V pair's sync offset is derived from the members' `t_start_us`
+  (in sample indices), never stored. A group move shifts every member by the
+  same delta; a video trim does not drag slipped audio.
+- At 29.97 / 59.94 a frame boundary is not a sample boundary, so a paired
+  audio layer sits up to ~10 µs from its video frame.
 
-The rate is the fixed mix rate, not `composition.sample_rate`: that field is only
-the export target, a delivery parameter that moves no edit. An FCP-style
-1/80-frame subframe was rejected for the same reason — at 29.97 one subframe is
-20.02 samples, so a subframe edit would land *between* mix samples and be rounded
-again at render, re-creating the two-grid problem this removed.
-
-Audio automation (`gain_db`, `pan`, role envelopes) quantizes on the same lattice
-at write time, so an envelope is never coarser than the mixer reading it. (The
-10 ms coefficient grid in "The envelope contract" below is a separate thing: it
-is how a *rendered* ramp is sampled, not where an authored keyframe may sit.)
-
-Consequences worth stating:
-
-- **Sample precision is not reachable by dragging.** At the 2000 px/s zoom
-  ceiling one sample is 0.042 px, so pointer drags keep snapping to a visible
-  quantum; sample accuracy arrives through nudge keys and numeric entry.
-- **A grouped A/V pair carries its sync offset implicitly**, in each member's own
-  `t_start_us`. There is no stored offset field, so nothing can disagree with the
-  geometry. A whole-group move shifts every member by the same delta and each
-  lands on its own lattice, so the offset survives exactly; a video trim does
-  *not* drag slipped audio, because the trim's aligned set requires coinciding
-  edges.
-- At 24, 25, 30, 50, 60 and 23.976 fps a frame boundary *is* a sample boundary
-  (integer samples per frame), so a co-aligned pair is exact. At 29.97 and 59.94
-  it is not, so a paired audio layer sits up to ~10 µs from the video frame —
-  where the mixer would have played it either way.
-
-The lattice is selected by one function, `gridForLayerKind` in
-`main/state/snap.ts`, shared by the commit validator, every mutation snap, and
-the load repair. See [data-model.md](data-model.md) for the enforcement contract.
+The 10 ms envelope grid below is how a rendered ramp is sampled, not where a
+keyframe may sit.
 
 ## The conform cache
 
-Every imported media with an audio stream gets a conform file —
-WeftCut's equivalent of Premiere's CFA conform, and chosen for the
-same reason Premiere states for theirs: the cache format **is** the
-engine working format, so the hot path never converts.
-
-**Canonical format: 48 000 Hz, 32-bit float, source channel count
-capped at 2, interleaved.**
-
-- **48 kHz** because video-world sources are overwhelmingly 48 kHz
-  already — for them conform is a decode, not a resample — and it
-  matches the typical device `AudioContext` rate. Resampling (44.1 kHz
-  music, exotic rates) is paid once at import, never per
-  playback/export. There is deliberately no per-project audio sample
-  rate setting; the export target rate is a one-time `aresample` at
-  encode.
-- **f32** because `AudioBuffer` channel data is f32, the mixer
-  accumulates in f32, and float headroom means gain staging cannot
-  clip until the single quantization at encode.
-- **Mono stays mono** (half the disk for the voice-recording class);
-  >2-channel sources downmix to stereo at conform. Consumers up-mix
-  mono via the pan law (below).
-- **Interleaved** because the preview reads time-windows over
-  `weftcut-media://` HTTP Range requests — one window, one contiguous
-  byte range.
-
-File layout (little-endian, sibling of the `.peaks` format):
+**Format:** 48 000 Hz, f32, interleaved, source channels capped at 2 (mono
+stays mono; more than 2 downmix to stereo). 48 kHz makes video audio a decode
+without resample; f32 is both consumers' working format; interleaving makes a
+preview time window one contiguous Range read. There is no per-project audio
+rate; the export target rate is applied once at encode.
 
 ```
 magic        "VCONF\0\0\0"  (8 bytes)
@@ -96,747 +46,365 @@ version      u32            (CONFORM_FORMAT_VERSION)
 sample_rate  u32            (48000)
 channels     u32            (1 | 2)
 frame_count  u64
-data         interleaved f32 samples
+data         interleaved f32 samples       offset = 28 + frame × channels × 4
 ```
 
-Frame addressing is arithmetic: `offset = 28 + frame * channels * 4`.
-A reusable conform must have the current format version, the canonical sample
-rate, one or two channels, a nonzero frame count, and an exact file length of
-`28 + frame_count * channels * 4`. Length arithmetic is checked for overflow.
-A readable header alone does not establish readiness; truncated bodies and
-trailing partial frames invalidate the artifact and trigger regeneration.
+A conform is reusable only with the current version, 48 kHz, 1–2 channels, a
+nonzero frame count and an exact file length of `28 + frame_count × channels ×
+4` (overflow-checked); a truncated body or trailing partial frame forces
+regeneration.
 
-**Producer:** `jobs/conform.rs`, one ffmpeg invocation
-(`-i src -vn -ac {1|2} -ar 48000 -f f32le -`) streamed to
-`Cache/audio/{blake3}.conform` through native resource admission. Jobs capture
-the workspace and project session before queueing; duplicate consumers share
-one artifact build. Valid cached artifacts restore before resource admission,
-independently of video proxy readiness. Triggered at import for audio-bearing media; an
-`ensure_conform` path covers media imported before the format existed
-(and `CONFORM_FORMAT_VERSION` bumps). Job completion logs the file
-size — conform costs ~1.4 GB per stereo source-hour (half for mono),
-and that cost is deliberate; see the trade-off in ADR 0019.
+**Producer:** `jobs/conform.rs`, one ffmpeg run (`-vn -ac {1|2} -ar 48000 -f
+f32le`) into `Cache/audio/{blake3}.conform` under native resource admission,
+triggered at import; `ensure_conform` backfills older media and format-version
+bumps. Valid cached conforms restore without waiting for proxies. Cost: ~1.4 GB
+per stereo source-hour (half for mono).
 
-**Waveforms:** `jobs/waveform.rs` produces stereo min/max/RMS peaks from
-22 050 Hz PCM in the existing V4 format. The finest window contains exactly
-22 PCM frames; coarser levels double that frame count, preserving the rational
-timebase rather than rounding each level to a nominal peaks-per-second rate.
-For 48 kHz mono/stereo sources, cold waveform generation follows conform and
-reuses its decoded PCM when valid. This retains the original single resample
-and mono/stereo channel policy. Other sample rates and multichannel sources
-continue decoding the original directly, avoiding a second resample or a
-changed downmix order. A cached waveform never waits for conform generation.
+**Waveforms:** `jobs/waveform.rs` writes V4 `.peaks` (min/max/RMS, 22 050 Hz,
+finest window 22 frames, each coarser level doubling it). For 48 kHz
+mono/stereo sources it reuses the conform's PCM; other sources decode the
+original directly. Generation streams through temporary files so memory does
+not grow with duration. A cached waveform never waits for conform.
 
-Peak generation streams the finest windows into temporary per-channel files,
-then constructs each coarser level with bounded read/write buffers. The final
-file streams the existing finest-first, channel-planar V4 layout. Memory for
-peaks no longer grows with source duration or duplicates the whole file during
-serialization; the background task reservation still covers FFmpeg and fixed
-buffers. This trades additional temporary disk I/O for bounded memory. Anonymous
-temporary files use operating-system unlink/delete-on-close semantics, so
-completion, failure, cancellation and process termination release intermediates.
-Min/max, RMS quantization and odd-tail
-self-pairing are unchanged, checked by byte-for-byte reference tests.
-
-Peaks reuse validates the version, sample rate, channel count, bounded level
-table, each level's timebase/count relationship, contiguous data offsets and
-exact final file length. Missing or invalid ordinary waveform artifacts are
-re-enqueued when read; consumers retry after the completion event. Conform
-and waveform generation drain FFmpeg diagnostics concurrently into a bounded
-buffer. Session cancellation kills and awaits the child before the job returns
-and releases its resource reservation; a completed stale task cannot publish
-into the newly opened project.
-
-An effect chain adds a **sibling** pair beside both files —
-`{hash}.fx-{sig16}.conform` and `waveforms/{hash}.fx-{sig16}.v4.peaks`, one
-per distinct chain (see § Clip effects).
-
-Those fx siblings are the one part of `Cache/audio/` the disk-cache LRU sweeps:
-`cache/disk_lru.rs` collects `*.fx-*.conform` as units under the shared budget
-while the canonical `{hash}.conform` beside them stays excluded, because a bake
-is one filter pass over already-decoded PCM (~300× realtime) and a conform is a
-full decode. The `.v4.peaks` siblings were already units. Since mtime is the
-LRU clock, a reader that short-circuits on a cache hit refreshes it — otherwise
-the artifact being played ages out as the oldest unit in the cache.
+**Effect siblings:** an effect chain adds `{hash}.fx-{sig16}.conform` and
+`waveforms/{hash}.fx-{sig16}.v4.peaks` (§ Clip effects). `cache/disk_lru.rs`
+sweeps the `.fx-*` conforms as LRU units under the shared budget; the canonical
+conform is never swept (a bake is one cheap filter pass, a conform a full
+decode). mtime is the LRU clock, so a reader that hits the cache refreshes it.
 
 ## The envelope contract
 
-The heart of the design. For each audio layer, the shared keyframe engine
-(now the single `weftcut-eval` leaf — compiled natively for Rust and to
-wasm for the renderer, see [`render.md`](render.md) and
-[ADR 0025](adr/0025-shared-eval-wasm-leaf-crate.md)) resolves two
-envelopes over the layer's local time span:
+For each audio layer, the shared `weftcut-eval` leaf (native in Rust, wasm in
+the renderer; [ADR 0025](adr/0025-shared-eval-wasm-leaf-crate.md)) yields:
 
 ```
-gain envelope  = lerp-sample(Animated gain_db, Δ = 10 ms)
-                 → linear (10^(dB/20))
-                 → × fade-in ramp × fade-out ramp     (linear ramps)
-pan envelope   = lerp-sample(Animated pan, Δ = 10 ms), clamped [-1, 1]
+gain = lerp-sample(gain_db, 10 ms) → 10^(dB/20) × fade-in ramp × fade-out ramp
+pan  = lerp-sample(pan, 10 ms), clamped [-1, 1] → pan_coeffs → 2×2 matrix [a,b,c,d]
 ```
 
-The output is a list of `(t_ms, value)` control points. **Both
-consumers linearly interpolate between the same points**:
-
-- Web Audio applies the gain envelope with `setValueCurveAtTime` —
-  whose semantics are exactly linear interpolation across the sampled
-  array — and the pan coefficient curves via `setValueCurveAtTime` on
-  the matrix `GainNode`s.
-- The Rust mixer lerps per sample between the same points.
-
-Identical points, identical interpolation: parity holds by
-construction, not by tolerance. Properties that are fully static (no
-keyframes, no fades) skip sampling and travel as a scalar.
-
-Known quantization: a `Hold` keyframe's instant step becomes a ≤10 ms
-ramp between the two grid points that straddle it. Accepted; 10 ms is
-well under a frame.
-
-The envelope sampler's drift-prone math is single-sourced in the
-`weftcut-eval` leaf (native for Rust, wasm for the renderer): `db_to_linear`
-(`10^(dB/20)`), the keyframe interpolation it samples, the **fade ramp**
-(`fade_multiplier`), and the **equal-power pan law** (`pan_coeffs`). The
-sampler STRUCTURE around them — the 10 ms grid loop and the per-sample lerp —
-is still parallel Rust/TS code, guarded by `audioEnvelopeGolden.fixture.json`.
-
-Pan law: the equal-power law is a time-varying 2×2 mix matrix
-`[a,b,c,d]` (`out_l = a·l + b·r`, `out_r = c·l + d·r`), computed by
-`weftcut-eval::pan_coeffs`. The canonical pan control points are the
-COEFFICIENTS, sampled on the 10 ms grid; both consumers lerp coefficients
-(export per-sample, preview via `setValueCurveAtTime`) — the same grid →
-lerp discipline as gain, so parity holds by construction. The
-`panLawGolden.fixture.json` covers mono + stereo branches; the pan
-coefficient envelope is additionally covered in the envelope golden.
+Both renderers linearly interpolate the same control points: Web Audio via
+`setValueCurveAtTime` (gain node and the four pan-matrix gains), Rust per
+sample. Static properties travel as scalars. A `Hold` keyframe becomes a
+≤10 ms ramp. `db_to_linear`, `fade_multiplier`, `pan_coeffs` (equal-power) and
+`role_audible` are single-sourced in the leaf; the 10 ms sampling loop is
+parallel Rust/TS code guarded by `audioEnvelopeGolden.fixture.json` and
+`panLawGolden.fixture.json`.
 
 ## Preview mixer
 
-`render/audio/` replaces element-based playback with a
-buffer-scheduled graph on one shared `AudioContext`:
+`renderer/render/audio/`, one shared `AudioContext`:
 
 ```
-per layer:  AudioBufferSourceNode (chunk)
-              → GainNode        (gain envelope via setValueCurveAtTime;
-                                 the role's gain is folded into it here)
-              → ChannelSplitter → 4×GainNode → ChannelMerger
-                                (pan matrix; coefficient curves from the
-                                 weftcut-eval pan law — mono uses 2 gains)
-              → trim GainNode   (micro-fades, re-anchor masking)
-              → roleBus(role).gain
-role bus:   gain (UNITY, permanently) → master.input
-              ↘ analyser        (LEAF — the role's meter tap)
-master:     input → analyser (meter) → DynamicsCompressor
-              (−1 dB, 20:1, 1 ms attack — soft overload protection)
-              → destination
+per layer:  AudioBufferSourceNode (1 s chunk)
+              → GainNode       (gain envelope, role gain folded in)
+              → ChannelSplitter → 4×GainNode → ChannelMerger   (pan matrix; mono uses 2)
+              → trim GainNode  (micro-fades)
+              → roleBusInput(role)
+role bus:   GainNode (UNITY, always) → master input
+              ↘ AnalyserNode (leaf: the role meter)
+master:     input → AnalyserNode → DynamicsCompressor (−1 dB, 20:1, 1 ms attack) → destination
 ```
 
-**Role buses are metering taps.** Each of the four roles owns one
-`GainNode` (`AudioGraph.roleBusInput`) — the single point every member
-layer's chain fans into — with an analyser hanging off it as a **leaf**
-that feeds nothing onward, so a bus adds no processing and cannot alter
-an output sample. Two invariants make that true and keep it true:
+**Role buses are meter taps, not processing buses.** Role gain is applied only
+by folding it onto each member layer's envelope in `AudioMixer.deriveFromView`;
+writing it at the bus too would apply it twice (a −6 dB trim would sound at
+−12 dB). `AudioGraph.test.ts` holds every bus at unity and `AudioMixer.test.ts`
+asserts the fold. A gated role's layers are skipped, not zeroed, so its meter
+reads true silence with no special case. `AudioMixer.updateView` re-points
+`trim` when a layer's role changes.
 
-- **The bus gain is unity, permanently.** The role's gain is folded onto
-  each member layer's own envelope in `AudioMixer.deriveFromView`, which
-  is the only place it is applied; writing it at the bus as well would
-  apply it twice. Unit tests hold both halves of that: `AudioGraph.test.ts`
-  keeps every bus at unity, and `AudioMixer.test.ts` drives a role gain
-  through the fold and asserts the bus stays there.
-- **A gated role's bus reads true silence.** The skip rules below drop a
-  gated role's layers entirely rather than zeroing them, so nothing
-  reaches the bus and its analyser reports silence without anything
-  asking whether the role is gated.
+**Feeding:** chunks are Range-read from the conform over `weftcut-media://`
+(loop-read to the exact byte count) and de-interleaved into `AudioBuffer`s; no
+renderer decode. 1 s chunks, 3 s lookahead, at most 8 live chunks and 8 cached
+buffers per mixer (`chunkSchedule.ts`); mixers outside lookahead are released.
+A chunk whose start is already past starts now with a compensating offset.
 
-`roleMeterSnapshot` / `roleMeterSnapshots` read the taps. This is
-deliberately *not* the per-role processing bus the Roles section defers:
-[ADR 0066](adr/0066-a-role-meter-is-a-tap-not-a-bus.md).
+**Clock:** the audio hardware clock is master. One `ClockAnchor`
+(composition µs ↔ `AudioContext.currentTime`, defined in `chunkSchedule.ts`)
+drives both the playhead (derived, never accumulated) and chunk scheduling, so
+there is no reconciler. `SyntheticClock` (`render/clock.ts`) interpolates
+visual ticks from `getOutputTimestamp()`, falling back to latency estimates or
+`currentTime` when the stamp is missing or older than 250 ms. Audio scheduling
+uses raw time; the displayed Moment is frame-snapped.
 
-**Feeding:** chunks are read straight from the conform file over
-`weftcut-media://` HTTP Range requests (loop-read until the exact byte
-count, the established Range discipline) and de-interleaved into
-`AudioBuffer`s — **no decode in the renderer, ever**. Chunk length 1 s, lookahead 3 s,
-at most 8 live chunks and 8 cached PCM buffers per layer. Buffers are shared
-with their scheduled nodes rather than copied; mixers outside lookahead are released. Mono conform produces mono
-buffers; the pan matrix routes the single channel to both outputs via
-the mono pan law (2 gains).
+**Transport ownership:** `PreviewAudioEngine` owns transport state, clock,
+graph, mixers and PCM preparation; the editor session creates it
+(`previewAudioSession.ts`) and disposes it at session end. Preview panels only
+attach presentation, so transport, meters and edits work with Preview closed.
+`Compositor` and `CompositionNode` do not own audio. A 16 ms timer refills the
+3 s schedule independently of Pixi/rAF, still on the renderer JS thread — a
+blocked UI thread can delay commands and refill, though Web Audio keeps playing
+what was submitted. Upcoming Audio layers, including inside Groups, come from
+`forEachLayer`; video readiness never gates audio start.
 
-**Scheduling:** sample-accurate inside the audio clock domain —
-`when = ctxTimeAtCompUs(anchor, chunkCompUs)` against the engine's
-clock anchor. Chunks that would start in the past start now with a
-compensating buffer offset.
+**States:** paused, preparing, playing, error, plus requested intent (a second
+gesture cancels preparation). Play resumes the context, prepares PCM for the
+first 100 ms, then releases the anchor 10 ms ahead. A missing conform keeps the
+transport preparing; a 10 s deadline (300 s while retimed stems prepare) or a
+read/device failure is an error; Play retries. `playing` means submitted
+against a running context, not audible at the speaker.
 
-**Clock:** the audio hardware clock is the master. One `ClockAnchor`
-(a composition-µs ↔ `AudioContext.currentTime` pair, defined in
-`chunkSchedule.ts` and nowhere else) is owned by `PreviewAudioEngine`:
-while the context is running, the playing position is DERIVED from
-the audio timeline against it — pure mapping, no accumulation — and the
-engine forwards the same anchor to every `AudioMixer`, which schedules
-chunks against it. Playhead and audio share one clock by construction;
-there is no second clock to reconcile, so there is no reconciler.
-For visual ticks, a fresh `getOutputTimestamp()` pair interpolates audio time
-between device blocks. The render/output offset is calibrated once per anchor
-against `currentTime`; recalibrating every tick would reintroduce block jitter
-and repeated/skipped frames at 60 fps. Audio scheduling retains its original
-anchor. Missing, invalid or stale (>250 ms) timestamps fall back to
-`currentTime`; a >50 ms device discontinuity recalibrates the offset. The source
-remains the hardware timestamp, not an independently accumulating wall clock.
-Play resumes the context and prepares the first 100 ms of PCM before releasing
-the clock, with a common 10 ms scheduling lead. The actual session never runs
-on a wall-clock fallback through a suspended device: preparation holds the
-position and an interruption stops playback with an observable error. Audio
-scheduling uses raw time; the displayed Moment is frame-snapped.
+**Edits and cancellation:** project snapshots, bake state and Role gain
+overrides notify the engine directly; a changed layer is rescheduled, an
+unchanged one keeps its mixer. Pause stops sources synchronously. Seek, pause,
+project replacement and disposal invalidate the request generation so late
+completions cannot revive old audio; completed PCM stays cached across pause. A
+monitor-only edit preview does not move the clock.
 
-**Transport ownership:** the editor session owns the graph and mixers, even
-with Preview closed. A 16 ms timer fills the three-second schedule without a
-Pixi/rAF dependency. The recursive composition walk supplies upcoming audio,
-including clipped Group instances, before they are drawn. Video readiness no
-longer gates audio start. Paused positions are preloaded too.
+## Layer skip rules
 
-The state store distinguishes paused, preparing, playing and error, plus
-requested intent. Missing conform data keeps the transport preparing; the
-10-second preparation deadline and source/device failures are visible errors.
-Play retries failed reads. Playing means scheduling against a running context,
-not a measurement at the speaker.
+Preview and export share rules 1–6:
 
-**Edits and cancellation:** project snapshots, bake changes and Role gain
-overrides notify the session directly. Changed parameters reschedule their
-layer; unchanged audio retains its mixer. Pause stops sources synchronously
-and invalidates pending work, without awaiting a visual tick. Seek, project
-replacement and disposal invalidate the request generation; read cancellation
-and per-slot identity prevent late completions from reviving old audio.
-Completed PCM stays cached on pause for resume. A monitor-only edit preview
-does not move the transport clock or the editor Moment.
+1. `Track.enabled == false` (track `muted`/`solo` do not gate audio).
+2. The layer's role is muted.
+3. A role solo set exists and the layer's role is not in it.
+4. Mute wins over solo.
+5. `Layer.enabled == false`.
+6. `AudioParams.mute == true`.
+7. `Layer.locked == true` — **export only**; preview still plays locked layers.
 
-**Diagnostics:** the performance monitor exposes preparation and stop-command
-handling times, plus separate AudioContext base/output latency estimates.
-These are not physical speaker measurements. Thread isolation remains a
-separate future step; UI stalls can still delay command delivery or refill.
+Rules 2–4 run the shared `role_audible` leaf (export `audible_audio_layers`,
+preview `roleGate.ts`), guarded by `roleGateGolden.fixture.json`; the
+layer-selection loop around it is parallel code on each side.
 
-**Layer skip rules (preview and export share rules 1–6):**
+## Meters
 
-1. `Track.enabled == false` — the whole track is off; skip all its audio layers.
-   This is the one whole-track gate left: track `muted`/`solo` no longer gate
-   audio (audio mute/solo moved to roles — see Roles below).
-2. The layer's role is muted (`RoleMixSettings.muted == true`) — every layer
-   tagged with that role is silenced.
-3. A role-solo set is non-empty — any role with `solo == true` exists; skip
-   layers whose role is not soloed. (An empty solo set → normal path.)
-4. `mute wins over solo` — a role that is both muted and soloed is silent, and a
-   muted role inside a solo set never reopens.
-5. `Layer.enabled == false` — the individual layer is off; skip it regardless of
-   role flags.
-6. `AudioParams.mute == true` — the layer's own clip mute; skip it.
-7. `Layer.locked == true` — **export-side only**: the export planner drops locked
-   layers' audio; the preview mixer does not apply this rule, so a locked layer
-   still plays back. The divergence is inherited, not designed — locking is an
-   edit guard, and silencing on lock is arguably wrong on both sides.
-
-The mute/solo half of these rules is evaluated against the project's `audio_roles`
-table, so it is consistent whatever track a layer lives on. The mute/solo
-DECISION itself now runs the shared `weftcut-eval` leaf (`role_audible` — native
-in the export planner `audible_audio_layers`, wasm in the preview gate
-`roleGate.ts`; [ADR 0025](adr/0025-shared-eval-wasm-leaf-crate.md)) and is guarded
-by the `roleGateGolden.fixture.json` cross-language golden. The layer-selection
-loop around it (track + window gating) stays parallel on the two sides.
-
-**Meter readings** — master RMS + peak, and per-role RMS + peak — are
-combined-channel; per-channel (L/R) splitting is future work for master
-and roles alike. `state/masterMeterStore.ts` is the single renderer
-publication seam for all of them and owns the silence floor consumers
-threshold against (`SILENCE_DB`, printed as "−∞"). The master UI reading
-(`publishMasterMeter`) and the per-role slice (`publishRoleMeters`) are
-published TOGETHER by the audio session’s fast tap, from one instant at one rate quick
-enough for a meter to move rather than step, so the master's line and the
-role columns beside it read as one clock; the tap runs only while a reader
-holds a ref-counted lease (`acquireRoleMeterDemand`) and the transport
-plays. Deliberately slow and SEPARATE is the agent-facing master report
-(`reportAudioMeter`), whose ~2 Hz cadence is the contract of the MCP
-`composition://meter` resource; it samples `AudioGraph.meterSnapshot` on
-its own 500 ms timer and does not pass through the store. The dev PerfHUD
-consumes neither — it samples `AudioGraph.meterSnapshot` on its own timer
-too. Both readings publish one silent sample when the transport stops
-(`publishMasterMeterSilent`, `publishRoleMetersSilent`) — a held last
-reading would claim level over a mix that has gone silent. That silent
-sample goes to the store only; the MCP resource keeps the reading it was
-last handed while playing.
-Selectors are scalar (`useRoleRmsDb`): one returning a fresh object per
-call re-renders its subtree forever.
-Per-role peak is published and kept, but nothing reads it yet.
-
-The store's one derived value is the master **peak hold** (`peakHoldDb`):
-the loudest master peak since it was last let go, raised by every
-published sample and lowered only by `resetMasterPeakHold` or a cleared
-preview. The silent sample leaves it standing on purpose — a meter's
-NUMBER is a hold, not a sample: the bar and the tick move with the
-signal, and the number stands at the pass's maximum so an editor can play
-through and then read what the mix reached. It is an infinite hold, as a
-console's peak display is, rather than a timed decay: a decay needs a
-clock that keeps ticking after the last sample, and the store has none.
-In the Panel the number is also the reset (click it), and at 0 dBFS and
-above it reads as a clip until reset.
+Master and per-role readings (RMS + peak) are combined-channel.
+`state/masterMeterStore.ts` is the single renderer publication seam and owns
+the silence floor (`SILENCE_DB`, shown as "−∞"). The session's fast tap
+publishes master (`publishMasterMeter`) and roles (`publishRoleMeters`)
+together, only while a reader holds `acquireRoleMeterDemand` and the transport
+plays, and publishes one silent sample on stop. Separately, `reportAudioMeter`
+samples `AudioGraph.meterSnapshot` every 500 ms for the MCP
+`composition://meter` resource (master only). Selectors are scalar
+(`useRoleRmsDb`): a selector returning a fresh object re-renders forever.
+`peakHoldDb` is an infinite master peak hold, cleared only by
+`resetMasterPeakHold` or a cleared preview.
 
 ## Roles
 
-Audio mixing groups by **role**, not by track. A role is a per-layer
-tag on `AudioParams` — Dialogue (the default), Music, SFX, or
-Voiceover — and each role is a mix bus. The buses live project-level in
-`Project.audio_roles`, one `RoleMixSettings { gain_db, muted, solo }`
-per role; an absent entry resolves to defaults (0 dB, unmuted,
-unsoloed) via `role_mix`, so a project that never touched the mixer
-plays every role at unity. Decision record: [ADR 0023](adr/0023-audio-mixes-by-role-not-track.md).
+A role is a per-layer tag on `AudioParams` — Dialogue (default), Music, SFX,
+Voiceover — and each role is a mix bus with project-level `RoleMixSettings {
+gain_db, muted, solo }` in `Project.audio_roles` (absent ⇒ unity). The bus is
+realized by folding role gain into member envelopes and filtering by mute/solo;
+neither engine has a per-role summing stage.
 
-v1 realizes the bus by **folding**: the role's `gain_db` is converted
-to linear and multiplied into every member layer's gain envelope before
-the block loop, and role mute/solo simply filter which layers enter the
-plan. There is no separate summing stage per role — the per-block
-accumulator loop is unchanged from a track-less mix, and the preview's
-per-role metering taps are unity leaves rather than a stage
-([ADR 0066](adr/0066-a-role-meter-is-a-tap-not-a-bus.md)). A future
-per-role effect insert — the `RoleMixSettings.effects` this design does
-not have — is the deferred extension point that would turn the fold into
-a real bus with its own DSP.
+Control levels: clip `Layer.enabled` (the inspector's audio-clip toggle; the
+v1 → v2 migration turned muted audio clips into disabled ones), role
+mute/solo/gain, and track `enabled` (picture and audio). Role gain
+(`set_role_gain`) is recorded; role mute/solo (`update_role_flags`) are
+unrecorded so undo never flips them.
 
-Three control levels stack, each owning a different scope:
-
-- **Clip enable/disable** (`Layer.enabled`, per layer) — the inspector's
-  control for silencing one audio clip. The v1 → v2 JSON migration turns each
-  muted audio clip into a disabled clip and clears `AudioParams.mute`, preserving
-  silence without a second toggle or a recovery action in the inspector.
-  The parameter remains in the engine/API wire shape.
-- **Role mute / solo / gain** (`audio_roles`, the mix) — silence,
-  isolate, or trim a whole category of sound at once ("all dialogue",
-  "just the music").
-- **Track `enabled`** (the eye toggle, whole track) — turn an entire
-  track's picture *and* audio off together.
-
-Role gain is a **recorded** edit — `set_role_gain` lands on the undo
-stack like any parameter change. Role mute and solo (`update_role_flags`)
-are **unrecorded** preferences applied to every history snapshot, so
-Ctrl-Z never flips a mixer toggle — the same convention as the track
-eye/lock flags. The Role Mixer Panel is the surface that drives these.
-
-### The Role Mixer Panel
-
-`RoleMixerPanel` is project-wide and the single home for per-role
-mute/solo: it mixes the four roles, never tracks or per-layer audio —
-layer gain, pan and fades stay in the inspector. It measures its own
-content width and renders one of two layouts, carrying exactly one
-`mixer-panel--<layout>` class on the measured root.
-
-- **Card list** (`RoleChannel`), below the console's floor. One flat card
-  per role: glyph, name and dB readout on line 1, a fader spanning the
-  card with a unity tick on line 2, the role's level meter on line 3,
-  and the implied-mute badge with mute/solo/reset on line 4. Giving each
-  of those a line of its own is the point — everything but the name is
-  fixed-width, so a line that holds the name and the controls together
-  has no room left for either the name or the fader. Role identity is a
-  glyph, not a hue, so the colour channel stays free for state. The
-  badge is the only item a translation can widen, so it is the one that
-  truncates; its sentence is in its `title` regardless. The list is
-  always one column: a
-  second column needs more root width than the console's floor leaves,
-  so the auto-fill grid rule earns its place as the correct way to write
-  a card grid and as the fallback if that floor ever moves, not as a
-  second column anyone can reach.
-- **Console** (`RoleStrip`), at 392 px of root width and above. Four
-  vertical-fader strips, each fader a channel-strip cap with its own
-  level meter beside it (`RoleStripMeter`, the one `MeterColumn` every
-  strip draws, so a role's level and gain read on one axis), the dB
-  legend drawn once in a shared gutter (`DbScaleGutter`), and the master
-  as a fifth strip on a sunken surface, shaped like the four: one RMS
-  column on the fader travel with the live peak as a tick across it, the
-  peak hold as the number under its name (where a console prints a
-  channel's peak; it is also the reset), and the RMS reading on the
-  readout row in line with the four gain readouts. One column, never two
-  — a second column on a mixer reads as the right channel whatever its
-  caption says, and the analyser is combined-channel. The per-role meter
-  sits in the fader row itself, so the row keeps its one fixed height and
-  the dB scale stays true; it is bar-only, because the numeric reading
-  lives on the card. Vertical
-  travel is what makes the precision width-independent: a horizontal
-  fader's travel is a function of the dock width. The threshold is
-  arithmetic over the column widths `editor.css` pins — four role
-  strips, the master strip, the gutter, the gaps, the Panel's inset —
-  rather than a measurement, so it cannot drift with a font or a
-  translation; a strip has to hold both the readout and the
-  mute/solo/reset row, which is what puts the floor where it is.
-
-Both layouts are presentations of **one** gain gesture, `useRoleGain`: the
-fader auditions live through a renderer-local role override
-(`auditionedRoleGainLinear` folds it in place of the committed gain),
-release records exactly one `set_role_gain`, and Escape mid-drag restores
-both the sound and the displayed value. `GainReadout` shows the value with
-its unit at rest, marks a non-neutral one, and becomes an input only when
-clicked. Reset to unity is revealed on hover or focus; mute and solo are
-state, so they stand at rest. A role silenced by another role's solo dims
-and names the reason, off the same `roleAudible` predicate the audio pass
-gates with, so a dimmed card and a silent role cannot disagree. Every
-meter on the Panel is a readout off the shared meter store (§ Preview
-mixer) rather than a DSP stage, and the Panel holds the per-role tap's
-lease only while it is visible.
+**Role Mixer Panel** (`panels/MixerPanel.tsx`, exported as `RoleMixerPanel`) is
+the only per-role control surface; layer gain/pan/fades stay in the inspector.
+It renders a one-column card list below `UI_METRICS.mixerConsoleMinWidth`
+(392 baseline px × UI scale, `settings/uiMetrics.ts`) and a vertical-fader
+console with a master strip at or above it. Both use one gesture, `useRoleGain`:
+dragging auditions live through a renderer-local override
+(`auditionedRoleGainLinear`), release records one `set_role_gain`, Escape
+restores. A role silenced by another's solo dims off the same `roleAudible`
+predicate the audio pass uses. The Panel holds the meter lease only while
+visible.
 
 ## Clip effects (baked)
 
-An audio effect is an **offline bake**, not a realtime insert: a layer's
-`audio.*` effect chain is rendered once by ffmpeg from the media's conform
-into a **sibling conform file**, and both mixers read that sibling instead of
-the raw conform. Decision record:
-[ADR 0063](adr/0063-audio-effects-are-baked-conform-siblings.md). The v1 kind
-is `audio.denoise` (`afftdn` with a user-sampled noise profile).
+An Audio layer's `audio.*` effects (in `Layer.effects`) are rendered once by
+ffmpeg from the media conform into a sibling conform that both mixers read. The
+only kind is `audio.denoise` (`afftdn` with a user-sampled noise profile). The
+command layer refuses an `audio.*` kind on a non-Audio layer and a visual kind
+on an Audio layer (`EffectKindNotApplicable`), and refuses keyframes on audio
+params (`AudioEffectParamStatic`).
 
-The chain is the ordinary `Layer.effects` array; audio kinds live in the
-`audio.*` namespace and the command layer refuses one on a non-Audio layer
-(and a visual kind on an Audio layer). The **effective chain** — what a bake
-actually renders — is the enabled, catalogued, *complete* audio effects in
-stored order; an incomplete one is dropped exactly as a disabled one is, and
-the card says what is missing. A denoise is complete when both sample-region
-bounds are written, the span is at least 250 ms, and it lies inside the media's
-probed duration. Region bounds are **source (media) time**, so move, trim, slip
-and split never invalidate a bake.
+The **effective chain** is the enabled, catalogued, complete audio effects in
+stored order; an incomplete one is dropped like a disabled one and its card says
+what is missing. A denoise is complete when both region bounds are set, the span
+is ≥ 250 ms, and it lies inside the media's duration. Region bounds are source
+time, so move, trim, slip and split never invalidate a bake.
 
-### The pipeline
+### Pipeline
 
-`main/audioFx/baker.ts` is the orchestrator, and the only holder of bake state:
+`main/audioFx/baker.ts` is the orchestrator and sole holder of bake state:
 
 ```
-actor change ──► desired = effectiveChain(layer) → chain signature
-   (Layer diff hint ⇒ that layer; anything else ⇒ every composition)
-      │
-      ▼  per layer, 400 ms debounce (a standing timer is re-armed only by a
-      │   CHANGED desire, so a burst of edits collapses into one bake)
-   ready under this signature and the file is still there  ⇒ done (touch mtime)
-   raw conform missing                                     ⇒ ensure_conform, wait
-                                        (its derivatives event re-enters here)
-   the sibling is already on disk and its header parses    ⇒ ready (build peaks)
-   another layer is already baking this signature          ⇒ attach to it
-   otherwise: cancel the bake this layer is leaving (if nobody else wants it),
+actor change ──► desired = effectiveChain(layer) → signature
+      ▼  per layer, 400 ms debounce (re-armed only by a changed desire)
+   ready under this signature and file present  ⇒ done (touch mtime)
+   raw conform missing                          ⇒ ensure_conform, wait
+   sibling already on disk with a valid header  ⇒ ready (build peaks)
+   another layer baking this signature          ⇒ attach
+   otherwise: cancel the bake this layer leaves (if unshared),
               measure_conform_rms → buildFilterComplex → bake_audio_fx
               → build_peaks_for_vconf → publish ready
-   on failure: publish failed, KEEP the previous ready artifact
+   on failure: publish failed, keep the previous ready artifact
 ```
 
-Bakes share `ffmpeg_sem` with the import derivatives — no second pool — and
-emit the usual `media:job_started/complete/error` with `kind: "audio_fx"`, so
-the status bar's job counter includes them. A cancel aborts the task, which
-reaps ffmpeg through `kill_on_drop` and discards the temp.
+Bakes take an interactive permit through native resource admission inside
+`audio/fx.rs`, emit `media:job_*` with `kind: "audio_fx"`, and on cancel reap
+ffmpeg via `kill_on_drop` and discard the temp. Rust's three primitives
+(`native/src/audio/fx.rs`, spawned by `jobs/mod.rs::spawn_audio_fx`) know
+nothing about effects.
 
-Rust's part is three stateless primitives in `native/src/audio/fx.rs`
-(spawned through `jobs/mod.rs::spawn_audio_fx`): `measure_conform_rms` pools a
-frame range into one dBFS figure, `bake_audio_fx` runs a finished
-`filter_complex` from one conform into another, and `build_peaks_for_vconf`
-draws the waveform sibling. None of them knows what an effect is.
+### Signature and paths
 
-### The signature and the paths
-
-Everything that decides *what* gets rendered is TS. `shared/audioEffects/`
-holds the catalog (`catalog.ts`, `denoise.ts`), the bake contract and the
-graph composer (`graph.ts`), the conform-format twins (`conform.ts`), the
-canonical string (`signature.ts`) and the cross-process state vocabulary
-(`status.ts`). Only main hashes it (`main/audioFx/signature.ts`), because the
-shared tree compiles without Node types — and nothing renderer-side needs a
-signature, it reads the paths the baker publishes.
+`shared/audioEffects/` holds the catalog (`catalog.ts`, `denoise.ts`), graph
+composer (`graph.ts`), conform-format twins (`conform.ts`), canonical string
+(`signature.ts`) and status vocabulary (`status.ts`). Only main hashes
+(`main/audioFx/signature.ts`).
 
 ```
 v1|{media_hash}|{CONFORM_FORMAT_VERSION}|{kind}@{version}{k=v,…};{kind}@{version}{…}
 ```
 
-Params sorted by key and printed to six decimals, effect `id` excluded (so two
-layers configured alike share one artifact), chain order preserved (it is the
-render order), only effective entries present. `sig = sha256(canonical)`;
-`sig16` is its first 16 hex chars. An empty effective chain has **no**
-signature — that layer plays the raw conform.
+Params sorted by key and printed to six decimals; effect ids excluded; chain
+order kept; only effective entries. `sig16` = first 16 hex chars of the sha256.
+The path layout is stated twice — `cache/mod.rs` (`audio_fx_conform`,
+`waveform_fx`) and `main/audioFx/fxPaths.ts`, which also owns the readiness
+predicates.
 
-```
-Cache/audio/{media_hash}.fx-{sig16}.conform        (VCONF; same header as the raw one)
-Cache/waveforms/{media_hash}.fx-{sig16}.v4.peaks   (the processed waveform)
-```
+**Denoise graph:** the region is prepended to the clip, `asendcmd` toggles
+`sample_noise` over that copy, and a trailing `atrim` removes it — `afftdn` is
+streaming, so without the pre-roll audio before the region is processed
+untrained (measured 3.7 dB reduction vs 9.3 dB). Both trims count samples, not
+seconds (second-valued bounds can differ by one sample and fail the frame-count
+check). `nf = clamp(round(region_rms_dbfs + margin), -80, -20)`, because
+`sample_noise` sets the profile's shape, never its level.
 
-The layout is stated twice — `cache/mod.rs`'s `audio_fx_conform` /
-`waveform_fx` and `main/audioFx/fxPaths.ts` — because only the baker holds a
-signature, so only the baker can name the file; the TS side also owns the
-trust predicates (non-empty, magic, format version, plausible channel count),
-since disk existence is what "ready" means.
+### Seams
 
-**The denoise graph** trains the filter with a concat pre-roll: the sample
-region is prepended to the clip, `asendcmd` starts and stops `sample_noise`
-over that copy, and a trailing `atrim` drops it again. `afftdn` is streaming,
-so without the pre-roll everything before the region is processed with an
-untrained profile (measured: 3.7 dB of reduction there, against 9.3 dB with
-it). Both trims count **samples** on the 48 kHz lattice, never seconds: with
-second-valued bounds the pre-roll and the trim that removes it can differ by
-one sample, and `bake_audio_fx` rejects a graph that changes the frame count.
-`nf` is derived at bake time as `clamp(round(region_rms_dbfs + margin), -80,
--20)` — `sample_noise` sets the profile's spectral shape and never its level,
-so a loud floor left at the filter's default makes the whole filter a no-op.
+- **Preview:** `previewAudioSession.ts` resolves each layer to its ready baked
+  path, else the raw `conform_path`; `PreviewAudioEngine.refresh` recreates the
+  mixer when the URL changes (the swap rides the 5 ms micro-fade). A
+  temporarily unresolved URL keeps the previous artifact if the media is
+  unchanged.
+- **Export:** `render/exportReadiness.ts`'s `runAudioFxGate` runs after the
+  conform gate (`ensure_export_audio_fx`, then wait, cancellable). Main injects
+  `layerAudioSources` (`state/export-project-forward.ts`) and `plan_for_project`
+  uses each as that layer's conform when the file exists. Only layers whose
+  desired signature is on disk are named. Group members are always included in
+  the wait (their times are Group-local).
+- **Waveform:** a tile's `waveformKey` is the media id or
+  `fx:{media_hash}.fx-{sig16}`; `TimelineVisualPreview.tsx` picks the fx key
+  when ready, `WaveformTileProducer.ts` keys tiles by it, and
+  `state/single-media-forward.ts` resolves it to a path. A new bake is new
+  tiles; no invalidation event.
 
-### The three seams
-
-- **Preview.** `audio/previewAudioSession.ts` resolves each layer to
-  its baked path when available and the raw `conform_path` otherwise;
-  `PreviewAudioEngine.refresh` disposes and recreates the `AudioMixer` when
-  the url changes, so the swap lands behind the existing ~5 ms micro-fade. A
-  url that goes null under a live mixer keeps that mixer — the audio it already
-  holds is closer to the truth than silence.
-- **Export.** `render/exportReadiness.ts`'s `runAudioFxGate` runs after the
-  conform gate (the conform is only half the audio wait): listener first, then
-  `ensure_export_audio_fx`, then the wait, with a Cancel-able "preparing"
-  panel. Main injects `layerAudioSources` into the mix channel
-  (`state/export-project-forward.ts`), and `audio/mix.rs`'s `plan_for_project`
-  uses the override as that layer's `conform_path` when the file is there.
-  Only layers whose *desired* signature is the one on disk are named, so an
-  absent entry means "no effects", never "not ready yet". The export window
-  filters **root-composition** layers only: a layer inside a Group keeps times
-  local to that Group and only the mix planner resolves the placement that maps
-  them, so a Group's members are always included — waiting for one bake too
-  many is cheaper than exporting audio the user never heard.
-- **Waveform.** A tile's identity is a `waveformKey` — a media id for the raw
-  conform, or `fx:{media_hash}.fx-{sig16}` for a baked sibling.
-  `timeline/TimelineVisualPreview.tsx` picks the fx key when one is ready
-  (`useReadyPeaksKey` → the block's `waveformKey`),
-  `tileEngine/WaveformTileProducer.ts` keys tiles and level tables by it, and
-  `state/single-media-forward.ts` resolves an `fx:` key to an explicit
-  `waveformPath` before forwarding to Rust. An fx key is immutable per
-  artifact, so a new bake is simply new tiles and no invalidation event is
-  needed.
-
-A **pause detection reads the same peaks the waveform draws**: the fx sibling's
-`.peaks` when the layer's bake is ready and its peaks file has landed, the raw
-media's otherwise. `detect_pauses` takes the resolved path the way it takes
-`layer` and `media` — main injects it out of the baker's state — so the choice
-is made in one place for the tile producer and the detector alike, and the
-bands the Pauses section draws cannot disagree with the waveform under them.
-That the processed audio is what a pause is measured on is the point rather
-than a convenience: denoise moves a clip's floor, and what a person hears is
-the baked sibling. A subject whose bake is still running falls back to the raw
-peaks rather than refusing — the same tolerance the tile fetch has, and unlike
-export, which keeps its strict gate.
-
-### Readiness and status
+### Status
 
 The baker publishes one `LayerFxState { desired_sig, ready, pending, error }`
-per layer over `audio_fx:status`, answers `audio_fx_snapshot` for boot-time and
-late subscribers, and `state/audioFxStore.ts` mirrors the map in the renderer
-(full state per push, never a delta, so a dropped event cannot half-update it).
-Nothing is persisted: a stored path outlives the file it names.
+per layer on `audio_fx:status` (full state per push), answers
+`audio_fx_snapshot`, and `state/audioFxStore.ts` mirrors it. Nothing is
+persisted. Status: no desired signature ⇒ none; `ready.sig` = desired ⇒ ready;
+error ⇒ failed; else pending (ready wins over a stale error).
 
-Status is a four-way derivation of that record, in this order: no desired
-signature ⇒ **none** (the layer plays the raw conform); `ready.sig` equals the
-desired one ⇒ **ready**; an error stands ⇒ **failed**; otherwise **pending**.
-Ready wins over a stale error deliberately, because the last failure stays
-attached until the next bake supersedes it.
+- Preview is stale-while-revalidate: a ready artifact keeps playing through a
+  new bake or failure; with no ready artifact the raw conform plays.
+- `ready.peaks_path` stays null until the waveform sibling lands.
+- A failed signature is not retried on unrelated changes; a chain edit or
+  `audio_fx_reverify { layer_id }` asks again. A tile fetch that reads
+  `not_ready` for an `fx:` key falls back to the raw waveform and reverifies
+  (cooldown per key).
+- Export refuses rather than falling back, naming effect, layer and message.
 
-- **Preview is stale-while-revalidate.** A layer that already has a ready
-  artifact keeps playing it while a new bake runs and after one fails. An empty
-  chain returns the layer to the raw conform, and so does a layer that has never
-  had a ready artifact — a first bake still pending, or a first bake that
-  failed.
-- `ready.peaks_path` is **null** while the waveform sibling has not landed —
-  correct audio never waits on a picture, so the timeline keeps drawing the raw
-  waveform until it fills in.
-- **A failed signature is not retried** on unrelated project changes; editing
-  the chain (a new signature) or an explicit `audio_fx_reverify { layer_id }`
-  is what asks again. Reverify is also the eviction recovery path: a tile fetch
-  that reads `not_ready` for an `fx:` key drops to the raw waveform and asks the
-  baker to re-probe the disk, cooldown-gated per key.
-- **Export refuses rather than falling back.** A layer that will never bake
-  fails the export with the effect, the layer and the message named; a failure
-  belonging to the chain as a whole (a missing conform, an ffmpeg refusal of the
-  composed graph) says so instead of blaming an arbitrary card.
+### Region gesture
 
-### The card and the region gesture
+`properties/AudioRegionRow.tsx` shows the bounds, the arm button and one status
+line. *Select region* arms a one-shot mode for `(layerId, effectId)`
+(`timeline/audioRegionArmStore.ts`); the next drag on that clip commits both
+bounds as one `update_layer_param_tracks` and disarms (Escape or a press outside
+also disarm). The band (`timeline/AudioRegionBand.tsx`) is drawn only while the
+owning card is mounted and expanded (`state/audioRegionFocusStore.ts`). Nothing
+is frame-snapped.
 
-An Audio layer's Effects panel renders the audio catalog
-(`panels/EffectPanel.tsx` picks which catalog by layer kind), with no stopwatch
-on any row — `audio.*` params are static only. `properties/AudioRegionRow.tsx`
-shows the two bounds as source seconds, the arm button, and the one status line
-(needs a region / too short / outside the clip's source span / processing /
-failed).
+## Pauses read what plays
 
-*Select region* arms a one-shot mode scoped to `(layerId, effectId)`
-(`timeline/audioRegionArmStore.ts`); the next drag on that clip paints the
-region and commits both bounds as one `update_layer_param_tracks`, then
-disarms — Escape and a press outside the clip disarm too. The band and its two
-edge handles (`timeline/AudioRegionBand.tsx`, arithmetic in
-`timeline/audioRegionGeometry.ts`, gestures in
-`timeline/hooks/useAudioRegionDrag.ts`) are drawn only while the owning card is
-mounted and expanded, which `state/audioRegionFocusStore.ts` decides. Nothing
-is frame-snapped: audio authors on samples.
+A pause detection's subject is the Audio layer that reaches the mixer: an
+`Audio` layer itself, or for a `VideoClip` the linked Audio member sharing its
+media, else the link's only Audio member, else none (an embedded track never
+reaches a mixer). It reads the fx sibling's peaks when that layer's bake and
+peaks are ready, the raw media's otherwise; main injects the resolved path, so
+the detector and the waveform tiles choose in one place. A running bake falls
+back to raw peaks rather than refusing. UI: [features.md](features.md#pauses).
+
+## Retimed audio
+
+When any Audio or Group (`CompositionRef`) layer has a rate ≠ 1 or a source
+phase (`audio/retime.rs::needed`), both preview and export render the root
+composition into **per-role stems** with `audio/retime.rs`, cached as
+immutable `retime-*.vconf` files beside the conforms (identity: a digest of the
+project and the effect-conform overrides). Each scope renders its source window
+at the authored rate, applies clip gain/pan/fades, mixes by role, then passes
+child role stems through the parent Group's rate/pitch policy. Every stage has a
+fixed sample count (tails padded with silence). Pitch-preserving stages chain
+`atempo` within [0.5, 2]; pitch-following stages use `asetrate` + `aresample`
+with an `atempo` remainder. Role gain/mute/solo stay outside the stems
+(`retime::stem_plan`, `PreviewAudioEngine.refresh`). Preview fetches stems via
+`prepare_retimed_audio`; a failed preparation is an error, never playback at the
+old rate.
 
 ## Export mixer
 
-`lower(project, target, window)` no longer produces an ffmpeg filter
-graph; it produces a **MixPlan**: per audible layer, the conform path
-+ channel count, source span, timeline placement, and the two
-envelopes (or scalars). The plan applies the same layer skip rules as
-the preview (see above) — the `Track.enabled` whole-track gate, the
-role mute/solo gates, and `Layer.enabled`/`AudioParams.mute` all take
-effect in export, and each role's gain is folded into its layers'
-envelopes. Layers whose conform is missing fail readiness before any
-work starts.
-
-A layer's conform path is not always its media's: `plan_for_project` takes an
-optional **per-layer override table**, keyed by layer id, which main fills from
-the audio-effect baker (see § Clip effects) — the baked effect-chain sibling
-that layer's audio must come from. An override whose file has been evicted
-falls back to the raw conform rather than failing the plan, because an entry
-that outlives its file must not be able to break an export; keeping the *mix*
-honest is the export gate's job, and it refuses instead of falling back.
-
-The mixer (`export::mix`) is a block-pull loop, deterministic and
-allocation-flat:
+`audio::mix::plan_for_project(project, window, overrides)` builds a
+**MixPlan**: per audible layer the conform path and channel count, source span,
+placement and the two envelopes, after the skip rules and role-gain fold. A
+missing conform fails readiness first. `overrides` (layer id → baked sibling)
+falls back to the raw conform if the file was evicted; the export gate, not the
+planner, keeps the mix honest.
 
 ```
-for each output block (65 536 frames, 48 kHz f32 stereo):
+for each block (MIX_BLOCK_FRAMES = 65 536, 48 kHz f32 stereo):
     zero the accumulator
     for each layer overlapping the block:
-        map block window → source frames (t_start, src_in, clamped to src span)
-        read frames from the conform file (seek = header + frame × ch × 4)
-        gain = lerp(envelope) per sample
-        pan  = lerp(pan_coeffs) per sample → 2×2 matrix (the shared leaf law)
-        sum into the accumulator
-    write the block, interleaved, to ffmpeg stdin
+        map block → source frames; read from conform (seek = 28 + frame × ch × 4)
+        apply lerped gain and pan_coeffs per sample; sum
+    write the block to ffmpeg stdin
 ```
 
-The frame grid derives from the export window with exact rational
-math (the same discipline as the video `frameGrid`), so audio length
-matches the video range to the sample.
-
-ffmpeg's remaining role is the encode tail:
+Frame bounds derive from the export window with exact rational math, so audio
+length matches the video range to the sample. Encode tail
+(`export/mod.rs`):
 
 ```
-ffmpeg -f f32le -ar 48000 -ac 2 -i - \
-       -af aresample={target_sr},alimiter=limit=0.891:level=false \
-       -c:a {aac|libopus} -b:a {bps}  <temp audio file>
+ffmpeg -f f32le -ar 48000 -ac 2 -i - -af alimiter=limit=0.891:level=0 \
+       -ar {target_sr} -ac {target_ch} {codec args} <temp audio file>
 ```
 
-- `alimiter` (−1 dB ceiling) is **always on in this slice** (no user
-  toggle yet; an export-settings switch can come later) — it is the
-  answer to "two 0 dB layers sum past full scale". `level=false` is
-  explicit because alimiter's auto-normalize default is a known trap.
-  This is a sample-peak ceiling; true-peak oversampling is future
-  work.
-- The limiter only acts above its ceiling; material below −1 dB
-  passes unchanged, and the existing Goertzel conformance gates
-  (dominant frequency, SNR, alignment) are level-shift-insensitive
-  either way.
-- Everything downstream — temp-file naming, `mux_to_file`, the
-  no-audio-layers short-circuit, the `include=false` skip — is
-  unchanged from [`export.md`](export.md).
-
-The audio IR (`DecodeA/Adelay/Amix/OutA` and the lavfi emitter) is
-retired by this design; the mixer plan is its replacement.
+The limiter is always on: a −1 dB sample-peak ceiling (not true-peak) for
+overlapping layers summing past full scale; `level=0` because alimiter's
+auto-normalize defaults on. Muxing and the no-audio short-circuit are in
+[export.md](export.md).
 
 ## Readiness and errors
 
-- **Export:** conform readiness joins the existing media-readiness
-  gate; the export auto-wait ("preparing") panel covers conform jobs
-  exactly as it covers proxies. The wait set comes from Rust
-  (`ensure_export_audio_conform`, sharing the mix plan's audible-layer
-  walk and validating the cache file itself), and completion is tracked
-  by `media:job_complete kind=conform` events — the store's
-  `conform_path` can't carry this wait because a stale path reads
-  identically before and after a re-conform. A conform job that
-  *failed* (unreadable audio) fails the export loudly with the media
-  named — never a silent layer drop.
-- **Export, effect chains:** the conform gate is followed by the
-  audio-effect gate (`runAudioFxGate` over `ensure_export_audio_fx`),
-  which flushes the bake debounce, waits on `audio_fx:status` for the
-  layers it names, and fails the export with the **effect, the layer and
-  the message** for anything that will never land — never a fall back to
-  the unprocessed audio. See § Clip effects.
-- **Preview:** a layer without conform (job still running, or failed)
-  is silent and logs once to the status log. Range-read failures
-  retry; a chunk that misses its deadline mutes briefly rather than
-  glitching (underrun behavior). A layer whose *bake* is pending or
-  failed is not silent — it keeps playing the last ready artifact, or
-  the raw conform if there has never been one.
+- **Export, conform:** the wait set comes from Rust
+  (`ensure_export_audio_conform`, same audible-layer walk as the plan) and
+  completes on `media:job_complete kind=conform` — the stored `conform_path`
+  cannot signal this, since a stale path looks the same before and after a
+  re-conform. A failed conform fails the export naming the media, never a
+  silent drop.
+- **Export, effects:** the audio-effect gate follows (§ Seams).
+- **Preview:** see § States; a pending or failed bake never silences a layer.
 
 ## MCP surface
 
-With this design, `gain_db`, `pan`, `fade_in_us`, and `fade_out_us`
-take real effect in both preview and export. The MCP tool
-descriptions must say so — the previous state (accepted but ignored)
-was a silent-no-op trap for agents, and updating the contract text is
-part of the same change that makes the fields live. The master meter
-is additionally exposed as an MCP resource for agent-side level
-checks.
-
-Clip effects ride the four existing effect tools — `add_effect` /
-`update_effect` / `move_effect` / `remove_effect` — with `audio.denoise` as the
-one audio `kind`; the two rules the audio namespace adds are refusals, not new
-tools (`EffectKindNotApplicable` for a kind on the wrong layer kind,
-`AudioEffectParamStatic` for a keyframe attempt on an `audio.*` param), and
-each message names the rule because the client drops structured error data. See
-[`mcp.md`](mcp.md). Bake status is deliberately not on the MCP surface: an
-agent that needs the processed audio exports, and the export gate does the
-waiting.
+`gain_db`, `pan`, `fade_in_us` and `fade_out_us` are live in both paths and
+the tool descriptions say so. The master meter is the `composition://meter`
+resource. Clip effects use the four effect tools with `audio.denoise`; both
+audio refusals name the rule in the message because the client drops
+structured error data. Bake status is not on MCP: an agent that needs processed
+audio exports, and the export gate waits. See [mcp.md](mcp.md).
 
 ## Testing
 
-- **Cross-language goldens:** the envelope sampler fixture (gain control
-  points + pan values + pan coefficient envelope) and the pan-law fixture
-  (`pan_coeffs` mono + stereo branches + apply rows), each asserted by both
-  the Rust and TS suites against one checked-in fixture — also the
-  native↔wasm `libm` trig determinism proof.
-- **Preview pan graph:** an `OfflineAudioContext` render test
-  (`e2e/electron/audio-pan-preview.spec.ts`) drives the real
-  `buildPanGraph` + `panCurves` and checks output L/R against the
-  equal-power law — covering the matrix-mixer wiring the math goldens
-  cannot reach.
-- **Mixer unit tests:** pure f32-in/f32-out — placement, trim
-  clamping, overlap summing, envelope application, block-boundary
-  continuity.
-- **Clip effects** are covered in three layers, each answering a different
-  question:
-  - **Rust, real ffmpeg** (`native/src/audio/fx.rs`, skipped where no ffmpeg is
-    installed, in `jobs/conform.rs`'s style) — does the DSP work? Bake output
-    frame count equals input; the RMS primitive against a known-level fixture;
-    peaks over a VCONF input; and a *profile engages* fixture whose noise-only
-    region sits at the END, asserting that the stretch before it improves as
-    much as the stretch after it and that the same graph **without** the concat
-    pre-roll does not — the test that documents why the pre-roll exists.
-  - **Vitest** (`shared/audioEffects/`, `main/audioFx/`,
-    `main/state/mutations/effects`, the renderer stores, rows and geometry) —
-    is the right graph built, named and orchestrated? The canonical string and
-    signature (order, the enabled and completeness filters, id exclusion,
-    quantization, a version bump changing the signature); the baker's state
-    machine (debounce, supersede and cancel, attaching to a shared signature,
-    waiting on a pending conform, a failure keeping the last ready artifact);
-    the namespace and static-only refusals; waveform-key resolution; the arm
-    store's lifecycle and the band's px↔µs mapping including offscreen. The
-    emitted graph is additionally **smoke-run through the bundled ffmpeg** over
-    a fraction-of-a-second fixture (`main/audioFx/graph.ffmpeg.test.ts`), the
-    repo rule for anything that emits an ffmpeg graph.
-  - **End to end** — is it what you hear? Because preview and export read the
-    same baked file, an audio-only export of a noisy fixture with and without
-    the effect, compared by the conformance analyzer's windowed RMS over the
-    noise-only span, is evidence for both paths at once; the Rust fixture above
-    stays the precise DSP gate, so this one proves the plumbing.
-- **Conformance E2E** (extends [`conformance.md`](conformance.md)):
-  the deterministic mixer upgrades audio assertions from perceptual
-  to analytic. New fixtures: a keyframed gain ramp (per-window RMS
-  against the analytic envelope), fade-in/out, two-layer overlap
-  (summing + limiter engagement), and pan (L/R energy ratio). The
-  existing Goertzel tone/alignment suite continues to pass unchanged.
-
-## Out of scope here, designed elsewhere or later
-
-- **Retime / speed** — needs A/V group-coupling semantics first;
-  component direction is signalsmith-stretch (same MIT algorithm
-  available as Rust crate and AudioWorklet).
-- **Per-role DSP effects** — the `RoleMixSettings.effects` insert that
-  would make each role a true processing bus; v1 folds role gain only.
-- **Clip-effect extensions** (§ Clip effects ships the chain and one kind):
-  auto-detecting the sample region by scanning for the quietest span;
-  auditioning the removed noise rather than the result; a speech denoiser on
-  `arnndn`, whose model would arrive through the app-managed content catalog;
-  a conform format carrying a start frame, which is what a span-limited bake
-  would need; dragging the region band's body to relocate it instead of
-  re-arming; keyframed audio params, which `afftdn`'s runtime-commandable
-  `nr` / `nf` would reach through `asendcmd`; and a clip badge for bake state.
-- **True-peak (oversampled) limiting**, loudness-normalize export
-  option, >stereo output, scrub audio.
-
-## Constant-rate time remapping
-
-Preview and export share `audio/retime.rs`. The renderer prepares immutable 48 kHz conform artifacts before transport starts. At each scope, it renders the selected source window at the authored rate, applies the clip's own gain/pan/fades, mixes by role, then passes child role stems through the parent Group's rate/pitch policy. Role gain/mute/solo remain outside these stems. Each stage has a fixed sample count, padding algorithmic tails with silence; failed preparation is surfaced, never played at the old rate. Cache identity includes the project and effect-conform inputs.
-
-Pitch-preserving stages use FFmpeg atempo in factors within [0.5,2]; pitch-following stages use asetrate/aresample with duration compensation. Preview seeks and export windows read the same prepared PCM, including nested mixed policies.
+- Cross-language goldens: envelope (`audioEnvelopeGolden.fixture.json`), pan
+  law (`panLawGolden.fixture.json`), role gate (`roleGateGolden.fixture.json`) —
+  also the native↔wasm `libm` determinism proof.
+- `e2e/electron/audio-pan-preview.spec.ts` renders the real pan graph in an
+  `OfflineAudioContext` against the equal-power law.
+- Clip effects: Rust tests with real ffmpeg in `native/src/audio/fx.rs`
+  (frame count preserved, RMS, peaks, and a fixture proving the concat pre-roll
+  is needed); `main/audioFx/graph.ffmpeg.test.ts` smoke-runs the emitted graph
+  through bundled ffmpeg; `e2e/electron/audio-denoise.spec.ts` compares exported
+  noise-span RMS with and without the effect.
+- `e2e/electron/audio.spec.ts` asserts exports analytically (fade and gain RMS
+  envelopes, summing and limiter ceiling, pan L/R energy ratio); the Goertzel
+  suite in [conformance.md](conformance.md) is level-insensitive.

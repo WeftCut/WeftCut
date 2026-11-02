@@ -1,7 +1,7 @@
 # Agent bench
 
 Measures how far apart models land on the same WeftCut task: the **model gap**
-of [ADR 0123](../../../docs/adr/0123-the-app-holds-the-evidence-the-client-runs-the-loop.md).
+of [ADR 0046](../../../docs/adr/0046-agent-guidance-ships-as-one-skill.md).
 It launches the built app, sets a project up, hands it to an agent client
 (Claude Code first) with the WeftCut skill and MCP server, and records what the
 agent did from the app's side: before/after snapshots, the entity-level review
@@ -61,7 +61,7 @@ interactive session on the same account.
   "setup": [
     { "tool": "import_media", "args": { "path": "{fixture:fixture-id}" }, "as": "media1" },
     { "tool": "read_project", "args": { "view": "tracks" }, "as": "tracks" },
-    { "tool": "add_video_layer", "args": { "media_id": "{ref:media1.media_id}", "track_id": "{ref:tracks[role=ARoll].id}" } }
+    { "tool": "add_layers", "args": { "layers": [{ "track_id": "{ref:tracks[role=ARoll].id}", "t_start_us": 0, "t_end_us": 4000000, "content": { "kind": "video", "media_id": "{ref:media1.media_id}", "src_in_us": 0 } }] } }
   ],
   "prompt": "what the user would type",
   "taste": "---\nextends: clipping\n---\n",   // optional: the project's TASTE.md
@@ -306,8 +306,8 @@ One folder per run, `<out>/<timestamp>/<task>__<driver>-<model>__r<n>/`:
 | `driver-stderr.log` | The client's stderr. |
 | `app.log` | The app's main-process stdout/stderr (job and admission messages). |
 | `media-jobs.json` | The `media:job_*` events recorded from setup to the baseline. |
-| `baseline.json` | `project://current` after setup, before the agent. |
-| `final.json` | `project://current` after the agent exits. |
+| `baseline.json` | the project (its saved `project.json`) after setup, before the agent. |
+| `final.json` | the project (its saved `project.json`) after the agent exits. |
 | `review-diff.json` | `diffProjects(baseline, final)`: what the agent changed, independent of what it says it changed (`final_message` in `run.json`). |
 | `workdir/` | Whatever the agent wrote in its working directory (a Motif package, for example), if anything. |
 | `proxy.log` | Remote host: the proxy's syncs and path rewrites, one JSON line each. |

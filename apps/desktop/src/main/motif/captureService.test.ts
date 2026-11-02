@@ -12,16 +12,19 @@ function fixture(enabled = true) {
   const writer = { png: vi.fn(async () => {}), encoded: vi.fn(async () => {}) };
   const encoder = { encode: vi.fn(async () => Buffer.from('wfrm')), close: vi.fn() };
   const prepareWrite = vi.fn(async () => writer);
-  const read = vi.fn(async (): Promise<StoredMotifFrame | null> => ({ kind: 'rgba', width: 2, height: 2, rgba: new Uint8Array(16) }));
+  const has = vi.fn(async (_hash: string, _frame: number): Promise<boolean> => true);
+  // No capture path reads stored pixels in main (ADR 0154).
+  const read = vi.fn();
+  const readTexture = vi.fn();
   const deps = {
-    store: { prepareWrite, read } as unknown as MotifFrameStore,
+    store: { prepareWrite, has, read, readTexture } as unknown as MotifFrameStore,
     texture: vi.fn(async (_args: unknown, consume: (t: OffscreenSharedTexture) => Promise<StoredMotifFrame>) => consume(texture)),
     png: vi.fn(async () => Buffer.from('png').toString('base64')),
     copy: vi.fn(async () => ({ kind: 'texture' as const, key: 'pool', token: 'lease' })),
     createEncoder: vi.fn(() => encoder), setTextureEnabled: vi.fn(), isContentFailure: vi.fn(() => false),
     promote: vi.fn(),
   } satisfies CaptureServiceDeps;
-  return { deps, writer, encoder, prepareWrite, read, service: new MotifCaptureService(deps, enabled) };
+  return { deps, writer, encoder, prepareWrite, has, read, readTexture, service: new MotifCaptureService(deps, enabled) };
 }
 
 describe('Motif capture and persistence', () => {
@@ -214,7 +217,7 @@ describe('Motif capture and persistence', () => {
     expect(h.encoder.encode).not.toHaveBeenCalled();
   });
 
-  it('concurrent persistence and display share a capture then read the persisted pixels', async () => {
+  it('concurrent persistence and display share a capture, then the display gets the stored marker without a pixel read', async () => {
     const h = fixture(); let finish!: () => void;
     h.writer.encoded.mockReturnValue(new Promise<void>(resolve => { finish = resolve; }));
     const persist = h.service.persist(args);
@@ -225,10 +228,12 @@ describe('Motif capture and persistence', () => {
     expect(h.read).not.toHaveBeenCalled();
     finish();
     await Promise.all([persist, duplicate]);
-    await expect(display).resolves.toMatchObject({ kind: 'rgba', persisted: true });
+    await expect(display).resolves.toEqual({ kind: 'stored', persisted: true });
     expect(h.deps.texture).toHaveBeenCalledTimes(1);
     expect(h.deps.copy).not.toHaveBeenCalled();
-    expect(h.read).toHaveBeenCalledExactlyOnceWith(args.bake.hash, args.bake.frame);
+    expect(h.read).not.toHaveBeenCalled();
+    expect(h.readTexture).not.toHaveBeenCalled();
+    expect(h.has).not.toHaveBeenCalled();
   });
 
   it('a persistence demand joins an existing display before consumption', async () => {
@@ -255,21 +260,36 @@ describe('Motif capture and persistence', () => {
     // foreground request reaches main after the pending job was removed.
     const { bake, ...preview } = args;
     const display = await h.service.capture(owner, { ...preview, cache: bake });
-    expect(display).toMatchObject({ kind: 'rgba', persisted: true });
+    expect(display).toEqual({ kind: 'stored', persisted: true });
+    expect(h.has).toHaveBeenCalledExactlyOnceWith(bake.hash, bake.frame);
+    expect(h.read).not.toHaveBeenCalled();
+    expect(h.readTexture).not.toHaveBeenCalled();
     expect(h.deps.png).toHaveBeenCalledTimes(1);
     expect(h.writer.png).toHaveBeenCalledTimes(1);
   });
 
-  it('shares a display cache recheck with persistence that arrives during the read', async () => {
+  it('captures live when the cache recheck finds no frame or cannot stat it', async () => {
     const h = fixture(false);
-    let finish!: (value: StoredMotifFrame | null) => void;
-    h.read.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    h.has.mockResolvedValueOnce(false).mockRejectedValueOnce(new Error('EACCES'));
+    const { bake: _bake, ...preview } = args;
+    for (let i = 0; i < 2; i++) {
+      await expect(h.service.capture(owner, { ...preview, cache: args.bake })).resolves.toMatchObject({ kind: 'png', persisted: false });
+    }
+    expect(h.has).toHaveBeenCalledTimes(2);
+    expect(h.deps.png).toHaveBeenCalledTimes(2);
+    expect(h.read).not.toHaveBeenCalled();
+  });
+
+  it('shares a display cache recheck with persistence that arrives during the check', async () => {
+    const h = fixture(false);
+    let finish!: (value: boolean) => void;
+    h.has.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
     const { bake, ...preview } = args;
     const display = h.service.capture(owner, { ...preview, cache: bake });
     const persist = h.service.persist(args);
     await Promise.resolve();
     expect(h.deps.png).not.toHaveBeenCalled();
-    finish(null);
+    finish(false);
     await expect(display).resolves.toMatchObject({ persisted: true });
     await persist;
     expect(h.deps.png).toHaveBeenCalledTimes(1);
@@ -278,13 +298,13 @@ describe('Motif capture and persistence', () => {
 
   it('does not acknowledge another cache address as persisted when a bake joins a cache hit', async () => {
     const h = fixture(false);
-    let finish!: (value: StoredMotifFrame | null) => void;
-    h.read.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    let finish!: (value: boolean) => void;
+    h.has.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
     const { bake, ...preview } = args;
     const display = h.service.capture(owner, { ...preview, cache: bake });
     const other = { hash: 'b'.repeat(32), frame: 0 };
     const persist = h.service.persist({ ...args, bake: other });
-    finish({ kind: 'rgba', width: 2, height: 2, rgba: new Uint8Array(16) });
+    finish(true);
     await Promise.all([display, persist]);
     expect(h.prepareWrite).toHaveBeenCalledExactlyOnceWith(other.hash, other.frame);
     expect(h.writer.png).toHaveBeenCalledTimes(1);
@@ -302,7 +322,7 @@ describe('Motif capture and persistence', () => {
     const display = h.service.capture(owner, preview);
     backgroundCurrent = false; finish();
     await rejected;
-    await expect(display).resolves.toMatchObject({ kind: 'rgba', persisted: true });
+    await expect(display).resolves.toEqual({ kind: 'stored', persisted: true });
     expect(h.deps.texture).toHaveBeenCalledTimes(1);
     expect(h.writer.encoded).toHaveBeenCalledTimes(1);
   });
@@ -325,12 +345,12 @@ describe('Motif capture and persistence', () => {
     const h = fixture(); let finish!: () => void;
     h.writer.encoded.mockReturnValueOnce(new Promise<void>(resolve => { finish = resolve; }));
     const persist = h.service.persist(args);
-    const otherStore = { prepareWrite: vi.fn(async () => h.writer), read: vi.fn() } as unknown as MotifFrameStore;
+    const otherStore = { prepareWrite: vi.fn(async () => h.writer), has: vi.fn() } as unknown as MotifFrameStore;
     const { bake: _bake, ...preview } = args;
     await expect(h.service.capture(owner, preview, () => true, undefined, otherStore)).resolves.toMatchObject({ kind: 'texture', persisted: false });
     finish(); await persist;
     expect(h.deps.texture).toHaveBeenCalledTimes(2);
-    expect(h.read).not.toHaveBeenCalled();
+    expect(h.has).not.toHaveBeenCalled();
   });
 
   it.each(['prepare', 'write'] as const)('optional persistence %s failure keeps the captured texture without recapture', async failure => {

@@ -1,6 +1,6 @@
 // Synthetic clock with an audio-master derivation mode.
 //
-// Behavior (docs/audio.md §Clock):
+// Behavior (docs/audio.md §Preview mixer, "Clock"):
 //   - When an `AudioContext` is bound and RUNNING, the playing position is
 //     DERIVED from the audio timeline against a `ClockAnchor` taken at
 //     play/seek (or at the suspended→running flip): pure mapping, no

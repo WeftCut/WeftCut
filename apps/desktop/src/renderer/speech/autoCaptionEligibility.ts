@@ -159,7 +159,7 @@ function selectedLayers(
 }
 
 /// The clips ONE Transcribe press reads, from the whole selection, in timeline
-/// order — the subject rule ADR 0070 states. Every selected `VideoClip` or
+/// order — the subject rule docs/features.md#transcribe-and-voiceover states. Every selected `VideoClip` or
 /// `Audio` layer, less two kinds of repeat that would caption the same speech
 /// twice:
 ///
@@ -167,7 +167,7 @@ function selectedLayers(
 ///    picture AND its sound, so the ordinary single-clip press is already a
 ///    two-layer selection. A `VideoClip` whose link holds a SELECTED `Audio`
 ///    member of the same media is dropped in favour of that member: it is the
-///    layer that plays (ADR 0068), and its own `src_in_us` / `t_start_us` put
+///    layer that plays (docs/features.md#pauses), and its own `src_in_us` / `t_start_us` put
 ///    the words where the sound is even after an A/V slip. A picture clip whose
 ///    sound is not selected — an `Alt`-click escaped the link, or the link has
 ///    no same-media audio — stays its own subject and is read from its own

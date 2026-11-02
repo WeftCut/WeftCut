@@ -7,8 +7,8 @@ import { layerRateNumber } from '../layerTiming';
 // verbs. It owns no drawing — the bands are the timeline's, published through
 // `state/pausePreviewStore` — and no subject rule: `commands/pauseCommands.ts`
 // states that, because the command's gate has to answer it too. See
-// `.scratch/pauses/spec.md` Decisions 3, 6, 7, 13, 15, 16 and ADR 0067's
-// sibling on where clip analysis lives.
+// `.scratch/pauses/spec.md` Decisions 3, 6, 7, 13, 15, 16 and
+// docs/features.md#pauses on where clip analysis lives.
 //
 // Home is a panel section rather than a dialog because tuning a threshold is
 // something a person does WHILE looking at the waveform and playing the clip,
@@ -109,14 +109,16 @@ function isWaveformPending(err: unknown): boolean {
 
 const ampFromDb = (db: number): number => 10 ** (db / 20);
 
-/// The slider's position for a stored amplitude. Rounded to the step and
-/// clamped to the ends, so a value tuned by an agent through `threshold_amp`
-/// still lands ON a stop rather than between two.
-function dbFromAmp(amp: number): number {
-  if (!(amp > 0)) return DB_MIN;
-  const db = Math.round(20 * Math.log10(amp) / DB_STEP) * DB_STEP;
-  return Math.min(DB_MAX, Math.max(DB_MIN, db));
+/// The slider's position for a level in dBFS (`null`: silence). Rounded to the
+/// step and clamped to the ends, so a value tuned by an agent still lands ON a
+/// stop rather than between two.
+function sliderDb(db: number | null): number {
+  if (db === null) return DB_MIN;
+  return Math.min(DB_MAX, Math.max(DB_MIN, Math.round(db / DB_STEP) * DB_STEP));
 }
+
+/// The slider's position for a stored amplitude (`pause_review.threshold_amp`).
+const dbFromAmp = (amp: number): number => sliderDb(amp > 0 ? 20 * Math.log10(amp) : null);
 
 /// A negative decibel figure the way an audio person writes it: a real minus
 /// sign, not a hyphen.
@@ -173,7 +175,9 @@ function PausesBody({ layer, subject, projectId, recipe }: {
   const [minMs, setMinMs] = useState(DEFAULT_MIN_MS);
   const [padMs, setPadMs] = useState(DEFAULT_PAD_MS);
   const [pauses, setPauses] = useState<readonly PauseRegion[]>([]);
-  const [floorAmp, setFloorAmp] = useState<number | null>(null);
+  /// The measured floor, dBFS; `undefined` until a detection reports one
+  /// (`null` is a report: the window is silent).
+  const [floorDb, setFloorDb] = useState<number | null | undefined>(undefined);
   const [source, setSource] = useState<PausePresetSource | null>(null);
   const [resultKey, setResultKey] = useState("");
   const [preferenceError, setPreferenceError] = useState("");
@@ -216,11 +220,10 @@ function PausesBody({ layer, subject, projectId, recipe }: {
     return `${live.t_start_us}:${live.t_end_us}:${src}`;
   });
 
-  const thresholdAmp = ampFromDb(thresholdDb);
   const minPauseUs = minMs * 1_000;
   const padUs = padMs * 1_000;
   const values = { thresholdDb, minMs, padMs };
-  const detectionKey = JSON.stringify([subjectId, thresholdAmp, minPauseUs, subjectWindow, fxStatus, retry]);
+  const detectionKey = JSON.stringify([subjectId, thresholdDb, minPauseUs, subjectWindow, fxStatus, retry]);
   const ready = phase === "ready" && resultKey === detectionKey;
 
   /// Stop whatever is playing. Idempotent, and the ONE place the ref is
@@ -295,10 +298,10 @@ function PausesBody({ layer, subject, projectId, recipe }: {
     setPhase("detecting");
     const timer = setTimeout(() => {
       void reads.run(
-        () => detectPauses({ layerId: subjectId, thresholdAmp, minPauseUs }),
+        () => detectPauses({ layerId: subjectId, thresholdDb, minPauseUs }),
         (result) => {
           setPauses(result.pauses);
-          setFloorAmp(result.noise_floor_amp);
+          setFloorDb(result.noise_floor_db);
           setResultKey(detectionKey);
           setPhase("ready");
           setError("");
@@ -316,16 +319,16 @@ function PausesBody({ layer, subject, projectId, recipe }: {
       );
     }, REDETECT_DEBOUNCE_MS);
     return () => { clearTimeout(timer); reads.invalidate(); };
-  }, [reads, hydrated, subjectId, thresholdAmp, minPauseUs, subjectWindow, fxStatus, retry, detectionKey]);
+  }, [reads, hydrated, subjectId, thresholdDb, minPauseUs, subjectWindow, fxStatus, retry, detectionKey]);
 
-  useEffect(() => { setFloorAmp(null); }, [subjectId, subjectWindow, fxStatus, retry]);
+  useEffect(() => { setFloorDb(undefined); }, [subjectId, subjectWindow, fxStatus, retry]);
 
   // A parameter change invalidates what is playing: the excerpt was stitched at
   // the old pad around the old joins, so continuing it would demonstrate an
   // edit the section is no longer offering.
   useEffect(() => {
     stopAudition();
-  }, [subjectId, thresholdAmp, minPauseUs, padUs, subjectWindow, fxStatus]);
+  }, [subjectId, thresholdDb, minPauseUs, padUs, subjectWindow, fxStatus]);
 
   // The waveform job. Subscribed for as long as the section is open rather than
   // only while waiting: a re-import or a regenerated peaks file changes the
@@ -505,7 +508,7 @@ function PausesBody({ layer, subject, projectId, recipe }: {
       async () => {
         const { markers } = await markPauses({
           layerId: subjectId,
-          thresholdAmp,
+          thresholdDb,
           minPauseUs,
         });
         return {
@@ -531,7 +534,7 @@ function PausesBody({ layer, subject, projectId, recipe }: {
       async () => {
         const result = await removePauses({
           layerId: subjectId,
-          thresholdAmp,
+          thresholdDb,
           minPauseUs,
           padUs,
         });
@@ -555,8 +558,8 @@ function PausesBody({ layer, subject, projectId, recipe }: {
     });
   };
   const controlsDisabled = !hydrated || busy !== null;
-  const suggestedThresholdDb = floorAmp === null ? null
-    : Math.min(DB_MAX, Math.max(DB_MIN, dbFromAmp(floorAmp) + AUTO_HEADROOM_DB));
+  const suggestedThresholdDb = floorDb === undefined ? null
+    : Math.min(DB_MAX, Math.max(DB_MIN, sliderDb(floorDb) + AUTO_HEADROOM_DB));
   const processing = phase === "detecting" || (phase === "ready" && !ready);
   const seconds = (us: number) => t("pauses.seconds", { value: new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 }).format(us / 1_000_000) });
 
@@ -585,7 +588,7 @@ function PausesBody({ layer, subject, projectId, recipe }: {
             ariaLabel={t("pauses.threshold")} getAriaValueText={v => t("pauses.db", { db: formatDb(v) })}
             onValueChange={setThresholdDb} onValueCommitted={v => persist(v, minMs, padMs)} />
           <div className="pauses-floor">
-            <span data-testid="pauses-floor">{floorAmp === null ? t("pauses.noise_floor_pending") : t("pauses.noise_floor", { db: formatDb(dbFromAmp(floorAmp)) })}</span>
+            <span data-testid="pauses-floor">{floorDb === undefined ? t("pauses.noise_floor_pending") : t("pauses.noise_floor", { db: formatDb(sliderDb(floorDb)) })}</span>
           </div>
         </div>
       </Field>

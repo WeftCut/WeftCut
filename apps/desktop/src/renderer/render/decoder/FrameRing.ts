@@ -24,8 +24,9 @@ const DEFAULT_LOOKBEHIND_US = 500_000;
 
 /// Frames ahead of the anchor the byte budget may NEVER pause the pump below.
 /// The window is what degrades under memory pressure, but not to the point of
-/// thrash: `PlaybackEngine`'s warm-up gate needs ~150 ms of ring past the play
-/// position before it releases the clock, which is 10 frames at 60 fps content.
+/// thrash: the floor keeps ~150 ms of ring past the play position (10 frames at
+/// 60 fps content). No consumer gates on that figure — `PlaybackEngine`'s only
+/// warm-up reason is `"audio-ready"` — so it is a thrash floor, not a contract.
 /// This floor OVERRIDES the budget — see frameRingBudget.ts.
 const MIN_LOOKAHEAD_FRAMES = 10;
 

@@ -182,7 +182,8 @@ pub struct FullProxyLanded {
 /// route↔path contradiction stays unrepresentable). The plain derivative paths
 /// (`waveform_path` / `conform_path` / `thumbnails_dir`) just set the field —
 /// once a derivative exists it persists (content-addressed invalidation happens
-/// by hash mismatch on re-import). See `docs/preview.md` and docs/adr/0028.
+/// by hash mismatch on re-import). See `docs/preview.md` and
+/// `docs/data-model.md#mediaitem`.
 ///
 /// Each route field keeps `skip_serializing_if = "Option::is_none"` so the TS
 /// `'key' in patch` contract (mutations/media.ts) reads absent vs present.
@@ -357,8 +358,6 @@ pub enum GroupNotPlainReason {
     Transform,
     Opacity,
     Effects,
-    #[serde(rename = "blend_mode")]
-    BlendMode,
 }
 
 impl std::fmt::Display for GroupNotPlainReason {
@@ -367,7 +366,6 @@ impl std::fmt::Display for GroupNotPlainReason {
             Self::Transform => "transform",
             Self::Opacity => "opacity",
             Self::Effects => "effects",
-            Self::BlendMode => "blend_mode",
         })
     }
 }

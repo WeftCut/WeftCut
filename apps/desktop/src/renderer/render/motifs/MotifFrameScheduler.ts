@@ -1,10 +1,13 @@
 import { CAPTURE_SUPERSEDED_MESSAGE } from '../../../shared/motifs/captureErrors';
 import type { FrameTicket } from './FrameBroker';
 import type { CapturedFrame } from './frameTransport';
+import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
 
 interface Request {
   cacheKey: string;
   frame: number;
+  /** The divisor a stored frame is read at; a capture is full size. */
+  scaleDiv: MotifReaderDiv;
   ticket: FrameTicket;
   capture: () => Promise<CapturedFrame>;
   captureOnly: boolean;
@@ -29,7 +32,7 @@ export class MotifFrameScheduler {
 
   constructor(private readonly deps: {
     shouldRead: (cacheKey: string, frame: number) => boolean;
-    read: (cacheKey: string, frame: number) => Promise<ImageBitmap | null>;
+    read: (cacheKey: string, frame: number, scaleDiv: MotifReaderDiv) => Promise<ImageBitmap | null>;
     readMiss: (cacheKey: string, frame: number) => void;
     /** Main owns background production for these content keys. Foreground
      * subscribers can still promote the same queued request immediately. */
@@ -110,9 +113,10 @@ export class MotifFrameScheduler {
     try {
       let value: CapturedFrame;
       if (read) {
-        // Only an authoritative miss permits a new capture. A transport,
-        // allocation or transient I/O failure says nothing about disk coverage.
-        const bitmap = await this.deps.read(job.cacheKey, job.frame);
+        // Only an authoritative miss (null) permits a new capture. A
+        // `MotifTransportError` says nothing about disk coverage: it rejects,
+        // and preview keeps its previous frame and retries later.
+        const bitmap = await this.deps.read(job.cacheKey, job.frame, job.scaleDiv);
         if (!bitmap) {
           if (!this.wanted(job)) throw new Error(CAPTURE_SUPERSEDED_MESSAGE);
           job.readMiss = true;
@@ -120,7 +124,7 @@ export class MotifFrameScheduler {
           this.queue.push(job);
           return;
         }
-        value = { bitmap, persisted: true };
+        value = { bitmap, persisted: true, scaleDiv: job.scaleDiv };
       } else {
         value = await job.capture();
       }

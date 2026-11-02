@@ -95,7 +95,7 @@ function descriptionEntries(
     // window — `segmentsForSpan` keeps a straddler deliberately — and the
     // source before the window is on no timeline to seek to.
     const tStartUs =
-      layer.t_start_us + Math.max(0, approximateTime(localAtContent(params, exactTime(seg.t_start_us))));
+      layer.t_start_us + Math.max(0, approximateTime(localAtContent(params, exactTime(seg.src_start_us))));
     const tags = seg.tags.map((tag) => tag.trim()).filter((tag) => tag !== "");
     const haystacks = withPinyin([label]);
     const detailFrom = haystacks.length;
@@ -108,7 +108,7 @@ function descriptionEntries(
     // tag and a hit deep in the sentence each display the words that matched.
     const behind = [...(text === label ? [] : [text]), ...tags].join(" · ");
     out.push({
-      key: `description:${layer.id}:${seg.t_start_us}`,
+      key: `description:${layer.id}:${seg.src_start_us}`,
       type: "description",
       label,
       // The CLIP and not its track: the label is prose, so the row has to say

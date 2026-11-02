@@ -133,7 +133,7 @@ export interface CaptionStylePatch {
 
 /** add_caption_track — lay the cues onto Caption tracks (one Text layer per
  *  cue), packing into the caption tracks the composition ALREADY HAS before
- *  opening a new one (ADR 0070). Cues stable-sorted by start_us; each cue goes to
+ *  opening a new one (ADR 0026). Cues stable-sorted by start_us; each cue goes to
  *  the FIRST unlocked Caption-role track, in track order, whose layers leave the
  *  cue's snapped span free, else a new Caption track is appended after the
  *  existing tracks and joins the candidates. Existing tracks come first because
@@ -228,7 +228,7 @@ export function applyRestyleCaptions(p: Project, patch: CaptionStylePatch, layer
     return n
   }
   // Narrowed: only the named captions — each must BE one, so a title from
-  // add_text_layer cannot be restyled through the caption door by mistake.
+  // add_layers cannot be restyled through the caption door by mistake.
   const unique = new Set(layerIds)
   for (const id of unique) {
     const { track, layer } = requireLayer(p, id)

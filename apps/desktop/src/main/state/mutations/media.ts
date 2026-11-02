@@ -140,9 +140,10 @@ export function applySeparateAudio(p: Project, idGen: IdGen, layerId: Uuid): Uui
 
   const newId = idGen() // after the checks, before commit's op_id (keystone)
   // THE ONE TRACK THAT KEEPS A STORED LABEL. Every other track leaves `label`
-  // null and lets the renderer derive the name (ADR 0042) — this one records
-  // WHICH source the audio was lifted from, and the display layer cannot
-  // recompute that once the layer has moved on. Do not copy this pattern.
+  // null and lets the renderer derive the name (docs/data-model.md#track) —
+  // this one records WHICH source the audio was lifted from, and the display
+  // layer cannot recompute that once the layer has moved on. Do not copy this
+  // pattern.
   //
   // The exception is only earned when the source HAS a name to record. A source
   // on its own derived name gives nothing to quote, and quoting main's idea of

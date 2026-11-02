@@ -46,7 +46,7 @@ pub struct Composition {
     ///
     /// Auto-fits to `max(layer.t_end_us)` while `duration_pinned` is false.
     /// An explicit `set_composition { duration_us }` sets the pin and freezes
-    /// the value until `fit_composition_to_layers` clears it. See ADR 0005.
+    /// the value until `fit_composition_to_layers` clears it. See `docs/data-model.md#composition`.
     ///
     /// For a Group this is also the source duration every `CompositionRef`
     /// window is measured against (ADR 0052 §4).
@@ -101,7 +101,7 @@ impl Composition {
     /// stored.
     ///
     /// `label` is left `None`: a reserved track's name is DERIVED from its
-    /// `role` in the renderer (ADR 0042), so a literal written here could
+    /// `role` in the renderer (`docs/data-model.md#track`), so a literal written here could
     /// never be localized.
     pub(crate) fn skeleton_tracks() -> imbl::Vector<Track> {
         let mut a_roll = Track::new();

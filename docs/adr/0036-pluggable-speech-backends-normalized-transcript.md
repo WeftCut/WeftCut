@@ -2,140 +2,70 @@
 status: accepted
 ---
 
-# Speech-to-text is one entry over pluggable backends (cloud + local sidecar), all normalized to timestamped word segments
+# Speech runs over pluggable backends, normalized to one word-timed transcript
+
+Date: 2026-10-31
 
 ## Context
 
-STT shipped cloud-only: an OpenAI Whisper client under `native/src/cloud/`,
-selected purely by "is an API key present", returning SRT text with no
-word-level timing (`response_format=srt` is hardcoded). Two things are wrong
-for where we want to go:
-
-- **The packaging assumes cloud.** The `Transcriber` trait is already
-  locality-neutral (`transcribe(audio_path, language) -> …`), and
-  `Capabilities { transcription, tts }` already anticipates STT-only backends —
-  but the module, error type, feature flag, and provider enum are all named
-  `cloud`, and selection keys on `has_key`, which a local engine has no analog
-  for.
-- **The output is lossy and non-uniform.** Word timing is what text-based
-  editing (and the scene/content-analysis plan) needs. It is derivable two
-  ways: from a JSON engine's exact token offsets, or by converting an SRT cue's
-  span. Different backends can emit different styles; consumers should see one
-  shape.
-
-We want local/offline engines — whisper.cpp first, FunASR later — as **peers**
-of cloud behind a single entry, and one normalized word-timed output.
+Transcription has to run on the OpenAI cloud, on local engines (whisper.cpp,
+FunASR) and on any OpenAI-compatible server (whisper-server, speaches, vLLM,
+LocalAI). Their output differs: OpenAI's `whisper-1` gives SRT, whisper.cpp
+`-ojf` gives token offsets, sherpa-onnx gives per-character JSON, servers give
+words at the top level, per segment, not at all, or refuse `verbose_json`.
+Consumers (caption packing, text correction, cut points) need one shape and
+must know whether a word time is exact or estimated. OpenAI's upload cap is
+25 MB, which the 16 kHz mono WAV every engine is fed reaches at about 13
+minutes. A copy of speech config pushed onto the native `Backend` drifted from
+Settings (a custom profile's key outlived a switch to a local model until
+relaunch).
 
 ## Decision
 
-### Cloud is one backend among many; one entry, one resolver
-
-`native/src/cloud/` becomes `native/src/speech/` (STT + TTS, locality-neutral).
-`enum Provider { OpenAi }` becomes `enum SpeechBackend { OpenAi, WhisperCpp,
-FunAsr }` with an `enum Locality { Cloud, Local }`. The agent entry
-(`transcribe_clip`) is unchanged; behind it, `pick_transcriber(keys)` becomes
-`resolve_transcriber(cfg)` selecting by **user preference then availability**
-(`Cloud → has key`; `Local → binary + model present`), falling back down a
-default order and erroring with an actionable message when nothing is
-available. Preference and override are deliberately **two inputs**: the user's
-Settings preference is a soft hint that falls back by availability, while the
-agent's explicit per-call `backend` arg is strict — that engine or an error
-naming its gap, never a silent substitute (an explicit local choice must not
-degrade into a cloud upload). The result envelope echoes the backend that
-actually served the request. `CloudError → SpeechError` (adds
-spawn/exit/parse/timeout); feature `cloud → speech`.
-
-### Backends emit a *style*; a pluggable parser normalizes it
-
-Two trait layers, deliberately split so no backend reimplements SRT→words:
-
-- `Transcriber` (thin): audio → `RawTranscript`, a format-tagged payload —
-  `Srt(String)`, `WhisperJson(String)`, or `FunAsrJson(String)`. Honoring the
-  request's `want_word_timing` hint (default **true** — exact timing costs the
-  engine nothing extra), each backend picks its output style internally;
-  whether an engine can deliver engine-exact word times is a static
-  `Capabilities::exact_word_timing` fact (badged in Settings), not a trait
-  method.
-- `TranscriptParser` (new, one impl per style): `RawTranscript → Transcript` —
-  the single normalized shape:
-
-  ```
-  Transcript   { segments: Vec<Segment>, language: Option<String>, word_timing: WordTiming }
-  Segment      { t_start_us, t_end_us, text, words: Vec<Word> }
-  Word         { t_start_us, t_end_us, text }
-  WordTiming   { Exact | InterpolatedFromCue | None }
-  ```
-
-`SrtParser` converts cue spans → words by distributing across word lengths and
-marks `word_timing = InterpolatedFromCue` (honest: approximate). Words are
-whitespace-delimited except space-less CJK text (Han, kana), which splits per
-character — whitespace tokenization alone would collapse a Chinese cue into
-one sentence-sized "word". It **reuses
-the caption-import parser** `native/src/subtitles/srt.rs` to get cues — one SRT
-parser in the codebase, not two. `WhisperJsonParser` reads whisper.cpp `-ojf`
-token offsets → `Word`s (grouping sub-word tokens on the leading-space
-boundary, or a CJK character start), marks `Exact`. Result:
-
-- **Cloud (OpenAI Whisper)** — SRT only → SRT parser → interpolated words.
-- **whisper.cpp** — JSON (`-ojf`) → exact words, or SRT → interpolated (its
-  choice honors `want_word_timing`).
-- **All three** yield byte-identical `Transcript` structure; only `word_timing`
-  differs, and it is inspectable.
-
-`transcribe_clip` returns the `Transcript` as JSON, which `apply_transcripts`
-takes as it comes. (It once carried a rendered `srt` field for the body-taking
-`apply_subtitles`; ADR 0077 removed both.)
-
-### Local engines are one-shot CLI sidecars
-
-whisper.cpp (first) runs as a spawned CLI child over the same
-`extract_audio_window` 16 kHz mono WAV the cloud path already produces, reusing
-the `NoConsoleWindow` spawn helper. FunASR (later) runs its Paraformer-zh model
-the same way — via the **sherpa-onnx (k2-fsa) prebuilt offline CLI**, not
-FunASR's Python runtime — so BOTH local engines are the one-shot
-`SidecarTranscriber` shape; no long-lived server, no linked native lib.
-
-### Config splits by secrecy
-
-The API **key** (secret) stays in the existing `safeStorage`-backed cache and
-its persisted file keeps the name `cloud_keys.json` (renaming it would orphan
-users' stored keys). Non-secret **local config** (binary path, model path,
-device, threads) lives in a TS-owned config store. Electron main merges both
-into the `Backend.speech_config` snapshot the stateless Rust resolver reads.
-
-## Considered options
-
-- **In-process `whisper-rs` (FFI) instead of a sidecar.** Deferred: links a C++
-  lib into the addon, complicates the 3-OS build, and holds the model in the
-  app's address space. Sidecar matches the existing `ffmpeg-sidecar` pattern
-  and keeps the model in a disposable child. Revisit if per-call spawn latency
-  hurts.
-- **Per-backend bespoke output types.** Rejected: N backends × M consumers. One
-  normalized `Transcript` + a parser-per-style is the whole point of this ADR.
-- **Keep `cloud/`, add a parallel `local/`.** Rejected: the name would keep
-  lying and the resolver would straddle two modules.
-- **A second SRT parser for transcripts.** Rejected: reuse `subtitles/srt.rs`;
-  a duplicate parser is a twin-drift hazard.
+- **One entry, strict selection.** `transcribe_clip` resolves the selected
+  model only (`speech::resolve_transcriber`) or the per-call `backend` arg
+  (`resolve_transcriber_exact`); neither substitutes another engine, so a local
+  choice never degrades into a cloud upload. Errors name the remedy. TTS keeps
+  a default-order fallback (`DEFAULT_ORDER`; OpenAI is its only provider).
+- **Backends emit a style, parsers normalize.** `Transcriber` returns a
+  format-tagged `RawTranscript` (SRT, whisper JSON, FunASR JSON, OpenAI
+  verbose JSON); one parser per style yields `Transcript { segments[{
+  t_start_us, t_end_us, text, words[] }], language, word_timing }` with
+  `WordTiming = Exact | InterpolatedFromCue | None`. SRT words are spread over
+  the cue by length; space-less CJK splits per character. The SRT style reuses
+  `subtitles::parse_subtitle_cues` — one SRT parser in the code.
+  `word_timestamps` defaults to true.
+- **Local engines are one-shot CLI sidecars** (`whisper-cli`,
+  `sherpa-onnx-offline`) over the shared extracted WAV, with an audio-scaled
+  hang guard; no linked inference library, no long-lived server.
+- **`byo_endpoint`** posts to the user's full URL, negotiating the format:
+  `verbose_json` with word+segment granularity first; a 400/415/422 or an
+  answer without `segments` retries once as `srt`, and the working format is
+  remembered per URL for the process. A result is `exact` only when every
+  segment carried the server's word times.
+- **Network engines get long audio in pieces**: over 10 minutes, cut at the
+  quietest 200 ms within ±30 s of each 10-minute mark, a tail under 1 minute
+  joining the previous piece; pieces run one at a time and are reassembled on
+  the WAV time base (`speech/split.rs`). Local engines get the whole window.
+- **Config splits by secrecy and travels with each call.** Keys stay in
+  `safeStorage` (`cloud_keys.json`, name kept so stored keys survive; the
+  endpoint key under its own tag); non-secret engine config lives in
+  `speech_config.json`. Electron main builds the snapshot at call time
+  (`toSpeechBackendSnapshot`) and injects it as `speech_config` into
+  `transcribe_clip`, `synthesize_speech` and the Settings status reads. It is
+  never advertised or logged, and it is part of a transcription job's
+  identity. The Rust side holds no speech state between calls.
 
 ## Consequences
 
-- The agent surface does not change; `transcribe_clip` gains only optional
-  `backend?` / `word_timestamps?` args.
-- Word-timing precision is explicit (`Exact` vs `InterpolatedFromCue`), so
-  downstream text-editing knows whether a cut point is frame-trustworthy or
-  approximate.
-- Adding an engine is an enum variant + availability probe + (only if a new
-  output style) one parser.
-- This unblocks the planned scene/content-analysis word-transcript resource:
-  word segments now come from the normalized `Transcript`, not a cloud-API
-  change.
-- The rename is broad but mechanical; the MCP catalog bijection gate pins that
-  def and handler stay paired.
+- Adding an engine is an enum variant, an availability probe and, only for a
+  new output style, a parser. `Capabilities::exact_word_timing` badges engines
+  statically; `byo_endpoint` reports per result.
+- A key saved or a model switched is what the next call uses.
+- A network piece can, rarely, cut inside a word when a minute has no pause;
+  the first call to a server without `verbose_json` costs two requests.
 
-## References
-
-- Target module: `native/src/speech/` (was `native/src/cloud/`); reused SRT
-  parser: `native/src/subtitles/srt.rs`; shared audio input:
-  `speech/audio_extract.rs`; spawn helper: the `NoConsoleWindow` sites.
-- Consumer: the planned scene/content-analysis word-level transcript
-  resource.
+Rejected: in-process `whisper-rs` FFI (links C++ into the addon, holds the
+model in the app's address space); per-backend output types; a second SRT
+parser; giving the `openai` backend a URL (its tag is a wire and on-disk key
+shared with TTS).

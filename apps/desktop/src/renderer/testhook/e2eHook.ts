@@ -15,6 +15,10 @@ import {
   addTrack,
   addMediaLayer,
   addMotif,
+  approveMotifProposal,
+  listMotifProposals,
+  rejectMotifProposal,
+  type MotifProposal,
   projectNewWorkspace,
   projectOpen,
   projectClose,
@@ -30,6 +34,12 @@ import { captureMotifFrame } from "../render/motifs/host";
 import { hashCacheKey } from "../render/motifs/frameCache";
 import { sharedMotifFrameCache, sharedBakedKeyIndex } from "../render/motifs/motifRasterCache";
 import { motifFrameDescriptor } from "../render/motifs/motifFrameDescriptor";
+import {
+  currentMotifFrameReader,
+  idleMotifReaderStats,
+  motifFrameReader,
+  type MotifReaderStats,
+} from "../render/motifs/MotifFrameReader";
 import { getMotif } from "../render/motifs/catalog";
 import { requestPrebake } from "../render/motifs/prebakeBus";
 import { mergeSettings, type ExportSettings } from "../render/exportSettings";
@@ -300,6 +310,12 @@ export interface E2EHook {
   /// Evict every L0 (in-RAM) frame for a cacheKey, so a subsequent resolve must
   /// come from disk (L2) or a fresh raster. Used to prove the disk read path.
   clearMotifCacheKey(cacheKey: string): void;
+  /// One stored-frame read by hashed address through the document's
+  /// `MotifFrameReader` (ADR 0154), on whichever lane it picks. Null is a miss.
+  readMotifFrame(args: { hash: string; frame: number; div: 1 | 2 | 4 }): Promise<ImageBitmap | null>;
+  /// The document's reader stats (`perf.motifReader` without the divisor),
+  /// readable before any preview mounts. Zeros until the first read.
+  motifReaderStats(): MotifReaderStats;
   /// Whether the in-RAM baked-key index currently marks this cacheKey baked.
   bakedIndexHas(cacheKey: string): boolean;
   /// Render a Motif frame via the Rust `motif_capture_frame` command and
@@ -321,6 +337,14 @@ export interface E2EHook {
   /// Requires an open project + the editor mounted (call newProjectAndEnter
   /// first). Dev/e2e only.
   motifAddCountdown(): Promise<string>;
+  /// The pending Motif publications the Motif panel's cards show (an agent's
+  /// `install_motif` proposals), through the same channel the cards read.
+  motifProposals(): Promise<MotifProposal[]>;
+  /// Decide a pending proposal as the card's Approve / Reject buttons do, so
+  /// an operator (or a spec) can approve without clicking. `motifId` is the
+  /// draft; omit `proposalId` for that draft's pending one. Approve returns
+  /// the published id; reject returns null. Dev/e2e only.
+  motifDecideProposal(args: { motifId: string; proposalId?: string; approve: boolean; note?: string }): Promise<string | null>;
   /// Drive the live preview to composition-time `us`. Delegates to the active
   /// PlaybackEngine's `seek`, which sets the clock + re-composites the frame
   /// (the same path the transport/scrubber uses). No-op until the Pixi preview
@@ -468,9 +492,9 @@ export interface E2EHook {
   /// the hidden-member badge's reveal must not select.
   getSelectedLayerIds(): string[];
   /// The selected gap — its lane and half-open span — or null when the
-  /// selection is of any other kind (ADR 0069). The highlight carries the same
-  /// three values as `data-*`, but a spec proving a click SELECTED the gap
-  /// wants the store's answer, not the DOM's.
+  /// selection is of any other kind (docs/features.md#timeline-selection). The
+  /// highlight carries the same three values as `data-*`, but a spec proving a
+  /// click SELECTED the gap wants the store's answer, not the DOM's.
   getSelectedGap(): { trackId: string; s: number; e: number } | null;
   /// Open a composition by id — the anchor store's `openComposition` with no
   /// entry layer, for a spec that needs to stand INSIDE a composition without
@@ -511,7 +535,9 @@ export interface E2EHook {
   /// `underrun.droppedFrames`/`underrun.lateFrames`, per-clip
   /// `decodedFrameCount`/`ringSize`/
   /// `lookaheadFull`/`downgraded`, `compositeMsLast`/`compositeMsMax`, and the
-  /// hardware lane's `handoff` barrier percentiles. Null until the preview mounts.
+  /// hardware lane's `handoff` barrier percentiles, per-Motif rows (`motifs`)
+  /// and the Motif frame reader's lanes, divisor and stage medians
+  /// (`motifReader`). Null until the preview mounts.
   compositorPerfSnapshot(): CompositorPerfSnapshot | null;
   /// Live concurrent-HW-session budget from main (`used`/`max`). The lane mix a
   /// perf snapshot reports says WHICH lane each clip took; this says whether
@@ -1029,6 +1055,11 @@ export function installMotifTestHooks(): void {
     sharedMotifFrameCache.clearKey(cacheKey);
   };
 
+  hookSlot().readMotifFrame = ({ hash, frame, div }) =>
+    motifFrameReader().readAddress({ hash, frame }, div);
+
+  hookSlot().motifReaderStats = () => currentMotifFrameReader()?.stats ?? idleMotifReaderStats();
+
   hookSlot().bakedIndexHas = (cacheKey: string): boolean => {
     return sharedBakedKeyIndex.has(cacheKey);
   };
@@ -1100,6 +1131,14 @@ export function installMotifHook(): void {
     return btoa(binary);
   };
 
+  hookSlot().motifProposals = () => listMotifProposals();
+  hookSlot().motifDecideProposal = async ({ motifId, proposalId, approve, note }) => {
+    const id = proposalId ?? (await listMotifProposals()).find((p) => p.motif_id === motifId)?.proposal_id;
+    if (!id) throw new Error(`motifDecideProposal: no pending proposal from the draft '${motifId}'`);
+    if (approve) return approveMotifProposal(motifId, id);
+    await rejectMotifProposal(motifId, id, note);
+    return null;
+  };
   hookSlot().motifAddCountdown = async () => {
     return addMotif({
       motifId: "countdown",

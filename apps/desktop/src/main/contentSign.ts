@@ -1,4 +1,4 @@
-// macOS-only install step for app-managed content (ADR 0075): give every
+// macOS-only install step for app-managed content (ADR 0039): give every
 // Mach-O file in a freshly extracted runtime a signature the kernel accepts.
 //
 // Apple Silicon refuses to map code whose signature is missing or does not

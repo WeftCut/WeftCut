@@ -77,6 +77,11 @@ describe("jobOverSourceSpan", () => {
     expect(jobOverSourceSpan(s, layers, q)).toBeNull();
   });
 
+  it("places a media-addressed description by its own source window, with no layer", () => {
+    const s = state([job("a", { layer_id: "", src_window: { src_start_us: 7_000_000, src_end_us: 9_000_000 } })]);
+    expect(jobOverSourceSpan(s, layers, q)?.job_id).toBe("a");
+  });
+
   it("answers the oldest of several overlapping jobs", () => {
     const s = state([
       job("later", { window: { t_start_us: 0, t_end_us: 20_000_000 } }),

@@ -54,3 +54,29 @@ export function applyTranslatePath(project: Project, id: Uuid, dx: number, dy: n
         throw new CommandFailure({ error: 'InvalidArgument', field: 'position', detail: problem });
     layer.params.transform.position = next;
 }
+/** MCP `translate_position`: offset a layer's position by (dx, dy) composition
+ *  px in either mode, keeping its motion — every XY key value (or the static
+ *  value), or every path node with its handles and progress (`applyTranslatePath`).
+ *  Tangents are unit-square shapes, so a uniform offset leaves them as they are. */
+export function applyTranslatePosition(project: Project, id: Uuid, dx: number, dy: number): void {
+    const { layer } = checkLayerEditable(project, id);
+    if (!('transform' in layer.params))
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'position', detail: `layer ${id} is a ${layer.params.kind} layer, which has no position` });
+    if (!Number.isFinite(dx) || !Number.isFinite(dy))
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'position', detail: 'Translation must be finite' });
+    const position = layer.params.transform.position;
+    if (position.mode === 'Path') { applyTranslatePath(project, id, dx, dy); return; }
+    // A plain copy of the draft (structuredClone cannot read an immer proxy);
+    // the record is JSON by construction.
+    const next = JSON.parse(JSON.stringify(position)) as typeof position;
+    const shift = (track: typeof next.x, d: number): void => {
+        if (track.mode === 'Static') track.value += d;
+        else for (const k of track.value) k.value += d;
+    };
+    shift(next.x, dx);
+    shift(next.y, dy);
+    const problem = positionProblem(next);
+    if (problem)
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'position', detail: problem });
+    layer.params.transform.position = next;
+}

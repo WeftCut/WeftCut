@@ -51,13 +51,11 @@ function shot(index: number): DescribableShot {
     index,
     srcStartUs: start,
     srcEndUs: start + 1_000_000,
-    tStartUs: start,
-    tEndUs: start + 1_000_000,
   };
 }
 
 function answer(text: string) {
-  return { backend: "qwen3_vl", model: "Qwen3VL-4B", segments: [{ t_start_us: 0, t_end_us: 1_000_000, text, tags: [] }] };
+  return { backend: "qwen3_vl", model: "Qwen3VL-4B", segments: [{ src_start_us: 0, src_end_us: 1_000_000, text, tags: [] }] };
 }
 
 describe("describeShotRows", () => {
@@ -86,7 +84,7 @@ describe("describeShotRows", () => {
     await describeShotRows([shot(0), shot(1), shot(2)], SUBJECT);
     expect(mocks.describeClip).toHaveBeenCalledTimes(3);
     expect(peak).toEqual([1, 1, 1]);
-    expect(mocks.describeClip.mock.calls.map((c) => c[0].tStartUs)).toEqual([
+    expect(mocks.describeClip.mock.calls.map((c) => c[0].srcStartUs)).toEqual([
       0, 1_000_000, 2_000_000,
     ]);
   });
@@ -177,7 +175,7 @@ describe("describeOneShot", () => {
   afterEach(resetDescriptionsStore);
 
   it("keeps a shot run from replacing the clip content cache", async () => {
-    await runDescribe({ ...SUBJECT, purpose: "clip", srcStartUs: 0, srcEndUs: 1_000_000, window: null, label: "clip" });
+    await runDescribe({ ...SUBJECT, purpose: "clip", srcStartUs: 0, srcEndUs: 1_000_000, wholeLayer: true, label: "clip" });
     const clipSegments = getDescriptionSegments("m-1");
     mocks.describeClip.mockResolvedValue(answer("a close-up"));
     await describeOneShot(shot(0), SUBJECT);
@@ -186,14 +184,14 @@ describe("describeOneShot", () => {
     expect(getDescriptionSegments("m-1", "shot")?.[0]?.text).toBe("a close-up");
     expect(mocks.getMediaDescription).toHaveBeenLastCalledWith("m-1", "shot");
     mocks.describeClip.mockResolvedValue(answer("new clip content"));
-    await runDescribe({ ...SUBJECT, purpose: "clip", srcStartUs: 0, srcEndUs: 1_000_000, window: null, label: "clip" });
+    await runDescribe({ ...SUBJECT, purpose: "clip", srcStartUs: 0, srcEndUs: 1_000_000, wholeLayer: true, label: "clip" });
     expect(getDescriptionSegments("m-1", "shot")?.[0]?.text).toBe("a close-up");
   });
 
   it("a failed clip run does not replace or clear a shot error", async () => {
     setDescribeError("shot", "shot failure");
     mocks.describeClip.mockRejectedValue(new Error("clip failure"));
-    await runDescribe({ ...SUBJECT, purpose: "clip", srcStartUs: 0, srcEndUs: 1_000_000, window: null, label: "clip" });
+    await runDescribe({ ...SUBJECT, purpose: "clip", srcStartUs: 0, srcEndUs: 1_000_000, wholeLayer: true, label: "clip" });
     expect(useDescriptionsStore.getState().errors).toEqual({ clip: expect.stringContaining("clip failure"), shot: "shot failure" });
     mocks.describeClip.mockResolvedValue(answer("shot content"));
     await describeOneShot(shot(0), SUBJECT);
@@ -209,8 +207,8 @@ describe("describeOneShot", () => {
     expect(mocks.describeClip).toHaveBeenCalledWith({
       layerId: "l-1",
       purpose: "shot",
-      tStartUs: 2_000_000,
-      tEndUs: 3_000_000,
+      srcStartUs: 2_000_000,
+      srcEndUs: 3_000_000,
       // The call's job tag (ADR 0121) — host plumbing, not a view parameter.
       requestId: expect.any(String),
     });

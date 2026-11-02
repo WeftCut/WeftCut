@@ -4,60 +4,51 @@ status: accepted
 
 # Constant time remapping preserves content windows
 
-Video, Audio, animated images, Motifs and Group instances support a positive
-constant rational playback rate. The inspector's single Timing group offers
-vertically stacked Start, Duration and read-only End rows, using the same label
-and control alignment as other properties. End is the exclusive timeline
-boundary (Start plus Duration), displayed in the same frame/audio units.
-Start moves the clip; Duration remains an out-edge trim.
-A Retime / 变速 row beneath these fields has target
-duration followed by a speed multiplier (1.00×), Reset to 1× and the Audio/Group
-Preserve pitch policy. Caption, target duration and speed share one compact row.
-Speed is a text button until clicked, then an automatically focused input with
-a trailing ×; Enter or blur commits, Escape cancels the edit. Its tooltip and
-accessible label name the speed without a separate visible caption.
-There is no nested disclosure or divider. Both directly retime
-the selected content; Target duration uses the same time units as Duration and
-commits on blur or Enter, with no confirmation buttons or result preview.
-Explicit target IDs are the complete
-batch; links never expand a retime request.
-For a batch, Preserve pitch targets only its Audio/Group clips, displays their
-count, and shows a mixed state when their policies differ. Clicking the mixed
-state enables Preserve pitch for those clips.
+Date: 2026-10-04
 
-A retime keeps starts and selected content endpoints. It snaps the new end to
-that clip's frame/sample grid, derives the actual rate from the snapped duration,
-and scales its own animation keys and fades by the actual duration ratio. Keys
-keep their IDs, normalized curves and exact time remainders, including keys
-outside the visible span. Child animation records remain unchanged. The pure
-planner is shared by inspector and actor; commit recomputes from live state and
-rejects the complete batch on collisions, locks, illegal transitions, nested
-selected targets or unrepresentable rational arithmetic. Transitions retain
-their duration and provenance, and neighbours stay fixed.
-Both local preview refusals and commit refusals name the colliding clips and
-show the available maximum duration and approximate minimum rate when known;
-transition refusals identify the transition by its participants.
+## Context
 
-Schema 3 persists an Affine time_map and fractional remainders next to integral
-source/key/fade coordinates. Images and Motifs have an unwrapped content_window;
-image looping happens only at frame sampling. Rust i128 arithmetic is shared
-with TypeScript through Wasm. Nested composition clocks compose rational maps
-before a final decoder/frame/sample boundary. Trim keeps the rate; split retains
-the mapping and re-bases the right side without discarding fractional keys.
+Video, Audio, animated images, Motifs and Group instances need a constant
+playback rate. Timeline times are integer µs on per-kind grids (ADR 0037), but
+a rational rate applied to them produces non-integer source and keyframe times,
+and rounding at every step would drift keys and windows across repeated edits.
+Group clocks were offset-only (ADR 0052), so nested rates had nowhere to
+compose. The existing `VideoClip.speed` field was stored but never affected
+playback.
 
-The schema 2 migration discards VideoClip.speed and installs rate 1. The old
-field never affected playback, so promoting it to an active rate would change
-old projects. Timeline geometry and Motif props.speed are untouched. No legacy
-speed report or compatibility UI is exposed.
+## Decision
 
-Audio uses immutable 48 kHz PCM stems shared by preview and export. Each Audio
-scope stretches its selected effect-processed source once, applies its own
-envelope, then mixes into child role stems. Each enclosing Group stretches
-those stems once with its own pitch policy; role routing is preserved and role
-gain is applied once outside. Pitch is preserved by default. Unavailable media
-or preparation failures hold playback/export rather than substituting raw audio.
+- **A positive constant rational rate per clip**, persisted (schema 3) as
+  `time_map: { kind: "Affine", rate: { num, den } }`, with fractional
+  remainders stored beside the integral coordinates: `source_phase` on the
+  source window, `time_fraction` on keyframes, `fade_phase` on fades. Images
+  and Motifs carry an unwrapped `content_window`; image looping happens only
+  at frame sampling.
+- **A retime keeps the start and the selected content.** It snaps the new end
+  to the clip's own grid, derives the actual rate from the snapped duration,
+  and scales the clip's own keys and fades by that ratio (ids, curves and
+  remainders kept, out-of-span keys included). Child compositions are
+  untouched; neighbours do not move; transitions keep duration and provenance.
+  Trim keeps the rate; split keeps the mapping and re-bases the right side.
+- **Exact arithmetic in one place**: rational i128 in the Rust eval leaf,
+  shared with TypeScript through wasm. Nested composition clocks compose
+  rational maps and quantize only at the final decoder/frame/sample boundary.
+- **One planner** (`renderer/retimePlan.ts`) serves the inspector preview and
+  the actor (`retime_layers`); the commit recomputes from live state and
+  refuses the whole batch on collisions, locks, illegal transitions, nested
+  selected targets or unrepresentable arithmetic. Explicit ids are the whole
+  batch; links never expand it.
+- **Audio** retimes into immutable 48 kHz per-role PCM stems shared by preview
+  and export; pitch is preserved by default; a failed preparation holds
+  playback/export instead of substituting raw audio.
+- **Only `FrameSampling` is implemented**; `FrameBlending` and `OpticalFlow`
+  exist in the type and are refused as unavailable.
+- **The schema 2→3 migration drops `VideoClip.speed` and installs rate 1.**
+  Promoting the inert field to a live rate would change how old projects play.
 
-FrameSampling is the implemented preview/export mode. FrameBlending and
-OpticalFlow are reserved and explicitly unavailable. Retimed Groups can be
-entered and edited, but ungrouping and membership changes require rate 1.
-This extends ADR 0052's original offset-only composition clock.
+## Consequences
+
+- Ungrouping a retimed Group and adding members to one require rate 1.
+- Every reader of source time goes through the composed map; a raw
+  `t − t_start + src_in` is wrong for a retimed clip.
+- Motif `props.speed` is unrelated application content and stays.

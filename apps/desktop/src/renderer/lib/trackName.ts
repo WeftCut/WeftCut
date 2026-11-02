@@ -3,11 +3,11 @@ import type { TrackSummary } from "../ipc";
 /// The one name a track is shown under, anywhere it is named: its own label,
 /// else its role, else its position in the z-stack.
 ///
-/// An absent label means the name is DERIVED (ADR 0042), and a blank one counts
-/// as absent exactly as it does for layers — so a lane is never nameless.
-/// Deriving here rather than in main is what makes the reserved lanes
-/// translatable at all: main holds no locale bundle, so a name computed there
-/// would ship one language into every UI.
+/// An absent label means the name is DERIVED (docs/data-model.md#track), and a
+/// blank one counts as absent exactly as it does for layers — so a lane is
+/// never nameless. Deriving here rather than in main is what makes the reserved
+/// lanes translatable at all: main holds no locale bundle, so a name computed
+/// there would ship one language into every UI.
 ///
 /// `tracks` is the project's track vector in DATA order (index 0 = bottom of the
 /// z-stack), never the timeline's reversed-and-filtered row order: the number is

@@ -1,51 +1,10 @@
 # Platform codec capabilities and verification
 
-Updated 2026-09-05. This is the maintained reference for the capability matrix
-and platform boundaries formerly tracked as a permanently open
-[issue #7](https://github.com/WeftCut/WeftCut/issues/7).
-That issue retains the original dated investigations and comments.
-[Issue #15](https://github.com/WeftCut/WeftCut/issues/15) closed on 2026-09-05:
-its three-platform verification was completed; remaining host requirements
-belong to [#35](https://github.com/WeftCut/WeftCut/issues/35), and optional
-implementation work belongs to [#21](https://github.com/WeftCut/WeftCut/issues/21).
-
-A hardware pass means the spec asserted engagement of the named lane. A skip
-means no measurement was made. Building an installer does not verify that a
-user can install and launch it.
-
-Hardware preview gates now attach the actual lane, the initial probe diagnostic
-and a monotonic per-clip hardware-fallback count before and after pixel/SSIM
-sampling. Timeout, crash, IPC/admission failure, unknown rejection and runtime
-fallback fail the gate; a later return to hardware does not erase a fallback.
-Only affirmative unavailability (no advertised/eligible lane, no render device,
-an observed native software frame during capability probing, a successful Linux
-inventory without an NVIDIA adapter, or a Windows inventory containing only
-Microsoft software adapters) can skip an optional variant. Empty/unknown Windows
-inventories and mixed software/physical adapters do not permit a skip. Missing fixtures/components are
-test setup failures. Legacy negative cache entries without a cause are not
-accepted as unavailability evidence; hardware audits use fresh profiles.
-Fidelity gates use the existing high-processing preset so a 3-core Mac retains
-an interactive compute slot beside import derivatives. They still enforce
-normal admission limits and fail on any probe/session error. The isolation and
-resource-pressure gates exercise failure and software recovery separately.
-The larger ProRes fixture completes import compute before timeline placement;
-an import that cannot drain fails setup instead of masking a busy probe as
-unsupported hardware. H.264 gates retain overlapping import/source swaps.
-
-On macOS the VideoToolbox H.264 and HEVC Main10 cells are mandatory, including
-all four H.264 color charts. ProRes is host-dependent. To require additional
-known capabilities, set `WEFTCUT_REQUIRE_HW_VARIANTS` to a comma-separated list
-such as `d3d11va-h264` or `videotoolbox-prores`; valid variants are
-`nvdec-h264`, `vaapi-h264`, `d3d11va-h264`, `videotoolbox-h264`,
-`videotoolbox-hevc10`, `videotoolbox-prores`. This strengthens assertions; it
-does not select which specs run. Unknown names fail configuration validation.
-Product software fallback remains enabled; test strictness does not change
-the editor's recovery behavior.
-Copy-back native sessions also check every received frame against the selected
-hardware surface format before cadence filtering or packing. A CPU frame in a
-hardware session reports `hardware surface lost` and enters the existing
-explicit software-session recovery; it can no longer keep a hardware label
-while silently packing software frames.
+The capability matrix per platform, the hardware evidence behind it, and the
+platform boundaries the code works around. Dated items are observations on
+named hardware, not promises about future Chromium, FFmpeg or driver versions.
+Open platform work is tracked in [#35](https://github.com/WeftCut/WeftCut/issues/35)
+and [#21](https://github.com/WeftCut/WeftCut/issues/21); see the end of this page.
 
 ## Encode and decode matrix
 
@@ -54,219 +13,182 @@ while silently packing software frames.
 | Export hardware encode priority | NVENC → QSV → AMF | NVENC → VAAPI | VideoToolbox |
 | Hardware encode verified | H.264 + HEVC NVENC, RTX 3050 | H.264 + HEVC NVENC, RTX 3050 | H.264 + HEVC VideoToolbox |
 | Encode fallback | Software encoder selected by the registry | Same | Same |
-| Lite engine export decode | WebCodecs hardware allowed for eligible sources | Software by the platform allowlist | WebCodecs hardware allowed for eligible sources |
+| Lite engine export decode | WebCodecs hardware allowed | Software (`hwExportDecodeAllowed`) | WebCodecs hardware allowed |
 | Standard engine export decode | Software FFmpeg session | Software FFmpeg session | Software FFmpeg session |
 | Standard engine hardware preview | d3d11va shared texture | nvdec / vaapi copy-back | videotoolbox copy-back |
-| Hardware preview transport | Browser frame from shared texture | NV12 ship-bytes | NV12 or I420P10 ship-bytes |
+| Hardware preview transport | RGBA shared texture, converted natively (ADR 0032) | NV12 ship-bytes | NV12 or I420P10 ship-bytes |
 | Hardware preview eligibility | 8-bit H.264 / HEVC / VP9 | 8-bit H.264 / HEVC / VP9 | H.264 / HEVC / VP9 / ProRes; 10-bit admitted |
 
-The encoder registry owns candidate selection, real availability probes and
-software fallback. Its status-log entry identifies the actual encoder,
-acceleration and FFmpeg executable; an adapter being listed is not proof that
-it was selected. QSV, AMF and VAAPI encode remain unmeasured on the recorded
-benches because NVENC won selection, or the required GPU was absent (#35).
+- The encoder registry (`native/src/export/encoder_registry.rs`) owns
+  candidates, real availability probes and software fallback. Its status-log
+  entry names the encoder actually selected; a listed adapter is not proof.
+  QSV, AMF and VAAPI encode are unmeasured because NVENC won selection or the
+  GPU was absent (#35).
+- Preview eligibility lives in `shared/hwLaneEligibility.ts` (seek-validated
+  per lane; it narrows the one-frame probe, never overrides a negative verdict).
+  AV1, MPEG-2 and intra formats other than ProRes-on-VideoToolbox never probe
+  hardware.
+- Hardware vs software is private to the Standard engine. Export freezes its
+  own per-media routing at export start; do not infer it from preview
+  priority (ADR 0030, ADR 0033).
 
-Hardware versus software is private to the Standard engine. Decode Route is
-the source's persisted truth; Decode engine is the runtime overlay. Preview's
-Automatic setting prefers Standard when available; export freezes its own
-per-media resolution at export start. Do not infer export routing from preview
-priority (CONTEXT.md; ADR 0030 and ADR 0033).
+## Hardware gates
+
+A hardware pass means the spec asserted engagement of the named lane; a skip
+means nothing was measured. Gates record the engaged lane, the probe
+diagnostic and a per-clip fallback count around sampling. Timeout, crash,
+IPC/admission failure, unknown rejection and any runtime fallback fail the
+gate. Only affirmative unavailability may skip: no advertised/eligible lane,
+no render device, a software frame observed during probing, a Linux inventory
+without NVIDIA, or a Windows inventory of only Microsoft software adapters.
+Missing fixtures or components are setup failures. Cache entries without a
+cause are not unavailability evidence; audits use fresh profiles.
+
+On macOS the VideoToolbox H.264 (all four color charts) and HEVC Main10 cells
+are mandatory; ProRes is host-dependent. `WEFTCUT_REQUIRE_HW_VARIANTS`
+(comma-separated: `nvdec-h264`, `vaapi-h264`, `d3d11va-h264`,
+`videotoolbox-h264`, `videotoolbox-hevc10`, `videotoolbox-prores`) makes more
+variants mandatory; unknown names fail configuration. It tightens assertions
+only; product software fallback is unchanged.
+
+Copy-back sessions check every received frame against the selected hardware
+surface format before packing. A CPU frame in a hardware session reports
+`hardware surface lost` and enters software-session recovery, so a hardware
+label never covers software frames.
+
+`preview-hw-color` measures matrix/range per engaged lane; natural-content SSIM
+alone misses those errors (ADR 0032). Shared-texture ordering cells are
+Windows-only; copy-back lanes have their own ordering cell. The opt-in
+index-encoded fixture comes from `node scripts/gen-order-fixture.mjs` in
+`apps/desktop/e2e`. Hosted CI has no GPU decode engines and skips these gates;
+native-decode CI coverage is in
+[the E2E guide](../apps/desktop/e2e/README.md#native-decode-ci-coverage).
 
 ## Hardware evidence
 
-- **Windows:** H.264 and HEVC NVENC selected on the RTX 3050 on 2026-07-23
-  (status-log support at `61fb4d86`). The d3d11va preview conformance, colour
-  and ordering gates passed on 2026-08-29 and were reconfirmed on 2026-08-31.
-  The colour gate remained 4/4 green after `6e3d12f0`, with worst patch error
-  1–2 out of 8 tolerated. Pinning absent vaapi produced four clean skips.
-- **Linux:** nvdec on the RTX 3050 and vaapi on the Intel iGPU passed on
-  2026-08-12 after the bundled-libva fix `7fbdc75e`. Both render nodes
-  remained available in NVIDIA-exclusive mode. On 2026-09-03, the hardware
-  colour suite was 8/8 green, 0 skipped, with errors 2/1/1/1 for each lane
-  across 709-limited / 601-limited / 709-full / 601-full. Pinning absent
-  videotoolbox produced four clean skips.
-- **macOS:** the base M1 hardware preview measured H.264 SSIM 0.982 and HEVC
-  Main10 I420P10 SSIM 0.9975. A MacBook Air M3 (Mac15,12, macOS 26.6.2,
-  FFmpeg sidecar 8.1.2) also passed ProRes on 2026-09-02: I420P10,
-  SSIM 0.9966 against a 0.96 floor. Native export wedges were 8/8;
-  ProRes fidelity 2/2, native-vs-proxy SSIM 0.852 vs 0.822, and the
-  10-bit ramps retained about 872 distinct levels.
-- **macOS colour is verified, not pending:** a base M1 (MacBookAir10,1,
-  macOS 26.5.2, sidecar 8.1.2) passed all four videotoolbox colour legs on
-  2026-09-04, errors 1/1/1/2 out of 8. Pinning absent d3d11va yielded
-  four clean skips. The report is in #15. This supersedes #7's old
-  “only the videotoolbox legs remain unrun” paragraph.
+| Host | Result | Date |
+| --- | --- | --- |
+| Windows, RTX 3050 | H.264 + HEVC NVENC selected; d3d11va preview conformance, color (4/4, worst patch error 1–2 of 8 tolerated) and ordering green | 2026-07-23, 2026-08-31 |
+| Linux, RTX 3050 + Intel iGPU | nvdec and vaapi preview green (both render nodes present in NVIDIA-exclusive mode); color 8/8, errors 2/1/1/1 per lane | 2026-08-12, 2026-09-03 |
+| macOS, base M1 (MacBookAir10,1) | H.264 SSIM 0.982; HEVC Main10 I420P10 SSIM 0.9975; videotoolbox color 4/4, errors 1/1/1/2 | 2026-09-04 |
+| macOS, M3 (Mac15,12) | ProRes I420P10 SSIM 0.9966 (floor 0.96); native export wedges 8/8; ProRes fidelity 2/2 (native 0.852 vs proxy 0.822); 10-bit ramps ~872 levels | 2026-09-02 |
 
-`preview-hw-color` measures matrix/range correctness per engaged lane.
-Natural-content SSIM alone does not catch those errors (ADR 0032).
-The shared-texture ordering cells are Windows-specific; `7ed8de20` (PR #36)
-added a separate copy-back ordering cell for nvdec/vaapi/videotoolbox and
-gated the shared-texture cells to Windows. The opt-in index-encoded fixture
-still comes from `node scripts/gen-order-fixture.mjs` in `apps/desktop/e2e`.
-
-## CI coverage and its limits
-
-The latest audited main run,
-[33904374835](https://github.com/WeftCut/WeftCut/actions/runs/33904374835)
-on `7ed8de20`, passed all 19 jobs. It includes TypeScript checks and unit
-tests, build-script tests, Rust tests plus rustfmt/clippy on three OSes,
-14 E2E slices, unsigned packaging on each OS, and cross-OS determinism.
-The [2026-09-04 nightly](https://github.com/WeftCut/WeftCut/actions/runs/33854892205)
-also passed. These runs predate the Linux-nightly decode opt-in described below.
-
-The Stryker 10 upgrade was verified by a fresh main-branch
-[mutation run 33941526966](https://github.com/WeftCut/WeftCut/actions/runs/33941526966)
-on 2026-09-05: initial run 1,464 tests, final mutation score **83.77%** against
-the 75% break threshold, completed successfully in about 11 minutes overall.
-
-The main media fixtures are generated by globalSetup and explicitly cached in
-CI. The two software-family benchmark fixtures (DNxHR and MPEG-2) are generated
-on the serial-project carrier. The 4K ProRes memory-ratchet and hardware
-ordering fixtures remain outside hosted CI.
-
-The native-decode group was measured on `4c850942` with explicit dispatch
-opt-in: Linux 3/3 green, each 16 passed / 1 hardware-only skip in 17–21 min;
-Windows 3/3 failed the same backward clip-reuse test, each 15 passed /
-1 skipped / 1 failed. The failure was its total test budget, not evidence of
-decode instability. Evidence:
-[Linux](https://github.com/WeftCut/WeftCut/actions/runs/33888127766),
-[Windows](https://github.com/WeftCut/WeftCut/actions/runs/33899875905).
-
-The workflow now selects these gates for **Linux nightly**, in the existing
-slices at one worker; push/PR cost stays unchanged. Windows and macOS still
-require dispatch opt-in. [#37](https://github.com/WeftCut/WeftCut/issues/37)
-tracks validation of the backward cell's 1,500-second total budget and the
-900-second limits on its two wide searches. The first candidate's
-[Windows replay](https://github.com/WeftCut/WeftCut/actions/runs/33942673085)
-completed the export in 47.5 s but hit the first analyzer call's 600-second
-default, so changing the total alone was insufficient. Ordinary analyzer
-calls keep that default; export stall detection and all assertions are unchanged.
-The analyzer already decodes each candidate range in one FFmpeg pass.
-See [the E2E guide](../apps/desktop/e2e/README.md#native-decode-ci-coverage)
-for the dispatch commands.
-
-A green macOS run does **not** verify window restoration: the audited
-`e2e-timings-macos-latest-rest/parallel.json` skipped both the position/size
-restore and maximized restore cells because the work area was 1024×677;
-they require 1100×760. The no-drift and off-screen rejection cells passed.
-The two M3 restore failures remain unresolved in #35.
+Pinning an absent lane on each host produced clean skips.
 
 ## Platform boundaries
 
-These are dated observations and implemented policies, not promises about all
-future Chromium, FFmpeg or driver versions.
+### 1. Linux WebCodecs hardware frames export black
 
-### 1. Linux WebCodecs hardware frames can export black
-
-On the Linux/NVIDIA bench, hardware-decoded VideoFrames could not be read
-faithfully by the export path. NVIDIA-exclusive mode did not fix it:
-2026-07-21 output SSIM was 0.423 / PSNR 3.28 dB despite aligned indices.
-The same force-test was faithful on Windows (SSIM 0.907–0.912) and macOS
-(0.896–0.898). The `hwExportDecodeAllowed` allowlist therefore permits eligible
-Windows/macOS sources (`35647f63`, `0cb604fb`) and retains software on
-Linux/unknown platforms. The original all-platform workaround was superseded.
-Issue #7's 2026-07-21 comments contain the broader import-path probe.
+On Linux/NVIDIA a hardware-decoded `VideoFrame` is an opaque GPU handle every JS
+read path returns as zeros, with no decoder error (2026-07-21: SSIM 0.423,
+indices aligned; NVIDIA-exclusive mode did not help). Windows (0.907–0.912) and
+macOS (0.896–0.898) were faithful. `hwExportDecodeAllowed`
+(`render/exportDecodeRouting.ts`) is an allowlist: Windows and macOS may
+prefer hardware; Linux and unknown platforms pin software.
 
 ### 2. VAAPI copy-back and libva
 
-The recorded Ubuntu 24.04 system libva lacked `vaMapBuffer2`; FFmpeg's
-implib trampoline could abort on the first copy-back frame even though opening
-the decoder succeeded. `7fbdc75e` bundles libva 2.22, pins the loaded library
-with RTLD_NODELETE and guards symbol availability before advertising vaapi.
-The bundled build is conda-forge's, linked against glibc 2.17, so it loads
-everywhere the package does (ADR 0143); an unavailable lane falls back to
-software. Local VAAPI conformance passed at SSIM 0.983 without an nvdec
-regression. A system-libva ≥2.21 cross-distro pass remains #35.
-Use the actual Intel render node for `vainfo`; node numbering changed across
-the recorded boots, so never hardcode the historical renderD128/renderD129 map.
+The BtbN ffmpeg calls `vaMapBuffer2` (libva ≥ 2.21) during copy-back; on an
+older libva (Ubuntu 24.04 ships 2.20) its implib trampoline aborts the process
+on the first mapped frame while decoder open and the one-frame probe succeed.
+The component bundles conda-forge libva 2.22 (+ libva-drm; glibc 2.17 floor,
+ADR 0143), pins it with `RTLD_NODELETE`, and advertises VAAPI only when
+`vaMapBuffer2` resolves (`vaapi_copyback_supported`); otherwise VAAPI sources
+decode in software. libva then dispatches to the system driver's
+`vaMapBuffer` when the driver predates the symbol. Local VAAPI conformance:
+SSIM 0.983. Render-node numbering changes across boots; enumerate the nodes
+and use the actual Intel node for `vainfo`. Cross-distro system-libva coverage
+is #35.
 
 ### 3. AV1 capability probes can over-promise
 
 On the recorded GPU, WebCodecs support probing succeeded but hardware AV1
-decode immediately failed without frames. The import probe retries once in
-software before declaring the source undecodable (`10301fab`). This differs
-from boundary 1, where decoding succeeds but pixels cannot be read correctly.
+decode failed without frames. `probeSourceDecodable` retries once with
+`prefer-software` before declaring a source undecodable.
 
 ### 4. H.264 High10 is a software case
 
-The recorded NVIDIA hardware has no Hi10P decode path. The 10-bit H.264
-WebCodecs lane requests software. AV1-10 is a separate case: hardware can emit
-opaque frames, whereas the software decoder provides copyTo-able I420P10.
+The recorded NVIDIA hardware has no Hi10P decode. The 10-bit WebCodecs lane
+requests software. AV1 10-bit hardware decode emits opaque frames; software
+gives copyTo-able I420P10.
 
 ### 5. ProRes range metadata
 
-The measured FFmpeg n7.1.5 ProRes encoders wrote primaries/transfer/matrix into
-MOV's colr atom but no range flag; probe output was `color_range=unknown`.
-The test was adjusted at `497eccae`. This is a dated encoder observation,
-not a claim that range metadata is unimportant to pixel interpretation.
+FFmpeg n7.1.5's ProRes encoders wrote primaries/transfer/matrix to the MOV
+`colr` atom but no range; ffprobe reports `color_range=unknown`.
 
 ### 6. FFmpeg build identity matters
 
-Different builds expose different flags and encoders: the recorded master
-removed `-vsync`, and johnvansickle lacked libsvtav1 available in the chosen
-Linux BtbN GPL build. The static encode sidecar and the LGPL shared decode
-runtime have different roles and must not be conflated. Current selections
-live in `fetch-ffmpeg.mjs` and `fetch-ffmpeg-lgpl.mjs`.
-The latter must also be a Rust-artifact cache input: it selects the headers
-and co-located libraries cached beside the decode addon.
+Builds differ in flags and encoders (one master build removed `-vsync`;
+johnvansickle lacks libsvtav1). The GPL encode sidecar
+(`scripts/fetch-ffmpeg.mjs`) and the LGPL shared decode runtime
+(`scripts/fetch-ffmpeg-lgpl.mjs`) have different roles. The LGPL fetch script
+is a Rust-artifact cache input: it selects the headers and co-located
+libraries cached beside the decode addon.
 
 ### 7. An exe-adjacent FFmpeg shadow must not win
 
-Stale auto-downloads beside Electron once shadowed the controlled sidecar:
-on Linux every hardware probe silently fell back to software; on macOS an
-arm64 shadow masked the old Rosetta problem. The single resolver in
-`native/src/ffmpeg` now prefers the controlled PATH-resolved executable and
-refuses an adjacent shadow when that executable is reachable. All native
-spawn sites use it. It walks PATH explicitly because Windows process lookup
-starts in the application directory. Status logs include the resolved binary
-and warn when a shadow was refused.
-
-An adjacent executable remains usable only when no PATH candidate is reachable,
-which is the degraded auto-download case. Linux never auto-downloads.
-Packaged-sidecar resolution was verified in #15; the remaining Windows/macOS
-degraded-download and SOCKS checks are #35.
+A stale ffmpeg beside the Electron executable silently forced software on
+Linux and masked a Rosetta problem on macOS. The single resolver in
+`native/src/ffmpeg` prefers the controlled PATH-resolved executable, walking
+PATH explicitly (Windows process lookup starts in the application directory),
+and refuses an adjacent shadow when that executable is reachable. All native
+spawn sites use it; status logs name the binary and any refused shadow. An
+adjacent executable is used only when no PATH candidate exists (the degraded
+auto-download case; Linux never auto-downloads).
 
 ### 8. Render nodes and GPU mode
 
-NVIDIA-exclusive mode did not remove the Intel render node on the Linux bench:
-both nvdec and vaapi ran on 2026-08-12. That is host evidence, not a universal
-driver guarantee. Enumerate the present DRM nodes and check the engaged lane;
-VAAPI encode is still unmeasured because NVENC wins selection on that bench.
+NVIDIA-exclusive mode kept the Intel render node on the Linux bench; that is
+host evidence, not a driver guarantee. Enumerate DRM nodes and check the
+engaged lane.
 
-### 9. Rosetta FFmpeg and HEVC VideoToolbox
+### 9. macOS FFmpeg must be native arm64
 
-The former x86_64 macOS sidecar failed HEVC VideoToolbox session creation under
-Rosetta with `-12908` (5/5), while native arm64 passed. `8f8b4fbc` replaced it
-with a versioned, SHA-256-pinned arm64 sidecar; HEVC then selected hardware
-and the conformance/codec suites passed. WeftCut's macOS target is Apple Silicon.
+An x86_64 sidecar under Rosetta failed HEVC VideoToolbox session creation
+with `-12908` (5/5); native arm64 passes. The macOS sidecar is a versioned,
+SHA-256-pinned arm64 build.
 
-### 10. Linux WebCodecs encode hardware hints
+### 10. WebCodecs encode hardware hints are mandatory
 
-The recorded Linux H.264 VideoEncoder rejected `prefer-hardware`; software
-or an omitted hint encoded successfully. `309cd220` made the hint
-platform-dependent: Windows/macOS request hardware, Linux/unknown omit it,
-and an explicit user software pin stays software. The pinned-WebCodecs export
-cell protects this path. Do not infer encoder support from decoder support.
+Chromium treats `hardwareAcceleration: "prefer-hardware"` on `VideoEncoder`
+as a requirement and rejects codecs with no hardware encoder on that machine
+(observed: H.264 on Linux; codecs without a WebCodecs hardware encoder, such
+as AV1, on Windows RTX hosts). `encoderHwHint` (`shared/exportSettings.ts`) therefore
+omits the hint under `auto` on every platform and sends `prefer-software`
+only for a user's software pin; `smokeEncode` matches it. Do not infer encoder
+support from decoder support.
 
 ### 11. VideoToolbox ProRes depends on silicon
 
-The base M1 probe declined ProRes hardware decode; the M3 engaged it.
-Both sides are verified, including I420P10 pixels and fidelity on the M3.
-FFmpeg release/8.x's hardware-required setting contributed to the base-M1
-failure; a future FFmpeg change may alter fallback behaviour, so recheck at
-an upgrade. The M3 conformance pass did not measure the ProRes throughput/seek
-benchmark; that optional measurement remains in #35 and
-[decode-bench.md](decode-bench.md).
+Base M1 has no ProRes decode engine; the probe declines and ProRes decodes in
+software. M1 Pro/Max and M2+ engage it (verified on M3). FFmpeg release/8.x
+requires hardware for every VideoToolbox codec except HEVC; master switched
+ProRes to "enable", which may open VT software sessions on base M1. Recheck at
+an FFmpeg upgrade.
+
+### 12. Export-from-original needs a proven Worker decode
+
+`export_decodable_statically` (`jobs/proxy_decision.rs`) admits an original to
+the export axis only for H.264 or AV1 in an 8-bit browser-friendly pixel
+format; everything else exports from an H.264 full proxy. Export decodes in a
+Web Worker, whose capability can differ from the main thread:
+`VideoDecoder.isConfigSupported` returns true for codecs that then fail, HEVC
+needs the Windows "HEVC Video Extensions" (absent on the reference machine),
+and VP9 Worker decode is unverified. Admit a codec only after a real Worker
+`decode()` succeeds. An AV1 export once wedged at frame 0 because of a PTS-grid
+bug in `ExportFrameStore.waitForPts`, not Worker AV1 decode. On machines that
+cannot decode an admitted codec, the pre-flight probe route-corrects the source
+([render.md](render.md#export-source-resolution)).
 
 ## Where unfinished work belongs
 
-- **#35:** macOS window restoration; P3 colour-pick/readback; cross-distro
-  VAAPI; unmeasured QSV/AMF/VAAPI encoders; Windows/macOS degraded auto-download
-  and SOCKS behaviour; optional ProRes-engine throughput/seek baseline.
+- **#35:** macOS window restoration; P3 color-pick/readback; cross-distro
+  VAAPI; unmeasured QSV/AMF/VAAPI encoders; Windows/macOS degraded
+  auto-download and SOCKS; ProRes-engine Mac throughput/seek baseline
+  ([decode-bench.md](decode-bench.md#macos-videotoolbox-copy-back)).
 - **#21:** native hardware export decode (profiling-gated), wider 10-bit
-  hardware-preview transport/eligibility, and Intel decoder-util sampling.
-  A codec may be admitted only when the actual hardware and transfer format
-  support it; this is not a promise of ProRes hardware decode on NVIDIA.
-- **#37:** only the Windows backward-test budget and its validation.
-- **#11:** release acceptance, including Windows/macOS installer installation
-  and launch. Platform backlog is explicitly deferred, not silently completed.
+  hardware-preview transport/eligibility, Intel decoder-util sampling. A codec
+  is admitted only when the hardware and transfer format support it.
+- **#37:** the Windows backward-cell test budget.
+- **#11:** release acceptance, including installer install and launch.

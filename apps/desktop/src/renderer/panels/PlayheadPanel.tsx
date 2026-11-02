@@ -6,9 +6,9 @@
 // share an accent and chain icon. Unlink commits straight through IPC, with
 // the project:changed bridge refreshing the view. Windowing,
 // filtering, the At-playhead / Nearby split and the drop's / menu's anchor
-// mappings live in `playheadItems.ts` (ADR 0044). The top row is a toolbar —
-// category chips plus the ±Δ window dial — and outside A/B Roll the panel
-// renders an explainer instead of rows.
+// mappings live in `playheadItems.ts` (docs/features.md#track-placement). The
+// top row is a toolbar — category chips plus the ±Δ window dial — and outside
+// A/B Roll the panel renders an explainer instead of rows.
 
 import {
   useCallback,
@@ -122,7 +122,7 @@ export interface PlayheadPanelProps {
   /// command. The host wires this to `updateLayer` + summary refresh.
   onRename?: ((layerId: string, nextLabel: string) => void) | undefined;
   /// Restack `layerId` directly above/below a stable layer or track anchor —
-  /// ONE anchored op per completed drag (ADR 0044). The host wires this to
+  /// ONE anchored op per completed drag. The host wires this to
   /// the `restack_layer` command + summary refresh. When omitted, the
   /// At-playhead rows render without grips.
   onRestack?:
@@ -192,7 +192,7 @@ export function PlayheadPanel({
     });
   };
 
-  // ── At-playhead restack gesture (ADR 0044 decision 6) ──────────────────
+  // ── At-playhead restack gesture ────────────────────────────────────────
   // Mechanics — and why pointer events, never HTML5 DnD — live in usePointerReorder.
   //
   // The row snapshot freezes for the duration of a gesture: the playhead
@@ -252,7 +252,7 @@ export function PlayheadPanel({
     reorder.startDrag(index, e);
   };
 
-  // ── Row context menu (ADR 0044 decision 4) ─────────────────────────────
+  // ── Row context menu ───────────────────────────────────────────────────
   // The grip drag's non-drag equivalent: four ordering items, offered only
   // where there is something to order — At-playhead visual rows (audio and
   // Nearby rows get no menu at all rather than an empty one). Anchors and
@@ -771,7 +771,7 @@ function PlayheadRow({
         }`}
         style={accent ? { boxShadow: `inset 2px 0 0 ${accent}` } : undefined}
       >
-        {/* Restack affordance (ADR 0044 decision 6): the row body already
+        {/* Restack affordance: the row body already
             spends click on select and double-click on rename, so the drag
             needs its own handle. Pointer-only — see usePointerReorder. */}
         {onGripPointerDown && (

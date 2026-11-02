@@ -51,7 +51,7 @@ const INFO_SHIM = {
   appimage: null,
   user_data: "C:\\ud",
   shim_path: "C:\\ud\\cli\\weftcut-mcp.cjs",
-  skills: { state: "installed", dir: SKILLS_DIR },
+  skills: { state: "current", dir: SKILLS_DIR },
 };
 
 const clipboard = vi.hoisted(() => ({ writeText: vi.fn() }));
@@ -235,7 +235,7 @@ describe("AgentSection", () => {
     // The recovery that costs no app restart: whatever cleared the fault (a
     // freed disk, a finished build:skills) only shows up by installing again.
     ipc.reinstallSkills.mockResolvedValue({
-      state: "installed",
+      state: "current",
       dir: SKILLS_DIR,
     });
     render(<AgentSection />);
@@ -244,7 +244,7 @@ describe("AgentSection", () => {
     );
     expect(ipc.reinstallSkills).toHaveBeenCalledTimes(1);
     expect(
-      await screen.findByRole("textbox", { name: "Skill folder location" }),
+      await screen.findByRole("textbox", { name: "WeftCut's Skill copy" }),
     ).toBeTruthy();
     expect(screen.queryByText(/npm run build:skills/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
@@ -361,6 +361,9 @@ describe("AgentSection with the stdio shim installed", () => {
     expect(prompt).toContain(`WEFTCUT_USERDATA=${INFO_SHIM.user_data}`);
     expect(prompt).toContain(`"${SKILLS_DIR}\\weftcut"`);
     expect(prompt).toContain("~/.claude/skills/weftcut");
+    // An older copy is replaced, never merged into: overwriting would keep
+    // the files a release removed.
+    expect(prompt).toContain("Delete any copy already there first");
     expect(prompt).not.toContain(INFO.bearer_token);
     // The skill has no second button of its own to press.
     expect(screen.queryByRole("button", { name: /Skill prompt/ })).toBeNull();
@@ -372,7 +375,7 @@ describe("AgentSection with the stdio shim installed", () => {
     // The prompt above hands the folder to an agent; a user installing it by
     // hand needs the same path on screen, and a way into the file manager.
     const field = (await screen.findByRole("textbox", {
-      name: "Skill folder location",
+      name: "WeftCut's Skill copy",
     })) as HTMLInputElement;
     expect(field.value).toBe(path);
     expect(field.readOnly).toBe(true);
@@ -383,6 +386,10 @@ describe("AgentSection with the stdio shim installed", () => {
     await userEvent.click(screen.getByRole("button", { name: "Browse…" }));
     // The folder itself, not its parent: reveal selects what it is given.
     expect(shell.reveal).toHaveBeenCalledWith(path);
+    // The app's copy is the only one the panel sees; it says the agent's own
+    // copy has to be replaced after an upgrade instead of calling it installed.
+    expect(screen.getByText(/replace it after each WeftCut upgrade/)).toBeTruthy();
+    expect(screen.queryByText(/installed/i)).toBeNull();
   });
 
   it("a folder an earlier launch left behind is still offered, but flagged", async () => {

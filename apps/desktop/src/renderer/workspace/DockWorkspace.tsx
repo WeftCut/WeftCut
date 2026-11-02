@@ -465,7 +465,7 @@ function PlayheadDockPanel() {
           }
         }}
         onRestack={async (layerId, anchor, position) => {
-          // One completed drag = one anchored restack op (ADR 0044); the
+          // One completed drag = one anchored restack op; the
           // actor owns the sole-occupant/split degradation and the undo entry.
           if (
             await tryMutate(
@@ -1278,7 +1278,7 @@ const EDGE_GLYPH = {
  * way, and the arrow that reveals it. Both float above the tabs and claim no
  * layout width, which is what lets an end disappear at its stop without
  * changing the strip's width — reserving the band instead would couple the two
- * and oscillate. ADR 0050.
+ * and oscillate. Why: docs/features.md#strip-overflow.
  *
  * Mounted through Dockview's header slots on either side of the tab strip, so
  * the arrow lives outside `role="tablist"` and the tablist's own roving
@@ -1602,7 +1602,8 @@ export function DockWorkspace({
             watermarkComponent={EmptyWorkspaceRecovery}
             /* Overflow is announced by the two floating edges below, not by a
                named list of what is hidden — reaching a Panel by name belongs to
-               the View menu and the search palette (ADR 0050). */
+               the View menu and the search palette
+               (docs/features.md#strip-overflow). */
             disableTabsOverflowList
             prefixHeaderActionsComponent={TabStripLeadingEdge}
             leftHeaderActionsComponent={TabStripTrailingEdge}

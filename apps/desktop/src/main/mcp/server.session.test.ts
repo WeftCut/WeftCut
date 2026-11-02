@@ -1,9 +1,10 @@
 // apps/desktop/src/main/mcp/server.session.test.ts
-// The work session's escape hatches over the tool surface, so a connection that
-// went away cannot hold `AgentSessionBusy` over every later one until the app
-// restarts: the refusal names the holder, its reason and its age, `read_project
-// { view: 'session' }` / `project://session` show it, and `end_agent_session
-// { force: true }` takes it over — lock included.
+// The work session over the tool surface. It owns the history lock: begin
+// locks by default, the owner's own reverts pass, anyone else's are refused
+// naming the holder. A connection that went away cannot hold `AgentSessionBusy`
+// over every later one until the app restarts: the refusal names the holder,
+// its reason and its age, `read_project { view: 'session' }` / `project://session`
+// show it, and `begin_agent_session { force: true }` takes it over in one call.
 import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { handleCallTool, handleReadResource, sessionView } from './server'
@@ -42,10 +43,12 @@ describe('the work session names its holder and can be taken over', () => {
     expect(began.isError).toBeFalsy()
     const busy = await call('two', 'begin_agent_session', { reason: 'Other work' }) as Res
     expect(busy.isError).toBe(true)
-    expect(text(busy)).toContain('AgentSessionBusy')
+    // Typed: no argument fixes a busy session, and the holder rides as data.
+    expect(busy.structuredContent).toMatchObject({ code: 'invalid_request', error: 'AgentSessionBusy', holder: { client: 'client-one', connection_id: 'one', reason: 'Rough cut' } })
     expect(text(busy)).toContain('client-one')
     expect(text(busy)).toContain('"Rough cut"')
-    expect(text(busy)).toContain('end_agent_session { force: true }')
+    expect(text(busy)).toContain('begin_agent_session { force: true }')
+    expect(busy.structuredContent?.options).toContainEqual({ action: 'take_over', tool: 'begin_agent_session', force: true })
     // The view, as a tool and as a resource, names the same holder.
     const view = await call('two', 'read_project', { view: 'session' }) as Res
     expect(view.structuredContent).toMatchObject({ active: { client: 'client-one', reason: 'Rough cut' } })
@@ -54,35 +57,73 @@ describe('the work session names its holder and can be taken over', () => {
     expect(sessionView({ agent }).active).toMatchObject({ connection_id: 'one' })
   })
 
-  it('a plain end from another connection is refused naming the holder; force ends it and releases its lock', async () => {
+  it('begin locks by default and answers it; lock: false does not', async () => {
+    const { call, ts } = host()
+    const began = await call('one', 'begin_agent_session', { reason: 'Rough cut' }) as Res
+    expect(JSON.parse(text(began))).toMatchObject({ reason: 'Rough cut', locked: true })
+    expect(ts.actor.historyStatus().lock_reason).toBe('Rough cut')
+    const again = await call('one', 'begin_agent_session', { reason: 'Rough cut', lock: false }) as Res
+    expect(JSON.parse(text(again))).toMatchObject({ locked: false })
+    expect(ts.actor.historyStatus().lock_reason).toBeUndefined()
+    // A repeat without `lock` leaves it as it is.
+    expect(JSON.parse(text(await call('one', 'begin_agent_session', { reason: 'Rough cut' }))).locked).toBe(false)
+    await call('one', 'end_agent_session')
+    const free = await call('one', 'begin_agent_session', { reason: 'Look only', lock: false }) as Res
+    expect(JSON.parse(text(free))).toMatchObject({ locked: false })
+    expect(ts.actor.historyStatus().lock_reason).toBeUndefined()
+  })
+
+  it('a plain end from another connection is refused naming the holder; begin { force } takes over in one call', async () => {
     const { agent, call, ts } = host()
     await call('one', 'begin_agent_session', { reason: 'Rough cut' })
-    await call('one', 'set_history_lock', { locked: true, reason: 'cutting' })
-    expect(ts.actor.historyStatus().lock_reason).toBe('cutting')
+    expect(ts.actor.historyStatus().lock_reason).toBe('Rough cut')
 
     const mismatch = await call('two', 'end_agent_session') as Res
     expect(mismatch.isError).toBe(true)
-    expect(text(mismatch)).toContain('AgentSessionOwnerMismatch')
+    expect(mismatch.structuredContent).toMatchObject({ code: 'invalid_request', error: 'AgentSessionOwnerMismatch', holder: { client: 'client-one' } })
     expect(text(mismatch)).toContain('client-one')
     expect(agent.snapshot().session?.connection_id).toBe('one')
+    // No takeover through end: the flag is gone, and an unknown argument refuses.
+    expect((await call('two', 'end_agent_session', { force: true }) as Res).isError).toBe(true)
 
-    const forced = await call('two', 'end_agent_session', { force: true }) as Res
+    const forced = await call('two', 'begin_agent_session', { reason: 'Other work', force: true }) as Res
     expect(forced.isError).toBeFalsy()
-    // The answer names whose work was closed, and how.
-    expect(JSON.parse(text(forced))).toMatchObject({ ended: { client: 'client-one', reason: 'Rough cut', end_reason: 'forced' } })
-    expect(agent.snapshot().session).toBeNull()
-    expect(agent.snapshot().sessions.at(-1)?.end_reason).toBe('forced')
-    // The lock went with it — a lock with no live owner blocks undo for nobody.
-    expect(ts.actor.historyStatus().lock_reason).toBeUndefined()
-    // And the newcomer can begin.
-    const began = await call('two', 'begin_agent_session', { reason: 'Other work' }) as Res
-    expect(began.isError).toBeFalsy()
+    // The answer is the newcomer's session, and names whose work was closed.
+    expect(JSON.parse(text(forced))).toMatchObject({ connection_id: 'two', reason: 'Other work', locked: true,
+      taken_over: { client: 'client-one', reason: 'Rough cut', end_reason: 'forced' } })
     expect(agent.snapshot().session?.connection_id).toBe('two')
+    // The stale lock went with its session; the newcomer holds its own.
+    expect(agent.lockHolder()).toMatchObject({ connection_id: 'two', reason: 'Other work' })
   })
 
-  it('force on an idle project is a harmless no-op', async () => {
+  it("HistoryLocked names the holder to another connection; the owner's own undo passes", async () => {
+    const { call } = host()
+    await call('one', 'begin_agent_session', { reason: 'Rough cut' })
+    await call('one', 'add_track', { label: 'x' })
+    await call('one', 'add_track', { label: 'y' })
+    const other = await call('two', 'undo') as Res
+    expect(other.isError).toBe(true)
+    expect(other.structuredContent).toMatchObject({ code: 'invalid_request', error: 'HistoryLocked', reason: 'Rough cut', holder: { client: 'client-one', connection_id: 'one' } })
+    expect(text(other)).toContain('client-one')
+    expect(text(other)).toContain('ask the user')
+    expect(JSON.stringify(other.structuredContent)).not.toContain('unlock')
+    const owner = await call('one', 'undo') as Res
+    expect(owner.isError).toBeFalsy()
+    expect(JSON.parse(text(owner))).toMatchObject({ undone: { summary: expect.any(String), actor: { kind: 'Agent' } } })
+  })
+
+  it('a dropped connection releases the session and its lock', async () => {
+    const { call, agent, ts } = host()
+    await call('one', 'begin_agent_session', { reason: 'Rough cut' })
+    agent.end('disconnected', 'one')
+    expect(agent.snapshot().session).toBeNull()
+    expect(ts.actor.historyStatus().lock_reason).toBeUndefined()
+    expect((await call('two', 'begin_agent_session', { reason: 'Next' }) as Res).isError).toBeFalsy()
+  })
+
+  it('end with no session answers ended: null', async () => {
     const { call, agent } = host()
-    const r = await call('two', 'end_agent_session', { force: true }) as Res
+    const r = await call('two', 'end_agent_session') as Res
     expect(r.isError).toBeFalsy()
     expect(JSON.parse(text(r))).toEqual({ ended: null })
     expect(agent.snapshot().session).toBeNull()

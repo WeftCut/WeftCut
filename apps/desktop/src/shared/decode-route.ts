@@ -8,7 +8,7 @@
 // process boundary into renderer code. One definition → no main↔renderer drift,
 // the same way RecentEntry / AppSettings are shared. The renderer's
 // render/decodeRoute.ts re-exports this and layers resolveDecode/previewPathLive
-// on top. See docs/adr/0028 and CONTEXT.md.
+// on top. See docs/data-model.md#decode-route and CONTEXT.md.
 
 export type DecodeRoute =
   | { route: "bypass" }
@@ -24,7 +24,7 @@ export type DecodeRoute =
   // same proxy paths as Proxied and resolves identically to it; the
   // original-vs-proxy choice is the decode-engine resolver's
   // (renderer/render/decoder/decodeEngine.ts, docs/adr/0030), NOT a
-  // resolveDecode change. See docs/adr/0028.
+  // resolveDecode change. See docs/data-model.md#decode-route.
   | {
       route: "native-sw";
       quick_proxy: string | null;

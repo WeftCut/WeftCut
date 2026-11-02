@@ -126,8 +126,9 @@ export const PANEL_REGISTRY: Readonly<Record<PanelKind, PanelDefinition>> = {
   },
   // Closed by default, and the one Panel whose absence LOSES something: a
   // hibernating marker is painted on no lane, so this is the only surface that
-  // shows one (ADR 0056). It opens on demand all the same — a marker the user
-  // has not gone looking for is not worth a permanent lane of screen.
+  // shows one (docs/features.md#markers). It opens on demand all the same — a
+  // marker the user has not gone looking for is not worth a permanent lane of
+  // screen.
   marker: {
     kind: "marker",
     titleKey: "dock_workspace.panels.marker",

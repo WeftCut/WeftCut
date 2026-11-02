@@ -172,10 +172,10 @@ describe("autoCaptionState", () => {
     expect(autoCaptionState(NONE, COMPOSITION, true)).toBe("transcribing");
   });
 
-  // The WHOLE selection (ADR 0070), not its primary: a marquee that caught a
-  // title beside the clips has not changed what the user meant, so the other
-  // kinds are ignored, and the press is refused only when nothing selected can
-  // be transcribed.
+  // The WHOLE selection (docs/features.md#transcribe-and-voiceover), not its
+  // primary: a marquee that caught a title beside the clips has not changed
+  // what the user meant, so the other kinds are ignored, and the press is
+  // refused only when nothing selected can be transcribed.
   it("admits a multi-selection with one clip with sound in it, whatever else it holds", () => {
     expect(autoCaptionState(sel("l-color", "l-video"), COMPOSITION, false)).toBe("auto_caption");
     expect(autoCaptionState(sel("l-video", "l-color"), COMPOSITION, false)).toBe("auto_caption");

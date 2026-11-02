@@ -50,7 +50,7 @@ describe('crop through the authoritative command and persistence surfaces', () =
   it('preserves the same source rectangle on both sides of a split', () => {
     const { actor, id, patch } = setup();
     expect(patch(rect).ok).toBe(true);
-    expect(actor.mcpCall('split_layer', JSON.stringify({ layer_id: id, at_t_us: [1_000_000] })).ok).toBe(true);
+    expect(actor.mcpCall('split_layer', JSON.stringify({ layer_id: id, t_cut_us: [1_000_000] })).ok).toBe(true);
     const layers = rootComposition(actor.snapshot()).tracks[0]!.layers;
     expect(layers).toHaveLength(2);
     for (const layer of layers) expect(layer.params).toMatchObject({ crop: rect });

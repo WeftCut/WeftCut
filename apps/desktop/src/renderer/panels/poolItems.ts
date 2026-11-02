@@ -30,8 +30,8 @@ export interface GroupPoolItem {
   /// card refuses the drag rather than letting the commit refuse the drop.
   durationUs: number;
   /// How many Group clips point at this composition. `0` is an isolated
-  /// composition — legal, and the reason it must keep a card at all: ADR 0042
-  /// refused leaving state with an entity no surface can remove.
+  /// composition — legal, and the reason it must keep a card at all: the
+  /// project must never hold an entity no surface can remove.
   refCount: number;
 }
 
@@ -120,8 +120,8 @@ export function filterPoolItems(
 /// The state means opposite things on either side (a Group with no reference is
 /// a remnant; a media item with no reference has merely never been placed), but
 /// the question asked of the pool is the same one — *what here is not carrying
-/// its weight* — so the answer is one list, and this is the surface ADR 0042
-/// requires an orphan Group to stay findable through once the merged list has
+/// its weight* — so the answer is one list, and this is the surface the project
+/// needs an orphan Group to stay findable through once the merged list has
 /// scattered it by name.
 ///
 /// Counts come from the project store's index rather than from the item,

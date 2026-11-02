@@ -2,6 +2,7 @@ import { CAPTURE_SUPERSEDED_MESSAGE } from '../../../shared/motifs/captureErrors
 import type { CapturedFrame } from './frameTransport';
 import type { MotifFrameCache } from './frameCache';
 import type { MotifCacheAddress } from '../../../shared/motifs/frameTransport';
+import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
 
 export interface FrameTicket {
   key: string;
@@ -41,12 +42,12 @@ export class FrameBroker {
 
   cancel(coalesceKey: string): void { this.latest.get(coalesceKey)?.cancel(); }
 
-  acquire(identity: string, frame: number, produce: (ticket: FrameTicket) => Promise<CapturedFrame>, coalesceKey?: string, bake?: MotifCacheAddress, priority: 'foreground' | 'background' = 'foreground'): Promise<CapturedFrame> {
+  acquire(identity: string, frame: number, scaleDiv: MotifReaderDiv, produce: (ticket: FrameTicket) => Promise<CapturedFrame>, coalesceKey?: string, bake?: MotifCacheAddress, priority: 'foreground' | 'background' = 'foreground'): Promise<CapturedFrame> {
     if (coalesceKey) this.latest.get(coalesceKey)?.cancel();
-    const address = JSON.stringify([identity, frame]);
+    const address = JSON.stringify([identity, frame, scaleDiv]);
     let job = this.jobs.get(address);
     if (!job) {
-      const cached = this.deps.cache.getFrame(identity, frame);
+      const cached = this.deps.cache.getFrame(identity, frame, scaleDiv);
       if (cached) this.deps.cache.retain(cached);
       const subscribers = new Set<Subscriber>();
       const key = `motif-job:${this.prefix}:${++this.sequence}`;
@@ -61,7 +62,9 @@ export class FrameBroker {
       // priority. A disk read may await; producer rechecks ticket before capture.
       created.result = Promise.resolve().then(() => {
         if (!subscribers.size) throw new Error(CAPTURE_SUPERSEDED_MESSAGE);
-        return cached ? { bitmap: cached, persisted: false } : produce({
+        // A hit may be a live capture serving this divisor; callers re-store
+        // it at `scaleDiv`, and L0 keeps the entry that already serves it.
+        return cached ? { bitmap: cached, persisted: false, scaleDiv } : produce({
           key, wanted: () => subscribers.size > 0,
           high: () => [...subscribers].some(s => s.high),
           bake: () => created.bake,
@@ -101,7 +104,7 @@ export class FrameBroker {
         if (!subscriber.active) return;
         const bitmap = await this.deps.clone(value.bitmap);
         if (!subscriber.active) { bitmap.close(); return; }
-        resolve({ bitmap, persisted: value.persisted });
+        resolve({ ...value, bitmap });
       }).catch(error => { if (subscriber.active) reject(error); }).finally(() => {
         subscriber.active = false; retire();
         if (--current.holds === 0) current.release();

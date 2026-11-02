@@ -8,6 +8,7 @@ import { applyTranscripts, applyTextCorrection, sourceSignature } from './textCo
 import { applyAddLayer } from './add'
 import { audioParams } from './media'
 import { CAPTION_TIMING_KEY, readCaptionTiming, type TranscriptPayload } from '../../../shared/captionTiming'
+import { captionLimits } from '../../../shared/craft'
 
 function fixture(text = '今天介绍自动剪缉功能它可以节省时间', exact = true) {
   const ids = seededGen(), p = blankProject(ids, 'correction'), c = rootComposition(p)
@@ -220,7 +221,7 @@ describe('text correction through project state', () => {
     const script = '今天介绍自动剪辑功能。它可以节省时间。'
     expect(actor.command('set_correction_script', { project_id: projectId, text: script }).ok).toBe(true)
     const before = actor.snapshot(), count = actor.historyStatus().len
-    expect(actor.command('correct_caption_text', { project_id: projectId, composition_id: compositionId, layer_ids: null })).toEqual({ ok: true, value: { changed: 1 } })
+    expect(actor.command('correct_caption_text', { project_id: projectId, composition_id: compositionId, layer_ids: null })).toMatchObject({ ok: true, value: { changed: 1 } })
     expect(actor.historyStatus().len).toBe(count + 1)
     expect(actor.dispatch('undo', {}).ok).toBe(true)
     expect(actor.snapshot().compositions).toEqual(before.compositions)
@@ -262,5 +263,123 @@ describe('text correction through project state', () => {
     applyTextCorrection(p, ids, c.id, null)
     expect(captions()).toHaveLength(2)
     expect(second.params).toMatchObject({ font: { size_px: 80 } })
+  })
+})
+
+// Whisper-style English captions against the corrected transcript (issue 22).
+const SCRIPT = 'Hi everyone, my name is Lane Rasberry and I am the president of Wikimedia New York City and we meet at LaGuardia Community College every month.\n' +
+  'Every year Wikimedia hosts an edit-a-thon there, and then we all edit together.'
+const CUES = [
+  'Hi everyone, my name is Laine Raspberry and I',
+  'am the president of with the media in\nNew York City and we meet',
+  'at LaGuardia Community\nCollege every month.',
+  'Every year Wicked Media hosts an edit-a-thon there,',
+  'and then, you know, we all edit together.',
+]
+function english() {
+  const ids = seededGen(), p = blankProject(ids, 'correction'), c = rootComposition(p)
+  // Exact word times, 2 s a cue, spread over its words.
+  const transcript: TranscriptPayload = { word_timing: 'exact', segments: CUES.map((text, n) => {
+    const words = text.split(/\s+/), step = 2_000_000 / words.length
+    return { text, t_start_us: n * 2_000_000, t_end_us: (n + 1) * 2_000_000,
+      words: words.map((w, i) => ({ text: w, t_start_us: n * 2_000_000 + Math.round(i * step), t_end_us: n * 2_000_000 + Math.round((i + 1) * step) })) }
+  }) }
+  applyTranscripts(p, ids, [transcript], c.id)
+  const captions = () => c.tracks.filter(t => t.role === 'Caption').flatMap(t => t.layers)
+  const text = (l: ReturnType<typeof captions>[number]) => l.params.kind === 'Text' ? l.params.content : ''
+  return { ids, p, c, captions, text }
+}
+const MAX_CHARS = captionLimits(null).max_chars
+
+describe('English captions against a corrected transcript', () => {
+  it('text only: takes the script words, keeps every cue and its timing, wraps changed cues to the line limit', () => {
+    const { p, c, ids, captions, text } = english()
+    const before = captions().map(l => ({ id: l.id, t_start_us: l.t_start_us, t_end_us: l.t_end_us, text: text(l) }))
+    const out = applyTextCorrection(p, ids, c.id, null, undefined, { kind: 'text_only', script: SCRIPT }, MAX_CHARS)
+    expect(captions().map(l => ({ id: l.id, t_start_us: l.t_start_us, t_end_us: l.t_end_us }))).toEqual(before.map(({ text: _, ...b }) => b))
+    const after = captions().map(text)
+    expect(after[0]!.replace(/\n/g, ' ')).toBe('Hi everyone, my name is Lane Rasberry and I')
+    expect(after[1]!.replace(/\n/g, ' ')).toBe('am the president of Wikimedia New York City and we meet')
+    expect(after[3]!.replace(/\n/g, ' ')).toBe('Every year Wikimedia hosts an edit-a-thon there,')
+    // Nothing to fix: byte for byte, its line break included.
+    expect(after[2]).toBe(CUES[2])
+    // The ad lib the script lacks survives.
+    expect(after[4]).toBe(CUES[4])
+    for (const [i, t] of after.entries()) if (t !== CUES[i]) for (const line of t.split('\n')) expect(line.length).toBeLessThanOrEqual(MAX_CHARS)
+    expect(out.changed).toBe(3)
+    expect(out.changes.map(x => x.layer_id)).toEqual([before[0]!.id, before[1]!.id, before[3]!.id])
+    // Substituted words count as aligned; only the ad lib does not.
+    expect(out.match_ratio).toBeGreaterThan(0.95)
+    expect(applyTextCorrection(p, ids, c.id, null, undefined, { kind: 'text_only', script: SCRIPT }, MAX_CHARS).changed).toBe(0)
+  })
+  it('text only without a line limit keeps a changed cue\'s line breaks where they were', () => {
+    const { p, c, ids, captions, text } = english()
+    applyTextCorrection(p, ids, c.id, null, undefined, { kind: 'text_only', script: SCRIPT })
+    expect(captions().map(text).slice(1, 3)).toEqual(['am the president of Wikimedia\nNew York City and we meet', CUES[2]])
+  })
+  it('never substitutes numbers or negations, nor inserts skipped words', () => {
+    const { p, c, ids, captions, text } = english()
+    const script = 'We have thirty volunteers who help us. We have 30 editors who help us. Anyone can now edit the pages here. Then we all edit articles together.'
+    const cues = ['We have twenty volunteers who help us.', 'We have 20 editors who help us.', 'Anyone can not edit the pages here.', 'Then we all edit together.']
+    applyAddCaptionTrack(p, ids, cues.map((t, i) => ({ start_us: 20_000_000 + i * 2_000_000, end_us: 22_000_000 + i * 2_000_000, text: t })), c.width, c.height, null, c.id)
+    const added = captions().slice(CUES.length)
+    applyTextCorrection(p, ids, c.id, added.map(l => l.id), undefined, { kind: 'text_only', script }, MAX_CHARS)
+    expect(captions().slice(CUES.length).map(text)).toEqual(cues)
+  })
+  it('manuscript mode substitutes too, without empty or overlapping cues', () => {
+    const { p, c, ids, captions, text } = english()
+    p.settings.correction_script = SCRIPT
+    applyTextCorrection(p, ids, c.id, null, undefined, { kind: 'manuscript' }, MAX_CHARS)
+    const after = captions(), joined = after.map(text).join(' ').replace(/\s+/g, ' ')
+    expect(joined).toContain('my name is Lane Rasberry and I am the president of Wikimedia New York City')
+    expect(joined).toContain('Every year Wikimedia hosts')
+    expect(joined).toContain('you know')
+    expect(joined).not.toMatch(/Laine|Raspberry|with the media|Wicked/)
+    expect(after[0]!.t_start_us).toBe(0)
+    expect(after.at(-1)!.t_end_us).toBe(CUES.length * 2_000_000)
+    for (const [i, l] of after.entries()) {
+      expect(text(l).trim()).not.toBe('')
+      expect(l.t_end_us).toBeGreaterThan(l.t_start_us)
+      if (i) expect(l.t_start_us).toBeGreaterThanOrEqual(after[i - 1]!.t_end_us)
+      for (const line of text(l).split('\n')) expect(line.length).toBeLessThanOrEqual(MAX_CHARS)
+      const meta = readCaptionTiming(l.metadata[CAPTION_TIMING_KEY])
+      if (/Wikimedia|Rasberry/.test(text(l))) expect(meta?.provenance).toBe('interpolated_from_cue')
+    }
+    expect(applyTextCorrection(p, ids, c.id, null, undefined, { kind: 'manuscript' }, MAX_CHARS).changed).toBe(0)
+  })
+
+  describe('text only: a neighbouring cue anchors a fix', () => {
+    function cues(texts: string[]) {
+      const { p, c, ids, captions, text } = english()
+      applyAddCaptionTrack(p, ids, texts.map((t, i) => ({ start_us: 30_000_000 + i * 2_000_000, end_us: 32_000_000 + i * 2_000_000, text: t })), c.width, c.height, null, c.id)
+      const added = captions().slice(CUES.length)
+      const timing = added.map(l => [l.id, l.t_start_us, l.t_end_us])
+      const run = (script: string) => applyTextCorrection(p, ids, c.id, added.map(l => l.id), undefined, { kind: 'text_only', script }, MAX_CHARS)
+      const after = () => captions().slice(CUES.length)
+      return { run, texts: () => after().map(text), timing: () => after().map(l => [l.id, l.t_start_us, l.t_end_us]), before: timing }
+    }
+    it('fixes a run at the start of a cue anchored by the previous cue', () => {
+      const t = cues(['Hi everyone, my name is', 'Laine Raspberry and I am here.'])
+      const script = 'Hi everyone, my name is Lane Rasberry and I am here.'
+      expect(t.run(script).changed).toBe(1)
+      expect(t.texts()).toEqual(['Hi everyone, my name is', 'Lane Rasberry and I am here.'])
+      expect(t.timing()).toEqual(t.before)
+      expect(t.run(script).changed).toBe(0)
+    })
+    it('fixes a run at the end of a cue anchored by the next cue', () => {
+      const t = cues(['Hi everyone, my name is Laine Raspberry', 'and I am the president.'])
+      const script = 'Hi everyone, my name is Lane Rasberry, and I am the president.'
+      expect(t.run(script).changed).toBe(1)
+      expect(t.texts()).toEqual(['Hi everyone, my name is Lane Rasberry,', 'and I am the president.'])
+      expect(t.timing()).toEqual(t.before)
+      expect(t.run(script).changed).toBe(0)
+    })
+    it('abstains on a run that spans two cues, leaving both byte-identical', () => {
+      const texts = ['Then we met Laine', 'Raspberry was there with us.']
+      const t = cues(texts)
+      expect(t.run('Then we met Lane Rasberry was there with us.').changed).toBe(0)
+      expect(t.texts()).toEqual(texts)
+      expect(t.timing()).toEqual(t.before)
+    })
   })
 })

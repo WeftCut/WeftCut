@@ -1,7 +1,9 @@
 import type { ServerResult } from '@modelcontextprotocol/sdk/types.js'
+import { pauseDbFromAmp } from '../../shared/pauseLevel'
 import type { ActorHandle } from './actor'
 import type { Animated, Composition, Layer, MediaItem, Project } from './model'
-import { mediaRecord } from './mcp-results'
+import { linkRecord, markerRecord, mediaRecord, transitionRecord } from './mcp-results'
+import { derivativeStates } from './derivative-jobs'
 import { referencingLayers } from './mutations/media'
 import { eachLayer, rootComposition } from './model'
 import { serializeProject } from './serialize'
@@ -21,27 +23,32 @@ function textResource(uri: string, body: unknown): ServerResult {
  *  SETTINGS. Emitting the whole root would ship every track on a resource an
  *  agent reads for the frame size. */
 export function compositionSettings(c: Composition): Record<string, unknown> {
-  return { id: c.id, label: c.label, width: c.width, height: c.height, fps: c.fps, duration_us: c.duration_us,
+  return { composition_id: c.id, label: c.label, width: c.width, height: c.height, fps: c.fps, duration_us: c.duration_us,
     duration_pinned: c.duration_pinned, sample_rate: c.sample_rate, channels: c.channels,
     color_space: c.color_space, background: c.background }
 }
 
-/** Throw the SDK-shaped not-found error (code -32601), mirroring Rust's
- *  `McpToolError::resource_not_found`. */
-function resourceNotFound(message: string): never {
+/** MCP's JSON-RPC code for a `resources/read` of a URI that names nothing
+ *  (the spec's "Resource not found"); `-32601` would say the METHOD is
+ *  unknown. Rust's `McpToolError::resource_not_found` envelope maps to it too
+ *  (`server.ts` CODE_MAP). */
+export const RESOURCE_NOT_FOUND = -32002
+
+/** Throw the SDK-shaped resource-not-found error. */
+export function resourceNotFound(message: string): never {
   const e = new Error(message) as Error & { code?: number }
-  e.code = -32601
+  e.code = RESOURCE_NOT_FOUND
   throw e
 }
 
 /** `project://compositions` rows: every composition with how many
  *  `CompositionRef` layers point at it — 0 for the root (never referenced) and
  *  for an orphan, which is legal state (ADR 0052 §3). */
-export function compositionListing(p: Project): Array<{ id: string; label: string | null; duration_us: number; ref_count: number }> {
+export function compositionListing(p: Project): Array<{ composition_id: string; label: string | null; duration_us: number; ref_count: number }> {
   const refs = new Map<string, number>()
   for (const { layer } of eachLayer(p))
     if (layer.params.kind === 'CompositionRef') refs.set(layer.params.composition, (refs.get(layer.params.composition) ?? 0) + 1)
-  return Object.values(p.compositions).map((c) => ({ id: c.id, label: c.label, duration_us: c.duration_us, ref_count: refs.get(c.id) ?? 0 }))
+  return Object.values(p.compositions).map((c) => ({ composition_id: c.id, label: c.label, duration_us: c.duration_us, ref_count: refs.get(c.id) ?? 0 }))
 }
 
 /** The animatable params of a layer whose track is Keyframed, by the
@@ -67,25 +74,70 @@ export function keyframedParams(layer: Layer): string[] {
   return out
 }
 
+/** How much of a Text layer's `content` an envelope carries: enough to tell
+ *  one title from another, not the paragraph. */
+const ENVELOPE_TEXT_CHARS = 80
+
 /** A layer as `project://tracks` lists it: the envelope an agent plans against
  *  — where it sits, what it is, what it plays, what is on it — without the
  *  params, keyframes and effect values `project://layers/{id}` carries; rows
  *  that inlined whole layers would make a timeline read cost as much as the
- *  project. */
+ *  project.
+ *
+ *  Each kind adds what tells it apart from its siblings, so "fix the title",
+ *  "lower the music" or "open the Group" needs no per-layer read: `media_id`
+ *  (what it plays), a Text's `content` (truncated), an Audio's `role`, a
+ *  Motif's `motif_id`, a Group's `composition_id`. A non-identity `rate` rides
+ *  along so a source-time answer (`src_*`) maps onto the timeline from this
+ *  row alone: `t = t_start_us + (src − src_in_us) / rate`. Ids use the edit
+ *  records' key names (`layer_id`, `effect_id`). */
 export function layerEnvelope(layer: Layer, c: Composition): Record<string, unknown> {
-  const p = layer.params as unknown as { kind: string; src_in_us?: number; src_out_us?: number; graphic_role?: string | null }
+  const p = layer.params as unknown as { kind: string; media?: string; src_in_us?: number; src_out_us?: number; graphic_role?: string | null
+    content?: string; role?: string | null; motif_id?: string; composition?: string
+    time_map?: { kind: 'Affine'; rate: { num: number; den: number } } }
+  const rate = p.time_map?.rate
   return {
-    id: layer.id, label: layer.label, kind: p.kind,
+    layer_id: layer.id, label: layer.label, kind: p.kind,
     // What the layer is for — the key style and lint plan by, so it rides the envelope.
     ...(p.kind === 'Text' || p.kind === 'Motif' || p.kind === 'ImageOverlay' ? { graphic_role: p.graphic_role ?? null } : {}),
+    ...(typeof p.media === 'string' ? { media_id: p.media } : {}),
+    ...(p.kind === 'Text' && typeof p.content === 'string' ? { content: truncate(p.content, ENVELOPE_TEXT_CHARS) } : {}),
+    ...(p.kind === 'Audio' ? { role: p.role ?? null } : {}),
+    ...(p.kind === 'Motif' && typeof p.motif_id === 'string' ? { motif_id: p.motif_id } : {}),
+    ...(p.kind === 'CompositionRef' && typeof p.composition === 'string' ? { composition_id: p.composition } : {}),
     t_start_us: layer.t_start_us, t_end_us: layer.t_end_us,
     ...(typeof p.src_in_us === 'number' ? { src_in_us: p.src_in_us } : {}),
     ...(typeof p.src_out_us === 'number' ? { src_out_us: p.src_out_us } : {}),
+    ...(rate && rate.num !== rate.den ? { rate: { num: rate.num, den: rate.den } } : {}),
     enabled: layer.enabled, locked: layer.locked,
     link_id: c.links.find((g) => g.members.includes(layer.id))?.id ?? null,
-    effects: layer.effects.map((e) => ({ id: e.id, kind: e.kind })),
+    effects: layer.effects.map((e) => ({ effect_id: e.id, kind: e.kind })),
     keyframed: keyframedParams(layer),
   }
+}
+
+/** `s` cut to `n` code points, with an ellipsis when anything was cut. */
+function truncate(s: string, n: number): string {
+  const chars = [...s]
+  return chars.length <= n ? s : `${chars.slice(0, n - 1).join('')}…`
+}
+
+/** Stored layer state as the wire shows it: a stored key's `t_us` is an
+ *  offset from the layer's `t_start_us`, so it travels as `local_t_us`, the
+ *  name `set_position` takes, and is never mistaken for the timeline time the
+ *  keyframe tools take. Key times are the only `t_us` a layer holds
+ *  (`shared/keyframe.ts`). */
+export function localKeyTimes(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(localKeyTimes)
+  if (v === null || typeof v !== 'object') return v
+  return Object.fromEntries(Object.entries(v).map(([k, x]) => [k === 't_us' ? 'local_t_us' : k, localKeyTimes(x)]))
+}
+
+/** `project://layers/{id}`: the layer in full, key times `local_t_us`, keyed
+ *  as the edit records are: `layer_id`, and `effect_id` on each effect. */
+export function layerView(layer: Layer): unknown {
+  const { id, effects, ...rest } = layer
+  return localKeyTimes({ layer_id: id, ...rest, effects: effects.map(({ id: effect_id, ...e }) => ({ effect_id, ...e })) })
 }
 
 /** `project://tracks`: every track with its flags and its layers as envelopes.
@@ -96,14 +148,37 @@ export function layerEnvelope(layer: Layer, c: Composition): Record<string, unkn
  *  a control with no MCP writer and no effect, so they stay off the wire until
  *  the mix reads them. */
 export function trackEnvelopes(c: Composition): Array<Record<string, unknown>> {
-  return c.tracks.map(({ layers, muted: _muted, solo: _solo, ...track }) => ({ ...track, layers: layers.map((l) => layerEnvelope(l, c)) }))
+  return c.tracks.map(({ id, layers, muted: _muted, solo: _solo, ...track }) => ({ track_id: id, ...track, layers: layers.map((l) => layerEnvelope(l, c)) }))
 }
 
-/** `project://settings`: the editing preferences plus the project metadata,
- *  without the whole `project://current`. `metadata.modified_at` is the dirty
- *  signal and moves on every recorded commit. */
+/** A composition's markers, links and transitions as the wire shows them:
+ *  each row is the record the tool that writes it answers with
+ *  (`mcp-results.ts`), so a read and an edit name the same keys —
+ *  `marker_id`, `link_id`, `transition_id`, `t_end_us` — whatever the stored
+ *  field is called. */
+function collectionRows(p: Project, c: Composition, kind: 'markers' | 'links' | 'transitions'): unknown[] {
+  switch (kind) {
+    case 'markers': return c.markers.map((m) => markerRecord(p, m.id))
+    case 'links': return c.links.map((l) => linkRecord(p, l.id))
+    case 'transitions': return c.transitions.map((t) => transitionRecord(p, t.id))
+  }
+}
+
+/** `project://settings`: the editing preferences, the project metadata and
+ *  the audio role mix (`audio_roles`: role → { gain_db, muted, solo }, what
+ *  `set_role_gain` / `set_role_flags` write). `metadata.modified_at` is the
+ *  dirty signal and moves on every recorded commit. */
 export function settingsView(p: Project): Record<string, unknown> {
-  return { ...p.settings, metadata: p.metadata }
+  return { ...mcpSettings(p.settings), audio_roles: p.audio_roles, metadata: p.metadata }
+}
+
+/** The settings as the MCP surface speaks them: the pause threshold in dBFS
+ *  (stored as amplitude), and without the caption-correction manuscript, which
+ *  is the Text correction dialog's and not an MCP setting (an agent passes its
+ *  transcript to `correct_caption_text { script }`). */
+export function mcpSettings(s: Project['settings']): Record<string, unknown> {
+  const { correction_script: _script, pause_review, ...rest } = s
+  return { ...rest, pause_review: pause_review === null ? null : { threshold_db: pauseDbFromAmp(pause_review.threshold_amp), min_pause_us: pause_review.min_pause_us, pad_us: pause_review.pad_us } }
 }
 
 /** The views a `?composition=<id>` query scopes — one per composition-owned
@@ -129,21 +204,32 @@ function scopedComposition(p: Project, query: string | null): Composition {
  *  `?composition=` id. */
 /** The sub-resources each kind of media answers (`hostResources.ts`). */
 const MEDIA_SUBRESOURCES: Record<MediaItem['kind'], readonly string[]> = {
-  Video: ['thumbnail', 'frame/{t_us}', 'waveform', 'analysis', 'description', 'shot-description'],
+  Video: ['thumbnail', 'frame/{src_us}', 'waveform', 'analysis', 'description', 'shot-description'],
   Audio: ['waveform'],
   Image: ['thumbnail'],
   Subtitle: [],
 }
 
-/** One pool item as `media://{id}` answers it: what it is, where it lies, and
- *  which layers place it — small enough to ride along as an @-mention's
- *  attachment. Null when the pool has no such item. */
+/** One pool item as `media://{id}` answers it: what it is, where it lies,
+ *  which layers place it and how far its background jobs are
+ *  (`derivatives`) — small enough to ride along as an @-mention's attachment.
+ *  Null when the pool has no such item. */
 export function mediaCard(p: Project, id: string): Record<string, unknown> | null {
   const record = mediaRecord(p, id)
   if (!record) return null
   const item = p.media_pool[id]!
-  return { ...record, path_rel: item.path_rel, used_by: referencingLayers(p, id),
+  return { ...record, path_rel: item.path_rel, used_by: referencingLayers(p, id), derivatives: derivativeStates(item),
     resources: MEDIA_SUBRESOURCES[item.kind].map((r) => `${PREFIX_MEDIA}${id}/${r}`) }
+}
+
+/** `project://media`: the pool keyed by media id, each row the stored item
+ *  with `media_id` for its id (the key `import_media` answers) and its
+ *  `derivatives`. */
+function mediaRows(p: Project): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(p.media_pool).map(([key, item]) => {
+    const { id, ...stored } = item
+    return [key, { media_id: id, ...stored, derivatives: derivativeStates(item) }]
+  }))
 }
 
 export function serveProjectResource(
@@ -164,7 +250,7 @@ export function serveProjectResource(
     let layer: Layer | undefined
     for (const e of eachLayer(actor.snapshot())) if (e.layer.id === tail) { layer = e.layer; break }
     if (!layer) resourceNotFound(`layer ${tail} not found`)
-    return textResource(uri, layer)
+    return textResource(uri, layerView(layer))
   }
   // The per-composition views take `?composition=<id>`; absent means the root.
   // `project://composition` scopes too — a Group's envelope is readable by id,
@@ -181,14 +267,13 @@ export function serveProjectResource(
   const composition = query?.get('composition') ?? null
   const snap = actor.snapshot()
   switch (base) {
-    case 'project://current': return textResource(uri, serializeProject(snap))
     case 'project://composition': return textResource(uri, compositionSettings(scopedComposition(snap, composition)))
     case 'project://compositions': return textResource(uri, compositionListing(snap))
-    case 'project://media': return textResource(uri, snap.media_pool)
+    case 'project://media': return textResource(uri, mediaRows(snap))
     case 'project://tracks': return textResource(uri, trackEnvelopes(scopedComposition(snap, composition)))
-    case 'project://markers': return textResource(uri, scopedComposition(snap, composition).markers)
-    case 'project://links': return textResource(uri, scopedComposition(snap, composition).links)
-    case 'project://transitions': return textResource(uri, scopedComposition(snap, composition).transitions)
+    case 'project://markers': return textResource(uri, collectionRows(snap, scopedComposition(snap, composition), 'markers'))
+    case 'project://links': return textResource(uri, collectionRows(snap, scopedComposition(snap, composition), 'links'))
+    case 'project://transitions': return textResource(uri, collectionRows(snap, scopedComposition(snap, composition), 'transitions'))
     case 'project://settings': return textResource(uri, settingsView(snap))
     case 'project://history': return textResource(uri, actor.historyView(100))
     default: return null

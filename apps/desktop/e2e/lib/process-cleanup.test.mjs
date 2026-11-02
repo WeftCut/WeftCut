@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { once } from 'node:events'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -87,6 +87,75 @@ test('POSIX graceful close also stops native children with separate stdio', { ti
   } finally {
     if (descendant) { try { process.kill(descendant, 'SIGKILL') } catch { /* Reaped. */ } }
     owner.force()
+    fs.rmSync(folder, { recursive: true, force: true })
+  }
+})
+
+/** A detached stand-in for Electron whose child runs under the executable name
+ * `name`: a symlink to bash, so ps reports it like the real binary (node would
+ * not do: it renames its main thread). Both record a SIGTERM; the leader keeps
+ * running on it, like Electron's blocked quit. */
+async function treeWithNamedChild(folder, name, { childExitsOnTerm, leaderExits }) {
+  fs.mkdirSync(path.join(folder, 'bin'))
+  const binary = path.join(folder, 'bin', name)
+  fs.symlinkSync(fs.existsSync('/bin/bash') ? '/bin/bash' : '/bin/sh', binary)
+  // Records sit apart from the symlink: writing through it would hit the shell.
+  const record = file => path.join(folder, `${file}.term`)
+  const script = `trap 'echo TERM >> "${record(name)}"${childExitsOnTerm ? '; exit 0' : ''}' TERM; echo ready; while :; do sleep 0.05; done`
+  const program = `
+    const fs = require('node:fs');
+    const {spawn} = require('node:child_process');
+    process.on('SIGTERM', () => fs.appendFileSync(${JSON.stringify(record('leader'))}, 'TERM\\n'));
+    const tool = spawn(${JSON.stringify(binary)}, ['-c', ${JSON.stringify(script)}], {stdio: ['pipe', 'pipe', 'ignore']});
+    tool.stdout.once('data', () => process.stdout.write(String(tool.pid), () => { ${leaderExits ? 'process.exit(0)' : 'setInterval(() => {}, 1000)'} }));
+  `
+  const child = spawn(process.execPath, ['-e', program], { detached: true, stdio: 'pipe' })
+  const owner = ownProcessTree(child)
+  const [data] = await once(child.stdout, 'data')
+  return { child, owner, tool: Number(String(data)) }
+}
+
+// Running, not merely an unreaped zombie under init.
+const alive = pid => { const state = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }); return state.status === 0 && !state.stdout.trim().startsWith('Z') }
+const terms = (folder, name) => { const file = path.join(folder, `${name}.term`); return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '' }
+
+test('POSIX forced close gives an ffmpeg descendant SIGTERM and a bounded grace before the kill', { timeout: 10_000, skip: process.platform === 'win32' }, async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-ffmpeg-term-'))
+  let tree
+  try {
+    // ffprobe ignores SIGTERM, so the grace runs out and the group kill follows.
+    tree = await treeWithNamedChild(folder, 'ffprobe', { childExitsOnTerm: false, leaderExits: false })
+    const started = Date.now()
+    await assert.rejects(closeProcessTree(tree.owner, () => new Promise(() => {}), 25), /graceful close timed out/)
+    await tree.owner.reaped
+    const elapsed = Date.now() - started
+    assert.match(terms(folder, 'ffprobe'), /^TERM\n$/, 'ffprobe was killed without a SIGTERM first')
+    assert.equal(terms(folder, 'leader'), '', 'the app itself got SIGTERM')
+    assert.equal(tree.child.signalCode, 'SIGKILL')
+    assert.ok(!alive(tree.tool), 'ffprobe outlived the grace')
+    assert.ok(elapsed >= 1900 && elapsed < 6000, `grace took ${elapsed} ms`)
+  } finally {
+    if (tree && alive(tree.tool)) process.kill(tree.tool, 'SIGKILL')
+    tree?.owner.force()
+    fs.rmSync(folder, { recursive: true, force: true })
+  }
+})
+
+test('POSIX cleanup after the app exits lets its ffmpeg end on SIGTERM before the group kill', { timeout: 10_000, skip: process.platform === 'win32' }, async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-ffmpeg-term-'))
+  let tree
+  try {
+    tree = await treeWithNamedChild(folder, 'ffmpeg', { childExitsOnTerm: true, leaderExits: true })
+    const started = Date.now()
+    await closeProcessTree(tree.owner, () => tree.owner.reaped)
+    const elapsed = Date.now() - started
+    assert.equal(tree.child.exitCode, 0)
+    assert.match(terms(folder, 'ffmpeg'), /^TERM\n$/, 'ffmpeg was killed without a SIGTERM first')
+    assert.ok(!alive(tree.tool), 'ffmpeg outlived app cleanup')
+    assert.ok(elapsed < 1500, `an ffmpeg that ended on SIGTERM still waited out the grace (${elapsed} ms)`)
+  } finally {
+    if (tree && alive(tree.tool)) process.kill(tree.tool, 'SIGKILL')
+    tree?.owner.force()
     fs.rmSync(folder, { recursive: true, force: true })
   }
 })

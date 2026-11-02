@@ -455,7 +455,7 @@ describe("FfmpegSource — hardware transport routing by HW lane", () => {
     );
     await src.ensureReady();
     // Same posture as nvdec/vaapi: decode on the OS media engine, frames ship
-    // NV12 over the SAME previewSw transport (ADR 0029/0034).
+    // NV12 over the SAME previewSw transport (ADR 0029).
     expect(src.currentLane()).toBe("hardware");
     expect(sw.t.open).toHaveBeenCalled();
     expect(gpu.t.open).not.toHaveBeenCalled();

@@ -36,6 +36,6 @@ export function effectsCatalogView(): EffectsCatalogView {
         ...(audio?.region ? { region: { in_key: audio.region.inKey, out_key: audio.region.outKey, min_us: audio.region.minUs } } : {}),
       }
     }),
-    param_key: 'update_effect writes a param Static as { "<key>": { "mode": "Static", "value": v } }; a VISUAL param is then keyframed as effects[<effect_id>].params[<key>]. Audio params are static only. A region bound has no default: the effect does nothing until both are written.',
+    param_key: 'add_effect / update_effect write a param as a plain number, { "<key>": v }; an unset param is its default. A VISUAL param is keyframed as effects[<effect_id>].params[<key>]. Audio params are static only. A region bound has no default: the effect does nothing until both are written.',
   }
 }

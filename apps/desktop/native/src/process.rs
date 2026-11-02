@@ -6,10 +6,11 @@
 //! the window in both dev and packaged builds, and is a no-op on macOS/Linux
 //! where child processes have no window concept at all.
 //!
-//! LANDMINE: EVERY non-test ffmpeg/ffprobe spawn MUST call `.no_console_window()`.
-//! A bare `Command::new(..)` re-introduces the popup. The codebase spawns through
-//! both `std::process::Command` (sync probes) and `tokio::process::Command`
-//! (async jobs/export), so the trait is implemented for both.
+//! LANDMINE: EVERY non-test child spawn MUST call `.no_console_window()`. A bare
+//! `Command::new(..)` re-introduces the popup. ffmpeg/ffprobe get it from their
+//! one builder (`crate::ffmpeg::FfmpegCommand`); the engine sidecars call it
+//! themselves. The trait covers both `std::process::Command` and
+//! `tokio::process::Command`.
 
 /// Suppress the Windows console window for a child-process spawn. Chainable on a
 /// builder (`Command::new(..).no_console_window().args(..)`) or callable as a

@@ -1,15 +1,17 @@
 import { planPrewarmTargets, type PrewarmContent, type PrewarmTarget } from './prewarmPlan';
+import type { CapturedFrame, MotifFrameDiv } from './frameTransport';
 
 export interface PrewarmContentSpec extends PrewarmContent {
   /// The shared acquisition module owns disk/capture admission. The request
   /// key is a cancellable BACKGROUND subscription, not foreground demand.
-  render: (frame: number, requestKey: string) => Promise<ImageBitmap>;
+  render: (frame: number, requestKey: string) => Promise<Pick<CapturedFrame, 'bitmap' | 'scaleDiv'>>;
 }
 
 export interface MotifPrewarmerDeps {
   capBytes: number;
   hasFrame: (cacheKey: string, frame: number) => boolean;
-  setFrame: (cacheKey: string, frame: number, bmp: ImageBitmap) => void;
+  /// `scaleDiv` is the divisor the rendered bitmap is at.
+  setFrame: (cacheKey: string, frame: number, scaleDiv: MotifFrameDiv, bmp: ImageBitmap) => void;
   prioritizeFrames: (targets: readonly PrewarmTarget[]) => void;
   schedule: (cb: () => void) => number;
   cancel: (token: number) => void;
@@ -75,9 +77,10 @@ export class MotifPrewarmer {
   private async acquire(id: string, request: Request, spec: PrewarmContentSpec): Promise<void> {
     let owned: ImageBitmap | null = null;
     try {
-      owned = await spec.render(request.frame, request.key);
+      const { bitmap, scaleDiv } = await spec.render(request.frame, request.key);
+      owned = bitmap;
       if (this.disposed || this.requests.get(id) !== request) return;
-      this.deps.setFrame(request.cacheKey, request.frame, owned);
+      this.deps.setFrame(request.cacheKey, request.frame, scaleDiv, owned);
       owned = null;
     } catch { /* Retry failures on the next demand update, never in a tight loop. */ }
     finally {

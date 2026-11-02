@@ -4,8 +4,8 @@
 //! - **Transcription** — [`Transcriber`] trait → `transcribe_clip` MCP tool.
 //! - **Text-to-speech** — [`Synthesizer`] trait → `synthesize_speech` MCP tool.
 //!
-//! Selection generalizes "has an API key" to "the preferred backend that is
-//! *available*". Each [`backend::SpeechBackend`] declares its
+//! A backend runs only when it is *available*, which generalizes "has an API
+//! key". Each [`backend::SpeechBackend`] declares its
 //! [`backend::Locality`] (Cloud/Local) and [`backend::Capabilities`]; its
 //! config (an API key, or a local engine's binary/model paths) lives in
 //! [`config::BackendConfig`], and [`config::availability`] decides whether it
@@ -43,11 +43,30 @@ pub use synthesizer::{AudioFormat, SynthesizeRequest, Synthesizer};
 pub use transcriber::{TranscribeRequest, Transcriber};
 pub use transcript::{Segment, WordTiming};
 
-/// Actionable "nothing can transcribe" message, naming BOTH remedies (cloud
-/// key + local engine). Shared so the tool layer's error and this module's
-/// tests read the same string (ADR 0036 acceptance #1).
-pub const NO_TRANSCRIBER_CONFIGURED: &str =
-    "no transcription model available — select and prepare a model in Settings → Transcription";
+/// The languages a transcription model covers, by primary BCP-47 subtag; the
+/// host injects them for the selected model from its catalog entry. An engine
+/// with none declared is taken to cover every language.
+pub type ModelLanguages = HashMap<String, Vec<String>>;
+
+/// The primary subtag of a BCP-47 tag, lowercased (`"en-US"` → `"en"`), or
+/// `None` when the tag is not one (2–3 letters, then `-`/`_`-separated
+/// alphanumerics).
+pub fn primary_language(tag: &str) -> Option<String> {
+    let mut parts = tag.split(['-', '_']);
+    let primary = parts.next()?;
+    let ok = (2..=3).contains(&primary.len())
+        && primary.chars().all(|c| c.is_ascii_alphabetic())
+        && parts
+            .all(|p| !p.is_empty() && p.len() <= 8 && p.chars().all(|c| c.is_ascii_alphanumeric()));
+    ok.then(|| primary.to_ascii_lowercase())
+}
+
+/// Whether `backend`'s declared languages cover `language` (a primary subtag).
+pub fn covers_language(langs: &ModelLanguages, backend: SpeechBackend, language: &str) -> bool {
+    langs
+        .get(backend.as_str())
+        .is_none_or(|l| l.iter().any(|x| x.eq_ignore_ascii_case(language)))
+}
 
 /// Actionable "nothing can synthesize speech" message. TTS is cloud-only today
 /// (no local backend advertises `tts`), so this names just the API-key remedy.
@@ -55,16 +74,79 @@ pub const NO_SYNTHESIZER_CONFIGURED: &str =
     "no speech-synthesis backend available — add an OpenAI API key in Settings (local TTS \
      engines are not supported yet)";
 
-/// Resolve the selected transcription backend only when it is available.
-/// Missing selection or files returns None; no other model is substituted.
-pub fn resolve_transcriber(
+/// Why `backend` cannot run right now, in the words a person acts on; `None`
+/// when it can.
+pub fn unavailable_reason(
+    backend: SpeechBackend,
+    cfg: &HashMap<String, BackendConfig>,
+) -> Option<&'static str> {
+    match availability(backend, cfg.get(backend.as_str())) {
+        Availability::Available => None,
+        Availability::NeedsKey => Some("no API key is set"),
+        Availability::NeedsBinary => Some("its binary was not found"),
+        Availability::NeedsModel => Some("its model file was not found"),
+        Availability::NeedsEndpoint => Some("no endpoint URL is configured"),
+    }
+}
+
+/// Resolve the model selected in Settings for a call that named no `backend`.
+/// Strict (ADR 0036, 0064): the selection is the user's explicit choice, so no
+/// other engine is substituted. When it cannot run, the refusal says it is the
+/// SELECTED model, what it lacks, and the ways out: repair or reselect it, a
+/// ready local engine the caller may name in `backend`, or an uploading engine
+/// — only with the user's consent.
+pub fn resolve_selected_transcriber(
     preferred: Option<SpeechBackend>,
     cfg: &HashMap<String, BackendConfig>,
-) -> Option<(SpeechBackend, Box<dyn Transcriber>)> {
-    let chosen = select_backend(preferred, cfg, |c| c.transcription)?;
-    let t = construct_transcriber(chosen, cfg.get(chosen.as_str()))?;
-    Some((chosen, t))
+) -> Result<(SpeechBackend, Box<dyn Transcriber>), String> {
+    let preferred = preferred.filter(|b| b.capabilities().transcription);
+    if let Some(p) = preferred {
+        if unavailable_reason(p, cfg).is_none() {
+            if let Some(t) = construct_transcriber(p, cfg.get(p.as_str())) {
+                return Ok((p, t));
+            }
+        }
+    }
+    let ready = |network: bool| -> Vec<String> {
+        DEFAULT_ORDER
+            .iter()
+            .filter(|b| {
+                Some(**b) != preferred
+                    && b.capabilities().transcription
+                    && b.locality().is_network() == network
+                    && unavailable_reason(**b, cfg).is_none()
+            })
+            .map(|b| format!("`backend: \"{}\"`", b.as_str()))
+            .collect()
+    };
+    let what = match preferred {
+        Some(p) => format!(
+            "the model selected in Settings → Transcription ({}) cannot run: {}",
+            p.as_str(),
+            unavailable_reason(p, cfg).unwrap_or("it could not be constructed")
+        ),
+        None => "no transcription model is selected in Settings → Transcription".to_string(),
+    };
+    let mut options = vec![format!(
+        "ask the user to repair or reselect it — {NO_TRANSCRIBER_CONFIGURED_REMEDY}"
+    )];
+    let local = ready(false);
+    if !local.is_empty() {
+        options.push(format!("{} (ready, on this machine)", local.join(" or ")));
+    }
+    let uploading = ready(true);
+    if !uploading.is_empty() {
+        options.push(format!(
+            "{} (uploads the audio — needs the user's consent)",
+            uploading.join(" or ")
+        ));
+    }
+    Err(format!("{what}. Options: {}", options.join("; ")))
 }
+
+/// The Settings remedy every "nothing can transcribe" refusal names.
+pub const NO_TRANSCRIBER_CONFIGURED_REMEDY: &str =
+    "select and prepare a model in Settings → Transcription";
 
 /// STRICT single-backend resolution for an explicit per-call override: build
 /// `backend` or error naming exactly what is missing. Never falls back — the
@@ -128,11 +210,9 @@ pub fn resolve_synthesizer(
     construct_synthesizer(chosen, cfg.get(chosen.as_str()))
 }
 
-/// Which transcription backend the resolver would pick right now, WITHOUT
-/// constructing it — the public counterpart to [`select_backend`] for the
-/// Settings "which engine is active" (`selected`) marker. Same
-/// strict selection rule as [`resolve_transcriber`]; `None` when the selected
-/// backend is unavailable.
+/// Which transcription backend is selected and can run, WITHOUT constructing
+/// it — the Settings "which engine is active" (`selected`) marker; `None` when
+/// the selected backend is unavailable.
 pub fn resolve_selected_transcriber_backend(
     preferred: Option<SpeechBackend>,
     cfg: &HashMap<String, BackendConfig>,
@@ -415,26 +495,95 @@ mod tests {
     #[test]
     fn empty_config_resolves_to_none() {
         let cfg = HashMap::new();
-        assert!(resolve_transcriber(None, &cfg).is_none());
+        assert!(resolve_selected_transcriber(None, &cfg).is_err());
         assert!(resolve_synthesizer(None, &cfg).is_none());
     }
 
     #[test]
     fn openai_key_resolves_a_transcriber() {
         let cfg = cfg_with(&[("openai", BackendConfig::ApiKey("sk-x".into()))]);
-        assert!(resolve_transcriber(Some(SpeechBackend::OpenAi), &cfg).is_some());
-        assert!(resolve_transcriber(None, &cfg).is_none());
+        let (b, _) = resolve_selected_transcriber(Some(SpeechBackend::OpenAi), &cfg)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(b, SpeechBackend::OpenAi);
+        // Unselected, the cloud engine is an option the refusal names, never a pick.
+        let Err(err) = resolve_selected_transcriber(None, &cfg) else {
+            panic!("no selection must not upload");
+        };
+        assert!(
+            err.starts_with("no transcription model is selected"),
+            "{err}"
+        );
+        assert!(
+            err.contains("`backend: \"openai\"` (uploads the audio — needs the user's consent)"),
+            "{err}"
+        );
         // OpenAI also serves TTS off the same key.
         assert!(resolve_synthesizer(None, &cfg).is_some());
     }
 
+    /// NEW-8: an unavailable selection is refused as the SELECTED model, not
+    /// as an explicit request, naming what is missing and the ready engines —
+    /// and nothing else runs in its place (ADR 0064).
     #[test]
-    fn unavailable_selected_local_model_never_uses_cloud() {
-        let cfg = cfg_with(&[("openai", BackendConfig::ApiKey("sk-x".into()))]);
-        assert!(resolve_transcriber(Some(SpeechBackend::WhisperCpp), &cfg).is_none());
+    fn an_unavailable_selection_refuses_with_its_options_and_substitutes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (bin, model, tokens) = (
+            dir.path().join("sherpa"),
+            dir.path().join("model.onnx"),
+            dir.path().join("tokens.txt"),
+        );
+        for f in [&bin, &model, &tokens] {
+            std::fs::write(f, b"x").unwrap();
+        }
+        let cfg = cfg_with(&[
+            (
+                "funasr",
+                BackendConfig::Local {
+                    binary: bin,
+                    model,
+                    tokens: Some(tokens),
+                    device: None,
+                    threads: None,
+                },
+            ),
+            ("openai", BackendConfig::ApiKey("sk-x".into())),
+        ]);
+        let Err(err) = resolve_selected_transcriber(Some(SpeechBackend::WhisperCpp), &cfg) else {
+            panic!("an unavailable selection must not be substituted");
+        };
+        assert!(
+            err.starts_with(
+                "the model selected in Settings → Transcription (whisper_cpp) cannot run: its binary was not found"
+            ),
+            "{err}"
+        );
+        assert!(!err.contains("requested explicitly"), "{err}");
+        assert!(err.contains("repair or reselect"), "{err}");
+        assert!(
+            err.contains("`backend: \"funasr\"` (ready, on this machine)"),
+            "{err}"
+        );
+        assert!(
+            err.contains("`backend: \"openai\"` (uploads the audio"),
+            "{err}"
+        );
         assert!(
             resolve_selected_transcriber_backend(Some(SpeechBackend::WhisperCpp), &cfg).is_none()
         );
+    }
+
+    #[test]
+    fn language_tags_reduce_to_their_primary_subtag() {
+        assert_eq!(primary_language("en"), Some("en".into()));
+        assert_eq!(primary_language("zh-CN"), Some("zh".into()));
+        assert_eq!(primary_language("EN_us"), Some("en".into()));
+        assert_eq!(primary_language("english"), None);
+        assert_eq!(primary_language("e"), None);
+        assert_eq!(primary_language("en-"), None);
+        let langs: ModelLanguages = [("funasr".to_string(), vec!["zh".to_string()])].into();
+        assert!(covers_language(&langs, SpeechBackend::FunAsr, "zh"));
+        assert!(!covers_language(&langs, SpeechBackend::FunAsr, "en"));
+        assert!(covers_language(&langs, SpeechBackend::WhisperCpp, "en"));
     }
 
     /// The STRICT counterpart never substitutes: an explicitly-requested but
@@ -467,12 +616,6 @@ mod tests {
             panic!("no key must not resolve");
         };
         assert!(matches!(err, SpeechError::MissingKey { .. }));
-    }
-
-    #[test]
-    fn preferred_openai_with_key_picks_openai() {
-        let cfg = cfg_with(&[("openai", BackendConfig::ApiKey("sk-x".into()))]);
-        assert!(resolve_transcriber(Some(SpeechBackend::OpenAi), &cfg).is_some());
     }
 
     #[tokio::test]
@@ -548,16 +691,13 @@ mod tests {
 
     #[test]
     fn no_provider_message_names_both_remedies() {
-        // Acceptance #1: the message the tool layer surfaces when the resolver
-        // returns None must name the cloud AND local remedies.
-        assert!(resolve_transcriber(None, &HashMap::new()).is_none());
-        assert!(
-            NO_TRANSCRIBER_CONFIGURED.contains("Settings"),
-            "must name the cloud remedy: {NO_TRANSCRIBER_CONFIGURED}"
-        );
-        assert!(
-            NO_TRANSCRIBER_CONFIGURED.contains("model"),
-            "must name the local remedy: {NO_TRANSCRIBER_CONFIGURED}"
-        );
+        // Acceptance #1: the message the tool layer surfaces when nothing can
+        // run must name the Settings remedy.
+        let Err(err) = resolve_selected_transcriber(None, &HashMap::new()) else {
+            panic!("nothing configured must not resolve");
+        };
+        assert!(err.contains(NO_TRANSCRIBER_CONFIGURED_REMEDY), "{err}");
+        assert!(NO_TRANSCRIBER_CONFIGURED_REMEDY.contains("Settings"));
+        assert!(NO_TRANSCRIBER_CONFIGURED_REMEDY.contains("model"));
     }
 }

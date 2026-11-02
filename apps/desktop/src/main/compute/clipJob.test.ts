@@ -24,9 +24,22 @@ describe('clipJobSpec', () => {
     expect(key({}, 'describe_clip')).toBe(key({ purpose: 'clip' }, 'describe_clip'))
   })
   it('names the job by its first layer, media and resolved timeline window', () => {
-    expect(clipJobSpec('describe_clip', { layer_id: 'l1', layer: layer(), media: media(), t_start_us: 2_000_000 })).toMatchObject({
-      tool: 'describe_clip', layer_id: 'l1', media_id: 'm1', window: { t_start_us: 2_000_000, t_end_us: 5_000_000 },
+    expect(clipJobSpec('transcribe_clip', { layer_id: 'l1', layer: layer(), media: media(), t_start_us: 2_000_000 })).toMatchObject({
+      tool: 'transcribe_clip', layer_id: 'l1', media_id: 'm1', window: { t_start_us: 2_000_000, t_end_us: 5_000_000 },
     })
+    // describe_clip's window is source time; the record says where the layer plays it.
+    expect(clipJobSpec('describe_clip', { layer_id: 'l1', layer: layer(), media: media(), src_start_us: 3_000_000 })).toMatchObject({
+      tool: 'describe_clip', window: { t_start_us: 2_000_000, t_end_us: 5_000_000 },
+    })
+  })
+
+  it('keys a description by its source window, whichever layer and spelling name it', () => {
+    const moved = clipJobSpec('describe_clip', {
+      layer: layer({ id: 'l2', t_start_us: 9_000_000, t_end_us: 13_000_000 }), media: media({ id: 'm2' }),
+    })
+    expect(moved?.key).toBe(key({}, 'describe_clip'))
+    expect(key({ src_start_us: 2_000_000, src_end_us: 6_000_000 }, 'describe_clip')).toBe(key({}, 'describe_clip'))
+    expect(key({ src_start_us: 3_000_000 }, 'describe_clip')).not.toBe(key({}, 'describe_clip'))
   })
 
   it('is null for an unresolved slice, which runs as a plain call', () => {
@@ -61,6 +74,19 @@ describe('clipJobSpec', () => {
   it.each(Object.keys(ARG_ROLES))('classifies every arg %s advertises', (tool) => {
     const advertised = Object.keys(catalog.tools.find(t => t.name === tool)!.inputSchema.properties ?? {})
     expect(advertised.filter(k => !(k in ARG_ROLES[tool as keyof typeof ARG_ROLES]))).toEqual([])
+  })
+
+  it('runs a media-addressed description as a job keyed by media + source window', () => {
+    const pooled = media({ metadata: { duration_us: 9_000_000 } })
+    const spec = clipJobSpec('describe_clip', { layer: null, media: pooled, media_id: 'm1' })!
+    expect(spec).toMatchObject({ layer_id: '', media_id: 'm1', src_window: { src_start_us: 0, src_end_us: 9_000_000 } })
+    // The same source span through a layer is the same question, so it joins.
+    const through = clipJobSpec('describe_clip', { layer: layer(), media: pooled, src_start_us: 0, src_end_us: 9_000_000 })!
+    expect(through.key).toBe(spec.key)
+    expect(clipJobSpec('describe_clip', { layer: null, media: pooled, src_start_us: 1_000_000 })!.key).not.toBe(spec.key)
+    // No known length and no end: Rust refuses it, so it runs plain.
+    expect(clipJobSpec('describe_clip', { layer: null, media: media({ metadata: { duration_us: null } }) })).toBeNull()
+    expect(clipJobSpec('transcribe_clip', { layer: null, media: pooled })).toBeNull()
   })
 
   it('never joins a refresh to a run that may answer from before it', () => {

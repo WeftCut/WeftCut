@@ -58,7 +58,8 @@ pub enum Locality {
 /// **Local-first** (unlike STT, which leads with a hosted provider): the whole
 /// subsystem is opt-in and privacy-sensitive (frames), so with nothing preferred
 /// we pick an on-device engine and only reach the network when no local engine
-/// is configured. Qwen3-VL leads — it is the validated default (ADR 0055).
+/// is configured. Qwen3-VL leads — it is the validated default
+/// (docs/notes/descriptions-vlm-facts.md).
 pub const DEFAULT_ORDER: &[VlmBackend] = &[
     VlmBackend::Qwen3Vl,
     VlmBackend::MiniCpmV,

@@ -1,6 +1,6 @@
 // 10-bit limited-range YCbCr ⇄ gamma-encoded RGB, the reference the ingest
 // and pack shaders are parity-tested against. Display-referred: NO transfer
-// math here (ADR 0021 / design doc: working space = gamma 709).
+// math here (ADR 0014: working space = gamma 709).
 
 export interface YuvCoef {
   /// Kr, Kb of the matrix (Kg = 1 − Kr − Kb).

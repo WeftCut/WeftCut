@@ -31,8 +31,8 @@ function host() {
     motifTool: () => [], handleInvoke: async () => null, start: () => {}, stop: () => {},
   } as any
   const backend = { mcpCallTool: async () => { throw new Error('rust must not be called') }, mcpReadResource: async () => '{"ok":true,"result":{}}', mcpCatalog: async () => RUST_CATALOG } as any
-  const call = async (name: string, args: Record<string, unknown> = {}) => {
-    const r = await agent.run('one', 'client-one', name, args, false, () => handleCallTool(backend, () => ts, name, args)) as { isError?: boolean; content: Array<{ text: string }> }
+  const call = async (name: string, args: Record<string, unknown> = {}, connection = 'one') => {
+    const r = await agent.run(connection, `client-${connection}`, name, args, false, () => handleCallTool(backend, () => ts, name, args)) as { isError?: boolean; content: Array<{ text: string }> }
     const text = r.content[0]!.text
     if (r.isError) return { isError: true, body: { text } as Record<string, any> }
     return { isError: r.isError, body: JSON.parse(text) as Record<string, any> }
@@ -45,13 +45,13 @@ describe('check_composition and audit freshness', () => {
   it('finds a short title against the style; the session end audits work nobody checked, once', async () => {
     const { call, bRoll } = host()
     await call('begin_agent_session', { reason: 'titles' })
-    const added = await call('add_text_layer', { track_id: bRoll, content: 'Title', t_start_us: 0, t_end_us: 2_000_000 })
+    const added = await call('add_layers', { layers: [{ track_id: bRoll, t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'text', content: 'Title' } }] })
     expect(added.isError).toBeFalsy()
-    await call('update_layer_params', { layer_id: added.body.layer_id, patch: { kind: 'Text', graphic_role: 'title' } })
+    await call('update_layer_params', { layer_id: added.body.layers[0].layer_id, patch: { kind: 'Text', graphic_role: 'title' } })
 
     // Never audited: the end runs the audit, and its warnings hold the session.
     const held = await call('end_agent_session')
-    expect(held.body).toMatchObject({ ended: null, held: 'audit', audit: { state: 'fresh', hard: 0 } })
+    expect(held.body).toMatchObject({ ended: false, held: 'audit', audit: { state: 'fresh', hard: 0 } })
     expect(held.body.audit.findings.map((f: { rule: string }) => f.rule)).toEqual(expect.arrayContaining(['title-hold', 'text-pops']))
     expect(held.body.next).toMatch(/call end_agent_session again/)
     // Seen and unchanged: the next end goes through.
@@ -69,7 +69,7 @@ describe('check_composition and audit freshness', () => {
 
     // Changed after its audit: audited again, and held while warnings remain.
     await call('begin_agent_session', { reason: 'fix' })
-    const fix = await call('update_layer_params', { layer_id: added.body.layer_id, patch: { kind: 'Text', intro: 'FadeIn', outro: 'FadeOut' } })
+    const fix = await call('update_layer_params', { layer_id: added.body.layers[0].layer_id, patch: { kind: 'Text', intro: 'FadeIn', outro: 'FadeOut' } })
     expect(fix.isError, JSON.stringify(fix.body)).toBeFalsy()
     const again = await call('end_agent_session')
     expect(again.body).toMatchObject({ held: 'audit' })
@@ -85,20 +85,23 @@ describe('check_composition and audit freshness', () => {
     expect(clean.body.audit).toMatchObject({ state: 'fresh', hard: 0, warning: 0 })
 
     await call('begin_agent_session', { reason: 'abandoned' })
-    const added = await call('add_text_layer', { track_id: bRoll, content: 'Title', t_start_us: 0, t_end_us: 1_000_000 })
-    await call('update_layer_params', { layer_id: added.body.layer_id, patch: { kind: 'Text', graphic_role: 'title' } })
-    const forced = await call('end_agent_session', { force: true })
-    expect(forced.body.ended).not.toBeNull()
-    expect(forced.body.audit).toMatchObject({ state: 'stale' })
+    const added = await call('add_layers', { layers: [{ track_id: bRoll, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'text', content: 'Title' } }] })
+    await call('update_layer_params', { layer_id: added.body.layers[0].layer_id, patch: { kind: 'Text', graphic_role: 'title' } })
+    // The takeover is a begin from another connection: the stale session ends
+    // unaudited (its owner is gone) and the newcomer's begins.
+    const forced = await call('begin_agent_session', { reason: 'next', force: true }, 'two')
+    expect(forced.isError).toBeFalsy()
+    expect(forced.body).toMatchObject({ connection_id: 'two', taken_over: { reason: 'abandoned', end_reason: 'forced' } })
+    expect(forced.body).not.toHaveProperty('held')
   })
 
   it('narrows the findings to a range but remembers the whole composition, and refuses half a range', async () => {
     const { call, bRoll } = host()
-    const a = await call('add_text_layer', { track_id: bRoll, content: 'Early', t_start_us: 0, t_end_us: 1_000_000 })
-    const b = await call('add_text_layer', { track_id: bRoll, content: 'Late', t_start_us: 20_000_000, t_end_us: 21_000_000 })
-    for (const id of [a.body.layer_id, b.body.layer_id]) await call('update_layer_params', { layer_id: id, patch: { kind: 'Text', graphic_role: 'title' } })
+    const a = await call('add_layers', { layers: [{ track_id: bRoll, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'text', content: 'Early' } }] })
+    const b = await call('add_layers', { layers: [{ track_id: bRoll, t_start_us: 20_000_000, t_end_us: 21_000_000, content: { kind: 'text', content: 'Late' } }] })
+    for (const id of [a.body.layers[0].layer_id, b.body.layers[0].layer_id]) await call('update_layer_params', { layer_id: id, patch: { kind: 'Text', graphic_role: 'title' } })
     const narrow = await call('check_composition', { t_start_us: 15_000_000, t_end_us: 30_000_000 })
-    expect(narrow.body.findings.every((f: { layers: string[] }) => f.layers.includes(b.body.layer_id))).toBe(true)
+    expect(narrow.body.findings.every((f: { layers: string[] }) => f.layers.includes(b.body.layers[0].layer_id))).toBe(true)
     const half = await call('check_composition', { t_start_us: 15_000_000 })
     expect(half.isError).toBe(true)
   })

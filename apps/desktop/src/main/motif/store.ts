@@ -8,6 +8,14 @@ import { motifFileSegments, readMotifFile, readMotifDirectory, type MotifFile } 
 import { motifContentHash } from './contentHash';
 
 export const DRAFTS_DIR = "drafts";
+/** Frozen packages of pending publications, one per draft (`workspace.ts`). */
+export const PROPOSALS_DIR = ".proposals";
+/** The id a pending publication's frozen package is served and captured
+ *  under: `<draft id>--proposal`. `sanitizeId` never emits `--`, so no
+ *  library or draft id can take this form. */
+const PROPOSAL_SUFFIX = "--proposal";
+export function proposalPreviewId(draftId: string): string { return draftId + PROPOSAL_SUFFIX; }
+export function isProposalPreviewId(id: string): boolean { return id.endsWith(PROPOSAL_SUFFIX); }
 
 /** Reject an id segment that could traverse or escape. */
 function safeSeg(seg: string): string {
@@ -38,6 +46,10 @@ export class UserMotifStore {
   /** Choose one complete package; never fill missing published assets from a draft. */
   private packageRel(id: string): string | null {
     if (id === DRAFTS_DIR || motifFileSegments(id)?.length !== 1) return null;
+    if (isProposalPreviewId(id)) {
+      const rel = `${PROPOSALS_DIR}/${id.slice(0, -PROPOSAL_SUFFIX.length)}`;
+      return readMotifFile(this._root, `${rel}/index.html`) ? rel : null;
+    }
     for (const rel of [id, `${DRAFTS_DIR}/${id}`]) {
       if (readMotifFile(this._root, `${rel}/index.html`)) return rel;
     }

@@ -1,4 +1,4 @@
-// The Text tool, driven through the real preview (ADR 0067): a click on empty
+// The Text tool, driven through the real preview (docs/preview.md#interaction): a click on empty
 // frame creates a Text layer centred on the click and opens the inline editor
 // on it; a click on existing text opens the editor on THAT layer and creates
 // nothing; and the click that closes an open editor creates nothing either.

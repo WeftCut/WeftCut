@@ -236,6 +236,15 @@ export async function startRemoteHost(opts: HostStartOptions & RemoteOptions): P
           fs.rmSync(tmp, { recursive: true, force: true })
         }
       },
+      async readText(hostPath) {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-get-'))
+        try {
+          await ssh.sftp(`get "${sftpPath(hostPath)}" "${path.join(tmp, 'file')}"\n`)
+          return fs.readFileSync(path.join(tmp, 'file'), 'utf8')
+        } finally {
+          fs.rmSync(tmp, { recursive: true, force: true })
+        }
+      },
       async resolveFixtures(ids) {
         if (!ids.length) return { paths: new Map(), meta: {} }
         const r = await op<{ paths: Record<string, string>; meta_json: string | null }>(ssh, root, 'fixtures', { ids, ...(opts.node ? { node: opts.node } : {}) }, 60 * 60_000)

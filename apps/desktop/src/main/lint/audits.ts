@@ -63,7 +63,7 @@ export class AuditStore {
 export function heldForAudit(check: CheckResult, shown = 20): Record<string, unknown> {
   const findings = check.findings.filter((f) => f.severity !== 'review')
   return {
-    ended: null,
+    ended: false,
     held: 'audit',
     audit: {
       composition_id: check.composition_id, state: 'fresh' as AuditState, ...check.counts,

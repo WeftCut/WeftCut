@@ -47,21 +47,8 @@ describe('app-level empty-track cleanup', () => {
     },
   )
 
-  it('dry-run predicts retained tracks, and preference changes do not sweep existing empty tracks', () => {
+  it('preference changes do not sweep existing empty tracks', () => {
     const { actor, track, layer, setEnabled } = setup(false)
-    const before = actor.snapshot()
-    const target = root(before).tracks[0].id
-    expect(actor.dryRun([
-      { kind: 'MoveLayer', id: layer, new_track_id: target, new_t_start_us: 0, escape_link: false },
-      { kind: 'AddLayer', track_id: track, params: root(before).tracks.at(-1)!.layers[0].params, t_start_us: 0, t_end_us: 1_000_000 },
-    ]).every((r) => r.ok)).toBe(true)
-    expect(actor.snapshot()).toBe(before)
-    setEnabled(true)
-    expect(actor.dryRun([
-      { kind: 'DeleteLayers', ids: [layer] },
-      { kind: 'AddLayer', track_id: track, params: root(before).tracks.at(-1)!.layers[0].params, t_start_us: 0, t_end_us: 1_000_000 },
-    ]).map((r) => r.ok)).toEqual([true, false])
-    setEnabled(false)
     actor.dispatch('delete_layers', { layers: [layer] })
     setEnabled(true)
     actor.dispatch('add_track', {})

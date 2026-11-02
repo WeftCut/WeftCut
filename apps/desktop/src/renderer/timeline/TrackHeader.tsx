@@ -48,7 +48,7 @@ function FlagButton({ active, activeClass, label, onToggle, children }: {
 /// toggles. Flag changes go through the unrecorded `update_track_flags`
 /// path (never enter undo history) while the name goes through the RECORDED
 /// `rename_track`, so one undo can revert a name without touching a control the
-/// editor set (ADR 0042); `onMutated` re-fetches the summary.
+/// editor set; `onMutated` re-fetches the summary.
 /// pointerdown must not bubble into the timeline root's seek path.
 export function TrackHeader({ compositionId, track, height, isRevealed, isExpanded, hasKeyframes, onToggleExpand, onMutated, ordering }: {
   ordering?: TrackOrdering | undefined;
@@ -116,7 +116,7 @@ export function TrackHeader({ compositionId, track, height, isRevealed, isExpand
     // deliberate difference from the layer rename, where an empty value
     // abandons the edit instead. A lane's derived name is a meaningful default
     // the editor needs a route back to, and a layer has no equivalent
-    // (ADR 0042). Do not "fix" the inconsistency.
+    // (docs/data-model.md#track). Do not "fix" the inconsistency.
     void (async () => {
       if (await tryMutate(() => renameTrack(track.id, next === "" ? null : next), "Rename track")) {
         await onMutated();

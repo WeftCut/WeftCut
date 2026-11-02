@@ -1,12 +1,16 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { getTextureBatchBindGroup, type BindGroup } from "pixi.js";
+import { Container, getTextureBatchBindGroup, type BindGroup } from "pixi.js";
 import { MotifSprite } from "./MotifSprite";
 import type { ResolvedMotifView } from "../resolveView";
 import { sharedMotifFrameCache } from "../motifs/motifRasterCache";
+import { getMotif, type Motif } from "../motifs/catalog";
+import { motifFrameDescriptor } from "../motifs/motifFrameDescriptor";
 
 // Keep the real Pixi source, texture, sprite and WebGPU batch bindings. The
 // frame objects need only dimensions: this tests ownership, not GPU uploads.
-vi.mock("../motifs/catalog", () => ({ getMotif: () => null }));
+vi.mock("../motifs/catalog", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../motifs/catalog")>(), getMotif: vi.fn(() => null),
+}));
 vi.mock("../motifs/motifRasterCache", async () => {
   const { MotifFrameCache } = await import("../motifs/frameCache");
   return {
@@ -128,9 +132,38 @@ it("removes only the retiring Motif's slots from every batch it participated in"
   expect(warn.mock.calls.filter(args => args.join(" ").includes("[BindGroup]"))).toHaveLength(0);
 });
 
+it("draws a 1/2 preview frame with the same world bounds and pivot as a full one", () => {
+  const motif = { manifest: { id: view.motif_id, name: "M", version: 1, size: [480, 270],
+    default_duration_s: 1, props_schema: {} }, hasParamsUi: false } as unknown as Motif;
+  vi.mocked(getMotif).mockReturnValue(motif);
+  try {
+    const { cacheKey } = motifFrameDescriptor(view, 0, 1_000_000, 30, 1, motif)!;
+    const full = frame(480, 270), half = frame(240, 135);
+    sharedMotifFrameCache.setFrame(cacheKey, 0, 1, full);
+    sharedMotifFrameCache.setFrame(cacheKey, 0, 2, half);
+    const placed = { ...view, x: 100, y: 50, scale_x: 2, scale_y: 0.5, rotation_deg: 30, anchor_x: 0.25, anchor_y: 0.75 };
+    const geometry = (div: 1 | 2) => {
+      const sprite = new MotifSprite({ layerId: `div-${div}`, motifId: view.motif_id, fpsNum: 30, fpsDen: 1, scaleDiv: () => div });
+      sprites.push(sprite);
+      new Container().addChild(sprite.sprite);
+      sprite.update(placed, 0, 1_000_000); // binds the cached frame
+      sprite.update(placed, 0, 1_000_000); // the pivot follows the bound texture
+      const b = sprite.sprite.getBounds();
+      return { resource: sprite.sprite.texture.source.resource, pivot: [sprite.sprite.pivot.x, sprite.sprite.pivot.y],
+        bounds: [b.x, b.y, b.width, b.height] };
+    };
+    const one = geometry(1), two = geometry(2);
+    expect(one.resource).toBe(full);
+    expect(two.resource).toBe(half);
+    expect(two.pivot).toEqual([120, 202.5]);
+    expect(two.pivot).toEqual(one.pivot);
+    two.bounds.forEach((value, i) => expect(value).toBeCloseTo(one.bounds[i]!, 6));
+  } finally { vi.mocked(getMotif).mockReturnValue(null); }
+});
+
 it("keeps an evicted shared bitmap alive until both sprites have moved off it", () => {
   const old = frame();
-  sharedMotifFrameCache.setFrame("shared", 0, old);
+  sharedMotifFrameCache.setFrame("shared", 0, 1, old);
   const a = makeSprite();
   const b = makeSprite();
   const frames = [old, frame()];

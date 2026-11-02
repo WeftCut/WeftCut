@@ -5,7 +5,7 @@
 // open a settled copy of it from the template store — snapshot it, hand the
 // session to a driver, snapshot again and record what changed. Everything
 // measured here comes from the app — the agent's own report is kept, but only
-// beside the evidence (ADR 0123: no self-certification).
+// beside the evidence (ADR 0046: no self-certification).
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -94,7 +94,7 @@ const GATE_1_TIMETABLE = 'The brief looks right. Go on to the timetable, and sho
 /** Tools an agent may call before its plan is approved although they are not
  *  read-only: they open and close its work session and change nothing a
  *  viewer sees. */
-const BEFORE_APPROVAL = new Set(['begin_agent_session', 'end_agent_session', 'set_history_lock', 'create_checkpoint'])
+const BEFORE_APPROVAL = new Set(['begin_agent_session', 'end_agent_session', 'create_checkpoint'])
 
 /** The recipe's plan is a timetable: a markdown table whose first column is
  *  `Time`. The agent writes it into its message or a markdown file in its
@@ -224,6 +224,23 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
       return JSON.parse(content.text)
     }
     const readMotifs = () => read('motifs://current') as Promise<Array<Record<string, unknown>>>
+    // The whole project, as the app saves it: MCP serves no whole-project
+    // read, so the bench reads the open project's project.json once the
+    // autosave has caught up — its `metadata.modified_at` matches the one
+    // project://settings reports, which moves on every recorded edit.
+    const readProject = async (): Promise<unknown> => {
+      const dir = ((await read('project://session')) as { project?: { dir?: string } | null }).project?.dir
+      if (!dir) throw new Error('project://session: no project is open')
+      const want = ((await read('project://settings')) as { metadata?: { modified_at?: string } }).metadata?.modified_at
+      const file = s.joinPath(dir, 'project.json')
+      const deadline = Date.now() + 15_000
+      for (;;) {
+        const wire = JSON.parse(await s.readText(file)) as { metadata?: { modified_at?: string } }
+        if (wire.metadata?.modified_at === want) return wire
+        if (Date.now() > deadline) throw new Error(`${file}: the autosave did not catch up with modified_at ${want} in 15 s`)
+        await new Promise((r) => setTimeout(r, 250))
+      }
+    }
 
     result.app_resources = await s.appResources()
     await s.jobEvents?.start()
@@ -279,7 +296,7 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     } finally {
       if (s.jobEvents) writeJson(plan.out_dir, 'media-jobs.json', await s.jobEvents.read().catch(() => []))
     }
-    const baselineWire = await read('project://current')
+    const baselineWire = await readProject()
     result.baseline_project = writeJson(plan.out_dir, 'baseline.json', baselineWire)
     const clips = aRollClips(baselineWire)
     result.setup_check = { a_roll_video_clips: clips.length, setup_ms: setupMs }
@@ -317,7 +334,7 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     const maxTurns = plan.task.plan_gate ? 2 : 1
     const nextUserTurn = async (turn: number, finalMessage: string | undefined): Promise<string | null> => {
       if (plan.task.go_ahead === false || turn > maxTurns) return null
-      const now = await read('project://current')
+      const now = await readProject()
       if (diffProjects(parseProject(baselineWire), parseProject(now)).length > 0) return null
       turnNow = turn + 1
       if (plan.task.plan_gate && turn === 1 && !hasTimetable(finalMessage, workdir)) return GATE_1_TIMETABLE
@@ -339,7 +356,7 @@ export async function runOne(plan: PlannedRun): Promise<RunResult> {
     // below is taken regardless, and the exit says how the session ended.
     if (!out.exit.ok) result.error = out.exit.error ?? 'driver reported failure'
 
-    const finalWire = await read('project://current')
+    const finalWire = await readProject()
     result.final_project = writeJson(plan.out_dir, 'final.json', finalWire)
     result.motifs = diffMotifs(motifsBefore, await readMotifs())
     result.workdir_copy = copyWorkdir(workdir, path.join(plan.out_dir, 'workdir'))

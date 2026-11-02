@@ -42,7 +42,7 @@ describe('replay', () => {
   it('plays the same after a head trim outside the range, though the trim moved every keyframe', () => {
     const s = setup()
     const pb = recordPlayback(s.actor.snapshot(), s.root(), 5 * S, 6 * S)
-    s.mcp('trim_layer', { layer_id: s.clip, edge: 'in', new_t_us: S })
+    s.mcp('trim_layer', { layer_id: s.clip, edge: 'in', t_edge_us: S })
     expect(replay(s.actor.snapshot(), pb)).toMatchObject({ t_us: 5 * S, same: true })
   })
 
@@ -64,7 +64,7 @@ describe('replay', () => {
   it('moves with its content, and stays where it was recorded once that is gone', () => {
     const s = setup()
     const pb = recordPlayback(s.actor.snapshot(), s.root(), 5 * S, 6 * S)
-    s.mcp('move_layer', { layer_id: s.clip, new_t_start_us: S, new_track_id: rootComposition(s.actor.snapshot()).tracks[0]!.id })
+    s.mcp('move_layers', { layer_ids: [s.clip], t_start_us: S, track_id: rootComposition(s.actor.snapshot()).tracks[0]!.id })
     expect(replay(s.actor.snapshot(), pb)).toMatchObject({ t_us: 6 * S, end_t_us: 7 * S, same: true, follows: { layer_id: s.clip, t_us: 6 * S } })
     s.mcp('delete_layers', { layer_ids: [s.clip] })
     expect(replay(s.actor.snapshot(), pb)).toEqual({ composition_id: s.root(), t_us: 5 * S, end_t_us: 6 * S, same: false, follows: null })

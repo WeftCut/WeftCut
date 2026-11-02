@@ -103,7 +103,7 @@ test('the lane paints markers, and one toggle silences them from either surface'
         name: 'add_marker',
         arguments: {
           t_us: 2_000_000,
-          end_t_us: 3_000_000,
+          t_end_us: 3_000_000,
           label: 'needs VO',
           color: { r: 34, g: 204, b: 85, a: 255 },
         },
@@ -201,7 +201,7 @@ test('markers are authorable from the keyboard and the lane — no MCP client an
 
     // Give the composition real duration BEFORE parking the playhead. The
     // ruler seek clamps to the last frame anchor, and an empty composition's
-    // autofitted duration is 0 (ADR 0005) — so over an empty timeline the park
+    // autofitted duration is 0 (docs/data-model.md#composition) — so over an empty timeline the park
     // below silently snaps back to frame 0. A layer via the renderer's own
     // command bridge keeps this spec's premise: still no MCP client anywhere.
     await invokeCmd(page, 'add_color_layer', { tStartUs: 0, durationUs: 5_000_000 })

@@ -37,7 +37,7 @@ the LZ4 cost of a fully transparent 1080p frame (8.3 MB of zeros encodes to
 ## Project-open inventory opens every file
 
 `MotifFrameStore.inventory()` opens each `.wfrm`, reads its 20-byte header
-and stats it so the restored coverage is exact (ADR 0016, restoring persisted
+and stats it so the restored coverage is exact (docs/motifs.md#preparation-l2-baking, restoring persisted
 coverage). The on-demand preview frame waits behind that barrier. On the bench
 host the first open of a file since boot costs about 6 ms regardless of its
 size; a second pass costs 0.03 ms. The drive is NVMe and the walk is

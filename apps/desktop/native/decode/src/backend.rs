@@ -259,7 +259,7 @@ pub fn version_info() -> String {
 }
 
 /// The decode lanes THIS build actually compiled in — the component's capability
-/// advertisement (ADR 0030 §Lane advertisement). `"software"` is unconditional
+/// advertisement (ADR 0029). `"software"` is unconditional
 /// (the libavcodec SW lane builds on every platform); the `"d3d11va"` HW-preview
 /// lane rides the SAME `#[cfg(windows)]` gate as the `preview_gpu` module it
 /// names, so the advertisement can never claim a lane the addon didn't compile.

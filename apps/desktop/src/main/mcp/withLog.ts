@@ -119,7 +119,7 @@ export function elideLarge(value: unknown, maxBytes: number = ELIDE_MAX_BYTES): 
  *
  *  Derived from `routeMcpTool`, which means **routing decides, not write-ness**:
  *  the read-shaped tools that route `'ts'` (`get_param_track`,
- *  `list_checkpoints`, `dry_run`) and the motif catalog reads log at `Info` too.
+ *  `export_captions`) and the motif catalog reads log at `Info` too.
  *  That is the accepted cost of deriving the level from the existing tool table
  *  — a per-tool checklist would rot the first time a tool landed without one.
  *

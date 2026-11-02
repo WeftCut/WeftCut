@@ -50,31 +50,29 @@ test('MCP creates, trims and moves clips, then exports the edited timeline', asy
     const track = await call<{ track_id: string }>('add_track', { label: 'Sequence' })
     // Synthetic solid clips make the exported edit observable without external
     // media, fonts, codec-specific source seeking, or calibrated SSIM floors.
-    const red = await call<LayerRecord>('add_color_layer', {
-      track_id: track.track_id, width: 640, height: 360, color: { r: 255, g: 0, b: 0, a: 255 },
-      t_start_us: 0, t_end_us: 3_000_000,
-    })
-    const green = await call<LayerRecord>('add_color_layer', {
-      track_id: track.track_id, width: 640, height: 360, color: { r: 0, g: 255, b: 0, a: 255 },
-      t_start_us: 4_000_000, t_end_us: 6_000_000,
-    })
+    // One call, one recorded edit; each block is the composition's 640x360.
+    const [red, green] = (await call<{ layers: LayerRecord[] }>('add_layers', { layers: [
+      { track_id: track.track_id, t_start_us: 0, t_end_us: 3_000_000, content: { kind: 'color', color: { r: 255, g: 0, b: 0, a: 255 } } },
+      { track_id: track.track_id, t_start_us: 4_000_000, t_end_us: 6_000_000, content: { kind: 'color', color: { r: 0, g: 255, b: 0, a: 255 } } },
+    ] })).layers
+    if (!red || !green) throw new Error('add_layers placed fewer than two layers')
     expect(await call<LayerRecord>('trim_layer', {
-      layer_id: red.layer_id, edge: 'out', new_t_us: 1_000_000,
+      layer_id: red.layer_id, edge: 'out', t_edge_us: 1_000_000,
     })).toMatchObject({ layer_id: red.layer_id, t_start_us: 0, t_end_us: 1_000_000 })
     expect(await call<LayerRecord>('trim_layer', {
-      layer_id: green.layer_id, edge: 'in', new_t_us: 5_000_000,
+      layer_id: green.layer_id, edge: 'in', t_edge_us: 5_000_000,
     })).toMatchObject({ layer_id: green.layer_id, t_start_us: 5_000_000, t_end_us: 6_000_000 })
-    expect(await call<LayerRecord>('move_layer', {
-      layer_id: green.layer_id, new_track_id: track.track_id, new_t_start_us: 1_000_000,
-    })).toMatchObject({ layer_id: green.layer_id, track_id: track.track_id,
+    expect((await call<{ layers: LayerRecord[] }>('move_layers', {
+      layer_ids: [green.layer_id], t_start_us: 1_000_000,
+    })).layers[0]).toMatchObject({ layer_id: green.layer_id, track_id: track.track_id,
       t_start_us: 1_000_000, t_end_us: 2_000_000 })
 
-    const tracks = await read<Array<{ id: string; layers: Array<{ id: string; t_start_us: number; t_end_us: number }> }>>('project://tracks')
-    expect(tracks.find(t => t.id === track.track_id)?.layers.map(l => ({
-      id: l.id, t_start_us: l.t_start_us, t_end_us: l.t_end_us,
+    const tracks = await read<Array<{ track_id: string; layers: Array<{ layer_id: string; t_start_us: number; t_end_us: number }> }>>('project://tracks')
+    expect(tracks.find(t => t.track_id === track.track_id)?.layers.map(l => ({
+      layer_id: l.layer_id, t_start_us: l.t_start_us, t_end_us: l.t_end_us,
     }))).toEqual([
-      { id: red.layer_id, t_start_us: 0, t_end_us: 1_000_000 },
-      { id: green.layer_id, t_start_us: 1_000_000, t_end_us: 2_000_000 },
+      { layer_id: red.layer_id, t_start_us: 0, t_end_us: 1_000_000 },
+      { layer_id: green.layer_id, t_start_us: 1_000_000, t_end_us: 2_000_000 },
     ])
     expect(await read('project://composition')).toMatchObject({
       width: 640, height: 360, fps: { num: 30, den: 1 }, duration_us: 2_000_000,
@@ -86,10 +84,10 @@ test('MCP creates, trims and moves clips, then exports the edited timeline', asy
       settings: { encoder_engine: 'native', hw_accel: 'software', include_audio: false, fps: 30 },
     })
     jobId = started.job_id
-    await expect.poll(async () => (await call<{ state: string }>('get_export_status', {
+    await expect.poll(async () => (await call<{ job: { state: string } }>('get_export_status', {
       job_id: jobId,
-    })).state, { timeout: 60_000 }).toBe('completed')
-    const completed = await call<{ output_path: string }>('get_export_status', { job_id: jobId })
+    })).job.state, { timeout: 60_000 }).toBe('completed')
+    const { job: completed } = await call<{ job: { output_path: string } }>('get_export_status', { job_id: jobId })
     expect(completed.output_path).toBe(output)
     expect(statSync(completed.output_path).size).toBeGreaterThan(100)
 

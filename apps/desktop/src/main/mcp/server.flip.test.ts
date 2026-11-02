@@ -44,11 +44,16 @@ describe('handleCallTool flip routing', () => {
     ts.actor.dispatch('add_media', { id: MID, kind: 'Audio', duration_us: 90_000_000 })
     const before = ts.actor.snapshot()
     const spy = vi.fn(async (_name: string, _args: string) => '{"ok":true,"result":{"content":[]}}')
+    // A caller-supplied slice is not an argument: refused, never trusted.
+    const forged = await handleCallTool(fakeBackend(spy), () => ts, 'analyze_audio',
+      { media_id: MID, src_start_us: 20_000_000, src_end_us: 25_000_000, media: { id: 'untrusted' } }) as { isError?: boolean }
+    expect(forged.isError).toBe(true)
+    expect(spy).not.toHaveBeenCalled()
     await handleCallTool(fakeBackend(spy), () => ts, 'analyze_audio',
-      { media_id: MID, start_us: 20_000_000, end_us: 25_000_000, media: { id: 'untrusted' } })
+      { media_id: MID, src_start_us: 20_000_000, src_end_us: 25_000_000 })
     expect(spy).toHaveBeenCalledTimes(1)
     expect(JSON.parse(spy.mock.calls[0][1])).toMatchObject({ media_id: MID,
-      start_us: 20_000_000, end_us: 25_000_000, media: before.media_pool[MID] })
+      src_start_us: 20_000_000, src_end_us: 25_000_000, media: before.media_pool[MID] })
     expect(ts.actor.snapshot()).toBe(before)
   })
 
@@ -59,7 +64,7 @@ describe('handleCallTool flip routing', () => {
     await handleCallTool(backend, () => ts, 'analyze_audio', { media_id: MID })
     expect(JSON.parse(spy.mock.calls[0][1]).media).toBeNull()
     spy.mockClear()
-    const result = await handleCallTool(backend, () => ts, 'analyze_audio', { start_us: 'bad' }) as any
+    const result = await handleCallTool(backend, () => ts, 'analyze_audio', { src_start_us: 'bad' }) as any
     expect(result.isError).toBe(true)
     expect(spy).not.toHaveBeenCalled()
   })
@@ -76,7 +81,7 @@ describe('handleCallTool flip routing', () => {
   it('routes a mutation tool to the TS actor (state changes)', async () => {
     const ts = tsHostStub()
     const track = root(ts.actor.snapshot()).tracks[0].id
-    const out: any = await handleCallTool(fakeBackend(async () => { throw new Error('rust must not be called') }), () => ts, 'add_color_layer', { track_id: track, color: { r: 0, g: 0, b: 0, a: 1 }, t_start_us: 0, t_end_us: 1_000_000 })
+    const out: any = await handleCallTool(fakeBackend(async () => { throw new Error('rust must not be called') }), () => ts, 'add_layers', { layers: [{ track_id: track, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 1 } } }] })
     expect(out.content[0].type).toBe('text') // a uuid
     const layers = root(ts.actor.snapshot()).tracks.reduce((n: number, t: any) => n + t.layers.length, 0)
     expect(layers).toBe(1)
@@ -102,25 +107,18 @@ describe('handleCallTool flip routing', () => {
     // which causes a downstream throw; what matters is -32600 is not raised).
     expect(ts.hybridDeps.compute.synthesizeSpeechCompute).toHaveBeenCalled()
   })
-  it('routes import_media through the hybrid (TS-write), returning the media record', async () => {
+  it('routes import_media through the hybrid (TS-write), returning one media record per path', async () => {
     const ts = tsHostStub()
-    const out: any = await handleCallTool(fakeBackend(async () => { throw new Error('rust must not be called') }), () => ts, 'import_media', { path: 'C:/x.mp4' })
-    expect(out.structuredContent).toMatchObject({ media_id: MID, kind: 'Video', duration_us: 4_000_000 })
+    const out: any = await handleCallTool(fakeBackend(async () => { throw new Error('rust must not be called') }), () => ts, 'import_media', { paths: ['C:/x.mp4'] })
+    expect(out.structuredContent.media).toHaveLength(1)
+    expect(out.structuredContent.media[0]).toMatchObject({ media_id: MID, kind: 'Video', duration_us: 4_000_000 })
     expect(JSON.parse(out.content[0].text)).toEqual(out.structuredContent)
     expect(ts.actor.snapshot().media_pool[MID]).toBeTruthy()
     expect(ts.hybridDeps.enqueueDerivatives).toHaveBeenCalledTimes(1)
   })
-  it('forwards a plain rust-routed tool to the backend', async () => {
-    // ping is the one live rust-native tool with no clip-slice injection — it falls
-    // straight through to the backend.
-    const ts = tsHostStub()
-    const spy = vi.fn(async () => '{"ok":true,"result":{"content":[{"type":"text","text":"pong"}]}}')
-    await handleCallTool(fakeBackend(spy), () => ts, 'ping', {})
-    expect(spy).toHaveBeenCalledWith('ping', JSON.stringify({}))
-  })
   it('no tsHost → forwards everything to the backend', async () => {
     const spy = vi.fn(async () => '{"ok":true,"result":{"content":[]}}')
-    await handleCallTool(fakeBackend(spy), () => null, 'add_color_layer', {})
+    await handleCallTool(fakeBackend(spy), () => null, 'add_layers', {})
     expect(spy).toHaveBeenCalled()
   })
   it('resolves the { layer, media } slice for a clip-audio tool and forwards it to the backend', async () => {
@@ -165,9 +163,9 @@ describe('handleCallTool flip routing', () => {
   it('begins work through the session service when the host provides it', async () => {
     const ts = tsHostStub()
     const begin = vi.fn(() => ({ id: 'session' }))
-    ;(ts as any).agent = { begin }
+    ;(ts as any).agent = { begin, snapshot: () => ({ session: null, sessions: [] }), locked: () => true }
     await handleCallTool(fakeBackend(async () => { throw new Error('rust must not be called') }), () => ts, 'begin_agent_session', { reason: 'cleanup' })
-    expect(begin).toHaveBeenCalledWith('cleanup')
+    expect(begin).toHaveBeenCalledWith('cleanup', { lock: undefined, force: false })
   })
   // ADR 0036: transcribe_clip selects by user preference THEN availability.
   // The host injects the stored preferred engine as the SOFT `preferred_backend`
@@ -180,17 +178,18 @@ describe('handleCallTool flip routing', () => {
   it('injects the preferred engine as preferred_backend when the agent omits backend', async () => {
     const ts = tsHostStub()
     const spy = vi.fn(okEnvelope)
-    await handleCallTool(fakeBackend(spy), () => ts, 'transcribe_clip', { layer_id: 'gone' }, speech('whisper_cpp'))
+    await handleCallTool(fakeBackend(spy), () => ts, 'transcribe_clip', { layer_ids: ['gone'] }, speech('whisper_cpp'))
     const sent = JSON.parse(spy.mock.calls[0][1])
+    expect(sent.layer_id).toBe('gone')
     expect(sent.preferred_backend).toBe('whisper_cpp')
     expect(sent.backend).toBeUndefined() // never promoted to the strict arg
-    // The config rides in with the call: native holds none (ADR 0148).
+    // The config rides in with the call: native holds none (ADR 0036).
     expect(sent.speech_config).toEqual({ whisper_cpp: { kind: 'local', binary: 'w', model: 'm' } })
   })
   it('passes an explicit transcribe_clip backend through untouched and injects no preference', async () => {
     const ts = tsHostStub()
     const spy = vi.fn(okEnvelope)
-    await handleCallTool(fakeBackend(spy), () => ts, 'transcribe_clip', { layer_id: 'gone', backend: 'openai' }, speech('whisper_cpp'))
+    await handleCallTool(fakeBackend(spy), () => ts, 'transcribe_clip', { layer_ids: ['gone'], backend: 'openai' }, speech('whisper_cpp'))
     const sent = JSON.parse(spy.mock.calls[0][1])
     expect(sent.backend).toBe('openai')
     expect(sent.preferred_backend).toBeUndefined()
@@ -200,7 +199,7 @@ describe('handleCallTool flip routing', () => {
   it('injects nothing when the preferred engine is auto', async () => {
     const ts = tsHostStub()
     const spy = vi.fn(okEnvelope)
-    await handleCallTool(fakeBackend(spy), () => ts, 'transcribe_clip', { layer_id: 'gone' }, speech('auto'))
+    await handleCallTool(fakeBackend(spy), () => ts, 'transcribe_clip', { layer_ids: ['gone'] }, speech('auto'))
     const sent = JSON.parse(spy.mock.calls[0][1])
     expect(sent.backend).toBeUndefined()
     expect(sent.preferred_backend).toBeUndefined()
@@ -215,6 +214,7 @@ describe('handleCallTool flip routing', () => {
     const spy = vi.fn(okEnvelope)
     await callClipComputeTool(fakeBackend(spy), ts, 'transcribe_clip', { layer_id: 'gone' }, speech('whisper_cpp'))
     const sent = JSON.parse(spy.mock.calls[0][1])
+    expect(sent.layer_id).toBe('gone')
     expect(sent.preferred_backend).toBe('whisper_cpp')
     expect(sent.speech_config).toHaveProperty('whisper_cpp')
     // The slice keys the stateless Rust handler reads, present (null for a layer

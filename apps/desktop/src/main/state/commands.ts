@@ -118,18 +118,19 @@ export function resolveDurationUs(durationUs: number | undefined): number {
   return Math.max(durationUs ?? 5_000_000, 100_000)
 }
 
-// Free-lane scan (ADR 0042's bounce policy). Home is mutations/helpers.ts so
-// the transition mutations can share it; re-exported here so existing
-// command-adapter consumers keep their './commands' import path.
+// Free-lane scan (the bounce policy, docs/features.md#track-placement). Home is
+// mutations/helpers.ts so the transition mutations can share it; re-exported
+// here so existing command-adapter consumers keep their './commands' import
+// path.
 export { pickFreeOverlayTrack } from './mutations/helpers'
 
 /** Mechanical channels: pure camelCase→snake renaming, no param construction.
  *  Returns null for channels not in this table. */
 const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; args: Record<string, unknown> }> = {
   // No label: the renderer derives the name, and a literal written here could
-  // never be localized (ADR 0042). `compositionId` is the creation-op scope
-  // (absent = root); layer-addressed channels carry none — the layer id names
-  // its composition (ADR 0052).
+  // never be localized (docs/data-model.md#track). `compositionId` is the
+  // creation-op scope (absent = root); layer-addressed channels carry none —
+  // the layer id names its composition (ADR 0052).
   add_track: (a) => ({ op: 'add_track', args: { label: null, composition_id: a.compositionId ?? null } }),
   update_layer: (a) => ({ op: 'update_layer', args: { layer: a.layerId, patch: a.patch } }),
   // Remaining mechanical + meta channels
@@ -140,24 +141,25 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   // and this flattens the pair onto the wire the way every other op carries its
   // args. Both null is the raise that names no time.
   move_layers_to_new_track: (a) => ({ op: 'move_layers_to_new_track', args: { layers: a.layerIds, anchor_layer_id: a.anchorLayerId ?? null, t_start_us: a.anchorTStartUs ?? null } }),
-  // Anchored z-reorder (ADR 0044) — the Playhead Panel's drop gesture. Pure renaming;
-  // position/anchor validation lives with the mutation.
+  // Anchored z-reorder (docs/features.md#track-placement) — the Playhead
+  // Panel's drop gesture. Pure renaming; position/anchor validation lives with
+  // the mutation.
   restack_layer: (a) => ({ op: 'restack_layer', args: { layer: a.layerId,
     ...(a.anchorLayerId === undefined ? {} : { anchor: a.anchorLayerId }),
     ...(a.anchorTrackId === undefined ? {} : { anchor_track: a.anchorTrackId }), position: a.position } }),
   retime_layers: (a) => ({ op: 'retime_layers', args: { layers: a.layerIds, target: a.target } }),
   set_preserve_pitch: (a) => ({ op: 'set_preserve_pitch', args: { layers: a.layerIds, preserve_pitch: a.preservePitch } }),
-  set_frame_interpolation: (a) => ({ op: 'set_frame_interpolation', args: { layers: a.layerIds, interpolation: a.interpolation } }),
-  get_frame_interpolation_capabilities: (a) => ({ op: 'get_frame_interpolation_capabilities', args: { layers: a.layerIds, purpose: a.purpose } }),
   trim_layer: (a) => ({ op: 'trim_layer', args: { layer: a.layerId, edge: a.edge, new_t_us: a.newTUs, escape_link: a.escapeLink ?? false } }),
   // The selection's delete — a set in, one undo entry out. Same rename as
   // move_layers_to_new_track's, which takes the selection the same way.
   delete_layers: (a) => ({ op: 'delete_layers', args: { layers: a.layerIds } }),
-  // The same selection, closing the span it vacated (ADR 0062). Same rename,
-  // and one entry: the deletes and the sweep are one undo.
+  // The same selection, closing the span it vacated
+  // (docs/features.md#ripple-delete). Same rename, and one entry: the deletes
+  // and the sweep are one undo.
   ripple_delete_layers: (a) => ({ op: 'ripple_delete_layers', args: { layers: a.layerIds } }),
-  // A selected gap closing (ADR 0069): the lane and BOTH edges of the span the
-  // renderer highlighted, so the actor closes that and refuses anything else.
+  // A selected gap closing (docs/features.md#ripple-delete): the lane and BOTH
+  // edges of the span the renderer highlighted, so the actor closes that and
+  // refuses anything else.
   ripple_delete_gap: (a) => ({ op: 'ripple_delete_gap', args: { track: a.trackId, s: a.startUs, e: a.endUs } }),
   remove_media: (a) => ({ op: 'remove_media', args: { media: a.mediaId, force: a.force ?? false } }),
   // The whole-link duplicate: a set in (the first id is the seed the drop
@@ -232,7 +234,7 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
   // three above use: the CHANNEL is the renderer's name for it, the OP is the
   // dispatch arm's. jump_to takes an absolute stack index (cursor-only, rejects
   // under the revert lock); create/delete_checkpoint are the User-actor half of
-  // the checkpoint surface the MCP tools already cover for agents.
+  // the checkpoint surface (agents create and restore; deleting is the user's).
   // Markers — the renderer's first marker channels (marker-authoring slice).
   // `label` defaults to the EMPTY string, not absence: the dispatch arm turns an
   // absent label into agent shorthand ('m'), and a human marker must instead stay
@@ -257,7 +259,7 @@ const MECHANICAL: Record<string, (a: Record<string, unknown>) => { op: string; a
 
 /** All production channels this adapter handles (mechanical + rich + meta). */
 export const PRODUCTION_OPS = new Set<string>([
-  'retime_layers', 'set_preserve_pitch', 'set_frame_interpolation', 'get_frame_interpolation_capabilities',
+  'retime_layers', 'set_preserve_pitch',
   'add_track', 'update_layer',
   'add_color_layer', 'add_text_layer', 'add_media_layer', 'paste_layer',
   'add_demo_color_layer', 'add_demo_text_layer',

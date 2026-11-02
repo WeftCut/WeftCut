@@ -14,7 +14,7 @@ import { hardwareGate, hardwareEnvironmentGate } from './helpers/hardwareGate'
 // transport shapes share this one spec:
 //   - nvdec/vaapi (Linux) and videotoolbox (macOS, issue #10) copy-back:
 //     NV12 copies back to system memory and rides the SAME previewSw
-//     transport as software (ADR 0034), so everything downstream
+//     transport as software (ADR 0029), so everything downstream
 //     (ring → Nv12Ingest → sprite) is shared.
 //   - d3d11va (Windows shared-texture): frames stay on the GPU; native
 //     converts NV12→RGBA with its own shader and shares the texture
@@ -149,7 +149,7 @@ function parseSsimAll(stderr: string): number | null {
 /// Which transport the title names. Derived from `frameKind` rather than listed
 /// per lane: 'browser' IS the shared-texture shape (d3d11va binds an
 /// ImageBitmap snapshot), everything else copies back into NV12/I420P10 ship
-/// bytes (ADR 0034). A hardcoded "copy-back" for all four contradicted this
+/// bytes (ADR 0029). A hardcoded "copy-back" for all four contradicted this
 /// file's own header on the one lane that isn't.
 const transportWord = (frameKind: HwVariant['frameKind']) =>
   frameKind === 'browser' ? 'shared-texture' : 'copy-back'

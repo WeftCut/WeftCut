@@ -37,6 +37,7 @@ import { webgpuDeviceOf } from "../webgpuDevice";
 import { loadFontsIntoFaceSet } from "../fonts/loadFontsIntoFaceSet";
 import { initEval } from "@/eval";
 import { MotifFrameInbox, closeMotifPacket } from "./motifStream";
+import { cannotDraw, cannotDrawMessage, capabilityOf, drawNeeds, rendererNameOf } from "../rendererCapability";
 
 // PixiJS defaults to `BrowserAdapter`, which calls `document.*`
 // and `new Image()`. In a Worker neither exists, so any renderer
@@ -161,12 +162,27 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
   // and every GL-dependent pass then reads `renderer.gl` as undefined — which
   // surfaces as a `createBuffer` TypeError deep inside plane readback, naming
   // neither the renderer nor the missing context. Assert once, here, for EVERY
-  // path that asked for WebGL.
+  // path that asked for WebGL. The runner already resolves `auto` engines to
+  // what the host runs (rendererCapability.ts); this is the backstop for a
+  // context that went away since.
   if (needsGl && !("gl" in app.renderer)) {
     throw new Error(
-      `export needs the WebGL2 renderer (native sink, native decode, or 10-bit); ` +
-        `got ${app.renderer.name} — no WebGL2 context is available in this worker`,
+      `export needs the WebGL2 renderer (native encoder, native decode, or 10-bit); ` +
+        `got ${app.renderer.name} — no WebGL2 context is available in this worker. ` +
+        `Set encoder_engine and decode_engine to webcodecs at bit_depth 8, or export on a host with WebGL2`,
     );
+  }
+  // The same backstop for content: refuse what this renderer cannot draw
+  // rather than composite the frames without it. Effects a still was asked to
+  // skip (`stills.effects: false`) are not drawn, so not asked for.
+  const effects = stills?.effects !== false;
+  {
+    const summary = req.project.summary as ProjectSummary;
+    const refusal = cannotDraw(
+      capabilityOf(rendererNameOf(app.renderer.name), app.renderer.name === "webgl"),
+      drawNeeds(summary, summary.root_id, req.startUs, req.endUs, undefined, effects),
+    );
+    if (refusal) throw new Error(cannotDrawMessage(refusal, stills ? "render_frames" : "export"));
   }
 
   if (tenBit) {
@@ -211,6 +227,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     width: req.project.width,
     height: req.project.height,
     mode: "export",
+    effects,
     pool: exportPool,
     proxyAssetUrl: (mediaId: string) =>
       req.project.proxyAssetUrls[mediaId] ??
@@ -765,7 +782,8 @@ function cleanup({
   // moment during the next export's setup, where Chromium 152 stalls the
   // renderer main thread on it. The `destroy()` is in `finally` so a throwing
   // `app.destroy` — the torn-down state the catch anticipates — cannot skip it
-  // and leak the device it exists to reclaim. ADR 0059.
+  // and leak the device it exists to reclaim.
+  // See docs/notes/electron-chromium-behavior.md.
   const device = webgpuDeviceOf(app.renderer);
   try {
     app.destroy({ removeView: true, releaseGlobalResources: true });

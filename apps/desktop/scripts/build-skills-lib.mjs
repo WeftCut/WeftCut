@@ -27,7 +27,7 @@ export const REQUIRED_DOCS = ['motif-authoring.md', 'motif-three-model.md', 'mot
 export const REQUIRED_ASSETS = ['templates/three-model.zip']
 
 /// The skill's layer folders, each held open by the README that states its
-/// contract (ADR 0123). SKILL.md points at both folders by name, and git keeps
+/// contract (ADR 0046). SKILL.md points at both folders by name, and git keeps
 /// no empty directory, so the README is what makes the folder exist in a
 /// checkout at all. Unlike the docs above these come from the skills/ tree
 /// itself, so they hold from the moment it is copied.

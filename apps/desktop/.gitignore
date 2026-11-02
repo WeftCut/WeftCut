@@ -2,6 +2,7 @@
 native/*.node
 native/index.js
 native/index.d.ts
+native/weftcut-reaper
 native/decode/*.node
 native/decode/index.js
 native/decode/index.d.ts

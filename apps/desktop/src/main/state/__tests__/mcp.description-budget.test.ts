@@ -40,7 +40,7 @@ const DESCRIPTION_CAP = 700
 const COMPLEX_CAP = 1100
 const COMPLEX: ReadonlySet<string> = new Set([
   'add_effect', 'add_transition', 'update_transition', 'update_composition', 'update_layer_params',
-  'delete_layers', 'ripple_delete_gap', 'move_layers_to_composition', 'create_group',
+  'delete_layers', 'move_layers', 'move_layers_to_composition', 'create_group',
   'remove_pauses', 'detect_pauses', 'analyze_clip', 'extract_clip_audio', 'transcribe_clip', 'describe_clip',
   'get_param_track',
   // Three tools' contracts in one (ADR 0074).
@@ -53,32 +53,11 @@ const PROPERTY_DESCRIPTION_CAP = 260
  *  bytes bought: an enum, a return shape, a meaning on a property an agent acts
  *  on as it types the argument, in place of prose it would learn by trial. The
  *  way down is merging over-granular families and cutting prose that restates
- *  the schema, not trimming meaning. */
-// +2 KB for analyze_audio: a bounded source window, waveform summary and
-// measured onset/energy candidates with explicit source-time semantics.
-// +6 KB: Motif source unions, revision-safe file transactions and bounded generic
-// upload/download contracts replace HTML-only drafting (ADR 0094).
-// +6 KB: five export-job tools and typed per-job settings, units, conflict and
-// null-reset semantics (ADR 0111). The encode controls need no prose guessing.
-// +8 KB: six app-level preset tools, typed portable create/update patches and
-// explicit preset selection for options/jobs (ADR 0113).
-// +3 KB: the three tack verbs and the `tacks` read (ADR 0115) — a batch item
-// schema with closed kind/status enums, so agents point at review ranges
-// without reaching for markers.
-// +2 KB: `graphic_role` on the three layer adds and the patch (H1-D1), each a
-// pattern-checked name with the built-ins listed, so an agent tags a layer as
-// it creates it rather than learning the vocabulary from a refusal.
-// +1 KB: `check_composition` (H1-D5) — the audit an agent stops on, with its
-// severity contract in the description so it needs no skill to be read right.
-// +1 KB: `restyle_to_taste` (H1-D4) — Q9's way back to the style after edits.
-// +1 KB: style Motifs (H2-D2) — `add_motif_layer` and `restyle_to_taste` name
-// the style's tokens as where a Motif's props come from, so an agent places a
-// role's Motif without copying colours and fonts by hand.
-// +1 KB: `render_frames` (H3-D3) — the agent sees the composed frame export
-// renders; H2 placed titles over faces and cards off frame without it.
-// +1 KB: the project folder as an agent's working directory (ADR 0151, 0152) —
-// `import_media` takes project-relative paths and says when the pool already
-// held the file; `read_project` reads one media item's card.
+ *  the schema, not trimming meaning.
+ *
+ *  The 2026-11 surface cutover took the catalog from 124 tools at about
+ *  157,000 B to 98 tools at 148,294 B. The cap stays where it was, about 6.5 %
+ *  above that: the new size plus 10 % (163,123 B) would raise it. */
 const CATALOG_BYTE_BUDGET = 158_000
 
 function compact(v: unknown): string { return JSON.stringify(v) }

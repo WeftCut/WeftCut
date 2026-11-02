@@ -102,7 +102,7 @@ export function animatableParams(kind: string, scaleLinked = false, positionMode
     case "Motif":
     case "ImageOverlay":
     // A Group carries the media-bearing transform set and nothing else: no
-    // crop, no speed, no flip (ADR 0052 §4 leaves time-remapping out of v1), so
+    // crop, no speed, no flip, so
     // it lands on exactly the same rows as a video clip minus those.
     case "CompositionRef":
       return scaleLinked

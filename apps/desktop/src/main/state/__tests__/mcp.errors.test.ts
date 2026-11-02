@@ -6,7 +6,7 @@
 // are the strongest case: their fix is a single corrected number that the actor
 // already computed, so the retry is mechanical.
 import { describe, it, expect } from 'vitest'
-import { mapCommandError, dryRunErrorString } from '../mcp-commands'
+import { mapCommandError } from '../mcp-commands'
 import type { CommandError } from '../errors'
 
 const validationFailed = (detail: Extract<CommandError, { error: 'ValidationFailed' }>['detail']): CommandError =>
@@ -118,9 +118,9 @@ describe('mapCommandError — ripple delete names the span and the way out', () 
     expect(out.data).toEqual({ error: 'RippleLockedLayer', layer: 'L9', tool: null })
   })
 
-  // The gap closing (ADR 0069): the fix is always "re-read the lane and send
-  // the gap as it is now", so the message says what a gap IS and the data
-  // echoes the span that was sent.
+  // The gap closing (docs/features.md#ripple-delete): the fix is always
+  // "re-read the lane and send the gap as it is now", so the message says what
+  // a gap IS and the data echoes the span that was sent.
   it('echoes the span that was not a gap and points at the composition resource', () => {
     const out = mapCommandError({ error: 'GapNotFound', track: 'T1', s: 2_000_000, e: 3_000_000 })
     expect(out.code).toBe('invalid_params')
@@ -131,39 +131,5 @@ describe('mapCommandError — ripple delete names the span and the way out', () 
       error: 'GapNotFound', track: 'T1', span_us: [2_000_000, 3_000_000],
       options: [{ action: 'reread_then_retry', resource: 'project://compositions' }],
     })
-  })
-})
-
-describe('dryRunErrorString', () => {
-  it('carries the corrected value into dry-run prose', () => {
-    // A dry run is exactly where an agent is still able to fix the op cheaply.
-    expect(dryRunErrorString(validationFailed({
-      rule: 'OffGridLayerBoundary', layer: 'L1', field: 't_end_us',
-      t: 2_999_999, fps: { num: 30, den: 1 }, grid: 'frame', snap_to: 3_000_000,
-    }))).toBe('validation failed: OffGridLayerBoundary (t_end_us 2999999 µs → send 3000000)')
-  })
-
-  it('every other rule takes the mapper’s own sentence, ids included', () => {
-    // A rehearsal names what a wet call would name: the rule AND the layer it
-    // is about, not a bare rule name an agent cannot act on.
-    const text = dryRunErrorString(validationFailed({ rule: 'DuplicateLayerId', layer: 'L1' }))
-    expect(text).toContain('DuplicateLayerId')
-    expect(text).toContain('L1')
-  })
-
-  it('reads as prose for the ripple refusals rather than the bare variant name', () => {
-    // These reach an agent mid-plan, where the whole point is to fix the op
-    // before spending a wet call — the generic `return e.error` would print
-    // 'RippleInsideHole' and name nothing.
-    expect(dryRunErrorString({ error: 'RippleInsideHole', layer: 'L1', hole: { s: 2_000_000, e: 5_000_000 } }))
-      .toBe('layer L1 starts inside the span [2000000, 5000000) µs the ripple would close — add it to layer_ids, or delete without rippling')
-    expect(dryRunErrorString({ error: 'RippleCollision', moving: 'M1', blocking: 'B1', track: 'T1' }))
-      .toBe('layer M1 would ripple left onto layer B1 on track T1')
-    expect(dryRunErrorString({ error: 'RippleLinkStraddles', link: 'K1', hole: { s: 0, e: 1_000_000 } }))
-      .toBe('link K1 has members on both sides of the span [0, 1000000) µs the ripple would close')
-    expect(dryRunErrorString({ error: 'RippleLockedLayer', layer: 'L9' }))
-      .toBe('layer L9 is locked and would have to move')
-    expect(dryRunErrorString({ error: 'GapNotFound', track: 'T1', s: 2_000_000, e: 3_000_000 }))
-      .toBe('[2000000, 3000000) µs is not a gap on track T1')
   })
 })

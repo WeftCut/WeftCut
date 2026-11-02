@@ -226,6 +226,8 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
   // means some other path tripped it — generic is the honest fallback.
   MediaInUse: { tier: "generic" },
   TrackPositionOutOfRange: { tier: "generic" },
+  // The timeline offers no drag for a reserved lane (canReorderTrack).
+  TrackReserved: { tier: "generic" },
   TrackNotEmpty: {
     tier: "curated",
     key: "errors.track_not_empty",
@@ -246,12 +248,12 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
     key: "errors.layer_locked",
     args: (e, ctx) => ({ layer: ctx.layer(e.layer) }),
   },
-  // Ripple delete's four (ADR 0062). Curated because every one of them is
-  // reachable from a key, and because these lines have a second job no other
-  // curated entry has: `timeline/rippleEligibility.ts` composes them from the
-  // PREDICTED refusal to grey the row before the gesture is sent, so the
-  // sentence the user reads in the tooltip and the sentence the status bar shows
-  // when the actor refuses for real are the same sentence.
+  // Ripple delete's four (docs/features.md#ripple-delete). Curated because
+  // every one of them is reachable from a key, and because these lines have a
+  // second job no other curated entry has: `timeline/rippleEligibility.ts`
+  // composes them from the PREDICTED refusal to grey the row before the gesture
+  // is sent, so the sentence the user reads in the tooltip and the sentence the
+  // status bar shows when the actor refuses for real are the same sentence.
   //
   // `hole` is deliberately not interpolated. It is the span being closed, and a
   // pair of timecodes in the middle of the line would be read as the layer's own
@@ -280,10 +282,10 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
     key: "errors.ripple_locked_layer",
     args: (e, ctx) => ({ layer: ctx.layer(e.layer) }),
   },
-  // The gap closing's own refusal (ADR 0069), curated for the ripple four's
-  // reason: reachable from the Delete key when the mirror lags the actor. The
-  // span is not interpolated — the user's highlight already showed it, and
-  // "no longer there" is the whole message.
+  // The gap closing's own refusal (docs/features.md#ripple-delete), curated for
+  // the ripple four's reason: reachable from the Delete key when the mirror
+  // lags the actor. The span is not interpolated — the user's highlight already
+  // showed it, and "no longer there" is the whole message.
   GapNotFound: {
     tier: "curated",
     key: "errors.gap_not_found",

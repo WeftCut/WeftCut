@@ -494,9 +494,6 @@ describe('applyGroupsUngroup', () => {
     layerOf(root(blurred), r.layerId).effects.push({ id: 'e', kind: 'blur', enabled: true, params: {} })
     expect(expectCmd(() => applyGroupsUngroup(blurred, gen, r.layerId))).toEqual({ error: 'GroupNotPlain', layer: r.layerId, reason: 'effects' })
 
-    const multiplied = structuredClone(p)
-    ;(layerOf(root(multiplied), r.layerId).params as CompositionRefParams).blend_mode = 'Multiply'
-    expect(expectCmd(() => applyGroupsUngroup(multiplied, gen, r.layerId))).toEqual({ error: 'GroupNotPlain', layer: r.layerId, reason: 'blend_mode' })
     // Each refusal left its project untouched.
     expect(normalise(root(moved))).not.toEqual(normalise(root(p)))
     expect(groupIds(moved)).toEqual([r.compositionId])

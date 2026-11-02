@@ -11,8 +11,7 @@
 //! Cross-language parity is locked by `keyframeEditsGolden.fixture.json`
 //! (asserted by `golden_vectors_match_fixture` here AND by
 //! `apps/desktop/src/renderer/keyframe/edits.golden.test.ts`). Any edit here MUST be mirrored in the TS
-//! and reflected in the fixture — there is no other enforcing test (see memory
-//! `feedback_engine_source_drift`, `feedback_snap_math_drift`).
+//! and reflected in the fixture — there is no other enforcing test.
 
 use crate::state::animated::{
     Animated, Continuity, EaseDir, Extrapolate, Extrapolation, Keyframe, Segment, Tangent,

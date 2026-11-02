@@ -9,6 +9,7 @@ import { AppDialog } from "../components/AppDialog";
 import { Button } from "@/components/ui/button";
 import { rendererOS, type RendererOS } from "@/platform";
 import { isResourceCapacityError } from "../../shared/resource-policy";
+import { isFfmpegStallError } from "../../shared/ffmpeg-stall";
 
 export interface ExportProgress {
   progress: number;
@@ -27,7 +28,8 @@ export type ExportState = ExportPhase & { job?: import('../../shared/exportJob')
 type ExportPhase =
   // Readiness waits and frame export provide their own cancellation handler.
   | { kind: "starting" }
-  | { kind: "preparing"; labels: string[]; message?: string; onCancel?: () => void }
+  // `queued`: admission waits for the resource budget (the job's `queued` state).
+  | { kind: "preparing"; labels: string[]; message?: string; onCancel?: () => void; queued?: NonNullable<import('../../shared/exportJob').ExportJob['queued']> }
   | { kind: "progress"; progress: ExportProgress; onCancel?: () => void }
   // The tail after the last frame is encoded: flush the native sink, render
   // audio, stream-copy mux. It used to be invisible — the panel sat frozen at
@@ -37,7 +39,9 @@ type ExportPhase =
   // step makes both the user's wait and the probe's stall budget honest.
   | { kind: "finalizing"; step: FinalizeStep }
   | { kind: "complete"; payload: ExportComplete }
-  | { kind: "error"; detail: string; onRetry?: (filename?: string) => Promise<void>; onDiscard?: () => Promise<void> };
+  // `code` + `fault`: a typed refusal (`RendererCannotDraw`), carried onto the
+  // job record so an agent reads the variant and its ids, not just the text.
+  | { kind: "error"; detail: string; code?: string; fault?: Record<string, unknown>; onRetry?: (filename?: string) => Promise<void>; onDiscard?: () => Promise<void> };
 
 /// Ordered as they run. `sink` only occurs on the native-encode path.
 export type FinalizeStep = "sink" | "audio" | "mux";
@@ -91,6 +95,9 @@ export function ExportPanel({
   const resourceReason = state.kind === "error" ? resourceFailureReason(state.detail) : undefined;
   const resourceMessage = resourceReason === "budget-too-small" ? "export.resource_budget"
     : resourceReason === "host-pressure" || resourceReason === "pressure" ? "export.resource_pressure" : "export.resource_unavailable";
+  // A finalization retry repeats only the steps that do not encode, so it
+  // keeps its own hint; otherwise the stall hint names the software encoder.
+  const stalled = state.kind === "error" && !resourceError && isFfmpegStallError(state.detail);
   // Publication can choose a new name. Completion always shows the saved path.
   const outputPath = state.kind === "complete" ? state.payload.outputPath : state.job?.output_path;
   const separator = outputPath ? Math.max(outputPath.lastIndexOf("/"), outputPath.lastIndexOf("\\")) : -1;
@@ -135,8 +142,10 @@ export function ExportPanel({
         )}
         {!cancelling && state.kind === "error" && (
           <div className="export-failure" role="alert">
-            <p className="export-progress-status">{resourceError ? t(resourceMessage) : t(retryable ? "export.retry_hint" : "export.failure_hint")}</p>
+            <p className="export-progress-status">{resourceError ? t(resourceMessage) : stalled ? t("export.encoder_stalled")
+              : t(retryable ? "export.retry_hint" : "export.failure_hint")}</p>
             {resourceError && retryable && <p className="export-progress-detail">{t("export.retry_hint")}</p>}
+            {stalled && <p className="export-progress-detail">{t(retryable ? "export.retry_hint" : "export.encoder_stalled_hint")}</p>}
           </div>
         )}
         {filename && (

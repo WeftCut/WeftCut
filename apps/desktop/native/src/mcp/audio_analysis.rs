@@ -17,9 +17,9 @@ pub(super) struct AnalyzeAudioArgs {
     /// Imported Audio or Video media id; analyzes its original audio before mix/effects.
     media_id: String,
     /// Source-absolute start in microseconds, inclusive. Default 0.
-    start_us: Option<i64>,
+    src_start_us: Option<i64>,
     /// Source-absolute end, exclusive. Default start + 60 seconds, capped at media end. At most 60 seconds per call.
-    end_us: Option<i64>,
+    src_end_us: Option<i64>,
     /// Maximum waveform summary bins, 1..1000 (default 200). Does not change event detection resolution.
     max_points: Option<usize>,
     /// Minimum short-time energy rise for onset candidates, 1..30 dB (default 6). Candidates are not beats or melody labels.
@@ -31,15 +31,15 @@ pub(super) struct AnalyzeAudioArgs {
 
 #[derive(Debug, Clone, Copy, Serialize)]
 struct Bin {
-    start_us: i64,
-    end_us: i64,
+    src_start_us: i64,
+    src_end_us: i64,
     peak_dbfs: f64,
     rms_dbfs: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct Event {
-    source_us: i64,
+    src_us: i64,
     /// Energy ratio in dB, not a probability. Signed for energy changes.
     change_db: f64,
     rms_dbfs: f64,
@@ -48,10 +48,9 @@ struct Event {
 #[derive(Debug, Serialize)]
 struct Analysis {
     media_id: String,
-    time_basis: &'static str,
     audio_basis: &'static str,
-    start_us: i64,
-    end_us: i64,
+    src_start_us: i64,
+    src_end_us: i64,
     resolution_us: f64,
     db_floor: f64,
     peak_dbfs: f64,
@@ -68,13 +67,13 @@ fn invalid(message: impl Into<String>) -> McpToolError {
 }
 
 fn window(args: &AnalyzeAudioArgs, duration: i64) -> Result<(i64, i64, usize, f64), McpToolError> {
-    let start = args.start_us.unwrap_or(0);
+    let start = args.src_start_us.unwrap_or(0);
     let end = args
-        .end_us
+        .src_end_us
         .unwrap_or(start.saturating_add(MAX_WINDOW_US).min(duration));
     if start < 0 || end <= start || end > duration {
         return Err(invalid(format!(
-            "audio window [{start}, {end}) must lie inside [0, {duration}) with start_us < end_us"
+            "audio window [{start}, {end}) must lie inside [0, {duration}) with src_start_us < src_end_us"
         )));
     }
     if end - start > MAX_WINDOW_US {
@@ -124,7 +123,8 @@ pub(super) async fn analyze_audio(
         .filter(|p| crate::cache::cached_ok(p))
         .unwrap_or_else(|| b.cache.waveform(&media.file_hash_blake3));
     if !crate::cache::cached_ok(&path) {
-        return Err(McpToolError::invalid_request(format!("waveform not generated yet for media {id} — wait for a media:job_complete event with kind=waveform and retry"), None));
+        let (message, data) = super::wire::derivative_not_ready(&id.to_string(), "waveform", "");
+        return Err(McpToolError::invalid_request(message, Some(data)));
     }
     crate::cache::touch_if_stale(&path);
     let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Analysis> {
@@ -239,8 +239,8 @@ impl Signal {
             total_duration += length;
             total_peak = total_peak.max(peak);
             waveform.push(Bin {
-                start_us: self.time(a).max(start),
-                end_us: self.time(b).min(end),
+                src_start_us: self.time(a).max(start),
+                src_end_us: self.time(b).min(end),
                 peak_dbfs: rounded(db(peak * peak)),
                 rms_dbfs: rounded(db(energy / length.max(1) as f64)),
             });
@@ -263,7 +263,7 @@ impl Signal {
                 let change = db(after) - db(mean(i - baseline, i));
                 if change >= threshold && db(after) >= -40.0 {
                     onsets.push(Event {
-                        source_us: t,
+                        src_us: t,
                         change_db: rounded(change),
                         rms_dbfs: rounded(db(after)),
                     });
@@ -275,7 +275,7 @@ impl Signal {
                 let change = db(after) - db(before);
                 if change.abs() >= 4.0 && db(before.max(after)) >= -40.0 {
                     changes.push(Event {
-                        source_us: t,
+                        src_us: t,
                         change_db: rounded(change),
                         rms_dbfs: rounded(db(after)),
                     });
@@ -286,10 +286,9 @@ impl Signal {
         let (energy_changes, energy_change_count) = select_events(changes, 500_000, 32);
         Analysis {
             media_id,
-            time_basis: "source",
             audio_basis: "original_before_mix_and_effects",
-            start_us: start,
-            end_us: end,
+            src_start_us: start,
+            src_end_us: end,
             resolution_us: resolution,
             db_floor: -120.0,
             peak_dbfs: rounded(db(total_peak * total_peak)),
@@ -310,20 +309,17 @@ fn select_events(mut events: Vec<Event>, gap: i64, limit: usize) -> (Vec<Event>,
         b.change_db
             .abs()
             .total_cmp(&a.change_db.abs())
-            .then(a.source_us.cmp(&b.source_us))
+            .then(a.src_us.cmp(&b.src_us))
     });
     let mut kept: Vec<Event> = Vec::new();
     for event in events {
-        if kept
-            .iter()
-            .all(|e| (e.source_us - event.source_us).abs() >= gap)
-        {
+        if kept.iter().all(|e| (e.src_us - event.src_us).abs() >= gap) {
             kept.push(event);
         }
     }
     let count = kept.len();
     kept.truncate(limit);
-    kept.sort_by_key(|e| e.source_us);
+    kept.sort_by_key(|e| e.src_us);
     (kept, count)
 }
 
@@ -345,8 +341,8 @@ mod tests {
     fn args() -> AnalyzeAudioArgs {
         AnalyzeAudioArgs {
             media_id: uuid::Uuid::new_v4().to_string(),
-            start_us: None,
-            end_us: None,
+            src_start_us: None,
+            src_end_us: None,
             max_points: None,
             onset_threshold_db: None,
             media: None,
@@ -357,18 +353,18 @@ mod tests {
     fn validates_ranges_and_bounds_default_window() {
         let mut a = args();
         assert_eq!(window(&a, 90_000_000).unwrap(), (0, 60_000_000, 200, 6.0));
-        a.start_us = Some(80_000_000);
+        a.src_start_us = Some(80_000_000);
         assert_eq!(window(&a, 90_000_000).unwrap().1, 90_000_000);
-        a.start_us = Some(-1);
+        a.src_start_us = Some(-1);
         assert!(window(&a, 90_000_000).is_err());
-        a.start_us = Some(0);
-        a.end_us = Some(60_000_001);
+        a.src_start_us = Some(0);
+        a.src_end_us = Some(60_000_001);
         assert!(window(&a, 90_000_000).is_err());
-        a.end_us = Some(0);
+        a.src_end_us = Some(0);
         assert!(window(&a, 90_000_000).is_err());
-        a.end_us = Some(90_000_001);
+        a.src_end_us = Some(90_000_001);
         assert!(window(&a, 90_000_000).is_err());
-        a.end_us = None;
+        a.src_end_us = None;
         a.max_points = Some(0);
         assert!(window(&a, 90_000_000).is_err());
         a.max_points = Some(1001);
@@ -376,8 +372,8 @@ mod tests {
         a.max_points = None;
         a.onset_threshold_db = Some(f64::NAN);
         assert!(window(&a, 90_000_000).is_err());
-        a.start_us = Some(i64::MAX);
-        a.end_us = Some(i64::MIN);
+        a.src_start_us = Some(i64::MAX);
+        a.src_end_us = Some(i64::MIN);
         assert!(window(&a, i64::MAX).is_err());
     }
 
@@ -388,8 +384,8 @@ mod tests {
             assert!(report.onsets.is_empty());
             assert!(report.energy_changes.is_empty());
             assert!(report.waveform.len() <= 17);
-            assert_eq!(report.waveform.first().unwrap().start_us, 123_456);
-            assert_eq!(report.waveform.last().unwrap().end_us, 3_456_789);
+            assert_eq!(report.waveform.first().unwrap().src_start_us, 123_456);
+            assert_eq!(report.waveform.last().unwrap().src_end_us, 3_456_789);
             assert!((report.rms_dbfs - db(amp * amp)).abs() < 0.001);
             assert!(!serde_json::to_string(&report).unwrap().contains("null"));
         }
@@ -404,15 +400,15 @@ mod tests {
         assert!(r
             .onsets
             .iter()
-            .any(|e| (e.source_us - 2_000_000).abs() <= 10_000));
+            .any(|e| (e.src_us - 2_000_000).abs() <= 10_000));
         assert!(r
             .energy_changes
             .iter()
-            .any(|e| (e.source_us - 2_000_000).abs() <= 10_000 && e.change_db > 20.0));
+            .any(|e| (e.src_us - 2_000_000).abs() <= 10_000 && e.change_db > 20.0));
         assert!(r
             .energy_changes
             .iter()
-            .any(|e| (e.source_us - 3_500_000).abs() <= 10_000 && e.change_db < -20.0));
+            .any(|e| (e.src_us - 3_500_000).abs() <= 10_000 && e.change_db < -20.0));
         let coarse = s.analyze("m".into(), 1_000_000, 4_500_000, 1, 6.0);
         assert_eq!(
             serde_json::to_value(&r.onsets).unwrap(),
@@ -435,15 +431,15 @@ mod tests {
         let expected = ((20_000_999_u128 * 22 * 1_000_000) / 22_050) as i64;
         assert_eq!(t, expected);
         let r = s.analyze("m".into(), s.time(0) + 37, s.time(1000) - 17, 29, 6.0);
-        assert_eq!(r.waveform[0].start_us, s.time(0) + 37);
-        assert_eq!(r.waveform.last().unwrap().end_us, s.time(1000) - 17);
+        assert_eq!(r.waveform[0].src_start_us, s.time(0) + 37);
+        assert_eq!(r.waveform.last().unwrap().src_end_us, s.time(1000) - 17);
     }
 
     #[test]
     fn strongest_events_are_bounded_sorted_and_counted() {
         let events = (0..200)
             .map(|i| Event {
-                source_us: i * 100_000,
+                src_us: i * 100_000,
                 change_db: 6.0 + i as f64 / 100.0,
                 rms_dbfs: -12.0,
             })
@@ -451,8 +447,8 @@ mod tests {
         let (events, count) = select_events(events, 100_000, 128);
         assert_eq!(count, 200);
         assert_eq!(events.len(), 128);
-        assert!(events.windows(2).all(|w| w[0].source_us < w[1].source_us));
-        assert_eq!(events.last().unwrap().source_us, 19_900_000);
+        assert!(events.windows(2).all(|w| w[0].src_us < w[1].src_us));
+        assert_eq!(events.last().unwrap().src_us, 19_900_000);
     }
 
     #[tokio::test]
@@ -524,7 +520,11 @@ mod tests {
                 < 0.01
         );
         assert!((report["peak_dbfs"].as_f64().unwrap() - db(0.25)).abs() < 0.01);
-        assert_eq!(report["time_basis"], "source");
+        assert!(
+            report.get("time_basis").is_none(),
+            "the src_* names carry the base"
+        );
+        assert_eq!(report["src_start_us"], 0);
         let mut no_audio = media.clone();
         no_audio.metadata.audio = None;
         a = args();

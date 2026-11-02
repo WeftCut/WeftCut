@@ -120,9 +120,11 @@ describe('Review baseline — attribution', () => {
   })
 
   it('a track reorder by an agent is an unreviewed placement change of the composition', () => {
-    const { a, tA } = setup()
+    const { a } = setup()
+    // A reserved A/B roll keeps its place (TrackReserved), so the reorder moves a lane of its own.
+    const free = ok(a.dispatch('add_track', {})) as Uuid
     a.pinReviewBaseline()
-    ok(a.dispatch('move_track', { track: tA, new_position: 1 }, AGENT))
+    ok(a.dispatch('move_track', { track: free, new_position: 0 }, AGENT))
     const [c] = a.reviewState().unreviewed
     expect(c).toMatchObject({ class: 'modified', id: entityKey('Composition', a.snapshot().root_id), details: [{ type: 'aspect', aspect: 'placement' }], ranges: [] })
   })

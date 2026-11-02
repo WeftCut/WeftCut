@@ -64,7 +64,9 @@ FFMPEG_DIR="$PWD/resources/ffmpeg-lgpl/linux" \
 ```
 
 (Windows/macOS swap the `ffmpeg-lgpl/<os>` dir + loader var — DLLs already on
-`PATH` on Windows, `DYLD_FALLBACK_LIBRARY_PATH` on macOS; see `electron-ci.yml`.)
+`PATH` on Windows, `DYLD_FALLBACK_LIBRARY_PATH` on macOS; see `electron-ci.yml`.
+macOS also appends `-- --test-threads=1`: VideoToolbox sessions are finite and
+concurrent ProRes decodes fail with VT -19092.)
 
 Lint gate — CI runs both on every OS with `-D warnings`, and the baseline is
 zero, so a new warning is a red build rather than noise:
@@ -129,12 +131,14 @@ in CI: `apps/desktop/bench/results/`, `determinism-artifacts/`, `test-results/`,
 
 - `apps/desktop/e2e/README.md` — authoring/running the E2E suite, the isolation
   model, and known flakes.
-- `apps/desktop/bench/README.md` — the agent bench (ADR 0123): task format,
+- `apps/desktop/bench/README.md` — the agent bench (ADR 0046): task format,
   output files, and what the Claude driver can and cannot isolate.
 - `docs/conformance.md` — the Rust `media_conformance` analyzer behind the
   export/color/audio gates.
 - `docs/decode-bench.md` — the decode-strategy benchmark.
-- `docs/controlled-playback-calibration.md` — the isolated H.264 4K/60 fps
-  calibration prototype and its two-field settings coverage.
+- `docs/playback-perf.md` — the multi-track preview playback benchmark (harness,
+  flags, validity rules).
+- `docs/performance-settings.md` § Computer test — the experimental Windows
+  H.264 4K/60 calibration.
 - `docs/platform-codecs.md` — platform capability evidence, hosted-CI limits,
   and where remaining hardware verification is tracked.

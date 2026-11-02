@@ -10,9 +10,9 @@ import {
 } from "./PacketPump";
 import { DecodeClock } from "./decodeClock";
 
-// ADR 0003, re-keyed to microseconds. The decision is purely a function
-// of the playhead target, the pump's decoded frontier, and the ring's
-// oldest cached PTS. All times are µs.
+// The GOP-crossing reset rule (docs/preview.md#decode). The decision is
+// purely a function of the playhead target, the pump's decoded frontier, and
+// the ring's oldest cached PTS. All times are µs.
 describe("decideReset", () => {
   it("continuous forward play: no reset (frontier ahead of playhead)", () => {
     // playhead 500ms, decoded frontier 900ms, ring from 0.

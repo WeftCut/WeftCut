@@ -2,6 +2,7 @@ import { invoke } from "@/bridge/ipc";
 import { CAPTURE_SUPERSEDED_MESSAGE } from "../../../shared/motifs/captureErrors";
 import { captureMotifResult, type CapturedFrame } from './frameTransport';
 import type { MotifCacheAddress } from '../../../shared/motifs/frameTransport';
+import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
 
 export interface CaptureOptions {
   key: string;
@@ -11,6 +12,9 @@ export interface CaptureOptions {
   /** Return valid pixels even when optional cache persistence is unavailable. */
   bakeOptional?: boolean;
   finalizationToken?: string;
+  /** The divisor a `stored` reply is read at; 1 when absent. A live capture
+   * is always full size. */
+  scaleDiv?: MotifReaderDiv;
 }
 
 export function captureMotifFrameResult(
@@ -20,7 +24,7 @@ export function captureMotifFrameResult(
 ): Promise<CapturedFrame> {
   if (typeof window === 'undefined' || typeof window.postMessage !== 'function' || typeof MessageChannel === 'undefined') {
     return captureMotifFrame(motifId, tSec, props, width, height, settleRafs, contentHash,
-      options.key, fpsNum, fpsDen).then(bitmap => ({ bitmap, persisted: false }));
+      options.key, fpsNum, fpsDen).then(bitmap => ({ bitmap, persisted: false, scaleDiv: 'live' as const }));
   }
   if (typeof window !== 'undefined') {
     const perf = (window as unknown as { __weftcutMotifPerf?: { renders: number } }).__weftcutMotifPerf;
@@ -32,7 +36,7 @@ export function captureMotifFrameResult(
     coalesceKey: options.key, high: options.high, bake: options.bake,
     cache: options.cache,
     bakeOptional: options.bakeOptional, finalizationToken: options.finalizationToken,
-  });
+  }, options.scaleDiv ?? 1);
 }
 
 /**

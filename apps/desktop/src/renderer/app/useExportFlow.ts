@@ -9,6 +9,7 @@ import { getCurrentWindow, ProgressBarStatus, SecondaryWindow } from "@/bridge/w
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { isResourceCapacityError } from "../../shared/resource-policy";
+import { isFfmpegStallError } from "../../shared/ffmpeg-stall";
 import { type ExportState } from "../panels/ExportPanel";
 import { type ProxyState } from "../panels/mediaReadiness";
 import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
@@ -130,7 +131,9 @@ export function useExportFlow(deps: {
             title: t("export.notify_failed_title"),
             body: isResourceCapacityError(state.detail)
               ? t("export.resource_unavailable")
-              : t("export.notify_failed_body", { detail: state.detail }),
+              : isFfmpegStallError(state.detail)
+                ? t("export.encoder_stalled")
+                : t("export.notify_failed_body", { detail: state.detail }),
           });
         }
       } catch {

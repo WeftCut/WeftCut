@@ -51,8 +51,8 @@ export interface PreviewSurfaceHandle {
   /// bytes; rejects on failure. App.tsx owns the save dialog + file
   /// write so the existing ExportPanel can drive the pipeline.
   runPixiExport(opts: {
-    resourcePlan?: import("../../shared/export-resources").ExportResourcePlan | undefined;
-    finalizationToken?: string | undefined;
+    resourcePlan: import("../../shared/export-resources").ExportResourcePlan;
+    finalizationToken: string;
     onProgress?: (encoded: number, total: number) => void;
     encoderConfig?: VideoEncoderConfig;
     outputFps?: { num: number; den: number };

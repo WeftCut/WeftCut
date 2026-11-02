@@ -23,6 +23,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
+import { mcpInstructions } from '../main/mcp/instructions.js'
 import { Bridge, BridgeDownError, BridgeTimeoutError, type ForwardOptions } from './bridge.js'
 import {
   bridgeTimeouts,
@@ -50,6 +51,7 @@ const SYNTHETIC_TOOLS: Tool[] = [
       'project it has open. Returns the endpoint state and what to do next when it is not running. ' +
       'Costs nothing; call this first when WeftCut tools appear to be missing or failing.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
   },
   {
     name: 'launch_weftcut',
@@ -60,6 +62,8 @@ const SYNTHETIC_TOOLS: Tool[] = [
       'when already running — reports that instead of launching twice. Use after ' +
       'weftcut_status says the app is not running.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    // Starts a process on this machine; a second call while it runs reports that.
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
 ]
 
@@ -110,9 +114,12 @@ function text(s: string, isError = false): { content: { type: 'text'; text: stri
 export interface ShimOptions {
   se: ShimEnv
   userDataDir: string
-  /** What `initialize` reports as the shim's own version — distinct from the
-   *  app's, which rides the bridge and is reported by `weftcut_status`.
-   *  `main.ts` passes the build stamp; absent reports `0.0.0-dev`. */
+  /** What `initialize` reports as the shim's own version, and the version its
+   *  `instructions` name. `main.ts` passes the build stamp; absent reports
+   *  `0.0.0-dev`. The app re-copies the shim it ships at every start, so the
+   *  stamp is the installed app's version and the instructions match what
+   *  HTTP-direct sends; the version of the app actually answering rides the
+   *  bridge and is reported by `weftcut_status`. */
   version?: string
   /// Test seams. Defaults: read mcp_auth.json / streamable HTTP / detached spawn.
   readAuth?: () => McpAuth | null
@@ -147,14 +154,19 @@ export function createShim(opts: ShimOptions): Shim {
   const launchTimeoutMs = opts.launchTimeoutMs ?? 45_000
   const launchPollMs = opts.launchPollMs ?? 1_000
 
+  // The shim answers `initialize` itself, before any bridge exists, so the app's
+  // instructions never cross it: it carries its own copy, bundled from the same
+  // source (`main/mcp/instructions.ts`) at the same version.
+  const version = opts.version ?? '0.0.0-dev'
   const server = new Server(
-    { name: 'weftcut-mcp', version: opts.version ?? '0.0.0-dev' },
+    { name: 'weftcut-mcp', version },
     {
       capabilities: {
         tools: { listChanged: true },
         resources: { listChanged: true },
         prompts: { listChanged: true },
       },
+      instructions: mcpInstructions(version),
     },
   )
   const closed = (): boolean => server.transport === undefined
@@ -176,8 +188,9 @@ export function createShim(opts: ShimOptions): Shim {
     onDown: broadcastCatalogChanged,
     clientName: () => server.getClientVersion()?.name,
     onNotification: (n) => {
-      // The app's change feed (notifications/weftcut/change), forwarded so a
-      // shim-connected agent sees edits exactly like an HTTP-direct one.
+      // The app's notifications (resources/list_changed and the like),
+      // forwarded verbatim so a shim-connected agent sees what an HTTP-direct
+      // one does.
       server.notification(n as { method: string; params?: Record<string, unknown> }).catch(() => {})
     },
   })

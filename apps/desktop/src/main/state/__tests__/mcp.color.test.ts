@@ -17,7 +17,7 @@ type Side = { x: number; y: number; mode: string }
 type KfEntry = {
   id: string
   t_us: number
-  t_local_us: number
+  local_t_us: number
   value: Rgba
   in: Side
   out: Side
@@ -53,11 +53,20 @@ function storedColor(a: ReturnType<typeof freshActor>, layerId: string): Animate
   throw new Error('layer not found')
 }
 
-function readTrack(a: ReturnType<typeof freshActor>, layerId: string): { mode: string; keyframes?: KfEntry[]; value?: Rgba; extrapolate?: unknown } {
+type Read = { track: { mode: string; value: unknown; extrapolate?: unknown }; keyframe_ids: string[]; local_t_us: number[]; preset_ids: Array<string | null> }
+function rawRead(a: ReturnType<typeof freshActor>, layerId: string): Read {
   const r = call(a, 'get_param_track', { layer_id: layerId, param_key: 'color' })
   expect(r.ok, 'get_param_track must succeed').toBe(true)
   if (!r.ok) throw new Error('get_param_track failed')
-  return JSON.parse(r.result.content[0].text)
+  return JSON.parse(r.result.content[0].text) as Read
+}
+
+/** get_param_track with its parallel arrays zipped back onto the keys. */
+function readTrack(a: ReturnType<typeof freshActor>, layerId: string): { mode: string; keyframes?: KfEntry[]; value?: Rgba; extrapolate?: unknown } {
+  const r = rawRead(a, layerId)
+  if (r.track.mode === 'Static') return { mode: 'Static', value: r.track.value as Rgba }
+  const keys = r.track.value as Array<Omit<KfEntry, 'id' | 'local_t_us' | 'preset_id'>>
+  return { mode: 'Keyframed', extrapolate: r.track.extrapolate, keyframes: keys.map((k, i) => ({ ...k, id: r.keyframe_ids[i]!, local_t_us: r.local_t_us[i]!, ...(r.preset_ids[i] === null ? {} : { preset_id: r.preset_ids[i]! }) })) }
 }
 
 function errorMessage(r: ReturnType<ReturnType<typeof freshActor>['mcpCall']>): string {
@@ -135,14 +144,10 @@ describe('the rest of the keyframe family on a colour track', () => {
     return { a, layerId }
   }
 
-  it('set_param_track replaces the whole colour track in one commit', () => {
+  it('set_param_track replaces the whole colour track in one commit, from the read as is', () => {
     const { a, layerId } = keyed()
-    const track = readTrack(a, layerId)
-    const next = {
-      mode: 'Keyframed',
-      extrapolate: { before: 'Hold', after: 'Loop' },
-      value: track.keyframes!.map(({ id: _id, t_local_us: _local, preset_id: _preset, ...k }, i) => ({ ...k, value: i === 0 ? BLUE : RED })),
-    }
+    const { track } = rawRead(a, layerId)
+    const next = { ...track, extrapolate: { before: 'Hold', after: 'Loop' }, value: (track.value as Array<Record<string, unknown>>).map((k, i) => ({ ...k, value: i === 0 ? BLUE : RED })) }
     expect(call(a, 'set_param_track', { layer_id: layerId, param_key: 'color', track: next }).ok).toBe(true)
     const after = readTrack(a, layerId)
     expect(after.keyframes?.map((k) => k.value)).toEqual([BLUE, RED])
@@ -151,19 +156,15 @@ describe('the rest of the keyframe family on a colour track', () => {
 
   it('set_param_track refuses a numeric value on the colour track', () => {
     const { a, layerId } = keyed()
-    const track = readTrack(a, layerId)
-    const next = {
-      mode: 'Keyframed',
-      extrapolate: { before: 'Hold', after: 'Hold' },
-      value: track.keyframes!.map(({ id: _id, t_local_us: _local, preset_id: _preset, ...k }) => ({ ...k, value: 1 })),
-    }
+    const { track } = rawRead(a, layerId)
+    const next = { ...track, value: (track.value as Array<Record<string, unknown>>).map((k) => ({ ...k, value: 1 })) }
     expect(errorMessage(call(a, 'set_param_track', { layer_id: layerId, param_key: 'color', track: next })))
       .toContain("param 'color' takes an {r,g,b,a} colour")
   })
 
-  it('smooth_keyframes leaves the identity coordinates — a colour has no slope to solve', () => {
+  it('update_keyframe { smooth } leaves the identity coordinates — a colour has no slope to solve', () => {
     const { a, layerId } = keyed()
-    expect(call(a, 'smooth_keyframes', { layer_id: layerId, param_key: 'color' }).ok).toBe(true)
+    for (const k of readTrack(a, layerId).keyframes!) expect(call(a, 'update_keyframe', { layer_id: layerId, param_key: 'color', keyframe_id: k.id, smooth: true }).ok).toBe(true)
     const keys = readTrack(a, layerId).keyframes!
     // Auto with no scalar projection: the mode is stored, the numbers are the
     // linear parametrisation's own control points, and both segments went Spline
@@ -183,9 +184,10 @@ describe('the rest of the keyframe family on a colour track', () => {
     expect(keys[0].segment).toEqual({ kind: 'Spline' })
   })
 
-  it('set_extrapolation writes both sides of a colour track', () => {
+  it('set_param_track writes both extrapolation sides of a colour track', () => {
     const { a, layerId } = keyed()
-    expect(call(a, 'set_extrapolation', { layer_id: layerId, param_key: 'color', before: 'Offset', after: 'PingPong' }).ok).toBe(true)
+    const { track } = rawRead(a, layerId)
+    expect(call(a, 'set_param_track', { layer_id: layerId, param_key: 'color', track: { ...track, extrapolate: { before: 'Offset', after: 'PingPong' } } }).ok).toBe(true)
     const stored = storedColor(a, layerId)
     expect(stored.mode === 'Keyframed' && stored.extrapolate).toEqual({ before: 'Offset', after: 'PingPong' })
   })
@@ -199,19 +201,15 @@ describe('the rest of the keyframe family on a colour track', () => {
     expect(readTrack(a, layerId)).toEqual({ mode: 'Static', value: GREEN })
   })
 
-  it('clear_keyframes collapses to the first key\'s colour, or to the one given', () => {
+  it('set_param_track { Static } collapses the animation to the colour given', () => {
     const { a, layerId } = keyed()
-    expect(call(a, 'clear_keyframes', { layer_id: layerId, param_key: 'color' }).ok).toBe(true)
-    expect(readTrack(a, layerId)).toEqual({ mode: 'Static', value: RED })
-
-    const second = keyed()
-    expect(call(second.a, 'clear_keyframes', { layer_id: second.layerId, param_key: 'color', value: BLUE }).ok).toBe(true)
-    expect(readTrack(second.a, second.layerId)).toEqual({ mode: 'Static', value: BLUE })
+    expect(call(a, 'set_param_track', { layer_id: layerId, param_key: 'color', track: { mode: 'Static', value: BLUE } }).ok).toBe(true)
+    expect(readTrack(a, layerId)).toEqual({ mode: 'Static', value: BLUE })
   })
 
-  it('clear_keyframes refuses a numeric collapse value on a colour param', () => {
+  it('set_param_track { Static } refuses a numeric value on a colour param', () => {
     const { a, layerId } = keyed()
-    expect(errorMessage(call(a, 'clear_keyframes', { layer_id: layerId, param_key: 'color', value: 1 })))
+    expect(errorMessage(call(a, 'set_param_track', { layer_id: layerId, param_key: 'color', track: { mode: 'Static', value: 1 } })))
       .toContain("param 'color' takes an {r,g,b,a} colour")
   })
 

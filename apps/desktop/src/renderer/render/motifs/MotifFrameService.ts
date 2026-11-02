@@ -28,6 +28,7 @@ import {
 } from "./motifRasterCache";
 import { onPrebakeRequest } from "./prebakeBus";
 import { collectLiveRasterKeys } from "./liveRasterKeys";
+import type { MotifReaderDiv } from "../../../shared/motifs/readerProtocol";
 
 /// Schedule `cb` for an idle slice: `requestIdleCallback` when available
 /// (with a 200ms timeout floor so the prewarm can't starve indefinitely),
@@ -88,16 +89,17 @@ export class MotifFrameService {
   private diskDiscoveryPending = false;
   private preparationError: string | null = null;
   private planningSignature: string | null = null;
+  private div: MotifReaderDiv = 1;
 
   constructor(private readonly deps: MotifFrameServiceDeps) {
     this.prewarmer =
       typeof document !== "undefined"
         ? new MotifPrewarmer({
             capBytes: sharedMotifFrameCache.capacityBytes(),
-            hasFrame: (k, f) => sharedMotifFrameCache.hasFrame(k, f),
-            prioritizeFrames: (targets) => sharedMotifFrameCache.prioritizeFrames(targets),
-            setFrame: (k, f, b) => {
-              sharedMotifFrameCache.setFrame(k, f, b);
+            hasFrame: (k, f) => sharedMotifFrameCache.hasFrame(k, f, this.div),
+            prioritizeFrames: (targets) => sharedMotifFrameCache.prioritizeFrames(targets, this.div),
+            setFrame: (k, f, div, b) => {
+              sharedMotifFrameCache.setFrame(k, f, div, b);
             },
             schedule: (cb) => scheduleIdle(cb),
             cancel: (t) => cancelIdle(t),
@@ -164,6 +166,24 @@ export class MotifFrameService {
     this.submitBakePlan();
   }
 
+  /// The Playback Resolution divisor preview, scrub and prewarm read stored
+  /// Motif frames at (ADR 0154). Export and finalization always read at 1.
+  get scaleDiv(): MotifReaderDiv {
+    return this.div;
+  }
+
+  /// A new divisor: requests at the old one are obsolete. L0 is not cleared:
+  /// frames read at another divisor stop matching and age out, live captures
+  /// still serve; the window refills at `div`.
+  setScaleDiv(div: MotifReaderDiv): void {
+    if (div === this.div) return;
+    this.div = div;
+    this.prewarmer?.setTargets([]);
+    this.lastPrewarmFrame = -1;
+    this.updatePrewarmTargets(this.deps.currentTimeUs());
+    this.recomputeBakeStatuses();
+  }
+
   noteFrameBoundary(tUsSnapped: number): void {
     if (!this.prewarmer) return;
     const frameIdx = Math.round(tUsSnapped * this.deps.fpsNum() / (1_000_000 * this.deps.fpsDen()));
@@ -227,6 +247,7 @@ export class MotifFrameService {
     // producer that only fills RAM. Foreground preview can still read/capture.
     if (this.preparationError) { this.prewarmer.setTargets([]); return; }
     const specs: PrewarmContentSpec[] = [];
+    const scaleDiv = this.div;
     this.forEachMotifLayer(tUs, (layer, tInLayerUs) => {
       const motif = getMotif(layer.params.motif_id);
       if (!motif) return;
@@ -242,6 +263,10 @@ export class MotifFrameService {
       // changes).
       const canonicalProps = desc.canonicalProps;
       const durationSec = desc.durationSec;
+      // Saved frames read at the divisor; holes are captured at full size.
+      // Plan only fully saved content at the smaller size, so the window
+      // never outgrows L0 with captures.
+      const div = sharedBakedKeyIndex.isComplete(desc.cacheKey, desc.contentDurationFrames) ? scaleDiv : 1;
       specs.push({
         cacheKey: desc.cacheKey,
         contentFrame: desc.contentFrame,
@@ -249,10 +274,10 @@ export class MotifFrameService {
         historyFrames: MOTIF_RECENT_FRAMES,
         // What one warmed frame costs the byte-bounded L0 cache — the planner
         // budget is in bytes, so a small Motif warms deeper than a 1080p one.
-        frameBytes: desc.renderW * desc.renderH * 4,
+        frameBytes: Math.ceil(desc.renderW / div) * Math.ceil(desc.renderH / div) * 4,
         // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
         // Disk-first: prefer a baked frame over a live raster, falling through
-        // to `rasterMotifFrame` (CDP) inside the resolver on miss / fs hiccup.
+        // to a live capture inside the resolver on a miss.
         render: (frame: number, requestKey: string) =>
           resolveMotifFrame(
             motif,
@@ -266,6 +291,7 @@ export class MotifFrameService {
             fpsDen,
             false,
             'background',
+            scaleDiv,
           ),
       });
     }, 500_000);
@@ -446,7 +472,7 @@ export class MotifFrameService {
       // L0 coverage of this layer's content frames — the "is preview warm"
       // signal that drives the green bar — the cache owns exact O(1) counts,
       // including frames that predate this service (e.g. preview remount).
-      const covered = sharedMotifFrameCache.frameCount(desc.cacheKey);
+      const covered = sharedMotifFrameCache.frameCount(desc.cacheKey, this.div);
       const status = motifWarmPhase(
         live ?? null,
         covered,

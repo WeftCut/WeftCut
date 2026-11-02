@@ -23,6 +23,9 @@ function setup() {
   return { a, tA, tB }
 }
 const ok = (r: ReturnType<ActorHandle['dispatch']>): unknown => { if (!r.ok) throw new Error(JSON.stringify(r.error)); return r.value }
+/** The named set shifted by one delta — `move_layers`' actor op. */
+const shiftSet = (a: ActorHandle, layers: Uuid[], deltaUs: number) =>
+  a.dispatch('move_layer_set', { request: { layers, tStartUs: null, deltaUs, track: null, insert: false, escapeLink: false } })
 const color = (a: ActorHandle, track: Uuid, s: number, e: number) => ok(a.dispatch('add_layer', { track, kind: 'color', t_start_us: s, t_end_us: e })) as Uuid
 const video = (a: ActorHandle, track: Uuid, s: number, e: number) =>
   ok(a.dispatch('add_layer', { track, kind: 'video', media: AV, src_in_us: 0, src_out_us: e - s, t_start_us: s, t_end_us: e })) as Uuid
@@ -152,7 +155,7 @@ describe('diffProjects — classes', () => {
     const m = ok(a.dispatch('add_marker', { t_us: S / 2 })) as Uuid
     ok(a.dispatch('attach_marker', { marker: m, layer: x }))
     const before = a.snapshot()
-    ok(a.dispatch('shift_layers', { layers: [x, y], delta_us: S }))
+    ok(shiftSet(a, [x, y], S))
     const cs = diffProjects(before, a.snapshot())
     // The marker's anchor — its truth — is unchanged; only its cached time followed the clip.
     expect(root(a.snapshot()).markers[0]!.t_us).toBe(1.5 * S)
@@ -175,7 +178,7 @@ describe('diffProjects — classes', () => {
     const moved = only(diffProjects(tied, a.snapshot()))
     expect(moved).toMatchObject({ id: M, details: [{ type: 'time', field: 'start', from_us: S, to_us: 3 * S }] })
     // Moved within its clip while the clip moved too: the marker's own instant changed, and its times say where it went.
-    ok(a.dispatch('shift_layers', { layers: [x], delta_us: S / 2 }))
+    ok(shiftSet(a, [x], S / 2))
     expect(only(diffProjects(tied, a.snapshot()).filter(c => c.id === M)).details).toEqual([{ type: 'time', field: 'start', from_us: S, to_us: 3.5 * S }])
     const free = structuredClone(tied)
     root(free).markers[0]!.anchor = null
@@ -311,7 +314,7 @@ describe('diffProjects — direct timing facts', () => {
     const gone = color(a, tA, 0, S), id = color(a, tB, 2 * S, 3 * S)
     const before = a.snapshot()
     ok(a.dispatch('delete_layers', { layers: [gone] }))
-    ok(a.dispatch('shift_layers', { layers: [id], delta_us: S }))
+    ok(shiftSet(a, [id], S))
     const changes = diffProjects(before, a.snapshot())
     ok(a.dispatch('move_layer', { layer: id, to_track: tA, t_start_us: 8 * S, escape_link: false }))
     const located = locateChanges(changes, a.snapshot())
@@ -355,9 +358,11 @@ describe('diffProjects — direct timing facts', () => {
 
 describe('diffProjects — track order', () => {
   it('a track reorder is a listed-only placement change of the composition; adding a track is not', () => {
-    const { a, tA } = setup()
+    const { a } = setup()
+    // A reserved A/B roll keeps its place (TrackReserved), so the reorder moves a lane of its own.
+    const free = ok(a.dispatch('add_track', {})) as Uuid
     const before = a.snapshot()
-    ok(a.dispatch('move_track', { track: tA, new_position: 1 }))
+    ok(a.dispatch('move_track', { track: free, new_position: 0 }))
     const after = a.snapshot()
     const c = only(diffProjects(before, after))
     expect(c).toMatchObject({ class: 'modified', id: entityKey('Composition', before.root_id), details: [{ type: 'aspect', aspect: 'placement' }], ranges: [] })
@@ -518,13 +523,19 @@ function apply(a: ActorHandle, op: Op): void {
   const tracks = root(p).tracks.map((t) => t.id)
   const layers = Object.values(p.compositions).flatMap((c) => c.tracks.flatMap((t) => t.layers.map((l) => l.id)))
   const pick = (n: number) => layers[n % layers.length]
-  if (op.t === 'reorder') { if (tracks.length > 1) a.dispatch('move_track', { track: tracks[op.n % tracks.length], new_position: (op.n + 1) % tracks.length }); return }
+  if (op.t === 'reorder') {
+    // A/B roll keep their place (TrackReserved): reorder a lane of its own, minting one first.
+    const free = root(p).tracks.filter((t) => t.role !== 'ARoll' && t.role !== 'BRoll')
+    if (free.length === 0) a.dispatch('add_track', {})
+    else a.dispatch('move_track', { track: free[op.n % free.length]!.id, new_position: (op.n + 1) % tracks.length })
+    return
+  }
   if (op.t !== 'add' && op.t !== 'marker' && layers.length === 0) return
   switch (op.t) {
     case 'add': a.dispatch('add_layer', { track: tracks[op.track], kind: 'color', t_start_us: op.start, t_end_us: op.start + op.len }); break
     case 'move': a.dispatch('move_layer', { layer: pick(op.n), to_track: tracks[op.track], t_start_us: op.start, escape_link: false }); break
     case 'trim': a.dispatch('trim_layer', { layer: pick(op.n), edge: op.edge, new_t_us: op.to, escape_link: false }); break
-    case 'shift': a.dispatch('shift_layers', { layers: [pick(op.n)], delta_us: op.delta }); break
+    case 'shift': shiftSet(a, [pick(op.n)], op.delta); break
     case 'delete': a.dispatch('delete_layers', { layers: [pick(op.n)] }); break
     case 'ripple': a.dispatch('ripple_delete_layers', { layers: [pick(op.n)] }); break
     case 'label': a.dispatch('update_layer', { layer: pick(op.n), patch: { label: `L${op.n}` } }); break

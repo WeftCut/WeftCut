@@ -1,4 +1,4 @@
-//! App-managed content helpers (ADR 0039 / 0043 / 0073). One stateless compute
+//! App-managed content helpers (ADR 0039). One stateless compute
 //! command: extract a downloaded tar archive into a staging directory. The
 //! caller (the TypeScript downloader in Electron main, which owns the whole
 //! download → verify → install lifecycle) has already SHA-256-verified the
@@ -196,7 +196,7 @@ mod tests {
         assert!(!tmp.path().join("escape.txt").exists());
     }
 
-    /// The Linux artifacts (ADR 0073) are gzip, and nothing in the catalog
+    /// The Linux artifacts (ADR 0039) are gzip, and nothing in the catalog
     /// tells the extractor which it is holding — the magic bytes do.
     #[tokio::test]
     async fn a_gzip_tar_extracts_through_the_same_command() {

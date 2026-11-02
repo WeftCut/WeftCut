@@ -630,7 +630,10 @@ impl Backend {
     /// re-routed through the `media:workspace_paths` seam in `import.rs`). Reads the
     /// workspace internally; no-op when none is set (the item keeps referencing the
     /// original source). The copy job's write-back is seam-routed (the TS host
-    /// applies it), so no actor handle is threaded through.
+    /// applies it), so no actor handle is threaded through. Answers the
+    /// workspace-relative `Media/<name>` the copy is reserved to land at, so
+    /// `import_media` can say where the pooled file will be before the copy
+    /// ran; `null` when nothing was queued.
     #[napi]
     #[cfg(feature = "jobs")]
     pub async fn enqueue_workspace_copy(
@@ -638,7 +641,7 @@ impl Backend {
         media_id: String,
         source_path: String,
         expected_generation: Option<u32>,
-    ) -> napi::Result<()> {
+    ) -> napi::Result<Option<String>> {
         let cache = self
             .cache
             .snapshot_expected(expected_generation)
@@ -646,16 +649,17 @@ impl Backend {
         let id = uuid::Uuid::parse_str(&media_id)
             .map_err(|e| Error::from_reason(format!("media_id: {e}")))?;
         if self.workspace.current().is_none() {
-            return Ok(());
+            return Ok(None);
         }
         let ws = cache
             .current_root()
             .parent()
             .expect("workspace cache has a parent")
             .to_path_buf();
-        self.import_queue
-            .enqueue_scoped(id, std::path::PathBuf::from(source_path), ws, cache);
-        Ok(())
+        Ok(self
+            .import_queue
+            .enqueue_scoped(id, std::path::PathBuf::from(source_path), ws, cache)
+            .map(|rel| rel.to_string_lossy().into_owned()))
     }
 
     /// Open the agent-session slot: installs a new session with the given
@@ -850,7 +854,7 @@ impl Backend {
                 ser(crate::commands::prefs::log_emit(self, a.input).await)
             }
             "log_dir_path" => ser(crate::commands::prefs::log_dir_path(self).await),
-            // App-managed content (ADR 0043/0073): stateless tar extraction
+            // App-managed content (ADR 0039): stateless tar extraction
             // (bzip2 or gzip) for the main-process downloader. Main-only —
             // router.ts never classifies it, so the renderer cannot reach it.
             "content_extract_archive" => {
@@ -1014,6 +1018,7 @@ impl Backend {
                     a.start_us,
                     a.end_us,
                     a.layer_audio_sources,
+                    a.finalization_id,
                 )
                 .await)
             }
@@ -1096,7 +1101,7 @@ impl Backend {
                 ser(crate::export::videosink::export_video_sink_cancel(&self.video_sink).await)
             }
             // The speech arms take their config in `args` like the VLM ones
-            // below (ADR 0148): Electron main injects `speechConfig` per call.
+            // below (ADR 0036): Electron main injects `speechConfig` per call.
             #[cfg(feature = "speech")]
             "settings_get_api_key_status" => {
                 let a: crate::commands::speech::SpeechConfigArgs =
@@ -1456,7 +1461,7 @@ mod tests {
                 "width": 64, "height": 64,
                 "fpsNum": 30, "fpsDen": 1, "codec": "hevc",
                 "bitrate": 0, "cbr": false, "gop": 30,
-                "software": false, "outputPath": ""
+                "software": false, "outputPath": "", "finalizationId": 0
             }
         })
         .to_string();
@@ -1471,13 +1476,14 @@ mod tests {
 
     #[cfg(feature = "mcp")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn mcp_catalog_lists_ping_but_no_ts_tools() {
+    async fn mcp_catalog_lists_native_tools_but_no_ts_tools() {
         // Rust catalog is native/compute/hybrid only.
         // `add_track` and `apply_subtitles` are TS-defined and must NOT appear here.
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
         b.init().await.unwrap();
         let cat = b.mcp_catalog().await.unwrap();
-        assert!(cat.contains("\"ping\""));
+        assert!(cat.contains("\"analyze_audio\""));
+        assert!(!cat.contains("\"ping\""), "ping is removed");
         assert!(!cat.contains("\"apply_subtitles\""));
         assert!(
             !cat.contains("\"add_track\""),
@@ -1521,7 +1527,7 @@ mod tests {
 
     /// The status reads the config injected with THIS call and nothing else:
     /// a key in one call's `speechConfig` is gone from the next call that does
-    /// not carry it — there is no resident cache to remember it (ADR 0148).
+    /// not carry it — there is no resident cache to remember it (ADR 0036).
     #[cfg(feature = "speech")]
     #[tokio::test]
     async fn settings_status_reflects_the_injected_config_only() {

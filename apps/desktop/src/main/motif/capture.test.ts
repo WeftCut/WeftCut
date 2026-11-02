@@ -40,7 +40,8 @@ let hangFrame = false
 let contentSize = { width: 32, height: 16 }
 /// The size the page is emulated at (Emulation.setDeviceMetricsOverride). A
 /// PNG readback while the window and the emulation disagree is BLANK: the
-/// macOS bitmap OSR host's empty first frame of a new document (ADR 0142).
+/// macOS bitmap OSR host's empty first frame of a new document
+/// (docs/notes/electron-chromium-behavior.md).
 let emulatedSize: { width: number; height: number } | null = null
 const BLANK = 'QkxBTks='
 

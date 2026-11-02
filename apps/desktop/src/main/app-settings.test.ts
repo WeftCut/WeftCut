@@ -593,7 +593,7 @@ describe('export preset library persistence', () => {
     const a = createAppSettingsStore(deps), b = createAppSettingsStore(deps);
     a.apply({ export_preset_change: { kind: 'create', preset } });
     b.apply({ export_preset_change: { kind: 'create', preset: { ...preset, id: 'second', name: 'Second' } } });
-    a.apply({ export_preset_change: { kind: 'rename', id: preset.id, name: 'Renamed' }, default_export_preset_id: preset.id });
+    a.apply({ export_preset_change: { kind: 'update', id: preset.id, name: 'Renamed' }, default_export_preset_id: preset.id });
     const restarted = createAppSettingsStore(deps);
     expect(restarted.get().export_presets?.map(p => p.name)).toEqual(['Renamed', 'Second']);
     expect(restarted.get().default_export_preset_id).toBe(preset.id);

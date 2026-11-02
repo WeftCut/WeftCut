@@ -42,7 +42,7 @@ if (!["webcodecs", "native", "sw", "native-copyback"].includes(STRATEGY)) {
   process.exit(1);
 }
 // The HW copy-back lane to pin via WEFTCUT_FORCE_HW_LANE (Linux: nvdec/vaapi,
-// ADR 0034; macOS: videotoolbox, issue #10). Only meaningful for
+// ADR 0029; macOS: videotoolbox, issue #10). Only meaningful for
 // `native-copyback`; the app leaves the lane UNFORCED and this env just
 // filters the resolver to one advertised HW lane.
 const HW_LANE = arg("hw-lane", "nvdec");
@@ -243,7 +243,7 @@ async function runSession(fixture, wantScenarios, poolSize, throttleMs) {
           gpu3d: { mean: mean(gpuS.gpu3d), max: Math.max(0, ...gpuS.gpu3d) },
           // Linux NVDEC copy-back only (empty elsewhere): the decoder engine's
           // machine-wide utilization % from nvidia-smi. `decode-idle` here + the
-          // fps/×realtime signal is what gates the ADR 0034 zero-copy deferral.
+          // fps/×realtime signal is what gates the ADR 0029 zero-copy deferral.
           nvdecDecoderUtil: { mean: mean(nvdecS.decoderUtil), max: Math.max(0, ...nvdecS.decoderUtil) },
           samples: { appMetrics: metricSamples.length, gpu: gpuS.videoDecode.length, nvdec: nvdecS.decoderUtil.length },
         },

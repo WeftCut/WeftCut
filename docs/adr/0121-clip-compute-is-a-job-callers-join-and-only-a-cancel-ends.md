@@ -1,96 +1,69 @@
-# ADR 0121: Clip compute is a job callers join, and only a cancel ends it
+---
+status: accepted
+---
 
-Status: Accepted
+# Clip compute is a job callers join, and only a cancel ends it
 
-Builds on [ADR 0120](0120-compute-a-person-waits-on-has-its-own-admission-lane.md),
-whose blocking reasons a queued job reports. The MCP error model, the
-diagnostic log and the agent activity stream of
-[ADR 0065](0065-agent-view-work-session-and-activity-are-independent.md) are
-unchanged; this adds a record beside them.
+Date: 2026-10-19
 
 ## Context
 
-`transcribe_clip` and `describe_clip` run for minutes on a long source. Called
-through the stdio shim they failed after 60 seconds with "WeftCut is not
-running" while the app kept working (#67). The shim now runs tool calls under
-an idle window that app progress re-arms, but the app sent no progress, so a
-long call still looked dead.
-
-Nothing tied the calls together either. An agent that retried after a timeout
-started a second job beside the first, three retries queued three, and a
-person pressing Transcribe on the clip an agent was reading started a fourth.
-No call could be cancelled, and nothing could tell whether the caller of a
-running call was still there. The Activity row of a call that never resolved
-stayed running for good.
+`transcribe_clip` and `describe_clip` run for minutes on a long source.
+Through the stdio shim they failed after 60 s with "WeftCut is not running"
+while the app kept working (#67); the shim's idle window is re-armed by app
+progress, and the app sent none. Retries after a timeout each started another
+job (three retries, three jobs), a person's press on the same clip started one
+more, nothing could be cancelled, and the Activity row of a call that never
+resolved stayed running forever.
 
 ## Decision
 
 A clip-compute call is a **job** in one main-process registry
-(`main/compute/jobs.ts`), shared by the agent's MCP calls and the renderer's.
+(`main/compute/jobs.ts`), shared by MCP calls and renderer calls.
 
-- **Synchronous calls, with progress.** No new tools and no MCP tasks: the
-  call returns the tool's answer when the job ends. While it runs, every
-  waiting caller whose request carries a `progressToken` gets
-  `notifications/progress` when it attaches, on every phase change and at
-  least every 15 seconds, with a growing `progress` and the phase in English
-  as `message`.
-- **Phases.** Native reports `compute:job_phase` for the job id the host
-  injects: queued (with the ADR 0120 reason), extracting, normalizing, loading
-  the model, inferring. A job is `queued` with no reason before native has
-  said anything, so no job is ever without a phase. There is no terminal
-  event; the native call settling is the end.
-- **Singleflight.** A call joins the running job with the same key: the tool,
-  the source (its content hash; its media id until hashed), the source span
-  (the window's offsets into the layer plus the layer's source mapping), and
-  every argument that changes the answer, including the engine the host
-  injects. A person's press on a clip an agent is transcribing joins that job.
-- **Only an explicit cancel cancels.** A caller that cancels (MCP
-  `notifications/cancelled`) settles at once and detaches. The job is
-  cancelled when no caller is attached any more and at least one of them
-  cancelled. The app's cancel button cancels the job for everyone.
-- **A disconnect leaves the job running.** The SDK aborts a handler both on
-  a cancel and when its transport closes. The app counts the abort as a
-  cancel only if the session's transport is still there one microtask later,
-  the same rule the shim uses. A caller that went away is not attached but
-  cancels nothing: its call ends when the job does, and a retry joins. Its
-  Activity row is marked `caller_disconnected` and stays running until then.
-- **Every caller settles exactly once**, with the answer, the failure, or
-  "cancelled". A cancelled call answers the agent with an `isError` result
-  whose code is `cancelled`. The model-file lease is held once per job, from
-  the native call's start until the native call settles, even if callers
-  were told about a cancel sooner.
-
-The renderer mirrors the registry (`compute_jobs:changed` plus a snapshot
-channel). A human call does not know its job id beforehand, because it may
-join an agent's job, so it tags the call with a `request_id`. Main strips the
-tag before the key and native see it, and the job record lists the tags of
-its human callers. A cancelled human run logs a cancelled terminal row at
-`info` that closes its op as `Ok`, as an import or export cancel does.
-
-## Considered options
-
-**MCP tasks or a start/poll tool pair.** Rejected for now (#67, D2): clients
-support them unevenly, an agent would have to learn a second calling
-convention for two tools, and progress over the open call is enough once
-the shim stops timing out.
-
-**Cancel on disconnect.** Rejected: a dropped stream, a client restart or a
-shim timeout looks like a disconnect. Cancelling then throws away minutes of
-work that the retry, sent seconds later, would have joined.
-
-**Match a human run to its job by layer and window.** Rejected: two jobs on
-one layer can differ in an argument such as normalization, and a press can
-join a job keyed from another layer over the same source. The tag is exact.
+- **Synchronous calls with progress**, not MCP tasks or a start/poll pair:
+  the call returns the tool's answer when the job ends. Callers with a
+  `progressToken` get `notifications/progress` on attach, on every phase
+  change and at least every 15 s (`HEARTBEAT_MS`), `message` = the phase in
+  English.
+- **Phases** come from native `compute:job_phase` for the injected job id:
+  queued (with the user-compute lane's blocking reason `memory` /
+  `finalization` / `budget`, see
+  [performance-settings.md](../performance-settings.md#admission-lanes), or
+  none yet), extracting, normalizing,
+  loading model, inferring. No terminal event; the native call settling ends
+  the job.
+- **Singleflight.** A call joins the running job with the same key: tool,
+  source content hash (media id until hashed), source span (window plus the
+  layer's source mapping) and every answer-changing argument, including the
+  injected engine and `refresh`.
+- **Only an explicit cancel cancels.** A caller's MCP `notifications/cancelled`
+  settles that caller at once; the job is cancelled when no caller is attached
+  and at least one cancelled. The app's cancel cancels it for everyone.
+- **A disconnect cancels nothing.** The SDK aborts a handler both on cancel
+  and on transport close; the app counts the abort as a cancel only if the
+  session's transport still exists one microtask later (the shim's rule). The
+  Activity row is marked `caller_disconnected` and runs until the job ends; a
+  retry joins.
+- Every caller settles exactly once (answer, failure, or an `isError` result
+  with code `cancelled`). The model-file lease is held once per job, for the
+  native call's lifetime.
+- The renderer mirrors the registry (`compute_jobs:changed` plus a snapshot).
+  A human call tags itself with a `request_id`, stripped before the key, since
+  it may join a job it did not start.
 
 ## Consequences
 
-- A retry after a timeout, or a second press, costs nothing extra; the Activity
-  row and the progress messages say what the job is waiting for.
-- A job whose callers have all gone runs to the end and nobody reads its
-  answer, though the native caches keep it. That is the price of letting
-  retries join.
-- An addon without `cancelComputeJob` cancels nothing natively. Callers are
-  still answered, and the lease is held until the native call ends.
-- The renderer's own in-flight gates are unchanged. They also cover the input
-  preflight and the write-back, and an agent's job on another clip must not
-  grey out a person's press.
+- A retry or a second press costs nothing; progress says what the job waits on.
+- A job whose callers all left runs to the end unread; native caches keep the
+  answer. That is the price of letting retries join.
+- An addon without `cancelComputeJob` still answers callers but cannot stop
+  native work.
+- The renderer's own in-flight gates stay per surface: an agent's job on
+  another clip must not grey out a person's press.
+
+Rejected: MCP tasks / start-poll tools (uneven client support, a second calling
+convention); cancel on disconnect (a dropped stream or shim timeout would throw
+away minutes of work the retry would have joined); matching a human run to a
+job by layer and window (two jobs on one layer can differ by an argument; a
+press can join a job keyed from another layer over the same source).

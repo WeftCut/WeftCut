@@ -13,8 +13,8 @@ use crate::state::{self, MediaItem, MediaKind};
 /// metadata probe + kind detection — NO blake3 (instant timeline appearance).
 /// `file_hash_blake3` is a PROVISIONAL sentinel (`pending-{id}`) that is never
 /// used as a cache key: the TS host runs the standalone `hash_media_source` pass
-/// and sets the real hash via `set_media_hash` BEFORE enqueuing any derivative
-/// (supersedes ADR 0007). Mints the media id
+/// and sets the real hash via `set_media_hash` BEFORE enqueuing any derivative.
+/// Mints the media id
 /// internally. The `probe_media` napi supplies admitted metadata.
 pub fn media_item_from_metadata(
     source_buf: PathBuf,

@@ -5,12 +5,13 @@ import { fileURLToPath } from 'node:url'
 
 import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir } from './helpers/driver'
 
-// The committed gate for ADR 0059 (a WebGPU device dies with its Application):
+// The committed gate for the rule that a WebGPU device dies with its Application
+// (docs/notes/electron-chromium-behavior.md, Chromium 152 WebGPU stall):
 // with a live hardware-decode session, close and reopen the Preview Panel N
 // times, and separately crash the GPU process, and assert the renderer never
 // freezes — each close must release every session, each reopen must re-engage
 // the HARDWARE lane rather than the sticky software fallback, and the app must
-// close without hanging. Before ADR 0059 this froze the renderer main thread
+// close without hanging. Without that rule this froze the renderer main thread
 // 30-45 s on Chromium 152 (Electron 44) whenever the closed Preview's WebGPU
 // device died out of order.
 //
@@ -100,7 +101,7 @@ async function openPreviewPanel(page: Page): Promise<void> {
 
 /// Seek into the clip and wait until the HARDWARE lane has bound the seeked frame.
 /// Every renderer round-trip is timed: a single call taking seconds is a frozen
-/// renderer main thread, which is the ADR-0059 regression, distinct from an
+/// renderer main thread, which is the device-lifetime regression, distinct from an
 /// empty ring. Returns the bound probe.
 async function expectHardwareBound(
   page: Page,
@@ -207,7 +208,7 @@ async function setupHardwareSession(lane: HwLane, where: string): Promise<Harnes
   return { app, page, layerId, rendererErrors, engaged }
 }
 
-test.describe('Preview reopen + GPU-crash stress on the hardware lane (ADR 0059)', () => {
+test.describe('Preview reopen + GPU-crash stress on the hardware lane', () => {
   test.skip(process.env.WEFTCUT_DECODE_E2E !== '1', 'needs the native-decode component (WEFTCUT_DECODE_E2E=1)')
   test.skip(!existsSync(H264), `fixture missing: ${H264}`)
 

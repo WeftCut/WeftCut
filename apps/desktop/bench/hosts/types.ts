@@ -72,6 +72,8 @@ export interface HostSession {
   joinPath(...parts: string[]): string
   /** Write a UTF-8 file at a path in the host's spelling. */
   writeText(hostPath: string, text: string): Promise<void>
+  /** Read a UTF-8 file at a path in the host's spelling. */
+  readText(hostPath: string): Promise<string>
   /** Each fixture's MP4 on the host and its fetch-time record
    *  (fixtures.mjs `fixture.json`: transcode parameters, ffmpeg version,
    *  output sha256). */
