@@ -65,8 +65,7 @@ FFMPEG_DIR="$PWD/resources/ffmpeg-lgpl/linux" \
 
 (Windows/macOS swap the `ffmpeg-lgpl/<os>` dir + loader var — DLLs already on
 `PATH` on Windows, `DYLD_FALLBACK_LIBRARY_PATH` on macOS; see `electron-ci.yml`.
-macOS also appends `-- --test-threads=1`: VideoToolbox sessions are finite and
-concurrent ProRes decodes fail with VT -19092.)
+macOS also appends `-- --test-threads=1`: VideoToolbox sessions are finite.)
 
 Lint gate — CI runs both on every OS with `-D warnings`, and the baseline is
 zero, so a new warning is a red build rather than noise:
