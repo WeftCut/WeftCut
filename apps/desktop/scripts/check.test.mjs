@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
-import { checkPlan } from './check.mjs'
+import { checkPlan } from './check-plan.mjs'
 
 const workflow = readFileSync(new URL('../../../.github/workflows/electron-ci.yml', import.meta.url), 'utf8')
 
@@ -51,6 +51,13 @@ test('Windows keeps its own PATH key and puts both ffmpeg sets on it', () => {
   assert.equal(env.PATH, undefined)
   assert.equal(env.FFMPEG_DIR, 'C:/d/resources/ffmpeg-lgpl/win')
   assert.equal(env.LIBCLANG_PATH, 'D:\\llvm')
+})
+
+test('both addons are rebuilt before anything reads them', () => {
+  const names = checkPlan({ platform: 'linux', root: '/d' }).map(({ name }) => name)
+  const firstReader = names.indexOf('typecheck')
+  assert.ok(names.indexOf('napi:build') >= 0 && names.indexOf('napi:build') < firstReader)
+  assert.ok(names.indexOf('napi:build:decode') >= 0 && names.indexOf('napi:build:decode') < firstReader)
 })
 
 test('--skip-rust leaves the TypeScript gates and no cargo step', () => {

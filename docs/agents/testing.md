@@ -7,11 +7,13 @@ not scattered by neglect.
 
 ## Before a PR
 
-`npm run check` (repo root) runs, in order, rustfmt, the typecheck, build-script
-tests, the MCP catalog check, unit tests, Clippy and every Rust test, with the
-environment each one needs. It stops at the first failure and needs a finished
-`npm run bootstrap`. `npm run check -- --skip-rust` runs the TypeScript half.
-E2E stays separate: run the specs your change touches.
+`npm run check` (repo root) runs, in order, rustfmt, both addon builds, the
+typecheck, build-script tests, the MCP catalog check, unit tests, Clippy and every
+Rust test, with the environment each one needs. It stops at the first failure and
+needs a finished `npm run bootstrap`. `npm run check -- --skip-rust` runs the
+TypeScript half against the addons already built, so a stale addon fails or passes
+it wrongly (see [below](#the-addon-is-rebuilt-by-nothing-but-napibuild)). E2E stays
+separate: run the specs your change touches.
 
 ## The layers
 
