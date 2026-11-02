@@ -58,10 +58,7 @@ export function spawnMotifWatcher(root: string, onChange: () => void, linkedRoot
   } catch {
     watcher = watch(canonical)
   }
-  watcher.on('change', (_event, filename) => {
-    if(String(filename??'').replaceAll('\\','/').startsWith('.transfers/'))return
-    deb.signal()
-  })
+  watcher.on('change', () => deb.signal())
   watcher.on('error', () => deb.signal())
   const linked=new Map<string,FSWatcher>()
   const refresh=()=>{

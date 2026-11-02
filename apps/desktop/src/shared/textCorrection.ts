@@ -3,16 +3,29 @@ import { CORRECTION_SCRIPT_MAX } from './textCorrectionRequest'
 
 export interface CorrectionPiece {
   start: number; end: number; text: string
+  /** Word tokens of the input the piece covers: 1, or a substituted run's length. */
+  tokens: number
   /** Matched manuscript sentence, independent of the ASR's punctuation. */
   referenceSentence?: number
   breakAfter?: boolean
+  /** The piece's words were taken from the script in place of others
+   *  (`text` may hold several words, or fewer than it covers). */
+  substituted?: boolean
 }
 export interface CorrectedText { text: string; pieces: CorrectionPiece[] }
 interface Token { start: number; end: number; raw: string; key: string; sound: string; protected: boolean }
 
 const HAN = /^\p{Script=Han}$/u
 const NUM = /^[\d０-９零〇一二两三四五六七八九十百千万亿点.％%]+$/u
-const NEGATIVE = new Set(['不', '没', '无', '未', '非', '别', '勿', '莫', '否', 'not', 'no', 'never', 'without'])
+const NEGATIVE = new Set(['不', '没', '无', '未', '非', '别', '勿', '莫', '否', 'not', 'no', 'never', 'without', 'nor', 'none', 'nothing', 'nobody', 'nowhere', 'neither', 'cannot'])
+// English quantities are words, not digits: never a substitution on either side.
+const NUMBER_WORDS = new Set(('zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen ' +
+  'twenty thirty forty fifty sixty seventy eighty ninety hundred thousand million billion trillion dozen half once twice ' +
+  'first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth fourteenth fifteenth sixteenth seventeenth eighteenth nineteenth ' +
+  'twentieth thirtieth fortieth fiftieth sixtieth seventieth eightieth ninetieth hundredth thousandth millionth billionth percent').split(' '))
+const LATIN = /^\p{Script=Latin}+(?:['’]\p{Script=Latin}+)*$/u
+/** Most words on either side of a substituted run. */
+const SPAN_MAX = 4
 const INITIAL_CONFUSIONS = [['z', 'zh'], ['c', 'ch'], ['s', 'sh'], ['ch', 'sh'], ['l', 'n'], ['f', 'h']]
 const digits: Record<string, number> = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 }
 
@@ -42,7 +55,7 @@ function tokenize(text: string): Token[] {
     const key = numeric ? (raw.startsWith('百分之') ? `${numberKey(raw.slice(3))}%` : numberKey(raw)) : raw.normalize('NFKC').toLowerCase()
     tokens.push({ start: m.index, end: m.index + raw.length, raw, key,
       sound: HAN.test(raw) ? pinyin(raw, { toneType: 'none', type: 'array' }).join('') : key,
-      protected: numeric || NEGATIVE.has(key) })
+      protected: numeric || NEGATIVE.has(key) || NUMBER_WORDS.has(key) || /n['’]t$/u.test(key) })
   }
   return tokens
 }
@@ -130,6 +143,39 @@ export function createTextCorrector(script: string): (text: string) => Corrected
     if (entries.length < 256) entries.push(i)
     index.set(key, entries)
   }
+  /** Misheard Latin words: between cue tokens `i1` and `i2`, aligned to the
+   * script in `a`, lies a run of 1–4 unmatched cue words and a run of 1–4
+   * unmatched script words. Two exact matches on each side anchor it, no
+   * sentence ends inside, and neither run holds a number or a negation. The
+   * answer is the script's run with its punctuation, or null. An empty run is
+   * an ad lib or a skipped line, never an edit; Han text keeps its homophone
+   * rules. */
+  const spanText = (tokens: Token[], text: string, a: Alignment, i1: number, i2: number): string | null => {
+    const j1 = a.pairs.get(i1), j2 = a.pairs.get(i2)
+    if (j1 === undefined || j2 === undefined) return null
+    const m = i2 - i1 - 1, n = j2 - j1 - 1
+    if (m < 1 || m > SPAN_MAX || n < 1 || n > SPAN_MAX || i1 < 1 || j1 < 1) return null
+    for (const [i, j] of [[i1 - 1, j1 - 1], [i1, j1], [i2, j2], [i2 + 1, j2 + 1]] as const) {
+      if (a.pairs.get(i) !== j || !tokens[i] || !ref[j] || !equivalent(tokens[i]!, ref[j]!)) return null
+    }
+    for (let i = i1 + 1; i < i2; i++) if (a.pairs.has(i) || !LATIN.test(tokens[i]!.raw) || tokens[i]!.protected) return null
+    for (let j = j1 + 1; j < j2; j++) if (!LATIN.test(ref[j]!.raw) || ref[j]!.protected) return null
+    for (let i = i1 - 1; i <= i2; i++) if (/[。！？.!?]/u.test(text.slice(tokens[i]!.end, tokens[i + 1]!.start))) return null
+    for (let j = j1 - 1; j <= j2; j++) if (referenceBreaks[j]) return null
+    return script.slice(ref[j1 + 1]!.start, ref[j2 - 1]!.end) + script.slice(ref[j2 - 1]!.end, ref[j2]!.start).slice(0, 16)
+  }
+  /** The anchors around script tokens (j1, j2) enclose one spelling wherever
+   *  they recur in the script (no other run, nor none). */
+  const uniqueRun = (j1: number, j2: number): boolean => {
+    const hits = index.get(`${ref[j1 - 1]!.sound}|${ref[j1]!.sound}`) ?? []
+    if (hits.length >= 256) return false
+    const spellings = new Set<string>()
+    for (const h of hits) for (let n = 0; n <= SPAN_MAX; n++) {
+      const x = ref[h + 2 + n], y = ref[h + 3 + n]
+      if (x && y && equivalent(x, ref[j2]!) && equivalent(y, ref[j2 + 1]!)) spellings.add(ref.slice(h + 2, h + 2 + n).map(t => t.key).join('|'))
+    }
+    return spellings.size === 1
+  }
   const correct = (text: string): CorrectedText => {
     // Existing sentence punctuation gives independent recovery points after
     // whole omitted sections and retakes. Newlines alone are NOT boundaries:
@@ -157,7 +203,29 @@ export function createTextCorrector(script: string): (text: string) => Corrected
       const candidates = [...new Set(starts)].map(start => align(tokens, ref.slice(start, start + Math.max(600, tokens.length * 2 + 96)), start)).sort((a, b) => b.score - a.score)
       const best = candidates[0]
       const usable = best && best.score >= Math.max(6, tokens.length * 1.2)
+      // Substituted runs, by their first cue token: the top candidates must
+      // all imply the same edit, else it abstains.
+      const runs = new Map<number, { to: number; text: string; first: number }>()
+      if (usable) {
+        const top = candidates.filter(c => c.score >= best.score - 1.5)
+        const order = [...best.pairs.keys()].sort((x, y) => x - y)
+        for (let k = 0; k + 1 < order.length; k++) {
+          const i1 = order[k]!, i2 = order[k + 1]!
+          if (i2 - i1 < 2) continue
+          const run = spanText(tokens, text, best, i1, i2)
+          if (run === null || !uniqueRun(best.pairs.get(i1)!, best.pairs.get(i2)!) || top.some(c => spanText(tokens, text, c, i1, i2) !== run)) continue
+          runs.set(i1 + 1, { to: i2, text: run, first: best.pairs.get(i1)! + 1 })
+        }
+      }
       for (let i = 0; i < tokens.length; i++) {
+        const run = runs.get(i)
+        if (run) {
+          // One piece covers the run, up to the right anchor.
+          pieces.push({ start: tokens[i]!.start, end: tokens[run.to]!.start, text: run.text, tokens: run.to - i,
+            referenceSentence: referenceSentences[run.first], breakAfter: false, substituted: true })
+          i = run.to - 1
+          continue
+        }
         const tok = tokens[i]!, next = all[base + i + 1]
         const end = next?.start ?? text.length
         let replacement = text.slice(tok.start, end)
@@ -193,17 +261,29 @@ export function createTextCorrector(script: string): (text: string) => Corrected
             const nextPair = best.pairs.get(i + 1)
             // Inside a sentence, don't borrow punctuation across unmatched
             // words. An authored sentence end also applies before an ad lib.
-            const canPunctuate = nextPair === j + 1 || !next || referenceBreaks[j]
+            const canPunctuate = nextPair === j + 1 || runs.has(i + 1) || !next || referenceBreaks[j]
             const punctuation = refTail.replace(/\s*\n\s*/g, ' ').slice(0, 16)
             // A manuscript line break must not add another trailing space on
             // every correction of a sentence/cue ending at this token.
             replacement = r.raw + (canPunctuate ? (next ? punctuation : punctuation.trimEnd()) : tail)
           }
         }
-        pieces.push({ start: tok.start, end, text: replacement, referenceSentence, breakAfter })
+        pieces.push({ start: tok.start, end, text: replacement, tokens: 1, referenceSentence, breakAfter })
       }
     }
     return { text: text.slice(0, all[0]?.start ?? text.length) + pieces.map(p => p.text).join(''), pieces }
   }
   return correct
+}
+
+/** How much of `text` aligns to the manuscript: the share of its word tokens
+ *  the corrector placed on a reference token (an exact match, an accepted
+ *  correction or a substituted run). Notes, a glossary or another take's script align little; the
+ *  full verbatim transcript of what is said aligns most of it. 1 for a text
+ *  with no words. */
+export function alignedShare(correct: (text: string) => CorrectedText, text: string): number {
+  const pieces = correct(text).pieces
+  if (!pieces.length) return 1
+  const total = pieces.reduce((n, p) => n + p.tokens, 0)
+  return pieces.reduce((n, p) => n + (p.referenceSentence !== undefined ? p.tokens : 0), 0) / total
 }

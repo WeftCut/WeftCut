@@ -75,7 +75,7 @@ export async function describeSelected(deps: {
     // No window at all, so Rust's own endpoints decide. A human who wants a
     // shorter one describes a SHOT from the Shots Panel, which is the same tool
     // over the boundaries the detector already found.
-    window: null,
+    wholeLayer: true,
     label: layerDisplayName(layer, (key, values) => i18n.t(key, values)),
   });
   // The failure's own sentence is already in the status log (`runDescribe` puts

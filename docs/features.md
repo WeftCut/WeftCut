@@ -28,9 +28,9 @@ History lives in `apps/desktop/src/main/state/history.ts`; per-op routing in
 | `set_composition` (any field, incl. `fps`, size, `duration_us`, `duration_pinned`), `fit_composition_to_layers` | **no** — project setup; the patch runs as a transform per snapshot (`History.replaceCompositionEverywhere`), so each snapshot refits/re-snaps against its own content |
 | passive duration shrink on delete / inward trim (unpinned) | rides the edit that caused it |
 | `replace_state` (open / new project) | no — resets history to one entry, drops checkpoints and the lock |
-| `undo`, `redo`, `jump_to { index }` | cursor-only |
+| `undo`, `redo`, `jump_to` | cursor-only |
 | `restore_checkpoint`, Revert all (review baseline) | yes |
-| `create_checkpoint`, `delete_checkpoint` | no entry and no `project:changed` broadcast; a surface listing checkpoints refetches itself (the History panel does) |
+| `create_checkpoint`, checkpoint delete (History panel) | no entry and no `project:changed` broadcast; a surface listing checkpoints refetches itself (the History panel does) |
 
 Because canvas changes cannot be undone, Settings → Project → Canvas opens with
 **Lock canvas settings** on; resolution and rate are inert until it is turned off,
@@ -46,12 +46,13 @@ project. The settings panel disables the control from `composition.fps_locked`.
 
 **User vs agent.** Both write one `History`; entries carry `Actor::User` /
 `Actor::Agent { client }` for the History panel, and Ctrl-Z walks across both.
-While `set_history_lock { locked: true, reason }` is held, every revert path —
-`undo`, `redo`, `jump_to`, `restore_checkpoint`, Revert all — fails with
-`HistoryLocked`; edits still record, and checkpoint create/delete is not gated.
-The lock is released by `set_history_lock { locked: false }` (any connection),
-the Agent panel's Unlock, the owning connection disconnecting or its work
-session ending, or a project swap.
+A work session holds the history lock (`begin_agent_session`, unless
+`lock: false`): every revert path — `undo`, `redo`, `jump_to`,
+`restore_checkpoint`, Revert all — from anyone but the session's own connection
+fails with `HistoryLocked`; edits still record, and checkpoint create/delete is
+not gated. The lock is released by the session ending (`end_agent_session`, a
+takeover, its connection disconnecting, the panel's End), the Agent panel's
+Unlock, or a project swap.
 
 ## Timeline selection
 
@@ -239,7 +240,7 @@ a *Group*, not a link ([CONTEXT.md](../CONTEXT.md#links-and-groups),
   get a new link, a non-spanning member joins its temporal side, and a side left
   with one member is unlinked. Under Link override (or `escape_link`) only the
   target splits; its left half stays linked and its right half is free.
-  `split_layer` takes an `at_t_us` array and applies every cut in one commit. The
+  `split_layer` takes a `t_cut_us` array and applies every cut in one commit. The
   shot-apply discard (§ Shot review) is the one place a delete travels a link.
 - **Duplicate** (`paste_layers`) clones every member handed to it and links the
   clones to each other, never to their sources, as one undo step. Other clones
@@ -301,7 +302,7 @@ precision (one sample is 0.042 px at the 2000 px/s ceiling); the inspector's
 audio fields switch units (timecode / ms / samples); the ruler stays frame-based.
 
 Mutations: `apps/desktop/src/main/state/mutations/links.ts`, with fan-out in
-`move.ts` / `trim.ts` / `split.ts`. Agents read links from `project://current`
+`move.ts` / `trim.ts` / `split.ts`. Agents read links from `project://links`
 (no list tool).
 
 ## Groups
@@ -309,7 +310,7 @@ Mutations: `apps/desktop/src/main/state/mutations/links.ts`, with fan-out in
 A *Group* is a composition placed as one layer — a precomp / nest
 ([ADR 0052](adr/0052-link-propagates-group-composes.md)). Its params are a
 `CompositionRef`: a source window `[src_in_us, src_out_us)` in the composition's
-own time, plus transform, opacity and blend. At rate 1, parent time `t` maps to
+own time, plus transform and opacity. At rate 1, parent time `t` maps to
 `t − t_start_us + src_in_us` (a retimed Group scales it — [Retime](#retime));
 nesting composes. Pre-compose, ungroup, add to
 Group and move to another composition are each one history entry and are the
@@ -331,7 +332,7 @@ the whole set.
 
 **Ungroup** (`groups_ungroup`; MCP `ungroup_layer`; `Mod+Shift+G`) puts members
 back in the parent at the same on-screen time. Allowed only on a **plain** Group
-layer — identity transform, static opacity 1, no effects, Normal blend —
+layer — identity transform, static opacity 1, no effects —
 otherwise `GroupNotPlain { reason }` names the field (those apply to the
 composite and have no per-member equivalent) — and only at rate 1. Members intersecting the window
 are copied in at `t + t_start_us − src_in_us`, trimmed to the window (source and
@@ -361,7 +362,7 @@ compositions (`CrossCompositionSet`); locked member or lane (`GroupLockedMember`
 including the destination itself (`CompositionCycle`); landing before time 0
 (`InvalidArgument`, naming the earliest landing the whole set clears — never
 clamped); unknown destination or lane (`CompositionNotFound`, `TrackNotFound`);
-destination = current composition (that is `move_layer`). Add to Group adds:
+destination = current composition (that is a move: `move_layer`, `move_layers` for agents). Add to Group adds:
 target not a Group layer (`WrongLayerKind`) or not a sibling of the set
 (`CrossCompositionSet`).
 
@@ -494,9 +495,9 @@ neighbours never move. Refusals (the local preview and the commit alike) name th
 colliding clips and, when known, the maximum duration and approximate minimum
 speed; a transition refusal names the transition. Only frame sampling is
 available. A retimed Group can be entered and edited, but ungrouping it or adding
-members needs rate 1. Agents: `retime_layers`, `set_preserve_pitch`,
-`set_frame_interpolation`, `get_frame_interpolation_capabilities`
-([mcp.md](mcp.md)). Code: `renderer/properties/RetimeFields.tsx`,
+members needs rate 1. Agents: `retime_layers` (rate or duration, and the
+`preserve_pitch` policy; its answer names the link partners left at their old
+rate; [mcp.md](mcp.md)). Code: `renderer/properties/RetimeFields.tsx`,
 `renderer/retimePlan.ts`, `main/state/mutations/retime.ts`.
 
 ## Split at the playhead
@@ -581,13 +582,16 @@ a gap on a locked lane always refuses. The span is sent as **both edges**; if it
 is no longer exactly a gap when it arrives, the actor refuses (`GapNotFound`)
 rather than re-measuring. History row: *Closed gap*.
 
-**Agents:** `delete_layers { layer_ids, ripple: true }` and
-`ripple_delete_gap { track_id, start_us, end_us }`. The internal
+**Agents:** `delete_layers { layer_ids, ripple: true }`, and for a gap
+`shift_layers { t_from_us, delta_us < 0 }` — one edge and a length, through the
+same planner, so whatever starts inside the span is named instead of
+`GapNotFound`. `move_layers { insert: true }` closes a moved set's span with
+the same planner and opens room at its landing. The internal
 `split_layer_multi` op carries a `ripple` flag so a split plus closing the
 discarded spans is one undo — what [Remove pauses](#pauses) and the
 `/cut-pauses` prompt use.
 
-Deliberately unbuilt: ripple trim, insert edits, per-track Sync Lock, rippling
+Deliberately unbuilt: ripple trim, insert edits in the timeline UI, per-track Sync Lock, rippling
 free markers, and a parent rippling when a Group shrinks. Rejected: bare `Delete`
 rippling (it stays the lift), same-track ripple (desyncs linked A/V on two
 tracks), and sliding a layer that starts inside the hole (a B-roll cut for the

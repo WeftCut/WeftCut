@@ -60,7 +60,6 @@ const api: WeftcutApi = {
       ipcRenderer.on('resources:export-waiting', listener);
       return () => { ipcRenderer.removeListener('resources:export-waiting', listener); };
     },
-    reserveExportFinalization: id => ipcRenderer.invoke('resources:reserve-export-finalization', id),
     acquire: request => ipcRenderer.invoke('resources:acquire', request),
     release: id => ipcRenderer.send('resources:release', id),
     playing: value => ipcRenderer.send('resources:playing', value),

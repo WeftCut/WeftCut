@@ -26,10 +26,11 @@ one tool in context for the life of the product.
   (`update_composition { patch: { duration_us: null } }` unpins).
 - **`<verb>_<resource>`, removals are `delete_*`.** Internal actor op names
   (`remove_media`, `links_create`) do not move; the tool table maps them.
-- **A rename is a break.** A renamed or merged tool does not dispatch under
-  its old name; the client gets `unknown tool` and re-reads the catalog.
-  `RETIRED_MCP_TOOL_NAMES` keeps its four pre-existing entries and takes no
-  new ones.
+- **A rename is a break, with no exceptions.** A renamed or merged tool does
+  not dispatch under its old name; the client gets `unknown tool` and re-reads
+  the catalog. There is no retired-name table and no alias, not even for a
+  name older than this decision. A renamed argument is refused naming its
+  replacement, never accepted.
 - **The wire is snake_case throughout**, including motion-path nodes
   (`in_handle`, `out_handle`, `tangent_mode`), with no schema-upgrade step for
   the old camelCase spelling.
@@ -43,6 +44,7 @@ one tool in context for the life of the product.
   so the surface cannot grow back by gesture; a new tool is first checked
   against an existing tool's arguments.
 - A stale client fails once per dropped name, instead of every client paying
-  for aliases always.
+  for aliases always — including a client that learned a name before this
+  decision.
 - Projects saved with camelCase Path-mode positions before the change fail
   validation on load and must be re-authored.

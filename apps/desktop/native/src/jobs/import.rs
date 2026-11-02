@@ -89,6 +89,9 @@ struct PendingImport {
     media_id: MediaId,
     source: PathBuf,
     workspace_root: PathBuf,
+    /// `Media/<name>`, reserved at enqueue so the import can answer where the
+    /// copy lands before it has run.
+    dest_rel: PathBuf,
     cache: Option<crate::cache::CacheLayout>,
     log_slot: LogBusSlot,
 }
@@ -97,6 +100,45 @@ struct RunningImport {
     media_id: MediaId,
     cancel: Arc<AtomicBool>,
     cancel_wake: Arc<Notify>,
+    workspace_root: PathBuf,
+    dest_rel: PathBuf,
+}
+
+impl ImportQueueInner {
+    /// The reservation of a copy of `media_id` still queued or running.
+    fn queued_dest(&self, media_id: MediaId) -> Option<PathBuf> {
+        if let Some(entry) = self.pending.iter().find(|e| e.media_id == media_id) {
+            return Some(entry.dest_rel.clone());
+        }
+        self.running
+            .as_ref()
+            .filter(|e| e.media_id == media_id && !e.cancel.load(Ordering::Acquire))
+            .map(|e| e.dest_rel.clone())
+    }
+
+    /// Reserve `Media/<name>` for a copy of `source` into `workspace_root`:
+    /// free on disk and not held by another copy queued or running there.
+    fn reserve_dest(&self, workspace_root: &Path, source: &Path) -> PathBuf {
+        let pending = self
+            .pending
+            .iter()
+            .map(|e| (&e.workspace_root, &e.dest_rel));
+        let running = self
+            .running
+            .iter()
+            .map(|e| (&e.workspace_root, &e.dest_rel));
+        let held: Vec<&PathBuf> = pending
+            .chain(running)
+            .filter(|(root, _)| root.as_path() == workspace_root)
+            .map(|(_, rel)| rel)
+            .collect();
+        let media_dir = workspace_root.join(MEDIA_DIR);
+        let name = pick_dest_filename(&media_dir, source, None, &|name| {
+            held.iter()
+                .any(|rel| rel.as_path() == Path::new(MEDIA_DIR).join(name))
+        });
+        PathBuf::from(MEDIA_DIR).join(name)
+    }
 }
 
 impl ImportQueue {
@@ -115,10 +157,19 @@ impl ImportQueue {
     }
 
     /// Push a copy job. Spawns the worker on first enqueue; subsequent
-    /// enqueues just append.
+    /// enqueues just append. Answers the `Media/<name>` the copy lands at —
+    /// reserved now, against the files already in `Media/` and every copy
+    /// still queued or running there — or `None` when the workspace is being
+    /// retired. A media id already queued or copying answers its own
+    /// reservation.
     #[cfg(test)]
-    pub fn enqueue(&self, media_id: MediaId, source: PathBuf, workspace_root: PathBuf) {
-        self.enqueue_inner(media_id, source, workspace_root, None);
+    pub fn enqueue(
+        &self,
+        media_id: MediaId,
+        source: PathBuf,
+        workspace_root: PathBuf,
+    ) -> Option<PathBuf> {
+        self.enqueue_inner(media_id, source, workspace_root, None)
     }
     pub fn enqueue_scoped(
         &self,
@@ -126,8 +177,8 @@ impl ImportQueue {
         source: PathBuf,
         workspace_root: PathBuf,
         cache: crate::cache::CacheLayout,
-    ) {
-        self.enqueue_inner(media_id, source, workspace_root, Some(cache));
+    ) -> Option<PathBuf> {
+        self.enqueue_inner(media_id, source, workspace_root, Some(cache))
     }
     fn enqueue_inner(
         &self,
@@ -135,19 +186,17 @@ impl ImportQueue {
         source: PathBuf,
         workspace_root: PathBuf,
         cache: Option<crate::cache::CacheLayout>,
-    ) {
+    ) -> Option<PathBuf> {
+        let dest_rel: PathBuf;
         let need_worker = {
             if cache.as_ref().is_some_and(|cache| cache.is_cancelled()) {
-                return;
+                return None;
             }
             let mut guard = self.inner.lock().expect("import queue poisoned");
-            if guard.pending.iter().any(|entry| entry.media_id == media_id)
-                || guard.running.as_ref().is_some_and(|entry| {
-                    entry.media_id == media_id && !entry.cancel.load(Ordering::Acquire)
-                })
-            {
-                return;
+            if let Some(queued) = guard.queued_dest(media_id) {
+                return Some(queued);
             }
+            dest_rel = guard.reserve_dest(&workspace_root, &source);
             guard.cache = cache.clone();
             guard.pending.push_back(PendingImport {
                 timer: super::diagnostics::StageTimer::new(
@@ -162,6 +211,7 @@ impl ImportQueue {
                 media_id,
                 source: source.clone(),
                 workspace_root,
+                dest_rel: dest_rel.clone(),
                 cache,
                 log_slot: self.log_slot.snapshot(),
             });
@@ -182,6 +232,7 @@ impl ImportQueue {
             let me = self.clone();
             tokio::spawn(async move { me.worker_loop().await });
         }
+        Some(dest_rel)
     }
 
     pub fn cancel_all(&self) {
@@ -284,6 +335,8 @@ impl ImportQueue {
                     media_id,
                     cancel: cancel.clone(),
                     cancel_wake: cancel_wake.clone(),
+                    workspace_root: next.workspace_root.clone(),
+                    dest_rel: next.dest_rel.clone(),
                 });
             }
             // Status-log producer: pair Started/Ok-Err on the same
@@ -340,7 +393,12 @@ impl ImportQueue {
                     serde_json::json!({ "mediaId": media_id.to_string() }),
                 );
                 next.timer.start();
-                let copy = copy_to_workspace(&next.source, &next.workspace_root, cancel.clone());
+                let copy = copy_to_workspace(
+                    &next.source,
+                    &next.workspace_root,
+                    &next.dest_rel,
+                    cancel.clone(),
+                );
                 tokio::pin!(copy);
                 if let Some(cache) = &next.cache {
                     tokio::select! {
@@ -526,16 +584,22 @@ struct CopyResult {
 /// basename NFC-normalized (a macOS source hands NFD names; the copy we own
 /// must byte-match the `path_rel` recorded in project.json after any
 /// byte-preserving transfer — see relink.ts); if that name is already taken
-/// on disk, prefix with the first 8 hex chars of `hash_hint` to disambiguate,
-/// or with a time-based value when there is none (the import copy passes
-/// none: the hash is computed in the same pass as the copy).
-fn pick_dest_filename(media_dir: &Path, source: &Path, hash_hint: Option<&str>) -> PathBuf {
+/// on disk or by `reserved` (a copy still queued there), prefix with the first
+/// 8 hex chars of `hash_hint` to disambiguate, or with a time-based value when
+/// there is none (the import copy passes none: the hash is computed in the
+/// same pass as the copy).
+fn pick_dest_filename(
+    media_dir: &Path,
+    source: &Path,
+    hash_hint: Option<&str>,
+    reserved: &dyn Fn(&Path) -> bool,
+) -> PathBuf {
     use unicode_normalization::UnicodeNormalization;
     let base = source
         .file_name()
         .map(|n| PathBuf::from(n.to_string_lossy().nfc().collect::<String>()))
         .unwrap_or_else(|| PathBuf::from("media"));
-    if !media_dir.join(&base).exists() {
+    if !media_dir.join(&base).exists() && !reserved(&base) {
         return base;
     }
     let prefix = hash_hint
@@ -556,8 +620,9 @@ fn rand_u32() -> u32 {
         .unwrap_or(0)
 }
 
-/// Copy `source` into `<workspace>/Media/<basename>` via a `.tmp + rename`
-/// atomic step, checking the cancel flag every chunk. Blake3-hashes the
+/// Copy `source` into `<workspace>/<dest_rel>` (the `Media/<name>` reserved at
+/// enqueue; re-picked only if a file took that name meanwhile) via a
+/// `.tmp + rename` atomic step, checking the cancel flag every chunk. Blake3-hashes the
 /// copied bytes in the same pass so the final content hash is available
 /// without a second read of the file. Returns:
 ///   - `Ok(Some(CopyResult))` on a successful copy + rename
@@ -566,6 +631,7 @@ fn rand_u32() -> u32 {
 async fn copy_to_workspace(
     source: &Path,
     workspace_root: &Path,
+    dest_rel: &Path,
     cancel: Arc<AtomicBool>,
 ) -> Result<Option<CopyResult>> {
     if cancel.load(Ordering::Relaxed) {
@@ -579,7 +645,15 @@ async fn copy_to_workspace(
         .await
         .with_context(|| format!("create {}", media_dir.display()))?;
 
-    let dest_rel_basename = pick_dest_filename(&media_dir, source, None);
+    let reserved_name = dest_rel
+        .file_name()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| pick_dest_filename(&media_dir, source, None, &|_| false));
+    let dest_rel_basename = if media_dir.join(&reserved_name).exists() {
+        pick_dest_filename(&media_dir, source, None, &|_| false)
+    } else {
+        reserved_name
+    };
     let dest_abs = media_dir.join(&dest_rel_basename);
     let tmp = dest_abs.with_extension(format!(
         "{}.tmp",
@@ -794,6 +868,7 @@ mod tests {
             media_dir,
             Path::new("/external/some/clip.mp4"),
             Some("deadbeef00112233"),
+            &|_| false,
         );
         assert_eq!(picked, PathBuf::from("clip.mp4"));
     }
@@ -806,7 +881,7 @@ mod tests {
         let nfd = "テ\u{3099}ート.mp4";
         let nfc = "デート.mp4";
         assert_ne!(nfd, nfc); // sanity: distinct byte sequences
-        let picked = pick_dest_filename(tmp.path(), Path::new(nfd), None);
+        let picked = pick_dest_filename(tmp.path(), Path::new(nfd), None, &|_| false);
         assert_eq!(picked.to_string_lossy(), nfc);
     }
 
@@ -819,10 +894,78 @@ mod tests {
             media_dir,
             Path::new("/another/place/clip.mp4"),
             Some("deadbeef00112233"),
+            &|_| false,
         );
         assert_eq!(
             picked.file_name().unwrap().to_string_lossy(),
             "deadbeef-clip.mp4"
+        );
+    }
+
+    #[test]
+    fn pick_dest_filename_avoids_a_reserved_name() {
+        let tmp = TempDir::new().unwrap();
+        let picked = pick_dest_filename(
+            tmp.path(),
+            Path::new("/another/place/clip.mp4"),
+            Some("deadbeef00112233"),
+            &|name| name == Path::new("clip.mp4"),
+        );
+        assert_eq!(picked, PathBuf::from("deadbeef-clip.mp4"));
+    }
+
+    #[tokio::test]
+    async fn enqueue_answers_the_reserved_media_path_and_the_copy_lands_there() {
+        // NEW-4: import_media answers where its copy lands before the copy
+        // ran. Two queued files with one basename get two names; asking again
+        // for a queued id answers its own reservation.
+        let ws = TempDir::new().unwrap();
+        let ext = TempDir::new().unwrap();
+        let (a, b) = (ext.path().join("a"), ext.path().join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(a.join("clip.mp4"), b"first").unwrap();
+        std::fs::write(b.join("clip.mp4"), b"second").unwrap();
+        let sink = Arc::new(crate::events::VecEventSink::new());
+        let queue = ImportQueue::new(sink.clone(), LogBusSlot::new());
+        let (first, second) = (crate::state::ids::new_id(), crate::state::ids::new_id());
+        let first_rel = queue
+            .enqueue(first, a.join("clip.mp4"), ws.path().to_path_buf())
+            .unwrap();
+        let second_rel = queue
+            .enqueue(second, b.join("clip.mp4"), ws.path().to_path_buf())
+            .unwrap();
+        assert_eq!(first_rel, PathBuf::from("Media/clip.mp4"));
+        assert_ne!(second_rel, first_rel);
+        assert!(second_rel.starts_with(MEDIA_DIR));
+        for _ in 0..500 {
+            if queue
+                .list()
+                .iter()
+                .filter(|e| matches!(e.status, ImportStatus::Completed))
+                .count()
+                == 2
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let landed = |id: MediaId| {
+            queue
+                .list()
+                .into_iter()
+                .find(|e| e.media_id == id.to_string())
+                .and_then(|e| e.destination_rel)
+        };
+        assert_eq!(landed(first), Some(first_rel.to_string_lossy().to_string()));
+        assert_eq!(
+            landed(second),
+            Some(second_rel.to_string_lossy().to_string())
+        );
+        assert_eq!(std::fs::read(ws.path().join(&first_rel)).unwrap(), b"first");
+        assert_eq!(
+            std::fs::read(ws.path().join(&second_rel)).unwrap(),
+            b"second"
         );
     }
 
@@ -834,7 +977,9 @@ mod tests {
         std::fs::write(&src, b"hello video").unwrap();
 
         let cancel = Arc::new(AtomicBool::new(false));
-        let result = copy_to_workspace(&src, ws.path(), cancel).await.unwrap();
+        let result = copy_to_workspace(&src, ws.path(), Path::new("Media/video.mp4"), cancel)
+            .await
+            .unwrap();
         let copy = result.expect("copy completed");
         assert_eq!(copy.dest_rel, PathBuf::from("Media/video.mp4"));
         let landed = ws.path().join(&copy.dest_rel);
@@ -930,7 +1075,9 @@ mod tests {
 
         // Pre-armed cancel flag: the copy loop must bail before its first read.
         let cancel = Arc::new(AtomicBool::new(true));
-        let result = copy_to_workspace(&src, ws.path(), cancel).await.unwrap();
+        let result = copy_to_workspace(&src, ws.path(), Path::new("Media/video.mp4"), cancel)
+            .await
+            .unwrap();
         assert!(result.is_none(), "expected cancelled outcome");
         // The .tmp shouldn't survive cancellation.
         let media_dir = ws.path().join(MEDIA_DIR);

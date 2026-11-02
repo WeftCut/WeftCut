@@ -9,8 +9,8 @@ import { EXPORT_TOOL_DEFS } from "../../mcp/exportTools";
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import {
-  MCP_TOOL_DEFS, LAYER_PARAMS_KEYS, LAYER_PARAM_KINDS, PARAM_KEYS, EFFECT_PARAM_KEY_PATTERN,
-  parseLayerParamsPatch, McpArgError,
+  MCP_TOOL_DEFS, LAYER_PARAMS_KEYS, LAYER_PARAM_KINDS, layerPatchKeys, PARAM_KEYS, EFFECT_PARAM_KEY_PATTERN,
+  parseLayerParamsPatch, ADD_LAYER_KINDS,
 } from '../mcp-commands'
 import { MOTIF_TOOL_DEFS } from '../../mcp/motifToolDefs'
 import { mergeMcpCatalog } from '../../mcp/mcpCatalog'
@@ -67,7 +67,9 @@ describe('update_layer_params advertises one variant per kind, from the table th
     for (const v of variants) {
       const kind = v.properties.kind.const as string
       const advertised = Object.keys(v.properties).filter((k) => k !== 'kind').sort()
-      expect(advertised, kind).toEqual([...LAYER_PARAMS_KEYS[kind]].sort())
+      expect(advertised, kind).toEqual([...layerPatchKeys(kind)].sort())
+      // `scale_linked` rides beside a scale pair, and only there.
+      expect(advertised.includes('scale_linked'), kind).toBe(LAYER_PARAMS_KEYS[kind]!.includes('scale_x'))
       expect(v.additionalProperties, `${kind} closes its set`).toBe(false)
       for (const [k, field] of Object.entries(v.properties)) expect(typeof field.description, `${kind}.${k} described`).toBe('string')
     }
@@ -84,7 +86,6 @@ describe('update_layer_params advertises one variant per kind, from the table th
         if (k === 'font_weight') probe[k] = 700
         if (k === 'align') probe[k] = 'Left'
         if (k === 'valign') probe[k] = 'Top'
-        if (k === 'blend_mode') probe[k] = 'Normal'
         if (k === 'role') probe[k] = 'music'
         if (k === 'graphic_role') probe[k] = 'title'
         if (k === 'intro') probe[k] = 'FadeIn'
@@ -94,7 +95,7 @@ describe('update_layer_params advertises one variant per kind, from the table th
     }
     // Text has no scale of its own (ADR 0049): the Text variant omits it and the parser refuses it.
     expect(Object.keys(variants.find((v) => v.properties.kind.const === 'Text')!.properties)).not.toContain('scale_x')
-    expect(() => parseLayerParamsPatch({ kind: 'Text', scale_x: 2 })).toThrow(McpArgError)
+    expect(() => parseLayerParamsPatch({ kind: 'Text', scale_x: 2 })).toThrow(/ADR 0049/)
   })
 
   it('the Text box pair and `shadow` keep their null arm: null MEANS back to auto / no shadow, not "omitted"', () => {
@@ -110,7 +111,7 @@ describe('param_key is an enum plus the effect-param pattern, on every tool that
   const takers = MCP_TOOL_DEFS.filter((d) => 'param_key' in ((d.inputSchema as Schema).properties ?? {}))
 
   it('every tool that takes it advertises the same schema', () => {
-    expect(takers.map((d) => d.name).sort()).toEqual(['clear_keyframes', 'delete_keyframe', 'get_param_track', 'set_extrapolation', 'set_keyframe', 'set_param_track', 'smooth_keyframes', 'update_keyframe'].sort())
+    expect(takers.map((d) => d.name).sort()).toEqual(['delete_keyframe', 'get_param_track', 'set_keyframe', 'set_param_track', 'update_keyframe'].sort())
     const first = JSON.stringify((takers[0].inputSchema as Schema).properties.param_key)
     for (const d of takers) expect(JSON.stringify((d.inputSchema as Schema).properties.param_key), d.name).toBe(first)
   })
@@ -131,8 +132,14 @@ describe('enums where the parser has one', () => {
   it('trim_layer.edge advertises in | out', () => {
     expect(def('trim_layer').properties.edge.enum).toEqual(['in', 'out'])
   })
-  it('add_audio_layer.role and the params role share the mixing buses, with no null in the enum', () => {
-    expect(def('add_audio_layer').properties.role.enum).toEqual(['dialogue', 'music', 'sfx', 'voiceover'])
+  it('add_layers audio role and the params role share the mixing buses, with no null in the enum', () => {
+    const arm = def('add_layers').properties.layers.items.properties.content.oneOf.find((a: Schema) => a.properties.kind.const === 'audio')
+    expect(arm.properties.role.enum).toEqual(['dialogue', 'music', 'sfx', 'voiceover'])
+  })
+  it('add_layers content kinds are the parser\'s, one oneOf arm each', () => {
+    const content = def('add_layers').properties.layers.items.properties.content
+    expect(content.properties.kind.enum).toEqual([...ADD_LAYER_KINDS])
+    expect(content.oneOf.map((a: Schema) => a.properties.kind.const)).toEqual([...ADD_LAYER_KINDS])
   })
 })
 
@@ -146,16 +153,19 @@ describe('null arms are advertised only where null means something omission does
     // composition/codec defaults or clears an optional rate constraint.
     ...['start_export', 'create_export_preset', 'update_export_preset'].flatMap(tool =>
       ['resolution_height','fps','custom_bitrate','max_bitrate','buffer_size','crf','audio.sample_rate','audio.channels'].map(k => `${tool}.settings.${k}`)),
-    'rename_track.label', 'update_layer.patch.label', 'rename_composition.label',
-    'update_marker.patch.label', 'update_marker.patch.note',
+    'rename_track.label', 'rename_layer.label', 'rename_composition.label',
+    // null turns a region back into a point; a marker's name and note take none.
+    'update_marker.patch.t_end_us',
     'update_composition.patch.duration_us',
     'set_marker_anchor.layer_id',
     'set_project_settings.patch.proxy_override.value', 'set_project_settings.patch.shot_review', 'set_project_settings.patch.pause_review',
     'update_layer_params.patch.crop', 'update_layer_params.patch.box_w', 'update_layer_params.patch.box_h', 'update_layer_params.patch.shadow',
-    // null clears the role; on a Motif add it overrides the manifest's with none.
-    'update_layer_params.patch.graphic_role', 'add_motif_layer.graphic_role',
+    // null clears the role.
+    'update_layer_params.patch.graphic_role',
     'update_layer_params.patch.intro', 'update_layer_params.patch.outro',
     'update_effect.patch.params.*',
+    // null selects the untagged Text and Motif layers.
+    'restyle_to_taste.graphic_role',
   ])
   it('across the whole advertised catalog, Rust tools included', () => {
     const nullable = new Set<string>()

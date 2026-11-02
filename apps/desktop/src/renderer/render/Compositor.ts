@@ -135,6 +135,10 @@ export interface CompositorInit {
   /// Preview can prefer interactive over throughput; export wants
   /// throughput. What it gates: see the private `mode` field.
   mode: "preview" | "export";
+  /// EXPORT mode only: false composites with clip effects skipped, the
+  /// preview's effects-off mode (`render_frames { without: ["effects"] }`).
+  /// Default true; a real export never sets it.
+  effects?: boolean;
   /// EXPORT mode's resolver for the asset URL of a media item's master proxy
   /// (decoded via WebCodecs). Preview mode uses `resolveSource` instead and
   /// does NOT pass this. Defaults to `() => null` when absent.
@@ -214,6 +218,8 @@ export class Compositor {
   /// Preview or export. Gates audio setup, decode-source resolution
   /// (`resolveSource` vs `proxyAssetUrl`), and the upcoming-clip prewarm.
   private mode: "preview" | "export";
+  /// Export mode's effects switch (`CompositorInit.effects`).
+  private exportEffects: boolean;
   private projectSummary: ProjectSummary | null = null;
   private proxyAssetUrl: (mediaId: string) => string | null;
   private resolveSource: (mediaId: string) => ResolvedRendererSource | null;
@@ -312,6 +318,7 @@ export class Compositor {
     this.compositionWidth = init.width;
     this.compositionHeight = init.height;
     this.mode = init.mode;
+    this.exportEffects = init.effects ?? true;
     this.underrun = new UnderrunTracker({ onChange: init.onUnderrun });
     this.app.stage.addChild(this.stage);
     this.host = {
@@ -656,11 +663,14 @@ export class Compositor {
     // applied at full quality during export regardless of the user's
     // preview performance setting. The export worker realm never
     // hydrates the settings store, but this guard is structural so
-    // correctness doesn't depend on that implementation detail.
+    // correctness doesn't depend on that implementation detail. The one
+    // export-mode exception is explicit: stills asked to skip effects.
     const previewEffectsEnabled =
-      this.mode === "export" || effectInput
-        ? true
-        : useAppSettingsStore.getState().settings.preview_effects_enabled;
+      this.mode === "export"
+        ? this.exportEffects
+        : effectInput
+          ? true
+          : useAppSettingsStore.getState().settings.preview_effects_enabled;
 
     // Fresh per-composite unsupported-media set — the reset half of the
     // ownership split documented on `unsupportedMedia`; the nodes only ADD

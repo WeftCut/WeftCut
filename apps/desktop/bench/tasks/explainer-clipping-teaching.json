@@ -5,7 +5,7 @@
   "setup": [
     { "tool": "import_media", "args": { "path": "{fixture:explainer-memory}" }, "as": "media" },
     { "tool": "read_project", "args": { "view": "tracks" }, "as": "tracks" },
-    { "tool": "add_video_layer", "args": { "media_id": "{ref:media.media_id}", "track_id": "{ref:tracks[role=ARoll].id}", "src_in_us": 0, "src_out_us": 215200000, "t_start_us": 0, "t_end_us": 215200000 } }
+    { "tool": "add_layers", "args": { "layers": [{ "track_id": "{ref:tracks[role=ARoll].id}", "t_start_us": 0, "t_end_us": 215200000, "content": { "kind": "video", "media_id": "{ref:media.media_id}", "src_in_us": 0 } }] } }
   ],
   "taste": "---\nextends: clipping\n---\n\nOur channel's explainers: editorial paper cut-outs over the speaker.\n",
   "prompt": "This is a section of a lecture by neuroscientist Lisa Genzel of Radboud University on how memory works. Turn it into an explainer for our channel: tighten out the pauses, put a title on it, introduce her with a name card when she's first on camera, call out the key points as she makes them, explain her main concepts visually instead of leaving it all to her talking, and caption the whole thing. The project is already set up in our channel's style.",

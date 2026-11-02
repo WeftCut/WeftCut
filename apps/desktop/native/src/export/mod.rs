@@ -71,13 +71,15 @@ fn target_channels(spec: &AudioEncodeSpec, composition_channels: u8) -> u8 {
 /// in Rust (`audio::mix`, sample-accurate over conform PCM); ffmpeg's role is
 /// reduced to the encode tail — `alimiter` ceiling + AAC/Opus encode. The
 /// PixiJS export Worker streams the temp video file; `mux_to_file` combines
-/// them. ADR 0019.
+/// them. ADR 0019. `resource_plan` is the export's admitted resource plan,
+/// which the mix borrows from.
 pub async fn export_audio_only_cancellable(
     project: &Project,
     output: &Path,
     audio: &AudioEncodeSpec,
     window_us: Option<(i64, i64)>,
     layer_audio_sources: Option<&HashMap<Uuid, PathBuf>>,
+    resource_plan: u32,
     cancellation: &cancellation::ExportCancellation,
 ) -> Result<bool> {
     mix_and_encode(
@@ -86,6 +88,7 @@ pub async fn export_audio_only_cancellable(
         audio,
         window_us,
         layer_audio_sources,
+        resource_plan,
         cancellation,
     )
     .await
@@ -99,6 +102,7 @@ async fn mix_and_encode(
     audio: &AudioEncodeSpec,
     window_us: Option<(i64, i64)>,
     layer_audio_sources: Option<&HashMap<Uuid, PathBuf>>,
+    resource_plan: u32,
     cancellation: &cancellation::ExportCancellation,
 ) -> Result<bool> {
     use crate::audio::mix::{mix_block, plan_for_project, MIX_BLOCK_FRAMES};
@@ -151,10 +155,10 @@ async fn mix_and_encode(
         }
     }
 
-    let _resources = tokio::select! {
-        _ = cancellation.cancelled() => anyhow::bail!("export cancelled"),
-        permit = crate::resources::interactive(128) => permit.map_err(anyhow::Error::msg)?,
-    };
+    // Borrowed from the export's admitted plan, never a fresh claim: a fresh
+    // one queued behind a running derivative and failed busy after 15 s,
+    // while the export itself already held its admission.
+    let _resources = crate::resources::export_audio(resource_plan).map_err(anyhow::Error::msg)?;
     let mut cmd = crate::ffmpeg::command(Bound::watchdog());
     cmd.args(["-y", "-hide_banner", "-nostats"])
         .args(["-f", "f32le", "-ar", "48000", "-ac", "2", "-i", "-"])
@@ -302,10 +306,11 @@ pub async fn mux_to_file(
     video_path: &Path,
     audio_path: &Path,
     output: &Path,
-    finalization_id: Option<u32>,
+    finalization_id: u32,
     audio_required: bool,
     staging_output: bool,
     cancellation: &cancellation::ExportCancellation,
+    events: &dyn crate::events::EventSink,
 ) -> Result<()> {
     cancellation.check()?;
     if !ffmpeg_is_installed() {
@@ -315,22 +320,23 @@ pub async fn mux_to_file(
     if audio_required && !has_audio {
         anyhow::bail!("The encoded audio file is missing; cannot finish this export");
     }
-    let (_continuation, _resources) = match finalization_id {
-        Some(id) => (
-            Some(tokio::select! {
-                _ = cancellation.cancelled() => anyhow::bail!("export cancelled"),
-                permit = crate::resources::continue_finalization(id) => permit.map_err(anyhow::Error::msg)?,
-            }),
-            None,
-        ),
-        None => (
-            None,
-            Some(tokio::select! {
-                _ = cancellation.cancelled() => anyhow::bail!("export cancelled"),
-                permit = crate::resources::interactive(64) => permit.map_err(anyhow::Error::msg)?,
-            }),
-        ),
+    let waited = std::sync::atomic::AtomicBool::new(false);
+    let _continuation = tokio::select! {
+        _ = cancellation.cancelled() => anyhow::bail!("export cancelled"),
+        permit = crate::resources::continue_finalization(finalization_id, |holders| {
+            waited.store(true, std::sync::atomic::Ordering::Relaxed);
+            events.emit(
+                crate::events::EVENT_EXPORT_MUX_WAIT,
+                serde_json::json!({ "waiting": true, "holders": holders }),
+            );
+        }) => permit.map_err(anyhow::Error::msg)?,
     };
+    if waited.load(std::sync::atomic::Ordering::Relaxed) {
+        events.emit(
+            crate::events::EVENT_EXPORT_MUX_WAIT,
+            serde_json::json!({ "waiting": false }),
+        );
+    }
     let mut cmd = crate::ffmpeg::command(Bound::watchdog());
     // Write beside the destination so committing is atomic on the same volume.
     // A failed mux must not truncate an existing user file or leave a partial
@@ -582,16 +588,19 @@ mod tests {
             sample_rate: Some(48_000),
             channels: Some(2),
         };
+        let plan = crate::resources::test_export_plan(crate::resources::EXPORT_AUDIO_MIX_MIB);
         let produced = super::mix_and_encode(
             &p,
             &out,
             &spec,
             None,
             None,
+            plan,
             &super::cancellation::ExportCancellation::default(),
         )
         .await
         .expect("mix_and_encode");
+        crate::resources::release_test_export_plan(plan);
         assert!(
             produced,
             "two audio layers in range -> should produce a file"

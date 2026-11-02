@@ -68,9 +68,8 @@ export async function groupSelected(): Promise<void> {
 }
 
 /// Ungroup the one selected Group layer (`Mod+Shift+G`). The gate greys the
-/// command out for a non-plain Group and names the field; the actor still
-/// refuses `blend_mode`, which is not on the wire, and that refusal surfaces as
-/// its own status line.
+/// command out for a non-plain Group and names the field; a refusal the gate
+/// did not foresee surfaces as its own status line.
 export async function ungroupSelected(): Promise<void> {
   const layer = selectedGroupLayer();
   if (!layer) return;

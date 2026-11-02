@@ -49,6 +49,10 @@ pub enum SpeechError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// The resource authority's refusal for the local engine, its own sentence.
+    #[error("{0}")]
+    Admission(String),
+
     #[cfg_attr(
         not(feature = "test-noop"),
         expect(
@@ -78,6 +82,7 @@ impl From<crate::inference::sidecar::SidecarFailure> for SpeechError {
     fn from(f: crate::inference::sidecar::SidecarFailure) -> Self {
         use crate::inference::sidecar::SidecarFailure as F;
         match f {
+            F::Admission(m) => Self::Admission(m),
             F::Io(e) => Self::Io(e),
             F::Spawn { program, cause } => Self::Spawn { program, cause },
             F::Timeout { secs } => Self::Timeout { secs },

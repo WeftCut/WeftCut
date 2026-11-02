@@ -67,14 +67,10 @@ export type AddToGroupState =
   | "starts_before_group"
   | "retimed";
 
-/// The reasons a Group layer is not plain that the WIRE can answer.
+/// The reasons a Group layer cannot be ungrouped, read from the WIRE.
 ///
-/// Twin of `main/state/mutations/groups.ts`'s `groupNotPlainReason`, minus its
-/// fourth arm: `blend_mode` is not on the summary (`CompositionRefView` carries
-/// the transform, the opacity and nothing else), so a non-Normal blend — which
-/// only MCP can set — reaches the actor's own refusal instead of this gate.
-/// That is the prevent-at-the-gesture / refuse-in-state split ADR 0052 §6
-/// states for overhang, applied to the one field the renderer cannot see.
+/// Twin of `main/state/mutations/groups.ts`'s `groupNotPlainReason` (transform,
+/// opacity, effects), plus `time_map` for the actor's separate rate-1 refusal.
 ///
 /// LANDMINE: the identity values are duplicated from main's `defaultTransform`
 /// and nothing enforces the agreement. A drift here does not throw — it greys
@@ -184,7 +180,7 @@ export function ungroupState(
 /// no MEMBER can be a Group, and the actor's `CompositionCycle` is reachable
 /// only through MCP — as is its `RootComposition`, since no gesture makes a
 /// Group clip that points at the root. That is the prevent-at-the-gesture /
-/// refuse-in-state split this file already states for `blend_mode`. Loosening
+/// refuse-in-state split ADR 0052 §6 states for overhang. Loosening
 /// exactly-one — nesting one Group inside another — is what would make a cycle
 /// state necessary. The gesture that DOES name its destination rather than
 /// spending the selection's Group clip on being it can have a Group as a

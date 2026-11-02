@@ -123,9 +123,12 @@ export const AUDIO_FX_CHANNELS: ReadonlySet<string> = new Set([
   'audio_fx_snapshot', 'ensure_export_audio_fx', 'audio_fx_reverify',
 ])
 
-/** Motif catalog-read + authoring + install + staleness channels, served in TS
- *  by runMotifTool. */
-export const MOTIF_CHANNELS: ReadonlySet<string> = new Set(['list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'begin_file_upload', 'write_file_chunk', 'read_file_transfer', 'delete_file_transfer', 'motif_staleness_report', 'acknowledge_motif_staleness'])
+/** Motif catalog-read + authoring + publication + staleness channels, served in
+ *  TS by runMotifTool. Renderer-only (never in MCP's `MOTIF_TOOLS`): the
+ *  user's own `publish_motif`, the approval card's `list_motif_proposals` /
+ *  `approve_motif_proposal` / `reject_motif_proposal` (ADR 0046), and the two
+ *  staleness channels. The renderer never calls `install_motif`, which proposes. */
+export const MOTIF_CHANNELS: ReadonlySet<string> = new Set(['list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal', 'motif_staleness_report', 'acknowledge_motif_staleness'])
 
 /** Native read/compute handlers that receive their project state slice (a MediaItem
  *  or the full Project) as an injected call argument — the TS host forwards it

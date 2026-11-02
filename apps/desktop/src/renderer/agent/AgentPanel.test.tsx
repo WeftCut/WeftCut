@@ -164,7 +164,7 @@ describe('AgentPanel', () => {
 })
 
 describe('AgentPanel — per-activity highlight', () => {
-  const edit = (patch: Partial<AgentActivity> = {}) => activity({ kind: 'operation', tool: 'add_video_layer', message: 'Add media clip', history_ids: ['op1'], effect: 'applied', ...patch })
+  const edit = (patch: Partial<AgentActivity> = {}) => activity({ kind: 'operation', tool: 'add_layers', message: 'Add clips', history_ids: ['op1'], effect: 'applied', ...patch })
   const reply = (available: boolean) => mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_activity_view'
     ? { available, reverted: false, decorations: [], changes: available ? [{ id: 'Layer:x', class: 'added', details: [], composition_id: 'root', ranges: [] }] : [] }
     : { available: true, url: '', connections: [] })
@@ -173,7 +173,7 @@ describe('AgentPanel — per-activity highlight', () => {
     reply(true)
     seed([edit()])
     render(<AgentPanel />)
-    fireEvent.click(screen.getByRole('button', { name: /Add media clip/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Add clips/ }))
     expect(await screen.findByText("Timeline shows this call's changes · 1")).toBeTruthy()
     expect(mocks.invoke).toHaveBeenCalledWith('review_activity_view', { history_ids: ['op1'] })
     fireEvent.click(screen.getByRole('button', { name: 'Back to unreviewed changes' }))
@@ -190,7 +190,7 @@ describe('AgentPanel — per-activity highlight', () => {
     reply(false)
     seed([edit()])
     render(<AgentPanel />)
-    fireEvent.click(screen.getByRole('button', { name: /Add media clip/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Add clips/ }))
     expect(await screen.findByText('Change detail is no longer available: this call has left the undo history.')).toBeTruthy()
     expect(screen.queryByText(/Timeline shows this call's changes/)).toBeNull()
     expect(useReview.getState().activity?.status).toBe('unavailable')

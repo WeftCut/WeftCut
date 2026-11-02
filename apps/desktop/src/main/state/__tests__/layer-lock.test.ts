@@ -57,14 +57,13 @@ describe('locked layer editing boundary', () => {
     expect(actor.dispatch('update_layer_params', { layer: second, patch: { kind: 'Color', width: 640 } }).ok).toBe(true)
   })
 
-  it('uses the same refusal for renderer, MCP and dry-run', () => {
+  it('uses the same refusal for renderer and MCP', () => {
     const { actor, second } = setup()
     const before = actor.snapshot()
     expect(actor.command('update_layer_params', { layerId: second, patch: { kind: 'Color', width: 640 } }).ok).toBe(false)
     const mcp = actor.mcpCall('update_layer_params', JSON.stringify({ layer_id: second, patch: { kind: 'Color', width: 640 } }))
     expect(mcp.ok).toBe(false)
     if (!mcp.ok) expect(mcp.error.message).toContain('locked')
-    expect(actor.dryRun([{ kind: 'DeleteLayers', ids: [second] }])).toEqual([{ ok: false, error: { error: 'LayerLocked', layer: second } }])
     expect(actor.snapshot()).toEqual(before)
   })
 

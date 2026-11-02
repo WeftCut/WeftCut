@@ -1,3 +1,4 @@
+import type { ResourceHolder } from './resource-policy';
 /** Plans describe simultaneous allocations, never output quality. */
 export interface ExportResourcePlan {
   memoryMiB: number;
@@ -10,6 +11,8 @@ export type ResourceWaitReason = 'busy' | 'pressure' | 'host-pressure' | 'budget
 export interface ExportResourceBlock {
   kind: 'blocked'; reason: ResourceWaitReason;
   requestedMiB: number; availableMiB: number; workMiB: number; revision: number;
+  /** What held the budget when admission refused, largest first. */
+  holders?: ResourceHolder[];
 }
 export type ExportAdmission = ExportResourceBlock | { kind: 'admitted'; id: number; index: number };
 export interface ExportPlanRequest { id: string; options: number[]; nativeEncoder: boolean }
@@ -20,11 +23,20 @@ export function resourceFailureReason(error: unknown): ResourceWaitReason | unde
   return match?.[1] as ResourceWaitReason | undefined;
 }
 
+/** Working memory of the audio mix + encode tail. It runs under its export's
+ * admitted plan and borrows from it (native `resources::EXPORT_AUDIO_MIX_MIB`),
+ * so every plan of an export with audio is at least this large. */
+export const EXPORT_AUDIO_MIX_MIB = 128;
+
 export const EXPORT_FRAME_WINDOW = 24;
 export const EXPORT_PRIVATE_FRAMES = 16;
 export function exportDecoderMiB(width: number, height: number, tenBit: boolean, frames: number): number {
   return Math.ceil(64 + width * height * (tenBit ? 8 : 4) * (frames + EXPORT_PRIVATE_FRAMES) / 1048576);
 }
+
+/** The fewest frames `minimumExportFrames` answers: a one-picture DPB plus
+ * the eight-picture headroom. */
+export const EXPORT_MIN_FRAMES = 9;
 
 /** AVC Annex A DPB bound + the existing eight-picture pipeline headroom.
  * Unknown codecs/levels keep the shipping 24 credits. Private/reference surface

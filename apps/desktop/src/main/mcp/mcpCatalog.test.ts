@@ -12,24 +12,24 @@ describe('mergeMcpCatalog', () => {
     // Rust catalog includes motif tool; TS receives both ts + motif defs.
     // Motif tools route 'motif' (not 'rust'/'hybrid'), so the Rust entry is dropped.
     const rust = [
-      { name: 'ping' }, { name: 'import_media' },          // native + hybrid (kept)
+      { name: 'synthesize_speech' }, { name: 'import_media' },          // native + hybrid (kept)
       { name: 'read_motif' },                         // motif in Rust — must be dropped
-      { name: 'add_track' }, { name: 'add_motif_layer' },   // TS-executed (dropped from rust side)
+      { name: 'add_track' }, { name: 'add_layers' },   // TS-executed (dropped from rust side)
     ]
     const merged = mergeMcpCatalog(rust, [...tsDefs, ...motifDefs])
     const names = merged.map((t) => t.name)
     expect(new Set(names).size).toBe(names.length)            // no dup
     expect(names).toContain('read_motif')               // present via TS motif table
-    expect(names).toContain('ping')                           // rust-native kept
+    expect(names).toContain('synthesize_speech')                           // rust-native kept
     expect(names).toContain('import_media')                   // hybrid kept
     expect(names).toContain('add_track')                      // ts kept (from TS table)
-    expect(names).toContain('add_motif_layer')
+    expect(names).toContain('add_layers')
     // The Rust entry for read_motif was dropped; only the TS motif def survives.
     expect(names.filter((n) => n === 'read_motif').length).toBe(1)
   })
 
   it('every merged name resolves to exactly one engine (no advertised-but-unhandled)', () => {
-    const rust = [{ name: 'list_motifs' }, { name: 'ping' }, { name: 'import_media' }, { name: 'add_track' }]
+    const rust = [{ name: 'list_motifs' }, { name: 'synthesize_speech' }, { name: 'import_media' }, { name: 'add_track' }]
     const merged = mergeMcpCatalog(rust, [...tsDefs, ...motifDefs])
     for (const t of merged) expect(['ts', 'rust', 'hybrid', 'motif']).toContain(routeMcpTool(t.name))
   })
@@ -44,7 +44,7 @@ describe('mergeMcpCatalog', () => {
 
 describe('mergeMcpResources', () => {
   const rustResources = [
-    { uri: 'project://current', name: 'Current project', mimeType: 'application/json' },
+    { uri: 'project://compiled', name: 'Audio mix plan', mimeType: 'application/json' },
     { uri: 'motifs://current', name: 'Motif catalog (rust)', mimeType: 'application/json' },
     { uri: 'project://media', name: 'Media pool', mimeType: 'application/json' },
   ]
@@ -54,7 +54,7 @@ describe('mergeMcpResources', () => {
     const uris = merged.map((r) => r.uri)
     expect(new Set(uris).size).toBe(uris.length)              // no dup
     expect(uris).toContain('motifs://current')                 // present via TS table
-    expect(uris).toContain('project://current')               // rust resource kept
+    expect(uris).toContain('project://compiled')               // rust resource kept
     expect(uris).toContain('project://media')                 // rust resource kept
     // TS entry, not the Rust one
     const motifRes = merged.find((r) => r.uri === 'motifs://current')!

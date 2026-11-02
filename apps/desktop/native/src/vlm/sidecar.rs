@@ -643,8 +643,8 @@ mod tests {
         for s in &segs {
             eprintln!(
                 "  [{:.2}s..{:.2}s] {}  tags={:?}",
-                s.t_start_us as f64 / 1e6,
-                s.t_end_us as f64 / 1e6,
+                s.src_start_us as f64 / 1e6,
+                s.src_end_us as f64 / 1e6,
                 s.text,
                 s.tags
             );

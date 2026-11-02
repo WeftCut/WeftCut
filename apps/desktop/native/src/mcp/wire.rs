@@ -66,6 +66,22 @@ impl McpToolError {
     }
 }
 
+/// A derivative (`waveform`, `thumbnail`) the import's background jobs have
+/// not written yet: the sentence and the typed `DerivativeNotReady` data every
+/// such refusal carries. The reader sees only that the file is missing; the
+/// host adds the job's `state` and `retry_after_s`, and rewrites the sentence
+/// for a job that failed (`main/state/derivative-jobs.ts`), since only main
+/// hears the job events. The sentence opens with "<derivative> not generated
+/// yet", which the renderer matches on.
+pub fn derivative_not_ready(media_id: &str, derivative: &str, extra: &str) -> (String, Value) {
+    (
+        format!(
+            "{derivative} not generated yet for media {media_id} — the import's background jobs are still generating it; retry in a few seconds{extra}"
+        ),
+        serde_json::json!({ "error": "DerivativeNotReady", "media_id": media_id, "derivative": derivative }),
+    )
+}
+
 impl std::fmt::Display for McpToolError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.message)
@@ -172,20 +188,42 @@ pub struct ToolAnnotations {
     pub destructive_hint: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub idempotent_hint: Option<bool>,
+    /// The spec defaults it to true; a tool that stays on this machine says
+    /// `false`, one that may reach a cloud engine `true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_world_hint: Option<bool>,
 }
 
 impl ToolAnnotations {
-    /// A read: commits nothing.
+    /// A read: commits nothing, on this machine.
     pub const READ: Self = Self {
         read_only_hint: Some(true),
         destructive_hint: None,
         idempotent_hint: None,
+        open_world_hint: Some(false),
+    };
+    /// A read whose engine may be a cloud or remote one (it uploads).
+    pub const READ_OPEN: Self = Self {
+        open_world_hint: Some(true),
+        ..Self::READ
     };
     /// A write that creates — twice is twice, nothing removed.
     pub const WRITE: Self = Self {
         read_only_hint: None,
         destructive_hint: Some(false),
         idempotent_hint: None,
+        open_world_hint: Some(false),
+    };
+    /// A write through a cloud engine.
+    pub const WRITE_OPEN: Self = Self {
+        open_world_hint: Some(true),
+        ..Self::WRITE
+    };
+    /// A write a repeat leaves as it was (an import of a pooled file answers
+    /// `existing`).
+    pub const WRITE_IDEMPOTENT: Self = Self {
+        idempotent_hint: Some(true),
+        ..Self::WRITE
     };
 }
 

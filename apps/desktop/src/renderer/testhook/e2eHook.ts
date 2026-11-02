@@ -15,6 +15,10 @@ import {
   addTrack,
   addMediaLayer,
   addMotif,
+  approveMotifProposal,
+  listMotifProposals,
+  rejectMotifProposal,
+  type MotifProposal,
   projectNewWorkspace,
   projectOpen,
   projectClose,
@@ -333,6 +337,14 @@ export interface E2EHook {
   /// Requires an open project + the editor mounted (call newProjectAndEnter
   /// first). Dev/e2e only.
   motifAddCountdown(): Promise<string>;
+  /// The pending Motif publications the Motif panel's cards show (an agent's
+  /// `install_motif` proposals), through the same channel the cards read.
+  motifProposals(): Promise<MotifProposal[]>;
+  /// Decide a pending proposal as the card's Approve / Reject buttons do, so
+  /// an operator (or a spec) can approve without clicking. `motifId` is the
+  /// draft; omit `proposalId` for that draft's pending one. Approve returns
+  /// the published id; reject returns null. Dev/e2e only.
+  motifDecideProposal(args: { motifId: string; proposalId?: string; approve: boolean; note?: string }): Promise<string | null>;
   /// Drive the live preview to composition-time `us`. Delegates to the active
   /// PlaybackEngine's `seek`, which sets the clock + re-composites the frame
   /// (the same path the transport/scrubber uses). No-op until the Pixi preview
@@ -1119,6 +1131,14 @@ export function installMotifHook(): void {
     return btoa(binary);
   };
 
+  hookSlot().motifProposals = () => listMotifProposals();
+  hookSlot().motifDecideProposal = async ({ motifId, proposalId, approve, note }) => {
+    const id = proposalId ?? (await listMotifProposals()).find((p) => p.motif_id === motifId)?.proposal_id;
+    if (!id) throw new Error(`motifDecideProposal: no pending proposal from the draft '${motifId}'`);
+    if (approve) return approveMotifProposal(motifId, id);
+    await rejectMotifProposal(motifId, id, note);
+    return null;
+  };
   hookSlot().motifAddCountdown = async () => {
     return addMotif({
       motifId: "countdown",

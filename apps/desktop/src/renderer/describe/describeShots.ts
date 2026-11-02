@@ -9,7 +9,8 @@
 // is about that shot and lands on that row.
 //
 // Which is also why this needs no new tool. `describe_clip` already takes
-// `t_start_us` / `t_end_us` and validates them against the layer; each shot run
+// `src_start_us` / `src_end_us` — the shot's own source span — and validates
+// them against the source the layer plays; each shot run
 // carries the `shot` purpose, so N shot-sized runs accumulate apart from the
 // whole-clip description, and the rows read them back through
 // `media://{id}/shot-description`.
@@ -25,17 +26,14 @@ import {
 } from "./descriptionsStore";
 import { runDescribe } from "./describeRun";
 
-/// One shot to describe: the span in both clocks, and the ordinal it is called
-/// by. `index` is 0-based, as `ShotRow.index` is; the label says `index + 1`.
+/// One shot to describe: the span, and the ordinal it is called by. `index`
+/// is 0-based, as `ShotRow.index` is; the label says `index + 1`.
 export interface DescribableShot {
   index: number;
-  /// Source time — the domain the answer is merged over and the rows are keyed
-  /// in.
+  /// Source time — the domain of `describe_clip`'s window, of the answer
+  /// merged over it, and of the rows' keys.
   srcStartUs: number;
   srcEndUs: number;
-  /// Timeline time — the domain `describe_clip`'s window arguments are in.
-  tStartUs: number;
-  tEndUs: number;
 }
 
 /// The clip the shots belong to.
@@ -133,12 +131,11 @@ export async function describeOneShot(
     mediaId: subject.mediaId,
     srcStartUs: shot.srcStartUs,
     srcEndUs: shot.srcEndUs,
-    // The window in TIMELINE time, which is the domain `describe_clip` validates
-    // against the layer. A merged row's span is its parts concatenated, so this
-    // is one window over several detected shots — exactly the span the reviewer
-    // decided is one shot, which is the only span whose prose would mean
-    // anything on that row.
-    window: { tStartUs: shot.tStartUs, tEndUs: shot.tEndUs },
+    // A merged row's span is its parts concatenated, so the window is one
+    // span over several detected shots — exactly the span the reviewer decided
+    // is one shot, which is the only span whose prose would mean anything on
+    // that row.
+    wholeLayer: false,
     label: shotLabel(subject.clipName, shot.index),
   });
 }

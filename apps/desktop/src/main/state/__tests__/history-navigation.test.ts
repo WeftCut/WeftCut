@@ -135,6 +135,23 @@ describe('jump_to — random access over the stack', () => {
     })
   })
 
+  it("MCP's jump_to names the op, not its index, and answers the row it landed on", () => {
+    const { actor, edit } = setup()
+    edit(); edit(); edit()
+    const ops = actor.historyView(50).ops
+    const r = actor.mcpCall('jump_to', JSON.stringify({ op_id: ops[1]!.op_id }))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(layerCount(actor)).toBe(1)
+    expect(r.result.structuredContent).toMatchObject({ cursor: 1, at: { op_id: ops[1]!.op_id } })
+    const gone = actor.mcpCall('jump_to', JSON.stringify({ op_id: '00000000-0000-0000-0000-0000000000ee' }))
+    expect(gone).toMatchObject({ ok: false, error: { code: 'invalid_params' } })
+    if (!gone.ok) expect(gone.error.message).toContain('project://history')
+    expect(actor.historyView(50).cursor).toBe(1)
+    // The index is not the argument any more.
+    expect(actor.mcpCall('jump_to', JSON.stringify({ index: 0 })).ok).toBe(false)
+  })
+
   it('is reachable through the renderer channel (project_jump_to → jump_to)', () => {
     const { actor, edit } = setup()
     edit(); edit()

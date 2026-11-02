@@ -30,7 +30,6 @@ function makeInMemoryDeps() {
   }
   const deps = {
     send: (_event: string, _payload: unknown) => {},
-    mcpNotify: () => {},
     fileExists: (p: string) => memFs.exists(p),
     fs: memFs,
     join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/'),

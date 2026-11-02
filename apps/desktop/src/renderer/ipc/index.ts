@@ -11,6 +11,7 @@ import type { CropRect } from '../../shared/crop';
 
 import { invoke } from "@/bridge/ipc";
 import type { PositionAnimation } from '../../shared/position';
+import type { ResourceHolder } from '../../shared/resource-policy';
 import { TACK_DELETE_CHANNEL, TACK_SET_STATUS_CHANNEL, type TackDeleteSelector, type TackStatus } from '../../shared/agent-activity';
 import {
   COMPUTE_CANCELLED_FIELD,
@@ -695,9 +696,7 @@ export interface TransitionSummary {
 }
 
 export interface LayerPatch {
-  label?: string;
-  t_start_us?: number;
-  t_end_us?: number;
+  label?: string | null;
   enabled?: boolean;
   locked?: boolean;
 }
@@ -1307,19 +1306,28 @@ export interface AudioExportSpec {
 
 /// Audio-only export at `outputPath` (extension picks the muxer: .m4a for AAC,
 /// .mka for Opus). `range` trims the audio to the export window (null = whole
-/// project). Awaitable; emits no events.
+/// project). The mix borrows its memory from the export's admitted plan, named
+/// by `finalizationToken` (`admitExportResources`); it never claims fresh
+/// resources. Awaitable; emits no events.
 export async function exportProjectAudioOnly(
   outputPath: string,
   audio: AudioExportSpec,
   range: { startUs: number; endUs: number } | null,
+  finalizationToken: string,
 ): Promise<boolean> {
   return invoke<boolean>("export_project_audio_only", {
     outputPath,
     audio,
     startUs: range?.startUs ?? null,
     endUs: range?.endUs ?? null,
+    finalizationToken,
   });
 }
+
+/// The mux tail started or stopped waiting for a CPU slot (its plan already
+/// holds the memory). `holders` is what occupies the CPU.
+export const EXPORT_MUX_WAIT = "export:mux_wait";
+export type ExportMuxWait = { waiting: true; holders: ResourceHolder[] } | { waiting: false };
 
 /// Mux `video` + `audio` into `output` — always a stream-copy. Every export
 /// path (WebCodecs direct-encode, or the native-encode video sink) already
@@ -1328,13 +1336,15 @@ export async function muxExport(
   videoPath: string,
   audioPath: string,
   outputPath: string,
-  finalization?: { token?: string | undefined; audioRequired: boolean; stagingOutput?: boolean },
+  finalization: { token: string; audioRequired: boolean; stagingOutput?: boolean },
 ): Promise<void> {
   return invoke<void>("mux_export", {
     videoPath,
     audioPath,
     outputPath,
-    ...(finalization ? { finalizationToken: finalization.token, audioRequired: finalization.audioRequired, stagingOutput: finalization.stagingOutput } : {}),
+    finalizationToken: finalization.token,
+    audioRequired: finalization.audioRequired,
+    stagingOutput: finalization.stagingOutput,
   });
 }
 
@@ -2011,8 +2021,9 @@ export interface McpInfoView {
   /// build:cli has produced the bundle (the panel then falls back to
   /// HTTP-direct as the primary path).
   shim_path: string | null;
-  /// State of the <userData>/skills refresh — the folder the user copies into
-  /// their agent client's skills directory. Anything but `installed` is a
+  /// State of the <userData>/skills refresh — the app's own copy, which the
+  /// user copies into their agent client's skills directory. It says nothing
+  /// about that client's copy, which the app cannot see. Anything but `current` is a
   /// condition the panel reports; main/mcp/skillsInstall.ts says what each
   /// fault means and why none of them is a reason to hide the section.
   skills: SkillsInstallView;
@@ -2027,7 +2038,7 @@ export type SkillsFault =
   | "copy_failed";
 
 export type SkillsInstallView =
-  | { state: "installed"; dir: string }
+  | { state: "current"; dir: string }
   | { state: "stale"; dir: string; fault: SkillsFault }
   | { state: "unavailable"; dir: null; fault: SkillsFault };
 
@@ -2397,7 +2408,7 @@ export async function getMediaThumbnail(mediaId: string): Promise<string> {
 
 /// One frame of a source at `tUs` (source-absolute microseconds) as a `data:`
 /// URL, ready for an `img` src. Served through the same
-/// `media://{id}/frame/{t_us}` resource an agent reads, so the extraction is
+/// `media://{id}/frame/{src_us}` resource an agent reads, so the extraction is
 /// cached per `(source, t_us)` and re-showing a frame is a cache read rather
 /// than a second decode.
 ///
@@ -2843,12 +2854,12 @@ export type PeaksSource = "raw" | "fx";
 /// sets a threshold from, and which peaks were read. Mirrors Rust
 /// `DetectPausesResult`.
 ///
-/// `noise_floor_amp` is the 10th percentile of the peaks inside the subject's
-/// source window, as a peak amplitude in [0, 1]; `0` when the window holds no
-/// peak at all.
+/// `noise_floor_db` is the 10th percentile of the peaks inside the subject's
+/// source window, dBFS; `null` when the window holds no peak at all or only
+/// digital silence.
 export interface DetectPausesResult {
   pauses: PauseRegion[];
-  noise_floor_amp: number;
+  noise_floor_db: number | null;
   peaks_source: PeaksSource;
 }
 
@@ -2866,12 +2877,12 @@ export interface DetectPausesResult {
 /// (`properties/PausesSection.tsx`).
 export async function detectPauses(args: {
   layerId: string;
-  thresholdAmp?: number;
+  thresholdDb?: number;
   minPauseUs?: number;
 }): Promise<DetectPausesResult> {
   return invoke<DetectPausesResult>("detect_pauses", {
     layer_id: args.layerId,
-    ...(args.thresholdAmp === undefined ? {} : { threshold_amp: args.thresholdAmp }),
+    ...(args.thresholdDb === undefined ? {} : { threshold_db: args.thresholdDb }),
     ...(args.minPauseUs === undefined ? {} : { min_pause_us: args.minPauseUs }),
   });
 }
@@ -2889,12 +2900,12 @@ export async function detectPauses(args: {
 /// threshold — re-tuning and re-running costs no undo steps.
 export async function markPauses(args: {
   layerId: string;
-  thresholdAmp?: number;
+  thresholdDb?: number;
   minPauseUs?: number;
 }): Promise<{ markers: number; marker_ids: string[] }> {
   return invoke<{ markers: number; marker_ids: string[] }>("mark_pauses", {
     layer_id: args.layerId,
-    ...(args.thresholdAmp === undefined ? {} : { threshold_amp: args.thresholdAmp }),
+    ...(args.thresholdDb === undefined ? {} : { threshold_db: args.thresholdDb }),
     ...(args.minPauseUs === undefined ? {} : { min_pause_us: args.minPauseUs }),
   });
 }
@@ -2939,13 +2950,13 @@ export interface RemovePausesResult {
 /// text block (`main/state/hybrids.ts` states that contract).
 export async function removePauses(args: {
   layerId: string;
-  thresholdAmp?: number;
+  thresholdDb?: number;
   minPauseUs?: number;
   padUs?: number;
 }): Promise<RemovePausesResult> {
   const json = await invoke<string>("remove_pauses", {
     layer_id: args.layerId,
-    ...(args.thresholdAmp === undefined ? {} : { threshold_amp: args.thresholdAmp }),
+    ...(args.thresholdDb === undefined ? {} : { threshold_db: args.thresholdDb }),
     ...(args.minPauseUs === undefined ? {} : { min_pause_us: args.minPauseUs }),
     ...(args.padUs === undefined ? {} : { pad_us: args.padUs }),
   });
@@ -3031,8 +3042,8 @@ export async function reportAudioMeter(report: {
 /// makes a shot row's own source span the only join needed. Mirrors Rust
 /// `DescSegment` (`native/src/vlm/description.rs`).
 export interface DescSegment {
-  t_start_us: number;
-  t_end_us: number;
+  src_start_us: number;
+  src_end_us: number;
   text: string;
   tags: string[];
 }
@@ -3080,7 +3091,8 @@ export interface DescriptionCache {
 /// `(source, backend, model, fps, focus, language)` — so a second call over a
 /// window the same key already covers returns from disk with no model spawn.
 ///
-/// `t_start_us` / `t_end_us` default to the layer's own endpoints in Rust. The
+/// `src_start_us` / `src_end_us` (source time, the domain of the shot rows and
+/// the answer's segments) default to the source the layer plays, in Rust. The
 /// THREE view arguments — sampling, focus, language — are not on this signature
 /// at all: main fills them from the user's Settings → Video understanding
 /// (`main/mcp/server.ts`), which is what makes a run land in the view
@@ -3091,15 +3103,15 @@ export interface DescriptionCache {
 export async function describeClip(args: {
   purpose?: import("../../shared/description").DescriptionPurpose;
   layerId: string;
-  tStartUs?: number;
-  tEndUs?: number;
+  srcStartUs?: number;
+  srcEndUs?: number;
   requestId?: string;
 }): Promise<SceneDescription> {
   return throwIfCancelled(await invoke<SceneDescription | ComputeCancelledPayload>("describe_clip", {
     layer_id: args.layerId,
     purpose: args.purpose ?? "clip",
-    ...(args.tStartUs === undefined ? {} : { t_start_us: args.tStartUs }),
-    ...(args.tEndUs === undefined ? {} : { t_end_us: args.tEndUs }),
+    ...(args.srcStartUs === undefined ? {} : { src_start_us: args.srcStartUs }),
+    ...(args.srcEndUs === undefined ? {} : { src_end_us: args.srcEndUs }),
     ...(args.requestId ? { [COMPUTE_REQUEST_ID_ARG]: args.requestId } : {}),
   }));
 }
@@ -3177,6 +3189,14 @@ export interface MotifSummary {
   target_id?: string;
   source_id?: string;
   diagnostic?: string;
+  /// A draft's latest proposed publication (an agent's `install_motif`).
+  publication?: {
+    state: "awaiting_approval" | "approved" | "rejected";
+    proposal_id: string;
+    revision: string;
+    note?: string;
+    version?: number;
+  };
   /// True when a `params.html` sits next to this Motif's `index.html`, i.e. the
   /// Motif owns its parameter UI and the property panel embeds that page
   /// instead of generating the fallback form. Presence of the file is the whole
@@ -3199,7 +3219,7 @@ export async function getMotifCover(id: string, contentHash: string): Promise<Bl
   return new Blob([bytes as BlobPart], { type: "image/png" });
 }
 
-/// Add a motif layer. Mirrors the MCP `add_motif_layer` tool's behavior:
+/// Add a motif layer (the UI twin of `add_layers` kind `motif`):
 /// - `t_end_us` defaults to `t_start_us + default_duration_s * 1e6`.
 /// - `track_id` defaults to first existing Video track or auto-creates
 ///   one labeled "Motifs".
@@ -3238,40 +3258,43 @@ export interface MotifSource {
 }
 
 export async function getMotifSource(id: string): Promise<MotifSource> {
-  const file=await invoke<{manifest:MotifManifest;revision:string;text:string}>('read_motif',{id,path:'index.html',encoding:'text'});
+  const file=await invoke<{manifest:MotifManifest;revision:string;text:string}>('read_motif',{motif_id:id,path:'index.html'});
   return {manifest:file.manifest,revision:file.revision,html:file.text};
 }
 
 /// Write a draft from authored `{ manifest, html }`. Returns the assigned draft id.
 export async function writeMotifDraft(manifest: MotifManifest, html: string): Promise<string> {
-  const draft = await invoke<{draft_id:string;revision:string}>('open_motif_draft', {source:{kind:'empty',name:manifest.name}});
-  await invoke('update_motif_files',{draft_id:draft.draft_id,expected_revision:draft.revision,files:[{path:'manifest.json',text:JSON.stringify(manifest)},{path:'index.html',text:html}]});
-  return draft.draft_id;
+  const draft = await invoke<{motif_id:string;revision:string}>('open_motif_draft', {source:{kind:'empty',name:manifest.name}});
+  await invoke('update_motif_files',{motif_id:draft.motif_id,expected_revision:draft.revision,files:[{path:'manifest.json',text:JSON.stringify(manifest)},{path:'index.html',text:html}]});
+  return draft.motif_id;
 }
 
-/// Install a draft. `mode` is `{ kind: "new" }` or `{ kind: "update", target_id }`.
+/// The user's own Install / Update: publishes directly (`publish_motif`, the
+/// renderer-only channel). An agent's `install_motif` only proposes; the
+/// user approves it on the Motif panel's card (`approveMotifProposal`).
+/// `mode` is `{ kind: "new" }` or `{ kind: "update", target_id }`.
 export async function installMotif(
   draftId: string,
   mode: { kind: "new" } | { kind: "update"; target_id: string },
   expectedRevision?: string,
   expectedTargetVersion?: number,
 ): Promise<string> {
-  const draft=await invoke<{revision:string}>('read_motif',{id:draftId});
-  const target=mode.kind==='update'?await invoke<{manifest:MotifManifest}>('read_motif',{id:mode.target_id}):null;
-  const result=await invoke<{motif_id:string}>('install_motif',{draft_id:draftId,expected_revision:expectedRevision??draft.revision,
+  const draft=await invoke<{revision:string}>('read_motif',{motif_id:draftId});
+  const target=mode.kind==='update'?await invoke<{manifest:MotifManifest}>('read_motif',{motif_id:mode.target_id}):null;
+  const result=await invoke<{motif_id:string}>('publish_motif',{motif_id:draftId,expected_revision:expectedRevision??draft.revision,
     ...(mode.kind==='update'?{target_id:mode.target_id,expected_version:expectedTargetVersion??target!.manifest.version}:{})});
   return result.motif_id;
 }
 
 export async function deleteMotif(id: string): Promise<void> {
-  await invoke("delete_motif", { id });
+  await invoke("delete_motif", { motif_id: id });
 }
 
 /// Overwrite an existing draft from its full edited source (in-app source panel).
 /// Keeps the draft id stable; the backend re-parses the manifest island, forces
 /// id/version, re-composes, and emits `motifs:changed`.
 export async function amendMotifDraft(draftId:string,source:string,expectedRevision:string):Promise<string> {
-  const result=await invoke<{revision:string}>('update_motif_files',{draft_id:draftId,expected_revision:expectedRevision,
+  const result=await invoke<{revision:string}>('update_motif_files',{motif_id:draftId,expected_revision:expectedRevision,
     files:[{path:'index.html',text:source},{path:'manifest.json',text:JSON.stringify(parseManifestIsland(source))}]});
   return result.revision;
 }
@@ -3279,25 +3302,62 @@ export async function amendMotifDraft(draftId:string,source:string,expectedRevis
 /// Open a working draft seeded from an installed/built-in Motif (Edit). Built-in
 /// → forced fork (no Update target). Returns the working draft id.
 export async function createEditDraft(sourceId: string): Promise<string> {
-  return (await invoke<{draft_id:string}>('open_motif_draft',{source:{kind:'motif',id:sourceId}})).draft_id;
+  return (await invoke<{motif_id:string}>('open_motif_draft',{source:{kind:'motif',motif_id:sourceId}})).motif_id;
 }
 
-/** Explicit independent copy; opening a draft id itself resumes that draft. */
+/** Explicit independent copy of any Motif, drafts included (opening a draft id
+ *  with `kind: 'motif'` resumes that draft instead). One main-process copy. */
 export async function copyMotifDraft(id:string):Promise<string> {
-  const transfer=await invoke<{file_id:string}>('export_motif',{id});
-  try {return (await invoke<{draft_id:string}>('open_motif_draft',{source:{kind:'zip',file_id:transfer.file_id}})).draft_id;}
-  finally {await invoke('delete_file_transfer',{file_id:transfer.file_id});}
+  return (await invoke<{motif_id:string}>('open_motif_draft',{source:{kind:'copy',motif_id:id}})).motif_id;
 }
 
 /// Import a Motif ZIP package from the OS dialog.
 /// Copies a snapshot into a new draft and returns its id.
 export async function importMotif(path: string): Promise<string> {
-  return (await invoke<{draft_id:string}>('open_motif_draft',{source:{kind:'zip',path}})).draft_id;
+  return (await invoke<{motif_id:string}>('open_motif_draft',{source:{kind:'zip',path}})).motif_id;
 }
 
 /// Export the complete package (built-in, installed or draft) as one ZIP folder.
 export async function exportMotif(id: string, path: string): Promise<void> {
-  await invoke("export_motif", { id, path });
+  await invoke("export_motif", { motif_id: id, path });
+}
+
+/// An agent's proposed publication (`install_motif`), waiting for the user's
+/// approval on the Motif panel (ADR 0046). Mirrors `ProposalCard` in
+/// `src/main/motif/workspace.ts`.
+export interface MotifProposal {
+  /// The draft it was proposed from.
+  motif_id: string;
+  proposal_id: string;
+  state: "awaiting_approval";
+  revision: string;
+  target: { id: string; version: number } | { new_id: string };
+  proposed_at: string;
+  /// The id the frozen package previews under.
+  preview_id: string;
+  manifest: MotifManifest;
+  /// Against the current published version; null for a first publication.
+  diff: {
+    files: { added: string[]; removed: string[]; changed: string[] };
+    props: { added: string[]; removed: string[]; changed: string[] };
+  } | null;
+  /// Layer ids of this project that approval rebinds.
+  rebinds: string[];
+}
+
+export async function listMotifProposals(): Promise<MotifProposal[]> {
+  return invoke<MotifProposal[]>("list_motif_proposals");
+}
+
+/// Approve: publishes the proposed revision and rebinds the trial layers.
+/// Returns the published id.
+export async function approveMotifProposal(draftId: string, proposalId: string): Promise<string> {
+  return (await invoke<{ motif_id: string }>("approve_motif_proposal", { motif_id: draftId, proposal_id: proposalId })).motif_id;
+}
+
+/// Reject: the draft stays; the note reaches the agent through list_motifs.
+export async function rejectMotifProposal(draftId: string, proposalId: string, note?: string): Promise<void> {
+  await invoke("reject_motif_proposal", { motif_id: draftId, proposal_id: proposalId, ...(note ? { note } : {}) });
 }
 
 /// One row of the on-open staleness report (docs/motifs.md "User Motifs"):
@@ -3394,7 +3454,7 @@ export async function logDirPath(): Promise<string | null> {
 /// Arguments for the native-encode video sink. Mirrors `VideoSinkStartArgs`
 /// in `export/videosink.rs` (serde camelCase).
 export interface VideoSinkStartArgs {
-  finalizationToken?: string | undefined;
+  finalizationToken: string;
   width: number;
   height: number;
   fpsNum: number;

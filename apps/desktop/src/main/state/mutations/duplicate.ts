@@ -1,6 +1,7 @@
-import type { Layer, Project, Uuid } from '../model'
+import { current, isDraft } from 'immer'
+import type { Composition, Layer, Project, Uuid } from '../model'
 import type { IdGen } from '../ids'
-import { applyDurationAutofit, cloneLayer, locateTrack, requireLayer, requireSameComposition } from './helpers'
+import { applyDurationAutofit, cloneLayer, compositionOf, locateTrack, requireLayer, requireSameComposition } from './helpers'
 import { applyLinksCreate } from './links'
 import { CommandFailure } from '../errors'
 import { gridForLayerKind, shiftOnGrids, snapOnGrid } from '../snap'
@@ -77,6 +78,12 @@ export function applyPasteLayer(
  *  one composition's (CrossCompositionSet), and the seed's target track must be
  *  in it (CrossCompositionMove).
  *
+ *  `unique` makes every Group clone its own: the composition it shows is
+ *  deep-copied (`copyCompositionDeep`), so editing inside the copy leaves the
+ *  source alone. Without it a Group clone is another instance of the same
+ *  composition, as a paste in the timeline is. A `unique` set with no Group in
+ *  it is `InvalidArgument` — the flag would change nothing.
+ *
  *  Returns source → clone. Empty input returns an empty map and touches nothing. */
 export function applyPasteLayers(
   p: Project,
@@ -84,6 +91,7 @@ export function applyPasteLayers(
   layerIds: readonly Uuid[],
   deltaUs: number,
   targetTrackId: Uuid | null,
+  unique = false,
 ): Map<Uuid, Uuid> {
   const ids = [...new Set(layerIds)]
   const result = new Map<Uuid, Uuid>()
@@ -131,10 +139,13 @@ export function applyPasteLayers(
     }
   }
 
+  if (unique && !plans.some((x) => x.source.params.kind === 'CompositionRef'))
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'unique', detail: 'none of layer_ids is a Group layer, and only a Group has a composition to copy' })
   for (const plan of plans) {
     const copy = cloneLayer(plan.source)
     copy.id = idGen()
     copy.effects = copy.effects.map((e) => ({ ...e, id: idGen() }))
+    if (unique && copy.params.kind === 'CompositionRef') copy.params.composition = copyCompositionDeep(p, idGen, copy.params.composition, new Map())
     copy.t_start_us = plan.tStartUs
     copy.t_end_us = plan.tEndUs
     const track = c.tracks[plan.trackIdx]
@@ -145,4 +156,41 @@ export function applyPasteLayers(
   if (result.size >= 2) applyLinksCreate(p, idGen, [...result.values()], false)
   applyDurationAutofit(c)
   return result
+}
+
+/** Deep-copy composition `sourceId` into a new one and return its id: fresh
+ *  ids for every track, layer, effect, link, transition and marker, with the
+ *  links, transitions and anchored markers re-pointed at the copies, and every
+ *  Group nested inside copied the same way — so nothing the copy shows is
+ *  shared with the source. A labelled source's copy is "<label> copy"; an
+ *  unlabelled one takes the next ordinal like any new Group. `copies` maps
+ *  each composition already copied in this pass to its copy, so a composition
+ *  placed twice inside the source is copied once. */
+export function copyCompositionDeep(p: Project, idGen: IdGen, sourceId: Uuid, copies: Map<Uuid, Uuid>): Uuid {
+  const done = copies.get(sourceId)
+  if (done !== undefined) return done
+  const src = compositionOf(p, sourceId)
+  const comp: Composition = structuredClone(isDraft(src) ? current(src) : src)
+  comp.id = idGen()
+  copies.set(sourceId, comp.id)
+  comp.ordinal = p.next_group_ordinal
+  p.next_group_ordinal += 1
+  if (comp.label !== null) comp.label = `${comp.label} copy`
+  const layerIds = new Map<Uuid, Uuid>()
+  for (const track of comp.tracks) {
+    track.id = idGen()
+    for (const layer of track.layers) {
+      const id = idGen()
+      layerIds.set(layer.id, id)
+      layer.id = id
+      layer.effects = layer.effects.map((e) => ({ ...e, id: idGen() }))
+      if (layer.params.kind === 'CompositionRef') layer.params.composition = copyCompositionDeep(p, idGen, layer.params.composition, copies)
+    }
+  }
+  const re = (id: Uuid): Uuid => layerIds.get(id) ?? id
+  comp.links = comp.links.map((l) => ({ id: idGen(), members: l.members.map(re).sort() }))
+  comp.transitions = comp.transitions.map((t) => ({ ...t, id: idGen(), from_layer: re(t.from_layer), to_layer: re(t.to_layer) }))
+  comp.markers = comp.markers.map((m) => ({ ...m, id: idGen(), anchor: m.anchor === null ? null : { ...m.anchor, layer: re(m.anchor.layer) } }))
+  p.compositions[comp.id] = comp
+  return comp.id
 }

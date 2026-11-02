@@ -13,6 +13,10 @@ use serde_json::Value;
 /// `{ job_id, phase: { kind, ...fields } }`; see `compute_jobs::ComputePhase`.
 pub const EVENT_COMPUTE_JOB_PHASE: &str = "compute:job_phase";
 
+/// An export's mux tail started or stopped waiting for a CPU slot. Payload
+/// `{ waiting: true, holders: [HolderUse] }` or `{ waiting: false }`.
+pub const EVENT_EXPORT_MUX_WAIT: &str = "export:mux_wait";
+
 pub trait EventSink: Send + Sync {
     fn emit(&self, event: &str, payload: Value);
 }

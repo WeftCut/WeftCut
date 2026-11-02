@@ -12,10 +12,13 @@ const editDocs = doc.split('### Edit tools')[1]!.split('\n### ')[0]!
 const positionDocs = editDocs.split('Position and motion paths:')[1]!.split('\nEffects (')[0]!
 
 describe('documented MCP position contract', () => {
-  it.each(['set_position', 'translate_path'])('%s is documented and registered for production', name => {
-    expect(PRODUCTION_OPS.has(name)).toBe(true)
+  it.each(['set_position', 'translate_position'])('%s is documented and a table tool', name => {
     expect(MCP_TOOL_DEFS.find(d => d.name === name)?.exec).toBe('table')
     expect(positionDocs).toContain('`' + name + ' {')
+  })
+
+  it('set_position shares its op with the UI', () => {
+    expect(PRODUCTION_OPS.has('set_position')).toBe(true)
   })
 
   it('documents active-mode parameters, time bases and progress restrictions', () => {
@@ -30,8 +33,8 @@ describe('documented MCP position contract', () => {
     const tool = (name: string) => MCP_TOOL_DEFS.find(d => d.name === name)!
     expect(JSON.stringify(tool('set_keyframe').inputSchema)).toContain('path_progress')
     expect(tool('get_param_track').description).toContain('path_progress in Path mode')
-    expect(tool('update_layer_params').description).toContain('Path mode rejects independent x/y writes')
-    expect(tool('set_extrapolation').description).toContain('For path_progress, only Hold / Loop / PingPong')
+    expect(tool('update_layer_params').description).toContain('Path mode refuses x/y: translate_position')
+    expect(JSON.stringify(tool('set_param_track').inputSchema)).toContain('path_progress takes Hold/Loop/PingPong')
   })
 
   it('accepts the documentation JSON through the public position parser', () => {
@@ -55,8 +58,9 @@ describe('documented MCP position contract', () => {
     expect(call('set_keyframe', { param_key: 'path_progress', t_us: 1_000_000, value: 0 }).ok).toBe(true)
     expect(call('set_keyframe', { param_key: 'path_progress', t_us: 2_000_000, value: 1 }).ok).toBe(true)
     expect(call('set_keyframe', { param_key: 'x', t_us: 1_000_000, value: 10 }).ok).toBe(false)
-    expect(call('set_extrapolation', { param_key: 'path_progress', after: 'Continue' }).ok).toBe(false)
-    expect(call('translate_path', { dx: 20, dy: -10 }).ok).toBe(true)
+    const progress = JSON.parse((call('get_param_track', { param_key: 'path_progress' }) as { ok: true; result: { content: Array<{ text: string }> } }).result.content[0]!.text).track
+    expect(call('set_param_track', { param_key: 'path_progress', track: { ...progress, extrapolate: { before: 'Hold', after: 'Continue' } } }).ok).toBe(false)
+    expect(call('translate_position', { dx: 20, dy: -10 }).ok).toBe(true)
     const layer = actor.snapshot().compositions[comp.id]!.tracks.flatMap(t => t.layers).find(l => l.id === layerId)!
     const position = (layer.params as TextParams).transform.position as PathPosition
     expect(position.path.nodes[0]!.point).toEqual({ x: 120, y: 190 })

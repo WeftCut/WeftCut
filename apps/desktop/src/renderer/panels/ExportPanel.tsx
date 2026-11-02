@@ -28,7 +28,8 @@ export type ExportState = ExportPhase & { job?: import('../../shared/exportJob')
 type ExportPhase =
   // Readiness waits and frame export provide their own cancellation handler.
   | { kind: "starting" }
-  | { kind: "preparing"; labels: string[]; message?: string; onCancel?: () => void }
+  // `queued`: admission waits for the resource budget (the job's `queued` state).
+  | { kind: "preparing"; labels: string[]; message?: string; onCancel?: () => void; queued?: NonNullable<import('../../shared/exportJob').ExportJob['queued']> }
   | { kind: "progress"; progress: ExportProgress; onCancel?: () => void }
   // The tail after the last frame is encoded: flush the native sink, render
   // audio, stream-copy mux. It used to be invisible — the panel sat frozen at
@@ -38,7 +39,9 @@ type ExportPhase =
   // step makes both the user's wait and the probe's stall budget honest.
   | { kind: "finalizing"; step: FinalizeStep }
   | { kind: "complete"; payload: ExportComplete }
-  | { kind: "error"; detail: string; onRetry?: (filename?: string) => Promise<void>; onDiscard?: () => Promise<void> };
+  // `code` + `fault`: a typed refusal (`RendererCannotDraw`), carried onto the
+  // job record so an agent reads the variant and its ids, not just the text.
+  | { kind: "error"; detail: string; code?: string; fault?: Record<string, unknown>; onRetry?: (filename?: string) => Promise<void>; onDiscard?: () => Promise<void> };
 
 /// Ordered as they run. `sink` only occurs on the native-encode path.
 export type FinalizeStep = "sink" | "audio" | "mux";

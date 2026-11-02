@@ -228,7 +228,7 @@ export function applyRestyleCaptions(p: Project, patch: CaptionStylePatch, layer
     return n
   }
   // Narrowed: only the named captions — each must BE one, so a title from
-  // add_text_layer cannot be restyled through the caption door by mistake.
+  // add_layers cannot be restyled through the caption door by mistake.
   const unique = new Set(layerIds)
   for (const id of unique) {
     const { track, layer } = requireLayer(p, id)

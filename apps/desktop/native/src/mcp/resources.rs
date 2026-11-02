@@ -20,7 +20,6 @@ use crate::state::{MediaId, MediaItem};
 
 use super::wire::{McpToolError, ResourceContent, ResourceDef, ResourceResult};
 
-const URI_PROJECT: &str = "project://current";
 const URI_COMPOSITION: &str = "project://composition";
 const URI_MEDIA: &str = "project://media";
 const URI_TRACKS: &str = "project://tracks";
@@ -225,8 +224,8 @@ pub(crate) async fn read_resource(
                 }),
             }
         }
-        // project://current / composition /
-        // media / tracks / markers / history / layers/{id} are served directly by
+        // project://composition / media / tracks / markers / settings /
+        // history / layers/{id} are served directly by
         // the TS MCP host (the sole state owner) and never reach this reader.
         other => {
             return Err(McpToolError::resource_not_found(
@@ -275,7 +274,7 @@ async fn read_media_resource(
     tail: &str,
     media: Option<MediaItem>,
 ) -> Result<ResourceResult, McpToolError> {
-    // tail = "{id}/thumbnail" | "{id}/frame/{t_us}" | "{id}/waveform"
+    // tail = "{id}/thumbnail" | "{id}/frame/{src_us}" | "{id}/waveform"
     let (id_part, sub) = tail.split_once('/').ok_or_else(|| {
         McpToolError::resource_not_found(format!("media URI missing sub-path: {uri}"), None)
     })?;
@@ -415,15 +414,16 @@ async fn read_description_resource(
 }
 
 /// Serve `media://{id}/analysis` — the deterministic shot-layer view for the
-/// tool's DEFAULT detection params (sensitivity 0.4, min_shot_us 500000, all
-/// passes). Unlike `media://{id}/description`, the shot layer is ALWAYS
+/// tool's DEFAULT detection params (sensitivity 0.4, min_shot_us 500000, the
+/// default shots + stats + events passes; no opt-in spans). Unlike `media://{id}/description`, the shot layer is ALWAYS
 /// computable, so a cache miss COMPUTES on demand (a whole-source scan) and
 /// writes it through, then returns — it never reports "not computed yet"
 /// (mirrors `serve_frame`'s on-demand `jobs::extract_frame`). Idempotent pure
 /// view: the same source + default params key the same VSHOT sidecar, so
 /// repeated reads return byte-identical JSON; `analyze_clip` is the parameterized
-/// recompute path that shares this cache. Returns the WHOLE-source `ShotReport`
-/// (source-absolute times) — a media resource has no layer window to clip to.
+/// recompute path that shares this cache. Returns the WHOLE-source report in
+/// `analyze_clip`'s wire shape (`src_*` times, no `mapping`) — a media resource
+/// has no layer window to clip to.
 #[cfg(feature = "jobs")]
 async fn read_analysis_resource(
     b: &Backend,
@@ -456,7 +456,8 @@ async fn read_analysis_resource(
     let report = jobs::shot::cached_source_report(&b.cache, &media, &opts)
         .await
         .map_err(|e| McpToolError::internal_error(format!("shot analysis: {e:#}"), None))?;
-    let body = serde_json::to_value(&report).map_err(serialize_err)?;
+    let body = serde_json::to_value(super::tools::SourceShotReport::new(media.id, None, &report))
+        .map_err(serialize_err)?;
     text_resource(uri, &body)
 }
 
@@ -473,13 +474,15 @@ async fn serve_thumbnail(
     let path = b.cache.thumbnail(&media.file_hash_blake3, MID);
     crate::cache::touch_if_stale(&path);
     if !cached_ok(&path) {
-        return Err(McpToolError::resource_not_found(
-            format!(
-                "thumbnail not generated yet for media {} — wait for a media:job_complete event with kind=thumbnails, or read media://{}/frame/<t_us> for an on-demand extraction",
-                media.id, media.id,
+        let (message, data) = super::wire::derivative_not_ready(
+            &media.id.to_string(),
+            "thumbnail",
+            &format!(
+                ", or read media://{}/frame/<src_us> for an on-demand extraction",
+                media.id
             ),
-            None,
-        ));
+        );
+        return Err(McpToolError::resource_not_found(message, Some(data)));
     }
     blob_response(uri, &path, IMAGE_JPEG).await
 }
@@ -506,13 +509,9 @@ async fn serve_waveform(
     let path = b.cache.waveform(&media.file_hash_blake3);
     crate::cache::touch_if_stale(&path);
     if !cached_ok(&path) {
-        return Err(McpToolError::resource_not_found(
-            format!(
-                "waveform not generated yet for media {} — wait for a media:job_complete event with kind=waveform",
-                media.id,
-            ),
-            None,
-        ));
+        let (message, data) =
+            super::wire::derivative_not_ready(&media.id.to_string(), "waveform", "");
+        return Err(McpToolError::resource_not_found(message, Some(data)));
     }
     blob_response(uri, &path, APP_OCTET).await
 }
@@ -549,11 +548,6 @@ struct ResourceDescriptor {
 
 const STATIC_RESOURCES: &[ResourceDescriptor] = &[
     ResourceDescriptor {
-        uri: URI_PROJECT,
-        name: "Current project",
-        description: "The full open WeftCut project as JSON. Re-fetch after change events.",
-    },
-    ResourceDescriptor {
         uri: URI_COMPOSITION,
         name: "Composition",
         description: "Canvas size, fps, sample rate, color space, background.",
@@ -561,7 +555,7 @@ const STATIC_RESOURCES: &[ResourceDescriptor] = &[
     ResourceDescriptor {
         uri: URI_MEDIA,
         name: "Media pool",
-        description: "All imported media items keyed by id.",
+        description: "The media pool keyed by media id; each row is the item with its `media_id` and `derivatives` (waveform, conform, thumbnails, proxy: pending, running, ready or failed).",
     },
     ResourceDescriptor {
         uri: URI_TRACKS,
@@ -576,12 +570,12 @@ const STATIC_RESOURCES: &[ResourceDescriptor] = &[
     ResourceDescriptor {
         uri: URI_COMPOSITIONS,
         name: "Compositions",
-        description: "Every composition — the root and each Group — with id, label, duration_us and ref_count (how many CompositionRef layers place it). project://tracks?composition=<id> and project://markers?composition=<id> read one of them; unscoped they read the root.",
+        description: "Every composition — the root and each Group — with composition_id, label, duration_us and ref_count (how many CompositionRef layers place it). project://tracks?composition=<id> and project://markers?composition=<id> read one of them; unscoped they read the root.",
     },
     ResourceDescriptor {
         uri: URI_HISTORY,
         name: "History",
-        description: "Recent operations and named checkpoints (no snapshots). `ops` is a window: `window_start` is the absolute stack index of `ops[0]`, and `cursor` is absolute too — never an offset into `ops`; absolute indices are the only ones `jump_to` accepts. `evicted` > 0 means the oldest entries were dropped for good.",
+        description: "Recent operations and this opening's named checkpoints (no snapshots). `ops` is a window: `window_start` is the absolute stack index of `ops[0]`, and `cursor` is absolute too — never an offset into `ops`. `jump_to` takes an op's `op_id`, which no eviction shifts. `evicted` > 0 means the oldest entries were dropped for good.",
     },
     ResourceDescriptor {
         uri: URI_COMPILED,
@@ -718,7 +712,7 @@ mod stateless_tests {
     }
 
     /// The advertised `project://history` description must teach the window
-    /// semantics (`window_start`, `evicted`, absolute `jump_to` indices):
+    /// semantics (`window_start`, `evicted`, `jump_to` by `op_id`):
     /// several MCP clients surface only `resources/list` to the model, so a
     /// semantic that lives nowhere else is a semantic agents never see.
     #[test]
@@ -775,12 +769,12 @@ mod stateless_tests {
     #[tokio::test]
     async fn project_views_are_not_served_by_rust() {
         let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
-        let err = read_resource(&b, "project://current", "{}")
+        let err = read_resource(&b, "project://tracks", "{}")
             .await
             .unwrap_err();
         assert!(
             err.message.contains("TS-served") || err.message.contains("unknown"),
-            "project://current must report it is TS-served; got: {}",
+            "project://tracks must report it is TS-served; got: {}",
             err.message
         );
     }

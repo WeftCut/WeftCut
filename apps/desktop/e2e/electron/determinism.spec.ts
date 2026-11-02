@@ -153,7 +153,7 @@ motif.define({
     try {
       await page.evaluate(
         ([ch, a]) => (window as any).api.backend.invoke(ch, a),
-        ['delete_motif', { id: publishedId }] as const,
+        ['delete_motif', { motif_id: publishedId }] as const,
       )
       console.log('[det] jitter motif deleted:', publishedId)
     } catch (e) {

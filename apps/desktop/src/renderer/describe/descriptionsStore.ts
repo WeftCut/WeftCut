@@ -348,12 +348,12 @@ export function mergeDescription(
   if (purpose === "shot") requestedShots.add(mediaId);
   const prior = contentsForPurpose(purpose).get(mediaId);
   const kept = (prior?.segments ?? []).filter(
-    (s) => !(s.t_start_us < srcEndUs && s.t_end_us > srcStartUs),
+    (s) => !(s.src_start_us < srcEndUs && s.src_end_us > srcStartUs),
   );
   put(
     mediaId,
     {
-      segments: [...kept, ...fresh].sort((a, b) => a.t_start_us - b.t_start_us),
+      segments: [...kept, ...fresh].sort((a, b) => a.src_start_us - b.src_start_us),
       // The optimistic answer carries no summary. Never pair new segments
       // with an old lead over the changed window; reload publishes the full read.
       summaries: (prior?.summaries ?? []).filter(s => !(s.window[0] < srcEndUs && s.window[1] > srcStartUs)),

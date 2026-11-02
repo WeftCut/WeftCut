@@ -51,5 +51,12 @@ describe('portable export presets', () => {
     expect(() => changeExportPresets([p], { kind: 'create', preset: { ...p, id: 'other', name: ' DELIVERY ' } })).toThrow();
     expect(() => changeExportPresets([], { kind: 'delete', id: fullhd.id })).toThrow();
     expect(() => changeExportPresets([p], { kind: 'update', id: p.id, values: { ...p.values, maxBitrate: 1 } })).toThrow();
+    expect(() => changeExportPresets([p], { kind: 'update', id: p.id })).toThrow('Invalid export preset change');
+  });
+  it('one update renames and changes values together, or either alone', () => {
+    const p = custom();
+    const both = changeExportPresets([p], { kind: 'update', id: p.id, name: ' Final ', values: { ...p.values, customBitrate: 7_000_000 } });
+    expect(both[0]).toMatchObject({ name: 'Final', values: { customBitrate: 7_000_000 } });
+    expect(changeExportPresets(both, { kind: 'update', id: p.id, name: 'Only name' })[0]).toMatchObject({ name: 'Only name', values: { customBitrate: 7_000_000 } });
   });
 });

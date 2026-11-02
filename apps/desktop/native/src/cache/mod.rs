@@ -374,7 +374,7 @@ impl CacheLayout {
     }
 
     /// On-demand extracted frame, lazy-cached. Used by
-    /// `media://{id}/frame/{t_us}` MCP resource.
+    /// `media://{id}/frame/{src_us}` MCP resource.
     pub fn frames(&self, hash: &str) -> PathBuf {
         self.frames_root().join(hash)
     }

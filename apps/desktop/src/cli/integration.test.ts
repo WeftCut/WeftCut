@@ -20,9 +20,12 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { CallToolRequestSchema, ListToolsRequestSchema, isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
+import { mcpInstructions } from '../main/mcp/instructions.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const TOKEN = 'itest-token'
+/// The version stamp scripts/build-cli.mjs defines from package.json.
+const STAMP = '9.8.7'
 
 let tmp: string
 let bundle: string
@@ -101,6 +104,7 @@ beforeAll(async () => {
     platform: 'node',
     target: 'node22',
     format: 'cjs',
+    define: { __WEFTCUT_VERSION__: JSON.stringify(STAMP) },
     logLevel: 'silent',
   })
   const port = await startFakeApp()
@@ -115,6 +119,8 @@ afterAll(() => {
 describe('bundled shim over real stdio + HTTP', () => {
   it('serves synthetic ∪ real and passes calls through (bearer included)', async () => {
     await withShimClient(async (client) => {
+      // The etiquette rides the bundle, at the stamped version.
+      expect(client.getInstructions()).toBe(mcpInstructions(STAMP))
       const tools = await client.listTools()
       expect(tools.tools.map((t) => t.name)).toEqual(['weftcut_status', 'launch_weftcut', 'add_marker'])
       const result = await client.callTool({ name: 'add_marker', arguments: {} })

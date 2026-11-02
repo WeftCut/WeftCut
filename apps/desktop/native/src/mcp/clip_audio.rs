@@ -6,7 +6,7 @@
 //! for a window of a clip's source audio, transcribes it wherever it likes, and
 //! shifts the offsets it gets back onto the timeline with the `t_start_us` this
 //! tool reports. A source-WAV cue at `w` belongs at
-//! `t_start_us + w / playback_rate` on the composition timeline.
+//! `t_start_us + w / rate` on the composition timeline.
 
 use base64::Engine;
 use schemars::JsonSchema;
@@ -62,17 +62,19 @@ pub(super) struct ExtractClipAudioArgs {
 ///
 /// `t_start_us` / `t_end_us` are the window as RESOLVED (the layer's endpoints
 /// when the args omitted them), so a caller that passed neither still learns
-/// exactly which span it received.
+/// exactly which span it received. `t_start_us`, `src_in_us` and `rate` are
+/// the mapping block every source-time result carries (`LayerMapping`), here
+/// for the window: source `s` plays at `t_start_us + (s − src_in_us) / rate`.
 #[derive(Debug, Serialize)]
 struct ExtractClipAudioResult {
     layer_id: LayerId,
     media_id: MediaId,
     t_start_us: i64,
     t_end_us: i64,
-    source_in_us: i64,
-    source_out_us: i64,
+    src_in_us: i64,
+    src_out_us: i64,
     duration_us: i64,
-    playback_rate: f64,
+    rate: crate::state::timing::Fraction,
     sample_rate_hz: u32,
     channels: u8,
     bits_per_sample: u8,
@@ -143,10 +145,10 @@ pub(super) async fn extract_clip_audio(
         media_id: resolved.media_id,
         t_start_us: resolved.timeline_start_us,
         t_end_us: resolved.timeline_end_us,
-        source_in_us: resolved.source_in_us,
-        source_out_us: resolved.source_out_us,
+        src_in_us: resolved.source_in_us,
+        src_out_us: resolved.source_out_us,
         duration_us,
-        playback_rate: resolved.playback_rate,
+        rate: resolved.rate,
         sample_rate_hz: SAMPLE_RATE_HZ,
         channels: 1,
         bits_per_sample: 16,
@@ -442,11 +444,12 @@ mod tests {
         assert_eq!(meta["t_start_us"], 6_000_000);
         assert_eq!(meta["t_end_us"], 8_000_000);
         assert_eq!(
-            meta["source_in_us"], 1_000_000,
+            meta["src_in_us"], 1_000_000,
             "the timeline window maps onto the layer's source window",
         );
-        assert_eq!(meta["source_out_us"], 3_000_000);
+        assert_eq!(meta["src_out_us"], 3_000_000);
         assert_eq!(meta["duration_us"], 2_000_000);
+        assert_eq!(meta["rate"], serde_json::json!({ "num": 1, "den": 1 }));
         assert_eq!(meta["sample_rate_hz"], SAMPLE_RATE_HZ);
         assert_eq!(meta["channels"], 1);
         assert_eq!(meta["bits_per_sample"], 16);

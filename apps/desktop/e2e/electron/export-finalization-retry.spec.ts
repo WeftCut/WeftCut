@@ -110,9 +110,16 @@ test('failed stream-copy mux preserves an existing output and removes its staged
     const input = path.join(folder, 'invalid.mp4'), output = path.join(folder, 'existing.mp4')
     writeFileSync(input, 'invalid media')
     writeFileSync(output, 'previous complete output')
-    await expect(invokeCmd(page, 'mux_export', { videoPath: input, audioPath: path.join(folder, 'none.m4a'), outputPath: output })).rejects.toThrow()
+    // The mux runs inside an admitted plan; the assertions below need it to
+    // reach ffmpeg rather than be refused for having none.
+    const finalizationToken = await page.evaluate(async () => {
+      const id = crypto.randomUUID()
+      await (window as any).api.resources.planExport({ id, options: [64], nativeEncoder: false })
+      return id
+    })
+    await expect(invokeCmd(page, 'mux_export', { finalizationToken, videoPath: input, audioPath: path.join(folder, 'none.m4a'), outputPath: output })).rejects.toThrow(/mux|ffmpeg|Invalid data/i)
     expect(readFileSync(output, 'utf8')).toBe('previous complete output')
-    await expect(invokeCmd(page, 'mux_export', { videoPath: media, audioPath: path.join(folder, 'none.m4a'), outputPath: output, audioRequired: true })).rejects.toThrow(/audio file is missing/)
+    await expect(invokeCmd(page, 'mux_export', { finalizationToken, videoPath: media, audioPath: path.join(folder, 'none.m4a'), outputPath: output, audioRequired: true })).rejects.toThrow(/audio file is missing/)
     expect(readFileSync(output, 'utf8')).toBe('previous complete output')
     const { readdirSync } = await import('node:fs')
     expect(readdirSync(folder).sort()).toEqual(['existing.mp4', 'invalid.mp4'])

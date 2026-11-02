@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { seededGen } from '../ids'
-import { blankProject, type Animated, type BlendMode, type Layer, type LayerParams, type MotifParams, type Project, type Rgba, type TextParams } from '../model'
+import { blankProject, type Animated, type Layer, type LayerParams, type MotifParams, type Project, type Rgba, type TextParams } from '../model'
 import { applyAddLayer, colorParams, textParamsDefault } from './add'
 import { videoClipParams, audioParams } from './media'
 import { isCommandFailure } from '../errors'
@@ -706,29 +706,6 @@ describe('applyUpdateLayerParams — a Group layer', () => {
     // Overhang is legal in state and clamped at the gesture (ADR 0052 §6), so
     // the validator must accept what this patch just wrote.
     expect(() => validate(p)).not.toThrow()
-  })
-
-  it('accepts every blend mode the model defines', () => {
-    // The Record type forces this literal to name every variant, so adding one
-    // to `BlendMode` breaks this file until it is listed here — and the loop
-    // then proves the arm's own list accepts it instead of refusing it as
-    // unknown, which a subset list would do silently.
-    const ALL: Record<BlendMode, true> = {
-      Normal: true, Multiply: true, Screen: true, Overlay: true,
-      Darken: true, Lighten: true, Add: true, Difference: true,
-    }
-    for (const mode of Object.keys(ALL) as BlendMode[]) {
-      const { p, refLayerId } = groupedProject()
-      applyUpdateLayerParams(p, refLayerId, { kind: 'CompositionRef', blend_mode: mode }, new MotifCatalog())
-      expect(refOf(p, refLayerId).blend_mode).toBe(mode)
-    }
-  })
-
-  it('refuses an unrecognised blend mode and leaves the layer untouched', () => {
-    const { p, refLayerId } = groupedProject()
-    const before = structuredClone(layerOf(p, refLayerId))
-    expectCmd(() => applyUpdateLayerParams(p, refLayerId, { kind: 'CompositionRef', blend_mode: 'Fancy' as BlendMode, x: 99 }, new MotifCatalog()), 'InvalidArgument')
-    expect(layerOf(p, refLayerId)).toEqual(before)
   })
 
   it('keyframes opacity and transform through the lens every visual kind shares', () => {

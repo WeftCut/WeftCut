@@ -12,8 +12,9 @@ import { exportTerminal, exportWire, type ExportJob, type ExportRun } from '../s
 
 /** Rendered stills: JPEG bytes per time, or one labelled sheet of them. */
 export interface StillsResult {
-  /** Without `sheet`, each frame's JPEG; with it, the times and sizes only. */
-  frames: Array<{ t_us: number; width: number; height: number; jpeg?: Uint8Array }>;
+  /** Without `sheet`, each frame's JPEG; with it, the times and sizes only.
+   *  `omitted`: what `without` skipped on this frame (it held effects). */
+  frames: Array<{ t_us: number; width: number; height: number; jpeg?: Uint8Array; omitted?: string[] }>;
   sheet?: { width: number; height: number; jpeg: Uint8Array };
 }
 
@@ -45,6 +46,16 @@ export async function exportPathExists(file: string): Promise<boolean> {
   try { await fs.lstat(file); return true; } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return false; throw e; }
 }
 
+/** The renderer's account of a queued admission, kept to the wire shape. */
+function exportQueued(value: unknown): NonNullable<ExportJob['queued']> {
+  const v = value as { reason?: unknown; holders?: unknown } | undefined;
+  const reason = v?.reason === 'busy' || v?.reason === 'pressure' || v?.reason === 'host-pressure' ? v.reason : 'busy';
+  const holders = (Array.isArray(v?.holders) ? v.holders : []).slice(0, 16).flatMap((h: Record<string, unknown>) =>
+    h && typeof h.kind === 'string' && typeof h.mib === 'number' && typeof h.threads === 'number'
+      ? [{ kind: h.kind, ...(typeof h.media_id === 'string' ? { media_id: h.media_id } : {}), mib: h.mib, threads: h.threads }] : []);
+  return { reason, holders };
+}
+
 /** Suggest only: the UI adopts the name explicitly and publication rechecks it. */
 export async function suggestExportName(file: string): Promise<string | null> {
   const { dir, name, ext } = path.parse(file);
@@ -69,29 +80,33 @@ export class ExportJobs {
   /** `render_frames`: the root at each time, rendered by the export pipeline
    *  in the app window and handed back as JPEGs (one contact sheet with
    *  `sheet`). Never alongside an export; the renderer must have announced the
-   *  open project's session. */
-  async renderStills(req: { times_us: number[]; width: number; sheet: boolean }): Promise<StillsResult> {
+   *  open project's session. `without: ['effects']` draws them with effects
+   *  skipped; export has no such switch. */
+  async renderStills(req: { times_us: number[]; width: number; sheet: boolean; without?: ['effects'] }): Promise<StillsResult> {
     const h = this.host();
     if (this.active) throw new ExportJobError('export_active', 'An export is running; render frames after it finishes');
     if (!this.ready || this.ready.session !== this.session(h)) throw new ExportJobError('renderer_unavailable', 'The app window is not ready to render this project yet; retry in a moment');
     const settings = await this.savedSettings(h);
     const id = randomUUID(), token = this.ready.token;
+    // The renderer stops at the same deadline: its admission waits have none.
+    const timeout_ms = 60_000 + 20_000 * req.times_us.length;
     return new Promise<StillsResult>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.stills.delete(id);
         reject(new ExportJobError('render_timeout', `Rendering ${req.times_us.length} frame(s) did not finish in time`));
-      }, 60_000 + 20_000 * req.times_us.length);
+      }, timeout_ms);
       this.stills.set(id, { token, resolve, reject, timer });
-      this.deps.send('render_frames:run', { request_id: id, renderer_token: token, ...req, settings });
+      this.deps.send('render_frames:run', { request_id: id, renderer_token: token, ...req, settings, timeout_ms });
     });
   }
   /** The renderer's answer to `render_frames:run`. */
-  stillsResult(p: { request_id: string; renderer_token: string; frames?: StillsResult['frames']; sheet?: StillsResult['sheet']; error?: string }) {
+  stillsResult(p: { request_id: string; renderer_token: string; frames?: StillsResult['frames']; sheet?: StillsResult['sheet']; error?: string; fault?: Record<string, unknown> }) {
     const pending = this.stills.get(p.request_id);
     if (!pending || pending.token !== p.renderer_token) return;
     this.stills.delete(p.request_id);
     clearTimeout(pending.timer);
-    if (p.error !== undefined) pending.reject(new ExportJobError('render_failed', p.error));
+    // A typed refusal (`fault`, e.g. `RendererCannotDraw`) keeps its variant and data.
+    if (p.error !== undefined) pending.reject(p.fault?.error === 'RendererCannotDraw' ? new ExportJobError('renderer_cannot_draw', p.error, p.fault) : new ExportJobError('render_failed', p.error));
     else pending.resolve({ frames: p.frames ?? [], ...(p.sheet ? { sheet: p.sheet } : {}) });
   }
   isActive() { return !!this.active; }
@@ -120,7 +135,7 @@ export class ExportJobs {
     if (id === undefined) return undefined;
     if (typeof id !== 'string' || !id.trim()) throw new ExportValidationError('preset_id must be a nonempty string');
     const preset = exportPresetLibrary(this.deps.exportPreferences?.() ?? {}).find(p => p.id === id);
-    if (!preset) throw new ExportJobError('not_found', `Unknown export preset ${id}; call list_export_presets`);
+    if (!preset) throw new ExportJobError('preset_not_found', `Unknown export preset ${id}; list_export_presets lists the ids`);
     return structuredClone(preset);
   }
   private async savedSettings(h: TsActorHost, preset?: ExportPreset) {
@@ -138,10 +153,40 @@ export class ExportJobs {
   }
   status(id?: string): ExportJob | null {
     const j = id ? this.entries.get(id) : this.active;
-    if (id && !j) throw new ExportJobError('not_found', `Unknown export job ${id}`);
+    if (id && !j) throw new ExportJobError('job_not_found', `Unknown export job ${id}`);
     return j ? structuredClone({ ...j.view, can_cancel: !exportTerminal(j.view.state), can_retry: j.view.state === 'awaiting_retry' && !j.cancelling }) : null;
   }
-  private notify(j: Entry) { this.deps.send('export:status', this.status(j.view.job_id)); }
+  /** The active job, else the most recently started one, else null —
+   *  `get_export_status` without a `job_id`, so a job that just finished is
+   *  still the one an agent polling "the current job" reads. */
+  latest(): ExportJob | null {
+    const j = this.active ?? [...this.entries.values()].pop();
+    return j ? this.status(j.view.job_id) : null;
+  }
+  private changeWaiters = new Set<() => void>();
+  private notify(j: Entry) {
+    this.deps.send('export:status', this.status(j.view.job_id));
+    for (const wake of [...this.changeWaiters]) wake();
+  }
+  /** `get_export_status { wait_s }`: resolves once job `id` (else the one
+   *  `latest()` names) leaves the state it was in at the call, when it is
+   *  terminal already, or after `ms`. Progress inside a state wakes nothing.
+   *  An unknown `id` throws `job_not_found` before any wait. */
+  waitForStateChange(id: string | undefined, ms: number): Promise<void> {
+    const read = () => (id ? this.status(id) : this.latest());
+    const first = read();
+    if (!first || exportTerminal(first.state) || ms <= 0) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const done = () => { clearTimeout(timer); this.changeWaiters.delete(check); resolve(); };
+      const check = () => {
+        const now = read();
+        if (!now || now.job_id !== first.job_id || now.state !== first.state) done();
+      };
+      const timer = setTimeout(done, ms);
+      timer.unref?.();
+      this.changeWaiters.add(check);
+    });
+  }
   start(args: Record<string, unknown>, agent = true): Promise<ExportJob> {
     const fingerprint = canonical({ args, agent });
     const key = args.request_id;
@@ -164,7 +209,8 @@ export class ExportJobs {
     this.assertWritable();
     const h = this.host();
     const allowed = ['request_id', 'output_path', 'on_conflict', 'settings', 'range', 'allow_experimental_10bit', 'preset_id'];
-    if (Object.keys(a).some(k => !allowed.includes(k))) throw new ExportValidationError('Unknown export argument');
+    const unknown = Object.keys(a).filter(k => !allowed.includes(k));
+    if (unknown.length) throw new ExportValidationError(`start_export does not take ${unknown.join(', ')}; it takes ${allowed.join(', ')}`);
     if (a.on_conflict !== undefined && !['rename', 'fail', ...(!agent ? ['overwrite'] : [])].includes(String(a.on_conflict))) throw new ExportValidationError('Invalid on_conflict policy');
     if (a.allow_experimental_10bit !== undefined && typeof a.allow_experimental_10bit !== 'boolean') throw new ExportValidationError('allow_experimental_10bit must be boolean');
     if (agent) {
@@ -175,33 +221,38 @@ export class ExportJobs {
         }
       };
       checkWireKeys(a.settings); checkWireKeys(a.range);
+      if (a.range !== undefined && a.range !== null && typeof a.range === 'object') {
+        const extra = Object.keys(a.range).filter(k => k !== 't_start_us' && k !== 't_end_us');
+        if (extra.length) throw new ExportValidationError(`range does not take ${extra.join(', ')}; it takes t_start_us and t_end_us, timeline µs`);
+      }
     }
     // Snapshot the selected recipe before any await; edits cannot change an admitted job.
     const preset = this.preset(a.preset_id);
-    // Reserve synchronously before reading defaults or touching the filesystem.
+    const policy = (a.on_conflict ?? (agent ? 'rename' : 'fail')) as Entry['policy'];
+    // An agent's settings, path, extension and conflict are checked BEFORE a
+    // job exists, so a request that cannot run is refused as the call's answer
+    // rather than reported as a job that failed in preparation. The UI's job
+    // is reserved first and fails in view, as its panel expects.
+    const session = this.session(h);
+    const planned = agent ? await this.plan(h, preset, a, agent, policy) : undefined;
+    if (agent) {
+      // The plan awaited: whatever started or switched meanwhile wins.
+      if (this.stopping) throw new ExportJobError('app_closing', 'The application is closing');
+      this.assertWritable();
+      if (this.session(this.host()) !== session) throw new ExportJobError('project_busy', 'The project changed while the export was being prepared; start it again');
+    }
+    // Reserve synchronously from here (a UI job before reading defaults or
+    // touching the filesystem).
     const j: Entry = {
       view: { job_id: randomUUID(), state: 'preparing', output_path: '', filename: '', agent, settings: {} as ExportJob['settings'], range: { startUs: 0, endUs: 0 } },
-      staging: '', video: '', audio: '', policy: (a.on_conflict ?? (agent ? 'rename' : 'fail')) as Entry['policy'], session: this.session(h), dispatched: false, cancelling: false, published: false, preparation: Promise.resolve()
+      staging: '', video: '', audio: '', policy, session, dispatched: false, cancelling: false, published: false, preparation: Promise.resolve()
     };
     this.active = j; this.entries.set(j.view.job_id, j);
     j.preparation = (async () => {
-      const resolved = resolveExportRequest(await this.savedSettings(h, preset), agent ? exportWire(a.settings, false) : a.settings,
-        this.composition(h), (agent ? exportWire(a.range, false) : a.range) as ExportJob['range'] | undefined, !agent || a.allow_experimental_10bit === true, snapFrameRound);
+      const { resolved, destination } = planned ?? await this.plan(h, preset, a, agent, policy);
       Object.assign(j.view, { settings: resolved.settings, range: resolved.range });
       j.video = path.join(os.tmpdir(), `weftcut-export-${j.view.job_id}-video.${['prores', 'dnxhr'].includes(resolved.settings.codec) ? 'mov' : 'mp4'}`);
       j.audio = path.join(os.tmpdir(), `weftcut-export-${j.view.job_id}-audio.${resolved.settings.audio.codec === 'opus' ? 'mka' : 'm4a'}`);
-      let destination: string;
-      if (a.output_path === undefined) {
-        const dir = path.join(h.openedProject()!.dir, 'output');
-        await fs.mkdir(dir, { recursive: true });
-        destination = path.join(dir, `${exportBasename(h.actor.snapshot().metadata.name)}.${resolved.extension}`);
-      } else {
-        if (typeof a.output_path !== 'string' || !path.isAbsolute(a.output_path)) throw new ExportValidationError('output_path must be absolute');
-        destination = path.resolve(a.output_path);
-        if (!agent) await fs.mkdir(path.dirname(destination), { recursive: true });
-      }
-      if (path.extname(destination).toLowerCase() !== `.${resolved.extension}`) throw new ExportValidationError(`output_path must end in .${resolved.extension}`);
-      if (j.policy === 'fail' && await exportPathExists(destination)) throw new ExportJobError('output_conflict', 'Output already exists; choose another filename');
       j.view.output_path = destination; j.view.filename = path.basename(destination);
       j.staging = await this.deps.native('export_prepare_output', { output: destination }) as string;
       await this.deps.native('export_begin', {});
@@ -220,6 +271,35 @@ export class ExportJobs {
       }
     } catch (e) { await this.finish(j, 'failed', e instanceof Error ? e.message : String(e), e instanceof ExportJobError ? e.code : e instanceof ExportValidationError ? 'invalid_params' : 'output_unavailable'); }
     return this.status(j.view.job_id)!;
+  }
+  /** The resolved settings and the destination file of a start request:
+   *  settings validated, an explicit `output_path` absolute and in a folder
+   *  that exists (the UI's is created, and so is the project's own output/),
+   *  its extension the one the settings write (`get_export_options`), and no
+   *  file there under `on_conflict: fail`. */
+  private async plan(h: TsActorHost, preset: ExportPreset | undefined, a: Record<string, unknown>, agent: boolean, policy: Entry['policy']) {
+    const resolved = resolveExportRequest(await this.savedSettings(h, preset), agent ? exportWire(a.settings, false) : a.settings,
+      this.composition(h), (agent ? exportWire(a.range, false) : a.range) as ExportJob['range'] | undefined, !agent || a.allow_experimental_10bit === true, snapFrameRound);
+    let destination: string;
+    if (a.output_path === undefined) {
+      const dir = path.join(h.openedProject()!.dir, 'output');
+      await fs.mkdir(dir, { recursive: true });
+      destination = path.join(dir, `${exportBasename(h.actor.snapshot().metadata.name)}.${resolved.extension}`);
+    } else {
+      if (typeof a.output_path !== 'string' || !path.isAbsolute(a.output_path)) throw new ExportValidationError(`output_path must be an absolute file path, got ${JSON.stringify(a.output_path)}`);
+      destination = path.resolve(a.output_path);
+      const parent = path.dirname(destination);
+      const isFolder = () => fs.stat(parent).then(st => st.isDirectory(), () => false);
+      // The project's own output/ is the default path's folder: made on demand,
+      // and only it (never a folder above it).
+      const own = path.relative(path.join(h.openedProject()!.dir, 'output'), parent) === '';
+      if (!agent) await fs.mkdir(parent, { recursive: true });
+      else if (!await isFolder() && !(own && await fs.mkdir(parent).then(isFolder, isFolder)))
+        throw new ExportJobError('output_parent_missing', `${parent} is not an existing folder; an export is written only into a folder that already exists`, { path: parent });
+    }
+    if (path.extname(destination).toLowerCase() !== `.${resolved.extension}`) throw new ExportValidationError(`output_path must end in .${resolved.extension}, the extension these settings write (get_export_options reports it); got ${path.basename(destination)}`);
+    if (policy === 'fail' && await exportPathExists(destination)) throw new ExportJobError('output_conflict', `${destination} already exists and on_conflict is fail; nothing is overwritten`, { path: destination });
+    return { resolved, destination };
   }
   rendererReady(token: string, rootId: string, generation = 0) {
     const h = this.host();
@@ -244,9 +324,10 @@ export class ExportJobs {
     if (typeof update.duration_us === 'number') j.view.duration_us = update.duration_us;
     if (update.state && exportTerminal(update.state)) {
       if (update.state === 'completed' && !j.published) throw new ExportJobError('invalid_state', 'Export cannot complete before publication');
-      await this.finish(j, j.published ? 'completed' : j.cancelling ? 'cancelled' : update.state, update.error?.message, update.error?.code);
-    } else if (update.state && ['preparing', 'rendering', 'finalizing', 'awaiting_retry'].includes(update.state)) {
+      await this.finish(j, j.published ? 'completed' : j.cancelling ? 'cancelled' : update.state, update.error?.message, update.error?.code, update.error);
+    } else if (update.state && ['queued', 'preparing', 'rendering', 'finalizing', 'awaiting_retry'].includes(update.state)) {
       j.view.state = update.state; j.view.error = update.error;
+      if (update.state === 'queued') j.view.queued = exportQueued(update.queued); else delete j.view.queued;
       if (!j.cancelling) j.view.phase = update.phase && ['sink', 'audio', 'mux'].includes(update.phase) ? update.phase : update.state;
       this.notify(j);
     }
@@ -264,7 +345,7 @@ export class ExportJobs {
   }
   async cancel(id: string) {
     const j = this.entries.get(id);
-    if (!j) throw new ExportJobError('not_found', `Unknown export job ${id}`);
+    if (!j) throw new ExportJobError('job_not_found', `Unknown export job ${id}`);
     if (exportTerminal(j.view.state)) return this.status(id);
     j.cancelling = true; j.view.phase = 'cancelling'; clearTimeout(j.timer); this.notify(j);
     await j.preparation.catch(() => { });
@@ -286,7 +367,7 @@ export class ExportJobs {
     this.deps.send('export:retry', { job_id: id, renderer_token: j.renderer });
     return this.status(id);
   }
-  private async finish(j: Entry, state: 'completed' | 'failed' | 'cancelled', message?: string, code = 'export_failed') {
+  private async finish(j: Entry, state: 'completed' | 'failed' | 'cancelled', message?: string, code = 'export_failed', fault?: ExportJob['error']) {
     if (j.finishing) return j.finishing;
     j.finishing = (async () => {
       clearTimeout(j.timer);
@@ -295,7 +376,7 @@ export class ExportJobs {
       await Promise.all([j.staging, j.video, j.audio].filter(Boolean).map(file => fs.rm(file, { force: true })));
       j.view.state = j.published ? 'completed' : state;
       j.view.phase = j.view.state;
-      if (message && !j.published) j.view.error = { code, message };
+      if (message && !j.published) j.view.error = { ...fault, code, message };
       else delete j.view.error;
       if (this.active === j) { this.active = undefined; this.idleWaiters.forEach(resolve => resolve()); this.idleWaiters.clear(); }
       this.notify(j);

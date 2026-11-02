@@ -7,7 +7,7 @@ import { root } from './fixtures/project'
 function makeDeps() {
   const noopFs = { exists: () => false, readFile: () => '', writeFile: () => {}, mkdirp: () => {}, copyFile: () => {}, readdir: () => [], rm: () => {} }
   return {
-    send: () => {}, mcpNotify: () => {}, fileExists: () => false,
+    send: () => {}, fileExists: () => false,
     fs: noopFs as any, join: (...p: string[]) => p.join('/'),
     napi: { commitWorkspace: async () => {}, pushRecent: () => {}, setLastNewProjectParent: () => {}, enqueueJobsForMedia: () => {} } as any,
     compute: { probeMedia: async () => '{}', hashMediaSource: async () => 'h', parseSubtitles: async () => '{}', synthesizeSpeechCompute: async () => '{}' },
@@ -39,11 +39,11 @@ describe('mcpCall rejects malformed args before commit (soak finding)', () => {
     host.stop()
   })
 
-  it('add_color_layer with a string color → invalid_params, no layer committed', () => {
+  it('add_layers with a string color → invalid_params, no layer committed', () => {
     const host = createTsActorHost(makeDeps())
     host.start()
     const track = root(host.actor.snapshot()).tracks[0].id
-    const r = host.actor.mcpCall('add_color_layer', JSON.stringify({ track_id: track, color: '#fff', t_start_us: 0, t_end_us: 1_000_000 }))
+    const r = host.actor.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: track, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: '#fff' } }] }))
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.code).toBe('invalid_params')
     const layers = root(host.actor.snapshot()).tracks.reduce((n, t) => n + t.layers.length, 0)
@@ -51,11 +51,11 @@ describe('mcpCall rejects malformed args before commit (soak finding)', () => {
     host.stop()
   })
 
-  it('add_color_layer with a valid color still works (regression guard)', () => {
+  it('add_layers with a valid color still works (regression guard)', () => {
     const host = createTsActorHost(makeDeps())
     host.start()
     const track = root(host.actor.snapshot()).tracks[0].id
-    const r = host.actor.mcpCall('add_color_layer', JSON.stringify({ track_id: track, color: { r: 10, g: 20, b: 30, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 }))
+    const r = host.actor.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: track, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 10, g: 20, b: 30, a: 255 } } }] }))
     expect(r.ok).toBe(true)
     const layers = root(host.actor.snapshot()).tracks.reduce((n, t) => n + t.layers.length, 0)
     expect(layers).toBe(1)

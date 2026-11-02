@@ -11,7 +11,7 @@ export interface AgentWorkSession {
   started_at: string
   ended_at: string | null
   /** `forced` = another connection took the session over with
-   *  `end_agent_session { force: true }` — the remedy for an owner that is gone. */
+   *  `begin_agent_session { force: true }` — the remedy for an owner that is gone. */
   end_reason: 'agent' | 'user' | 'disconnected' | 'forced' | null
   checkpoint_id: string
 }

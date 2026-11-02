@@ -101,7 +101,12 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: translate, i18n: { resolvedLanguage: "en-US" } }),
 }));
 
-import { createExportRunner } from "./exportRunner";
+import { createExportRunner, queuedExportMessage } from "./exportRunner";
+import { EXPORT_AUDIO_MIX_MIB } from "../../shared/export-resources";
+import { capabilityOf, RendererCannotDrawError, type RendererCapability } from "../render/rendererCapability";
+
+const GPU = capabilityOf("webgpu", true);
+const CANVAS = capabilityOf("canvas", false);
 
 const AUDIO_LAYER: LayerSummary = {
   id: "layer-vo",
@@ -179,17 +184,18 @@ function summary(tracks: TrackSummary[]) {
   });
 }
 
-function mount(previewRef = createRef<PreviewSurfaceHandle>()) {
+function mount(previewRef = createRef<PreviewSurfaceHandle>(), cap: RendererCapability = GPU) {
   let output = '';
   const controller = new AbortController();
   return renderHook(() => {
     const [exportState, setState] = useState<ExportState | null>(null);
     const runner = useMemo(() => createExportRunner({
 previewRef, proxyStateRef: { current: new Map() }, decodeProbeMemo: { current: new Map() },
-      t: translate as TFunction, onState: setState, cancel: () => controller.abort(), publish: async () => output
+      t: translate as TFunction, onState: setState, cancel: () => controller.abort(), publish: async () => output,
+      capability: async () => cap,
 }), []);
     return {
-exportState, runExportWithSettings: async (settings: ExportSettings, path: string, range?: { startUs: number; endUs: number }) => {
+exportState, runner, runExportWithSettings: async (settings: ExportSettings, path: string, range?: { startUs: number; endUs: number }) => {
         output = path;
         await runner.run({ job_id: 'test', state: 'preparing', filename: 'out.mp4', renderer_token: 'test', agent: false, settings, range: range ?? { startUs: 0, endUs: 2_000_000 }, output_path: path, staging_path: path, encoded_video_path: '/tmp/video.mp4', encoded_audio_path: '/tmp/audio.m4a' }, controller);
       }
@@ -255,6 +261,36 @@ describe("exportRunner", () => {
     expect(result.current.exportState?.kind).toBe(outcome === 'success' ? 'complete' : 'error');
     expect(restore).toHaveBeenCalledOnce();
     expect(suspended).toBe(false);
+  });
+
+  it("a mux behind a running derivative reads queued, names it, and returns to finalizing", async () => {
+    const project = summary([track("track-v", "Video", [COLOR_LAYER])]);
+    const { useProjectStore } = await import("../state/projectStore");
+    act(() => useProjectStore.getState().apply(project));
+    bridge.answers.set("project_summary", () => project);
+    const previewRef = createRef<PreviewSurfaceHandle>();
+    previewRef.current = { suspendForExport: () => () => { }, runPixiExport: async () => ({ framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 }) } as unknown as PreviewSurfaceHandle;
+    const { result } = mount(previewRef);
+    const wait = (payload: unknown) => act(async () => { for (const handler of bridge.handlers.get("export:mux_wait") ?? []) handler({ payload }); });
+    const holders = [{ kind: "proxy", media_id: "m-1", mib: 900, threads: 2 }];
+    let finishMux: (() => void) | undefined;
+    bridge.answers.set("mux_export", () => new Promise<void>((resolve) => { finishMux = resolve; }));
+    let run!: Promise<unknown>;
+    act(() => {
+      run = result.current.runExportWithSettings({
+        ...DEFAULT_EXPORT_SETTINGS, encoderEngine: "native", includeVideo: true,
+        audio: { ...DEFAULT_EXPORT_SETTINGS.audio, include: false },
+      }, "/out/movie.mp4");
+    });
+    await act(async () => { await vi.waitFor(() => expect(finishMux).toBeDefined()); });
+    await wait({ waiting: true, holders });
+    expect(result.current.exportState).toMatchObject({ kind: "preparing", queued: { reason: "busy", holders }, onCancel: expect.any(Function),
+      message: "Waiting for proxy generation to finish; the file is written automatically" });
+    await wait({ waiting: false });
+    expect(result.current.exportState).toMatchObject({ kind: "finalizing", step: "mux" });
+    await act(async () => { finishMux!(); await run; });
+    expect(result.current.exportState?.kind).toBe("complete");
+    expect(bridge.handlers.get("export:mux_wait") ?? []).toHaveLength(0);
   });
 
   it("retains encoded files after mux failure and retries only mux, then cleans up", async () => {
@@ -415,6 +451,84 @@ describe("exportRunner", () => {
     expect(bridge.log).not.toContain("invoke export_video_sink_start");
   });
 
+  // Issue 21: right after import a quick proxy holds the only CPU slot. A
+  // fresh audio claim waited 15 s behind it and failed the export busy; the
+  // mix must instead run under the export's admitted plan.
+  describe("the audio mix borrows the export's admitted plan", () => {
+    function recordPlans() {
+      const plans: Array<{ id: string; options: number[] }> = [];
+      const waiters = new Set<(event: { id: string } & Record<string, unknown>) => void>();
+      let admit = () => { };
+      const held = new Promise<void>((resolve) => { admit = resolve; });
+      Object.assign(window.api.resources, {
+        onExportWaiting: (cb: (event: { id: string } & Record<string, unknown>) => void) => { waiters.add(cb); return () => waiters.delete(cb); },
+        planExport: vi.fn(async (request: { id: string; options: number[] }) => {
+          plans.push(request);
+          bridge.log.push(`plan ${request.options.join(",")}`);
+          return 0;
+        }),
+      });
+      /// The next plan request blocks, queued behind a quick proxy, until `admit`.
+      const blockNext = () => {
+        vi.mocked(window.api.resources.planExport).mockImplementationOnce(async (request: { id: string; options: number[] }) => {
+          plans.push(request);
+          bridge.log.push(`plan ${request.options.join(",")}`);
+          for (const cb of waiters) cb({ id: request.id, kind: "blocked", reason: "busy", requestedMiB: request.options[0]!, availableMiB: 0, workMiB: 512, revision: 1,
+            holders: [{ kind: "quick_proxy", media_id: "media-2", mib: 128, threads: 1 }] });
+          await held;
+          return 0;
+        });
+      };
+      return { plans, blockNext, admit: () => admit() };
+    }
+
+    it("mixes a full export's audio under its working-set plan, after admission", async () => {
+      const project = summary([track("track-v", "Video", [COLOR_LAYER]), track("track-a", "Audio", [AUDIO_LAYER])]);
+      const { useProjectStore } = await import("../state/projectStore");
+      act(() => useProjectStore.getState().apply(project));
+      bridge.answers.set("project_summary", () => project);
+      bridge.answers.set("ensure_export_audio_fx", () => ({ waiting: [], failed: [] }));
+      const audio = vi.fn((_args: unknown) => true);
+      bridge.answers.set("export_project_audio_only", audio);
+      const { plans } = recordPlans();
+      const previewRef = createRef<PreviewSurfaceHandle>();
+      previewRef.current = { suspendForExport: () => () => { }, runPixiExport: async () => ({ framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 }) } as unknown as PreviewSurfaceHandle;
+      const { result } = mount(previewRef);
+      await act(async () => result.current.runExportWithSettings({
+        ...DEFAULT_EXPORT_SETTINGS, encoderEngine: "native", includeVideo: true,
+        audio: { ...DEFAULT_EXPORT_SETTINGS.audio, include: true },
+      }, "/out/movie.mp4"));
+      expect(result.current.exportState?.kind).toBe("complete");
+      expect(audio).toHaveBeenCalledOnce();
+      const workingSet = plans.at(-1)!;
+      expect(audio.mock.calls[0]![0]).toMatchObject({ finalizationToken: workingSet.id });
+      expect(bridge.log.indexOf(`plan ${workingSet.options.join(",")}`)).toBeLessThan(bridge.log.indexOf("invoke export_project_audio_only"));
+      expect(Math.min(...workingSet.options)).toBeGreaterThanOrEqual(EXPORT_AUDIO_MIX_MIB);
+    });
+
+    it("queues an audio-only export for its plan, then mixes under it", async () => {
+      bridge.answers.set("project_summary", () => summary([track("track-a", "Audio", [AUDIO_LAYER])]));
+      bridge.answers.set("ensure_export_audio_fx", () => ({ waiting: [], failed: [] }));
+      const audio = vi.fn((_args: unknown) => true);
+      bridge.answers.set("export_project_audio_only", audio);
+      const { plans, blockNext, admit } = recordPlans();
+      blockNext();
+      const { result } = mount();
+      let run!: Promise<void>;
+      act(() => { run = result.current.runExportWithSettings({ ...DEFAULT_EXPORT_SETTINGS, includeVideo: false, includeAudio: true }, "/out/mix.m4a"); });
+      await waitFor(() => expect(result.current.exportState).toMatchObject({
+        kind: "preparing", queued: { reason: "busy", holders: [{ kind: "quick_proxy" }] },
+        message: "Waiting for proxy generation to finish; the export starts automatically",
+      }));
+      expect(audio).not.toHaveBeenCalled();
+      await act(async () => { admit(); await run; });
+      expect(plans).toEqual([expect.objectContaining({ options: [EXPORT_AUDIO_MIX_MIB] })]);
+      expect(audio.mock.calls[0]![0]).toMatchObject({ finalizationToken: plans[0]!.id });
+      expect(window.api.resources.release).toHaveBeenCalledWith(plans[0]!.id);
+      expect(result.current.exportState?.kind).toBe("complete");
+    });
+  });
+
   it("lets an export with nothing to bake through the gate", async () => {
     bridge.answers.set("project_summary", () =>
       summary([track("track-a", "Audio", [AUDIO_LAYER])]),
@@ -460,5 +574,144 @@ describe("exportRunner", () => {
 
     expect(calls).toEqual([{ startUs: 0, endUs: 2_000_000 }]);
     expect(summary([]).compositions[ROOT_ID]).toBeDefined();
+  });
+
+  // Spec D1 on a host without WebGPU or WebGL2: the canvas fallback draws no
+  // effects, so a frame that holds one is refused with the typed reason, and a
+  // plain frame renders as before.
+  describe("on the canvas renderer", () => {
+    const DARK: LayerSummary = { ...COLOR_LAYER, id: "layer-dark", t_start_us: 1_000_000, effects: [{ id: "fx-1", kind: "brightness", enabled: true, params: {} }] };
+    const CROPPED: LayerSummary = { ...COLOR_LAYER, id: "layer-crop", kind: "VideoClip", t_start_us: 1_000_000, params: { kind: "VideoClip", crop: { x: 0.1, y: 0, w: 0.9, h: 1 } } as never };
+    type RunOpts = { startUs: number; encoderConfig: VideoEncoderConfig; nativeSinkPixFmt?: string; stills?: { width: number; effects?: boolean }; onStill?: (s: { width: number; height: number; jpeg: ArrayBuffer }) => void };
+    function stillsPreview(rendered: number[], runs: RunOpts[] = []) {
+      const previewRef = createRef<PreviewSurfaceHandle>();
+      previewRef.current = {
+        suspendForExport: () => () => { },
+        runPixiExport: async (opts: RunOpts) => {
+          rendered.push(opts.startUs);
+          runs.push(opts);
+          opts.onStill?.({ width: 640, height: 360, jpeg: new ArrayBuffer(4) });
+          return { framesEncoded: 1, totalFrames: 1, fpsNum: 30, fpsDen: 1 };
+        },
+      } as unknown as PreviewSurfaceHandle;
+      return previewRef;
+    }
+    async function load(project: ReturnType<typeof summary>) {
+      const { useProjectStore } = await import("../state/projectStore");
+      act(() => { useProjectStore.getState().apply(project); });
+      bridge.answers.set("project_summary", () => project);
+    }
+
+    it("render_frames refuses a frame with an effect layer, before rendering any", async () => {
+      await load(summary([track("track-v", "Video", [COLOR_LAYER, DARK])]));
+      const rendered: number[] = [];
+      const { result } = mount(stillsPreview(rendered), CANVAS);
+      const err = await result.current.runner.runStills({ times_us: [500_000, 1_500_000], width: 640, settings: DEFAULT_EXPORT_SETTINGS }, new AbortController().signal).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(RendererCannotDrawError);
+      // Effects are all it lacks, so the refusal offers to look without them.
+      expect((err as RendererCannotDrawError).fault).toEqual({
+        error: "RendererCannotDraw", renderer: "canvas", missing: ["effects"], layer_ids: ["layer-dark"], needs: "WebGPU or WebGL2", t_us: [1_500_000],
+        options: [{ action: "render_without_effects", tool: "render_frames", without: ["effects"] }],
+      });
+      expect((err as Error).message).toContain("layer-dark");
+      expect((err as Error).message).toContain('without: ["effects"]');
+      expect(rendered).toEqual([]);
+    });
+
+    it("render_frames without effects draws with effects off and marks the frames that held one", async () => {
+      await load(summary([track("track-v", "Video", [COLOR_LAYER, DARK])]));
+      const rendered: number[] = [];
+      const runs: RunOpts[] = [];
+      const { result } = mount(stillsPreview(rendered, runs), CANVAS);
+      const frames = await result.current.runner.runStills({ times_us: [500_000, 1_500_000], width: 640, settings: DEFAULT_EXPORT_SETTINGS, without: ["effects"] }, new AbortController().signal);
+      expect(rendered).toEqual([500_000, 1_500_000]);
+      expect(runs.map((r) => r.stills)).toEqual([{ width: 640, effects: false }, { width: 640, effects: false }]);
+      expect(frames.map((f) => [f.t_us, f.omitted])).toEqual([[500_000, undefined], [1_500_000, ["effects"]]]);
+    });
+
+    it("render_frames without effects still refuses a crop, and offers no without", async () => {
+      await load(summary([track("track-v", "Video", [COLOR_LAYER, DARK]), track("track-c", "Video", [CROPPED])]));
+      for (const without of [["effects" as const], undefined]) {
+        const rendered: number[] = [];
+        const { result } = mount(stillsPreview(rendered), CANVAS);
+        const err = await result.current.runner.runStills({ times_us: [1_500_000], width: 640, settings: DEFAULT_EXPORT_SETTINGS, ...(without ? { without } : {}) }, new AbortController().signal).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(RendererCannotDrawError);
+        const fault = (err as RendererCannotDrawError).fault;
+        expect(fault).toMatchObject({ error: "RendererCannotDraw", missing: without ? ["crop"] : ["effects", "crop"] });
+        expect(fault).not.toHaveProperty("options");
+        expect((err as Error).message).not.toContain("without:");
+        expect(rendered).toEqual([]);
+      }
+    });
+
+    it("render_frames without effects on a GPU host still skips them, labelled", async () => {
+      await load(summary([track("track-v", "Video", [COLOR_LAYER, DARK])]));
+      const runs: RunOpts[] = [];
+      const { result } = mount(stillsPreview([], runs), GPU);
+      const frames = await result.current.runner.runStills({ times_us: [1_500_000], width: 640, settings: DEFAULT_EXPORT_SETTINGS, without: ["effects"] }, new AbortController().signal);
+      expect(runs[0]!.stills).toEqual({ width: 640, effects: false });
+      expect(frames[0]!.omitted).toEqual(["effects"]);
+    });
+
+    it("render_frames renders a plain frame", async () => {
+      await load(summary([track("track-v", "Video", [COLOR_LAYER, DARK])]));
+      const rendered: number[] = [];
+      const runs: RunOpts[] = [];
+      const { result } = mount(stillsPreview(rendered, runs), CANVAS);
+      const frames = await result.current.runner.runStills({ times_us: [500_000], width: 640, settings: DEFAULT_EXPORT_SETTINGS }, new AbortController().signal);
+      expect(frames.map((f) => f.t_us)).toEqual([500_000]);
+      expect(frames[0]).not.toHaveProperty("omitted");
+      expect(rendered).toEqual([500_000]);
+      expect(runs[0]!.stills).toEqual({ width: 640 });
+    });
+
+    it("an export whose range holds an effect fails before encoding, typed", async () => {
+      await load(summary([track("track-v", "Video", [COLOR_LAYER, DARK])]));
+      const { result } = mount(stillsPreview([]), CANVAS);
+      await act(async () => {
+        await result.current.runExportWithSettings({ ...DEFAULT_EXPORT_SETTINGS, includeVideo: true, audio: { ...DEFAULT_EXPORT_SETTINGS.audio, include: false } }, "/out/movie.mp4");
+      });
+      expect(result.current.exportState).toMatchObject({ kind: "error", code: "renderer_cannot_draw", fault: { error: "RendererCannotDraw", layer_ids: ["layer-dark"] } });
+      expect(bridge.log).not.toContain("invoke export_video_sink_start");
+    });
+
+    it("an auto export without WebGL encodes with WebCodecs, not the native sink", async () => {
+      await load(summary([track("track-v", "Video", [COLOR_LAYER])]));
+      const runs: RunOpts[] = [];
+      const { result } = mount(stillsPreview([], runs), CANVAS);
+      await act(async () => {
+        await result.current.runExportWithSettings({ ...DEFAULT_EXPORT_SETTINGS, codec: "h264", includeVideo: true, audio: { ...DEFAULT_EXPORT_SETTINGS.audio, include: false } }, "/out/movie.mp4");
+      });
+      expect(bridge.log).not.toContain("invoke export_video_sink_start");
+      expect(runs).toHaveLength(1);
+      expect(runs[0]!.nativeSinkPixFmt).toBeUndefined();
+      expect(runs[0]!.encoderConfig.codec).toMatch(/^avc1\./);
+      await waitFor(() => expect(result.current.exportState?.kind).toBe("complete"));
+    });
+
+    it("a native pin without WebGL fails naming encoder_engine", async () => {
+      await load(summary([track("track-v", "Video", [COLOR_LAYER])]));
+      const { result } = mount(stillsPreview([]), CANVAS);
+      await act(async () => {
+        await result.current.runExportWithSettings({ ...DEFAULT_EXPORT_SETTINGS, encoderEngine: "native", includeVideo: true, audio: { ...DEFAULT_EXPORT_SETTINGS.audio, include: false } }, "/out/movie.mp4");
+      });
+      expect(result.current.exportState).toMatchObject({ kind: "error", code: "encoder_unavailable", fault: { error: "EncoderUnavailable", option: "encoder_engine" } });
+      expect((result.current.exportState as { detail: string }).detail).toContain("encoder_engine");
+    });
+  });
+});
+
+describe("queued export message", () => {
+  const block = { kind: "blocked", reason: "busy", requestedMiB: 800, availableMiB: 100, workMiB: 1024, revision: 1 } as const;
+  const t = translate as unknown as TFunction;
+  it("names the largest holder it knows, waiting without a deadline", () => {
+    expect(queuedExportMessage(t, { ...block, holders: [{ kind: "proxy", media_id: "m-1", mib: 900, threads: 1 }] }))
+      .toBe("Waiting for proxy generation to finish; the export starts automatically");
+    expect(queuedExportMessage(t, { ...block, holders: [{ kind: "editor", mib: 900, threads: 1 }, { kind: "waveform", mib: 64, threads: 1 }] }))
+      .toBe("Waiting for waveform generation to finish; the export starts automatically");
+  });
+  it("falls back to other processing, and memory reasons say memory", () => {
+    expect(queuedExportMessage(t, block)).toBe(enUS.export.wait_resources);
+    expect(queuedExportMessage(t, { ...block, reason: "host-pressure", holders: [{ kind: "proxy", mib: 900, threads: 1 }] })).toBe(enUS.export.wait_memory);
   });
 });

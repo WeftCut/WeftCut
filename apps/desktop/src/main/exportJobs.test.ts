@@ -78,6 +78,62 @@ it('waits for the matching renderer and rejects stale ownership', async () => {
   await s.jobs.cancel(job.job_id); await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
 });
 
+it('get_export_status { wait_s }: wakes on a state change, not on progress, and at once when terminal', async () => {
+  const s = await setup(); s.ready(); const job = await s.jobs.start({});
+  await s.jobs.update(job.job_id, 'renderer', { state: 'rendering', progress: 0.1 });
+  let woke = false;
+  const waiting = s.jobs.waitForStateChange(job.job_id, 5_000).then(() => { woke = true; });
+  await s.jobs.update(job.job_id, 'renderer', { state: 'rendering', progress: 0.5 });
+  await new Promise(r => setTimeout(r, 10));
+  expect(woke).toBe(false);
+  await s.jobs.update(job.job_id, 'renderer', { state: 'finalizing', phase: 'mux' });
+  await waiting;
+  expect(s.jobs.status(job.job_id)?.state).toBe('finalizing');
+  // Without a change the wait ends when it elapses.
+  const started = Date.now();
+  await s.jobs.waitForStateChange(undefined, 30);
+  expect(Date.now() - started).toBeGreaterThanOrEqual(25);
+  await s.jobs.cancel(job.job_id); await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
+  const before = Date.now();
+  await s.jobs.waitForStateChange(job.job_id, 5_000);
+  expect(Date.now() - before).toBeLessThan(1_000);
+});
+
+it('a job waiting for admission reads queued with its holders, and get_export_status { wait_s } wakes when it is admitted', async () => {
+  const s = await setup(); s.ready(); const job = await s.jobs.start({});
+  const proxy = { kind: 'proxy', media_id: 'm-1', mib: 900, threads: 1 };
+  let woke = false;
+  const entering = s.jobs.waitForStateChange(job.job_id, 5_000).then(() => { woke = true; });
+  await s.jobs.update(job.job_id, 'renderer', { state: 'queued', queued: { reason: 'busy', holders: [proxy] } });
+  await entering; expect(woke).toBe(true);
+  expect(s.jobs.status(job.job_id)).toMatchObject({ state: 'queued', phase: 'queued', can_cancel: true, queued: { reason: 'busy', holders: [proxy] } });
+  // A new holder list while still queued is no state change.
+  woke = false;
+  const admitted = s.jobs.waitForStateChange(undefined, 5_000).then(() => { woke = true; });
+  await s.jobs.update(job.job_id, 'renderer', { state: 'queued', queued: { reason: 'busy', holders: [proxy, { kind: 'waveform', mib: 128, threads: 1 }] } });
+  await new Promise(r => setTimeout(r, 10));
+  expect(woke).toBe(false);
+  expect(s.jobs.latest()?.queued?.holders).toHaveLength(2);
+  await s.jobs.update(job.job_id, 'renderer', { state: 'rendering', progress: 0 });
+  await admitted;
+  expect(s.jobs.status(job.job_id)).toMatchObject({ state: 'rendering' });
+  expect(s.jobs.status(job.job_id)).not.toHaveProperty('queued');
+  await s.jobs.cancel(job.job_id); await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
+});
+
+it('an explicit path into the project\'s own output/ creates that folder; any other missing folder still refuses', async () => {
+  const s = await setup(); s.ready();
+  const output = path.join(s.dir, 'output');
+  await expect(fs.stat(output)).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(s.jobs.start({ output_path: path.join(output, 'nested', 'cut.mp4') })).rejects.toMatchObject({ code: 'output_parent_missing' });
+  await expect(fs.stat(output)).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(s.jobs.start({ output_path: path.join(s.dir, 'other', 'cut.mp4') })).rejects.toMatchObject({ code: 'output_parent_missing', data: { path: path.join(s.dir, 'other') } });
+  const job = await s.jobs.start({ output_path: path.join(output, 'cut.mp4') });
+  expect(job).toMatchObject({ state: 'preparing', output_path: path.join(output, 'cut.mp4') });
+  expect((await fs.stat(output)).isDirectory()).toBe(true);
+  await s.jobs.cancel(job.job_id); await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
+});
+
 it('keeps admission during cancellation until the renderer acknowledges cleanup', async () => {
   const s = await setup(); s.ready(); const job = await s.jobs.start({});
   await s.jobs.cancel(job.job_id); expect(s.jobs.isActive()).toBe(true);
@@ -113,11 +169,24 @@ it('times out waiting for initialization without retaining the edit lock', async
   expect(s.jobs.isActive()).toBe(false);
 });
 
-it('rejects strict conflicts before starting native encoding and never changes defaults', async () => {
+it('refuses an agent request that cannot run before a job exists: strict conflict, wrong extension, missing folder (ME10)', async () => {
   const s = await setup(); const output = path.join(s.dir, 'exists.mp4'); await fs.writeFile(output, 'original');
-  const job = await s.jobs.start({ output_path: output, on_conflict: 'fail', settings: { include_audio: false } });
+  await expect(s.jobs.start({ output_path: output, on_conflict: 'fail', settings: { include_audio: false } })).rejects.toMatchObject({ code: 'output_conflict' });
+  expect(await fs.readFile(output, 'utf8')).toBe('original');
+  await expect(s.jobs.start({ output_path: path.join(s.dir, 'cut.txt') })).rejects.toMatchObject({ code: 'invalid_params' });
+  await expect(s.jobs.start({ output_path: path.join(s.dir, 'no-such-folder', 'cut.mp4') })).rejects.toMatchObject({ code: 'output_parent_missing' });
+  await expect(s.jobs.start({ output_path: 'relative/cut.mp4' })).rejects.toMatchObject({ code: 'invalid_params' });
+  expect(s.native.mock.calls.some(([c]) => c === 'export_begin' || c === 'export_prepare_output')).toBe(false);
+  expect(s.jobs.latest()).toBeNull();
+});
+
+it('the UI\'s strict conflict still fails in view, and the latest job outlives its end (ME11)', async () => {
+  const s = await setup(); const output = path.join(s.dir, 'exists.mp4'); await fs.writeFile(output, 'original');
+  const job = await s.jobs.start({ output_path: output, on_conflict: 'fail', settings: { includeAudio: false } }, false);
   expect(job).toMatchObject({ state: 'failed', error: { code: 'output_conflict' }, can_retry: false, can_cancel: false }); expect(await fs.readFile(output, 'utf8')).toBe('original');
   expect(s.native.mock.calls.some(([c]) => c === 'export_begin')).toBe(false);
+  expect(s.jobs.status()).toBeNull();
+  expect(s.jobs.latest()).toMatchObject({ job_id: job.job_id, state: 'failed' });
 });
 
 it('does not accept a completion acknowledgement without publication', async () => {
@@ -171,7 +240,7 @@ it('uses the personal default for MCP options while keeping saved project settin
   expect(await jobs.options(preset.id)).toMatchObject({ settings: { custom_bitrate: 7_000_000, hw_accel: 'software', decode_engine: 'ffmpeg' } });
   expect(await jobs.options('builtin:hd')).toMatchObject({ settings: { resolution_height: 720, custom_bitrate: 5_000_000 } });
   expect(saved).toMatchObject({ customBitrate: 3_000_000 });
-  await expect(jobs.options('missing')).rejects.toMatchObject({ code: 'not_found' });
+  await expect(jobs.options('missing')).rejects.toMatchObject({ code: 'preset_not_found' });
   await expect(jobs.options(null)).rejects.toMatchObject({ code: 'invalid_params' });
 });
 
@@ -179,7 +248,7 @@ it('snapshots a selected preset before awaits and replays the job after that pre
   const preset = { id: 'personal', name: 'Review', version: 1 as const, values: exportPresetValues(mergeSettings({ quality: 'custom', customBitrate: 7_000_000 })) };
   const prefs: ExportPresetPreferences = { export_presets: [preset] };
   const s = await setup(() => prefs); s.ready();
-  await expect(s.jobs.start({ preset_id: 'missing' })).rejects.toMatchObject({ code: 'not_found' });
+  await expect(s.jobs.start({ preset_id: 'missing' })).rejects.toMatchObject({ code: 'preset_not_found' });
   await expect(s.jobs.start({ preset_id: null })).rejects.toMatchObject({ code: 'invalid_params' });
   expect(s.jobs.isActive()).toBe(false);
   expect(s.native).not.toHaveBeenCalled();

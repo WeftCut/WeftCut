@@ -13,7 +13,7 @@ import { mergeMcpCatalog, mergeMcpResources } from '../../mcp/mcpCatalog'
 import { HOST_RESOURCE_DEFS } from '../../mcp/hostResources'
 import { APP_SCOPE_RESOURCES, APP_SCOPE_TOOLS, MOTIF_TOOLS } from '../../mcp/mutationTools'
 import { handleCallTool, handleReadResource, sessionView } from '../../mcp/server'
-import { NO_PROJECT_OPEN_MESSAGE } from '../../mcp/toolResult'
+import { NO_PROJECT_OPEN_MESSAGE, UnknownToolError } from '../../mcp/toolResult'
 import { createTsActorHost } from '../ts-actor-host'
 import { PROJECT_OPENED_EVENT } from '../../../shared/project-events'
 
@@ -32,9 +32,9 @@ const resources = mergeMcpResources(rust.resources as never, HOST_RESOURCE_DEFS 
 const backend = { mcpCallTool: async () => { throw new Error('a refused call must not reach the backend') }, mcpReadResource: async () => { throw new Error('a refused read must not reach the backend') }, mcpCatalog: async () => RUST_CATALOG } as any
 
 const PINNED_APP_SCOPE = [
-  'list_export_presets', 'create_export_preset', 'update_export_preset', 'rename_export_preset', 'delete_export_preset', 'set_default_export_preset',
-  'get_export_status', 'cancel_export', 'retry_export', 'ping',
-  'list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'begin_file_upload', 'write_file_chunk', 'read_file_transfer', 'delete_file_transfer', 'preview_motif',
+  'list_export_presets', 'create_export_preset', 'update_export_preset', 'delete_export_preset',
+  'get_export_status', 'cancel_export', 'retry_export',
+  'list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'preview_motif',
   'open_project', 'create_project',
 ]
 
@@ -59,7 +59,6 @@ function host(recents: { parent?: string | null } = {}) {
   const workspaceDir = vi.fn((): string | null => null)
   const ts = createTsActorHost({
     send: (event: string, payload: unknown) => { sent.push([event, payload]) },
-    mcpNotify: () => {},
     fileExists: (p: string) => fs.exists(p),
     fs,
     join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/'),
@@ -90,11 +89,12 @@ describe('no project open: every other tool refuses and commits nothing', () => 
     const before = ts.actor.snapshot()
     const len = ts.actor.historyStatus().len
     const checkpoints = ts.actor.listCheckpoints().length
-    const gated = [
-      ...merged.map((t) => t.name).filter((n) => !APP_SCOPE_TOOLS.has(n)),
-      'motif_staleness_report', 'acknowledge_motif_staleness',
-    ]
+    const gated = merged.map((t) => t.name).filter((n) => !APP_SCOPE_TOOLS.has(n))
     expect(gated.length).toBeGreaterThan(50)
+    // The staleness and approval channels are the renderer's: over MCP they
+    // are unknown tools (ME8), on the start screen as anywhere else.
+    for (const name of ['motif_staleness_report', 'acknowledge_motif_staleness', 'approve_motif_proposal', 'publish_motif'])
+      await expect(call(ts, name, {}), name).rejects.toBeInstanceOf(UnknownToolError)
     for (const name of gated) {
       const out = await call(ts, name, { reason: 'x', label: 'x', layer_id: 'x' })
       expect(out.isError, name).toBe(true)
@@ -108,7 +108,7 @@ describe('no project open: every other tool refuses and commits nothing', () => 
 
   it('refuses every read_project view but session and effects', async () => {
     const { ts } = host()
-    for (const view of ['current', 'composition', 'compositions', 'media', 'tracks', 'markers', 'links', 'transitions', 'settings', 'history']) {
+    for (const view of ['composition', 'compositions', 'media', 'tracks', 'markers', 'links', 'transitions', 'settings', 'history']) {
       const out = await call(ts, 'read_project', { view })
       expect(out.structuredContent?.error, view).toBe('NoProjectOpen')
     }
@@ -162,8 +162,22 @@ describe('open_project / create_project', () => {
     await call(ts, 'create_project', { name: 'A' })
     await call(ts, 'create_project', { name: 'B' })
     const out = await call(ts, 'open_project', { path: '/work/A' })
-    expect(out.structuredContent).toEqual({ name: 'A', dir: '/work/A', replaced: '/work/B' })
+    expect(out.structuredContent).toEqual({ name: 'A', dir: '/work/A', replaced: '/work/B', already_open: false })
     expect(ts.openedProject()).toEqual({ dir: '/work/A' })
+  })
+
+  it('open_project on the folder already open reloads nothing and keeps the undo history (W12)', async () => {
+    const { ts, sent } = host({ parent: '/work' })
+    await call(ts, 'create_project', { name: 'A' })
+    await call(ts, 'add_track', { label: 'kept' })
+    const history = ts.actor.historyStatus().len
+    const opens = sent.filter(([e]) => e === PROJECT_OPENED_EVENT).length
+    for (const path of ['/work/A', '/work/A/', '/work/./A']) {
+      const out = await call(ts, 'open_project', { path })
+      expect(out.structuredContent, path).toEqual({ name: 'A', dir: '/work/A', replaced: null, already_open: true })
+    }
+    expect(ts.actor.historyStatus().len).toBe(history)
+    expect(sent.filter(([e]) => e === PROJECT_OPENED_EVENT)).toHaveLength(opens)
   })
 
   it('refuses a missing folder, a non-project folder and an existing target, by name, changing nothing', async () => {

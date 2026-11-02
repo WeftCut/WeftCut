@@ -240,7 +240,10 @@ pub(super) async fn render_cancellable(
 
     let _resources = tokio::select! {
         _ = cancelled(cancel) => anyhow::bail!("export cancelled"),
-        permit = crate::resources::interactive(128) => permit.map_err(anyhow::Error::msg)?,
+        permit = crate::resources::held_by(
+            crate::resources::Holder::new("audio_fx"),
+            crate::resources::interactive(128),
+        ) => permit.map_err(anyhow::Error::msg)?,
     };
     // Finish fallible output setup before starting a child. Once spawned, every
     // error/cancellation path below explicitly stops and reaps it.

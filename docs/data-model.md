@@ -398,7 +398,8 @@ carry a stable `id`, relative handles, the outgoing `segment` (Line | Cubic) and
 solver stores resolved handles for every reader. `progress` 0–1 traverses by
 distance and is keyframed as `path_progress`; independent `x`/`y` writes are
 refused in Path mode. `set_position` replaces the record atomically,
-`translate_path` moves all nodes, and a split keeps the whole route and progress
+a path translation moves all nodes (UI `translate_path`; MCP
+`translate_position` offsets either mode), and a split keeps the whole route and progress
 on both halves. Conversion previews never write state; applying one is a single
 record replacement.
 
@@ -407,8 +408,9 @@ are structural twins (same mode and, if keyframed, the same `(t_us, value, in,
 out, continuity, segment)` sequence and `extrapolate`; key ids differ). Enforced
 on **results** (`mutations/scaleLink.ts`): after any write touching a linked
 layer's scale, a twin check in the same commit clears the flag on divergence.
-`set_scale_linked { linked: true }` copies `scale_x` over `scale_y` with fresh
-ids. The load pass backfills a missing flag from the twin check and repairs a
+Linking (UI `set_scale_linked`, MCP `update_layer_params { scale_linked }`)
+copies `scale_x` over `scale_y` with fresh ids; while linked, both surfaces fan
+a one-axis write out to the pair, so the twins stay twins. The load pass backfills a missing flag from the twin check and repairs a
 lying one. Rust carries it for wire fidelity only.
 
 ## Animated values
@@ -539,7 +541,8 @@ sharing), capped at 200 entries, plus named checkpoints and an optional lock.
 - Undo/redo move the cursor and broadcast the snapshot there.
 - Checkpoints are in-memory snapshots that survive stack eviction; they are not
   written to `project.json`. Restoring one records a new entry, which drops redo.
-- While the lock is set (`set_history_lock`), undo / redo / restore are refused.
+- While a work session holds the lock, undo / redo / jump / restore are refused
+  to everyone but that session's connection.
 - **Unrecorded mutation classes** patch every snapshot and checkpoint in place
   (`replace*Everywhere` in `history.ts`), broadcast a non-recorded change and
   leave the cursor: unreferenced media import/removal, derivative and path
@@ -615,11 +618,14 @@ Command contracts not stated elsewhere:
 |---|---|
 | `remove_media(id, force?)` | `MediaInUse { referenced_by }` unless `force`, which deletes the layers as `delete_layers` does (links, lane prune, autofit; locked lane → `TrackLocked`) in one recorded entry; unreferenced media is removed unrecorded |
 | `update_track_flags` / `update_role_flags` | unrecorded; `set_role_gain` and `rename_track` are recorded |
-| `move_track(id, position)` | whole-track reorder in its composition, `0` = bottom; refuses locked tracks and tracks holding locked clips; keeps identity, links, transitions; no-op records nothing |
-| `paste_layers(ids, t_start_us \| t_offset_us, target_track_id?)` | the only copy command: clones shift by the seed's (`ids[0]`) delta, re-snap on their own lattice; only the seed changes track; any lock or overlap refuses the set; ≥ 2 clones are linked together |
+| `move_track(id, position)` | whole-track reorder in its composition, `0` = bottom; refuses the reserved A/B roll (`TrackReserved`), locked tracks and tracks holding locked clips (`LayerLocked`); keeps identity, links, transitions; no-op records nothing |
+| `paste_layers(ids, t_start_us \| t_offset_us, target_track_id?, unique?)` | the only copy command: clones shift by the seed's (`ids[0]`) delta, re-snap on their own lattice; only the seed changes track; any lock or overlap refuses the set; ≥ 2 clones are linked together; `unique` deep-copies a Group clone's composition (fresh ids throughout, nested Groups too) |
 | `set_layers_enabled(ids, enabled)` | exactly the named layers (no link fan-out); a locked track refuses the set |
 | `update_layer_param_track(s)` / `update_param_tracks_multi` | replace whole tracks with the normalization above; the multi form spans layers in **one** entry and checks the scale-link invariant once per layer after all entries land |
 | `move_layer(…, escape_link?)` | link-aware; a fan-out touching a locked member refuses whole (`LinkLockedMember`) |
+| `move_layer_set(request)` | the agent's `move_layers`: the set + link partners shift by the seed's delta, only the seed changes lane (or a spawned top lane); `insert` closes the set's span (`planRipple`) and opens its length at the landing on every track; strict (no floor, no no-op) |
+| `shift_layers(from_t_us, delta_us, tracks?, composition_id?)` | the sweep; a negative delta closes `[from + delta, from)` through the ripple planner |
+| `set_layer_flags(ids, enabled?, locked?)` | exactly the named layers, one entry; the lock is written after the visibility |
 | `move_layers_to_composition(ids, to, anchor_layer_id, anchor_t_start_us, to_track_id?)` | the set lands with the anchor at an ABSOLUTE destination time, others keeping phase; lanes per source track (omitted: nearest free else spawn; `"spawn"`: fresh; named: refused if locked/occupied); each member re-snaps on its own lattice. [features.md § Groups](features.md#groups) |
 | `move_layers_to_new_track(ids, anchor_layer_id?, t_start_us?)` | one fresh top lane; emptied source lanes pruned in the same entry; with both landing args the anchor lands at an absolute time, with neither times are kept verbatim; links untouched |
 | `restack_layer(id, above\|below, anchor_layer_id? \| anchor_track_id?)` | anchored z-reorder resolved at apply time; a sole occupant moves its track, a shared-track mover splits onto a fresh track; role-stamped sources never move; audio movers/anchors, cross-composition and self anchors refuse. [features.md § Track placement](features.md#track-placement) |
@@ -629,15 +635,13 @@ Command contracts not stated elsewhere:
 | `groups_create(ids, label?)` | pre-compose into a new composition with the parent's settings and the A/B skeleton; never partial (locks refuse first); inside links and transitions move, straddling ones are trimmed / reconciled away; anchored markers follow their layer |
 | `add_group_layer(source, track_id, t_start_us)` | window `[0, duration_us)`, identity transform; refuses the root, a cycle, an empty source before any write |
 | `groups_add_members(ids, group_layer_id)` | members land at `t_start_us − group.t_start_us + group.src_in_us` (overhang possible); delegates the crossing to `move_layers_to_composition` |
-| `groups_ungroup(layer_id)` | only a plain Group (identity transform, static opacity 1, no effects, Normal) else `GroupNotPlain`; members inside the window copy in trimmed, outside dropped; the composition goes with its last reference |
+| `groups_ungroup(layer_id)` | only a plain Group (identity transform, static opacity 1, no effects) else `GroupNotPlain`; members inside the window copy in trimmed, outside dropped; the composition goes with its last reference |
 | `set_composition(patch, composition_id?)` | never recorded; lattice fields cascade; `fps` behind the lock |
 | `restore_checkpoint` | records a new entry (clears redo) |
-| `dry_run(operations)` | runs the batch on a clone, stops at the first error, commits nothing |
 | `replace_state(snapshot)` | project open / new; full validation; resets history |
 
 Agent keyframe tools (`get_param_track`, `set_keyframe`, `update_keyframe`,
-`delete_keyframe`, `smooth_keyframes`, `set_extrapolation`, `clear_keyframes`,
-`set_param_track`) read the track, apply a pure transform, and write the whole
+`delete_keyframe`, `set_param_track`) read the track, apply a pure transform, and write the whole
 track back. Their times are timeline-absolute, converted to layer-local at the
 boundary. The transform math is shared with the timeline UI and locked Rust↔TS by
 a golden fixture.

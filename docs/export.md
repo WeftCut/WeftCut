@@ -157,8 +157,11 @@ frozen while a job is active or awaiting retry (ADR 0111).
   the directory and extension and clears that job's overwrite consent.
 - **MCP tools.** `get_export_options`, `start_export`, `get_export_status`,
   `retry_export`, `cancel_export`. A repeated `request_id` with identical
-  arguments returns the same job; different arguments conflict. Records
-  survive reconnects, not app restart. Agents must report the completed
+  arguments returns the same job; different arguments conflict. An agent's
+  settings, path, extension and `on_conflict: fail` collision are refused
+  before a job exists; `get_export_status` answers `{ job }` (the named, else
+  active, else most recent job). Records survive reconnects, not app
+  restart. Agents must report the completed
   `output_path`. MCP settings are per-job overrides; MCP never falls back from
   native to WebCodecs.
 
@@ -171,7 +174,8 @@ of a preset. Built-ins (`builtin:match`, `builtin:hd` 720p, `builtin:fullhd`
 1080p, `builtin:uhd` 2160p) are read-only and seed explicit bitrates for
 standard and high frame rates. Personal presets and `default_export_preset_id`
 live in `app_settings.json`; library changes are individual
-create/update/rename/delete operations in main. Names are capped at
+create/update/delete operations in main, an update carrying a new name,
+new values or both. Names are capped at
 `EXPORT_PRESET_NAME_LIMIT` (40).
 
 - **Copy, not reference.** Applying a preset copies its values into the dialog
