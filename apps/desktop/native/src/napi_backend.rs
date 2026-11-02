@@ -1461,7 +1461,7 @@ mod tests {
                 "width": 64, "height": 64,
                 "fpsNum": 30, "fpsDen": 1, "codec": "hevc",
                 "bitrate": 0, "cbr": false, "gop": 30,
-                "software": false, "outputPath": ""
+                "software": false, "outputPath": "", "finalizationId": 0
             }
         })
         .to_string();
