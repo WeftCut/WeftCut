@@ -127,6 +127,8 @@ export async function collectLinuxHardware(info: unknown, host: LinuxHardwareIO 
   } catch (error) { inventoryReason = hardwareFailure(error); }
   // Electron can identify a GPU even when the sandbox cannot enumerate DRM.
   for (const [index, device] of electron.entries()) {
+    // Vulkan headless Chromium reports a zero-ID placeholder, not a third GPU.
+    if (!device.vendorId && !device.deviceId && !device.deviceString?.trim()) continue;
     const matches = devices.filter(d => d.vendor_id === device.vendorId && d.device_id === device.deviceId);
     if (matches.length === 1) {
       matches[0].driver_version = device.driverVersion || null;
