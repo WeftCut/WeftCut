@@ -1,5 +1,8 @@
-import { describe, it, expect, vi } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { beforeAll, describe, it, expect, vi } from 'vitest'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { configureSkillBundle } from './skillResources'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { buildMcpServer, handleCallTool, handleReadResource } from './server'
@@ -21,6 +24,34 @@ function fakeBackend(spy: (u: string, s?: string) => Promise<string>) {
 function contents(out: unknown) {
   return (out as { contents: Array<{ text: string; mimeType: string }> }).contents
 }
+
+describe('the served skill', () => {
+  const noBackend = fakeBackend(async () => { throw new Error('no backend') })
+  beforeAll(() => {
+    const root = mkdtempSync(join(tmpdir(), 'weftcut-served-skill-'))
+    mkdirSync(join(root, 'weftcut', 'craft'), { recursive: true })
+    writeFileSync(join(root, 'weftcut', 'SKILL.md'), '---\nname: weftcut\ndescription: Drive it.\n---\n# Long form\n')
+    writeFileSync(join(root, 'weftcut', 'craft', 'rules.md'), 'rules\n')
+    configureSkillBundle(root)
+  })
+  it('reads with no host and no project open', async () => {
+    expect(contents(await handleReadResource(noBackend, () => null, 'skill://weftcut/SKILL.md'))[0].text).toContain('# Long form')
+    expect(contents(await handleReadResource(noBackend, () => tsHostStub(), 'skill://weftcut/craft/rules.md'))[0].text).toBe('rules\n')
+  })
+  it('read_project answers the same files, and only that view takes a path', async () => {
+    const call = (args: Record<string, unknown>) => handleCallTool(noBackend, () => null, 'read_project', args) as Promise<{ isError?: boolean; content: Array<{ text: string }> }>
+    expect((await call({ view: 'skill' })).content[0]!.text).toContain('# Long form')
+    expect((await call({ view: 'skill', path: 'craft/rules.md' })).content[0]!.text).toBe('rules\n')
+    const stray = await call({ view: 'skill', path: '../SKILL.md' })
+    expect(stray.isError).toBe(true)
+    expect(stray.content[0]!.text).toContain('not a file of the weftcut skill')
+    const ts = tsHostStub()
+    ts.mcpCall = (n: string, a: string) => ts.actor.mcpCall(n, a)
+    const other = await handleCallTool(noBackend, () => ts, 'read_project', { view: 'tracks', path: 'x' }) as { isError?: boolean; content: Array<{ text: string }> }
+    expect(other.isError).toBe(true)
+    expect(other.content[0]!.text).toContain('takes no path')
+  })
+})
 
 describe('handleReadResource', () => {
   it('serves project://settings from the actor without calling the backend', async () => {

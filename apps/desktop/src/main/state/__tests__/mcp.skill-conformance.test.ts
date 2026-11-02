@@ -29,6 +29,7 @@ import { MCP_TOOL_DEFS } from '../mcp-commands'
 import { EXPORT_TOOL_DEFS } from '../../mcp/exportTools'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from '../../mcp/motifToolDefs'
 import { HOST_RESOURCE_DEFS, HOST_RESOURCE_TEMPLATES } from '../../mcp/hostResources'
+import { SKILL_ENTRY_URI } from '../../mcp/skillResources'
 import { parse as parseYaml } from 'yaml'
 import { MAX_ROUNDS, SIGNALS, STAGES } from '../../../shared/harness'
 
@@ -68,6 +69,7 @@ const resourceUris = new Set([
   ...HOST_RESOURCE_DEFS.map((r) => r.uri),
   // A template is advertised too (`resources/templates/list`), named as written.
   ...HOST_RESOURCE_TEMPLATES.map((t) => t.uriTemplate),
+  SKILL_ENTRY_URI,
 ])
 const promptNames = new Set(rust.prompts.map((p) => p.name))
 

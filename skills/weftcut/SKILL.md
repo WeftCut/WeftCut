@@ -16,7 +16,8 @@ what no single tool can: how a session should go.
 The server sends these as its `initialize` instructions, so a client without
 this skill reads the same etiquette; the long form follows. Its last line names
 the server's version: if it differs from this skill's `metadata.version`, this
-copy is stale, so replace it with the app's (Settings > Agent).
+copy is stale, so read `skill://weftcut/SKILL.md` (always the running version)
+instead, and replace this copy with the app's (Settings > Agent).
 
 WeftCut is a desktop video editor; the user watches the same project live, and every edit you commit lands in their undo history. A video the user asks you to edit is the project open in WeftCut, named or not.
 1. Read `project://tracks` (or `read_project` view "tracks") before your first edit; ids come from reads, never memory.

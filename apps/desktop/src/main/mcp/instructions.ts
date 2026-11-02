@@ -11,7 +11,8 @@
 // skill reads one etiquette, not two. The closing line is the server's alone:
 // it names the version, which a skill copy carries as `metadata.version`
 // (stamped by `scripts/build-skills.mjs`), so an agent holding a copy from
-// another release can tell and is told to replace it. Per-tool facts stay in
+// another release can tell, and points at the served skill (`skillResources.ts`),
+// which needs no copy and cannot be stale. Per-tool facts stay in
 // the tool descriptions; the long form stays in the skill and docs/mcp.md.
 // Kept under a size a session pays without noticing — the test caps it.
 
@@ -32,6 +33,6 @@ export const MCP_INSTRUCTION_LINES: ReadonlyArray<string> = [
 export function mcpInstructions(version: string): string {
   return [
     ...MCP_INSTRUCTION_LINES,
-    `The weftcut skill (Settings > Agent) has the long form and the Motif contract; if its \`metadata.version\` is not ${version}, it is stale: re-copy it.`,
+    `Skill (long form, Motif rules): \`skill://weftcut/SKILL.md\` or \`read_project\` view "skill"; a copy whose \`metadata.version\` is not ${version} is stale.`,
   ].join('\n')
 }

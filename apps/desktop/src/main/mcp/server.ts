@@ -48,6 +48,7 @@ import { importRecord, shapeHybridResult } from './hybridResult.js'
 import { PROJECT_TOOLS, runProjectTool } from './projectTools.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
 import { HOST_RESOURCE_DEFS, HOST_RESOURCE_TEMPLATES, mediaResourceDefs } from './hostResources.js'
+import { isSkillUri, readSkillResource, readSkillView, skillResourceDefs } from './skillResources.js'
 import { mcpInstructions } from './instructions.js'
 import { AgentServiceError } from '../agent/activity.js'
 import { effectsCatalogView } from '../../shared/effects/catalogView.js'
@@ -557,6 +558,10 @@ async function dispatchTool(
       throw e
     }
   }
+  if (name === 'read_project' && args.view === 'skill') {
+    const p = mcpDef('read_project').parseDedicated!(args)
+    return readSkillView(p.path as string) as unknown as ServerResult
+  }
   if (tsHost?.agent && name === 'read_project' && args.view === 'tacks') {
     const p = mcpDef('read_project').parseDedicated!(args)
     return readTacksView(tsHost.agent.tacks, p.composition_id as string | null)
@@ -819,6 +824,8 @@ export async function handleReadResource(
   uri: string,
   getVlm: VlmProvider = NO_VLM,
 ): Promise<ServerResult> {
+  // The skill is the app's, not the project's: no project gate, no host needed.
+  if (isSkillUri(uri)) return readSkillResource(uri) as unknown as ServerResult
   const tsHost = getTsHost()
   if (tsHost) {
     if (uri === 'project://session' && tsHost.agent) {
@@ -1136,7 +1143,7 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
     const cat = await rustCatalog(backend)
     const tsHost = getTsHost()
     const media = tsHost && !noProjectOpen(tsHost) ? mediaResourceDefs(tsHost.actor.snapshot().media_pool) : []
-    return { resources: [...mergeMcpResources(cat.resources, [...MOTIF_RESOURCE_DEFS, ...HOST_RESOURCE_DEFS]), ...media] } as unknown as ServerResult
+    return { resources: [...mergeMcpResources(cat.resources, [...MOTIF_RESOURCE_DEFS, ...HOST_RESOURCE_DEFS]), ...skillResourceDefs(), ...media] } as unknown as ServerResult
   }, log, clientInfo))
   server.setRequestHandler(ListResourceTemplatesRequestSchema, track('resources/templates/list', async () => {
     return { resourceTemplates: HOST_RESOURCE_TEMPLATES } as unknown as ServerResult

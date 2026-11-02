@@ -40,6 +40,8 @@ export const HOST_RESOURCE_DEFS = [
 /** RFC 6570 templates for the parameterised resources. `{?composition}` is the
  *  form-style query: expand with a Group's id, or leave it out for the root. */
 export const HOST_RESOURCE_TEMPLATES = [
+  { uriTemplate: 'skill://weftcut/{+path}', name: 'Skill file', mimeType: 'text/markdown',
+    description: 'A file of the weftcut skill, at the path SKILL.md names it relative to itself (`craft/rules.md`). This running version\'s copy; readable with no project open.' },
   { uriTemplate: 'project://layers/{id}', name: 'Layer', mimeType: APP_JSON,
     description: "One layer in full — layer_id, envelope, params (kind-specific, with every animated track), effects (effect_id, kind, enabled, params) — from whichever composition holds it. Key times are `local_t_us`, µs from the layer's start." },
   { uriTemplate: 'project://composition{?composition}', name: 'Composition settings', mimeType: APP_JSON,

@@ -1664,7 +1664,7 @@ const LAYER_PARAMS_PATCH_SCHEMA = {
 /** The `project://*` views `read_project` serves — one per state-view resource
  *  the TS host answers (`resource-views.ts`), so the two never disagree on what
  *  an agent can read. The Rust-compute resources are not here. */
-export const READ_PROJECT_VIEWS = ['composition', 'compositions', 'media', 'tracks', 'layer', 'markers', 'links', 'transitions', 'settings', 'history', 'session', 'effects', 'tacks', 'taste', 'media_thumbnail', 'media_frame'] as const
+export const READ_PROJECT_VIEWS = ['composition', 'compositions', 'media', 'tracks', 'layer', 'markers', 'links', 'transitions', 'settings', 'history', 'session', 'effects', 'tacks', 'taste', 'skill', 'media_thumbnail', 'media_frame'] as const
 /** The views that take `composition_id` — the per-composition resources. */
 export const SCOPED_PROJECT_VIEWS: ReadonlySet<string> = new Set(['composition', 'tracks', 'markers', 'links', 'transitions'])
 /** Every view `composition_id` narrows: the per-composition ones, plus `tacks`,
@@ -2522,10 +2522,13 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       id: { type: 'string', description: 'The layer id for view `layer`; the media id for `media` (optional) / `media_thumbnail` / `media_frame`.' },
       src_us: { type: 'integer', description: 'For `media_frame`: the frame time in the source, µs.' },
       composition_id: { type: 'string', description: 'For the per-composition views: a Group\'s composition; omit for the root.' },
+      path: { type: 'string', description: 'For `skill`: a file beside SKILL.md, as SKILL.md names it (`craft/rules.md`); omit for SKILL.md.' },
     }, required: ['view'] },
     parseDedicated: (a) => {
       const view = parseStr(a.view, 'view')
       if (!READ_PROJECT_VIEWS.includes(view as ReadProjectView)) throw new McpArgError(`view must be one of ${READ_PROJECT_VIEWS.join(', ')}, got '${view}'`, 'view')
+      if (a.path !== undefined && a.path !== null && view !== 'skill') throw new McpArgError(`view '${view}' takes no path — path names a file of view 'skill'`, 'path')
+      if (view === 'skill') return { view, path: a.path === undefined || a.path === null ? 'SKILL.md' : parseStr(a.path, 'path') }
       const needsId = view === 'layer' || view === 'media_thumbnail' || view === 'media_frame'
       if (needsId && (a.id === undefined || a.id === null)) throw new McpArgError(`view '${view}' needs \`id\` — ${view === 'layer' ? 'the layer id (project://tracks lists them)' : 'the media id (project://media lists them)'}`, 'id')
       if (view === 'media_frame' && (a.src_us === undefined || a.src_us === null)) throw new McpArgError("view 'media_frame' needs `src_us` — the frame time in the source, µs (media_thumbnail takes none)", 'src_us')

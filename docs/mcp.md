@@ -76,8 +76,8 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   it, and so does the shim, which answers `initialize` itself and bundles the
   same file, so a stdio and an HTTP-direct client read identical text. The
   etiquette is pinned equal to the head of the shipped skill; the last line
-  names the app version, so an agent whose skill copy carries another
-  `metadata.version` knows to replace it. `serverInfo`
+  names the app version and the served skill, so an agent whose skill copy
+  carries another `metadata.version` knows to read that instead. `serverInfo`
   is `weftcut` (`weftcut-mcp` through the shim) at the app version (a bare dev
   `electron out/main/index.js` reports Electron's).
 - **The skill**: `skills/weftcut/` staged with its required docs by
@@ -91,6 +91,15 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   `stale` or `unavailable` with its fault; the panel shows the fault with
   *Try again* (no restart), and a packaged build that is not `current` raises
   a startup notice that main retracts by re-broadcasting `app:notices`.
+- **The served skill**: the same bundle over MCP, on SEP-2640's resource
+  mapping (`main/mcp/skillResources.ts`): `skill://weftcut/SKILL.md` is listed,
+  the files beside it read by their relative paths
+  (`skill://weftcut/{+path}`). It is the running version's, needs no copy and
+  no open project; a client without resources reads the same files with
+  `read_project { view: "skill", path? }`. The
+  `io.modelcontextprotocol/skills` extension is not declared (no `skills/list`
+  or `skills/get`), because hosts have barely adopted it; the URIs conform, so
+  declaring it later is additive.
 
 ## Multi-agent semantics
 
@@ -221,9 +230,9 @@ dispatches nothing. Default-deny: only `APP_SCOPE_TOOLS` /
 `APP_SCOPE_RESOURCES` in `main/mcp/mutationTools.ts` answer — the
 Motif library tools, the export preset tools,
 `get_export_status`, `cancel_export`, `retry_export`, `open_project`,
-`create_project`, `read_project` for views `session` / `effects` / `taste`, and
-the resources `project://session`, `project://taste`, `effects://catalog`,
-`motifs://current`. One predicate (`servesWithoutProject`) serves both gates;
+`create_project`, `read_project` for views `session` / `effects` / `taste` /
+`skill`, and the resources `project://session`, `project://taste`,
+`effects://catalog`, `motifs://current`, `skill://weftcut/*`. One predicate (`servesWithoutProject`) serves both gates;
 `mcp.project-scope` sweeps the whole catalog. `install_motif` with no project
 open proposes as usual; approved then, it rebinds no layers. The renderer is
 not gated.

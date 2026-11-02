@@ -6,6 +6,7 @@ import { resolvePauseSubject } from './state/pauseSubject.js'
 import fs from 'node:fs'
 import os from 'node:os'
 import { configureResources, backgroundResourcePause, onBackgroundResourceChange, retainRasterDirectories, resourceSnapshot } from './resources.js'
+import { configureSkillBundle } from './mcp/skillResources.js'
 import { setResourceHolders } from './mcp/faultText.js'
 import { installResourceIpc, resolveExportFinalization } from './resourceIpc.js'
 import { hydrateResourceAllocation, resourceAllocation } from '../shared/resource-policy.js'
@@ -1210,6 +1211,15 @@ app.whenReady().then(async () => {
   // Started AFTER tsHost.start() so the actor is ready before any MCP read can run
   // (the host serves state views from the actor and injects compute slices).
   const { startMcpHost } = await import('./mcp/index.js')
+  const skillsSource = {
+    resourcesSkills: path.join(process.resourcesPath, 'skills'),
+    devSkills: path.join(import.meta.dirname, '../skills'),
+    isPackaged: app.isPackaged,
+    userDataDir: app.getPath('userData'),
+  }
+  // MCP serves the shipped skill from the bundle itself, so what it reads is
+  // this version's whatever became of the userData mirror.
+  configureSkillBundle(skillsSource.isPackaged ? skillsSource.resourcesSkills : skillsSource.devSkills)
   const mcpHost = await startMcpHost(backend, {
     getTsHost: () => tsHost,
     getSpeech,
@@ -1256,12 +1266,6 @@ app.whenReady().then(async () => {
   // in the app reads it — it exists to be copied into an agent client's own
   // skills directory.
   const { installSkills } = await import('./mcp/skillsInstall.js')
-  const skillsSource = {
-    resourcesSkills: path.join(process.resourcesPath, 'skills'),
-    devSkills: path.join(import.meta.dirname, '../skills'),
-    isPackaged: app.isPackaged,
-    userDataDir: app.getPath('userData'),
-  }
   let skills = installSkills(skillsSource)
   /// Bring `startupNotices` in line with the latest install attempt: at most one
   /// agent-skill row, and none once the app's copy is current.

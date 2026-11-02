@@ -83,3 +83,15 @@ change against the installed version, the clips that will rebind). Approval,
 rejection and the user's own Install are renderer-only channels, so no MCP
 client can approve its own proposal. See
 [motif-workspaces.md](../motif-workspaces.md#review-publication-and-export).
+
+## Note (2026-11): the skill is also served over MCP
+
+MCP has since defined this delivery ([SEP-2640](https://modelcontextprotocol.io/seps/2640-skills-extension.md),
+Final 2026-09): each file of a skill is a resource under `skill://`. The app now
+serves the same bundle that way (`main/mcp/skillResources.ts`), and the
+`initialize` instructions point at it, which is the one thing that does reach an
+agent before its first call. So a stale copy no longer strands an agent: it is
+told to read the running version's instead. "One skill, skill version = app
+version" stands, and the copy into a client's skills directory stays: that is
+what lets the client load the skill by its description, and hosts mostly do not
+list MCP-served skills yet, so the extension itself is not declared.

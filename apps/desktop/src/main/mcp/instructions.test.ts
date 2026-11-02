@@ -29,9 +29,10 @@ describe('initialize instructions', () => {
     expect(skill.indexOf(etiquette)).toBeLessThan(skill.indexOf('## Session etiquette'))
   })
 
-  it('close with the version a skill copy must carry as metadata.version', () => {
+  it('close with the served skill and the version a local copy must carry', () => {
     const last = mcpInstructions('1.2.3').split('\n').at(-1)!
-    expect(last).toContain('if its `metadata.version` is not 1.2.3, it is stale')
+    expect(last).toContain('`skill://weftcut/SKILL.md`')
+    expect(last).toContain('`metadata.version` is not 1.2.3 is stale')
   })
 
   it('stay ten lines and under a session-sized budget', () => {

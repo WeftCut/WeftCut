@@ -68,3 +68,38 @@ test('TS actor: MCP mutate → resource read reflects it; blocked tool rejects',
     fs.rmSync(ws, { recursive: true, force: true })
   }
 })
+
+test('the shipped skill reads over MCP with no project open, as the instructions point', async () => {
+  const userDataDir = tmpDir('wc-mcp-skill-userdata-')
+  let connect: { url: string; token: string } | null = null
+  const app = await electron.launch({
+    args: [...GL_SWITCHES, `--user-data-dir=${userDataDir}`, MAIN],
+    env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
+  })
+  app.process().stdout!.on('data', (b: Buffer) => { const c = parseConnect(b.toString()); if (c) connect = c })
+  try {
+    await app.firstWindow({ timeout: 60_000 })
+    await expect.poll(() => connect, { timeout: 30_000 }).not.toBeNull()
+    const transport = new StreamableHTTPClientTransport(new URL(connect!.url), { requestInit: { headers: { Authorization: `Bearer ${connect!.token}` } } })
+    const client = new Client({ name: 'e2e', version: '0.0.0' })
+    await client.connect(transport)
+    try {
+      const { resources } = await client.listResources()
+      expect(resources.filter(r => r.uri.startsWith('skill://')).map(r => r.uri)).toEqual(['skill://weftcut/SKILL.md'])
+      const read = async (uri: string) => (await client.readResource({ uri })).contents[0] as { text?: string; blob?: string }
+      const skill = (await read('skill://weftcut/SKILL.md')).text!
+      // The instructions point here, and what is served carries a stamped version.
+      // (A bare dev launch reports Electron's version, so the two are not compared.)
+      expect(client.getInstructions()).toContain('`skill://weftcut/SKILL.md`')
+      expect(skill).toMatch(/metadata:\n {2}version: '/)
+      // The files SKILL.md names beside it resolve by their relative paths.
+      expect((await read('skill://weftcut/craft/rules.md')).text!.length).toBeGreaterThan(0)
+      expect((await read('skill://weftcut/motif-authoring.md')).text!.length).toBeGreaterThan(0)
+      expect((await read('skill://weftcut/templates/three-model.zip')).blob!.length).toBeGreaterThan(0)
+      await expect(client.readResource({ uri: 'skill://weftcut/../../package.json' })).rejects.toThrow(/not a file of the weftcut skill/)
+      const view = await client.callTool({ name: 'read_project', arguments: { view: 'skill', path: 'craft/rules.md' } }) as { isError?: boolean; content: Array<{ text: string }> }
+      expect(view.isError).toBeFalsy()
+      expect(view.content[0]!.text).toBe((await read('skill://weftcut/craft/rules.md')).text)
+    } finally { await client.close() }
+  } finally { await app.close() }
+})
