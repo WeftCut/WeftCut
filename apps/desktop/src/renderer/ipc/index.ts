@@ -1330,13 +1330,15 @@ export async function muxExport(
   videoPath: string,
   audioPath: string,
   outputPath: string,
-  finalization?: { token?: string | undefined; audioRequired: boolean; stagingOutput?: boolean },
+  finalization: { token: string; audioRequired: boolean; stagingOutput?: boolean },
 ): Promise<void> {
   return invoke<void>("mux_export", {
     videoPath,
     audioPath,
     outputPath,
-    ...(finalization ? { finalizationToken: finalization.token, audioRequired: finalization.audioRequired, stagingOutput: finalization.stagingOutput } : {}),
+    finalizationToken: finalization.token,
+    audioRequired: finalization.audioRequired,
+    stagingOutput: finalization.stagingOutput,
   });
 }
 
@@ -3446,7 +3448,7 @@ export async function logDirPath(): Promise<string | null> {
 /// Arguments for the native-encode video sink. Mirrors `VideoSinkStartArgs`
 /// in `export/videosink.rs` (serde camelCase).
 export interface VideoSinkStartArgs {
-  finalizationToken?: string | undefined;
+  finalizationToken: string;
   width: number;
   height: number;
   fpsNum: number;

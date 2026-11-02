@@ -53,18 +53,6 @@ export function updateRendererResources(value: { renderers: number; pressure: st
 }
 export const exportBufferBytes = () => resourceAllocation().export_mib * 1048576;
 
-/** Reserve the small stream-copy tail before encoding. It owns no CPU slot
- * until mux starts and remains owned by this renderer until success/discard. */
-export async function reserveExportFinalization(): Promise<{ token?: string; release: () => void }> {
-  if (typeof window === 'undefined' || !window.api?.resources) return { release: () => {} };
-  const token = crypto.randomUUID();
-  await window.api.resources.reserveExportFinalization(token);
-  let live = true;
-  return { token, release: () => {
-    if (live) { live = false; window.api.resources.release(token); }
-  } };
-}
-
 /** Register the wait observer before IPC so an immediate rejection is visible.
  * Admission waits until it is admitted or `signal` aborts; it has no deadline. */
 export async function admitExportResources(plans: import('../../shared/export-resources').ExportResourcePlan[], nativeEncoder: boolean,

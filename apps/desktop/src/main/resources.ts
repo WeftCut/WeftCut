@@ -10,7 +10,6 @@ interface NativeResources {
   resourcesExportWaiting(entered: boolean): void;
   resourcesReserve(threads: number, memoryMiB: number, finalizationId?: number): number;
   resourcesRelease(id: number): void;
-  resourcesReserveFinalization(): number;
   resourcesActivity(playing: boolean, pressured: boolean, critical: boolean): void;
   resourcesSnapshot(): string;
   resourcesMemory(): Promise<ResourceMemorySample>;
@@ -61,11 +60,6 @@ export function reserveResources(threads: number, memoryMiB: number, finalizatio
   catch (error) { throw new Error(`${RESOURCE_CAPACITY_EXCEEDED}: ${String(error)}`); }
   let live = true;
   return () => { if (live) { live = false; owner.resourcesRelease(id); } };
-}
-export function reserveExportFinalization(): { nativeId: number; release: () => void } {
-  const owner = getNative();
-  const nativeId = owner.resourcesReserveFinalization();
-  return { nativeId, release: () => owner.resourcesRelease(nativeId) };
 }
 export function setResourceActivity(playing: boolean, pressured: boolean, critical = pressured): void {
   getNative().resourcesActivity(playing, pressured, critical);

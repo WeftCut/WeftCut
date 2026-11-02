@@ -150,10 +150,7 @@ impl Governor {
 }
 
 /// Native sink borrows the same owner-validated export token as worker decoders.
-pub async fn interactive_export(mib: u64, parent: Option<u32>) -> Result<Permit, String> {
-    let Some(parent) = parent else {
-        return super::interactive(mib).await;
-    };
+pub async fn interactive_export(mib: u64, parent: u32) -> Result<Permit, String> {
     let authority = governor();
     let threads = authority
         .state

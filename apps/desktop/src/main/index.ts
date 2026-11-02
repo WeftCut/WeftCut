@@ -1523,7 +1523,9 @@ app.whenReady().then(async () => {
     if (channel === 'export_video_sink_start') {
       // The stand-in encoder is main's to request, never the renderer's.
       const { finalizationToken, finalizationId: _id, finalization_id: _alias, e2eStalledEncoderMs: _stall, ...rest } = args?.args ?? {};
-      args = { ...args, args: { ...rest, finalizationId: resolveExportFinalization(_e.sender.id, finalizationToken),
+      const parent = resolveExportFinalization(_e.sender.id, finalizationToken);
+      if (parent === undefined) throw new Error('The video sink needs an admitted export plan');
+      args = { ...args, args: { ...rest, finalizationId: parent,
         ...(e2eStalledEncoderMs === null ? {} : { e2eStalledEncoderMs }) } };
     }
     if (channel === 'mux_export') {
@@ -1531,7 +1533,8 @@ app.whenReady().then(async () => {
       // snake-case alias). Only this sender's live continuation token qualifies.
       const { finalizationToken, finalizationId: _id, finalization_id: _alias, ...rest } = args ?? {};
       const parent = resolveExportFinalization(_e.sender.id, finalizationToken);
-      if (parent !== undefined) motifGpu?.closeExport(_e.sender, parent);
+      if (parent === undefined) throw new Error('The mux needs an admitted export plan');
+      motifGpu?.closeExport(_e.sender, parent);
       args = { ...rest, finalizationId: parent };
     }
     if (channel === 'export_project_audio_only') {

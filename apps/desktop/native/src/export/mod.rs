@@ -306,7 +306,7 @@ pub async fn mux_to_file(
     video_path: &Path,
     audio_path: &Path,
     output: &Path,
-    finalization_id: Option<u32>,
+    finalization_id: u32,
     audio_required: bool,
     staging_output: bool,
     cancellation: &cancellation::ExportCancellation,
@@ -319,24 +319,9 @@ pub async fn mux_to_file(
     if audio_required && !has_audio {
         anyhow::bail!("The encoded audio file is missing; cannot finish this export");
     }
-    let (_continuation, _resources) = match finalization_id {
-        Some(id) => (
-            Some(tokio::select! {
-                _ = cancellation.cancelled() => anyhow::bail!("export cancelled"),
-                permit = crate::resources::continue_finalization(id) => permit.map_err(anyhow::Error::msg)?,
-            }),
-            None,
-        ),
-        None => (
-            None,
-            Some(tokio::select! {
-                _ = cancellation.cancelled() => anyhow::bail!("export cancelled"),
-                permit = crate::resources::held_by(
-                    crate::resources::Holder::new("export"),
-                    crate::resources::interactive(64),
-                ) => permit.map_err(anyhow::Error::msg)?,
-            }),
-        ),
+    let _continuation = tokio::select! {
+        _ = cancellation.cancelled() => anyhow::bail!("export cancelled"),
+        permit = crate::resources::continue_finalization(finalization_id) => permit.map_err(anyhow::Error::msg)?,
     };
     let mut cmd = crate::ffmpeg::command(Bound::watchdog());
     // Write beside the destination so committing is atomic on the same volume.

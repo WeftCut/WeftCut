@@ -349,6 +349,9 @@ impl Governor {
         drop(s);
         self.notify_change();
     }
+    /// A bare tail with no plan, so the governor tests can drive finalization
+    /// alone. Production tails are the plans `reserve_export` admits.
+    #[cfg(test)]
     fn reserve_finalization(&self) -> Option<u32> {
         let id = HOLDER.sync_scope(Holder::new("export"), || {
             self.reserve(Claim {
@@ -597,15 +600,6 @@ impl Drop for FinalizationPermit {
 /// the wait (`mux_to_file` selects on it); only real exhaustion refuses.
 pub async fn continue_finalization(id: u32) -> Result<FinalizationPermit, String> {
     governor().acquire_finalization(id).await
-}
-#[cfg_attr(test, allow(dead_code))]
-#[napi]
-pub fn resources_reserve_finalization() -> napi::Result<u32> {
-    governor().reserve_finalization().ok_or_else(|| {
-        napi::Error::from_reason(
-            "resource-capacity-exceeded: Cannot reserve memory for export finalization",
-        )
-    })
 }
 pub fn governor() -> &'static Arc<Governor> {
     static INSTANCE: OnceLock<Arc<Governor>> = OnceLock::new();

@@ -5,14 +5,14 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   handles: new Map<string, (...args: any[]) => any>(),
   listeners: new Map<string, (...args: any[]) => any>(),
-  plan: vi.fn(), wait: vi.fn(), releaseId: vi.fn(), queue: vi.fn(), leave: vi.fn(), quit: [] as (() => void)[], reserve: vi.fn(), reserveFinalization: vi.fn(), activity: vi.fn(), memory: vi.fn(), windows: vi.fn(() => [] as any[]),
+  plan: vi.fn(), wait: vi.fn(), releaseId: vi.fn(), queue: vi.fn(), leave: vi.fn(), quit: [] as (() => void)[], reserve: vi.fn(), activity: vi.fn(), memory: vi.fn(), windows: vi.fn(() => [] as any[]),
 }));
 vi.mock('electron', () => ({
   ipcMain: { handle: (name: string, fn: any) => mocks.handles.set(name, fn), on: (name: string, fn: any) => mocks.listeners.set(name, fn) },
   BrowserWindow: { getAllWindows: mocks.windows }, app: { once: (_: string, fn: () => void) => mocks.quit.push(fn) },
 }));
 vi.mock('./resources', async importOriginal => ({
-  ...await importOriginal<object>(), reserveResources: mocks.reserve, reserveExportFinalization: mocks.reserveFinalization, setResourceActivity: mocks.activity,
+  ...await importOriginal<object>(), reserveResources: mocks.reserve, setResourceActivity: mocks.activity,
   tryExportPlan: mocks.plan, waitForResourceChange: mocks.wait, releaseResourceId: mocks.releaseId, queueExport: mocks.queue, processTreeMemory: mocks.memory, resourceSnapshot: () => ({ active: 0, waiting: 0, reserved_mib: 0, cpu_threads: 0 }),
 }));
 import { installResourceIpc, resolveExportFinalization } from './resourceIpc';
@@ -158,22 +158,21 @@ it('keeps fresh app pressure when host telemetry alone becomes unavailable', asy
   expect(mocks.activity).toHaveBeenLastCalledWith(false, false, false);
 });
 
-it('finalization tokens belong to one renderer and expire on release or reload', () => {
+it('finalization tokens belong to one renderer and expire on release or reload', async () => {
   const owner = sender(20);
-  const release = vi.fn();
-  mocks.reserveFinalization.mockReturnValue({ nativeId: 42, release });
-  const reserve = mocks.handles.get('resources:reserve-export-finalization')!;
-  reserve({ sender: owner }, 'export-a');
+  mocks.plan.mockReturnValue({ kind: 'admitted', id: 42, index: 0 });
+  const plan = (id: string) => mocks.handles.get('resources:plan-export')!({ sender: owner }, { id, options: [64], nativeEncoder: false });
+  await plan('export-a');
   expect(resolveExportFinalization(20, 'export-a')).toBe(42);
   expect(() => resolveExportFinalization(21, 'export-a')).toThrow('expired');
-  expect(() => reserve({ sender: owner }, 'export-a')).toThrow('Invalid');
+  await expect(plan('export-a')).rejects.toThrow('Invalid');
   mocks.listeners.get('resources:release')!({ sender: owner }, 'export-a');
   expect(() => resolveExportFinalization(20, 'export-a')).toThrow('expired');
-  expect(release).toHaveBeenCalledOnce();
-  reserve({ sender: owner }, 'export-b');
+  expect(mocks.releaseId).toHaveBeenCalledExactlyOnceWith(42);
+  await plan('export-b');
   owner.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
   expect(() => resolveExportFinalization(20, 'export-b')).toThrow('expired');
-  expect(release).toHaveBeenCalledTimes(2);
+  expect(mocks.releaseId).toHaveBeenCalledTimes(2);
 });
 
 const planRequest = { id: 'plan-a', options: [900, 800], nativeEncoder: true };

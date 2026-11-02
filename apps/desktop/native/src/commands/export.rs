@@ -66,7 +66,7 @@ pub async fn mux_export(
     video_path: String,
     audio_path: String,
     output_path: String,
-    finalization_id: Option<u32>,
+    finalization_id: u32,
     audio_required: bool,
     staging_output: bool,
 ) -> Result<(), String> {

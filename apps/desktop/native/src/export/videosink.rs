@@ -88,8 +88,9 @@ pub struct VideoSinkStartArgs {
     pub software: bool,
     /// Empty ⇒ no ffmpeg (byte-count only; used by tests). Non-empty ⇒ encode.
     pub output_path: String,
-    #[serde(default)]
-    pub finalization_id: Option<u32>,
+    /// The export's admitted resource plan, resolved by main from the
+    /// renderer's token. The sink borrows from it and claims nothing fresh.
+    pub finalization_id: u32,
     /// rawvideo input format the renderer packs: "yuv420p" | "yuv420p10le" |
     /// "yuv422p" | "yuv422p10le". Defaults to yuv420p10le when the caller
     /// omits it.
@@ -728,7 +729,7 @@ mod tests {
             crf: None,
             preset: None,
             profile: None,
-            finalization_id: None,
+            finalization_id: 0,
             e2e_stalled_encoder_ms: None,
         }
     }
@@ -751,7 +752,7 @@ mod tests {
             crf: None,
             preset: None,
             profile: None,
-            finalization_id: None,
+            finalization_id: 0,
             e2e_stalled_encoder_ms: None,
         }
     }
@@ -805,7 +806,7 @@ mod tests {
         let v: VideoSinkStartArgs = serde_json::from_str(
             r#"{"width":64,"height":64,"fpsNum":30,"fpsDen":1,
               "codec":"hevc","bitrate":0,"cbr":false,"gop":30,"software":true,
-              "outputPath":""}"#,
+              "outputPath":"","finalizationId":0}"#,
         )
         .unwrap();
         assert_eq!(v.pix_fmt, "yuv420p10le");
@@ -839,10 +840,13 @@ mod tests {
             .join("encoder-log.mp4")
             .to_string_lossy()
             .into_owned();
+        let plan = crate::resources::test_export_plan(256);
+        args.finalization_id = plan;
         export_video_sink_start(&state, &registry, &slot, args)
             .await
             .expect("start");
         export_video_sink_cancel(&state).await.expect("cancel");
+        crate::resources::release_test_export_plan(plan);
 
         let entries = slot.current().expect("bus installed").list();
         let entry = entries
@@ -899,6 +903,8 @@ mod tests {
             .to_string_lossy()
             .into_owned();
         args.e2e_stalled_encoder_ms = Some(500);
+        let plan = crate::resources::test_export_plan(256);
+        args.finalization_id = plan;
         export_video_sink_start(
             &state,
             &EncoderRegistry::default(),
@@ -927,6 +933,7 @@ mod tests {
             shared.child.lock().unwrap().is_none(),
             "the encoder is reaped"
         );
+        crate::resources::release_test_export_plan(plan);
     }
 
     // Unknown codecs are rejected while translating the wire request, before
@@ -935,9 +942,13 @@ mod tests {
     async fn start_rejects_vp9_at_8bit() {
         let state = VideoSinkState::default();
         let registry = EncoderRegistry::default();
-        let err = export_video_sink_start(&state, &registry, &LogBusSlot::new(), args_8bit("vp9"))
+        let plan = crate::resources::test_export_plan(256);
+        let mut args = args_8bit("vp9");
+        args.finalization_id = plan;
+        let err = export_video_sink_start(&state, &registry, &LogBusSlot::new(), args)
             .await
             .unwrap_err();
+        crate::resources::release_test_export_plan(plan);
         assert!(
             err.contains("invalid encoder intent codec"),
             "unexpected error: {err}"
@@ -1024,7 +1035,7 @@ mod tests {
                 crf: None,
                 preset: None,
                 profile: None,
-                finalization_id: None,
+                finalization_id: 0,
                 e2e_stalled_encoder_ms: None,
             },
         )
