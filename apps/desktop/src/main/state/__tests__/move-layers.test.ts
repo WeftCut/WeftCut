@@ -110,6 +110,72 @@ describe('move_layers: time and lane', () => {
   })
 })
 
+describe('an edit the grid settles back where it was records nothing', () => {
+  // A 1 µs delta on a 30 fps grid passes every "was anything asked for" check
+  // and then rounds home. The recipes lift each layer and reinsert it, so the
+  // draft is dirty while the project is the same.
+  it('move_layers refuses it by the field that asked, for the seed and for the whole set', () => {
+    const { a, tA, tB } = setup()
+    const one = color(a, tA, S, 2 * S)
+    const two = color(a, tB, 3 * S, 4 * S)
+    const before = a.snapshot()
+    const len = a.historyStatus().len
+    for (const args of [{ layer_ids: [one], delta_us: 1 }, { layer_ids: [one, two], delta_us: -1 }]) {
+      const r = refused(call(a, 'move_layers', args))
+      expect(r.message).toMatch(/^delta_us: .*nothing would move/)
+      expect(r.data).toMatchObject({ error: 'InvalidArgument' })
+    }
+    expect(refused(call(a, 'move_layers', { layer_ids: [one], t_start_us: S + 1 })).message).toMatch(/^t_start_us: /)
+    expect(refused(call(a, 'move_layers', { layer_ids: [one], track_id: tA })).message).toMatch(/^track_id: /)
+    expect(a.historyStatus().len).toBe(len)
+    expect(a.snapshot()).toBe(before)
+  })
+
+  it('move_layers still records when only a partner on a finer grid moves, or only the lane changes', () => {
+    const { a, tA, tB } = setup()
+    const v = video(a, tA, S, 2 * S)
+    const au = audio(a, tA, S, 2 * S)
+    idOf(a.dispatch('links_create', { layers: [v, au] }))
+    const len = a.historyStatus().len
+    ok(call(a, 'move_layers', { layer_ids: [v], delta_us: 1000 }))
+    expect(span(a, v)).toEqual([S, 2 * S])
+    expect(span(a, au)[0]).toBeGreaterThan(S)
+    expect(a.historyStatus().len).toBe(len + 1)
+    const lone = color(a, tA, 5 * S, 6 * S)
+    ok(call(a, 'move_layers', { layer_ids: [lone], delta_us: 1, track_id: tB }))
+    expect(where(a, lone)).toEqual({ track: tB, span: [5 * S, 6 * S] })
+    expect(a.historyStatus().len).toBe(len + 3)
+  })
+
+  it('shift_layers refuses a sweep that rounds home, in either direction', () => {
+    const { a, tA } = setup()
+    const one = color(a, tA, S, 2 * S)
+    const before = a.snapshot()
+    const len = a.historyStatus().len
+    for (const delta_us of [1, -1]) {
+      const r = refused(call(a, 'shift_layers', { t_from_us: S, delta_us }))
+      expect(r.message).toMatch(/^delta_us: .*would move nothing/)
+      expect(r.data).toMatchObject({ error: 'InvalidArgument' })
+    }
+    expect(a.historyStatus().len).toBe(len)
+    expect(a.snapshot()).toBe(before)
+    expect(span(a, one)).toEqual([S, 2 * S])
+  })
+
+  it('the timeline\'s own moves answer ok and spend no history entry and no op id', () => {
+    const { a, tA } = setup()
+    const one = color(a, tA, S, 2 * S)
+    const before = a.snapshot()
+    const len = a.historyStatus().len
+    expect(a.dispatch('move_layer', { layer: one, to_track: tA, t_start_us: S }).ok).toBe(true)
+    expect(a.dispatch('move_layer', { layer: one, to_track: tA, t_start_us: S + 1 }).ok).toBe(true)
+    expect(a.dispatch('move_layers', { placements: [{ layerId: one, trackId: tA }], anchor_layer_id: one, t_start_us: S }).ok).toBe(true)
+    expect(a.dispatch('shift_layers', { from_t_us: S, delta_us: 1 }).ok).toBe(true)
+    expect(a.historyStatus().len).toBe(len)
+    expect(a.snapshot()).toBe(before)
+  })
+})
+
 describe('move_layers { insert: true }: the ripple move', () => {
   // L3: "move the part after 1:30 to the start" — split, then one move.
   it('moves the tail of a linked A/V clip to the start in one edit: the head shifts right, the span behind closes', () => {
@@ -151,6 +217,197 @@ describe('move_layers { insert: true }: the ripple move', () => {
     expect(e.data).toMatchObject({ error: 'RippleInsideHole', layer: title, tool: 'move_layers' })
     expect(e.message).toContain(`add ${title} to layer_ids`)
     expect(span(a, clip)).toEqual([2 * S, 4 * S])
+  })
+})
+
+describe('move_layers refuses by name and leaves the project alone', () => {
+  const lockTrack = (a: ActorHandle, track: string) => ok(call(a, 'set_track_flags', { track_id: track, locked: true }))
+
+  it('an unknown or locked destination; its own locked lane; a lane in another composition', () => {
+    const { a, tA, tB } = setup()
+    const one = color(a, tA, 0, S)
+    const before = a.snapshot()
+    const unknown = '00000000-0000-0000-0000-00000000dead'
+    expect(refused(call(a, 'move_layers', { layer_ids: [one], track_id: unknown })).data).toMatchObject({ error: 'TrackNotFound' })
+    lockTrack(a, tB)
+    expect(refused(call(a, 'move_layers', { layer_ids: [one], track_id: tB })).message).toContain(tB)
+    expect(root(a.snapshot()).tracks.find((t) => t.id === tA)!.layers.map((l) => l.id)).toEqual([one])
+    lockTrack(a, tA)
+    expect(refused(call(a, 'move_layers', { layer_ids: [one], delta_us: S })).message).toContain(tA)
+    expect(before.compositions[root(before).id].tracks[0].layers).toEqual(root(a.snapshot()).tracks[0].layers)
+  })
+
+  it('a locked partner the call did not name is named, and escape_link steps around it', () => {
+    const { a, tA } = setup()
+    const v = video(a, tA, 0, S)
+    const au = audio(a, tA, 0, S)
+    const link = idOf(a.dispatch('links_create', { layers: [v, au] }))
+    ok(call(a, 'set_layer_flags', { layer_ids: [au], locked: true }))
+    expect(refused(call(a, 'move_layers', { layer_ids: [v], delta_us: S })).data).toMatchObject({ error: 'LinkLockedMember', link, locked_layer: au, touched: v })
+    expect(span(a, v)).toEqual([0, S])
+    ok(call(a, 'move_layers', { layer_ids: [v], delta_us: S, escape_link: true }))
+    expect(span(a, v)).toEqual([S, 2 * S])
+    expect(span(a, au)).toEqual([0, S])
+  })
+
+  it('names the earliest member, not the seed, when the set would cross 0', () => {
+    const { a, tA, tB } = setup()
+    const seed = color(a, tA, 2 * S, 3 * S)
+    const earliest = color(a, tB, S, 2 * S)
+    const later = color(a, tB, 4 * S, 5 * S)
+    expect(refused(call(a, 'move_layers', { layer_ids: [seed, later, earliest], delta_us: -2 * S })).data).toMatchObject({ error: 'NegativeLayerStart', layer: earliest, requested_us: -S })
+  })
+})
+
+describe('move_layers settles the timeline around the move', () => {
+  it('a lane change takes the emptied lane with it and fits the duration, in one undo', () => {
+    const { a } = setup()
+    const extra = idOf(a.dispatch('add_track', {}))
+    const dest = idOf(a.dispatch('add_track', {}))
+    const one = color(a, extra, 0, S)
+    ok(call(a, 'move_layers', { layer_ids: [one], track_id: dest, t_start_us: 7 * S }))
+    const c = root(a.snapshot())
+    expect(c.tracks.some((t) => t.id === extra)).toBe(false)
+    expect(c.duration_us).toBe(8 * S)
+    a.dispatch('undo', {})
+    expect(root(a.snapshot()).tracks.some((t) => t.id === extra)).toBe(true)
+    expect(where(a, one)).toEqual({ track: extra, span: [0, S] })
+  })
+
+  it('moving a member past its neighbours keeps every lane in time order, partners too', () => {
+    const { a, tA } = setup()
+    const v = video(a, tA, 0, S)
+    const au = audio(a, tA, 0, S)
+    idOf(a.dispatch('links_create', { layers: [v, au] }))
+    const nextV = color(a, tA, S, 2 * S)
+    const nextA = audio(a, tA, S, 2 * S)
+    ok(call(a, 'move_layers', { layer_ids: [v], t_start_us: 3 * S }))
+    expect(root(a.snapshot()).tracks.find((t) => t.id === tA)!.layers.map((l) => l.id).sort()).toEqual([au, nextA, nextV, v].sort())
+    const starts = root(a.snapshot()).tracks.find((t) => t.id === tA)!.layers.map((l) => l.t_start_us)
+    expect(starts).toEqual([...starts].sort((x, y) => x - y))
+  })
+
+  it('insert closes behind and answers what the closing moved, without the set', () => {
+    const { a, tA } = setup()
+    const head = color(a, tA, 0, S)
+    const seed = color(a, tA, S, 2 * S)
+    const tail = color(a, tA, 2 * S, 3 * S)
+    const rec = ok(call(a, 'move_layers', { layer_ids: [seed], t_start_us: 5 * S, insert: true }))
+    expect(span(a, tail)).toEqual([S, 2 * S])
+    expect(span(a, seed)).toEqual([5 * S, 6 * S])
+    expect(span(a, head)).toEqual([0, S])
+    expect(JSON.stringify(rec.rippled)).toContain(tail)
+    expect(JSON.stringify(rec.rippled)).not.toContain(seed)
+  })
+
+  it('insert opens room the length of the whole set, from the set\'s earliest landing', () => {
+    const { a, tA } = setup()
+    const head = color(a, tA, 0, S)
+    const other = color(a, tA, S, 2 * S)
+    const b = color(a, tA, 2 * S, 3 * S)
+    const c = color(a, tA, 3 * S, 4 * S)
+    ok(call(a, 'move_layers', { layer_ids: [c, b], t_start_us: 2 * S, insert: true }))
+    expect(span(a, head)).toEqual([0, S])
+    expect(span(a, c)).toEqual([2 * S, 3 * S])
+    expect(span(a, b)).toEqual([S, 2 * S])
+    expect(span(a, other)).toEqual([3 * S, 4 * S])
+  })
+
+  it('insert refuses to open room through a link it would split, a locked lane or a locked layer', () => {
+    const setUp = () => {
+      const s = setup()
+      return { ...s, seed: color(s.a, s.tA, 5 * S, 6 * S) }
+    }
+    {
+      const { a, tB, seed } = setUp()
+      const reach = video(a, tB, 0, 2 * S)
+      const after = audio(a, tB, S, 3 * S)
+      const link = idOf(a.dispatch('links_create', { layers: [reach, after] }))
+      expect(refused(call(a, 'move_layers', { layer_ids: [seed], t_start_us: S, insert: true })).data).toMatchObject({ error: 'ShiftLinkStraddles', link, t_from_us: S })
+      expect(span(a, after)).toEqual([S, 3 * S])
+    }
+    {
+      // A member ending exactly on the landing does not reach across it.
+      const { a, tB, seed } = setUp()
+      const ends = video(a, tB, 0, S)
+      const starts = audio(a, tB, S, 2 * S)
+      idOf(a.dispatch('links_create', { layers: [ends, starts] }))
+      ok(call(a, 'move_layers', { layer_ids: [seed], t_start_us: S, insert: true }))
+      expect(span(a, starts)).toEqual([2 * S, 3 * S])
+      expect(span(a, ends)).toEqual([0, S])
+    }
+    {
+      const { a, tB, seed } = setUp()
+      const held = color(a, tB, S, 2 * S)
+      ok(call(a, 'set_layer_flags', { layer_ids: [held], locked: true }))
+      expect(refused(call(a, 'move_layers', { layer_ids: [seed], t_start_us: 0, insert: true })).data).toMatchObject({ error: 'RippleLockedLayer', layer: held })
+    }
+    {
+      const { a, tB, seed } = setUp()
+      const held = color(a, tB, S, 2 * S)
+      ok(call(a, 'set_track_flags', { track_id: tB, locked: true }))
+      expect(refused(call(a, 'move_layers', { layer_ids: [seed], t_start_us: 0, insert: true })).message).toContain(tB)
+      expect(span(a, held)).toEqual([S, 2 * S])
+    }
+  })
+})
+
+describe('the timeline\'s moves', () => {
+  it('move_layers (a drag of many) refuses a locked destination and a locked member', () => {
+    const { a, tA, tB } = setup()
+    const one = color(a, tA, 0, S)
+    ok(call(a, 'set_track_flags', { track_id: tB, locked: true }))
+    const r = a.dispatch('move_layers', { placements: [{ layerId: one, trackId: tB }], anchor_layer_id: one, t_start_us: S })
+    expect(r).toMatchObject({ ok: false, error: { error: 'TrackLocked', track: tB } })
+    expect(where(a, one)).toEqual({ track: tA, span: [0, S] })
+  })
+
+  it('move_layer floors a drag past 0 as one body and keeps the partner\'s phase', () => {
+    const { a, tA } = setup()
+    const v = video(a, tA, S, 2 * S)
+    const au = audio(a, tA, 2 * S, 3 * S)
+    idOf(a.dispatch('links_create', { layers: [v, au] }))
+    expect(a.dispatch('move_layer', { layer: au, to_track: tA, t_start_us: 0 }).ok).toBe(true)
+    expect(span(a, v)).toEqual([0, S])
+    expect(span(a, au)).toEqual([S, 2 * S])
+  })
+
+  it('move_layer leaves a locked partner alone only when the drag escapes the link', () => {
+    const { a, tA } = setup()
+    const v = video(a, tA, 0, S)
+    const au = audio(a, tA, 0, S)
+    const link = idOf(a.dispatch('links_create', { layers: [v, au] }))
+    ok(call(a, 'set_layer_flags', { layer_ids: [au], locked: true }))
+    expect(a.dispatch('move_layer', { layer: v, to_track: tA, t_start_us: S })).toMatchObject({ ok: false, error: { error: 'LinkLockedMember', link, locked_layer: au } })
+    expect(a.dispatch('move_layer', { layer: v, to_track: tA, t_start_us: S, escape_link: true }).ok).toBe(true)
+    expect(span(a, au)).toEqual([0, S])
+    expect(span(a, v)).toEqual([S, 2 * S])
+  })
+
+  it('the raise: a verbatim raise leaves the duration, a landing refits it, and every emptied lane goes', () => {
+    const { a } = setup()
+    const laneOne = idOf(a.dispatch('add_track', {}))
+    const laneTwo = idOf(a.dispatch('add_track', {}))
+    const one = color(a, laneOne, 0, S)
+    const two = color(a, laneTwo, S, 2 * S)
+    const pinned = root(a.snapshot()).duration_us
+    const raised = idOf(a.dispatch('move_layers_to_new_track', { layers: [one, two] }))
+    expect(root(a.snapshot()).duration_us).toBe(pinned)
+    const c = root(a.snapshot())
+    expect(c.tracks.some((t) => t.id === laneOne || t.id === laneTwo)).toBe(false)
+    expect(where(a, one)).toEqual({ track: raised, span: [0, S] })
+    idOf(a.dispatch('move_layers_to_new_track', { layers: [one, two], anchor_layer_id: one, t_start_us: 6 * S }))
+    expect(root(a.snapshot()).duration_us).toBe(8 * S)
+    expect(span(a, two)).toEqual([7 * S, 8 * S])
+  })
+
+  it('the raise refuses an empty set and an anchor outside it', () => {
+    const { a, tA } = setup()
+    const one = color(a, tA, 0, S)
+    const two = color(a, tA, S, 2 * S)
+    expect(a.dispatch('move_layers_to_new_track', { layers: [] })).toMatchObject({ ok: false, error: { error: 'InvalidArgument', field: 'layers' } })
+    const outside = a.dispatch('move_layers_to_new_track', { layers: [one], anchor_layer_id: two, t_start_us: S })
+    expect(outside).toMatchObject({ ok: false, error: { error: 'InvalidArgument', field: 'anchor_layer_id', detail: expect.stringContaining(two) } })
   })
 })
 
