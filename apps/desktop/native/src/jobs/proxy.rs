@@ -35,6 +35,13 @@ const PROXY_HEIGHT_CAP: u32 = 2160;
 /// Shared with the quick (scrub) proxy.
 pub const PROXY_GOP_FRAMES: u32 = 6;
 
+/// The proxies' `scale` filter: caps height at `cap` without upscaling. `-2`
+/// evens only the width and yuv420p needs both even, so the height rounds down
+/// itself. Left odd it fails libx264; padded it adds a black row to every frame.
+pub(crate) fn scale_filter(cap: u32) -> String {
+    format!("scale=-2:'max(2,trunc(min(ih,{cap})/2)*2)'")
+}
+
 /// Bump whenever the proxy ffmpeg args change in a way that affects playback,
 /// scrub, or color: the open-time `Backend::enqueue_jobs_for_media` pass
 /// invalidates any `Proxied` variant whose stored `format_version` is older,
@@ -116,12 +123,11 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     // transcode that dies at promote.
     let tmp = claim_temp(&dest)?;
 
-    // `scale=-2:'min(ih,N)'` caps height without upscaling; the `-2` rounds
-    // width to even (libx264 requires even dims). High profile + yuv420p give
-    // WebCodecs a universally-decodable `avc1.640028` stream; `+faststart`
-    // puts the moov atom up front so the renderer can parse before the write
-    // completes. Height-cap / GOP / `-bf 0` rationale: see the constants above.
-    let scale_filter = format!("scale=-2:'min(ih,{PROXY_HEIGHT_CAP})'");
+    // High profile + yuv420p give WebCodecs a universally-decodable
+    // `avc1.640028` stream; `+faststart` puts the moov atom up front so the
+    // renderer can parse before the write completes. Height-cap / GOP / `-bf 0`
+    // rationale: see the constants above.
+    let scale_filter = scale_filter(PROXY_HEIGHT_CAP);
     let gop = PROXY_GOP_FRAMES.to_string();
     let input = media.path_abs.clone();
     let color_args = source_color_args(media);
@@ -677,5 +683,97 @@ mod tests {
             height, 1440,
             "master must preserve 1440p source res, not cap to 1080"
         );
+    }
+
+    /// Dimensions and the bottom row's darkest luma of a proxy's first frame.
+    async fn probe_size_and_bottom_row(proxy: &std::path::Path) -> (u32, u32, u8) {
+        let out = Command::new("ffprobe")
+            .args(["-v", "error", "-select_streams", "v:0"])
+            .args(["-show_entries", "stream=width,height", "-of", "csv=p=0"])
+            .arg(proxy)
+            .output()
+            .await
+            .expect("ffprobe size");
+        let size = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let (width, height) = size.split_once(',').expect("width,height");
+        let row = Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-i"])
+            .arg(proxy)
+            // Gray first: on 4:2:0, `crop` rounds a height of 1 down to 0.
+            .args(["-vf", "format=gray,crop=iw:1:0:ih-1", "-frames:v", "1"])
+            .args(["-f", "rawvideo", "-"])
+            .output()
+            .await
+            .expect("ffmpeg bottom row");
+        assert!(row.status.success(), "could not read the bottom row");
+        (
+            width.parse().unwrap(),
+            height.parse().unwrap(),
+            row.stdout.iter().copied().min().expect("a row of pixels"),
+        )
+    }
+
+    /// x264 takes an odd height only outside 4:2:0, so the source is 4:4:4. It
+    /// is white so a padded black row would read as a dark bottom edge.
+    #[tokio::test]
+    async fn odd_height_source_yields_even_proxies_with_no_added_row() {
+        if !ffmpeg_available() {
+            eprintln!("ffmpeg not on PATH — skipping odd-height proxy test");
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        let cache = CacheLayout::new(tmp.path().join("cache"));
+        cache.ensure_dirs().unwrap();
+        let src = tmp.path().join("odd.mp4");
+        let status = Command::new("ffmpeg")
+            .args(["-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi"])
+            .args(["-i", "color=white:size=640x361:rate=30:duration=1"])
+            .args(["-pix_fmt", "yuv444p", "-c:v", "libx264", "-preset"])
+            .arg("ultrafast")
+            .arg(&src)
+            .status()
+            .await
+            .expect("spawn ffmpeg");
+        assert!(status.success(), "fixture");
+
+        let media = MediaItem {
+            id: new_id(),
+            label: Some("odd.mp4".into()),
+            path_abs: src,
+            path_rel: None,
+            kind: MediaKind::Video,
+            metadata: MediaMetadata {
+                duration_us: Some(1_000_000),
+                video: None,
+                audio: None,
+                ..Default::default()
+            },
+            decode_route: DecodeRoute::Proxied {
+                quick_proxy: None,
+                full_proxy: None,
+                format_version: 0,
+            },
+            waveform_path: None,
+            conform_path: None,
+            thumbnails_dir: None,
+            file_hash_blake3: "oddheight".into(),
+            file_size: 0,
+            file_mtime: 0,
+            imported_at: Utc::now(),
+        };
+
+        let full = run(&cache, &media).await.expect("full proxy");
+        let quick = crate::jobs::quick_proxy::run(&cache, &media, None)
+            .await
+            .expect("quick proxy");
+        for proxy in [&full, &quick] {
+            let (width, height, darkest) = probe_size_and_bottom_row(proxy).await;
+            assert_eq!(height, 360, "{proxy:?}: rounds down, never up");
+            assert_eq!(width % 2, 0, "{proxy:?}: width {width} must be even");
+            assert!(
+                darkest > 200,
+                "{proxy:?}: bottom row reached luma {darkest}"
+            );
+        }
     }
 }
