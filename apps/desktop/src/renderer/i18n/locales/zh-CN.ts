@@ -2268,22 +2268,22 @@ const zhCN: Resources = {
     brightness: {
       name: "亮度",
       desc: "曝光增益，黑场不浮",
-      params: { amount: "数量" },
+      params: { amount: "数值" },
     },
     contrast: {
       name: "对比度",
       desc: "以中灰为轴调整反差",
-      params: { amount: "数量" },
+      params: { amount: "数值" },
     },
     saturation: {
       name: "饱和度",
       desc: "色彩浓度，可降至灰度",
-      params: { amount: "数量" },
+      params: { amount: "数值" },
     },
     sharpen: {
       name: "锐化",
       desc: "让偏软或缩小后的画面更清晰",
-      params: { amount: "数量" },
+      params: { amount: "强度" },
     },
   },
   property_panel: {
