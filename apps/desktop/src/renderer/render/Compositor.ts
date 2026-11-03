@@ -428,6 +428,11 @@ export class Compositor {
   /// actively ticking (paused state).
   scheduleRepaint(): void {
     if (this.disposed) return;
+    // Export's frame driver alone creates decoder handles and composites. A
+    // repaint here would run ensureClip first and create a WebCodecs handle
+    // under the key the driver opens natively; the driver then reuses it and
+    // the export fails admission. Async arrivals wait for the driver's next frame.
+    if (this.mode === "export") return;
     if (!this.presentationVisible) {
       this.presentationDirty = true;
       return;
