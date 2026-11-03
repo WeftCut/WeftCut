@@ -1,6 +1,7 @@
 import { applyRetimeLayers, applyPreservePitch } from './mutations/retime'
 import type { RetimeTarget } from '../../shared/timeMapping'
 // apps/desktop/src/main/state/actor.ts
+import { isDeepStrictEqual } from 'node:util'
 import { produce, setAutoFreeze } from 'immer'
 import { assertLockedLayersUnchanged } from './layerLocks'
 import type { Animated, AudioRole, Composition, Continuity, Interpolation, LayerParams, MarkerAnchor, MotifRebindEntry, Project, Rational, Rgba, TransitionKind, Uuid , TextParams} from './model'
@@ -309,14 +310,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
       droppedTransitions = measureEditStage('reconcile_transitions', () => reconcileTransitions(draft))
       droppedMarkers = measureEditStage('reconcile_markers', () => reconcileMarkers(draft))
     }))
-    // No-op guard: if the recipe left the draft unmodified, immer returns the
-    // original object by reference. Recording an identical snapshot would waste
-    // a history slot and an op_id, and would fool the undo-unwind property's
-    // state-change detector (two entries with the same state look like "bottom").
-    // Mirrors the intent of applyTrimLayer's requestedDelta===0 early return.
-    // (A no-op recipe can't dirty a transition or an anchored marker, so
-    // neither reconcile blocks this.)
-    if (next === current()) return value
+    // No-op guard: recording an identical snapshot would waste a history slot and
+    // an op_id, and would fool the undo-unwind property's state-change detector
+    // (two entries with the same state look like "bottom"). By VALUE, because a
+    // recipe that lifts a layer and reinserts it where it was (a move the grid
+    // rounds home) dirties the draft and changes nothing. Immer shares every
+    // untouched subtree, so this walks only what the recipe touched.
+    if (isDeepStrictEqual(next, current())) return value
     measureEditStage('locked_layer_check', () => assertLockedLayersUnchanged(current(), next))
     // Every recorded edit is a modification, so `metadata.modified_at` takes
     // the commit's timestamp — the one cheap dirty signal a client has. After
@@ -998,7 +998,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
             (d) => applyMoveLayers(d, placements, a.anchor_layer_id as Uuid, parseNum(a.t_start_us, 't_start_us')))
           return { ok: true, value: null }
         }
-        case 'move_layer': commit(HISTORY_SUMMARY.layerMove, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyMoveLayer(d, a.layer as Uuid, a.to_track as Uuid, parseNum(a.t_start_us, 't_start_us'), (a.escape_link as boolean) ?? false, a.strict === true)); return { ok: true, value: null }
+        case 'move_layer': commit(HISTORY_SUMMARY.layerMove, layerRef(a.layer as Uuid), { kind: 'Coarse' }, (d) => applyMoveLayer(d, a.layer as Uuid, a.to_track as Uuid, parseNum(a.t_start_us, 't_start_us'), (a.escape_link as boolean) ?? false)); return { ok: true, value: null }
         // move_layers_to_new_track — the whole of z-order rearrangement
         // (docs/features.md#track-placement). ONE commit: the lane is minted,
         // the layers move onto it, and every lane the raise emptied goes with

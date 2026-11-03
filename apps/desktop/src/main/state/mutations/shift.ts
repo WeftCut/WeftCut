@@ -97,9 +97,17 @@ export function applyShiftLayersFrom(
       if (strays.length > 0) throw new CommandFailure({ error: 'ShiftLinkStraddles', link: link.id, from_t_us: fromTUs })
     }
   }
-  if (deltaUs > 0) return shiftInComposition(c, ids, deltaUs, strict)
+  const spans = ids.map((id) => { const { layer } = locateLayerIn(c, id)!; return { layer, start: layer.t_start_us, end: layer.t_end_us } })
+  const result = deltaUs > 0 ? shiftInComposition(c, ids, deltaUs, strict) : closeFrom(c, lanes, ids, fromTUs, deltaUs, strict)
+  // A delta smaller than a grid step rounds every layer home. Thrown from inside
+  // the recipe, so the draft goes with it.
+  if (strict && spans.every(({ layer, start, end }) => layer.t_start_us === start && layer.t_end_us === end))
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'delta_us', detail: `on their own grids every layer lands where it already is after ${deltaUs} µs, so the sweep would move nothing` })
+  return result
+}
 
-  // ── Closing: the ripple planner over the lanes the sweep covers ──
+/** The closing half of the sweep: the ripple planner over the lanes it covers. */
+function closeFrom(c: Composition, lanes: ReadonlySet<Uuid> | null, ids: readonly Uuid[], fromTUs: number, deltaUs: number, strict: boolean): ShiftLayersResult {
   const s = fromTUs + deltaUs
   if (s < 0) {
     if (strict) {

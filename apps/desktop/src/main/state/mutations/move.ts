@@ -41,18 +41,16 @@ export function applyMoveLayers(p: Project, placements: readonly MovePlacement[]
   for (const trackId of new Set(located.map(({ src }) => src.track.id))) pruneEmptiedTrack(c, trackId)
 }
 
-/** Move one layer (and its link siblings) within its composition. The target
- *  track names a composition too, and it must be the layer's own: a track in
- *  another composition is refused (CrossCompositionMove) — a move never
- *  crosses, and crossing has its own op (`moveToComposition.ts`, which
- *  pre-compose, add-to-Group and ungroup stand beside).
+/** Move one layer (and its link siblings) within its composition: the timeline
+ *  drag's move. The target track names a composition too, and it must be the
+ *  layer's own: a track in another composition is refused (CrossCompositionMove)
+ *  — a move never crosses, and crossing has its own op (`moveToComposition.ts`,
+ *  which pre-compose, add-to-Group and ungroup stand beside).
  *
- *  `strict` is the AGENT's mode (the MCP arm sets it): a landing the set
- *  cannot honour as stated — the earliest mover would start before 0 — is
- *  refused rather than floored. The renderer's drag keeps the floor, because a
- *  drag shows its ghost and a clamped drop is what the user saw; a tool call
- *  shows nothing, so a clamped write is a lie it would report as success. */
-export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStartUs: number, escapeLink: boolean, strict = false): void {
+ *  A set dragged past 0 is floored, because a drag shows its ghost and a clamped
+ *  drop is what the user saw. The agent's move is `applyMoveLayerSet`, which
+ *  refuses that landing: a tool call shows nothing. */
+export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStartUs: number, escapeLink: boolean): void {
   const src = requireLayer(p, id)
   const c = src.comp
   const fps = c.fps
@@ -91,12 +89,6 @@ export function applyMoveLayer(p: Project, id: Uuid, newTrackId: Uuid, newTStart
     .map((l) => ({ id: l.id, kind: l.params.kind, tStartUs: l.t_start_us, tEndUs: l.t_end_us }))
   const requestedDelta = snapped - curStart
   const delta = floorShiftAtZero(movers, requestedDelta)
-  if (strict && delta !== requestedDelta) {
-    // The member that would have crossed 0 — the earliest starter — named with
-    // the start it was asked for, so the refusal reads as the validator's own.
-    const earliest = movers.reduce((a, b) => (b.tStartUs < a.tStartUs ? b : a))
-    throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'NegativeLayerStart', layer: earliest.id, t_start: earliest.tStartUs + requestedDelta } })
-  }
   // One arithmetic for every site that has to agree about where this set lands —
   // the two mutations that decide it and the two timeline surfaces that draw it
   // in advance (`renderer/grid.ts`). Both endpoints, each member's own lattice.
@@ -314,14 +306,16 @@ export function applyMoveLayerSet(p: Project, idGen: IdGen, req: MoveSetRequest)
   const delta = req.tStartUs !== null
     ? snapOnGrid(req.tStartUs, gridForLayerKind(seed.layer.params.kind, c.fps)) - seed.layer.t_start_us
     : req.deltaUs ?? 0
-  if (delta === 0 && dest === null && req.track !== 'spawn')
-    throw new CommandFailure({ error: 'InvalidArgument', field: req.tStartUs !== null ? 't_start_us' : 'delta_us', detail: 'the seed already starts there on its own track, so nothing would move' })
   const movers: ShiftMember[] = located.map(({ layer }) => ({ id: layer.id, kind: layer.params.kind, tStartUs: layer.t_start_us, tEndUs: layer.t_end_us }))
   if (floorShiftAtZero(movers, delta) !== delta) {
     const earliest = movers.reduce((a, b) => (b.tStartUs < a.tStartUs ? b : a))
     throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'NegativeLayerStart', layer: earliest.id, t_start: earliest.tStartUs + delta } })
   }
   const landings = shiftOnGrids(movers, delta, c.fps)
+  // Read off the landings, not the delta: a delta smaller than a grid step is
+  // nonzero and still rounds every member home.
+  if (dest === null && req.track !== 'spawn' && movers.every((m) => landings.get(m.id)!.tStartUs === m.tStartUs && landings.get(m.id)!.tEndUs === m.tEndUs))
+    throw new CommandFailure({ error: 'InvalidArgument', field: req.tStartUs !== null ? 't_start_us' : req.deltaUs !== null ? 'delta_us' : 'track_id', detail: 'on its own grid and track every member already lands there, so nothing would move' })
   const setMoves: RippleMove[] = located.map(({ layer, track }) => ({ layer: layer.id, track: track.id, t_start_us: landings.get(layer.id)!.tStartUs, t_end_us: landings.get(layer.id)!.tEndUs }))
 
   const rippled = new Set<Uuid>()

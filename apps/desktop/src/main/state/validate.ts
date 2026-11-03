@@ -395,14 +395,6 @@ export function reconcileMarkers(p: Project): DroppedMarker[] {
   return dropped
 }
 
-function checkSrcRange(p: Project, layer: Uuid, media: Uuid, srcIn: number, srcOut: number): void {
-  if (!(media in p.media_pool)) fail({ rule: 'MissingMedia', layer, media })
-  if (srcIn < 0 || srcIn >= srcOut) fail({ rule: 'InvalidSrcRange', layer, src_in: srcIn, src_out: srcOut })
-  const dur = p.media_pool[media].metadata.duration_us
-  if (dur !== null && dur !== undefined && srcOut > dur)
-    fail({ rule: 'SrcRangeExceedsMedia', layer, src_in: srcIn, src_out: srcOut, media_duration: dur })
-}
-
 function validateLayerParams(p: Project, layer: Layer): void {
   // Out-of-range keyframes are intentionally NOT checked.
   // Neither are OFF-GRID keyframe times, and for a sharper reason: content-glued
@@ -449,18 +441,13 @@ function validateLayerParams(p: Project, layer: Layer): void {
     const problem = graphicRoleProblem(pa.graphic_role)
     if (problem) throw new CommandFailure({ error: 'InvalidArgument', field: 'graphic_role', detail: problem })
   }
-  if (pa.kind === 'VideoClip' || pa.kind === 'Audio') checkSrcRange(p, layer.id, pa.media, approximateTime(sourceIn(pa)), approximateTime(sourceOut(layer)))
-  else if (pa.kind === 'ImageOverlay') { if (!(pa.media in p.media_pool)) fail({ rule: 'MissingMedia', layer: layer.id, media: pa.media }) }
-  else if (pa.kind === 'CompositionRef') {
-    // Beside `checkSrcRange`, not inside it: that helper is media-specific, and a
-    // composition window has NO upper bound — `src_out_us` past the referenced
-    // composition's `duration_us` is tolerated in state and clamped at the
-    // gesture (ADR 0052 §6), or deleting a layer INSIDE a Group would be refused
-    // because a parent's window overhangs. Target existence is
-    // validateCompositionRefs' (it needs the whole graph for the cycle check).
-    if (compareTime(sourceIn(pa), ZERO_TIME) < 0 || compareTime(sourceIn(pa), sourceOut(layer)) >= 0)
-      fail({ rule: 'InvalidSrcRange', layer: layer.id, src_in: pa.src_in_us, src_out: pa.src_out_us })
-  }
+  if ((pa.kind === 'VideoClip' || pa.kind === 'Audio' || pa.kind === 'ImageOverlay') && !(pa.media in p.media_pool))
+    fail({ rule: 'MissingMedia', layer: layer.id, media: pa.media })
+  // A CompositionRef's window has only the lower checks above and NO upper bound:
+  // `src_out_us` past the referenced composition's `duration_us` is tolerated in
+  // state and clamped at the gesture (ADR 0052 §6), or deleting a layer INSIDE a
+  // Group would be refused because a parent's window overhangs. Target existence
+  // is validateCompositionRefs' (it needs the whole graph for the cycle check).
 }
 
 function validateTrack(p: Project, c: Composition, track: Track, authorized: Map<string, number>, seenLayers: Set<Uuid>, layersHere: Set<Uuid>): void {
