@@ -170,7 +170,7 @@ function validateMarkers(c: Composition, seenMarkers: Set<Uuid>): void {
 // ── Per-transition invariant — ONE predicate, TWO callers ─────────────────────
 // validateTransitions fails on it; reconcileTransitions drops on it. Keeping the
 // logic in a single function is the design's anti-drift guarantee (Policy B,
-// ADR 0035 § Ordinary edits reconcile transitions on commit): validate and
+// ADR 0035 § Reconcile on commit): validate and
 // reconcile can never disagree about what a healthy transition looks like.
 
 /** layer id → {track, start, end, kind} geometry snapshot for the predicate.

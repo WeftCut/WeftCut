@@ -447,8 +447,8 @@ fn summary_outline(segments: &[vlm::description::DescSegment], start_us: i64) ->
         .map(|s| {
             format!(
                 "[{:.1}–{:.1}s] {}",
-                secs(s.t_start_us),
-                secs(s.t_end_us),
+                secs(s.src_start_us),
+                secs(s.src_end_us),
                 s.text.replace('\n', " ")
             )
         })
@@ -630,8 +630,8 @@ fn chunk_segments(
     let mut fresh = vlm::parse_raw(raw)?;
     vlm::shift_segments(&mut fresh, start);
     for s in &mut fresh {
-        s.t_start_us = s.t_start_us.clamp(start, end);
-        s.t_end_us = s.t_end_us.clamp(s.t_start_us, end);
+        s.src_start_us = s.src_start_us.clamp(start, end);
+        s.src_end_us = s.src_end_us.clamp(s.src_start_us, end);
     }
     Ok(fresh)
 }
@@ -643,8 +643,8 @@ mod summary_outline_tests {
 
     fn seg(a: i64, b: i64, text: &str) -> DescSegment {
         DescSegment {
-            t_start_us: a,
-            t_end_us: b,
+            src_start_us: a,
+            src_end_us: b,
             text: text.into(),
             tags: vec![],
         }

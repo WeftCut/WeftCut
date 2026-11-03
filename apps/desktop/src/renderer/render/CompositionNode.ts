@@ -25,6 +25,7 @@ import { cropPreview } from '../state/cropEditingStore';
 import type { Sprite } from 'pixi.js';
 import { Container, Texture } from "pixi.js";
 import type { InjectedMotifFrames } from "./worker/motifStream";
+import type { MotifReaderDiv } from "../../shared/motifs/readerProtocol";
 import type { Renderer } from "pixi.js";
 
 import { snapFrameFloor } from "../frames";
@@ -277,6 +278,8 @@ export interface CompositionNodeHost {
   sourceColor(mediaId: string): VideoColorSpaceInit | undefined;
   mediaById(mediaId: string): MediaSummary | undefined;
   motifFrames(key: string): InjectedMotifFrames | undefined;
+  /// The divisor preview reads stored Motif frames at (Playback Resolution).
+  motifScaleDiv(): MotifReaderDiv;
   ensureTenBitIngest(): TenBitIngest;
   ensureNv12Ingest(): Nv12Ingest;
   /// Drop both ingests' per-clip state for a pool key that is going away.
@@ -1699,6 +1702,7 @@ export class CompositionNode {
       fpsNum: this.host.fpsNum(),
       fpsDen: this.host.fpsDen(),
       onLoaded: () => this.host.scheduleRepaint(),
+      scaleDiv: () => this.host.motifScaleDiv(),
     });
     const tmpl: ActiveMotif = { layerId: layer.id, motifId, sprite, effects: new EffectChain() };
     this.activeMotifs.set(layer.id, tmpl);

@@ -1,7 +1,7 @@
 // apps/desktop/bench/checklist.mjs
 //
 // Scores a bench task's intent checklist against the final project: the JSON
-// `project://current` serves (src/main/state/model.ts `Project`). Pure: it
+// the app saves as project.json (src/main/state/model.ts `Project`). Pure: it
 // reads nothing but its two arguments, so a run can be re-scored from its
 // final.json after the vocabulary grows.
 //
@@ -78,7 +78,8 @@
 // `photo` or `media` prop, and no prop naming a pool item (an animation of a
 // process, a diagram). A drawn scene is one on the root that is not drawn over
 // the footage (`ground: none`) or scaled down: a frame-sized animation, a scene
-// by itself (ADR 0134). Without its manifest the checklist cannot read its
+// by itself (docs/motif-authoring.md#scope-one-element-or-one-interaction).
+// Without its manifest the checklist cannot read its
 // size; the audit can.
 
 export const BUILTIN_MOTIF_IDS = Object.freeze([

@@ -61,6 +61,9 @@ pub struct ExportAudioOnlyArgs {
     /// Absent for a project with no audio effects.
     #[serde(default, alias = "layer_audio_sources")]
     pub layer_audio_sources: Option<std::collections::HashMap<uuid::Uuid, String>>,
+    /// The export's admitted resource plan, resolved by main from the
+    /// renderer's token. The mix borrows from it and claims nothing fresh.
+    pub finalization_id: u32,
 }
 
 #[cfg(feature = "export")]
@@ -69,8 +72,9 @@ pub struct ExportAudioOnlyArgs {
 pub struct MuxExportArgs {
     #[serde(default)]
     pub staging_output: bool,
-    #[serde(default)]
-    pub finalization_id: Option<u32>,
+    /// The export's admitted resource plan, resolved by main from the
+    /// renderer's token. The mux runs inside it and claims nothing fresh.
+    pub finalization_id: u32,
     #[serde(default)]
     pub audio_required: bool,
     pub video_path: String,

@@ -7,7 +7,7 @@
 //! (`main/speech-config.ts` → `speech_config.json`). Electron main merges both,
 //! plus the active endpoint profile, into one `HashMap<String, BackendConfig>`
 //! snapshot (keyed by [`SpeechBackend::as_str`]) and injects it into every call
-//! that resolves a backend (`speech_config` / `speechConfig` arg, ADR 0148) —
+//! that resolves a backend (`speech_config` / `speechConfig` arg, ADR 0036) —
 //! nothing is held on `Backend`, so the resolver is stateless like the VLM one.
 
 use std::path::PathBuf;

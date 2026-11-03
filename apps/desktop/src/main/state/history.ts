@@ -250,6 +250,12 @@ export class History {
     this.cursor = index
     return this.snapshots[index].snapshot
   }
+  /** The stack index of op `opId`, or null when the stack no longer holds it.
+   *  An op's id does not shift when the cap evicts the front; its index does. */
+  indexOf(opId: Uuid): number | null {
+    const i = this.snapshots.findIndex((e) => e.op_id === opId)
+    return i < 0 ? null : i
+  }
   canUndo(): boolean { return this.cursor > 0 }
   canRedo(): boolean { return this.cursor + 1 < this.snapshots.length }
   cursorIndex(): number { return this.cursor }

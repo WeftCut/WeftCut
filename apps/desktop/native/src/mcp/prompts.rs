@@ -18,6 +18,20 @@ pub const NAME_AUTO_CAPTION: &str = "auto-caption";
 #[cfg(feature = "speech")]
 pub const NAME_VOICEOVER: &str = "voiceover";
 
+/// The `clip` argument both clip prompts take. A person picks a prompt from a
+/// slash menu and has no layer id, so the clip is named as the user sees it
+/// and the agent finds it (`find_clip_step`); an id still works.
+fn clip_arg(what: &str) -> PromptArgDef {
+    PromptArgDef {
+        name: "clip".into(),
+        description: Some(format!(
+            "The clip {what}, as you would name it: its label, or what it shows or says. \
+             Omit for the clip you mean in the conversation."
+        )),
+        required: false,
+    }
+}
+
 /// Static prompt catalog; re-exported as `list_prompts`.
 pub(crate) fn catalog() -> Vec<PromptDef> {
     let mut prompts = vec![PromptDef {
@@ -28,34 +42,24 @@ pub(crate) fn catalog() -> Vec<PromptDef> {
                 .into(),
         ),
         arguments: vec![
+            clip_arg("to tighten"),
             PromptArgDef {
-                name: "layer_id".into(),
-                description: Some(
-                    "Target Audio layer id, or the VideoClip that plays it — a VideoClip is \
-                     resolved to the Audio layer of its link."
-                        .into(),
-                ),
-                required: true,
-            },
-            PromptArgDef {
-                name: "threshold_amp".into(),
-                description: Some(
-                    "Peak amplitude threshold in [0.0, 1.0]. Default 0.02 (≈ -34 dBFS).".into(),
-                ),
+                name: "threshold_db".into(),
+                description: Some("Peak threshold, dBFS (≤ 0). Omit for the default.".into()),
                 required: false,
             },
             PromptArgDef {
                 name: "min_pause_us".into(),
                 description: Some(
-                    "Shortest pause to cut, in microseconds. Default 500000 (0.5s).".into(),
+                    "Shortest pause to cut, in microseconds. Omit for the default.".into(),
                 ),
                 required: false,
             },
             PromptArgDef {
                 name: "pad_us".into(),
                 description: Some(
-                    "Microseconds of each pause kept on EACH side when removing. Default 100000 \
-                     (100ms); 0 erases each pause whole."
+                    "Microseconds of each pause kept on each side when cutting. Omit for the \
+                     default."
                         .into(),
                 ),
                 required: false,
@@ -67,20 +71,15 @@ pub(crate) fn catalog() -> Vec<PromptDef> {
         prompts.push(PromptDef {
             name: NAME_AUTO_CAPTION.into(),
             description: Some(
-                "Transcribe a video or audio layer with the configured engine, then lay the transcript on the caption tracks with its word timing."
+                "Transcribe a clip with the configured engine, then lay the transcript on the caption tracks with its word timing."
                     .into(),
             ),
             arguments: vec![
-                PromptArgDef {
-                    name: "layer_id".into(),
-                    description: Some("Target VideoClip or Audio layer id.".into()),
-                    required: true,
-                },
+                clip_arg("to caption"),
                 PromptArgDef {
                     name: "language".into(),
                     description: Some(
-                        "Optional ISO-639-1 language hint (en, zh, etc.). Auto-detect when omitted."
-                            .into(),
+                        "Optional language hint (en, zh, …). Auto-detect when omitted.".into(),
                     ),
                     required: false,
                 },
@@ -94,17 +93,13 @@ pub(crate) fn catalog() -> Vec<PromptDef> {
             arguments: vec![
                 PromptArgDef {
                     name: "script".into(),
-                    description: Some(
-                        "Text to speak. tts-1 caps a single call at 4096 chars; for longer scripts split into paragraphs."
-                            .into(),
-                    ),
+                    description: Some("Text to speak.".into()),
                     required: true,
                 },
                 PromptArgDef {
                     name: "voice".into(),
                     description: Some(
-                        "OpenAI voice: alloy, echo, fable, onyx, nova, or shimmer. Required — `synthesize_speech` takes no default."
-                            .into(),
+                        "OpenAI voice: alloy, echo, fable, onyx, nova, or shimmer.".into(),
                     ),
                     required: true,
                 },
@@ -117,9 +112,9 @@ pub(crate) fn catalog() -> Vec<PromptDef> {
                     required: false,
                 },
                 PromptArgDef {
-                    name: "target_track_id".into(),
+                    name: "track".into(),
                     description: Some(
-                        "Optional Audio track id. Defaults to the first existing Audio track or a new 'Voiceover' track."
+                        "Optional track to place it on, by its name. Omit for the default lane."
                             .into(),
                     ),
                     required: false,
@@ -157,9 +152,21 @@ pub(crate) fn expand(
     }
 }
 
+/// The step that turns the user's words for a clip into a `layer_id`: the
+/// prompts carry process, and each tool's description carries its contract.
+fn find_clip_step(clip: Option<&str>, kinds: &str) -> String {
+    let which = match clip {
+        Some(c) => format!("the {kinds} layer the user calls \"{c}\" (its label, its media or its text; this may also be a layer id)"),
+        None => format!("the {kinds} layer the user means"),
+    };
+    format!(
+        "Find the clip: read `project://tracks` and pick {which}. If none fits, or several do, ask the user which one. Use its `layer_id` below."
+    )
+}
+
 fn expand_cut_pauses(args: Option<&Map<String, Value>>) -> Result<PromptResult, McpToolError> {
-    let layer_id = require_str(args, "layer_id")?;
-    let threshold = optional_str(args, "threshold_amp");
+    let clip = optional_str(args, "clip");
+    let threshold = optional_str(args, "threshold_db");
     let min_pause = optional_str(args, "min_pause_us");
     let pad = optional_str(args, "pad_us");
 
@@ -167,7 +174,7 @@ fn expand_cut_pauses(args: Option<&Map<String, Value>>) -> Result<PromptResult, 
     // rides along with `remove_pauses` and never with `detect_pauses`.
     let mut extra = String::new();
     if let Some(t) = &threshold {
-        extra.push_str(&format!(", `threshold_amp: {t}`"));
+        extra.push_str(&format!(", `threshold_db: {t}`"));
     }
     if let Some(m) = &min_pause {
         extra.push_str(&format!(", `min_pause_us: {m}`"));
@@ -176,22 +183,22 @@ fn expand_cut_pauses(args: Option<&Map<String, Value>>) -> Result<PromptResult, 
     if let Some(p) = &pad {
         remove_extra.push_str(&format!(", `pad_us: {p}`"));
     }
+    let find = find_clip_step(clip.as_deref(), "Audio or VideoClip");
 
     let text = format!(
-"Cut the pauses out of layer `{layer_id}` and close them.
+"Cut the pauses out of a clip and close the gaps.
 
-Steps:
-1. Call `remove_pauses` with `layer_id: \"{layer_id}\"`{remove_extra}. It walks the pre-computed waveform peaks, splits the clip at the edges of every pause, deletes them and closes the gaps behind them, all as ONE recorded edit — a single undo puts the clip back whole. Each pause keeps `pad_us` on EACH side (default 100000 — 100 ms; pass 0 to erase pauses whole), so speech keeps its breath and a soft word onset is not clipped off. It returns `{{ surviving_layer_ids, removed, removed_us }}`: what is left of the clip in timeline order, how many pauses went, and how much time went with them. Linked audio/video partners travel with each removed slice, so no orphaned sliver is left behind. If the tool errors with a `waveform not generated yet` message, wait for the corresponding `media:job_complete` event (kind=waveform) and retry — imports run in the background.
-2. Report how many pauses were removed and how much shorter the clip is.
+1. {find}
+2. Call `remove_pauses` with the `layer_id`{remove_extra}. It is one recorded edit: one undo puts the clip back whole.
+3. Report how many pauses went and how much shorter the clip is.
 
-A refusal is whole and lands before any write, so the clip comes back UNSPLIT with nothing recorded — fix what it names and call again. `RippleInsideHole` means a layer on another track STARTS inside one of the pauses, so the gap cannot close over it: either ripple that layer away too, or take the review-first route below and let the human decide. `RippleCollision`, `RippleLinkStraddles` and `RippleLockedLayer` / `TrackLocked` each name the layer that blocked. `InvalidArgument` means the clip is one pause end to end — removing every part of it is a `delete_layers`, not an edit to it — or that `pad_us` is too large for `min_pause_us`, which needs `2 × pad_us` to stay below it.
+A refusal changes nothing and names its cause and the fix: act on it. If a layer on another track blocks the cut, offer the user the review-first route.
 
-REVIEW FIRST — the alternative when the pauses should be seen before any of them goes:
-1. Call `detect_pauses` with `layer_id: \"{layer_id}\"`{extra}. Same walk over the same peaks, but it commits nothing: it returns `{{ pauses: [{{ t_start_us, t_end_us }}, ...], noise_floor_amp, peaks_source }}` — timeline-absolute ranges where the audio stays below threshold for the requested duration, the measured noise floor, and which peaks file the numbers came from. If it finds nothing, `noise_floor_amp` says why: a threshold near the floor plus 6 dB is the one that reads pauses as a listener would.
-2. Call `create_tacks` ONCE with `tacks: [...]`, one entry per pause: `t_us: <pause.t_start_us>`, `end_t_us: <pause.t_end_us>` and a short `label` (e.g. \"pause\") — setting `end_t_us` is what makes the tack a REGION spanning the pause rather than a point at its start. Each tack follows what plays in its range: a ripple upstream moves it with the audio it describes, and an edit inside the pause marks it outdated rather than leaving it to mean something it no longer does. Tacks are review marks, not project content: they record nothing, leave the user's markers alone, and the user resolves, dismisses or clears them in the agent panel. Do not use `add_marker` here — markers are the user's, created only when they ask for markers.
-3. Report how many pauses were tacked and their total duration, and leave what becomes of them to the human. Reading `project://tacks` later shows what they decided: a tack `resolved` or `dismissed` is their answer, `open` is still waiting.
-
-Defaults if the agent leaves args off: threshold_amp = 0.02 (-34 dBFS), min_pause_us 500 ms, pad_us 100 ms per side (`remove_pauses` only); `detect_pauses` alone also takes bridge_us 80 ms (two pauses closer than that read as one) — tuned for podcast-style speech with quick breath-pause cuts. Loosen for music (lower threshold, longer min) or tighten for talking-head (higher threshold)."
+REVIEW FIRST — when the user wants to see the pauses before any of them goes:
+1. Find the clip as above, then call `detect_pauses` with the `layer_id`{extra}. It commits nothing.
+2. Call `create_tacks` ONCE, one region tack per pause: `t_us` and `t_end_us` from the pause, and a short `label`. Tacks are review marks, not markers: never `add_marker` here.
+3. Tell the user to resolve or dismiss the tacks in the agent panel, and stop.
+4. When they are done, read `project://tacks` and call `remove_pauses` with the `layer_id` and `pauses: [{{ t_start_us, t_end_us }}, ...]`, the ranges of the tacks they kept, as detected."
     );
     Ok(PromptResult {
         description: Some(
@@ -206,21 +213,23 @@ Defaults if the agent leaves args off: threshold_amp = 0.02 (-34 dBFS), min_paus
 
 #[cfg(feature = "speech")]
 fn expand_auto_caption(args: Option<&Map<String, Value>>) -> Result<PromptResult, McpToolError> {
-    let layer_id = require_str(args, "layer_id")?;
+    let clip = optional_str(args, "clip");
     let language = optional_str(args, "language");
     let language_clause = match language {
         Some(lang) => format!(", `language: \"{lang}\"`"),
         None => String::new(),
     };
+    let find = find_clip_step(clip.as_deref(), "VideoClip or Audio");
     let text = format!(
-"Auto-caption the clip on layer `{layer_id}` using the configured transcription engine.
+"Caption a clip with the configured transcription engine.
 
-Steps:
-1. Call `transcribe_clip` with `layer_id: \"{layer_id}\"`{language_clause}. The tool extracts the layer's audio (mono 16 kHz WAV), transcribes it with the configured engine (cloud OpenAI Whisper, or local whisper.cpp / FunASR), and returns a JSON envelope `{{ backend, segments, language, word_timing }}` with all timestamps already shifted to timeline-absolute microseconds. `segments` carry the cues, each with its per-word spans in `words`.
-2. Inspect the `segments` text. Fix obvious mistakes you can spot — proper nouns, technical terms, on-screen text that should match exactly. Don't rewrite the prose. Keep every cue's `words` array as it came (edit a word's `text`, never its times).
-3. Call `apply_transcripts` with `transcripts: [<the envelope: segments + word_timing>]` and `source_layer_ids: [\"{layer_id}\"]`. The cues land as editable Text layers on the caption tracks, packing where there is room, and KEEP their word timing — which is what `correct_caption_text` later needs to re-segment a corrected cue. The tool returns the id of the caption track the first cue landed on.
+1. {find} If its pauses are to be cut, cut them first (`/cut-pauses`): captions follow the clip as it was transcribed.
+2. Call `transcribe_clip` with `layer_ids: [<the layer_id>]`{language_clause}.
+3. Read the `segments` text. Fix proper nouns and terms you can verify; do not rewrite the prose, and keep every word's times and the `source` as they came.
+4. Call `apply_transcripts` with the `transcripts`.
+5. Report how many cues landed.
 
-If `transcribe_clip` refuses because no backend is configured or its key is missing or invalid, tell the user to add an OpenAI API key or configure a local engine under Settings → Transcription; the refusal names what is missing. If `PayloadTooLarge`, narrow the window with `t_start_us`/`t_end_us` and call again — the cloud Whisper per-request cap is ~13 minutes of mono 16 kHz audio (local engines have no upload cap)."
+If `transcribe_clip` refuses, tell the user what it names and offer the options it lists. Never pass `backend: \"openai\"` or `\"byo_endpoint\"` on your own: they upload the audio, so they need the user's consent."
     );
     Ok(PromptResult {
         description: Some("Auto-caption a clip via transcribe_clip + apply_transcripts.".into()),
@@ -238,15 +247,31 @@ fn expand_voiceover(args: Option<&Map<String, Value>>) -> Result<PromptResult, M
     // promised a default voice would write a call the tool refuses.
     let voice = require_str(args, "voice")?;
     let speed = optional_str(args, "speed");
-    let target_track = optional_str(args, "target_track_id");
+    let track = optional_str(args, "track");
 
     let mut extra = format!(", `voice: \"{voice}\"`");
     if let Some(s) = &speed {
         extra.push_str(&format!(", `speed: {s}`"));
     }
-    if let Some(t) = &target_track {
-        extra.push_str(&format!(", `target_track_id: \"{t}\"`"));
+    let mut steps: Vec<String> = Vec::new();
+    if let Some(t) = &track {
+        steps.push(format!(
+            "Find the track the user calls \"{t}\" in `project://tracks` and pass its `track_id` as `target_track_id`. If none fits, or several do, ask."
+        ));
+        extra.push_str(", `target_track_id`");
     }
+    steps.push(format!(
+        "Call `synthesize_speech` with `text: <the script>`{extra}. A script longer than the tool takes goes in several calls, split at paragraph boundaries, in order."
+    ));
+    steps.push(
+        "Report where the voiceover landed and whether it was `cached` (no new charge).".into(),
+    );
+    let steps = steps
+        .iter()
+        .enumerate()
+        .map(|(i, s)| format!("{}. {s}", i + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
 
     let text = format!(
 "Generate voiceover audio for the script below in the `{voice}` voice.
@@ -257,12 +282,9 @@ Script:
 \"\"\"
 
 Steps:
-1. Call `synthesize_speech` with `text: <the script>`{extra}. The tool content-addresses by `(model, voice, speed, text)`, so an identical earlier call returns the cached audio without re-billing.
-2. Report the resulting `layer_id`, `media_id`, `t_start_us`, `t_end_us`, and whether the result was `cached`.
+{steps}
 
-If the script exceeds 4096 characters, split it at paragraph boundaries and synthesize each chunk separately. Each call's `t_start_us` defaults to the current `composition.duration_us`, so successive chunks chain at the end of the timeline.
-
-If `synthesize_speech` refuses because no OpenAI API key is configured, tell the user to add one under Settings → API keys; the refusal names what is missing."
+If `synthesize_speech` refuses, tell the user what it names; an OpenAI key goes under Settings → API keys."
     );
     Ok(PromptResult {
         description: Some("Generate cloud TTS and attach it as an Audio layer.".into()),
@@ -273,6 +295,7 @@ If `synthesize_speech` refuses because no OpenAI API key is configured, tell the
     })
 }
 
+#[cfg(feature = "speech")]
 fn require_str(args: Option<&Map<String, Value>>, key: &str) -> Result<String, McpToolError> {
     optional_str(args, key).ok_or_else(|| {
         McpToolError::invalid_params(format!("required prompt argument '{key}' missing"), None)
@@ -299,7 +322,7 @@ mod tests {
     }
 
     #[test]
-    fn catalog_lists_cut_pauses_with_required_args_marked() {
+    fn catalog_lists_cut_pauses_with_no_required_args() {
         let cat = catalog();
         #[cfg(not(feature = "speech"))]
         assert_eq!(cat.len(), 1);
@@ -307,9 +330,7 @@ mod tests {
         assert_eq!(cat.len(), 3);
 
         let cs = cat.iter().find(|p| p.name == NAME_CUT_PAUSES).unwrap();
-        let layer = cs.arguments.iter().find(|a| a.name == "layer_id").unwrap();
-        assert!(layer.required);
-        for optional in ["threshold_amp", "min_pause_us", "pad_us"] {
+        for optional in ["clip", "threshold_db", "min_pause_us", "pad_us"] {
             let arg = cs
                 .arguments
                 .iter()
@@ -319,118 +340,80 @@ mod tests {
         }
     }
 
+    /// A person invokes a prompt from a slash menu and has no layer id
+    /// (audit W16), so no prompt asks for one: the clip is named in words, or
+    /// left out, and the body tells the agent how to find it.
     #[test]
-    fn cut_pauses_interpolates_layer_id_and_names_both_recipes() {
-        let a = args(&[("layer_id", json!("xyz-789"))]);
+    fn no_prompt_requires_an_id() {
+        for p in catalog() {
+            for a in &p.arguments {
+                assert!(
+                    !(a.required && (a.name.ends_with("_id") || a.name.ends_with("_ids"))),
+                    "{} requires {}",
+                    p.name,
+                    a.name
+                );
+            }
+        }
+        let body =
+            message_text(&expand(NAME_CUT_PAUSES, None).expect("expand").messages[0]).to_string();
+        assert!(body.contains("read `project://tracks`"));
+        assert!(body.contains("ask the user which one"));
+    }
+
+    #[test]
+    fn cut_pauses_names_the_clip_the_user_gave_and_both_routes() {
+        let a = args(&[("clip", json!("Interview A"))]);
         let result = expand(NAME_CUT_PAUSES, Some(&a)).expect("expand");
         let body = message_text(&result.messages[0]);
-        assert!(body.contains("`xyz-789`"));
-        // Two recipes over one detection, and the prompt carries both: the cut
-        // is the answer it leads with, the tack is the review-first fallback.
+        assert!(body.contains("\"Interview A\""));
+        // Two routes over one detection: the cut leads, the tack is the
+        // review-first alternative.
         assert!(body.contains("remove_pauses"));
         assert!(body.contains("detect_pauses"));
-        // `end_t_us` is what makes each tack a region spanning the pause rather
-        // than a point at its start; drop it and the tacks stop meaning what
-        // the prompt says they mean. A tack follows the content of its range by
-        // itself, and `create_tacks` refuses the old pin (ADR 0117).
+        // `t_end_us` is what makes each tack a region spanning the pause.
         assert!(body.contains("create_tacks"));
-        assert!(body.contains("end_t_us"));
-        assert!(!body.contains("anchor_layer_id"));
-        // The tack's required label is named where the step is.
+        assert!(body.contains("`t_end_us`"));
+        assert!(!body.contains("end_t_us"));
         assert!(body.contains("`label`"));
     }
 
-    /// Pad is what makes *Remove* keep part of each pause instead of erasing
-    /// it, so the defaults paragraph has to name it — and the bridge — or an
-    /// agent never learns those two knobs exist.
+    /// The prompt carries process; each tool's description carries its
+    /// contract (W16). Return shapes, defaults and refusal lists restated here
+    /// drift from the tools, so none is.
     #[test]
-    fn cut_pauses_names_the_pad_and_bridge_defaults() {
-        let a = args(&[("layer_id", json!("xyz"))]);
-        let result = expand(NAME_CUT_PAUSES, Some(&a)).expect("expand");
+    fn cut_pauses_restates_no_tool_contract() {
+        let result = expand(NAME_CUT_PAUSES, None).expect("expand");
         let body = message_text(&result.messages[0]);
-        assert!(body.contains("pad_us"));
-        assert!(body.contains("100000"), "the pad default, in µs");
-        assert!(body.contains("pass 0 to erase pauses whole"));
-        assert!(body.contains("bridge_us 80 ms"));
-        assert!(
-            body.contains("`detect_pauses` alone also takes bridge_us"),
-            "bridge_us belongs to detect_pauses only"
-        );
-        assert!(body.contains("min_pause_us 500 ms"));
-    }
-
-    /// This prompt could not keep its own name while the editor had no ripple
-    /// delete: split then split then `delete_layers` left a gap exactly as long
-    /// as what it removed — audibly identical to doing nothing — so the recipe
-    /// marked, the blurb said so, and a "DO NOT split and delete" instruction
-    /// stood in for the missing primitive. `remove_pauses` is that primitive
-    /// (ADR 0062), and every pin moves with it: the recipe cuts, the warning is
-    /// gone, and the blurb may promise tightening because it now delivers it.
-    /// The review-first alternative stays pinned too, so neither half can
-    /// quietly drop out of the prompt.
-    #[test]
-    fn cut_pauses_cuts_the_gaps_and_keeps_marking_as_the_alternative() {
-        let a = args(&[("layer_id", json!("xyz"))]);
-        let result = expand(NAME_CUT_PAUSES, Some(&a)).expect("expand");
-        let body = message_text(&result.messages[0]);
-        assert!(
-            body.contains("remove_pauses"),
-            "the recipe must reach the primitive that actually closes the gap"
-        );
-        assert!(
-            !body.contains("DO NOT split and delete"),
-            "the instruction that stood in for a missing primitive must not outlive it"
-        );
-        // The review-first half, intact.
-        assert!(body.contains("detect_pauses"));
-        assert!(body.contains("create_tacks"));
-        assert!(body.contains("end_t_us"));
-
-        let listed = catalog();
-        let cs = listed
-            .iter()
-            .find(|p| p.name == NAME_CUT_PAUSES)
-            .expect("cut-pauses in catalog");
-        let desc = cs.description.as_deref().unwrap_or_default();
-        assert!(
-            !desc.contains("does not have"),
-            "catalog blurb must not still claim the editor cannot cut: {desc}"
-        );
-        assert!(
-            desc.contains("tightening"),
-            "catalog blurb should promise what it now delivers: {desc}"
-        );
-        assert!(
-            desc.contains("tack"),
-            "catalog blurb must still offer the review-first half: {desc}"
-        );
+        for contract in [
+            "100000",
+            "-34",
+            "500",
+            "surviving_layer_ids",
+            "noise_floor_db",
+            "RippleInsideHole",
+            "DerivativeNotReady",
+        ] {
+            assert!(!body.contains(contract), "restates `{contract}`");
+        }
     }
 
     /// Review marks are tacks, not markers (ADR 0115): markers are the user's
-    /// content — persisted, recorded, exported — and an agent writes one only
-    /// when the user asks for markers. The review-first route places the
-    /// pauses as ONE `create_tacks` batch, and no prompt steers an agent to
-    /// `add_marker` as a way of pointing the user at something.
+    /// content, and an agent writes one only when the user asks for markers.
     #[test]
     fn review_first_points_with_tacks_never_with_markers() {
-        let a = args(&[("layer_id", json!("xyz"))]);
-        let result = expand(NAME_CUT_PAUSES, Some(&a)).expect("expand");
+        let result = expand(NAME_CUT_PAUSES, None).expect("expand");
         let body = message_text(&result.messages[0]);
         let (_, review_half) = body.split_once("REVIEW FIRST").expect("both halves");
         assert!(review_half.contains("Call `create_tacks` ONCE"));
         assert!(
-            review_half.contains("resolved") && review_half.contains("dismissed"),
+            review_half.contains("resolve") && review_half.contains("dismiss"),
             "the agent learns where the user's decision shows up"
         );
-        assert!(
-            !review_half.contains("`color`"),
-            "a tack takes no colour; that was the marker's field"
-        );
-        assert!(
-            !body.contains("call `add_marker`"),
-            "no recipe may tell the agent to mark for review"
-        );
-        assert!(!body.contains("One call per pause"));
+        assert!(review_half.contains("never `add_marker`"));
+        assert!(!body.contains("call `add_marker`"));
+        // The reviewed subset is cut as reviewed, not re-detected.
+        assert!(review_half.contains("`pauses: [{ t_start_us, t_end_us }, ...]`"));
     }
 
     /// `pad_us` shapes the cut, not the detection, so it must reach
@@ -439,14 +422,13 @@ mod tests {
     #[test]
     fn cut_pauses_passes_through_optional_args_to_the_tool_that_takes_them() {
         let a = args(&[
-            ("layer_id", json!("xyz")),
-            ("threshold_amp", json!("0.05")),
+            ("threshold_db", json!("-28")),
             ("min_pause_us", json!("1000000")),
             ("pad_us", json!("200000")),
         ]);
         let result = expand(NAME_CUT_PAUSES, Some(&a)).expect("expand");
         let body = message_text(&result.messages[0]);
-        assert!(body.contains("`threshold_amp: 0.05`"));
+        assert!(body.contains("`threshold_db: -28`"));
         assert!(body.contains("`min_pause_us: 1000000`"));
         assert_eq!(
             body.matches("`pad_us: 200000`").count(),
@@ -464,12 +446,6 @@ mod tests {
         assert!(format!("{err}").contains("unknown prompt 'nope'"));
     }
 
-    #[test]
-    fn cut_pauses_requires_layer_id() {
-        let err = expand(NAME_CUT_PAUSES, None).expect_err("missing layer_id");
-        assert!(format!("{err}").contains("layer_id"));
-    }
-
     #[cfg(feature = "speech")]
     #[test]
     fn catalog_includes_cloud_prompts() {
@@ -480,15 +456,20 @@ mod tests {
 
     #[cfg(feature = "speech")]
     #[test]
-    fn auto_caption_names_the_fix_not_error_tokens() {
-        let a = args(&[("layer_id", json!("00000000-0000-7000-8000-000000000001"))]);
+    fn auto_caption_finds_the_clip_and_asks_before_uploading() {
+        let a = args(&[("clip", json!("the interview")), ("language", json!("zh"))]);
         let r = expand("auto-caption", Some(&a)).expect("expand auto-caption");
         let body = message_text(&r.messages[0]);
-        assert!(body.contains("Settings → Transcription"));
+        assert!(body.contains("\"the interview\""));
+        assert!(body.contains("read `project://tracks`"));
+        assert!(body.contains("`layer_ids: [<the layer_id>]`, `language: \"zh\"`"));
+        assert!(body.contains("they upload the audio"));
         assert!(
-            !body.contains("MissingKey") && !body.contains("InvalidKey"),
-            "no token names the model cannot act on"
+            !body.contains("MissingKey") && !body.contains("PayloadTooLarge"),
+            "no token the tool's own refusal does not say"
         );
+        assert!(!body.contains("source_layer_ids"));
+        assert!(expand("auto-caption", None).is_ok(), "the clip is optional");
     }
 
     #[cfg(feature = "speech")]
@@ -506,9 +487,27 @@ mod tests {
         );
         assert!(body.contains("Settings → API keys"));
         assert!(
+            !body.contains("target_track_id"),
+            "no track named, no track step"
+        );
+        assert!(
             !body.contains("MissingKey"),
             "no token names the model cannot act on"
         );
+    }
+
+    #[cfg(feature = "speech")]
+    #[test]
+    fn voiceover_takes_a_track_by_name() {
+        let a = args(&[
+            ("script", json!("hi")),
+            ("voice", json!("nova")),
+            ("track", json!("Narration")),
+        ]);
+        let r = expand("voiceover", Some(&a)).expect("expand voiceover");
+        let body = message_text(&r.messages[0]);
+        assert!(body.contains("\"Narration\""));
+        assert!(body.contains("`target_track_id`"));
     }
 
     /// `voice` is required because the tool requires it — the prompt and the

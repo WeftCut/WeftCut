@@ -12,7 +12,7 @@
 </p>
 
 > [!NOTE]
-> WeftCut is still under active development, so some features and UI/UX may change before v1.0.0. Join us to improve the project!
+> WeftCut is still under active development, so some features and UI/UX may change before v1.0.0. Join us to improve the project: start with the [contributing guide](CONTRIBUTING.md).
 
 <p align="center">
   <a href="https://github.com/WeftCut/WeftCut/releases/latest"><img alt="Download the latest release" src="https://img.shields.io/github/v/release/WeftCut/WeftCut?style=flat-square&label=Download&labelColor=475569&color=6696E6&logo=github&logoColor=white" /></a>
@@ -51,8 +51,8 @@ None of that rides on a stripped-down editor. Everything an agent can reach, you
 Copy the prompt in settings into your client, and your agent is holding the editor.
 
 - **It edits the project you are watching.** No import/export round trip, no separate headless copy.
-- **Every batch is reversible.** Agents checkpoint at logical boundaries, and each checkpoint is one click from being restored. The agent can also rehearse a whole multi-step edit against a throwaway clone first (`dry_run`) and find the collision before it touches your project.
-- **Multi-agent, with rules.** Sessions are per-connection. An agent that is mid-batch can `set_history_lock` so a stray Ctrl-Z doesn't land in the middle of its work — and the lock, plus the reason it gave, is shown to you.
+- **Every batch is reversible.** A work session begins with a checkpoint that is one click from being restored, and every edit the agent commits is a step of your undo history.
+- **Multi-agent, with rules.** Sessions are per-connection. A work session locks undo for everyone but its agent, so a stray Ctrl-Z doesn't land in the middle of its work — the lock and the reason it gave are shown to you, and Unlock is yours.
 
 ### Watch and review in Agent view
 
@@ -109,10 +109,10 @@ Lower thirds, countdowns, karaoke text and animated title cards are the obvious 
 ![WeftCut editor](docs/assets/editor.png)
 
 **Timeline** — A/B-roll rows with filmstrips and waveforms, frame-accurate SMPTE editing, ripple delete that closes the gap behind it, linked A/V that trims as one clip, cross-track groups, and nested compositions.
-<br/><sub>Agent: `move_layer` · `trim_layer` · `split_layer` · `ripple_delete_gap` · `create_link` · `create_group` · `move_layers_to_composition`</sub>
+<br/><sub>Agent: `move_layers` · `trim_layer` · `split_layer` · `shift_layers` · `create_link` · `create_group` · `move_layers_to_composition`</sub>
 
 **Keyframes** — animate any parameter, with bézier easing, a curve editor, tangent control, motion paths and extrapolation.
-<br/><sub>Agent: `set_keyframe` · `update_keyframe` · `smooth_keyframes` · `set_extrapolation`</sub>
+<br/><sub>Agent: `set_keyframe` · `update_keyframe` · `set_param_track` · `get_param_track`</sub>
 
 **Speech and captions** — transcribe a clip and get editable caption layers packed onto your caption tracks; import SRT/VTT/ASS into the media pool and drop it where it starts. Transcription runs against a cloud provider, or entirely on your machine once you let the app fetch a local engine (whisper.cpp, FunASR) — or an agent can pull the raw audio out and run its own model. Text-to-speech for scratch voiceover.
 <br/><sub>Agent: `transcribe_clip` · `extract_clip_audio` · `apply_transcripts` · `apply_subtitles` · `synthesize_speech`</sub>
@@ -155,7 +155,7 @@ Design decisions: [ADRs](docs/adr/).
 
 ## Build from source
 
-Prerequisites: **Node 24+**, **Rust** (stable via `rustup`), and your platform's C++ build tools — per-OS commands in [docs/setup.md](docs/setup.md).
+Prerequisites: **Node 24+**, **Rust** (version pinned by `rust-toolchain.toml`, installed via `rustup`), and your platform's C/C++ build tools and libclang — per-OS commands in [docs/setup.md](docs/setup.md).
 
 ```sh
 npm install       # JS dependencies
@@ -175,10 +175,10 @@ Start with **[architecture](docs/architecture.md)** for the system map, or **[MC
 - **[Data model](docs/data-model.md)** — project state schema, history, persistence, validation.
 - **[Render](docs/render.md)** — PixiJS + WebCodecs renderer architecture.
 - **[Preview](docs/preview.md)** — interactive preview surface and transport.
-- **[Export](docs/export.md)** — export settings and range, audio export, final mux, proxies, background jobs.
+- **[Export](docs/export.md)** — export pipeline, settings and range, audio, finalization, export jobs and presets.
 - **[Captions](docs/captions.md)** · **[Audio](docs/audio.md)** — caption ingestion and the audio engine.
-- **[Conformance](docs/conformance.md)** — media fixtures and E2E gates for frame alignment, audio sync, colour.
-- **[Features](docs/features.md)** — small-feature contracts: undo-stack scope, groups, search palette, colour picker.
+- **[Conformance](docs/conformance.md)** — E2E gates that export real media and check frame alignment, audio sync and colour.
+- **[Features](docs/features.md)** — the concrete behavior of each editor capability: selection, links, groups, ripple delete, markers, shot review, pauses, search, gizmo, crop.
 - **[Status / log system](docs/status-log.md)** — the bottom-of-editor log bus.
 - **[Setup](docs/setup.md)** — per-OS toolchain prerequisites and first-run flow.
 - **[Licensing](docs/licensing.md)** — MIT app plus the two FFmpeg lanes and their build-time compliance gates.
@@ -188,7 +188,7 @@ Start with **[architecture](docs/architecture.md)** for the system map, or **[MC
 
 ## Community
 
-Join the [WeftCut Discord community](https://discord.gg/SjsFCpzDe) to share feedback, discuss feature ideas, and get help. Please use [GitHub Issues](https://github.com/WeftCut/WeftCut/issues) for bug reports and feature requests so they can be tracked.
+Join the [WeftCut Discord community](https://discord.gg/SjsFCpzDe) to share feedback, discuss feature ideas, and get help. Please use [GitHub Issues](https://github.com/WeftCut/WeftCut/issues) for bug reports and feature requests so they can be tracked. Before opening a pull request, read the [contributing guide](CONTRIBUTING.md).
 
 ## Maintainer
 

@@ -14,10 +14,10 @@ const HEAD = "audio extract: resource-capacity-exceeded: Waited 60 s before extr
 const NATIVE = {
   memory: `${HEAD}: memory is under pressure. Close other work or wait for memory to recover, then retry`,
   finalization: `${HEAD}: an export is finishing and goes first. Retry when the export completes`,
-  budget: `${HEAD}: the CPU and memory budget is held by 2 other lease(s), 1 of them background processing such as proxy generation. Retry when it finishes, or raise Processing effort or the Memory target in Settings`,
-  allowance: "resource-capacity-exceeded: Requested 128 MiB working memory exceeds the 64 MiB allowance; increase the memory target",
+  budget: `${HEAD}: the CPU and memory budget is held by proxy of media m-1 (128 MiB), editor (96 MiB). Retry when that finishes, or raise Processing effort or the Memory target in Settings › Performance`,
+  allowance: "resource-capacity-exceeded: Requested 128 MiB working memory exceeds the 64 MiB allowance; raise the Memory target in Settings › Performance",
   queue: "resource-capacity-exceeded: Too many queued tasks; retry when current work finishes",
-  busy: "resource-capacity-exceeded: Resources are busy. Stop playback or wait for other processing, then retry",
+  busy: "resource-capacity-exceeded: Resources are busy, held by export (2048 MiB). Retry when that finishes, or stop playback",
 } as const;
 
 beforeEach(async () => {

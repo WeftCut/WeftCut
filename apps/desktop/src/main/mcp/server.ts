@@ -1,4 +1,5 @@
-import { EXPORT_TOOL_DEFS, EXPORT_TOOLS, EXPORT_PRESET_TOOLS, exportSettingsSchema } from "./exportTools";
+import { EXPORT_TOOL_DEFS, EXPORT_TOOLS, EXPORT_PRESET_TOOLS, EXPORT_STATUS_MAX_WAIT_S, exportRefusal, unknownExportArguments } from "./exportTools";
+import { describeFault } from "./faultText";
 import { beatSamples } from "./frameSamples";
 import { runExportPresetTool } from './exportPresetTools';
 import { ExportJobError } from "../exportJobs";
@@ -26,27 +27,32 @@ import { captureMotifFrameB64 } from '../motif/capture.js'
 import { APP_SCOPE_RESOURCES, HYBRID_TOOLS, routeMcpTool, servesWithoutProject } from './mutationTools.js'
 import { canonicalizeProps, MotifPropError, type Manifest } from '../../shared/motifs/catalog.js'
 import { mediaPropProblem } from '../../shared/motifs/mediaProp.js'
-import { shapeMotifMcpResult } from './motifResult.js'
+import { agentMotifRow, shapeMotifMcpResult } from './motifResult.js'
+import { composeMotifSheet } from './motifSheet.js'
 import { runHybrid } from '../state/hybrids.js'
-import { CLIP_SLICE_TOOLS, resolveClipSliceArgs, resolvePauseComputeArgs, TWO_SLICE_TOOLS, resolveTwoSliceArgs } from '../state/clip-slice-forward.js'
-import { serveProjectResource, buildResourceInjection } from '../state/resource-views.js'
+import { CLIP_SLICE_TOOLS, HEARD_SLICE_TOOLS, resolveClipSliceArgs, resolveHeardSliceArgs, resolvePauseComputeArgs, TWO_SLICE_TOOLS, resolveTwoSliceArgs } from '../state/clip-slice-forward.js'
+import { resolvePauseSubject } from '../state/pauseSubject.js'
+import { sourceSignature } from '../state/mutations/textCorrection.js'
+import { serveProjectResource, buildResourceInjection, RESOURCE_NOT_FOUND } from '../state/resource-views.js'
+import { withDerivativeState } from '../state/derivative-jobs.js'
 import type { TsActorHost } from '../state/ts-actor-host.js'
 import type { MediaItem } from '../state/model.js'
 import type { ActorHandle, ChangeEvent } from '../state/actor.js'
 import { mergeMcpCatalog, mergeMcpResources } from './mcpCatalog.js'
-import { MCP_TOOL_DEFS, MCP_TOOLS, McpArgError, mcpDef, type McpErrorCode, type ToolAnnotations } from '../state/mcp-commands.js'
+import { MCP_TOOL_DEFS, MCP_TOOLS, McpArgError, mcpDef, type McpErrorCode, type McpToolErrorJson, type ToolAnnotations } from '../state/mcp-commands.js'
 import { NO_PROJECT_OPEN_MESSAGE, noProjectOpenResult, toolErrorResult, thrownToToolError, UnknownToolError } from './toolResult.js'
 import { toolRecord } from '../state/mcp-results.js'
 import { mcpActor } from '../state/mcp-actor.js'
 import { argProblemMessage } from './argCheck.js'
-import { shapeHybridResult, shapeImportResult } from './hybridResult.js'
+import { importRecord, shapeHybridResult } from './hybridResult.js'
 import { PROJECT_TOOLS, runProjectTool } from './projectTools.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
 import { HOST_RESOURCE_DEFS, HOST_RESOURCE_TEMPLATES, mediaResourceDefs } from './hostResources.js'
-import { MCP_INSTRUCTIONS } from './instructions.js'
+import { isSkillUri, readSkillResource, readSkillView, skillResourceDefs } from './skillResources.js'
+import { mcpInstructions } from './instructions.js'
+import { AgentServiceError } from '../agent/activity.js'
 import { effectsCatalogView } from '../../shared/effects/catalogView.js'
 import { withLog, NO_MCP_LOG, type McpCommitWindow, type McpLogDeps, type McpRowSummary } from './withLog.js'
-import { withCanonicalToolName } from './toolAliases.js'
 import { TACK_TOOLS, isTacksUri, readTacksResource, readTacksView, runTackTool } from './tackTools.js'
 import { heldForAudit } from '../lint/audits.js'
 import { ComputeCancelledError, type ComputeCaller } from '../compute/jobs.js'
@@ -61,8 +67,11 @@ interface Envelope {
   result?: unknown
   error?: { code: McpErrorCode; message: string; data?: unknown }
 }
+/** Envelope code → JSON-RPC code. `not_found` is Rust's resource-not-found,
+ *  which MCP spells `-32002`; for a TOOL it means an unknown name, and
+ *  `unwrapToolEnvelope` turns that into `UnknownToolError` before this map. */
 const CODE_MAP: Record<string, number> = {
-  invalid_params: -32602, invalid_request: -32600, not_found: -32601, internal: -32603,
+  invalid_params: -32602, invalid_request: -32600, not_found: RESOURCE_NOT_FOUND, internal: -32603,
 }
 
 /** Map a parsed {ok,result|error} envelope to the SDK result, or THROW the
@@ -76,21 +85,25 @@ const CODE_MAP: Record<string, number> = {
 function unwrapEnvelope(env: Envelope): unknown {
   if (env.ok) return env.result
   const err = env.error!
-  const e = new Error(err.message) as Error & { code?: number; data?: unknown }
+  const { message, data } = withDerivativeState(err)
+  const e = new Error(message) as Error & { code?: number; data?: unknown }
   e.code = CODE_MAP[err.code] ?? -32603
-  e.data = err.data
+  e.data = data
   throw e
 }
 function unwrap(json: string): unknown { return unwrapEnvelope(JSON.parse(json) as Envelope) }
 
 /** Per-call speech config provider (transcribe_clip): the merged backend-config
- *  snapshot the stateless resolver reads (ADR 0148) keyed by backend tag, plus
+ *  snapshot the stateless resolver reads (ADR 0036) keyed by backend tag, plus
  *  the selected engine, injected as a SOFT preference. Built at call time, so a
  *  key saved or a model switched a moment ago is what the next call runs on.
  *  `synthesize_speech` gets the same `config` at the host's compute facade. */
 export type SpeechProvider = () => {
   config: Record<string, unknown>
   preferred: string | null
+  /** The languages the selected model covers, by backend tag (its catalog
+   *  entry's); absent → the engine is taken to cover any. */
+  languages?: Record<string, readonly string[]>
 }
 const NO_SPEECH: SpeechProvider = () => ({ config: {}, preferred: null })
 
@@ -134,8 +147,12 @@ const NO_VLM: VlmProvider = () => ({
 export type PeaksPathProvider = (subjectLayerId: string) => string | null
 const NO_PEAKS_PATH: PeaksPathProvider = () => null
 
-/** The arguments `preview_motif` takes (`motif_id` is an older name for `id`). */
-const PREVIEW_MOTIF_ARGS: ReadonlySet<string> = new Set(['id', 'motif_id', 't_sec', 'props', 'width', 'height', 'expected_revision'])
+/** The arguments `preview_motif` takes: its advertised schema's, no alias. */
+const PREVIEW_MOTIF_ARGS: ReadonlySet<string> = new Set(Object.keys((MOTIF_TOOL_DEFS.find((d) => d.name === 'preview_motif')!.inputSchema as { properties: Record<string, unknown> }).properties))
+/** A `preview_motif` frame's width when no bound is given, and the most
+ *  frames one sheet holds: `render_frames`' own. */
+const PREVIEW_FRAME_WIDTH = 640
+const PREVIEW_MAX_FRAMES = 24
 
 /** One clip-compute tool call: resolve the `{ layer, media }` slice from the
  *  actor (the sole state owner), inject the engine-selection hints the stateless
@@ -171,15 +188,17 @@ export async function callClipComputeTool(
   // (spec Decisions 1 and 11).
   const merged = name === 'detect_pauses'
     ? resolvePauseComputeArgs(args, tsHost.actor.snapshot(), peaksPathFor)
+    : HEARD_SLICE_TOOLS.has(name) ? resolveHeardSliceArgs(name, args, tsHost.actor.snapshot())
     : resolveClipSliceArgs(args, tsHost.actor.snapshot())
   // ADR 0064: inject the explicitly selected model backend. None stays unset;
   // native resolution does not choose another configured model implicitly.
   // An agent's explicit backend override remains authoritative.
   // Speech, like vision below, resolves against the per-call configuration
-  // (ADR 0148): nothing is held natively, so this injection is the whole config.
+  // (ADR 0036): nothing is held natively, so this injection is the whole config.
   if (name === 'transcribe_clip') {
     const speech = getSpeech()
     merged.speech_config = speech.config
+    if (speech.languages) merged.model_languages = speech.languages
     if (merged.backend == null && speech.preferred && speech.preferred !== 'auto') {
       merged.preferred_backend = speech.preferred
     }
@@ -215,6 +234,48 @@ export async function callClipComputeTool(
   const release = COMPUTE_TOOLS.has(name) ? beginModelUse() : () => {}
   try { return unwrap(await backend.mcpCallTool(name, JSON.stringify(merged))) as ServerResult }
   finally { release() }
+}
+
+/** `transcribe_clip { layer_ids }`: one clip-compute run per layer, in order,
+ *  each answered with the `source` `apply_transcripts` checks — the layer that
+ *  was read (a VideoClip's linked Audio member) and its signature at the start
+ *  of the run. A layer that refuses goes to `failed` with its message, so one
+ *  bad id does not throw away the runs before it; the call is an error only
+ *  when every layer refused. */
+async function transcribeLayers(
+  backend: Backend, tsHost: TsActorHost, args: Record<string, unknown>,
+  getSpeech: SpeechProvider, getVlm: VlmProvider, peaksPathFor: PeaksPathProvider, compute?: ComputeCaller,
+): Promise<ServerResult> {
+  const { layer_ids: ids, ...rest } = args as { layer_ids: string[] } & Record<string, unknown>
+  if (!Array.isArray(ids) || ids.length === 0) return toolErrorResult({ code: 'invalid_params', message: 'transcribe_clip: layer_ids names no layer', data: { field: 'layer_ids' } })
+  if (new Set(ids).size !== ids.length) return toolErrorResult({ code: 'invalid_params', message: 'transcribe_clip: layer_ids names a layer twice', data: { field: 'layer_ids' } })
+  if (ids.length > 1 && (rest.t_start_us != null || rest.t_end_us != null))
+    return toolErrorResult({ code: 'invalid_params', message: 'transcribe_clip: t_start_us / t_end_us narrow one layer\'s window — send them with a single layer id', data: { field: 't_start_us' } })
+  const transcripts: Array<Record<string, unknown>> = []
+  const failed: Array<{ layer_id: string; message: string }> = []
+  let firstFailure: ServerResult | null = null
+  for (const id of ids) {
+    const snapshot = tsHost.actor.snapshot()
+    const subject = resolvePauseSubject(id, snapshot)
+    const source = subject.ok ? { layer_id: subject.subject.id, signature: sourceSignature(subject.subject) } : null
+    let result: ServerResult
+    try { result = await callClipComputeTool(backend, tsHost, 'transcribe_clip', { ...rest, layer_id: id }, getSpeech, getVlm, peaksPathFor, compute) }
+    catch (e) {
+      if (!(e instanceof McpArgError)) throw e
+      result = toolErrorResult(e.toJson())
+    }
+    const r = result as { isError?: boolean; content?: Array<{ text?: string }> }
+    const text = r.content?.[0]?.text ?? ''
+    if (r.isError || !source) {
+      failed.push({ layer_id: id, message: text || 'the layer plays no sound' })
+      firstFailure ??= result
+      continue
+    }
+    transcripts.push({ source, ...(JSON.parse(text) as Record<string, unknown>) })
+  }
+  if (transcripts.length === 0 && ids.length === 1 && firstFailure) return firstFailure
+  if (transcripts.length === 0) return toolErrorResult({ code: 'invalid_request', message: `transcribe_clip: every layer refused — ${failed.map((f) => `${f.layer_id}: ${f.message}`).join('; ')}`, data: { failed } })
+  return toolRecord({ transcripts, ...(failed.length ? { failed } : {}) }) as unknown as ServerResult
 }
 
 /** What an agent reads for a cancelled job. Only a job someone ELSE cancelled
@@ -255,7 +316,7 @@ function unwrapToolEnvelope(json: string, name: string): ServerResult {
   if (env.ok) return env.result as ServerResult
   const err = env.error!
   if (err.code === 'not_found') throw new UnknownToolError(name)
-  return toolErrorResult(err)
+  return toolErrorResult({ ...err, ...withDerivativeState(err) })
 }
 
 /** The argument gate for the routes that have no TS parser of their own.
@@ -313,8 +374,8 @@ export async function refuseUnheldSources(tsHost: Pick<TsActorHost, 'sourceFiles
   for (const media of sources as (MediaItem | null | undefined)[]) {
     if (!media) continue
     const state = await tsHost.sourceFiles.settle(media)
-    if (state === 'missing') return toolErrorResult({ code: 'invalid_request', message: `${name}: the source file ${media.path_abs} is missing — import the original file again to restore it` })
-    if (state === 'changed') return toolErrorResult({ code: 'invalid_request', message: `${name}: ${media.path_abs} was changed outside WeftCut and no longer holds this media — import the original file again to restore it, or import the new file as new media` })
+    if (state === 'missing') return toolErrorResult({ code: 'invalid_request', message: `${name}: the source file ${media.path_abs} is missing — import the original file again to restore it`, data: { error: 'SourceMissing', media_id: media.id } })
+    if (state === 'changed') return toolErrorResult({ code: 'invalid_request', message: `${name}: ${media.path_abs} was changed outside WeftCut and no longer holds this media — import the original file again to restore it, or import the new file as new media`, data: { error: 'SourceChanged', media_id: media.id } })
   }
   return null
 }
@@ -355,8 +416,7 @@ export async function handleCallTool(
     return await dispatchTool(backend, getTsHost, route, name, args, getSpeech, getVlm, peaksPathFor, client, compute)
   } catch (e) {
     if (e instanceof ComputeCancelledError) return cancelledToolResult(e)
-    if (e instanceof ExportValidationError) return toolErrorResult({code:'invalid_params',message:e.message});
-    if (e instanceof ExportJobError) return {isError:true, content:[{type:"text",text:JSON.stringify({error:{code:e.code,message:e.message,data:e.data}})}], structuredContent:{error:{code:e.code,message:e.message,data:e.data}}};
+    if (e instanceof ExportValidationError || e instanceof ExportJobError) return toolErrorResult(exportRefusal(e))
     if (e instanceof UnknownToolError) throw e
     // The motif store's failures are the caller's — an unknown draft, an id
     // already installed — so a plain message there is `invalid_params`. A
@@ -394,7 +454,8 @@ async function dispatchTool(
     const definition = EXPORT_TOOL_DEFS.find(d => d.name === name);
     if (!definition) throw new UnknownToolError(name);
     const properties = definition.inputSchema.properties as Record<string,unknown>;
-    if (Object.keys(args).some(key => !(key in properties))) throw new ExportJobError('invalid_params','Unknown export argument');
+    const unknown = Object.keys(args).filter(key => !(key in properties));
+    if (unknown.length) return toolErrorResult(unknownExportArguments(name, unknown));
     if (EXPORT_PRESET_TOOLS.has(name)) {
       if (!tsHost) throw new ExportJobError('export_unavailable', 'Export preset preferences are unavailable');
       const record = await runExportPresetTool(tsHost, name, args);
@@ -405,11 +466,23 @@ async function dispatchTool(
     if (name === 'render_frames') return await renderFrames(backend, getTsHost, tsHost!, jobs, args);
     for (const field of ['job_id','filename']) if (args[field] !== undefined && (typeof args[field] !== 'string' || !args[field])) throw new ExportJobError('invalid_params',`${field} must be a nonempty string`);
     if (['cancel_export','retry_export'].includes(name) && typeof args.job_id !== 'string') throw new ExportJobError('invalid_params','job_id is required');
-    const result = name === 'get_export_options' ? {...await jobs.options(args.preset_id) as Record<string,unknown>, settings_schema:exportSettingsSchema()}
+    const result = name === 'get_export_options' ? await jobs.options(args.preset_id) as Record<string,unknown>
       : name === 'start_export' ? await jobs.start(args)
-      : name === 'get_export_status' ? jobs.status(args.job_id as string | undefined)
+      : name === 'get_export_status' ? null
       : name === 'retry_export' ? await jobs.retry(args.job_id as string, args.filename as string | undefined)
       : await jobs.cancel(args.job_id as string);
+    // One shape whatever was asked: `{ job }`, the job named, else the active
+    // or most recent one, null only when no job has run this session.
+    if (name === 'get_export_status') {
+      const id = typeof args.job_id === 'string' ? args.job_id : undefined;
+      if (args.wait_s !== undefined) {
+        if (!Number.isInteger(args.wait_s) || (args.wait_s as number) < 0 || (args.wait_s as number) > EXPORT_STATUS_MAX_WAIT_S) throw new ExportJobError('invalid_params', `wait_s must be a whole number of seconds from 0 to ${EXPORT_STATUS_MAX_WAIT_S}`);
+        await jobs.waitForStateChange(id, (args.wait_s as number) * 1000);
+      }
+      const job = id ? jobs.status(id) : jobs.latest();
+      const answer = { job: job === null ? null : exportRecordForAgent(exportWire(job, true) as Record<string, unknown>) };
+      return { content: [{ type: 'text', text: JSON.stringify(answer) }], structuredContent: answer } as ServerResult;
+    }
     const record = (name === 'get_export_options' ? result : exportWire(result, true)) ?? {job:null};
     // An export is where unchecked work would leave the app: audit the root
     // unless its last audit is still fresh, and report — never block, in
@@ -419,36 +492,39 @@ async function dispatchTool(
       if (tsHost.audits.summary(snap, snap.root_id, taste).state !== 'fresh') tsHost.audits.run(snap, snap.root_id, taste)
       ;(record as Record<string, unknown>).audit = tsHost.audits.summary(snap, snap.root_id, taste)
     }
-    return {content:[{type:'text',text:JSON.stringify(record)}],structuredContent:record} as ServerResult;
+    const answer = exportRecordForAgent(record as Record<string, unknown>)
+    return {content:[{type:'text',text:JSON.stringify(answer)}],structuredContent:answer} as ServerResult;
   }
-  if (tsHost?.agent && ['begin_agent_session', 'end_agent_session', 'set_history_lock'].includes(name)) {
+  if (tsHost?.agent && (name === 'begin_agent_session' || name === 'end_agent_session')) {
     try {
-      // Every arm reads its args through the tool's own parser, so a refusal
-      // reads the same whichever path reaches the service, and answers with
-      // the record it committed like every other mutator.
+      // Both arms read their args through the tool's own parser, so a refusal
+      // reads the same whichever path reaches the service, and answer with
+      // the record they committed like every other mutator.
       let result: Record<string, unknown>
+      const active = tsHost.agent.snapshot().session
       if (name === 'begin_agent_session') {
         const p = mcpDef('begin_agent_session').parseDedicated!(args)
-        result = tsHost.agent.begin(p.reason as string) as unknown as Record<string, unknown>
-      } else if (name === 'end_agent_session') {
-        // Answer with the session that ended (null when none was active), so a
-        // takeover says whose work it closed.
-        const p = mcpDef('end_agent_session').parseDedicated!(args)
-        const active = tsHost.agent.snapshot().session
+        const session = tsHost.agent.begin(p.reason as string, { lock: p.lock as boolean | undefined, force: p.force as boolean })
+        result = { ...session, locked: tsHost.agent.locked() }
+        // A takeover says whose work it closed.
+        if (active !== null && active.id !== session.id) result.taken_over = tsHost.agent.snapshot().sessions.find((x) => x.id === active.id) ?? active
+      } else {
+        mcpDef('end_agent_session').parseDedicated!(args)
         // A handoff is of checked work (spec H1-D6). Agents that never ran the
         // audit ignored a reported `never` (bench 2026-10-21), so the app runs
         // it here when the last one is not fresh. Hard or warning findings the
-        // agent has not seen keep its session open and come back to it; the
-        // next call, at a fresh audit, ends the session whatever it found.
-        // A takeover is never held: the owner is gone.
-        if (active !== null && tsHost.audits && p.force !== true && tsHost.agent.currentCall()?.connection_id === active.connection_id) {
+        // agent has not seen keep its session open and come back to it
+        // (`ended: false`); the next call, at a fresh audit, ends the session
+        // whatever it found.
+        if (active !== null && tsHost.audits && tsHost.agent.currentCall()?.connection_id === active.connection_id) {
           const snap = tsHost.actor.snapshot(), taste = tsHost.taste?.() ?? null
           if (tsHost.audits.summary(snap, snap.root_id, taste).state !== 'fresh') {
             const check = tsHost.audits.run(snap, snap.root_id, taste)
             if (check.counts.hard + check.counts.warning > 0) return toolRecord(heldForAudit(check)) as ServerResult
           }
         }
-        tsHost.agent.end(p.force === true ? 'forced' : 'agent')
+        // Answer with the session that ended (null when none was active).
+        tsHost.agent.end('agent')
         result = { ended: active === null ? null : tsHost.agent.snapshot().sessions.find((x) => x.id === active.id) ?? active }
         // The client's open tacks that no longer point where they were made
         // to — the agent's last chance to fix or resolve them. Omitted when none.
@@ -460,17 +536,11 @@ async function dispatchTool(
           const snap = tsHost.actor.snapshot()
           result.audit = tsHost.audits.summary(snap, snap.root_id, tsHost.taste?.() ?? null)
         }
-      } else {
-        // The lock is taken here rather than through mcpCall because the OWNER
-        // is the connection, which only this seam knows.
-        const p = mcpDef('set_history_lock').parseDedicated!(args)
-        if (p.locked as boolean) tsHost.agent.lock(p.reason as string)
-        else tsHost.agent.unlock()
-        result = { locked: p.locked as boolean, reason: (p.reason as string | undefined) ?? null }
       }
       return toolRecord(result) as ServerResult
     } catch (e) {
-      return toolErrorResult({ code: 'invalid_params', message: e instanceof Error ? e.message : String(e) })
+      if (e instanceof AgentServiceError) return toolErrorResult(e.toJson())
+      return toolErrorResult(thrownToToolError(e, 'internal', name))
     }
   }
   // Tacks are runtime review state beside the agent activity, not project
@@ -487,6 +557,10 @@ async function dispatchTool(
       if (e instanceof McpArgError) return toolErrorResult(e.toJson())
       throw e
     }
+  }
+  if (name === 'read_project' && args.view === 'skill') {
+    const p = mcpDef('read_project').parseDedicated!(args)
+    return readSkillView(p.path as string) as unknown as ServerResult
   }
   if (tsHost?.agent && name === 'read_project' && args.view === 'tacks') {
     const p = mcpDef('read_project').parseDedicated!(args)
@@ -510,18 +584,25 @@ async function dispatchTool(
       return toolRecord(effectsCatalogView()) as unknown as ServerResult
     }
     // The two picture views for a client without resources: served by the same
-    // Rust reader `media://{id}/thumbnail` and `media://{id}/frame/{t_us}` use,
+    // Rust reader `media://{id}/thumbnail` and `media://{id}/frame/{src_us}` use,
     // and answered as an IMAGE content block, which is what a model can look at.
     // A derivative not yet generated refuses with the reader's own hint.
     if (name === 'read_project' && (args.view === 'media_thumbnail' || args.view === 'media_frame')) {
       const p = mcpDef('read_project').parseDedicated!(args)
-      const uri = p.view === 'media_frame' ? `media://${p.id as string}/frame/${p.t_us as number}` : `media://${p.id as string}/thumbnail`
+      const uri = p.view === 'media_frame' ? `media://${p.id as string}/frame/${p.src_us as number}` : `media://${p.id as string}/thumbnail`
       // The resource reader answers a missing id with the resource vocabulary
       // (`not_found`, which over tools means "no such tool"); as a tool call it
       // is a bad argument, and the reader's own sentence says which.
-      const res = await handleReadResource(backend, () => tsHost, uri, getVlm).catch((e: unknown) => {
-        throw new McpArgError(e instanceof Error ? e.message : String(e), 'id')
-      })
+      // A derivative still being generated is not a bad id: it keeps the
+      // reader's typed `DerivativeNotReady` and its retry hint.
+      let res: ServerResult
+      try { res = await handleReadResource(backend, () => tsHost, uri, getVlm) }
+      catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        const data = (e as { data?: { error?: unknown } } | null)?.data
+        if (data?.error === 'DerivativeNotReady') return toolErrorResult({ code: 'invalid_request', message, data })
+        throw new McpArgError(message, 'id')
+      }
       const first = (res as { contents?: Array<{ blob?: string; text?: string; mimeType?: string }> }).contents?.[0]
       if (first?.blob) return { content: [{ type: 'image', data: first.blob, mimeType: first.mimeType ?? 'image/jpeg' }] } as unknown as ServerResult
       return { content: [{ type: 'text', text: first?.text ?? '' }] } as unknown as ServerResult
@@ -530,7 +611,7 @@ async function dispatchTool(
       const r = tsHost.mcpCall(name, JSON.stringify(args), client)
       if (!r.ok) {
         if (r.error.code === 'not_found') throw new UnknownToolError(name)
-        return toolErrorResult(r.error)
+        return toolErrorResult(historyLockedRefusal(r.error, tsHost))
       }
       return r.result as unknown as ServerResult
     }
@@ -543,9 +624,16 @@ async function dispatchTool(
       const by = mcpActor(client)
       // An import answers its outcome over the committed media record; the
       // importer is the host's, so it joins imports of the same file in flight.
+      // Every path is checked by name before any is imported, so a typo in
+      // the fifth refuses the batch with nothing written; then one import per
+      // path, in order, each answered with its pooled record.
       if (name === 'import_media') {
-        const outcome = await tsHost.mediaImporter.ensureImported(args.path as string, { by })
-        return shapeImportResult(outcome, tsHost.actor.snapshot()) as unknown as ServerResult
+        const paths = args.paths as string[]
+        if (new Set(paths).size !== paths.length) throw new McpArgError('paths names a file twice', 'paths')
+        paths.forEach((p, i) => tsHost.mediaImporter.checkPath(p, `paths[${i}]`))
+        const media: Array<Record<string, unknown>> = []
+        for (const p of paths) media.push(importRecord(await tsHost.mediaImporter.ensureImported(p, { by }), tsHost.actor.snapshot()))
+        return toolRecord({ media }) as unknown as ServerResult
       }
       // Native-compute → TS-write.
       const hybridActor = tsHost.hybridDeps.actor
@@ -584,6 +672,11 @@ async function dispatchTool(
       if (unheld) return unheld
       return unwrapToolEnvelope(await backend.mcpCallTool(name, JSON.stringify(merged)), name)
     }
+    if (name === 'transcribe_clip') {
+      const refused = await refuseBadArgs(backend, name, args)
+      if (refused) return refused
+      return transcribeLayers(backend, tsHost, args, getSpeech, getVlm, peaksPathFor, compute)
+    }
     if (CLIP_SLICE_TOOLS.has(name)) {
       const refused = await refuseBadArgs(backend, name, args)
       if (refused) return refused
@@ -594,33 +687,39 @@ async function dispatchTool(
     // route === 'rust' → fall through (other reads are served by the backend).
   }
   if (name === 'preview_motif') {
-    const a = args as { id?: string; motif_id?: string; t_sec?: number; props?: unknown; expected_revision?: string; width?: number | null; height?: number | null }
-    const motifId = a.id ?? a.motif_id ?? ''
-    // One frame per call, at a time the caller names: an H4 run sent
-    // `times_s: [...]`, got the t = 0 frame (nothing drawn yet) and concluded
-    // the Motif was broken.
+    const a = args as { motif_id: string; local_t_s: number[]; props?: unknown; expected_revision?: string; width?: number | null; height?: number | null }
+    // The schema check every motif tool runs: `motif_id` and 1–24 times
+    // present and typed, an argument it does not take named, all together.
     const unknown = Object.keys(args).filter((k) => !PREVIEW_MOTIF_ARGS.has(k))
-    if (unknown.length) return toolErrorResult({ code: 'invalid_params', message: `preview_motif does not take ${unknown.join(', ')}; it renders one frame per call at t_sec`, data: { field: unknown[0] } })
-    if (typeof a.t_sec !== 'number' || !Number.isFinite(a.t_sec)) return toolErrorResult({ code: 'invalid_params', message: 'preview_motif needs t_sec: the time into the Motif, in seconds, of the one frame it renders', data: { field: 't_sec' } })
-    // The catalog entry, as `list_motifs` reports it — it IS the manifest plus a
-    // few catalog fields, so it serves both the advertised default size and the
-    // props defaults below. A bare-core call (no host) has no catalog to ask:
-    // 480 is its floor and the props go through as sent.
-    const entry = tsHost
-      ? (tsHost.motifTool('list_motifs', {}) as Array<Record<string, unknown> & { id: string; size?: [number, number] }>).find((m) => m.id === motifId)
-      : undefined
-    if (tsHost && !entry) return toolErrorResult({ code: 'invalid_params', message: `unknown Motif id '${motifId}' — list_motifs reports the built-in, installed and draft ids` })
-    const source = tsHost?.motifTool('read_motif', {id:motifId}) as {revision:string;diagnostic?:string} | undefined
-    if(source?.diagnostic)return toolErrorResult({code:'invalid_params',message:source.diagnostic})
-    if(a.expected_revision && a.expected_revision!==source?.revision)return toolErrorResult({code:'invalid_params',message:'Motif revision conflict'})
-    // Props canonicalised against the manifest exactly as `add_motif_layer` does:
+    if (unknown.length) return toolErrorResult({ code: 'invalid_params', message: `preview_motif does not take ${unknown.join(', ')}; it takes motif_id and local_t_s (1–24 seconds from the Motif's start), with optional props, width, height and expected_revision`, data: { field: unknown[0] } })
+    const refused = await refuseBadArgs(backend, name, args)
+    if (refused) return refused
+    if (a.local_t_s.length < 1 || a.local_t_s.length > PREVIEW_MAX_FRAMES || a.local_t_s.some((t) => typeof t !== 'number' || !Number.isFinite(t) || t < 0))
+      return toolErrorResult({ code: 'invalid_params', message: `preview_motif: local_t_s must be 1–${PREVIEW_MAX_FRAMES} non-negative seconds from the Motif's start, got ${JSON.stringify(a.local_t_s).slice(0, 80)}`, data: { field: 'local_t_s' } })
+    const motifId = a.motif_id
+    // One Motif read: its manifest serves the canvas size and the props
+    // defaults, and only this draft's linked folder is synced (not every
+    // linked draft's, as a catalog listing would). A bare-core call (no host)
+    // has no store to ask: 480 is its floor and the props go through as sent.
+    let entry: { manifest: Manifest; revision: string; diagnostic?: string } | undefined
+    if (tsHost) {
+      try { entry = tsHost.motifTool('read_motif', { motif_id: motifId }) as typeof entry }
+      catch (e) {
+        if (/unknown motif id/i.test(String(e))) return toolErrorResult({ code: 'invalid_params', message: `unknown Motif id '${motifId}' — list_motifs reports the built-in, installed and draft ids`, data: { error: 'MotifNotFound', id: motifId } })
+        throw e
+      }
+      if (!entry) return toolErrorResult({ code: 'invalid_params', message: `unknown Motif id '${motifId}' — list_motifs reports the built-in, installed and draft ids`, data: { error: 'MotifNotFound', id: motifId } })
+      if (entry.diagnostic) return toolErrorResult({ code: 'invalid_params', message: entry.diagnostic })
+      if (a.expected_revision && a.expected_revision !== entry.revision) return toolErrorResult({ code: 'invalid_params', message: `Motif revision conflict: the current revision is ${entry.revision}; preview without expected_revision, or read it again`, data: { error: 'RevisionConflict', current_revision: entry.revision } })
+    }
+    // Props canonicalised against the manifest exactly as `add_layers` does:
     // missing keys take the schema defaults (a lower third previews WITH its
     // text), an unknown key is refused naming it.
     let props: Record<string, unknown> = (a.props ?? {}) as Record<string, unknown>
     if (entry) {
       try {
-        props = canonicalizeProps(entry as unknown as Manifest, a.props ?? null)
-        const media = mediaPropProblem((entry as unknown as Manifest).props_schema, props, tsHost?.actor.snapshot().media_pool ?? {})
+        props = canonicalizeProps(entry.manifest, a.props ?? null)
+        const media = mediaPropProblem(entry.manifest.props_schema, props, tsHost?.actor.snapshot().media_pool ?? {})
         if (media) throw new MotifPropError(media)
       }
       catch (e) { if (e instanceof MotifPropError) return toolErrorResult({ code: 'invalid_params', message: `invalid props for '${motifId}': ${e.detail} — list_motifs reports its props_schema` }); throw e }
@@ -631,19 +730,27 @@ async function dispatchTool(
     const snap = tsHost?.actor.snapshot()
     const rootFps = snap?.compositions?.[snap.root_id]?.fps
     // The page always renders at the Motif's own canvas, as a placed layer
-    // does; width/height only bound the returned image, which keeps the
-    // aspect ratio (a smaller viewport would crop the page to its top-left
-    // corner, and agents read that as a broken Motif). Upscaling stops at 2×.
-    const [canvasW, canvasH] = entry?.size ?? [a.width ?? 480, a.height ?? 480]
-    const fits = [a.width != null ? a.width / canvasW : null, a.height != null ? a.height / canvasH : null].filter((f): f is number => f !== null)
-    const scale = fits.length ? Math.min(2, ...fits) : 1
-    const b64 = await captureMotifFrameB64({
-      motifId, tSec: a.t_sec ?? 0, propsJson: JSON.stringify(props),
-      width: canvasW, height: canvasH, scale, settleRafs: null, contentHash: source?.revision ?? '',
-      ...(rootFps ? { fpsNum: rootFps.num, fpsDen: rootFps.den } : {}),
-    })
+    // does; width/height only bound each frame, which keeps the aspect ratio
+    // (a smaller viewport would crop the page to its top-left corner, and
+    // agents read that as a broken Motif). Upscaling stops at 2×. With no
+    // bound a frame is 640 wide, as `render_frames` draws its sheet.
+    const [canvasW, canvasH] = entry?.manifest.size ?? [a.width ?? 480, a.height ?? 480]
+    const bounds = a.width == null && a.height == null ? { width: PREVIEW_FRAME_WIDTH, height: null } : { width: a.width ?? null, height: a.height ?? null }
+    const fits = [bounds.width != null ? bounds.width / canvasW : null, bounds.height != null ? bounds.height / canvasH : null].filter((f): f is number => f !== null)
+    const scale = Math.min(2, ...fits)
+    const frames: Array<{ tSec: number; png: Uint8Array }> = []
+    for (const tSec of a.local_t_s) {
+      const b64 = await captureMotifFrameB64({
+        motifId, tSec, propsJson: JSON.stringify(props),
+        width: canvasW, height: canvasH, scale, settleRafs: null, contentHash: entry?.revision ?? '',
+        ...(rootFps ? { fpsNum: rootFps.num, fpsDen: rootFps.den } : {}),
+      })
+      frames.push({ tSec, png: new Uint8Array(Buffer.from(b64, 'base64')) })
+    }
+    const sheet = composeMotifSheet(frames)
     const image = [Math.round(canvasW * scale), Math.round(canvasH * scale)]
-    return { content: [{ type: 'image', data: b64, mimeType: 'image/png' }, {type:'text',text:JSON.stringify({id:motifId,revision:source?.revision,canvas:[canvasW,canvasH],image})}] } as unknown as ServerResult
+    const record = { motif_id: motifId, revision: entry?.revision, canvas: [canvasW, canvasH], image, local_t_s: a.local_t_s, sheet: { width: sheet.width, height: sheet.height, columns: sheet.columns } }
+    return { content: [{ type: 'image', data: Buffer.from(sheet.png).toString('base64'), mimeType: 'image/png' }, { type: 'text', text: JSON.stringify(record) }] } as unknown as ServerResult
   }
   // Decided HERE, from the catalog this process advertises, rather than left to
   // the backend's `not_found` envelope: the name is known or it is not, and a
@@ -653,6 +760,31 @@ async function dispatchTool(
   const refused = await refuseBadArgs(backend, name, args)
   if (refused) return refused
   return unwrapToolEnvelope(await backend.mcpCallTool(name, JSON.stringify(args)), name)
+}
+
+/** A job record as an agent reads it: a failed job's `error.message` comes
+ *  from the renderer and may carry IPC or admission text, which is said in
+ *  the error model's words here (`faultText.ts`). The job service and the
+ *  Export panel keep the raw text. */
+function exportRecordForAgent(record: Record<string, unknown>): Record<string, unknown> {
+  const error = record.error as { message?: unknown } | undefined
+  if (!error || typeof error.message !== 'string') return record
+  // A failure of a known family carries its variant and data, as a refusal
+  // does: a busy budget names its holders and when to retry.
+  const fault = describeFault(error.message)
+  return { ...record, error: { ...error, message: fault.message, ...(fault.error ? { error: fault.error, ...fault.data } : {}) } }
+}
+
+/** `HistoryLocked` with its holder, which only the host knows: the work
+ *  session that took the lock. Its own connection is never refused (the lock
+ *  exempts it), so the caller here is someone else, told to wait or ask the
+ *  user — never to clear another session's lock. */
+function historyLockedRefusal(err: McpToolErrorJson, tsHost: TsActorHost): McpToolErrorJson {
+  const data = err.data as { error?: unknown; reason?: unknown } | undefined
+  if (data?.error !== 'HistoryLocked' || !tsHost.agent) return err
+  const holder = tsHost.agent.lockHolder()
+  if (!holder) return err
+  return { ...err, message: `${err.message} — the lock is held by ${holder.client} (connection ${holder.connection_id.slice(0, 8)}…); read_project { view: "session" } shows its work session`, data: { ...data, holder } }
 }
 
 /** `project://session` / `read_project { view: "session" }`: who holds the work
@@ -692,6 +824,8 @@ export async function handleReadResource(
   uri: string,
   getVlm: VlmProvider = NO_VLM,
 ): Promise<ServerResult> {
+  // The skill is the app's, not the project's: no project gate, no host needed.
+  if (isSkillUri(uri)) return readSkillResource(uri) as unknown as ServerResult
   const tsHost = getTsHost()
   if (tsHost) {
     if (uri === 'project://session' && tsHost.agent) {
@@ -705,7 +839,7 @@ export async function handleReadResource(
     }
     if (uri === 'motifs://current') {
       const raw = tsHost.motifTool('list_motifs', {}) as Array<Record<string, unknown>>
-      const list = raw.map((e) => { const { html: _html, ...rest } = e; return rest })
+      const list = raw.map(agentMotifRow)
       return { contents: [{ uri: 'motifs://current', mimeType: 'application/json', text: JSON.stringify(list) }] } as unknown as ServerResult
     }
     // A resource read has no isError slot, so the start-screen refusal is the
@@ -776,7 +910,7 @@ function openCommitWindow(actor: ActorHandle): McpCommitWindow {
 }
 
 /** One media frame as a `data:` URL the renderer can put straight in an `img`
- *  src, read through the SAME `media://{id}/frame/{t_us}` resource an agent
+ *  src, read through the SAME `media://{id}/frame/{src_us}` resource an agent
  *  reads: Rust extracts the frame once and caches it per `(file_hash, t_us)`,
  *  so the shot-review surface's cover frames cost one extract each however
  *  often they are re-shown.
@@ -791,12 +925,14 @@ function openCommitWindow(actor: ActorHandle): McpCommitWindow {
 /** `render_frames`: export-path stills of the root, at given times or sampled
  *  over beats' spans (`frameSamples.ts`), as images plus what each shows. */
 async function renderFrames(backend: Backend, getTsHost: () => TsActorHost | null, tsHost: TsActorHost, jobs: NonNullable<TsActorHost['exportJobs']>, args: Record<string, unknown>): Promise<ServerResult> {
-  const times = args.times_us, ids = args.layer_ids
-  if ((times === undefined) === (ids === undefined)) throw new ExportJobError('invalid_params', 'Pass exactly one of times_us or layer_ids')
+  const times = args.t_us, ids = args.layer_ids
+  if ((times === undefined) === (ids === undefined)) throw new ExportJobError('invalid_params', 'Pass exactly one of t_us or layer_ids')
   const width = args.width === undefined ? 640 : args.width
   if (!Number.isInteger(width) || (width as number) < 160 || (width as number) > 1920) throw new ExportJobError('invalid_params', 'width must be an integer from 160 to 1920')
   const sheet = args.sheet === undefined ? true : args.sheet
   if (typeof sheet !== 'boolean') throw new ExportJobError('invalid_params', 'sheet must be a boolean')
+  const without = args.without
+  if (without !== undefined && (!Array.isArray(without) || without.length !== 1 || without[0] !== 'effects')) throw new ExportJobError('invalid_params', 'without must be ["effects"]: effects are the one thing render_frames can skip')
   let samples: Array<{ t_us: number; layer_id?: string; why?: string }>
   if (ids !== undefined) {
     if (!Array.isArray(ids) || !ids.length || ids.length > 12 || ids.some((x) => typeof x !== 'string' || !x)) throw new ExportJobError('invalid_params', 'layer_ids must be 1 to 12 layer ids')
@@ -807,19 +943,22 @@ async function renderFrames(backend: Backend, getTsHost: () => TsActorHost | nul
     for (const m of media) {
       const res = await handleReadResource(backend, getTsHost, `media://${m}/analysis`).catch(() => null)
       const text = (res as { contents?: Array<{ text?: string }> } | null)?.contents?.[0]?.text
-      try { shots.set(m, text ? (JSON.parse(text) as { shots?: Array<{ t_start_us: number }> }).shots?.map((s) => s.t_start_us) ?? null : null) } catch { shots.set(m, null) }
+      try { shots.set(m, text ? (JSON.parse(text) as { shots?: Array<{ src_start_us: number }> }).shots?.map((s) => s.src_start_us) ?? null : null) } catch { shots.set(m, null) }
     }
     try { samples = beatSamples(snap, ids as string[], (m) => shots.get(m) ?? null) } catch (e) { throw new ExportJobError('invalid_params', (e as Error).message) }
   } else {
-    if (!Array.isArray(times) || !times.length || times.length > 24 || times.some((t) => !Number.isInteger(t) || (t as number) < 0)) throw new ExportJobError('invalid_params', 'times_us must be 1 to 24 non-negative integers')
+    if (!Array.isArray(times) || !times.length || times.length > 24 || times.some((t) => !Number.isInteger(t) || (t as number) < 0)) throw new ExportJobError('invalid_params', 't_us must be 1 to 24 non-negative integers')
     samples = (times as number[]).map((t_us) => ({ t_us }))
   }
-  const r = await jobs.renderStills({ times_us: samples.map((s) => s.t_us), width: width as number, sheet })
+  const r = await jobs.renderStills({ times_us: samples.map((s) => s.t_us), width: width as number, sheet, ...(without ? { without: ['effects'] as ['effects'] } : {}) })
   const near = (t: number) => samples.reduce((best, s) => (Math.abs(s.t_us - t) < Math.abs(best.t_us - t) ? s : best), samples[0]!)
   const frames = r.frames.map((f) => { const s = near(f.t_us); return { t_us: f.t_us, ...(s.layer_id ? { layer_id: s.layer_id, why: s.why } : {}) } })
   const b64 = (u: Uint8Array) => Buffer.from(u.buffer, u.byteOffset, u.byteLength).toString('base64')
   const images = r.sheet ? [{ type: 'image', data: b64(r.sheet.jpeg), mimeType: 'image/jpeg' }] : r.frames.map((f) => ({ type: 'image', data: b64(f.jpeg!), mimeType: 'image/jpeg' }))
-  const record = { frames, ...(r.sheet ? { sheet: { width: r.sheet.width, height: r.sheet.height, columns: Math.min(4, frames.length) } } : {}) }
+  // With `without`, `omitted` always answers: what was skipped on some frame
+  // (each one labelled on the sheet), or [] when none held it.
+  const omitted = without ? [...new Set(r.frames.flatMap((f) => f.omitted ?? []))] : undefined
+  const record = { frames, ...(omitted ? { omitted } : {}), ...(r.sheet ? { sheet: { width: r.sheet.width, height: r.sheet.height, columns: Math.min(4, frames.length) } } : {}) }
   return { content: [...images, { type: 'text', text: JSON.stringify(record) }] } as unknown as ServerResult
 }
 
@@ -950,12 +1089,14 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
   // per call would be pure churn.
   const log: McpLogDeps = opts.log ? { ...opts.log, observe: mcpCommitObserver(getTsHost) } : NO_MCP_LOG
   // `instructions` rides on `initialize`: the ten-line etiquette every client
-  // reads before its first call (`instructions.ts`). `version` is the app's
-  // (`app.getVersion()` in `mcp/index.ts`); a bare `electron.exe out/main`
-  // dev launch reports Electron's, since there is no package.json in that path.
+  // reads before its first call (`instructions.ts`), closed by the version a
+  // skill copy must match. `version` is the app's (`app.getVersion()` in
+  // `mcp/index.ts`); a bare `electron.exe out/main` dev launch reports
+  // Electron's, since there is no package.json in that path.
+  const version = opts.version ?? '0.0.0-dev'
   const server = new Server(
-    { name: 'weftcut', version: opts.version ?? '0.0.0-dev' },
-    { capabilities: { tools: {}, resources: { listChanged: true }, prompts: {} }, instructions: MCP_INSTRUCTIONS },
+    { name: 'weftcut', version },
+    { capabilities: { tools: {}, resources: { listChanged: true }, prompts: {} }, instructions: mcpInstructions(version) },
   )
   // One Server per session (`mcp/index.ts`), so this closure resolves to the
   // client that opened *this* session — `undefined` until it has initialized.
@@ -984,10 +1125,6 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
     const rust = (await rustCatalog(backend)).tools
     return { tools: mergeMcpCatalog(rust, [...MCP_TOOL_DEFS, ...MOTIF_TOOL_DEFS, ...EXPORT_TOOL_DEFS]) } as unknown as ServerResult
   }, log, clientInfo))
-  // A retired tool name is rewritten to the advertised one BEFORE `track`, so
-  // the log row, the activity service's read/write split and the dispatcher all
-  // read the same single name (`toolAliases.ts`).
-  //
   // A clip-compute call also gets its registry caller (ADR 0121), built here
   // because only this closure holds the session: its transport is what tells a
   // cancel from a disconnect, and its activity row is the one the phases go to.
@@ -1001,12 +1138,12 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
     return handleCallTool(backend, getTsHost, name, (req.params.arguments ?? {}) as Record<string, unknown>, getSpeech, getVlm, peaksPathFor, client, compute)
   }, log, clientInfo)
   server.setRequestHandler(CallToolRequestSchema, (req: CallToolRequest, extra: unknown) =>
-    callTool(withCanonicalToolName(req), extra))
+    callTool(req, extra))
   server.setRequestHandler(ListResourcesRequestSchema, track('resources/list', async () => {
     const cat = await rustCatalog(backend)
     const tsHost = getTsHost()
     const media = tsHost && !noProjectOpen(tsHost) ? mediaResourceDefs(tsHost.actor.snapshot().media_pool) : []
-    return { resources: [...mergeMcpResources(cat.resources, [...MOTIF_RESOURCE_DEFS, ...HOST_RESOURCE_DEFS]), ...media] } as unknown as ServerResult
+    return { resources: [...mergeMcpResources(cat.resources, [...MOTIF_RESOURCE_DEFS, ...HOST_RESOURCE_DEFS]), ...skillResourceDefs(), ...media] } as unknown as ServerResult
   }, log, clientInfo))
   server.setRequestHandler(ListResourceTemplatesRequestSchema, track('resources/templates/list', async () => {
     return { resourceTemplates: HOST_RESOURCE_TEMPLATES } as unknown as ServerResult

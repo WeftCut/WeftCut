@@ -149,7 +149,7 @@ describe("evaluateTimelinePlacements", () => {
     expect(result.conflictingLayerIds).toEqual(["stationary"]);
   });
 
-  // The fourth outcome (ADR 0042): "no lane can take this, so spawn one".
+  // The fourth outcome: "no lane can take this, so spawn one".
   it("answers spawn for the spawn target, whatever the committed timeline holds", () => {
     const result = evaluateTimelinePlacements({
       // Every lane in the project is occupied across the placement's span and

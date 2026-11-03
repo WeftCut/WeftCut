@@ -6,8 +6,7 @@
 // attached to the layer's own start and end, so trimming or moving the layer
 // keeps the entrance at the head and the exit at the tail.
 //
-// The presets existed in the data model long before anything played them;
-// ADR 0127 gives them their motion.
+// Durations and travel: docs/render.md#text-entrance-and-exit-presets.
 
 export type TextIntro = 'FadeIn' | 'SlideUp' | 'SlideDown' | 'Typewriter'
 export type TextOutro = 'FadeOut' | 'SlideUp' | 'SlideDown'

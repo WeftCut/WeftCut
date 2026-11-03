@@ -173,7 +173,7 @@ async fn resumes_persisted_chunks_refreshes_and_retries_only_a_missing_summary()
         resumed
             .segments
             .iter()
-            .map(|s| (s.t_start_us, s.t_end_us, s.text.as_str()))
+            .map(|s| (s.src_start_us, s.src_end_us, s.text.as_str()))
             .collect::<Vec<_>>(),
         [
             (0, 2_000_000, "forest"),
@@ -297,8 +297,8 @@ async fn chunks_run_concurrently_and_remain_on_their_own_source_windows() {
     assert_eq!(engine.peak.load(Ordering::SeqCst), 2);
     assert_eq!(frames.0.lock().unwrap().len(), 4);
     assert_eq!(result.summary, None);
-    assert_eq!(result.segments.first().unwrap().t_start_us, 10_000_000);
-    assert_eq!(result.segments.last().unwrap().t_end_us, 18_000_000);
+    assert_eq!(result.segments.first().unwrap().src_start_us, 10_000_000);
+    assert_eq!(result.segments.last().unwrap().src_end_us, 18_000_000);
 }
 
 #[tokio::test]

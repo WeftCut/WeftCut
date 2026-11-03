@@ -64,15 +64,24 @@ describe('against the live Rust catalog', () => {
     expect(msg).toBe('synthesize_speech: missing required `text`; missing required `voice`')
   })
 
-  it('import_media {} names path', () => {
-    expect(argProblemMessage('import_media', schemaOf('import_media'), {})).toBe('import_media: missing required `path`')
+  it('import_media {} names paths, and the old path names its replacement', () => {
+    expect(argProblemMessage('import_media', schemaOf('import_media'), {})).toBe('import_media: missing required `paths`')
+    expect(argProblemMessage('import_media', schemaOf('import_media'), { path: 'C:/x.mp4' }))
+      .toBe('import_media: `path` is not an argument any more — send paths: [..]; missing required `paths`')
   })
 
   it('a complete call passes', () => {
-    expect(argProblemMessage('import_media', schemaOf('import_media'), { path: 'C:/x.mp4' })).toBeNull()
+    expect(argProblemMessage('import_media', schemaOf('import_media'), { paths: ['C:/x.mp4'] })).toBeNull()
   })
+})
 
-  it('ping takes nothing and refuses nothing', () => {
-    expect(argProblemMessage('ping', schemaOf('ping'), {})).toBeNull()
+describe('argProblemMessage', () => {
+  it('refuses a top-level key the tool does not take, naming a renamed one\'s replacement', () => {
+    const schema = { properties: { layer_id: { type: 'string' }, threshold_db: { type: 'number' } } }
+    expect(argProblemMessage('detect_pauses', schema, { layer_id: 'x', threshold_amp: 0.02 }))
+      .toBe('detect_pauses: `threshold_amp` is not an argument any more — send threshold_db (dBFS)')
+    expect(argProblemMessage('detect_pauses', schema, { layer_id: 'x', loud: 1 }))
+      .toBe('detect_pauses: unknown argument `loud`; it takes layer_id, threshold_db')
+    expect(argProblemMessage('detect_pauses', schema, { layer_id: 'x', threshold_db: -30 })).toBeNull()
   })
 })

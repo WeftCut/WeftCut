@@ -25,10 +25,17 @@ pub const PROMPT_TEMPLATE_VERSION: u32 = 2;
 /// One described span: a timestamped window of the clip plus the model's
 /// free-text description and its extracted `tags`. Transcript-mirror
 /// (`Segment`), with `tags` where `Segment` has `words`.
+///
+/// Source time, named so on the wire (`src_*`). The cache files earlier builds
+/// wrote spell the same values `t_start_us` / `t_end_us`; reads accept that
+/// spelling so their prose is kept. Nothing on the MCP surface deserializes
+/// this struct.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DescSegment {
-    pub t_start_us: i64,
-    pub t_end_us: i64,
+    #[serde(alias = "t_start_us")]
+    pub src_start_us: i64,
+    #[serde(alias = "t_end_us")]
+    pub src_end_us: i64,
     pub text: String,
     pub tags: Vec<String>,
 }
@@ -51,8 +58,8 @@ pub struct SceneDescription {
 /// source-window start so window-relative parser output becomes source-absolute.
 pub fn shift_segments(segments: &mut [DescSegment], offset_us: i64) {
     for s in segments {
-        s.t_start_us = s.t_start_us.saturating_add(offset_us).max(0);
-        s.t_end_us = s.t_end_us.saturating_add(offset_us).max(0);
+        s.src_start_us = s.src_start_us.saturating_add(offset_us).max(0);
+        s.src_end_us = s.src_end_us.saturating_add(offset_us).max(0);
     }
 }
 
@@ -170,7 +177,7 @@ impl Run {
         let old = std::mem::take(&mut self.segments);
         self.segments = clip_outside(old, &[chunk]);
         self.segments.extend(fresh);
-        self.segments.sort_by_key(|s| s.t_start_us);
+        self.segments.sort_by_key(|s| s.src_start_us);
         self.done.push(chunk);
         self.done = merge_ranges(std::mem::take(&mut self.done));
         self.summary = None;
@@ -196,17 +203,17 @@ impl Run {
     /// two shots that read alike must stay two rows.
     pub fn tidied(&self) -> Vec<DescSegment> {
         let mut segments = self.segments.clone();
-        segments.sort_by_key(|s| s.t_start_us);
+        segments.sort_by_key(|s| s.src_start_us);
         let mut out = Vec::with_capacity(segments.len());
         let mut rest = segments.into_iter().peekable();
         for &[a, b] in &self.done {
             // Segments before this range lie outside every finished range (an
             // upgraded legacy file may hold such prose): passed through as is.
-            while rest.peek().is_some_and(|s| s.t_start_us < a) {
+            while rest.peek().is_some_and(|s| s.src_start_us < a) {
                 out.push(rest.next().expect("peeked"));
             }
             let mut inside = Vec::new();
-            while rest.peek().is_some_and(|s| s.t_start_us <= b) {
+            while rest.peek().is_some_and(|s| s.src_start_us <= b) {
                 inside.push(rest.next().expect("peeked"));
             }
             out.extend(tidy_range(inside, [a, b]));
@@ -226,29 +233,29 @@ fn tidy_range(mut segments: Vec<DescSegment>, [a, b]: [i64; 2]) -> Vec<DescSegme
     let n = segments.len();
     for i in 0..n {
         let next = if i + 1 < n {
-            segments[i + 1].t_start_us
+            segments[i + 1].src_start_us
         } else {
             b
         };
         let s = &mut segments[i];
-        s.t_end_us = s.t_end_us.max(s.t_start_us);
-        if s.t_end_us == s.t_start_us {
-            s.t_end_us = next.min(s.t_start_us + TIDY_GAP_US).max(s.t_start_us);
+        s.src_end_us = s.src_end_us.max(s.src_start_us);
+        if s.src_end_us == s.src_start_us {
+            s.src_end_us = next.min(s.src_start_us + TIDY_GAP_US).max(s.src_start_us);
         }
-        if s.t_end_us < next && next - s.t_end_us <= TIDY_GAP_US {
-            s.t_end_us = next;
+        if s.src_end_us < next && next - s.src_end_us <= TIDY_GAP_US {
+            s.src_end_us = next;
         }
     }
     if let Some(first) = segments.first_mut() {
-        if first.t_start_us > a && first.t_start_us - a <= TIDY_GAP_US {
-            first.t_start_us = a;
+        if first.src_start_us > a && first.src_start_us - a <= TIDY_GAP_US {
+            first.src_start_us = a;
         }
     }
     let mut out: Vec<DescSegment> = Vec::with_capacity(n);
     for s in segments {
         match out.last_mut() {
-            Some(prev) if prev.t_end_us >= s.t_start_us && same_content(prev, &s) => {
-                prev.t_end_us = prev.t_end_us.max(s.t_end_us);
+            Some(prev) if prev.src_end_us >= s.src_start_us && same_content(prev, &s) => {
+                prev.src_end_us = prev.src_end_us.max(s.src_end_us);
                 for tag in s.tags {
                     if !prev.tags.contains(&tag) {
                         prev.tags.push(tag);
@@ -332,7 +339,7 @@ impl DescriptionCache {
             })
             .collect();
         for s in segments {
-            let mid = s.t_start_us + (s.t_end_us - s.t_start_us) / 2;
+            let mid = s.src_start_us + (s.src_end_us - s.src_start_us) / 2;
             let distance = |[a, b]: [i64; 2]| {
                 if mid < a {
                     a - mid
@@ -346,15 +353,15 @@ impl DescriptionCache {
                 Some(run) => run.segments.push(s),
                 // Prose with no range at all: keep it in a run of its own span.
                 None => runs.push(Run {
-                    window: [s.t_start_us, s.t_end_us],
-                    done: vec![[s.t_start_us, s.t_end_us]],
+                    window: [s.src_start_us, s.src_end_us],
+                    done: vec![[s.src_start_us, s.src_end_us]],
                     segments: vec![s],
                     summary: None,
                 }),
             }
         }
         for run in &mut runs {
-            run.segments.sort_by_key(|s| s.t_start_us);
+            run.segments.sort_by_key(|s| s.src_start_us);
         }
         Self { runs }
     }
@@ -387,7 +394,7 @@ impl DescriptionCache {
             claimed.extend(run.done.iter().copied());
             claimed = merge_ranges(claimed);
         }
-        out.sort_by_key(|s| s.t_start_us);
+        out.sort_by_key(|s| s.src_start_us);
         out
     }
 
@@ -452,10 +459,10 @@ impl DescriptionCache {
 /// A segment's span meets `[in_us, out_us]`; a zero-length segment meets the
 /// window it sits in.
 fn intersects(s: &DescSegment, in_us: i64, out_us: i64) -> bool {
-    if s.t_start_us == s.t_end_us {
-        return s.t_start_us >= in_us && s.t_start_us <= out_us;
+    if s.src_start_us == s.src_end_us {
+        return s.src_start_us >= in_us && s.src_start_us <= out_us;
     }
-    s.t_start_us < out_us && s.t_end_us > in_us
+    s.src_start_us < out_us && s.src_end_us > in_us
 }
 
 /// The parts of each segment outside `claimed` (merged, sorted), text and tags
@@ -466,36 +473,36 @@ fn clip_outside(segments: Vec<DescSegment>, claimed: &[[i64; 2]]) -> Vec<DescSeg
     }
     let mut out = Vec::with_capacity(segments.len());
     for s in segments {
-        if s.t_start_us >= s.t_end_us {
-            let t = s.t_start_us;
+        if s.src_start_us >= s.src_end_us {
+            let t = s.src_start_us;
             if !claimed.iter().any(|[a, b]| *a <= t && t < *b) {
                 out.push(s);
             }
             continue;
         }
-        let mut from = s.t_start_us;
+        let mut from = s.src_start_us;
         for [a, b] in claimed {
             if *b <= from {
                 continue;
             }
-            if *a >= s.t_end_us {
+            if *a >= s.src_end_us {
                 break;
             }
             if *a > from {
                 out.push(DescSegment {
-                    t_start_us: from,
-                    t_end_us: *a,
+                    src_start_us: from,
+                    src_end_us: *a,
                     ..s.clone()
                 });
             }
             from = from.max(*b);
-            if from >= s.t_end_us {
+            if from >= s.src_end_us {
                 break;
             }
         }
-        if from < s.t_end_us {
+        if from < s.src_end_us {
             out.push(DescSegment {
-                t_start_us: from,
+                src_start_us: from,
                 ..s
             });
         }
@@ -588,8 +595,8 @@ mod tests {
 
     fn seg(a: i64, b: i64, text: &str) -> DescSegment {
         DescSegment {
-            t_start_us: a,
-            t_end_us: b,
+            src_start_us: a,
+            src_end_us: b,
             text: text.into(),
             tags: vec![],
         }
@@ -599,10 +606,10 @@ mod tests {
     fn shift_moves_segments_and_clamps_at_zero() {
         let mut s = vec![seg(0, 1_000_000, "a"), seg(1_000_000, 2_000_000, "b")];
         shift_segments(&mut s, 5_000_000);
-        assert_eq!(s[0].t_start_us, 5_000_000);
-        assert_eq!(s[1].t_end_us, 7_000_000);
+        assert_eq!(s[0].src_start_us, 5_000_000);
+        assert_eq!(s[1].src_end_us, 7_000_000);
         shift_segments(&mut s, -100_000_000);
-        assert!(s.iter().all(|x| x.t_start_us >= 0 && x.t_end_us >= 0));
+        assert!(s.iter().all(|x| x.src_start_us >= 0 && x.src_end_us >= 0));
     }
 
     fn done(window: [i64; 2], segments: Vec<DescSegment>) -> Run {
@@ -668,7 +675,7 @@ mod tests {
         let spans: Vec<_> = run
             .segments
             .iter()
-            .map(|s| (s.t_start_us, s.t_end_us, s.text.as_str()))
+            .map(|s| (s.src_start_us, s.src_end_us, s.text.as_str()))
             .collect();
         assert_eq!(
             spans,
@@ -702,7 +709,7 @@ mod tests {
         let spans: Vec<_> = c
             .view()
             .into_iter()
-            .map(|s| (s.t_start_us, s.t_end_us, s.text))
+            .map(|s| (s.src_start_us, s.src_end_us, s.text))
             .collect();
         assert_eq!(
             spans,
@@ -720,8 +727,8 @@ mod tests {
 
     fn tagged(a: i64, b: i64, text: &str, tags: &[&str]) -> DescSegment {
         DescSegment {
-            t_start_us: a,
-            t_end_us: b,
+            src_start_us: a,
+            src_end_us: b,
             text: text.into(),
             tags: tags.iter().map(|t| t.to_string()).collect(),
         }
@@ -730,7 +737,7 @@ mod tests {
     fn spans(segments: &[DescSegment]) -> Vec<(i64, i64, &str)> {
         segments
             .iter()
-            .map(|s| (s.t_start_us, s.t_end_us, s.text.as_str()))
+            .map(|s| (s.src_start_us, s.src_end_us, s.text.as_str()))
             .collect()
     }
 
@@ -817,7 +824,7 @@ mod tests {
         };
         let tidied = run.tidied();
         assert_eq!(tidied.len(), 2);
-        assert_eq!(tidied[0].t_end_us, 2 * S);
+        assert_eq!(tidied[0].src_end_us, 2 * S);
         assert_eq!(tidied[1].tags, ["女人", "山羊", "挤奶器", "挤奶"]);
     }
 
@@ -998,8 +1005,8 @@ mod tests {
                     continue;
                 };
                 let tag = format!("r{i}");
-                let expected = owner.tidied().iter().filter(|s| inside(s.t_start_us, s.t_end_us)).count();
-                let got: Vec<_> = view.iter().filter(|s| inside(s.t_start_us, s.t_end_us)).collect();
+                let expected = owner.tidied().iter().filter(|s| inside(s.src_start_us, s.src_end_us)).count();
+                let got: Vec<_> = view.iter().filter(|s| inside(s.src_start_us, s.src_end_us)).collect();
                 proptest::prop_assert_eq!(got.len(), expected, "t={} owner={}", t, tag);
                 proptest::prop_assert!(got.iter().all(|s| s.text == tag), "t={} owner={}", t, tag);
             }

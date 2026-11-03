@@ -3,12 +3,15 @@ import { MotifPrewarmer, type PrewarmContentSpec } from "./MotifPrewarmer";
 import { MotifFrameCache } from "./frameCache";
 
 function makeBmp(): ImageBitmap { return { close() {} } as unknown as ImageBitmap; }
+type Rendered = Awaited<ReturnType<PrewarmContentSpec['render']>>;
+/** A stored frame read at full size. */
+const rendered = (bitmap: ImageBitmap): Rendered => ({ bitmap, scaleDiv: 1 });
 
 describe("MotifPrewarmer", () => {
   it("bounds subscription metadata even when tiny long Motifs fit in the pixel budget", () => {
     let scheduled!: () => void;
     const cancelRequest = vi.fn();
-    const render = vi.fn(() => new Promise<ImageBitmap>(() => {}));
+    const render = vi.fn(() => new Promise<Rendered>(() => {}));
     const prewarmer = new MotifPrewarmer({
       capBytes: 512 * 1024 * 1024, hasFrame: () => false, setFrame: () => {},
       prioritizeFrames: () => {}, schedule: cb => { scheduled = cb; return 1; },
@@ -26,7 +29,7 @@ describe("MotifPrewarmer", () => {
     const pending: (() => void)[] = [];
     const releases = new Map<number, (bitmap: ImageBitmap) => void>();
     const cached = new Set<number>();
-    const render = vi.fn((frame: number) => new Promise<ImageBitmap>(resolve => releases.set(frame, resolve)));
+    const render = vi.fn((frame: number) => new Promise<Rendered>(resolve => releases.set(frame, bitmap => resolve(rendered(bitmap)))));
     const prewarmer = new MotifPrewarmer({
       capBytes: 3, hasFrame: (_k, f) => cached.has(f),
       setFrame: (_k, f) => { cached.add(f); }, prioritizeFrames: () => {},
@@ -50,7 +53,7 @@ describe("MotifPrewarmer", () => {
   it("rasters missing targets in plan order, skips cached, stops when done", async () => {
     const cached = new Set<string>();
     const setSpy = vi.fn((k: string, f: number) => cached.add(`${k}#${f}`));
-    const renderSpy = vi.fn(async (_f: number) => makeBmp());
+    const renderSpy = vi.fn(async (_f: number) => rendered(makeBmp()));
     const pending: (() => void)[] = [];
     const prewarmer = new MotifPrewarmer({
       capBytes: 240,
@@ -77,7 +80,7 @@ describe("MotifPrewarmer", () => {
 
   it("dispose cancels and stops rastering", async () => {
     const pending: (() => void)[] = [];
-    const renderSpy = vi.fn(async () => makeBmp());
+    const renderSpy = vi.fn(async () => rendered(makeBmp()));
     const prewarmer = new MotifPrewarmer({
       capBytes: 240, hasFrame: () => false, setFrame: () => {},
       prioritizeFrames: () => {},
@@ -95,12 +98,12 @@ describe("MotifPrewarmer", () => {
     const release: (() => void)[] = [];
     const render = vi.fn(
       (_f: number) =>
-        new Promise<ImageBitmap>((resolve) => {
+        new Promise<Rendered>((resolve) => {
           inFlight++;
           maxInFlight = Math.max(maxInFlight, inFlight);
           release.push(() => {
             inFlight--;
-            resolve(makeBmp());
+            resolve(rendered(makeBmp()));
           });
         }),
     );
@@ -141,7 +144,7 @@ describe("MotifPrewarmer", () => {
       cancelRequest: vi.fn(),
     });
     prewarmer.setTargets([
-      { cacheKey: "a", contentFrame: 0, contentDurationFrames: 2, frameBytes: 1, render: async () => makeBmp() },
+      { cacheKey: "a", contentFrame: 0, contentDurationFrames: 2, frameBytes: 1, render: async () => rendered(makeBmp()) },
     ]);
     scheduled!();
     await new Promise((r) => setTimeout(r, 0));
@@ -154,14 +157,14 @@ describe("MotifPrewarmer", () => {
     const release: (() => void)[] = [];
     const render = vi.fn(
       () =>
-        new Promise<ImageBitmap>((resolve) => {
+        new Promise<Rendered>((resolve) => {
           const id = n++;
           release.push(() =>
-            resolve({
+            resolve(rendered({
               close() {
                 closed.push(id);
               },
-            } as unknown as ImageBitmap),
+            } as unknown as ImageBitmap)),
           );
         }),
     );
@@ -200,12 +203,12 @@ describe("MotifPrewarmer cache retention", () => {
   function rig(capacityFrames: number) {
     const cache = new MotifFrameCache(capacityFrames * 4);
     const pending: (() => void)[] = [];
-    const render = vi.fn(async (_frame: number) => bitmap());
+    const render = vi.fn(async (_frame: number) => rendered(bitmap()));
     const prewarmer = new MotifPrewarmer({
       capBytes: cache.capacityBytes(),
-      hasFrame: (k, f) => cache.hasFrame(k, f),
-      setFrame: (k, f, b) => { cache.setFrame(k, f, b); },
-      prioritizeFrames: (targets) => cache.prioritizeFrames(targets),
+      hasFrame: (k, f) => cache.hasFrame(k, f, 1),
+      setFrame: (k, f, div, b) => { cache.setFrame(k, f, div, b); },
+      prioritizeFrames: (targets) => cache.prioritizeFrames(targets, 1),
       schedule: (cb) => { pending.push(cb); return pending.length; },
       cancel: () => { pending.length = 0; },
       cancelRequest: vi.fn(),
@@ -227,13 +230,13 @@ describe("MotifPrewarmer cache retention", () => {
     try {
       r.prewarmer.setTargets([r.spec(0)]);
       await r.drain();
-      expect(r.cache.getFrame("a", 0)).not.toBeNull();
+      expect(r.cache.getFrame("a", 0, 1)).not.toBeNull();
       for (let frame = 1; frame <= 20; frame++) {
-        expect(r.cache.getFrame("a", frame), `playback frame ${frame}`).not.toBeNull();
+        expect(r.cache.getFrame("a", frame, 1), `playback frame ${frame}`).not.toBeNull();
         r.prewarmer.setTargets([r.spec(frame)]);
         await r.drain();
-        expect(r.cache.hasFrame("a", frame + 1), `next frame after ${frame}`).toBe(true);
-        expect(r.cache.hasFrame("a", frame - 1)).toBe(false);
+        expect(r.cache.hasFrame("a", frame + 1, 1), `next frame after ${frame}`).toBe(true);
+        expect(r.cache.hasFrame("a", frame - 1, 1)).toBe(false);
         expect(r.cache.size()).toBe(3);
       }
       // Every frame was prepared once, with no re-read of an evicted future.
@@ -248,17 +251,17 @@ describe("MotifPrewarmer cache retention", () => {
     try {
       r.prewarmer.setTargets([r.spec(0), r.spec(0, "b")]);
       await r.drain();
-      const bound = r.cache.getFrame("a", 0)!;
+      const bound = r.cache.getFrame("a", 0, 1)!;
       r.cache.retain(bound);
-      r.cache.getFrame("b", 0);
-      r.cache.getFrame("a", 1);
-      r.cache.getFrame("b", 1);
+      r.cache.getFrame("b", 0, 1);
+      r.cache.getFrame("a", 1, 1);
+      r.cache.getFrame("b", 1, 1);
       r.prewarmer.setTargets([r.spec(1), r.spec(1, "b")]);
       await r.drain();
       for (const key of ["a", "b"]) {
-        expect(r.cache.hasFrame(key, 0)).toBe(false);
-        expect(r.cache.hasFrame(key, 1)).toBe(true);
-        expect(r.cache.hasFrame(key, 2)).toBe(true);
+        expect(r.cache.hasFrame(key, 0, 1)).toBe(false);
+        expect(r.cache.hasFrame(key, 1, 1)).toBe(true);
+        expect(r.cache.hasFrame(key, 2, 1)).toBe(true);
       }
       expect(r.cache.size()).toBe(4);
       expect(bound.close).not.toHaveBeenCalled();
@@ -273,7 +276,7 @@ describe("MotifPrewarmer cache retention", () => {
       r.prewarmer.setTargets([r.spec(0)]);
       await r.drain();
       let finish!: (bmp: ImageBitmap) => void;
-      r.render.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+      r.render.mockImplementationOnce(() => new Promise((resolve) => { finish = bmp => resolve(rendered(bmp)); }));
       r.prewarmer.setTargets([r.spec(10)]);
       r.pending.shift()!();
       r.prewarmer.setTargets([r.spec(0)]);
@@ -281,8 +284,8 @@ describe("MotifPrewarmer cache retention", () => {
       finish(stale);
       await r.settle();
       expect(stale.close).toHaveBeenCalledTimes(1);
-      expect(r.cache.hasFrame("a", 10)).toBe(false);
-      for (const frame of [0, 1, 2]) expect(r.cache.hasFrame("a", frame)).toBe(true);
+      expect(r.cache.hasFrame("a", 10, 1)).toBe(false);
+      for (const frame of [0, 1, 2]) expect(r.cache.hasFrame("a", frame, 1)).toBe(true);
       await r.drain();
       expect(r.render).toHaveBeenCalledTimes(6); // initial window + abandoned window 10–12
     } finally { r.prewarmer.dispose(); r.cache.dispose(); }
@@ -291,22 +294,45 @@ describe("MotifPrewarmer cache retention", () => {
   it("keeps an in-flight frame still needed after the playhead advances", async () => {
     const r = rig(3);
     try {
-      r.cache.setFrame("a", 0, bitmap());
-      r.cache.setFrame("a", 1, bitmap());
+      r.cache.setFrame("a", 0, 1, bitmap());
+      r.cache.setFrame("a", 1, 1, bitmap());
       let finish!: (bmp: ImageBitmap) => void;
-      r.render.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+      r.render.mockImplementationOnce(() => new Promise((resolve) => { finish = bmp => resolve(rendered(bmp)); }));
       r.prewarmer.setTargets([r.spec(0)]);
       r.pending.shift()!(); // frame 2 is in flight
-      r.cache.getFrame("a", 1);
+      r.cache.getFrame("a", 1, 1);
       r.prewarmer.setTargets([r.spec(1)]);
       const next = bitmap();
       finish(next);
       await r.settle();
       await r.drain();
       expect(next.close).not.toHaveBeenCalled();
-      expect(r.cache.getFrame("a", 2)).toBe(next);
+      expect(r.cache.getFrame("a", 2, 1)).toBe(next);
       expect(r.render.mock.calls.map(([frame]) => frame)).toEqual([2, 3]);
-      expect(r.cache.hasFrame("a", 0)).toBe(false);
+      expect(r.cache.hasFrame("a", 0, 1)).toBe(false);
     } finally { r.prewarmer.dispose(); r.cache.dispose(); }
+  });
+
+  it("stores live captures as divisor 1 and does not request them again at 1/2", async () => {
+    const cache = new MotifFrameCache(3 * 4);
+    const pending: (() => void)[] = [];
+    const render = vi.fn(async (_frame: number): Promise<Rendered> => ({ bitmap: bitmap(), scaleDiv: "live" }));
+    const prewarmer = new MotifPrewarmer({
+      capBytes: cache.capacityBytes(),
+      hasFrame: (k, f) => cache.hasFrame(k, f, 2),
+      setFrame: (k, f, div, b) => { cache.setFrame(k, f, div, b); },
+      prioritizeFrames: (targets) => cache.prioritizeFrames(targets, 2),
+      schedule: (cb) => { pending.push(cb); return pending.length; },
+      cancel: () => {}, cancelRequest: vi.fn(),
+    });
+    const spec: PrewarmContentSpec = { cacheKey: "a", contentFrame: 0, contentDurationFrames: 40, frameBytes: 4, render };
+    try {
+      for (let pass = 0; pass < 3; pass++) {
+        prewarmer.setTargets([spec]);
+        while (pending.length) { pending.shift()!(); await new Promise((r) => setTimeout(r, 0)); }
+      }
+      expect(render.mock.calls.map(([frame]) => frame)).toEqual([0, 1, 2]);
+      expect(cache.getFrame("a", 0, 1)).not.toBeNull();
+    } finally { prewarmer.dispose(); cache.dispose(); }
   });
 });

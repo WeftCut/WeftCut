@@ -100,7 +100,7 @@
         }
 
         // Determinism: force the exact face we render before resolving, so the
-        // first capture never paints a fallback (see docs/motifs.md Fonts).
+        // first capture never paints a fallback (see docs/motif-authoring.md#fonts).
         if (document.fonts && document.fonts.load) {
           await document.fonts.load("700 " + fontSize + 'px "Inter"');
         }

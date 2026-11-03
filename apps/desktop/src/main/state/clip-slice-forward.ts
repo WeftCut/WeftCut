@@ -15,7 +15,33 @@ export const CLIP_SLICE_TOOLS: ReadonlySet<string> = new Set([
   'detect_pauses', 'transcribe_clip', 'describe_clip', 'analyze_clip', 'extract_clip_audio',
 ])
 
-/** MCP clip compute tools shaped `{ a:{layer_id,t_us}, b:{layer_id,t_us} }` —
+/** The clip tools that read the audio that PLAYS (docs/mcp.md, the audio
+ *  subject rule): a VideoClip is read through the Audio member of its link,
+ *  as `detect_pauses` reads it, so words, pauses and an extracted WAV all
+ *  describe one stream — a slipped J/L-cut partner included. */
+export const HEARD_SLICE_TOOLS: ReadonlySet<string> = new Set(['transcribe_clip', 'extract_clip_audio'])
+
+/** Resolve a heard-audio tool's slice: the SUBJECT Audio layer (named in
+ *  `layer_id`, so the answer's ids and mapping are the layer that was read) and
+ *  its media. A missing layer injects nulls for Rust's not-found refusal; a
+ *  layer that plays nothing is refused here, in the pause tools' words. */
+export function resolveHeardSliceArgs(
+  name: string,
+  args: Record<string, unknown>,
+  snapshot: Pick<Project, 'compositions' | 'media_pool'>,
+): Record<string, unknown> {
+  const layerId = (args as { layer_id?: string }).layer_id ?? ''
+  const resolved = resolvePauseSubject(layerId, snapshot)
+  if (!resolved.ok) {
+    if (resolved.reason === 'plays_no_sound') throw playsNoSoundError(name, layerId, snapshot)
+    return { ...args, layer: null, media: null }
+  }
+  const { subject } = resolved
+  const mediaId = subject.params.kind === 'Audio' ? subject.params.media : null
+  return { ...args, layer_id: subject.id, layer: subject, media: mediaId ? snapshot.media_pool[mediaId] ?? null : null }
+}
+
+/** MCP clip compute tools shaped `{ a:{layer_id,src_us}, b:{layer_id,src_us} }` —
  *  TWO nested clip slices, not a top-level `layer_id`, so they can't ride
  *  `CLIP_SLICE_TOOLS`. `compare_frames` compares one frame from each side. */
 export const TWO_SLICE_TOOLS: ReadonlySet<string> = new Set(['compare_frames'])
@@ -44,8 +70,20 @@ export function resolveClipSliceArgs(
   args: Record<string, unknown>,
   snapshot: Pick<Project, 'compositions' | 'media_pool'>,
 ): Record<string, unknown> {
-  const { layer, media } = resolveLayerSlice((args as { layer_id?: string }).layer_id ?? '', snapshot)
-  return { ...args, layer, media }
+  return { ...args, ...resolveTargetSlice(args, snapshot) }
+}
+
+/** The slice for a tool addressed by `layer_id` or by `media_id` (the source
+ *  analyses: a pooled item needs no placed layer, M7). A layer wins — Rust
+ *  checks that it plays the named media; a media id alone injects the pool
+ *  item and no layer. */
+function resolveTargetSlice(
+  args: Record<string, unknown>,
+  snapshot: Pick<Project, 'compositions' | 'media_pool'>,
+): { layer: Layer | null; media: MediaItem | null } {
+  const { layer_id: layerId, media_id: mediaId } = args as { layer_id?: unknown; media_id?: unknown }
+  if (typeof layerId !== 'string' && typeof mediaId === 'string') return { layer: null, media: snapshot.media_pool[mediaId] ?? null }
+  return resolveLayerSlice(typeof layerId === 'string' ? layerId : '', snapshot)
 }
 
 /** Resolve `detect_pauses`' slice: the SUBJECT Audio layer, its media, and the
@@ -97,8 +135,7 @@ export function resolveTwoSliceArgs(
 ): Record<string, unknown> {
   const resolveSide = (raw: unknown): Record<string, unknown> => {
     const side = (raw ?? {}) as Record<string, unknown>
-    const { layer, media } = resolveLayerSlice((side as { layer_id?: string }).layer_id ?? '', snapshot)
-    return { ...side, layer, media }
+    return { ...side, ...resolveTargetSlice(side, snapshot) }
   }
   return {
     ...args,

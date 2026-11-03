@@ -9,7 +9,7 @@ function seg(
   text: string,
   tags: string[] = [],
 ): DescSegment {
-  return { t_start_us: tStartUs, t_end_us: tEndUs, text, tags };
+  return { src_start_us: tStartUs, src_end_us: tEndUs, text, tags };
 }
 
 describe("segmentsForSpan", () => {

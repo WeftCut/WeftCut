@@ -102,7 +102,7 @@ pub const EVENT_ERROR: &str = "media:job_error";
 /// The authority owns thread, memory, playback and pressure checks. For
 /// derivatives only: compute a person is waiting on (transcription audio,
 /// description frames) takes `resources::user_compute` so it never queues
-/// behind them (ADR 0120).
+/// behind them (docs/performance-settings.md#admission-lanes).
 pub(crate) fn ffmpeg_sem() -> &'static crate::resources::BackgroundGate {
     &crate::resources::BackgroundGate
 }
@@ -119,7 +119,7 @@ async fn run_derivative(
 ) -> anyhow::Result<std::path::PathBuf> {
     let mut timer = diagnostics::StageTimer::new(
         events.clone(),
-        serde_json::to_value(kind)?.as_str().unwrap_or("unknown"),
+        kind.wire(),
         None,
         Some(media.id.to_string()),
     );
@@ -137,7 +137,10 @@ async fn run_derivative(
             kind,
         },
     );
-    let result = singleflight::run(cache, media, kind, async {
+    // Every lease the job takes is named for it, so a refusal elsewhere can
+    // say what holds the budget.
+    let holder = crate::resources::Holder::media(kind.wire(), media.id);
+    let work = async {
         if let Some(path) = cached_derivative(cache, media, kind) {
             timer.hit();
             return Ok(path);
@@ -177,8 +180,9 @@ async fn run_derivative(
             }
             result => result,
         }
-    })
-    .await;
+    };
+    let result =
+        singleflight::run(cache, media, kind, crate::resources::held_by(holder, work)).await;
     timer.finish(&result);
     result
 }
@@ -288,6 +292,21 @@ struct JobError {
     media_id: String,
     kind: JobKind,
     error: String,
+}
+
+impl JobKind {
+    /// The kind's wire name, as the job events and the serde form spell it.
+    pub fn wire(self) -> &'static str {
+        match self {
+            JobKind::Thumbnails => "thumbnails",
+            JobKind::Proxy => "proxy",
+            JobKind::QuickProxy => "quick_proxy",
+            JobKind::ProxyBypass => "proxy_bypass",
+            JobKind::Waveform => "waveform",
+            JobKind::Conform => "conform",
+            JobKind::AudioFx => "audio_fx",
+        }
+    }
 }
 
 /// Human name for a job kind in console messages.
@@ -693,8 +712,12 @@ fn spawn_proxy_decision(
             Some(media_id.to_string()),
         );
         let gop_result = singleflight::source(&cache, &media.path_abs, "gop", async {
+            let admit = crate::resources::held_by(
+                crate::resources::Holder::media("proxy_decision", media_id),
+                crate::resources::import_preparation(),
+            );
             let _permit = tokio::select! {
-                permit = crate::resources::import_preparation() => permit?,
+                permit = admit => permit?,
                 _ = cache.cancelled() => anyhow::bail!("workspace cancelled"),
             };
             timer.start();
@@ -1569,6 +1592,20 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_job_kind_wire_name_is_its_serde_name() {
+        for kind in [
+            JobKind::Thumbnails,
+            JobKind::Proxy,
+            JobKind::QuickProxy,
+            JobKind::ProxyBypass,
+            JobKind::Waveform,
+            JobKind::Conform,
+            JobKind::AudioFx,
+        ] {
+            assert_eq!(serde_json::to_value(kind).unwrap(), kind.wire());
+        }
+    }
     #[tokio::test]
     async fn emit_job_error_pairs_the_event_with_one_err_log_row() {
         use crate::events::VecEventSink;

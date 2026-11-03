@@ -1128,6 +1128,7 @@ async function runCell(leg, tracks) {
       compositeMsLast: endPerf?.compositeMsLast ?? null,
       sync: endPerf?.sync ?? null,
       motifs: endPerf?.motifs ?? [],
+      motifReader: endPerf?.motifReader ?? null,
       compositeMsMax: endPerf?.compositeMsMax ?? null,
       swapsInFlight: endPerf?.swapsInFlight ?? null,
       stages,

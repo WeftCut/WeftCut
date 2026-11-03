@@ -1,6 +1,6 @@
 // apps/desktop/bench/drivers/types.ts
 //
-// The seam between the bench and an agent client (ADR 0123, spec Q29a). A
+// The seam between the bench and an agent client (ADR 0046, spec Q29a). A
 // driver runs one agent session against an already-prepared project and
 // reports where its transcript went; everything the bench MEASURES — snapshots,
 // the review diff, the checklist — is taken by the runner over its own MCP

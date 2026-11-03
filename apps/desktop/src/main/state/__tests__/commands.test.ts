@@ -18,7 +18,7 @@ import { root } from './fixtures/project'
 describe('PRODUCTION_OPS', () => {
   it('contains exactly the in-scope renderer channels', () => {
     const expected = [
-      'retime_layers', 'set_preserve_pitch', 'set_frame_interpolation', 'get_frame_interpolation_capabilities',
+      'retime_layers', 'set_preserve_pitch',
       'correct_caption_text', 'set_correction_script', 'apply_transcripts',
       'add_color_layer', 'add_demo_color_layer', 'add_demo_text_layer', 'add_effect',
       // The media pool's Group drop: an existing composition placed as one layer.
@@ -32,9 +32,11 @@ describe('PRODUCTION_OPS', () => {
       // Groups (ADR 0052): pre-compose / ungroup / rename, and the orphan delete.
       'compositions_delete',
       'delete_layers', 'delete_track', 'move_track',
-      // The selection's delete that also closes the span it vacated (ADR 0062).
+      // The selection's delete that also closes the span it vacated
+      // (docs/features.md#ripple-delete).
       'ripple_delete_layers',
-      // A selected gap closing: the same sweep with nothing deleted (ADR 0069).
+      // A selected gap closing: the same sweep with nothing deleted
+      // (docs/features.md#ripple-delete).
       'ripple_delete_gap',
       'fit_composition_to_layers', 'groups_add_members', 'groups_create', 'groups_rename', 'groups_ungroup',
       'links_create', 'links_dissolve', 'move_effect',
@@ -47,7 +49,8 @@ describe('PRODUCTION_OPS', () => {
       'project_create_checkpoint', 'project_delete_checkpoint',
       'project_jump_to', 'project_redo', 'project_restore_checkpoint', 'project_undo',
       'remove_effect', 'remove_marker', 'remove_media', 'remove_transition', 'rename_track',
-      // The Playhead Panel's anchored z-reorder drop (ADR 0044).
+      // The Playhead Panel's anchored z-reorder drop
+      // (docs/features.md#track-placement).
       'restack_layer', 'restyle_captions',
       'separate_audio_to_new_track', 'set_composition', 'set_role_gain', 'set_scale_linked', 'split_layer_linked',
       'trim_layer', 'update_effect', 'update_layer', 'update_layer_param_track', 'update_marker',

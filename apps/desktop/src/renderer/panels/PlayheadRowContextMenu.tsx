@@ -11,7 +11,7 @@ import type { RestackMenuTargets, RestackTarget, RestackReferenceTargets } from 
 /// only where it applies, so no row ever gets an empty menu:
 ///
 /// - Ordering (`targets`), on At-playhead visual rows — the non-drag path to
-///   the same restack op as the grip (ADR 0044 decision 4: every drag has a
+///   the same restack op as the grip (every drag has a
 ///   keyboard-reachable equivalent). The caller resolves each item to its
 ///   anchored restack (or null = disabled) via `restackMenuTargets` at open
 ///   time, so this component is purely presentational and the op surface

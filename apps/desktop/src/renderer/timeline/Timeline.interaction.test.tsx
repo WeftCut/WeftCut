@@ -447,7 +447,7 @@ describe("Timeline seek/selection coupling", () => {
     expect(layerIdsOf(currentSelection()).size).toBe(0);
   });
 
-  // The gap gesture (ADR 0069). jsdom's canvas rect is all zeros, so a press's
+  // The gap gesture. jsdom's canvas rect is all zeros, so a press's
   // clientX IS its canvas x, and at the default 80 px/s a press at 240 px is
   // t = 3 s — inside the [2 s, 4 s) gap the two-clip lane below leaves.
   describe("clicking a gap", () => {
@@ -2429,7 +2429,7 @@ describe("Timeline seek/selection coupling", () => {
     expect(ipcMocks.addMediaLayer).not.toHaveBeenCalled();
   });
 
-  // -------- The drop strip (ADR 0042) --------
+  // -------- The drop strip (docs/features.md#track-placement) --------
 
   const stripOf = (container: HTMLElement): HTMLElement => {
     const strip = container.querySelector(
@@ -2460,7 +2460,7 @@ describe("Timeline seek/selection coupling", () => {
     ) as HTMLElement;
 
     // Both columns paint the row, or every header below it loses its lane.
-    // 14 px is the hit target (ADR 0042); shrinking it to close the gutter
+    // 14 px is the hit target; shrinking it to close the gutter
     // under the plus would steal drop area. The plus sits on the bottom of
     // that row instead, so leftover pixels fall above it. The dashed rule is
     // a zero-height overlay *after* the row so the hairline can paint on top

@@ -264,7 +264,7 @@ async fn live_endpoint_llama_server_describes_jpeg_frames_and_honors_timeout() {
     for s in &segments {
         println!(
             "  [{} .. {}] {} {:?}",
-            s.t_start_us, s.t_end_us, s.text, s.tags
+            s.src_start_us, s.src_end_us, s.text, s.tags
         );
     }
     assert!(!segments.is_empty());

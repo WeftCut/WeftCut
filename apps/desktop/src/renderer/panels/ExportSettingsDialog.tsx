@@ -28,6 +28,7 @@ import {
 } from "../render/exportDecodeRouting";
 import { referencedVideoMediaIds } from "../render/activeVideoLayers";
 import { useProjectStore } from "../state/projectStore";
+import { useRendererCapability } from "../render/useRendererCapability";
 import {
   useDecodeComponentAvailable,
   useDecodeComponentReason,
@@ -289,10 +290,10 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
     if (!settings) return;
     let cancelled = false;
     setWebcodecsOk(null);
-    // Only an explicit WebCodecs pin ever consults this result
-    // (resolveEncodeTarget ignores it for auto/native, which always resolve
-    // native) — skip the round trip entirely rather than dead-waiting on
-    // smokeEncode's up-to-4s deadline for a result nothing reads.
+    // Only an explicit WebCodecs pin shows this result (an `auto` export
+    // that resolves WebCodecs on a host without WebGL smoke-encodes at run
+    // time) — skip the round trip rather than dead-waiting on smokeEncode's
+    // up-to-4s deadline for a result nothing reads.
     if (settings.encoderEngine !== "webcodecs") return;
     // Intermediates (ProRes/DNxHR) are native-only — never probed via WebCodecs.
     if (isIntermediateCodec(settings.codec)) {
@@ -314,6 +315,9 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
     setSettings((s) => (s ? { ...s, ...p } : s));
 
   const decodeComponentAvailable = useDecodeComponentAvailable();
+  // Native decode also needs WebGL (exportRunner's videoGate); unknown until
+  // the shared capability query settles.
+  const webgl = useRendererCapability()?.webgl ?? true;
   const decodeComponentReason = useDecodeComponentReason();
   const projSummary = useProjectStore((s) => s.summary);
   const mediaById = useProjectStore((s) => s.mediaById);
@@ -345,12 +349,12 @@ export function ExportSettingsDialog({ comp, durationUs, hasTenBitSource, onCanc
       .filter((m): m is MediaSummary => !!m);
     const routing = resolveExportDecodeRouting({
       setting: settings.decodeEngine,
-      componentAvailable: decodeComponentAvailable,
+      componentAvailable: decodeComponentAvailable && webgl,
       bitDepth: compositeBitDepth(settings),
       media,
     });
     return routingSourceCounts(media, routing);
-  }, [settings, projSummary, mediaById, chosenRange, decodeComponentAvailable]);
+  }, [settings, projSummary, mediaById, chosenRange, decodeComponentAvailable, webgl]);
 
   /// The target bitrate this export would actually run at — the quality
   /// preset's bpp heuristic, or the user's custom override. Recomputed from the

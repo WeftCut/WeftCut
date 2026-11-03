@@ -354,7 +354,7 @@ geometries, 0 mismatched bytes; colorSpace tag echoed intact
 (`transfer:'iec61966-2-1'`, `matrix:'rgb'`, fullRange); `rgb10a2` rejected
 (`Invalid shared texture info object`). The A′ premise — an sRGB-passthrough
 RGBA share turns the browser into a pure byte mover — holds. This finding is
-what ADR 0040 rests on.
+what ADR 0032 rests on.
 
 ## Success criteria
 

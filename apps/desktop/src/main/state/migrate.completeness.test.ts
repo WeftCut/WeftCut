@@ -67,7 +67,7 @@ describe('every shipped generation has a frozen fixture', () => {
 describe('the fixture for the current generation is the shape the app writes', () => {
   it('survives parse → serialize byte-identically', () => {
     // Load-then-save is a no-op on this fixture or something rewrites projects
-    // on open. That silent edit is what ADR 0047 §3 refuses, and it is invisible
+    // on open. That silent edit is what ADR 0047 refuses, and it is invisible
     // to the upgrade test above, which only asks that the result validate.
     // Compared as BYTES, not deep-equal: key order and number formatting are
     // part of the on-disk shape the next generation's step will read.

@@ -139,6 +139,7 @@ export async function startLocalHost(opts: HostStartOptions): Promise<HostSessio
       projectsDir: path.join(scratch, 'projects'),
       joinPath: (...p) => path.join(...p),
       writeText: async (p, text) => { fs.writeFileSync(p, text) },
+      readText: async (p) => fs.readFileSync(p, 'utf8'),
       async resolveFixtures(ids) {
         const mod = await import(pathToFileURL(path.join(BENCH_DIR, 'fixtures', 'fixtures.mjs')).href) as
           { resolveFixtureWithMeta(id: string): Promise<{ path: string; meta: FixtureMeta }> }

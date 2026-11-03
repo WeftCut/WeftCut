@@ -56,3 +56,13 @@ export function effectParamSpecs(kind: string): Readonly<Record<string, EffectPa
   }
   return null
 }
+
+/** What an unset param of a known kind stands for: its catalog default — the
+ *  value the render and the inspector use — or null when there is none: a
+ *  kind or key no catalog knows, or a sample-region bound, whose unset state
+ *  means "no region yet" rather than any number. */
+export function effectParamDefault(kind: string, key: string): number | null {
+  const region = AUDIO_EFFECTS[kind]?.region
+  if (region && (key === region.inKey || key === region.outKey)) return null
+  return effectParamSpecs(kind)?.[key]?.default ?? null
+}

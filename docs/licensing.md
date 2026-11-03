@@ -3,13 +3,10 @@
 WeftCut's own code — TypeScript, Rust, shaders, docs — is **MIT** (root
 [`LICENSE`](../LICENSE)). Packaged installers additionally bundle third-party
 binaries with their own licenses; [`THIRD-PARTY-NOTICES.md`](../THIRD-PARTY-NOTICES.md)
-enumerates them. This doc explains *why* the MIT license holds next to
-GPL/LGPL FFmpeg components, and which build gates enforce it.
+enumerates them. This doc explains why the MIT license holds next to GPL/LGPL
+FFmpeg components and which build gates enforce it.
 
-## The model: two FFmpeg lanes, two license boundaries
-
-FFmpeg enters the product twice, and each lane sits behind a different
-license boundary:
+## Two FFmpeg lanes, two license boundaries
 
 | Lane | What ships | License | Boundary that protects MIT |
 |---|---|---|---|
@@ -73,11 +70,10 @@ export lanes.
 
 ## Pack-time enforcement
 
-`apps/desktop/scripts/after-pack-licensing.mjs` (electron-builder `afterPack`)
-re-reads both packaged manifests and re-asserts both banners plus the presence
-of every compliance file **inside the built distributable** — so a runtime
-swapped out from under the packager, or a staging regression, fails the build
-instead of shipping.
+`apps/desktop/scripts/after-pack-licensing.mjs` (run from the `afterPack` hook
+`after-pack.mjs`) re-reads both packaged manifests and re-asserts both banners
+plus every compliance file inside the built distributable, so a swapped
+runtime or a staging regression fails the build instead of shipping.
 
 ## Supply-chain rules
 
@@ -85,9 +81,8 @@ instead of shipping.
   (`full_build-shared`) is GPL, dev-only, and must never be the distribution
   decode runtime.
 - Any new binary source must pass the banner gates; prefer version-pinned
-  URLs with SHA-256 over rolling "latest" endpoints.
-- A zero-GPL-binaries edition remains possible later via download-on-first-use
-  of the sidecar (Audacity precedent); the LGPL decode lane is unaffected.
+  URLs with SHA-256 over rolling "latest" endpoints. App-managed content
+  downloads (models) follow the same rule and record license provenance.
 - **ML background removal is license-blocked, not merely unbuilt.** RVM is
   GPL-3.0 and `@imgly/background-removal` is AGPL/commercial — both
   incompatible with this MIT distribution, and neither can hide behind the

@@ -8,10 +8,20 @@ import type { ServerResult } from '@modelcontextprotocol/sdk/types.js'
 import { mcpDef, McpArgError } from '../state/mcp-commands.js'
 import { toolRecord } from '../state/mcp-results.js'
 import { toolErrorResult } from './toolResult.js'
+import { resourceNotFound } from '../state/resource-views.js'
 import { TackError, type TackInput, type TackPatch, type TackStore } from '../agent/tacks.js'
 import type { TackView } from '../../shared/agent-activity.js'
 
 export const TACK_TOOLS: ReadonlySet<string> = new Set(['create_tacks', 'update_tack', 'delete_tacks'])
+
+/** A tack as MCP shows it: keyed `tack_id`, as `affected_tacks` and
+ *  `delete_tacks` name it, and with the stored range end `end_t_us` as
+ *  `t_end_us`, at the top and in `range`, the name every timeline time on the
+ *  surface takes. The panel reads the stored shape. */
+function tackWire({ id, end_t_us, range, ...rest }: TackView): Record<string, unknown> {
+  const { end_t_us: rangeEnd, ...r } = range
+  return { tack_id: id, ...rest, t_end_us: end_t_us, range: { ...r, t_end_us: rangeEnd } }
+}
 
 /** A refusal an argument could fix is `invalid_params`; the limit and a call
  *  from a replaced project opening are not. */
@@ -29,9 +39,9 @@ export function runTackTool(store: TackStore, name: string, args: Record<string,
       const views = store.viewsOf(new Set(ids))
       const created = ids.map((id) => views.find((v) => v.id === id)!)
       const hints = [...createTackHints(inputs, created), ...samePlaceHints(created, store.views())]
-      return toolRecord({ tack_ids: ids, ...(hints.length ? { hints } : {}) }) as unknown as ServerResult
+      return toolRecord({ tacks: created.map(tackWire), ...(hints.length ? { hints } : {}) }) as unknown as ServerResult
     }
-    if (name === 'update_tack') return toolRecord(store.update(p.tack_id as string, p.patch as TackPatch)) as unknown as ServerResult
+    if (name === 'update_tack') return toolRecord(tackWire(store.update(p.tack_id as string, p.patch as TackPatch))) as unknown as ServerResult
     const selector = typeof p.session_id === 'string' ? { session_id: p.session_id } : { tack_ids: p.tack_ids as string[] }
     return toolRecord({ deleted_tack_ids: store.delete(selector) }) as unknown as ServerResult
   } catch (e) {
@@ -94,7 +104,7 @@ export function samePlaceHints(created: readonly TackView[], all: readonly TackV
  *  resource serves, as text. */
 export function readTacksView(store: TackStore, compositionId: string | null): ServerResult {
   try {
-    return { content: [{ type: 'text', text: JSON.stringify(store.views(compositionId)) }] } as unknown as ServerResult
+    return { content: [{ type: 'text', text: JSON.stringify(store.views(compositionId).map(tackWire)) }] } as unknown as ServerResult
   } catch (e) {
     if (e instanceof TackError) return tackErrorResult(e)
     throw e
@@ -103,12 +113,6 @@ export function readTacksView(store: TackStore, compositionId: string | null): S
 
 const TACKS_URI = 'project://tacks'
 
-/** The not-found the other `project://` reads throw (`resource-views.ts`). */
-function resourceNotFound(message: string): never {
-  const e = new Error(message) as Error & { code?: number }
-  e.code = -32601
-  throw e
-}
 
 /** Whether `uri` names the tacks resource (with or without its query). */
 export function isTacksUri(uri: string): boolean {
@@ -130,5 +134,5 @@ export function readTacksResource(store: TackStore, uri: string): ServerResult {
     if (e instanceof TackError) resourceNotFound(e.message)
     throw e
   }
-  return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(tacks, null, 2) }] } as unknown as ServerResult
+  return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(tacks.map(tackWire), null, 2) }] } as unknown as ServerResult
 }

@@ -7,8 +7,6 @@
 /// never import `main/state`. What the two sides agree on is the STRUCTURE below,
 /// so a field added to either layer model reaches the planner only if someone
 /// maps it here as well — which is the drift this shape is meant to make visible.
-///
-/// ADR 0062.
 import type { CompositionSummary } from '../ipc'
 import type { RippleView } from './plan'
 

@@ -74,9 +74,30 @@ export function schemaProblems(schema: unknown, args: Record<string, unknown>, p
   return out
 }
 
+/** Arguments the surface renamed or folded away, per tool: an agent holding the
+ *  old spelling is told what replaced it. No alias — the old key never
+ *  dispatches (ADR 0074). */
+const REPLACED_ARGS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  detect_pauses: { threshold_amp: 'send threshold_db (dBFS)', bridge_us: 'the bridge is fixed at 80 ms' },
+  describe_clip: { purpose: 'it is not an MCP argument' },
+  import_media: { path: 'send paths: [..]' },
+  transcribe_clip: { layer_id: 'send layer_ids: [..]' },
+}
+
+/** Top-level keys the schema does not declare: a key a tool would drop
+ *  silently is refused instead, naming its replacement when there is one. */
+function unknownKeyProblems(tool: string, schema: unknown, args: Record<string, unknown>): string[] {
+  const props = (schema as SchemaLike | undefined)?.properties
+  if (!props) return []
+  const replaced = REPLACED_ARGS[tool] ?? {}
+  return Object.keys(args).filter((k) => !(k in props)).map((k) => replaced[k]
+    ? `\`${k}\` is not an argument any more — ${replaced[k]}`
+    : `unknown argument \`${k}\`; it takes ${Object.keys(props).join(', ')}`)
+}
+
 /** The one-line refusal for a tool whose args fail the check, or null. */
 export function argProblemMessage(tool: string, schema: unknown, args: Record<string, unknown>): string | null {
-  const problems = schemaProblems(schema, args)
+  const problems = [...unknownKeyProblems(tool, schema, args), ...schemaProblems(schema, args)]
   if (problems.length === 0) return null
   return `${tool}: ${problems.join('; ')}`
 }

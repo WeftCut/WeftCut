@@ -20,7 +20,7 @@
 //
 // The skill's layer folders are scanned the same way, and every
 // recipes/<name>.md must compose stages and signals from that vocabulary
-// (ADR 0123): a recipe naming anything else fails here.
+// (ADR 0046): a recipe naming anything else fails here.
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
@@ -29,6 +29,7 @@ import { MCP_TOOL_DEFS } from '../mcp-commands'
 import { EXPORT_TOOL_DEFS } from '../../mcp/exportTools'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from '../../mcp/motifToolDefs'
 import { HOST_RESOURCE_DEFS, HOST_RESOURCE_TEMPLATES } from '../../mcp/hostResources'
+import { SKILL_ENTRY_URI } from '../../mcp/skillResources'
 import { parse as parseYaml } from 'yaml'
 import { MAX_ROUNDS, SIGNALS, STAGES } from '../../../shared/harness'
 
@@ -68,6 +69,7 @@ const resourceUris = new Set([
   ...HOST_RESOURCE_DEFS.map((r) => r.uri),
   // A template is advertised too (`resources/templates/list`), named as written.
   ...HOST_RESOURCE_TEMPLATES.map((t) => t.uriTemplate),
+  SKILL_ENTRY_URI,
 ])
 const promptNames = new Set(rust.prompts.map((p) => p.name))
 
@@ -76,11 +78,10 @@ const promptNames = new Set(rust.prompts.map((p) => p.name))
 // Every entry must occur in the sources (pruned below) and must never collide
 // with a live tool name (checked below).
 const KNOWN_NON_TOOLS = new Set([
-  'request_id', 'awaiting_retry', 'output_path', 'filename',
-  // SKILL.md — tool params
-  'pad_us', 'threshold_amp', 't_start_us', 'segments', 'word_timing', 'source_us', 'playback_rate', 'time_fraction', 't_local_us', 'preset_id', 'src_out_us',
-  // SKILL.md — fields of a mutator's committed record (mcp-results.ts)
-  'adjusted', 'siblings',
+  // SKILL.md, recipes/ — a tool param and a result field
+  'threshold_db', 'segments',
+  // SKILL.md — a field of a mutator's committed record (mcp-results.ts)
+  'adjusted',
   // SKILL.md — tack feedback: a mutating call's and end_agent_session's
   // result fields (activity.ts, server.ts)
   'affected_tacks', 'tacks_to_review',
@@ -97,16 +98,14 @@ const KNOWN_NON_TOOLS = new Set([
   'motif', 'setup', 'ctx', 't', 'duration', 'await', 'bg_color',
   // motif-authoring.md — npm package example and private draft metadata file
   'three', 'target', 'model', 'eval',
-  // motif-authoring.md — the Style Motif props a leaving Motif declares (ADR 0130)
+  // motif-authoring.md — the Style Motif props a leaving Motif declares (ADR 0126)
   'duration_s', 'exit',
   // The `media` prop variant and its frame time (ADR 0132).
   'media', 't_us',
   // Motif props the skill and motif-authoring.md name.
   'seed', 'ground',
-  // SKILL.md — Text entrance/exit patch fields
-  'intro', 'outro',
-  // SKILL.md, motif-workspaces.md — update_motif_files partial-edit fields
-  'edits', 'old', 'new',
+  // motif-workspaces.md — an update_motif_files partial-edit field
+  'old',
   // craft/rules.md — finding severities and the caption tokens that tighten rules
   'hard', 'warning', 'review', 'max_chars_per_line', 'max_lines', 'min_cue_s', 'max_cue_s',
   // recipes/README.md — recipe frontmatter keys

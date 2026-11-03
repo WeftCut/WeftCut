@@ -28,6 +28,10 @@ export default defineConfig({
     // math now runs through it). Requires the generated module — the `pretest`
     // npm hook runs build:wasm first.
     setupFiles: ['./src/renderer/testSetup.ts'],
+    // Same split as the e2e `parallel` project in playwright.config.ts. One worker
+    // per logical core starves renders past the 5 s test timeout on many-core
+    // hosts; CI's small runners keep the default.
+    maxWorkers: process.env.CI ? undefined : '50%',
   },
   resolve: {
     alias: {

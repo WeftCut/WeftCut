@@ -640,7 +640,7 @@ test('effects: chromakey keys out a green color layer; viewMatte previews the ma
   // viewMatte=1 → whole bg layer outputs (alpha,alpha,alpha,1): opaque black at the corner.
   await mcp.callTool({ name: 'update_effect', arguments: {
     layer_id: bgId, effect_id: effectId,
-    patch: { params: { viewMatte: { mode: 'Static', value: 1 } } },
+    patch: { params: { viewMatte: 1 } },
   } })
   let matte = await sampleAt(page, 500_000, 600, 340)
   {

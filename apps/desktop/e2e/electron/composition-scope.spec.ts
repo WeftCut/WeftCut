@@ -181,16 +181,16 @@ test('the timeline, the ruler and the Insert menu follow the open composition', 
     try {
       const res = await client.readResource({ uri: `project://tracks?composition=${groupId}` })
       const tracks = JSON.parse((res.contents[0] as { text: string }).text) as Array<{
-        layers: Array<{ id: string; kind: string }>
+        layers: Array<{ layer_id: string; kind: string }>
       }>
       // `project://tracks` lists ENVELOPES: the kind rides at the top, the params do not.
-      const inGroup = tracks.flatMap((t) => t.layers).find((l) => l.id === added[0])
+      const inGroup = tracks.flatMap((t) => t.layers).find((l) => l.layer_id === added[0])
       expect(inGroup?.kind).toBe('Color')
       const rootRes = await client.readResource({ uri: 'project://tracks' })
       const rootTracks = JSON.parse((rootRes.contents[0] as { text: string }).text) as Array<{
-        layers: Array<{ id: string }>
+        layers: Array<{ layer_id: string }>
       }>
-      expect(rootTracks.flatMap((t) => t.layers).some((l) => l.id === added[0])).toBe(false)
+      expect(rootTracks.flatMap((t) => t.layers).some((l) => l.layer_id === added[0])).toBe(false)
     } finally {
       await client.close()
     }

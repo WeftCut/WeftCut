@@ -16,11 +16,13 @@ function text(out: ReturnType<typeof serveProjectResource>): string {
 }
 
 describe('serveProjectResource', () => {
-  it('serves project://current as a pretty JSON application/json block', () => {
+  it('serves a state view as a pretty JSON application/json block, and no whole-project view', () => {
     const actor = mkActor()
-    const out = serveProjectResource('project://current', actor)!
-    expect((out as { contents: Array<{ mimeType: string }> }).contents[0].mimeType).toBe('application/json')
-    expect(JSON.parse(text(out)).project_id).toBe(actor.snapshot().project_id)
+    const out = serveProjectResource('project://settings', actor)!
+    expect((out as { contents: Array<{ mimeType: string; text: string }> }).contents[0].mimeType).toBe('application/json')
+    expect(text(out)).toContain('\n  ')
+    // project://current is gone: every part of it has a smaller view.
+    expect(serveProjectResource('project://current', actor)).toBeNull()
   })
   it('serves project://history with the {ops,cursor,len,checkpoints} shape', () => {
     const actor = mkActor()
@@ -62,13 +64,18 @@ describe('serveProjectResource', () => {
   it('serves a single layer for project://layers/{id}', () => {
     const actor = mkActor()
     const track = root(actor.snapshot()).tracks[0].id
-    const r = actor.mcpCall('add_color_layer', JSON.stringify({ track_id: track, color: { r: 0, g: 0, b: 0, a: 1 }, t_start_us: 0, t_end_us: 1_000_000 }))
+    const r = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: track, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 1 } } }] }))
     expect(r.ok).toBe(true)
     const layerId = root(actor.snapshot()).tracks.flatMap((t) => t.layers)[0].id
-    expect(JSON.parse(text(serveProjectResource(`project://layers/${layerId}`, actor))).id).toBe(layerId)
+    const full = JSON.parse(text(serveProjectResource(`project://layers/${layerId}`, actor)))
+    // Keyed as the edit records are: `layer_id`, never a bare `id`.
+    expect(full.layer_id).toBe(layerId)
+    expect('id' in full).toBe(false)
   })
   it('throws not-found for an absent layer id', () => {
     expect(() => serveProjectResource('project://layers/gone', mkActor())).toThrow(/not found/)
+    // MCP's resource-not-found, not JSON-RPC "method not found" (-32601).
+    try { serveProjectResource('project://layers/gone', mkActor()) } catch (e) { expect((e as { code?: number }).code).toBe(-32002) }
   })
   it('returns null for the Rust-compute resources', () => {
     const actor = mkActor()
@@ -165,10 +172,10 @@ describe('serveProjectResource across compositions', () => {
     const actor = createActor({ initial: p, idGen: gen })
     const inner = p.compositions[groupId].tracks[0].layers[0]
     const text = (r: ReturnType<typeof serveProjectResource>) => (r as { contents: Array<{ text: string }> }).contents[0].text
-    expect(JSON.parse(text(serveProjectResource(`project://layers/${inner.id}`, actor))).id).toBe(inner.id)
+    expect(JSON.parse(text(serveProjectResource(`project://layers/${inner.id}`, actor))).layer_id).toBe(inner.id)
     expect(JSON.parse(text(serveProjectResource('project://tracks', actor)))).toHaveLength(root(p).tracks.length)
     const comp = JSON.parse(text(serveProjectResource('project://composition', actor)))
-    expect(comp.id).toBe(p.root_id)
+    expect(comp.composition_id).toBe(p.root_id)
     expect('tracks' in comp).toBe(false)
   })
 })
@@ -181,8 +188,8 @@ describe('project://compositions and the ?composition= scope', () => {
     const rows = JSON.parse(text(serveProjectResource('project://compositions', actor)))
     expect(rows).toHaveLength(2)
     expect(rows).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: p.root_id, label: null, ref_count: 0 }),
-      expect.objectContaining({ id: groupId, ref_count: 1, duration_us: 1_000_000 }),
+      expect.objectContaining({ composition_id: p.root_id, label: null, ref_count: 0 }),
+      expect.objectContaining({ composition_id: groupId, ref_count: 1, duration_us: 1_000_000 }),
     ]))
     expect(JSON.parse(text(serveProjectResource(`project://tracks?composition=${groupId}`, actor)))).toHaveLength(2)
     expect(JSON.parse(text(serveProjectResource('project://tracks', actor)))).toHaveLength(root(p).tracks.length)
@@ -195,8 +202,8 @@ describe('project://compositions and the ?composition= scope', () => {
     const { p, groupId } = groupedProject(gen, 'r')
     const actor = createActor({ initial: p, idGen: gen })
     const scoped = JSON.parse(text(serveProjectResource(`project://composition?composition=${groupId}`, actor)))
-    expect(scoped.id).toBe(groupId)
-    expect(JSON.parse(text(serveProjectResource('project://composition', actor))).id).toBe(p.root_id)
+    expect(scoped.composition_id).toBe(groupId)
+    expect(JSON.parse(text(serveProjectResource('project://composition', actor))).composition_id).toBe(p.root_id)
     expect(() => serveProjectResource('project://composition?composition=ghost', actor)).toThrow(/not found/)
   })
 
@@ -219,6 +226,32 @@ describe('project://compositions and the ?composition= scope', () => {
     expect(JSON.parse(text(serveProjectResource('project://transitions', actor)))).toEqual(root(p).transitions)
     expect(() => serveProjectResource('project://links?composition=ghost', actor)).toThrow(/not found/)
   })
+
+  it('rows are the records the edits answer with — one id key name for a read and a write', () => {
+    const gen = uuidV7Gen()
+    const actor = createActor({ initial: blankProject(gen, 'rows'), idGen: gen, clock: () => '<TS>' })
+    const call = (name: string, args: unknown) => {
+      const r = actor.mcpCall(name, JSON.stringify(args))
+      if (!r.ok) throw new Error(r.error.message)
+      const { adjusted: _a, ...rec } = JSON.parse(r.result.content[0].text) as Record<string, unknown>
+      return rec
+    }
+    const track = root(actor.snapshot()).tracks[0].id
+    const color = { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } }
+    const placed = call('add_layers', { layers: [{ track_id: track, t_start_us: 0, t_end_us: 2_000_000, content: color }, { track_id: track, t_start_us: 2_000_000, t_end_us: 4_000_000, content: color }] }) as { layers: Array<{ layer_id: string }> }
+    const [a, b] = placed.layers.map((l) => l.layer_id)
+    const other = (call('add_layers', { layers: [{ track_id: root(actor.snapshot()).tracks[1].id, t_start_us: 0, t_end_us: 2_000_000, content: color }] }) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
+    const link = call('create_link', { layer_ids: [a, other] })
+    const marker = call('add_marker', { t_us: 1_000_000, t_end_us: 2_000_000, label: 'm' })
+    const transition = call('add_transition', { from_layer_id: a, to_layer_id: b, duration_us: 500_000 })
+    const rows = (uri: string) => JSON.parse(text(serveProjectResource(uri, actor))) as Array<Record<string, unknown>>
+    expect(rows('project://links')).toEqual([expect.objectContaining({ link_id: link.link_id, members: expect.arrayContaining([a, other]) })])
+    expect(rows('project://markers')).toEqual([marker])
+    expect(rows('project://markers')[0]).toMatchObject({ t_end_us: 2_000_000 })
+    expect(rows('project://transitions')).toEqual([expect.objectContaining({ transition_id: transition.transition_id, from_layer_id: a, to_layer_id: b })])
+    for (const uri of ['project://links', 'project://markers', 'project://transitions', 'project://compositions'])
+      for (const row of rows(uri)) expect('id' in row, uri).toBe(false)
+  })
 })
 
 describe('project://tracks lists envelopes', () => {
@@ -226,12 +259,12 @@ describe('project://tracks lists envelopes', () => {
     const gen = uuidV7Gen()
     const actor = createActor({ initial: blankProject(gen, 'env'), idGen: gen, clock: () => '<TS>' })
     const aRoll = root(actor.snapshot()).tracks[0].id
-    const added = actor.mcpCall('add_color_layer', JSON.stringify({ track_id: aRoll, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 2_000_000 }))
+    const added = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: aRoll, t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] }))
     if (!added.ok) throw new Error(added.error.message)
-    const layerId = (JSON.parse(added.result.content[0].text) as { layer_id: string }).layer_id
-    const title = actor.mcpCall('add_text_layer', JSON.stringify({ track_id: root(actor.snapshot()).tracks[1].id, content: 'Hi', t_start_us: 0, t_end_us: 2_000_000 }))
+    const layerId = (JSON.parse(added.result.content[0].text) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
+    const title = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: root(actor.snapshot()).tracks[1].id, t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'text', content: 'Hi' } }] }))
     if (!title.ok) throw new Error(title.error.message)
-    const titleId = (JSON.parse(title.result.content[0].text) as { layer_id: string }).layer_id
+    const titleId = (JSON.parse(title.result.content[0].text) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
     const link = actor.mcpCall('create_link', JSON.stringify({ layer_ids: [layerId, titleId] }))
     if (!link.ok) throw new Error(link.error.message)
     const effect = actor.mcpCall('add_effect', JSON.stringify({ layer_id: titleId, kind: 'blur' }))
@@ -239,24 +272,31 @@ describe('project://tracks lists envelopes', () => {
     const key = actor.mcpCall('set_keyframe', JSON.stringify({ layer_id: titleId, param_key: 'opacity', t_us: 0, value: 1 }))
     if (!key.ok) throw new Error(key.error.message)
 
-    const tracks = JSON.parse(text(serveProjectResource('project://tracks', actor))) as Array<{ id: string; layers: Array<Record<string, unknown>> }>
+    const tracks = JSON.parse(text(serveProjectResource('project://tracks', actor))) as Array<{ track_id: string; layers: Array<Record<string, unknown>> }>
     const rows = tracks.flatMap((tr) => tr.layers)
-    const color = rows.find((r) => r.id === layerId)!
-    const textRow = rows.find((r) => r.id === titleId)!
+    const color = rows.find((r) => r.layer_id === layerId)!
+    const textRow = rows.find((r) => r.layer_id === titleId)!
     expect(color).toEqual({
-      id: layerId, label: null, kind: 'Color', t_start_us: 0, t_end_us: 2_000_000,
+      layer_id: layerId, label: null, kind: 'Color', t_start_us: 0, t_end_us: 2_000_000,
       enabled: true, locked: false, link_id: JSON.parse(link.result.content[0].text).link_id,
       effects: [], keyframed: [],
     })
     expect('params' in color).toBe(false)
     expect(textRow.kind).toBe('Text')
     expect(textRow.link_id).toBe(color.link_id)
-    expect(textRow.effects).toEqual([{ id: JSON.parse(effect.result.content[0].text).effect_id, kind: 'blur' }])
+    expect(textRow.effects).toEqual([{ effect_id: JSON.parse(effect.result.content[0].text).effect_id, kind: 'blur' }])
+    // What tells it apart from another title rides the row.
+    expect(textRow.content).toBe('Hi')
     expect(textRow.keyframed).toEqual(['opacity'])
     // The full record is still one read away.
     const full = JSON.parse(text(serveProjectResource(`project://layers/${titleId}`, actor)))
     expect(full.params.kind).toBe('Text')
+    expect(full.effects.map((e: { effect_id: string }) => e.effect_id)).toEqual([(textRow.effects as Array<{ effect_id: string }>)[0]!.effect_id])
+    expect('id' in full.effects[0]).toBe(false)
     expect(full.params.opacity.mode).toBe('Keyframed')
+    // Stored key times are layer-local, and the wire names them so.
+    expect(full.params.opacity.value[0]).toMatchObject({ local_t_us: 0 })
+    expect(JSON.stringify(full)).not.toMatch(/"t_us"/)
   })
 
   it('a media-bearing layer carries its source window; the track keeps its own flags', () => {
@@ -266,26 +306,61 @@ describe('project://tracks lists envelopes', () => {
     p.media_pool[MID] = mediaItemTemplate(MID, 'Video', 4_000_000)
     const actor = createActor({ initial: p, idGen: gen, clock: () => '<TS>' })
     const aRoll = root(actor.snapshot()).tracks[0].id
-    const added = actor.mcpCall('add_video_layer', JSON.stringify({ track_id: aRoll, media_id: MID, src_in_us: 500_000, src_out_us: 2_500_000, t_start_us: 0, t_end_us: 2_000_000 }))
+    const added = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: aRoll, t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'video', media_id: MID, src_in_us: 500_000 } }] }))
     if (!added.ok) throw new Error(added.error.message)
     const tracks = JSON.parse(text(serveProjectResource('project://tracks', actor))) as Array<Record<string, unknown> & { layers: Array<Record<string, unknown>> }>
     const row = tracks[0].layers[0]
-    expect(row).toMatchObject({ kind: 'VideoClip', src_in_us: 500_000, src_out_us: 2_500_000 })
-    expect(tracks[0]).toMatchObject({ id: aRoll, enabled: true, locked: false })
+    expect(row).toMatchObject({ kind: 'VideoClip', media_id: MID, src_in_us: 500_000, src_out_us: 2_500_000 })
+    // Identity rate stays off the row; a retimed one rides it, so a source
+    // time maps onto the timeline from the envelope alone.
+    expect('rate' in row).toBe(false)
+    const retimed = actor.mcpCall('retime_layers', JSON.stringify({ layer_ids: [row.layer_id], target: { kind: 'Rate', value: { num: 2, den: 1 } } }))
+    if (!retimed.ok) throw new Error(retimed.error.message)
+    const after = (JSON.parse(text(serveProjectResource('project://tracks', actor))) as typeof tracks)[0].layers[0]
+    expect(after.rate).toEqual({ num: 2, den: 1 })
+    expect(tracks[0]).toMatchObject({ track_id: aRoll, enabled: true, locked: false })
+    expect('id' in tracks[0]).toBe(false)
     expect(Object.keys(tracks[0])).toContain('role')
     // Per-track mute/solo have no writer and nothing mixes by them: a control
     // the read does not advertise (mute and solo are per ROLE — set_role_flags).
     expect(Object.keys(tracks[0])).not.toContain('muted')
     expect(Object.keys(tracks[0])).not.toContain('solo')
   })
+
+  it('names what each kind is, so a layer is found without a per-layer read', () => {
+    const gen = uuidV7Gen()
+    const p = blankProject(gen, 'env')
+    const AID = '00000000-0000-0000-0000-0000000000ab'
+    p.media_pool[AID] = mediaItemTemplate(AID, 'Audio', 4_000_000)
+    const actor = createActor({ initial: p, idGen: gen, clock: () => '<TS>' })
+    const tracks = () => JSON.parse(text(serveProjectResource('project://tracks', actor))) as Array<{ layers: Array<Record<string, unknown>> }>
+    const add = (content: Record<string, unknown>, t0: number) => {
+      const r = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ t_start_us: t0, t_end_us: t0 + 1_000_000, content }] }))
+      if (!r.ok) throw new Error(r.error.message)
+      return (JSON.parse(r.result.content[0].text) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
+    }
+    const long = 'A title long enough that the envelope has to cut it short, because rows are not paragraphs at all'
+    const text1 = add({ kind: 'text', content: long }, 0)
+    const music = add({ kind: 'audio', media_id: AID, src_in_us: 0, role: 'music' }, 0)
+    const row = (id: string) => tracks().flatMap((t) => t.layers).find((l) => l.layer_id === id)!
+    expect([...(row(text1).content as string)]).toHaveLength(80)
+    expect((row(text1).content as string).endsWith('…')).toBe(true)
+    expect(row(music)).toMatchObject({ kind: 'Audio', media_id: AID, role: 'music' })
+    const group = actor.mcpCall('create_group', JSON.stringify({ layer_ids: [text1] }))
+    if (!group.ok) throw new Error(group.error.message)
+    const g = JSON.parse(group.result.content[0].text) as { layer_id: string; composition_id: string }
+    expect(row(g.layer_id)).toMatchObject({ kind: 'CompositionRef', composition_id: g.composition_id })
+  })
 })
 
 describe('project://settings', () => {
-  it('is the preferences plus the metadata — six booleans without the whole project', () => {
+  it('is the preferences, the role mix and the metadata — without the whole project', () => {
     const gen = uuidV7Gen()
     const actor = createActor({ initial: blankProject(gen, 'set'), idGen: gen, clock: () => '<TS>' })
+    expect(actor.mcpCall('set_role_gain', JSON.stringify({ role: 'music', gain_db: -6 })).ok).toBe(true)
     const body = JSON.parse(text(serveProjectResource('project://settings', actor)))
-    expect(body).toEqual({ ...actor.snapshot().settings, metadata: actor.snapshot().metadata })
+    expect(body).toEqual({ ...actor.snapshot().settings, audio_roles: actor.snapshot().audio_roles, metadata: actor.snapshot().metadata })
+    expect(body.audio_roles.music).toEqual({ gain_db: -6, muted: false, solo: false })
     expect(body.metadata.name).toBe('set')
     expect('compositions' in body).toBe(false)
   })

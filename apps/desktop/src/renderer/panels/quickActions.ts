@@ -360,11 +360,12 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
         icon: SquareSplitHorizontal,
       },
       {
-        // Delete AND close the gap (ADR 0062). Only the ripple gets a button:
-        // plain Delete is the key every editor already presses, and a strip slot
-        // spent restating it would buy nothing. `FoldHorizontal` is the glyph
-        // because that is literally the edit — two sides drawn together along the
-        // timeline's own axis, where the Group pair's `FoldVertical` folds rows.
+        // Delete AND close the gap (docs/features.md#ripple-delete). Only the
+        // ripple gets a button: plain Delete is the key every editor already
+        // presses, and a strip slot spent restating it would buy nothing.
+        // `FoldHorizontal` is the glyph because that is literally the edit —
+        // two sides drawn together along the timeline's own axis, where the
+        // Group pair's `FoldVertical` folds rows.
         //
         // Gated, unlike `splitAtPlayhead` above it, and affordably so: the
         // verdict depends on the SELECTION and the mirror, not on the playhead,

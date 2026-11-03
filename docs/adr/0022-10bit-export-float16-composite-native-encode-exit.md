@@ -2,132 +2,58 @@
 status: accepted
 ---
 
-# 10-bit export uses a float16 composite and a native ffmpeg encode exit
+# 10-bit export uses a float16 WebGL2 composite and a native ffmpeg encode exit
+
+Date: 2026-06-13
 
 ## Context
 
-The 8-bit export pipeline composites in RGBA8 and snapshots each frame
-through a 2D canvas, so 10-bit source precision dies before any encoder
-sees pixels. The encoder itself was a second ceiling: WebCodecs' encoder
-is 8-bit only, tags HD output BT.709 by resolution default, and has no
-HEVC software path (ADR 0014). Lifting 10-bit delivery therefore meant
-fixing two things at once — a wider composite and a different encoder —
-not just swapping the encoder.
+The 8-bit pipeline composites in RGBA8 and snapshots through a 2D canvas, so
+10-bit precision dies before encode. WebCodecs encodes 8-bit only and tags by
+resolution (ADR 0014). Probes (2026-06-12) found:
 
-A round of probes (the 2026-06-12 float16 pipeline exploration, since
-retired) settled the shape:
-
-- **WebGL2 renders `rgba16float` render targets stock.** PixiJS's WebGPU
-  backend hardcodes a `bgra8unorm` pipeline color target and would need
-  an upstream patch; the WebGL2 backend honors the render-texture format
-  directly, with no fork. The export Worker owns its own renderer, so it
-  can pick the backend per bit depth.
-- **The encode exit's bottleneck is the webview↔Rust transport, not the
-  GPU.** Readback of a packed `yuv420p10le` frame is GB/s; a loopback
-  WebSocket to a Rust sink sustains ~80–100 MB/s on the dev machine —
-  below realtime but acceptable for offline export, and far past a
-  raw-invoke IPC fallback.
-- **Chromium/Electron has no hardware Hi10P decode**, only software. 10-bit pixels
-  do reach our memory via `VideoFrame.copyTo` of software-decoded I420P10
-  frames; opaque hardware-decoded frames (HEVC Main10) cannot `copyTo`.
-- **HDR preview is blocked on the web platform.** WebGL cannot present
-  extended-range (`drawingBufferToneMapping` is unshipped); only a WebGPU
-  canvas with `toneMapping: 'extended'` can, which would require the Pixi
-  upstream per-target-format work plus real HDR-glass verification.
+- PixiJS's WebGPU backend hardcodes a `bgra8unorm` pipeline target and would
+  need an upstream patch; its WebGL2 backend renders `rgba16float` render
+  textures stock. The export Worker owns its renderer and can choose a backend.
+- Chromium/Electron has no hardware Hi10P decode. Software-decoded I420P10
+  frames can `VideoFrame.copyTo`; opaque hardware frames (HEVC Main10) cannot.
+  AV1 10-bit decodes to copyable I420P10 only under prefer-software (dav1d);
+  the hardware path "succeeds" with `format=null` frames.
+- HDR preview is blocked: WebGL cannot present extended range
+  (`drawingBufferToneMapping` is unshipped); only a WebGPU canvas with
+  `toneMapping: 'extended'` can, which needs the Pixi per-format work above.
+- Packed `yuv420p10le` at 1080p30 needs 186 MB/s; 4K needs ~750 MB/s. GPU
+  readback is not the bottleneck; the webview→Rust transport is
+  ([`export-ipc-transport.md`](../export-ipc-transport.md)).
 
 ## Decision
 
-When the export settings select **bit depth 10** (HEVC Main10 or AV1
-only — H.264 stays 8-bit):
-
-- The export Worker composites on the **WebGL2** backend into an
-  `rgba16float` `RenderTexture`.
-- **10-bit-capable sources** (H.264 Hi10P originals, identified by an
-  ffprobe-metadata rule: codec h264 + pix_fmt yuv420p10le) ingest through
-  a CPU-plane lane — `VideoFrame.copyTo` into an `I420P10` buffer, close
-  the source frame immediately (ADR 0004 buffer-pool discipline), then an
-  RG8→f16 GLSL conversion pass. 8-bit sources keep the snapshot ingest but
-  composite into the same f16 target, gaining intermediate-rounding
-  precision.
-- A GPU byte-pack pass (`PackYuv420p10`) applies the BT.709 limited-range
-  matrix + 10-bit quantization and writes `yuv420p10le` planes; the buffer
-  streams over a one-shot loopback WebSocket to a Rust sink
-  (`export/videosink.rs`) that pipes `ffmpeg -f rawvideo` into the probed
-  Main10 encoder (`encoder_registry.rs`). Raw-invoke IPC is the fallback
-  transport.
-
-**The working space stays display-referred, gamma-encoded BT.709.** The
-f16 composite is a precision-preserving carry of the already-encoded
-signal, NOT a linear-light scene space. This is exactly the named revisit
-trigger of ADR 0021 (color converges once at ingest; working space =
-output space) realized for the export path: ingest still converges color,
-the output transform is the second explicit chokepoint, and the
-discipline is unchanged. The 8-bit export path is untouched.
+- The export Worker composites on **WebGL2**. For 10-bit HEVC Main10 / AV1
+  10-bit and for ProRes, the target is an `rgba16float` `RenderTexture`.
+  H.264 output stays 8-bit.
+- 10-bit-capable sources (`tenBitExportCapable`: h264 or av1 with
+  `yuv420p10le`) ingest through a CPU-plane lane: software decode,
+  `copyTo` into I420P10, close the frame at once, upload planes as RG8, and
+  unpack to f16 in a GLSL pass (`TenBitIngest`). 8-bit sources keep the
+  snapshot ingest into the same f16 target.
+- A GPU pack pass (`PackYuv420p10`) applies BT.709 limited-range matrix and
+  10-bit quantization; the bytes go to a native `ffmpeg` sink
+  (`export/videosink.rs`) that encodes with the probed encoder.
+- **The f16 composite is display-referred, gamma-encoded BT.709**, a
+  precision carry of the already-encoded signal, not a linear scene space.
+  ADR 0014's working-space rule is unchanged.
 
 ## Consequences
 
-- Real 10-bit HEVC/AV1 delivery with full color-tag control, verified
-  end-to-end on a real Hi10P source (`Main 10 / yuv420p10le / bt709 / tv`).
-  The conformance gradient meter confirms the precision survives ingest →
-  composite → pack → encode.
-- The post-v1 "native Rust export backend" shrinks from "rewrite the
-  compositor in wgpu" to "native encode exit + f16 composite" — the entire
-  PixiJS scene graph (sprites, Motifs, effects-to-be) is reused.
-- Software 10-bit decode is slow; the export-settings UI warns that 10-bit
-  export runs well below realtime. The ring high-water is entry-count
-  based (a byte-based cap is the 4K follow-up).
-- **Deferred (gate on the HDR-deliverable trigger, tracked post-v1):**
-  HDR preview (WebGPU `rgba16float` canvas + Pixi
-  per-target formats / runtime override + HDR-glass verification) and a
-  wider-gamut/linear working space. **Open in the 10-bit bucket:** HEVC
-  Main10 source conform (HW-opaque frames transcoded to a Hi10P
-  intermediate so they ingest at full precision), an AV1-10 source decode
-  probe, and the byte-based ring cap for 4K.
-
-## Addendum (2026-06-13)
-
-Three consequence-section facts moved after this ADR was accepted; the
-decision itself is unchanged:
-
-- **The "~80–100 MB/s, below realtime" transport figure was a dev-profile
-  artifact, not a WS design property.** The receiver (tungstenite) ran at
-  opt-level 0 in dev builds; release builds always sustained ~330 MB/s.
-  With `[profile.dev] opt-level = 1` (a per-package override does not work —
-  the read path monomorphizes into the caller's crate), the dev-build
-  transport measures ~293 MB/s: above the 186 MB/s 1080p30 realtime bar.
-  4K (~750 MB/s) remains beyond it; byte reduction (dense 10-bit packing)
-  is the lever there.
-- **AV1 10-bit sources are admitted** alongside Hi10P: dav1d under
-  prefer-software decodes to copyTo-able I420P10, while the hardware path
-  "succeeds" with opaque `format=null` frames — making the lane's
-  prefer-software flag a correctness requirement for AV1.
-- **The ring cap is resolution-derived**, replacing the flat 48-entry
-  high-water: a per-ring byte target over the first frame's actual plane
-  bytes, clamped to an entry floor/ceiling. 4K bounds at ~500 MB (entry
-  floor) instead of ~1.2 GB.
-- **v1 10-bit export ships as an experimental feature.** The export-
-  settings UI labels the 10-bit option experimental and gates the export
-  click behind an explicit confirmation. The driving caveat is preview
-  fidelity: HDR/wide-gamut preview is unavailable on the web platform
-  (the preview stays 8-bit/SDR per the Context section), so what the user
-  sees **cannot be guaranteed to match** the 10-bit output — colors and
-  gradients may differ. Compounding hazards: software 10-bit decode runs
-  below realtime (4K especially), and HEVC Main10 source conform is still
-  pending (HW-opaque originals get transcoded). The lane stays selectable;
-  it is flagged, not removed.
-
-Current state lives in `docs/render.md` ("Encode exits"); the remaining
-follow-ups live in the issue tracker.
-
-## References
-
-- ADR 0021 — color converges at ingest; working space = output space
-  (this ADR is its export-path revisit-trigger realization).
-- ADR 0014 — export color perceptual conformance (the encoder ceiling
-  this lifts; the gradient meter that gates it).
-- ADR 0004 — WebCodecs buffer-pool discipline (the copy-then-close rule
-  the CPU-plane lane satisfies).
-- `docs/render.md` — the evergreen description of both encode exits.
-- The 2026-06-12 float16 pipeline exploration (since retired) — the probe
-  record and the HDR/`importExternalTexture` findings that seed the
-  deferred work.
+- Real 10-bit HEVC/AV1 delivery with explicit color tags; the gradient-row
+  meter in `export_codecs.spec.ts` gates precision through ingest, composite,
+  pack and encode.
+- The whole Pixi scene graph is reused; there is no separate native
+  compositor.
+- 10-bit ships **experimental** (labeled, click confirmed): preview stays 8-bit
+  SDR, so the output cannot be guaranteed to match what the user sees; software
+  10-bit decode runs below realtime, especially at 4K; HEVC Main10 originals
+  have no copyable decode until a 10-bit conform exists.
+- Deferred until HDR is a deliverable: HDR preview (WebGPU f16 canvas + Pixi
+  per-target formats + HDR-display verification) and a linear/wide working
+  space.

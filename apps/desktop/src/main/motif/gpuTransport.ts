@@ -5,17 +5,22 @@ import { CAPTURE_SUPERSEDED_MESSAGE } from '../../shared/motifs/captureErrors'
 import { isResourceCapacityError } from '../../shared/resource-policy'
 import { withSharedTextureQueue } from '../sharedTextureQueue.js'
 import { gpuBufferBudget, type GpuBufferBudget, type GpuBufferLease } from '../gpuBufferBudget.js'
-import type { MotifTextureFrame } from '../../shared/motifs/frameTransport.js'
+import { isMotifFrameError } from './frameAddress'
+import type { MotifReaderDiv } from '../../shared/motifs/readerProtocol.js'
+import type { MotifReadUnavailable, MotifTextureFrame, MotifUploadTiming } from '../../shared/motifs/frameTransport.js'
 
 export interface MotifPool {
   handles(): Buffer[]
-  uploadFile(path: string, slot: number): Promise<void>
+  /** Reads, verifies and downscales by `div` (default 1); the pool must have
+   * the scaled size. A `motif-frame: ` rejection is about the file. */
+  uploadFile(path: string, slot: number, div?: number): Promise<MotifUploadTiming>
   copyTexture(handle: Buffer, slot: number): Promise<void>
   close(): void
 }
 type PoolFactory = (w: number, h: number, bgra: boolean) => MotifPool
 type Session = { finalizationId?: number | undefined; owner: WebContents; key: string; width: number; height: number; pool: MotifPool; imported: SharedTextureImported; busy: boolean }
 const BUDGET_WAIT_MS = 250
+const CONSUMER_CLOSED_MESSAGE = 'Motif consumer closed'
 
 function consumerFrameAlive(owner: WebContents): boolean {
   try {
@@ -105,8 +110,19 @@ export class MotifGpuTransport {
     }
   }
 
-  read(owner: WebContents, file: string, width: number, height: number, finalizationId?: number): Promise<MotifTextureFrame> {
-    return this.produce(owner, width, height, 'rgba', pool => pool.uploadFile(file, 0), finalizationId)
+  /** Uploads a cached frame scaled by `div` into a session of the scaled
+   * `width × height`. A file failure rejects with its `motif-frame: ` error and
+   * a closed consumer or superseded export rejects as before; any other
+   * failure (budget, pool, import, device) means this lane cannot serve the
+   * read, and the reader falls back to the utility lane (ADR 0154). */
+  async read(owner: WebContents, file: string, width: number, height: number, div: MotifReaderDiv, finalizationId?: number): Promise<MotifTextureFrame | MotifReadUnavailable> {
+    try {
+      return await this.produce(owner, width, height, 'rgba', pool => pool.uploadFile(file, 0, div), finalizationId)
+    } catch (error) {
+      const message = String((error as Error | undefined)?.message ?? error)
+      if (isMotifFrameError(error) || message === CONSUMER_CLOSED_MESSAGE || message === CAPTURE_SUPERSEDED_MESSAGE) throw error
+      return { kind: 'unavailable' }
+    }
   }
 
   copy(owner: WebContents, texture: OffscreenSharedTexture, finalizationId?: number): Promise<MotifTextureFrame> {
@@ -125,7 +141,7 @@ export class MotifGpuTransport {
     return (sharedResourceAllocationEnabled() ? settings.gpu_buffer_mib : settings.motif_gpu_mib) * MIB
   }
 
-  private async produce(owner: WebContents, width: number, height: number, format: 'rgba' | 'bgra', fill: (pool: MotifPool) => Promise<void>, finalizationId?: number): Promise<MotifTextureFrame> {
+  private async produce(owner: WebContents, width: number, height: number, format: 'rgba' | 'bgra', fill: (pool: MotifPool) => Promise<MotifUploadTiming | void>, finalizationId?: number): Promise<MotifTextureFrame> {
     if (this.unavailable.has(owner)) throw new Error('Motif shared textures unavailable for this renderer')
     const generation = this.generations.get(owner) ?? 0
     let exportOpen = true
@@ -137,7 +153,7 @@ export class MotifGpuTransport {
     }
     const assertOpen = (): void => {
       if (!exportOpen) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
-      if (!consumerFrameAlive(owner) || (this.generations.get(owner) ?? 0) !== generation) throw new Error('Motif consumer closed')
+      if (!consumerFrameAlive(owner) || (this.generations.get(owner) ?? 0) !== generation) throw new Error(CONSUMER_CLOSED_MESSAGE)
     }
     // Independent leases let native reading/upload overlap the preceding
     // consumer's GPU read. A lane still cannot overwrite an unacknowledged slot.
@@ -186,7 +202,7 @@ export class MotifGpuTransport {
             if (bufferLease) break
           }
           // Retired imports can outlive their document. Keep their pools alive,
-          // but let the caller read on CPU instead of wedging every GPU lane.
+          // but let the caller use another lane instead of wedging every GPU lane.
           // Once stalled, new allocations fail promptly until references free.
           if (this.budgetStalled || performance.now() >= deadline) {
             // Preserve hard admission failures: never turn them into a PNG
@@ -240,7 +256,7 @@ export class MotifGpuTransport {
       }
       active = s
       s.busy = true
-      await fill(s.pool)
+      const timing = await fill(s.pool)
       assertOpen()
       const token = randomUUID()
       const timeout = setTimeout(() => {
@@ -251,7 +267,7 @@ export class MotifGpuTransport {
       this.pending.set(token, { owner: owner.id, retire: () => this.retireSession(address, s), release: () => {
         clearTimeout(timeout); s.busy = false; this.budgetChanged(); unlock()
       } })
-      return { kind: 'texture', key: s.key, token }
+      return timing ? { kind: 'texture', key: s.key, token, timing } : { kind: 'texture', key: s.key, token }
     } catch (error) {
       if (active) this.retireSession(address, active)
       this.budgetChanged(); unlock(); throw error

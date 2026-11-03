@@ -2,10 +2,12 @@ import { ExportJobs, exportPathExists, suggestExportName } from "./exportJobs";
 import path from 'node:path'
 import { diagnosticOwner, recordDiagnostic, recordProjectDiagnostic } from './diagnostics'
 import { sourceSignature } from './state/mutations/textCorrection.js'
-import { locateLayer } from './state/mutations/helpers.js'
+import { resolvePauseSubject } from './state/pauseSubject.js'
 import fs from 'node:fs'
 import os from 'node:os'
-import { configureResources, backgroundResourcePause, onBackgroundResourceChange, retainRasterDirectories } from './resources.js'
+import { configureResources, backgroundResourcePause, onBackgroundResourceChange, retainRasterDirectories, resourceSnapshot } from './resources.js'
+import { configureSkillBundle } from './mcp/skillResources.js'
+import { setResourceHolders } from './mcp/faultText.js'
 import { installResourceIpc, resolveExportFinalization } from './resourceIpc.js'
 import { hydrateResourceAllocation, resourceAllocation } from '../shared/resource-policy.js'
 import { gpuBufferBudget } from './gpuBufferBudget.js'
@@ -17,7 +19,7 @@ import { createMacDecodeProbe } from './macDecodeProbe.js'
 import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
 import { execFile } from 'node:child_process'
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, net, Notification, protocol, screen, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, Menu, nativeImage, nativeTheme, net, Notification, protocol, screen, shell, utilityProcess } from 'electron'
 import { createHash } from 'node:crypto'
 import { MotifCovers } from './motif/covers.js'
 import { PNG_CANVAS_RUNTIME_SOURCE } from './motif/pngCanvasRuntime.js'
@@ -37,6 +39,11 @@ import { rasterizeSvg } from './svgRaster.js'
 import { MotifCaptureService, type CaptureRequest, type TextureEncoder } from './motif/captureService.js'
 import { UserMotifStore } from './motif/store.js'
 import { MotifFrameStore } from './motif/frameStore.js'
+import { createMotifConsumers } from './motif/consumers.js'
+import { MotifReaderService } from './motif/readerService.js'
+import { MOTIF_READER_CONNECT, isMotifReaderDiv } from '../shared/motifs/readerProtocol.js'
+import type { MotifTextureReadRequest, MotifTextureReadResult } from '../shared/motifs/frameTransport.js'
+import { isMotifFrameAddress } from './motif/frameAddress.js'
 import { MotifBakeWorkspace, validateBakePlan } from './motif/bakeWorkspace.js'
 import { MOTIF_BAKE_READY_EVENT, type MotifBakePlan } from '../shared/motifs/baking.js'
 import { MotifGpuTransport, type MotifPool } from './motif/gpuTransport.js'
@@ -56,6 +63,7 @@ import { createDeferredLog } from './deferredLog.js'
 import { createWorkspaceEventGate } from './workspaceEvents.js'
 import type { McpLogEntryInput } from './mcp/withLog.js'
 import { ImportDiagnostics } from './importDiagnostics'
+import { recordDerivativeJob, resetDerivativeJobs } from './state/derivative-jobs'
 import { IMPORT_DIAGNOSTIC_MILESTONE } from '../shared/import-diagnostics'
 import { listSystemFontFamilies, resolveSystemFont } from './fonts/resolveSystemFont.js'
 import { collectMetrics } from './metrics.js'
@@ -90,12 +98,17 @@ import { resignInvalidMachO, type ContentSignDeps } from './contentSign.js'
 import { ContentQueue } from './contentQueue.js'
 import { createModelFeature } from './model-feature.js'
 import { ModelManager } from './model-manager.js'
-import { MODEL_EVENTS, type ModelUseRequest, type ModelFamily } from '../shared/inference-models.js'
+import { MODEL_EVENTS, speechModelLanguages, type ModelUseRequest, type ModelFamily } from '../shared/inference-models.js'
+import { stalledEncoderLimitMs } from './exportE2EStall.js'
 
 const require_ = createRequire(import.meta.url)
 const { Backend } = require_('@weftcut/core') as typeof import('@weftcut/core')
 
 let backend: import('@weftcut/core').Backend | null = null
+// E2E builds only (exportE2EStall.ts). A production build folds the flag to
+// '0', so this is null and the native sink never sees the stand-in request.
+const e2eStalledEncoderMs = process.env.WEFTCUT_E2E_BUILD === '1'
+  ? stalledEncoderLimitMs(process.env.WEFTCUT_E2E_STALLED_ENCODER_MS) : null
 let mainWindow: BrowserWindow | null = null
 let layoutTheme = DEFAULT_LAYOUT_THEME
 
@@ -114,10 +127,9 @@ function emitToRenderer(event: string, payload: unknown): void {
   if (wc.isDestroyed()) return
   wc.send('evt:' + event, payload)
 }
-// The MCP host is started after `backend.init()`, but the `onEvent` closure
-// (which taps `mcp:change`) is constructed in the `new Backend(...)` call
-// BEFORE the host exists. Hold it module-scoped and set it right after
-// `startMcpHost` resolves.
+// The MCP host is started after `backend.init()`, but the closures that reach
+// it (the TS actor host's resource-list relay) are built BEFORE the host
+// exists. Hold it module-scoped and set it right after `startMcpHost` resolves.
 let mcpHostRef: import('./mcp/index.js').McpHost | null = null
 let tsHost: import('./state/ts-actor-host.js').TsActorHost | null = null
 // The clip-compute job registry (ADR 0121). Module-scoped for the `onEvent`
@@ -570,6 +582,8 @@ app.whenReady().then(async () => {
   layoutTheme = readLayoutTheme(initialAppSettings.layout_theme)
   hydrateResourceAllocation(initialAppSettings.resource_allocation)
   configureResources(initialAppSettings.resource_allocation!)
+  // A busy refusal said as a sentence names its holders from the live ledger.
+  setResourceHolders(() => resourceSnapshot().holders ?? [])
   const measureCacheDisk = (workspace: string) => void fs.promises.statfs(workspace).then(stats => {
     // A later Workspace measures its own disk; the same disk changes nothing.
     if (wsCache !== workspace || diskMiB(stats) === cacheDiskMiB) return
@@ -597,7 +611,7 @@ app.whenReady().then(async () => {
   let models: ModelManager | undefined
 
   // Video-understanding (VLM) backend config store — <userData>/vlm_config.json,
-  // the non-secret sibling of the endpoint key. Like speech's (ADR 0148), VLM
+  // the non-secret sibling of the endpoint key. Like speech's (ADR 0036), VLM
   // config is injected per-call into describe_clip / media://{id}/description
   // (stateless, ADR 0024) via the provider passed to startMcpHost below.
   const { createVlmConfigStore, toVlmBackendSnapshot, modelProfileToVlmSnapshot } = await import('./vlm-config.js')
@@ -666,13 +680,10 @@ app.whenReady().then(async () => {
       if (event === 'media:job_complete' || event === 'media:job_error' || event === 'import:complete' || event === 'import:error') {
         importDiagnostics?.native(event, payload)
       }
+      // What an agent reads of the derivative jobs (media cards, refusals):
+      // the job events reach no MCP session themselves.
+      if (event === 'media:job_started' || event === 'media:job_complete' || event === 'media:job_error') recordDerivativeJob(event, payload)
       if (event === 'log:entry') recordProjectDiagnostic(payload)
-      // `mcp:change` is consumed by the MCP host (relayed as an in-protocol
-      // streamable-HTTP notification to connected agents), NOT forwarded to the renderer.
-      if (event === 'mcp:change') {
-        mcpHostRef?.notifyChange(payload)
-        return
-      }
       // A clip-compute job's phase: the registry owns it and publishes its own
       // `compute_jobs:changed` to the renderer, so the raw event goes no further.
       if (event === 'compute:job_phase') {
@@ -752,7 +763,7 @@ app.whenReady().then(async () => {
   if (legacyVlmKey) setKey(VLM_ENDPOINT_KEY_TAG, legacyVlmKey)
 
   // Nothing to push into the backend: speech keys and local paths travel with
-  // each call, merged by `getSpeech` below (ADR 0148).
+  // each call, merged by `getSpeech` below (ADR 0036).
 
   // Construct the motif store + resolve the built-in dir once at boot.
   // Both are passed to the protocol handler and the capture singleton so
@@ -766,7 +777,7 @@ app.whenReady().then(async () => {
   // TS actor host: constructed unconditionally; must start BEFORE startMcpHost so
   // the actor (the sole owner of project state — it serves every MCP state view and
   // injects the slice each Rust compute call needs) is ready before any MCP read can
-  // run. mcpNotify uses mcpHostRef?.notifyChange (optional), so the host wires up
+  // run. mcpResourcesChanged uses mcpHostRef (optional), so the host wires up
   // cleanly before the MCP host exists.
   const [{ createTsActorHost }, { initEval }] = await Promise.all([
     import('./state/ts-actor-host.js'),
@@ -816,6 +827,9 @@ app.whenReady().then(async () => {
   // open/saveAs/newWorkspace resolves wsCache must reflect the NEW workspace so that
   // buildProjectSummary's fileExists + autosave see the right dir).
   let wsCache: string | null = null
+  // The Motif reader utility follows the same generation and root as
+  // `currentMotifStore()`; it is created with the Motif services below.
+  let motifReader: MotifReaderService | null = null
   try {
     wsCache = JSON.parse(await backend!.invoke('workspace_dir', '{}')) as string | null
   } catch { /* no workspace at cold boot */ }
@@ -844,6 +858,7 @@ app.whenReady().then(async () => {
     commitWorkspace: async (p: string) => {
       const previous = workspaceEvents.current()
       workspaceEvents.beginTransition()
+      motifReader?.workspaceChanged()
       motifBakes?.reset()
       // Native commit can schedule a sweep before the incoming actor/catalog
       // is ready. Protect its existing cache until main has accepted a plan.
@@ -854,9 +869,11 @@ app.whenReady().then(async () => {
         emitToRenderer('import:queue', [])
       } catch (error) {
         if (previous !== null) workspaceEvents.activate(previous)
+        motifReader?.workspaceChanged()
         throw error
       }
       wsCache = p
+      motifReader?.workspaceChanged()
       measureCacheDisk(p)
       // Replay AFTER wsCache is set, so every replayed row takes the direct path
       // and cannot re-queue itself, and after the commit resolves, because that
@@ -865,10 +882,12 @@ app.whenReady().then(async () => {
     },
     endWorkspace: async () => {
       workspaceEvents.beginTransition()
+      motifReader?.workspaceChanged()
       motifBakes?.reset()
       const generation = await backend!.endWorkspace()
       workspaceEvents.activate(generation)
       wsCache = null
+      motifReader?.workspaceChanged()
       emitToRenderer('import:queue', [])
     },
   }
@@ -898,7 +917,7 @@ app.whenReady().then(async () => {
     hashMediaSource: (p: string, importId?: string) => backend!.hashMediaSource(p, workspaceEvents.requireCurrent(), importId),
     parseSubtitles: (body: string, format: string | null) => backend!.parseSubtitles(body, format),
     // TTS reads its OpenAI key from the same per-call snapshot transcription
-    // gets (ADR 0148); injected here, the one place every synthesis passes.
+    // gets (ADR 0036); injected here, the one place every synthesis passes.
     synthesizeSpeechCompute: (argsJson: string) => backend!.synthesizeSpeechCompute(
       JSON.stringify({ ...(JSON.parse(argsJson) as Record<string, unknown>), speech_config: getSpeech().config })),
     analyzeShotsFloor: (mediaJson: string) => backend!.analyzeShotsFloor(mediaJson),
@@ -919,7 +938,7 @@ app.whenReady().then(async () => {
     // exists; by the time a hybrid can run, it does. The import is local for
     // the same chunking reason the renderer's dispatch states below — a
     // top-level one would pull the MCP SDK into the entry chunk.
-    detectPauses: async (args: { layer_id: string; threshold_amp?: number; min_pause_us?: number }) => {
+    detectPauses: async (args: { layer_id: string; threshold_db?: number; min_pause_us?: number }) => {
       if (!tsHost) throw new Error('detect_pauses: the project actor is not started yet')
       const { callClipComputeTool } = await import('./mcp/server.js')
       // The two engine seams belong to transcribe/describe; a peaks read picks
@@ -1011,6 +1030,7 @@ app.whenReady().then(async () => {
       motifAdmissionOpen = false
       emitToRenderer('project:workspace-changing', {})
       importDiagnostics?.reset()
+      resetDerivativeJobs()
       audioFxBaker?.suspend()
       motifBakes?.reset()
     },
@@ -1031,7 +1051,6 @@ app.whenReady().then(async () => {
       }
     },
     send: (event, payload) => emitToRenderer(event, payload),
-    mcpNotify: (payload) => mcpHostRef?.notifyChange(payload),
     mcpResourcesChanged: () => mcpHostRef?.notifyResourceListChanged(),
     fileExists: (p) => fs.existsSync(p),
     fs: nodeFs,
@@ -1111,10 +1130,13 @@ app.whenReady().then(async () => {
   })
 
   // Motif file watch: on any disk change under <dataRoot>/motifs/, refresh
-  // the actor catalog (so a disk-written Motif is placeable via add_motif)
+  // the actor catalog (so a disk-written Motif is placeable via add_layers)
   // AND emit motifs:changed (renderer resync → ?v= host buster).
   const motifWorkspace = new MotifWorkspace(motifStore, motifBuiltins)
-  motifWatcher = spawnMotifWatcher(dataRoot.motifsDir, () => {
+  // The MCP file-transfer tools are gone; releases up to 0.5.6 left their
+  // temporary uploads (up to 512 MiB) under `.transfers/`. Nothing reads it.
+  fs.rm(path.join(motifStore.root(), '.transfers'), { recursive: true, force: true }, () => {})
+  motifWatcher =spawnMotifWatcher(dataRoot.motifsDir, () => {
     motifWorkspace.syncLinked()
     tsHost?.refreshMotifCatalog()
     emitToRenderer('motifs:changed', {})
@@ -1125,7 +1147,7 @@ app.whenReady().then(async () => {
   // `clipCompute` dispatch in `backend:invoke`: the injection is what decides
   // which engine serves a call, so two definitions of it would be two answers
   // to the same question depending on who asked.
-  const getSpeech = (): { config: Record<string, unknown>; preferred: string | null } => {
+  const getSpeech = (): { config: Record<string, unknown>; preferred: string | null; languages?: Record<string, readonly string[]> } => {
     // Read at call time, every time: the model store owns the selection and
     // safeStorage the keys, so a snapshot is never staler than the call.
     const profile = models?.active('speech')
@@ -1143,6 +1165,12 @@ app.whenReady().then(async () => {
         endpointKey: profile?.endpoint ? keys[profile.keyTag ?? ''] : null,
       }),
       preferred: profile?.backend ?? null,
+      // The selected model's catalog languages: a monolingual model refuses a
+      // clip in another language instead of returning garbage (R1 NEW-9).
+      languages: (() => {
+        const langs = profile ? speechModelLanguages(profile.id) : null
+        return langs && profile ? { [profile.backend]: langs } : undefined
+      })(),
     }
   }
   const getVlm = (): {
@@ -1183,6 +1211,15 @@ app.whenReady().then(async () => {
   // Started AFTER tsHost.start() so the actor is ready before any MCP read can run
   // (the host serves state views from the actor and injects compute slices).
   const { startMcpHost } = await import('./mcp/index.js')
+  const skillsSource = {
+    resourcesSkills: path.join(process.resourcesPath, 'skills'),
+    devSkills: path.join(import.meta.dirname, '../skills'),
+    isPackaged: app.isPackaged,
+    userDataDir: app.getPath('userData'),
+  }
+  // MCP serves the shipped skill from the bundle itself, so what it reads is
+  // this version's whatever became of the userData mirror.
+  configureSkillBundle(skillsSource.isPackaged ? skillsSource.resourcesSkills : skillsSource.devSkills)
   const mcpHost = await startMcpHost(backend, {
     getTsHost: () => tsHost,
     getSpeech,
@@ -1229,15 +1266,9 @@ app.whenReady().then(async () => {
   // in the app reads it — it exists to be copied into an agent client's own
   // skills directory.
   const { installSkills } = await import('./mcp/skillsInstall.js')
-  const skillsSource = {
-    resourcesSkills: path.join(process.resourcesPath, 'skills'),
-    devSkills: path.join(import.meta.dirname, '../skills'),
-    isPackaged: app.isPackaged,
-    userDataDir: app.getPath('userData'),
-  }
   let skills = installSkills(skillsSource)
   /// Bring `startupNotices` in line with the latest install attempt: at most one
-  /// agent-skill row, and none once it is installed.
+  /// agent-skill row, and none once the app's copy is current.
   ///
   /// A dev tree before `npm run build:skills` never raises one — the Agent panel
   /// names that command itself, and a standing notice would be noise in every
@@ -1247,7 +1278,7 @@ app.whenReady().then(async () => {
   const syncSkillNotice = () => {
     const at = startupNotices.findIndex((n) => n.code.startsWith('agent_skill_'))
     if (at >= 0) startupNotices.splice(at, 1)
-    if (skills.state === 'installed') return
+    if (skills.state === 'current') return
     console.warn(`[mcp] agent skill ${skills.state} (${skills.fault})`)
     if (!app.isPackaged) return
     startupNotices.push(
@@ -1399,41 +1430,41 @@ app.whenReady().then(async () => {
   // compositor surface: its next shared-texture lease must fence again.
   app.on('child-process-gone', (_event, details) => { if (details.type === 'GPU') invalidateCaptureSurface() })
   const currentMotifStore = () => wsCache ? motifBakes!.store() : motifFrames
-  const motifConsumers = new WeakMap<Electron.WebContents, { document: object | null }>()
-  const trackMotifConsumer = (owner: Electron.WebContents, frame: Electron.WebFrameMain | null): (() => boolean) => {
-    let consumer = motifConsumers.get(owner)
-    if (!consumer) {
-      consumer = { document: {} }
-      motifConsumers.set(owner, consumer)
-      const state = consumer
-      // Imports belong to a document, not its long-lived WebContents. A reload
-      // must cancel old work and re-import pools for the replacement preload.
-      owner.on('did-start-navigation', details => {
-        if (details.isMainFrame && !details.isSameDocument) {
-          state.document = null
-          motifGpu?.close(owner)
-        }
-      })
-      owner.on('dom-ready', () => { state.document = {} })
-      // A cancelled/failed navigation can leave the original document usable.
-      owner.on('did-stop-loading', () => { state.document ??= {} })
-      owner.on('render-process-gone', () => { state.document = null; motifGpu?.close(owner) })
-      owner.once('destroyed', () => { state.document = null; motifGpu?.close(owner) })
-    }
-    const document = consumer.document
-    // Bind at IPC admission, BEFORE async disk reads/capture. Work from the
-    // outgoing document must not acquire leases in the replacement document.
-    return () => document !== null && consumer.document === document && !owner.isDestroyed() && frame !== null && !frame.detached
-  }
-  ipcMain.handle('motif:read', (event, args: { hash: string; frame: number; finalizationToken?: string }) => {
+  motifReader = new MotifReaderService({
+    fork: () => utilityProcess.fork(path.join(import.meta.dirname, 'motifReader.js'), [], {
+      serviceName: 'WeftCut Motif reader', stdio: 'ignore',
+    }),
+    channel: () => new MessageChannelMain(),
+    workspace: () => {
+      const generation = workspaceEvents.current()
+      return { generation, root: generation === null ? null : wsCache }
+    },
+    reportMiss: (hash, frame) => currentMotifStore().reportMiss(hash, frame),
+    log: line => console.warn(line),
+  })
+  const reader = motifReader
+  app.once('will-quit', () => reader.stop())
+  const trackMotifConsumer = createMotifConsumers(owner => {
+    motifGpu?.close(owner)
+    reader.retire(owner)
+  })
+  // Texture-only (ADR 0154): without shared textures the renderer reads
+  // through the Motif reader utility, never through main.
+  ipcMain.handle('motif:read', async (event, args: MotifTextureReadRequest): Promise<MotifTextureReadResult> => {
+    if (!isMotifFrameAddress(args?.hash, args?.frame) || !isMotifReaderDiv(args.div)) throw new Error('Invalid Motif read request')
+    if (!motifGpu) return { kind: 'unavailable' }
     const owner = event.sender
     const isCurrent = trackMotifConsumer(owner, event.senderFrame)
     const parent = resolveExportFinalization(owner.id, args.finalizationToken)
-    return currentMotifStore().read(args.hash, args.frame,
-      motifGpu ? (file, w, h) => {
-        if (!isCurrent()) return Promise.reject(new Error('Motif consumer closed'))
-        return motifGpu.read(owner, file, w, h, parent)
-      } : undefined)
+    return currentMotifStore().readTexture(args.hash, args.frame, args.div, (file, w, h, div) => {
+      if (!isCurrent()) return Promise.reject(new Error('Motif consumer closed'))
+      return motifGpu.read(owner, file, w, h, div, parent)
+    })
+  })
+  ipcMain.on(MOTIF_READER_CONNECT, event => {
+    // Registers the document's retirement before it holds a port.
+    trackMotifConsumer(event.sender, event.senderFrame)
+    if (event.senderFrame && !event.senderFrame.detached) reader.connect(event.sender)
   })
   ipcMain.on('motif:ack', (event, { token, failed }: { token: string; failed?: boolean }) => motifGpu?.release(event.sender, token, failed))
   ipcMain.on('motif:capture-control', (event, control: import('../shared/motifs/frameTransport').MotifCaptureControl) => {
@@ -1494,15 +1525,28 @@ app.whenReady().then(async () => {
     if (channel === IMPORT_DIAGNOSTIC_MILESTONE) { importDiagnostics?.milestone(args); return null }
     if (['export_begin','export_cancel','export_prepare_output','export_publish_output'].includes(channel)) throw new Error('Native export lifecycle is main-owned');
     if (channel === 'export_video_sink_start') {
-      const { finalizationToken, finalizationId: _id, finalization_id: _alias, ...rest } = args?.args ?? {};
-      args = { ...args, args: { ...rest, finalizationId: resolveExportFinalization(_e.sender.id, finalizationToken) } };
+      // The stand-in encoder is main's to request, never the renderer's.
+      const { finalizationToken, finalizationId: _id, finalization_id: _alias, e2eStalledEncoderMs: _stall, ...rest } = args?.args ?? {};
+      const parent = resolveExportFinalization(_e.sender.id, finalizationToken);
+      if (parent === undefined) throw new Error('The video sink needs an admitted export plan');
+      args = { ...args, args: { ...rest, finalizationId: parent,
+        ...(e2eStalledEncoderMs === null ? {} : { e2eStalledEncoderMs }) } };
     }
     if (channel === 'mux_export') {
       // Never accept a renderer-supplied native lease number (including the
       // snake-case alias). Only this sender's live continuation token qualifies.
       const { finalizationToken, finalizationId: _id, finalization_id: _alias, ...rest } = args ?? {};
       const parent = resolveExportFinalization(_e.sender.id, finalizationToken);
-      if (parent !== undefined) motifGpu?.closeExport(_e.sender, parent);
+      if (parent === undefined) throw new Error('The mux needs an admitted export plan');
+      motifGpu?.closeExport(_e.sender, parent);
+      args = { ...rest, finalizationId: parent };
+    }
+    if (channel === 'export_project_audio_only') {
+      // The mix borrows from its export's admitted plan: only this sender's
+      // live token names it, never a renderer-supplied lease number.
+      const { finalizationToken, finalizationId: _id, finalization_id: _alias, ...rest } = args ?? {};
+      const parent = resolveExportFinalization(_e.sender.id, finalizationToken);
+      if (parent === undefined) throw new Error('The audio mix needs an admitted export plan');
       args = { ...rest, finalizationId: parent };
     }
     if (channel === 'motif_get_cover') return motifCovers.get(args.id, args.contentHash)
@@ -1524,7 +1568,6 @@ app.whenReady().then(async () => {
     }
     if (channel === 'motif_bake_snapshot') return motifBakes!.snapshot()
     if (channel === 'motif_capture_diagnostics') return captureDiagnostics(args?.reset === true)
-    if (channel === 'motif_read_cached_frame') return currentMotifStore().read(args.hash, args.frame)
     if (channel === 'motif_has_cached_frame') return currentMotifStore().has(args.hash, args.frame)
     if (channel === 'motif_write_cached_frame') return currentMotifStore().write(args.hash, args.frame, args.png)
     if (channel === 'agent_connections') return mcpHost.connectionSnapshot()
@@ -1580,7 +1623,7 @@ app.whenReady().then(async () => {
     }
     // Speech backends. Like the API-key writes above, these are intercepted
     // here — the reads carry the same per-call config snapshot transcribe_clip
-    // gets (ADR 0148), so the panel and the resolver cannot disagree, and the
+    // gets (ADR 0036), so the panel and the resolver cannot disagree, and the
     // writes persist non-secret local config to the TS store, which IS the
     // apply. Intercepted BEFORE the router, so they never route to Rust bare.
     if (channel === 'settings_get_api_key_status' || channel === 'settings_test_provider') {
@@ -1845,8 +1888,10 @@ app.whenReady().then(async () => {
     if (tsHost && CLIP_COMPUTE_CHANNELS.has(channel)) {
       const { [COMPUTE_REQUEST_ID_ARG]: requestId, ...toolArgs } = (args ?? {}) as Record<string, unknown>
       const before = tsHost.actor.snapshot()
-      const located = channel === 'transcribe_clip' ? locateLayer(before, (toolArgs as { layer_id?: string }).layer_id ?? '') : null
-      const source = located ? { id: located.layer.id, signature: sourceSignature(located.layer), project_id: before.project_id, composition_id: located.comp.id } : undefined
+      // The layer the transcript was read from: a VideoClip's linked Audio
+      // member, the same subject `callClipComputeTool` resolves.
+      const heard = channel === 'transcribe_clip' ? resolvePauseSubject((toolArgs as { layer_id?: string }).layer_id ?? '', before) : null
+      const source = heard?.ok ? { id: heard.subject.id, signature: sourceSignature(heard.subject), project_id: before.project_id, composition_id: heard.composition.id } : undefined
       let result: Awaited<ReturnType<typeof callClipComputeTool>>
       try {
         result = await callClipComputeTool(
@@ -2379,7 +2424,7 @@ app.whenReady().then(async () => {
     clearMarker(migrationMarkerPath, migrationFs)
   })
 
-  // App-managed content downloads (ADR 0039, 0043, 0055, 0073, 0075) — driven by the model
+  // App-managed content downloads (ADR 0039) — driven by the model
   // feature (models:* below), never by the renderer directly. The lifecycle
   // itself is pure + DI (contentDownload.ts); these deps bind it to node:fs,
   // fflate, and Electron net.fetch — Chromium's network stack, which honors the
@@ -2470,13 +2515,13 @@ app.whenReady().then(async () => {
       const entries = unzipSync(new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength))
       return Object.entries(entries).map(([p, data]) => ({ path: p, data }))
     },
-    // Rust stateless compute (ADR 0043) — native bzip2/gzip for archives up to
+    // Rust stateless compute (ADR 0039) — native bzip2/gzip for archives up to
     // the 234 MB model one; the tar crate's unpack containment is the traversal
     // guard, and its unpack is what carries modes and symlinks across.
     extractTar: async (archivePath, destDir) => {
       await backend!.invoke('content_extract_archive', JSON.stringify({ archivePath, destDir }))
     },
-    // macOS only (ADR 0075): Apple Silicon SIGKILLs code whose signature does
+    // macOS only (ADR 0039): Apple Silicon SIGKILLs code whose signature does
     // not cover its bytes, and the upstream sherpa-onnx osx-arm64 tarball
     // ships its libonnxruntime that way — re-sign what fails to verify, ad hoc,
     // before the install is marked complete.
@@ -2510,7 +2555,7 @@ app.whenReady().then(async () => {
       speechConfig.apply({ local: { backend: tag, config } })
     }
   }
-  // The ADR 0055 twin of the above: the VLM subsystem is stateless too
+  // The VLM twin of the above: the VLM subsystem is stateless too
   // (ADR 0024), so persisting to the store IS the whole apply — the next
   // describe_clip reads it through the injected snapshot.
   const autofillVlmFromContent = (): void => {

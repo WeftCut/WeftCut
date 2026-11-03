@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createTextCorrector } from './textCorrection'
+import { alignedShare, createTextCorrector } from './textCorrection'
 
 const correct = (text: string, script: string) => createTextCorrector(script)(text).text
 describe('reference text correction', () => {
@@ -96,5 +96,59 @@ describe('reference text correction', () => {
   it('abstains when repeated phonetic contexts support different spellings', () => {
     const script = '我们今天要介绍权利保护。我们今天要介绍权力保护。'
     expect(correct('我们今天要介绍全力保护。', script)).toBe('我们今天要介绍全力保护。')
+  })
+})
+
+describe('misheard Latin words between exact anchors', () => {
+  const script = 'Hi everyone, my name is Lane Rasberry and I am the president of Wikimedia New York City.\nEvery year I joined Wikimedia events as a volunteer.'
+  it.each([
+    ['my name is Laine Raspberry and I am', 'my name is Lane Rasberry and I am'],
+    ['the president of with the media in New York City', 'the president of Wikimedia New York City.'],
+    ['the president of Wicked Media New York City', 'the president of Wikimedia New York City.'],
+    ['every year I joined with the media events as a', 'Every year I joined Wikimedia events as a'],
+  ])('takes the script words for a run of 1-4 words: %s', (text, expected) => {
+    expect(correct(text, script)).toBe(expected)
+  })
+  it('substitutes the same run when no sentence ends inside it', () => {
+    expect(correct('then we met Laine Raspberry was there with us', 'Then we met Lane Rasberry was there with us.')).toBe('Then we met Lane Rasberry was there with us.')
+  })
+  it('counts the substituted words as aligned', () => {
+    expect(alignedShare(createTextCorrector(script), 'my name is Laine Raspberry and I am')).toBe(1)
+  })
+  it('is stable when applied again', () => {
+    const fix = createTextCorrector(script)
+    const once = fix('the president of with the media in New York City').text
+    expect(fix(once).text).toBe(once)
+  })
+  it('keeps an ad lib the script lacks', () => {
+    expect(correct('and then, you know, we all edit together', 'And then we all edit together.')).toBe('And then, you know, we all edit together.')
+  })
+  it('never inserts words the speaker skipped', () => {
+    expect(correct('and then we all edit together', 'And then we all edit articles together.')).toBe('And then we all edit together.')
+  })
+  it.each([
+    ['we have twenty volunteers who help us', 'We have thirty volunteers who help us.'],
+    ['we have 20 volunteers who help us', 'We have 30 volunteers who help us.'],
+    ['we have the twenty volunteers who help us', 'We have thirty volunteers who help us.'],
+    ['anyone can not edit the pages here', 'Anyone can now edit the pages here.'],
+    ['anyone can now edit the pages here', 'Anyone can not edit the pages here.'],
+    ["anyone can't edit the pages here", 'Anyone can edit the pages here.'],
+  ])('never substitutes a number or a negation: %s', (text, script) => {
+    expect(correct(text, script).toLowerCase()).toBe(text.toLowerCase() + '.')
+  })
+  it.each([
+    // One anchor word on a side is not enough.
+    ['of Wicked Media New York', 'the president of Wikimedia New York City'],
+    // The run crosses a sentence end.
+    ['then we met Laine. Raspberry was there with us', 'Then we met Lane. Rasberry was there with us.'],
+    // More than four words.
+    ['the president of a b c d e New York City', 'The president of Wikimedia New York City.'],
+    // The same anchors enclose different words elsewhere in the script.
+    ['we met Laine Rasbery at the park', 'We met Lane Rasberry at the park and later we met Lane Raspberry at the park again.'],
+  ])('abstains on weak or ambiguous evidence: %s', (text, script) => {
+    expect(correct(text, script).toLowerCase().replace(/[.,]/g, '')).toBe(text.toLowerCase().replace(/[.,]/g, ''))
+  })
+  it('leaves Han text to its own rules', () => {
+    expect(correct('这个功能非常好用。', '这个功能十分方便。')).toBe('这个功能非常好用。')
   })
 })

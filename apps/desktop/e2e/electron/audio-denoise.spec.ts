@@ -137,8 +137,6 @@ async function addEffect(mcp: Client, layerId: string, kind: string): Promise<st
   return effectId
 }
 
-const staticParam = (value: number) => ({ mode: 'Static', value })
-
 interface SummaryLayer {
   id: string
   t_start_us: number
@@ -175,7 +173,7 @@ async function regionOf(
 }
 
 /// One layer's bake state, off the baker's snapshot route. Bake state is a
-/// derivation the baker alone holds (ADR 0063 decision 8), so there is nowhere
+/// derivation the baker alone holds (ADR 0063), so there is nowhere
 /// else to read it from — the project carries no path and no status.
 interface LayerFxState {
   desired_sig: string | null
@@ -302,10 +300,10 @@ test.describe('audio denoise (Electron)', () => {
           effect_id: effectId,
           patch: {
             params: {
-              strength: staticParam(12),
-              margin: staticParam(8),
-              profile_in_us: staticParam(PROFILE_IN_US),
-              profile_out_us: staticParam(PROFILE_OUT_US),
+              strength: 12,
+              margin: 8,
+              profile_in_us: PROFILE_IN_US,
+              profile_out_us: PROFILE_OUT_US,
             },
           },
         },

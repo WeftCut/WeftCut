@@ -16,10 +16,10 @@ import { useTranslation } from "react-i18next";
 /// green one already gives native fullscreen. Drawing our own Windows-style
 /// buttons on top would double up the controls. See src/main/index.ts.
 ///
-/// Deliberate exception to the lucide-react icon convention (ADR 0020):
-/// caption buttons must read as native Windows chrome — 10px hairline
-/// glyphs matching Segoe-style caption icons, which lucide's 24px-grid
-/// stroke-2 drawing style cannot reproduce.
+/// Deliberate exception to the lucide-react icon convention
+/// (docs/ui-tokens.md#icons): caption buttons must read as native Windows
+/// chrome — 10px hairline glyphs matching Segoe-style caption icons, which
+/// lucide's 24px-grid stroke-2 drawing style cannot reproduce.
 export function WindowControls() {
   const { t } = useTranslation();
   const [maximized, setMaximized] = useState(false);

@@ -454,7 +454,7 @@ export function useLayerDrag(opts: {
 
   /// Which destination a pointer at `clientY` is over, as a track id —
   /// `SPAWN_TRACK_ID` when that destination is the drop strip, i.e. a lane that
-  /// does not exist yet (ADR 0042). Measure the rendered rows, then band-select.
+  /// does not exist yet. Measure the rendered rows, then band-select.
   /// Cost is one forced reflow per pointer event; the remaining rect reads then
   /// hit clean layout.
   const destinationUnderPointer = useCallback(

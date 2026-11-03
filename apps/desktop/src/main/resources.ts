@@ -7,9 +7,9 @@ interface NativeResources {
   resourcesConfigure(json: string): void;
   resourcesPlanExport(options: string, nativeEncoder: boolean): string;
   resourcesWaitForChange(revision: number): Promise<void>;
+  resourcesExportWaiting(entered: boolean): void;
   resourcesReserve(threads: number, memoryMiB: number, finalizationId?: number): number;
   resourcesRelease(id: number): void;
-  resourcesReserveFinalization(): number;
   resourcesActivity(playing: boolean, pressured: boolean, critical: boolean): void;
   resourcesSnapshot(): string;
   resourcesMemory(): Promise<ResourceMemorySample>;
@@ -33,6 +33,14 @@ export function tryExportPlan(options: number[], nativeEncoder: boolean): import
 }
 export function waitForResourceChange(revision: number): Promise<void> { return getNative().resourcesWaitForChange(revision); }
 export function releaseResourceId(id: number): void { getNative().resourcesRelease(id); }
+/** Queue an export waiting for admission: no new background claim is admitted
+ * until every queued export leaves. Returns the leave, safe to call twice. */
+export function queueExport(): () => void {
+  const owner = getNative();
+  owner.resourcesExportWaiting(true);
+  let live = true;
+  return () => { if (live) { live = false; owner.resourcesExportWaiting(false); } };
+}
 export function reserveDecoderResources(path: string, finalizationId?: number): () => void {
   if (!native) return () => {}; // isolated managers/tests; app bootstrap installs the authority
   const decode = createRequire(import.meta.url)('@weftcut/native-decode') as {
@@ -53,11 +61,6 @@ export function reserveResources(threads: number, memoryMiB: number, finalizatio
   let live = true;
   return () => { if (live) { live = false; owner.resourcesRelease(id); } };
 }
-export function reserveExportFinalization(): { nativeId: number; release: () => void } {
-  const owner = getNative();
-  const nativeId = owner.resourcesReserveFinalization();
-  return { nativeId, release: () => owner.resourcesRelease(nativeId) };
-}
 export function setResourceActivity(playing: boolean, pressured: boolean, critical = pressured): void {
   getNative().resourcesActivity(playing, pressured, critical);
   backgroundPause = pressured ? 'memory' : playing && !resourceAllocation().background_playback ? 'playback' : undefined;
@@ -70,7 +73,7 @@ export function onBackgroundResourceChange(notify: () => void): () => void {
   resourceObservers.add(notify); return () => { resourceObservers.delete(notify); };
 }
 export function retainRasterDirectories(paths: string[]): void { getNative().resourcesRetainRaster(paths); }
-export function resourceSnapshot(): Pick<ResourceStatus, 'active' | 'waiting' | 'reserved_mib' | 'cpu_threads'> {
+export function resourceSnapshot(): Pick<ResourceStatus, 'active' | 'waiting' | 'reserved_mib' | 'cpu_threads' | 'holders'> {
   return JSON.parse(getNative().resourcesSnapshot());
 }
 export function processTreeMemory(): Promise<ResourceMemorySample> { return getNative().resourcesMemory(); }

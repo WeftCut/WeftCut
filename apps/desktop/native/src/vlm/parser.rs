@@ -123,12 +123,12 @@ fn parse_segments(raw: &str, split_underscore_tags: bool) -> Result<Vec<DescSegm
         }
         let t_start_s = coerce_secs(obj.get("t_start")).unwrap_or(0.0);
         let t_end_s = coerce_secs(obj.get("t_end")).unwrap_or(t_start_s);
-        let t_start_us = secs_to_us(t_start_s);
-        let t_end_us = secs_to_us(t_end_s).max(t_start_us);
+        let src_start_us = secs_to_us(t_start_s);
+        let src_end_us = secs_to_us(t_end_s).max(src_start_us);
         let tags = coerce_tags(obj.get("tags"), split_underscore_tags);
         segments.push(DescSegment {
-            t_start_us,
-            t_end_us,
+            src_start_us,
+            src_end_us,
             text,
             tags,
         });
@@ -225,10 +225,10 @@ mod tests {
         ]"#;
         let segs = parse_raw(RawDescription::JsonArray(raw.into())).expect("parse");
         assert_eq!(segs.len(), 2);
-        assert_eq!(segs[0].t_start_us, 0);
-        assert_eq!(segs[0].t_end_us, 2_500_000); // 2.5 s → µs, verbatim
+        assert_eq!(segs[0].src_start_us, 0);
+        assert_eq!(segs[0].src_end_us, 2_500_000); // 2.5 s → µs, verbatim
         assert_eq!(segs[0].tags, vec!["person", "walking", "wide shot"]);
-        assert_eq!(segs[1].t_start_us, 2_500_000);
+        assert_eq!(segs[1].src_start_us, 2_500_000);
         assert_eq!(segs[1].text, "Close-up of a face");
     }
 
@@ -245,7 +245,7 @@ mod tests {
         // Two complete objects recovered; the half-written third is dropped.
         assert_eq!(segs.len(), 2);
         assert_eq!(segs[0].text, "Skyline at dusk");
-        assert_eq!(segs[1].t_end_us, 7_600_000);
+        assert_eq!(segs[1].src_end_us, 7_600_000);
     }
 
     /// MiniCPM-V: underscore-joined tag phrases split into discrete keywords,
@@ -323,8 +323,8 @@ mod tests {
     fn coerces_numeric_string_timestamps_with_s_suffix() {
         let raw = r#"[{"t_start":"1.5s","t_end":"3s","text":"y","tags":"solo_tag"}]"#;
         let segs = parse_raw(RawDescription::JsonArray(raw.into())).expect("parse");
-        assert_eq!(segs[0].t_start_us, 1_500_000);
-        assert_eq!(segs[0].t_end_us, 3_000_000);
+        assert_eq!(segs[0].src_start_us, 1_500_000);
+        assert_eq!(segs[0].src_end_us, 3_000_000);
         // A single-string tag is accepted (kept verbatim by the general parser).
         assert_eq!(segs[0].tags, vec!["solo_tag"]);
     }

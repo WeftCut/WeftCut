@@ -10,7 +10,7 @@
 // slot owns dropping a deleted participant's transition and a deleted anchor's
 // markers, so neither is repeated here.
 //
-// ADR 0062.
+// docs/features.md#ripple-delete.
 import type { Composition, Project, Uuid } from '../model'
 import { CommandFailure } from '../errors'
 import { planRipple, planRippleGap, type RippleMove, type RippleView } from '../../../renderer/ripple/plan'
@@ -75,10 +75,11 @@ export function applyRippleDeleteLayers(p: Project, ids: readonly Uuid[]): Rippl
 /**
  * Close the gap `[s, e)` on `trackId`: every layer of its composition that starts
  * at or after `e` moves left by `e - s`, on every track, and nothing is deleted
- * (ADR 0069). The plan is computed FIRST, off untouched state, and a refusal is
- * thrown before a single layer is re-timed — `GapNotFound` when the span is not
- * a gap as the actor sees it (the renderer's mirror can lag), and the ripple's
- * own four when the closing would not be clean.
+ * (docs/features.md#ripple-delete). The plan is computed FIRST, off untouched
+ * state, and a refusal is thrown before a single layer is re-timed —
+ * `GapNotFound` when the span is not a gap as the actor sees it (the renderer's
+ * mirror can lag), and the ripple's own four when the closing would not be
+ * clean.
  */
 export function applyRippleDeleteGap(p: Project, trackId: Uuid, s: number, e: number): RippleGapResult {
   const { comp: c } = requireTrack(p, trackId) // TrackNotFound
@@ -89,10 +90,12 @@ export function applyRippleDeleteGap(p: Project, trackId: Uuid, s: number, e: nu
 
 /**
  * The sweep: write every landing, keep a travelling transition's frame count,
- * and autofit once. Shared by the deletion and the gap closing — what differs
- * between them is how the holes were found, and that is the planner's business.
+ * and autofit once. Shared by the deletion, the gap closing, `shift_layers`'
+ * sweep and the insert move — what differs between them is how the landings
+ * were found, and that is the planner's business. Each landed layer stays on
+ * its own track.
  */
-function applySweep(c: Composition, plannedMoves: readonly RippleMove[]): Uuid[] {
+export function applySweep(c: Composition, plannedMoves: readonly RippleMove[]): Uuid[] {
   // Moves are keyed by LAYER id and re-located one at a time, never by the track
   // index the plan carries: a delete above may have pruned a whole lane out of
   // the vector. Both endpoints come from the plan — a landing plus the old
@@ -144,7 +147,8 @@ function applySweep(c: Composition, plannedMoves: readonly RippleMove[]): Uuid[]
   }
 
   // The sweep lowered the high-water mark; each delete's own autofit ran before
-  // it (ADR 0005 — a pinned composition keeps its length either way).
+  // it (docs/data-model.md#composition — a pinned composition keeps its length
+  // either way).
   applyDurationAutofit(c)
   return moved
 }

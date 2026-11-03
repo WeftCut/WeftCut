@@ -186,7 +186,7 @@ describe("searchIndexStore", () => {
     const cache: DescriptionCache = {
       covered_ranges: [[0, 2_000_000]],
       segments: [
-        { t_start_us: 0, t_end_us: 1_000_000, text: "a hallway", tags: ["interior"] },
+        { src_start_us: 0, src_end_us: 1_000_000, text: "a hallway", tags: ["interior"] },
       ],
     };
     mocks.getMediaDescription.mockResolvedValue(cache);

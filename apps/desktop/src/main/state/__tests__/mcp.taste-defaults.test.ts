@@ -1,5 +1,5 @@
 // apps/desktop/src/main/state/__tests__/mcp.taste-defaults.test.ts
-// Layers are born in the project's style (Q9, spec H1-D4): add_text_layer by
+// Layers are born in the project's style (Q9, spec H1-D4): add_layers text by
 // graphic role, apply_transcripts by the caption tokens and limits, and
 // restyle_to_taste puts layers back. The default style changes nothing a user
 // made untagged, and keeps the look of today's transcript captions.
@@ -31,10 +31,13 @@ function actor(t: Tokens | null) {
   return { a, bRoll: root(a.snapshot()).tracks[1]!.id }
 }
 const text = (a: ActorHandle, id: string) => root(a.snapshot()).tracks.flatMap((t) => t.layers).find((l) => l.id === id)!.params as TextParams
-const addText = (a: ActorHandle, track: string, extra: Record<string, unknown> = {}) =>
-  body<{ layer_id: string }>(call(a, 'add_text_layer', { track_id: track, content: 'Hi', t_start_us: 0, t_end_us: 4_000_000, ...extra })).layer_id
+const addText = (a: ActorHandle, track: string, o: { graphic_role?: string; at?: { x: number; y: number }; t_start_us?: number; t_end_us?: number } = {}) =>
+  body<{ layers: Array<{ layer_id: string }> }>(call(a, 'add_layers', { layers: [{
+    track_id: track, t_start_us: o.t_start_us ?? 0, t_end_us: o.t_end_us ?? 4_000_000, ...(o.at ? { transform: o.at } : {}),
+    content: { kind: 'text', content: 'Hi', ...(o.graphic_role ? { graphic_role: o.graphic_role } : {}) },
+  }] })).layers[0]!.layer_id
 
-describe('add_text_layer is born in the style', () => {
+describe('add_layers text is born in the style', () => {
   it('leaves untagged text exactly as it was without a style', () => {
     const styled = actor(tokens()), plain = actor(null)
     expect(text(styled.a, addText(styled.a, styled.bRoll))).toEqual(text(plain.a, addText(plain.a, plain.bRoll)))
@@ -45,7 +48,7 @@ describe('add_text_layer is born in the style', () => {
     const t = text(a, addText(a, bRoll, { graphic_role: 'title' }))
     expect(t).toMatchObject({ graphic_role: 'title', font: { size_px: 110, weight: 700 }, intro: 'FadeIn', outro: 'FadeOut', align: 'Center' })
     expect(t.transform.position).toEqual({ mode: 'XY', x: { mode: 'Static', value: 960 }, y: { mode: 'Static', value: 172.8 } })
-    const placed = text(a, addText(a, bRoll, { graphic_role: 'title', x: 400, y: 300, t_start_us: 5_000_000, t_end_us: 9_000_000 }))
+    const placed = text(a, addText(a, bRoll, { graphic_role: 'title', at: { x: 400, y: 300 }, t_start_us: 5_000_000, t_end_us: 9_000_000 }))
     expect(placed.transform.position).toEqual({ mode: 'XY', x: { mode: 'Static', value: 400 }, y: { mode: 'Static', value: 300 } })
   })
 })
@@ -114,7 +117,7 @@ describe('restyle_to_taste', () => {
   it('refuses an ambiguous selection and a non-text layer, and needs a style', () => {
     const { a, bRoll } = actor(tokens())
     expect(call(a, 'restyle_to_taste', { captions: true, graphic_role: 'title' }).ok).toBe(false)
-    const color = body<{ layer_id: string }>(call(a, 'add_color_layer', { track_id: bRoll, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 10_000_000, t_end_us: 11_000_000 })).layer_id
+    const color = body<{ layers: Array<{ layer_id: string }> }>(call(a, 'add_layers', { layers: [{ track_id: bRoll, t_start_us: 10_000_000, t_end_us: 11_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] })).layers[0]!.layer_id
     expect(call(a, 'restyle_to_taste', { layer_ids: [color] }).ok).toBe(false)
     const bare = actor(null)
     expect(call(bare.a, 'restyle_to_taste', { captions: true }).ok).toBe(false)

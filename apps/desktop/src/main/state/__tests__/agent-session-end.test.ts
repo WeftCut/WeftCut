@@ -4,7 +4,7 @@ import { createTsActorHost } from '../ts-actor-host'
 function makeDeps(overrides: { send?: (event: string, payload: unknown) => void } = {}) {
   const noopFs = { exists: () => false, readFile: () => '', writeFile: () => {}, mkdirp: () => {}, copyFile: () => {}, readdir: () => [], rm: () => {} }
   return {
-    send: () => {}, mcpNotify: () => {}, fileExists: () => false,
+    send: () => {}, fileExists: () => false,
     fs: noopFs as any, join: (...p: string[]) => p.join('/'),
     napi: { commitWorkspace: async () => {}, pushRecent: () => {}, setLastNewProjectParent: () => {}, enqueueJobsForMedia: () => {} } as any,
     compute: { probeMedia: async () => '{}', hashMediaSource: async () => 'h', parseSubtitles: async () => '{}', synthesizeSpeechCompute: async () => '{}' },
@@ -36,7 +36,6 @@ describe('host agent lifecycle', () => {
     host.start()
     await host.agent.run('connection', 'Client', 'begin_agent_session', {}, false, () => {
       host.agent.begin('Edit')
-      host.agent.lock('')
     })
     send.mockClear()
     await host.handleInvoke('agent_session_end', {})

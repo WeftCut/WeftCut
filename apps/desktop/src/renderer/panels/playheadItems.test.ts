@@ -331,7 +331,7 @@ describe("restackTargetForGap", () => {
   it("derives anchors from the visible rows only (filtered-out neighbours never anchor)", () => {
     // A category chip hid "mid": the function sees exactly what the user
     // sees, so the drop below the remaining top row anchors on "bottom" —
-    // never on the hidden layer between them (ADR 0044 decision 5).
+    // never on the hidden layer between them.
     const visible = [
       item("top", "ImageOverlay", { trackIndex: 5 }),
       item("bottom", "VideoClip", { trackIndex: 1 }),
@@ -355,7 +355,7 @@ describe("restackTargetForGap", () => {
 
 describe("restackMenuTargets", () => {
   // Visible rows top-of-stack first, the At-playhead render order — the same
-  // stack the context menu is looking at (ADR 0044 decision 4: front/back are
+  // stack the context menu is looking at (front/back are
   // derived by the caller from the visible non-reserved stack; the op surface
   // stays above/below).
   const rows = () => [
@@ -417,7 +417,7 @@ describe("restackMenuTargets", () => {
 
   it("derives anchors from the visible rows only (filtered-out neighbours never anchor)", () => {
     // A category chip hid "mid": the menu sees exactly what the user sees
-    // (ADR 0044 decision 5), so the remaining pair anchor on each other.
+    // and no more, so the remaining pair anchor on each other.
     const visible = [
       item("top", "ImageOverlay", { trackIndex: 5 }),
       item("bottom", "VideoClip", { trackIndex: 1 }),

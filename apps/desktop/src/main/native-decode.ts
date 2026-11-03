@@ -1,5 +1,5 @@
 // Level-0 availability gate for the optional @weftcut/native-decode component
-// (ADR 0030 §Conditional first-class). Main tries the require ONCE in
+// (ADR 0030). Main tries the require ONCE in
 // a try/catch; failure means the Native decode engine is unavailable — the app
 // keeps working, the setting grays out with `reason`, `auto` skips Native tiers.
 //
@@ -17,8 +17,8 @@ export interface NativeDecodeComponent {
   backend: NativeDecode | null
   reason: string | null
   version: string | null
-  /// The decode lanes this build advertised (`capabilities()`, ADR 0030
-  /// §Lane advertisement): `software` on every platform, plus the platform's HW
+  /// The decode lanes this build advertised (`capabilities()`, ADR 0030):
+  /// `software` on every platform, plus the platform's HW
   /// lanes — `d3d11va` on the Windows HW-preview build, `nvdec`/`vaapi` on
   /// Linux, `videotoolbox` on macOS. Empty when the component failed to load.
   /// Resolvers probe ONLY advertised lanes, so the Linux resolver never touches

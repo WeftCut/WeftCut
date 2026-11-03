@@ -1,6 +1,7 @@
 // The one thing Pixi leaves to whoever owns an Application: ending the life of
 // the WebGPU device behind it. Structural access only — no pixi import — so the
-// decoder transports can share it. ADR 0059.
+// decoder transports can share it. Why it must be destroyed, and when:
+// docs/notes/electron-chromium-behavior.md.
 
 /// The device of a WebGPU-backed Pixi renderer, or null for a WebGL/Canvas
 /// renderer, a renderer that never initialized, or no renderer at all.

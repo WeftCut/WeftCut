@@ -25,7 +25,7 @@ import { hardwareGate, hardwareEnvironmentGate } from './helpers/hardwareGate'
 //   whether that shader's constants are right.
 //
 //   videotoolbox / nvdec / vaapi (copy-back) — no bespoke shader: the lane
-//   copies back into NV12 / I420P10 ship bytes (ADR 0034) that go through the
+//   copies back into NV12 / I420P10 ship bytes (ADR 0029) that go through the
 //   same renderer ingest the SOFTWARE lane feeds, so the shader math is
 //   already gated cross-platform by preview-sw-color. What is NOT gated
 //   anywhere else is the seam these lanes introduce: the color tags are read

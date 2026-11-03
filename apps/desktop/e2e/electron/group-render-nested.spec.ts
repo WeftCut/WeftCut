@@ -2,8 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from "./helpers/driver";
 
 /**
- * A Group renders as one picture composited from its own timeline (ADR 0052 §
- * Rendering): a `CompositionNode` per Group LAYER draws that composition into a
+ * A Group renders as one picture composited from its own timeline (ADR 0052;
+ * docs/render.md §Compositions: the recursive composite): a `CompositionNode` per Group LAYER draws that composition into a
  * `RenderTexture`, and the parent stages the texture like any other visual.
  * Three things follow that nothing flatter can express, and all three are read
  * off the LIVE Pixi canvas here rather than from the project:

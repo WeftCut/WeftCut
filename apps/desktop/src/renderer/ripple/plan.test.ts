@@ -460,7 +460,7 @@ describe("property: applying an accepted plan keeps the layout legal", () => {
   });
 });
 
-// ── a selected gap as the hole (ADR 0069) ────────────────────────────────────
+// ── a selected gap as the hole ───────────────────────────────────────────────
 
 describe("planRippleGap closes a selected gap with the ripple's own closing", () => {
   it("shifts every layer at or after the gap's end left by its length, on every track", () => {

@@ -15,11 +15,12 @@ export const HYBRID_TOOLS: ReadonlySet<string> = new Set([
   'remove_pauses',
 ])
 
-/** Motif catalog-read + authoring + install + staleness tools, served in TS by
- *  runMotifTool. The advertised members take their defs from TS
- *  MOTIF_TOOL_DEFS (mcpCatalog dedups by name); the two staleness tools are
- *  unadvertised. The Rust catalog carries no motif arms. */
-export const MOTIF_TOOLS: ReadonlySet<string> = new Set(['list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'begin_file_upload', 'write_file_chunk', 'read_file_transfer', 'delete_file_transfer', 'motif_staleness_report', 'acknowledge_motif_staleness'])
+/** Motif catalog-read + authoring + proposal tools, served in TS by
+ *  runMotifTool, with their defs in TS MOTIF_TOOL_DEFS (mcpCatalog dedups by
+ *  name). The Rust catalog carries no motif arms. The approval and staleness
+ *  channels are the renderer's alone (router `MOTIF_CHANNELS`): no MCP
+ *  client can approve its own proposal (ADR 0046). */
+export const MOTIF_TOOLS: ReadonlySet<string> = new Set(['list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif'])
 
 /** The tools that answer while no project is open — default-deny: every tool
  *  NOT named here is refused with `NoProjectOpen` on the start screen, so a new
@@ -28,10 +29,10 @@ export const MOTIF_TOOLS: ReadonlySet<string> = new Set(['list_motifs', 'read_mo
  *
  *  Liveness, the Motif LIBRARY (its store, not placed layers — `install_motif`
  *  rebinds nothing while no project is open), and the two ways INTO a project. */
-export const APP_SCOPE_TOOLS: ReadonlySet<string> = new Set([...EXPORT_PRESET_TOOLS, 'get_export_status', 'cancel_export', 'retry_export', 'ping', 'list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'begin_file_upload', 'write_file_chunk', 'read_file_transfer', 'delete_file_transfer', 'preview_motif', 'open_project', 'create_project'])
+export const APP_SCOPE_TOOLS: ReadonlySet<string> = new Set([...EXPORT_PRESET_TOOLS, 'get_export_status', 'cancel_export', 'retry_export', 'list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'preview_motif', 'open_project', 'create_project'])
 
 /** `read_project` views the host answers without the actor's project. */
-const APP_SCOPE_VIEWS: ReadonlySet<string> = new Set(['session', 'effects', 'taste'])
+const APP_SCOPE_VIEWS: ReadonlySet<string> = new Set(['session', 'effects', 'taste', 'skill'])
 
 /** Resources the host answers without the actor's project. */
 export const APP_SCOPE_RESOURCES: ReadonlySet<string> = new Set(['project://session', 'project://taste', 'effects://catalog', 'motifs://current'])

@@ -64,9 +64,10 @@ export const LAYER_PREVIEW_MIN_PX = 16;
 /// Width of the sticky track-header column (UI_METRICS.timeline.headerColumn).
 export const headerColumnPx = (): number => uiPixels(UI_METRICS.timeline.headerColumn);
 
-/// Height of the drop strip above the topmost lane (ADR 0042). Its space is
-/// reserved in flow permanently, not conditionally on a drag — a row that
-/// appeared mid-gesture would reflow the timeline under the pointer. Thin
+/// Height of the drop strip above the topmost lane
+/// (docs/features.md#track-placement). Its space is reserved in flow
+/// permanently, not conditionally on a drag — a row that appeared mid-gesture
+/// would reflow the timeline under the pointer. Thin
 /// enough to read as a seam rather than a lane the user is meant to manage.
 export const DROP_STRIP_HEIGHT_PX = 14;
 /// The dashed rule sits on the strip/lane boundary (`intoLanePx = 0` when a
@@ -257,7 +258,7 @@ export function layerSliceRect(
 // Placement APPENDS a lane it had to create, so the role-less "additional"
 // region is the TAIL of the data array and therefore the HEAD of the visual
 // order — auto-created lanes accrete downward from the top of the screen, which
-// is why the drop strip that spawns them sits above the first row (ADR 0042).
+// is why the drop strip that spawns them sits above the first row.
 //
 //   data-model (bottom → top of z-stack)        visual (top → bottom of screen)
 //   ┌─────────────────────────────────┐         ┌─────────────────────────────┐

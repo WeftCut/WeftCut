@@ -346,7 +346,8 @@ function ShotsDescribeJobs({
 /// start open. A long window's description runs to hundreds of segments, so the
 /// open list scrolls inside its own box and the strip and rows never move
 /// further than that box; each line leads with its timecode, which seeks like a
-/// row's (ADR 0149).
+/// row's
+/// (docs/notes/descriptions-vlm-facts.md#long-clips-tidy-and-summary-2026-10-27).
 ///
 /// Rendered once, above both of the Panel's states, so opening the details
 /// before an analysis and having the rows land does not close them again.
@@ -381,12 +382,12 @@ function ClipContentDescription({ layer, mediaId, srcInUs, srcOutUs, fpsNum, fps
           <div className="shots-clip-detail-list">
             {overlapping.map((segment) => {
               // A segment straddling the in-point starts where the clip does.
-              const tUs = sourceToTimelineUs(layer, Math.max(segment.t_start_us, srcInUs));
+              const tUs = sourceToTimelineUs(layer, Math.max(segment.src_start_us, srcInUs));
               const timecode = formatTimecode(tUs, fpsNum, fpsDen);
               return (
                 <p
                   className="shots-clip-detail"
-                  key={`${segment.t_start_us}-${segment.t_end_us}`}
+                  key={`${segment.src_start_us}-${segment.src_end_us}`}
                   // The tags stay one hover away: the rows already show theirs
                   // as chips, and a chip row per line is what made a long
                   // list unreadable.
@@ -467,7 +468,7 @@ function ShotDescriptionCell({
         overlapping.map((segment) => (
           <p
             className="shots-description-span"
-            key={`${segment.t_start_us}-${segment.t_end_us}`}
+            key={`${segment.src_start_us}-${segment.src_end_us}`}
           >
             <span className="shots-description-text">{segment.text}</span>
             {segment.tags.map((tag) => (
@@ -950,9 +951,8 @@ function MeasureShotsButton({
 /// greyed row and a refused sweep can never disagree about the precondition.
 ///
 /// `describeState` is the gate the Edit-menu command is greyed by, reused whole:
-/// the Panel's subject IS the primary selection, so the same three answers apply
-/// — and a re-timed clip is refused by the tool itself, which is exactly the
-/// case a per-row button would otherwise offer and then always fail on.
+/// the Panel's subject IS the primary selection, so the same three answers
+/// apply.
 ///
 /// `needs_selection` and `needs_video_kind` are deliberately not mapped: neither
 /// is reachable here, because a Panel with rows has a selected VideoClip by

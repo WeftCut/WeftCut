@@ -1,10 +1,10 @@
 import { admitExport } from './exportAdmission';
 import type { ExportPlanRequest } from '../shared/export-resources';
-import { tryExportPlan, waitForResourceChange, releaseResourceId, decoderResourceMiB } from './resources';
+import { tryExportPlan, waitForResourceChange, releaseResourceId, decoderResourceMiB, queueExport } from './resources';
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { resourceAllocation } from '../shared/resource-policy';
 import type { ResourceStatus } from '../shared/resource-policy';
-import { reserveResources, reserveExportFinalization, createMemoryPressure, MEMORY_SAMPLE_TTL_MS, resourceSnapshot, setResourceActivity, processTreeMemory, type ResourceMemorySample } from './resources';
+import { reserveResources, createMemoryPressure, MEMORY_SAMPLE_TTL_MS, resourceSnapshot, setResourceActivity, processTreeMemory, type ResourceMemorySample } from './resources';
 
 const finalizationOwners = new Map<number, Map<string, number>>();
 /** Only main translates an owner-scoped token to a native reservation. */
@@ -73,7 +73,7 @@ export function installResourceIpc(onDiagnostic?: (snapshot: { status: ResourceS
     owner.pending.set(request.id, controller);
     try {
       const admitted = await admitExport(request, {
-        tryPlan: tryExportPlan, wait: waitForResourceChange, release: releaseResourceId,
+        tryPlan: tryExportPlan, wait: waitForResourceChange, release: releaseResourceId, queue: queueExport,
         waiting: block => { if (!event.sender.isDestroyed()) event.sender.send('resources:export-waiting', { id: request.id, ...block }); },
       }, controller.signal);
       if (controller.signal.aborted) { releaseResourceId(admitted.id); controller.signal.throwIfAborted(); }
@@ -89,15 +89,6 @@ export function installResourceIpc(onDiagnostic?: (snapshot: { status: ResourceS
       || !Number.isSafeInteger(request.memoryMiB) || request.memoryMiB < 1 || request.memoryMiB > 0xffff_ffff
       || !Number.isSafeInteger(request.threads) || request.threads < 0 || request.threads > 1024) throw new Error('Invalid resource request');
     owner.releases.set(request.id, reserveResources(request.threads, request.memoryMiB, resolveExportFinalization(event.sender.id, request.finalizationToken)));
-  });
-  ipcMain.handle('resources:reserve-export-finalization', (event, id: string) => {
-    const owner = ownerFor(event.sender);
-    if (typeof id !== 'string' || id.length === 0 || id.length > 128 || owner.releases.has(id) || owner.pending.has(id)) throw new Error('Invalid resource request');
-    const reservation = reserveExportFinalization();
-    const tokens = finalizationOwners.get(event.sender.id) ?? new Map<string, number>();
-    tokens.set(id, reservation.nativeId);
-    finalizationOwners.set(event.sender.id, tokens);
-    owner.releases.set(id, reservation.release);
   });
   ipcMain.on('resources:release', (event, id: string) => {
     const owner = owners.get(event.sender.id);

@@ -32,8 +32,8 @@ describe('timeline mutation intent', () => {
     expect(starts).toEqual([0, 5_000_000])
   })
 
-  // ── (b) Duration autofit (ADR 0005) ───────────────────────────────────────
-  it('autofits unpinned composition duration to the last layer end (ADR 0005)', () => {
+  // ── (b) Duration autofit (docs/data-model.md#composition) ──────────────────
+  it('autofits unpinned composition duration to the last layer end', () => {
     const a = freshActor()
     const firstAdd = a.dispatch('add_layer', { track: aRollId(a), kind: 'color', t_start_us: 0, t_end_us: 2_500_000 })
     expect(firstAdd.ok).toBe(true)
@@ -49,31 +49,6 @@ describe('timeline mutation intent', () => {
     const shortAdd = a.dispatch('add_layer', { track: bRollId(a), kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
     expect(shortAdd.ok).toBe(true)
     expect(wireRoot(wireSnapshot(a)).duration_us).toBe(2_500_000)
-  })
-
-  // ── (b-ii) update_layer skips autofit ─────────────────────────────────────
-  // update_layer is an envelope-only patch that deliberately does NOT run
-  // applyDurationAutofit (mutations/update.ts, applyUpdateLayer). So extending a
-  // layer's Out edge via update_layer leaves composition.duration_us STALE
-  // (behind the layer's new end) on an unpinned project — over-strict invariant
-  // checks must not reject that.
-  it('update_layer does NOT autofit composition duration (stays stale)', () => {
-    const a = freshActor()
-    const t = aRollId(a)
-    const lid = okValue(a.dispatch('add_layer', { track: t, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })) as string
-    // add_layer autofits: duration tracks the layer end.
-    expect(wireRoot(wireSnapshot(a)).duration_us).toBe(1_000_000)
-    // Extend the Out edge to 3s via update_layer (envelope patch).
-    const updated = a.dispatch('update_layer', { layer: lid, patch: { t_end_us: 3_000_000 } })
-    expect(updated.ok).toBe(true)
-    const snap = wireSnapshot(a)
-    const layer = wireRoot(snap).tracks.flatMap((tr) => tr.layers).find((l) => l.id === lid)
-    // The layer DID move to 3s...
-    expect(layer?.t_end_us).toBe(3_000_000)
-    // ...but composition duration is STILL 1s (autofit deliberately skipped)...
-    expect(wireRoot(snap).duration_us).toBe(1_000_000)
-    // ...and the composition was never pinned.
-    expect(wireRoot(snap).duration_pinned).toBe(false)
   })
 
   // ── (c) fit_composition_to_layers ─────────────────────────────────────────

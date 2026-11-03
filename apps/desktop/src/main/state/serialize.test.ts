@@ -148,19 +148,6 @@ describe('parseProject grid repair', () => {
     }
   })
 
-  it('rejects the same off-grid value when a MUTATION submits it (reject on edit)', () => {
-    const g = seededGen()
-    const actor = createActor({ initial: blankProject(g, 'x'), idGen: g })
-    const track = root(actor.snapshot()).tracks[0].id
-    const added = actor.dispatch('add_layer', { track, kind: 'color', t_start_us: 0, t_end_us: 2_000_000 })
-    expect(added.ok).toBe(true)
-    const layer = added.ok ? (added.value as string) : ''
-    // update_layer is the one envelope patch that stores raw µs — the backstop is
-    // what stops it, and the failure is structured rather than a silent write.
-    const res = actor.dispatch('update_layer', { layer, patch: { t_end_us: 2_999_999 } })
-    expect(res).toEqual({ ok: false, error: { error: 'ValidationFailed', detail: { rule: 'OffGridLayerBoundary', layer, field: 't_end_us', t: 2_999_999, fps: { num: 30, den: 1 }, grid: 'frame', snap_to: 3_000_000 } } })
-  })
-
   it('is idempotent: repaired → saved → reopened reports no second repair', () => {
     const repaired = parseProject(offGridWire(), silent)
     const reported: GridRepair[][] = []

@@ -377,8 +377,8 @@ describe("SearchPalette", () => {
 /// have come through the prose or its tags.
 const DESC_SEGMENTS: readonly DescSegment[] = [
   {
-    t_start_us: 500_000,
-    t_end_us: 1_500_000,
+    src_start_us: 500_000,
+    src_end_us: 1_500_000,
     text: "a wide shot of the city skyline at dusk",
     tags: ["establishing", "exterior"],
   },

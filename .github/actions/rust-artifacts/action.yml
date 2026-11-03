@@ -1,8 +1,9 @@
 name: Rust artifacts
 description: >-
-  Restore the two napi addons, the conformance analyzer bin and the generated
-  eval wasm module from a cache keyed on the Rust sources that produce them —
-  or build them and publish the cache.
+  Restore the two napi addons (with the core addon's ffmpeg reaper on macOS
+  and Linux), the conformance analyzer bin and the generated eval wasm module
+  from a cache keyed on the Rust sources that produce them — or build them and
+  publish the cache.
 
 # Why this is an action and not five inline steps: the key below must be
 # byte-identical in every job that reads it, and a drifted copy degrades to a
@@ -83,6 +84,7 @@ runs:
           apps/desktop/native/index.*.node
           apps/desktop/native/index.js
           apps/desktop/native/index.d.ts
+          apps/desktop/native/weftcut-reaper
           apps/desktop/native/decode/index.*.node
           apps/desktop/native/decode/index.js
           apps/desktop/native/decode/index.d.ts
@@ -177,6 +179,7 @@ runs:
           apps/desktop/native/index.*.node
           apps/desktop/native/index.js
           apps/desktop/native/index.d.ts
+          apps/desktop/native/weftcut-reaper
           apps/desktop/native/decode/index.*.node
           apps/desktop/native/decode/index.js
           apps/desktop/native/decode/index.d.ts

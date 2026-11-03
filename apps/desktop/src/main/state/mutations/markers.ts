@@ -20,7 +20,7 @@ export function snapMarkerTimes(c: Composition, tUs: number, endTUs: number | nu
   // caller's arithmetic slip, and a mark that silently moved to 0 would be
   // reported as placed where it was asked. Load-time repair is not needed —
   // a stored negative marker is legal state and simply never receives one.
-  for (const [field, t] of [['t_us', tUs], ['end_t_us', endTUs]] as const) {
+  for (const [field, t] of [['t_us', tUs], ['t_end_us', endTUs]] as const) {
     if (t !== null && t < 0)
       throw new CommandFailure({ error: 'InvalidArgument', field, detail: `${field} ${t} is before the start of the timeline; timeline time starts at 0` })
   }
@@ -28,8 +28,8 @@ export function snapMarkerTimes(c: Composition, tUs: number, endTUs: number | nu
   const t = snapFrameRound(tUs, num, den)
   const end = endTUs === null ? null : snapFrameRound(endTUs, num, den)
   if (end !== null && end <= t)
-    throw new CommandFailure({ error: 'InvalidArgument', field: 'end_t_us',
-      detail: `a region marker must span at least one frame at ${num}/${den} fps: snapped end_t_us ${end} <= t_us ${t}` })
+    throw new CommandFailure({ error: 'InvalidArgument', field: 't_end_us',
+      detail: `a region marker must span at least one frame at ${num}/${den} fps: snapped t_end_us ${end} <= t_us ${t}` })
   return { tUs: t, endTUs: end }
 }
 
@@ -50,8 +50,9 @@ function requireMarker(p: Project, id: Uuid): LocatedMarker {
   return found
 }
 
-/** MarkerPatch. null/absent = "don't touch"; end_t_us can only be SET, never
- *  cleared (clearing → remove+add).
+/** MarkerPatch. Absent = "don't touch"; `end_t_us: null` turns a region back
+ *  into a point. The renderer never sends a null; the MCP parser refuses one
+ *  on every other field.
  *
  *  `anchor` is deliberately NOT a patch field, and never becomes one: an anchor
  *  is set and cleared only by the dedicated attach/detach ops, which check the
@@ -100,8 +101,8 @@ export interface MarkerPatch {
  *  anyway (`MarkerAnchorLayerHasNoSourceWindow`). */
 function retimeAnchor(p: Project, m: Marker, anchor: MarkerAnchor, tUs: number, patchesEnd: boolean): void {
   if (patchesEnd)
-    throw new CommandFailure({ error: 'InvalidArgument', field: 'end_t_us',
-      detail: `marker ${m.id} is anchored, so its end follows its anchor: patch t_us alone to move it, end_t_us alone to resize it` })
+    throw new CommandFailure({ error: 'InvalidArgument', field: 't_end_us',
+      detail: `marker ${m.id} is anchored, so its end follows its anchor: patch t_us alone to move it, t_end_us alone to resize it` })
   const { layer } = requireLayer(p, anchor.layer)
   if (!hasSourceWindow(layer.params))
     throw new CommandFailure({ error: 'WrongLayerKind', layer: anchor.layer, expected: 'VideoClip | Audio | CompositionRef' })
@@ -134,14 +135,16 @@ export function applyUpdateMarker(p: Project, id: Uuid, patch: MarkerPatch): voi
   const { comp: c, marker: m } = requireMarker(p, id)
   const movesTime = typeof patch.t_us === 'number'
   const patchesEnd = typeof patch.end_t_us === 'number'
+  const clearsEnd = patch.end_t_us === null
   const anchor = movesTime ? m.anchor : null
   if (anchor !== null) {
     retimeAnchor(p, m, anchor, snapFrameRound(patch.t_us as number, c.fps.num, c.fps.den), patchesEnd)
+    if (clearsEnd) m.end_t_us = null
   } else {
     const snapped = snapMarkerTimes(c, movesTime ? (patch.t_us as number) : m.t_us,
-      patchesEnd ? (patch.end_t_us as number) : m.end_t_us)
+      patchesEnd ? (patch.end_t_us as number) : clearsEnd ? null : m.end_t_us)
     if (movesTime) m.t_us = snapped.tUs
-    if (patchesEnd) m.end_t_us = snapped.endTUs
+    if (patchesEnd || clearsEnd) m.end_t_us = snapped.endTUs
   }
   if (typeof patch.label === 'string') m.label = patch.label
   if (typeof patch.note === 'string') m.note = patch.note

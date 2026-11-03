@@ -22,7 +22,7 @@ export { percentile } from "../../../shared/msStats";
 /// `DecodeSession` seam as the WebCodecs strategy.
 type BenchHandle = SourceHandle | FfmpegSource;
 
-/// `native-copyback` is the copy-back HW lanes (Linux NVDEC/VAAPI, ADR 0034;
+/// `native-copyback` is the copy-back HW lanes (Linux NVDEC/VAAPI, ADR 0029;
 /// macOS VideoToolbox): decode on the GPU, `av_hwframe_transfer_data` back to a
 /// CPU frame, then feed the SAME `DecodeSession` seam as `sw` (the ship-bytes
 /// `SwTransport`). UNLIKE `native` it does NOT force the lane — it hands

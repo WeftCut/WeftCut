@@ -1,7 +1,7 @@
 import { sourceIn, sourceOut, layerRate, layerRateNumber, writeSourceWindow } from '../../../renderer/layerTiming'
 import { approximateTime, exactTime, subtractTime, addTime, multiplyTime } from '../../../renderer/timeMapping'
 import { canonicalCrop, cropProblem, type CropRect } from '../../../shared/crop'
-import type { Animated, AudioParams, AudioRole, BlendMode, ColorParams, CompositionRefParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextAlign, TextAnimPreset, TextParams, Uuid, VAlign, VideoClipParams , Shadow} from '../model'
+import type { Animated, AudioParams, AudioRole, ColorParams, CompositionRefParams, ImageOverlayParams, Layer, MotifParams, Project, Rgba, TextAlign, TextAnimPreset, TextParams, Uuid, VAlign, VideoClipParams , Shadow} from '../model'
 import { CommandFailure } from '../errors'
 import { TEXT_INTROS, TEXT_OUTROS } from '../../../shared/textAnimation'
 import { snapFrameFloor, snapFrameCeil, gridForLayerKind, snapOnGrid } from '../snap'
@@ -15,6 +15,7 @@ import { positionTrack, setPositionTrack } from '../../../shared/position'
 // carries" — in the shared record module, so this lens layer and the MCP
 // parser read the same predicate and neither depends on the other.
 import { isColorParam, MAX_RESIDENT_KEYFRAMES, type TrackValue } from '../../../shared/keyframe'
+import { effectParamDefault } from '../../../shared/effects/params'
 import type { MotifCatalog } from '../../../shared/motifs/catalog'
 import { canonicalizeProps, MotifPropError, resolveMotifMaxDurUs } from '../../../shared/motifs/catalog'
 import { mediaPropProblem } from '../../../shared/motifs/mediaProp'
@@ -42,11 +43,10 @@ export type LayerParamsPatch =
    *  gesture (ADR 0052 §6), so this path can set the window a trim drag would
    *  not.
    *
-   *  `blend_mode` is the ONE patchable blend field in this table, and only
-   *  because the Ungroup gate names it: `groupNotPlainReason` refuses a
-   *  non-Normal blend, and a reason no command can reach is a dead branch.
-   *  Every other kind stores `blend_mode` and no surface writes it yet. */
-  | { kind: 'CompositionRef'; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; blend_mode?: BlendMode }
+   *  No kind's patch writes `blend_mode`: every kind stores it, always Normal,
+   *  and no renderer draws another mode yet. Rendering, UI and MCP land
+   *  together when one does. */
+  | { kind: 'CompositionRef'; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number }
 
 const stat = <T>(value: T): Animated<T> => ({ mode: 'Static', value })
 
@@ -105,16 +105,27 @@ function authoredTransform(patch: {
  *  this is the only site that needs them as data. */
 const TEXT_ALIGNS: readonly TextAlign[] = ['Left', 'Center', 'Right']
 const VALIGNS: readonly VAlign[] = ['Top', 'Middle', 'Bottom']
-/** `BlendMode`'s variants as values, for the same reason: MCP hands this arm
- *  untyped JSON, and an unrecognised mode reaches the renderer's blend table as
- *  `undefined`, i.e. a layer composited by no rule at all. */
-const BLEND_MODES: readonly BlendMode[] = ['Normal', 'Multiply', 'Screen', 'Overlay', 'Darken', 'Lighten', 'Add', 'Difference']
 
 /** apply_params_patch — kind-matched field merge. Refuses a discriminant
  *  mismatch and a value the kind cannot store (an enum outside its variants, a
  *  zero scale, a face outside its range, a Path-mode x/y). Animated fields
  *  collapse to Static(v), overwriting any keyframe track. Motif props merge
  *  field-wise; only a rebind (a new `motif_id`) replaces them. */
+/** A source-window write on a media-bearing kind. `src_in_us` alone is a SLIP:
+ *  the window moves and keeps its length, so the span and what it plays still
+ *  agree — the Motif rule. With `src_out_us` beside it the window is written as
+ *  sent; `src_out_us` alone moves only the end (a Group's window may overhang
+ *  its composition, ADR 0052 §6). */
+function writeWindow(layer: Layer, q: VideoClipParams | AudioParams | CompositionRefParams, srcIn: number | undefined, srcOut: number | undefined): void {
+  if (srcIn !== undefined && srcOut === undefined) {
+    const span = subtractTime(sourceOut(layer), sourceIn(q))
+    writeSourceWindow(q, exactTime(srcIn), addTime(exactTime(srcIn), span))
+    return
+  }
+  if (srcIn !== undefined) q.src_in_us = srcIn
+  if (srcOut !== undefined) q.src_out_us = srcOut
+}
+
 export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
   const p = layer.params
   if ('transform' in p && p.transform.position.mode === 'Path' && ('x' in patch || 'y' in patch)) throw new CommandFailure({ error:'InvalidArgument',field:'position',detail:'This layer follows a path. Translate or edit its path, or explicitly bake to XY.' })
@@ -293,8 +304,7 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
         throw new CommandFailure({ error: 'InvalidArgument', field: 'speed',
           detail: 'Use retime_layers to change playback rate' })
       }
-      if (patch.src_in_us !== undefined) v.src_in_us = patch.src_in_us
-      if (patch.src_out_us !== undefined) v.src_out_us = patch.src_out_us
+      writeWindow(layer, v, patch.src_in_us, patch.src_out_us)
       if (a.x !== undefined) setPositionTrack(v.transform.position, 'x', stat(a.x))
       if (a.y !== undefined) setPositionTrack(v.transform.position, 'y', stat(a.y))
       if (a.scale_x !== undefined) v.transform.scale_x = stat(a.scale_x)
@@ -353,14 +363,7 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
     case 'CompositionRef': {
       const g = p as CompositionRefParams
       const a = authoredTransform(patch)
-      // Checked before the first write, like the Text arm's enums and for the
-      // same reason: a refused patch must leave the project byte-identical.
-      if (patch.blend_mode !== undefined && !BLEND_MODES.includes(patch.blend_mode)) {
-        throw new CommandFailure({ error: 'InvalidArgument', field: 'blend_mode',
-          detail: `blend_mode must be one of ${BLEND_MODES.join(' | ')}` })
-      }
-      if (patch.src_in_us !== undefined) g.src_in_us = patch.src_in_us
-      if (patch.src_out_us !== undefined) g.src_out_us = patch.src_out_us
+      writeWindow(layer, g, patch.src_in_us, patch.src_out_us)
       if (a.x !== undefined) setPositionTrack(g.transform.position, 'x', stat(a.x))
       if (a.y !== undefined) setPositionTrack(g.transform.position, 'y', stat(a.y))
       if (a.scale_x !== undefined) g.transform.scale_x = stat(a.scale_x)
@@ -369,7 +372,6 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       if (a.rotation_deg !== undefined) g.transform.rotation_deg = stat(a.rotation_deg)
       if (a.anchor_x !== undefined) g.transform.anchor_x = stat(a.anchor_x)
       if (a.anchor_y !== undefined) g.transform.anchor_y = stat(a.anchor_y)
-      if (patch.blend_mode !== undefined) g.blend_mode = patch.blend_mode
       return
     }
     case 'Color': {
@@ -394,8 +396,7 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       // Refusing here makes the store the truth; that clamp stays as a guard for
       // projects written before this check existed.
       const panP = authored('pan', patch.pan)
-      if (patch.src_in_us !== undefined) au.src_in_us = patch.src_in_us
-      if (patch.src_out_us !== undefined) au.src_out_us = patch.src_out_us
+      writeWindow(layer, au, patch.src_in_us, patch.src_out_us)
       if (gainP !== undefined) au.gain_db = stat(gainP)
       if (panP !== undefined) au.pan = stat(panP)
       if (patch.fade_in_us !== undefined) au.fade_in_us = patch.fade_in_us
@@ -426,7 +427,7 @@ export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsP
     if (pa.fade_phase && 'fade_out_us' in patch && patch.fade_out_us !== undefined) pa.fade_phase.out = { num: 0, den: 1 };
   }
   // A Motif's props are checked against its manifest BEFORE the merge, the
-  // way `add_motif_layer` and `preview_motif` check theirs: an unknown
+  // way `add_layers` and `preview_motif` check theirs: an unknown
   // key or a wrong type is refused naming the schema, rather than stored for a
   // render that ignores it. The manifest is the motif the layer will NAME once
   // the patch lands: a rebind (a new `motif_id`) starts from the patch's props
@@ -582,11 +583,26 @@ export function resolveAnimatedRgba(layer: Layer, key: string): Animated<Rgba> |
  *  keyframe tools for timeline-absolute↔layer-local conversion. Read-only (no
  *  commit, no id mint).
  *
+ *  An effect param resolves on the effect it names (EffectNotFound when the
+ *  layer has none by that id), and an unset param of a catalogued kind reads as
+ *  `Static(<catalog default>)` — the value the render and the inspector use for
+ *  it (`shared/effects/params.ts`) — so it can be keyed with no prior write.
+ *
  *  The track's value type is decided by the KEY, so the union it answers is
  *  already narrowed for the caller: `color` reads through `rgbaLens`' sibling,
  *  every other key through `f64Lens`'. */
 export function readLayerTrack(p: Project, id: Uuid, paramKey: string): { tStartUs: number; track: Animated<TrackValue> } {
   const { layer } = requireLayer(p, id)
+  const eff = parseEffectParamKey(paramKey)
+  if (eff) {
+    const e = layer.effects.find((x) => x.id === eff[0])
+    if (!e) throw new CommandFailure({ error: 'EffectNotFound', effect: eff[0] })
+    const stored = e.params[eff[1]]
+    const dflt = effectParamDefault(e.kind, eff[1])
+    if (stored) return { tStartUs: layer.t_start_us, track: stored }
+    if (dflt !== null) return { tStartUs: layer.t_start_us, track: { mode: 'Static', value: dflt } }
+    throw new CommandFailure({ error: 'UnknownKeyframeParam', layer: id, param_key: paramKey })
+  }
   const track: Animated<TrackValue> | null = isColorParam(paramKey)
     ? resolveAnimatedRgba(layer, paramKey)
     : resolveAnimatedF64(layer, paramKey)
@@ -709,10 +725,10 @@ export function applyUpdateLayerParamTrack(p: Project, id: Uuid, paramKey: strin
       const e = layer.effects.find((x) => x.id === eff[0])
       // A placeholder that lives for two statements: it exists only so the
       // re-resolve below finds the key present, and `lens.set(track)` overwrites
-      // it unconditionally. NOT a default — the effect registry's `default` is
-      // the default, applied at render (`EffectChain`) and in the inspector
-      // (`EffectParamField`), and absent-means-default is the contract because
-      // main cannot read that pixi-dependent registry at all.
+      // it unconditionally. NOT a default — the catalog's `default`
+      // (`shared/effects/params.ts`) is, applied at render (`EffectChain`), in
+      // the inspector (`EffectParamField`) and by the MCP read (`readLayerTrack`):
+      // absent means default.
       if (e && !(eff[1] in e.params)) e.params[eff[1]] = { mode: 'Static', value: 0 }
     }
   }

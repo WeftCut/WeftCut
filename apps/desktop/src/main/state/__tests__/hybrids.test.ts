@@ -7,7 +7,7 @@ import { applyAddLayer } from '../mutations/add'
 import { markerHibernating } from '../summary'
 import {
   runHybrid, markShotCuts, cutsToTimeline, pauseCores,
-  DEFAULT_PAUSE_PAD_US, PAUSE_MARKER_COLOR,
+  DEFAULT_PAUSE_PAD_US, PAUSE_MARKER_COLOR, reviewedPauses, voiceoverLane,
   type HybridDeps,
 } from '../hybrids'
 import { resolvePauseSubject } from '../pauseSubject'
@@ -69,7 +69,7 @@ function makeDeps(actor: ActorHandle, opts: {
       analyzeShotsFloor: vi.fn(async () => JSON.stringify({ shots: [], cut_scores: [] })),
       reduceShotReport: vi.fn((reportJson: string) => reportJson),
       shotDefaultOpts: vi.fn(() => ({ ...RUST_SHOT_DEFAULTS })),
-      detectPauses: vi.fn(async () => ({ pauses: [], noise_floor_amp: 0, peaks_source: 'raw' as const })),
+      detectPauses: vi.fn(async () => ({ pauses: [], noise_floor_db: null, peaks_source: 'raw' as const })),
     },
     enqueueDerivatives,
     enqueueWorkspaceCopy,
@@ -138,7 +138,7 @@ describe('runHybrid: apply_subtitles', () => {
     expect(track.layers.map((l) => [l.t_start_us, l.t_end_us])).toEqual([[11_000_000, 12_000_000], [13_000_000, 14_000_000]])
   })
 
-  // ADR 0070: the write packs into the caption track already there.
+  // ADR 0026: the write packs into the caption track already there.
   it('a second apply whose cues fit lands on the first caption track', async () => {
     const actor = actorWithSubtitle()
     const deps = makeDeps(actor)
@@ -312,23 +312,49 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     expect(arg[0].id).toBe(AUDIO_MID)
   })
 
-  it('ensureAudioTrack returns the last existing track when target_track_id is omitted', async () => {
-    // Fresh project has 2 reserved (non-removable) A/B-roll tracks, so
-    // ensureAudioTrack (hybrids.ts) returns the LAST existing track — it does NOT
-    // create a track here. The zero-track add_track('Voiceover') branch is
-    // unreachable through the validated actor (reserved tracks can't be removed),
-    // so it's not exercised.
+  it('without target_track_id, lands on the topmost track whose audio lane is free', async () => {
+    // A fresh project has the two reserved A/B-roll tracks, both empty: the
+    // topmost (last) is free, so no track is created.
     const actor = freshActor()
     const deps = makeDeps(actor)
     deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
-    await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1 }, deps)
-    const snap = actor.snapshot()
-    // A layer must have been placed on some track.
-    const layerCount = root(snap).tracks.flatMap((t) => t.layers).length
-    expect(layerCount).toBeGreaterThanOrEqual(1)
-    // The placed layer must be on the last existing track.
-    const lastTrack = root(snap).tracks[root(snap).tracks.length - 1]
-    expect(lastTrack.layers).toHaveLength(1)
+    const parsed = JSON.parse(await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1 }, deps) as string) as { track_id: string }
+    const tracks = root(actor.snapshot()).tracks
+    expect(tracks).toHaveLength(2)
+    expect(parsed.track_id).toBe(tracks[tracks.length - 1].id)
+    expect(tracks[tracks.length - 1].layers).toHaveLength(1)
+  })
+
+  it('a refused placement leaves no orphan in the pool (M16)', async () => {
+    const actor = freshActor()
+    const deps = makeDeps(actor)
+    const track = root(actor.snapshot()).tracks[1].id
+    const BUSY = '00000000-0000-0000-0000-0000000000ee'
+    actor.dispatch('add_media', { id: BUSY, kind: 'Audio', duration_us: 4_000_000 })
+    expect(actor.dispatch('add_layer', { track, kind: 'audio', media: BUSY, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000 }).ok).toBe(true)
+    deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
+    await expect(runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, target_track_id: track, t_start_us: 1_000_000 }, deps)).rejects.toThrow()
+    expect(actor.snapshot().media_pool[AUDIO_MID]).toBeUndefined()
+    expect(deps._enqueueDerivatives).not.toHaveBeenCalled()
+  })
+
+  it('names the voiceover lane rule: a busy audio lane is skipped', () => {
+    const actor = freshActor()
+    const [lower, upper] = root(actor.snapshot()).tracks
+    const BUSY = '00000000-0000-0000-0000-0000000000ee'
+    actor.dispatch('add_media', { id: BUSY, kind: 'Audio', duration_us: 4_000_000 })
+    expect(actor.dispatch('add_layer', { track: upper.id, kind: 'audio', media: BUSY, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000 }).ok).toBe(true)
+    const comp = root(actor.snapshot())
+    expect(voiceoverLane(comp, 1_000_000, 2_000_000)).toBe(lower.id)
+    expect(voiceoverLane(comp, 4_000_000, 5_000_000)).toBe(upper.id)
+  })
+
+  it('refuses a target track outside the composition before synthesizing', async () => {
+    const actor = freshActor()
+    const deps = makeDeps(actor)
+    deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
+    await expect(runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', target_track_id: '00000000-0000-0000-0000-00000000ffff' }, deps)).rejects.toThrow(/target_track_id|not in/)
+    expect(deps.compute.synthesizeSpeechCompute).not.toHaveBeenCalled()
   })
 })
 
@@ -489,6 +515,11 @@ describe('runHybrid: auto_split_by_shot', () => {
     // under the dropped sliver goes with it rather than being left orphaned.
     expect(spansOfKind(actor, 'VideoClip')).toEqual([[0, 2_000_000], [2_300_000, 6_000_000]])
     expect(spansOfKind(actor, 'Audio')).toEqual([[0, 2_000_000], [2_300_000, 6_000_000]])
+    // The partner's surviving pieces ride the answer (audit T12).
+    const siblings = (JSON.parse(result as string) as { siblings: Array<{ layer_id: string; segments: string[] }> }).siblings
+    const audioIds = root(actor.snapshot()).tracks.flatMap((t) => t.layers).filter((l) => l.params.kind === 'Audio').sort((x, y) => x.t_start_us - y.t_start_us).map((l) => l.id)
+    expect(siblings).toHaveLength(1)
+    expect(siblings[0]!.segments).toEqual(audioIds)
   })
 
   it('collapses sub-frame-spaced cuts to one split instead of throwing', async () => {
@@ -965,7 +996,7 @@ describe('runHybrid: apply_shot_cuts', () => {
 function withPauses(deps: HybridDeps, ranges: Array<[number, number]>) {
   const detectPauses = vi.fn(async () => ({
     pauses: ranges.map(([t_start_us, t_end_us]) => ({ t_start_us, t_end_us })),
-    noise_floor_amp: 0.004,
+    noise_floor_db: -48,
     peaks_source: 'raw' as const,
   }))
   deps.compute.detectPauses = detectPauses
@@ -1185,8 +1216,8 @@ describe('runHybrid: mark_pauses', () => {
     const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
     const { detectPauses } = withPauses(deps, [])
-    await runHybrid('mark_pauses', { layer_id: layerId, threshold_amp: 0.05, min_pause_us: 250_000 }, deps)
-    expect(detectPauses).toHaveBeenCalledWith({ layer_id: layerId, threshold_amp: 0.05, min_pause_us: 250_000 })
+    await runHybrid('mark_pauses', { layer_id: layerId, threshold_db: -26, min_pause_us: 250_000 }, deps)
+    expect(detectPauses).toHaveBeenCalledWith({ layer_id: layerId, threshold_db: -26, min_pause_us: 250_000 })
     // Omitted means ABSENT on the wire, so Rust's own defaults decide — a
     // number invented at this hop would be free to drift from them.
     await runHybrid('mark_pauses', { layer_id: layerId }, deps)
@@ -1482,10 +1513,10 @@ describe('runHybrid: remove_pauses', () => {
     const { actor, layerId } = withAudioLayer(6_000_000)
     const deps = makeDeps(actor)
     const { detectPauses } = withPauses(deps, [])
-    await runHybrid('remove_pauses', { layer_id: layerId, threshold_amp: 0.05, min_pause_us: 250_000, pad_us: 0 }, deps)
+    await runHybrid('remove_pauses', { layer_id: layerId, threshold_db: -26, min_pause_us: 250_000, pad_us: 0 }, deps)
     // `pad_us` never reaches Rust: the cut list is built here, so the detector
     // is asked for whole pauses whatever the pad is.
-    expect(detectPauses).toHaveBeenCalledWith({ layer_id: layerId, threshold_amp: 0.05, min_pause_us: 250_000 })
+    expect(detectPauses).toHaveBeenCalledWith({ layer_id: layerId, threshold_db: -26, min_pause_us: 250_000 })
     // Omitted means ABSENT on the wire, so Rust's own defaults decide — the
     // same rule mark_pauses follows, and for the same reason.
     await runHybrid('remove_pauses', { layer_id: layerId }, deps)
@@ -1674,5 +1705,41 @@ describe('applyWorkspacePathsEvent', () => {
       media_id: MID, path_abs: 'a', path_rel: 'r', file_hash_blake3: 'h', file_size: 1, file_mtime: 2,
     })
     expect(r?.ok).toBe(false)
+  })
+})
+
+describe('runHybrid: remove_pauses { pauses } (a reviewed subset)', () => {
+  it('cuts exactly the ranges given, detecting nothing, with the pad rule', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
+    const deps = makeDeps(actor)
+    const { detectPauses } = withPauses(deps, [[1_000_000, 2_000_000], [4_000_000, 5_000_000]])
+    const result = removedResult(await runHybrid('remove_pauses', { layer_id: layerId, pad_us: 100_000, pauses: [{ t_start_us: 4_000_000, t_end_us: 5_000_000 }] }, deps))
+    expect(detectPauses).not.toHaveBeenCalled()
+    expect(result.removed).toBe(1)
+    expect(result.removed_us).toBe(800_000)
+    expect(spansOfKind(actor, 'Audio')).toEqual([[0, 4_100_000], [4_100_000, 5_200_000]])
+  })
+
+  it('refuses a range outside the clip, overlapping ranges, one its pad swallows, and detection args beside it', async () => {
+    const { actor, layerId } = withAudioLayer(6_000_000)
+    const deps = makeDeps(actor)
+    withPauses(deps, [])
+    const len = actor.historyStatus().len
+    for (const [pauses, extra, msg] of [
+      [[{ t_start_us: 5_000_000, t_end_us: 7_000_000 }], {}, 'outside the clip'],
+      [[{ t_start_us: 1_000_000, t_end_us: 2_000_000 }, { t_start_us: 1_500_000, t_end_us: 2_500_000 }], {}, 'overlap'],
+      [[{ t_start_us: 1_000_000, t_end_us: 1_150_000 }], {}, 'nothing of it would be cut'],
+      [[{ t_start_us: 1_000_000, t_end_us: 2_000_000 }], { threshold_db: -30 }, 'replaces detection'],
+    ] as const) {
+      await expect(runHybrid('remove_pauses', { layer_id: layerId, pauses, ...extra }, deps)).rejects.toThrow(msg)
+    }
+    expect(actor.historyStatus().len).toBe(len)
+  })
+
+  it('reviewedPauses sorts the list; an edge pause keeps its pad on the inner side only', () => {
+    const clip = { t_start_us: 0, t_end_us: 10 }
+    expect(reviewedPauses([{ t_start_us: 3, t_end_us: 6 }, { t_start_us: 0, t_end_us: 2 }], 1, clip))
+      .toEqual([{ t_start_us: 0, t_end_us: 2 }, { t_start_us: 3, t_end_us: 6 }])
+    expect(() => reviewedPauses([{ t_start_us: 3, t_end_us: 5 }], 1, clip)).toThrow('nothing of it would be cut')
   })
 })

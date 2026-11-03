@@ -31,6 +31,7 @@ test('both addons and every co-located real library are checked; SONAME links ar
   const { resources, modules } = packed(t, {
     'core/index.linux-x64-gnu.node': true,
     'core/index.js': true,
+    'core/weftcut-reaper': true,
     'native-decode/index.linux-x64-gnu.node': true,
     'native-decode/libavutil.so.60.26.103': true,
     'native-decode/libavutil.so.60': 'libavutil.so.60.26.103',
@@ -41,6 +42,7 @@ test('both addons and every co-located real library are checked; SONAME links ar
   })
   assert.deepEqual(names(linuxLibraries(resources), modules), [
     'core/index.linux-x64-gnu.node',
+    'core/weftcut-reaper',
     'native-decode/index.linux-x64-gnu.node',
     'native-decode/libavutil.so.60.26.103',
     'native-decode/libva-drm.so.2.2200.0',

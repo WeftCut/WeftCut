@@ -136,7 +136,7 @@ function useLibraryActions(onCreated: (p: ExportPreset) => void) {
     create: (values: ExportPresetValues) => setNaming({ kind: 'create', values: structuredClone(values) }),
     dialog: naming && <NameDialog initialName={naming.kind === 'rename' ? naming.preset.name : ''}
       excludeId={naming.kind === 'rename' ? naming.preset.id : undefined} onClose={() => setNaming(null)} onSave={async name => {
-        if (naming.kind === 'rename') await setAppSettings({ export_preset_change: { kind: 'rename', id: naming.preset.id, name } });
+        if (naming.kind === 'rename') await setAppSettings({ export_preset_change: { kind: 'update', id: naming.preset.id, name } });
         else {
           const preset: ExportPreset = { id: crypto.randomUUID(), name, version: 1, values: naming.values };
           await setAppSettings({ export_preset_change: { kind: 'create', preset } });

@@ -17,11 +17,9 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use crate::ffmpeg::ffmpeg_is_installed;
+use crate::ffmpeg::{ffmpeg_is_installed, Bound};
 use anyhow::{Context, Result};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-use crate::process::NoConsoleWindow;
 
 use crate::cache::{cached_ok, discard_temp, promote_temp, temp_path, CacheLayout};
 use crate::state::{MediaItem, MediaKind};
@@ -115,11 +113,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     let tmp = temp_path(&dest);
     let _ = tokio::fs::remove_file(&tmp).await;
 
-    let mut child = crate::ffmpeg::command_with_threads(1)
-        .no_console_window()
-        // Reap on future-drop so no orphan keeps writing the shared temp; see
-        // hwaccel.rs.
-        .kill_on_drop(true)
+    let mut child = crate::ffmpeg::command_with_threads(1, Bound::watchdog())
         .args(["-hide_banner", "-nostats", "-loglevel", "error", "-i"])
         .arg(&media.path_abs)
         .args([
@@ -140,9 +134,9 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
         .spawn()
         .context("spawn ffmpeg for conform")?;
 
-    let mut stdout = child.stdout.take().expect("stdout was piped");
+    let mut stdout = child.take_stdout().expect("stdout was piped");
     let mut stderr_task =
-        tokio::spawn(drain_stderr(child.stderr.take().expect("stderr was piped")));
+        tokio::spawn(drain_stderr(child.take_stderr().expect("stderr was piped")));
     let operation = async {
         // Stream to the temp file with a placeholder frame_count, then patch
         // the header once the byte total is known.
@@ -228,8 +222,7 @@ pub async fn run(cache: &CacheLayout, media: &MediaItem) -> Result<PathBuf> {
     let result = operation.await;
     if result.is_err() {
         // A reservation may be released only after the process has exited.
-        let _ = child.kill().await;
-        let _ = child.wait().await;
+        let _ = child.stop().await;
         stderr_task.abort();
         discard_temp(&dest);
     }

@@ -14,7 +14,7 @@ import { hardwareGate, hardwareEnvironmentGate } from './helpers/hardwareGate'
 // transport shapes share this one spec:
 //   - nvdec/vaapi (Linux) and videotoolbox (macOS, issue #10) copy-back:
 //     NV12 copies back to system memory and rides the SAME previewSw
-//     transport as software (ADR 0034), so everything downstream
+//     transport as software (ADR 0029), so everything downstream
 //     (ring → Nv12Ingest → sprite) is shared.
 //   - d3d11va (Windows shared-texture): frames stay on the GPU; native
 //     converts NV12→RGBA with its own shader and shares the texture
@@ -57,7 +57,9 @@ const H264 = path.resolve(MEDIA_DIR, 'test_1080p_h264.mp4')
 //   VT hwaccel REQUIREs the hardware ProRes decoder (release/8.x), which only
 //   ProRes-engine chips carry (M1 Pro/Max, M2+) — on a base M1 the probe
 //   declines and this variant SKIPS cleanly (software fallback proven by the
-//   skip path itself).
+//   skip path itself). GitHub's hosted Macs skip on both of their chips: the
+//   M1 finds no decoder, the M2 Pro opens a session that fails every first
+//   frame (docs/platform-codecs.md §11). No hosted Mac covers this variant.
 // - HEVC Main10 (yuv420p10le): the smooth-gradient fixture (SSIM_FLOOR_SMOOTH).
 //   Hardware-decoded by every Apple Silicon media block, so the I420P10
 //   transport → ten-bit ingest path gates GREEN on any Mac host, ProRes engine
@@ -149,7 +151,7 @@ function parseSsimAll(stderr: string): number | null {
 /// Which transport the title names. Derived from `frameKind` rather than listed
 /// per lane: 'browser' IS the shared-texture shape (d3d11va binds an
 /// ImageBitmap snapshot), everything else copies back into NV12/I420P10 ship
-/// bytes (ADR 0034). A hardcoded "copy-back" for all four contradicted this
+/// bytes (ADR 0029). A hardcoded "copy-back" for all four contradicted this
 /// file's own header on the one lane that isn't.
 const transportWord = (frameKind: HwVariant['frameKind']) =>
   frameKind === 'browser' ? 'shared-texture' : 'copy-back'
@@ -201,12 +203,16 @@ for (const { lane, id, codec, fixture, frameKind, ssimFloor } of VARIANTS) {
         // This large fixture keeps import preparation + a derivative alive
         // together (both interactive slots on a 3-core Mac). Finish setup
         // before measuring hardware fidelity; do not retry a software result
-        // or bypass the product's admission authority.
+        // or bypass the product's admission authority. Idle must HOLD: the
+        // import returns before its derivatives start and they start in turn,
+        // so one idle sample reads a gap (measured 38-51 s to really settle).
         const mediaId = await invokeCmd<string>(page, 'import_media', { path: fixture })
+        let idleSince: number | null = null
         await expect.poll(async () => {
           const status = await page.evaluate(() => window.api.resources.status())
-          return status.cpu_threads === 0 && status.waiting === 0
-        }, { timeout: 60_000, message: 'ProRes fixture import must release compute before hardware fidelity sampling' }).toBe(true)
+          idleSince = status.cpu_threads === 0 && status.waiting === 0 ? idleSince ?? Date.now() : null
+          return idleSince !== null && Date.now() - idleSince >= 8_000
+        }, { timeout: 180_000, intervals: [200], message: 'ProRes fixture import must release compute before hardware fidelity sampling' }).toBe(true)
         ;({ layerId } = await placeMediaLayer(page, { mediaId }))
       } else {
         const placed = await importAndPlaceMedia(page, { mediaAbsPath: fixture })

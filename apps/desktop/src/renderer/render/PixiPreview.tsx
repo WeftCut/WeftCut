@@ -190,6 +190,13 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   const compositorRef = useRef<Compositor | null>(null);
   const engineRef = useRef<PlaybackEngine | null>(null);
   const applicationRef = useRef<Application | null>(null);
+  /// Whether this preview is mounted. Pixi's init is async, so `handleInit` can
+  /// run for an Application whose preview already unmounted.
+  const mountedRef = useRef(false);
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   // `handleInit` must not change identity when an always-rendered dock tab
   // flips visibility. Read the current value through a ref at initialization;
   // the visibility effect owns every subsequent transition.
@@ -293,7 +300,6 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   // Compositor and PlaybackEngine against it.
   const handleInit = useCallback(
     (app: Application) => {
-      applicationRef.current = app;
       // The device dies one microtask after Pixi's own teardown, and not a
       // moment sooner. @pixi/react destroys the Application asynchronously
       // after this component's cleanup; inside that one synchronous
@@ -302,7 +308,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       // microtask lands after the renderer half. Destroying the device before
       // Pixi has released the canvas swap chain and its textures reproduces the
       // Electron 44 freeze exactly as leaving it to the garbage collector does.
-      // ADR 0059.
+      // See docs/notes/electron-chromium-behavior.md.
       const device = webgpuDeviceOf(app.renderer);
       app.stage.once("destroyed", () => queueMicrotask(() => {
         try {
@@ -314,6 +320,23 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
           device?.destroy();
         }
       }));
+      // LANDMINE: the Compositor and PlaybackEngine live exactly as long as
+      // this Application. The engine subscribes to the session transport, which
+      // outlives every preview; one left behind keeps compositing on every seek
+      // into a destroyed renderer (a Group's render target then throws). So an
+      // init that lands after unmount (unmounted mid-init; @pixi/react destroys
+      // the app right after) wires nothing, and the app's teardown disposes
+      // whatever is still wired to it.
+      if (!mountedRef.current) return;
+      applicationRef.current = app;
+      app.stage.once("destroyed", () => {
+        if (applicationRef.current !== app) return;
+        engineRef.current?.dispose();
+        compositorRef.current?.dispose();
+        engineRef.current = null;
+        compositorRef.current = null;
+        applicationRef.current = null;
+      });
       // `app.screen` is exact only here, before the first `resize` — Pixi
       // initialized it from the composition-sized props at resolution 1.
       const logical = { width: app.screen.width, height: app.screen.height };
@@ -942,10 +965,11 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         height={composition.height}
         background={0x000000}
         antialias
-        // Prefer WebGPU; PixiJS auto-falls back to WebGL when the
-        // runtime doesn't expose `navigator.gpu` (older Chromium,
-        // restricted contexts). `app.renderer.type` in the init log
-        // reads 2 for WebGPU, 1 for WebGL — useful sanity check.
+        // Prefer WebGPU; PixiJS falls back to WebGL, then to the 2D-canvas
+        // renderer, which draws no effects, crops or transitions — the
+        // status area says so while any is in view (rendererCapability.ts,
+        // RendererLimitIndicator). `app.renderer.type` in the init log reads
+        // 2 for WebGPU, 1 for WebGL, 4 for canvas.
         preference="webgpu"
         onInit={handleInit}
         className="pixi-preview-canvas"
@@ -979,8 +1003,8 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 /// pixiPreviewFlag.ts, which most of them are threaded straight into.
 async function handlePixiExport(
   opts: {
-    resourcePlan?: import("../../shared/export-resources").ExportResourcePlan | undefined;
-    finalizationToken?: string | undefined;
+    resourcePlan: import("../../shared/export-resources").ExportResourcePlan;
+    finalizationToken: string;
     onProgress?: (encoded: number, total: number) => void;
     encoderConfig?: VideoEncoderConfig;
     outputFps?: { num: number; den: number };

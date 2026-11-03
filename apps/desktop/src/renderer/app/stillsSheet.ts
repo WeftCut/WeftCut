@@ -2,9 +2,10 @@
 //
 // `render_frames { sheet: true }`: the rendered stills laid out as one labelled
 // contact sheet, so an agent reads a beat's span in one image. Each frame keeps
-// its own pixels; the label sits above it, never over the picture.
+// its own pixels; the label sits above it, never over the picture. A frame
+// drawn with effects skipped (`without: ["effects"]`) says so in its label.
 
-export interface Still { t_us: number; width: number; height: number; jpeg: ArrayBuffer }
+export interface Still { t_us: number; width: number; height: number; jpeg: ArrayBuffer; omitted?: readonly string[] }
 
 const LABEL_PX = 26;
 
@@ -14,7 +15,8 @@ export function sheetLayout(count: number, frameW: number, frameH: number, maxCo
   return { cols, rows, width: cols * frameW, height: rows * (frameH + LABEL_PX), cell: (i: number) => ({ x: (i % cols) * frameW, y: Math.floor(i / cols) * (frameH + LABEL_PX) }) };
 }
 
-export const stillLabel = (tUs: number) => `${(tUs / 1e6).toFixed(2)} s`;
+export const stillLabel = (tUs: number, omitted?: readonly string[]) =>
+  `${(tUs / 1e6).toFixed(2)} s${omitted?.includes("effects") ? " · effects off" : ""}`;
 
 export async function composeStillsSheet(frames: readonly Still[], maxCols = 4): Promise<{ width: number; height: number; jpeg: ArrayBuffer }> {
   const w = frames[0]!.width, h = frames[0]!.height;
@@ -27,7 +29,7 @@ export async function composeStillsSheet(frames: readonly Still[], maxCols = 4):
   for (const [i, f] of frames.entries()) {
     const { x, y } = layout.cell(i);
     ctx.fillStyle = "#ffffff";
-    ctx.fillText(stillLabel(f.t_us), x + 8, y + 18);
+    ctx.fillText(stillLabel(f.t_us, f.omitted), x + 8, y + 18);
     const bitmap = await createImageBitmap(new Blob([f.jpeg], { type: "image/jpeg" }));
     try {
       ctx.drawImage(bitmap, x, y + LABEL_PX, w, h);

@@ -98,19 +98,19 @@ test(`Motif pre-bake survives a cold app restart and captures only missing frame
     await waitForHook(running.page, 'motifReopenProject')
     // Install before opening the project: the new renderer has no cached or
     // in-flight frame reads yet. Clearing L0 after prewarming is insufficient,
-    // because an existing broker request can refill it and bypass this IPC.
-    // Replay a stale disk miss although frame 0 is already persisted. Main
-    // must recheck the committed address instead of capturing it again.
-    await running.app.evaluate(({ ipcMain }, hash) => {
-      const read = ipcMain._invokeHandlers.get('motif:read')!
+    // because an existing broker request can refill it and bypass this read.
+    // Replay a stale miss from the Motif frame reader (every lane) although
+    // frame 0 is persisted and was never reported to main. Main must recheck
+    // the committed address instead of capturing it again.
+    await running.page.evaluate(hash => {
       ;(globalThis as any).__staleMotifMissDelivered = false
-      ipcMain._invokeHandlers.set('motif:read', (event: any, args: any) => {
-        if (args.hash === hash && args.frame === 0 && !(globalThis as any).__staleMotifMissDelivered) {
+      ;(globalThis as any).__weftcutE2EMotifReadInterceptor = (address: { hash: string; frame: number }, _div: number, next: () => Promise<ImageBitmap | null>) => {
+        if (address.hash === hash && address.frame === 0 && !(globalThis as any).__staleMotifMissDelivered) {
           ;(globalThis as any).__staleMotifMissDelivered = true
-          return null
+          return Promise.resolve(null)
         }
-        return read(event, args)
-      })
+        return next()
+      }
     }, hashCacheKey(key))
     await invokeCmd(running.page, 'motif_capture_diagnostics', { reset: true })
     await running.page.evaluate(path => (window as any).__weftcutTest.motifReopenProject({ path }), projectPath)
@@ -147,7 +147,7 @@ test(`Motif pre-bake survives a cold app restart and captures only missing frame
       await expect(dot).toHaveAttribute('title', 'Pre-baked')
       await running.page.evaluate(() => (window as any).__weftcutTest.weftcutSampleComposite(240, 240))
     }
-    expect(await running.app.evaluate(() => (globalThis as any).__staleMotifMissDelivered)).toBe(true)
+    expect(await running.page.evaluate(() => (globalThis as any).__staleMotifMissDelivered)).toBe(true)
     const diagnostics = await invokeCmd<CaptureDiagnostics>(running.page, 'motif_capture_diagnostics')
     expect(capturesFor(diagnostics, 'countdown')).toBe(missingFrame === null ? 0 : 1)
     const after = await Promise.all(Array.from({ length: 30 }, (_, f) =>
@@ -222,7 +222,7 @@ for (const mode of ['native', 'png', 'readback-failure', 'warm-cache'] as const)
       expect(files.some(f => f.endsWith('.png'))).toBe(false)
       const decoded = await app.evaluate(async (_electron, { addon, file }) => {
         const native = process.getBuiltinModule('module').createRequire(addon)(addon)
-        const { width, height, rgba } = await native.motifReadFrame(file)
+        const { width, height, rgba } = await native.motifReadFrameScaled(file, 1)
         let clear = 0, visible = 0, partial = 0
         for (let i = 3; i < rgba.length; i += 4) {
           if (rgba[i] === 0) clear++

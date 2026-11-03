@@ -4,7 +4,7 @@ import path from "node:path";
 import { invokeCmd, launchApp, newProject, tmpDir } from "./helpers/driver";
 
 /**
- * A subtitle document is pool media (ADR 0077): importing it lands a `Subtitle`
+ * A subtitle document is pool media (ADR 0026): importing it lands a `Subtitle`
  * item in the pool and touches no track, and dragging that item onto the
  * timeline takes only the drop TIME — released over a picture lane, its cues
  * still go to the caption tracks, the document's 0 at the drop.

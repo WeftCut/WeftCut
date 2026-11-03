@@ -1,5 +1,5 @@
 //! `Project` — the top-level state. Single source of truth shared between the
-//! UI, IR compiler, MCP server, and persistence layer.
+//! UI, MCP server, and persistence layer.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

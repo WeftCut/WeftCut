@@ -94,8 +94,8 @@ describe("trackDisplayName", () => {
     expect(trackDisplayName(tracks[2]!, tracks, tZh)).toBe("轨道 3");
   });
 
-  // Renumbering is the accepted consequence of a positional name (ADR 0042);
-  // Premiere and Resolve renumber too.
+  // Renumbering is the accepted consequence of a positional name
+  // (docs/data-model.md#track); Premiere and Resolve renumber too.
   it("renumbers when a lane below is pruned", () => {
     const kept = track({ id: "kept" });
     const before = [track({ id: "gone" }), kept];

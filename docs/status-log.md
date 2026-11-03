@@ -1,365 +1,208 @@
 # Status / Log System
 
-A persistent status bar + expandable inline console that records shortcut
-results, wait operations, MCP agent activity, and system errors. Lives at
-the bottom of the editor view. It replaced `ActivityPanel` and the
-menu-bar error span, and remains the diagnostic surface. The agent panel has a separate structured
-activity stream (ADR 0065).
-
----
-
-## System shape
-
-- Persistent ~28 px status strip pinned to the bottom of the editor view.
-- Expandable inline overlay console that **lifts** over the editor
-  (drag-resize handle on top + slight dim of underlying content). Does
-  not push the editor up.
-- Replaced `ActivityPanel` and the menu bar's inline error span. The
-  status bar's `derivatives-pill` is the permanent liveness signal for
-  background derivative jobs — the once-planned aggregate-row replacement
-  was retired. Liveness stays on the pill; job *failures* land as
-  `Job`/`Error` rows (see § Producers).
-- Coexists with: `ExportPanel` (detailed progress UI), `QueuePanel`
-  (editable export queue).
+A status strip pinned to the bottom of the editor plus an expandable console
+overlay that lifts over the editor (drag-resizable, does not push it up). It
+records command results, long operations, MCP activity and errors. The agent
+panel's activity stream is separate (see the last section). The
+`derivatives-pill` in the strip is the liveness signal for background derivative
+jobs; `ExportPanel` and `QueuePanel` own export progress.
 
 ## Backend
 
-A `LogBus` actor (`native/src/logs/bus.rs`) owns the system.
+`LogBus` (`native/src/logs/bus.rs`) is workspace-scoped: built when a workspace
+opens, replaced on switch, dropped on close.
 
-- Ring buffer: in-memory `VecDeque<LogEntry>` capped at **1000 entries**.
-- Broadcast: `tokio::sync::broadcast` channel; the Electron bridge
-  forwards each entry as an IPC event (`log:entry`).
-- Persistence: bounded `tokio::mpsc` channel feeds a dedicated writer
-  task that appends to `<workspace>/Logs/session-<YYYYMMDD-HHMMSS>.jsonl`.
-  Channel saturation emits a single `log_persist_lagged` error and
-  drops; producers never block.
-- Rotation: keep the most recent **20 session files**; delete the rest
-  on workspace open. A single session rolls to `…-part2.jsonl` when it
-  exceeds ~50 MB.
-- Flush: line-buffered; explicit flush on app shutdown / workspace
-  close.
+- Ring: 1000 entries in memory. Broadcast to the renderer as `log:entry`.
+- Persistence (`logs/writer.rs`): `<workspace>/Logs/session-<YYYYMMDD-HHMMSS>.jsonl`,
+  one JSON line per entry, rolling to `…-partN.jsonl` past ~50 MB. On open the 20
+  most recent `session-*.jsonl` files are kept (parts count individually). The
+  writer channel holds 4096 entries; overflow drops lines **silently** (no drop
+  counter; producers never block). The file is flushed when the bus drops.
+- Before a workspace opens there is no bus: Rust producers drop silently and
+  startup errors go to `tracing` stderr and the application diagnostics below.
+  Exception: MCP host rows (it binds at `app.whenReady`) wait in a 50-entry FIFO
+  (`src/main/deferredLog.ts`) and replay once when `commitWorkspace` installs the
+  bus.
+- `tracing` → log: only `Error` events from `weftcut*` targets become
+  `System`/`Error` rows (`logs/tracing_layer.rs`). Never call `tracing` inside
+  `emit` — it recurses.
+- Commands: `log_list` (seed the mirror), `log_clear` (clears the ring, not the
+  file, then emits one `Log cleared` row), `log_emit` (renderer-originated rows),
+  `log_dir_path`.
 
-### Import timing diagnostics
+### Entry schema
 
-UI and MCP `import_media` requests share an `import_id`, allocated before the
-metadata probe. Rows use category `Import`, message `Import timing: <stage>`
-and structured `details` (`schema: 1`). They persist in the normal project
-JSONL. The application diagnostic bundle also retains an explicit selection of
-timings, correlation ids, codec metadata and resource snapshots; labels, paths
-and free-form errors stay out of that structured selection. No upload is automatic.
+`LogEntry` in `native/src/logs/entry.rs` is canonical: UUIDv7 `id` and `ts`
+stamped by the bus; `level` (trace…error); `category` (`Shortcut`, `Mcp`, `Job`,
+`Export`, `Import`, `Project`, `System`, `Agent`, `Other(name)`); `source`
+(`User`, `Agent { client }`, `System`); English `message`; optional `i18n_key` /
+`i18n_args`; `op_id` + `op_state` (`Started`, `Progress(0..1)`, `Ok`, `Err`);
+`details`.
 
-- Info: request start, renderer milestones, and `background_settled` summary.
-- Debug: registration metadata and each native stage's queued/running/terminal
-  event. Debug rows are persisted even when the console's Info+ filter hides them.
-- Warn: request/stage/write-back failures. Cancellation is distinguished from
-  failure. A workspace transition ends tracking and lists unfinished stages;
-  late events cannot attach to the next opening, including a same-path reopen.
-
-Native stages cover `probe`, `hash`, `gop_probe`, `copy` (including its hash),
-`thumbnails`, `conform`, `waveform`, `quick_proxy`, and `proxy` (export master).
-`queue_ms` is time from entering that stage until it obtains resources;
-it also includes single-flight waiting, and for copy includes FIFO waiting.
-Dependencies before a stage is entered (e.g. conform before waveform) are
-visible in the request-relative `elapsed_ms`, not counted again as stage queue
-time. `work_ms` starts at admission; `total_ms = queue_ms + work_ms`. These are
-monotonic, stage-local clocks. Cache hits never enter admission: their validation
-time is work and their queue time is zero. `cache` distinguishes `hit`, `miss`, and `shared`
-(another producer supplied the result). `admission_at_enqueue` snapshots
-playback policy, memory pressure, and resource occupancy/limits; it is context
-at enqueue, not proof of the cause of the entire wait.
-
-The summary waits for the initial derivative plan (including quick-then-full
-proxy chaining), workspace copy and their completion/write-back events. Its
-status is `completed` or `incomplete`; it does not mean the user has previewed
-the clip. Later on-demand proxy/recovery jobs may emit additional stage rows.
-
-Renderer milestones are once per imported media:
-
-- `pool_observed`: the renderer's project state contains the item (not a claim
-  that the Media Pool tab is visible).
-- `editable`: the same readiness gate used by the Media Pool permits use.
-- `first_frame_submitted`: a real video frame was bound in a visible preview
-  composite and `app.render()` returned successfully. This measures render
-  submission, not physical display scanout; it includes the resolved engine.
-- `audio_prepared`: the requested playback window has prepared PCM. It is not
-  proof that sound reached the speakers, nor just that a conform file exists.
-
-Milestone `elapsed_ms` is measured at main's receipt and includes IPC delay.
-Frame/audio milestones happen only if the user previews/plays that source, so
-they also include user idle time; absent milestones are not zero latency or
-failures. `since_editable_ms` helps distinguish those observations from initial
-readiness. The import start is when its command enters main, not when a batch
-was selected; earlier files in the UI's serial batch precede that start.
-
-Registration records version, media id/label, size, duration and stream metadata.
-Timing state is session-only, bounded to 2048 requests, and never changes project
-state or import scheduling. Capacity eviction emits `tracking_ended` with its
-reason. There are no per-frame log rows.
-
-### LogBus lifecycle
-
-- **Pre-workspace: strict refuse.** Neither the ring buffer nor the
-  JSONL writer exist before a workspace is opened. Startup-screen
-  Rust startup errors are visible via `tracing` stderr; the separate application
-  diagnostic recorder below captures main/renderer startup messages. The `LogBus` is built
-  by the workspace-open path and torn down by the workspace-close
-  path, mirroring the rest of the workspace-scoped state.
-- **MCP is the exception, on the producer side.** The MCP host binds at
-  `app.whenReady()`, so its `listening` row could never be recorded at
-  all. Rows that producer emits with no bus to land in go into a bounded
-  FIFO (**50 entries**, oldest dropped — `src/main/deferredLog.ts`) and
-  replay in order, exactly once, when `commitWorkspace` installs the bus.
-  This is a *producer* buffer: `LogBus`, `Clear` and `log_list` semantics
-  are unchanged, and an app that never opens a workspace still never
-  grows a project log. Application diagnostic logs are independent of this bus.
-
-### Application diagnostics and GitHub reports
-
-The startup screen's Report an Issue button and Help → Report an Issue open
-the same report dialog. Export Diagnostic Bundle saves a local ZIP. Open
-GitHub Issue prepares a draft with current version/build/system information
-and, when applicable, the previous session's version and exit status. The user
-reviews the ZIP, attaches it manually and submits the issue; the app never
-uploads it, and needs neither a GitHub token nor a reporting service.
-
-`main/entry.ts` starts diagnostics before loading the editor/native backend.
-`<userData>/diagnostics` (`diagnostics-dev` for unpackaged runs) retains eight
-inactive/current sessions; live concurrent instances are excluded from cleanup
-and abnormal-exit detection. Each session has a marker, a hardware/version
-snapshot, and at most two 512 KiB JSONL log segments. Pending logs are capped at
-32 KiB and flushed every two seconds; excess chatter is dropped. Fatal errors
-flush immediately; a hard kill can lose the last batch.
-
-Collected evidence includes main/renderer console messages, renderer JS errors,
-observed renderer/child-process failures, project log messages (excluding tool
-arguments, arbitrary details and i18n arguments; import timing uses the explicit
-field selection described above), and resource status/effective allocations
-every ten seconds. A ZIP contains the current session and the most recent
-abnormal session (retained even after dismissal for later reporting), plus
-environment information and a README.
-Common credentials, paths, URLs and email addresses are redacted before disk.
-No project/media/config files or memory dumps are read. Free-form errors can
-still contain private text: the dialog asks users to review before attaching
-anything to a public issue.
-
-Only the actual successful `quit` event marks a session closed, after autosave;
-`before-quit` can be cancelled and must not clear the marker. An unfinished
-session or a recorded process failure prompts after the next launch's splash,
-without blocking project recovery. It says “did not exit normally”, since a
-power loss/forced quit is not proof of a crash. Dismissal (or successfully opening
-the GitHub draft) is persisted and does
-not erase the logs. Storage failures never prevent startup and disable export
-with an explanatory message. There is no native crash dump or automatic upload.
-
-### Backend surface
-
-Commands:
-- `log_list() -> Vec<LogEntry>` — seeds the frontend mirror on mount.
-- `log_clear() -> ()` — clears the in-memory ring (does not truncate
-  the JSONL file), then emits a single `Log cleared` marker row — the
-  cleared ring's first entry, so an empty console is distinguishable
-  from "nothing has happened".
-- `log_emit(entry: LogEntryInput) -> ()` — frontend-originated entries
-  (shortcut results, UI errors).
-
-Events:
-- `log:entry` — payload is a single `LogEntry`. One event per append.
-
-## Entry schema
-
-```rust
-struct LogEntry {
-    id: Ulid,                     // monotonic, sortable, unique
-    ts: DateTime<Utc>,            // ISO 8601 on the wire
-    level: Level,                 // Trace | Debug | Info | Warn | Error
-    category: Category,           // Shortcut | Mcp | Job | Export |
-                                  // Import | Project | System | Agent |
-                                  // Other(String)
-    source: Source,               // User | Agent { client: String } |
-                                  // System
-    message: String,              // English; canonical
-    i18n_key: Option<String>,     // optional translation key
-    i18n_args: Option<Value>,     // optional translation args
-    op_id: Option<Ulid>,          // groups state changes for one op
-    op_state: Option<OpState>,    // Started | Progress(f32) | Ok | Err
-    details: Option<Value>,       // free-form, redacted, ≤4 KB
-}
-```
-
-Notes:
-- `Category` is a fixed enum with an `Other(String)` escape hatch.
-- `details` is passed through a redactor that strips
-  `Authorization: Bearer …`, `api[_-]?key[=:]…`, and `x-api-key: …`
-  before broadcast and persistence.
-- `details` > 4 KB is truncated with `{ "truncated": true }` appended.
-- Long-running ops emit **one entry per state change**, all sharing
-  one `op_id`. The UI collapses these into a single row.
+- `details` only is redacted (`logs/redact.rs`: `Authorization: Bearer`,
+  `api[_-]?key=`/`:`, `x-api-key:`) before broadcast and persistence; producers
+  keep secrets out of `message`. Over 4 KB serialized, `details` is replaced by
+  `{ truncated, original_bytes, preview }`.
+- A long op emits one entry per state change under one `op_id`; the console
+  collapses them. **Every exit path owes a terminal row**, or the running badge
+  never clears.
 
 ## Producers
 
-| Producer | Category | Level | Notes |
-|---|---|---|---|
-| Command dispatch (keyboard shortcut, macOS native menu, in-app menu bar, search palette, Quick Actions strip) | `Shortcut` | `Info` on success, `Error` on failure | One row per dispatch, whatever surface invoked it: the keyboard and native-menu dispatchers call `runWithLogging` directly, and the command registry wraps every `CommandDef.run` in the same funnel (`commands/registry.ts`) — so the palette, the in-app menu bar and the Quick Actions strip log with nothing to remember. Start logged only when the handler is async AND runs > 250 ms. No-ops (e.g. `deleteSelected` with nothing selected, `NothingToUndo` refusals) at `Debug`. Failures render as refusal lines (see § Refusals). |
-| Direct commits (inspector fields and keyframe/effect commits, drag commits — timeline and on-canvas gizmo, drops onto the timeline, timeline context menus, mixer, caption restyle, proxy mode) | `Project` | `Error` (`Debug` for no-op refusals) | One entry per refused mutation via `renderer/errors/tryMutate.ts`; `details` carries the structured `CommandError`. Components with their own inline error slot (media-removal dialog, effects section, project settings, the voiceover dialog) keep it and render the same refusal copy there instead. A refusal stated in prose rather than as a structured `CommandError` has Electron's `Error invoking remote method 'backend:invoke': ` wrapper stripped before it is shown or logged, so the sentence that names the remedy ("configure one in Settings → Transcription") is what the user reads. |
-| Speech runs (the transcribe command, the voiceover dialog) | `Project` | `Info`/`Error` | `source = User`. Started → Ok under one `op_id` — both are multi-second network calls, and without the Started row the status badge has nothing to spin on. Keys `log.auto_caption_started` (one clip, named) or `log.auto_caption_started_many` (several, counted) / `log.auto_caption_done` (cue count over every transcript + the engine, or engines, that served) and `log.voiceover_started` / `log.voiceover_done` / `log.voiceover_done_cached` — two terminal keys because the difference is what the run cost: a cached hit billed nothing. Rows carry the script's LENGTH, the voice and the speed, never the script; a test asserts no row or `details` contains it. Failures go through `logMutationFailure` (the direct-commits row above) handed the run's `op_id`, so the failure row closes the op as `Err` — the running badge clears only on a terminal row under the same id — and, for voiceover, also stay inline in the dialog. The transcribe run's READ step is the exception: a clip that fails is logged as `log.auto_caption_failed`, which names the clip and carries the tool's own sentence, because a multi-clip run's user has to know which clip to fix; the run stops there and still applies the transcripts before it, so a `log.auto_caption_done` row with no `op_state` precedes the `Err` row that closes the op. Only the write step (`apply_transcripts`) uses the generic row. A clip whose job was cancelled (ADR 0121) stops the run the same way but closes the op with `log.auto_caption_cancelled` at `Info` and `Ok`, the way an import or export cancel does: a cancel is not a failure. The transcribe command has no dialog, so its refusal is read in the status bar, and one that names Settings → Transcription also opens that pane. |
-| Analysis surfaces (Shots Panel analyze and apply, the Pauses section, the describe gestures) | `Project` | `Info`/`Error` | `source = User`. Started → Ok/Err under one `op_id`, always the pair even when an apply settles inside 250 ms: the Started row is the only statement of how much of the review went out (`log.shots_apply_*_started` carries the cut count and, for a discard, the discarded count), and the terminal row says what came back — segments, markers or survivors (`log.shots_apply_*_done`), candidates found (`log.shots_analyze_done`), spans measured (`log.shots_stats_done`), pause markers added (`log.mark_pauses_done`) or pauses cut out with the time that went with them (`log.remove_pauses_started` / `log.remove_pauses_done`), described spans with the engine and model that answered (`log.describe_done`). A describe whose job was cancelled (ADR 0121) closes with `log.describe_cancelled` at `Info` and `Ok`, and a sweep stops there. The measure pass carries the same span count on both rows (`log.shots_stats_started`), because that count is what it costs — three ffmpeg extracts per span nothing had measured. A structured refusal closes the op under its own curated key; only a prose failure uses `log.shots_analyze_failed` / `log.shots_stats_failed` / `log.shots_apply_failed`, and the Pauses section's and the describe gestures' prose failures are `logMutationFailure`'s generic row under the same `op_id`. A failure also stays inline wherever the gesture has a slot — the Panel's own describe slot, the Pauses section — and the describe command has none, so its one recoverable refusal (no engine configured) opens Settings → Video understanding instead of reporting twice. |
-| Import | `Import` | `Info`/`Error` | Started → Ok/Err, grouped by `op_id`; a mid-copy cancel closes the op as `Ok` (`Import cancelled: …`) — every exit path owes the terminal row or the running badge never clears. No per-chunk Progress rows: a bulk drop imports many files at once and would spend the ring on its own progress; the import queue UI owns per-file liveness. |
-| Export | `Export` | `Info`/`Error` | A renderer mirror over `ExportState` (`renderer/app/exportLog.ts`), covering every pipeline path by construction. House three-state shape: settling inside 250 ms → one row, no `op_id`; slower → Started then Ok/Err under one `op_id`, plus Progress once per tenth of the encode (never per frame — the ring is 1000 entries; `ExportPanel` stays the live progress UI). A cancel closes the op as `Ok`; a run refused before it began (no-material guard) is one standalone `Error` row. The native sink separately emits one row with the resolved encoder plan at sink start (`export/videosink.rs`, `source = System`, `Warn` when the ffmpeg shadow refused). |
-| Derivative jobs (proxy, quick proxy, thumbnails, waveform, conform) | `Job` | `Error` only | One row per failed job — `<Kind> job failed for <name>: <error>`, `source = System` (`jobs::emit_job_error`). No Started/Ok rows by design: liveness is the status-bar pill, and per-job Info rows would flood the console on bulk imports. |
-| Long-running MCP compute (transcribe_clip, extract_clip_audio, synthesize_speech, detect_pauses, describe_clip) | `Mcp` | `Info`/`Error` | No producer of their own: the generic MCP-tool decorator below covers them like any other tool. Their compute is what usually crosses the 250 ms threshold, so they are the ops that actually get a `Started` row — and crossing it is what lifts a read-route tool to `Info`. |
-| MCP tool calls (and `tools/list`, `resources/*`, `prompts/*`) | `Mcp` | `Info` mutations, `Debug` quick reads, `Error` on failure | One `withLog` decorator on each of `buildMcpServer`'s six request handlers, so a newly added tool is logged with nothing to remember; the level is derived from `routeMcpTool`, never a per-tool list. A mutation's `message` is the **change summary** the history panel renders, carrying the same `i18n_key`/`i18n_args` — `Added clip`, not `MCP: add_color_layer`, translated through the existing `history.*` keys with no new strings. It is captured by collecting the actor's `ChangeEvent`s across the call, which is safe only for the synchronous `ts` route: the four `async` hybrids, every read, every refusal and every no-op keep the mechanical `MCP: <tool>` line, because two overlapping hybrids would each see the other's commit and a row attributed to the wrong tool is worse than a mechanical one. Several commits under one call → the last summary plus `details.commits`. A commit that never reaches history (`undo`, `restore_checkpoint`) carries its summary text and no key. Settling inside 250 ms → one entry, no `op_id`; still running at 250 ms → `Started` then `Ok`/`Err` under one `op_id` (the three-state shape Shortcuts use). An op slow enough to need a `Started` logs at `Info` whatever its route — the threshold is the test of whether the user is waiting on it. An op that crosses a workspace switch drops its `op_id` and its label key: `install` replaces the bus so the pair cannot span it, and the annotated message is no longer what the key renders. `details` carries `{ tool, args, duration_ms, client_info }` plus `error` on failure; `tool` is what a filter keys on, since the message is no longer mechanical. Strings over 512 bytes are elided to `{ omitted, bytes, sha256_8 }` in TS, before the payload reaches the 4 KB cap that would otherwise discard the whole object. No return value. `source = Agent { client }` names the client that opened the session — its `initialize` name, control characters stripped and clamped to 64 bytes — and falls back to `"mcp"` ("arrived over the MCP transport, nobody named") before `initialize`; the full client payload is `details.client_info`. The same name stamps the history entries and checkpoints the call records. |
-| MCP server lifecycle | `Mcp` | `Info` bind and connect, `Debug` disconnect, `Warn` rejections, `Info` rotation | `source = System`, except the token rotation — `User`, the one lifecycle event a person causes. Six rows: the host bound to its loopback port; a client connected, named from `Server.getClientVersion()`; a client disconnected at `Debug`, because reconnects are routine and would flood the default filter at `Info`; a request rejected for a bad bearer, carrying `{ method, user_agent }` and never the header value; a request rejected by the DNS-rebinding guard; and the bearer token rotated, recording neither the retired token nor its replacement. The host-rejection row is reachable only through `transport.onerror`: the SDK enforces `allowedHosts` inside the transport and writes its own 403, so our middleware never sees a rejection. That hook is a superset, so every other transport fault lands in a distinct `MCP transport error` row rather than being mislabelled as a rejected Host. And because the transport is built only after the bearer gate passes, an unauthenticated probe produces the unauthorized row, never the host one. |
-| Project mutations | `Project` | — | **No generic row per successful mutation, by design.** The history panel is that feed, and a per-commit producer would double-log every agent mutation the `Mcp` row above already summarises. The same ring-pressure reasoning rejects a per-commit preview-rebuild row (even at `Debug` — hidden rows still occupy the 1000-entry ring). What does land as `Project`: refusals (the direct-commits row above), the load-time repairs (the two rows below, plus schema upgrade), checkpoint create/delete and restore pin-rows (`source = User` or `Agent { client }`, whichever path called), a dropped transition reconcile, an overlap add's sibling lane bounce (the row below), a dropped marker reconcile (`details.kind = "MarkerReconcileDrop"` — one row per anchored marker whose clip the edit deleted; the same best-effort seam, and deliberately not a toast), motif staleness, and the one refusal that never reaches a command at all — `Warn`, `source = User`, from `renderer/timeline/crossCompositionRefusal.ts`: Alt-dragging a clip into another composition's Panel, where a COPY across compositions is a mutation that does not exist and the same drag without Alt moves it there instead. A successful commit otherwise reaches the log only as a `Shortcut` row, when a command surface dispatched it. |
-| Transition placement bounce | `Project` | `Info` | One row per group sibling an overlap-placement `add_transition` relocates because its shifted span collided on its lane (the actor's add arm; the "no free lane, so make one" spawn is ADR 0042's placement policy). `source = User` or `Agent { client }`, whichever committed. `details.kind = "TransitionPlacementBounce"` with `{ layer, from_track, to_track, spawned }` — `spawned` marks a lane minted for the landing. |
-| Load-time media relink | `Project` | `Info` healed / `Warn` missing | `source = System`. `details.kind = "Relink"`. Emitted after the workspace commit, never during the heal — the commit rotates the per-workspace bus. |
-| Load-time grid repair | `Project` | `Warn` | `source = System`. `details.kind = "GridRepair"` with one row per moved field. `Warn` because the repair rewrites the user's timeline. Same post-commit timing rule as relink. |
-| System errors | `System` | `Error` | Via a `tracing-subscriber` `Layer` scoped to our crate's spans only. |
+The house shape for anything a user may wait on: settles within 250 ms → one row,
+no `op_id`; otherwise `Started` then `Ok`/`Err` under one `op_id`. A cancel
+closes the op as `Ok` at `Info`; a cancel is not a failure. Never log per frame
+or per chunk — the ring is 1000 entries.
+
+- **Command dispatch** (`Shortcut`): one row per dispatch from any surface —
+  keyboard and native menu call `runWithLogging`; the command registry
+  (`commands/registry.ts`) wraps every `CommandDef.run`, so palette, menu bar and
+  Quick Actions log automatically. No-ops (`NothingToUndo`, empty selection) at
+  `Debug`.
+- **Direct commits** (`Project`): inspector, drags, drops, context menus, mixer
+  and similar refusals go through `renderer/errors/tryMutate.ts`, one row with the
+  structured `CommandError` in `details`. Components with an inline error slot
+  keep it and show the same copy. Prose refusals have Electron's
+  `Error invoking remote method …` prefix stripped.
+- **Speech runs and analysis surfaces** (`Project`, `source = User`): transcribe,
+  voiceover, Shots analyze/measure/apply, Pauses, describe. Always a `Started` /
+  terminal pair under one `op_id`, even under 250 ms, because the rows carry what
+  went out and what came back (counts, engine/model). Keys live under `log.*`
+  (`auto_caption_*`, `voiceover_*`, `shots_*`, `mark_pauses_done`,
+  `remove_pauses_*`, `describe_*`). Failures use `logMutationFailure` with the
+  run's `op_id`. Rows never contain the voiceover script, only its length.
+  A cancelled job (ADR 0121) closes with a `*_cancelled` key. A refusal that
+  names a Settings pane also opens it when the gesture has no inline slot.
+- **Import** (`Import`): `Started` → `Ok`/`Err`; no per-file progress rows (the
+  import queue UI owns that). Import timing diagnostics: below.
+- **Export** (`Export`): `renderer/app/exportLog.ts` mirrors `ExportState`; house
+  shape plus a `Progress` row per tenth of the encode. The native sink adds one
+  `System` row with the resolved encoder plan (`Warn` when the ffmpeg shadow
+  refused).
+- **Derivative jobs** (`Job`, `Error` only): one row per failed job
+  (`jobs::emit_job_error`); no Started/Ok rows — the pill owns liveness.
+- **MCP tool calls** (`Mcp`): one `withLog` decorator (`main/mcp/withLog.ts`) on
+  every request handler, so new tools log automatically. Level from
+  `routeMcpTool`: mutations `Info`, quick reads `Debug`, failures `Error`; any op
+  crossing 250 ms is `Info`. A synchronous mutation's `message` is the history
+  change summary with the same `history.*` key; async hybrids, reads, refusals
+  and no-ops keep `MCP: <tool>`. `details = { tool, args, duration_ms,
+  client_info, error? }`, strings over 512 bytes elided to
+  `{ omitted, bytes, sha256_8 }`. `source = Agent { client }` from `initialize`
+  (sanitized, 64 bytes; `"mcp"` before it). An op crossing a workspace switch
+  drops its `op_id`.
+- **MCP server lifecycle** (`Mcp`, `System`): host listening, client connected
+  (`Info`), disconnected / session closed, bad bearer and host-guard rejections
+  (`Warn`, never the header value), other transport faults (`MCP transport
+  error`), and token rotation (`User`). Host rejections are only visible via
+  `transport.onerror`, because the SDK enforces `allowedHosts` itself.
+- **Project** rows: deliberately no row per successful mutation — the history
+  panel is that feed. What lands: refusals, load-time repairs (relink `Info`/`Warn`
+  `details.kind = "Relink"`; grid repair `Warn` `"GridRepair"`, emitted after the
+  workspace commit), schema upgrade, checkpoint create/delete/restore,
+  `TransitionPlacementBounce` and `MarkerReconcileDrop` (actor), motif staleness,
+  and the cross-composition Alt-drag refusal
+  (`renderer/timeline/crossCompositionRefusal.ts`).
+- **System**: `tracing` errors (above) and startup capability notices, mirrored
+  once the bus exists.
+
+### Import timing diagnostics
+
+UI and MCP imports share an `import_id`. Rows: category `Import`, message
+`Import timing: <stage>`, `details` with `schema: 1`.
+
+- `Info`: request start, renderer milestones, `background_settled` summary
+  (`completed` / `incomplete`). `Debug`: registration and each native stage's
+  queued/running/terminal event. `Warn`: failures, distinguished from cancel.
+- Stages: `probe`, `hash`, `gop_probe`, `copy`, `thumbnails`, `conform`,
+  `waveform`, `quick_proxy`, `proxy`. `queue_ms` runs from stage entry to
+  resource admission (single-flight and copy FIFO waits included); `work_ms` from
+  admission; `total_ms` is their sum. Cache hits have zero queue. `cache` is
+  `hit` / `miss` / `shared`. `admission_at_enqueue` is context, not cause.
+- Renderer milestones, once per media: `pool_observed`, `editable`,
+  `first_frame_submitted` (a real frame bound and `app.render()` returned — not
+  scanout), `audio_prepared` (PCM ready — not audible). Elapsed is measured at
+  main's receipt; frame/audio milestones include user idle time.
+- Session-only, bounded to 2048 requests (`main/importDiagnostics.ts`); eviction or
+  a workspace transition emits `tracking_ended`. Never alters import scheduling.
+
+### Application diagnostics and issue reports
+
+Independent of the bus. `main/entry.ts` starts it before the editor loads.
+`<userData>/diagnostics` (`diagnostics-dev` unpackaged) keeps 8 sessions
+(`main/diagnosticsStore.ts`); each has a marker, hardware/version snapshot and up
+to two 512 KiB JSONL segments. Pending writes cap at 32 KiB, flush every 2 s;
+fatal errors flush immediately. It records console messages, renderer errors,
+child-process failures, project log messages (minus tool args, free-form
+details and i18n args; import timing by explicit field selection) and resource
+status every 10 s. Credentials, paths, URLs and emails are redacted before disk.
+
+Report an Issue (startup screen, Help menu) exports a local ZIP (current session +
+latest abnormal one + environment + README) and opens a prefilled GitHub issue
+draft; the user attaches the ZIP. Nothing is uploaded automatically. Only the
+`quit` event (after autosave) marks a session closed — `before-quit` can be
+cancelled. An unfinished session or recorded process failure prompts after the
+next splash ("did not exit normally"). Storage failures never block startup.
 
 ## Frontend
 
-- State: Zustand store, seeded by `log_list` on mount + `log:entry`
-  subscription. Capped at 1000 entries (mirrors backend).
-- Selectors:
-  - Bar: `{ latest, errorCount, runningCount }`.
-  - Console: filtered, virtualized slice based on chip + search state.
+`renderer/logs/store.ts` mirrors the ring (1000), seeded by `log_list` and fed by
+`log:entry`.
 
-### Bar (collapsed)
+### Bar
 
 ```
-[●] 14:32  Added 3 layers to track v1 · agent     [⚠2] [↻1] [Logs ▾]
+[●] 14:32  Added 3 layers to track v1 · agent  [N to review] [⚠2] [↻1] [System N] [Update] [Logs ▾]
 ```
 
-- Severity dot + time + truncated latest message + source pill (left).
-- Error badge (red, count) + running badge (spinner + count) + explicit
-  `Logs ▾` toggle (right).
-- Auto-updates on `Info+`. When an `Error` lands the line **sticks for
-  10 s** before being overwritten.
-- Error badge pulses for ~1.5 s when the count increments, then settles.
-- While unreviewed agent changes exist (ADR 0115), an amber `N to review`
-  badge sits left of the error badge; clicking it opens the agent panel on
-  its Changes tab. Agent view hides the bar; the tab's badge carries the
-  count there.
-- While an update is offered and not skipped, a solid blue `Update available`
-  pill sits left of the `Logs ▾` toggle and opens the update dialog
-  (`docs/releases.md`).
+- Latest `Info+` message with time and source; an `Error` sticks 10 s
+  (`ERROR_STICKY_MS`); the error badge pulses once (1.5 s) on increment.
+- Badges: unreviewed agent changes (ADR 0115; opens the agent panel's Changes
+  tab), errors, running ops, running clip-compute jobs, system notices (opens the
+  status panel with recovery cards), update offer (`docs/releases.md`).
+- A visually hidden `aria-live="polite"` region announces errors only.
 
-### Console (expanded overlay)
+### Console
 
-Layout: toolbar → virtualized entry list → footer.
-
-Toolbar:
-- Level chips: `Info+` (default) · `Warn+` · `Errors only` · `All`.
-- Category chips: `Shortcut` · `MCP` · `Job` · `Export` · `Import` ·
-  `Project` · `Agent` · `System`.
-- Source chips: `User` · `Agent` · `System`.
-- Free-text search (matches `message` + `details` + translated
-  rendering).
-- `Clear` (in-memory ring only) · `Copy` (filtered view as text) ·
-  `Open log folder` (reveals `<workspace>/Logs/` in OS file manager) ·
-  pause-autoscroll toggle.
-
-Entries:
-- Row shape: `[time] [level dot] [category pill] [source pill] message [⋯]`.
-- `⋯` discloses `details` as pretty JSON + the `op_id`.
-- Ops with multiple state changes collapse to one row with a `(N)`
-  counter; clicking expands the inline state-change timeline.
-- Progress ops show an inline mini progress bar.
-
-Current system status:
-- Startup capability notices (for example, an unavailable optional decode
-  component or OS keyring) are mirrored into the `System` log once the
-  workspace log bus is ready.
-- Log history renders those events as ordinary, non-interactive rows, including
-  when the user filters the console to the `System` category.
-- The notice list remains the source of truth for unresolved state. The
-  status-bar `System N` entry opens a dedicated status panel containing the
-  interactive recovery cards and links to the relevant settings category.
-- `Clear` removes historical rows only. It does not change the dedicated
-  status panel; recovery removes the current state and may emit a recovery
-  event.
-
-Footer:
-- `showing N / M` (filtered / total).
-- JSONL session file path with copy button.
-
-Defaults: level `Info+`, ops collapsed.
-
-### Shortcuts
-
-- `toggleLog`: `Ctrl+\`` — expand / collapse the overlay. Acknowledges
-  any 10-s-sticky error in the bar.
-- `focusLogSearch`: `Ctrl+Shift+\`` — expand and focus the search box.
-- `Esc` collapses the overlay when focused. In the search box, first
-  `Esc` clears the query; second `Esc` collapses.
+- Filters: level (`Info+` default, `Warn+`, `Errors only`, `All`), category,
+  source, free-text search over English message, translated rendering and
+  `details`.
+- Actions: autoscroll toggle, Copy (filtered view), Open log folder. Clear clears
+  history rows only; it never touches the system-status panel.
+- Rows: time, level, category and source pills, message; disclosure shows
+  `details` JSON and `op_id`. Ops collapse to one row with a counter; progress ops
+  show an inline bar. `role="log"`. Not virtualized (1000 rows render fine).
+- Footer: `showing N / M` and the logs folder path.
+- Keys: `toggleLog` `Mod+\``, `focusLogSearch` `Mod+Shift+\``. Escape in search
+  clears the query, then collapses; elsewhere in the console it collapses.
 
 ### Refusals
 
-A refused mutation crosses IPC as `Error(JSON.stringify(CommandError))`
-(the actor serializes the structure into `message` because Electron's
-`invoke` drops custom Error props). The renderer parses it back
-(`renderer/errors/parseCommandError.ts`) and renders it through a
-type-locked copy map (`renderer/errors/formatCommandError.ts` — a
-`Record` over the full error union, so adding a variant without filing
-its tier fails to compile). Three tiers:
+A refusal crosses IPC as `Error(JSON.stringify(CommandError))` (Electron's
+`invoke` drops custom Error props). `renderer/errors/parseCommandError.ts` parses
+it; `formatCommandError.ts` maps every variant to a tier through an exhaustive
+`Record`, so a new variant without a tier fails to compile:
 
-- **suppress** — no-op refusals (`NothingToUndo`/`NothingToRedo`) log at
-  `Debug`; a native NLE does nothing on an empty undo.
-- **generic** — plumbing / not user-reachable variants; the code is
-  humanized mechanically, English only.
-- **curated** — refusals a user can hit from the editor surface
-  (`LayerOverlap`, `TrackLocked`, `FpsLockedByContent`, …): hand-written
-  copy under the `errors.*` keys (en-US + zh-CN), uuids resolved to the
-  display names the timeline shows (fallback: short id, never a raw
-  uuid).
+- **suppress** — `NothingToUndo`/`NothingToRedo`, logged at `Debug`.
+- **generic** — plumbing variants, code humanized, English only.
+- **curated** — user-reachable refusals (`LayerOverlap`, `TrackLocked`,
+  `FpsLockedByContent`, …): `errors.*` copy (en-US, zh-CN) with ids resolved to
+  display names, never raw uuids.
 
-The copy map carries an unused `actions?` slot per variant: if real
-usage shows the status line gets missed, remedy buttons can be added as
-map entries on a richer surface without re-architecting (a toast layer
-was explicitly declined for v1 — prevention and the status bar are the
-NLE-convention answer).
+No toast layer: prevention plus the status bar is the NLE convention.
 
 ### i18n
 
-- Producers emit canonical English `message`. Selected high-frequency
-  producers (shortcut names, MCP mutation summaries — through the same
-  `history.*` keys the history panel uses — export/import status verbs,
-  project mutation summaries, curated refusal lines) additionally emit
-  `i18n_key` + `i18n_args`. Mechanical lines that name a mechanism rather
-  than a change (`MCP: <tool>`, `MCP read: <uri>`) carry no key. Plumbing
-  errors and `tracing`-bridged messages stay raw English.
-- Frontend prefers `i18n_key` if present; falls back to `message`
-  (`renderer/logs/renderMessage.ts`, used by the bar, the console rows,
-  and the search haystack).
-- UI chrome (chips, buttons, level labels) is translated.
-- Untranslated entries in zh-CN render verbatim (no `[en]` tag).
-- Search matches raw English + translated rendering.
-
-### Accessibility
-
-- A visually-hidden `aria-live="polite"` region announces **errors
-  only**, as `"Error: <message>"`. Info/warn entries update the
-  visible bar but do not announce.
-- Expanded console has `role="log"`.
+- `message` is canonical English. High-frequency producers (shortcut names, MCP
+  and project change summaries via `history.*`, import/export verbs, curated
+  refusals) also emit `i18n_key` + `i18n_args`. Mechanical lines (`MCP: <tool>`)
+  and `tracing` rows have no key.
+- `renderer/logs/renderMessage.ts` prefers the key, falls back to `message`; used
+  by the bar, console rows and search. Untranslated rows render verbatim.
 
 ## Agent activity is a separate stream
 
 The MCP handler funnel feeds both the diagnostic decorator and the main-owned
-`AgentActivityService`. Diagnostic rows retain their severity, bounded details
-and JSONL output. Agent activity has its own stable IDs, connection and work
-session ownership, actual history IDs, execution state and completion budget.
-The two kinds of IDs are not interchangeable.
-
-Clearing or evicting diagnostic logs does not remove panel activities or running
-task state. Both editor and agent layouts consume the same activity snapshot and
-versioned updates. The editor’s agent-running pill also reads activity state.
-Restoring checkpoints preserves activities and marks only proven reverted
-effects; it no longer prunes a time interval from the diagnostic stream.
-See [ADR 0065](adr/0065-agent-view-work-session-and-activity-are-independent.md).
-
-## Deferred
-
-Nothing open. Two once-planned items were retired rather than shipped,
-with their reasons: the derivatives-pill aggregate row (the status-bar
-pill already owns liveness, and job failures land as `Job`/`Error`
-rows) and console virtualization (the ring caps at 1000 entries —
-`LogConsole.tsx` marks the react-window spot should that ever grow).
+`AgentActivityService`, which has its own ids, session ownership, history ids and
+execution state. Clearing or evicting log rows never touches activities;
+checkpoint restore marks reverted effects without pruning the log.

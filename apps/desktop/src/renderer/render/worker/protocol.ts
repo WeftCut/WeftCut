@@ -134,7 +134,8 @@ export type ExportRequest =
       /// Present ⇒ no encoder at all: every rendered frame is posted as a JPEG
       /// still (`still` events) at `width` px wide — what `render_frames` shows
       /// an agent, composited exactly as export would. Excludes `nativeSink`.
-      stills?: { width: number; quality: number };
+      /// `effects: false` skips clip effects (`render_frames { without }`).
+      stills?: { width: number; quality: number; effects?: boolean };
       /// Platform verdict for the 8-bit WebCodecs decode lane, resolved ONCE
       /// on the renderer main thread (the Worker has no OS signal of its own).
       /// True ⇒ the lane may configure prefer-hardware; absent/false ⇒ it pins

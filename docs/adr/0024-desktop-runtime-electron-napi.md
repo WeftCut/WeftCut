@@ -1,16 +1,43 @@
 ---
 status: accepted
 ---
-# 0024 — Desktop runtime: Electron + napi-rs
+
+# Desktop runtime: Electron + an in-process, stateless napi-rs core
+
+Date: 2026-06-27
 
 ## Context
-WeftCut must ship on Windows, macOS, and Linux. A system-webview runtime (per-OS: WebView2 / WKWebView / WebKitGTK) made browser behavior diverge per platform — codec, transport, and capture-determinism quirks that were a recurring tax and blocked cross-platform parity. The heavy runtime work (the PixiJS WebGPU compositor, WebCodecs decode, the frame ring) already lives in the webview, and the domain core is Rust; rewriting that core in Node was never desirable.
+
+WeftCut ships on Windows, macOS and Linux. A system-webview runtime
+(WebView2 / WKWebView / WebKitGTK) made codec, transport and capture behavior
+diverge per OS, a recurring tax that blocked cross-platform parity. The heavy
+runtime work (PixiJS WebGPU compositor, WebCodecs decode) already lives in the
+web layer, and the domain core is Rust; rewriting it in Node was not an option.
+
+A Rust-side read-mirror of the whole project, re-serialized on every commit
+(drag bursts included) yet read rarely and mostly in slices, was a standing
+synchronization liability: a second copy of state that could go stale and
+attracted hand-mirrored twins.
 
 ## Decision
-The desktop shell is **Electron** — one bundled Chromium across all three OSes, so renderer behavior is identical everywhere. The Rust domain core stays **in-process as a napi-rs addon** (`@weftcut/core`, `apps/desktop/native/`), exposed to the Electron main process through a `Backend.invoke(cmd, argsJson)` dispatch plus a thread-safe event callback; the renderer reaches it via a contextBridge preload. The renderer keeps PixiJS + WebCodecs unchanged.
+
+- The shell is **Electron**: one pinned Chromium on all three OSes.
+- The Rust core is an **in-process napi-rs addon** (`@weftcut/core`,
+  `apps/desktop/native/`), reached from main through
+  `Backend.invoke(cmd, argsJson)` plus a thread-safe event callback; the
+  renderer reaches main through the contextBridge preload. Not a separate
+  process: control-plane calls stay sub-millisecond.
+- **TypeScript owns all project state** (the main-process actor). Rust is
+  project-state **stateless**: it keeps runtime slots (jobs, cache, workspace,
+  logs, sessions), but every project compute or export call receives the exact
+  `Project` / `MediaItem` slice it needs as an argument. No resident mirror.
 
 ## Consequences
-- **+** Deterministic cross-OS behavior: offscreen-CDP motif capture is byte-identical across Windows/Linux/macOS (verified on a 3-OS CI matrix), and a class of system-webview codec/transport quirks disappears on a pinned Chromium.
-- **+** No Rust rewrite — the same native code runs in-process; control-plane latency is sub-millisecond.
-- **−** Larger bundle and cold start; Chromium updates are self-maintained (no OS-provided runtime).
-- Hot-path runtime performance is unchanged versus the prior shell (same Chromium engine, same native Rust), so the payoff is determinism and control, not speed.
+
+- Renderer behavior is identical across OSes; offscreen-CDP Motif capture is
+  byte-identical on the 3-OS determinism compare.
+- Larger bundle and cold start; Chromium updates are ours to ship.
+- A Rust feature that needs project data takes it in its request; a Rust-side
+  project cache reintroduces the stale-mirror problem.
+- Going out-of-process would make every compute call pay the state transfer
+  across a process boundary.

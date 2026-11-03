@@ -117,7 +117,7 @@ try {
   const probe = () =>
     page.evaluate(() => {
       const ruler = document.querySelector('[data-testid="timeline-ruler"]');
-      // ADR 0084: fixed chrome and the scroll viewport are sibling rows.
+      // Fixed chrome and the scroll viewport are sibling rows.
       const layout = ruler?.closest('[data-testid="timeline-layout"]');
       const root = layout?.querySelector('[data-testid="timeline-track-viewport"]');
       const corner = layout?.querySelector('[data-testid="timeline-ruler-corner"]');

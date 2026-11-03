@@ -127,10 +127,11 @@ describe("runTranscribe", () => {
     expect(rows()[0].op_id).toBe(rows()[1].op_id);
   });
 
-  // ADR 0070: N reads, one write. The reads go one at a time in the order
-  // given, and every transcript that came back lands in ONE `apply_transcripts`
-  // call — one history row, one undo, and the packing sees every cue at once.
-  // Each envelope keeps its normalized segments and its source identity.
+  // N reads, one write (docs/features.md#transcribe-and-voiceover). The reads
+  // go one at a time in the order given, and every transcript that came back
+  // lands in ONE `apply_transcripts` call — one history row, one undo, and the
+  // packing sees every cue at once. Each envelope keeps its normalized segments
+  // and its source identity.
   it("transcribes several clips one at a time, in order, and applies every transcript in one call", async () => {
     const order: string[] = [];
     let inFlight = 0;

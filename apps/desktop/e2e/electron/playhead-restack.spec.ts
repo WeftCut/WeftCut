@@ -3,7 +3,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { dockPanel, dockTab, invokeCmd, launchApp, newProject, tmpDir, rootSummary } from './helpers/driver'
 
 /**
- * Playhead Panel z-order restack in the real app (ADR 0044).
+ * Playhead Panel z-order restack in the real app (docs/features.md#track-placement).
  *
  * Both tests below exist for what the colocated Vitest suites cannot see: the
  * grip drag is pure pointer events fired inside a live Dockview panel, so only
@@ -223,7 +223,7 @@ test('the row context menu Bring-to-front restacks and one undo restores it', as
       .toEqual([mid, over, under])
 
     const after = await stackSummary(page)
-    // One item click = one restack = one history entry (ADR 0044 decision 4).
+    // One item click = one restack = one history entry.
     expect(after.history.len).toBe(before.history.len + 1)
     await expect.poll(() => rowLabels(page)).toEqual(['Under', 'Over', 'Mid'])
 

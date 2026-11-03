@@ -105,7 +105,7 @@ export function applyMoveLayersToComposition(
   // that unreachable, not an accident of who calls this.
   if (dest === parent)
     throw new CommandFailure({ error: 'InvalidArgument', field: 'to_composition_id',
-      detail: `the set is already in composition ${dest.id}; move within a composition with move_layer` })
+      detail: `the set is already in composition ${dest.id}; move within a composition with move_layers` })
 
   const located = ids.map((id) => locateLayerIn(parent, id)!) // requireSameComposition located each
   // Never partial: taking the unlocked half of a selection would leave a split

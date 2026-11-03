@@ -90,8 +90,8 @@ describe('applyUpdateMarker', () => {
 // have to guess at; `metadata` is refused because the field no longer exists.
 describe('parseMarkerPatch', () => {
   it('accepts note beside the fields it always took', () => {
-    const patch = { t_us: 1, end_t_us: 2, label: 'x', note: 'long', color: { r: 0, g: 0, b: 0, a: 255 } }
-    expect(parseMarkerPatch(patch)).toEqual(patch)
+    const rest = { t_us: 1, label: 'x', note: 'long', color: { r: 0, g: 0, b: 0, a: 255 } }
+    expect(parseMarkerPatch({ ...rest, t_end_us: 2 })).toEqual({ ...rest, end_t_us: 2 })
   })
   it('rejects a non-string note rather than silently skipping it', () => {
     expect(() => parseMarkerPatch({ note: 42 })).toThrow(/note must be a string/)
@@ -139,7 +139,7 @@ describe('marker times enter the composition frame grid', () => {
     const { p, gen } = emptyAt(30, 1)
     // 1_016_000 snaps back down to 1_000_000 at 30 fps → zero-length region.
     const err = expectCmdErr(() => applyAddMarker(p, gen, 1_000_000, 1_016_000, 'm', BLUE))
-    expect([err.error, err.field]).toEqual(['InvalidArgument', 'end_t_us'])
+    expect([err.error, err.field]).toEqual(['InvalidArgument', 't_end_us'])
     expectCmd(() => applyAddMarker(p, gen, 1_000_000, 500_000, 'm', BLUE), 'InvalidArgument') // end < t
     expect(root(p).markers).toEqual([])
     // #4, not #5+ → neither rejection consumed a marker id
@@ -382,7 +382,7 @@ describe('applyUpdateMarker on an anchored marker', () => {
     const m = applyAddMarker(p, gen, 1_500_000, 2_500_000, 'shot', BLUE)
     applyAttachMarker(p, m, clipId)
     expect(expectCmdErr(() => applyUpdateMarker(p, m, { t_us: 2_000_000, end_t_us: 2_800_000 }))).toMatchObject({
-      error: 'InvalidArgument', field: 'end_t_us',
+      error: 'InvalidArgument', field: 't_end_us',
     })
     expect(root(p).markers[0]).toMatchObject({ t_us: 1_500_000, end_t_us: 2_500_000 })
     expect(root(p).markers[0].anchor).toEqual({ layer: clipId, src_us: 2_500_000 })

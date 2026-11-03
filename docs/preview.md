@@ -1,11 +1,10 @@
 # Preview
 
-The preview surface is a PixiJS v8 `Application` mounted against a
-`<canvas>` on the main thread. The same renderer module runs inside an
-`OffscreenCanvas` Worker for export — preview and export share one
-compositor and produce identical pixels by construction. See
-[`docs/render.md`](render.md) for the renderer architecture; this doc
-covers the preview-side surface and transport.
+The preview is a PixiJS v8 `Application` on a main-thread `<canvas>`. Export
+runs the same compositor in an `OffscreenCanvas` Worker. Canvas sizing, zoom
+math and the renderer itself are described in [`render.md`](render.md) (§
+Preview canvas). This doc covers decode, transport attachment and the preview
+surface.
 
 ## Component tree
 
@@ -13,618 +12,417 @@ covers the preview-side surface and transport.
 Editor session
   ├─ PreviewAudioEngine — transport state, clock, AudioGraph, PCM scheduling
   └─ PreviewSurface / PixiPreview — optional visual attachment
-       ├─ PlaybackEngine — read audio clock, present/seek pictures
-       └─ Compositor — visual CompositionNodes and decoder pool
+       ├─ PlaybackEngine — reads the audio clock, presents and seeks pictures
+       └─ Compositor — CompositionNodes and SourceDecoderPool
 ```
 
-Playback is independent of panel lifetime. Closing Preview releases Pixi
-resources and its visual attachment; the session transport, audio and meters
-continue. The App session disposes the audio owner when the editor closes or
-the project opening is replaced.
+The editor session owns playback. Closing the Preview panel releases Pixi
+resources only; transport, audio and meters keep running. Transport states,
+PCM scheduling and the session timer are described in
+[`audio.md` § Preview mixer](audio.md#preview-mixer).
 
-## Clock and transport
+## Clock and presentation
 
-The audio output clock remains master. The session owns the single
-`ClockAnchor` used by all AudioMixers; the visual attachment reads its
-frame-snapped position. PCM scheduling uses unsnapped time. The session's
-16 ms timer publishes deduplicated Moment updates and refills a three-second
-audio schedule, without relying on visual frames.
+The audio output clock is master. PCM is scheduled against a `ClockAnchor` on
+`AudioContext.currentTime`. The picture is presented on a different time: the
+`getOutputTimestamp()` pair projected to the current performance time, without
+adding the render lead back. Adding the lead back put the picture ahead of the
+sound by the full output delay. For example, a 100 ms device delay showed
+500 ms of picture where 400 ms had been heard (regression test in
+`clock.test.ts`). When stamps are missing or stale, presentation falls back to
+`baseLatency + outputLatency`, then to `currentTime`. `ClockSyncSnapshot.source`
+names the source in use. Position is monotonic. After Play or a seek, the
+position holds at the target until that audio reaches output. All of this is
+an estimate, not a measurement of the speaker or display.
 
-The anchor is taken on `AudioContext.currentTime`, where PCM is scheduled.
-Presentation projects `getOutputTimestamp()` to the current performance time;
-it does not add the render/output offset back. Missing/stale device stamps use
-the base/output latency properties when both exist, otherwise the render clock,
-and diagnostics name the fallback. The position holds at a new play/seek target
-until that audio reaches output. This is an output estimate, not a measurement
-of a physical speaker or display (ADR 0095).
+The Compositor records each visible frame interval in root composition time,
+including Group and clip rate mappings and held pictures. It samples the output
+clock again after every Pixi render submission. This produces target/output
+skew, the worst expired or future frame, missing layers, held scenes and the
+last 600 submission intervals. The Performance Monitor and playback-perf JSON
+report them.
 
-Play resumes the AudioContext and prepares the first 100 ms of PCM, then
-starts all audio against one anchor with a 10 ms lead. Video lookahead is
-independent: the old 150 ms lookahead / 250 ms video warmup gate is removed.
-A missing conform stays preparing, bounded by a 10-second deadline; read or
-device failures produce an error that Play can retry. The clock is held
-while preparing rather than advancing through missing audio.
-
-Pause directly cancels scheduled audio and pending work. A normal seek starts
-a fresh preparation generation when playing. An editing gesture's temporary
-monitor preview changes the presented frame without moving the audio clock
-or publishing a different Moment.
-
-The UI observes paused / preparing / playing / error, with requested intent
-kept separately so a repeated play/pause command can cancel preparation.
-Playing describes a running AudioContext with its initial schedule submitted,
-not an acoustic measurement. The execution remains renderer JavaScript plus
-Web Audio; native real-time audio is a separately deferred change. See
-[ADR 0087](adr/0087-preview-audio-belongs-to-the-editor-session.md).
+An edit gesture's monitor preview (`seek(t, "preview")`) changes the
+presented frame only. It does not move the clock, cancel audio or publish a
+Moment.
 
 ## Decode
 
-`SourceDecoderPool` keeps one `VideoDecoder` + one `FrameRing` per
-*clip* (per `layerId`). The mediabunny `Input` + `EncodedPacketSink`
-live on a refcounted `SourceMedia` keyed by `mediaId` so multiple clips
-of the same source share one open/parse but each get their own decode
-pipeline (a per-clip `PacketPump` driving the `VideoDecoder`). Each
-handle's `FrameRing` caches 1 s lookahead / 0.5 s
-lookbehind of `ImageBitmap` snapshots around the current playhead.
-The ring is what the compositor reads.
+`SourceDecoderPool` gives each clip (`layerId`) its own decoder handle and
+`FrameRing`. Clips of the same media share one refcounted `SourceMedia` (one
+open and parse). On the WebCodecs path, a per-clip `PacketPump` feeds a
+`VideoDecoder`. Each ring holds 1 s of lookahead and 0.5 s of lookbehind. The
+byte budget pauses forward fill only. Lookbehind is trimmed by time only,
+because trimming it re-seeks long-GOP sources (`FrameRing.ts`). WebCodecs
+frames are stored as `ImageBitmap` snapshots
+([ADR 0004](adr/0004-imagebitmap-snapshot-frame-ring.md)).
 
-The sprite's held image outlives the decoder ring. On replay, a retained
-sprite may therefore still hold the clip's previous tail even after its
-decoder was reclaimed. Preview checks the source target of that image before
-restaging the clip: if the new target is earlier and the ring cannot serve it,
-the node keeps its current composition until a replacement frame arrives.
-Ordinary forward underruns still hold the clip's current image. This avoids
-flashing the old tail and then jumping backwards when a short cut refills.
+Sources are never loaded whole. mediabunny reads through `MediaRangeSource`,
+a `CustomSource` over `weftcut-media://` HTTP Range requests (see
+[`render.md`](render.md#byte-handling)).
 
-The same check covers a first visit with no incoming texture, and recurses
-through Groups before replacing a populated parent scene. While the incoming
-decode catches up, preview retains the last complete composition rather than
-clearing it to black. Empty timeline intervals still clear normally.
-
-The Standard engine advances ring eviction on every tick but requests native
-refill only below 150 ms of cached forward coverage; native already fills a
-500 ms horizon per request. Cold opens in both engines process only the newest
-pending target. Hardware requests for the same target are deduplicated, with
-an explicit reset when the ring is flushed. See
-[ADR 0082](adr/0082-preview-demand-and-buffer-ownership-survive-transport-changes.md).
-
-Decoders are idle-disposed 5 s after last use and rebuild on the next
-`requestFrameAt`. Hardware-decode failures route through
-`decoderFallback.ts`: a zero-output first-frame error reconfigures
-the decoder with `hardwareAcceleration: 'prefer-software'`; a
-`'Codec reclaimed due to inactivity'` error closes the decoder and
-lazy-rebuilds.
-
-Forward GOP-crossings during continuous play do NOT reset the
-decoder. The pump dispatches the new GOP's IDR chunk through the
-same `VideoDecoder` in stream — H.264 IDR semantics clear
-reference state mid-stream — and the ring carries continuously
-across the boundary. Reset is reserved for backward seeks whose
-target isn't in the ring and for forward seeks far enough past
-the pump frontier that decoding through the gap would burn
-seconds. See [ADR 0003](adr/0003-forward-gop-crossing-no-decoder-reset.md).
-
-The source is never fully resident in memory. mediabunny reads through
-a `weftcut-media://` HTTP Range `CustomSource` (`AssetRangeSource`),
-pulling only the bytes a packet needs; the `PacketPump`'s `getKeyPacket` /
-`getNextPacket` calls await those uncached Range reads natively. See
-[`render.md`](render.md#byte-handling) for the byte contract.
-
-## Decode engine
-
-Which decoder plays a source is decided per session by an overlay sitting
-above the persisted [Decode Route](../CONTEXT.md#decode-routing). Preview
-decode is a *deep module*: a caller picks an **engine**, and the engine hides
-everything below it — hardware-vs-software lane selection, capability probes,
-the per-machine cache, sticky fallback, and device-loss recovery. A resolution
-names two public axes; a third lives private inside the engine:
-
-- **Engine** — `ffmpeg` (**Standard**) or `webcodecs` (**Lite**). The
-  `decode_engine` AppSetting is `auto` / `ffmpeg` / `webcodecs`; `auto`
-  (**Automatic**) resolves to a concrete engine per source.
-- **Source** — `original` or `proxy`. The user's axis; routing never flips it
-  on its own (see [Proxies](#proxies)).
-- **Lane** — `hardware` or `software`. **Private to the Standard engine**,
-  never surfaced in a resolver input or output. HW-vs-SW is an implementation
-  detail of `FfmpegSource`, not something a caller or the Compositor sees.
-
-`resolveDecodeEngine` is a pure function of its inputs — the setting, whether
-the native-decode component is loaded, the user's proxy opt-in, this session's
-WebCodecs-original probe verdict, and a runtime "has ffmpeg terminally failed
-for this source" flag. It never writes back to the route, the cache, or the
-project; reopening a project re-runs it from nothing. It returns a
-`DecodeResolution` handed to `SourceDecoderPool.acquire`:
-
-```
-decode_engine setting  ─┐
-component available?    │
-proxy opt-in / ready    ┼─► resolveDecodeEngine ─► { engine, source, target,
-webcodecs probe verdict │        (pure)                 status, key }
-ffmpeg-usable (runtime) ─┘                                    │
-                          engine: ffmpeg    → FfmpegSource ───┤ (picks its own lane)
-                          engine: webcodecs → SourceHandle ───┘
-```
-
-`status` is first-class: `ok` (a `target` is acquirable), `pending` (a probe
-or proxy build is still outstanding), or `unsupported` (no engine can decode
-the chosen source — see [Unsupported](#unsupported)). `key` —
-`${engine}:${source}:${target}` — is the swap identity. An engine/source flip
-or an import moving from its external path to the project copy changes it.
-The Compositor retains the old frame while the replacement decodes, alternating
-between the layer's base and `#swap` pool slots. Completion releases the slot
-that actually held the old source; shared media keys include the resolved
-identity so clips switching at different times cannot reuse another target's
-immutable URL. A lane change *inside* the Standard engine does not change the
-key and triggers no swap.
-
-**Engine selection by setting:**
-
-| Setting | Label | Resolves to |
-|---|---|---|
-| `auto` (default) | Automatic | `ffmpeg` when the component is loaded and hasn't failed for this source, else `webcodecs` |
-| `ffmpeg` | Standard | `ffmpeg` (`unsupported` if the component isn't loaded, or it already failed for this source) |
-| `webcodecs` | Lite | `webcodecs` |
-
-The stored setting value was renamed `"native" → "ffmpeg"`; a one-shot
-migration in `app-settings.ts` maps any persisted `"native"` on load. The
-settings UI grays out **Standard** when the component is absent, so a pinned
-`ffmpeg` with no component is only reachable via a stale/migrated value — the
-resolver reports it `unsupported` rather than optimistically `ok`.
-
-**Originals are the default.** Both engines decode the original file by
-default; the quick proxy is a source the user opts into, never one the app
-swaps to on its own, and `auto` never auto-proxies. This matches how
-mainstream NLEs behave (`feedback_native_nle_conventions`).
-
-**Why `auto` prefers the Standard engine — settled.** WebCodecs used to
-out-play `ffmpeg` on 8-bit ≤1080p, and the whole of that gap was the hardware
-lane's read barrier. With the barrier off the critical path the ordering
-reverses: measured in one sitting, 1080p max smooth tracks are H.264 **5** on
-ffmpeg-hardware against 2 on WebCodecs, and HEVC **5** against ≥5 — the
-hardware lane's five HEVC clips all taking hardware, at 0.00 % drops and tick
-p99 18.10 ms against a 33.3 ms budget
-([playback-perf](playback-perf.md#max-smooth-tracks)). Since
-[decode-bench](decode-bench.md) already gave `ffmpeg` the decisive **seek**
-advantage, `auto` wins both axes — and picking per-*interaction* has lost its
-motive while keeping its cost, because `key` is
-`${engine}:${source}:${target}`, so flipping engine on a play/scrub transition
-is a visible swap by construction. **Reopening this needs a second box that
-loses on sustained playback _and_ loses on seek**; one without the other is
-what reopened it before.
-
-**Export mirrors this overlay.** The same Automatic/Standard/Lite vocabulary
-routes export decode: a per-project `decodeEngine` setting feeds
-`resolveExportDecodeRouting`, which freezes a per-media routing table at
-export start — no mid-run re-resolution, and native-routed sources skip the
-proxy wait. The export dialog renders this section's picker options verbatim
-(`settings/decodeEngineOptions.tsx` is shared by both surfaces). See
-[`render.md`](render.md) §Export source resolution and
-[ADR 0033](adr/0033-export-decode-joins-the-engine-overlay.md).
-
-### The Standard engine (`FfmpegSource`)
-
-`FfmpegSource` is the deep module: one class over two interchangeable
-*transports* against one stable `FrameRing`. It privately owns the
-capability-cache lookup, the HW allow-list, the class-key probe, and the
-sticky HW→SW verdict. It needs the optional `@weftcut/native-decode`
-component; where that isn't loadable, `auto` resolves to the Lite engine and
-**Standard** is grayed out. See [ADR 0030](adr/0030-decode-engine-overlay-and-native-component.md)
-for why the component is a separate, conditionally-loaded addon and what it
-means for licensing.
-
-- **Lane pick at open.** HW-eligible codec + probe ok → a `GpuTransport`
-  (`lane = "hardware"`); otherwise a `SwTransport` (`lane = "software"`).
-- **HW transport** — Windows d3d11va: a pooled shared GPU texture reaches the
-  compositor with zero pixel bytes crossing IPC. The preload isolated world
-  builds each `ImageBitmap` from the shared slot and forwards it over a
-  MessagePort. Codec-agnostic — nothing on the path inspects the bitstream.
-- **A slot's recycling waits for the GPU read; its delivery doesn't.** ffmpeg
-  overwrites a slot in place as soon as it is acked, on its own D3D11 device,
-  while Chromium reads that texture on the GPU process's — a cross-device
-  dependency Chromium cannot track, so `await createImageBitmap` resolving is
-  not the read having landed. Ack too early and the producer overwrites the slot
-  mid-read, delivering a later frame's pixels tagged with an earlier PTS
-  (`preview-gpu-order.spec.ts` locks this: every frame carries a barcode of its
-  index and every delivered bitmap must match its PTS-derived index, on one
-  session and on three concurrent ones). That group is Windows-only, because the
-  slot pool it exercises is; the same spec runs the one-session barcode check on
-  the copy-back lanes with the lane left unforced, which covers presentation
-  order there and reaches no shared texture. What has to wait is **recycling**, not
-  **delivery** — treating the two as one costs a display interval on the
-  renderer thread for every frame of every session. So the preload hands the
-  bitmap over immediately and delegates the ack to the renderer, which copies one
-  pixel out of the delivered bitmap on Pixi's WebGPU queue, waits for that
-  queue's submitted work, and acks the slot back up the same port.
-- **Waiting must be free, which is why the signal is a promise.** The same
-  deferral expressed with a WebGL2 `fenceSync` needs a context of its own, and on
-  an idle GPU such a fence does not signal by itself at any bound — the drain's
-  flush-and-poll spin is what completes it, and WebGL2 cannot express a blocking
-  wait, so that spin is busy work on the renderer thread. It cost a quiet 1080p
-  track ~2 s per 20 s window and made 4K fail outright. WebGPU's
-  `onSubmittedWorkDone` is a promise, so a slot that is not ready yet costs
-  nothing to keep waiting for.
-- **The ack is independent of paint, and completion-bound.** A frame the ring evicts, or
-  one that arrives while nothing is compositing, still holds a slot, and
-  `pool_size` stranded slots wedge a session for good — so the signal is taken on
-  delivery and never waits on anything downstream. An unsignalled slot remains
-  owned regardless of elapsed wall time, until its GPU completion signal arrives
-  or the stream closes; time alone is not evidence that native may overwrite the
-  shared texture. The observed 83–97 ms hold with a three-slot pool can constrain
-  high-frame-rate throughput, but it no longer trades pixel ordering for that
-  throughput. `HwBarrierMode` (`shared/ipc.ts`) names the strategies;
-  the preload-side fence and the synchronous 1px readback — a pipeline flush, not
-  a frame transfer — stay available as A/B controls, the readback also as the
-  fallback where the renderer has no device to fence on.
-- **SW transport** — libavcodec decodes the original in the main process and
-  ships NV12 bytes over classic IPC ([ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md)).
-  The bytes ring as `NativeNv12Frame`s and convert to RGB in the compositor's
-  own `Nv12Ingest` pass (dual GLSL/WGSL — the preview renderer prefers
-  WebGPU), with the matrix selected from the source's mapped color tags —
-  never via `createImageBitmap`, whose buffer-frame conversion is always
-  BT.601 ([ADR 0032](adr/0032-cpu-plane-yuv-converts-in-owned-shaders.md)).
-  Gate: `preview-sw-color.spec.ts` (saturated charts, 709 + 601 legs).
-- **SW requests continue, they don't re-seek.** The native session keeps a
-  cursor (position + the frame it stopped on) across requests, so a target that
-  moves forward — every playback tick — resumes the same decode pass, and only a
-  backward scrub or a jump more than a second past the frontier pays a seek.
-  It stops once half a second past the target is decoded, which is what paces
-  delivery to content rate: one new frame per tick, no duplicates. The renderer
-  adds the second brake, skipping the request entirely while
-  `FrameRing.isLookaheadFull()` (time OR byte budget). Seeking per request
-  instead costs the whole GOP prefix every tick — measured 137× decode
-  amplification on a 240-frame GOP, which is what made this lane unusable for
-  long-GOP and 10-bit sources.
-- **SW delivery has end-to-end credits.** Production opens enable an eight-frame,
-  32 MiB payload window spanning native, napi and Electron IPC. The renderer
-  returns a unique receipt after accepting or discarding each frame, including
-  obsolete-seek and malformed frames. An oversized frame can travel alone; the
-  decoder can retain one additional pending frame. This bounds payloads, not
-  total process memory or IPC's transient copies. New seeks do not reset the
-  outstanding receipts. Requests carry an identity checked during decode and
-  again before renderer acceptance. An eight-ms cooperative work slice yields
-  between decoded frames and resumes the same cursor; it cannot interrupt a
-  blocking FFmpeg call. Renderer loss/reload closes the producer.
-- **HW→SW fallback is internal.** A HW decode error or device loss disposes the
-  GPU transport and opens the SW transport **into the same `FrameRing`** — a
-  fresh `streamId` so no stale GPU frame lands, the last HW frame held so
-  there's no visible gap. A budget throw first gives the owning pool one
-  ordered chance to reclaim retained capacity and retry hardware; only a retry
-  that still loses admission takes the same SW path. The lane flips; nothing
-  external fires and the swap key is unchanged. `currentLane()` reads the live
-  lane for PerfHUD/diagnostics.
-- **Total failure surfaces once.** Only if the SW transport also dies (or the
-  component vanished after open) does `FfmpegSource` fire its single
-  `onFatalError` → the Compositor re-resolves (`auto` → webcodecs, or →
-  unsupported).
-
-**HW allow-list + budget** (private to the engine). The HW lane is restricted
-to a seek-validated codec allow-list — 8-bit H.264, HEVC, VP9. The GPU probe
-decodes one forward frame, which proves the driver *can* hardware-decode but
-not that the D3D11 session survives a backward seek; some drivers
-hardware-decode codecs outside this scope (MPEG-2 is the known case) and hang
-indefinitely on a backward seek. The allow-list encodes that seek-safety
-dimension the one-frame probe can't test — a codec must be on it before its
-probe is even kicked — but never overrules a probe's negative verdict. (The
-underlying D3D11 backward-seek hang is a separate pre-existing gap the
-allow-list routes around, not a fix — a tracked follow-up.) GPU admission
-reserves two currencies before native allocation: at most five concurrent
-sessions and at most `3 × 3840 × 2160` total coded pixel area. The area is
-calibrated against the measured 30 fps fixtures; it is not pixel-rate because
-source fps is not carried into admission. Thus five 1080p sessions fit, while a
-fourth 4K session does not ([playback-perf](playback-perf.md)). Exhausting either
-currency throws typed `hw-budget-exceeded`; the clip falls to the SW transport
-rather than erroring and records no capability verdict, because admission
-capacity is transient.
-
-**Capability failures stay sticky; capacity spills do not.** A genuine HW
-failure (device creation/loss, decode failure) marks that media software-only
-for the rest of the app session; a total ffmpeg failure under `auto` marks the
-media `webcodecs` for the session. Those verdicts do not re-promote. A budget
-throw records no verdict, so it neither spreads to another clip on the same
-media nor becomes a permanent property of this clip.
-
-Above 1080p, only this capacity fallback gets the formal spill profile: the
-smallest supported scale near a 960×540 target (quarter size for 4K) and half
-cadence. Native still decodes every reference frame, but skips unselected
-frames before copy-back, scale, packing and IPC. Device failures and native-size
-mismatches use the ordinary software profile instead.
-
-`Compositor` publishes one **priority epoch** before any active acquire or
-upcoming prewarm: every currently active VideoClip plus every clip at the
-nearest boundary inside the one-second lookahead, with both its base and
-overlap-swap pool keys. The plan uses the shared recursive placement walk,
-including Group instance paths and source trims. The same plan drives active
-requests and preloading, so their resource protection and source times agree.
-For sequential short cuts, the plan also looks past
-the nearest clip to subsequent non-overlapping boundaries in that window.
-With at most one active video, speculation is capped at three upcoming clips;
-concurrent playback keeps a cap of three active/upcoming clips in total.
-Participants of the nearest boundary are never dropped to meet that cap.
-These are prewarm limits, not hardware admission limits. Warming
-only the first two short cuts can give their successor just a few frames of startup
-time, leaving its decoder empty at the cut. A priority source that receives
-`hw-budget-exceeded` may ask `SourceDecoderPool` to close only non-priority
-FFmpeg hardware handles retained from older timeline regions. The pool awaits
-each `previewGpu:close` through main's native close and budget-lease release
-before `FfmpegSource` retries `previewGpu:open`; a fire-and-forget close would
-race the same still-live lease.
-
-If the priority set itself exceeds physical capacity, the rejected source uses
-the spill profile without retry churn. When the playhead crosses the boundary,
-the priority epoch changes: the just-departed hardware source is now
-reclaimable. After a lease is reclaimed, a still-priority budget spill retries
-hardware inside its existing source, preserving its decoded ring and sprite.
-The new transport asks main for admission again; a second capacity refusal
-can still fall back to software. Without reclaimed capacity there is no retry.
-Output from the retired transport is ignored, and repeated PTS entries from
-the new transport replace and release the old snapshots instead of consuming
-additional ring capacity.
-Thus the five-second idle retention remains useful in the ordinary case, but
-cannot pin an about-to-play clip to software under measured budget pressure.
-
-The live budget is readable — `previewGpu:budget` returns
-`sessions.used/max`, `codedPixelArea.used/max`, and the latter's
-`calibratedFps: 30`. The PerfHUD shows both currencies beside the per-clip lane
-pills. This is diagnostic state, not an invitation to pre-check: main's
-reservation is the authority. A clip reading `SW↓` next to newly available
-capacity is a transient spill awaiting the next priority rebalance, not a
-capability verdict.
-
-**Two trails, logged separately.** `noteResolution` emits one LogBus row per
-media per change of the resolved key, so an engine or source change (the
-total-ffmpeg-failure case above, a proxy landing) leaves a trail. The lane needs
-its own channel, because it is deliberately absent from that key (ADR 0030) and
-putting it there would make hardware-vs-software an engine-level fact:
-`noteLaneOpen` emits one `decode-lane` row per clip per hardware↔software
-transition, naming the layer, the media, the lane left, the lane taken and the
-reason — the `hw-budget-exceeded` overflow, a device loss, a capability failure.
-Both trails log per *change*, never per frame: a first open, and a same-lane
-re-open such as a playback-resolution change, are silent. A priority rebalance
-that rebuilds a budget-spilled clip leaves the matching `software → hardware`
-return row; capability-failure sessions never produce that return.
-
-**Capability cache.** `<userData>/decode_capability.json` persists per-machine
-probe verdicts across restarts, keyed by lane (`sw`/`hw`) and a
-codec/pix-fmt/resolution-class string, so a source never re-probes a format
-class it already answered. Each lane carries an `env` string — the component's
-ffmpeg version for `sw`, the GPU + driver identity for `hw` — and a mismatch
-wipes that whole lane's entries, since the machine truth it was measured
-against changed. This is distinct from the session's sticky verdict above: the
-cache answers "can this machine decode this format at all," the sticky verdict
-answers "did this session's open just fail."
-
-On macOS, a cache miss for the VideoToolbox lane runs its one-frame native
-probe in a disposable Electron utility process (`decode-probe-host.ts`). Main
-coalesces concurrent requests for the same format class, including an import's
-original-to-project-copy source swap, just as the disk capability cache does.
-The in-flight entry is removed on both success and failure. Main
-owns a four-second deadline covering startup, addon loading and decoding. It
-accepts a verdict only after the host exits cleanly. Timeout or IPC/process
-failure triggers forced termination and software fallback, and disables further
-VideoToolbox capability resolution for this app session, including cached
-positives. These transient failures never become persistent negative capability
-entries. Before spawning, admission waits up to four seconds for temporary
-import contention to clear, with no reservation or child while waiting. Shutdown
-cancels this wait. An admission wait that times out falls back without caching
-or disabling the lane. A probe asked for while another runs, such as an H.264
-and an HEVC source first opened together, waits its turn rather than being
-refused (ADR 0153): it waits for the previous caller's answer, not its child's
-exit, so an unreaped host delays no one. The parent reserves one CPU thread and 192 MiB and
-releases them only on the child's exit; after a one-second reap grace the caller
-can continue even if the OS has not yet reaped the host. Outstanding ownership
-is retained in that case. Actual preview sessions and export encoders retain
-their existing lifecycle; probe isolation does not recover those sessions.
-
-Regression gates: `decodeProbeProcess.test.ts` exercises lifetime races and a
-real synchronously blocked child; `decode-probe-isolation.spec.ts` exercises the
-Electron IPC path, timeout-to-software recovery and native addon loading on
-macOS. `scripts/smoke-packaged-decode-probe.mjs` verifies the same native loading
-path in the signed application bundle after packaging.
-
-Hardware probe failures carry a structured diagnostic through IPC and initial
-lane selection. Native rejection details are retained alongside negative
-capability cache entries. Initial failed selection emits a diagnostic log;
-the active clip exposes `hwDiagnostic` and `hwFallbackCount` in addition to
-`hwLane`. The count is recorded before asynchronous recovery and survives
-source recreation/re-promotion for the same clip and media. Hardware acceptance
-tests use that evidence both before and after sampling, so a successful
-software fallback cannot be counted as hardware coverage (see
-`platform-codecs.md` for skip/required-variant rules).
-
-### The Lite engine (`SourceHandle`)
-
-The Lite engine is WebCodecs decoding through the shared refcounted
-`SourceMedia` (§[Decode](#decode) above) — the same `VideoDecoder` +
-`FrameRing` pipeline every WebCodecs clip uses. On `original`, resolution
-consults this session's WebCodecs-original probe: `ok` → decode the original
-directly (no proxy), `untested` → `pending` while the probe kicks, `fail` →
-`unsupported`. FFmpeg decodes any original, so this probe is consulted only on
-`webcodecs × original`.
-
-### Unsupported
-
-`unsupported` replaces the old silent proxy floor: when the chosen engine
-cannot decode the chosen source, the clip resolves to that first-class status,
-the Compositor skips acquiring a handle and surfaces the media via an
-`onUnsupported(mediaId)` notification, and PixiPreview renders a placeholder
-card (not a black frame) with two actions: **Switch to Standard** and
-**Generate proxy**. Switch to Standard shows only when the component is
-available; on a no-component machine the card states the format is
-unsupported by the Lite engine, with no switch. Generate proxy is shown
-either way — it forces the per-clip proxy override on and enqueues an
-on-demand build ([Proxies](#proxies)); once the quick proxy lands the clip
-resolves through it (proxy playback is always the Lite engine, so this works
-regardless of component availability) and the card clears. Copy is i18n'd
-(en-US + zh-CN). In practice the Switch-to-Standard path is reached via a
-pinned/absent Standard engine; the `webcodecs × original × fail` path depends
-on the probe emitting `fail` rather than `untested`, which is a known gap.
+- **GOP crossings do not reset the decoder.** During continuous play the pump
+  sends the next IDR into the same `VideoDecoder`, and the ring continues. A
+  reset happens only on a backward seek outside the ring, or a forward jump
+  far past the pump frontier. An unconditional reset at every GOP boundary
+  measured a ~400 ms stall per boundary (`PacketPump.ts`).
+- **Idle and failure.** A handle with no use for 5 s is disposed and rebuilt
+  on the next request. `decoderFallback.ts` handles hardware failures: a
+  zero-output first-frame error reconfigures the decoder with
+  `prefer-software`, and `Codec reclaimed due to inactivity` closes the
+  decoder and rebuilds it lazily.
+- **Demand plan.** Before any acquire or prewarm, the Compositor publishes one
+  priority epoch (`previewDecodePriority.ts`). It covers every active video
+  clip and every clip at the nearest boundary within 1 s
+  (`UPCOMING_CLIP_PREWARM_US`), with both the base and `#swap` pool keys. The
+  plan uses the recursive placement walk (`forEachLayerInTime`), so Group
+  instances and trims request the source time that is actually visible. For
+  short sequential cuts it also looks past the nearest boundary. Speculation is
+  capped at 3 upcoming clips with one active video, or 3 minus the active count
+  otherwise. Clips at the nearest boundary are never dropped. Active demand is
+  acquired before speculation.
+- **Picture continuity.** A populated scene is not replaced until incoming
+  video has a usable frame (checked recursively through Groups). Until then
+  the previous complete composition stays on screen, so a cold or backward cut
+  never flashes black or shows a stale tail. Empty intervals still clear. The
+  audio clock does not stop; a held picture is counted as a late layer.
 
 ## Scrub
 
-`scrub.ts` debounces drag input and, on commit, calls `decoder.flush()`,
-seeks to the prior IDR, and decodes forward to the requested frame.
-Continuous scrub uses the same path with a tighter debounce so the user
-sees a frame within ~1 frame-time of each drag step.
+`PlaybackEngine` composites every seek immediately and passes it to a
+`ScrubCoalescer` (`decoder/scrub.ts`: 50 ms debounce, 180 ms max-wait). The
+coalescer then re-anchors and composites the latest target. Frames for
+intermediate targets are discarded. The max-wait must exceed the worst-case
+decode from a keyframe, which the short-GOP proxy bounds.
 
-## Audio
+## Decode engine
 
-`AudioGraph` owns the preview's master bus and one metering tap per audio
-role. Each audio layer gets an `AudioMixer` that schedules its chunks
-through a gain envelope and a pan matrix and fans into its role's bus,
-which sums into the master input. A seek re-anchors and reschedules every
-source; pause stops scheduling but holds state for the next play. The
-topology, the envelope contract and the meter seam live in
-[`docs/audio.md`](audio.md) § Preview mixer.
+The decoder for a source is chosen per session, on top of the persisted
+[Decode Route](../CONTEXT.md#decode-routing). Callers pick an **engine**. The
+engine hides lane choice, probes, the capability cache, sticky fallback and
+device-loss recovery.
 
-The audio compositor that produces the final m4a at export time still
-runs in Rust ffmpeg — see [`docs/export.md`](export.md). The
-Web Audio path is preview-only.
+- **Engine**: `ffmpeg` (**Standard**) or `webcodecs` (**Lite**). The
+  `decode_engine` AppSetting is `auto` / `ffmpeg` / `webcodecs`. A persisted
+  legacy `"native"` value migrates to `ffmpeg` on load.
+- **Source**: `original` or `proxy`. Only the user changes it
+  ([Proxies](#proxies)).
+- **Lane**: hardware or software. It is private to `FfmpegSource` and never
+  appears in a resolver input or output.
+
+`resolveDecodeEngine` (`decoder/decodeEngine.ts`) is pure. Its inputs are the
+setting, whether the native-decode component is loaded, the proxy intent and
+whether the proxy is ready, the session's WebCodecs-original verdict, and
+whether ffmpeg has failed terminally for this source. It writes nothing.
+`resolvePreviewSource` gathers these inputs for both playback and
+[actionability](#actionability). It returns `{ engine, source, target, status,
+key }`:
+
+- `status` is `ok`, `pending` (a probe or proxy is outstanding) or
+  `unsupported` ([Unsupported](#unsupported)).
+- `key = ${engine}:${source}:${target}` is the swap identity. When it changes
+  (engine or source flip, or an import moving to its project copy), the
+  Compositor keeps the old frame on screen while the replacement decodes in the
+  layer's alternate pool slot (`swapKeys.ts`). A lane change inside Standard
+  does not change the key.
+
+| Setting | Label | Resolves to |
+|---|---|---|
+| `auto` (default) | Automatic | `ffmpeg` when the component is loaded and has not failed for this source, else `webcodecs` |
+| `ffmpeg` | Standard | `ffmpeg`; `unsupported` if the component is missing or has failed for this source |
+| `webcodecs` | Lite | `webcodecs` |
+
+Settings grays out **Standard** when the component is absent.
+
+**Originals are the default.** Neither engine switches to a proxy on its own.
+
+**Why `auto` prefers Standard.** With the hardware read barrier off the
+critical path, 1080p max smooth tracks were H.264 5 on ffmpeg hardware vs 2 on
+WebCodecs, and HEVC 5 vs ≥5
+([findings](notes/playback-perf-findings-2026-07.md#max-smooth-tracks)).
+[decode-bench](decode-bench.md) already gave ffmpeg the seek advantage. Picking
+an engine per interaction would cause a visible swap, because the engine is
+part of `key`. Reopening this needs a machine where Standard loses on both
+sustained playback and seek.
+
+Export uses the same Automatic/Standard/Lite vocabulary through
+`resolveExportDecodeRouting`. The routing table is frozen at export start (see
+[`render.md`](render.md) § Export source resolution).
+
+### The Standard engine (`FfmpegSource`)
+
+`FfmpegSource` puts two interchangeable transports over one stable
+`FrameRing`. It needs the optional `@weftcut/native-decode` component
+([ADR 0030](adr/0030-decode-engine-overlay-and-native-component.md)).
+
+- **Lane pick at open** (`pickInitialLane`). Main walks the advertised
+  hardware lanes (`HW_LANE_PRIORITY`: `nvdec`, `vaapi`, `d3d11va`,
+  `videotoolbox`) and keeps those eligible for the format
+  (`shared/hwLaneEligibility.ts`). It then checks the capability cache or
+  probes. Windows `d3d11va` uses `GpuTransport`. The copy-back hardware lanes
+  (NVDEC, VAAPI, VideoToolbox) and software decode use `SwTransport`.
+- **Eligibility.** Every lane except VideoToolbox accepts 8-bit H.264, HEVC
+  and VP9 only. VideoToolbox adds ProRes and 10-bit, shipped as I420P10. The
+  list encodes seek safety, which a one-frame probe cannot test (MPEG-2 on
+  d3d11va decodes forward, then hangs on a backward seek). It narrows the
+  formats that get probed and never overrides a negative probe.
+- **`GpuTransport` (d3d11va).** A pooled shared D3D11 texture reaches the
+  compositor with no pixel bytes crossing IPC. The preload builds an
+  `ImageBitmap` from the slot and forwards it over a MessagePort.
+- **A slot is recycled only after the GPU read completes. Delivery does not
+  wait.** ffmpeg overwrites an acked slot on its own D3D11 device, and Chromium
+  cannot track that cross-device dependency. If the ack comes too early, a
+  later frame's pixels arrive tagged with an earlier PTS. So the bitmap is
+  delivered immediately. The renderer copies one pixel on Pixi's WebGPU queue,
+  awaits `onSubmittedWorkDone`, then acks (`slotFenceQueue.ts`; default
+  `HwBarrierMode` `rendererFence`). A WebGL2 `fenceSync` was rejected: it needs
+  a busy flush-and-poll loop, which cost ~2 s per 20 s on one 1080p track and
+  failed at 4K. The ack does not depend on painting, and the renderer never
+  acks on elapsed time. Native reclaims a slot left un-acked for 3 s
+  (`LEASE_TIMEOUT`, `preview_gpu/session.rs`) with a generation bump: a wedged
+  consumer costs one possibly-torn frame instead of a stalled session, and its
+  late ack fails the generation check (a routine non-zero `lease_timeouts` counter means the
+  consumer is stalling). `preview-gpu-order.spec.ts` checks the ordering with
+  per-frame barcodes, on one session and on three concurrent sessions
+  (Windows), and on the copy-back lanes with one session.
+- **`SwTransport`.** libavcodec decodes in the main process, and NV12 (or
+  I420P10) bytes go over classic IPC
+  ([ADR 0029](adr/0029-native-sw-decode-ships-bytes-not-shared-texture.md)).
+  The compositor's own ingest pass converts them to RGB using the source's
+  color tags, never through `createImageBitmap`, which always applies BT.601
+  ([ADR 0032](adr/0032-cpu-plane-yuv-converts-in-owned-shaders.md)). The gate
+  is `preview-sw-color.spec.ts`.
+- **Software requests continue; they do not re-seek.** The native session
+  keeps a cursor between requests. A target moving forward continues the same
+  pass. Only a backward move, or a jump more than 1 s past the frontier,
+  seeks. Each request decodes up to 500 ms past the target. Re-seeking on
+  every request cost 137× decode amplification on a 240-frame GOP. The
+  renderer requests a refill only when forward coverage drops below 150 ms
+  (`REFILL_LOOKAHEAD_US`), and not while `FrameRing.isLookaheadFull()`.
+- **Software delivery uses credits.** Production opens allow at most 8
+  outstanding frames and 32 MiB (`preview_sw/flow.rs`); one oversized frame may
+  travel alone. Each frame stays charged until the renderer returns its unique
+  receipt, sent whether the frame was accepted or dropped. Duplicate or
+  foreign receipts are ignored. A seek changes the request identity but does
+  not cancel outstanding receipts. Forward refills keep the identity. A cache
+  flush changes it. Native code and the renderer both reject superseded work.
+  Decode runs in 8 ms cooperative slices and resumes the same cursor; it
+  cannot interrupt a blocking FFmpeg call. Renderer reload closes the producer.
+  Callers that use native code directly keep the uncredited contract.
+- **Hardware→software fallback happens inside the source.** A hardware error
+  or device loss opens `SwTransport` into the same ring with a fresh
+  `streamId` and keeps the last hardware frame on screen. The swap key does
+  not change. `currentLane()` reports the live lane. Only if software also
+  fails does `onFatalError` fire. The Compositor then re-resolves (`auto` →
+  `webcodecs`, otherwise `unsupported`).
+
+**Hardware admission (d3d11va).** Before allocating, main reserves a session
+slot (default 5), coded pixel area (default `3 × 3840 × 2160`) and pool bytes
+from the shared GPU buffer budget (`src/main/previewGpuBudget.ts`; settings in
+`performance-settings.ts`). The area limit is calibrated at 30 fps (60 once a
+computer-test calibration is applied). It does not model pixel rate. Five
+1080p sessions fit; a fourth 4K session does not
+([findings](notes/playback-perf-findings-2026-07.md#hardware-admission)). A
+refusal throws `hw-budget-exceeded`, and the clip spills to software with no
+capability verdict.
+
+**Capability failures are sticky; capacity spills are not.** A real hardware
+failure marks that media software-only for the app session. A total ffmpeg
+failure under `auto` marks it `webcodecs`. Neither verdict is ever reversed. A
+budget spill records nothing. Above 1080p, a spill uses the spill profile: the
+supported scale nearest 960×540, at half cadence (`budgetSpillProfile.ts`).
+
+**Reclaim and retry.** If a priority clip is refused, the pool closes
+non-priority hardware handles retained from earlier timeline regions. Each
+`previewGpu:close` is awaited through the native close and the lease release
+before `previewGpu:open` retries; a fire-and-forget close would race the
+lease. If the priority set alone exceeds capacity, the refused clip spills
+with no retry loop. When the epoch moves past a boundary, a still-priority
+spilled clip retries hardware inside its existing `FfmpegSource`, keeping its
+ring and sprite. Output from the retired transport is ignored. A repeated PTS
+replaces the old snapshot and releases it.
+
+`previewGpu:budget` exposes `sessions`, `codedPixelArea` and `calibratedFps`
+for diagnostics only. Main's reservation is the authority, so do not
+pre-check against it.
+
+**Two log trails.** `noteResolution` logs one row per media whenever the
+resolved key changes. `noteLaneOpen` logs one `decode-lane` row per clip on
+each hardware↔software transition, with the reason. The lane has its own
+trail because it is not part of the key. Neither trail logs per frame. A
+same-lane reopen is silent.
+
+**Capability cache.** `<userData>/decode_capability.json` (`main/decode-capability.ts`)
+stores probe verdicts across restarts. It is keyed by lane (`sw`, `d3d11va`,
+`nvdec`, `vaapi`, `videotoolbox`) and format class, plus the DRM node for
+VAAPI. Each lane stores an `env` string: the ffmpeg version for `sw`, and the
+GPU and driver identity for hardware lanes. If `env` changes, that lane's
+entries are wiped. The cache records whether this machine can decode a format.
+The session's sticky verdict records whether an open just failed.
+
+**macOS probe isolation.** On a VideoToolbox cache miss, the one-frame probe
+runs in a disposable utility process (`decode-probe-host.ts`,
+`decodeProbeProcess.ts`). Concurrent requests for the same format class are
+coalesced. Requests for different classes queue behind the previous answer,
+not behind the child process exiting. Main enforces a 4 s deadline covering
+startup, addon load and decode. It accepts a verdict only after the host exits
+cleanly. On timeout or crash, the host is killed, the clip falls back to
+software, and VideoToolbox resolution is disabled for the app session
+(cached positives included). Transient failures are never cached as
+negatives. Admission waits up to 4 s for import contention, then reserves one
+CPU thread and 192 MiB until the child exits. After a 1 s reap grace the
+caller continues anyway. Gates: `decodeProbeProcess.test.ts`,
+`decode-probe-isolation.spec.ts`, `scripts/smoke-packaged-decode-probe.mjs`.
+
+**Hardware evidence.** A probe failure carries a structured diagnostic through
+IPC and into the negative cache entry. Each active clip exposes `hwLane`,
+`hwDiagnostic` and `hwFallbackCount`, and the count survives source
+re-creation. Hardware acceptance tests check this evidence before and after
+sampling, so a software fallback is never counted as hardware coverage (see
+[`platform-codecs.md`](platform-codecs.md)).
+
+### The Lite engine (`SourceHandle`)
+
+WebCodecs over the shared `SourceMedia` (§ [Decode](#decode)). On `original`,
+it consults the session verdict. `ok` decodes the original, `untested` is
+`pending`, and `fail` is `unsupported`. A source is marked `fail` only on a
+definitive codec or config rejection from the import decodability sweep
+(`markWebcodecsUnusable`), never on a timeout.
+
+### Unsupported
+
+When the chosen engine cannot decode the chosen source, the clip resolves to
+`unsupported`. The Compositor acquires nothing and reports the media through
+`onUnsupported(set)`. `UnsupportedClipCard` replaces the black frame with
+two actions. **Switch to Standard** appears only when the component is
+available. **Generate proxy** forces the per-clip proxy override on and
+enqueues `generate_quick_proxy`. The proxy always decodes on Lite, so this
+works on every machine.
+
+## Actionability
+
+A media card can be dragged or used once preview can actually play it. Import
+job progress does not decide this. `mediaReadiness` (`panels/mediaReadiness.ts`)
+turns the `resolvePreviewSource` result plus file availability into `ready`,
+`missing`, `proxy_pending` or `unsupported`. The pool, the context menu and the
+timeline drop handler all read the same verdict through `useImportReadiness`.
+
+- A job finishing does not grant access. Outstanding hash, copy or
+  optimization work does not take away access the source already has.
+- Standard can play a probed original immediately. Lite needs a successful
+  original decode or a ready proxy that the user selected.
+- `PreviewCapabilities` (`app/previewCapabilities.ts`) runs at most 2 probes at
+  a time and keeps in-flight probes across unrelated summary updates. It
+  retries inconclusive results. First-use probes may run during playback;
+  optional probes follow the background-playback policy.
+- Decode evidence survives a source path change only through
+  `media:source-relocated`. Main emits it when the workspace copy matches the
+  previous hash and size. A missing file, different content, or a retired
+  project opening discards the evidence and cancels its probes. Late results
+  cannot restore discarded evidence.
+- A terminal engine failure invalidates the verdict, and the engine fallback
+  rules then apply. Copy progress is shown separately and may appear on an
+  actionable card. Export has its own readiness gates.
 
 ## Proxies
 
-Proxy is a decode **source** the user opts into (the `source` axis of a
-[resolution](#decode-engine)), never a tier the engine falls back to on its
-own — the native-NLE convention (`feedback_native_nle_conventions`). The
-opt-in is two-layered, both persisted on `ProjectSettings` and written through
-the unrecorded `update_project_settings` mutation, so neither ever enters undo
-history (`data-model.md` §ProjectSettings):
+A proxy is a decode **source** the user opts into, never a fallback the engine
+picks. Two persisted `ProjectSettings` fields control it. Both are written with
+the unrecorded `update_project_settings`, so neither creates an undo entry:
 
-- **Prefer Proxies** — a project-scoped toggle, surfaced in the Settings
-  panel (`prefer_proxies`). On, it prefers the quick proxy for every clip in
-  the project that has one.
-- **Per-clip override** — a control in the media pool (`proxy_overrides`,
-  keyed by media id) that cycles **Auto → Proxy → Original → Auto**. Auto
-  defers to the global toggle; Proxy/Original force that one clip regardless
-  of the toggle. Hidden for `Bypass` sources (below).
+- **Prefer Proxies** (`prefer_proxies`): a project toggle in Settings.
+- **Per-clip override** (`proxy_overrides[mediaId]`): a media-pool control
+  that cycles Auto → Proxy → Original. It is hidden for `Bypass` sources.
 
-The effective per-clip intent is `proxy_overrides[mediaId] ?? prefer_proxies`.
-Preview uses the proxy only when that intent is true **and** the clip's quick
-proxy exists on disk (`quickProxyPath`); otherwise it decodes the original.
-That `proxyIntent(mediaId) && quickProxyPath(media) !== null` gate is the
-whole safety net: a clip toggled onto proxy before its build finishes, or one
-whose proxy gets cache-cleaned mid-session, falls back to the original with
-no black frame and no special-case code, and a WebCodecs-unsupported original
-still reaches [Unsupported](#unsupported) rather than silently proxying.
+Preview uses the proxy when `(proxy_overrides[id] ?? prefer_proxies)` is true
+**and** `quickProxyPath(media)` exists. Otherwise it decodes the original. That
+gate covers a toggle set before the proxy is built and a proxy deleted by the
+cache. A WebCodecs-undecodable original still goes to
+[Unsupported](#unsupported).
 
-**Proxy always resolves to the Lite (WebCodecs) engine**, regardless of the
-`decode_engine` setting — the quick proxy is 720p H.264 short-GOP,
-WebCodecs-decodable by construction, so routing it through the Standard
-engine would need a file path the proxy branch doesn't carry and buys nothing
-on a source this light. One consequence: turning proxy on for a clip also
-rescues the pinned-Standard / no-component case, since the proxy decodes via
-WebCodecs no matter what `decode_engine` says.
+The proxy always resolves to the Lite engine. It is ≤720p short-GOP H.264
+(`PROXY_GOP_FRAMES` = 6), and the proxy branch has only a URL, not a path. This
+also rescues a pinned Standard engine on a machine without the component.
 
-Both the media-pool override's Proxy state and the Unsupported card's
-**Generate proxy** action reach the same on-demand backend command,
-`generate_quick_proxy(media_id)`, which enqueues the existing quick-proxy job
-for a media that doesn't have one yet — a cache-cleaned proxy, or a source
-that wasn't heavy enough to auto-build one at import. `Bypass` sources are
-excluded: their Decode Route carries no `quick_proxy` slot and they're
-already light (short-GOP H.264 ≤1080p), so there's nothing to generate. See
-[`data-model.md`](data-model.md) and ADRs 0009–0011 for how the Decode Route
-decides which derivatives exist for a source; the decode engine only ever
-reads that decision, never writes it.
+`generate_quick_proxy(media_id)` (`native/src/commands/media.rs`) builds a
+missing quick proxy on demand. It does nothing for `Bypass`, which has no
+`quick_proxy` slot, or when the proxy already exists.
 
-- **Quick proxy** — a 720p short-GOP scrub copy (`quick_proxy_path`),
-  generated at import by `jobs/quick_proxy.rs` for sources heavy enough to
-  need one, and on demand otherwise via `generate_quick_proxy`. Its short
-  fixed GOP (`PROXY_GOP_FRAMES`) is what makes scrubbing frame-accurate: any
-  scrub target decodes at most a few frames from its keyframe, bounding the
-  seek-to-key-then-decode-forward tail (ADR 0008). This is the live preview
-  source whenever the proxy axis resolves active.
-- **Export master** — the full `proxy_path`, a source-resolution copy
-  (ADR 0011) used only at export time; preview never reads it. Which file
-  export decodes is governed solely by the persisted Decode Route, never by
-  the preview proxy preference: `Bypass`/`DirectExport` export the original,
-  `Proxied`/`NativeSw` export this master, and the `prefer_proxies` /
-  `proxy_overrides` toggles — which only steer the preview axis — have no
-  bearing on what export reads. For `Proxied`/`NativeSw` sources the export
-  master is still what export reads today; routing those two routes to
-  decode the original instead is deliberately left to `auto`'s discretion,
-  profiling-gated and deferred past v1.
-  `MediaDerivativesPatch.proxy_path = Some(None)` (or a
-  `proxy_format_version` bump) invalidates a stale proxy and triggers a
-  re-encode on next open.
+- **Quick proxy** (`quick_proxy_path`): the only proxy preview reads.
+- **Export master** (`proxy_path`): the full proxy, read only by export, for
+  sources that export does not decode natively. Preview never reads it, and the
+  preview toggles do not affect export. See
+  [ADR 0011](adr/0011-export-master-vs-preview-proxy.md).
+
+## Interaction
+
+The preview is not a selection surface. Under Selection, a click on the frame
+selects nothing. The `TransformGizmo` takes gestures only for the layer
+already selected in the timeline. A video frame is mostly footage, so
+click-to-select would turn stray clicks into selection changes.
+
+**Frame-coordinate tools hit-test only their own kind.** While the Text tool
+(`T`) is armed, `preview/textHitTest.ts` checks the click against Text layers
+at the playhead, topmost first. It uses the gizmo's own geometry
+(`layerFrameAt`, `layerQuad`). Locked or disabled layers and tracks are skipped.
+A hit opens the editor (`textEditingStore`). A miss creates a Text layer at the
+click: `add_text_layer` with `x` and `y`, both or neither. That is two history
+entries, the same as using the menu and then typing. While the tool is armed,
+the gizmo is display-only (`data-inert`). The tool stays armed after a
+creation. Escape outside the editor returns to Selection. `Shift+T` toggles
+display mode. A future pen or crop tool should follow the same pattern and
+must not widen the hit test to every kind. The tool is inert when the preview
+shows a composition other than the focused one.
+
+**The viewport is a gesture, not a mode.** It works under every tool:
+
+- The wheel zooms around the pointer, clamped to 5–800 %, and snaps to the
+  stops (25, 50, 75, 100, 150, 200, 300, 400 %). A trackpad pinch (Chromium
+  sends it as a ctrl-wheel) uses the same handler with its own gain. Listeners
+  sit on the preview surface, not the Pixi host, because the overlays are
+  siblings of the host.
+- The middle button pans. Autoscroll is suppressed on the mouse event; that is
+  the only event where suppression works. The Hand tool (`H`) shares the same
+  pan code for pointers without a middle button.
+- A two-finger trackpad scroll zooms. Trackpads therefore pan with the Hand
+  tool.
+- The toolbar readout (`Fit` or a percentage) opens a radio menu, not a
+  select. A select renders its trigger from its own items, so it threw the view
+  back to Fit whenever the wheel landed between stops.
+- `Z` (View › Fit preview to window) returns to Fit. The stepping commands have
+  no default keys: `Mod +/−` is consumed by `hardenWindow`, and `=`/`−` belong
+  to the timeline.
+- Zoom and pan are session view state (`previewViewStore`). No edit, history
+  entry, export setting or decode divisor reads them. Zoom is measured in
+  device pixels per composition pixel, and `Fit` is a mode that re-fits on
+  resize ([`render.md` § Preview canvas](render.md#preview-canvas)).
 
 ## Motifs
 
-`MotifSprite` binds cache-owned bitmaps as Pixi textures. The shared frame
-broker reads persisted frames first and otherwise captures the offscreen Motif
-host; transport and ownership follow [ADR 0078](adr/0078-motifs-cache-pixels-and-transfer-persistent-textures.md).
-The cache uses content identity (motif id, version, props, render size, fps and
-content duration), so identical content can share pixels across instances.
-
-Each sprite's `MotifPlaybackCursor` keeps one admitted request and the latest
-demand. During playback, useful late results advance the picture; newer cached
-frames can overtake them without rolling back. Pause and seek require the exact
-target, and export keeps its exact injected-frame path. Prewarming covers visible
-and imminent content within 500 ms, with a small recent-frame window and a shared
-byte cap. Repeated Group instances retain their own time windows. See
-[ADR 0096](adr/0096-motif-preview-progress.md) and [`motifs.md`](motifs.md).
-
-Persisted prewarming replenishes each available slot on an idle callback,
-skipping frames already in flight across replans. GPU delivery takes an
-acknowledged free lane rather than waiting for a fixed lane's turn. The existing
-concurrency and memory limits still apply; see
-[ADR 0097](adr/0097-motif-prewarm-replenishes-available-lanes.md).
-
-The **Motif lag / hold** PerfHUD tile measures content lag and outdated bitmap
-hold time, including missing frames and pending requests. A steady composite
-submission cadence alone cannot establish that Motif content is progressing.
+`MotifSprite` binds cache-owned bitmaps. `MotifPlaybackCursor` keeps one
+admitted request and the latest demand per sprite. During playback, late but
+useful frames advance the picture. Pause and seek wait for the exact frame.
+Caching, prewarming and transport are described in [`motifs.md`](motifs.md).
 
 ## Diagnostics
 
-The transport-bar dropped/late indicator counts the current episode. It dims
-after 1.5 seconds without an observed problem and clears both counts after
-3 seconds, including while paused. Ongoing stale frames extend the quiet window
-even when frame deduplication does not increase the count. At expiry, the
-tracker records the totals and confirms them on the following composite before
-clearing. A new problem cancels that confirmation even if deduplication kept the
-totals unchanged. Judging precedes clearing synchronously. The existing
-composite tick handles decay, with no UI timer or per-frame React updates.
-PerfHUD and the pause summary retain cumulative totals for the play session;
-a new incident therefore starts at one in the transport bar without erasing
-diagnostic history.
+**Dropped/late indicator** (transport bar, `underrunTracker.ts`). It counts the
+current episode, dims after 1.5 s with no new problem, and clears after 3 s
+of quiet, including while paused. Clearing is confirmed on the next composite,
+and any new problem cancels it. Decay runs on the composite tick; there is no
+UI timer. Session totals are kept in the Performance Monitor.
 
-`PerfHUD.tsx` is a `import.meta.env.DEV`-gated overlay mounted in
-the top-right corner of the preview surface (`Ctrl+Shift+P` toggles).
-It reads the Compositor and PlaybackEngine via refs every 500 ms and
-displays:
+**Performance Monitor** (dev builds only: Dev menu › Performance Monitor). This
+is a separate window (`render/PerfHUD.tsx`, `performanceMonitorWindow.ts`).
+`PerfTelemetryBridge` in `PixiPreview` streams to it only while the window is
+open, polling every 500 ms. It shows frame rate (rAF p50/p99 over 120
+intervals), composite time, audio prepare and stop times, video late/lead,
+submit p95/p99, Motif lag/hold, drop/late totals, prewarm, JS heap, process
+CPU, hardware sessions against the budget, audio meters, and a per-clip table
+(lane, ring, barrier, frame fates). Reset clears the peaks.
 
-- **rAF P50 / P99** — frame-interval percentiles over a 120-entry
-  circular window. Resets on `visibilitychange` so a tab-unhide
-  doesn't pollute the ring with the multi-second pause interval.
-- **composite ms (last · max)** — `compositeFrame` body duration.
-  The running max persists until the reset button is clicked.
-- **audio preparation ms (last · max)** — time spent resuming the context and
-  preparing initial PCM before releasing the audio clock.
-- **audio stop ms** — synchronous command handling, shown separately from
-  AudioContext base/output latency estimates; not physical speaker latency.
-- **heap** — Chromium's `performance.memory.usedJSHeapSize /
-  totalJSHeapSize`. Chromium/Electron exposes this.
-- **per-clip** — `decodeQueueSize`, ring entry count, ring's latest
-  PTS for every active clip (clips with disposed handles are
-  filtered out).
-
-The HUD's reset button clears the Compositor's `compositeMsMax` AND
-the audio preparation max so a one-off cold-start spike doesn't pin
-the displayed max forever. The HUD's z-index sits below page
-chrome popovers / settings dialogs so it doesn't obscure them.
-
-For a per-stage breakdown rather than a single `composite ms` — including
-the two costs that bracket lives outside, `setAnchorTime` and the Pixi
-present — see [`playback-perf.md`](playback-perf.md), the multi-track
-playback benchmark (operated per
-[`playback-perf-runbook.md`](playback-perf-runbook.md)), and
-`render/perf/stageTimers.ts`, the accumulator it reads. Note what the
-HUD's **Dropped** counter cannot see: it judges whether the ring held a
-fresh frame, so a loop stalled by a synchronous GPU drain reports zero
-drops while looking visibly jerky.
-
-## Render & Play
-
-The "Render & Play" affordance kicks off the same Pixi+WebCodecs
-pipeline used for export, writes the result to an OS temp MP4, and
-opens an Electron window playing the file. It's the WYSIWYG
-verification path when the user wants to see exactly what the export
-will produce. The popup HTML lives at `/render-play.html`.
+The Drop counter only reports whether the ring had a fresh frame. A loop
+stalled by a synchronous GPU drain reports zero drops yet looks jerky. A
+steady submit cadence can also hide a frozen Motif, which is why Motif lag/hold
+is a separate tile. For per-stage timing use
+[`playback-perf.md`](playback-perf.md) and `render/perf/stageTimers.ts`.

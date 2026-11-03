@@ -171,9 +171,12 @@ function skillFolder(skillsDir: string): string {
 /// stdio support). Until the shim is installed (dev before build:cli,
 /// shim_path = null) the HTTP path renders as primary, which is also the
 /// pre-shim layout. The shipped agent skill rides along both routes: the setup
-/// prompt asks the agent to install it, and the manual section names its
-/// folder. Its state is reported whatever it is, because a shipped app cannot
-/// reach anything but `installed` without something being broken. Lives in the
+/// prompt asks the agent to copy it, and the manual section names the app's own
+/// copy. That copy is all the panel can see — the agent's copy lives in the
+/// client's skills directory and goes stale on upgrade — so the panel says so
+/// instead of claiming it installed. The app copy's state is reported whatever
+/// it is, because a shipped app cannot reach anything but `current` without
+/// something being broken. Lives in the
 /// Settings "Agent" tab; like the other panes it stays mounted across tab
 /// switches, so the poll below runs once.
 export function AgentSection() {
@@ -444,12 +447,12 @@ export function AgentSection() {
       </div>
     ) : null;
 
-  /// The line that explains a skill state other than `installed`, in the
+  /// The line that explains a skill state other than `current`, in the
   /// register its severity deserves: amber for `stale` (the folder is there and
   /// worth handing out, it is just not this version's), red for a folder that
   /// is not there at all.
   const skillFaultNote = (skills: SkillsInstallView) =>
-    skills.state === "installed" ? null : (
+    skills.state === "current" ? null : (
       <div
         className={`connect-skill-fault ${
           skills.state === "stale" ? "settings-warn" : "settings-error"
@@ -536,7 +539,7 @@ export function AgentSection() {
       {/* Connecting the server and installing the skill are one act — one
           message, pasted into one agent — so they are one button. The skill
           state is presented whatever it is: a shipped build that reached
-          anything but `installed` has had both of its build gates fail, so the
+          anything but `current` has had both of its build gates fail, so the
           absence is a defect the user can act on, and the fault here is what
           explains a prompt that carries only the MCP half. */}
       <section className="settings-section">
@@ -610,23 +613,29 @@ export function AgentSection() {
             )}
           </div>
           {info.skills.dir ? (
-            <div className="connect-path">
-              <AppInput
-                value={skillFolder(info.skills.dir)}
-                onValueChange={() => {}}
-                readOnly
-                mono
-                title={skillFolder(info.skills.dir)}
-                className="connect-path-input"
-                ariaLabel={t("connect.skill_path_heading")}
-              />
-              <Button
-                onClick={revealSkillFolder}
-                title={t("connect.open_location")}
-              >
-                {t("connect.browse")}
-              </Button>
-            </div>
+            <>
+              <div className="connect-path">
+                <AppInput
+                  value={skillFolder(info.skills.dir)}
+                  onValueChange={() => {}}
+                  readOnly
+                  mono
+                  title={skillFolder(info.skills.dir)}
+                  className="connect-path-input"
+                  ariaLabel={t("connect.skill_path_heading")}
+                />
+                <Button
+                  onClick={revealSkillFolder}
+                  title={t("connect.open_location")}
+                >
+                  {t("connect.browse")}
+                </Button>
+              </div>
+              {/* The copy an agent reads is not this one, and nothing here can
+                  see it: say so, rather than let a healthy app copy pass for an
+                  up-to-date agent. */}
+              <p className="settings-blurb">{t("connect.skill_copy_note")}</p>
+            </>
           ) : (
             // Points at the section that already diagnosed it rather than
             // repeating the diagnosis: one fault, one explanation.

@@ -317,7 +317,8 @@ export function QuickActionsPanel({
   useHorizontalWheel(scrollRef, orientation === "horizontal");
   // Which ends still hide a button. Same predicate the dock tab strip reads, so
   // the two strips cannot disagree about what "there is more this way" means;
-  // this one draws only the gradient, no arrows (ADR 0050).
+  // this one draws only the gradient, no arrows
+  // (docs/features.md#strip-overflow).
   const edge = useEdgeOverflow(scrollRef, orientation);
   const fade = !edge.overflowing
     ? "none"

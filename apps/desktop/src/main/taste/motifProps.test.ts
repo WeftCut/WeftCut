@@ -70,20 +70,20 @@ describe('placing and restyling a style Motif', () => {
   it('fills the props the call leaves out from the tokens; explicit props win', () => {
     const tokens = view(STYLED).tokens
     const a = actor(tokens)
-    expect(call(a, 'add_motif_layer', { motif_id: 'lower-third', t_start_us: 0, graphic_role: 'lower_third', props: { title: 'Ann' } }).ok).toBe(true)
+    expect(call(a, 'add_layers', { layers: [{ t_start_us: 0, t_end_us: 4_000_000, content: { kind: 'motif', motif_id: 'lower-third', graphic_role: 'lower_third', props: { title: 'Ann' } } }] }).ok).toBe(true)
     expect(props(a)).toMatchObject({ title: 'Ann', accent: '#D2261C', align: 'right' })
     const b = actor(tokens)
-    call(b, 'add_motif_layer', { motif_id: 'lower-third', t_start_us: 0, props: { accent: '#00FF00' } })
+    call(b, 'add_layers', { layers: [{ t_start_us: 0, t_end_us: 4_000_000, content: { kind: 'motif', motif_id: 'lower-third', props: { accent: '#00FF00' } } }] })
     expect(props(b)).toMatchObject({ accent: '#00FF00', align: 'right' })
     const plain = actor(null)
-    call(plain, 'add_motif_layer', { motif_id: 'lower-third', t_start_us: 0 })
+    call(plain, 'add_layers', { layers: [{ t_start_us: 0, t_end_us: 4_000_000, content: { kind: 'motif', motif_id: 'lower-third' } }] })
     expect(props(plain)).toMatchObject({ accent: '#ff4d4d', align: 'left' })
   })
 
   it('restyle_to_taste puts token-backed props back by role, and the audit reports the drift before', () => {
     const v = view(STYLED)
     const a = actor(v.tokens)
-    call(a, 'add_motif_layer', { motif_id: 'lower-third', t_start_us: 0, graphic_role: 'lower_third' })
+    call(a, 'add_layers', { layers: [{ t_start_us: 0, t_end_us: 4_000_000, content: { kind: 'motif', motif_id: 'lower-third', graphic_role: 'lower_third' } }] })
     const id = layer(a).id
     expect(call(a, 'update_layer_params', { layer_id: id, patch: { kind: 'Motif', props: { accent: '#00FF00' } } }).ok).toBe(true)
     const snap = a.snapshot()

@@ -82,7 +82,7 @@ test('word timing survives project reopen and correction resegments once', async
     await expect(panel.locator('.caption-text').last()).toHaveValue('它可以节省时间');
     const before = await invokeCmd<{ history: unknown }>(page, 'project_summary');
     const result = await invokeCmd(page, 'correct_caption_text', { project_id: summary.project_id, composition_id: summary.root_id, layer_ids: null });
-    expect(result).toEqual({ changed: 0 });
+    expect(result).toMatchObject({ changed: 0, changes: [] });
     expect((await invokeCmd<{ history: unknown }>(page, 'project_summary')).history).toEqual(before.history);
   } finally { await app.close(); }
 });
@@ -122,6 +122,6 @@ test('imported captions follow manuscript lines with estimated cuts, undo and re
     expect(cues.every((l: { metadata: Record<string, { provenance: string }> }) => l.metadata['weftcut.caption_timing']?.provenance === 'interpolated_from_cue')).toBe(true);
     await invokeCmd(page, 'project_open', { path: workspace });
     await expect(panel.locator('.caption-row')).toHaveCount(2);
-    expect(await invokeCmd(page, 'correct_caption_text', args)).toEqual({ changed: 0 });
+    expect(await invokeCmd(page, 'correct_caption_text', args)).toMatchObject({ changed: 0, changes: [] });
   } finally { await app.close(); }
 });

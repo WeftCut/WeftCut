@@ -5,7 +5,7 @@
 //! Every pool slot is an RGBA8 texture; each delivered frame renders the
 //! decoded NV12 surface through a session-owned pixel shader into the slot,
 //! and the browser-side `createImageBitmap` of the imported `rgba` frame is a
-//! pure byte copy (byte-exact end to end; see ADR 0040). Explicitly
+//! pure byte copy (byte-exact end to end; see ADR 0032). Explicitly
 //! NOT `ID3D11VideoContext::VideoProcessorBlt`: its conversion math is
 //! driver-defined, which can neither be pinned to the conformance goldens nor
 //! reproduced cross-machine.

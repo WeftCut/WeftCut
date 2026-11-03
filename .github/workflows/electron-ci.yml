@@ -3,8 +3,13 @@ name: electron-ci
 on:
   push:
     branches: [main]
+  # Drafts run nothing: the three entry jobs (release-plan, checks, rust-test)
+  # skip them and the rest follow through `needs`. ready_for_review starts the
+  # suite. converted_to_draft is here to cancel a run in flight: its own run takes
+  # the same concurrency group, cancels the old one and skips everything.
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   # Nightly full sweep: runs the @matrix tier that the per-PR e2e run drops
   # (what earns the tag: apps/desktop/e2e/README.md §Tiers). Same job, no
   # duplicated setup: only WEFTCUT_E2E_FULL differs (see the e2e step).
@@ -66,6 +71,7 @@ concurrency:
 
 jobs:
   release-plan:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -110,7 +116,7 @@ jobs:
     # is the binding constraint: 3 legs here + 1 `rust-test` leave one macOS
     # slot for a concurrent push run or another repository. macOS affords
     # three because it runs only the platform's own specs (e2e/slices.mjs
-    # §SKIP_ON, ADR 0141). The pack (§LEGS) balances each OS across exactly
+    # §SKIP_ON). The pack (§LEGS) balances each OS across exactly
     # these counts, so a leg's wall clock is that OS's suite over its leg
     # count: widening means buying legs back from somewhere.
     strategy:
@@ -468,7 +474,8 @@ jobs:
           # shader rounding shifts smooth regions by ±1-2 LSB — SSIM-visible,
           # PSNR-flat. Both legs measure ~0.67 healthy; floors calibrated to
           # that baseline, and the color gates' per-channel ceiling likewise
-          # (worst measured 12/255). See e2e/README.md §SSIM floors.
+          # (worst measured 12/255). See e2e/README.md
+          # §Export SSIM floors are environment-calibrated.
           WEFTCUT_E2E_SSIM_FLOOR: ${{ matrix.os != 'macos-latest' && '0.62' || '' }}
           WEFTCUT_E2E_COLOR_FAITHFUL_MAX: ${{ matrix.os != 'macos-latest' && '16' || '' }}
           # Native-decode gates run on Linux nightly: #15 measured 3/3 green
@@ -666,6 +673,7 @@ jobs:
   # `typecheck` and `mcp:catalog:check` appear here as well as inline in every
   # e2e leg; the duplication is concurrent, so it costs nothing.
   checks:
+    if: ${{ !github.event.pull_request.draft }}
     # A cold rust-artifacts miss can spend 15 min building the addons and
     # analyzer before typecheck and the full unit suite even start. Leave
     # those gates their own budget, plus dependency setup and cache cleanup.
@@ -746,6 +754,7 @@ jobs:
   # 537 MB compilation cache from every e2e leg. Concurrent with the e2e matrix,
   # for the reason spelled out on `checks`.
   rust-test:
+    if: ${{ !github.event.pull_request.draft }}
     # ~3.5 min warm. The cap covers the two cold paths that dwarf that: macOS
     # compiling ffmpeg-lgpl from source (~10 min) and a cold rust-cache
     # compiling the whole workspace.
@@ -910,6 +919,7 @@ jobs:
           # via the Linux `npm test` TS goldens, which run the same fixtures.)
           cargo test -p weftcut-eval --manifest-path native/Cargo.toml
           cargo test -p weftcut-conversion --manifest-path native/Cargo.toml
+          cargo test -p weftcut-reaper --manifest-path native/Cargo.toml
           # The production feature union is the crate `default` (jobs/export/mcp/
           # speech — see native/Cargo.toml; motifs migrated to TS and is NOT a Cargo
           # feature). Features are additive, so `--features test-noop` = defaults +
@@ -935,9 +945,9 @@ jobs:
             LD_LIBRARY_PATH="$PWD/resources/ffmpeg-lgpl/linux/lib" \
             cargo test --manifest-path native/decode/Cargo.toml --features test-noop
           elif [ "$RUNNER_OS" = "macOS" ]; then
-            # VideoToolbox tests share the runner's finite hardware sessions.
-            # Concurrent ProRes decodes can fail with VT -19092; run every
-            # decode test serially while preserving all hardware assertions.
+            # VideoToolbox tests share the runner's finite hardware sessions;
+            # run every decode test serially while preserving all hardware
+            # assertions.
             FFMPEG_DIR="$PWD/resources/ffmpeg-lgpl/mac" \
             DYLD_FALLBACK_LIBRARY_PATH="$PWD/resources/ffmpeg-lgpl/mac/lib" \
             cargo test --manifest-path native/decode/Cargo.toml --features test-noop -- --test-threads=1

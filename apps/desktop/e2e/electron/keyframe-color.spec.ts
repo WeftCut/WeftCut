@@ -9,7 +9,7 @@
 // between the number and the assertion.
 //
 // What only an end-to-end run can catch: colour is interpolated in OkLab with
-// premultiplied alpha inside the shared eval leaf (ADR 0021), and the preview
+// premultiplied alpha inside the shared eval leaf (ADR 0025), and the preview
 // (wasm) and the export (native) reach it by different code paths. The midpoint
 // of red → green is the OkLab mix, a markedly lighter and warmer colour than the
 // channel-wise average — so a leg that fell back to sRGB lerp lands ~80 counts

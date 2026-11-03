@@ -5,7 +5,7 @@ import { useCompositionAnchorStore } from '../state/compositionAnchorStore'
 import { useProjectStore } from '../state/projectStore'
 import { canJump, jump, type LocateItem } from './locate'
 
-/** The agent view's Jump (ADR 0065): moves the preview to a review item's
+/** The agent view's Jump: moves the preview to a review item's
  *  time and nothing else — the editor's Locate selects and navigates. Offered
  *  while the item sits on the composition the preview shows; `why` names a
  *  reason it has no place at all. */

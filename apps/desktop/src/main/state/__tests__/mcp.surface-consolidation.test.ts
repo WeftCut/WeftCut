@@ -3,7 +3,7 @@
 // `update_keyframe`, three link tools became `update_link`, the duration unpin
 // became `update_composition { duration_us: null }`, the reads gained a
 // tool-shaped fallback (`read_project`), and an Image no longer has to invent a
-// source window for `add_video_layer`.
+// source window for `add_layers` video.
 //
 // What is pinned is what the merged descriptions promise and a caller cannot
 // see from the schema: ONE commit per call, the order the aspects apply in,
@@ -39,9 +39,11 @@ function text(r: ReturnType<Actor['mcpCall']>): string {
 }
 function json<T>(r: ReturnType<Actor['mcpCall']>): T { return JSON.parse(text(r)) as T }
 /** One id out of a mutator's record — every write answers with the committed
- *  record, so the id is a field of it, not the whole text. */
+ *  record, so the id is a field of it, not the whole text (`add_layers`: of
+ *  its first placed layer). */
 function id(r: ReturnType<Actor['mcpCall']>, key: string): string {
-  const v = json<Record<string, unknown>>(r)[key]
+  const body = json<{ layers?: Array<Record<string, unknown>> } & Record<string, unknown>>(r)
+  const v = (body.layers?.[0] ?? body)[key]
   expect(typeof v, `${key} in ${text(r)}`).toBe('string')
   return v as string
 }
@@ -54,20 +56,20 @@ function aRoll(a: Actor): string { return root(a.snapshot()).tracks[0].id }
 function bRoll(a: Actor): string { return root(a.snapshot()).tracks[1].id }
 function threeClips(a: Actor): string[] {
   const track = aRoll(a)
-  return [0, 1, 2].map((i) => id(call(a, 'add_color_layer', {
-    track_id: track, t_start_us: i * 1_000_000, t_end_us: (i + 1) * 1_000_000, color: { r: 1, g: 2, b: 3, a: 255 },
-  }), 'layer_id'))
+  return [0, 1, 2].map((i) => id(call(a, 'add_layers', { layers: [{ track_id: track, t_start_us: i * 1_000_000, t_end_us: (i + 1) * 1_000_000, content: { kind: 'color', color: { r: 1, g: 2, b: 3, a: 255 } } }] }), 'layer_id'))
 }
 
 interface Key { id: string; t_us: number; in: { x: number; y: number; mode: string }; out: { x: number; y: number; mode: string }; continuity: string; segment: { kind: string }; preset_id?: string }
 function keyedText(a: Actor): { layerId: string; keys: Key[] } {
-  const layerId = id(call(a, 'add_text_layer', { track_id: bRoll(a), t_start_us: 0, t_end_us: 4_000_000, content: 'k' }), 'layer_id')
+  const layerId = id(call(a, 'add_layers', { layers: [{ track_id: bRoll(a), t_start_us: 0, t_end_us: 4_000_000, content: { kind: 'text', content: 'k' } }] }), 'layer_id')
   for (const [t, v] of [[0, 0], [2_000_000, 1]] as const)
     expect(call(a, 'set_keyframe', { layer_id: layerId, param_key: 'opacity', t_us: t, value: v }).ok).toBe(true)
   return { layerId, keys: readKeys(a, layerId) }
 }
+/** get_param_track's keys with the parallel ids and preset ids zipped back on. */
 function readKeys(a: Actor, layerId: string): Key[] {
-  return json<{ keyframes: Key[] }>(call(a, 'get_param_track', { layer_id: layerId, param_key: 'opacity' })).keyframes
+  const r = json<{ track: { value: Array<Omit<Key, 'id' | 'preset_id'>> }; keyframe_ids: string[]; preset_ids: Array<string | null> }>(call(a, 'get_param_track', { layer_id: layerId, param_key: 'opacity' }))
+  return r.track.value.map((k, i) => ({ ...k, id: r.keyframe_ids[i]!, ...(r.preset_ids[i] === null ? {} : { preset_id: r.preset_ids[i]! }) }))
 }
 
 describe('update_keyframe', () => {
@@ -181,12 +183,14 @@ describe('read_project', () => {
   it('serves the project views the resources serve, as text', () => {
     const a = actorWithPool()
     const [c1] = threeClips(a)
-    const tracks = json<Array<{ id: string; layers: Array<{ id: string }> }>>(call(a, 'read_project', { view: 'tracks' }))
-    expect(tracks.map((t) => t.id)).toEqual(root(a.snapshot()).tracks.map((t) => t.id))
-    expect(json<{ id: string }>(call(a, 'read_project', { view: 'layer', id: c1 })).id).toBe(c1)
+    const tracks = json<Array<{ track_id: string; layers: Array<{ layer_id: string }> }>>(call(a, 'read_project', { view: 'tracks' }))
+    expect(tracks.map((t) => t.track_id)).toEqual(root(a.snapshot()).tracks.map((t) => t.id))
+    expect(json<{ layer_id: string }>(call(a, 'read_project', { view: 'layer', id: c1 })).layer_id).toBe(c1)
     expect(json<{ ops: unknown[] }>(call(a, 'read_project', { view: 'history' })).ops.length).toBeGreaterThan(0)
-    expect(json<Array<{ id: string; ref_count: number }>>(call(a, 'read_project', { view: 'compositions' }))).toHaveLength(1)
-    expect(Object.keys(json<Record<string, unknown>>(call(a, 'read_project', { view: 'media' })))).toEqual(expect.arrayContaining([IMAGE, VIDEO]))
+    expect(json<Array<{ composition_id: string; ref_count: number }>>(call(a, 'read_project', { view: 'compositions' }))).toHaveLength(1)
+    const pool = json<Record<string, { media_id: string }>>(call(a, 'read_project', { view: 'media' }))
+    expect(Object.keys(pool)).toEqual(expect.arrayContaining([IMAGE, VIDEO]))
+    expect(pool[VIDEO]!.media_id).toBe(VIDEO)
   })
 
   it('refuses an unknown view or a layer view without an id, and reports an unknown composition as not found', () => {
@@ -197,15 +201,26 @@ describe('read_project', () => {
     // escalates to a JSON-RPC error; an unknown composition is a bad argument.
     expect(refusal(call(a, 'read_project', { view: 'tracks', composition_id: NOWHERE })).code).toBe('invalid_params')
   })
+
+  it('refuses composition_id on a view it does not narrow, as the resource refuses ?composition=', () => {
+    const a = actorWithPool()
+    const rootId = a.snapshot().root_id
+    for (const view of ['compositions', 'media', 'settings', 'history']) {
+      const e = refusal(call(a, 'read_project', { view, composition_id: rootId }))
+      expect(e.code, view).toBe('invalid_params')
+      expect(e.message, view).toMatch(/takes no composition_id/)
+    }
+    expect(refusal(call(a, 'read_project', { view: 'current' })).message).toMatch(/view must be one of/)
+  })
 })
 
-describe('add_video_layer source bounds', () => {
-  it('an Image needs no source window; a Video still does', () => {
+describe('add_layers source bounds', () => {
+  it('an image needs no source window; a video needs its in point', () => {
     const a = actorWithPool()
-    expect(call(a, 'add_video_layer', { track_id: bRoll(a), media_id: IMAGE, t_start_us: 0, t_end_us: 1_000_000 }).ok).toBe(true)
-    const e = refusal(call(a, 'add_video_layer', { track_id: aRoll(a), media_id: VIDEO, t_start_us: 0, t_end_us: 1_000_000 }))
+    expect(call(a, 'add_layers', { layers: [{ track_id: bRoll(a), t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'image', media_id: IMAGE } }] }).ok).toBe(true)
+    const e = refusal(call(a, 'add_layers', { layers: [{ track_id: aRoll(a), t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'video', media_id: VIDEO } }] }))
     expect(e.code).toBe('invalid_params')
-    expect(e.message).toMatch(/src_in_us and src_out_us are required for Video/)
+    expect(e.message).toMatch(/content\.src_in_us must be a number/)
   })
 })
 
@@ -213,7 +228,7 @@ describe('set_position path nodes', () => {
   const node = (x: number) => ({ point: { x, y: 0 }, in_handle: { x: 0, y: 0 }, out_handle: { x: 0, y: 0 }, segment: 'Line', tangent_mode: 'Corner' })
   it('takes snake_case nodes and reads them back the same way', () => {
     const a = actorWithPool()
-    const layerId = id(call(a, 'add_text_layer', { track_id: bRoll(a), t_start_us: 0, t_end_us: 4_000_000, content: 'p' }), 'layer_id')
+    const layerId = id(call(a, 'add_layers', { layers: [{ track_id: bRoll(a), t_start_us: 0, t_end_us: 4_000_000, content: { kind: 'text', content: 'p' } }] }), 'layer_id')
     const position = { mode: 'Path', path: { nodes: [node(0), node(100)] }, progress: { mode: 'Static', value: 0 } }
     expect(call(a, 'set_position', { layer_id: layerId, position }).ok).toBe(true)
     const back = text(call(a, 'read_project', { view: 'layer', id: layerId }))
@@ -222,7 +237,7 @@ describe('set_position path nodes', () => {
   })
   it('refuses the old camelCase spelling', () => {
     const a = actorWithPool()
-    const layerId = id(call(a, 'add_text_layer', { track_id: bRoll(a), t_start_us: 0, t_end_us: 4_000_000, content: 'p' }), 'layer_id')
+    const layerId = id(call(a, 'add_layers', { layers: [{ track_id: bRoll(a), t_start_us: 0, t_end_us: 4_000_000, content: { kind: 'text', content: 'p' } }] }), 'layer_id')
     const old = { point: { x: 0, y: 0 }, inHandle: { x: 0, y: 0 }, outHandle: { x: 0, y: 0 }, segment: 'Line', tangentMode: 'Corner' }
     const e = refusal(call(a, 'set_position', { layer_id: layerId, position: { mode: 'Path', path: { nodes: [old, node(100)] }, progress: { mode: 'Static', value: 0 } } }))
     expect(e.message).toMatch(/tangent_mode/)
@@ -245,7 +260,10 @@ describe('renamed tools', () => {
     }
     for (const old of ['remove_track', 'remove_media', 'remove_effect', 'remove_transition', 'remove_marker', 'remove_keyframe',
       'links_create', 'links_dissolve', 'links_add_members', 'links_remove_members', 'links_rename',
-      'groups_create', 'groups_add_members', 'groups_ungroup', 'groups_rename'])
+      'groups_create', 'groups_add_members', 'groups_ungroup', 'groups_rename',
+      // Spec ticket 09: merged into move_layers / shift_layers / set_layer_flags / retime_layers, no aliases.
+      'move_layer', 'update_layer', 'set_layers_enabled', 'ripple_delete_gap', 'separate_audio_to_new_track',
+      'set_preserve_pitch', 'set_frame_interpolation', 'get_frame_interpolation_capabilities'])
       expect(refusal(call(a, old, {})).code, old).toBe('not_found')
   })
 })

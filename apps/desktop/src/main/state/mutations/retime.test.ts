@@ -32,6 +32,7 @@ describe('time-remapping transactions', () => {
     if (!result.ok) throw new Error(JSON.stringify(result));
     const record = JSON.parse(result.result.content[0].text);
     expect(record.layers).toHaveLength(1);
+    expect(record.unretimed_partners).toEqual([a]);
     expect(record.layers[0]).toMatchObject({ layer_id: v, t_end_us: 4_000_000, timing: { time_map: { kind: 'Affine', rate: { num: 2, den: 1 } } } });
     const layers = rootComposition(actor.snapshot()).tracks.flatMap(t => t.layers);
     expect(layers.find(l => l.id === a)).toEqual(rootComposition(before).tracks.flatMap(t => t.layers).find(l => l.id === a));
@@ -50,22 +51,22 @@ describe('time-remapping transactions', () => {
     const read = actor.mcpCall('get_param_track', JSON.stringify({ layer_id: v, param_key: 'opacity' }));
     if (!read.ok) throw new Error(JSON.stringify(read));
     const record = JSON.parse(read.result.content[0].text);
-    expect(record.keyframes.map((k: Keyframe<number>) => k.time_fraction)).toEqual([{ num: 1, den: 3 }, { num: 2, den: 3 }]);
-    const keys = record.keyframes.map(({ id, t_local_us, preset_id, ...k }: Record<string, unknown>) => k);
-    const written = actor.mcpCall('set_param_track', JSON.stringify({ layer_id: v, param_key: 'opacity', track: { mode: 'Keyframed', value: keys } }));
+    expect(record.track.value.map((k: Keyframe<number>) => k.time_fraction)).toEqual([{ num: 1, den: 3 }, { num: 2, den: 3 }]);
+    // The read's `track` is the write shape: it goes back unedited.
+    const written = actor.mcpCall('set_param_track', JSON.stringify({ layer_id: v, param_key: 'opacity', track: record.track }));
     expect(written.ok, JSON.stringify(written)).toBe(true);
     const params = rootComposition(actor.snapshot()).tracks.flatMap(t => t.layers).find(l => l.id === v)!.params;
     if (params.kind !== 'VideoClip' || params.opacity.mode !== 'Keyframed') throw new Error('fixture');
     expect(params.opacity.value.map(keyTimeExact)).toEqual([exactTime(1, 3), exactTime(2, 3)]);
   });
 
-  it.each(['layer', 'track'])('MCP interpolation refuses a locked %s without changing the project or history', lock => {
+  it.each(['layer', 'track'])('MCP retime refuses a locked %s without changing the project or history', lock => {
     const { p, gen, c, v, layer } = setup();
     if (lock === 'layer') layer(v).locked = true;
     else c.tracks[0].locked = true;
     const actor = createActor({ initial: p, idGen: gen });
     const before = actor.snapshot(), history = actor.historyStatus();
-    const result = actor.mcpCall('set_frame_interpolation', JSON.stringify({ layer_ids: [v], interpolation: { kind: 'FrameSampling' } }));
+    const result = actor.mcpCall('retime_layers', JSON.stringify({ layer_ids: [v], target: { kind: 'Rate', value: { num: 2, den: 1 } } }));
     expect(result.ok).toBe(false);
     expect(actor.snapshot()).toBe(before);
     expect(actor.historyStatus()).toEqual(history);

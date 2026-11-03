@@ -4,7 +4,7 @@
 // Both are tool-independent on purpose — Resolve and Premiere zoom and pan
 // their viewer without arming anything, and the Hand tool exists there (and
 // here) as the path for a pointer with no middle button, not as the way in.
-// ADR 0072.
+// See docs/preview.md#interaction.
 //
 // Listeners go on the SURFACE (`.preview-video`), never on the Pixi host: the
 // gizmo, Text and Hand overlays are SIBLINGS of that host, so a wheel over a

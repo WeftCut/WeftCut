@@ -1,74 +1,49 @@
-# 0111 — UI and MCP share application-session export jobs
+---
+status: accepted
+---
 
-Status: Accepted
+# UI and MCP share application-session export jobs
+
+Date: 2026-10-12
 
 ## Context
 
-PR [#50](https://github.com/WeftCut/WeftCut/pull/50) proposed asynchronous MCP
-export using the renderer. Since its base, export gained resource reservations,
-retryable finalization and time remapping. Porting its old pipeline would remove
-those behaviors. Its review also required a no-overwrite rename fallback and
-preflight on portable filesystems such as exFAT.
+MCP needed asynchronous export (PR #50). A separate agent pipeline would have
+lost resource admission, retryable finalization (ADR 0104) and time remapping,
+which only the renderer export path has. The renderer reads the live project,
+so a concurrent edit would change what a running or retried export renders.
+Destinations include portable filesystems (exFAT) where overwrite-safe
+publication is not guaranteed.
 
 ## Decision
 
-`ExportJobs` in main owns admission, request idempotency, application-session
-records and the project edit gate. UI and MCP submit to this authority; both
-control the same task. One task, including one awaiting finalization retry, is
-admitted at a time. Actor writes, history changes, project replacement and Motif
-authoring reject while admitted. Derivative cache writebacks remain allowed.
-
-The renderer adapter subscribes before announcing readiness for a workspace
-generation. Main can admit a preparing job while the editor initializes, with a
-bounded readiness wait. `exportRunner` contains the existing media preparation,
-resource admission and renderer pipeline. The existing resource authority owns
-all permits and finalization reservations.
-
-Native code probes the destination directory before rendering, allocates one
-same-directory staging file, and publishes only a complete file. No-overwrite
-publication uses a hard link, falling back to the platform's atomic no-replace
-rename. There is no copy fallback. UI replacement follows the user's app-level
-`export_auto_overwrite` preference, defaulting off. The export dialog always
-shows this checkbox and remembers explicit changes across projects and restarts;
-changing the filename or directory does not clear it. Only a collision with
-automatic overwrite disabled shows a hint and an optional available-name suggestion
-that is adopted only on click. Successful checks and enabled overwrite show no
-status text; failed checks retain the retry action. Publication atomically
-replaces the old file only after completion. MCP defaults to numbered names or can require a strict name;
-neither policy overwrites or inherits the UI preference.
-
-Completed encoding is immutable. Mux or publication failure retains it and its
-reservation as `awaiting_retry`. Retrying a publication failure reuses the muxed
-file; retrying a mux failure consumes the encoded streams. A new basename must
-stay in the same directory and retain the extension. Renaming during finalization
-retry clears that job's earlier overwrite consent, without changing the saved
-preference for future UI exports.
-
-Cancellation is latched through gaps between native stages. Native children,
-mixing tasks and renderer work drain before admission is released. Cancellation
-of export preparation does not cancel unrelated shared proxy/conform/bake work.
-Publication is the commit point: if it wins a cancellation race, the job reports
-completion and the actual destination. Confirmed application exit cancels or
-discards, drains the job, and only then closes the editor and resource services.
-
-MCP disconnect does not cancel export. A repeated `request_id` with the same
-explicit arguments returns the same job before defaults or busy state are read;
-different arguments conflict. Records survive reconnects, but not app restart.
-MCP settings are per-job overrides, not saved defaults. MCP never prompts or
-automatically falls back from native encoding to WebCodecs. Existing native
-hardware-to-software candidate selection remains part of the native engine.
+- `ExportJobs` in main is the one authority for admission, request
+  idempotency, session records and the project edit gate. UI and MCP submit to
+  it and control the same job. One job runs at a time, including one awaiting
+  finalization retry.
+- **Editing is frozen** while a job is admitted or awaiting retry: actor
+  writes, history changes, project replacement and Motif authoring reject.
+  Derivative cache write-backs still apply.
+- Native code probes the destination directory before rendering, writes one
+  same-directory staging file, and publishes only a complete file:
+  no-overwrite publication is a hard link, falling back to the platform's
+  atomic no-replace rename. There is no copy fallback. Overwrite (UI only,
+  explicit preference) replaces atomically after completion.
+- Publication is the commit point: if it wins a race with cancellation, the
+  job reports completion and the actual path. Cancellation drains native
+  children, mixing and renderer work before admission is released, and does
+  not cancel shared proxy/conform/bake work. Confirmed app exit cancels or
+  discards and drains the job before closing the editor.
+- MCP disconnect does not cancel. Records survive reconnects but not restart.
 
 ## Consequences
 
-Five tools expose options, start, status, retry and cancel. Wire settings use
-snake_case; one mapping feeds the shared settings validator. The ExportPanel
-shows the same phase, progress, destination and result for either entry point;
-encoding parameters stay in the export settings dialog.
-Agents must poll and report the completed `output_path`, rather than assuming
-that their candidate filename was used.
-
-Editing is frozen while export is active or awaiting retry. This intentionally
-avoids editable snapshot exports, queuing, restart recovery and multiple export
-workers in this change.
-
-Inspired by PR #50 and its contributor theo_russell.
+- One code path for both entry points; the ExportPanel shows either job's
+  phase, progress and result.
+- No snapshot exports, queue, restart recovery or parallel export workers.
+  Allowing editing during export would need a project snapshot the renderer
+  pipeline can render from.
+- A destination that supports neither hard links nor atomic no-replace rename
+  fails at preflight instead of risking an overwrite.
+- Surface details (conflict policies, tools, idempotency) are in
+  [`export.md`](../export.md#export-jobs-ui-and-mcp).

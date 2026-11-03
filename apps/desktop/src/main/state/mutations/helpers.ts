@@ -99,7 +99,8 @@ export function requireSameComposition(p: Project, layerIds: readonly Uuid[]): C
   return comp
 }
 
-/** Reconcile composition.duration_us with the layer high-water mark (ADR 0005).
+/** Reconcile composition.duration_us with the layer high-water mark
+ *  (docs/data-model.md#composition).
  *
  *  The high-water mark is rounded UP to the enclosing composition frame, which
  *  matters only once audio lives on the 48 kHz lattice (spec R2-D6): an audio
@@ -119,10 +120,11 @@ export function applyDurationAutofit(c: Composition): void {
   else c.duration_us = fitted
 }
 
-/** A track disappears when its last layer leaves it (ADR 0042). The one prune,
- *  called by every path that can empty a track, with the track the caller just
- *  emptied — never a project-wide sweep, so a track that was *born* empty was
- *  never emptied and survives, and no edit can make a track vanish elsewhere.
+/** A track disappears when its last layer leaves it (docs/data-model.md#track).
+ *  The one prune, called by every path that can empty a track, with the track
+ *  the caller just emptied — never a project-wide sweep, so a track that was
+ *  *born* empty was never emptied and survives, and no edit can make a track
+ *  vanish elsewhere.
  *
  *  `transient` reads as "not part of the reserved skeleton": it is stamped on
  *  every role-less track at creation, so it is the cleanup-candidate flag rather
@@ -151,11 +153,11 @@ export function insertSorted(track: Track, layer: Layer): void {
 
 /** Scan tracks in reverse for the first non-reserved, UNLOCKED track with no
  *  layer overlap in [t0, t1). Returns null if none found, which means the
- *  caller must spawn a track via `applyAddTrack`. This IS ADR 0042's bounce
- *  policy ("no free lane, so make one"); it lives here rather than commands.ts
- *  so the transition mutations can share it without importing the command
- *  adapter (commands.ts imports mutations — the reverse edge would cycle).
- *  commands.ts re-exports it for its own consumers.
+ *  caller must spawn a track via `applyAddTrack`. This IS the bounce policy
+ *  ("no free lane, so make one", docs/features.md#track-placement); it lives
+ *  here rather than commands.ts so the transition mutations can share it
+ *  without importing the command adapter (commands.ts imports mutations — the
+ *  reverse edge would cycle). commands.ts re-exports it for its own consumers.
  *
  *  Locked lanes are never candidates: every caller PLACES content on the
  *  returned lane (agent color/text adds, paste, transition sibling bounces),

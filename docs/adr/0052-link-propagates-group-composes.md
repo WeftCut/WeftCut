@@ -4,163 +4,54 @@ status: accepted
 
 # A link propagates, a Group composes
 
+Date: 2026-10-04
+
 ## Context
 
-The editor had one relationship between layers and called it a Group: a flat
-set of two or more layer ids whose move, trim and split fan out to every
-member. That is Premiere's *Link* with more than two members. It has no
-rendering significance, no bounds, no timeline of its own and no identity — a
-label field and a rename tool existed, and nothing on screen ever drew the
-label; the clip block promised a chain-link icon and painted a 2 px left
-border.
-
-Three problems followed from the word.
-
-**One mechanism carried two intents.** "These travel together" — an A/V pair,
-a B-roll shot with its voice-over — and "this is one thing" — a lower-third
-build, a reusable title card, a scene to animate as a unit — are different
-requests, and every shipping NLE keeps them as two features: Link and Nest
-(Premiere), Link and Compound (Resolve), nothing and Precomp (After Effects).
-The second intent had no home here, and the word every editor uses for it was
-already spent on the first.
-
-**The relationship had no identity.** A group was a hue on a border. Under the
-name "Group" the user reasonably expected an object — something to open, name
-and render — and got a selection rule.
-
-**A/B Roll hid the fan-out.** Under the default track display a member on a
-hidden lane moves when its visible sibling is dragged, and nothing on screen
-says so. Premiere can afford an invisible link because every Premiere track is
-visible; this editor's default hides tracks. A relationship with no identity
-cannot grow the badge or the outline that would fix this.
+"These travel together" (an A/V pair, a B-roll shot with its voice-over) and
+"this is one thing" (a lower-third build, a reusable title, a scene animated as
+a unit) are different requests. Every NLE users come from keeps them as two
+features — Link and Nest (Premiere), Link and Compound (Resolve), Precomp
+(After Effects). The editor had one mechanism, a flat propagating member set,
+and called it a Group, so the second intent had no home and the word users
+reach for was spent on the first.
 
 ## Decision
 
-1. **The propagation relationship is a Link.** `Group` becomes `Link`,
-   field-for-field — `{ id, label?, members }`, `Project.groups` →
-   `Project.links`, `groups_*` → `links_*`, `escape_group` → `escape_link`,
-   `GroupSummary` → `LinkSummary`, every error twin in both languages. The
-   fan-out rules do not change. `Ctrl+L` toggles link ↔ unlink from the
-   selection, as in Premiere; `Ctrl+G` and `Ctrl+Shift+G` are vacated. No
-   compatibility aliases on MCP: the one consumer re-reads the schema every
-   session, which is the `EntityLabel` precedent.
-
-2. **The word Group means a composition placed as one layer** — After
-   Effects' precomp, Premiere's nest. It is reserved now and built later; the
-   glossary in `CONTEXT.md` holds the vocabulary so that no work in between
-   writes "group" for the propagation sense and has to be renamed twice.
-
-3. **Root and Group compositions share one `Composition` shape**, addressed
-   through `Project.compositions: Record<Uuid, Composition>` and
-   `Project.root_id`. A composition is settings + tracks + markers +
-   transitions + links; the root is one entry and every Group another. Chosen
-   over "the root stays special and Groups live in `sub_compositions`" because
-   that shape leaves every walk, every mutation and every validator with a
-   twin path — one over the root's fields on `Project`, one over a sub's fields
-   on its entry — and twin paths drift.
-
-4. **A Group layer is a media-bearing layer whose source is a composition.**
-   `CompositionRefParams { composition, src_in_us, src_out_us, transform,
-   opacity, blend_mode }`; the source duration is the referenced composition's
-   `duration_us`. That one sentence makes trim clamping, split's proportional
-   source distribution and keyframe re-basing apply verbatim — the kind joins
-   `VideoClip` and `Audio` in the `src_in_us` / `src_out_us` family and needs
-   no new rule.
-
+1. **Link** is the propagation relationship: `{ id, label?, members }` in
+   `Composition.links`; move/trim/split fan out, nothing renders.
+2. **Group** is a composition placed as one layer (After Effects' precomp,
+   Premiere's nest).
+3. **Root and Groups share one `Composition` shape**, addressed through
+   `Project.compositions: Record<Uuid, Composition>` and `Project.root_id`. A
+   special root plus `sub_compositions` would give every walk, mutation and
+   validator a twin path, and twin paths drift.
+4. **A Group layer is media-bearing.** Its params are
+   `CompositionRefParams { composition, src_in_us, src_out_us, … }`, the source
+   duration being the referenced composition's `duration_us`, so trim clamping,
+   split's source distribution and keyframe re-basing apply as they do for
+   `VideoClip` and `Audio`.
 5. **Single lattice.** Every composition's `fps`, `sample_rate` and `channels`
-   equal the root's. A Group on a different fps would put its `src_*` on a
-   different grid from the parent's `t_*` — that is time-remapping, and it is
-   out of scope. `width` / `height` may differ per composition.
-
-6. **Overhang is tolerated in state and clamped at the gesture.** A trim drag
-   clamps `src_out_us` to the composition's duration; validation never rejects
-   `src_out_us > duration_us`. Otherwise deleting a layer *inside* a Group —
-   autofit shrinks the duration — would be refused because a parent's window
-   overhangs. Past the end the Group renders nothing. Same posture as the text
-   box's `(null, set)` defence: prevent at the gesture, tolerate in state,
-   render defensively.
-
-7. **Cut-over, not migration, while pre-release.** Both shape changes — the
-   rename and the composition container — rewrite the shape in place:
-   `SCHEMA_VERSION` stays 1, `STEPS` stays empty, and
-   `fixtures/projects/v1.json` is regenerated by driving the actor once. This is
-   the trade [ADR 0047](0047-project-schema-upgrades-are-a-version-keyed-chain.md)'s
-   own context names — pre-release builds cut over rather than migrate, because
-   maintaining migration code for formats nobody has is pure overhead — and its
-   completeness test holds at zero steps and one fixture exactly as it did. Not
-   chosen: bumping `MIN_SCHEMA_VERSION = SCHEMA_VERSION = 2` with no step, which
-   passes the same test and creates the phantom generation ADR 0047 refused
-   when it reset 10 → 1. The clause expires at first release or at the first
-   `.vproj` handed to anyone else; from then on the chain is mandatory.
-
-## Split refinement (2026-10-01)
-
-This supersedes decision 1's unchanged split-membership behavior: a linked
-split partitions the original link at the cut instead of adding all right
-halves to it. Left-side members retain the original link id; right-side
-members receive a new link id. Non-spanning members join their temporal side;
-singletons are unlinked. Link override splits only the target, keeps its left
-half in the original link, and leaves its right half unlinked.
-
-The blade, playhead split, MCP split and multi-cut operations share this rule
-in the actor mutation, within the same undoable edit. It preserves each
-resulting A/V pair while allowing either side to move independently. Previously
-all segments continued moving together, defeating the separation made by a cut.
-
-MCP `split_layer` accepts one non-empty `at_t_us` array, even for one cut.
-It snaps, sorts and deduplicates the cut points, then applies the whole batch
-in one actor commit. Invalid cuts abort the entire edit; success publishes
-one project-change event and records one undo entry. This avoids a series of
-per-cut commits repeatedly refreshing the timeline and filling the history.
-The response is uniformly `{ layer_ids, at_t_us }`: ordered target segments
-and the actual cut points.
-
-## Considered options
-
-**Keep "Group" for propagation and pick another word for the composition.**
-Every NLE the users come from calls the propagation relationship a link, and
-two of the three call the composition a nest or a compound — words this
-project's UI copy avoids because "Group" is what a user reaches for when they
-mean "make this one thing". Keeping the old word would have saved a rename
-and cost the vocabulary the feature is for.
-
-**Root special + `sub_compositions`.** Rejected in (3).
-
-**Per-Group fps and sample rate.** Rejected in (5): it is time-remapping under
-another name.
-
-**Reject overhang in the validator.** Rejected in (6): it turns a delete inside
-a Group into a refusal about its parent.
-
-**Bump to v2 with an empty step.** Rejected in (7).
+   equal the root's (`CompositionLatticeMismatch`); width and height may differ.
+   A Group on another rate would put its `src_*` window on a different grid from
+   the parent's `t_*`. Rate change is a property of the Group *layer*
+   (`time_map`, ADR 0092), not of the composition.
+6. **Overhang is tolerated in state, clamped at the gesture.** Validation never
+   rejects `src_out_us > duration_us`; a trim drag clamps to the duration and
+   past the end the Group renders nothing. Otherwise a delete inside a Group,
+   which autofit-shrinks it, would be refused because a parent's window
+   overhangs.
 
 ## Consequences
 
-- Two words, two features, each spelled the way the industry spells it. A
-  link has one job and gains the identity the A/B Roll problem needs: the
-  accent and the hidden-member badge both hang off a relationship that now has
-  a name of its own.
-- Every `.vproj` on disk today fails to open with a parse error rather than a
-  clean refusal: the file still says `schema_version: 1`, passes the version
-  gate, and the parser finds no `links`. Accepted — those files live on
-  development machines only, and the README-capture projects have to be
-  rebuilt regardless.
-- A two-language model change, twice. `Project` round-trips through serde for
-  audio export and `project://compiled`, so the rename and the composition
-  container each land in TypeScript and Rust in one change.
-- No MCP aliases: a script written against `groups_create` breaks, and
-  `escape_group` is an unknown key. The schema is re-read per session.
-- Every flat `tracks[].layers[]` walk — export decode set, motif pre-bake,
-  font collection, the audio pass, snapping, the Rust mixer and export — learns
-  to recurse with a time offset once Groups land; a flat project is no longer
-  the whole project.
-- `Ctrl+G` / `Ctrl+Shift+G` are unbound until Pre-compose ships.
-- The decision in (7) is the one part of this record with an expiry, and it is
-  named above so the first release can find it.
+- Every per-composition walk (export decode set, motif pre-bake, fonts, audio,
+  snapping, the Rust mixer) recurses through `CompositionRef` with a composed
+  time mapping; a flat `tracks[].layers[]` walk is never the whole project.
+- No Group layer is retrimmed when its composition grows or shrinks; widening
+  a window is the user's act.
+- `Project` round-trips through serde to Rust, so shape changes land in both
+  languages at once.
 
-
-## Time-remapping extension
-
-[ADR 0092](0092-constant-time-remapping-preserves-content-windows.md) replaces
-the offset-only clock with a composed rational mapping. Group instances may
-retime child content; ungrouping and membership changes require rate 1.
+Rejected: keeping "Group" for propagation (costs the vocabulary the feature is
+for); per-Group fps (time remapping under another name); rejecting overhang in
+the validator (turns a delete inside a Group into a refusal about its parent).

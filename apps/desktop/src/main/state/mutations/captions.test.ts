@@ -131,7 +131,7 @@ describe('applyAddCaptionTrack', () => {
     expect(caps[0].layers.map((l) => (l.params as { content: string }).content)).toEqual(['a', 'c'])
     expect(caps[1].layers.map((l) => (l.params as { content: string }).content)).toEqual(['b'])
   })
-  // ADR 0070. The candidates are the composition's caption tracks, not only the
+  // ADR 0026. The candidates are the composition's caption tracks, not only the
   // lanes this call opens: a second transcription of the same timeline lands on
   // the caption track already there wherever that track has room.
   it('packs into an existing caption track with room instead of opening a new one, and returns it', () => {

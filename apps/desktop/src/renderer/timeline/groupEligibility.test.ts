@@ -70,7 +70,7 @@ afterEach(() => {
 });
 
 // The gate mirrors `main/state/mutations/groups.ts`'s `groupNotPlainReason` over
-// the WIRE shape, minus its `blend_mode` arm. A drift here does not throw — it
+// the WIRE shape. A drift here does not throw — it
 // greys Ungroup out on a plain Group, or offers it on one the actor refuses —
 // which is why each field gets its own case.
 describe("groupNotPlainReason", () => {

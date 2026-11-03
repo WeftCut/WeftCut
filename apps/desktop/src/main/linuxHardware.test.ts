@@ -41,6 +41,11 @@ it('resolves Linux IDs without Electron name strings and keeps memory per device
   expect(result.devices.find(d => d.vendor_id === 0x8086)?.memory).toMatchObject({ kind: 'shared', total_mib: null });
   expect(result.devices.find(d => d.vendor_id === 0x1002)?.memory).toMatchObject({ kind: 'local', total_mib: 16384, used_mib: 2048 });
 });
+it('does not manufacture a GPU from the zero-ID Vulkan placeholder', async () => {
+  const result = await collectLinuxHardware({ gpuDevice: [{ vendorId: 0, deviceId: 0, active: false }] }, fixture());
+  expect(result.devices).toHaveLength(3);
+  expect(result.devices.some(d => d.vendor_id === 0)).toBe(false);
+});
 it('keeps a PCI name when NVML is absent and never substitutes zero for unknown memory', async () => {
   const result = await collectLinuxHardware(gpuInfo, fixture({ nvml: false }));
   expect(result.devices.find(d => d.vendor_id === 0x10de)).toMatchObject({ name: 'NVIDIA RTX Example', name_source: 'pci-ids', memory: { total_mib: null } });
