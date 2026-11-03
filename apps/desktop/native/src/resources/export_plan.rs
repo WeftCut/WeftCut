@@ -210,12 +210,22 @@ pub fn export_audio(plan: u32) -> Result<Permit, String> {
 }
 
 /// An admitted plan on the shared governor, for tests that drive production
-/// code which borrows from one.
+/// code which borrows from one. Tests running alongside hold the same budget for
+/// moments, so a refusal waits its turn.
 #[cfg(test)]
 pub(crate) fn test_export_plan(mib: u64) -> u32 {
-    governor().reserve_export(&[mib], false)["id"]
-        .as_u64()
-        .expect("test export plan admitted") as u32
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let plan = governor().reserve_export(&[mib], false);
+        if let Some(id) = plan["id"].as_u64() {
+            return id as u32;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "test export plan refused: {plan}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }
 #[cfg(test)]
 pub(crate) fn release_test_export_plan(id: u32) {

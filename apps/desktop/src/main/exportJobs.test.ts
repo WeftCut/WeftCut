@@ -53,11 +53,22 @@ async function setup(exportPreferences?: () => ExportPresetPreferences) {
   return { jobs, dir, project, send, native, ready, run, close: () => { opened = null; } };
 }
 
-it('reserves before awaits, deduplicates before busy/default resolution and retains terminal records', async () => {
+it('admits one of two agent requests racing through their plans and refuses the other as busy', async () => {
+  const s = await setup(); s.ready();
+  const results = await Promise.allSettled([s.jobs.start({ request_id: 'one' }), s.jobs.start({ request_id: 'two' })]);
+  const admitted = results.flatMap(r => r.status === 'fulfilled' ? [r.value] : []);
+  const refused = results.flatMap(r => r.status === 'rejected' ? [r.reason] : []);
+  expect(admitted).toHaveLength(1);
+  expect(refused).toEqual([expect.objectContaining({ code: 'export_busy' })]);
+  expect(s.native.mock.calls.filter(([c]) => c === 'export_begin')).toHaveLength(1);
+  await s.jobs.cancel(admitted[0].job_id); await s.jobs.update(admitted[0].job_id, 'renderer', { state: 'cancelled' });
+});
+
+it('deduplicates before busy/default resolution and retains terminal records', async () => {
   const s = await setup(); s.ready();
   const a = s.jobs.start({ request_id: 'one' }), b = s.jobs.start({ request_id: 'one' });
-  await expect(s.jobs.start({ request_id: 'two' })).rejects.toMatchObject({ code: 'export_busy' });
   const job = await a; expect(await b).toEqual(job);
+  await expect(s.jobs.start({ request_id: 'two' })).rejects.toMatchObject({ code: 'export_busy' });
   expect(s.native.mock.calls.filter(([c]) => c === 'export_begin')).toHaveLength(1);
   await expect(s.jobs.start({ request_id: 'one', settings: { codec: 'hevc' } })).rejects.toMatchObject({ code: 'request_id_conflict' });
   const actual = await s.jobs.publish(job.job_id, 'renderer');

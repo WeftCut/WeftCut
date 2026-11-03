@@ -665,7 +665,15 @@ mod tests {
         let writer = tokio::spawn(async move {
             video_sink_write(&write_state, vec![0; 8 * 1024 * 1024], 0).await
         });
-        tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+        // A write holds this lock while the pipe, which the fixture never reads,
+        // blocks it. Cancelling any sooner tests a write that has not begun.
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while shared.stdin.try_lock().is_ok() {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("the write reaches the pipe");
         export_video_sink_cancel(&state).await.unwrap();
         assert!(
             tokio::time::timeout(std::time::Duration::from_secs(2), writer)
