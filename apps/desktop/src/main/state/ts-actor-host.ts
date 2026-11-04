@@ -18,7 +18,8 @@ import { runTackIpc } from '../agent/tackIpc'
 import { mcpActor } from './mcp-actor'
 import { AGENT_VIEW_EVENT } from '../../shared/agent-activity'
 import { PROJECT_OPENED_EVENT, type ProjectOpenedPayload } from '../../shared/project-events'
-import type { ProjectVersion, ProjectPublication, PublishedResult } from '../../shared/projectPublication'
+import { PUBLICATION_BASE_ARG, type ProjectVersion, type ProjectPublication, type PublishedResult } from '../../shared/projectPublication'
+import { createPublicationAnswers } from './publicationAnswers'
 import { REVIEW_CHANGED_EVENT, type ReviewActivityArgs, type ReviewActivityView, type ReviewActionArgs, type ReviewActionResult, type ReviewChangedPayload, type ReviewVersion, type ReviewView, type ReviewViewArgs, type ReviewViewUnchanged } from '../../shared/review'
 import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
 import { recoverInterruptedImports } from './importRecovery'
@@ -629,6 +630,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       : summaryOf(publishedProject, publishedHistory) }
   }
 
+  const answerPublication = createPublicationAnswers<ReturnType<typeof buildProjectSummary>>()
+
   async function published<T>(run: () => Promise<T>): Promise<PublishedResult<T>> {
     const before = publicationVersion.revision
     const value = await run()
@@ -778,7 +781,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   }
 
   async function handleInvoke(channel: string, args: Record<string, unknown>): Promise<unknown> {
-    if (channel === 'project_publication') return runEditTrace(editTraceId(args[EDIT_TRACE_ARG]), 'main.summary', publication)
+    if (channel === 'project_publication') return runEditTrace(editTraceId(args[EDIT_TRACE_ARG]), 'main.summary',
+      () => answerPublication(publication(), (args[PUBLICATION_BASE_ARG] as number | undefined) ?? null))
     if (channel === 'agent_activity_snapshot') return agent.snapshot()
     if (channel === 'agent_session_get') return agent.snapshot().session
     if (channel === 'agent_unlock_history') { agent.unlock(); return null }

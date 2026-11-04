@@ -1,4 +1,5 @@
-import type { ProjectPublication, ProjectVersion } from '../../shared/projectPublication'
+import type { ProjectPublication, ProjectPublicationReply, ProjectVersion } from '../../shared/projectPublication'
+import { applySnapshotPatches } from '../../shared/snapshotPatch'
 
 export type ProjectPublicationFailure = 'read-failed' | 'stale-response' | 'superseded-session' | 'stopped' | 'unavailable'
 
@@ -12,8 +13,12 @@ export class ProjectPublicationError extends Error {
 }
 
 interface PublicationOptions<T> {
-  read: (traceId?: string) => Promise<ProjectPublication<T>>
+  /** `base` names the answer this client holds; null asks for the whole projection. */
+  read: (traceId: string | undefined, base: number | null) => Promise<ProjectPublicationReply<T>>
   apply: (summary: T | null, publication: ProjectPublication<T>, traceId?: string) => void
+  /** Carries the held view's references over to a whole projection, which crossed
+   *  IPC with none of them. Differences keep them by construction. */
+  adopt?: (held: T | null, next: T | null) => T | null
   onError?: (error: ProjectPublicationError) => void
 }
 interface Barrier {
@@ -22,6 +27,8 @@ interface Barrier {
   resolve: () => void
   reject: (error: ProjectPublicationError) => void
 }
+
+const UNFIT = Symbol('difference does not fit the held view')
 
 function compare(a: ProjectVersion, b: ProjectVersion): number {
   return a.session - b.session || a.revision - b.revision
@@ -37,10 +44,16 @@ function copy(version: ProjectVersion): ProjectVersion { return { ...version } }
  *
  *  Errors reject waiting callers and are reported once for background observers.
  *  A subsequent wait/refresh retries only the read. stop() ends this owner's
- *  lifetime, rejects its barriers and prevents late responses from publishing. */
+ *  lifetime, rejects its barriers and prevents late responses from publishing.
+ *
+ *  It also owns the held view, so a read's base and the view a difference lands
+ *  on cannot disagree. A difference that does not fit is not a failure: the
+ *  client asks for the whole projection and no caller hears of it (ADR 0157). */
 export class ProjectPublicationClient<T> {
   private desired: ProjectVersion | null = null
   private applied: ProjectVersion | null = null
+  private view: T | null = null
+  private viewId: number | null = null
   private traceId: string | undefined
   private inFlight = false
   private stopped = false
@@ -108,6 +121,13 @@ export class ProjectPublicationClient<T> {
     return result
   }
 
+  private materialize(reply: ProjectPublicationReply<T>): T | null | typeof UNFIT {
+    if (!('patches' in reply)) return this.options.adopt ? this.options.adopt(this.view, reply.summary) : reply.summary
+    if (reply.base !== this.viewId) return UNFIT
+    try { return applySnapshotPatches(this.view, reply.patches) }
+    catch (error) { console.warn('[project publication] a difference did not fit the held view', error); return UNFIT }
+  }
+
   private resolveBarriers(): void {
     if (this.applied === null) return
     for (const barrier of this.barriers) {
@@ -141,7 +161,7 @@ export class ProjectPublicationClient<T> {
   private async runRead(requested: ProjectVersion | null, force: number, traceId?: string): Promise<void> {
     let failed = false
     try {
-      const publication = await this.options.read(traceId)
+      const publication = await this.options.read(traceId, this.viewId)
       if (this.stopped) return
       const target = this.desired
       if ((target && compare(publication.version, target) < 0)
@@ -156,7 +176,15 @@ export class ProjectPublicationClient<T> {
           if (++this.staleResponses >= 2) throw new ProjectPublicationError('stale-response')
         }
       } else if (force >= this.forceRequested) {
-        this.options.apply(publication.summary, publication, traceId)
+        const summary = this.materialize(publication)
+        if (summary === UNFIT) {
+          this.viewId = null
+          this.request(publication.version, traceId)
+          return
+        }
+        this.options.apply(summary, { version: publication.version, summary }, traceId)
+        this.view = summary
+        this.viewId = publication.viewId
         this.applied = copy(publication.version)
         if (!this.desired || compare(publication.version, this.desired) > 0) this.desired = copy(publication.version)
         if (compare(publication.version, this.desired) >= 0) this.traceId = undefined

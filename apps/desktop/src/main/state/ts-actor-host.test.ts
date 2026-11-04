@@ -195,7 +195,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       expect(view.version).toEqual(added.publication)
       expect(view.summary?.compositions[view.summary.root_id].markers[0].id).toBe(added.value)
       expect(sent.filter(row => row.event === 'project:changed').at(-1)?.payload).toMatchObject({ publication: added.publication })
-      expect(await host.handleInvoke('project_publication', {})).toEqual(view)
+      expect(await host.handleInvoke('project_publication', {})).toEqual({ ...view, viewId: expect.any(Number) })
       expect(await host.handleInvoke('project_summary', {})).toEqual(view.summary)
       expect(await host.published(() => host.handleInvoke('project_summary', {}))).toEqual({ value: view.summary, publication: null })
       expect((await host.published(() => host.handleInvoke('update_marker', { markerId: added.value, patch: { label: '' } }))).publication).toBeNull()

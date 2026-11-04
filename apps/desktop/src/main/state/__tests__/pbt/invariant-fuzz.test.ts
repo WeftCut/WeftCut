@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest'
 import fc from 'fast-check'
 import { freshActor, wireSnapshot, canonicalSnapshot, aRollId, bRollId, PBT_SEED, PBT_RUNS, wireRoot } from './harness'
 import { checkAllInvariants } from './invariants'
+import { buildProjectSummary } from '../../summary'
+import { createPublicationAnswers } from '../../publicationAnswers'
+import { applySnapshotPatches } from '../../../../shared/snapshotPatch'
 
 // ── Seeded media ──────────────────────────────────────────────────────────────
 // Finite durations make video/audio layers — and add/update_transition's
@@ -239,6 +242,48 @@ describe('broad-op invariant fuzz', () => {
       for (let i = 0; i < undos; i++) actor.dispatch('redo', {})
       return canonicalSnapshot(actor) === final
     }), { seed: PBT_SEED, numRuns: PBT_RUNS })
+  })
+})
+
+// The view a renderer builds from differences must be the view a full read would
+// give, byte for byte and key for key, after every op: a drift here is a timeline
+// that silently disagrees with the project until the next reopen (ADR 0157).
+describe('publication differences', () => {
+  it('rebuild the full projection after every op, undo and redo included', () => {
+    fc.assert(fc.property(fc.array(opArb, { maxLength: 40, size: 'max' }), (ops) => {
+      const actor = seedTimeline(seededActor())
+      const project = () => buildProjectSummary(actor.snapshot(), actor.historyStatus(), () => true)
+      const answer = createPublicationAnswers<ReturnType<typeof project>>()
+      let revision = 0
+      let held = project()
+      let base = answer({ version: { session: 1, revision }, summary: held }, null).viewId
+      for (const op of ops) {
+        applyOp(actor, op)
+        const current = { version: { session: 1, revision: ++revision }, summary: project() }
+        const reply = answer(current, base)
+        base = reply.viewId
+        held = 'patches' in reply ? applySnapshotPatches(held, reply.patches) : reply.summary!
+        expect(JSON.stringify(held)).toBe(JSON.stringify(project()))
+      }
+    }), { seed: PBT_SEED, numRuns: PBT_RUNS })
+  })
+
+  it('stop at unchanged layers: a commit touching one layer sends only that layer', () => {
+    const actor = seedTimeline(seededActor())
+    const project = () => buildProjectSummary(actor.snapshot(), actor.historyStatus(), () => true)
+    const answer = createPublicationAnswers<ReturnType<typeof project>>()
+    const before = project()
+    const base = answer({ version: { session: 1, revision: 0 }, summary: before }, null).viewId
+    const target = Object.values(before.compositions)[0]!.tracks.flatMap(t => t.layers)[0]!
+    expect(actor.dispatch('update_layer', { layer: target.id, patch: { label: 'renamed' } }).ok).toBe(true)
+    const after = project()
+    const reply = answer({ version: { session: 1, revision: 1 }, summary: after }, base)
+    if (!('patches' in reply)) throw new Error('expected a difference')
+    const touched = reply.patches.filter(p => p.path.includes('layers'))
+    expect(touched.map(p => p.path.at(-1))).toEqual(['label'])
+    const layers = (s: typeof after) => Object.values(s.compositions)[0]!.tracks.flatMap(t => t.layers)
+    const held = applySnapshotPatches(before, reply.patches)
+    layers(held).forEach((layer, i) => { if (layer.id !== target.id) expect(layer).toBe(layers(before)[i]) })
   })
 })
 

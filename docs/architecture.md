@@ -101,9 +101,11 @@ runs the same stop once the app's pipe to it closes, or by a kill-on-close job
 4. Subscribers react:
    - **Renderer**: main sends `evt:project:changed`. The renderer's publication
      client (`src/renderer/state/projectPublication.ts`) reads the newest
-     version, keeps unchanged branches by reference, and the compositor
-     updates its sprite tree in place. Command promises resolve after their
-     receipt is applied ([ADR 0114](adr/0114-project-view-publication.md)).
+     version as a difference from the view it holds, unchanged branches keep
+     their references, and the compositor updates its sprite tree in place.
+     Command promises resolve after their receipt is applied
+     ([ADR 0114](adr/0114-project-view-publication.md),
+     [ADR 0157](adr/0157-a-publication-crosses-as-a-difference.md)).
    - **Autosave**: a debounced write of `project.json` plus periodic
      `Backups/` copies (`src/main/state/autosave.ts`).
 

@@ -50,8 +50,8 @@ IDs are emitted. At most four observation windows run concurrently.
 | `recipe`, `reconcile_markers`, `reconcile_transitions` | Mutation and relationship maintenance |
 | `produce_including_finalize` | The three above plus Immer finalize/freeze — **do not sum nested durations** |
 | `locked_layer_check`, `stamp`, `validate`, `history_record`, `notify_subscribers` | Remaining commit costs |
-| `main.summary` | Building the summary for the correlated refresh |
-| `renderer.refresh / summary_ipc` | Waiting for that summary, incl. IPC and main queuing |
+| `main.summary` | Building the summary and its difference for the correlated refresh |
+| `renderer.refresh / summary_ipc` | Waiting for that reply, incl. IPC and main queuing; `patches` is its size, absent for a whole projection ([ADR 0157](adr/0157-a-publication-crosses-as-a-difference.md)) |
 | `renderer.refresh / store_apply` | Synchronous store/index/selection work, before React render |
 | `store_apply_to_two_raf` | Two rAF opportunities after applying; does not prove pixels were presented |
 | `main.autosave / serialize`, `write_file`, `backup_and_gc` | Actual save costs |

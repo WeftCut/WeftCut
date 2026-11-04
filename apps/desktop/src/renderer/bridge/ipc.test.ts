@@ -12,7 +12,7 @@ function deferred<T>() {
 const version = { session: 1, revision: 1 };
 
 it('returns the original command value only after the receipt reaches the view', async () => {
-  const snapshot = deferred<{ version: typeof version; summary: string }>();
+  const snapshot = deferred<{ version: typeof version; viewId: number; summary: string }>();
   let view = 'before';
   const read = vi.fn(() => snapshot.promise);
   const client = new ProjectPublicationClient({ read, apply: summary => { view = summary ?? ''; } });
@@ -23,7 +23,7 @@ it('returns the original command value only after the receipt reaches the view',
   const result = invoke('add_color_layer').then(value => { returned = true; return value; });
   await Promise.resolve(); await Promise.resolve();
   expect(returned).toBe(false);
-  snapshot.resolve({ version, summary: 'edited' });
+  snapshot.resolve({ version, viewId: 1, summary: 'edited' });
   expect(await result).toEqual({ id: 'new-layer' });
   expect(view).toBe('edited');
   // Event arrives after receipt: no additional snapshot and no value envelope leak.
