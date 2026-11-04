@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseInterp, parseInterpOpt, parseEasing, parseAnimatedF64, parseAnimatedTrack, parseTrackValue, parseTrackValueOpt, parseTangentXy, parseContinuity, parseExtrapolate, parseSegment, isColorParam, parseRole, parseRgba, parseNum, parseObj, parseEffectPatch, parseMarkerPatch, parseTransitionPlacement, McpArgError, toolJson } from '../mcp-commands'
+import { parseInterp, parseEasing, parseAnimatedTrack, parseAddEffectParams, parseTrackValue, parseTangentXy, parseContinuity, parseExtrapolate, parseSegment, isColorParam, parseRole, parseRgba, parseNum, parseObj, parseEffectPatch, parseMarkerPatch, parseTransitionPlacement, McpArgError, toolJson } from '../mcp-commands'
 import { EASING_PRESETS } from '../../../shared/easing'
 
 describe('parseInterp', () => {
@@ -52,16 +52,13 @@ describe('parseInterp', () => {
     expect(() => parseInterp({ kind: 'Elastic' })).toThrow(/'In' \| 'Out' \| 'InOut'/)
     expect(() => parseInterp({ kind: 'Bounce', dir: 'Sideways' })).toThrow(/'In' \| 'Out' \| 'InOut'/)
   })
-  it('rejects a preset payload here, pointing at update_keyframe', () => {
-    expect(() => parseInterp({ preset: 'ease_in_out' })).toThrow(/update_keyframe/)
+  it('names the argument it parses in the refusal', () => {
+    expect(() => parseInterp({ kind: 'bogus' })).toThrow(/^invalid easing:/)
+    expect(() => parseInterp({ kind: 'bogus' }, 'segment')).toThrow(/^invalid segment:/)
   })
   it('rejects non-objects', () => {
     expect(() => parseInterp(42)).toThrow(McpArgError)
   })
-})
-describe('parseInterpOpt', () => {
-  it('passes undefined through', () => { expect(parseInterpOpt(undefined)).toBeUndefined() })
-  it('validates a present value', () => { expect(() => parseInterpOpt({ kind: 'nope' })).toThrow(McpArgError) })
 })
 describe('parseEasing', () => {
   it('bakes every table preset id to a fresh copy of its canonical interp', () => {
@@ -146,8 +143,15 @@ describe('parseAnimatedTrack — a scalar param', () => {
   it('rejects a Bezier segment kind — the cubic lives on the tangents', () => {
     expect(() => parse(keyed([{ t_us: 0, value: 0, ...SIDES, segment: { kind: 'Bezier', p1: [0, 0], p2: [1, 1] } }]))).toThrow(/Spline/)
   })
-  it('rejects a keyframe still carrying the retired per-segment interp, naming the record', () => {
-    expect(() => parse(keyed([{ t_us: 0, value: 0, interp: { kind: 'Linear' } }]))).toThrow(/retired per-segment "interp"/)
+  it('refuses `interp` on a key, naming `easing`', () => {
+    expect(() => parse(keyed([{ t_us: 0, value: 0, interp: { kind: 'Linear' } }]))).toThrow(/"interp", which is not a key field.*`easing`/)
+  })
+  it('an Auto side may omit its numbers — the write solves them', () => {
+    expect(parse(keyed([{ t_us: 0, value: 0, in: { mode: 'Auto' }, out: { mode: 'Auto' } }]))).toMatchObject({ value: [{ in: { mode: 'Auto' }, out: { mode: 'Auto' } }] })
+    expect(() => parse(keyed([{ t_us: 0, value: 0, out: { mode: 'Free' } }]))).toThrow(/finite x and y/)
+  })
+  it('a Static track takes no extrapolate', () => {
+    expect(() => parse({ mode: 'Static', value: 1, extrapolate: { before: 'Hold', after: 'Hold' } })).toThrow(/Static track has no extrapolate/)
   })
   it('rejects a side whose x leaves [0, 1], naming the side and the rule', () => {
     const k = { t_us: 0, value: 0, ...SIDES, segment: { kind: 'Spline' } }
@@ -182,17 +186,40 @@ describe('parseAnimatedTrack — the color param', () => {
     expect(() => parse({ mode: 'Static', value: { r: 0.5, g: 0, b: 0, a: 255 } })).toThrow(McpArgError)
   })
 })
-describe('parseAnimatedF64 (effect params — scalar whatever the param is named)', () => {
-  it('accepts a Static number and a keyframed number track', () => {
-    expect(parseAnimatedF64({ mode: 'Static', value: 8 })).toEqual({ mode: 'Static', value: 8 })
-    const t = keyed([{ t_us: 0, value: 0, ...SIDES, segment: { kind: 'Linear' } }], { before: 'Hold', after: 'Hold' })
-    expect(parseAnimatedF64(t)).toMatchObject(t)
+describe('parseAnimatedTrack — a key\'s easing (set_param_track)', () => {
+  const parse = (v: unknown) => parseAnimatedTrack(v, 'opacity') as { value: Array<{ out: unknown; in: unknown; segment: unknown }> }
+  const k = (t_us: number, extra: Record<string, unknown> = {}) => ({ t_us, value: t_us / 1_000_000, ...extra })
+  it('a preset on a key writes its leaving segment: out + Spline here, in on the next key', () => {
+    const t = parse(keyed([k(0, { easing: { preset: 'ease_in_out' } }), k(1_000_000)]))
+    expect(t.value[0]!.segment).toEqual({ kind: 'Spline' })
+    expect(t.value[0]!.out).toEqual({ x: 0.42, y: 0, mode: 'Free' })
+    expect(t.value[1]!.in).toEqual({ x: 0.58, y: 1, mode: 'Free' })
   })
-  it('rejects a colour value — an effect param named color is still a number', () => {
-    expect(() => parseAnimatedF64({ mode: 'Static', value: RED })).toThrow(/Static value must be a number/)
+  it('on the last key it eases the segment arriving at it, keys in any order', () => {
+    const t = parse(keyed([k(1_000_000, { easing: { kind: 'Hold' } }), k(0)]))
+    expect(t.value[1]!.segment).toEqual({ kind: 'Hold' }) // keyframe[1] is t 0, the left key
+  })
+  it('refuses a lone key, a side the easing writes, and two easings on one segment, naming them', () => {
+    expect(() => parse(keyed([k(0, { easing: { preset: 'ease_in' } })]))).toThrow(/one key has no segment/)
+    expect(() => parse(keyed([k(0, { easing: { preset: 'ease_in' }, out: { x: 0.2, y: 0, mode: 'Free' } }), k(1_000_000)]))).toThrow(/keyframe\[0\]'s out and segment/)
+    expect(() => parse(keyed([k(0, { easing: { preset: 'ease_in' } }), k(1_000_000, { in: { x: 0.5, y: 1, mode: 'Free' } })]))).toThrow(/keyframe\[1\]'s in/)
+    expect(() => parse(keyed([k(0, { easing: { preset: 'ease_in' } }), k(1_000_000, { easing: { kind: 'Linear' } })]))).toThrow(/keyframe\[1\]\.easing and keyframe\[0\]\.easing both ease/)
+    expect(() => parse(keyed([k(0, { easing: { preset: 'nope' } }), k(1)]))).toThrow(/keyframe\[0\]\.easing: unknown preset 'nope'/)
   })
 })
-describe('isColorParam / parseTrackValue / parseTrackValueOpt', () => {
+describe('parseAddEffectParams (add_effect params — plain numbers, judged by the kind)', () => {
+  it('lifts each number to a static value', () => {
+    expect(parseAddEffectParams({ amount: -20 }, 'brightness')).toEqual({ amount: { mode: 'Static', value: -20 } })
+    expect(parseAddEffectParams(undefined, 'brightness')).toBeNull()
+  })
+  it('refuses an empty set, a non-number, a key or value the kind does not take', () => {
+    expect(() => parseAddEffectParams({}, 'blur')).toThrow(/names no param/)
+    expect(() => parseAddEffectParams({ strength: { mode: 'Static', value: 8 } }, 'blur')).toThrow(/send the value itself/)
+    expect(() => parseAddEffectParams({ amount: 1 }, 'blur')).toThrow(/'amount' is not a param of effect kind 'blur' — its params are strength/)
+    expect(() => parseAddEffectParams({ strength: 500 }, 'blur')).toThrow(/outside 'blur'\.strength's range \[0, 100\]/)
+  })
+})
+describe('isColorParam / parseTrackValue', () => {
   it('only the bare key "color" carries a colour; effect params of any name are scalar', () => {
     expect(isColorParam('color')).toBe(true)
     for (const k of ['opacity', 'x', 'scale_x', 'gain_db', 'effects[00000000-0000-7000-8000-000000000001].params[color]']) expect(isColorParam(k), k).toBe(false)
@@ -210,12 +237,6 @@ describe('isColorParam / parseTrackValue / parseTrackValueOpt', () => {
     expect(() => parseTrackValue(undefined, 'opacity', 'value')).toThrow(/got nothing/)
     expect(() => parseTrackValue(Number.NaN, 'opacity', 'value')).toThrow(/got a non-finite number/)
     expect(() => parseTrackValue(null, 'opacity', 'value')).toThrow(/got null/)
-  })
-  it('the optional form treats undefined and null as absent and validates a present value', () => {
-    expect(parseTrackValueOpt(undefined, 'opacity', 'value')).toBeUndefined()
-    expect(parseTrackValueOpt(null, 'color', 'value')).toBeUndefined()
-    expect(parseTrackValueOpt(1, 'opacity', 'value')).toBe(1)
-    expect(() => parseTrackValueOpt('1', 'opacity', 'value')).toThrow(McpArgError)
   })
 })
 describe('parseTangentXy', () => {
@@ -272,7 +293,8 @@ describe('parseSegment', () => {
     expect(() => parseSegment({ kind: 'Bounce' })).toThrow(/'In' \| 'Out' \| 'InOut'/)
   })
   it('rejects Bezier (the cubic lives on the tangents), an unknown kind, and a non-object', () => {
-    expect(() => parseSegment({ kind: 'Bezier', p1: [0, 0], p2: [1, 1] })).toThrow(/send \{"kind":"Spline"\}/)
+    expect(() => parseSegment({ kind: 'Bezier', p1: [0, 0], p2: [1, 1] })).toThrow(/\{"kind":"Spline"\}/)
+    expect(() => parseSegment({ preset: 'ease_in' })).toThrow(/a preset is the key's `easing`/)
     expect(() => parseSegment({ kind: 'Wobble' })).toThrow(McpArgError)
     expect(() => parseSegment('Spline')).toThrow(/segment must be an object/)
   })
@@ -346,13 +368,15 @@ describe('parseObj', () => {
 })
 
 describe('parseEffectPatch', () => {
-  it('accepts { enabled, params } with AnimTrack values', () => {
-    expect(parseEffectPatch({ enabled: true, params: { strength: { mode: 'Static', value: 8 } } }))
+  it('accepts { enabled, params } with plain numbers, lifted to static values', () => {
+    expect(parseEffectPatch({ enabled: true, params: { strength: 8 } }))
       .toEqual({ enabled: true, params: { strength: { mode: 'Static', value: 8 } } })
   })
-  it('accepts an empty patch (no-op, but honestly so)', () => { expect(parseEffectPatch({})).toEqual({}) })
-  it('null enabled/params mean "don\'t touch" and are dropped', () => {
-    expect(parseEffectPatch({ enabled: null, params: null })).toEqual({})
+  it('refuses an empty patch and a null enabled / params: none of them would write anything', () => {
+    expect(() => parseEffectPatch({})).toThrow(/names no field/)
+    expect(() => parseEffectPatch({ enabled: null })).toThrow(/enabled must be a boolean, got null/)
+    expect(() => parseEffectPatch({ params: null })).toThrow(/JSON object/)
+    expect(() => parseEffectPatch({ params: {} })).toThrow(/names no param/)
   })
   it('rejects a string patch with the expected-shape hint', () => {
     expect(() => parseEffectPatch('{"enabled":true}')).toThrow(/JSON object/)
@@ -363,14 +387,15 @@ describe('parseEffectPatch', () => {
   it('rejects a non-boolean enabled', () => {
     expect(() => parseEffectPatch({ enabled: 'yes' })).toThrow(McpArgError)
   })
-  it('rejects a malformed param value naming the param', () => {
-    expect(() => parseEffectPatch({ params: { strength: 8 } })).toThrow(/params\['strength'\]/)
+  it('rejects a malformed param value naming the param, and the old wrapper naming the plain form', () => {
+    expect(() => parseEffectPatch({ params: { strength: 'high' } })).toThrow(/params\['strength'\] must be a number/)
+    expect(() => parseEffectPatch({ params: { strength: { mode: 'Static', value: 8 } } })).toThrow(/send the value itself, \{"strength": <number>\}/)
   })
   // A null INSIDE params is a removal, not a malformed track — the only way to
   // put a param back to unset (see EffectPatch). A null params/enabled FIELD
   // still means "don't touch", which is the case above.
   it('passes a null param value through as a removal', () => {
-    expect(parseEffectPatch({ params: { profile_in_us: null, strength: { mode: 'Static', value: 12 } } }))
+    expect(parseEffectPatch({ params: { profile_in_us: null, strength: 12 } }))
       .toEqual({ params: { profile_in_us: null, strength: { mode: 'Static', value: 12 } } })
   })
   it('names null as accepted in the unknown-key hint', () => {
@@ -380,8 +405,12 @@ describe('parseEffectPatch', () => {
 
 describe('parseMarkerPatch', () => {
   it('accepts a full valid patch', () => {
-    const p = { t_us: 1, end_t_us: 2, label: 'x', color: { r: 0, g: 0, b: 0, a: 255 } }
-    expect(parseMarkerPatch(p)).toEqual(p)
+    const color = { r: 0, g: 0, b: 0, a: 255 }
+    // The wire's t_end_us lands on the stored field, end_t_us.
+    expect(parseMarkerPatch({ t_us: 1, t_end_us: 2, label: 'x', color })).toEqual({ t_us: 1, end_t_us: 2, label: 'x', color })
+  })
+  it('refuses the old end_t_us spelling, naming t_end_us', () => {
+    expect(() => parseMarkerPatch({ end_t_us: 2 })).toThrow(/t_end_us/)
   })
   it('rejects a string patch', () => { expect(() => parseMarkerPatch('t_us=1')).toThrow(McpArgError) })
   it('rejects unknown keys', () => { expect(() => parseMarkerPatch({ time_us: 1 })).toThrow(/unknown key 'time_us'/) })
@@ -394,8 +423,8 @@ describe('parseMarkerPatch', () => {
 
 describe('toolJson', () => {
   const text = (r: ReturnType<typeof toolJson>) => (r.content[0] as { type: 'text'; text: string }).text
-  // Regression: toolJson must NOT sentinel wall-clock fields — list_checkpoints
-  // .created_at and begin_agent_session.started_at are real timestamps agents read.
+  // Regression: toolJson must NOT sentinel wall-clock fields — a checkpoint's
+  // created_at and begin_agent_session.started_at are real timestamps agents read.
   it('preserves real wall-clock timestamps (does not emit the <TS> sentinel)', () => {
     const out = toolJson([{ id: 'x', label: 'cp', actor: { client: 'mcp', kind: 'Agent' }, created_at: '2026-06-26T07:42:46.605Z' }])
     const parsed = JSON.parse(text(out)) as Array<{ created_at: string }>

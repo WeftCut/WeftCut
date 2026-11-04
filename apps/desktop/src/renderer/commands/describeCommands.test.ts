@@ -83,7 +83,7 @@ describe("describeSelected", () => {
       mediaId: "m-1",
       srcStartUs: 3_000_000,
       srcEndUs: 5_000_000,
-      window: null,
+      wholeLayer: true,
       label: expect.any(String),
     });
   });

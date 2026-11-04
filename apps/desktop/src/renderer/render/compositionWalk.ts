@@ -45,6 +45,13 @@ export interface PlacedLayer {
   depth: number;
 }
 
+/// What `forEachLayerInTime` hands out: every leaf, and optionally every
+/// Group layer it enters.
+export interface PlacementVisitor {
+  leaf: (placed: PlacedLayer) => void;
+  group?: (placed: PlacedLayer) => void;
+}
+
 /// `path` for the children of the Group layer `refLayerId` placed under `parentPath`.
 export function refPath(parentPath: string, refLayerId: string): string {
   return `${parentPath}${refLayerId}/`;
@@ -139,13 +146,17 @@ export function compositionLocalUs(
 ///
 /// A ref whose composition the summary does not carry, or one nested past
 /// `MAX_COMPOSITION_DEPTH`, contributes nothing — the same silence as Rust.
+///
+/// A caller that judges the Group layer itself too (its own effects, a
+/// transition it takes part in) passes `{ leaf, group }`: `group` sees each
+/// entered ref, placed in its parent, before its children.
 export function forEachLayerInTime(
   summary: ProjectSummary,
   compId: string,
   t0Us: number,
   t1Us: number,
   offsetUs: number,
-  f: (placed: PlacedLayer) => void,
+  f: ((placed: PlacedLayer) => void) | PlacementVisitor,
   frame: { windowStartUs: number; windowEndUs: number; path: string; depth: number; clock?: CompositionClock } = {
     windowStartUs: Number.NEGATIVE_INFINITY,
     windowEndUs: Number.POSITIVE_INFINITY,
@@ -155,6 +166,7 @@ export function forEachLayerInTime(
 ): void {
   if (frame.depth > MAX_COMPOSITION_DEPTH) return;
   if (frame.windowStartUs >= frame.windowEndUs || t0Us >= t1Us) return;
+  const visit = typeof f === "function" ? { leaf: f } : f;
   const comp: CompositionSummary | undefined = summary.compositions[compId];
   if (!comp) return;
   for (const track of comp.tracks) {
@@ -165,7 +177,9 @@ export function forEachLayerInTime(
       if (placed.tStartUs >= placed.tEndUs) continue;
       // Half-open overlap with the query range.
       if (placed.tEndUs <= t0Us || placed.tStartUs >= t1Us) continue;
+      const at = { layer, track, compositionId: compId, offsetUs, clock: frame.clock ?? ROOT_CLOCK, ...placed, path: frame.path, depth: frame.depth };
       if (layer.params.kind === "CompositionRef") {
+        visit.group?.(at);
         const child = childFrame(
           layer,
           layer.params.src_in_us,
@@ -174,7 +188,7 @@ export function forEachLayerInTime(
           frame.windowEndUs,
           frame.clock,
         );
-        forEachLayerInTime(summary, layer.params.composition_id, t0Us, t1Us, child.offsetUs, f, {
+        forEachLayerInTime(summary, layer.params.composition_id, t0Us, t1Us, child.offsetUs, visit, {
           windowStartUs: child.windowStartUs,
           windowEndUs: child.windowEndUs,
           clock: child.clock,
@@ -183,16 +197,7 @@ export function forEachLayerInTime(
         });
         continue;
       }
-      f({
-        layer,
-        track,
-        compositionId: compId,
-        offsetUs,
-        clock: frame.clock ?? ROOT_CLOCK,
-        ...placed,
-        path: frame.path,
-        depth: frame.depth,
-      });
+      visit.leaf(at);
     }
   }
 }

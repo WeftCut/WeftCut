@@ -250,7 +250,7 @@ if (!wgsl.unavailable) {
   const h = wgsl.phases?.highlightsWgsl;
   const near = (actual, expected) => actual?.length === expected.length
     && actual.every((v, i) => Math.abs(v - expected[i]) <= 1);
-  const ok = h && near(h.zero, [102, 153]) && near(h.lower, [97, 122]) && near(h.lift, [103, 165]);
+  const ok = h && near(h.zero, [102, 153]) && near(h.lower, [102, 148]) && near(h.lift, [102, 161]);
   console.log(`[f16-parity] ${ok ? "PASS" : "FAIL"} WebGPU highlights`, JSON.stringify(h));
   if (!ok) failed = true;
 }

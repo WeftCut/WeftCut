@@ -12,7 +12,7 @@ const MEDIA_DIR = 'Media'
 /** The probe's provisional hash (native `media_item_from_metadata`). */
 const PENDING_HASH = 'pending-'
 
-const pathLib = (platform: NodeJS.Platform) => (platform === 'win32' ? path.win32 : path.posix)
+export const pathLib = (platform: NodeJS.Platform) => (platform === 'win32' ? path.win32 : path.posix)
 
 /** Which file a path names: two paths name one file exactly when their keys
  *  are equal. Null when nothing is there. */

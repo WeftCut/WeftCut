@@ -1,10 +1,14 @@
-import { describe, it, expect, vi } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { beforeAll, describe, it, expect, vi } from 'vitest'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { configureSkillBundle } from './skillResources'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { buildMcpServer, handleCallTool, handleReadResource } from './server'
 import { HOST_RESOURCE_DEFS, HOST_RESOURCE_TEMPLATES } from './hostResources'
 import { mediaItemTemplate } from '../state/mutations/media'
+import { recordDerivativeJob, resetDerivativeJobs } from '../state/derivative-jobs'
 import { createActor } from '../state/actor'
 import { uuidV7Gen } from '../state/ids'
 import { blankProject, rootComposition } from '../state/model'
@@ -21,14 +25,42 @@ function contents(out: unknown) {
   return (out as { contents: Array<{ text: string; mimeType: string }> }).contents
 }
 
+describe('the served skill', () => {
+  const noBackend = fakeBackend(async () => { throw new Error('no backend') })
+  beforeAll(() => {
+    const root = mkdtempSync(join(tmpdir(), 'weftcut-served-skill-'))
+    mkdirSync(join(root, 'weftcut', 'craft'), { recursive: true })
+    writeFileSync(join(root, 'weftcut', 'SKILL.md'), '---\nname: weftcut\ndescription: Drive it.\n---\n# Long form\n')
+    writeFileSync(join(root, 'weftcut', 'craft', 'rules.md'), 'rules\n')
+    configureSkillBundle(root)
+  })
+  it('reads with no host and no project open', async () => {
+    expect(contents(await handleReadResource(noBackend, () => null, 'skill://weftcut/SKILL.md'))[0].text).toContain('# Long form')
+    expect(contents(await handleReadResource(noBackend, () => tsHostStub(), 'skill://weftcut/craft/rules.md'))[0].text).toBe('rules\n')
+  })
+  it('read_project answers the same files, and only that view takes a path', async () => {
+    const call = (args: Record<string, unknown>) => handleCallTool(noBackend, () => null, 'read_project', args) as Promise<{ isError?: boolean; content: Array<{ text: string }> }>
+    expect((await call({ view: 'skill' })).content[0]!.text).toContain('# Long form')
+    expect((await call({ view: 'skill', path: 'craft/rules.md' })).content[0]!.text).toBe('rules\n')
+    const stray = await call({ view: 'skill', path: '../SKILL.md' })
+    expect(stray.isError).toBe(true)
+    expect(stray.content[0]!.text).toContain('not a file of the weftcut skill')
+    const ts = tsHostStub()
+    ts.mcpCall = (n: string, a: string) => ts.actor.mcpCall(n, a)
+    const other = await handleCallTool(noBackend, () => ts, 'read_project', { view: 'tracks', path: 'x' }) as { isError?: boolean; content: Array<{ text: string }> }
+    expect(other.isError).toBe(true)
+    expect(other.content[0]!.text).toContain('takes no path')
+  })
+})
+
 describe('handleReadResource', () => {
-  it('serves project://current from the actor without calling the backend', async () => {
+  it('serves project://settings from the actor without calling the backend', async () => {
     const ts = tsHostStub()
     const spy = vi.fn(async () => '{"ok":true,"result":{"contents":[]}}')
-    const out = await handleReadResource(fakeBackend(spy), () => ts, 'project://current')
+    const out = await handleReadResource(fakeBackend(spy), () => ts, 'project://settings')
     expect(spy).not.toHaveBeenCalled()
     expect(contents(out)[0].mimeType).toBe('application/json')
-    expect(JSON.parse(contents(out)[0].text).project_id).toBe(ts.actor.snapshot().project_id)
+    expect(JSON.parse(contents(out)[0].text).metadata).toEqual(ts.actor.snapshot().metadata)
   })
   it('serves project://history from the actor (no backend call)', async () => {
     const ts = tsHostStub()
@@ -98,7 +130,7 @@ describe('resources/templates/list and resources/list', () => {
     const { resourceTemplates } = await client.listResourceTemplates()
     const templates = resourceTemplates.map((t) => t.uriTemplate).sort()
     expect(templates).toEqual(HOST_RESOURCE_TEMPLATES.map((t) => t.uriTemplate).sort())
-    for (const want of ['project://layers/{id}', 'project://tracks{?composition}', 'project://composition{?composition}', 'media://{id}/frame/{t_us}', 'media://{id}/thumbnail']) expect(templates).toContain(want)
+    for (const want of ['project://layers/{id}', 'project://tracks{?composition}', 'project://composition{?composition}', 'media://{id}/frame/{src_us}', 'media://{id}/thumbnail']) expect(templates).toContain(want)
     for (const t of resourceTemplates) expect(typeof t.description, t.uriTemplate).toBe('string')
   })
 
@@ -143,6 +175,28 @@ describe('one media item as a resource', () => {
     expect(card).toMatchObject({ media_id: MID, kind: 'Video', label: 'Interview A', path: '/proj/Media/interview.mp4', path_rel: 'Media/interview.mp4', duration_us: 4_000_000 })
     expect(card.used_by).toEqual([added.value])
     expect(card.resources).toContain(`media://${MID}/description`)
+  })
+
+  // Sim L4: /tmp filled, the waveform job died, and every read said "not
+  // generated yet" for ten minutes. The card and the refusal say failed.
+  it('a failed waveform job reads failed on the card, in project://media, and in the reader\'s refusal', async () => {
+    const ts = tsHostStub()
+    ts.actor.dispatch('add_media_item', { media: mediaItemTemplate(MID, 'Audio', 4_000_000, true) })
+    recordDerivativeJob('media:job_started', { media_id: MID, kind: 'conform' })
+    recordDerivativeJob('media:job_error', { media_id: MID, kind: 'waveform', error: 'Disk quota exceeded' })
+    try {
+      const card = JSON.parse(contents(await handleReadResource(fakeBackend(async () => { throw new Error('no backend') }), () => ts, `media://${MID}`))[0].text)
+      expect(card.derivatives).toEqual({ waveform: { failed: 'Disk quota exceeded' }, conform: 'running' })
+      const pool = JSON.parse(contents(await handleReadResource(fakeBackend(async () => { throw new Error('no backend') }), () => ts, 'project://media'))[0].text)
+      expect(pool[MID].derivatives.waveform).toEqual({ failed: 'Disk quota exceeded' })
+      // A row names its id as `import_media` and the card do.
+      expect(pool[MID].media_id).toBe(MID)
+      expect('id' in pool[MID]).toBe(false)
+      const reader = fakeBackend(async () => JSON.stringify({ ok: false, error: { code: 'not_found', message: `waveform not generated yet for media ${MID} — the import's background jobs are still generating it; retry in a few seconds`, data: { error: 'DerivativeNotReady', media_id: MID, derivative: 'waveform' } } }))
+      const refused = await handleReadResource(reader, () => ts, `media://${MID}/waveform`).then(() => null, (e: Error & { data?: unknown }) => e)
+      expect(refused?.message).toContain('waveform failed for media')
+      expect(refused?.data).toMatchObject({ error: 'DerivativeNotReady', derivative: 'waveform', state: 'failed', reason: 'Disk quota exceeded', retry_after_s: null })
+    } finally { resetDerivativeJobs() }
   })
 
   it('media://{id} of an id the pool lacks is not found', async () => {
@@ -194,14 +248,14 @@ describe('read_project picture views answer an image block from the media reader
     expect(spy.mock.calls[0][0]).toBe(`media://${IMG}/frame/0`)
     expect(out.content[0]).toEqual({ type: 'image', data: 'SU1H', mimeType: 'image/jpeg' })
   })
-  it('media_frame needs t_us and reads media://{id}/frame/{t_us}', async () => {
+  it('media_frame needs src_us and reads media://{id}/frame/{src_us}', async () => {
     const ts = host()
     const spy = vi.fn(async (_u: string, _s?: string) => '{"ok":true,"result":{"contents":[{"uri":"u","mimeType":"image/jpeg","blob":"QUJD"}]}}')
-    await handleCallTool(fakeBackend(spy), () => ts, 'read_project', { view: 'media_frame', id: MID, t_us: 1_500_000 })
+    await handleCallTool(fakeBackend(spy), () => ts, 'read_project', { view: 'media_frame', id: MID, src_us: 1_500_000 })
     expect(spy.mock.calls[0][0]).toBe(`media://${MID}/frame/1500000`)
     const refused = await handleCallTool(fakeBackend(spy), () => ts, 'read_project', { view: 'media_frame', id: MID }) as { isError?: boolean; content: Array<{ text: string }> }
     expect(refused.isError).toBe(true)
-    expect(refused.content[0].text).toContain('t_us')
+    expect(refused.content[0].text).toContain('src_us')
     const noId = await handleCallTool(fakeBackend(spy), () => ts, 'read_project', { view: 'media_thumbnail' }) as { isError?: boolean; content: Array<{ text: string }> }
     expect(noId.isError).toBe(true)
     expect(noId.content[0].text).toContain('media id')

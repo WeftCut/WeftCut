@@ -20,7 +20,7 @@ import {
 import { applyMoveLayersToComposition } from './moveToComposition'
 
 export interface GroupCreateResult { compositionId: Uuid; layerId: Uuid }
-export type GroupNotPlainReason = 'transform' | 'opacity' | 'effects' | 'blend_mode'
+export type GroupNotPlainReason = 'transform' | 'opacity' | 'effects'
 
 /** A blank label is no label: the renderer derives "Group N" from null, and a
  *  stored `''` would render as an empty name (same rule as `applyRenameTrack`). */
@@ -180,7 +180,8 @@ function isStatic(a: Animated<number>, value: number): boolean { return a.mode =
 
 /** Why a Group layer is not plain, or null when it is. Plain = identity
  *  transform (including the `scale_linked` default), static opacity 1, no
- *  effects, Normal blend — exactly what ungroup could not carry onto the members. */
+ *  effects — exactly what ungroup could not carry onto the members. The stored
+ *  `blend_mode` is not read: it is always Normal, since nothing writes it. */
 export function groupNotPlainReason(layer: Layer, source: Pick<Composition, 'width' | 'height'>): GroupNotPlainReason | null {
   const pa = layer.params as CompositionRefParams
   const ident: Transform = defaultTransform()
@@ -190,7 +191,6 @@ export function groupNotPlainReason(layer: Layer, source: Pick<Composition, 'wid
   if (!identity) return 'transform'
   if (!isStatic(pa.opacity, 1)) return 'opacity'
   if (layer.effects.length > 0) return 'effects'
-  if (pa.blend_mode !== 'Normal') return 'blend_mode'
   return null
 }
 

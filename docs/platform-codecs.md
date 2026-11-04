@@ -167,6 +167,19 @@ requires hardware for every VideoToolbox codec except HEVC; master switched
 ProRes to "enable", which may open VT software sessions on base M1. Recheck at
 an FFmpeg upgrade.
 
+GitHub's `macos-latest` assigns one of two VMs, and neither decodes ProRes in
+hardware. Runner size names the chip; a leg's outcome follows it, not the commit:
+
+| Host | ProRes on VideoToolbox | Probe verdict |
+| --- | --- | --- |
+| `Apple M1 (Virtual)`, 3 cores, 7 GB | `VideoToolbox decoder for this format not found`; software frame | unavailable |
+| `Apple M2 Pro (Virtual)`, 5 cores, 14 GB, about 1 run in 8 | Session opens; every first frame fails with `output image buffer is null: -19092`, alone on the machine | unavailable, after software decodes the same file |
+
+Measured 2026-11-02 with ffmpeg and the product probe, nothing else decoding
+(runs 41415253463, 41417440939). The conformance variant skips on both, so hosted
+CI has no ProRes hardware coverage; `WEFTCUT_REQUIRE_HW_VARIANTS` pins it on a Mac
+with a real engine.
+
 ### 12. Export-from-original needs a proven Worker decode
 
 `export_decodable_statically` (`jobs/proxy_decision.rs`) admits an original to

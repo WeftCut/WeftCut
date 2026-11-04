@@ -46,18 +46,18 @@ test('TS actor: MCP mutate → resource read reflects it; blocked tool rejects',
     try {
       // A read resource — the `project://*` state views are served by the TS MCP host.
       const before = await client.readResource({ uri: 'project://tracks' })
-      const tracks = JSON.parse((before.contents[0] as { text: string }).text) as Array<{ id: string }>
+      const tracks = JSON.parse((before.contents[0] as { text: string }).text) as Array<{ track_id: string }>
       expect(tracks.length).toBeGreaterThan(0)
       // Mutate via the TS actor.mcpCall path.
-      const added = await client.callTool({ name: 'add_color_layer', arguments: { track_id: tracks[0].id, color: { r: 0, g: 0, b: 0, a: 1 }, t_start_us: 0, t_end_us: 1_000_000 } })
+      const added = await client.callTool({ name: 'add_layers', arguments: { layers: [{ track_id: tracks[0].track_id, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 1 } } }] } })
       expect((added.content as Array<{ type: string }>)[0].type).toBe('text')
       // The mirror reflects the mutation on the next read.
-      const after = await client.readResource({ uri: 'project://current' })
-      const proj = JSON.parse((after.contents[0] as { text: string }).text) as { root_id: string; compositions: Record<string, { tracks: Array<{ layers: unknown[] }> }> }
-      expect(proj.compositions[proj.root_id]!.tracks.reduce((n, t) => n + t.layers.length, 0)).toBe(1)
+      const after = await client.readResource({ uri: 'project://tracks' })
+      const rows = JSON.parse((after.contents[0] as { text: string }).text) as Array<{ layers: unknown[] }>
+      expect(rows.reduce((n, t) => n + t.layers.length, 0)).toBe(1)
       // A failed hybrid answers with an `isError` RESULT, never a JSON-RPC
       // rejection — the refusal is the tool's answer, and the model reads it.
-      const refused = await client.callTool({ name: 'import_media', arguments: { path: '/nope.mp4' } })
+      const refused = await client.callTool({ name: 'import_media', arguments: { paths: ['/nope.mp4'] } })
       expect(refused.isError).toBe(true)
       expect((refused.content as Array<{ type: string; text: string }>)[0].text).toContain('nope.mp4')
     } finally {
@@ -67,4 +67,39 @@ test('TS actor: MCP mutate → resource read reflects it; blocked tool rejects',
     await app.close()
     fs.rmSync(ws, { recursive: true, force: true })
   }
+})
+
+test('the shipped skill reads over MCP with no project open, as the instructions point', async () => {
+  const userDataDir = tmpDir('wc-mcp-skill-userdata-')
+  let connect: { url: string; token: string } | null = null
+  const app = await electron.launch({
+    args: [...GL_SWITCHES, `--user-data-dir=${userDataDir}`, MAIN],
+    env: { ...process.env, WEFTCUT_SUPPRESS_ELEVATION_NOTICE: '1' } as Record<string, string>,
+  })
+  app.process().stdout!.on('data', (b: Buffer) => { const c = parseConnect(b.toString()); if (c) connect = c })
+  try {
+    await app.firstWindow({ timeout: 60_000 })
+    await expect.poll(() => connect, { timeout: 30_000 }).not.toBeNull()
+    const transport = new StreamableHTTPClientTransport(new URL(connect!.url), { requestInit: { headers: { Authorization: `Bearer ${connect!.token}` } } })
+    const client = new Client({ name: 'e2e', version: '0.0.0' })
+    await client.connect(transport)
+    try {
+      const { resources } = await client.listResources()
+      expect(resources.filter(r => r.uri.startsWith('skill://')).map(r => r.uri)).toEqual(['skill://weftcut/SKILL.md'])
+      const read = async (uri: string) => (await client.readResource({ uri })).contents[0] as { text?: string; blob?: string }
+      const skill = (await read('skill://weftcut/SKILL.md')).text!
+      // The instructions point here, and what is served carries a stamped version.
+      // (A bare dev launch reports Electron's version, so the two are not compared.)
+      expect(client.getInstructions()).toContain('`skill://weftcut/SKILL.md`')
+      expect(skill).toMatch(/metadata:\n {2}version: '/)
+      // The files SKILL.md names beside it resolve by their relative paths.
+      expect((await read('skill://weftcut/craft/rules.md')).text!.length).toBeGreaterThan(0)
+      expect((await read('skill://weftcut/motif-authoring.md')).text!.length).toBeGreaterThan(0)
+      expect((await read('skill://weftcut/templates/three-model.zip')).blob!.length).toBeGreaterThan(0)
+      await expect(client.readResource({ uri: 'skill://weftcut/../../package.json' })).rejects.toThrow(/not a file of the weftcut skill/)
+      const view = await client.callTool({ name: 'read_project', arguments: { view: 'skill', path: 'craft/rules.md' } }) as { isError?: boolean; content: Array<{ text: string }> }
+      expect(view.isError).toBeFalsy()
+      expect(view.content[0]!.text).toBe((await read('skill://weftcut/craft/rules.md')).text)
+    } finally { await client.close() }
+  } finally { await app.close() }
 })

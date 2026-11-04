@@ -1,7 +1,7 @@
 // apps/desktop/bench/checklist.mjs
 //
 // Scores a bench task's intent checklist against the final project: the JSON
-// `project://current` serves (src/main/state/model.ts `Project`). Pure: it
+// the app saves as project.json (src/main/state/model.ts `Project`). Pure: it
 // reads nothing but its two arguments, so a run can be re-scored from its
 // final.json after the vocabulary grows.
 //

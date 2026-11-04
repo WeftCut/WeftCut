@@ -16,10 +16,10 @@ const snap = { compositions: { r: { tracks: [{ layers: [vclip, vclip2, text] }] 
 
 describe('resolveClipSliceArgs', () => {
   it('injects the layer and its MediaItem for an AV layer, preserving args', () => {
-    const out = resolveClipSliceArgs({ layer_id: 'L1', threshold_amp: 0.02 }, snap)
+    const out = resolveClipSliceArgs({ layer_id: 'L1', threshold_db: -34 }, snap)
     expect(out.layer).toBe(vclip)
     expect(out.media).toBe(media)
-    expect(out.threshold_amp).toBe(0.02)
+    expect(out.threshold_db).toBe(-34)
   })
   it('null layer + null media when the layer id is absent', () => {
     expect(resolveClipSliceArgs({ layer_id: 'gone' }, snap)).toMatchObject({ layer: null, media: null })
@@ -84,11 +84,11 @@ const pauseSnap = {
 describe('resolvePauseComputeArgs', () => {
   it('injects the subject Audio layer, its media and the fx peaks path', () => {
     const peaksPathFor = vi.fn(() => 'C:/cache/fx/abc.peaks')
-    const out = resolvePauseComputeArgs({ layer_id: 'A1', threshold_amp: 0.02 }, pauseSnap, peaksPathFor)
+    const out = resolvePauseComputeArgs({ layer_id: 'A1', threshold_db: -34 }, pauseSnap, peaksPathFor)
     expect(out.layer).toBe(audio)
     expect(out.media).toBe(media2)
     expect(out.peaks_path).toBe('C:/cache/fx/abc.peaks')
-    expect(out.threshold_amp).toBe(0.02)
+    expect(out.threshold_db).toBe(-34)
     // Keyed by the SUBJECT, never by the layer the caller named — the bake state
     // hangs off the layer that plays.
     expect(peaksPathFor).toHaveBeenCalledWith('A1')

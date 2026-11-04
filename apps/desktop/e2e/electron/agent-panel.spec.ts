@@ -33,7 +33,7 @@ test('agent panel separates views, work sessions and connection lifetime', async
     const { client, transport } = await connect('Panel test agent')
     const call = (name: string, args: Record<string, unknown> = {}) => client.callTool({ name, arguments: args })
     const trackResource = await client.readResource({ uri: 'project://tracks' })
-    const trackId = JSON.parse((trackResource.contents[0] as { text: string }).text)[0].id as string
+    const trackId = JSON.parse((trackResource.contents[0] as { text: string }).text)[0].track_id as string
     expect((await call('begin_agent_session', { reason: 'Interview rough cut' })).isError).not.toBe(true)
     await expect(page.locator('.agent-mode-shell')).toBeVisible()
     // One status row: the session's reason is its live state, End beside it.
@@ -41,11 +41,11 @@ test('agent panel separates views, work sessions and connection lifetime', async
     await expect(statusRow.getByRole('status')).toHaveText('Interview rough cut')
     await expect(statusRow.getByRole('button', { name: 'End work session', exact: true })).toBeVisible()
     const first = (await snapshot()).session!
-    await call('set_history_lock', { locked: true, reason: 'Rough cut batch' })
+    // The session took the undo lock with its reason; the panel offers Unlock.
     await expect(page.locator('.agent-history-lock').getByRole('button', { name: 'Unlock undo', exact: true })).toBeVisible()
     await page.locator('.agent-exit-button').click()
     expect((await snapshot()).session?.id).toBe(first.id)
-    expect((await snapshot()).lock_reason).toBe('Rough cut batch')
+    expect((await snapshot()).lock_reason).toBe('Interview rough cut')
     await menu(/^Agent$/)
     await expect(dockPanel(page, 'agent')).toHaveCount(1)
     await call('begin_agent_session', { reason: 'Retry begin' })
@@ -53,13 +53,13 @@ test('agent panel separates views, work sessions and connection lifetime', async
     expect((await snapshot()).checkpoints).toHaveLength(1)
     const other = await connect('Second client')
     expect((await other.client.callTool({ name: 'begin_agent_session', arguments: { reason: 'Other work' } })).isError).toBe(true)
-    await other.client.readResource({ uri: 'project://current' })
+    await other.client.readResource({ uri: 'project://settings' })
 
-    await call('add_color_layer', { track_id: trackId, color: { r: 28, g: 76, b: 128, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 })
-    await client.readResource({ uri: 'project://current' })
+    await call('add_layers', { layers: [{ track_id: trackId, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 28, g: 76, b: 128, a: 255 } } }] })
+    await client.readResource({ uri: 'project://settings' })
     await client.readResource({ uri: 'project://tracks' })
-    await call('set_history_lock', { locked: false })
-    await call('restore_checkpoint', { checkpoint_id: first.checkpoint_id })
+    // The owner's own restore passes its own lock.
+    expect((await call('restore_checkpoint', { checkpoint_id: first.checkpoint_id })).isError).not.toBe(true)
     await expect.poll(async () => (await snapshot()).activities.some(a => a.effect === 'reverted')).toBe(true)
     const count = (await snapshot()).activities.length
     await invokeCmd(page, 'log_clear', {})
@@ -68,11 +68,10 @@ test('agent panel separates views, work sessions and connection lifetime', async
     await page.getByRole('button', { name: 'End work session', exact: true }).click()
     await expect.poll(async () => (await snapshot()).session).toBeNull()
     await expect(page.locator('.agent-mode-shell')).toHaveCount(0)
-    await call('add_color_layer', { track_id: trackId, color: { r: 51, g: 102, b: 153, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 })
+    await call('add_layers', { layers: [{ track_id: trackId, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 51, g: 102, b: 153, a: 255 } } }] })
     expect((await snapshot()).activities.at(-1)?.session_id).toBeNull()
 
     await call('begin_agent_session', { reason: 'Check the result' })
-    await call('set_history_lock', { locked: true, reason: 'Check batch' })
     expect((await call('end_agent_session')).isError).not.toBe(true)
     expect((await snapshot()).session).toBeNull()
     expect((await snapshot()).lock_reason).toBeNull()
@@ -80,7 +79,6 @@ test('agent panel separates views, work sessions and connection lifetime', async
     await expect(page.locator('.agent-mode-shell')).toBeVisible()
 
     await call('begin_agent_session', { reason: 'Final review' })
-    await call('set_history_lock', { locked: true, reason: 'Review batch' })
     await expect(page.locator('.agent-mode-shell')).toBeVisible()
     await page.getByRole('button', { name: 'MCP service ready' }).click()
     await expect(page.locator('.agent-connection-details')).toContainText('Panel test agent')
@@ -107,7 +105,7 @@ test('tacks: listed in the panel, chipped in the review lane, converted into one
     const info = await page.evaluate(() => (window as any).api.mcp.getInfo()) as { url: string; bearer_token: string }
     client = new Client({ name: 'Tack test agent', version: '1.0' })
     await client.connect(new StreamableHTTPClientTransport(new URL(info.url), { requestInit: { headers: { Authorization: `Bearer ${info.bearer_token}` } } }))
-    const created = await client.callTool({ name: 'create_tacks', arguments: { tacks: [{ label: 'Long pause', body: 'Keep the breath?', kind: 'question', t_us: 0, end_t_us: 1_000_000 }] } })
+    const created = await client.callTool({ name: 'create_tacks', arguments: { tacks: [{ label: 'Long pause', body: 'Keep the breath?', kind: 'question', t_us: 0, t_end_us: 1_000_000 }] } })
     expect(created.isError).not.toBe(true)
     const markers = async () => {
       const s = await invokeCmd<{ root_id: string; compositions: Record<string, { markers: Array<{ label: string; note: string }> }> }>(page, 'project_summary', {})
@@ -180,12 +178,13 @@ test('changes: an agent edit is listed, highlighted and counted until reverted o
     await client.connect(new StreamableHTTPClientTransport(new URL(info.url), { requestInit: { headers: { Authorization: `Bearer ${info.bearer_token}` } } }))
     const call = (name: string, args: Record<string, unknown> = {}) => client!.callTool({ name, arguments: args })
     const trackResource = await client.readResource({ uri: 'project://tracks' })
-    const trackId = JSON.parse((trackResource.contents[0] as { text: string }).text)[0].id as string
+    const trackId = JSON.parse((trackResource.contents[0] as { text: string }).text)[0].track_id as string
 
     // The work session pins the Review baseline; the agent's clip is the one change.
-    expect((await call('begin_agent_session', { reason: 'Add a title card' })).isError).not.toBe(true)
+    // lock: false leaves the user's history free, so the panel can revert it.
+    expect((await call('begin_agent_session', { reason: 'Add a title card', lock: false })).isError).not.toBe(true)
     await expect(page.locator('.agent-mode-shell')).toBeVisible()
-    expect((await call('add_color_layer', { track_id: trackId, color: { r: 28, g: 76, b: 128, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 })).isError).not.toBe(true)
+    expect((await call('add_layers', { layers: [{ track_id: trackId, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 28, g: 76, b: 128, a: 255 } } }] })).isError).not.toBe(true)
     await expect(page.getByRole('tab', { name: /Changes/ })).toHaveText('Changes1')
     await expect(page.getByTestId('mini-change')).toHaveCount(1)
     await page.locator('.agent-exit-button').click()

@@ -67,22 +67,24 @@ describe('actor commit pipeline', () => {
     expect(events.length).toBe(1)
   })
 
-  it('dry_run applies+validates each op without committing, halting at the first error', () => {
-    const { actor, aRoll } = fresh()
-    const out = actor.dryRun([
-      { kind: 'AddLayer', track_id: aRoll, params: colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), t_start_us: 0, t_end_us: 1_000_000 },
-      { kind: 'AddLayer', track_id: aRoll, params: colorParams({ r: 0, g: 0, b: 0, a: 255 }, 1, 1), t_start_us: 500_000, t_end_us: 1_500_000 },
-    ])
-    expect(out[0].ok).toBe(true)
-    expect(out[1].ok).toBe(false)
-    expect(root(actor.snapshot()).tracks[0].layers).toHaveLength(0) // never committed
-  })
-
   it('lock blocks undo with HistoryLocked', () => {
     const { actor, aRoll } = fresh()
     actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
     actor.lockHistory('agent')
     expect(actor.dispatch('undo', {})).toEqual({ ok: false, error: { error: 'HistoryLocked', reason: 'agent' } })
+  })
+
+  it("the lock's holder may still revert: holderMay decides per call", () => {
+    const { actor, aRoll } = fresh()
+    actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
+    actor.dispatch('add_layer', { track: aRoll, kind: 'color', t_start_us: 1_000_000, t_end_us: 2_000_000 })
+    let holder = true
+    actor.lockHistory('agent', () => holder)
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
+    holder = false
+    expect(actor.dispatch('undo', {})).toEqual({ ok: false, error: { error: 'HistoryLocked', reason: 'agent' } })
+    actor.unlockHistory()
+    expect(actor.dispatch('undo', {}).ok).toBe(true)
   })
 })
 
@@ -186,7 +188,7 @@ describe('dispatch: split + links', () => {
     const result = channel === 'blade'
       ? actor.command('split_layer_linked', { layerId: layer, atTUs: 2_000_000, escapeLink: false })
       : channel === 'mcp'
-        ? actor.mcpCall('split_layer', JSON.stringify({ layer_id: layer, at_t_us: [2_000_000] }))
+        ? actor.mcpCall('split_layer', JSON.stringify({ layer_id: layer, t_cut_us: [2_000_000] }))
         : actor.dispatch('split_layer_multi', { layer, at_t_us_list: [2_000_000, 4_000_000] })
     expect(result.ok).toBe(true)
     const after = actor.snapshot()
@@ -204,7 +206,7 @@ describe('dispatch: split + links', () => {
       const response = JSON.parse(result.result.content[0].text)
       expect(response.layer_ids[0]).toBe(layer)
       expect(response.layer_ids).toHaveLength(2)
-      expect(response.at_t_us).toEqual([2_000_000])
+      expect(response.t_cut_us).toEqual([2_000_000])
     }
     expect(actor.dispatch('undo', {}).ok).toBe(true)
     expect(actor.snapshot()).toEqual(before)
@@ -579,19 +581,19 @@ describe('dispatch: update_marker + remove_marker', () => {
 })
 
 describe('dispatch: update_layer + fit_composition_to_layers', () => {
-  it('update_layer patches the envelope; fit refits duration', () => {
+  it('update_layer patches the name and the lock; a null label clears the name', () => {
     const idGen = seededGen(); const initial = blankProject(idGen, 'd'); const a = root(initial).tracks[0].id
     const actor = createActor({ initial, idGen, clock: () => '<TS>' })
     const l = actor.dispatch('add_layer', { track: a, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 })
     expect(l.ok).toBe(true)
     const lid = (l as { ok: true; value: unknown }).value as string
-    expect(actor.dispatch('update_layer', { layer: lid, patch: { t_end_us: 4_000_000, label: 'x' } }).ok).toBe(true)
-    const snap = actor.snapshot()
-    const layer = root(snap).tracks.flatMap((t) => t.layers).find((x) => x.id === lid)!
-    expect(layer.t_end_us).toBe(4_000_000); expect(layer.label).toBe('x')
-    expect(root(snap).duration_us).toBe(1_000_000) // update_layer did NOT autofit (stayed at add_layer end)
-    expect(actor.dispatch('fit_composition_to_layers', {}).ok).toBe(true)
-    expect(root(actor.snapshot()).duration_us).toBe(4_000_000) // fit refit to layer end
+    const layerOf = () => root(actor.snapshot()).tracks.flatMap((t) => t.layers).find((x) => x.id === lid)!
+    expect(actor.dispatch('update_layer', { layer: lid, patch: { label: 'x' } }).ok).toBe(true)
+    expect(layerOf()).toMatchObject({ label: 'x', t_start_us: 0, t_end_us: 1_000_000 })
+    expect(actor.dispatch('update_layer', { layer: lid, patch: { label: null } }).ok).toBe(true)
+    expect(layerOf().label).toBeNull()
+    expect(actor.dispatch('update_layer', { layer: lid, patch: { locked: true } }).ok).toBe(true)
+    expect(layerOf().locked).toBe(true)
   })
 })
 
@@ -926,20 +928,6 @@ describe('dispatch: transitions', () => {
     const { actor } = withCrossfade()
     const r = actor.dispatch('update_transition', { transition: '00000000-0000-0000-0000-000000000000', duration_us: 500_000 })
     expect([errOf(r).error]).toEqual(['TransitionNotFound'])
-  })
-
-  // ── dryRun ↔ commit alignment ──
-  it('dryRun runs reconcile like commit: a trim over a transition edge predicts succeed-with-drop, not ValidationFailed', () => {
-    // a2 sits at [1M,3M] (overlap add); pulling its In edge to 2.5M — past
-    // a1's end — collapses the overlap to 0 ≠ duration 1M, so reconcile drops
-    // the transition.
-    const { actor, a2 } = withCrossfade()
-    const out = actor.dryRun([{ kind: 'TrimLayer', id: a2, edge: 'In', new_t_us: 2_500_000, escape_link: false }])
-    expect(out[0].ok, 'dry-run must match the real succeed-with-drop outcome').toBe(true)
-    expect(root(actor.snapshot()).transitions).toHaveLength(1) // dry-run committed nothing
-    // parity: the real command also succeeds and drops the transition
-    expect(actor.dispatch('trim_layer', { layer: a2, edge: 'in', new_t_us: 2_500_000 }).ok).toBe(true)
-    expect(root(actor.snapshot()).transitions).toEqual([])
   })
 })
 
@@ -2431,9 +2419,9 @@ describe('dispatch: set_layers_enabled', () => {
     const v = addClip(actor, aRoll); const a = addClip(actor, bRoll)
     expect(actor.command('set_layers_enabled', { layerIds: [v, a], enabled: false }).ok).toBe(true)
     expect(enabledOf(actor)).toEqual([false, false])
-    expect(actor.mcpCall('set_layers_enabled', JSON.stringify({ layer_ids: [v, a], enabled: true })).ok).toBe(true)
+    expect(actor.mcpCall('set_layer_flags', JSON.stringify({ layer_ids: [v, a], enabled: true })).ok).toBe(true)
     expect(enabledOf(actor)).toEqual([true, true])
-    const bad = actor.mcpCall('set_layers_enabled', JSON.stringify({ layer_ids: [v], enabled: 'no' }))
+    const bad = actor.mcpCall('set_layer_flags', JSON.stringify({ layer_ids: [v], enabled: 'no' }))
     expect(bad.ok).toBe(false)
     if (!bad.ok) expect(bad.error.code).toBe('invalid_params')
   })
@@ -2491,7 +2479,7 @@ describe('creation defaults follow the target composition', () => {
 })
 
 // The media pool's Group drop at all three surfaces — dispatch, the renderer
-// channel, the MCP tool — because this is the one creation op whose scope
+// channel, `add_layers` — because this is the one creation op whose scope
 // argument is a cross-check AND whose subject is a composition too (ADR 0052).
 describe('dispatch: add_group_layer', () => {
   function withOneGroup() {
@@ -2548,19 +2536,17 @@ describe('dispatch: add_group_layer', () => {
     expect(actor.historyStatus().len).toBe(len)
   })
 
-  it('routes the renderer channel and the MCP tool onto the same arm', () => {
+  it('the renderer channel and add_layers place the same Group layer', () => {
     const { actor, groupId, rootTrackId } = withOneGroup()
     const viaChannel = actor.command('add_group_layer', {
       sourceCompositionId: groupId, trackId: rootTrackId, tStartUs: 2_000_000, compositionId: actor.snapshot().root_id,
     })
     expect(viaChannel.ok).toBe(true)
 
-    const viaMcp = actor.mcpCall('add_group_layer', JSON.stringify({
-      source_composition_id: groupId, track_id: rootTrackId, t_start_us: 6_000_000,
-    }))
+    const viaMcp = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: rootTrackId, t_start_us: 6_000_000, content: { kind: 'group', composition_id: groupId } }] }))
     expect(viaMcp.ok).toBe(true)
     if (!viaMcp.ok) return
-    const layerId = (JSON.parse(viaMcp.result.content[0]!.text) as { layer_id: string }).layer_id
+    const layerId = (JSON.parse(viaMcp.result.content[0]!.text) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
     expect(placedIn(actor, rootTrackId).map((l) => l.id)).toEqual([viaChannel.ok ? viaChannel.value : null, layerId])
     // Both instances point at the one composition.
     for (const l of placedIn(actor, rootTrackId)) {

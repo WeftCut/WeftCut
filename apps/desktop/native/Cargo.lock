@@ -2758,6 +2758,7 @@ dependencies = [
  "unicode-normalization",
  "uuid",
  "weftcut-eval",
+ "weftcut-reaper",
  "windows 0.62.2",
  "zstd",
 ]
@@ -2792,6 +2793,13 @@ dependencies = [
  "serde_json",
  "tracing",
  "windows 0.62.2",
+]
+
+[[package]]
+name = "weftcut-reaper"
+version = "0.0.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

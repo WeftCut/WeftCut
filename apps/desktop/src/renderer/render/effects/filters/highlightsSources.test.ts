@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { HIGHLIGHTS_FRAG_GL, HIGHLIGHTS_WGSL } from "./highlightsSources";
+import { HIGHLIGHTS_FRAG_GL, HIGHLIGHTS_WGSL, HIGHLIGHTS_UNIFORM_DEFAULTS } from "./highlightsSources";
 import { highlightsReference } from "./highlightsReference";
 
 const grey = (value: number, strength: number) => highlightsReference([value, value, value, 1], strength)[0]!;
@@ -15,11 +15,11 @@ describe("highlights adjustment strength", () => {
 
   it("protects darker tones throughout the entire strength range", () => {
     for (const amount of [-100, -75, -50, -25, 25, 100]) {
-      for (const value of [0, .05, .1, .2, .29]) {
+      for (const value of [0, .05, .1, .2, .4, .44]) {
         expect(highlightsReference([value,value,value,1], amount)).toEqual([value,value,value,1]);
       }
     }
-    expect(grey(1, -100)).toBeCloseTo(.44, 12);
+    expect(grey(1, -100)).toBe(1);
   });
 
   it("never reverses tone order or exceeds SDR bounds", () => {
@@ -28,7 +28,7 @@ describe("highlights adjustment strength", () => {
       for (let i=0; i<=4096; i++) {
         const v=i/4096;
         const [r,g,b,a]=highlightsReference([v,v,v,1], amount);
-        expect(r!).toBeGreaterThanOrEqual(last);
+        expect(r!).toBeGreaterThanOrEqual(last - 1e-12);
         expect(r).toBe(g);
         expect(g).toBe(b);
         expect(a).toBe(1);
@@ -50,34 +50,59 @@ describe("highlights adjustment strength", () => {
     expect(partial[3]).toBe(.5);
   });
 
-  it("uses strength to compress bright tones rather than a literal percent multiplier", () => {
-    expect(grey(.4,-40)).toBeCloseTo(.3813953488372093,12);
-    expect(grey(.6,-40)).toBeCloseTo(.4779661016949152,12);
-    expect(grey(.8,-40)).toBeCloseTo(.5333333333333333,12);
-    expect(grey(.4,40)).toBeCloseTo(.4047904191616767,12);
-    expect(grey(.6,40)).toBeCloseTo(.647682119205298,12);
-    expect(grey(.8,-25)).not.toBeCloseTo(.8*.75,3);
-    // Higher input brightness receives progressively greater relative reduction.
-    expect(1-grey(.4,-25)/.4).toBeLessThan(1-grey(.6,-25)/.6);
-    expect(1-grey(.6,-25)/.6).toBeLessThan(1-grey(1,-25));
-    for (const v of [.4,.6,.8,1]) {
+  it("preserves white while adjusting bright tones in both directions", () => {
+    for (const amount of [-100,-50,-10,0,50,100]) expect(grey(1,amount)).toBe(1);
+    // The review's flat light-grey patch (232) is preserved below clipping.
+    const levels = [-100,-50,-10,50,100].map(a => Math.round(grey(232/255,a)*255));
+    expect(levels).toEqual([206,219,229,241,250]);
+    expect(grey(128/255,-50)*255).toBeGreaterThan(126);
+    for (const v of [.6,.8,.95]) {
       expect(grey(v,-50)).toBeLessThan(grey(v,-25));
-      expect(grey(v,25)).toBeLessThanOrEqual(grey(v,50));
+      expect(grey(v,-25)).toBeLessThan(v);
+      expect(grey(v,25)).toBeGreaterThan(v);
+      expect(grey(v,25)).toBeLessThan(grey(v,50));
+      expect(grey(v,100)).toBeLessThan(1);
+    }
+  });
+
+  it("keeps bright saturated colours inside gamut without changing ratios", () => {
+    for (const rgb of [[1,.6,.2],[.2,.5,1],[.92,.74,.55]]) {
+      const out=highlightsReference([...rgb,1] as [number,number,number,number],100);
+      expect(Math.max(...out.slice(0,3))).toBeLessThanOrEqual(1);
+      expect(out[0]!/out[1]!).toBeCloseTo(rgb[0]!/rgb[1]!,12);
+      expect(out[1]!/out[2]!).toBeCloseTo(rgb[1]!/rgb[2]!,12);
     }
   });
 
   it("joins protected tones smoothly at a fixed boundary for every strength", () => {
     for (const amount of [-100,-75,-25,25,100]) {
-      const eps=1e-7;
-      expect(grey(.3,amount)).toBeCloseTo(.3,12);
-      expect((grey(.3+eps,amount)-grey(.3,amount))/eps).toBeCloseTo(1,4);
+      // The positive t^1.25 curve approaches its boundary slope slowly.
+      const eps=1e-10;
+      expect(grey(.45,amount)).toBeCloseTo(.45,12);
+      expect(Math.abs((grey(.45+eps,amount)-grey(.45,amount))/eps - 1)).toBeLessThan(.006);
     }
+  });
+
+  it("every effect uniform appears in both shader sources", () => {
+    for (const name of Object.keys(HIGHLIGHTS_UNIFORM_DEFAULTS)) {
+      expect(HIGHLIGHTS_FRAG_GL).toContain(name);
+      expect(HIGHLIGHTS_WGSL).toContain(name);
+    }
+  });
+
+  it("declares GLSL ES 3 and highp before any declarations", () => {
+    const lines=HIGHLIGHTS_FRAG_GL.split('\n').filter(l=>l.trim());
+    expect(lines[0]).toBe('#version 300 es');
+    expect(lines[1]).toBe('precision highp float;');
+    expect(lines.findIndex(l=>/^(in|out|uniform)\b/.test(l.trim()))).toBeGreaterThan(1);
   });
 
   it("uses the same plain-JS shader source in the GPU gate", () => {
     const text=readFileSync(new URL('./highlightsSources.ts',import.meta.url),'utf8').replace(/^export /gm,'');
-    const shader=new Function(text+';return HIGHLIGHTS_FRAG_GL')();
-    expect(shader).toBe(HIGHLIGHTS_FRAG_GL);
+    const shader=new Function(text+';return { HIGHLIGHTS_FRAG_GL, HIGHLIGHTS_WGSL, HIGHLIGHTS_UNIFORM_DEFAULTS }')();
+    expect(shader.HIGHLIGHTS_FRAG_GL).toBe(HIGHLIGHTS_FRAG_GL);
+    expect(shader.HIGHLIGHTS_WGSL).toBe(HIGHLIGHTS_WGSL);
+    expect(shader.HIGHLIGHTS_UNIFORM_DEFAULTS).toEqual(HIGHLIGHTS_UNIFORM_DEFAULTS);
     expect(HIGHLIGHTS_FRAG_GL.startsWith('#version 300 es\nprecision highp float;')).toBe(true);
     expect(HIGHLIGHTS_WGSL).toContain('mainVertex');
     expect(HIGHLIGHTS_WGSL).toContain('mainFragment');

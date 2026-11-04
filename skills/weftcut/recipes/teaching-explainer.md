@@ -51,12 +51,12 @@ timetable says.
    no A-roll clip shorter than 1 s.
    - **Check the pauses against her words first.** A pause that holds a
      whole word from `transcribe_clip` cuts what she says. Lower
-     `threshold_amp` (try 0.006) and detect again until none does. A cut
+     `threshold_db` (try -44) and detect again until none does. A cut
      that removes more than a fifth of the talk is a sign of it.
 2. **Caption.** Transcribe after tightening, and pass the envelope to
    `apply_transcripts` as it comes. The cues are built to the style's
    limits.
-3. **Place overlays** with `add_motif_layer`.
+3. **Place overlays** with `add_layers`.
    - Leave colour and font props unset: the style's tokens fill them.
    - Set `duration_s` to the layer's length.
    - Move and size the layer with `update_layer_params`. Its x and y are

@@ -90,10 +90,12 @@ export function applyRippleDeleteGap(p: Project, trackId: Uuid, s: number, e: nu
 
 /**
  * The sweep: write every landing, keep a travelling transition's frame count,
- * and autofit once. Shared by the deletion and the gap closing — what differs
- * between them is how the holes were found, and that is the planner's business.
+ * and autofit once. Shared by the deletion, the gap closing, `shift_layers`'
+ * sweep and the insert move — what differs between them is how the landings
+ * were found, and that is the planner's business. Each landed layer stays on
+ * its own track.
  */
-function applySweep(c: Composition, plannedMoves: readonly RippleMove[]): Uuid[] {
+export function applySweep(c: Composition, plannedMoves: readonly RippleMove[]): Uuid[] {
   // Moves are keyed by LAYER id and re-located one at a time, never by the track
   // index the plan carries: a delete above may have pruned a whole lane out of
   // the vector. Both endpoints come from the plan — a landing plus the old

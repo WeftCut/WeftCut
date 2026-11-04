@@ -30,6 +30,10 @@ files:
   - "**/node_modules/@weftcut/core/index.js"
   - "**/node_modules/@weftcut/core/index.d.ts"
   - "**/node_modules/@weftcut/core/*.node"
+  # macOS + Linux: the reaper that ends our ffmpeg children if the app dies
+  # (native/reaper). The addon runs it from beside its own .node, so it is
+  # unpacked with it; afterPack (after-pack-reaper.mjs) refuses a build without it.
+  - "**/node_modules/@weftcut/core/weftcut-reaper"
   - "!**/node_modules/@weftcut/native-decode/**"
   - "**/node_modules/@weftcut/native-decode/index.js"
   - "**/node_modules/@weftcut/native-decode/index.d.ts"
@@ -45,6 +49,7 @@ files:
   - "**/node_modules/@weftcut/native-decode/*.dylib"
 asarUnpack:
   - "**/*.node"
+  - "**/node_modules/@weftcut/core/weftcut-reaper"
   # $ORIGIN/@loader_path resolves against the .node's on-disk directory, which
   # only exists once the shared objects are unpacked out of the asar archive
   # beside it — inside app.asar there is no real directory for the loader to

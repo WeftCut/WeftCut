@@ -190,7 +190,7 @@ describe("PausesSection", () => {
         { t_start_us: 1_000_000, t_end_us: 2_500_000 },
         { t_start_us: 4_000_000, t_end_us: 4_800_000 },
       ],
-      noise_floor_amp: 0.004, // ≈ −48 dB
+      noise_floor_db: -48,
       peaks_source: "raw",
     });
     mocks.markPauses.mockReset().mockResolvedValue({
@@ -226,7 +226,7 @@ describe("PausesSection", () => {
     await open(audio);
     expect(mocks.detectPauses).toHaveBeenCalledWith({
       layerId: "a-1",
-      thresholdAmp: expect.closeTo(0.02, 4),
+      thresholdDb: -34,
       minPauseUs: 500_000,
     });
   });
@@ -272,7 +272,7 @@ describe("PausesSection", () => {
   it("says so plainly and greys both verbs when nothing is quiet", async () => {
     mocks.detectPauses.mockResolvedValue({
       pauses: [],
-      noise_floor_amp: 0.004,
+      noise_floor_db: -48,
       peaks_source: "raw",
     });
     const audio = audioLayer("a-1", "m-1");
@@ -307,7 +307,7 @@ describe("PausesSection", () => {
     await waitFor(() =>
       expect(mocks.detectPauses).toHaveBeenLastCalledWith({
         layerId: "a-1",
-        thresholdAmp: expect.closeTo(10 ** (-28 / 20), 6),
+        thresholdDb: -28,
         minPauseUs: 800_000,
       }),
     );
@@ -331,7 +331,7 @@ describe("PausesSection", () => {
     fireEvent.click(button("Use suggested"));
     await waitFor(() =>
       expect(mocks.detectPauses).toHaveBeenLastCalledWith(
-        expect.objectContaining({ thresholdAmp: expect.closeTo(10 ** (-42 / 20), 6) }),
+        expect.objectContaining({ thresholdDb: -42 }),
       ),
     );
     // …and the numbers are no longer any preset's.
@@ -366,7 +366,7 @@ describe("PausesSection", () => {
     await waitFor(() => expect(mocks.removePauses).toHaveBeenCalled());
     expect(mocks.removePauses).toHaveBeenCalledWith({
       layerId: "a-1",
-      thresholdAmp: expect.closeTo(0.02, 4),
+      thresholdDb: -34,
       minPauseUs: 500_000,
       padUs: 100_000,
     });
@@ -394,7 +394,7 @@ describe("PausesSection", () => {
     await waitFor(() => expect(mocks.markPauses).toHaveBeenCalled());
     expect(mocks.markPauses).toHaveBeenCalledWith({
       layerId: "a-1",
-      thresholdAmp: expect.closeTo(0.02, 4),
+      thresholdDb: -34,
       minPauseUs: 500_000,
     });
     expect(Object.keys(mocks.markPauses.mock.calls[0]![0])).not.toContain("padUs");
@@ -490,7 +490,7 @@ describe("PausesSection", () => {
     // The stored values, not the defaults, and the preset they match lights.
     expect(mocks.detectPauses).toHaveBeenLastCalledWith({
       layerId: "a-1",
-      thresholdAmp: expect.closeTo(10 ** (-45 / 20), 6),
+      thresholdDb: -45,
       minPauseUs: 1_500_000,
     });
     expect(button("Preset").textContent).toBe("Music / ambience");

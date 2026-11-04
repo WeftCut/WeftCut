@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { MCP_TOOL_DEFS, MCP_ARG_PARSERS, MCP_TOOLS } from '../mcp-commands'
+import { MCP_TOOL_DEFS, MCP_ARG_PARSERS, MCP_TOOLS, mapCommandError } from '../mcp-commands'
 import { MCP_RESULT_READERS } from '../mcp-results'
 import { createActor } from '../actor'
 import { uuidV7Gen } from '../ids'
@@ -7,32 +7,29 @@ import { blankProject } from '../model'
 import { root } from './fixtures/project'
 
 const EXPECTED_TOOL_NAMES = new Set<string>([
-  'retime_layers', 'set_preserve_pitch', 'set_frame_interpolation', 'get_frame_interpolation_capabilities',
+  'retime_layers',
   // table-exec tools — counts are asserted below, not duplicated in labels.
-  'set_position', 'translate_path',
+  'set_position', 'translate_position',
   'add_track', 'delete_track', 'rename_track', 'paste_layers', 'move_track', 'set_track_flags',
-  'update_layer', 'set_layers_enabled', 'update_layer_params', 'set_scale_linked',
-  'move_layer', 'shift_layers', 'restack_layer', 'trim_layer', 'delete_layers', 'ripple_delete_gap',
-  'separate_audio_to_new_track', 'restyle_captions', 'merge_captions',
+  'rename_layer', 'set_layer_flags', 'update_layer_params',
+  'move_layers', 'shift_layers', 'restack_layer', 'trim_layer', 'delete_layers',
+  'merge_captions',
   'create_link', 'delete_link',
-  'create_group', 'add_group_members', 'move_layers_to_composition', 'add_group_layer', 'ungroup_layer', 'rename_composition', 'delete_composition',
+  'create_group', 'add_group_members', 'move_layers_to_composition', 'ungroup_layer', 'rename_composition', 'delete_composition',
   'add_effect', 'update_effect', 'move_effect', 'delete_effect',
   'add_transition', 'update_transition', 'delete_transition',
   'update_composition', 'set_project_settings',
   'update_marker', 'delete_marker', 'set_marker_anchor',
-  'delete_media', 'undo', 'redo', 'jump_to', 'delete_checkpoint',
+  'delete_media', 'undo', 'redo', 'jump_to',
   'set_role_gain', 'set_role_flags',
   // dedicated-exec tools — auto_split_by_shot and remove_pauses are TS-owned
   // HYBRID defs (they route 'hybrid', not to an actor arm) that carry a
   // parseDedicated for the bijection required-scalar gate.
-  'add_color_layer', 'add_video_layer', 'add_audio_layer', 'add_text_layer', 'split_layer', 'add_marker',
+  'add_layers', 'split_layer', 'add_marker',
   'apply_transcripts', 'correct_caption_text',
-  'add_motif_layer',
-  'set_history_lock',
-  'set_keyframe', 'get_param_track', 'delete_keyframe', 'update_keyframe',
-  'smooth_keyframes', 'clear_keyframes', 'set_param_track', 'set_extrapolation',
+  'set_keyframe', 'get_param_track', 'delete_keyframe', 'update_keyframe', 'set_param_track',
   'update_link', 'read_project',
-  'dry_run', 'create_checkpoint', 'list_checkpoints', 'restore_checkpoint', 'begin_agent_session', 'end_agent_session', 'export_captions', 'open_project', 'create_project',
+  'create_checkpoint', 'restore_checkpoint', 'begin_agent_session', 'end_agent_session', 'export_captions', 'open_project', 'create_project',
   'create_tacks', 'update_tack', 'delete_tacks', 'check_composition', 'restyle_to_taste',
   'apply_subtitles', 'auto_split_by_shot', 'remove_pauses',
 ])
@@ -66,7 +63,7 @@ describe('MCP tool table projections', () => {
 
   it('dedicated-exec defs have no parseArgs', () => {
     const dedicated = MCP_TOOL_DEFS.filter((d) => d.exec === 'dedicated')
-    expect(dedicated.length).toBe(37)
+    expect(dedicated.length).toBe(27)
     for (const d of dedicated) {
       expect(d.parseArgs, `${d.name} should not have parseArgs`).toBeUndefined()
     }
@@ -74,7 +71,7 @@ describe('MCP tool table projections', () => {
 
   it('table-exec defs all have parseArgs', () => {
     const table = MCP_TOOL_DEFS.filter((d) => d.exec === 'table')
-    expect(table.length).toBe(53)
+    expect(table.length).toBe(44)
     for (const d of table) {
       expect(d.parseArgs, `${d.name} should have parseArgs`).toBeDefined()
     }
@@ -84,54 +81,67 @@ describe('MCP tool table projections', () => {
   // the prose docs. Both must agree. When `jump_to` joined the revert paths both docs were
   // updated and this drifted, leaving the agent told it could still be reverted
   // by the one path the panel makes easiest.
-  const REVERT_PATHS = 'undo / redo / jump_to / restore_checkpoint'
-  it('set_history_lock ENUMERATES every revert path the lock actually rejects', () => {
-    const def = MCP_TOOL_DEFS.find((d) => d.name === 'set_history_lock')!
-    // The enumeration itself, not just a mention somewhere in the prose: an
-    // agent reads the list in the parentheses to decide what is still available.
-    expect(def.description).toContain(REVERT_PATHS)
-    // …and it must not re-tell the myth docs/mcp.md used to: the lock rejects
-    // reverts, it never changes what RECORDS (docs/features.md#undo-stack-scope).
-    expect(def.description).toMatch(/never affects what records|does not fold/i)
+  const REVERT_PATHS = 'undo, redo, jump_to and restore_checkpoint'
+  it('the session lock and its refusal ENUMERATE every revert path the lock gates', () => {
+    // begin_agent_session: what the owner keeps under its own lock.
+    expect(MCP_TOOL_DEFS.find((d) => d.name === 'begin_agent_session')!.description).toContain(REVERT_PATHS)
+    // HistoryLocked: what everyone else is refused — and that edits still record.
+    const refusal = mapCommandError({ error: 'HistoryLocked', reason: 'batch' }).message
+    expect(refusal).toContain(REVERT_PATHS)
+    expect(refusal).toMatch(/edits still record/)
   })
 
-  // `reason` is what the user is shown in place of undo, so locking without one
-  // is refused rather than badged blank; unlocking WITH one is refused too, so a
-  // caller cannot believe it left an explanation behind.
-  it('set_history_lock gates `reason` on the direction of the write', () => {
-    const parse = MCP_TOOL_DEFS.find((d) => d.name === 'set_history_lock')!.parseDedicated!
-    expect(parse({ locked: true, reason: 'batch' })).toEqual({ locked: true, reason: 'batch' })
-    expect(parse({ locked: false })).toEqual({ locked: false, reason: null })
-    expect(() => parse({ locked: true })).toThrow(/reason/)
-    expect(() => parse({ locked: true, reason: '   ' })).toThrow(/reason/)
-    expect(() => parse({ locked: false, reason: 'done' })).toThrow(/reason/)
-  })
-
-  it('paste_layers / set_layers_enabled round-trip valid args and reject malformed ones', () => {
+  it('paste_layers / set_layer_flags / rename_layer round-trip valid args and reject malformed ones', () => {
     const u1 = '00000000-0000-7000-8000-000000000001'
     const u2 = '00000000-0000-7000-8000-000000000002'
     const t = '00000000-0000-7000-8000-0000000000aa'
     expect(MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1, u2], t_start_us: 1_000_000 }))
-      .toEqual({ op: 'paste_layers', args: { layers: [u1, u2], t_start_us: 1_000_000, target_track_id: null } })
-    expect(MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 0, target_track_id: t }).args.target_track_id).toBe(t)
+      .toEqual({ op: 'paste_layers', args: { layers: [u1, u2], t_start_us: 1_000_000, target_track_id: null, unique: false } })
+    expect(MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 0, track_id: t }).args.target_track_id).toBe(t)
+    expect(MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 0, unique: true }).args.unique).toBe(true)
     expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: u1, t_start_us: 0 })).toThrow()               // not an array
     expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 'later' })).toThrow()      // non-number start
-    expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 0, target_track_id: 'A roll' })).toThrow() // non-uuid track
-    expect(MCP_ARG_PARSERS['set_layers_enabled']({ layer_ids: [u1, u2], enabled: false }))
-      .toEqual({ op: 'set_layers_enabled', args: { layers: [u1, u2], enabled: false } })
-    expect(() => MCP_ARG_PARSERS['set_layers_enabled']({ layer_ids: [u1], enabled: 'no' })).toThrow()      // non-boolean
+    expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 0, track_id: 'A roll' })).toThrow() // non-uuid track
+    expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 0, target_track_id: t })).toThrow(/track_id/) // the old spelling is refused, not dropped
+    expect(MCP_ARG_PARSERS['set_layer_flags']({ layer_ids: [u1, u2], enabled: false }))
+      .toEqual({ op: 'set_layer_flags', args: { layers: [u1, u2], enabled: false, locked: null } })
+    expect(MCP_ARG_PARSERS['set_layer_flags']({ layer_ids: [u1], locked: true }).args).toEqual({ layers: [u1], enabled: null, locked: true })
+    expect(() => MCP_ARG_PARSERS['set_layer_flags']({ layer_ids: [u1], enabled: 'no' })).toThrow()      // non-boolean
+    expect(() => MCP_ARG_PARSERS['set_layer_flags']({ layer_ids: [u1] })).toThrow(/at least one/)       // names no flag
+    expect(MCP_ARG_PARSERS['rename_layer']({ layer_id: u1, label: null })).toEqual({ op: 'update_layer', args: { layer: u1, patch: { label: null } } })
+    expect(() => MCP_ARG_PARSERS['rename_layer']({ layer_id: u1 })).toThrow(/label/)
+    expect(() => MCP_ARG_PARSERS['rename_layer']({ layer_id: u1, label: 'x', t_end_us: 5 })).toThrow(/trim_layer/)
+    expect(() => MCP_ARG_PARSERS['rename_layer']({ layer_id: u1, label: 'x', opacity: 0.5 })).toThrow(/update_layer_params/)
   })
 
-  // The landing is named ONCE: `t_start_us` (absolute) or `t_offset_us` (the
+  // The landing is named ONCE: `t_start_us` (absolute) or `delta_us` (the
   // shift itself). Neither is a landing at all, and both name two — a caller
   // sending both believes one of them, and the parser cannot know which.
-  it('paste_layers takes exactly one of t_start_us / t_offset_us', () => {
+  it('paste_layers takes exactly one of t_start_us / delta_us', () => {
     const u1 = '00000000-0000-7000-8000-000000000001'
-    expect(MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_offset_us: 2_000_000 }))
-      .toEqual({ op: 'paste_layers', args: { layers: [u1], t_offset_us: 2_000_000, target_track_id: null } })
+    expect(MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], delta_us: 2_000_000 }))
+      .toEqual({ op: 'paste_layers', args: { layers: [u1], t_offset_us: 2_000_000, target_track_id: null, unique: false } })
     expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1] })).toThrow(/t_start_us/)
-    expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 0, t_offset_us: 5 })).toThrow(/two landings/)
-    expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_offset_us: 'later' })).toThrow()
+    expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], t_start_us: 0, delta_us: 5 })).toThrow(/two landings/)
+    expect(() => MCP_ARG_PARSERS['paste_layers']({ layer_ids: [u1], delta_us: 'later' })).toThrow()
+  })
+
+  // move_layers speaks paste_layers' vocabulary, and a stale spelling of the
+  // old move is refused by name rather than dropped into a lane-only move.
+  it('move_layers names one landing (or a lane) and refuses the old spelling', () => {
+    const u1 = '00000000-0000-7000-8000-000000000001'
+    const t = '00000000-0000-7000-8000-0000000000aa'
+    expect(MCP_ARG_PARSERS['move_layers']({ layer_ids: [u1], t_start_us: 0, insert: true }))
+      .toEqual({ op: 'move_layer_set', args: { layers: [u1], request: { layers: [u1], tStartUs: 0, deltaUs: null, track: null, insert: true, escapeLink: false } } })
+    expect(MCP_ARG_PARSERS['move_layers']({ layer_ids: [u1], track_id: 'spawn' }).args.request).toMatchObject({ track: 'spawn', tStartUs: null, deltaUs: null })
+    expect(MCP_ARG_PARSERS['move_layers']({ layer_ids: [u1], delta_us: -5, track_id: t }).args.request).toMatchObject({ track: t, deltaUs: -5 })
+    expect(() => MCP_ARG_PARSERS['move_layers']({ layer_ids: [u1] })).toThrow(/would move nothing/)
+    expect(() => MCP_ARG_PARSERS['move_layers']({ layer_ids: [u1], t_start_us: 0, delta_us: 5 })).toThrow(/two landings/)
+    expect(() => MCP_ARG_PARSERS['move_layers']({ layer_ids: [u1], delta_us: 0 })).toThrow(/nothing would move/)
+    expect(() => MCP_ARG_PARSERS['move_layers']({ layer_ids: [u1], new_t_start_us: 0, track_id: t })).toThrow(/t_start_us/)
+    expect(() => MCP_ARG_PARSERS['move_layers']({ layer_ids: [u1], t_start_us: 0, escape_link: 'true' })).toThrow()
+    expect(() => MCP_ARG_PARSERS['shift_layers']({ layer_ids: [u1], t_from_us: 0, delta_us: 5 })).toThrow(/move_layers/)
+    expect(() => MCP_ARG_PARSERS['shift_layers']({ delta_us: 5 })).toThrow()
   })
 
   // `ripple` is the whole difference between the two deletes, so it has to pick
@@ -158,8 +168,7 @@ describe('MCP tool table projections', () => {
 
   it('parseBoolOpt hardening: escape_link rejects non-boolean', () => {
     const u = '00000000-0000-7000-8000-000000000001'
-    const u2 = '00000000-0000-7000-8000-000000000002'
-    expect(() => MCP_ARG_PARSERS['move_layer']({ layer_id: u, new_track_id: u2, new_t_start_us: 0, escape_link: 'true' })).toThrow()
+    expect(() => MCP_ARG_PARSERS['trim_layer']({ layer_id: u, edge: 'in', t_edge_us: 0, escape_link: 'true' })).toThrow()
   })
 
   it('asArray hardening: layer_ids rejects non-array', () => {
@@ -482,10 +491,6 @@ describe('dedicated arms reject malformed scalars before commit', () => {
   })
   it('set_keyframe rejects non-string param_key', () => {
     const r = mk().mcpCall('set_keyframe', JSON.stringify({ layer_id: '00000000-0000-7000-8000-000000000001', param_key: 42, t_us: 0, value: 1 }))
-    expect(r.ok).toBe(false)
-  })
-  it('dry_run rejects non-array operations', () => {
-    const r = mk().mcpCall('dry_run', JSON.stringify({ operations: 'nope' }))
     expect(r.ok).toBe(false)
   })
 })

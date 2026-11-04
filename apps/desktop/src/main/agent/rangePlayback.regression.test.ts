@@ -103,7 +103,7 @@ describe('Tack range contract — adversarial cases', () => {
     const s = setup()
     s.mcp('update_layer_params', { layer_id: s.a, patch: { kind: 'VideoClip', fade_out_us: 4 * S } })
     const inside = s.record(5, 6), outside = s.record(1, 2)
-    s.mcp('trim_layer', { layer_id: s.a, edge: 'out', new_t_us: 7 * S })
+    s.mcp('trim_layer', { layer_id: s.a, edge: 'out', t_edge_us: 7 * S })
     expect(replay(s.actor.snapshot(), inside)!.same).toBe(false)
     expect(replay(s.actor.snapshot(), outside)!.same).toBe(true)
     s.mcp('undo', {})
@@ -148,7 +148,7 @@ describe('Tack range contract — adversarial cases', () => {
     const [id] = store.create([{ label: 'Check the music fade', body: '', kind: 'question', t_us: 5 * S, end_t_us: 6 * S, composition_id: null }])
     expect(store.views()[0]!.outdated).toBe(false)
     const before = s.find(s.a)
-    s.mcp('trim_layer', { layer_id: s.a, edge: 'out', new_t_us: 7 * S })
+    s.mcp('trim_layer', { layer_id: s.a, edge: 'out', t_edge_us: 7 * S })
     const after = s.find(s.a)
     if (before.params.kind !== 'Audio' || after.params.kind !== 'Audio') throw new Error('fixture')
     expect(fadeMultiplier(5.5 * S, before.t_end_us - before.t_start_us, 0, before.params.fade_out_us)).toBe(0.625)
@@ -159,20 +159,20 @@ describe('Tack range contract — adversarial cases', () => {
   it('control: an end trim without fades outside the range preserves current status', () => {
     const s = setup(false, false, true)
     const pb = s.record(5, 6)
-    s.mcp('trim_layer', { layer_id: s.a, edge: 'out', new_t_us: 7 * S })
+    s.mcp('trim_layer', { layer_id: s.a, edge: 'out', t_edge_us: 7 * S })
     expect(replay(s.actor.snapshot(), pb)!.same).toBe(true)
   })
 
   it('control: splitting after a static reviewed range retains its content identity', () => {
     const s = setup()
     const pb = s.record(1, 2)
-    s.mcp('split_layer', { layer_id: s.a, at_t_us: [3 * S] })
+    s.mcp('split_layer', { layer_id: s.a, t_cut_us: [3 * S] })
     expect(replay(s.actor.snapshot(), pb)!.same).toBe(true)
   })
 
   it('a newly created range covering a sample-aligned audio start must be current at its requested place', () => {
     const s = setup(false, false, true)
-    s.mcp('move_layer', { layer_id: s.a, new_t_start_us: 1_010_000, new_track_id: s.track })
+    s.mcp('move_layers', { layer_ids: [s.a], t_start_us: 1_010_000, track_id: s.track })
     expect(s.find(s.a).t_start_us).toBe(1_010_000) // Audio's sample lattice, not a video frame boundary.
     const store = new TackStore({
       project: () => s.actor.snapshot(), changed: () => {},
@@ -180,7 +180,7 @@ describe('Tack range contract — adversarial cases', () => {
     })
     store.create([{ label: 'Check the music entrance', body: '', kind: 'question', t_us: 500_000, end_t_us: 2 * S, composition_id: null }])
     expect(store.views()[0]).toMatchObject({ t_us: 500_000, end_t_us: 2 * S, outdated: false })
-    s.mcp('move_layer', { layer_id: s.a, new_t_start_us: 1_020_000, new_track_id: s.track })
+    s.mcp('move_layers', { layer_ids: [s.a], t_start_us: 1_020_000, track_id: s.track })
     expect(store.views()[0]).toMatchObject({ t_us: 510_000, end_t_us: 2_010_000, outdated: false })
     s.mcp('undo', {})
     expect(store.views()[0]).toMatchObject({ t_us: 500_000, end_t_us: 2 * S, outdated: false })

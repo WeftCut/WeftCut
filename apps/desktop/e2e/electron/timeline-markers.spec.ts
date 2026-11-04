@@ -103,7 +103,7 @@ test('the lane paints markers, and one toggle silences them from either surface'
         name: 'add_marker',
         arguments: {
           t_us: 2_000_000,
-          end_t_us: 3_000_000,
+          t_end_us: 3_000_000,
           label: 'needs VO',
           color: { r: 34, g: 204, b: 85, a: 255 },
         },

@@ -1,11 +1,7 @@
-// Highlights uses an adjustment-strength percentage, not a promised pixel reduction.
-// A rational shoulder starts at Rec.709 display-gamma luma 0.30 with identity
-// value and slope. Darker tones stay unchanged at every strength, including -100.
-// Negative strength compresses progressively brighter tones; positive strength
-// opens them up. The curve is monotonic for the entire [-100,100] range.
-// The 4.0 compression / 0.8 expansion limits calibrate this custom SDR control;
-// these are not a claim to match Final Cut or another editor's private formula.
-// Scaling RGB together preserves hue until the SDR gamut clips. Alpha is kept.
+// Brightness-range Highlights correction with fixed black and white endpoints.
+// The tone selector blends Rec.709 luma and the peak channel. A peak-aware gain
+// keeps positive adjustments inside gamut without changing channel ratios.
+// Both backends share this calibration; alpha and amount-zero input are kept.
 // Keep this module plain JavaScript: the GPU parity gate loads the same sources.
 
 export const HIGHLIGHTS_FRAG_GL = `#version 300 es
@@ -22,20 +18,23 @@ void main() {
         finalColor = src;
         return;
     }
-    vec3 rgb = src.rgb / src.a;
-    float luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
-    float low = 0.30;
-    if (luma <= low) {
+    vec3 rgb = clamp(src.rgb / src.a, 0.0, 1.0);
+    float peak = max(rgb.r, max(rgb.g, rgb.b));
+    float tone = mix(dot(rgb, vec3(0.2126, 0.7152, 0.0722)), peak, 0.5);
+    float low = 0.45;
+    if (tone <= low) {
         finalColor = src;
         return;
     }
-    float delta = luma - low;
-    float position = delta / (1.0 - low);
-    float curve = amount < 0.0 ? -4.0 * amount : -0.8 * amount;
-    float mapped = low + delta / max(1.0 + curve * position, 0.0001);
-    float scale = mapped / luma;
-    vec3 adjusted = clamp(rgb * scale, 0.0, 1.0);
-    finalColor = vec4(adjusted * src.a, src.a);
+    float t = (tone - low) / (1.0 - low);
+    float mapped;
+    if (amount < 0.0) {
+        mapped = low + (1.0 - low) * (t + 1.6 * amount * t * t * (1.0 - t));
+    } else {
+        mapped = low + (1.0 - low) * (t + amount * pow(t, 1.25) * (1.0 - t));
+    }
+    float scale = min(mapped / tone, 1.0 / peak);
+    finalColor = vec4(rgb * scale * src.a, src.a);
 }
 `;
 
@@ -70,17 +69,20 @@ fn mainFragment(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
   let src = textureSampleLevel(uTexture, uSampler, uv, 0.0);
   let amount = clamp(highlightsUniforms.uAmount * 0.01, -1.0, 1.0);
   if (amount == 0.0 || src.a < 0.0001) { return src; }
-  let rgb = src.rgb / src.a;
-  let luma = dot(rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
-  let low = 0.30;
-  if (luma <= low) { return src; }
-  let delta = luma - low;
-  let position = delta / (1.0 - low);
-  let curve = select(-0.8 * amount, -4.0 * amount, amount < 0.0);
-  let mapped = low + delta / max(1.0 + curve * position, 0.0001);
-  let scale = mapped / luma;
-  let adjusted = clamp(rgb * scale, vec3<f32>(0.0), vec3<f32>(1.0));
-  return vec4<f32>(adjusted * src.a, src.a);
+  let rgb = clamp(src.rgb / src.a, vec3<f32>(0.0), vec3<f32>(1.0));
+  let peak = max(rgb.r, max(rgb.g, rgb.b));
+  let tone = mix(dot(rgb, vec3<f32>(0.2126, 0.7152, 0.0722)), peak, 0.5);
+  let low = 0.45;
+  if (tone <= low) { return src; }
+  let t = (tone - low) / (1.0 - low);
+  var mapped: f32;
+  if (amount < 0.0) {
+    mapped = low + (1.0 - low) * (t + 1.6 * amount * t * t * (1.0 - t));
+  } else {
+    mapped = low + (1.0 - low) * (t + amount * pow(t, 1.25) * (1.0 - t));
+  }
+  let scale = min(mapped / tone, 1.0 / peak);
+  return vec4<f32>(rgb * scale * src.a, src.a);
 }
 `;
 

@@ -72,8 +72,8 @@ interface PanelMarker {
   fpsDen: number;
 }
 
-// IPC snapshots allocate fresh objects even for unchanged markers. Compare
-// the scalar wire fields so moving one marker doesn't render hundreds of
+// A row is rebuilt on every store change, around a marker that may be unchanged.
+// Compare the scalar wire fields so moving one marker doesn't render hundreds of
 // unrelated text inputs, swatches and icons. Include the owning clock/target.
 function sameMarkerRow(a: { row: PanelMarker }, b: { row: PanelMarker }): boolean {
   return a.row.compositionId === b.row.compositionId &&

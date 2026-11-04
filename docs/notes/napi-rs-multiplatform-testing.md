@@ -68,8 +68,9 @@ macOS specifics:
   silently does nothing.
 - SIP strips `DYLD_*` only for protected binaries, so the fallback path works
   for `cargo test`; the packaged `.node` needs no env.
-- VideoToolbox decode tests run serially: concurrent ProRes sessions on the
-  runner fail with VT -19092.
+- VideoToolbox decode tests run serially: hardware sessions are finite. VT
+  -19092 on ProRes is the hosted M2 Pro failing alone, not contention
+  ([platform-codecs](../platform-codecs.md) §11).
 
 ## Upstream references
 

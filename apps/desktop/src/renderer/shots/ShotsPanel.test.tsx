@@ -702,7 +702,7 @@ describe("ShotsPanel — the description column", () => {
   it("shows clip content separately and still offers every undescribed shot", async () => {
     shots.getMediaDescription.mockImplementation(async (_id, purpose) => purpose === "shot" ? null : {
       covered_ranges: [[0, 6_000_000]],
-      segments: [{ t_start_us: 0, t_end_us: 6_000_000, text: "whole clip content", tags: [] }],
+      segments: [{ src_start_us: 0, src_end_us: 6_000_000, text: "whole clip content", tags: [] }],
     });
     openComposition(ROOT_ID, null);
     setLayerSelection("l1", ["l1"]);
@@ -720,8 +720,8 @@ describe("ShotsPanel — the description column", () => {
     shots.getMediaDescription.mockImplementation(async (_id, purpose) => purpose === "shot" ? null : {
       covered_ranges: [[0, 6_000_000]],
       segments: [
-        { t_start_us: 0, t_end_us: 3_000_000, text: "a hallway", tags: [] },
-        { t_start_us: 3_000_000, t_end_us: 6_000_000, text: "a door opens", tags: [] },
+        { src_start_us: 0, src_end_us: 3_000_000, text: "a hallway", tags: [] },
+        { src_start_us: 3_000_000, src_end_us: 6_000_000, text: "a door opens", tags: [] },
       ],
       summaries: [{ window: [0, 6_000_000], text: "Someone walks a hallway to a door." }],
     });
@@ -737,8 +737,8 @@ describe("ShotsPanel — the description column", () => {
 
   it("shows a run without a summary as its open details, with nothing standing in for a summary", async () => {
     const segments = Array.from({ length: 12 }, (_, i) => ({
-      t_start_us: i * 500_000,
-      t_end_us: (i + 1) * 500_000,
+      src_start_us: i * 500_000,
+      src_end_us: (i + 1) * 500_000,
       text: `moment ${i}`,
       tags: [],
     }));
@@ -760,8 +760,8 @@ describe("ShotsPanel — the description column", () => {
     shots.getMediaDescription.mockImplementation(async (_id, purpose) => purpose === "shot" ? null : {
       covered_ranges: [[0, 6_000_000]],
       segments: [
-        { t_start_us: 0, t_end_us: 3_000_000, text: "a hallway", tags: ["hallway", "dim"] },
-        { t_start_us: 3_000_000, t_end_us: 6_000_000, text: "a door opens", tags: [] },
+        { src_start_us: 0, src_end_us: 3_000_000, text: "a hallway", tags: ["hallway", "dim"] },
+        { src_start_us: 3_000_000, src_end_us: 6_000_000, text: "a door opens", tags: [] },
       ],
     });
     openComposition(ROOT_ID, null);
@@ -783,7 +783,7 @@ describe("ShotsPanel — the description column", () => {
   it("keeps the details open when the rows land under them", async () => {
     shots.getMediaDescription.mockImplementation(async (_id, purpose) => purpose === "shot" ? null : {
       covered_ranges: [[0, 6_000_000]],
-      segments: [{ t_start_us: 0, t_end_us: 6_000_000, text: "whole clip content", tags: [] }],
+      segments: [{ src_start_us: 0, src_end_us: 6_000_000, text: "whole clip content", tags: [] }],
     });
     let landReduce!: (r: ShotReport) => void;
     shots.reduceShotReport.mockReturnValue(
@@ -833,8 +833,8 @@ describe("ShotsPanel — the description column", () => {
     shots.getMediaDescription.mockResolvedValue({
       covered_ranges: [[0, 6_000_000]],
       segments: [
-        { t_start_us: 0, t_end_us: 2_000_000, text: "a hallway", tags: ["interior"] },
-        { t_start_us: 2_000_000, t_end_us: 6_000_000, text: "a street", tags: ["exterior", "wide"] },
+        { src_start_us: 0, src_end_us: 2_000_000, text: "a hallway", tags: ["interior"] },
+        { src_start_us: 2_000_000, src_end_us: 6_000_000, text: "a street", tags: ["exterior", "wide"] },
       ],
     });
     openComposition(ROOT_ID, null);
@@ -862,8 +862,8 @@ describe("ShotsPanel — the description column", () => {
       covered_ranges: [[0, 6_000_000]],
       segments: [
         {
-          t_start_us: 1_500_000,
-          t_end_us: 2_500_000,
+          src_start_us: 1_500_000,
+          src_end_us: 2_500_000,
           text: "she turns to the window",
           tags: [],
         },
@@ -884,7 +884,7 @@ describe("ShotsPanel — the description column", () => {
     shots.getMediaDescription.mockResolvedValue({
       covered_ranges: [[0, 2_000_000]],
       segments: [
-        { t_start_us: 0, t_end_us: 2_000_000, text: "a hallway", tags: [] },
+        { src_start_us: 0, src_end_us: 2_000_000, text: "a hallway", tags: [] },
       ],
     });
     openComposition(ROOT_ID, null);
@@ -901,10 +901,9 @@ describe("ShotsPanel — the description column", () => {
 
 // The per-row press and the sweep beside it. `REPORT`'s boundary at 2 s and the
 // clip's 0–6 s source window give two rows: shot 1 over [0, 2 s) and shot 2 over
-// [2 s, 6 s). The clip sits at `t_start_us` 1 s (see `SUMMARY`), so the TIMELINE
-// window a row sends is its source span shifted by one second — which is the
-// projection worth pinning, since `describe_clip` validates against the layer's
-// timeline range and would refuse a source-time window outright.
+// [2 s, 6 s). The clip sits at `t_start_us` 1 s (see `SUMMARY`), and the window
+// a row sends is its own SOURCE span, unshifted: `describe_clip` takes source
+// time, the domain the rows and the answer share.
 describe("ShotsPanel — describing one shot", () => {
   beforeEach(() => {
     shots.shotFloorReportCached.mockResolvedValue(true);
@@ -912,7 +911,7 @@ describe("ShotsPanel — describing one shot", () => {
       backend: "qwen3_vl",
       model: "Qwen3VL-4B",
       segments: [
-        { t_start_us: 2_000_000, t_end_us: 6_000_000, text: "a kitchen", tags: ["interior"] },
+        { src_start_us: 2_000_000, src_end_us: 6_000_000, text: "a kitchen", tags: ["interior"] },
       ],
     });
   });
@@ -929,7 +928,7 @@ describe("ShotsPanel — describing one shot", () => {
     });
   }
 
-  it("sends the row's own window in timeline time", async () => {
+  it("sends the row's own window in source time", async () => {
     await review();
     fireEvent.click(screen.getByTestId("shots-describe-1"));
     await waitFor(() => expect(shots.describeClip).toHaveBeenCalled());
@@ -939,34 +938,31 @@ describe("ShotsPanel — describing one shot", () => {
     expect(shots.describeClip).toHaveBeenCalledWith({
       layerId: "l1",
       purpose: "shot",
-      tStartUs: 3_000_000,
-      tEndUs: 7_000_000,
+      srcStartUs: 2_000_000,
+      srcEndUs: 6_000_000,
       // The call's job tag (ADR 0121) — host plumbing, not a view argument.
       requestId: expect.any(String),
     });
   });
 
   it.each(["shots-describe-1", "shots-describe-all"])(
-    "bounds %s requests when the source endpoint projects past the clip by one microsecond",
+    "keeps %s requests inside the source when the clip ends one microsecond early",
     async (buttonId) => {
       const layer = clip({ id: "l1", mediaId: "m1", tStartUs: 1_000_000 });
       layer.t_end_us -= 1;
       useProjectStore.getState().apply(
         summaryFixture({ root: { duration_us: 20_000_000, tracks: [track("t1", [layer])] } }),
       );
-      shots.describeClip.mockImplementation(async (args: { tStartUs: number; tEndUs: number }) => {
-        if (args.tStartUs < layer.t_start_us || args.tEndUs > layer.t_end_us) {
+      const { src_in_us: srcIn, src_out_us: srcOut } = layer.params as { src_in_us: number; src_out_us: number };
+      shots.describeClip.mockImplementation(async (args: { srcStartUs: number; srcEndUs: number }) => {
+        if (args.srcStartUs < srcIn || args.srcEndUs > srcOut) {
           throw new Error(
-            `description window [${args.tStartUs}, ${args.tEndUs}] is outside layer range [${layer.t_start_us}, ${layer.t_end_us}]`,
+            `description window [${args.srcStartUs}, ${args.srcEndUs}] is outside the source the layer plays [${srcIn}, ${srcOut}]`,
           );
         }
         return {
           backend: "qwen3_vl", model: "Qwen3VL-4B",
-          segments: [{
-            t_start_us: args.tStartUs - layer.t_start_us,
-            t_end_us: args.tEndUs - layer.t_start_us,
-            text: "a kitchen", tags: [],
-          }],
+          segments: [{ src_start_us: args.srcStartUs, src_end_us: args.srcEndUs, text: "a kitchen", tags: [] }],
         };
       });
       const rows = await review();
@@ -974,8 +970,8 @@ describe("ShotsPanel — describing one shot", () => {
       await waitFor(() => expect(rows[1]?.textContent).toContain("a kitchen"));
       expect(screen.queryByTestId("shots-describe-error")).toBeNull();
       expect(shots.describeClip).toHaveBeenLastCalledWith(expect.objectContaining({
-        tStartUs: 3_000_000,
-        tEndUs: layer.t_end_us,
+        srcStartUs: 2_000_000,
+        srcEndUs: 6_000_000,
       }));
     },
   );
@@ -1063,7 +1059,7 @@ describe("ShotsPanel — describing one shot", () => {
     shots.getMediaDescription.mockResolvedValue({
       covered_ranges: [[0, 2_000_000]],
       segments: [
-        { t_start_us: 0, t_end_us: 2_000_000, text: "a hallway", tags: [] },
+        { src_start_us: 0, src_end_us: 2_000_000, text: "a hallway", tags: [] },
       ],
     });
     await review();
@@ -1075,8 +1071,8 @@ describe("ShotsPanel — describing one shot", () => {
     expect(shots.describeClip).toHaveBeenCalledWith({
       layerId: "l1",
       purpose: "shot",
-      tStartUs: 3_000_000,
-      tEndUs: 7_000_000,
+      srcStartUs: 2_000_000,
+      srcEndUs: 6_000_000,
       // The call's job tag (ADR 0121) — host plumbing, not a view argument.
       requestId: expect.any(String),
     });
@@ -1103,8 +1099,8 @@ describe("ShotsPanel — describing one shot", () => {
     shots.getMediaDescription.mockResolvedValue({
       covered_ranges: [[0, 6_000_000]],
       segments: [
-        { t_start_us: 0, t_end_us: 2_000_000, text: "a hallway", tags: [] },
-        { t_start_us: 2_000_000, t_end_us: 6_000_000, text: "a kitchen", tags: [] },
+        { src_start_us: 0, src_end_us: 2_000_000, text: "a hallway", tags: [] },
+        { src_start_us: 2_000_000, src_end_us: 6_000_000, text: "a kitchen", tags: [] },
       ],
     });
     await review();
@@ -1200,7 +1196,7 @@ describe("ShotsPanel — describing one shot", () => {
     shots.getMediaDescription.mockResolvedValue({
       covered_ranges: [[0, 6_000_000]],
       segments: [
-        { t_start_us: 0, t_end_us: 2_000_000, text: "a hallway", tags: [] },
+        { src_start_us: 0, src_end_us: 2_000_000, text: "a hallway", tags: [] },
       ],
     });
     await review();

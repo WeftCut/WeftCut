@@ -6,12 +6,14 @@
 // the MCP caller wraps it via shapeMotifMcpResult, the renderer returns it as-is.
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { encodeMotifZip, decodeMotifZip } from './archive';
+import { isUtf8 } from 'node:buffer';
+import { createHash } from 'node:crypto';
+import { encodeMotifZip } from './archive';
 import type { MotifRebindEntry } from '../state/model';
 import type { UserMotifStore } from './store';
 import { type BuiltinMotif, type MotifLayerRef, motifSourceFiles } from './authoring';
 import { MotifWorkspace, type DraftSource, type FileChange } from './workspace';
-import { FileTransfers } from './transfers';
+import { revisionConflict } from './refusal';
 import { type MotifStaleEntry, currentVersions, buildStalenessReport, buildAckEntries } from './staleness';
 export interface MotifToolDeps {
     store: UserMotifStore;
@@ -24,6 +26,9 @@ export interface MotifToolDeps {
     emitChanged: () => void;
     /** Re-pull list_motifs → actor.setUserMotifManifests (content-window clamp). */
     refreshCatalog: () => void;
+    /** Tell connected agents the catalog changed (MCP resources list_changed):
+     *  a publication was proposed, approved or rejected. */
+    notifyAgents?: () => void;
     /** Emit a record-panel LogBus warn row (the on-open staleness summary).
      *  Best-effort; the host wraps the underlying emit in try/catch. */
     emitLog: (entry: {
@@ -37,81 +42,105 @@ export interface MotifToolDeps {
         message: string;
     }) => void;
 }
+/** read_motif's text bound; a larger text file is refused, not truncated. */
+const TEXT_READ_BYTES = 256 * 1024;
+/** The subject Motif of a call: one input name on every tool (`motif_id`). */
+function subject(a: Record<string, unknown>): string {
+    if (typeof a.motif_id !== 'string' || !a.motif_id)
+        throw new Error('motif_id is required: the id list_motifs reports');
+    return a.motif_id;
+}
 export function runMotifTool(name: string, rawArgs: Record<string, unknown>, deps: MotifToolDeps): unknown {
     const a = rawArgs;
     const workspace = new MotifWorkspace(deps.store, deps.builtins);
-    const transfers = new FileTransfers(path.join(deps.store.root(), '.transfers'));
     const changed = () => { deps.emitChanged(); deps.refreshCatalog(); };
+    // A publication's state moved: the renderer's card and every agent's catalog.
+    const transitioned = () => { changed(); deps.notifyAgents?.(); };
     switch (name) {
         case 'list_motifs': return workspace.list(a.status as string | undefined);
         case 'read_motif': {
-            const info = workspace.read(a.id as string);
+            if ('encoding' in a)
+                throw new Error('read_motif takes no encoding: a path answers its UTF-8 text, or {size, sha256} for a binary file');
+            const id = subject(a);
+            const info = workspace.read(id);
             if (a.path === undefined) {
                 const { html: _html, ...overview } = info;
                 return overview;
             }
-            const file = motifSourceFiles(deps.store, deps.builtins, a.id as string).find(f => f.path === a.path);
+            const file = motifSourceFiles(deps.store, deps.builtins, id).find(f => f.path === a.path);
             const bytes = file?.bytes ?? (a.path === 'index.html' ? Buffer.from(info.html) : null);
             if (!bytes)
                 throw new Error('Unknown Motif file: ' + a.path);
-            if (a.encoding === 'text') {
-                if (bytes.length > 256 * 1024)
-                    throw new Error('Text exceeds 256 KiB; request a file transfer');
-                return { id: a.id, manifest: info.manifest, revision: info.revision, path: a.path, text: new TextDecoder('utf-8', { fatal: true }).decode(bytes) };
-            }
-            return { id: a.id, revision: info.revision, path: a.path, ...transfers.put(bytes) };
+            if (!isUtf8(bytes))
+                return { motif_id: id, revision: info.revision, path: a.path, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+            if (bytes.length > TEXT_READ_BYTES)
+                throw new Error(`${a.path as string} is ${Math.ceil(bytes.length / 1024)} KiB of text, over read_motif's 256 KiB; change it with update_motif_files edits, or read it in the draft's linked directory`);
+            return { motif_id: id, manifest: info.manifest, revision: info.revision, path: a.path, text: bytes.toString('utf8') };
         }
         case 'open_motif_draft': {
-            const source = a.source as DraftSource | {
-                kind: 'zip';
-                file_id: string;
-            };
-            if (!source || typeof source !== 'object')
-                throw new Error('A draft source is required');
-            if ('file_id' in source && Object.keys(source).some(k => k !== 'kind' && k !== 'file_id'))
-                throw new Error('ZIP source needs exactly one path or file_id');
-            const opened = source.kind === 'zip' && 'file_id' in source ? workspace.openFiles(decodeMotifZip(transfers.bytes(source.file_id))) : workspace.open(source as DraftSource);
+            const opened = workspace.open(a.source as DraftSource);
             changed();
             return opened;
         }
         case 'update_motif_files': {
-            const updated = workspace.update(a.draft_id as string, a.expected_revision as string, a.files as FileChange[], id => transfers.bytes(id));
+            const updated = workspace.update(subject(a), a.expected_revision as string, a.files as FileChange[]);
             changed();
             return updated;
         }
         case 'export_motif': {
-            const info = workspace.read(a.id as string);
+            const id = subject(a);
+            const info = workspace.read(id);
             if (info.diagnostic)
                 throw new Error(info.diagnostic);
             if (a.expected_revision !== undefined && a.expected_revision !== info.revision)
-                throw new Error('Motif revision conflict');
-            const files = motifSourceFiles(deps.store, deps.builtins, a.id as string);
-            const bytes = Buffer.from(encodeMotifZip(a.id as string, [{ path: 'index.html', bytes: Buffer.from(info.html) }, ...files.filter(f => f.path !== 'index.html')]));
-            if (a.path !== undefined) {
-                if (!path.isAbsolute(a.path as string))
-                    throw new Error('Export path must be absolute');
-                writeFileSync(a.path as string, bytes);
-                return { id: a.id, revision: info.revision, path: a.path };
-            }
-            return { id: a.id, revision: info.revision, ...transfers.put(bytes) };
+                throw revisionConflict(info.revision, 'export it without expected_revision, or read it again');
+            const files = motifSourceFiles(deps.store, deps.builtins, id);
+            const bytes = Buffer.from(encodeMotifZip(id, [{ path: 'index.html', bytes: Buffer.from(info.html) }, ...files.filter(f => f.path !== 'index.html')]));
+            if (typeof a.path !== 'string' || !path.isAbsolute(a.path))
+                throw new Error('export_motif needs path: an absolute app-machine .zip path in an existing folder');
+            if (path.extname(a.path).toLowerCase() !== '.zip')
+                throw new Error(`export_motif writes a ZIP: path must end in .zip, got ${a.path}`);
+            // `wx`: never over an existing file (the same policy as
+            // start_export's on_conflict: fail), and a missing parent folder
+            // is ENOENT, not a folder made on the caller's behalf.
+            writeFileSync(a.path, bytes, { flag: 'wx' });
+            return { motif_id: id, revision: info.revision, path: a.path };
         }
-        case 'delete_motif':
-            workspace.delete(a.id as string);
-            changed();
-            return { motif_id: a.id };
+        case 'delete_motif': {
+            const id = subject(a);
+            workspace.delete(id);
+            transitioned();
+            return { motif_id: id };
+        }
         case 'install_motif': {
-            const { updates, ...result } = workspace.install(a.draft_id as string, a.expected_revision as string, a.target_id as string | undefined, a.expected_version as number | undefined, deps.motifLayers());
+            // An agent proposes; the user approves in the Motif panel (ADR 0046).
+            const proposed = workspace.propose(subject(a), a.expected_revision as string, a.target_id as string | undefined, a.expected_version as number | undefined);
+            if (proposed.state === 'awaiting_approval')
+                transitioned();
+            return proposed;
+        }
+        // ── Renderer-only channels (router MOTIF_CHANNELS, never MOTIF_TOOLS) ──
+        case 'publish_motif': {
+            // The app's own Install / Update / Save as new: the user publishes.
+            const { updates, ...result } = workspace.publish(subject(a), a.expected_revision as string, a.target_id as string | undefined, a.expected_version as number | undefined, deps.motifLayers());
             if (updates.length)
                 deps.dispatchRebind(updates);
-            changed();
+            transitioned();
             return result;
         }
-        case 'begin_file_upload': return transfers.begin(a.size as number, a.sha256 as string);
-        case 'write_file_chunk': return transfers.write(a.file_id as string, a.offset as number, a.base64 as string);
-        case 'read_file_transfer': return transfers.read(a.file_id as string, a.offset as number | undefined, a.length as number | undefined);
-        case 'delete_file_transfer':
-            transfers.delete(a.file_id as string);
-            return { file_id: a.file_id };
+        case 'list_motif_proposals': return workspace.proposals(deps.motifLayers());
+        case 'approve_motif_proposal': {
+            const { updates, ...result } = workspace.approve(subject(a), a.proposal_id as string, deps.motifLayers());
+            if (updates.length)
+                deps.dispatchRebind(updates);
+            transitioned();
+            return result;
+        }
+        case 'reject_motif_proposal': {
+            const rejected = workspace.reject(subject(a), a.proposal_id as string, a.note as string | undefined);
+            transitioned();
+            return rejected;
+        }
         case 'motif_staleness_report': {
             const current = currentVersions(deps.builtins, deps.store.listManifests());
             const layers = deps.motifLayers().map((l) => ({ motifId: l.motifId, placedVersion: l.version }));

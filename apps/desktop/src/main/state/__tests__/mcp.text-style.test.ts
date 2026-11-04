@@ -10,9 +10,9 @@ import { root } from './fixtures/project'
 function withTitle() {
   const gen = seededGen()
   const a = createActor({ initial: blankProject(gen, 'text'), idGen: gen, clock: () => '<TS>' })
-  const r = a.mcpCall('add_text_layer', JSON.stringify({ track_id: root(a.snapshot()).tracks[1].id, content: 'Hi', t_start_us: 0, t_end_us: 1_000_000 }))
+  const r = a.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: root(a.snapshot()).tracks[1].id, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'text', content: 'Hi' } }] }))
   if (!r.ok) throw new Error(r.error.message)
-  return { a, id: (JSON.parse(r.result.content[0].text) as { layer_id: string }).layer_id }
+  return { a, id: (JSON.parse(r.result.content[0].text) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id }
 }
 const patch = (a: ActorHandle, id: string, p: Record<string, unknown>) => a.mcpCall('update_layer_params', JSON.stringify({ layer_id: id, patch: { kind: 'Text', ...p } }))
 const text = (a: ActorHandle, id: string): TextParams => root(a.snapshot()).tracks.flatMap((t) => t.layers).find((l) => l.id === id)!.params as TextParams
@@ -46,9 +46,9 @@ describe('Text face and shadow', () => {
     const { a, id } = withTitle()
     const partial = patch(a, id, { shadow: { color: SHADOW.color, offset_x: 1, offset_y: 1 } })
     expect(!partial.ok && partial.error.message).toContain('blur')
-    const c = a.mcpCall('add_color_layer', JSON.stringify({ track_id: root(a.snapshot()).tracks[0].id, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 }))
+    const c = a.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: root(a.snapshot()).tracks[0].id, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] }))
     if (!c.ok) throw new Error(c.error.message)
-    const colorId = (JSON.parse(c.result.content[0].text) as { layer_id: string }).layer_id
+    const colorId = (JSON.parse(c.result.content[0].text) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
     const r = a.mcpCall('update_layer_params', JSON.stringify({ layer_id: colorId, patch: { kind: 'Color', shadow: SHADOW } }))
     expect(!r.ok && r.error.message).toContain('not a Color param')
   })

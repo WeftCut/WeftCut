@@ -2,7 +2,9 @@
 //! decides how they end: [`FfmpegCommand`] builds, [`FfmpegChild`] (tokio) and
 //! [`SyncFfmpegChild`] (`std::process`, for the export video sink and the sync
 //! probes) own the running process. Both end it through the same stop sequence
-//! (see [`STOP_GRACE`]), and both are bounded (see [`Bound`]).
+//! (see [`STOP_GRACE`]), and both are bounded (see [`Bound`]). Each child is
+//! also held by `super::guard` from spawn to reap, which ends it if the app
+//! dies before its owner does.
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -26,8 +28,9 @@ use crate::process::NoConsoleWindow;
 /// VideoToolbox session hangs the next one on the macOS CI VM. So on Unix a
 /// stop is always stdin EOF, then SIGTERM, then this grace, and only then a
 /// kill (Windows: see `StopPolicy::stdin_is_input`). See
-/// docs/notes/macos-runner-videotoolbox-kill-2026-10-31.md.
-const STOP_GRACE: Duration = Duration::from_secs(2);
+/// docs/notes/macos-runner-videotoolbox-kill-2026-10-31.md. The reaper that
+/// stops children once the app is gone uses the same grace.
+const STOP_GRACE: Duration = weftcut_reaper::STOP_GRACE;
 
 /// How long a watched child may go without a sign of life before it is
 /// stopped as stalled. Signs of life: a progress advance (`Progress`), input
@@ -254,10 +257,12 @@ impl FfmpegCommand {
         let watch = self.watch()?;
         let child = self.command.spawn()?;
         let target = Target::of_tokio(&child);
+        let guard = target.as_ref().ok().and_then(|target| target.adopt());
         let owner = FfmpegChild {
             handle: Some(Handle {
                 child,
                 watch: watch.clone(),
+                _guard: guard,
             }),
             stop: Stop::new(self.policy),
             timeout: self.timeout(),
@@ -285,6 +290,7 @@ impl FfmpegCommand {
             handle: Some(Handle {
                 child,
                 watch: watch.clone(),
+                _guard: target.adopt(),
             }),
             stop: Stop::new(self.policy),
             timeout: self.timeout(),
@@ -645,15 +651,22 @@ enum Feed {
     Closed,
 }
 
-/// A child process and its watch, if any.
+/// A child process, its watch, if any, and its hold in the guard that ends it
+/// if the app dies first.
 ///
 /// LANDMINE: every reap goes through `try_wait` here, under the watch lock,
 /// and dropping the handle releases the watch under the same lock. That is
 /// what keeps the watchdog from signalling a reaped (possibly reused) pid or a
 /// closed process handle.
+///
+/// LANDMINE: the handle is what a stop thread carries until the reap, so
+/// dropping it is also what takes the child back from the guard
+/// (`super::guard`). A handle dropped before its reap would leave a running
+/// child unguarded.
 struct Handle<C: Process> {
     child: C,
     watch: Option<Arc<Watch>>,
+    _guard: Option<super::guard::Adopted>,
 }
 
 impl<C: Process> Handle<C> {
@@ -870,6 +883,15 @@ impl Target {
             #[cfg(windows)]
             handle: std::os::windows::io::AsRawHandle::as_raw_handle(child) as usize,
         }
+    }
+
+    /// Hand the just-spawned child to the guard that ends it if the app dies
+    /// first.
+    fn adopt(&self) -> Option<super::guard::Adopted> {
+        #[cfg(unix)]
+        return super::guard::adopt(self.pid);
+        #[cfg(windows)]
+        return super::guard::adopt(self.handle);
     }
 
     /// Unix: SIGTERM. Windows has no such request, so it terminates.
@@ -1288,6 +1310,40 @@ mod unix_tests {
     fn reaped(pid: u32) -> bool {
         // A zombie still answers signal 0; only a reaped pid is gone.
         unsafe { libc::kill(pid as libc::pid_t, 0) == -1 }
+    }
+
+    #[tokio::test]
+    async fn the_guard_holds_a_child_until_its_owner_lets_go_of_the_reaped_process() {
+        use super::super::guard::held;
+        let mut child = spawn_ready(&mut sh(
+            "echo ready; exec sleep 30",
+            Duration::from_secs(10),
+        ))
+        .await;
+        let pid = child.handle().child.id().unwrap();
+        assert!(held(pid).is_some());
+        child.stop().await.unwrap();
+        // Reaped, and the owner still holds the handle: the guard's start time
+        // is what keeps a reused pid safe meanwhile.
+        assert!(held(pid).is_some());
+        drop(child);
+        assert!(held(pid).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_dropped_owner_leaves_the_child_guarded_until_the_stop_thread_reaps_it() {
+        use super::super::guard::held;
+        let grace = Duration::from_millis(300);
+        let child = spawn_ready(&mut sh("trap '' TERM; echo ready; exec sleep 30", grace)).await;
+        let pid = child.handle.as_ref().unwrap().child.id().unwrap();
+        drop(child);
+        // The kill is still a grace away, on a thread an app exit would end.
+        assert!(held(pid).is_some());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while held(pid).is_some() && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(reaped(pid) && held(pid).is_none());
     }
 
     #[tokio::test]

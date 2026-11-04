@@ -68,10 +68,19 @@ const asErr = (r: unknown): ErrResult => { expect(isToolError(r), JSON.stringify
 describe('handleCallTool — every route answers a refusal as an isError result', () => {
   it("a hybrid arm's own argument refusal (import_media of a directory) is invalid_params naming the path, and nothing was probed or written", async () => {
     const host = tsHostStub({ statPath: () => ({ kind: 'directory', readable: true }) })
-    const out = asErr(await handleCallTool(fakeBackend(), () => host, 'import_media', { path: 'C:/clips' }))
+    const out = asErr(await handleCallTool(fakeBackend(), () => host, 'import_media', { paths: ['C:/clips'] }))
     expect(out.structuredContent.code).toBe('invalid_params')
     expect(out.content[0].text).toContain('C:/clips')
     expect(out.content[0].text).toContain('is a directory')
+    expect(host.hybridDeps.compute.probeMedia).not.toHaveBeenCalled()
+    expect(Object.keys(host.actor.snapshot().media_pool)).toEqual([])
+  })
+
+  it('import_media checks every path before importing any: one bad path imports nothing', async () => {
+    const host = tsHostStub({ statPath: ((p: string) => p.endsWith('clips') ? { kind: 'directory', readable: true } : { kind: 'file', readable: true }) as never })
+    const out = asErr(await handleCallTool(fakeBackend(), () => host, 'import_media', { paths: ['C:/a.mp4', 'C:/clips'] }))
+    expect(out.content[0].text).toContain('is a directory')
+    expect(out.content[0].text).toContain('C:/clips')
     expect(host.hybridDeps.compute.probeMedia).not.toHaveBeenCalled()
     expect(Object.keys(host.actor.snapshot().media_pool)).toEqual([])
   })
@@ -80,16 +89,16 @@ describe('handleCallTool — every route answers a refusal as an isError result'
     // A detector must exist for the arm to get as far as the subject check.
     const host = tsHostStub({ compute: { detectPauses: vi.fn(async () => { throw new Error('the subject check comes first') }) } })
     const track = root(host.actor.snapshot()).tracks[0].id
-    const added = host.actor.mcpCall('add_color_layer', JSON.stringify({ track_id: track, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 }))
+    const added = host.actor.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: track, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] }))
     if (!added.ok) throw new Error(added.error.message)
-    const layerId = (JSON.parse(added.result.content[0].text) as { layer_id: string }).layer_id
+    const layerId = (JSON.parse(added.result.content[0].text) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
     const out = asErr(await handleCallTool(fakeBackend(), () => host, 'remove_pauses', { layer_id: layerId }))
     expect(out.structuredContent.code).toBe('invalid_params')
     expect(out.content[0].text).toContain('plays no sound')
   })
 
   it('a TS parser refusal (bad argument) is a result, with the code and the message mirrored in structuredContent', async () => {
-    const out = asErr(await handleCallTool(fakeBackend(), () => tsHostStub(), 'move_layer', {}))
+    const out = asErr(await handleCallTool(fakeBackend(), () => tsHostStub(), 'trim_layer', {}))
     expect(out.content[0].text).toContain('layer_id not a UUID')
     expect(out.structuredContent).toMatchObject({ code: 'invalid_params', message: out.content[0].text })
   })
@@ -97,10 +106,10 @@ describe('handleCallTool — every route answers a refusal as an isError result'
   it('a TS actor refusal (stale id) is a result; the mapper\'s data rides in structuredContent', async () => {
     const ts = tsHostStub()
     const trackId = root(ts.actor.snapshot()).tracks[0].id
-    const args = { track_id: trackId, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 }
-    const first = await handleCallTool(fakeBackend(), () => ts, 'add_color_layer', args)
+    const args = { layers: [{ track_id: trackId, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] }
+    const first = await handleCallTool(fakeBackend(), () => ts, 'add_layers', args)
     expect(isToolError(first)).toBe(false)
-    const out = asErr(await handleCallTool(fakeBackend(), () => ts, 'add_color_layer', args))
+    const out = asErr(await handleCallTool(fakeBackend(), () => ts, 'add_layers', args))
     expect(out.content[0].text).toContain('layer overlap')
     expect(out.structuredContent).toMatchObject({ code: 'invalid_params', error: 'LayerOverlap', track: trackId })
     expect(Array.isArray(out.structuredContent.options)).toBe(true)
@@ -110,7 +119,7 @@ describe('handleCallTool — every route answers a refusal as an isError result'
     // remove_pauses on a layer that does not exist: the hybrid resolves the
     // subject first and throws — the thrown text must NOT reach the agent as a
     // raw JSON struct.
-    const ts = tsHostStub({ compute: { detectPauses: vi.fn(async () => ({ pauses: [], noise_floor_amp: 0, peaks_source: 'raw' })) } })
+    const ts = tsHostStub({ compute: { detectPauses: vi.fn(async () => ({ pauses: [], noise_floor_db: null, peaks_source: 'raw' })) } })
     const out = asErr(await handleCallTool(fakeBackend(), () => ts, 'remove_pauses', { layer_id: NOWHERE }))
     expect(out.content[0].text).not.toMatch(/^\{/)
     expect(out.content[0].text).toContain(NOWHERE)
@@ -132,22 +141,24 @@ describe('handleCallTool — every route answers a refusal as an isError result'
 
   it('a compute failure inside a hybrid is a result, not a throw, and keeps the message', async () => {
     const ts = tsHostStub({ compute: { probeMedia: vi.fn(async () => { throw new Error('open C:/nope.mp4: no such file (os error 2)') }) } })
-    const out = asErr(await handleCallTool(fakeBackend(), () => ts, 'import_media', { path: 'C:/nope.mp4' }))
+    const out = asErr(await handleCallTool(fakeBackend(), () => ts, 'import_media', { paths: ['C:/nope.mp4'] }))
     expect(out.content[0].text).toContain('nope.mp4')
     expect(out.structuredContent.code).toBe('internal')
   })
 
   it('a motif-store failure is the caller\'s: invalid_params with the store\'s message', async () => {
-    const out = asErr(await handleCallTool(fakeBackend(), () => tsHostStub(), 'install_motif', { draft_id: 'd1', expected_revision: 'r' }))
+    const out = asErr(await handleCallTool(fakeBackend(), () => tsHostStub(), 'install_motif', { motif_id: 'd1', expected_revision: 'r' }))
     expect(out.content[0].text).toBe("unknown draft 'd1'")
     expect(out.structuredContent.code).toBe('invalid_params')
   })
 
   it('a Rust envelope refusal is a result', async () => {
     const backend = fakeBackend(async () => '{"ok":false,"error":{"code":"invalid_params","message":"layer x not found","data":{"layer":"x"}}}')
-    const out = asErr(await handleCallTool(backend, () => tsHostStub(), 'ping', {}))
+    // Bare core: with a host every Rust tool gets its slice resolved first.
+    const out = asErr(await handleCallTool(backend, () => null, 'synthesize_speech', { text: 'hi', voice: 'alloy' }))
     expect(out.content[0].text).toBe('layer x not found')
-    expect(out.structuredContent).toEqual({ code: 'invalid_params', message: 'layer x not found', layer: 'x' })
+    // A route that names no variant gets the code's own.
+    expect(out.structuredContent).toEqual({ code: 'invalid_params', message: 'layer x not found', layer: 'x', error: 'InvalidArgument' })
   })
 
   it('a clip-compute refusal thrown as an SDK-shaped error maps its code back', async () => {
@@ -158,14 +169,14 @@ describe('handleCallTool — every route answers a refusal as an isError result'
 
   it('a bare-core call (no host) still answers a refusal as a result', async () => {
     const backend = fakeBackend(async () => '{"ok":false,"error":{"code":"invalid_params","message":"stub"}}')
-    const out = asErr(await handleCallTool(backend, () => null, 'ping', {}))
+    const out = asErr(await handleCallTool(backend, () => null, 'synthesize_speech', { text: 'hi', voice: 'alloy' }))
     expect(out.content[0].text).toBe('stub')
   })
 
   it('the preview capture failing is a result too', async () => {
     // A catalogued id, so the refusal comes from the CAPTURE and not from the
     // unknown-id check that now precedes it.
-    const out = asErr(await handleCallTool(fakeBackend(), () => tsHostStub({ motifTool: () => [{ id: 'x', props_schema: {}, size: [10, 10] }] }), 'preview_motif', { id: 'x', t_sec: 0 }))
+    const out = asErr(await handleCallTool(fakeBackend(), () => tsHostStub({ motifTool: () => ({ manifest: { id: 'x', props_schema: {}, size: [10, 10] }, revision: 'r' }) }), 'preview_motif', { motif_id: 'x', local_t_s: [0] }))
     expect(out.content[0].text).toContain('no renderer')
   })
 
@@ -189,11 +200,11 @@ describe('the routes with no parser of their own are still gated', () => {
     // a lookup for `undefined` — a store error for what is a bad argument.
     const touched: string[] = []
     const host = () => tsHostStub({ motifTool: (name) => { touched.push(name); return [] } })
-    const mode = asErr(await handleCallTool(fakeBackend(), host, 'install_motif', { draft_id: 'd1', expected_revision: 17 }))
+    const mode = asErr(await handleCallTool(fakeBackend(), host, 'install_motif', { motif_id: 'd1', expected_revision: 17 }))
     expect(mode.structuredContent.code).toBe('invalid_params')
     expect(mode.content[0].text).toContain('expected_revision')
     const missing = asErr(await handleCallTool(fakeBackend(), host, 'install_motif', {}))
-    expect(missing.content[0].text).toContain('draft_id')
+    expect(missing.content[0].text).toContain('motif_id')
     expect(touched).toEqual([])
   })
 
@@ -209,7 +220,7 @@ describe('the routes with no parser of their own are still gated', () => {
     // JSON-RPC error; a bad id is the caller's argument, and the reader's own
     // sentence says which.
     const backend = fakeBackend()
-    backend.mcpReadResource = async () => { throw Object.assign(new Error(`media ${NOWHERE} not found`), { code: -32601 }) }
+    backend.mcpReadResource = async () => { throw Object.assign(new Error(`media ${NOWHERE} not found`), { code: -32002 }) }
     const out = asErr(await handleCallTool(backend, () => tsHostStub(), 'read_project', { view: 'media_thumbnail', id: NOWHERE }))
     expect(out.structuredContent.code).toBe('invalid_params')
     expect(out.content[0].text).toContain(NOWHERE)
@@ -227,7 +238,7 @@ describe('over the wire, the client sees a result for a refusal and a rejection 
 
   it('a refusal RESOLVES with isError and the text the model reads', async () => {
     const client = await connected()
-    const out = await client.callTool({ name: 'move_layer', arguments: {} })
+    const out = await client.callTool({ name: 'trim_layer', arguments: {} })
     expect(out.isError).toBe(true)
     expect((out.content as Array<{ text: string }>)[0].text).toContain('layer_id not a UUID')
     expect(out.structuredContent).toMatchObject({ code: 'invalid_params' })
@@ -267,12 +278,19 @@ describe('thrownToToolError', () => {
     expect(thrownToToolError(e)).toEqual({ code: 'invalid_params', message: 'layer x not found', data: { layer: 'x' } })
   })
 
-  it('toolErrorResult flattens object data beside code and message, and boxes anything else', () => {
+  it('toolErrorResult flattens object data beside code and message, boxes anything else, and always names a variant', () => {
     expect((toolErrorResult({ code: 'invalid_params', message: 'm', data: { a: 1 } }) as { structuredContent: unknown }).structuredContent)
-      .toEqual({ code: 'invalid_params', message: 'm', a: 1 })
+      .toEqual({ code: 'invalid_params', message: 'm', a: 1, error: 'InvalidArgument' })
     expect((toolErrorResult({ code: 'internal', message: 'm', data: [1] }) as { structuredContent: unknown }).structuredContent)
-      .toEqual({ code: 'internal', message: 'm', data: [1] })
-    expect((toolErrorResult({ code: 'internal', message: 'm' }) as { structuredContent: unknown }).structuredContent)
-      .toEqual({ code: 'internal', message: 'm' })
+      .toEqual({ code: 'internal', message: 'm', data: [1], error: 'Internal' })
+    expect((toolErrorResult({ code: 'invalid_request', message: 'm', data: { error: 'Mine' } }) as { structuredContent: unknown }).structuredContent)
+      .toEqual({ code: 'invalid_request', message: 'm', error: 'Mine' })
+  })
+
+  it('toolErrorResult says IPC and errno text in the model\'s words, and never answers not_found', () => {
+    const r = toolErrorResult({ code: 'internal', message: "Error invoking remote method 'export_begin': Error: ENOSPC: no space left on device, write" }) as { content: Array<{ text: string }>; structuredContent: Record<string, unknown> }
+    expect(r.content[0].text).not.toMatch(/Error invoking remote method|ENOSPC:/)
+    expect(r.structuredContent).toMatchObject({ code: 'invalid_request', error: 'DiskFull', errno: 'ENOSPC' })
+    expect((toolErrorResult({ code: 'not_found', message: 'm' }) as { structuredContent: Record<string, unknown> }).structuredContent.code).toBe('invalid_params')
   })
 })

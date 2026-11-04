@@ -20,7 +20,6 @@ import { HISTORY_SUMMARY } from '../state/history-labels'
 import { uuidV7Gen } from '../state/ids'
 import { blankProject } from '../state/model'
 import { mediaItemTemplate } from '../state/mutations/media'
-import { BUILTIN_MANIFESTS } from '../../shared/motifs/catalog'
 import { root } from '../state/__tests__/fixtures/project'
 
 // preview_motif's route ends in a real CDP frame capture, which has no
@@ -91,7 +90,7 @@ function fakeBackend(callToolJson = '{"ok":false,"error":{"code":"invalid_params
   return {
     mcpCallTool: async () => callToolJson,
     mcpReadResource: async () => '{"ok":true,"result":{"contents":[]}}',
-    mcpCatalog: async () => '{"tools":[{"name":"ping"}],"resources":[{"uri":"project://current"}]}',
+    mcpCatalog: async () => '{"tools":[{"name":"ping"}],"resources":[{"uri":"project://compiled"}]}',
     mcpListPrompts: async () => '[]',
     mcpGetPrompt: async () => '{"ok":true,"result":{"messages":[]}}',
   } as any
@@ -118,7 +117,7 @@ function sessionCallTool(deps: McpLogDeps, ts: ReturnType<typeof tsHostStub>) {
     handler({ params: { name, arguments: args } }, undefined).catch(() => { /* the Err branch is a valid outcome here */ })
 }
 
-/** Opaque black — `add_color_layer`'s one required non-time arg. */
+/** Opaque black — a colour layer's one required non-time arg. */
 const BLACK = { r: 0, g: 0, b: 0, a: 1 }
 
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers() })
@@ -148,7 +147,7 @@ const HANDLER_SPECS: Array<[unknown, string, Record<string, unknown>]> = [
   [ListToolsRequestSchema, 'tools/list', {}],
   [CallToolRequestSchema, 'ping', { name: 'ping', arguments: {} }],
   [ListResourcesRequestSchema, 'resources/list', {}],
-  [ReadResourceRequestSchema, 'resources/read', { uri: 'project://current' }],
+  [ReadResourceRequestSchema, 'resources/read', { uri: 'project://compiled' }],
   [ListPromptsRequestSchema, 'prompts/list', {}],
   [GetPromptRequestSchema, 'prompts/get', { name: 'edit_plan' }],
 ]
@@ -206,9 +205,9 @@ describe('level follows the tool route', () => {
     const track = root(ts.actor.snapshot()).tracks[0].id
     const handler = withLog('tools/call', async (req: { params: { name: string; arguments: Record<string, unknown> } }) =>
       handleCallTool(fakeBackend(), () => ts, req.params.name, req.params.arguments), deps)
-    await handler({ params: { name: 'add_color_layer', arguments: { track_id: track, color: { r: 0, g: 0, b: 0, a: 1 }, t_start_us: 0, t_end_us: 1_000_000 } } }, undefined)
+    await handler({ params: { name: 'add_layers', arguments: { layers: [{ track_id: track, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: BLACK } }] } } }, undefined)
     expect(entries[0].level).toBe('info')
-    expect(entries[0].message).toBe('MCP: add_color_layer')
+    expect(entries[0].message).toBe('MCP: add_layers')
     expect(typeof detailsOf(entries[0]).duration_ms).toBe('number')
   })
 
@@ -221,7 +220,7 @@ describe('level follows the tool route', () => {
 
   it('a read-shaped tool on the ts route still logs at Info — routing decides, not write-ness', async () => {
     const { entries, deps } = collector()
-    await decoratedCallTool(deps)('list_checkpoints')
+    await decoratedCallTool(deps)('export_captions', { format: 'srt' })
     expect(entries[0].level).toBe('info')
   })
 
@@ -243,10 +242,10 @@ describe('level follows the tool route', () => {
     // A refusal is an `isError` RESULT, not a throw — the row must not read it
     // as a success.
     const { entries, deps } = collector()
-    await decoratedCallTool(deps)('add_color_layer', {})
+    await decoratedCallTool(deps)('add_layers', {})
     expect(entries[0].level).toBe('error')
     expect(detailsOf(entries[0]).error).toMatchObject({ code: 'invalid_params' })
-    expect((detailsOf(entries[0]).error as { message: string }).message).toContain('track_id')
+    expect((detailsOf(entries[0]).error as { message: string }).message).toContain('layers')
   })
 
   it('a cancelled clip-compute job is not an Error: info, and the row says cancelled', async () => {
@@ -324,7 +323,7 @@ describe('oversized args are elided before the payload leaves TS', () => {
   it("a 40 KB file body keeps the row under Rust's 4 KB cap with its revision intact", async () => {
     const { entries, deps } = collector()
     const html = 'x'.repeat(40 * 1024)
-    await decoratedCallTool(deps)('update_motif_files', {draft_id:'draft',expected_revision:'revision',files:[{path:'index.html',text:html}]})
+    await decoratedCallTool(deps)('update_motif_files', {motif_id:'draft',expected_revision:'revision',files:[{path:'index.html',text:html}]})
 
     const details = detailsOf(entries[0])
     expect(JSON.stringify(details).length).toBeLessThan(4096)
@@ -351,7 +350,7 @@ describe('a mutation row reads the way the history panel does', () => {
     const ts = tsHostStub()
     const call = sessionCallTool(deps, ts)
     const track = root(ts.actor.snapshot()).tracks[0].id
-    await call('add_color_layer', { track_id: track, color: BLACK, t_start_us: 0, t_end_us: 1_000_000 })
+    await call('add_layers', { layers: [{ track_id: track, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: BLACK } }] })
 
     // Asserted against the panel's OWN read, not an English literal: the row has
     // to track the label table rather than hold a second copy of it.
@@ -361,7 +360,7 @@ describe('a mutation row reads the way the history panel does', () => {
     expect(entries[0].level).toBe('info')
     // The tool name survives in details — it is what a filter keys on once the
     // message stops being mechanical.
-    expect(detailsOf(entries[0]).tool).toBe('add_color_layer')
+    expect(detailsOf(entries[0]).tool).toBe('add_layers')
     // One commit needs no count; the message already stands for it.
     expect('commits' in detailsOf(entries[0])).toBe(false)
   })
@@ -377,13 +376,16 @@ describe('a mutation row reads the way the history panel does', () => {
   it('a call that commits twice names the last change and counts them', async () => {
     const { entries, deps } = collector()
     const ts = tsHostStub()
-    // add_motif_layer with no track_id spawns the track, then the layer: two commits
-    // under one call, and the layer is what the agent asked for.
-    await sessionCallTool(deps, ts)('add_motif_layer', { motif_id: [...BUILTIN_MANIFESTS.keys()][0], t_start_us: 0 })
+    // No MCP tool commits twice any more (add_layers spawns inside its one
+    // commit), so the host route does: a track, then the layer the agent asked for.
+    const inner = ts.mcpCall
+    ts.mcpCall = (name: string, argsJson: string) => { inner('add_track', '{}'); return inner(name, argsJson) }
+    const track = root(ts.actor.snapshot()).tracks[0].id
+    await sessionCallTool(deps, ts)('add_layers', { layers: [{ track_id: track, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: BLACK } }] })
     expect(entries[0].message).toBe(HISTORY_SUMMARY.layerAdd.text)
     expect(entries[0].i18n_key).toBe(HISTORY_SUMMARY.layerAdd.key)
     expect(detailsOf(entries[0]).commits).toBe(2)
-    expect(detailsOf(entries[0]).tool).toBe('add_motif_layer')
+    expect(detailsOf(entries[0]).tool).toBe('add_layers')
   })
 
   it('a commit that never reached history keeps its summary and no key', async () => {
@@ -391,7 +393,7 @@ describe('a mutation row reads the way the history panel does', () => {
     const ts = tsHostStub()
     const call = sessionCallTool(deps, ts)
     const track = root(ts.actor.snapshot()).tracks[0].id
-    await call('add_color_layer', { track_id: track, color: BLACK, t_start_us: 0, t_end_us: 1_000_000 })
+    await call('add_layers', { layers: [{ track_id: track, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: BLACK } }] })
     await call('undo')
     // undo broadcasts an unrecorded ChangeEvent: real user-facing text, but no
     // history entry to read a key off — and the op_id match is what stops it
@@ -404,11 +406,11 @@ describe('a mutation row reads the way the history panel does', () => {
     const { entries, deps } = collector()
     const ts = tsHostStub()
     const call = sessionCallTool(deps, ts)
-    await call('add_color_layer', {}) // refused before any commit
-    await call('list_checkpoints') // a read that happens to route 'ts'
+    await call('add_layers', {}) // refused before any commit
+    await call('export_captions', { format: 'srt' }) // a read that happens to route 'ts'
     expect(entries.map((e) => [e.level, e.message])).toEqual([
-      ['error', 'MCP: add_color_layer'],
-      ['info', 'MCP: list_checkpoints'],
+      ['error', 'MCP: add_layers'],
+      ['info', 'MCP: export_captions'],
     ])
   })
 })
@@ -426,10 +428,10 @@ describe('the commit window is closed before the first await', () => {
       await Promise.resolve()
       return handleCallTool(fakeBackend(), () => ts, req.params.name, req.params.arguments)
     }, observed)
-    await late({ params: { name: 'add_color_layer', arguments: { track_id: track, color: BLACK, t_start_us: 0, t_end_us: 1_000_000 } } }, undefined)
+    await late({ params: { name: 'add_layers', arguments: { layers: [{ track_id: track, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: BLACK } }] } } }, undefined)
 
     expect(ts.actor.historyView(1).ops[0].label_key).toBe(HISTORY_SUMMARY.layerAdd.key) // the commit did happen
-    expect(entries[0].message).toBe('MCP: add_color_layer')
+    expect(entries[0].message).toBe('MCP: add_layers')
     expect(entries[0].i18n_key).toBeUndefined()
   })
 
@@ -448,12 +450,12 @@ describe('the commit window is closed before the first await', () => {
     const quick = withLog('tools/call', route, observed)
 
     const pending = slow({ params: { name: 'add_track', arguments: {} } }, undefined)
-    await quick({ params: { name: 'add_color_layer', arguments: { track_id: track, color: BLACK, t_start_us: 0, t_end_us: 1_000_000 } } }, undefined)
+    await quick({ params: { name: 'add_layers', arguments: { layers: [{ track_id: track, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: BLACK } }] } } }, undefined)
     release()
     await pending
 
     expect(entries.map((e) => [detailsOf(e).tool, e.message])).toEqual([
-      ['add_color_layer', HISTORY_SUMMARY.layerAdd.text],
+      ['add_layers', HISTORY_SUMMARY.layerAdd.text],
       ['add_track', 'MCP: add_track'],
     ])
   })
@@ -478,7 +480,7 @@ describe('hybrids keep the mechanical line — a wrong attribution is worse', ()
 
     const both = Promise.all([
       call('apply_subtitles', { media_id: sub }),
-      call('import_media', { path: 'C:/media/clip.mp4' }),
+      call('import_media', { paths: ['C:/media/clip.mp4'] }),
     ])
     release()
     await both

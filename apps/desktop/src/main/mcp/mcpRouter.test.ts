@@ -6,7 +6,7 @@ import { MOTIF_TOOL_DEFS } from './motifToolDefs'
 
 describe('routeMcpTool', () => {
   it('routes ported mutations + reads to ts', () => {
-    for (const t of ['add_color_layer', 'set_keyframe', 'undo', 'get_param_track', 'list_checkpoints', 'dry_run'])
+    for (const t of ['add_layers', 'set_keyframe', 'undo', 'get_param_track', 'export_captions'])
       expect(routeMcpTool(t), t).toBe('ts')
   })
   it('routes import_media + apply_subtitles + synthesize_speech to the native-compute → TS-write hybrid', () => {
@@ -14,24 +14,22 @@ describe('routeMcpTool', () => {
     expect(routeMcpTool('apply_subtitles')).toBe('hybrid')
     expect(routeMcpTool('synthesize_speech')).toBe('hybrid')
   })
-  it('add_motif_layer routes to ts (pure TS mutation)', () => {
-    expect(routeMcpTool('add_motif_layer')).toBe('ts')
-  })
   it('routes the 5 MCP motif tools to the motif route', () => {
     for (const t of ['list_motifs', 'read_motif', 'open_motif_draft', 'delete_motif', 'install_motif'])
       expect(routeMcpTool(t), t).toBe('motif')
   })
-  it('routes motif_staleness_report and acknowledge_motif_staleness to the motif route', () => {
-    expect(routeMcpTool('motif_staleness_report')).toBe('motif')
-    expect(routeMcpTool('acknowledge_motif_staleness')).toBe('motif')
+  it('the staleness and approval channels are the renderer\'s, never MCP motif tools (ME8, ADR 0046)', () => {
+    for (const t of ['motif_staleness_report', 'acknowledge_motif_staleness', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal']) {
+      expect(MOTIF_TOOLS.has(t), t).toBe(false)
+      expect(routeMcpTool(t), t).not.toBe('motif')
+    }
   })
   it('preview_motif stays rust (special-cased capture in server.ts)', () => {
     expect(routeMcpTool('preview_motif')).toBe('rust')
   })
   it('routes the live rust-native tools to rust', () => {
-    // Link reads come from the project://current summary resource (it includes
-    // `links`), not an MCP tool.
-    for (const t of ['ping', 'detect_pauses', 'transcribe_clip'])
+    // Link reads come from project://links, not an MCP tool.
+    for (const t of ['compare_frames', 'detect_pauses', 'transcribe_clip'])
       expect(routeMcpTool(t), t).toBe('rust')
   })
   it('routes the TS-owned hybrid defs to the hybrid orchestrator (Rust compute + TS writes)', () => {
@@ -60,7 +58,7 @@ describe('merged ListTools is a clean catalog↔handler bijection', () => {
   // Simulate a Rust catalog that still advertises TS-executed names — the merge
   // must stay a duplicate-free union where every name routes to exactly one engine.
   const rust4a = [...MCP_TOOLS].map((n) => ({ name: n })).concat(
-    [{ name: 'ping' }, { name: 'list_motifs' }, { name: 'read_motif' }, { name: 'preview_motif' },
+    [{ name: 'list_motifs' }, { name: 'read_motif' }, { name: 'preview_motif' },
      { name: 'detect_pauses' }, { name: 'transcribe_clip' }, { name: 'import_media' }, { name: 'apply_subtitles' },
      { name: 'install_motif' }, { name: 'motif_staleness_report' }, { name: 'acknowledge_motif_staleness' }, { name: 'synthesize_speech' }],
   )

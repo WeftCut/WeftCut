@@ -1,0 +1,21 @@
+[package]
+name = "weftcut-reaper"
+version = "0.0.0"
+license = "MIT"
+edition = "2021"
+publish = false
+rust-version = "1.88"
+description = "Ends the app's ffmpeg children when the app process is gone, however it ended"
+
+# The bin ships beside the core addon on macOS and Linux (napi-build-core.mjs);
+# the lib is the protocol and process identity the addon shares with it.
+[lib]
+name = "weftcut_reaper"
+path = "src/lib.rs"
+
+[[bin]]
+name = "weftcut-reaper"
+path = "src/main.rs"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

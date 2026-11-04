@@ -167,6 +167,18 @@ export function planRippleGap(view: RippleView, gap: RippleGap): RipplePlan {
   return planClosing(view, indexOf(view), new Set(), [{ s: gap.s, e: gap.e }])
 }
 
+/**
+ * The plan for closing a span named by ONE edge and a length — `shift_layers`'
+ * sweep with a negative delta, which closes `[s, e)` with `e` the sweep origin.
+ * Unlike `planRippleGap` the span need not be a gap: whatever starts inside it
+ * is `RippleInsideHole`, whatever reaches into it from before and is landed on
+ * is `RippleCollision`, so the caller learns by name what stands in the way
+ * instead of being told the span is not empty.
+ */
+export function planRippleSpan(view: RippleView, hole: RippleHole): RipplePlan {
+  return planClosing(view, indexOf(view), new Set(), [{ s: hole.s, e: hole.e }])
+}
+
 /** Every layer in the view by id, with its lane and class. */
 function indexOf(view: RippleView): Map<Uuid, Placed> {
   const index = new Map<Uuid, Placed>()

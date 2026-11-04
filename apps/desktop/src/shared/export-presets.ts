@@ -13,8 +13,8 @@ export interface ExportPreset {
 }
 export type ExportPresetChange =
   | { kind: 'create'; preset: ExportPreset }
-  | { kind: 'update'; id: string; values: ExportPresetValues }
-  | { kind: 'rename'; id: string; name: string }
+  /** A rename, a settings change, or both, as one validated write. */
+  | { kind: 'update'; id: string; name?: string; values?: ExportPresetValues }
   | { kind: 'delete'; id: string };
 export interface ExportPresetPreferences {
   export_presets?: ExportPreset[];
@@ -128,7 +128,8 @@ export function readExportPresets(input: unknown): ExportPreset[] {
   return result;
 }
 export function changeExportPresets(current: ExportPreset[], change: ExportPresetChange): ExportPreset[] {
-  if (!change || !['create', 'update', 'rename', 'delete'].includes(change.kind)) throw new Error('Invalid export preset change');
+  if (!change || !['create', 'update', 'delete'].includes(change.kind)
+    || (change.kind === 'update' && change.name === undefined && change.values === undefined)) throw new Error('Invalid export preset change');
   if (change.kind !== 'create' && (typeof change.id !== 'string' || change.id.startsWith('builtin:'))) throw new Error('Built-in export presets are read-only');
   if (change.kind === 'delete') return current.filter(p => p.id !== change.id);
   let next: ExportPreset;
@@ -136,7 +137,7 @@ export function changeExportPresets(current: ExportPreset[], change: ExportPrese
   else {
     const old = current.find(p => p.id === change.id);
     if (!old) throw new Error('Export preset no longer exists');
-    next = readOne(change.kind === 'rename' ? { ...old, name: change.name } : { ...old, values: change.values });
+    next = readOne({ ...old, ...(change.name !== undefined ? { name: change.name } : {}), ...(change.values !== undefined ? { values: change.values } : {}) });
   }
   if (current.some(p => (change.kind === 'create' || p.id !== next.id)
     && (p.id === next.id || exportPresetNameKey(p.name) === exportPresetNameKey(next.name)))) throw new Error('An export preset with this name already exists');

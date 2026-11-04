@@ -965,10 +965,11 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         height={composition.height}
         background={0x000000}
         antialias
-        // Prefer WebGPU; PixiJS auto-falls back to WebGL when the
-        // runtime doesn't expose `navigator.gpu` (older Chromium,
-        // restricted contexts). `app.renderer.type` in the init log
-        // reads 2 for WebGPU, 1 for WebGL — useful sanity check.
+        // Prefer WebGPU; PixiJS falls back to WebGL, then to the 2D-canvas
+        // renderer, which draws no effects, crops or transitions — the
+        // status area says so while any is in view (rendererCapability.ts,
+        // RendererLimitIndicator). `app.renderer.type` in the init log reads
+        // 2 for WebGPU, 1 for WebGL, 4 for canvas.
         preference="webgpu"
         onInit={handleInit}
         className="pixi-preview-canvas"
@@ -1002,8 +1003,8 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
 /// pixiPreviewFlag.ts, which most of them are threaded straight into.
 async function handlePixiExport(
   opts: {
-    resourcePlan?: import("../../shared/export-resources").ExportResourcePlan | undefined;
-    finalizationToken?: string | undefined;
+    resourcePlan: import("../../shared/export-resources").ExportResourcePlan;
+    finalizationToken: string;
     onProgress?: (encoded: number, total: number) => void;
     encoderConfig?: VideoEncoderConfig;
     outputFps?: { num: number; den: number };

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ProjectPublication, ProjectVersion } from '../../shared/projectPublication'
+import type { ProjectPublicationReply, ProjectVersion } from '../../shared/projectPublication'
 import { ProjectPublicationClient, ProjectPublicationError, attachProjectPublication, awaitProjectPublication, refreshActiveProjectPublication, settleActiveProjectPublication } from './projectPublication'
 
 function deferred<T>() {
@@ -9,14 +9,14 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 const version = (revision: number, session = 1): ProjectVersion => ({ session, revision })
-const publication = (revision: number, summary: string | null = `view-${revision}`, session = 1): ProjectPublication<string> => ({ version: version(revision, session), summary })
+const publication = (revision: number, summary: string | null = `view-${revision}`, session = 1): ProjectPublicationReply<string> => ({ version: version(revision, session), viewId: revision + 1000, summary })
 const flush = async () => { for (let i = 0; i < 5; i++) await Promise.resolve() }
 const clients: ProjectPublicationClient<string>[] = []
 afterEach(() => { for (const client of clients.splice(0)) client.stop() })
 function fixture() {
-  const requests: ReturnType<typeof deferred<ProjectPublication<string>>>[] = []
+  const requests: ReturnType<typeof deferred<ProjectPublicationReply<string>>>[] = []
   const read = vi.fn((_trace?: string) => {
-    const request = deferred<ProjectPublication<string>>()
+    const request = deferred<ProjectPublicationReply<string>>()
     requests.push(request)
     return request.promise
   })
@@ -36,11 +36,11 @@ describe('project publication client', () => {
     f.requests[0]!.resolve(publication(1))
     await flush()
     expect(f.apply).not.toHaveBeenCalled()
-    expect(f.read.mock.calls).toEqual([['trace-1'], ['trace-100']])
+    expect(f.read.mock.calls).toEqual([['trace-1', null], ['trace-100', null]])
     f.requests[1]!.resolve(publication(100))
     await done
     expect(f.apply).toHaveBeenCalledTimes(1)
-    expect(f.apply).toHaveBeenCalledWith('view-100', publication(100), 'trace-100')
+    expect(f.apply).toHaveBeenCalledWith('view-100', { version: version(100), summary: 'view-100' }, 'trace-100')
   })
 
   it('a receipt before its event fetches once; satisfied or reordered events do no work', async () => {
@@ -216,10 +216,10 @@ describe('active publication registration', () => {
     try {
       const done = awaitProjectPublication(version(3), false, 'receipt-trace')
       f.client.observe(version(3), 'receipt-trace')
-      expect(f.read.mock.calls).toEqual([['receipt-trace']])
+      expect(f.read.mock.calls).toEqual([['receipt-trace', null]])
       f.requests[0]!.resolve(publication(3))
       await done
-      expect(f.apply).toHaveBeenCalledWith('view-3', publication(3), 'receipt-trace')
+      expect(f.apply).toHaveBeenCalledWith('view-3', { version: version(3), summary: 'view-3' }, 'receipt-trace')
     } finally { detach() }
   })
 
@@ -284,5 +284,108 @@ describe('active publication registration', () => {
     await refresh
     detachNext()
     await expect(awaitProjectPublication(version(1))).rejects.toMatchObject({ reason: 'unavailable' })
+  })
+})
+
+describe('project publication client differences', () => {
+  const start = () => {
+    const replies: ReturnType<typeof deferred<ProjectPublicationReply<{ n: number; kept: object }>>>[] = []
+    const read = vi.fn((_trace: string | undefined, _base: number | null) => {
+      const reply = deferred<ProjectPublicationReply<{ n: number; kept: object }>>()
+      replies.push(reply)
+      return reply.promise
+    })
+    const apply = vi.fn()
+    const onError = vi.fn()
+    const client = new ProjectPublicationClient({ read, apply, onError })
+    clients.push(client as unknown as ProjectPublicationClient<string>)
+    return { client, read, apply, onError, replies }
+  }
+  const kept = {}
+  const seeded = async () => {
+    const f = start()
+    f.client.observe(version(1))
+    f.replies[0]!.resolve({ version: version(1), viewId: 10, summary: { n: 1, kept } })
+    await flush()
+    return f
+  }
+
+  it('asks for the whole projection first, then names what it holds', async () => {
+    const f = await seeded()
+    expect(f.read).toHaveBeenLastCalledWith(undefined, null)
+    f.client.observe(version(2))
+    expect(f.read).toHaveBeenLastCalledWith(undefined, 10)
+    f.replies[1]!.resolve({ version: version(2), viewId: 11, base: 10, patches: [{ path: ['n'], value: 2 }] })
+    await flush()
+    const summary = f.apply.mock.lastCall![0]
+    expect(summary).toEqual({ n: 2, kept })
+    expect(summary.kept).toBe(kept)
+    f.client.observe(version(3))
+    expect(f.read).toHaveBeenLastCalledWith(undefined, 11)
+  })
+
+  it('a reply behind the newest event is not applied and leaves the base where it was', async () => {
+    const f = await seeded()
+    f.client.observe(version(2))
+    f.client.observe(version(3))
+    f.replies[1]!.resolve({ version: version(2), viewId: 11, base: 10, patches: [{ path: ['n'], value: 2 }] })
+    await flush()
+    expect(f.apply).toHaveBeenCalledTimes(1)
+    expect(f.read).toHaveBeenLastCalledWith(undefined, 10)
+    f.replies[2]!.resolve({ version: version(3), viewId: 12, base: 10, patches: [{ path: ['n'], value: 3 }] })
+    await flush()
+    expect(f.apply.mock.lastCall![0]).toEqual({ n: 3, kept })
+  })
+
+  it('a difference that does not fit reads the whole projection, and no waiter hears of it', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const f = await seeded()
+      const waiting = f.client.waitFor(version(2))
+      f.replies[1]!.resolve({ version: version(2), viewId: 11, base: 10, patches: [{ path: ['n', 'deep', 'er'], value: 2 }] })
+      await flush()
+      expect(f.apply).toHaveBeenCalledTimes(1)
+      expect(f.read).toHaveBeenLastCalledWith(undefined, null)
+      f.replies[2]!.resolve({ version: version(2), viewId: 12, summary: { n: 2, kept } })
+      await waiting
+      expect(f.onError).not.toHaveBeenCalled()
+      expect(f.apply.mock.lastCall![0]).toEqual({ n: 2, kept })
+    } finally { warn.mockRestore() }
+  })
+
+  it('a difference from some other base is refused the same way', async () => {
+    const f = await seeded()
+    f.client.observe(version(2))
+    f.replies[1]!.resolve({ version: version(2), viewId: 11, base: 9, patches: [] })
+    await flush()
+    expect(f.apply).toHaveBeenCalledTimes(1)
+    expect(f.read).toHaveBeenLastCalledWith(undefined, null)
+  })
+
+  it('a reply dropped for a newer forced refresh does not move the base', async () => {
+    const f = await seeded()
+    const first = f.client.refresh()
+    expect(f.read).toHaveBeenLastCalledWith(undefined, 10)
+    const second = f.client.refresh()
+    f.replies[1]!.resolve({ version: version(1), viewId: 11, base: 10, patches: [{ path: ['n'], value: 50 }] })
+    await flush()
+    expect(f.apply).toHaveBeenCalledTimes(1)
+    expect(f.read).toHaveBeenLastCalledWith(undefined, 10)
+    f.replies[2]!.resolve({ version: version(1), viewId: 12, base: 10, patches: [{ path: ['n'], value: 99 }] })
+    await Promise.all([first, second])
+    expect(f.apply.mock.lastCall![0]).toEqual({ n: 99, kept })
+  })
+
+  it('a whole projection passes through adopt with the held view', async () => {
+    const adopt = vi.fn((_held: string | null, next: string | null) => `adopted:${next}`)
+    const reply = deferred<ProjectPublicationReply<string>>()
+    const apply = vi.fn()
+    const client = new ProjectPublicationClient<string>({ read: () => reply.promise, apply, adopt })
+    clients.push(client)
+    client.observe(version(1))
+    reply.resolve({ version: version(1), viewId: 1, summary: 'view' })
+    await flush()
+    expect(adopt).toHaveBeenCalledWith(null, 'view')
+    expect(apply.mock.lastCall![0]).toBe('adopted:view')
   })
 })

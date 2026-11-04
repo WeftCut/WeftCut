@@ -39,7 +39,7 @@ function getDescriptionSegments(mediaId: string, purpose: "clip" | "shot" = "cli
 const CACHE: DescriptionCache = {
   covered_ranges: [[0, 6_000_000]],
   segments: [
-    { t_start_us: 0, t_end_us: 2_000_000, text: "a hallway", tags: ["interior"] },
+    { src_start_us: 0, src_end_us: 2_000_000, text: "a hallway", tags: ["interior"] },
   ],
 };
 
@@ -164,10 +164,10 @@ describe("descriptionsStore", () => {
   // answers for ONE window, so publishing it must leave every other shot's
   // prose — and every other clip's, cut from the same source — where it was.
   it("merges a window's segments and keeps the ones outside it", () => {
-    const early = { t_start_us: 0, t_end_us: 1_000_000, text: "a hallway", tags: [] };
-    const late = { t_start_us: 8_000_000, t_end_us: 9_000_000, text: "a kitchen", tags: [] };
+    const early = { src_start_us: 0, src_end_us: 1_000_000, text: "a hallway", tags: [] };
+    const late = { src_start_us: 8_000_000, src_end_us: 9_000_000, text: "a kitchen", tags: [] };
     mergeDescription("m-1", 0, 10_000_000, [early, late]);
-    const fresh = { t_start_us: 8_000_000, t_end_us: 9_000_000, text: "a galley", tags: [] };
+    const fresh = { src_start_us: 8_000_000, src_end_us: 9_000_000, text: "a galley", tags: [] };
     mergeDescription("m-1", 8_000_000, 9_000_000, [fresh]);
     expect(held("m-1")).toEqual([early, fresh]);
   });
@@ -176,8 +176,8 @@ describe("descriptionsStore", () => {
   // read this list through `segmentsForSpan`, which sorts too, but the search
   // index reads it raw.
   it("keeps the merged list in time order", () => {
-    const late = { t_start_us: 8_000_000, t_end_us: 9_000_000, text: "late", tags: [] };
-    const early = { t_start_us: 0, t_end_us: 1_000_000, text: "early", tags: [] };
+    const late = { src_start_us: 8_000_000, src_end_us: 9_000_000, text: "late", tags: [] };
+    const early = { src_start_us: 0, src_end_us: 1_000_000, text: "early", tags: [] };
     mergeDescription("m-1", 8_000_000, 9_000_000, [late]);
     mergeDescription("m-1", 0, 1_000_000, [early]);
     expect(held("m-1")?.map((s) => s.text)).toEqual(["early", "late"]);
@@ -187,7 +187,7 @@ describe("descriptionsStore", () => {
   // half-open predicate `segmentsForSpan` and Rust's `segments_in` use, so an
   // overlay cannot fold a segment differently from the file underneath it.
   it("leaves a segment that only touches the window's edge", () => {
-    const abutting = { t_start_us: 0, t_end_us: 2_000_000, text: "before", tags: [] };
+    const abutting = { src_start_us: 0, src_end_us: 2_000_000, text: "before", tags: [] };
     mergeDescription("m-1", 0, 2_000_000, [abutting]);
     mergeDescription("m-1", 2_000_000, 4_000_000, []);
     expect(held("m-1")).toEqual([abutting]);
@@ -371,7 +371,7 @@ describe("resyncDescriptionsForView", () => {
     // The other view's answer, so a stale hold is visible as a wrong value
     // rather than as an absent one.
     const other = [
-      { t_start_us: 0, t_end_us: 2_000_000, text: "wide, static", tags: ["wide"] },
+      { src_start_us: 0, src_end_us: 2_000_000, text: "wide, static", tags: ["wide"] },
     ];
     mocks.getMediaDescription.mockResolvedValue({ covered_ranges: [[0, 6_000_000]], segments: other });
     await resyncDescriptionsForView(new Map([["m-1", "/a/reel.mp4"]]));
@@ -402,7 +402,7 @@ describe("resyncDescriptionsForView", () => {
   // reads the view the rows are actually asking about.
   it("drops a run's optimistic fill when the view moved while it was in flight", async () => {
     const stale = [
-      { t_start_us: 0, t_end_us: 2_000_000, text: "from the view just left", tags: [] },
+      { src_start_us: 0, src_end_us: 2_000_000, text: "from the view just left", tags: [] },
     ];
     setDescribing({ mediaId: "m-1", srcStartUs: 0, srcEndUs: 2_000_000 });
     mocks.getMediaDescription.mockResolvedValue(null);
@@ -420,7 +420,7 @@ describe("resyncDescriptionsForView", () => {
   it("drops a read issued before the view changed", async () => {
     const stale: DescriptionCache = {
       covered_ranges: [[0, 6_000_000]],
-      segments: [{ t_start_us: 0, t_end_us: 2_000_000, text: "old view", tags: [] }],
+      segments: [{ src_start_us: 0, src_end_us: 2_000_000, text: "old view", tags: [] }],
       summaries: [{ window: [0, 6_000_000], text: "Old view summary" }],
     };
     let settle: (c: DescriptionCache) => void = () => {};

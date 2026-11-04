@@ -15,6 +15,8 @@ import {
   exportVideoSinkWrite,
   MEDIA_JOB_EVENTS,
   muxExport,
+  EXPORT_MUX_WAIT,
+  type ExportMuxWait,
   projectSummary,
   type MediaJobEvent,
   type MediaSummary,
@@ -26,7 +28,17 @@ import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
 import { hasVisibleContent, referencedVideoMediaIds } from "../render/activeVideoLayers";
 import { classifyWebcodecsDecodability } from "../render/decoder/probeSourceDecodable";
 import { resolveDecode } from "../render/decodeRoute";
-import { needsEncoderProbe, resolveEncodeTarget } from "../render/encodeTarget";
+import { resolveEncodeTarget, type EncodeTarget } from "../render/encodeTarget";
+import {
+  cannotDraw,
+  drawNeeds,
+  rendererCapability,
+  RendererCannotDrawError,
+  type DrawNeeds,
+  type OmittableFeature,
+  type RendererCannotDraw,
+  type RendererCapability,
+} from "../render/rendererCapability";
 import { smokeEncode } from "../render/exportCodecProbe";
 import {
   proxyWaitScope,
@@ -63,6 +75,7 @@ import { useDecodeComponentStore } from "../settings/decodeComponentStore";
 import { rootCompositionOf, useProjectStore } from "../state/projectStore";
 
 import type { TFunction } from 'i18next';
+import { EXPORT_AUDIO_MIX_MIB, type ExportResourceBlock } from "../../shared/export-resources";
 import type { ExportRun } from '../../shared/exportJob';
 /// The status-bar detail for an exception out of a readiness gate. A proxy or
 /// conform failure names its media through `prepareDetail`; any other
@@ -96,6 +109,27 @@ function audioLayerLabel(summary: ProjectSummary | null, layerId: string): strin
   return layerId;
 }
 
+/** The holder an export queued for admission names, by ledger kind. */
+const QUEUED_HOLDER: Record<string, string> = {
+  proxy: "export.holder_proxy", quick_proxy: "export.holder_proxy", proxy_bypass: "export.holder_proxy",
+  proxy_decision: "export.holder_proxy", waveform: "export.holder_waveform",
+  filmstrip: "export.holder_thumbnails", thumbnails: "export.holder_thumbnails", shots: "export.holder_shots", import: "export.holder_import",
+  model: "export.holder_model", export: "export.holder_export",
+};
+/** The panel's sentence for a queued export: memory, else the largest holder
+ *  it can name, else other processing. */
+export function queuedExportMessage(t: TFunction, block: ExportResourceBlock): string {
+  if (block.reason === "host-pressure" || block.reason === "pressure") return t("export.wait_memory");
+  const holder = block.holders?.map((h) => QUEUED_HOLDER[h.kind]).find(Boolean);
+  return holder ? t("export.wait_holder", { holder: t(holder) }) : t("export.wait_resources");
+}
+
+/** The panel's sentence for a mux tail waiting on a CPU slot: the render is
+ *  done, so what starts automatically is writing the file. */
+export function queuedMuxMessage(t: TFunction, holders: ExportResourceBlock["holders"] = []): string {
+  const holder = holders.map((h) => QUEUED_HOLDER[h.kind]).find(Boolean);
+  return holder ? t("export.wait_holder_mux", { holder: t(holder) }) : t("export.wait_resources_mux");
+}
 
 export function createExportRunner(deps: {
   previewRef: React.RefObject<PreviewSurfaceHandle | null>;
@@ -105,18 +139,36 @@ export function createExportRunner(deps: {
   onState: (state: ExportState | null) => void;
   cancel: () => void;
   publish: () => Promise<string>;
+  /// The host renderer's capability; the shared query unless a test injects one.
+  capability?: () => Promise<RendererCapability>;
 }) {
   const { previewRef, proxyStateRef, decodeProbeMemo, t } = deps;
+  const capability = deps.capability ?? rendererCapability;
+  /// The UI sentence for a refusal: renderer and the features, in the UI's words.
+  const cannotDrawDetail = (r: RendererCannotDraw) => t("export.renderer_cannot_draw", {
+    renderer: r.renderer,
+    features: r.missing.map((f) => t(`preview.renderer_feature_${f}`)).join(t("preview.renderer_feature_separator")),
+  });
   const runningRef = { current: false };
   const pendingFinalization = { current: null as ReturnType<typeof createExportFinalization> | null };
   let state: ExportState | null = null;
   let exportController = new AbortController();
   const setExportState = (next: ExportState | null) => { state = next; deps.onState(next); };
+  /// A mux behind a running derivative reads queued and names it, as admission
+  /// does, then returns to the step it was on.
+  async function watchMuxWait(mux: () => Promise<void>) {
+    const off = await listen<ExportMuxWait>(EXPORT_MUX_WAIT, ({ payload }) => {
+      if (!payload.waiting) { setExportState({ kind: "finalizing", step: "mux", onCancel: deps.cancel }); return; }
+      const message = queuedMuxMessage(t, payload.holders);
+      setExportState({ kind: "preparing", labels: [message], message, onCancel: deps.cancel, queued: { reason: "busy", holders: payload.holders } });
+    });
+    try { await mux(); } finally { off(); }
+  }
   async function finalize(mux: () => Promise<void>, cleanup: () => Promise<void>, durationUs: number) {
     let muxed = false;
     let actual = '';
     const finalization = createExportFinalization({
-      mux: async () => { if (!muxed) { await mux(); muxed = true; } actual = await deps.publish(); },
+      mux: async () => { if (!muxed) { await watchMuxWait(mux); muxed = true; } actual = await deps.publish(); },
       cleanup: async () => { await cleanup(); pendingFinalization.current = null; },
       onRunning: () => setExportState({ kind: 'finalizing', step: 'mux', onCancel: deps.cancel }),
       onFailure: detail => setExportState({ kind: 'error', detail, onRetry: async () => { await finalization.retry(); }, onDiscard: async () => { await finalization.discard(); setExportState(null); } }),
@@ -163,16 +215,19 @@ export function createExportRunner(deps: {
   /// originals; rules in exportDecodeRouting.ts), then waits for any proxy
   /// still encoding. `detail: null` is a cancel.
   async function videoGate(
-    proj: ProjectSummary, startUs: number, endUs: number, settings: ExportRun["settings"],
+    proj: ProjectSummary, startUs: number, endUs: number, settings: ExportRun["settings"], cap: RendererCapability,
     signal: AbortSignal, onWaiting: (labels: string[]) => void,
   ): Promise<{ ok: true; decodeRouting: ExportDecodeRouting } | { ok: false; detail: string | null }> {
     const store = useProjectStore.getState();
     const referencedMedia = [...referencedVideoMediaIds(proj, startUs, endUs)]
       .map((id) => store.mediaById.get(id))
       .filter((m): m is MediaSummary => !!m);
+    // Native decode converts relay frames in GL ingest passes: without WebGL
+    // it is as unusable as a missing component, so `auto` keeps every source
+    // on WebCodecs (blind spots via their full proxy).
     const decodeRouting = resolveExportDecodeRouting({
       setting: settings.decodeEngine,
-      componentAvailable: useDecodeComponentStore.getState().available,
+      componentAvailable: useDecodeComponentStore.getState().available && cap.webgl,
       bitDepth: compositeBitDepth(settings),
       media: referencedMedia,
     });
@@ -225,11 +280,13 @@ export function createExportRunner(deps: {
   /// `render_frames`: the composition at each time, rendered by the export
   /// pipeline (same decode routing, Motif frames and compositor) and handed
   /// back as JPEGs instead of encoded. One frame-long range per time. Never
-  /// alongside an export, and invisible to the export panel.
+  /// alongside an export, and invisible to the export panel. `without:
+  /// ["effects"]` composites with clip effects skipped (the preview's
+  /// effects-off mode) and marks each frame that held one `omitted`.
   async function runStills(
-    request: { times_us: number[]; width: number; settings: ExportRun["settings"] },
+    request: { times_us: number[]; width: number; settings: ExportRun["settings"]; without?: readonly OmittableFeature[] },
     signal: AbortSignal,
-  ): Promise<Array<{ t_us: number; width: number; height: number; jpeg: ArrayBuffer }>> {
+  ): Promise<Array<{ t_us: number; width: number; height: number; jpeg: ArrayBuffer; omitted?: OmittableFeature[] }>> {
     if (runningRef.current || pendingFinalization.current) throw new Error("an export is running; render frames after it finishes");
     runningRef.current = true;
     const restorePreview = previewRef.current?.suspendForExport();
@@ -240,9 +297,21 @@ export function createExportRunner(deps: {
       const frameUs = Math.ceil((1_000_000 * comp.fps_den) / comp.fps_num);
       const times = [...new Set(request.times_us.map((t) => Math.max(0, Math.min(Math.round(t), Math.max(0, comp.duration_us - frameUs)))))].sort((a, b) => a - b);
       if (!times.length) return [];
-      const gate = await videoGate(summary, times[0]!, times.at(-1)! + frameUs, request.settings, signal, () => { });
+      // Refuse before rendering anything when a requested frame holds content
+      // this renderer cannot draw; frames without it render as usual. Effects
+      // the caller asked to skip are not asked of the renderer.
+      const effects = !request.without?.includes("effects");
+      const cap = await capability();
+      const refusedAt = times.filter((t) => cannotDraw(cap, drawNeeds(summary, summary.root_id, t, t + frameUs, undefined, effects)) !== null);
+      const needs: DrawNeeds = new Map();
+      for (const t of refusedAt) drawNeeds(summary, summary.root_id, t, t + frameUs, needs, effects);
+      const refusal = cannotDraw(cap, needs);
+      if (refusal) throw new RendererCannotDrawError({ ...refusal, t_us: refusedAt });
+      // The frames whose picture the skip changed: never a silent degrade.
+      const omittedAt = new Set(effects ? [] : times.filter((t) => drawNeeds(summary, summary.root_id, t, t + frameUs).has("effects")));
+      const gate = await videoGate(summary, times[0]!, times.at(-1)! + frameUs, request.settings, cap, signal, () => { });
       if (!gate.ok) throw new Error(gate.detail ?? "render cancelled");
-      const out: Array<{ t_us: number; width: number; height: number; jpeg: ArrayBuffer }> = [];
+      const out: Array<{ t_us: number; width: number; height: number; jpeg: ArrayBuffer; omitted?: OmittableFeature[] }> = [];
       for (const t of times) {
         if (signal.aborted) throw new Error("render cancelled");
         const range = { startUs: t, endUs: t + frameUs };
@@ -263,11 +332,11 @@ export function createExportRunner(deps: {
             signal,
             bitDepth: 8,
             decodeRouting: gate.decodeRouting,
-            stills: { width: request.width },
+            stills: effects ? { width: request.width } : { width: request.width, effects: false },
             onStill: (s) => { if (!got) got = { width: s.width, height: s.height, jpeg: s.jpeg }; },
           });
           if (!got) throw new Error(`no frame rendered at ${t} µs`);
-          out.push({ t_us: t, ...(got as { width: number; height: number; jpeg: ArrayBuffer }) });
+          out.push({ t_us: t, ...(got as { width: number; height: number; jpeg: ArrayBuffer }), ...(omittedAt.has(t) ? { omitted: ["effects" as const] } : {}) });
         } finally {
           reservation.release();
         }
@@ -288,6 +357,17 @@ export function createExportRunner(deps: {
     let retained = false;
     exportController = controller;
     const onCancel = deps.cancel;
+    // Admission (the audio-only export's plan; else the metadata preflight's,
+    // then the working set's) waits as long as the budget is held (the job
+    // reads queued); cancel is the only way out of the wait. Everything the
+    // export claims afterwards, the audio mix included, borrows from the plan.
+    let queued = false;
+    const onQueued = (block: ExportResourceBlock) => {
+      queued = true;
+      const message = queuedExportMessage(t, block);
+      setExportState({ kind: "preparing", labels: [message], message, onCancel,
+        queued: { reason: block.reason === "budget-too-small" ? "busy" : block.reason, holders: block.holders ?? [] } });
+    };
     // Name the run for the log mirror before any state can transition.
 
     // Idle preview decoders retain leases. Yield before preparation/encoder
@@ -295,6 +375,7 @@ export function createExportRunner(deps: {
     let restorePreview: (() => void) | undefined;
     try {
       restorePreview = previewRef.current?.suspendForExport();
+      const cap = await capability();
       // ---- No-material guard -----------------------------------------------
       // A video export with nothing visible to render would emit pure black —
       // reject it as "no video material" instead. (Audio emptiness is judged
@@ -313,6 +394,15 @@ export function createExportRunner(deps: {
           const eUs = range?.endUs ?? rootCompositionOf(proj).duration_us;
           if (!hasVisibleContent(proj, sUs, eUs)) {
             setExportState({ kind: "error", detail: t("export.no_video_material") });
+            return;
+          }
+          // ---- Renderer capability ------------------------------------------
+          // Every video path composites with this renderer (the GL ones need
+          // WebGL, which draws everything), so content it cannot draw refuses
+          // here, before any wait or encode — never an export without it.
+          const refusal = cannotDraw(cap, drawNeeds(proj, proj.root_id, sUs, eUs));
+          if (refusal) {
+            setExportState({ kind: "error", detail: cannotDrawDetail(refusal), code: "renderer_cannot_draw", fault: refusal });
             return;
           }
         }
@@ -379,7 +469,10 @@ export function createExportRunner(deps: {
           setExportState({ kind: "error", detail: fx.detail });
           return;
         }
+        let audioPlan: { token: string; release: () => void } | undefined;
         try {
+          audioPlan = await admitExportResources([{ memoryMiB: EXPORT_AUDIO_MIX_MIB, workerMiB: 0, motifBufferBytes: 0, frameWindows: {} }],
+            false, exportController.signal, onQueued);
           setExportState({ kind: "starting" });
           const produced = await exportProjectAudioOnly(
             path,
@@ -390,6 +483,7 @@ export function createExportRunner(deps: {
               channels: settings.audio.channels,
             },
             { startUs, endUs },
+            audioPlan.token,
           );
           if (!produced) {
             // No audio layers in range → Rust wrote nothing. Surface it rather
@@ -401,13 +495,31 @@ export function createExportRunner(deps: {
             return;
           }
         } catch (e) {
+          if (exportController.signal.aborted) {
+            setExportState(null);
+            return;
+          }
           const msg = e instanceof Error ? e.message : String(e);
           console.error("[weftcut/pixi] audio-only export failed:", e);
           setExportState({ kind: "error", detail: `Audio export failed: ${msg}` });
           return;
+        } finally {
+          audioPlan?.release();
         }
         retained = true;
         await finalize(async () => { }, async () => { }, endUs - startUs);
+        return;
+      }
+
+      // ---- Encoder this host can run ----------------------------------------
+      // Resolved before any wait: `auto` picks WebCodecs where there is no
+      // WebGL; a combination with no path on this host names the setting.
+      const resolved = resolveEncodeTarget(settings, cap.webgl);
+      if (resolved.engine === "unavailable") {
+        setExportState({
+          kind: "error", detail: t("export.encoder_needs_webgl"), code: "encoder_unavailable",
+          fault: { error: "EncoderUnavailable", renderer: cap.renderer, option: "encoder_engine", needs: "WebGL2" },
+        });
         return;
       }
 
@@ -429,7 +541,7 @@ export function createExportRunner(deps: {
         // Shared with stills (`videoGate`), so `render_frames` decodes exactly
         // as this export will.
         setExportState({ kind: "starting" });
-        const gate = await videoGate(proj, startUs, endUs, settings, exportController.signal, (labels) =>
+        const gate = await videoGate(proj, startUs, endUs, settings, cap, exportController.signal, (labels) =>
           setExportState({ kind: "preparing", labels, onCancel: deps.cancel }));
         if (!gate.ok) {
           setExportState(gate.detail === null ? null : { kind: "error", detail: gate.detail });
@@ -519,30 +631,12 @@ export function createExportRunner(deps: {
       const outFps = fpsNum / fpsDen;
       // `path` already carries the chosen container extension (set by the dialog).
 
-      // One resolution seam for the encode engine (see docs/render.md §"Encode exits").
-      // Probe injected: the smoke-encode only runs when the target needs it —
-      // that's only an explicit WebCodecs pin; `auto` always resolves
-      // native and this ternary short-circuits to `true` unconsulted. Cast is
-      // sound: this branch only runs when needsEncoderProbe(settings) is true,
-      // which needsEncoderProbe itself defines as excluding
-      // isIntermediateCodec(settings.codec) — so settings.codec here is always
-      // a WebCodecsCodecId, never "prores"/"dnxhr".
-      const needsProbe = needsEncoderProbe(settings);
-      const smokeOk = needsProbe
-        ? await smokeEncode(
-          settings.codec as WebCodecsCodecId,
-          dims.width,
-          dims.height,
-          outFps,
-        )
-        : true;
-      // A pinned WebCodecs export that fails its own smoke test has no
-      // fallback — the pin is explicit user intent, unlike `auto`'s
-      // fallback-carrying native-first path (handled below at the native
-      // sink-start catch). Fail loudly, before the sink or the export Worker
-      // ever starts, instead of letting resolveEncodeTarget silently proceed
-      // with an encoder that just proved it can't run.
-      if (needsProbe && !smokeOk) {
+      // The encode target resolved above (see docs/render.md §"Encode exits").
+      // A WebCodecs target smoke-encodes one frame first: an encoder that
+      // cannot run fails here, before the sink or the Worker starts, with no
+      // fallback.
+      let target: EncodeTarget = resolved;
+      if (target.engine === "webcodecs" && !await smokeEncode(target.workerCodec, dims.width, dims.height, outFps)) {
         setExportState({
           kind: "error",
           detail: t("export_dialog.codec_unsupported", {
@@ -556,7 +650,6 @@ export function createExportRunner(deps: {
       // is nulled out alongside the flip so its type (`NativeTarget | null`)
       // stays honest — no consumer below may assert it non-null with `!`;
       // each site re-checks `sinkTarget` (or reads it after the flip settles).
-      let target = resolveEncodeTarget(settings, smokeOk);
       let nativeSink = target.engine === "native";
       let sinkTarget = target.engine === "native" ? target : null;
 
@@ -564,25 +657,27 @@ export function createExportRunner(deps: {
       const resourcePlans = await prepareExportResourcePlans({
         summary, media: useProjectStore.getState().mediaById,
         routing: decodeRouting, ...exportRange, bitDepth: compositeBitDepth(settings), nativeEncoder: nativeSink,
-        outputWidth: dims.width, outputHeight: dims.height, signal: exportController.signal
+        outputWidth: dims.width, outputHeight: dims.height, signal: exportController.signal, waiting: onQueued,
+        audio: settings.audio.include,
       });
+
+      const finalizationReservation = await admitExportResources(resourcePlans, nativeSink, exportController.signal, onQueued);
+      releaseFinalization = finalizationReservation.release;
+      if (queued) setExportState({ kind: "preparing", labels: [], onCancel });
+
       let audioProduced = false;
-      // Finish audio before video production. Once encoding completes, retry
-      // needs only immutable files and cannot accidentally mix a newer timeline.
+      // Finish audio before video production, under the admitted plan: no
+      // video child exists yet, so the mix borrows the plan's memory instead of
+      // a fresh claim that a running derivative could refuse. Once encoding
+      // completes, retry needs only immutable files and cannot accidentally mix
+      // a newer timeline.
       if (settings.audio.include) {
         setExportState({ kind: "preparing", labels: [t("export.prepare_audio")], message: t("export.finalize_audio") });
         audioProduced = await exportProjectAudioOnly(tempAudioPath, {
           codec: settings.audio.codec, bitrate: settings.audio.bitrate,
           sampleRate: settings.audio.sampleRate, channels: settings.audio.channels,
-        }, exportRange);
+        }, exportRange, finalizationReservation.token);
       }
-
-      const finalizationReservation = await admitExportResources(resourcePlans, nativeSink, exportController.signal,
-        reason => {
-          const message = t(reason === 'host-pressure' || reason === 'pressure' ? "export.wait_memory" : "export.wait_resources");
-          setExportState({ kind: "preparing", labels: [message], message, onCancel });
-        });
-      releaseFinalization = finalizationReservation.release;
 
       // Native-sink path: start the native-encode video sink (ffmpeg, frames
       // streamed over IPC) before the Worker starts. On the WebCodecs path the

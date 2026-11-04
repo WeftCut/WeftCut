@@ -58,7 +58,7 @@ describe('the read set', () => {
   // A name-shaped fixture the read set is pinned against: the tools this
   // pattern names must be exactly the annotated reads, so a read tool whose
   // name starts with a verb is caught HERE if its annotation is wrong.
-  const OLD_RULE = /^(get_|list_|read_|ping$|view_|analyze_|describe_|transcribe_|compare_|detect_|extract_|dry_run$|preview_)/
+  const OLD_RULE = /^(get_|list_|read_|ping$|view_|analyze_|describe_|transcribe_|compare_|detect_|extract_|preview_)/
   // Reads whose names the pattern does not match — each one a review
   // decision, listed here so a stray annotation is still caught.
   const READS_BEYOND_THE_REGEX = ['export_captions', 'check_composition', 'render_frames']
@@ -66,22 +66,19 @@ describe('the read set', () => {
     const byAnnotation = merged.filter((t) => (t.annotations as Ann | undefined)?.readOnlyHint === true).map((t) => t.name).sort()
     const byRegex = [...merged.filter((t) => OLD_RULE.test(t.name)).map((t) => t.name), ...READS_BEYOND_THE_REGEX].sort()
     expect(byAnnotation).toEqual(byRegex)
-    for (const n of ['read_project', 'dry_run', 'get_param_track', 'list_checkpoints', 'preview_motif', 'extract_clip_audio', 'detect_pauses', 'ping']) expect(byAnnotation).toContain(n)
+    for (const n of ['read_project', 'get_param_track', 'preview_motif', 'extract_clip_audio', 'detect_pauses']) expect(byAnnotation).toContain(n)
   })
 
   it('every TS read tool commits nothing — the snapshot and the history are what they were', () => {
     const gen = seededGen()
     const actor = createActor({ initial: blankProject(gen, 'reads'), idGen: gen, clock: () => '<TS>' })
     const aRoll = root(actor.snapshot()).tracks[0].id
-    const added = actor.mcpCall('add_color_layer', JSON.stringify({ track_id: aRoll, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 }))
+    const added = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: aRoll, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] }))
     if (!added.ok) throw new Error(added.error.message)
-    const layerId = (JSON.parse(added.result.content[0].text) as { layer_id: string }).layer_id
+    const layerId = (JSON.parse(added.result.content[0].text) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
     const argsFor: Record<string, Record<string, unknown>> = {
-      get_frame_interpolation_capabilities: { layer_ids: [layerId], purpose: 'Preview' },
-      read_project: { view: 'current' },
-      list_checkpoints: {},
+      read_project: { view: 'settings' },
       get_param_track: { layer_id: layerId, param_key: 'color' }, // a Color layer animates its colour
-      dry_run: { operations: [{ kind: 'add_color_layer', track_id: aRoll, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 2_000_000, t_end_us: 3_000_000 }] },
       export_captions: { format: 'srt' },
       check_composition: {},
     }
@@ -102,19 +99,28 @@ describe('the destructive set', () => {
   it('is every removal and revert, and no read', () => {
     const destructive = merged.filter((t) => (t.annotations as Ann | undefined)?.destructiveHint === true).map((t) => t.name)
     for (const n of ['delete_layers', 'delete_track', 'delete_media', 'delete_marker', 'delete_effect', 'delete_transition', 'delete_link',
-      'delete_composition', 'delete_keyframe', 'delete_checkpoint', 'delete_motif', 'clear_keyframes',
-      'ripple_delete_gap', 'remove_pauses', 'auto_split_by_shot', 'undo', 'redo', 'jump_to', 'restore_checkpoint', 'install_motif']) {
+      'delete_composition', 'delete_keyframe', 'delete_motif', 'delete_export_preset',
+      // Discards the export's output.
+      'cancel_export',
+      // Whole-track replacers: what they discard, undo is the way back to.
+      'set_param_track', 'set_position',
+      'remove_pauses', 'auto_split_by_shot', 'undo', 'redo', 'jump_to', 'restore_checkpoint']) {
       expect(destructive, n).toContain(n)
     }
     for (const n of destructive) expect(n, 'a destructive read is a contradiction').not.toMatch(/^(get_|list_|read_)/)
     // Creation and setting are writes, not destruction.
-    for (const n of ['add_color_layer', 'set_position', 'update_layer_params', 'create_link', 'set_project_settings']) expect(ann(n).destructiveHint).toBe(false)
+    for (const n of ['add_layers', 'translate_position', 'update_layer_params', 'create_link', 'set_project_settings']) expect(ann(n).destructiveHint).toBe(false)
+    // install_motif only proposes: the library changes when the user approves in the app (ADR 0046).
+    expect(ann('install_motif').destructiveHint).toBe(false)
   })
 
   it('a set is idempotent, a creation is not', () => {
     expect(ann('set_position').idempotentHint).toBeUndefined() // replacement generates fresh node/key IDs
     expect(ann('set_param_track').idempotentHint).toBeUndefined()
-    expect(ann('update_layer').idempotentHint).toBe(true)
+    expect(ann('rename_layer').idempotentHint).toBe(true)
+    expect(ann('set_layer_flags').idempotentHint).toBe(true)
+    expect(ann('move_layers').idempotentHint).toBeUndefined() // a delta is not idempotent
+    expect(ann('shift_layers').idempotentHint).toBeUndefined()
     expect(ann('add_track').idempotentHint).toBeUndefined()
     expect(ann('paste_layers').idempotentHint).toBeUndefined()
   })
@@ -146,7 +152,7 @@ describe('the wire and the activity service read the same fact', () => {
     const byName = new Map(tools.map((t) => [t.name, t.annotations as Ann | undefined]))
     expect(byName.get('read_project')?.readOnlyHint).toBe(true)
     expect(byName.get('delete_layers')?.destructiveHint).toBe(true)
-    expect(byName.get('ping')?.readOnlyHint).toBe(true)
+    expect(byName.get('get_param_track')?.readOnlyHint).toBe(true)
     expect(byName.get('list_motifs')?.readOnlyHint).toBe(true)
     expect(tools.every((t) => t.annotations !== undefined)).toBe(true)
   })
@@ -154,25 +160,25 @@ describe('the wire and the activity service read the same fact', () => {
   it('a read tool is logged as a read, a write as an operation — from the catalog, not the name', async () => {
     const { client, agent, actor } = await connected()
     const aRoll = root(actor.snapshot()).tracks[0].id
-    await client.callTool({ name: 'read_project', arguments: { view: 'current' } })
-    await client.callTool({ name: 'add_color_layer', arguments: { track_id: aRoll, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 } })
-    const kinds = Object.fromEntries(agent.snapshot().activities.filter((a) => a.tool === 'read_project' || a.tool === 'add_color_layer').map((a) => [a.tool, a.kind]))
-    expect(kinds).toEqual({ read_project: 'read', add_color_layer: 'operation' })
+    await client.callTool({ name: 'read_project', arguments: { view: 'settings' } })
+    await client.callTool({ name: 'add_layers', arguments: { layers: [{ track_id: aRoll, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] } })
+    const kinds = Object.fromEntries(agent.snapshot().activities.filter((a) => a.tool === 'read_project' || a.tool === 'add_layers').map((a) => [a.tool, a.kind]))
+    expect(kinds).toEqual({ read_project: 'read', add_layers: 'operation' })
   })
 })
 
 describe('an unrecorded mutator says so', () => {
   it('in one word, at the end, on every tool whose write undo walks past', () => {
     const desc = (name: string): string => merged.find((t) => t.name === name)?.description ?? ''
-    for (const n of ['set_track_flags', 'create_checkpoint', 'delete_checkpoint']) expect(desc(n), n).toMatch(/Unrecorded\.$/)
+    for (const n of ['set_track_flags', 'create_checkpoint']) expect(desc(n), n).toMatch(/Unrecorded\.$/)
     for (const n of ['update_composition', 'set_project_settings', 'set_role_flags', 'delete_media', 'import_media']) expect(desc(n), n).toContain('Unrecorded')
     // The session tools write too — a view, a lock, a checkpoint pin — and undo
     // walks past all three.
-    for (const n of ['begin_agent_session', 'end_agent_session', 'set_history_lock']) expect(desc(n), n).toContain('Unrecorded')
+    for (const n of ['begin_agent_session', 'end_agent_session']) expect(desc(n), n).toContain('Unrecorded')
     // and a recorded edit does not carry the word
-    for (const n of ['add_color_layer', 'delete_layers', 'rename_composition', 'set_role_gain']) expect(desc(n), n).not.toContain('Unrecorded')
+    for (const n of ['add_layers', 'delete_layers', 'rename_composition', 'set_role_gain']) expect(desc(n), n).not.toContain('Unrecorded')
   })
   it('ANN_READ is what the TS reads carry', () => {
-    for (const n of ['read_project', 'list_checkpoints', 'get_param_track', 'dry_run', 'export_captions']) expect(MCP_TOOL_DEFS.find((d) => d.name === n)!.annotations).toBe(ANN_READ)
+    for (const n of ['read_project', 'get_param_track', 'export_captions']) expect(MCP_TOOL_DEFS.find((d) => d.name === n)!.annotations).toBe(ANN_READ)
   })
 })

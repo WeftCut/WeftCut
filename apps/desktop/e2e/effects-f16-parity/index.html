@@ -231,11 +231,6 @@ void main(){ float v = vUV.x < 0.5 ? 0.4 : 0.6; finalColor=vec4(v,v,v,1.0); }`;
             0, 0, 0, 1, 0,
           ]);
 
-          // Sharpen — the catalog's second custom shader, loaded from the REAL
-          // product source exactly as chroma is above (both files are
-          // type-annotation-free JS by contract, and a unit test replays this
-          // loading path). Unlike the colour trio, here the shared source is
-          // the point: the maths is the shader.
           const highlightsText = fsMod.readFileSync(pathMod.resolve(__dirname, "../../src/renderer/render/effects/filters/highlightsSources.ts"), "utf8").replace(/^export /gm, "");
           const HL = new Function(highlightsText + "\nreturn { HIGHLIGHTS_FRAG_GL };")();
           function highlightsThrough(amount) {
@@ -264,6 +259,12 @@ void main(){ float v = vUV.x < 0.5 ? 0.4 : 0.6; finalColor=vec4(v,v,v,1.0); }`;
               sourceAtBright:zero[768], lowerAtBright:lower[768], liftAtBright:lift[768] };
           });
 
+
+          // Sharpen — the catalog's second custom shader, loaded from the REAL
+          // product source exactly as chroma is above (both files are
+          // type-annotation-free JS by contract, and a unit test replays this
+          // loading path). Unlike the colour trio, here the shared source is
+          // the point: the maths is the shader.
           const sharpenText = fsMod
             .readFileSync(pathMod.resolve(__dirname, "../../src/renderer/render/effects/filters/sharpenSources.ts"), "utf8")
             .replace(/^export /gm, "");

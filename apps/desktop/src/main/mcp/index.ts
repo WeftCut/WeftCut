@@ -23,7 +23,6 @@ export interface McpHost {
   getInfo(): McpInfoView
   connectionSnapshot(): AgentConnectionSnapshot
   resetToken(): string
-  notifyChange(summary: unknown): void
   /** notifications/resources/list_changed to every session. */
   notifyResourceListChanged(): void
   close(): Promise<void>
@@ -301,18 +300,6 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
       // client. Neither the retired nor the new token appears in it.
       emitLifecycle('info', { kind: 'User' }, 'MCP bearer token rotated')
       return auth.token
-    },
-    notifyChange(summary): void {
-      for (const server of servers) {
-        server
-          .notification({
-            method: 'notifications/weftcut/change',
-            params: summary as Record<string, unknown>,
-          })
-          .catch(() => {
-            /* session may have closed */
-          })
-      }
     },
     notifyResourceListChanged(): void {
       for (const server of servers) server.sendResourceListChanged().catch(() => { /* session may have closed */ })

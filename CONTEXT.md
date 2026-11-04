@@ -30,6 +30,14 @@ reported filename is the one publication used.
 
 ## Time remapping
 
+**Time base**:
+Which clock a time reads: the timeline (`t_*`, the owning composition's
+clock), the source (`src_*`, the media file's own time) or the layer
+(`local_*`, from its `t_start_us`). Every MCP time name carries its base; a
+bare `_us` / `_s` is a duration. A source-time answer for a layer carries that
+layer's **mapping** (`t_start_us`, `src_in_us`, `rate`, `source_phase`).
+_Avoid_: absolute time (absolute on which clock?)
+
 **Time remapping**:
 The relationship between a clip's local time and its content's own time: a
 constant rate over the selected content range. A clip's own animation keeps its
@@ -154,7 +162,9 @@ _Avoid_: trim (time), resize (dimensions)
 
 **Linked scale**:
 A layer state (`Transform.scale_linked`) where the two scale tracks are edited
-as one "Scale". Not a keyframe mode; any write that diverges the pair clears it.
+as one "Scale": a write to one axis writes both, in the UI and over MCP
+(`update_layer_params { scale_linked }` sets it). Not a keyframe mode; any
+write that diverges the pair clears it.
 _Avoid_: uniform-scale mode, scale lock
 
 ## Keyframes
@@ -167,7 +177,7 @@ _Avoid_: handle (the drawn thing), influence, velocity
 
 **Auto**:
 The tangent mode whose numbers are solved (clamped monotone) when the track is
-written; the other mode is **Free**. Smooth in `smooth_keyframes` means set Auto.
+written; the other mode is **Free**. `update_keyframe { smooth: true }` means set Auto.
 _Avoid_: smooth as a mode, auto-bezier
 
 **Continuity**:
@@ -180,6 +190,14 @@ The span between two adjacent keys, with its class stored on the LEFT key:
 Spline, Hold, Linear, Elastic or Bounce. A named preset is a Spline with known
 tangents, not a class.
 _Avoid_: interpolation as the stored thing, easing type; a layer a split produced
+
+**Easing**:
+The shape one argument writes onto one segment: a named preset or a raw kind
+(Hold, Linear, Bezier, Elastic, Bounce). On a key it eases the segment leaving
+that key — on the last key, the one arriving at it — so keys written in time
+order each carry the move into them; a lone key has no segment and refuses one.
+Stored as the segment class plus tangents, never as itself.
+_Avoid_: interp, interpolation (the argument)
 
 **Extrapolation**:
 What a track does outside its first and last key (`extrapolate { before, after }`):
@@ -207,8 +225,15 @@ _Avoid_: auto-fit, effective font size (the derived number)
 
 **Layer**:
 One placed item in a track (`Track.layers`), with a kind: video, audio, image,
-text, motif, group. The model word. UI word: clip / 片段, never *layer* or 图层.
+text, color, motif, group — the `kind`s `add_layers` places. The model word. UI
+word: clip / 片段, never *layer* or 图层.
 _Avoid_: layer / 图层 in UI strings; item, element, object
+
+**Auto-pair**:
+A video layer placed with its source's audio as a linked dialogue Audio layer
+on the same track, in the same commit (`auto_pair_audio_on_import`; per call,
+`add_layers` `audio: "linked" | "none"`).
+_Avoid_: auto-link
 
 **Track**:
 The kind-agnostic container of layers (`Project.tracks`, bottom of z-stack
@@ -298,6 +323,19 @@ layer). Trailing space is not a gap. Selectable; its `Delete` closes it via
 ripple. UI word: Gap / 间隙; history *Closed gap* / 闭合间隙.
 _Avoid_: hole (ripple's per-layer measure), blank space / 空白
 
+**Insert move**:
+A move that closes the moved set's span behind it and opens room at its
+landing, on every track — a ripple delete and a ripple insert in one edit
+(`move_layers { insert: true }`, agents only). The landing is read on the
+closed timeline: where the set starts afterwards.
+_Avoid_: ripple move (the trim), overwrite move, swap
+
+**Slip**:
+Moving a clip's source window under a fixed span: the span and the window's
+length stay, what plays changes (`src_in_us` on VideoClip, Audio, Motif and
+Group). Distinct from a trim (changes the span) and a retime (changes the rate).
+_Avoid_: slide (moves the span), offset, source shift
+
 ## Markers
 
 **Free marker**:
@@ -324,8 +362,9 @@ _Avoid_: orphan, unlink, unpin; link (that is between layers)
 
 **Pause**:
 A stretch of an Audio layer's played audio whose peak stays under the
-threshold for the minimum length, read from the peaks of what plays. A
-VideoClip delegates to its linked Audio. UI word: Pauses / 停顿.
+threshold (dBFS) for the minimum length, read from the peaks of what plays. A
+VideoClip delegates to its linked Audio — the **audio subject** rule that
+transcription and audio extraction share. UI word: Pauses / 停顿.
 See [features.md](docs/features.md#pauses).
 _Avoid_: silence / 静默, 静音 (mute), gap, dead air
 
@@ -345,7 +384,7 @@ _Avoid_: scene, segment, clip
 **Candidate cut**:
 One `cut_scores` entry: a source time whose frame-change score exceeded the
 floor. A threshold decides which become **shot cuts** / 镜头切点.
-_Avoid_: cut (an edit), scene change, keyframe (`keyframe_t_us` is a cover frame)
+_Avoid_: cut (an edit), scene change, keyframe (`src_keyframe_us` is a cover frame)
 
 **Floor scan**:
 The one cached detection pass per source at `FLOOR_SENSITIVITY` (0.05); every
@@ -517,11 +556,25 @@ See [motifs.md](docs/motifs.md), ADR 0017.
 _Avoid_: template, overlay, animation preset
 
 **Motif draft**: A retained, editable package, optionally linked to a working directory.
+Agents reach its files by path or inline in `update_motif_files` (text, or base64 up to 256 KiB); there are no file handles.
+_Avoid_: upload, file transfer
 
 **Motif revision**: The content hash of a complete validated package; stale writes are rejected by it.
 
 **Installed Motif**: A published copy with its own identity and version; publishing keeps the draft.
 See [motif-workspaces.md](docs/motif-workspaces.md).
+
+**Motif proposal**: An agent's request to publish one revision of a draft (`install_motif`), frozen
+when made and pending until the user decides. It replaces an installed Motif at a stated version, or
+takes a new id from the draft's name; a taken id is refused, never numbered. A newer proposal from
+the same draft supersedes it. Its state rides the draft row as `publication` (a Motif field, not the
+export sense of *Publication*). See ADR 0046.
+_Avoid_: install request, pending install, publish request
+
+**Approval**: The user's decision on a Motif proposal, made on its card in the Motifs panel:
+approve publishes the frozen revision and rebinds the trial layers; reject keeps the draft with the
+user's note. Only the app decides; no MCP tool approves. UI word: Approve / 批准, Reject / 拒绝.
+_Avoid_: confirm, accept, review (a review is the tacks' word)
 
 **Motif preparation**:
 The Workspace session's background work that persists Motif frame ranges:
@@ -604,7 +657,9 @@ _Avoid_: subtitle, caption layer kind (there is none)
 **Text correction**:
 Reference-text-assisted correction and resegmentation of caption text, on new
 transcripts or existing captions. Estimated word times stay marked as
-estimates. UI word: Text correction / 文字校正. See [captions.md](docs/captions.md).
+estimates. An agent passes the **script** (the full verbatim transcript) per
+call and corrects text only, never cue boundaries. UI word: Text correction /
+文字校正. See [captions.md](docs/captions.md).
 _Avoid_: 强制对齐 (acoustic alignment), 文稿对齐
 
 ## Performance resources
@@ -621,6 +676,21 @@ platform; targets are cooperative, not OS caps. UI words: Memory target /
 内存使用目标, Processing effort / 处理强度, Temporary cache space / 临时缓存空间.
 See ADR 0101, ADR 0150.
 _Avoid_: guaranteed RAM cap, CPU percentage cap
+
+**Derivative state**:
+How far one of a media item's background jobs is: `pending`, `running`,
+`ready` or `failed` with the job's reason. The derivatives are waveform,
+conform, thumbnails and proxy; shot detection is not one (the call that needs
+it runs it). Read on `media://{id}`, `project://media` rows and the
+`import_media` answer. See [mcp.md](docs/mcp.md#resources).
+_Avoid_: not generated yet (for a job that failed)
+
+**Holder**:
+What holds part of the working budget, named when admission refuses someone
+else: the work's kind (a derivative job, `export`, `editor`, `model`, …) and
+the media it works on. A busy refusal (`ResourceBusy`) lists the holders; a
+claim larger than the whole working allowance is `ResourceBudget` instead,
+which no wait admits.
 
 **Cache budget**:
 The desired combined retention of video and animation pictures, thumbnails and
@@ -662,6 +732,12 @@ _Avoid_: session (for the layout)
 One explicitly begun batch of agent work with an ID, owning MCP connection
 and reason. Ending it releases its undo lock; it cancels nothing.
 _Avoid_: view mode, agent permission, execution lock
+
+**Silent outcome**:
+A call that answers success while it ignored, dropped or did not apply part of
+what it was asked, or delivered less than asked. The MCP surface never has one:
+the call refuses, or a typed field says what is missing. See ADR 0156.
+_Avoid_: best effort, soft failure
 
 **MCP connection**:
 A registered protocol connection, identified independently of client name.

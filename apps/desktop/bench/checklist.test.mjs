@@ -1,7 +1,7 @@
 // apps/desktop/bench/checklist.test.mjs — `node --test bench/checklist.test.mjs`
 //
 // The checklist evaluator against small hand-built projects in the
-// `project://current` shape, plus a lint over every bench task file so a typo
+// project.json shape, plus a lint over every bench task file so a typo
 // in a check kind, a regex or a setup tool name fails here rather than
 // mid-run.
 
@@ -367,7 +367,7 @@ describe('task files', () => {
   const fixtureIds = new Set(JSON.parse(fs.readFileSync(path.join(HERE, 'fixtures', 'fixtures.json'), 'utf8')).fixtures.map((f) => f.id))
 
   it('found the tool registry', () => {
-    for (const t of ['import_media', 'add_track', 'add_video_layer', 'read_project']) assert.ok(tools.has(t), t)
+    for (const t of ['import_media', 'add_track', 'add_layers', 'read_project']) assert.ok(tools.has(t), t)
   })
 
   for (const file of files) {

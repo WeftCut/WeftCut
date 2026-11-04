@@ -25,7 +25,7 @@ Paths are under `apps/desktop/`.
 | Renderer workers | `render/worker/exportWorker.ts`, `render/motifs/motifReaderWorker.ts`, `render/positionConversion.worker.ts` | Export render and encode on an `OffscreenCanvas`; Motif frame reads; offline position conversion. |
 | Utility processes | `src/main/motif-reader-host.ts`, `decode-probe-host.ts` (macOS), `hardware-probe-host.ts` (Linux) | Motif frame decode off main ([ADR 0154](adr/0154-motif-frames-are-read-at-preview-scale-through-one-reader.md)); crash-isolated hardware probes. |
 | Hidden windows | `src/main/motif/capture.ts`, `svgRaster.ts`, `screenPick.ts` | Offscreen Motif capture over CDP ([ADR 0017](adr/0017-motifs-cdp-webcap-clock-takeover.md), [motifs.md](motifs.md#capture-host)); SVG rasterizing on import; screen color pick. |
-| Child processes | `native/src/ffmpeg/`, `speech/`, `vlm/` | ffmpeg/ffprobe via `ffmpeg-sidecar`; local speech (whisper.cpp, FunASR) and VLM engines as sidecars. |
+| Child processes | `native/src/ffmpeg/`, `speech/`, `vlm/`, `native/reaper/` | ffmpeg/ffprobe via `ffmpeg-sidecar`; local speech (whisper.cpp, FunASR) and VLM engines as sidecars; on macOS and Linux the `weftcut-reaper` that ends ffmpeg children after the app ([ADR 0155](adr/0155-an-ffmpeg-child-never-outlives-the-app.md)). |
 | `weftcut-mcp` shim | `src/cli/` | Stdio MCP server that bridges agent clients to the app's HTTP endpoint ([mcp.md](mcp.md#transport--deployment)). |
 
 `src/main/calibration-host.ts` is a Windows-only developer prototype, selected
@@ -87,7 +87,10 @@ kill (a SIGKILLed VideoToolbox session hangs the next one:
 also bounded: short commands by a timeout, transcodes by a progress watchdog
 that stops a child showing no sign of life (no progress, no input taken, no
 CPU use) for 60 s. The only exception is the one-time download's own version
-check.
+check. No child outlives the app, however it exits: each is held from spawn to
+reap by the `weftcut-reaper` process beside the addon (macOS, Linux), which
+runs the same stop once the app's pipe to it closes, or by a kill-on-close job
+(Windows) ([ADR 0155](adr/0155-an-ffmpeg-child-never-outlives-the-app.md)).
 
 ## Data flow: one edit
 
@@ -98,13 +101,13 @@ check.
 4. Subscribers react:
    - **Renderer**: main sends `evt:project:changed`. The renderer's publication
      client (`src/renderer/state/projectPublication.ts`) reads the newest
-     version, keeps unchanged branches by reference, and the compositor
-     updates its sprite tree in place. Command promises resolve after their
-     receipt is applied ([ADR 0114](adr/0114-project-view-publication.md)).
+     version as a difference from the view it holds, unchanged branches keep
+     their references, and the compositor updates its sprite tree in place.
+     Command promises resolve after their receipt is applied
+     ([ADR 0114](adr/0114-project-view-publication.md),
+     [ADR 0157](adr/0157-a-publication-crosses-as-a-difference.md)).
    - **Autosave**: a debounced write of `project.json` plus periodic
      `Backups/` copies (`src/main/state/autosave.ts`).
-   - **MCP change feed**: notifications to subscribed agents
-     ([mcp.md](mcp.md#change-feed)).
 
 ## Process boundaries
 

@@ -110,17 +110,17 @@ describe("the shipped catalog", () => {
     const rows = rowsIn(en);
     for (const [query, kind] of [
       ["bright", "brightness"], ["contr", "contrast"], ["satur", "saturation"],
-      ["sharp", "sharpen"],
+      ["high", "highlights"], ["sharp", "sharpen"],
     ]) {
       expect(filterEffects(query!, rows)[0]?.kind, query).toBe(kind);
     }
   });
 
-  it("groups the trio under Color, in registration order", () => {
+  it("groups the color controls under Color, in registration order", () => {
     const groups = groupEffects(rowsIn(en));
     const color = groups.find((g) => g.category === "color")!;
     expect(color.label).toBe("Color");
-    expect(color.items.map((i) => i.kind)).toEqual(["brightness", "contrast", "saturation"]);
+    expect(color.items.map((i) => i.kind)).toEqual(["brightness", "contrast", "highlights", "saturation"]);
   });
 
   it("groups sharpen under Stylize", () => {

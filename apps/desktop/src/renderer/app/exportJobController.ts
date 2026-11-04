@@ -3,6 +3,7 @@ import { listen } from '@/bridge/events';
 import { projectSummary } from '../ipc';
 import { exportTerminal, type ExportJob, type ExportRun } from '../../shared/exportJob';
 import { createExportRunner } from './exportRunner';
+import { RendererCannotDrawError, type OmittableFeature } from '../render/rendererCapability';
 import { composeStillsSheet } from './stillsSheet';
 import type { ExportState } from '../panels/ExportPanel';
 
@@ -44,8 +45,10 @@ export function createExportJobController(deps: Omit<Parameters<typeof createExp
     onState: next => {
       state = next; display();
       if (!active || ended.has(active.job_id) || !next || next.kind === 'error' || next.kind === 'complete') return;
+      const queued = next.kind === 'preparing' ? next.queued : undefined;
       const update = {
-        state: next.kind === 'progress' ? 'rendering' : next.kind === 'finalizing' ? 'finalizing' : 'preparing',
+        state: next.kind === 'progress' ? 'rendering' : next.kind === 'finalizing' ? 'finalizing' : queued ? 'queued' : 'preparing',
+        ...(queued ? { queued } : {}),
         ...(next.kind === 'finalizing' ? { phase: next.step } : {}),
         ...(next.kind === 'progress' ? { progress: next.progress.progress } : {})
       };
@@ -62,7 +65,9 @@ export function createExportJobController(deps: Omit<Parameters<typeof createExp
     await report(job, final?.kind === 'complete' ? { state: 'completed', duration_us: final.payload.durationUs }
       : final?.kind === 'error' && final.onRetry && !aborted.aborted ? { state: 'awaiting_retry', error: { code: 'finalization_failed', message: final.detail } }
         : aborted.aborted || !final ? { state: 'cancelled' }
-          : { state: 'failed', error: { code: 'export_failed', message: final.kind === 'error' ? final.detail : 'Export ended without a result' } });
+          : { state: 'failed', error: final.kind === 'error'
+            ? { ...final.fault, code: final.code ?? 'export_failed', message: final.detail }
+            : { code: 'export_failed', message: 'Export ended without a result' } });
   };
   const enqueue = (job: ExportRun | undefined, operation: () => Promise<void>) => {
     running = running.then(operation).catch(async error => {
@@ -104,18 +109,20 @@ export function createExportJobController(deps: Omit<Parameters<typeof createExp
         }),
         // `render_frames`: export-path stills for an agent, queued behind any
         // export so the two never share the pipeline.
-        listen<{ request_id: string; renderer_token: string; times_us: number[]; width: number; sheet: boolean; settings: ExportRun['settings'] }>('render_frames:run', ({ payload: r }) => {
+        listen<{ request_id: string; renderer_token: string; times_us: number[]; width: number; sheet: boolean; settings: ExportRun['settings']; timeout_ms?: number; without?: OmittableFeature[] }>('render_frames:run', ({ payload: r }) => {
           if (disposed || r.renderer_token !== token) return;
           void enqueue(undefined, async () => {
             const reply = (body: Record<string, unknown>) => invoke('export_job_stills', { request_id: r.request_id, renderer_token: token, ...body });
             try {
-              const frames = await runner.runStills(r, new AbortController().signal);
+              // Main gives up at `timeout_ms`; stop there too, so a queued
+              // admission does not outlive the request.
+              const frames = await runner.runStills(r, AbortSignal.timeout(r.timeout_ms ?? 60_000));
               const sheet = r.sheet && frames.length > 0 ? await composeStillsSheet(frames) : null;
               await reply(sheet
-                ? { frames: frames.map(({ t_us, width, height }) => ({ t_us, width, height })), sheet: { ...sheet, jpeg: new Uint8Array(sheet.jpeg) } }
+                ? { frames: frames.map(({ t_us, width, height, omitted }) => ({ t_us, width, height, ...(omitted ? { omitted } : {}) })), sheet: { ...sheet, jpeg: new Uint8Array(sheet.jpeg) } }
                 : { frames: frames.map((f) => ({ ...f, jpeg: new Uint8Array(f.jpeg) })) });
             } catch (error) {
-              await reply({ error: error instanceof Error ? error.message : String(error) }).catch(reportError);
+              await reply({ error: error instanceof Error ? error.message : String(error), ...(error instanceof RendererCannotDrawError ? { fault: error.fault } : {}) }).catch(reportError);
             }
           });
         }),

@@ -124,6 +124,10 @@ export function restoredCheckpointSummary(label: string): HistorySummary {
   return { key: 'history.checkpoint.restore', text: `Restored to checkpoint '${label}'`, label_args: { label } }
 }
 /** `paste_layers` — the summary counts the clones. */
+export function addedLayersSummary(count: number): HistorySummary {
+  return { key: 'history.layer.add_multi', text: `Added ${count} clips`, label_args: { count } }
+}
+
 export function pastedLayersSummary(count: number): HistorySummary {
   return { key: 'history.layer.paste_multi', text: `Duplicated ${count} clips`, label_args: { count } }
 }
@@ -165,6 +169,7 @@ export const HISTORY_SUMMARY_KEYS: readonly string[] = [
   removedMediaSummary('', 0).key,
   roleGainSummary('').key,
   restoredCheckpointSummary('').key,
+  addedLayersSummary(0).key,
   pastedLayersSummary(0).key,
   groupCreateSummary(0).key,
   groupAddMembersSummary(0).key,

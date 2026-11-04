@@ -2,7 +2,7 @@
 # `weftcut-eval` leaf, offline `weftcut-conversion` (native + wasm32), and optional `weftcut-native-decode`
 # component addon (the only ffmpeg-next consumer — see decode/Cargo.toml).
 [workspace]
-members = ["eval", "conversion", "decode"]
+members = ["eval", "conversion", "decode", "reaper"]
 
 [package]
 name = "weftcut"
@@ -28,6 +28,10 @@ napi-build = "2"
 # `Keyframe<T>` stays Serialize/Deserialize. `Rational` (which also needs
 # schemars, forbidden in the leaf) stays in state/time.rs.
 weftcut-eval = { path = "eval", features = ["serde"] }
+# The reaper's protocol and process identity (src/ffmpeg/guard.rs). Its binary
+# ships beside this addon on macOS and Linux and ends our ffmpeg children when
+# the app dies; see reaper/src/lib.rs.
+weftcut-reaper = { path = "reaper" }
 
 # napi-rs: WeftCut's domain core is exposed to Electron as a native addon.
 # `dyn-symbols` is a NAPI-RS v3 DEFAULT: the addon resolves the host's `napi_*`
@@ -118,7 +122,7 @@ image-compare = "0.5"
 windows = { version = "0.62", features = [
   "Win32_Foundation", "Win32_Security", "Win32_Graphics_Direct3D", "Win32_Storage_FileSystem",
   "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common",
-  "Win32_System_Threading",
+  "Win32_System_Threading", "Win32_System_JobObjects",
 ] }
 
 [target.'cfg(unix)'.dependencies]

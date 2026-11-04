@@ -37,12 +37,17 @@ export interface ComputeJob {
   /** Present on description jobs. Omitted legacy records mean clip content. */
   purpose?: import('./description').DescriptionPurpose
   /** The layer the first caller named. A caller on another layer over the same
-   *  source span joins this job without changing it. */
+   *  source span joins this job without changing it. `''` for a description
+   *  addressed by `media_id` (a pooled item no layer places). */
   layer_id: string
   media_id: string
   /** Timeline µs — the window the first caller asked for, or the layer's own
-   *  span when it named none. */
+   *  span when it named none. A media-addressed job has no timeline: it holds
+   *  the source window, as `src_window` says. */
   window: { t_start_us: number; t_end_us: number }
+  /** Description jobs: the source window, µs — how a job is placed on a
+   *  source whether or not a layer plays it. */
+  src_window?: { src_start_us: number; src_end_us: number }
   phase: ComputePhase
   /** ISO time the phase last changed, counts included — what a stall reads. */
   phase_since: string

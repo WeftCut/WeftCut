@@ -1,7 +1,7 @@
 // apps/desktop/src/main/state/__tests__/mcp.agent-hardening.test.ts
 // Regression gates for the three ways this surface used to mislead an agent:
 // update_effect must reject an unparseable patch, never commit nothing and
-// report success; add_video_layer must place the video and its auto-paired
+// report success; add_layers must place a video and its auto-paired
 // audio atomically or not at all; and a clip's paired audio must land on its
 // OWN track's audio lane, not a shared one.
 import { describe, it, expect } from 'vitest'
@@ -19,7 +19,7 @@ function addVideoWithAudio(actor: Actor, mediaId = VIDEO_MEDIA): string {
 }
 
 function videoLayerArgs(trackId: string, mediaId: string, t0: number, t1: number): string {
-  return JSON.stringify({ track_id: trackId, media_id: mediaId, src_in_us: 0, src_out_us: t1 - t0, t_start_us: t0, t_end_us: t1 })
+  return JSON.stringify({ layers: [{ track_id: trackId, t_start_us: t0, t_end_us: t1, content: { kind: 'video', media_id: mediaId, src_in_us: 0 } }] })
 }
 
 function totalLayerCount(actor: Actor): number {
@@ -28,15 +28,16 @@ function totalLayerCount(actor: Actor): number {
 
 // ── Issue 03/04: paired A/V placement ────────────────────────────────────────
 
-describe('add_video_layer auto-pair — combined-row placement (issue 04)', () => {
+describe('add_layers video auto-pair — combined-row placement (issue 04)', () => {
   it('lands video + dialogue audio + link on the SAME track', () => {
     const a = freshActor()
     const media = addVideoWithAudio(a)
     const trackId = aRollId(a)
-    const r = a.mcpCall('add_video_layer', videoLayerArgs(trackId, media, 0, 5_000_000))
+    const r = a.mcpCall('add_layers', videoLayerArgs(trackId, media, 0, 5_000_000))
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    const ids = JSON.parse(r.result.content[0].text) as { video_layer_id: string; audio_layer_id: string; link_id: string }
+    const placed = (JSON.parse(r.result.content[0].text) as { layers: Array<{ layer_id: string; linked: { audio_layer_id: string; link_id: string } }> }).layers[0]!
+    const ids = { video_layer_id: placed.layer_id, ...placed.linked }
     const track = root(a.snapshot()).tracks.find((t) => t.id === trackId)!
     const video = track.layers.find((l) => l.id === ids.video_layer_id)
     const audio = track.layers.find((l) => l.id === ids.audio_layer_id)
@@ -52,8 +53,8 @@ describe('add_video_layer auto-pair — combined-row placement (issue 04)', () =
     // the second placement collide on a visually empty roll.
     const a = freshActor()
     const media = addVideoWithAudio(a)
-    const r1 = a.mcpCall('add_video_layer', videoLayerArgs(aRollId(a), media, 0, 5_000_000))
-    const r2 = a.mcpCall('add_video_layer', videoLayerArgs(bRollId(a), media, 1_000_000, 6_000_000))
+    const r1 = a.mcpCall('add_layers', videoLayerArgs(aRollId(a), media, 0, 5_000_000))
+    const r2 = a.mcpCall('add_layers', videoLayerArgs(bRollId(a), media, 1_000_000, 6_000_000))
     expect(r1.ok).toBe(true)
     expect(r2.ok).toBe(true)
     const snap = a.snapshot()
@@ -62,7 +63,7 @@ describe('add_video_layer auto-pair — combined-row placement (issue 04)', () =
   })
 })
 
-describe('add_video_layer auto-pair — atomicity (issue 03)', () => {
+describe('add_layers video auto-pair — atomicity (issue 03)', () => {
   it('rejects the WHOLE call when the audio lane is blocked: no video layer, no link, rich error', () => {
     const a = freshActor()
     const media = addVideoWithAudio(a)
@@ -72,7 +73,7 @@ describe('add_video_layer auto-pair — atomicity (issue 03)', () => {
     expect(bare.ok).toBe(true)
     const before = totalLayerCount(a)
 
-    const r = a.mcpCall('add_video_layer', videoLayerArgs(trackId, media, 0, 5_000_000))
+    const r = a.mcpCall('add_layers', videoLayerArgs(trackId, media, 0, 5_000_000))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('invalid_params')
@@ -92,10 +93,10 @@ describe('add_video_layer auto-pair — atomicity (issue 03)', () => {
     const a = freshActor()
     const media = addVideoWithAudio(a)
     const trackId = aRollId(a)
-    const first = a.mcpCall('add_video_layer', videoLayerArgs(trackId, media, 0, 5_000_000))
+    const first = a.mcpCall('add_layers', videoLayerArgs(trackId, media, 0, 5_000_000))
     expect(first.ok).toBe(true)
     const before = totalLayerCount(a)
-    const r = a.mcpCall('add_video_layer', videoLayerArgs(trackId, media, 1_000_000, 6_000_000))
+    const r = a.mcpCall('add_layers', videoLayerArgs(trackId, media, 1_000_000, 6_000_000))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.error.code).toBe('invalid_params')
@@ -110,12 +111,10 @@ describe('add_video_layer auto-pair — atomicity (issue 03)', () => {
 describe('update_effect — strict patch (issue 02)', () => {
   function actorWithEffect(): { a: Actor; layerId: string; effectId: string } {
     const a = freshActor()
-    const add = a.mcpCall('add_color_layer', JSON.stringify({
-      track_id: aRollId(a), color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 2_000_000,
-    }))
+    const add = a.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: aRollId(a), t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] }))
     expect(add.ok).toBe(true)
     if (!add.ok) throw new Error('setup failed')
-    const layerId = (JSON.parse(add.result.content[0].text) as { layer_id: string }).layer_id
+    const layerId = (JSON.parse(add.result.content[0].text) as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
     const eff = a.mcpCall('add_effect', JSON.stringify({ layer_id: layerId, kind: 'blur' }))
     expect(eff.ok).toBe(true)
     if (!eff.ok) throw new Error('setup failed')
@@ -131,7 +130,7 @@ describe('update_effect — strict patch (issue 02)', () => {
     const { a, layerId, effectId } = actorWithEffect()
     const r = a.mcpCall('update_effect', JSON.stringify({
       layer_id: layerId, effect_id: effectId,
-      patch: JSON.stringify({ params: { strength: { mode: 'Static', value: 8 } } }), // string, not object
+      patch: JSON.stringify({ params: { strength: 8 } }), // string, not object
     }))
     expect(r.ok).toBe(false)
     if (r.ok) return
@@ -143,7 +142,7 @@ describe('update_effect — strict patch (issue 02)', () => {
   it('an unknown patch key → invalid_params naming the key, effect unchanged', () => {
     const { a, layerId, effectId } = actorWithEffect()
     const r = a.mcpCall('update_effect', JSON.stringify({
-      layer_id: layerId, effect_id: effectId, patch: { paramz: { strength: { mode: 'Static', value: 8 } } },
+      layer_id: layerId, effect_id: effectId, patch: { paramz: { strength: 8 } },
     }))
     expect(r.ok).toBe(false)
     if (r.ok) return
@@ -154,7 +153,7 @@ describe('update_effect — strict patch (issue 02)', () => {
   it('a malformed param value → invalid_params naming the param, effect unchanged', () => {
     const { a, layerId, effectId } = actorWithEffect()
     const r = a.mcpCall('update_effect', JSON.stringify({
-      layer_id: layerId, effect_id: effectId, patch: { params: { strength: 8 } }, // bare number, not an AnimTrack
+      layer_id: layerId, effect_id: effectId, patch: { params: { strength: 'eight' } }, // a string, not a number
     }))
     expect(r.ok).toBe(false)
     if (r.ok) return
@@ -168,22 +167,20 @@ describe('update_effect — strict patch (issue 02)', () => {
   // the "absent" key here is a real param that was never written.
   it('a null param value removes the key; removing an absent key succeeds', () => {
     const a = freshActor()
-    const add = a.mcpCall('add_color_layer', JSON.stringify({
-      track_id: aRollId(a), color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 2_000_000,
-    }))
+    const add = a.mcpCall('add_layers', JSON.stringify({ layers: [{ track_id: aRollId(a), t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] }))
     if (!add.ok) throw new Error('setup failed')
-    const layerId = (add.result.structuredContent as { layer_id: string }).layer_id
+    const layerId = (add.result.structuredContent as { layers: Array<{ layer_id: string }> }).layers[0]!.layer_id
     const eff = a.mcpCall('add_effect', JSON.stringify({ layer_id: layerId, kind: 'chromakey' }))
     if (!eff.ok) throw new Error('setup failed')
     const effectId = (eff.result.structuredContent as { effect_id: string }).effect_id
     expect(a.mcpCall('update_effect', JSON.stringify({
       layer_id: layerId, effect_id: effectId,
-      patch: { params: { feather: { mode: 'Static', value: 2 }, shrink: { mode: 'Static', value: 1 } } },
+      patch: { params: { feather: 2, shrink: 1 } },
     })).ok).toBe(true)
 
     const r = a.mcpCall('update_effect', JSON.stringify({
       layer_id: layerId, effect_id: effectId,
-      patch: { params: { feather: { mode: 'Static', value: 4 }, shrink: null, despill: null } },
+      patch: { params: { feather: 4, shrink: null, despill: null } },
     }))
     expect(r.ok).toBe(true)
     expect(effectParams(a, layerId)).toEqual({ feather: { mode: 'Static', value: 4 } })
@@ -193,7 +190,7 @@ describe('update_effect — strict patch (issue 02)', () => {
     const { a, layerId, effectId } = actorWithEffect()
     const r = a.mcpCall('update_effect', JSON.stringify({
       layer_id: layerId, effect_id: effectId,
-      patch: { enabled: false, params: { strength: { mode: 'Static', value: 8 } } },
+      patch: { enabled: false, params: { strength: 8 } },
     }))
     expect(r.ok).toBe(true)
     const layer = root(a.snapshot()).tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)!

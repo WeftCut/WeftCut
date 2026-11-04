@@ -405,7 +405,6 @@ export interface WeftcutApi {
     planExport(request: import('./export-resources').ExportPlanRequest): Promise<number>;
     estimateDecoder(path: string): Promise<number>;
     onExportWaiting(cb: (event: import('./export-resources').ExportResourceBlock & { id: string }) => void): () => void;
-    reserveExportFinalization(id: string): Promise<void>;
     acquire(request: { id: string; memoryMiB: number; threads: number; finalizationToken?: string }): Promise<void>;
     release(id: string): void;
     playing(value: boolean): void;

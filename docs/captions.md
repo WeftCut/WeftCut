@@ -80,10 +80,11 @@ flattened in time order. Activating a cue selects its layer, seeks to its
 start and reveals it in the Timeline; inline text edits commit on blur via
 `update_layer_params`. The style row (size, outline width, colour) calls
 `restyle_captions` over all caption tracks in one undo step; outline width 0
-stores `null` (no outline); colour commits are debounced. `restyle_captions`
-also takes `font_family` and `layer_ids` (MCP only). `merge_captions` folds
+stores `null` (no outline); colour commits are debounced. It is the panel's
+channel, not an MCP tool: an agent changes the caption tokens and calls
+`restyle_to_taste { captions: true }`. `merge_captions` folds
 cues of one lane into the earliest; `export_captions` returns an SRT/VTT body
-(MCP only).
+(MCP only), with `range` clipped to a range export's span and shifted to 0.
 
 ## Text correction / 文字校正
 
@@ -96,6 +97,14 @@ target refuses the whole run; inputs that changed while the dialog awaited a
 save refuse rather than apply stale. Re-running on unchanged input records
 nothing.
 
+An agent's run (`correct_caption_text { script }`) passes the full verbatim
+transcript per call; the manuscript setting is the dialog's and not on the MCP
+surface. It corrects text only — each cue in place, never split, merged or
+retimed (resegmentation below is the dialog's) — and refuses when under half
+of the caption words align to the script (`CORRECTION_MIN_MATCH`), the sign of
+notes or a glossary passed as one. It answers `changed`, `match_ratio` and up
+to 20 `changes { layer_id, before, after }`.
+
 Matching (`shared/textCorrection.ts`) aligns caption text to the manuscript
 locally, with gaps on either side. It corrects context-supported Chinese
 homophones, equivalent formatting, near sounds with confusable initials and
@@ -103,7 +112,15 @@ single misread Chinese numerals (五老师 / 吴老师) when two exact tokens ma
 each side and the reference has one spelling. Quantity/ordinal contexts,
 numeric targets, negation and ambiguous colloquial numbers are preserved;
 extra speech stays, unmatched manuscript text is not inserted, conflicting
-repeated contexts abstain. No acoustic model, network or forced alignment.
+repeated contexts abstain. Latin-script words the ASR misheard are replaced
+as a run: 1–4 unmatched caption words take the 1–4 unmatched script words
+between the same anchors, two exact words on each side, in one sentence
+("with the media" / "Wikimedia"); never when either run is empty or holds a
+number word, digit or negation. No acoustic model, network or forced alignment.
+
+A cue whose text changed is re-wrapped (`breakLines`) at the style's
+`max_chars`; one whose text did not change, spacing aside, is left byte for
+byte. Punctuation comes from the script, its line breaks never.
 
 Resegmentation: manuscript line breaks and sentence-ending punctuation set
 caption boundaries (ASR boundaries may join; pauses and length add none).

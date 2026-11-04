@@ -76,7 +76,7 @@ describe("Compositor presentation gate", () => {
       app: { stage: new Container() } as unknown as Application,
       width: 1920,
       height: 1080,
-      mode: "export",
+      mode: "preview",
       originalAssetUrl: () => null,
       sourceColor: () => undefined,
       mediaById: () => undefined,

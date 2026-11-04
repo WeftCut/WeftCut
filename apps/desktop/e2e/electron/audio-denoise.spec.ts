@@ -137,8 +137,6 @@ async function addEffect(mcp: Client, layerId: string, kind: string): Promise<st
   return effectId
 }
 
-const staticParam = (value: number) => ({ mode: 'Static', value })
-
 interface SummaryLayer {
   id: string
   t_start_us: number
@@ -302,10 +300,10 @@ test.describe('audio denoise (Electron)', () => {
           effect_id: effectId,
           patch: {
             params: {
-              strength: staticParam(12),
-              margin: staticParam(8),
-              profile_in_us: staticParam(PROFILE_IN_US),
-              profile_out_us: staticParam(PROFILE_OUT_US),
+              strength: 12,
+              margin: 8,
+              profile_in_us: PROFILE_IN_US,
+              profile_out_us: PROFILE_OUT_US,
             },
           },
         },

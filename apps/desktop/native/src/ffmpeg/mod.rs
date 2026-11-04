@@ -23,9 +23,11 @@
 //! `ffprobe_path()` here. Importing the sidecar crate's versions re-opens the
 //! hole.
 //!
-//! Spawning and stopping those children lives in [`child`].
+//! Spawning and stopping those children lives in [`child`]; ending them when
+//! the app dies first, in [`guard`].
 
 mod child;
+mod guard;
 
 use std::path::PathBuf;
 use std::process::Stdio;

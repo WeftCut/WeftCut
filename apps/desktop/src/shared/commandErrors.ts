@@ -135,6 +135,10 @@ export type CommandError =
   | { error: 'TrackPositionOutOfRange'; position: number; len: number }
   | { error: 'TrackNotEmpty'; track: Uuid }
   | { error: 'TrackNotRemovable'; track: Uuid }
+  /** A reserved A roll / B roll track keeps its place in the stack: `move_track`
+   *  refuses it, as `restack_layer` keeps it fixed and the timeline offers no
+   *  drag for it. */
+  | { error: 'TrackReserved'; track: Uuid }
   | { error: 'TrackLocked'; track: Uuid }
   // ── Ripple delete (docs/features.md#ripple-delete). A ripple closes the span
   // a deletion vacated, so every refusal below is about the span — `hole` is
@@ -201,7 +205,7 @@ export type CommandError =
   // Ungroup refuses a Group layer whose transform / opacity / effects are not the
   // identity: expanding would discard them silently. `reason` names the first
   // non-plain field so the caller can clear it or keep the Group.
-  | { error: 'GroupNotPlain'; layer: Uuid; reason: 'transform' | 'opacity' | 'effects' | 'blend_mode' }
+  | { error: 'GroupNotPlain'; layer: Uuid; reason: 'transform' | 'opacity' | 'effects' }
   // `compositions_delete` on a composition some Group layer still references.
   | { error: 'CompositionInUse'; composition: Uuid; ref_count: number }
   // The root is never renamed or deleted: it has no name in the UI and export

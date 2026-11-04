@@ -1,7 +1,5 @@
 // apps/desktop/src/main/state/__tests__/add-motif.test.ts
 // add_motif as a pure TS recorded mutation.
-import { MCP_TOOL_DEFS } from '../mcp-commands'
-import { BUILTIN_IDS } from '../../../shared/motifs/catalog'
 import { describe, it, expect } from 'vitest'
 import { routeChannel } from '../router'
 import { routeMcpTool } from '../../mcp/mutationTools'
@@ -25,8 +23,8 @@ describe('add_motif routing', () => {
     expect(routeChannel('add_motif').kind).toBe('command')
   })
 
-  it('routeMcpTool("add_motif_layer") → "ts"', () => {
-    expect(routeMcpTool('add_motif_layer')).toBe('ts')
+  it('routeMcpTool("add_layers") → "ts"', () => {
+    expect(routeMcpTool('add_layers')).toBe('ts')
   })
 })
 
@@ -169,27 +167,13 @@ describe('actor.command("add_motif") — reject-before-commit', () => {
 })
 
 // ── d. MCP path ───────────────────────────────────────────────────────────────
-describe('add_motif_layer description', () => {
-  it('names example ids that exist, pinned to the built-ins', () => {
-    const def = MCP_TOOL_DEFS.find((d) => d.name === 'add_motif_layer')!
-    const desc = ((def.inputSchema as { properties: { motif_id: { description: string } } }).properties.motif_id.description)
-    const quoted = [...desc.matchAll(/"([a-z0-9-]+)"/g)].map((m) => m[1])
-    expect(quoted.length).toBeGreaterThan(0)
-    for (const id of quoted) expect(BUILTIN_IDS, id).toContain(id)
-  })
-})
-
-describe('actor.mcpCall("add_motif_layer") — MCP dedicated arm', () => {
+describe('actor.mcpCall("add_layers") — kind motif', () => {
   it('creates a Motif layer via MCP and returns its record', () => {
     const actor = makeActor()
-    const result = actor.mcpCall('add_motif_layer', JSON.stringify({
-      motif_id: 'countdown',
-      t_start_us: 0,
-    }))
+    const result = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'motif', motif_id: 'countdown' } }] }))
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    const record = JSON.parse(result.result.content[0]!.text) as { layer_id: string; kind: string }
-    expect(record.kind).toBe('Motif')
+    const record = (JSON.parse(result.result.content[0]!.text) as { layers: Array<{ layer_id: string }> }).layers[0]!
     const text = record.layer_id
     expect(typeof text).toBe('string')
     expect(text.length).toBeGreaterThan(0)
@@ -209,10 +193,7 @@ describe('actor.mcpCall("add_motif_layer") — MCP dedicated arm', () => {
 
   it('MCP bad motif_id → ok:false invalid_params', () => {
     const actor = makeActor()
-    const result = actor.mcpCall('add_motif_layer', JSON.stringify({
-      motif_id: 'no-such-motif',
-      t_start_us: 0,
-    }))
+    const result = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'motif', motif_id: 'no-such-motif' } }] }))
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.error.code).toBe('invalid_params')
@@ -221,11 +202,7 @@ describe('actor.mcpCall("add_motif_layer") — MCP dedicated arm', () => {
   it('MCP bad props → ok:false invalid_params, no commit', () => {
     const actor = makeActor()
     const snapBefore = actor.snapshot()
-    const result = actor.mcpCall('add_motif_layer', JSON.stringify({
-      motif_id: 'countdown',
-      t_start_us: 0,
-      props: { badKey: 'oops' },
-    }))
+    const result = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'motif', motif_id: 'countdown', props: { badKey: 'oops' } } }] }))
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.error.code).toBe('invalid_params')
@@ -235,7 +212,7 @@ describe('actor.mcpCall("add_motif_layer") — MCP dedicated arm', () => {
 
   it('MCP missing motif_id → rejects (required field)', () => {
     const actor = makeActor()
-    const result = actor.mcpCall('add_motif_layer', JSON.stringify({ t_start_us: 0 }))
+    const result = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ t_start_us: 0, t_end_us: 2_000_000, content: { kind: 'motif' } }] }))
     expect(result.ok).toBe(false)
   })
 
@@ -245,11 +222,7 @@ describe('actor.mcpCall("add_motif_layer") — MCP dedicated arm', () => {
     const trackId = trackResult.ok ? trackResult.value as string : ''
     const trackCountBefore = root(actor.snapshot()).tracks.length
 
-    const result = actor.mcpCall('add_motif_layer', JSON.stringify({
-      motif_id: 'countdown',
-      t_start_us: 0,
-      track_id: trackId,
-    }))
+    const result = actor.mcpCall('add_layers', JSON.stringify({ layers: [{ t_start_us: 0, t_end_us: 2_000_000, track_id: trackId, content: { kind: 'motif', motif_id: 'countdown' } }] }))
     expect(result.ok).toBe(true)
     expect(root(actor.snapshot()).tracks.length).toBe(trackCountBefore)
   })

@@ -1,4 +1,5 @@
 // apps/desktop/src/main/state/ts-actor-host.ts
+import { resolve as resolvePath } from 'node:path'
 import { createActor, type ActorHandle, type ChangeEvent } from './actor'
 import type { EntityRef } from './history'
 import { uuidV7Gen } from './ids'
@@ -17,7 +18,8 @@ import { runTackIpc } from '../agent/tackIpc'
 import { mcpActor } from './mcp-actor'
 import { AGENT_VIEW_EVENT } from '../../shared/agent-activity'
 import { PROJECT_OPENED_EVENT, type ProjectOpenedPayload } from '../../shared/project-events'
-import type { ProjectVersion, ProjectPublication, PublishedResult } from '../../shared/projectPublication'
+import { PUBLICATION_BASE_ARG, type ProjectVersion, type ProjectPublication, type PublishedResult } from '../../shared/projectPublication'
+import { createPublicationAnswers } from './publicationAnswers'
 import { REVIEW_CHANGED_EVENT, type ReviewActivityArgs, type ReviewActivityView, type ReviewActionArgs, type ReviewActionResult, type ReviewChangedPayload, type ReviewVersion, type ReviewView, type ReviewViewArgs, type ReviewViewUnchanged } from '../../shared/review'
 import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
 import { recoverInterruptedImports } from './importRecovery'
@@ -53,10 +55,9 @@ export interface TsActorHostDeps {
   onWorkspaceOpened?: () => void
   /** mainWindow.webContents.send('evt:'+event, payload) */
   send: (event: string, payload: unknown) => void
-  /** mcpHost.notifyChange(payload) — the mcp:change relay. */
-  mcpNotify: (payload: unknown) => void
   /** notifications/resources/list_changed to every MCP session: the pool's
-   *  files or their names changed, and with them the `media://{id}` list. */
+   *  files or their names changed, and with them the `media://{id}` list; or a
+   *  Motif publication was proposed, approved or rejected (`motifs://current`). */
   mcpResourcesChanged?: () => void
   /** fs.existsSync, for buildProjectSummary's media-availability checks. */
   fileExists: (absPath: string) => boolean
@@ -72,7 +73,7 @@ export interface TsActorHostDeps {
   /** Rust compute facade for the native-compute → TS-write hybrids. */
   compute: ComputeNapi
   /** Queue the background workspace-copy job (Backend.enqueueWorkspaceCopy). */
-  enqueueWorkspaceCopy: (mediaId: string, sourcePath: string) => Promise<void>
+  enqueueWorkspaceCopy: (mediaId: string, sourcePath: string) => Promise<string | null | void>
   /** node:fs readFile (utf8) — for the subtitle hybrid. */
   readFile: (p: string) => string
   /** node:fs stat folded to `PathFacts` — `import_media` refuses on it before any write. */
@@ -154,7 +155,9 @@ export interface ProjectStatus {
 
 /** What an agent's open / create answers: the project now open, and the one
  *  it replaced (flushed to disk first), if any. */
-export interface ProjectOpened { name: string; dir: string; replaced: string | null }
+/** `already_open`: `open_project` named the folder already open, so nothing
+ *  was flushed or reloaded and the undo history stands. */
+export interface ProjectOpened { name: string; dir: string; replaced: string | null; already_open?: boolean }
 
 export interface TsActorHost {
   exportJobs?: import("../exportJobs").ExportJobs
@@ -221,10 +224,9 @@ export interface TsActorHost {
   stop: () => void
 }
 
-/** Mints the `project:changed` wire payload — the shape the renderer event and
- *  the `notifications/weftcut/change` relay both see. `affected` carries the
- *  refs themselves: an agent watching the feed decides from the ids whether an
- *  edit touched its own work, which a count cannot tell it. */
+/** Mints the `project:changed` wire payload the renderer reads. `affected`
+ *  carries the refs themselves, so a reader decides from the ids whether an
+ *  edit touched what it shows, which a count cannot tell it. */
 export function mapChangeEvent(e: ChangeEvent): { op_id: string; actor_kind: 'user' | 'agent'; client: string | null; summary: string; timestamp: string; affected: EntityRef[] } {
   const actor_kind = e.actor.kind === 'Agent' ? 'agent' : 'user'
   const client = e.actor.kind === 'Agent' ? e.actor.client : null
@@ -528,13 +530,24 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     },
   }
 
+  /** Two spellings of one folder: resolved (`.`/`..`, trailing separators),
+   *  then through the real path (symlinks, and on Windows and macOS the
+   *  on-disk case) when the host can read it. */
+  const sameFolder = (a: string, b: string): boolean => {
+    const norm = (p: string) => resolvePath(deps.realPath ? deps.realPath(p) : p)
+    return norm(a) === norm(b)
+  }
   const agentProjects: TsActorHost['projects'] = {
     shuttingDown: () => quitting,
     open: async (dir) => {
       const replaced = opened?.dir ?? null
+      // The folder already open is not reopened: a reload would flush and
+      // drop the undo history, checkpoints, tacks and the work session of the
+      // very project the caller wanted open.
+      if (replaced !== null && sameFolder(replaced, dir)) return { name: actor.snapshot().metadata.name, dir: replaced, replaced: null, already_open: true }
       await persistence.open(dir)
       deps.send(PROJECT_OPENED_EVENT, { dir } satisfies ProjectOpenedPayload)
-      return { name: actor.snapshot().metadata.name, dir, replaced }
+      return { name: actor.snapshot().metadata.name, dir, replaced, already_open: false }
     },
     create: async (a) => {
       const replaced = opened?.dir ?? null
@@ -555,7 +568,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   }
 
   function runMotif(name: string, args: Record<string, unknown>): unknown {
-    if (!["list_motifs", "read_motif", "read_file_transfer", "motif_staleness_report"].includes(name)) deps.exportJobs?.assertWritable()
+    if (!["list_motifs", "read_motif", "list_motif_proposals", "motif_staleness_report"].includes(name)) deps.exportJobs?.assertWritable()
     if (!deps.motifStore) throw new Error('motifTool: motifStore not configured')
     const motifToolDeps: MotifToolDeps = {
       store: deps.motifStore,
@@ -571,6 +584,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       dispatchRebind: (updates: MotifRebindEntry[]) => { const r = actor.dispatch('rebind_motif', { updates }); if (!r.ok) throw new Error(JSON.stringify(r.error)) },
       emitChanged: () => deps.send('motifs:changed', {}),
       refreshCatalog: () => refreshMotifCatalog(),
+      notifyAgents: () => deps.mcpResourcesChanged?.(),
       emitLog: (entry) => { try { deps.emitLog?.(entry) } catch (err) { console.warn('[ts-actor-host] emitLog failed (motif)', err) } },
     }
     return runMotifTool(name, args, motifToolDeps)
@@ -604,8 +618,6 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       replacementOccurred ||= e.replaced === true
       deferredChange = { event: e, traceId }
     } else publishChange(e, traceId, e.replaced === true)
-    // MCP retains its existing public notification schema.
-    if (emitting) deps.mcpNotify(mapChangeEvent(e))
     const listed = mediaListKey(actor.snapshot().media_pool)
     if (listed !== listedMedia) {
       listedMedia = listed
@@ -617,6 +629,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     return { version: { ...publicationVersion }, summary: publishedProject === null ? null
       : summaryOf(publishedProject, publishedHistory) }
   }
+
+  const answerPublication = createPublicationAnswers<ReturnType<typeof buildProjectSummary>>()
 
   async function published<T>(run: () => Promise<T>): Promise<PublishedResult<T>> {
     const before = publicationVersion.revision
@@ -767,7 +781,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   }
 
   async function handleInvoke(channel: string, args: Record<string, unknown>): Promise<unknown> {
-    if (channel === 'project_publication') return runEditTrace(editTraceId(args[EDIT_TRACE_ARG]), 'main.summary', publication)
+    if (channel === 'project_publication') return runEditTrace(editTraceId(args[EDIT_TRACE_ARG]), 'main.summary',
+      () => answerPublication(publication(), (args[PUBLICATION_BASE_ARG] as number | undefined) ?? null))
     if (channel === 'agent_activity_snapshot') return agent.snapshot()
     if (channel === 'agent_session_get') return agent.snapshot().session
     if (channel === 'agent_unlock_history') { agent.unlock(); return null }

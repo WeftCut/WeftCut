@@ -79,9 +79,12 @@ pub async fn extract_tile(
 
     // scale=-2:256 keeps aspect at the canonical tile height. Same ffmpeg
     // single-frame-extract incantation as jobs/frame.rs.
-    let _resources = crate::resources::interactive(128)
-        .await
-        .map_err(anyhow::Error::msg)?;
+    let _resources = crate::resources::held_by(
+        crate::resources::Holder::new("filmstrip"),
+        crate::resources::interactive(128),
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
     let output = crate::ffmpeg::command(Bound::Timeout(crate::ffmpeg::FRAME_TIMEOUT))
         .args([
             "-y",

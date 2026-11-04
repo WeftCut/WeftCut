@@ -382,12 +382,12 @@ function ClipContentDescription({ layer, mediaId, srcInUs, srcOutUs, fpsNum, fps
           <div className="shots-clip-detail-list">
             {overlapping.map((segment) => {
               // A segment straddling the in-point starts where the clip does.
-              const tUs = sourceToTimelineUs(layer, Math.max(segment.t_start_us, srcInUs));
+              const tUs = sourceToTimelineUs(layer, Math.max(segment.src_start_us, srcInUs));
               const timecode = formatTimecode(tUs, fpsNum, fpsDen);
               return (
                 <p
                   className="shots-clip-detail"
-                  key={`${segment.t_start_us}-${segment.t_end_us}`}
+                  key={`${segment.src_start_us}-${segment.src_end_us}`}
                   // The tags stay one hover away: the rows already show theirs
                   // as chips, and a chip row per line is what made a long
                   // list unreadable.
@@ -468,7 +468,7 @@ function ShotDescriptionCell({
         overlapping.map((segment) => (
           <p
             className="shots-description-span"
-            key={`${segment.t_start_us}-${segment.t_end_us}`}
+            key={`${segment.src_start_us}-${segment.src_end_us}`}
           >
             <span className="shots-description-text">{segment.text}</span>
             {segment.tags.map((tag) => (

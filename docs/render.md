@@ -29,16 +29,6 @@ Motif capture and caching: [`motifs.md`](motifs.md).
   analytically antialiased coverage; export runs the same filter. Preview
   reads the in-progress draft from `cropEditingStore`.
 
-## Highlights
-
-The Highlights effect uses a percentage for adjustment strength, not a
-guaranteed change in pixel brightness. Negative values compress bright tones, positive values
-brighten them, and 0 is neutral. A smooth transition protects darker tones,
-including at -100. RGB scales together until SDR gamut clipping; alpha is kept.
-This custom SDR tone curve is not a match for another editor's private formula
-and cannot recover detail clipped during recording. Both graphics backends
-share the same curve; the source and parity tests specify its calibration.
-
 ## Directory layout
 
 ```
@@ -435,13 +425,28 @@ duplicated — concurrent probes contend for the decoder pool and false-negative
 
 ### Encode exits
 
-`resolveEncodeTarget` (`encodeTarget.ts`) returns `NativeTarget { pixFmt }` or
-`WebCodecsTarget { workerCodec }`. `auto` (default) always resolves native.
-WebCodecs is reached only by an explicit pin on an 8-bit H.264/HEVC/AV1
-export; the dialog disables conflicting combinations and `mergeSettings`
-snaps a stale saved combo back to `auto`. If the native sink fails to start
-under `auto` for an 8-bit non-intermediate, the user is offered a WebCodecs
-retry; every other failure is a hard error. The engine never swaps silently.
+`resolveEncodeTarget` (`encodeTarget.ts`) returns `NativeTarget { pixFmt }`,
+`WebCodecsTarget { workerCodec }`, or `unavailable`, from the settings and the
+host's WebGL verdict (`rendererCapability.ts`). `auto` (default) resolves
+native wherever WebGL exists; without it, WebCodecs for an 8-bit
+H.264/HEVC/AV1 bitrate export, and `unavailable` (the export refuses before
+any wait, naming `encoder_engine`) for everything else. A `webcodecs` pin is
+WebCodecs on an 8-bit H.264/HEVC/AV1 export; the dialog disables conflicting
+combinations and `mergeSettings` snaps a stale saved combo back to `auto`. If
+the native sink fails to start under `auto` for an 8-bit non-intermediate,
+the user is offered a WebCodecs retry; every other failure is a hard error.
+The engine is chosen before the run and never swaps silently. Without WebGL,
+native decode counts as unavailable too (its ingest passes are GL), so `auto`
+keeps every source on WebCodecs.
+
+**Renderer capability.** Preview, stills and the WebCodecs exit composite with
+whatever Pixi picked when preferring WebGPU: WebGPU, WebGL, or the 2D-canvas
+renderer, which skips every filter (effects, crop) and has no mesh pipe
+(transitions). `rendererCapability()` asks Pixi's own detectors once;
+`drawNeeds` lists the features a span holds and `cannotDraw` turns a gap into
+`RendererCannotDraw`. `render_frames` and export refuse such spans before
+drawing; the Worker re-checks with the renderer it actually got; the preview
+shows a quiet status note while one is in view.
 
 **Native (default).** The Worker forces WebGL2 (the pack shaders need GL; the
 WebCodecs exit prefers WebGPU). A GPU pack pass — `PackYuvPlanar` for
@@ -463,7 +468,7 @@ uploads planes as `rg8unorm` and unpacks into the f16 target. Copies share the
 The lane is labelled **experimental** and confirmed on click: preview stays
 8-bit SDR and the path runs below realtime (ADR 0022).
 
-**WebCodecs (pin only).** `VideoEncoder` encodes the canvas frames
+**WebCodecs (a pin, or `auto` without WebGL).** `VideoEncoder` encodes the canvas frames
 (`timestamp = tUs − startUs`, backpressure at `encodeQueueSize > 8`) and
 mediabunny writes fMP4 slices over the same chunk loop. Color tags are the
 encoder's defaults.

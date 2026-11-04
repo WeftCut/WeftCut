@@ -63,11 +63,20 @@ export function automaticDiskCacheMiB(diskMiB?: number): number {
   if (diskMiB === undefined || !Number.isFinite(diskMiB)) return AUTOMATIC_DISK_RANGE.min;
   return Math.max(AUTOMATIC_DISK_RANGE.min, Math.min(AUTOMATIC_DISK_RANGE.max, Math.floor(diskMiB * .1 / 256) * 256));
 }
+/** The share of the memory target admitted work may hold (`work_mib`). */
+export const WORK_FRACTION = .4;
+/** The smallest memory target, in the 256-MiB steps automatic targets use,
+ *  whose working allowance admits a claim of `workMiB`. */
+export function memoryTargetForWork(workMiB: number): number {
+  let target = Math.ceil(workMiB / WORK_FRACTION / 256) * 256;
+  while (Math.floor(target * WORK_FRACTION) < workMiB) target += 256;
+  return Math.min(RESOURCE_MEMORY_RANGE.max, Math.max(RESOURCE_MEMORY_RANGE.min, target));
+}
 export function resolveResourcePolicy(policy: ResourcePolicy, memoryMiB = 8192, cores = 4, diskMiB?: number): ResourceAllocation {
   const memory = policy.memory_mib ?? Math.max(1024, Math.min(32768, Math.floor(memoryMiB * .35 / 256) * 256));
   const fraction = { low: .25, balanced: .5, high: .85 }[policy.processing];
   const cpu = Math.max(1, Math.floor(Math.max(1, cores) * fraction));
-  return Object.freeze({ memory_mib: memory, cache_mib: Math.floor(memory * .25), work_mib: Math.floor(memory * .4),
+  return Object.freeze({ memory_mib: memory, cache_mib: Math.floor(memory * .25), work_mib: Math.floor(memory * WORK_FRACTION),
     export_mib: Math.max(64, Math.floor(memory * .125)),
     cpu_threads: cpu, task_threads: Math.max(1, Math.min(4, Math.floor(cpu / 2))),
     background_jobs: Math.max(1, Math.min(8, Math.floor(cpu / 2))),
@@ -82,7 +91,13 @@ export function hydrateResourceAllocation(value?: ResourceAllocation): void { ma
 export function setRendererResourceShare(count: number): void { rendererShare = Math.max(1, count); }
 export function rendererResourceShare(): number { return rendererShare; }
 
+/** One holder's share of the working budget, from the native ledger
+ *  (`resources::HolderUse`): the work's kind (a derivative job's name,
+ *  `export`, `editor`, `model`, …) and the media it works on. */
+export interface ResourceHolder { kind: string; media_id?: string; mib: number; threads: number }
 export interface ResourceStatus {
+  /** What holds the reserved budget, largest first. */
+  holders?: ResourceHolder[];
   memory_mib: number | null;
   /** Host RAM available for use, including reclaimable pages. */
   available_memory_mib?: number;

@@ -46,7 +46,7 @@ describe('MCP client attribution', () => {
   it('a table-exec mutation records as the calling agent, not the instance User', async () => {
     const ts = host()
     const track = root(ts.actor.snapshot()).tracks[0].id
-    await handleCallTool(backend, () => ts, 'add_color_layer', { track_id: track, color: { r: 0, g: 0, b: 0, a: 255 }, t_start_us: 0, t_end_us: 1_000_000 }, undefined, undefined, undefined, CLIENT)
+    await handleCallTool(backend, () => ts, 'add_layers', { layers: [{ track_id: track, t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'color', color: { r: 0, g: 0, b: 0, a: 255 } } }] }, undefined, undefined, undefined, CLIENT)
     expect(lastOp(ts).actor).toEqual(AGENT)
   })
 
@@ -82,7 +82,7 @@ describe('MCP client attribution', () => {
   it("the host's checkpoint and restore pin-rows name the client", () => {
     const emitLog = vi.fn()
     const deps = {
-      send: () => {}, mcpNotify: () => {}, fileExists: () => false,
+      send: () => {}, fileExists: () => false,
       fs: { exists: () => false, readFile: () => '', writeFile: () => {}, mkdirp: () => {}, copyFile: () => {}, readdir: () => [], rm: () => {} },
       join: (...p: string[]) => p.join('/'),
       napi: { commitWorkspace: async () => {}, pushRecent: () => {}, setLastNewProjectParent: () => {}, enqueueJobsForMedia: async () => {} },

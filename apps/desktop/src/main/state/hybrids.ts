@@ -12,10 +12,11 @@ import type { TimingFields } from '../../shared/timeMapping'
 // per hybrid tool.
 import type { AudioParams, Composition, Layer, MediaItem, Rgba, VideoClipParams } from './model'
 import { eachLayer, rootComposition } from './model'
-import { McpArgError, mcpDef } from './mcp-commands'
+import { McpArgError, mcpDef, parseReviewedPauses } from './mcp-commands'
 import type { Cue } from './mutations/captions'
 import { scopeComposition } from './mutations/helpers'
 import { parseDiscardSegments } from './mutations/split'
+import { splitSiblings } from './mcp-results'
 import type { MediaImportDeps } from './mediaImport'
 import { playsNoSoundError, resolvePauseSubject } from './pauseSubject'
 import { snapFrameRound } from './snap'
@@ -75,7 +76,7 @@ export interface ComputeNapi {
    *
    *  Optional like the shot entries above: a build without it wired refuses
    *  with an actionable error rather than marking nothing. */
-  detectPauses?(args: { layer_id: string; threshold_amp?: number; min_pause_us?: number }): Promise<DetectPausesResult>
+  detectPauses?(args: { layer_id: string; threshold_db?: number; min_pause_us?: number }): Promise<DetectPausesResult>
 }
 
 /** One pause in the layer's OWN composition clock. Mirrors native `PauseRegion`
@@ -90,13 +91,13 @@ export type PeaksSource = 'raw' | 'fx'
 
 /** `detect_pauses`' answer. Mirrors native `DetectPausesResult` serde.
  *
- *  `noise_floor_amp` is the 10th percentile of the folded peaks inside the
- *  subject's source window (0 when the window holds none) — it rides along
- *  with the walk that already touched every peak, and it is what gives the
- *  threshold control a referent. */
+ *  `noise_floor_db` is the 10th percentile of the folded peaks inside the
+ *  subject's source window, dBFS (null when the window holds none, or only
+ *  digital silence) — it rides along with the walk that already touched every
+ *  peak, and it is what gives the threshold control a referent. */
 export interface DetectPausesResult {
   pauses: PauseRegion[]
-  noise_floor_amp: number
+  noise_floor_db: number | null
   peaks_source: PeaksSource
 }
 
@@ -116,19 +117,17 @@ export type HybridDeps = MediaImportDeps & {
 
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-/** Return the id of the topmost (last) track, or create a new "Voiceover"
- *  track and return its id. "Topmost" = last in the `tracks` array. */
-function ensureAudioTrack(deps: HybridDeps): string {
-  const root = rootComposition(deps.actor.snapshot())
-  if (root.tracks.length > 0) {
-    return root.tracks[root.tracks.length - 1].id
+/** Where a voiceover lands when no track is named: the topmost unlocked
+ *  track of `composition` whose audio lane is free across `[t_start, t_end)`,
+ *  or null for "open a new 'Voiceover' track". Every track has an audio lane,
+ *  so "the first Audio track" was never a rule. */
+export function voiceoverLane(composition: Composition, tStart: number, tEnd: number): string | null {
+  for (const track of [...composition.tracks].reverse()) {
+    if (track.locked) continue
+    const busy = track.layers.some((l) => l.params.kind === 'Audio' && l.t_start_us < tEnd && tStart < l.t_end_us)
+    if (!busy) return track.id
   }
-  // No tracks at all — create a "Voiceover" track. Pathological-only branch:
-  // production projects always carry the reserved, non-removable A/B-roll tracks,
-  // so a zero-track project is unconstructable through the validated actor.
-  const r = deps.actor.dispatch('add_track', { label: 'Voiceover' })
-  if (!r.ok) throw new Error(JSON.stringify(r.error))
-  return r.value as string
+  return null
 }
 
 /** apply_subtitles: read a `Subtitle` pool item's document, parse it in Rust
@@ -489,7 +488,7 @@ export const PAUSE_MARKER_COLOR: Rgba = { r: 230, g: 160, b: 40, a: 255 }
  *  No dispatch at all when nothing was found at the threshold — an empty answer
  *  writes no history entry, so re-tuning and re-running costs no undo steps. */
 export async function markPauses(
-  spec: { layer_id: string; threshold_amp?: number; min_pause_us?: number },
+  spec: { layer_id: string; threshold_db?: number; min_pause_us?: number },
   deps: HybridDeps,
 ): Promise<string[]> {
   const detect = deps.compute.detectPauses
@@ -497,7 +496,7 @@ export async function markPauses(
   const { subject, params, composition } = resolvePauseTarget(spec.layer_id, deps, 'mark pauses')
   const { pauses } = await detect({
     layer_id: subject.id,
-    ...(spec.threshold_amp === undefined ? {} : { threshold_amp: spec.threshold_amp }),
+    ...(spec.threshold_db === undefined ? {} : { threshold_db: spec.threshold_db }),
     ...(spec.min_pause_us === undefined ? {} : { min_pause_us: spec.min_pause_us }),
   })
   if (pauses.length === 0) return []
@@ -635,6 +634,26 @@ function refusePadArgs(padUs: number, minPauseUs: number | undefined): void {
     refuseArg('pad_us', `pad_us ${padUs} keeps ${2 * padUs}µs of every pause, which is not less than min_pause_us ${minPauseUs} — nothing would be cut`)
 }
 
+/** A reviewed pause list (`remove_pauses { pauses }`) as the cut takes it:
+ *  sorted, each inside the subject's span, none overlapping another, and each
+ *  long enough that its pad leaves a core to cut. Refused whole otherwise —
+ *  a reviewed range that would be dropped is a cut the user approved and did
+ *  not get, which no answer may report as done. */
+export function reviewedPauses(pauses: readonly PauseRegion[], padUs: number, subject: Pick<Layer, 't_start_us' | 't_end_us'>): PauseRegion[] {
+  const sorted = [...pauses].sort((a, b) => a.t_start_us - b.t_start_us)
+  for (const [i, p] of sorted.entries()) {
+    if (p.t_start_us < subject.t_start_us || p.t_end_us > subject.t_end_us)
+      refuseArg('pauses', `pause [${p.t_start_us}, ${p.t_end_us}) lies outside the clip [${subject.t_start_us}, ${subject.t_end_us}) — pass detect_pauses ranges for this layer`)
+    const prev = sorted[i - 1]
+    if (prev && p.t_start_us < prev.t_end_us)
+      refuseArg('pauses', `pauses [${prev.t_start_us}, ${prev.t_end_us}) and [${p.t_start_us}, ${p.t_end_us}) overlap`)
+    const kept = (p.t_start_us > subject.t_start_us ? padUs : 0) + (p.t_end_us < subject.t_end_us ? padUs : 0)
+    if (p.t_end_us - p.t_start_us <= kept)
+      refuseArg('pauses', `pause [${p.t_start_us}, ${p.t_end_us}) is not longer than the ${kept}µs its pad keeps, so nothing of it would be cut — lower pad_us or drop it`)
+  }
+  return sorted
+}
+
 /** Detect one clip's pauses and CUT the CORE of each out, closing the gap
  *  behind itself, in ONE commit. The other verb over `markPauses`' detection:
  *  same compute, same `waiting_waveform` contract, and the same "no dispatch
@@ -685,24 +704,28 @@ function refusePadArgs(padUs: number, minPauseUs: number | undefined): void {
  *  back — the clip comes out UNSPLIT, with nothing recorded — so a refusal is
  *  something to fix and re-run, never a half-cut clip to clean up. */
 export async function removePauses(
-  spec: { layer_id: string; threshold_amp?: number; min_pause_us?: number; pad_us?: number },
+  spec: { layer_id: string; threshold_db?: number; min_pause_us?: number; pad_us?: number; pauses?: PauseRegion[] },
   deps: HybridDeps,
 ): Promise<RemovePausesResult> {
-  const detect = deps.compute.detectPauses
-  if (!detect) throw new Error('remove pauses: pause detection is not available in this build')
   const padUs = spec.pad_us ?? DEFAULT_PAUSE_PAD_US
   refusePadArgs(padUs, spec.min_pause_us)
   const { subject, composition } = resolvePauseTarget(spec.layer_id, deps, 'remove pauses')
-  const { pauses } = await detect({
-    layer_id: subject.id,
-    ...(spec.threshold_amp === undefined ? {} : { threshold_amp: spec.threshold_amp }),
-    ...(spec.min_pause_us === undefined ? {} : { min_pause_us: spec.min_pause_us }),
-  })
-  // Zero-length ranges are filtered rather than trusted: they name no segment to
-  // discard, so a set of nothing but those would dispatch a split that threw
-  // nothing away — an undo entry for an edit the user cannot see. The pad shrink
-  // then drops anything else that leaves nothing to cut.
-  const spans = pauses.filter((r) => r.t_end_us > r.t_start_us)
+  let spans: PauseRegion[]
+  if (spec.pauses) spans = reviewedPauses(spec.pauses, padUs, subject)
+  else {
+    const detect = deps.compute.detectPauses
+    if (!detect) throw new Error('remove pauses: pause detection is not available in this build')
+    const { pauses } = await detect({
+      layer_id: subject.id,
+      ...(spec.threshold_db === undefined ? {} : { threshold_db: spec.threshold_db }),
+      ...(spec.min_pause_us === undefined ? {} : { min_pause_us: spec.min_pause_us }),
+    })
+    // Zero-length ranges are filtered rather than trusted: they name no segment to
+    // discard, so a set of nothing but those would dispatch a split that threw
+    // nothing away — an undo entry for an edit the user cannot see. The pad shrink
+    // then drops anything else that leaves nothing to cut.
+    spans = pauses.filter((r) => r.t_end_us > r.t_start_us)
+  }
   const cores = cutGridCores(pauseCores(spans, padUs, subject), subject, composition)
   if (cores.length === 0) return removedNothing(subject.id)
 
@@ -771,46 +794,47 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       // timeline, which passes the drop time as `t_start_us`.
       return applySubtitles(args, deps)
     case 'synthesize_speech': {
-      // The TS host applies the WRITES: add_media_item + enqueueDerivatives +
-      // resolve track + add Audio layer (voiceover role, single commit).
+      // Atomic: a named track outside the composition refuses before the paid
+      // synthesis, and a placement the actor still refuses (an overlap) takes
+      // the new pool row back out, so no refusal leaves an orphan voiceover in
+      // the pool (M16).
+      const composition = scopeComposition(deps.actor.snapshot(), (args.composition_id as string | undefined) ?? null)
+      if (args.target_track_id !== undefined && !composition.tracks.some((t) => t.id === args.target_track_id))
+        refuseArg('target_track_id', `track ${String(args.target_track_id)} is not in ${args.composition_id ? `composition ${String(args.composition_id)}` : 'the root composition'}`)
       const { media_item, duration_us, cached } = JSON.parse(
         await deps.compute.synthesizeSpeechCompute(JSON.stringify(args)),
       ) as { media_item: { id: string }; duration_us: number; cached: boolean }
+      const tStart = (args.t_start_us as number | undefined) ?? composition.duration_us
+      const tEnd = tStart + duration_us
+      const named = args.target_track_id as string | undefined
+      const trackId = named ?? voiceoverLane(composition, tStart, tEnd) ?? null
 
       const addR = deps.actor.dispatch('add_media_item', { media: media_item })
       if (!addR.ok) throw new Error(JSON.stringify(addR.error))
-
-      await deps.enqueueDerivatives([media_item])
-
-      const tStart = (args.t_start_us as number | undefined) ?? deps.snapshotComposition().duration_us
-      const tEnd = tStart + duration_us
-
-      const trackId = (args.target_track_id as string | undefined) ?? ensureAudioTrack(deps)
-
+      const undoPool = () => { deps.actor.dispatch('remove_media', { media: media_item.id, force: false }) }
+      let lane = trackId
+      if (lane === null) {
+        const r = deps.actor.dispatch('add_track', { label: 'Voiceover', composition_id: composition.id })
+        if (!r.ok) { undoPool(); throw new Error(JSON.stringify(r.error)) }
+        lane = r.value as string
+      }
       // ONE add_layer carrying role:'voiceover' — the 'audio' arm accepts the
-      // optional `role` override (actor.ts), so no separate update_layer_params
-      // commit and the whole synthesis is a single history entry.
+      // optional `role` override (actor.ts), so no separate update_layer_params.
       const layerR = deps.actor.dispatch('add_layer', {
-        kind: 'audio',
-        track: trackId,
-        media: media_item.id,
-        src_in_us: 0,
-        src_out_us: duration_us,
-        role: 'voiceover',
-        t_start_us: tStart,
-        t_end_us: tEnd,
+        kind: 'audio', track: lane, media: media_item.id, src_in_us: 0, src_out_us: duration_us,
+        role: 'voiceover', t_start_us: tStart, t_end_us: tEnd,
       })
-      if (!layerR.ok) throw new Error(JSON.stringify(layerR.error))
-      const layerId = layerR.value as string
-
+      if (!layerR.ok) { undoPool(); throw new Error(JSON.stringify(layerR.error)) }
+      await deps.enqueueDerivatives([media_item])
       // Return a JSON STRING, never the object — runHybrid's result contract.
-      return JSON.stringify({ layer_id: layerId, media_id: media_item.id, t_start_us: tStart, t_end_us: tEnd, cached })
+      return JSON.stringify({ layer_id: layerR.value as string, media_id: media_item.id, track_id: lane, t_start_us: tStart, t_end_us: tEnd, cached })
     }
     case 'auto_split_by_shot': {
       // Convenience composite (reproducible with analyze_clip + split_layer):
       // the detector's boundaries for this layer, split in ONE commit
       // (split_layer_multi → single undo). Returns a JSON STRING
-      // `{ layer_ids }` — the new segment ids in timeline order.
+      // `{ layer_ids, siblings }` — the new segment ids in timeline order, and
+      // each link partner the split cut with its own (`splitSiblings`).
       const layerId = args.layer_id
       if (typeof layerId !== 'string' || layerId.length === 0)
         throw new Error('auto_split_by_shot: layer_id is required')
@@ -819,8 +843,9 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       // part of the SAME commit — so drop + split are one undo. The tool's own
       // argument is a boolean, so the length it resolves to is decided here.
       const dropShortUs = args.drop_short === true ? (minShotUs ?? shotDefaults(deps).min_shot_us) : undefined
+      const before = deps.actor.snapshot()
       const layerIds = await splitByShotCuts({ layer_id: layerId, min_shot_us: minShotUs, drop_short_us: dropShortUs }, deps)
-      return JSON.stringify({ layer_ids: layerIds })
+      return JSON.stringify({ layer_ids: layerIds, siblings: splitSiblings(before, deps.actor.snapshot(), layerId, layerIds) })
     }
     case 'drop_shot_markers': {
       // The zero-argument marker entry: apply_shot_cuts in 'mark' mode at the
@@ -854,7 +879,7 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       // would be free to disagree with the one an omitted parameter resolves to.
       const ids = await markPauses({
         layer_id: layerId,
-        ...(typeof args.threshold_amp === 'number' ? { threshold_amp: args.threshold_amp } : {}),
+        ...(typeof args.threshold_db === 'number' ? { threshold_db: args.threshold_db } : {}),
         ...(typeof args.min_pause_us === 'number' ? { min_pause_us: args.min_pause_us } : {}),
       }, deps)
       return { markers: ids.length, marker_ids: ids }
@@ -869,11 +894,13 @@ export async function runHybrid(tool: string, args: Record<string, unknown>, dep
       // Detection parameters left UNDEFINED for `mark_pauses`' reason. `pad_us`
       // is the exception and not an inconsistency: Rust never sees a pad, so
       // `DEFAULT_PAUSE_PAD_US` is the only statement of it there is.
+      const reviewed = parseReviewedPauses(args)
       const removed = await removePauses({
         layer_id: layerId,
-        ...(typeof args.threshold_amp === 'number' ? { threshold_amp: args.threshold_amp } : {}),
+        ...(typeof args.threshold_db === 'number' ? { threshold_db: args.threshold_db } : {}),
         ...(typeof args.min_pause_us === 'number' ? { min_pause_us: args.min_pause_us } : {}),
         ...(typeof args.pad_us === 'number' ? { pad_us: args.pad_us } : {}),
+        ...(reviewed ? { pauses: reviewed } : {}),
       }, deps)
       // A JSON STRING, never the object — runHybrid's MCP result contract. The
       // renderer's typed wrapper parses it back (`renderer/ipc/index.ts`).

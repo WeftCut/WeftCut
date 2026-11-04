@@ -866,13 +866,44 @@ pub fn probe_hw_first_frame(path: &str, accel: DecodeAccel) -> Result<(), String
         .hw_pix_fmt()
         .ok_or_else(|| "software is not a hardware lane".to_string())?;
     let mut stream =
-        SwVideoStream::open_with_accel(path, SwOutFormat::Nv12, accel, OutScale::FULL)?;
-    match stream.decode_one_raw_format()? {
-        Some(fmt) if fmt == want => Ok(()),
-        Some(fmt) => Err(format!(
+        SwVideoStream::open_with_accel(path, SwOutFormat::Nv12, accel.clone(), OutScale::FULL)?;
+    match stream.decode_one_raw_format() {
+        Ok(Some(fmt)) if fmt == want => Ok(()),
+        Ok(Some(fmt)) => Err(format!(
             "decoder produced {fmt:?}, not the hw surface (hardware decode unavailable)"
         )),
-        None => Err("no frame decoded".to_string()),
+        Ok(None) => Err("no frame decoded".to_string()),
+        Err(hw_error) => {
+            drop(stream);
+            Err(first_hw_frame_failure(path, &accel, hw_error))
+        }
+    }
+}
+
+/// The reason for a hardware session that opened and then failed its first
+/// frame. A hosted M2 Pro does this on every ProRes file (VT -19092, surfaced as
+/// `AVERROR_UNKNOWN`), alone on the machine: the guest finds the host's decoder
+/// and gets no image back. Decoding the same file in software separates that
+/// from a bad file, so only a proven good file reads as an unavailable lane.
+/// VideoToolbox only: on NVDEC/VAAPI the same failure on a GPU host is a broken
+/// driver, which their conformance gates must keep failing on.
+fn first_hw_frame_failure(path: &str, accel: &DecodeAccel, hw_error: String) -> String {
+    let software_decodes = matches!(accel, DecodeAccel::VideoToolbox)
+        && SwVideoStream::open_with_accel(
+            path,
+            SwOutFormat::Nv12,
+            DecodeAccel::Software,
+            OutScale::FULL,
+        )
+        .and_then(|mut software| software.decode_one_raw_format())
+        .is_ok_and(|frame| frame.is_some());
+    if software_decodes {
+        format!(
+            "decoder failed the first hardware frame ({hw_error}) \
+             but decoded it in software (hardware decode unavailable)"
+        )
+    } else {
+        hw_error
     }
 }
 
@@ -1562,6 +1593,51 @@ mod tests {
         assert!(r.is_err(), "absent vaapi node should Err, got {r:?}");
     }
 
+    // Software-only, so every OS holds what a hosted M2 Pro does live: the
+    // hardware session fails its first frame on a file that is fine.
+    #[test]
+    fn videotoolbox_first_frame_failure_on_a_good_file_is_unavailable() {
+        use super::{first_hw_frame_failure, DecodeAccel};
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_prores.mov"
+        );
+        assert_eq!(
+            first_hw_frame_failure(
+                p,
+                &DecodeAccel::VideoToolbox,
+                "Unknown error occurred".into()
+            ),
+            "decoder failed the first hardware frame (Unknown error occurred) \
+             but decoded it in software (hardware decode unavailable)"
+        );
+    }
+
+    #[test]
+    fn first_frame_failure_keeps_the_error_when_software_cannot_decode_either() {
+        use super::{first_hw_frame_failure, DecodeAccel};
+        let missing = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/absent.mov");
+        assert_eq!(
+            first_hw_frame_failure(missing, &DecodeAccel::VideoToolbox, "hw error".into()),
+            "hw error"
+        );
+    }
+
+    // A driver failing the first frame on a GPU host stays a failure on the
+    // lanes whose gates read it as one.
+    #[test]
+    fn first_frame_failure_stays_an_error_on_other_lanes() {
+        use super::{first_hw_frame_failure, DecodeAccel};
+        let p = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/tiny_prores.mov"
+        );
+        assert_eq!(
+            first_hw_frame_failure(p, &DecodeAccel::Nvdec, "hw error".into()),
+            "hw error"
+        );
+    }
+
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn probe_rejects_videotoolbox_off_macos() {
@@ -1602,9 +1678,10 @@ mod tests {
     // create returns kVTCouldNotFindVideoDecoderErr and the decoder falls back
     // to its software format — which the probe must report as a CLEAN decline
     // (the resolver's silent software fallback), never a panic/abort. On a
-    // ProRes-engine Mac the same probe can confirm the hw surface. Hosted Macs
-    // can also create a session but fail the first frame (VT -19092). Any probe
-    // error is a negative capability verdict; its diagnostic text is not an API.
+    // ProRes-engine Mac the same probe can confirm the hw surface. A hosted
+    // M2 Pro creates the session and fails the first frame (VT -19092), which
+    // `first_hw_frame_failure` reports as unavailable. Either decline ends in
+    // the suffix main's classifier accepts as an environmental skip.
     #[cfg(target_os = "macos")]
     #[test]
     fn videotoolbox_prores_probe_confirms_hw_or_declines_cleanly() {
@@ -1618,8 +1695,8 @@ mod tests {
             Err(reason) => {
                 println!("ProRes VT probe declined cleanly: {reason}");
                 assert!(
-                    !reason.trim().is_empty(),
-                    "an unavailable hardware lane must report a diagnostic"
+                    reason.ends_with("(hardware decode unavailable)"),
+                    "a good file must read as an unavailable lane, got: {reason}"
                 );
             }
         }

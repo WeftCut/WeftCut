@@ -57,7 +57,9 @@ const H264 = path.resolve(MEDIA_DIR, 'test_1080p_h264.mp4')
 //   VT hwaccel REQUIREs the hardware ProRes decoder (release/8.x), which only
 //   ProRes-engine chips carry (M1 Pro/Max, M2+) — on a base M1 the probe
 //   declines and this variant SKIPS cleanly (software fallback proven by the
-//   skip path itself).
+//   skip path itself). GitHub's hosted Macs skip on both of their chips: the
+//   M1 finds no decoder, the M2 Pro opens a session that fails every first
+//   frame (docs/platform-codecs.md §11). No hosted Mac covers this variant.
 // - HEVC Main10 (yuv420p10le): the smooth-gradient fixture (SSIM_FLOOR_SMOOTH).
 //   Hardware-decoded by every Apple Silicon media block, so the I420P10
 //   transport → ten-bit ingest path gates GREEN on any Mac host, ProRes engine
@@ -201,12 +203,16 @@ for (const { lane, id, codec, fixture, frameKind, ssimFloor } of VARIANTS) {
         // This large fixture keeps import preparation + a derivative alive
         // together (both interactive slots on a 3-core Mac). Finish setup
         // before measuring hardware fidelity; do not retry a software result
-        // or bypass the product's admission authority.
+        // or bypass the product's admission authority. Idle must HOLD: the
+        // import returns before its derivatives start and they start in turn,
+        // so one idle sample reads a gap (measured 38-51 s to really settle).
         const mediaId = await invokeCmd<string>(page, 'import_media', { path: fixture })
+        let idleSince: number | null = null
         await expect.poll(async () => {
           const status = await page.evaluate(() => window.api.resources.status())
-          return status.cpu_threads === 0 && status.waiting === 0
-        }, { timeout: 60_000, message: 'ProRes fixture import must release compute before hardware fidelity sampling' }).toBe(true)
+          idleSince = status.cpu_threads === 0 && status.waiting === 0 ? idleSince ?? Date.now() : null
+          return idleSince !== null && Date.now() - idleSince >= 8_000
+        }, { timeout: 180_000, intervals: [200], message: 'ProRes fixture import must release compute before hardware fidelity sampling' }).toBe(true)
         ;({ layerId } = await placeMediaLayer(page, { mediaId }))
       } else {
         const placed = await importAndPlaceMedia(page, { mediaAbsPath: fixture })

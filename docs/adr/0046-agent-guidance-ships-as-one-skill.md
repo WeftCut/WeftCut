@@ -35,13 +35,15 @@ plan and cut was what held quality.
   contract means the description is too weak — fix it there.
 - **Single-sourced, skill version = app version**: `build-skills.mjs` stages
   `skills/` plus the docs in `REQUIRED_DOCS` (copied verbatim, so they link to
-  no other doc); it ships as an extraResource and is refreshed to
-  `<userData>/skills/` at startup. No marketplace copy. No embedded example
+  no other doc); it ships as an extraResource and is mirrored to
+  `<userData>/skills/` at startup. The `initialize` instructions name the app
+  version, so a client's copy whose `metadata.version` differs is detectable.
+  No marketplace copy. No embedded example
   Motifs: built-ins are read live with `read_motif`.
 - **A missing skill is a failure**: `build:skills` and the afterPack gate
-  assert shape and version stamp; startup reports `installed` / `stale` /
+  assert shape and version stamp; startup reports `current` / `stale` /
   `unavailable` with its fault; the panel shows the fault with a retry, and a
-  packaged build that is not `installed` raises a retractable startup notice.
+  packaged build that is not `current` raises a retractable startup notice.
 - **Names are pinned**: `mcp.skill-conformance.test.ts` checks every backticked
   tool/resource/prompt name and the recipe stage/signal vocabulary against the
   advertised catalog.
@@ -69,3 +71,27 @@ prevent); a skill series (standing context per description); marketplace-first
 distribution (drift on day one); growing the `initialize` instructions into a
 harness (they stay ten lines of etiquette); numeric taste scores as a gate;
 agent self-review as the Motif install gate.
+
+## Note (2026-11-01): the app enforces the Motif install gate
+
+The decision stands as written; the code now holds it on the construction
+rung instead of in skill prose. `install_motif` only proposes: it freezes the
+draft's revision as a pending publication and answers `awaiting_approval`,
+leaving the library untouched. The user approves or rejects it on a card in
+the Motifs panel (the proposed package in the preview player, its props, the
+change against the installed version, the clips that will rebind). Approval,
+rejection and the user's own Install are renderer-only channels, so no MCP
+client can approve its own proposal. See
+[motif-workspaces.md](../motif-workspaces.md#review-publication-and-export).
+
+## Note (2026-11): the skill is also served over MCP
+
+MCP has since defined this delivery ([SEP-2640](https://modelcontextprotocol.io/seps/2640-skills-extension.md),
+Final 2026-09): each file of a skill is a resource under `skill://`. The app now
+serves the same bundle that way (`main/mcp/skillResources.ts`), and the
+`initialize` instructions point at it, which is the one thing that does reach an
+agent before its first call. So a stale copy no longer strands an agent: it is
+told to read the running version's instead. "One skill, skill version = app
+version" stands, and the copy into a client's skills directory stays: that is
+what lets the client load the skill by its description, and hosts mostly do not
+list MCP-served skills yet, so the extension itself is not declared.

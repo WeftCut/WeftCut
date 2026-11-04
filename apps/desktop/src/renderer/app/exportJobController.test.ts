@@ -4,7 +4,7 @@ import { createExportJobController } from './exportJobController';
 
 const mock = vi.hoisted(() => ({
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
-  invoke: vi.fn(), summary: vi.fn(),
+  invoke: vi.fn(), summary: vi.fn(), onState: undefined as undefined | ((state: unknown) => void),
   runner: { state: () => null as unknown, discard: async () => { }, run: async (_request: unknown, _abort: AbortController) => { }, retry: async () => { } },
 }));
 vi.mock('@/bridge/ipc', () => ({ invoke: mock.invoke }));
@@ -15,10 +15,13 @@ listen: async (name: string, callback: (event: { payload: unknown }) => void) =>
   }
 }));
 vi.mock('../ipc', () => ({ projectSummary: mock.summary }));
-vi.mock('./exportRunner', () => ({ createExportRunner: () => ({
-  state: () => mock.runner.state(), discard: () => mock.runner.discard(),
-  run: (request: unknown, abort: AbortController) => mock.runner.run(request, abort), retry: () => mock.runner.retry(),
-}) }));
+vi.mock('./exportRunner', () => ({ createExportRunner: (deps: { onState: (state: unknown) => void }) => {
+  mock.onState = deps.onState;
+  return {
+    state: () => mock.runner.state(), discard: () => mock.runner.discard(),
+    run: (request: unknown, abort: AbortController) => mock.runner.run(request, abort), retry: () => mock.runner.retry(),
+  };
+} }));
 
 beforeEach(() => {
   mock.listeners.clear(); mock.invoke.mockReset(); mock.summary.mockReset();
@@ -75,6 +78,21 @@ async function mountedWithToken() {
   const token = mock.invoke.mock.calls.find(([channel]) => channel === 'export_job_ready')![1].renderer_token as string;
   return { c, run: (id: string) => emit('export:run', { ...(job(id) as object), renderer_token: token }), cancel: (id: string) => emit('export:cancel', { job_id: id, renderer_token: token }) };
 }
+
+it('reports a queued admission as queued with its holders, then admission as preparing', async () => {
+  runUntilAborted();
+  const { c, run, cancel } = await mountedWithToken();
+  run('q');
+  const holders = [{ kind: 'proxy', media_id: 'm-1', mib: 900, threads: 1 }];
+  mock.onState!({ kind: 'preparing', labels: ['waiting'], message: 'waiting', queued: { reason: 'busy', holders } });
+  mock.onState!({ kind: 'preparing', labels: [] });
+  const updates = () => mock.invoke.mock.calls.filter(([channel, args]) => channel === 'export_job_update' && args.job_id === 'q').map(([, args]) => args.update);
+  await vi.waitFor(() => expect(updates()).toHaveLength(2));
+  expect(updates()).toEqual([{ state: 'queued', queued: { reason: 'busy', holders } }, { state: 'preparing' }]);
+  cancel('q');
+  await vi.waitFor(() => expect(updatesFor('q')).toContain('cancelled'));
+  await c.dispose();
+});
 
 // Main may answer the terminal update before its status event arrives; the
 // job is still reported terminal once (a second report is `stale_renderer`).

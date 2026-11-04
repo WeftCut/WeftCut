@@ -14,8 +14,4 @@ describe('command-path arg hardening', () => {
     const r = mk().command('add_color_layer', { tStartUs: 0, color: '#fff' })
     expect(r.ok).toBe(false)
   })
-  it('dry_run via specToDryRunOp rejects a non-number t_start_us', () => {
-    const r = mk().mcpCall('dry_run', JSON.stringify({ operations: [{ kind: 'add_color_layer', track_id: '00000000-0000-7000-8000-000000000001', color: { r:0,g:0,b:0,a:255 }, t_start_us: 'x', t_end_us: 1 }] }))
-    expect(r.ok).toBe(false)
-  })
 })

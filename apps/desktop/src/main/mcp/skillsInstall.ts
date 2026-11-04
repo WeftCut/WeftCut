@@ -12,14 +12,18 @@ import path from 'node:path'
 /// - `copy_failed` — the refresh into userData threw (permissions, full disk).
 export type SkillsFault = 'not_built' | 'bundle_missing' | 'incomplete' | 'copy_failed'
 
-/// What the user can be offered right now.
+/// What the user can be offered right now. It describes the app's own copy
+/// under <userData>/skills only: the copies agent clients read live in their
+/// own skills directories, out of the app's sight, so no state claims those are
+/// installed or current.
 ///
-/// `stale` is deliberately distinct from `installed`: the folder is there and
-/// worth handing out, but it was left by an earlier launch and its version is
+/// `current` — the folder holds exactly what this app version ships.
+/// `stale` is deliberately distinct from it: the folder is there and worth
+/// handing out, but it was left by an earlier launch and its version is
 /// whatever that launch shipped — which is exactly the drift the every-startup
 /// refresh exists to prevent, so the panel warns rather than staying silent.
 export type SkillsInstall =
-  | { state: 'installed'; dir: string }
+  | { state: 'current'; dir: string }
   | { state: 'stale'; dir: string; fault: SkillsFault }
   | { state: 'unavailable'; dir: null; fault: SkillsFault }
 
@@ -43,8 +47,10 @@ function usable(dest: string): boolean {
 /// start, which is what keeps the copy from drifting from the app that ships
 /// it; a start that cannot refresh reports `stale` rather than pretending.
 ///
-/// The copy overwrites shipped files but never deletes: anything the user added
-/// under <userData>/skills/ survives, since `cpSync` only walks the source tree.
+/// The refresh mirrors: <userData>/skills/ is the app's, and after it holds
+/// exactly the bundle, so a file a release removed does not linger for the
+/// next copy to pick up. The new tree is staged beside it and swapped in, so a
+/// copy that fails halfway leaves the previous launch's folder whole.
 ///
 /// Reports a fault instead of degrading silently. A packaged build has already
 /// passed two gates that make every fault but `copy_failed` impossible
@@ -74,12 +80,36 @@ export function installSkills(opts: {
   // launch's good copy succeeds and leaves a usable destination, which would
   // otherwise read as a healthy install of a bundle that shipped nothing.
   if (!usable(source)) return fallback('incomplete')
+  const staging = `${dest}.new`
+  const retired = `${dest}.old`
   try {
-    fs.cpSync(source, dest, { recursive: true, force: true })
+    // Leftovers of a start that died mid-swap go first.
+    fs.rmSync(staging, { recursive: true, force: true })
+    fs.rmSync(retired, { recursive: true, force: true })
+    fs.cpSync(source, staging, { recursive: true })
+    if (fs.existsSync(dest)) fs.renameSync(dest, retired)
+    try {
+      fs.renameSync(staging, dest)
+    } catch (e) {
+      if (fs.existsSync(retired)) fs.renameSync(retired, dest)
+      throw e
+    }
   } catch {
     // A previous launch's copy still beats none, so this is not fatal — but it
     // is no longer the version this app ships, which `stale` records.
+    removeQuietly(staging)
     return fallback('copy_failed')
   }
-  return usable(dest) ? { state: 'installed', dir: dest } : fallback('copy_failed')
+  // The swap already happened; a retired tree a file handle still pins is
+  // cleared at the next start.
+  removeQuietly(retired)
+  return usable(dest) ? { state: 'current', dir: dest } : fallback('copy_failed')
+}
+
+function removeQuietly(dir: string): void {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true })
+  } catch {
+    // Best effort: the next start retries.
+  }
 }
