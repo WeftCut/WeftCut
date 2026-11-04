@@ -221,6 +221,17 @@ describe('layerParamsView carries the transform anchor on every visual kind', ()
       const v = layerParamsView(params, {}) as unknown as { anchor_x: Animated<number>; anchor_y: Animated<number> }
       expect([v.anchor_x, v.anchor_y]).toEqual([stat(0.25), stat(0.75)])
     })
+
+    // A publication's difference stops at these references (ADR 0157). A copy
+    // here would make every commit read every keyframe.
+    it(`${kind} view hands its tracks over by reference`, () => {
+      const v = layerParamsView(params, {}) as unknown as Record<string, unknown>
+      const source = params as unknown as { transform: ReturnType<typeof xf>; opacity: Animated<number> }
+      expect(v.opacity).toBe(source.opacity)
+      expect(v.rotation_deg).toBe(source.transform.rotation_deg)
+      expect(v.scale_x).toBe(source.transform.scale_x)
+      expect(v.x).toBe((source.transform.position as { x: Animated<number> }).x)
+    })
   }
 })
 

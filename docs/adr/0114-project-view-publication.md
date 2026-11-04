@@ -42,6 +42,6 @@ mean selection or the next UI action could read the edited state.
 
 - Command completion means accepted and applied to the mounted renderer store
   — not painted, saved or flushed.
-- Still a full-snapshot protocol: cost is proportional to project size. The
-  version is the seam for future deltas. Memoizing snapshots must account for
+- Cost was proportional to project size until reads became differences across
+  this version seam (ADR 0157). Memoizing snapshots must account for
   filesystem-derived availability; revision alone is not a cache key.

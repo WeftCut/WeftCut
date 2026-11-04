@@ -31,7 +31,7 @@ import {
 } from "./selectionStore";
 import { isGapOn } from "../ripple/gap";
 import { invokeRaw } from '../bridge/ipc';
-import type { ProjectPublication, ProjectVersion } from '../../shared/projectPublication';
+import { PUBLICATION_BASE_ARG, type ProjectPublicationReply, type ProjectVersion } from '../../shared/projectPublication';
 import {
   ProjectPublicationClient, attachProjectPublication,
   refreshActiveProjectPublication, settleActiveProjectPublication,
@@ -161,7 +161,6 @@ export const useProjectStore = create<
 
   apply: (summary) => {
     const previous = get();
-    if (summary?.project_id === previous.summary?.project_id) summary = shareSnapshot(previous.summary, summary);
     const indices = buildIndices(summary);
     // Index subscribers should wake only when their entries changed, too.
     for (const key of Object.keys(indices) as (keyof typeof indices)[]) {
@@ -218,17 +217,20 @@ export async function wireProjectStore(): Promise<UnlistenFn> {
     if (trace) { trace.fact('applied', false); trace.report(false); trace = undefined; }
   };
   const client = new ProjectPublicationClient<ProjectSummary>({
-    read: async (traceId) => {
+    read: async (traceId, base) => {
       discardTrace();
       trace = traceId ? new EditTrace(traceId, 'renderer.refresh') : undefined;
       const end = trace?.span('summary_ipc');
       try {
-        const publication = await invokeRaw<ProjectPublication<ProjectSummary>>('project_publication',
-          traceId ? { [EDIT_TRACE_ARG]: traceId } : undefined);
+        const args = { ...(traceId ? { [EDIT_TRACE_ARG]: traceId } : {}), ...(base === null ? {} : { [PUBLICATION_BASE_ARG]: base }) };
+        const reply = await invokeRaw<ProjectPublicationReply<ProjectSummary>>('project_publication',
+          Object.keys(args).length > 0 ? args : undefined);
         end?.();
-        return publication;
+        if ('patches' in reply) trace?.fact('patches', reply.patches.length);
+        return reply;
       } catch (error) { end?.(false); discardTrace(); throw error; }
     },
+    adopt: (held, next) => next?.project_id === held?.project_id ? shareSnapshot(held, next) : next,
     apply: (summary) => {
       if (trace) {
         trace.measure('store_apply', () => useProjectStore.getState().apply(summary));

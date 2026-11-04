@@ -59,7 +59,11 @@ test('post-drag timing correlates all phases on a dense synthetic timeline', asy
     expect(correlated.map(r => r.phase)).toEqual(expect.arrayContaining([
       'renderer.invoke.update_marker', 'renderer.refresh', 'main.summary', 'main.autosave', 'renderer.frames',
     ]))
-    expect(correlated.find(r => r.phase === 'renderer.refresh')).toMatchObject({ applied: true, frameOpportunityObserved: true })
+    const refresh = correlated.find(r => r.phase === 'renderer.refresh')
+    expect(refresh).toMatchObject({ applied: true, frameOpportunityObserved: true })
+    // One marker on a dense timeline crosses as a handful of patches, not a summary.
+    expect(refresh!.patches).toBeGreaterThan(0)
+    expect(refresh!.patches).toBeLessThan(16)
     expect(correlated.find(r => r.phase === 'main.autosave')?.spans.map((s: any) => s.stage))
       .toEqual(expect.arrayContaining(['serialize', 'write_file']))
     await info.attach('edit-latency', { body: JSON.stringify(correlated, null, 2), contentType: 'application/json' })

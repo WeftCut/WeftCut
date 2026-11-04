@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectSummary, LayerSummary, TrackSummary } from '../ipc';
-import type { ProjectPublication } from '../../shared/projectPublication';
+import type { ProjectPublicationReply } from '../../shared/projectPublication';
 
 const mocks = vi.hoisted(() => ({ read: vi.fn(), unlisten: vi.fn(),
   onProjectChanged: null as ((event: any) => void) | null }));
@@ -14,8 +14,8 @@ vi.mock('@/bridge/events', () => ({
 import { refreshProjectStore, settleProjectStore, useProjectStore, wireProjectStore } from './projectStore';
 import { compositionFixture, ROOT_ID, summaryFixture } from '../testing/summaryFixture';
 
-const publication = (name: string | null, revision: number): ProjectPublication<ProjectSummary> => ({
-  version: { session: 1, revision }, summary: name === null ? null : summaryFixture({ name }),
+const publication = (name: string | null, revision: number): ProjectPublicationReply<ProjectSummary> => ({
+  version: { session: 1, revision }, viewId: revision + 1, summary: name === null ? null : summaryFixture({ name }),
 });
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -40,8 +40,8 @@ describe('project publication store adapter', () => {
   }
   it('publishes only the latest observed revision and joins mutation callbacks without redundant reads', async () => {
     await seed();
-    const first = deferred<ProjectPublication<ProjectSummary>>();
-    const last = deferred<ProjectPublication<ProjectSummary>>();
+    const first = deferred<ProjectPublicationReply<ProjectSummary>>();
+    const last = deferred<ProjectPublicationReply<ProjectSummary>>();
     mocks.read.mockReturnValueOnce(first.promise).mockReturnValueOnce(last.promise);
     changed(1);
     for (let i = 2; i <= 101; i++) changed(i);
@@ -76,7 +76,7 @@ describe('project publication store adapter', () => {
   });
   it('reports initial failure without publishing a fabricated closed snapshot', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    useProjectStore.getState().apply(publication('retained', 0).summary);
+    useProjectStore.getState().apply(summaryFixture({ name: 'retained' }));
     mocks.read.mockRejectedValueOnce(new Error('temporarily unavailable'));
     unwire = await wireProjectStore();
     expect(useProjectStore.getState().summary?.name).toBe('retained');
@@ -84,7 +84,7 @@ describe('project publication store adapter', () => {
   });
   it('teardown prevents a pending read from publishing', async () => {
     await seed();
-    const pending = deferred<ProjectPublication<ProjectSummary>>();
+    const pending = deferred<ProjectPublicationReply<ProjectSummary>>();
     mocks.read.mockReturnValueOnce(pending.promise);
     changed(1);
     unwire!(); unwire = undefined;
@@ -96,6 +96,8 @@ describe('project publication store adapter', () => {
 });
 
 describe("indices span every composition", () => {
+  let unwire: (() => void) | undefined;
+  afterEach(() => { unwire?.(); unwire = undefined; });
   const stat = <T,>(value: T) => ({ mode: "Static" as const, value });
   const color = (id: string): LayerSummary => ({
     id, label: null, t_start_us: 0, t_end_us: 1_000_000, kind: "Color", color_hint: "#000000",
@@ -118,15 +120,17 @@ describe("indices span every composition", () => {
     role: null, transient: true, layers,
   });
 
-  it('retains unchanged tracks and indices across marker-only IPC snapshots, but publishes actual layer edits', () => {
+  it('retains unchanged tracks and indices across marker-only IPC snapshots, but publishes actual layer edits', async () => {
     const make = () => summaryFixture({ root: { tracks: [track('t', [color('a'), color('b')])], markers: [
       { id: 'm', t_us: 0, end_t_us: null, label: '', note: '', color_hint: '#ffffff',
         anchor_layer: null, anchor_src_us: null, hibernating: false },
     ] } });
-    useProjectStore.getState().apply(make());
+    mocks.read.mockResolvedValueOnce({ version: { session: 1, revision: 0 }, viewId: 1, summary: make() });
+    unwire = await wireProjectStore();
     const before = useProjectStore.getState();
     const moved = make(); moved.compositions[ROOT_ID]!.markers[0]!.t_us = 500_000;
-    useProjectStore.getState().apply(moved);
+    mocks.read.mockResolvedValueOnce({ version: { session: 1, revision: 1 }, viewId: 2, summary: moved });
+    changed(1); await tick();
     const after = useProjectStore.getState();
     expect(after.summary!.compositions[ROOT_ID]!.tracks).toBe(before.summary!.compositions[ROOT_ID]!.tracks);
     expect(after.summary!.compositions[ROOT_ID]!.markers[0]!.t_us).toBe(500_000);
@@ -134,9 +138,27 @@ describe("indices span every composition", () => {
     expect(after.layerById).toBe(before.layerById);
     expect(after.groupOrdinals).toBe(before.groupOrdinals);
     const edited = make(); edited.compositions[ROOT_ID]!.tracks[0]!.layers[0]!.label = 'Changed';
-    useProjectStore.getState().apply(edited);
+    mocks.read.mockResolvedValueOnce({ version: { session: 1, revision: 2 }, viewId: 3, summary: edited });
+    changed(2); await tick();
     expect(useProjectStore.getState().layerById.get('a')!.label).toBe('Changed');
     expect(useProjectStore.getState().layerById.get('b')).toBe(before.layerById.get('b'));
+  });
+
+  it('names the view it holds, and lands a difference on it with every other branch kept', async () => {
+    const make = () => summaryFixture({ root: { tracks: [track('t', [color('a'), color('b')])] } });
+    mocks.read.mockResolvedValueOnce({ version: { session: 1, revision: 0 }, viewId: 7, summary: make() });
+    unwire = await wireProjectStore();
+    expect(mocks.read).toHaveBeenLastCalledWith('project_publication', undefined);
+    const before = useProjectStore.getState();
+    const base = 7;
+    mocks.read.mockResolvedValueOnce({ version: { session: 1, revision: 1 }, viewId: 8, base,
+      patches: [{ path: ['compositions', ROOT_ID, 'tracks', 0, 'layers', 0, 'label'], value: 'Changed' }] });
+    changed(1); await tick();
+    expect(mocks.read).toHaveBeenLastCalledWith('project_publication', { base });
+    const after = useProjectStore.getState();
+    expect(after.layerById.get('a')!.label).toBe('Changed');
+    expect(after.layerById.get('b')).toBe(before.layerById.get('b'));
+    expect(before.layerById.get('a')!.label).not.toBe('Changed');
   });
 
   it("resolves a layer inside a Group to its layer, track and composition", () => {
