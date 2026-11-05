@@ -18,7 +18,8 @@ Motif capture and caching: [`motifs.md`](motifs.md).
 - **Per-layer effects** are Pixi filter chains. Project state holds the
   instances and their keyframeable params; the renderer owns the catalog
   (`effects/effectRegistry.ts`: blur, chroma key, sharpen, brightness,
-  contrast, saturation; chroma key and sharpen are shaders authored here).
+  contrast, highlights, saturation; chroma key, highlights and sharpen are
+  shaders authored here).
   `EffectChain` caches filters per layer. See
   [ADR 0027](adr/0027-per-layer-effects-pixi-filter-chains.md).
 - **Crop** is the last filter on a video sprite: after the effect chain,

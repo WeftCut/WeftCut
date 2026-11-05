@@ -10,11 +10,13 @@ import type { Sprite, Matrix } from 'pixi.js';
 import { Buffer, BufferUsage, GCSystem, type Filter, type UniformGroup } from "pixi.js";
 import { describe, expect, it, vi } from "vitest";
 import { ChromaKeyFilter } from "./ChromaKeyFilter";
+import { HighlightsFilter } from "./HighlightsFilter";
 import { SharpenFilter } from "./SharpenFilter";
 
 const FILTERS: Array<{ name: string; make: () => Filter; resource: string }> = [
   { name: "ChromaKeyFilter", make: () => new ChromaKeyFilter(), resource: "chromaUniforms" },
   { name: "CropFilter", make: () => new CropFilter({} as Sprite), resource: "cropUniforms" },
+  { name: "HighlightsFilter", make: () => new HighlightsFilter(), resource: "highlightsUniforms" },
   { name: "SharpenFilter", make: () => new SharpenFilter(), resource: "sharpenUniforms" },
 ];
 

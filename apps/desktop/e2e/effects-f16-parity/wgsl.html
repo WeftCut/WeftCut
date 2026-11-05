@@ -164,6 +164,26 @@
             };
           });
 
+          const hlText = fsMod.readFileSync(pathMod.resolve(__dirname, "../../src/renderer/render/effects/filters/highlightsSources.ts"), "utf8").replace(/^export /gm, "");
+          const HL = new Function(hlText + "\nreturn { HIGHLIGHTS_FRAG_GL, HIGHLIGHTS_WGSL };")();
+          function throughHighlights(amount) {
+            const rt=RenderTexture.create({width:W,height:H});
+            const stage=new Container();
+            const sprite=new Sprite(stepTexture);
+            sprite.filters=[new Filter({
+              gpuProgram:GpuProgram.from({vertex:{source:HL.HIGHLIGHTS_WGSL,entryPoint:"mainVertex"},fragment:{source:HL.HIGHLIGHTS_WGSL,entryPoint:"mainFragment"}}),
+              glProgram:GlProgram.from({vertex:defaultFilterVert,fragment:HL.HIGHLIGHTS_FRAG_GL,name:"highlights-wgsl-gate"}),
+              resources:{highlightsUniforms:new UniformGroup({uAmount:{value:amount,type:"f32"}})},
+            })];
+            stage.addChild(sprite);renderer.render({container:stage,target:rt});return rt;
+          }
+          await phaseAsync("highlightsWgsl",async()=>{
+            const zero=await rowOf(throughHighlights(0));
+            const lower=await rowOf(throughHighlights(-40));
+            const lift=await rowOf(throughHighlights(40));
+            return {zero:[zero[100],zero[900]],lower:[lower[100],lower[900]],lift:[lift[100],lift[900]]};
+          });
+
           ipcRenderer.send("wgsl-result", out);
         } catch (err) {
           out.fatal = String((err && err.stack) || err);

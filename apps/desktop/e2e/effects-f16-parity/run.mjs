@@ -91,6 +91,7 @@ const runCondition = (f16) =>
 
 let failed = false;
 
+
 // --- Condition A: default pool ---
 const defaultResult = runCondition(false);
 // --- Condition B: f16 pool ---
@@ -232,6 +233,26 @@ if (wgsl.unavailable) {
     eq(ring?.window, [102, 102, 71, 184, 153, 153]),
     `window=${JSON.stringify(ring?.window)} — expected [102, 102, 71, 184, 153, 153] (the WebGL lane's 0.28 / 0.72, at 8-bit)`,
   );
+}
+
+for (const [label, result] of [["default", defaultResult], ["f16", f16Result]]) {
+  const h = result.phases?.highlights;
+  const ok = h && h.zeroMaxDiff < .005 && h.protectedMaxDiff < .005 && h.monotonic
+    && h.lowerAtBright < h.sourceAtBright - .02 && h.liftAtBright > h.sourceAtBright + .01;
+  console.log(`[f16-parity] ${ok ? "PASS" : "FAIL"} ${label} highlights`, JSON.stringify(h));
+  if (!ok) failed = true;
+}
+if (!(f16Result.phases?.highlights?.distinct > 750)) {
+  console.error("[f16-parity] FAIL highlights loses float16 ramp precision");
+  failed = true;
+}
+if (!wgsl.unavailable) {
+  const h = wgsl.phases?.highlightsWgsl;
+  const near = (actual, expected) => actual?.length === expected.length
+    && actual.every((v, i) => Math.abs(v - expected[i]) <= 1);
+  const ok = h && near(h.zero, [102, 153]) && near(h.lower, [102, 148]) && near(h.lift, [102, 161]);
+  console.log(`[f16-parity] ${ok ? "PASS" : "FAIL"} WebGPU highlights`, JSON.stringify(h));
+  if (!ok) failed = true;
 }
 
 if (failed) {

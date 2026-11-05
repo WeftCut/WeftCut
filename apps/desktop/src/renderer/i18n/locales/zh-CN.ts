@@ -2275,6 +2275,11 @@ const zhCN: Resources = {
       desc: "以中灰为轴调整反差",
       params: { amount: "数值" },
     },
+    highlights: {
+      name: "高光",
+      desc: "调整明亮区域并平滑过渡，保护较暗色调",
+      params: { amount: "强度" },
+    },
     saturation: {
       name: "饱和度",
       desc: "色彩浓度，可降至灰度",

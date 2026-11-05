@@ -34,6 +34,7 @@ export const VISUAL_EFFECT_PARAMS: Readonly<Record<string, Readonly<Record<strin
   },
   brightness: { amount: { default: 0, range: [-100, 100], step: 1 } },
   contrast: { amount: { default: 0, range: [-100, 100], step: 1 } },
+  highlights: { amount: { default: 0, range: [-100, 100], step: 1 } },
   saturation: { amount: { default: 0, range: [-100, 100], step: 1 } },
   sharpen: { amount: { default: 0, range: [0, 100], step: 1 } },
 }

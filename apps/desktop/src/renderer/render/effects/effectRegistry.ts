@@ -12,6 +12,7 @@ import { BlurFilter, ColorMatrixFilter, type Filter } from "pixi.js";
 import type { AudioEffectRegion } from "../../../shared/audioEffects/catalog";
 import { ChromaKeyFilter, type ChromaParamName } from "./filters/ChromaKeyFilter";
 import { SharpenFilter } from "./filters/SharpenFilter";
+import { HighlightsFilter } from "./filters/HighlightsFilter";
 import {
   writeBrightness,
   writeContrast,
@@ -160,6 +161,20 @@ const REGISTRY: Record<string, EffectDescriptor> = {
   },
   brightness: colorMatrixEffect("brightness", writeBrightness),
   contrast: colorMatrixEffect("contrast", writeContrast),
+  highlights: {
+    kind: "highlights",
+    nameI18nKey: "effects.highlights.name",
+    category: "color",
+    create: () => new HighlightsFilter(),
+    params: {
+      amount: {
+        ...VISUAL_EFFECT_PARAMS.highlights!.amount!,
+        apply: (f, v) => (f as HighlightsFilter).applyAmount(v),
+      },
+    },
+    fidelity: "f16-verified",
+    colorspace: "display-gamma",
+  },
   saturation: colorMatrixEffect("saturation", writeSaturation),
   sharpen: {
     kind: "sharpen",
