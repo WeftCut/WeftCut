@@ -106,7 +106,7 @@ describe("the shipped catalog", () => {
     });
   }
 
-  it("typing an English name prefix reaches the colour trio and sharpen", () => {
+  it("typing an English name prefix reaches the color controls and sharpen", () => {
     const rows = rowsIn(en);
     for (const [query, kind] of [
       ["bright", "brightness"], ["contr", "contrast"], ["satur", "saturation"],
