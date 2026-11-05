@@ -10,7 +10,6 @@ export interface CaptureOptions {
   bake?: MotifCacheAddress;
   cache?: MotifCacheAddress;
   /** Return valid pixels even when optional cache persistence is unavailable. */
-  bakeOptional?: boolean;
   finalizationToken?: string;
   /** The divisor a `stored` reply is read at; 1 when absent. A live capture
    * is always full size. */
@@ -35,7 +34,7 @@ export function captureMotifFrameResult(
     settleRafs: settleRafs ?? null, contentHash: contentHash ?? '', fpsNum, fpsDen,
     coalesceKey: options.key, high: options.high, bake: options.bake,
     cache: options.cache,
-    bakeOptional: options.bakeOptional, finalizationToken: options.finalizationToken,
+    finalizationToken: options.finalizationToken,
   }, options.scaleDiv ?? 1);
 }
 

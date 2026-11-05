@@ -1,14 +1,12 @@
 import { CAPTURE_SUPERSEDED_MESSAGE } from '../../../shared/motifs/captureErrors';
 import type { CapturedFrame } from './frameTransport';
 import type { MotifFrameCache } from './frameCache';
-import type { MotifCacheAddress } from '../../../shared/motifs/frameTransport';
 import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
 
 export interface FrameTicket {
   key: string;
   wanted(): boolean;
   high(): boolean;
-  bake(): MotifCacheAddress | undefined;
 }
 interface Subscriber { active: boolean; high: boolean; cancel(): void }
 interface Job {
@@ -18,12 +16,11 @@ interface Job {
   result: Promise<CapturedFrame>;
   value?: CapturedFrame;
   cached: boolean;
-  bake?: MotifCacheAddress;
   release(): void;
 }
 
 /** Deduplicates acquisition, not persistence. Callers receive owned clones so
- * stale prewarm completion, eviction and bake failure cannot close another
+ * stale prewarm completion and eviction cannot close another
  * consumer's bitmap. Only callers publish into L0, after their stale checks. */
 export class FrameBroker {
   private jobs = new Map<string, Job>();
@@ -33,7 +30,7 @@ export class FrameBroker {
   constructor(private readonly deps: {
     cache: MotifFrameCache;
     clone: (bitmap: ImageBitmap) => Promise<ImageBitmap>;
-    control: (key: string, action: 'promote' | 'cancel' | 'bake', bake?: MotifCacheAddress) => void;
+    control: (key: string, action: 'promote' | 'cancel') => void;
   }) {}
 
   /** A new workspace may reuse pixels, but must not inherit another workspace's
@@ -42,7 +39,7 @@ export class FrameBroker {
 
   cancel(coalesceKey: string): void { this.latest.get(coalesceKey)?.cancel(); }
 
-  acquire(identity: string, frame: number, scaleDiv: MotifReaderDiv, produce: (ticket: FrameTicket) => Promise<CapturedFrame>, coalesceKey?: string, bake?: MotifCacheAddress, priority: 'foreground' | 'background' = 'foreground'): Promise<CapturedFrame> {
+  acquire(identity: string, frame: number, scaleDiv: MotifReaderDiv, produce: (ticket: FrameTicket) => Promise<CapturedFrame>, coalesceKey?: string, priority: 'foreground' | 'background' = 'foreground'): Promise<CapturedFrame> {
     if (coalesceKey) this.latest.get(coalesceKey)?.cancel();
     const address = JSON.stringify([identity, frame, scaleDiv]);
     let job = this.jobs.get(address);
@@ -67,17 +64,10 @@ export class FrameBroker {
         return cached ? { bitmap: cached, persisted: false, scaleDiv } : produce({
           key, wanted: () => subscribers.size > 0,
           high: () => [...subscribers].some(s => s.high),
-          bake: () => created.bake,
         });
       }).then(value => { created.value = value; return value; });
     }
     const current = job;
-    if (bake && !current.bake && !current.cached) {
-      current.bake = bake;
-      // If admission already happened, main can still attach the writer while
-      // the page renders. If too late, persisted=false selects bitmap fallback.
-      this.deps.control(current.key, 'bake', bake);
-    }
     current.holds++;
     return new Promise<CapturedFrame>((resolve, reject) => {
       const retire = () => {

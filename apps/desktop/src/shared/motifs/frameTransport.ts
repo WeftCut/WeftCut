@@ -25,6 +25,4 @@ export type MotifReadUnavailable = { kind: 'unavailable' }
 export type MotifTextureReadResult = MotifTextureFrame | MotifReadUnavailable | null
 
 export interface MotifCacheAddress { hash: string; frame: number }
-export type MotifCaptureControl =
-  | { key: string; action: 'promote' | 'cancel' }
-  | { key: string; action: 'bake'; bake: MotifCacheAddress }
+export type MotifCaptureControl = { key: string; action: 'promote' | 'cancel' }

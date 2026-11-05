@@ -59,19 +59,14 @@ export class MotifBakeWorkspace {
         if (this.bytes() + next > this.deps.diskBytes()) {
           throw new Error('motif-disk-capacity: temporary cache space cannot retain the next frame');
         }
-        this.writing.set(content.hash, (this.writing.get(content.hash) ?? 0) + 1);
-        this.retain();
+        this.markWriting(content.hash, 1);
         try {
           await this.deps.capture.persist({ ...content.capture, tSec: frame * content.capture.fpsDen / content.capture.fpsNum,
             coalesceKey: `background:${session.generation}:${content.hash}:${frame}`, high: false,
             bake: { hash: content.hash, frame },
           }, isCurrent, session.store);
         } finally {
-          if (this.current === session) {
-            const remaining = (this.writing.get(content.hash) ?? 1) - 1;
-            if (remaining) this.writing.set(content.hash, remaining); else this.writing.delete(content.hash);
-            this.retain();
-          }
+          if (this.current === session) this.markWriting(content.hash, -1);
         }
       },
       // Capacity belongs to each content: one large frame cannot prevent a
@@ -97,6 +92,13 @@ export class MotifBakeWorkspace {
       for (const bytes of frames.values()) sum += bytes;
     }
     return sum;
+  }
+  /** A live capture can write a content the plan no longer lists. Retention
+   * only changes when such a directory starts or stops being written. */
+  private markWriting(hash: string, delta: 1 | -1): void {
+    const count = (this.writing.get(hash) ?? 0) + delta;
+    if (count > 0) this.writing.set(hash, count); else this.writing.delete(hash);
+    if (!this.live.has(hash) && count === (delta > 0 ? 1 : 0)) this.retain();
   }
   private retain(): void {
     this.deps.retain(this.current ? this.bootstrap
@@ -136,7 +138,7 @@ export class MotifBakeWorkspace {
       if (this.bytes() - previous + bytes > this.deps.diskBytes()) {
         throw new Error('motif-disk-capacity: temporary cache space cannot retain the encoded frame');
       }
-    });
+    }, (hash, delta) => { if (this.current === session) this.markWriting(hash, delta); });
     this.current = session;
     this.retain();
     this.jobs.reset(next.generation);

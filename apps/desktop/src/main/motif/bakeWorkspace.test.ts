@@ -214,4 +214,21 @@ describe('Motif workspace ownership', () => {
     expect(results.map(r => r.status)).toEqual(['fulfilled', 'rejected']);
     expect(await store.inventory(c.hash)).toEqual([{ frame: 0, bytes: 68 }]);
   });
+
+  it('retains a directory the plan does not list only while it is being written', async () => {
+    const h = await fixture(); const listed = content('listed'), stray = content('stray');
+    await h.workspace.reconcile({ ...plan([]), live: [listed] });
+    const rasterDir = (hash: string) => path.join(h.root, 'Cache', 'raster', hash);
+    const store = h.workspace.store();
+    expect(h.retain).toHaveBeenLastCalledWith([rasterDir(listed.hash)]);
+    h.retain.mockClear();
+
+    await (await store.prepareWrite(listed.hash, 0))!.encoded(frameBytes());
+    expect(h.retain).not.toHaveBeenCalled();
+
+    const writing = (await store.prepareWrite(stray.hash, 0))!.encoded(frameBytes());
+    expect(h.retain).toHaveBeenLastCalledWith([rasterDir(listed.hash), rasterDir(stray.hash)]);
+    await writing;
+    expect(h.retain).toHaveBeenLastCalledWith([rasterDir(listed.hash)]);
+  });
 });

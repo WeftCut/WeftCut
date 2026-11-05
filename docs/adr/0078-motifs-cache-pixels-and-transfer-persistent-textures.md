@@ -33,7 +33,7 @@ commit, not the compositor's raster.
 - **Windows moves pixels as persistent D3D11 textures.** The core addon (not
   the optional FFmpeg component) owns bounded pools; handles are shared once
   and per-frame messages carry a slot lease. Bakes read the OSR texture on a
-  native worker and encode `.wfrm` directly. Straight alpha is premultiplied
+  native worker and encode `.wfrm` directly (after the lease: ADR 0158). Straight alpha is premultiplied
   for import.
 - **A consumer completes the GPU read before acknowledging a slot**; a failed
   or timed-out consumer retires the texture instead of permitting reuse.

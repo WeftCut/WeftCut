@@ -1,5 +1,6 @@
-//! OSR texture to the existing straight-RGBA/LZ4 cache, without PNG or pixel IPC.
-//! D3D11 device/staging resources stay on one worker; callers retain the OSR lease.
+//! OSR texture to the straight-RGBA frame cache, without PNG or pixel IPC.
+//! `read` runs under the caller's OSR lease; D3D11 device and staging resources
+//! stay on its one worker. `finish` runs after the lease (ADR 0158).
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 use std::sync::mpsc;
@@ -15,7 +16,50 @@ fn error(e: impl std::fmt::Display) -> napi::Error {
     napi::Error::from_reason(e.to_string())
 }
 
-type Reply = tokio::sync::oneshot::Sender<Result<Buffer, String>>;
+type Reply = tokio::sync::oneshot::Sender<Result<Pixels, String>>;
+
+struct Pixels {
+    width: u32,
+    height: u32,
+    bgra: bool,
+    premultiplied: Vec<u8>,
+}
+
+/// One frame read back from a texture. Its pixels stay native until `finish`.
+#[napi]
+pub struct MotifRawFrame {
+    pixels: std::sync::Mutex<Option<Pixels>>,
+}
+
+#[napi]
+impl MotifRawFrame {
+    /// Straightens and encodes off the D3D11 worker, so the next `read` does not
+    /// wait for this frame.
+    #[napi]
+    pub async fn finish(&self) -> napi::Result<Buffer> {
+        let pixels = self
+            .pixels
+            .lock()
+            .map_err(error)?
+            .take()
+            .ok_or_else(|| error("motif frame already finished"))?;
+        tokio::task::spawn_blocking(move || encode_pixels(pixels))
+            .await
+            .map_err(error)?
+            .map_err(error)
+    }
+}
+
+fn encode_pixels(pixels: Pixels) -> anyhow::Result<Buffer> {
+    let Pixels {
+        width,
+        height,
+        bgra,
+        premultiplied: mut rgba,
+    } = pixels;
+    straighten(&mut rgba, bgra);
+    Ok(crate::motif_frame::encode(width, height, &rgba, true)?.into())
+}
 
 #[napi]
 pub struct MotifTextureEncoder {
@@ -42,7 +86,7 @@ impl MotifTextureEncoder {
                     }
                 };
                 while let Ok((handle, reply)) = rx.recv() {
-                    let result = unsafe { reader.encode(handle) }.map_err(|e| e.to_string());
+                    let result = unsafe { reader.read(handle) }.map_err(|e| e.to_string());
                     let _ = reply.send(result);
                 }
             })
@@ -52,7 +96,7 @@ impl MotifTextureEncoder {
     }
 
     #[napi]
-    pub async fn encode(&self, handle: Buffer) -> napi::Result<Buffer> {
+    pub async fn read(&self, handle: Buffer) -> napi::Result<MotifRawFrame> {
         let bits: [u8; 8] = handle.as_ref().try_into().map_err(error)?;
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.tx
@@ -60,7 +104,10 @@ impl MotifTextureEncoder {
             .ok_or_else(|| error("encoder closed"))?
             .send((u64::from_le_bytes(bits) as usize, tx))
             .map_err(error)?;
-        rx.await.map_err(error)?.map_err(error)
+        let pixels = rx.await.map_err(error)?.map_err(error)?;
+        Ok(MotifRawFrame {
+            pixels: std::sync::Mutex::new(Some(pixels)),
+        })
     }
 
     #[napi]
@@ -98,7 +145,7 @@ impl Reader {
         })
     }
 
-    unsafe fn encode(&mut self, handle: usize) -> anyhow::Result<Buffer> {
+    unsafe fn read(&mut self, handle: usize) -> anyhow::Result<Pixels> {
         let source: ID3D11Texture2D = self.device.OpenSharedResource1(HANDLE(handle as *mut _))?;
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         source.GetDesc(&mut desc);
@@ -153,12 +200,12 @@ impl Reader {
         if let Some(m) = mutex {
             m.ReleaseSync(0)?;
         }
-        let mut rgba = result?;
-
-        straighten(&mut rgba, desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM);
-
-        let bytes = crate::motif_frame::encode(desc.Width, desc.Height, &rgba, true)?;
-        Ok(bytes.into())
+        Ok(Pixels {
+            width: desc.Width,
+            height: desc.Height,
+            bgra: desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM,
+            premultiplied: result?,
+        })
     }
 }
 

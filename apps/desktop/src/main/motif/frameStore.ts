@@ -59,6 +59,8 @@ export class MotifFrameStore {
     private readonly codec: FrameCodec,
     private readonly changed: (hash: string, frame: number, present: boolean, bytes?: number) => void = () => {},
     private readonly admitWrite: (hash: string, frame: number, encodedBytes: number) => void = () => {},
+    /** +1 when a file is about to be written, -1 when that write ended. */
+    private readonly writing: (hash: string, delta: 1 | -1) => void = () => {},
   ) {}
 
   private async stem(hash: string, frame: number): Promise<string | null> {
@@ -108,6 +110,7 @@ export class MotifFrameStore {
       // Admission and commit form one serial transaction for this workspace.
       // Concurrent export/background writers cannot both spend the same free
       // bytes before their successful-write callbacks update accounting.
+      this.writing(hash, 1)
       const write = this.writeTail.then(async () => {
         this.admitWrite(hash, frame, bytes.byteLength)
         await fs.mkdir(path.dirname(stem), { recursive: true })
@@ -118,7 +121,7 @@ export class MotifFrameStore {
           this.changed(hash, frame, true, bytes.byteLength)
           notifyResourceCacheWrite()
         } finally { await fs.rm(temp, { force: true }).catch(() => {}) }
-      })
+      }).finally(() => this.writing(hash, -1))
       this.writeTail = write.catch(() => {})
       return write
     }
@@ -129,6 +132,13 @@ export class MotifFrameStore {
         await encoded(await this.codec.motifEncodePng(Buffer.from(png.buffer, png.byteOffset, png.byteLength), true))
       },
     }
+  }
+
+  /** False when the next write of any size would be refused, so a frame that
+   * can be skipped costs no readback or encoding at the budget. */
+  hasRoom(hash: string, frame: number): boolean {
+    try { this.admitWrite(hash, frame, 1); return true }
+    catch { return false }
   }
 
   async has(hash: string, frame: number): Promise<boolean> {

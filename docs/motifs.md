@@ -242,9 +242,20 @@ demands and maps main's snapshots into the baked-key index and layer status;
 `MotifBakeClient` carries the IPC.
 
 - **Persistence owns no display bitmap.** On Windows a native worker reads the
-  OSR texture and encodes `.wfrm` (falling back to a PNG compatibility writer);
-  with PNG capture main stores the capture directly. The write is atomic before
-  main marks the frame complete.
+  OSR texture inside the lease and encodes `.wfrm` after it (falling back to a PNG
+  compatibility writer); with PNG capture main stores the capture directly. The
+  write is atomic before main marks the frame complete.
+- **Every stored frame goes through `MotifFrameWriteQueue`**
+  ([ADR 0158](adr/0158-stored-frames-leave-the-capture-lease.md)). At most two
+  frames hold pixels, one write per address. A frame someone asked to keep (bake,
+  export) waits for a slot inside its lease, which is the backpressure on capture.
+- **A live capture stores itself** on the texture path: a committed preview frame
+  offers itself at its cache address and is skipped when both slots are taken,
+  under memory pressure or when the cache has no room. It is the tail of a
+  foreground capture, so the *background processing during playback* setting does
+  not stop it, and a failed write reaches neither the display nor the GPU path.
+  Replays then read instead of capturing again. Parameter previews have no cache
+  address and store nothing.
 - **Inventory is stat-only.** On open, a frame counts when `<n>.wfrm` is a
   regular file larger than the 52-byte header; files are never opened. The
   first open of a file after boot costs ~6 ms on the Windows bench (Defender),
@@ -288,9 +299,8 @@ frame over the budget fails with the resource-capacity error. Export does not
 wait for background baking.
 
 A missing frame is captured with the same host and frame-grid inputs as preview
-and can be persisted during the same OSR lease, joining an overlapping bake. A
-cache-write failure keeps the valid pixels and only logs; a capture failure
-fails the export. Cancelling stops admission and keeps completed cache files.
+and stored through the write queue, joining an overlapping bake. A cache-write
+failure keeps the valid pixels and only logs; a capture failure fails the export. Cancelling stops admission and keeps completed cache files.
 
 ## User Motifs
 

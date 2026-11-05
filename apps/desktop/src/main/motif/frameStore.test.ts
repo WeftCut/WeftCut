@@ -243,4 +243,21 @@ describe('MotifFrameStore', () => {
     expect(admit).toHaveBeenNthCalledWith(2, hash, 1, Buffer.byteLength('fast cache'))
     expect(await store.has(hash, 1)).toBe(true)
   })
+
+  it('reports a write in flight until it ends, whether or not it succeeded', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'motif-store-test-'))
+    roots.push(root)
+    const events: number[] = []
+    let refuse = false
+    const store = new MotifFrameStore(async () => root, { motifEncodePng: async () => Buffer.alloc(0) }, () => {}, () => {
+      if (refuse) throw new Error('motif-disk-capacity')
+    }, (_hash, delta) => events.push(delta))
+    await (await store.prepareWrite(hash, 0))!.encoded(frameHeader(2, 2))
+    refuse = true
+    await expect((await store.prepareWrite(hash, 1))!.encoded(frameHeader(2, 2))).rejects.toThrow('motif-disk-capacity')
+    expect(events).toEqual([1, -1, 1, -1])
+    expect(store.hasRoom(hash, 1)).toBe(false)
+    refuse = false
+    expect(store.hasRoom(hash, 1)).toBe(true)
+  })
 })

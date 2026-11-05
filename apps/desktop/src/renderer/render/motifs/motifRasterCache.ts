@@ -37,10 +37,9 @@ export const sharedMotifOverlayCache = new MotifFrameCache();
 
 function broker(cache: MotifFrameCache) {
   return new FrameBroker({ cache, clone: bitmap => createImageBitmap(bitmap),
-    control: (key, action, bake) => {
+    control: (key, action) => {
       frameScheduler.wake();
-      if (action === 'bake') { if (bake) controlStoredMotifCapture({ key, action, bake }); }
-      else controlStoredMotifCapture({ key, action });
+      controlStoredMotifCapture({ key, action });
     } });
 }
 const committedBroker = broker(sharedMotifFrameCache);
@@ -147,8 +146,7 @@ function acquireFrame(
         motif.manifest.content_hash, fpsNum, fpsDen, {
           key: ticket.key, high: ticket.high(), scaleDiv,
           ...(!overlay ? { cache: { hash: hashCacheKey(cacheKey), frame } } : {}),
-          ...(ticket.bake() ? { bake: ticket.bake()! } : {}),
         }),
     });
-  }, coalesceKey, undefined, priority);
+  }, coalesceKey, priority);
 }

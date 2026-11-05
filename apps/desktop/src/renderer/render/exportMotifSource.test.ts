@@ -79,7 +79,7 @@ describe('streamed Motif selection', () => {
     expect(captureMotifFrameResult).toHaveBeenCalledOnce();
     expect(vi.mocked(captureMotifFrameResult).mock.calls[0]?.[9]).toMatchObject({
       bake: { hash: expect.stringMatching(/^[0-9a-f]{32}$/), frame: 60 },
-      bakeOptional: true, finalizationToken: 'export-token', high: true,
+      finalizationToken: 'export-token', high: true,
     });
     expect(canvas).not.toHaveBeenCalled();
     expect(sharedMotifFrameCache.writeFrame).not.toHaveBeenCalled();

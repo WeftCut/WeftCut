@@ -183,11 +183,11 @@ for (const mode of ['native', 'png', 'readback-failure', 'warm-cache'] as const)
         const encodePng = native.motifEncodePng
         native.motifEncodePng = (...args: any[]) => { stats.png++; return encodePng(...args) }
         if (native.MotifTextureEncoder) {
-          const encode = native.MotifTextureEncoder.prototype.encode
-          native.MotifTextureEncoder.prototype.encode = function (...args: any[]) {
+          const read = native.MotifTextureEncoder.prototype.read
+          native.MotifTextureEncoder.prototype.read = function (...args: any[]) {
             stats.native++
             if (mode === 'readback-failure') return Promise.reject(new Error('injected readback failure'))
-            return encode.apply(this, args)
+            return read.apply(this, args)
           }
         }
       }, { addon, mode })
@@ -252,6 +252,85 @@ for (const mode of ['native', 'png', 'readback-failure', 'warm-cache'] as const)
     } finally { await app.close() }
   })
 }
+
+// Integer-aligned translucent rectangles and no text: the GPU rasterises this the same
+// way in every project and launch, so a pixel test of the pipeline can demand equality.
+// Anti-aliased content cannot: another launch may put one edge pixel a level away.
+const RASTER_STABLE_MOTIF = `<!doctype html><html><body style="margin:0;background:transparent;overflow:hidden"><script>
+  const cells = Array.from({ length: 12 }, (_, i) => {
+    const cell = document.createElement('div');
+    cell.style.cssText = 'position:absolute;width:32px;height:32px;background:rgba(' + (20 + i * 20) + ',' + (240 - i * 15) + ',90,' + ((i + 1) / 13).toFixed(3) + ')';
+    document.body.appendChild(cell);
+    return cell;
+  });
+  motif.define({ frame(t) {
+    const frame = Math.round(t * 30);
+    cells.forEach((cell, i) => {
+      cell.style.left = ((i * 37 + frame * 7) % 448) + 'px';
+      cell.style.top = ((i * 53 + frame * 3) % 448) + 'px';
+    });
+  }});
+</script></body></html>`
+
+test('A live capture stores the same pixels a bake stores at its address, and coverage learns of it @serial', async () => {
+  test.skip(process.platform !== 'win32', 'Live capture writes need D3D11 texture readback')
+  test.setTimeout(180_000)
+  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'texture' } })
+  const differingBytes = (a: string, b: string) => app.evaluate(async (_electron, { addon, a, b }) => {
+    const native = process.getBuiltinModule('module').createRequire(addon)(addon)
+    const [left, right] = await Promise.all([native.motifReadFrameScaled(a, 1), native.motifReadFrameScaled(b, 1)])
+    let differing = 0
+    for (let i = 0; i < left.rgba.length; i++) if (left.rgba[i] !== right.rgba[i]) differing++
+    return differing
+  }, { addon, a, b })
+  // Published once: a second publish takes a new id, and so another cache address.
+  let motifId: string | undefined
+  const stableLayer = async () => {
+    await invokeCmd(page, 'app_settings_set', { patch: { prebake_motifs: false } })
+    motifId ??= await publishMotifDraft(page, await createMotifDraft(page, {
+      id: 'raster-stable', name: 'Raster stable', version: 1, size: [480, 480], default_duration_s: 1, props_schema: {},
+    }, RASTER_STABLE_MOTIF))
+    return await page.evaluate(motifId => (window as any).__weftcutTest.addMotifLayer({ motifId, durationUs: 1_000_000 }), motifId) as string
+  }
+  const rasterDir = async (key: string) => path.join(await invokeCmd<string>(page, 'workspace_dir'), 'Cache', 'raster', hashCacheKey(key))
+  try {
+    test.skip(!await supportsMotifSharedTextures(app), 'Chromium cannot share D3D textures')
+    const canvas = { width: 480, height: 480, fpsNum: 30, fpsDen: 1 }
+    // Live first: both projects share one cache key, and memory already holding the
+    // frames would leave playback in a second project nothing to capture.
+    await newProject(page, { parentFolder: tmpDir('weftcut-live-preview-'), name: 'Live', canvas })
+    const key = await page.evaluate(id => (window as any).__weftcutTest.cacheKeyForLayer(id), await stableLayer()) as string
+    const liveDir = await rasterDir(key)
+    // The real preview path: playback captures the layer's own frames at its own address.
+    await page.evaluate(() => (window as any).__weftcutTest.transportPlay())
+    const stored = () => fs.readdir(liveDir).then(files => files.filter(f => f.endsWith('.wfrm')), () => [] as string[])
+    await expect.poll(async () => (await stored()).length, { timeout: 15_000 }).toBeGreaterThanOrEqual(5)
+    await page.evaluate(() => (window as any).__weftcutTest.transportPause())
+    const files = await stored()
+    await expect.poll(async () => (await invokeCmd<MotifBakeSnapshot>(page, 'motif_bake_snapshot')).coverage[key]?.length ?? 0,
+      { timeout: 15_000 }).toBeGreaterThanOrEqual(files.length)
+
+    await newProject(page, { parentFolder: tmpDir('weftcut-live-baked-'), name: 'Baked', canvas })
+    await waitForHook(page, 'prebakeLayerAndWait')
+    const bakedLayer = await stableLayer()
+    expect(await page.evaluate(id => (window as any).__weftcutTest.cacheKeyForLayer(id), bakedLayer)).toBe(key)
+    // Preparation accepts a layer once its preview is mounted.
+    await expect.poll(() => page.evaluate(async () => {
+      try { await (window as any).__weftcutTest.weftcutSampleComposite(240, 240); return true }
+      catch (error) { return String(error) }
+    }), { timeout: 15_000, intervals: [25] }).toBe(true)
+    // This preview warms frames too; only what the bake itself wrote is a bake.
+    const bakedDir = await rasterDir(key)
+    const warmed = new Set(await fs.readdir(bakedDir).catch(() => [] as string[]))
+    await page.evaluate(async layerId => (window as any).__weftcutTest.prebakeLayerAndWait({ layerId, expectedFrames: 30 }), bakedLayer)
+    const compared = files.filter(file => !warmed.has(file))
+    expect(compared.length).toBeGreaterThan(0)
+    for (const file of compared) expect(await differingBytes(path.join(liveDir, file), path.join(bakedDir, file)), file).toBe(0)
+    // Equality would mean nothing if every frame were the same picture.
+    expect(await differingBytes(path.join(bakedDir, '0.wfrm'), path.join(bakedDir, '1.wfrm'))).toBeGreaterThan(1000)
+    console.log(`[motif-live] ${compared.length} of ${files.length} live frames equal a bake`)
+  } finally { await app.close() }
+})
 
 test('Motif background work survives renderer reload and reuses pages across multiple contents @serial', async ({}, testInfo) => {
   test.setTimeout(120_000)

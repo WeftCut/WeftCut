@@ -49,10 +49,10 @@ describe("captureMotifFramePngBlob", () => {
     vi.mocked(captureMotifResult).mockResolvedValue({ bitmap, persisted: true, scaleDiv: 1 });
     const bake = { hash: 'a'.repeat(32), frame: 75 };
     await expect(captureMotifFrameResult('countdown', 2.5, { seconds: 5 }, 480, 480, 1,
-      'revision', 30, 1, { key: 'export', high: true, bake, bakeOptional: true, finalizationToken: 'finalization' }))
+      'revision', 30, 1, { key: 'export', high: true, bake, finalizationToken: 'finalization' }))
       .resolves.toEqual({ bitmap, persisted: true, scaleDiv: 1 });
     expect(captureMotifResult).toHaveBeenCalledWith(expect.objectContaining({
-      bake, bakeOptional: true, finalizationToken: 'finalization', coalesceKey: 'export',
+      bake, finalizationToken: 'finalization', coalesceKey: 'export',
     }), 1);
   });
 

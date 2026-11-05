@@ -1470,8 +1470,7 @@ app.whenReady().then(async () => {
   ipcMain.on('motif:capture-control', (event, control: import('../shared/motifs/frameTransport').MotifCaptureControl) => {
     if (!control || typeof control.key !== 'string') return
     const { key, action } = control
-    if (action === 'bake' && control.bake) motifCapture.requestBake(event.sender.id, key, control.bake)
-    else if (action === 'promote' || action === 'cancel') controlMotifCapture(`${event.sender.id}:${key}`, action)
+    if (action === 'promote' || action === 'cancel') controlMotifCapture(`${event.sender.id}:${key}`, action)
   })
   ipcMain.handle('motif:capture', (event, args: CaptureRequest) => {
     const isCurrent = trackMotifConsumer(event.sender, event.senderFrame)

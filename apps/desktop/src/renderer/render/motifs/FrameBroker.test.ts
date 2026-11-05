@@ -19,23 +19,6 @@ function setup() {
 }
 
 describe('FrameBroker ownership and subscribers', () => {
-  it('attaches bake intent to an existing preview capture without a second producer', async () => {
-    const h = setup(), wait = deferred<CapturedFrame>();
-    let ticket!: FrameTicket;
-    const capture = vi.fn((t: FrameTicket) => { ticket = t; return wait.promise; });
-    const preview = h.broker.acquire('c', 0, 1, capture, 'sprite');
-    await flush();
-    expect(ticket.bake()).toBeUndefined();
-    const address = { hash: 'hash', frame: 0 };
-    const bake = h.broker.acquire('c', 0, 1, capture, undefined, address);
-    expect(ticket.bake()).toEqual(address);
-    expect(h.control).toHaveBeenCalledWith(ticket.key, 'bake', address);
-    wait.resolve({ bitmap: bitmap(), persisted: true, scaleDiv: 'live' as const });
-    expect((await bake).persisted).toBe(true);
-    await preview;
-    expect(capture).toHaveBeenCalledTimes(1);
-  });
-
   it('a workspace reset prevents a new bake from inheriting the old write acknowledgement', async () => {
     const h = setup(), old = deferred<CapturedFrame>();
     const first = h.broker.acquire('c', 0, 1, () => old.promise);

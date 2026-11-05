@@ -580,6 +580,8 @@ _Avoid_: confirm, accept, review (a review is the tacks' word)
 The Workspace session's background work that persists Motif frame ranges:
 used ranges when *Pre-bake motifs* is on, full content on *Pre-bake now*.
 Ready = durable coverage; preview warming = volatile memory. See ADR 0108.
+A committed preview frame on the texture path also stores itself and counts
+toward coverage (ADR 0158); that is not preparation and is never waited on.
 _Avoid_: preview-owned bake queue
 
 **Motif cover**:

@@ -112,6 +112,17 @@ first, so it reads as a bug in that feature.
 So "all tests in one folder" has no clean endpoint here; the boundaries are the
 three runners.
 
+## Pixel equality
+
+GPU rasterisation of anti-aliased content is not stable: another project or launch
+can put an edge pixel of a Motif's text a level away, without any code change. A test
+of the frame pipeline (capture, store, read, transfer) therefore compares byte for byte
+on content the GPU draws the same way every time: integer-aligned rectangles, no
+text, no curves (`RASTER_STABLE_MOTIF` in `motif-bake.spec.ts`). It also checks that
+neighbouring frames differ, so equality cannot pass on a static picture. No tolerance:
+a tolerance hides the off-by-one a pipeline bug produces. Solid fills alone do not
+test colour or alpha handling, so keep translucent rectangles in the fixture.
+
 ## Fixtures — two trees, on purpose
 
 Regression fixtures must use synthetic or anonymized content. Do not copy actual
