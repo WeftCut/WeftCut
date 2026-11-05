@@ -12,6 +12,10 @@ jobs:
   probe:
     runs-on: macos-latest
     timeout-minutes: 45
+    # Explicit bash adds pipefail, without which `| tee` hides a probe that failed.
+    defaults:
+      run:
+        shell: bash
     env:
       OUT: ${{ github.workspace }}/probe-out
       POC: poc/osr-bitmap-paint
@@ -26,7 +30,11 @@ jobs:
           cd "$RUNNER_TEMP/e"
           npm init -y > /dev/null
           npm install electron@44.9.3
-          echo "ELECTRON=$RUNNER_TEMP/e/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron" >> "$GITHUB_ENV"
+          # The package installs no binary by itself.
+          node node_modules/electron/install.js
+          bin="$RUNNER_TEMP/e/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
+          test -x "$bin"
+          echo "ELECTRON=$bin" >> "$GITHUB_ENV"
       - name: Record the host
         run: |
           {
@@ -54,3 +62,11 @@ jobs:
         with:
           name: osr-paint-probe-macos
           path: probe-out
+      # The probe steps continue on error so later ones still run; a missing result
+      # has to fail the run here.
+      - name: Require every result
+        run: |
+          test -s "$OUT/capture-sources.json"
+          test -s "$OUT/rule.json"
+          test -s "$OUT/alpha-order.txt"
+          grep -q gpuAtEnd "$OUT/capture-sources.json"
