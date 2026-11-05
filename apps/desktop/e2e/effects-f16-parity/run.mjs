@@ -17,7 +17,7 @@
 //
 // What it checks — every catalog filter gets a phase, each driven by a
 // non-neutral parameter (the colour trio at amount -40, a gain below 1 so
-// nothing clips; sharpen at amount 60):
+// nothing clips; sharpen at amount 60; highlights at -40 and 40):
 //   default-pool: each filter through an 8-bit pool intermediate
 //                 → gradient collapses to ~256 distinct values (banding)
 //   f16-pool:     each filter through an rgba16float pool intermediate
@@ -27,7 +27,7 @@
 // pass-through at amount 0, and the predicted ring around a hard step.
 //
 // And a third condition, `wgsl-webgpu`, which runs the WGSL half of the
-// dual-source sharpen on a real WebGPU device — the backend the PREVIEW uses,
+// dual-source sharpen and highlights on a real WebGPU device — the backend the PREVIEW uses,
 // and one nothing else in the repo executes.
 
 import { execFileSync } from "child_process";
@@ -90,7 +90,6 @@ const runCondition = (f16) =>
   runHost(f16 ? "f16-pool" : "default-pool", MAIN, { POOL_F16: f16 ? "1" : "0" }, "GATE", 35_000);
 
 let failed = false;
-
 
 // --- Condition A: default pool ---
 const defaultResult = runCondition(false);

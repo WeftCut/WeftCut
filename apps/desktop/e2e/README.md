@@ -353,8 +353,8 @@ scripts/             standalone color diagnostics (color-*.mjs) — invoke
 effects-f16-parity/  the effect catalog's shader gate — one phase per filter.
                      Conditions A/B: float16 GL round-trip pool parity
                      (main.cjs + index.html). Condition C: the WGSL half of a
-                     dual-source filter on a real WebGPU device — sharpen today,
-                     chromakey's WGSL is still unexecuted (wgsl.cjs +
+                     dual-source filter on a real WebGPU device — sharpen and
+                     highlights today, chromakey's WGSL is still unexecuted (wgsl.cjs +
                      wgsl.html, its own host because WebGPU needs
                      --enable-features=Vulkan on Linux and that switch also moves
                      ANGLE's WebGL backend). All three from run.mjs;
