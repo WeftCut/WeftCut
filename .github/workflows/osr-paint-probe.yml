@@ -1,0 +1,56 @@
+name: osr-paint-probe
+
+# Branch-only screening run for poc/osr-bitmap-paint: Electron alone, no app build.
+on:
+  push:
+    branches: [poc/osr-bitmap-paint]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      OUT: ${{ github.workspace }}/probe-out
+      POC: poc/osr-bitmap-paint
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Install Electron outside the workspace
+        run: |
+          mkdir -p "$RUNNER_TEMP/e" "$OUT"
+          cd "$RUNNER_TEMP/e"
+          npm init -y > /dev/null
+          npm install electron@44.9.3
+          echo "ELECTRON=$RUNNER_TEMP/e/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron" >> "$GITHUB_ENV"
+      - name: Record the host
+        run: |
+          {
+            sysctl kern.hv_vmm_present hw.model hw.ncpu hw.memsize machdep.cpu.brand_string
+            sw_vers
+            system_profiler SPDisplaysDataType
+          } | tee "$OUT/host.txt"
+      - name: Capture sources
+        continue-on-error: true
+        timeout-minutes: 14
+        run: |
+          "$ELECTRON" "$POC/capture-sources.cjs" "--user-data-dir=$RUNNER_TEMP/p1" "--out=$OUT/capture-sources.json" --n=25 2>&1 | tee "$OUT/capture-sources.log"
+      - name: Alpha order
+        continue-on-error: true
+        timeout-minutes: 6
+        run: |
+          "$ELECTRON" "$POC/alpha-order.cjs" "--user-data-dir=$RUNNER_TEMP/p2" 2>&1 | tee "$OUT/alpha-order.txt"
+      - name: Paint selection rule
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          "$ELECTRON" "$POC/rule.cjs" "--user-data-dir=$RUNNER_TEMP/p3" "--out=$OUT/rule.json" --n=10 --kinds=dom,alpha,canvas 2>&1 | tee "$OUT/rule.log"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: osr-paint-probe-macos
+          path: probe-out
