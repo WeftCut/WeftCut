@@ -1504,34 +1504,40 @@ const SCALAR_TRACK_SCHEMA = {
   },
   required: ['mode', 'value'],
 }
+
+const POSITION_PATH_SCHEMA = { type: 'object', description: 'Path mode: the route.', properties: { nodes: { type: 'array', description: '1..128 nodes in route order.', items: {
+  type: 'object',
+  description: 'One node of the route.',
+  properties: {
+    point: { ...POINT_SCHEMA, description: 'Anchor point, composition px.' },
+    in_handle: HANDLE_SCHEMA('Arriving'), out_handle: HANDLE_SCHEMA('Leaving'),
+    segment: { type: 'string', enum: ['Line', 'Cubic'], description: 'Span LEAVING this node; defaults to Line. Cubic reads the handles.' },
+    tangent_mode: { type: 'string', enum: ['Corner', 'Smooth', 'Auto'], description: 'Defaults to Corner. Smooth aligns handles; Auto solves from neighbours.' },
+  },
+  required: ['point'],
+  additionalProperties: false,
+} } }, required: ['nodes'] }
+
 /** `set_position`'s record: XY (two scalar tracks) or Path (nodes + a scalar
  *  `progress` track). Typed so a client sends objects, not JSON strings; judged
- *  by `positionProblem` on the way in. */
+ *  by `positionProblem` on the way in. Each mode is a self-contained arm with
+ *  its own fields: Codex renders only the arms of an object that also has
+ *  sibling `properties`, so fields beside constraint-only arms vanish
+ *  (`mcp.schema-semantics` refuses that shape). */
 const POSITION_SCHEMA = {
   type: 'object',
   description: 'XY: `x`/`y` tracks in composition px. Path: `path.nodes` plus a `progress` track, 0..1 = distance along the path (Hold/Loop/PingPong extrapolation only).',
-  properties: {
-    mode: { type: 'string', enum: ['XY', 'Path'], description: 'XY: two scalar tracks. Path: a route plus a progress track.' },
-    x: { ...SCALAR_TRACK_SCHEMA, description: 'XY mode: the x track, composition px.' },
-    y: { ...SCALAR_TRACK_SCHEMA, description: 'XY mode: the y track, composition px.' },
-    path: { type: 'object', description: 'Path mode: the route.', properties: { nodes: { type: 'array', description: '1..128 nodes in route order.', items: {
-      type: 'object',
-      description: 'One node of the route.',
-      properties: {
-        point: { ...POINT_SCHEMA, description: 'Anchor point, composition px.' },
-        in_handle: HANDLE_SCHEMA('Arriving'), out_handle: HANDLE_SCHEMA('Leaving'),
-        segment: { type: 'string', enum: ['Line', 'Cubic'], description: 'Span LEAVING this node; defaults to Line. Cubic reads the handles.' },
-        tangent_mode: { type: 'string', enum: ['Corner', 'Smooth', 'Auto'], description: 'Defaults to Corner. Smooth aligns handles; Auto solves from neighbours.' },
-      },
-      required: ['point'],
-      additionalProperties: false,
-    } } }, required: ['nodes'] },
-    progress: { ...SCALAR_TRACK_SCHEMA, description: 'Path mode: distance along the route, 0..1 (Hold / Loop / PingPong extrapolation only).' },
-  },
-  required: ['mode'],
   oneOf: [
-    { properties: { mode: { const: 'XY', description: 'XY needs both tracks.' } }, required: ['mode', 'x', 'y'] },
-    { properties: { mode: { const: 'Path', description: 'Path needs the route and its progress.' } }, required: ['mode', 'path', 'progress'] },
+    { type: 'object', properties: {
+      mode: { const: 'XY', description: 'XY: two scalar tracks.' },
+      x: { ...SCALAR_TRACK_SCHEMA, description: 'The x track, composition px.' },
+      y: { ...SCALAR_TRACK_SCHEMA, description: 'The y track, composition px.' },
+    }, required: ['mode', 'x', 'y'], additionalProperties: false },
+    { type: 'object', properties: {
+      mode: { const: 'Path', description: 'Path: a route plus a progress track.' },
+      path: POSITION_PATH_SCHEMA,
+      progress: { ...SCALAR_TRACK_SCHEMA, description: 'Distance along the route, 0..1 (Hold / Loop / PingPong extrapolation only).' },
+    }, required: ['mode', 'path', 'progress'], additionalProperties: false },
   ],
 }
 
@@ -1695,7 +1701,7 @@ const KEYFRAME_ARG_OWNERS: Readonly<Record<string, string>> = {
 export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   {name:'set_position',exec:'table',annotations:ANN_DESTRUCTIVE,description:"Replace a layer's position outright, motion included: XY tracks, or a motion path with a scalar `progress` track. Keys are timed `local_t_us` (layer-local) and need only local_t_us/value (Linear, identity tangents); nodes need only point (Line, Corner, zero handles); IDs are generated, so omit them. A static `update_layer_params` x/y also flattens XY animation; `translate_position` offsets it instead. One undo step; returns the position as committed.",inputSchema:{type:'object',properties:{layer_id:LAYER_ID_SCHEMA,position:POSITION_SCHEMA},required:['layer_id','position']},parseArgs:(a,idGen)=>({op:'set_position',args:{layer:parseUuid(a.layer_id,'layer_id'),position:parsePosition(a.position,idGen)}})},
   { name: 'translate_position', exec: 'table', annotations: ANN_WRITE,
-    description: "Offset a layer's position by (dx, dy) composition px as one undo step, keeping its motion: in XY mode every x/y key (or the static value), in Path mode every node (handles and progress kept). Returns the position as committed, as set_position does.",
+    description: "Offset a layer's position by (dx, dy) composition px as one undo step, keeping its motion: in XY mode every x/y key (or the static value), in Path mode every node (handles and progress kept). Returns the position as committed, as set_position does. One static spot: update_layer_params x/y; new motion: set_position.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, dx: { type: 'number', description: 'Shift in x, composition px.' }, dy: { type: 'number', description: 'Shift in y, composition px.' } }, required: ['layer_id', 'dx', 'dy'] },
     parseArgs: (a) => {
       refuseUnknownArgs(a, ['layer_id', 'dx', 'dy'], 'translate_position')
@@ -1717,7 +1723,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     inputSchema: { type: 'object', properties: { track_id: TRACK_ID_SCHEMA, label: { type: ['string', 'null'], description: 'The new name. null or blank clears it back to the displayed-by-default name.' } }, required: ['track_id'] },
     parseArgs: (a) => ({ op: 'rename_track', args: { track: parseUuid(a.track_id, 'track_id'), label: parseStrOpt(a.label, 'label') } }) },
   { name: 'move_track', exec: 'table', annotations: ANN_SET,
-    description: "Move a track to a different z-order position, one recorded edit; 0 is the bottom of the stack, and the position must be below the track count (`TrackPositionOutOfRange`). Refuses a reserved A roll / B roll track (`TrackReserved`; they keep their place), a locked track (`TrackLocked`) and a track holding a locked layer (`LayerLocked`).",
+    description: "Move a track to a different z-order position, one recorded edit; 0 is the bottom of the stack, and the position must be below the track count (`TrackPositionOutOfRange`). Refuses a reserved A roll / B roll track (`TrackReserved`; they keep their place), a locked track (`TrackLocked`) and a track holding a locked layer (`LayerLocked`). One layer's drawing order: restack_layer.",
     inputSchema: { type: 'object', properties: { track_id: TRACK_ID_SCHEMA, new_position: { type: 'integer', description: 'Target index in the stack; 0 is the bottom.' } }, required: ['new_position', 'track_id'] },
     parseArgs: (a) => ({ op: 'move_track', args: { track: parseUuid(a.track_id, 'track_id'), new_position: parseIntNum(a.new_position, 'new_position') } }) },
   // Two flags of four: `Track` also stores muted/solo, and they are omitted on
@@ -1787,7 +1793,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { op: 'set_layer_flags', args: { layers: asNonEmptyArray(a.layer_ids, 'layer_ids', 'name at least one layer').map((s) => parseUuid(s, 'layer_ids')), enabled, locked } }
     } },
   { name: 'update_layer_params', exec: 'table', annotations: ANN_SET,
-    description: "Patch static fields of one layer; fields are kind-specific (schema variants). A static write replaces that field's animation, x/y included (Path mode refuses x/y: translate_position); set_param_track animates. `scale_linked` links the scale pair; while linked, one axis writes both. Text has no scale fields: resize its box. `src_in_us` slips the source window (span kept); retime_layers changes the rate. Returns the layer with `params`, each patched field as committed (values are quantized); locked layers and invalid values are refused.",
+    description: "Patch static fields of one layer; fields are kind-specific (schema variants). A static write replaces that field's animation, x/y included (Path mode refuses x/y: translate_position; new motion: set_position); set_param_track animates. `scale_linked` links the scale pair; while linked, one axis writes both. Text has no scale fields: resize its box. `src_in_us` slips the source window (span kept); retime_layers changes the rate. Returns the layer with `params`, each patched field as committed (values are quantized); locked layers and invalid values are refused.",
     inputSchema: { type: 'object', properties: { layer_id: LAYER_ID_SCHEMA, patch: LAYER_PARAMS_PATCH_SCHEMA }, required: ['layer_id', 'patch'] },
     parseArgs: (a) => {
       const { scale_linked, ...patch } = parseLayerParamsPatch(a.patch)
@@ -1798,7 +1804,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // only the seed. `insert` is the ripple move. Strict: a key no arm reads is
   // refused, as add_layers refuses one.
   { name: 'move_layers', exec: 'table', annotations: ANN_WRITE,
-    description: "Move a set of layers as one recorded edit. `layer_ids[0]` is the seed: land it with one of `t_start_us` (absolute) or `delta_us`, or with neither for a lane change alone. Every member keeps its offset on its own track, link partners included unless `escape_link`; `track_id` moves only the seed — a track of the same composition, or \"spawn\" for a fresh top track. `insert: true` is the ripple move: the set's span closes behind it and opens at its landing on every track, so a later landing is read with that span already closed; it refuses like `delete_layers { ripple: true }`. Each layer snaps on its own grid. A start before 0, an occupied landing (`LayerOverlap`) or a lock refuses whole. Returns `{ layers, rippled, track?, pruned_tracks }`.",
+    description: "Move named layers in time and/or onto another track of the SAME composition, as one recorded edit. `layer_ids[0]` is the seed: land it with one of `t_start_us` (absolute) or `delta_us`, or with neither for a lane change alone. Every member keeps its offset on its own track, link partners included unless `escape_link`; `track_id` moves only the seed — a track of the same composition, or \"spawn\" for a fresh top track. `insert: true` is the ripple move: the set's span closes behind it and opens at its landing on every track, so a later landing is read with that span already closed; it refuses like `delete_layers { ripple: true }`. Each layer snaps on its own grid. A start before 0, an occupied landing (`LayerOverlap`) or a lock refuses whole. Returns `{ layers, rippled, track?, pruned_tracks }`. Every layer from a time on: shift_layers; into another composition: move_layers_to_composition; drawing order against one layer: restack_layer.",
     inputSchema: { type: 'object', properties: {
       layer_ids: LAYER_IDS_SCHEMA('The layers to move, all in one composition; the first is the seed.'),
       t_start_us: US_SCHEMA("Where the seed starts afterwards, timeline. Exclusive with `delta_us`"),
@@ -1839,16 +1845,13 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       return { op: 'shift_layers', args: { from_t_us: parseIntNum(a.t_from_us, 't_from_us'), tracks: a.track_ids === undefined || a.track_ids === null ? null : asArray(a.track_ids, 'track_ids').map((s) => parseUuid(s, 'track_ids')), composition_id: parseCompositionIdOpt(a.composition_id), delta_us: delta, strict: true } }
     } },
   { name: 'restack_layer', exec: 'table', annotations: ANN_SET,
-    description: "Restack a visual layer above/below a stable layer or track anchor. Supply exactly one anchor; track anchors work through gaps. A sole occupant carries its track; shared or reserved sources split onto a fresh track. Reserved tracks stay put. Audio, cross-composition and self-anchors reject. Already in place records nothing. One undo step.",
+    description: "Change drawing order: put a visual layer directly above/below an anchor layer or track, keeping its time. Supply exactly one anchor; track anchors work through gaps. A sole occupant carries its track; shared or reserved sources split onto a fresh track. Reserved tracks stay put. Audio, cross-composition and self-anchors reject. Already in place records nothing. One undo step. A time or named-lane move: move_layers; a whole track: move_track.",
     inputSchema: { type: 'object', properties: {
       layer_id: { type: 'string', description: 'The visual layer to restack.' },
       anchor_layer_id: { type: 'string', description: 'The visual layer to place it against; supply exactly one of anchor_layer_id / anchor_track_id.' },
       anchor_track_id: { type: 'string', description: 'A visual track to place it against, including an empty reserved lane. Supply instead of anchor_layer_id.' },
       position: { type: 'string', enum: ['above', 'below'], description: "Place the layer directly above or directly below the anchor layer's track." },
-    }, required: ['layer_id', 'position'], oneOf: [
-      { required: ['anchor_layer_id'], not: { required: ['anchor_track_id'] } },
-      { required: ['anchor_track_id'], not: { required: ['anchor_layer_id'] } },
-    ] },
+    }, required: ['layer_id', 'position'] },
     parseArgs: (a) => {
       const hasLayer = a.anchor_layer_id !== undefined && a.anchor_layer_id !== null
       const hasTrack = a.anchor_track_id !== undefined && a.anchor_track_id !== null
@@ -1933,7 +1936,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     }, required: ['layer_ids'] },
     parseArgs: (a) => ({ op: 'groups_create', args: { layers: asArray(a.layer_ids, 'layer_ids').map((s) => parseUuid(s, 'layer_ids')), label: parseStrOpt(a.label, 'label') } }) },
   { name: 'add_group_members', exec: 'table', annotations: ANN_WRITE,
-    description: "Move selected clips into an existing Group while preserving external placement. Requires Group rate 1 and compatible selection. Refuses partial links, locked members and cycles. Returns the resulting Group.",
+    description: "Move selected clips into an existing Group while preserving external placement. Requires Group rate 1 and compatible selection. Refuses partial links, locked members and cycles. Returns the resulting Group. To land them at a chosen time inside: move_layers_to_composition.",
     inputSchema: { type: 'object', properties: {
       layer_ids: { type: 'array', items: { type: 'string' }, description: 'The layers to move in; at least one, all in one composition.' },
       group_layer_id: { type: 'string', description: 'The Group clip they move into — a `CompositionRef` layer in the SAME composition as the members.' },
@@ -1943,7 +1946,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
       group_layer: parseUuid(a.group_layer_id, 'group_layer_id'),
     } }) },
   { name: 'move_layers_to_composition', exec: 'table', annotations: ANN_WRITE,
-    description: "Move selected layers into another composition. The anchor starts at t_start_us; other members retain offsets. Lane assignment is per source track: omit to_track_id to find space, use spawn for fresh lanes, or name a free unlocked lane. Refuses mixed source compositions, locks, cycles, negative starts and membership changes involving retimed Groups. Internal links/transitions move; straddling ones are cut. Markers stay; compositions autofit; Group windows stay fixed.",
+    description: "Move layers out of their composition into ANOTHER one: into a Group's composition, back out to the root, or between timelines. The anchor starts at t_start_us on the destination's clock; other members retain offsets. Lane assignment is per source track: omit to_track_id to find space, use spawn for fresh lanes, or name a free unlocked lane. Refuses mixed source compositions, locks, cycles, negative starts and membership changes involving retimed Groups. Internal links/transitions move; straddling ones are cut. Markers stay; compositions autofit; Group windows stay fixed. Within one composition: move_layers; into a Group keeping their place on the outer timeline: add_group_members.",
     inputSchema: { type: 'object', properties: {
       layer_ids: { type: 'array', items: { type: 'string' }, description: 'The layers to move; at least one, all in one composition.' },
       to_composition_id: { type: 'string', description: 'The destination composition (`project://compositions`). The root is allowed — that is the move back out of a Group.' },
