@@ -6,8 +6,11 @@ read on the Windows texture lane, and which parts can go? **Answer:** a fresh
 output buffer per decode cost about 7 ms in page faults, and premultiplying
 then `UpdateSubresource` copied the frame twice on the CPU. Reusing the buffer
 and premultiplying straight into the pool's own staging texture took a 4K read
-from 25 to 14–17 ms. 4K playback was already at the content's ceiling; reads
-now use about half the lane capacity instead of 82%.
+from 25 to 15 ms. Splitting each frame into eight zstd bands, decoded on two
+threads and premultiplied into staging as each band lands, took it to about
+11 ms. More threads per frame were faster still but made playback tick late.
+4K playback was already at the content's ceiling; reads now use well under
+half the lane capacity instead of 82%.
 
 ## Probe and environment
 
@@ -64,20 +67,47 @@ decode 13, premultiply 5, upload 7 (`UpdateSubresource` 3.4, completion wait
 
 ## In the app (4K, alternating arms)
 
-| | before | after |
-| --- | --- | --- |
-| paused reads, one in flight | 39/s, p50 25.4 ms | 59/s, p50 16.7 ms |
-| paused reads, three in flight | 93–95/s | 141–148/s |
-| decode / premultiply / GPU copy | 11 / 4.5 / 5.5 ms | 6 / 4.5 / 3.2 ms |
-| playback, one read end to end | about 32 ms | about 21 ms |
-| playback pictures per second | 51.4 (some passes 46–50) | 51.4 (some passes 46–50) |
+| | before | buffer + staging | + bands, 2 threads |
+| --- | --- | --- | --- |
+| paused reads, one in flight | 39/s, p50 25 ms | 66/s, p50 15 ms | 87/s, p50 11 ms |
+| paused reads, three in flight | 93–95/s | 150–155/s | 178–182/s |
+| playback, one read end to end | about 32 ms | about 21 ms | about 17–18 ms |
+| late ticks per pass | 0–2 | 0–2 | 0 |
 
-The occasional slow pass appeared on both sides at the same rate (2 of 20
-passes each) with no pending or late ticks, so it is not the change. With the
-frames on disk replaced by their half-transparent variants (240 frames), the
-old path fell to 36 / 88 reads per second while the new one held. 1080p
-paused reads went from 274 to 330–367 per second. A fingerprint check of 400
-reads per arm, with alternating distinct frames, found no wrong frame.
+Playback held 51.4 pictures per second on every arm; an occasional pass of
+46–50 appeared on all of them at the same rate (about 2 in 20) with no pending
+or late ticks, so it is not a change's doing. With 240 stored frames replaced
+by their half-transparent variants, the old path fell to 36 / 88 reads per
+second while both new ones held. 1080p paused reads went from 274 to
+461–463 per second. A fingerprint check of 400 reads per arm, with
+alternating distinct frames, found no wrong frame.
+
+## Bands and how many threads decode them
+
+One zstd frame decodes on one thread. Splitting the rows into eight bands,
+each its own zstd frame with its own checksum, costs nothing in size (0.30 MB
+either way at 4K) and lets them decode in parallel. In the microbenchmark a
+4K decode fell from 9.0 ms to about 4 ms with four or eight threads, 8.8 ms on
+random-alpha frames from 16, and encoding from 15.7 to 7.6 ms with eight.
+Premultiplying each band into staging on its decoding thread, while it is
+still in cache, took decode plus premultiply from 9.0 to 4 ms.
+
+In the app every lane decodes at once, so threads per frame multiply by
+three. Sweeping the cap (two rounds of three playback passes each):
+
+| threads per frame | late ticks per pass | paused reads 1 / 3 in flight | playback read |
+| --- | --- | --- | --- |
+| 8 | about 3 (7–12 in a first run) | 104 / 182–191 | 16–17 ms |
+| 8, below-normal priority | about 10 | 103 / 188–191 | 16–17 ms |
+| 4 | about 2 | 98 / 192–194 | 16 ms |
+| 2 | 0 | 86 / 178–182 | 17.5 ms |
+| 1 | about 0.5 | 65 / 148–150 | 20 ms |
+
+Late ticks are the preview's dropped-frame indicator, so the cap is two per
+frame on this 16-thread machine, one per eight hardware threads. Lower thread
+priority made it worse: preempted bands held their lane longer. Baking the
+same project took as long as before (12.9 and 13.4 frames per second at 4K
+between a quarter and nine tenths done; 16.0 and 15.6 at 1080p).
 
 ## Not taken
 

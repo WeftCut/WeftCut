@@ -33,10 +33,13 @@ commit, not the compositor's raster.
 
 ## Decision
 
-- **One `.wfrm` file per frame.** A 16-byte header (magic, dimensions), then
-  straight RGBA8 as one zstd level-1 frame with its content checksum, which is
-  the frame's only content check. A frame without the checksum flag, or in
-  another layout, is a miss. Files are independent and atomically replaced.
+- **One `.wfrm` file per frame.** A 16-byte header (magic, dimensions), the
+  band count and each band's length, then straight RGBA8 split into up to
+  eight bands of rows, each one zstd level-1 frame with its content checksum,
+  which is the frame's only content check. Bands encode and decode in parallel:
+  one zstd frame cannot, and at 4K it was the read's largest stage. Threads
+  per frame stay few, because three lanes decode at once beside playback. A
+  band without the checksum flag, or a frame in another layout, is a miss. Files are independent and atomically replaced.
   Older caches are not read or migrated: the key namespace moves.
 - **Windows moves pixels as persistent D3D11 textures.** The core addon (not
   the optional FFmpeg component) owns bounded pools; handles are shared once
@@ -60,7 +63,7 @@ commit, not the compositor's raster.
 
 ## Consequences
 
-- The cache key namespace (`surface-v4`) discards frames baked before the
+- The cache key namespace (`surface-v5`) discards frames baked before the
   surface fence, the canvas policy and the current layout; collection deletes
   their directories unread. Projects re-bake once after a layout change.
 - One readback per navigation, size change and GPU restart.

@@ -145,7 +145,7 @@ background so `background: transparent` stays real alpha.
 
 Frames are identified by content, not placement. The key
 (`motifFrameCacheKey`, `renderer/render/motifs/motifFrames.ts`) is
-`surface-v4 | motifId | version | contentHash | renderW | renderH | fpsNum |
+`surface-v5 | motifId | version | contentHash | renderW | renderH | fpsNum |
 fpsDen | contentDurationFrames | canonicalProps [| mediaKeys]`.
 
 - `contentHash` covers the manifest, HTML and every companion path and bytes,
@@ -176,8 +176,10 @@ persisted frames; otherwise it may capture its window.
 **L2 — disk.** One `.wfrm` per frame under
 `<workspace>/Cache/raster/<hash>/<frame>.wfrm`, where `<hash>` is
 `hashCacheKey` (two FNV-1a-64 lanes, 32 hex chars) of the key: a 16-byte header
-(magic `WCMFRM02`, dimensions) and straight RGBA8 as one zstd level-1 frame with
-its content checksum, the frame's only content check (ADR 0078). Files are
+(magic `WCMFRM03`, dimensions), the band count and lengths, then straight RGBA8
+in up to eight bands of rows, each a zstd level-1 frame with its content
+checksum, the frame's only content check (ADR 0078). Bands encode and decode in
+parallel. Files are
 atomically replaced and disposable. A format change moves the key namespace, so
 older directories are collected rather than read.
 

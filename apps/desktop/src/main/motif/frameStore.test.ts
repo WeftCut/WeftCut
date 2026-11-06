@@ -18,7 +18,7 @@ async function fixture() {
 /** A `.wfrm` header (magic, width, height) padded to the minimum frame size. */
 function frameHeader(width: number, height: number): Buffer {
   const bytes = Buffer.alloc(68)
-  bytes.write('WCMFRM02'); bytes.writeUInt32LE(width, 8); bytes.writeUInt32LE(height, 12)
+  bytes.write('WCMFRM03'); bytes.writeUInt32LE(width, 8); bytes.writeUInt32LE(height, 12)
   return bytes
 }
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
@@ -45,8 +45,8 @@ describe('MotifFrameStore', () => {
   })
 
   it.each([
-    ['a short file', Buffer.from('WCMFRM02')],
-    ['a former format', Buffer.concat([Buffer.from('WCMFRM01'), frameHeader(2, 2).subarray(8)])],
+    ['a short file', Buffer.from('WCMFRM03')],
+    ['a former format', Buffer.concat([Buffer.from('WCMFRM02'), frameHeader(2, 2).subarray(8)])],
     ['a zero width', frameHeader(0, 2)],
     ['a width beyond the native bound', frameHeader(9000, 2)],
   ])('reads a bad header (%s) as a miss', async (_, bytes) => {

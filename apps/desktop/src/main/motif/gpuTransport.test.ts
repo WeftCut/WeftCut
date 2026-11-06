@@ -511,7 +511,7 @@ describe('Motif GPU leases', () => {
       const store = new MotifFrameStore(async () => root, { motifEncodePng: vi.fn() }, changed)
       const hash = 'c'.repeat(32)
       const bytes = Buffer.alloc(68)
-      bytes.write('WCMFRM02'); bytes.writeUInt32LE(3841, 8); bytes.writeUInt32LE(2161, 12)
+      bytes.write('WCMFRM03'); bytes.writeUInt32LE(3841, 8); bytes.writeUInt32LE(2161, 12)
       await (await store.prepareWrite(hash, 0))!.encoded(bytes)
       changed.mockClear()
       const gpu = (file: string, width: number, height: number, div: 1 | 2 | 4) => transport.read(owner, file, width, height, div)

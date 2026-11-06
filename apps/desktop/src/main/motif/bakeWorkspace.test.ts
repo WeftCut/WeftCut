@@ -12,7 +12,7 @@ const roots: string[] = [];
 const workspaces: MotifBakeWorkspace[] = [];
 function frameBytes(width = 2, height = 2) {
   const bytes = Buffer.alloc(52 + width * height * 4);
-  bytes.write('WCMFRM02'); bytes.writeUInt32LE(width, 8); bytes.writeUInt32LE(height, 12);
+  bytes.write('WCMFRM03'); bytes.writeUInt32LE(width, 8); bytes.writeUInt32LE(height, 12);
   return bytes;
 }
 const content = (key: string, width = 2): MotifBakeContent => ({ cacheKey: key, hash: hashCacheKey(key), contentFrames: 1,

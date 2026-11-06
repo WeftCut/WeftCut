@@ -29,7 +29,7 @@ export type MotifTextureUpload = (file: string, width: number, height: number, d
 
 /** The native frame layout (`motif_frame.rs`): magic, width, height, then the
  * checksummed zstd payload. */
-const HEADER_MAGIC = 'WCMFRM02'
+const HEADER_MAGIC = 'WCMFRM03'
 const HEADER_BYTES = 16
 /** The native core's dimension bounds (`motif_frame.rs`). */
 const MAX_DIMENSION = 8192

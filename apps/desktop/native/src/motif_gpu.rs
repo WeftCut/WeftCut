@@ -19,7 +19,9 @@ type TimedReply = tokio::sync::oneshot::Sender<Result<MotifUploadTiming, String>
 #[derive(Clone, Copy, Default)]
 pub struct MotifUploadTiming {
     pub read: crate::motif_frame::MotifReadTiming,
-    /// Premultiplying into the staging texture.
+    /// Filling the staging texture beyond reading and decoding: mapping it, and
+    /// premultiplying a scaled frame. A full-size frame premultiplies each band
+    /// as it decodes, inside `read.decode_ms`.
     pub premultiply_ms: f64,
     /// Waiting for the consumer to release the slot's keyed mutex.
     pub acquire_ms: f64,
@@ -101,13 +103,13 @@ impl MotifGpuPool {
         std::thread::Builder::new()
             .name("motif-gpu".into())
             .spawn(move || {
-                let state = unsafe { Pool::new(width, height, count, bgra.unwrap_or(false)) }
-                    .and_then(|pool| Ok((pool, crate::motif_frame::FrameDecoder::new()?)));
+                let state = unsafe { Pool::new(width, height, count, bgra.unwrap_or(false)) };
                 match state {
                     Err(e) => {
                         let _ = ready_tx.send(Err(e.to_string()));
                     }
-                    Ok((pool, mut decoder)) => {
+                    Ok(pool) => {
+                        let mut decoder = crate::motif_frame::FrameDecoder::default();
                         let handles = pool
                             .slots
                             .iter()
@@ -127,15 +129,19 @@ impl MotifGpuPool {
                                 Command::Stop => break,
                             };
                             let result = (|| {
-                                let (w, h, pixels, read) = decoder.read_scaled(&path, div)?;
-                                // The file does not fit this pool: a miss, not a device failure.
-                                anyhow::ensure!(
-                                    w == width && h == height,
-                                    "{}scaled frame {w}x{h} does not fit the {width}x{height} pool",
-                                    crate::motif_frame::FRAME_ERROR
-                                );
-                                let (premultiply_ms, acquire_ms, gpu_ms) =
-                                    unsafe { pool.upload(slot, pixels) }?;
+                                let (read, premultiply_ms, acquire_ms, gpu_ms) = unsafe {
+                                    pool.upload(slot, |rows| {
+                                        decoder.read_with(&path, div, |w, h| {
+                                            // A file that does not fit this pool is a miss,
+                                            // not a device failure.
+                                            anyhow::ensure!(
+                                                w == width && h == height,
+                                                "scaled frame {w}x{h} does not fit the {width}x{height} pool"
+                                            );
+                                            Ok(())
+                                        }, rows)
+                                    })
+                                }?;
                                 Ok(MotifUploadTiming {
                                     read,
                                     premultiply_ms,
@@ -233,6 +239,18 @@ impl Drop for Slot {
         }
     }
 }
+/// The mapped staging texture, written by every band's thread at disjoint rows.
+struct Mapping(*mut u8);
+// SAFETY: the pointer outlives the fill, and writers never share a row.
+unsafe impl Sync for Mapping {}
+
+impl Mapping {
+    /// Through a method, so a closure captures the `Sync` wrapper, not the pointer.
+    unsafe fn at(&self, offset: usize) -> *mut u8 {
+        self.0.add(offset)
+    }
+}
+
 struct Pool {
     device: ID3D11Device1,
     context: ID3D11DeviceContext,
@@ -325,14 +343,18 @@ impl Pool {
         })
     }
 
-    /// Premultiplies straight `pixels` into the slot. Returns the premultiply,
-    /// the keyed-mutex wait and the copy through completion, in ms.
-    unsafe fn upload(&self, slot: usize, pixels: &[u8]) -> anyhow::Result<(f64, f64, f64)> {
+    /// Premultiplies the straight rows `fill` hands over, `rows(first_row,
+    /// pixels)`, into the staging texture, then copies it into the slot.
+    /// Returns `fill`'s timing, the rest of the fill, the keyed-mutex wait and
+    /// the copy through completion, in ms.
+    unsafe fn upload(
+        &self,
+        slot: usize,
+        fill: impl FnOnce(
+            &(dyn Fn(usize, &[u8]) + Sync),
+        ) -> anyhow::Result<crate::motif_frame::MotifReadTiming>,
+    ) -> anyhow::Result<(crate::motif_frame::MotifReadTiming, f64, f64, f64)> {
         let row = self.width as usize * 4;
-        anyhow::ensure!(
-            pixels.len() == row * self.height as usize,
-            "Motif upload does not fit the pool"
-        );
         let start = std::time::Instant::now();
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
         // The previous copy out of the staging texture completed before its
@@ -340,18 +362,34 @@ impl Pool {
         self.context
             .Map(&self.staging, 0, D3D11_MAP_WRITE, 0, Some(&mut mapped))?;
         let pitch = mapped.RowPitch as usize;
-        let rows = std::slice::from_raw_parts_mut(
-            mapped.pData.cast::<u8>(),
-            pitch * (self.height as usize - 1) + row,
-        );
-        premultiply_rows(pixels, rows, row, pitch);
+        let len = pitch * (self.height as usize - 1) + row;
+        let base = Mapping(mapped.pData.cast::<u8>());
+        let rows = |first: usize, pixels: &[u8]| {
+            let count = pixels.len() / row;
+            let offset = first * pitch;
+            assert!(
+                count > 0
+                    && pixels.len() == count * row
+                    && offset + pitch * (count - 1) + row <= len,
+                "Motif rows outside the staging texture"
+            );
+            // SAFETY: inside the mapping, and each call writes rows no other call writes.
+            let dst = std::slice::from_raw_parts_mut(base.at(offset), pitch * (count - 1) + row);
+            premultiply_rows(pixels, dst, row, pitch);
+        };
+        let read = fill(&rows);
         self.context.Unmap(&self.staging, 0);
-        let premultiply_ms = start.elapsed().as_secs_f64() * 1000.0;
+        let read = read?;
+        let premultiply_ms = (start.elapsed().as_secs_f64() * 1000.0
+            - read.read_ms
+            - read.decode_ms
+            - read.scale_ms)
+            .max(0.0);
         // Waits for the copy even though the keyed mutex would order it (ADR 0078).
         let (acquire_ms, gpu_ms) = self.write(slot, |texture| {
             self.context.CopyResource(texture, &self.staging)
         })?;
-        Ok((premultiply_ms, acquire_ms, gpu_ms))
+        Ok((read, premultiply_ms, acquire_ms, gpu_ms))
     }
 
     unsafe fn copy(&self, handle: usize, slot: usize) -> anyhow::Result<()> {
