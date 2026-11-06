@@ -219,20 +219,30 @@ export class MotifCaptureService {
    * It can be captured again, so memory pressure or a full cache simply skips. */
   private liveWriteAddress(request: CaptureRequest, store: MotifFrameStore): MotifCacheAddress | null {
     const address = request.cache
-    if (!address || !this.canReadTexture() || backgroundResourcePause() === 'memory') return null
+    if (!address || backgroundResourcePause() === 'memory') return null
     return store.hasRoom(address.hash, address.frame) ? address : null
   }
 
-  /** Pixels in flight are charged to the write, which outlives the capture. */
-  private liveRead(texture: OffscreenSharedTexture, args: CaptureArgs, address: MotifCacheAddress, store: MotifFrameStore): FrameRead {
-    return async () => {
-      const release = reserveResources(0, args.width * args.height * 8 / 1048576)
-      try {
-        const writer = await store.prepareWrite(address.hash, address.frame)
-        if (!writer) throw new Error('Motif frame has no open workspace')
-        const encodeAndStore = await this.textureRead(texture, args, writer)()
-        return () => encodeAndStore().finally(release)
-      } catch (error) { release(); throw error }
+  /** Offered frames ask nothing of the display: no failure here reaches it.
+   * Pixels in flight are charged to the write, which outlives the capture. */
+  private async offerLiveFrame(request: CaptureRequest, args: CaptureArgs, store: MotifFrameStore, read: (writer: FrameWriter) => FrameRead): Promise<QueuedWrite | null> {
+    try {
+      const address = this.liveWriteAddress(request, store)
+      if (!address) return null
+      const queued = await this.writes.offer(store, address, 'skip', async () => {
+        const release = reserveResources(0, args.width * args.height * 8 / 1048576)
+        try {
+          const writer = await store.prepareWrite(address.hash, address.frame)
+          if (!writer) throw new Error('Motif frame has no open workspace')
+          const encodeAndStore = await read(writer)()
+          return () => encodeAndStore().finally(release)
+        } catch (error) { release(); throw error }
+      })
+      queued?.written.catch(error => this.warnLiveWrite(error))
+      return queued
+    } catch (error) {
+      this.warnLiveWrite(error)
+      return null
     }
   }
 
@@ -302,8 +312,12 @@ export class MotifCaptureService {
       const bytes = Buffer.from(await this.deps.png(args, key, high, isCurrent), 'base64')
       acceptingBake = false
       if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
-      const writer = await kept?.writer
-      const queued = writer ? await this.writes.offer(store, kept!.address, 'wait', async () => () => writer.png(bytes)) : null
+      if (!kept) {
+        await this.offerLiveFrame(request, args, store, writer => async () => () => writer.png(bytes))
+        return { kind: 'png', bytes, persisted: false }
+      }
+      const writer = await kept.writer
+      const queued = writer ? await this.writes.offer(store, kept.address, 'wait', async () => () => writer.png(bytes)) : null
       return { kind: 'png', bytes, persisted: await persisted(queued) }
     } finally {
       releaseResources()
@@ -314,21 +328,12 @@ export class MotifCaptureService {
   /** Inside the lease. A frame nobody can store is still delivered: no failure
    * here reaches the display. */
   private async offerDisplayFrame(texture: OffscreenSharedTexture, request: CaptureRequest, args: CaptureArgs, kept: { address: MotifCacheAddress; writer: Promise<FrameWriter | null> } | undefined, store: MotifFrameStore): Promise<QueuedWrite | null> {
+    if (!this.canReadTexture()) return null
+    if (!kept) return this.offerLiveFrame(request, args, store, writer => this.textureRead(texture, args, writer))
     try {
-      if (kept) {
-        const writer = await kept.writer
-        if (!writer || !this.canReadTexture()) return null
-        return await this.writes.offer(store, kept.address, 'wait', this.textureRead(texture, args, writer))
-      }
-      const address = this.liveWriteAddress(request, store)
-      if (!address) return null
-      const queued = await this.writes.offer(store, address, 'skip', this.liveRead(texture, args, address, store))
-      queued?.written.catch(error => this.warnLiveWrite(error))
-      return queued
-    } catch (error) {
-      if (!kept) this.warnLiveWrite(error)
-      return null
-    }
+      const writer = await kept.writer
+      return writer ? await this.writes.offer(store, kept.address, 'wait', this.textureRead(texture, args, writer)) : null
+    } catch { return null }
   }
 
   dispose(): void { this.encoder?.close(); this.encoder = null }

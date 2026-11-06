@@ -1332,7 +1332,7 @@ const enUS = {
     bake_dot_warming: "Warming…",
     bake_dot_preview_ready: "Preview ready",
     bake_dot_baking: "Pre-baking…",
-    bake_dot_ready: "Pre-baked",
+    bake_dot_ready: "Baked",
     bake_dot_error: "Pre-bake failed",
     audio_slipped: "Audio slipped {{offset}} from its video",
     audio_units: "Audio units",
@@ -2357,9 +2357,9 @@ const enUS = {
     content_qwen3vl_mmproj: "Qwen3-VL vision projector (F16)",
     content_prereq_msvc14:
       "Requires the Microsoft Visual C++ 2015–2022 x64 runtime (usually already installed).",
-    prebake_motifs: "Pre-bake motifs",
+    prebake_motifs: "Pre-bake all motif content",
     prebake_motifs_hint:
-      "Background-render motif frames to disk. Smoother playback, instant reopen; uses disk space in the project Cache.",
+      "Bake every motif frame the timeline uses in the background.",
     preview_heading: "Preview",
     preview_snap_enabled: "Canvas snapping",
     preview_snap_enabled_hint:

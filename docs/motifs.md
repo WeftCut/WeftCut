@@ -232,7 +232,7 @@ session; its `MotifBakeCoordinator` owns inventory, queued ranges, progress,
 pauses, bounded retries and collection
 ([ADR 0108](adr/0108-motif-preparation-belongs-to-the-workspace-session.md)).
 Automatic demand covers used ranges when the `prebake_motifs` setting
-("Pre-bake motifs", default off) is on; **Pre-bake now** on a layer demands its
+("Pre-bake all motif content", default off) is on; **Pre-bake now** on a layer demands its
 full content and moves it (or a Group's Motifs) to the front. Clips finish in
 timeline order (start time, then track/layer order).
 Renderer reload and preview disposal do not cancel main's work; close, reopen
@@ -241,6 +241,10 @@ one. In the renderer, `MotifFrameService` projects committed layers into
 demands and maps main's snapshots into the baked-key index and layer status;
 `MotifBakeClient` carries the IPC.
 
+- **One rule for what reaches the disk.** Every captured frame with a cache
+  address is stored, whoever captured it; the setting only decides whether frames
+  nobody has asked for are generated. Disk use is limited by the temporary cache
+  space, not by the setting.
 - **Persistence owns no display bitmap.** On Windows a native worker reads the
   OSR texture inside the lease and encodes `.wfrm` after it (falling back to a PNG
   compatibility writer); with PNG capture main stores the capture directly. The
@@ -249,13 +253,14 @@ demands and maps main's snapshots into the baked-key index and layer status;
   ([ADR 0158](adr/0158-stored-frames-leave-the-capture-lease.md)). At most two
   frames hold pixels, one write per address. A frame someone asked to keep (bake,
   export) waits for a slot inside its lease, which is the backpressure on capture.
-- **A live capture stores itself** on the texture path: a committed preview frame
-  offers itself at its cache address and is skipped when both slots are taken,
-  under memory pressure or when the cache has no room. It is the tail of a
-  foreground capture, so the *background processing during playback* setting does
-  not stop it, and a failed write reaches neither the display nor the GPU path.
-  Replays then read instead of capturing again. Parameter previews have no cache
-  address and store nothing.
+- **A live capture stores itself:** a committed preview frame offers itself at its
+  cache address and is skipped when both slots are taken, under memory pressure or
+  when the cache has no room. It is the tail of a foreground capture, so the
+  *background processing during playback* setting does not stop it, and a failed
+  write reaches neither the display nor the GPU path. Replays then read instead of
+  capturing again. Parameter previews have no cache address and store nothing. A
+  session whose texture readback failed stores nothing live: its display texture
+  has no pixels main can read.
 - **Inventory is stat-only.** On open, a frame counts when `<n>.wfrm` is a
   regular file larger than the 52-byte header; files are never opened. The
   first open of a file after boot costs ~6 ms on the Windows bench (Defender),
@@ -300,7 +305,8 @@ wait for background baking.
 
 A missing frame is captured with the same host and frame-grid inputs as preview
 and stored through the write queue, joining an overlapping bake. A cache-write
-failure keeps the valid pixels and only logs; a capture failure fails the export. Cancelling stops admission and keeps completed cache files.
+failure keeps the valid pixels and only logs; a capture failure fails the
+export. Cancelling stops admission and keeps completed cache files.
 
 ## User Motifs
 

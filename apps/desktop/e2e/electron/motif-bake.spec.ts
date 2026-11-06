@@ -41,8 +41,10 @@ test('Pre-bake now moves a clip ahead of unfinished background work @serial', as
       const gate = new Promise<void>(resolve => { release = resolve })
       const state = { calls: 0, held: false, release: () => { native.motifEncodePng = original; release() } }
       ;(globalThis as any).__bakeOrderGate = state
+      // The preview stores the frame under the playhead too, so up to three of
+      // these encodes are not the bake's. A clip finishes before the next starts.
       native.motifEncodePng = async (...args: any[]) => {
-        if (++state.calls === 4) { state.held = true; await gate }
+        if (++state.calls === 7) { state.held = true; await gate }
         return original(...args)
       }
     }, addon)
@@ -50,8 +52,8 @@ test('Pre-bake now moves a clip ahead of unfinished background work @serial', as
     await expect.poll(() => app.evaluate(() => (globalThis as any).__bakeOrderGate.held), { timeout: 30_000 }).toBe(true)
     const read = () => invokeCmd<MotifBakeSnapshot>(page, 'motif_bake_snapshot')
     const before = await read()
-    const active = layers.find(l => before.statuses[l.key]?.done > 0)!
-    const target = layers.findLast(l => before.statuses[l.key]?.done === 0)!
+    const active = layers.find(l => before.statuses[l.key]?.done > 1)!
+    const target = layers.findLast(l => before.statuses[l.key]?.done <= 1)!
     expect(active).toBeTruthy(); expect(target).toBeTruthy()
     await page.evaluate(id => (window as any).__weftcutTest.revealLayer({ layerId: id }), target.layerId)
     const block = page.locator(`[data-layer-id="${target.layerId}"]`)
@@ -144,7 +146,7 @@ test(`Motif pre-bake survives a cold app restart and captures only missing frame
         h.clearMotifCacheKey(key)
         h.weftcutSeekUs(us)
       }, { key, us })
-      await expect(dot).toHaveAttribute('title', 'Pre-baked')
+      await expect(dot).toHaveAttribute('title', 'Baked')
       await running.page.evaluate(() => (window as any).__weftcutTest.weftcutSampleComposite(240, 240))
     }
     expect(await running.page.evaluate(() => (globalThis as any).__staleMotifMissDelivered)).toBe(true)
@@ -242,10 +244,9 @@ for (const mode of ['native', 'png', 'readback-failure', 'warm-cache'] as const)
         expect(decoded.stats.png).toBe(30)
       }
       if (mode === 'warm-cache') {
-        // Renderer L0 is display-owned. A main-owned bake persists directly
-        // without requesting ImageBitmaps back across IPC from that cache.
+        // Warming stored its frames, so the bake captures only those it skipped.
+        // Renderer L0 is display-owned: nothing crosses back from it.
         const backgroundCaptures = capturesFor(await invokeCmd<CaptureDiagnostics>(page, 'motif_capture_diagnostics'), 'countdown') - beforeBake
-        expect(backgroundCaptures).toBeGreaterThan(0)
         expect(backgroundCaptures).toBeLessThanOrEqual(30)
       }
       console.log(`[motif-bake:${mode}] ${JSON.stringify(decoded.stats)}`)
@@ -273,9 +274,8 @@ const RASTER_STABLE_MOTIF = `<!doctype html><html><body style="margin:0;backgrou
 </script></body></html>`
 
 test('A live capture stores the same pixels a bake stores at its address, and coverage learns of it @serial', async () => {
-  test.skip(process.platform !== 'win32', 'Live capture writes need D3D11 texture readback')
   test.setTimeout(180_000)
-  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'texture' } })
+  const { app, page } = await launchApp()
   const differingBytes = (a: string, b: string) => app.evaluate(async (_electron, { addon, a, b }) => {
     const native = process.getBuiltinModule('module').createRequire(addon)(addon)
     const [left, right] = await Promise.all([native.motifReadFrameScaled(a, 1), native.motifReadFrameScaled(b, 1)])
@@ -294,7 +294,6 @@ test('A live capture stores the same pixels a bake stores at its address, and co
   }
   const rasterDir = async (key: string) => path.join(await invokeCmd<string>(page, 'workspace_dir'), 'Cache', 'raster', hashCacheKey(key))
   try {
-    test.skip(!await supportsMotifSharedTextures(app), 'Chromium cannot share D3D textures')
     const canvas = { width: 480, height: 480, fpsNum: 30, fpsDen: 1 }
     // Live first: both projects share one cache key, and memory already holding the
     // frames would leave playback in a second project nothing to capture.
@@ -377,7 +376,8 @@ test('Motif background work survives renderer reload and reuses pages across mul
     const selected = stats.lanes.filter(lane => layers.some(layer => layer.motifId === lane.motifId))
     const captures = selected.reduce((n, lane) => n + lane.captures, 0)
     const pageLoads = selected.reduce((n, lane) => n + lane.pageLoads, 0)
-    expect(captures).toBeGreaterThanOrEqual(240)
+    // Each layer's preview may have stored the frame under the playhead already.
+    expect(captures).toBeGreaterThanOrEqual(240 - layers.length)
     // A frame-round-robin implementation reloads almost every capture. A
     // bounded content slice must retain meaningful affinity on any hardware.
     expect(pageLoads).toBeLessThan(captures * .75)

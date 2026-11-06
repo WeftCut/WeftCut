@@ -432,10 +432,55 @@ describe('Motif capture and persistence', () => {
       expect(h.encoder.read).not.toHaveBeenCalled();
     });
 
-    it('never on a host without texture readback', async () => {
-      const h = fixture(false); missing(h);
+    describe('on a PNG host', () => {
+      it('from the bytes it delivers, without holding the display for the write', async () => {
+        const h = fixture(false); missing(h); let finish!: () => void;
+        h.writer.png.mockReturnValueOnce(new Promise<void>(r => { finish = r; }));
+        await expect(h.service.capture(owner, at(3))).resolves.toEqual({ kind: 'png', bytes: Buffer.from('png'), persisted: false });
+        expect(h.prepareWrite).toHaveBeenCalledExactlyOnceWith(bake.hash, 3);
+        await vi.waitFor(() => expect(h.writer.png).toHaveBeenCalledExactlyOnceWith(Buffer.from('png')));
+        finish();
+      });
+
+      it('never while two frames are in flight; the third is still delivered', async () => {
+        const h = fixture(false); missing(h);
+        h.writer.png.mockReturnValue(new Promise<void>(() => {}));
+        for (const frame of [0, 1, 2]) await expect(h.service.capture(owner, at(frame))).resolves.toMatchObject({ kind: 'png' });
+        await vi.waitFor(() => expect(h.writer.png).toHaveBeenCalledTimes(2));
+      });
+
+      it('never under memory pressure or without room', async () => {
+        const h = fixture(false); missing(h);
+        pressure.pause = 'memory';
+        await h.service.capture(owner, at(0));
+        pressure.pause = undefined; h.hasRoom.mockReturnValue(false);
+        await h.service.capture(owner, at(1));
+        expect(h.prepareWrite).not.toHaveBeenCalled();
+      });
+
+      it('and a failed write does not reach the display', async () => {
+        const h = fixture(false); missing(h);
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        h.writer.png.mockRejectedValue(new Error('disk full'));
+        await expect(h.service.capture(owner, at(0))).resolves.toMatchObject({ kind: 'png', persisted: false });
+        await vi.waitFor(() => expect(warn).toHaveBeenCalledOnce());
+        warn.mockRestore();
+      });
+
+      it('and a parameter preview, which has no cache address, stores nothing', async () => {
+        const h = fixture(false);
+        await expect(h.service.capture(owner, preview)).resolves.toMatchObject({ kind: 'png', persisted: false });
+        expect(h.prepareWrite).not.toHaveBeenCalled();
+      });
+    });
+
+    it('after a session downgrade to PNG too', async () => {
+      const h = fixture(); missing(h);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      h.deps.texture.mockRejectedValue(new Error('OSR unavailable'));
       await expect(h.service.capture(owner, at(0))).resolves.toMatchObject({ kind: 'png', persisted: false });
-      expect(h.writer.png).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(h.writer.png).toHaveBeenCalledOnce());
+      warn.mockRestore();
     });
 
     it('and a failed write reaches neither the display nor the GPU path', async () => {

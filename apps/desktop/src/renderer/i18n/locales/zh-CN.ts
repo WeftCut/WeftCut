@@ -1154,7 +1154,7 @@ const zhCN: Resources = {
     bake_dot_warming: "预热中…",
     bake_dot_preview_ready: "预览已就绪",
     bake_dot_baking: "预烘焙中…",
-    bake_dot_ready: "已预烘焙",
+    bake_dot_ready: "已烘焙",
     bake_dot_error: "预烘焙失败",
     audio_slipped: "音频相对视频偏移 {{offset}}",
     audio_units: "音频单位",
@@ -2111,9 +2111,9 @@ const zhCN: Resources = {
     content_qwen3vl_mmproj: "Qwen3-VL 视觉投影器（F16）",
     content_prereq_msvc14:
       "需要 Microsoft Visual C++ 2015–2022 x64 运行库（通常已随系统安装）。",
-    prebake_motifs: "预烘焙 Motifs",
+    prebake_motifs: "预烘焙所有 Motif 内容",
     prebake_motifs_hint:
-      "后台渲染 Motif 帧到磁盘，播放更流畅、重开更快；占用项目 Cache 的磁盘空间。",
+      "后台烘焙时间线上用到的所有 Motif 帧。",
     preview_heading: "预览",
     preview_snap_enabled: "启用画面吸附",
     preview_snap_enabled_hint:

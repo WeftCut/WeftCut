@@ -77,8 +77,10 @@ export interface AppSettings {
   /// pixels would feel different on a 1080p and a 4K composition and would
   /// drift as the panel is resized. Clamped on write.
   preview_snap_strength_px: number;
-  /// When true, every motif layer's full frame sequence is pre-baked
-  /// to disk in the background (L2). Default false. See docs/motifs.md.
+  /// When true, the frames Motif layers use on the timeline are baked to disk
+  /// in the background (L2), including ones nothing has played yet. Frames a
+  /// preview or export captures are stored either way. Default false. See
+  /// docs/motifs.md.
   prebake_motifs: boolean;
   /// When false, the preview compositor skips all effect filters (LOD
   /// toggle for scrub performance). Default true.
