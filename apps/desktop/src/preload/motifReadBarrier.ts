@@ -1,18 +1,40 @@
 // Complete shared-texture reads off the UI thread. Transferring the bitmap to
-// this worker preserves ownership; only return it after the GPU readback has
-// finished, so main may safely reuse the source slot.
+// this worker preserves ownership; only return it after the GPU has run the
+// copy that `createImageBitmap` recorded, so main may safely reuse the source
+// slot. Chromium's keyed mutex only excludes, it does not order, so without this
+// wait main can overwrite the slot before the copy runs
+// (docs/notes/motif-texture-read-path-2026-11-06.md).
+//
+// The proof is one pixel drawn on an accelerated canvas and read back: the draw
+// waits on the bitmap's sync token, so the read returns only after the copy.
+// `willReadFrequently` must be explicitly false. Set to true, or left unset
+// (Chromium moves a canvas to the CPU after two readbacks), the draw reads the
+// whole frame back instead.
+// TWIN: `completeMotifReadOnGpu` below must stay identical to the worker body.
 const SOURCE = `
 let ctx;
 self.onmessage = ({data: {id, bitmap}}) => {
   let error;
   try {
-    ctx ??= new OffscreenCanvas(1, 1).getContext('2d', {willReadFrequently: true});
+    ctx ??= new OffscreenCanvas(1, 1).getContext('2d', {willReadFrequently: false});
     if (!ctx) throw new Error('Motif read barrier unavailable');
-    ctx.drawImage(bitmap, 0, 0, 1, 1);
+    ctx.drawImage(bitmap, 0, 0, 1, 1, 0, 0, 1, 1);
     ctx.getImageData(0, 0, 1, 1);
   } catch (e) { error = String(e); }
   self.postMessage({id, bitmap, error}, [bitmap]);
 };`;
+
+let fallbackCtx: OffscreenCanvasRenderingContext2D | null | undefined
+
+/** The worker's barrier on the calling thread, for when no worker can start.
+ * False when no 2D context exists, so nothing was proven. */
+export function completeMotifReadOnGpu(bitmap: ImageBitmap): boolean {
+  fallbackCtx ??= new OffscreenCanvas(1, 1).getContext('2d', { willReadFrequently: false })
+  if (!fallbackCtx) return false
+  fallbackCtx.drawImage(bitmap, 0, 0, 1, 1, 0, 0, 1, 1)
+  fallbackCtx.getImageData(0, 0, 1, 1)
+  return true
+}
 
 export class MotifReadBarrier {
   private worker: Worker | null = null

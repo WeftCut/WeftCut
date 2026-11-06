@@ -23,6 +23,7 @@ goes where.
 - `motif-preview-progress-2026-10-05.md` — Motif preparation progress during playback.
 - `motif-live-store-2026-11-05.md` — playback with every captured Motif frame stored outside the lease; on the PNG host the utility lane is then the limit.
 - `motif-frame-checksum-2026-11-06.md` — zstd's content checksum against BLAKE3: cost and bit-flip detection.
+- `motif-texture-read-path-2026-11-06.md` — where a Windows texture-lane read spends its time; read barriers compared, with a check that can fail.
 - `macos-runner-videotoolbox-kill-2026-10-31.md` — on the GitHub macOS VM, a SIGKILLed VideoToolbox encoder hangs the next export; a graceful ffmpeg stop does not.
 - `ffmpeg-stall-limit-2026-10-31.md` — slowest software encodes go 78 s without progress but never idle on CPU; why the ffmpeg watchdog counts CPU use.
 

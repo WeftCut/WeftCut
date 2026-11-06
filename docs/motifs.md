@@ -206,9 +206,14 @@ verifies the checksum as it goes) and downscales (alpha-weighted box, size
 rounded up). At most three reads are in flight per document.
 
 - **Windows — texture lane.** Main's `MotifGpuTransport` uploads the scaled
-  frame into a D3D11 slot sized for the divisor; preload completes the GPU read
-  before acknowledging the slot (`motifReadBarrier.ts`), and a free lane goes to
-  the oldest waiter. Pool memory is `motif_gpu_mib` (default 128 MiB) across at
+  frame into a D3D11 slot sized for the divisor. Before acknowledging the slot,
+  preload proves Chromium's copy out of it has run: it draws one pixel of the
+  bitmap on an accelerated canvas and reads that pixel back
+  (`motifReadBarrier.ts`). Both sides take the slot's keyed mutex with key 0,
+  which excludes but does not order, so the ack must wait; a CPU-backed canvas
+  would read the whole frame back instead
+  ([read path](notes/motif-texture-read-path-2026-11-06.md)). A free lane goes
+  to the oldest waiter. Pool memory is `motif_gpu_mib` (default 128 MiB) across at
   most `motif_gpu_sessions` (default 8) size/format pools, or the shared
   `gpu_buffer_mib` when shared allocation is on; allocation waits at most
   250 ms. If no slot can be used, main answers `unavailable` and the read takes

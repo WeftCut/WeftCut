@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, sharedTexture, webUtils } from 'electron'
 import type { SharedTextureImported } from 'electron'
 import { installMotifFrames } from './motifFrames'
-import { MotifReadBarrier } from './motifReadBarrier'
+import { MotifReadBarrier, completeMotifReadOnGpu } from './motifReadBarrier'
 import { readLayoutThemeArgument } from '../shared/layout-theme'
 import type {
   WeftcutApi,
@@ -578,7 +578,7 @@ function forceSharedTextureReadComplete(bmp: ImageBitmap): BarrierCost | null {
   return { drawMs: tRead - tDraw, readMs: performance.now() - tRead }
 }
 
-const motifReadBarrier = new MotifReadBarrier(bitmap => forceSharedTextureReadComplete(bitmap) !== null)
+const motifReadBarrier = new MotifReadBarrier(completeMotifReadOnGpu)
 installMotifFrames(key => importedByKey.get(`${key}:0`), bitmap => motifReadBarrier.complete(bitmap))
 
 // The one WebGL2 context both GPU-side barriers share. One 1×1 context and ONE

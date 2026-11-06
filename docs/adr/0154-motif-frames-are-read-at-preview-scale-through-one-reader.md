@@ -71,8 +71,9 @@ Posting from main's own thread cost it 12–37 ms per frame to serialize.
 - A new long-lived utility process loads the native addon and restarts with
   backoff after a crash. Diagnostics appear as `motifReader` in the
   compositor perf snapshot.
-- Open: the downscale is scalar; the Windows 30 / 70 ms read split seen in #62
-  (post-upload GPU copy) is unexplained.
+- Open: the downscale is scalar. The post-upload part of a Windows read was
+  mostly the read barrier reading the whole frame back; it now reads one pixel
+  ([texture read path](../notes/motif-texture-read-path-2026-11-06.md)).
 
 Rejected: WASM decode in a renderer worker (slower than the IPC it saves;
 dense frames still cost the page 18 ms); posting from main's thread;
