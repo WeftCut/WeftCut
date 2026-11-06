@@ -18,7 +18,7 @@ async function fixture() {
 /** A `.wfrm` header (magic, width, height) padded to the minimum frame size. */
 function frameHeader(width: number, height: number): Buffer {
   const bytes = Buffer.alloc(68)
-  bytes.write('WCMFRM01'); bytes.writeUInt32LE(width, 8); bytes.writeUInt32LE(height, 12)
+  bytes.write('WCMFRM02'); bytes.writeUInt32LE(width, 8); bytes.writeUInt32LE(height, 12)
   return bytes
 }
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))) })
@@ -45,8 +45,8 @@ describe('MotifFrameStore', () => {
   })
 
   it.each([
-    ['a short file', Buffer.from('WCMFRM01')],
-    ['another magic', Buffer.concat([Buffer.from('WCMFRM02'), frameHeader(2, 2).subarray(8)])],
+    ['a short file', Buffer.from('WCMFRM02')],
+    ['a former format', Buffer.concat([Buffer.from('WCMFRM01'), frameHeader(2, 2).subarray(8)])],
     ['a zero width', frameHeader(0, 2)],
     ['a width beyond the native bound', frameHeader(9000, 2)],
   ])('reads a bad header (%s) as a miss', async (_, bytes) => {
@@ -59,7 +59,7 @@ describe('MotifFrameStore', () => {
   })
 
   it.each([
-    'motif-frame: BLAKE3 mismatch',
+    'motif-frame: Restored data doesn\'t match checksum',
     'motif-frame: scaled frame 1920x1080 does not fit the 1921x1081 pool',
   ])('takes a native file failure from the upload as a miss: %s', async message => {
     const { store, gpu, changed } = await fixture()
@@ -127,7 +127,7 @@ describe('MotifFrameStore', () => {
     expect(codec.motifEncodePng).not.toHaveBeenCalled()
     await store.write(hash, 0, new Uint8Array([1]))
     expect(await store.has(hash, 0)).toBe(true)
-    expect(codec.motifEncodePng).toHaveBeenCalledExactlyOnceWith(Buffer.from([1]), true)
+    expect(codec.motifEncodePng).toHaveBeenCalledExactlyOnceWith(Buffer.from([1]))
   })
 
   it('does not mark a frame persisted when encoding fails', async () => {
@@ -159,7 +159,7 @@ describe('MotifFrameStore', () => {
     const bytes = frameHeader(2, 2)
     await (await store.prepareWrite(hash, 2))!.encoded(bytes)
     const dir = path.join(root, 'Cache', 'raster', hash)
-    await fs.writeFile(path.join(dir, '3.wfrm'), bytes.subarray(0, 52))
+    await fs.writeFile(path.join(dir, '3.wfrm'), bytes.subarray(0, 16))
     for (const name of ['02.wfrm', '-1.wfrm', '6.tmp', '7.png', '9007199254740993.wfrm']) await fs.writeFile(path.join(dir, name), bytes)
     await fs.mkdir(path.join(dir, '8.wfrm'))
     // Opening each file costs ~6 ms cold under on-access scanning.
@@ -225,7 +225,7 @@ describe('MotifFrameStore', () => {
     const { store, changed, gpu } = await fixture()
     await (await store.prepareWrite(hash, 7))!.encoded(frameHeader(2, 2))
     expect(changed).toHaveBeenLastCalledWith(hash, 7, true, 68)
-    gpu.mockRejectedValueOnce(new Error('motif-frame: BLAKE3 mismatch'))
+    gpu.mockRejectedValueOnce(new Error('motif-frame: Restored data doesn\'t match checksum'))
     expect(await store.readTexture(hash, 7, 1, gpu)).toBeNull()
     expect(changed).toHaveBeenLastCalledWith(hash, 7, false)
   })

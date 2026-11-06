@@ -19,7 +19,7 @@ const fakeStats: MotifReaderStats = {
   fallbacks: 2,
   transportFailures: 1,
   restarts: 1,
-  stages: { readMs: 1.5, decodeMs: 3, hashMs: 0.25, scaleMs: 2, uploadMs: null, importMs: null, bitmapMs: 0.5 },
+  stages: { readMs: 1.5, decodeMs: 3, scaleMs: 2, uploadMs: null, importMs: null, bitmapMs: 0.5 },
 };
 
 describe("Compositor perf snapshot: motifReader", () => {
@@ -49,7 +49,7 @@ describe("Compositor perf snapshot: motifReader", () => {
       fallbacks: 0,
       transportFailures: 0,
       restarts: 0,
-      stages: { readMs: null, decodeMs: null, hashMs: null, scaleMs: null, uploadMs: null, importMs: null, bitmapMs: null },
+      stages: { readMs: null, decodeMs: null, scaleMs: null, uploadMs: null, importMs: null, bitmapMs: null },
       scaleDiv: 1,
     });
     expect(create).not.toHaveBeenCalled();

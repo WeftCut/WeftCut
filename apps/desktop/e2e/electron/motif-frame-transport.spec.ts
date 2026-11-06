@@ -38,7 +38,7 @@ test('@serial cached Motif frames survive concurrent reads and slot reuse', asyn
       const fs = process.getBuiltinModule('fs/promises')
       await fs.mkdir(directory, { recursive: true })
       for (let i = 0; i < pngs.length; i++) {
-        await fs.writeFile(`${directory}/${i}.wfrm`, await native.motifEncodePng(Buffer.from(pngs[i]!, 'base64'), true))
+        await fs.writeFile(`${directory}/${i}.wfrm`, await native.motifEncodePng(Buffer.from(pngs[i]!, 'base64')))
       }
     }, { addon, directory: path.join(parent, 'Transport', 'Cache', 'raster', hash), pngs })
     await waitForHook(page, 'readMotifFrame')
@@ -102,7 +102,7 @@ test('@serial cached Motif transport stays responsive across renderer reloads', 
       const native = process.getBuiltinModule('module').createRequire(addon)(addon)
       const fs = process.getBuiltinModule('fs/promises')
       await fs.mkdir(directory, { recursive: true })
-      const encoded = await native.motifEncodePng(Buffer.from(png, 'base64'), true)
+      const encoded = await native.motifEncodePng(Buffer.from(png, 'base64'))
       await fs.writeFile(`${directory}/0.wfrm`, encoded)
       await fs.writeFile(`${directory}/1.wfrm`, encoded)
       const handler = ipcMain._invokeHandlers.get('motif:read')!

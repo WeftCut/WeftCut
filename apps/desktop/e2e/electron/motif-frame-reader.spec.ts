@@ -52,7 +52,7 @@ const HOLD = 5000
 const RELEASE = HOLD + 1
 const SENTINEL = HOLD + 2
 /** `.wfrm` header bytes; damage stays behind them so the header still parses. */
-const FRAME_HEADER_BYTES = 52
+const FRAME_HEADER_BYTES = 16
 
 interface Reference { name: string; width: number; height: number; rgba: Uint8Array }
 interface Vector { name: string; width: number; height: number; div: Div; rgba: number[]; expected: { width: number; height: number; rgba: number[] } }
@@ -156,7 +156,7 @@ async function encodeFrames(app: ElectronApplication, pngs: Buffer[]): Promise<B
   const encoded = await app.evaluate(async (_electron, { addon, pngs }) => {
     const native = process.getBuiltinModule('module').createRequire(addon)(addon)
     const out: string[] = []
-    for (const png of pngs) out.push((await native.motifEncodePng(Buffer.from(png, 'base64'), true)).toString('base64'))
+    for (const png of pngs) out.push((await native.motifEncodePng(Buffer.from(png, 'base64'))).toString('base64'))
     return out
   }, { addon, pngs: pngs.map(png => png.toString('base64')) })
   return encoded.map(value => Buffer.from(value, 'base64'))

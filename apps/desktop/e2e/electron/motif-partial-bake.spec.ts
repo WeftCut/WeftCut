@@ -57,7 +57,7 @@ for (const complete of [false, true]) {
       const encoded = await running.app.evaluate(async (_electron, { addon, pngs }) => {
         const native = process.getBuiltinModule('module').createRequire(addon)(addon)
         const result: string[] = []
-        for (const png of pngs) result.push((await native.motifEncodePng(Buffer.from(png, 'base64'), true)).toString('base64'))
+        for (const png of pngs) result.push((await native.motifEncodePng(Buffer.from(png, 'base64'))).toString('base64'))
         return result
       }, { addon, pngs })
       await running.app.close()

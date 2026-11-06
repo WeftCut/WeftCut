@@ -1,12 +1,15 @@
-//! Disposable, versioned straight-alpha RGBA8 cache. Each frame is independent:
-//! seeks never decode preceding frames. PNG remains the portable fallback.
-//! Codec 0 is raw, 1 is LZ4 (read only), 2 is zstd level 1 (ADR 0078).
-//! A read verifies BLAKE3 over the pixels and may downscale them (ADR 0154).
+//! Disposable straight-alpha RGBA8 frame cache (ADR 0078). Each frame is
+//! independent: seeks never decode preceding frames. A read checks the frame
+//! through zstd's content checksum and may downscale it (ADR 0154).
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 
-const MAGIC: &[u8; 8] = b"WCMFRM01";
-const HEADER: usize = 52;
+/// Moves with any layout or codec change, together with the cache key namespace
+/// (`motifFrameCacheKey`), so older files are collected instead of read.
+const MAGIC: &[u8; 8] = b"WCMFRM02";
+/// Magic, then width and height (little-endian u32), then one zstd frame.
+const HEADER: usize = 16;
+const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
 const MAX_BYTES: usize = 256 * 1024 * 1024;
 
 fn byte_len(w: u32, h: u32) -> anyhow::Result<usize> {
@@ -19,55 +22,41 @@ fn byte_len(w: u32, h: u32) -> anyhow::Result<usize> {
     Ok(n)
 }
 
-pub(crate) fn encode(w: u32, h: u32, rgba: &[u8], compressed: bool) -> anyhow::Result<Vec<u8>> {
+/// zstd level 1 with its content checksum, the frame's only content check: it
+/// is taken over the pixels as captured and verified over the pixels a read
+/// restores, so it covers the file and the decompression alike.
+pub(crate) fn encode(w: u32, h: u32, rgba: &[u8]) -> anyhow::Result<Vec<u8>> {
     anyhow::ensure!(rgba.len() == byte_len(w, h)?, "invalid motif pixel length");
-    let (codec, payload) = if compressed {
-        (2u32, zstd::bulk::compress(rgba, 1)?)
-    } else {
-        (0, rgba.to_vec())
-    };
+    let mut zstd = zstd::bulk::Compressor::new(1)?;
+    zstd.set_parameter(zstd::zstd_safe::CParameter::ChecksumFlag(true))?;
+    let payload = zstd.compress(rgba)?;
     let mut out = Vec::with_capacity(HEADER + payload.len());
     out.extend_from_slice(MAGIC);
     out.extend_from_slice(&w.to_le_bytes());
     out.extend_from_slice(&h.to_le_bytes());
-    out.extend_from_slice(&codec.to_le_bytes());
-    out.extend_from_slice(blake3::hash(rgba).as_bytes());
     out.extend_from_slice(&payload);
     Ok(out)
 }
 
-#[cfg(test)]
+/// zstd verifies the checksum while it decompresses. A frame without one is
+/// rejected: nothing else would notice its pixels changing.
 fn decode(bytes: &[u8]) -> anyhow::Result<(u32, u32, Vec<u8>)> {
-    let (w, h, rgba) = unpack(bytes)?;
-    verify(bytes, &rgba)?;
-    Ok((w, h, rgba))
-}
-
-/// Header and decompression; `verify` checks the result.
-fn unpack(bytes: &[u8]) -> anyhow::Result<(u32, u32, Vec<u8>)> {
     anyhow::ensure!(
-        bytes.len() >= HEADER && &bytes[..8] == MAGIC,
+        bytes.len() > HEADER + 4 && &bytes[..8] == MAGIC,
         "invalid motif frame header"
     );
     let number = |offset| u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
     let (w, h) = (number(8), number(12));
     let size = byte_len(w, h)?;
-    let rgba = match number(16) {
-        0 => bytes[HEADER..].to_vec(),
-        1 => lz4_flex::block::decompress(&bytes[HEADER..], size)?,
-        2 => zstd::bulk::decompress(&bytes[HEADER..], size)?,
-        _ => anyhow::bail!("unsupported motif frame codec"),
-    };
+    let payload = &bytes[HEADER..];
+    // Frame_Header_Descriptor bit 2 is Content_Checksum_flag (RFC 8878 3.1.1.1.1).
+    anyhow::ensure!(
+        payload[..4] == ZSTD_MAGIC && payload[4] & 0x04 != 0,
+        "motif frame has no checksum"
+    );
+    let rgba = zstd::bulk::decompress(payload, size)?;
     anyhow::ensure!(rgba.len() == size, "invalid motif frame length");
     Ok((w, h, rgba))
-}
-
-fn verify(bytes: &[u8], rgba: &[u8]) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        blake3::hash(rgba).as_bytes() == &bytes[20..HEADER],
-        "corrupt motif frame"
-    );
-    Ok(())
 }
 
 /// Alpha-weighted box downscale of straight RGBA by 1, 2 or 4 (ADR 0154): a
@@ -136,8 +125,8 @@ fn from_file<T>(read: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
 #[cfg_attr(test, allow(dead_code))] // Host-only wire type; read by `perf.motifs`.
 pub struct MotifReadTiming {
     pub read_ms: f64,
+    /// Decompression, checksum included.
     pub decode_ms: f64,
-    pub hash_ms: f64,
     pub scale_ms: f64,
 }
 
@@ -145,7 +134,7 @@ fn elapsed_ms(start: std::time::Instant) -> f64 {
     start.elapsed().as_secs_f64() * 1000.0
 }
 
-/// Read, decompress, verify and downscale one frame, timed per stage. An
+/// Read, decompress (verifying) and downscale one frame, timed per stage. An
 /// invalid `div` is the caller's error and is rejected before the file is read.
 pub(crate) fn read_scaled(
     path: &str,
@@ -161,12 +150,9 @@ pub(crate) fn read_scaled(
         let bytes = read_file(path)?;
         timing.read_ms = elapsed_ms(start);
         let start = std::time::Instant::now();
-        let (w, h, rgba) = unpack(&bytes)?;
+        let frame = decode(&bytes)?;
         timing.decode_ms = elapsed_ms(start);
-        let start = std::time::Instant::now();
-        verify(&bytes, &rgba)?;
-        timing.hash_ms = elapsed_ms(start);
-        Ok((w, h, rgba))
+        Ok(frame)
     })?;
     let start = std::time::Instant::now();
     let (w, h, rgba) = downscale(rgba, w, h, div)?;
@@ -175,8 +161,7 @@ pub(crate) fn read_scaled(
 }
 
 fn read_file(path: &str) -> anyhow::Result<Vec<u8>> {
-    // Bounds both LZ4 and zstd's worst case (zstd's is MAX_BYTES / 256 + framing).
-    let limit = MAX_BYTES + MAX_BYTES / 255 + HEADER + 32;
+    let limit = HEADER + zstd::zstd_safe::compress_bound(MAX_BYTES);
     let file = std::fs::File::open(path)?;
     anyhow::ensure!(
         file.metadata()?.len() <= limit as u64,
@@ -197,8 +182,8 @@ pub struct MotifScaledPixels {
     pub timing: MotifReadTiming,
 }
 
-/// The caller authorizes the path. Read, verify and downscale run on the
-/// blocking pool; a `motif-frame: ` error is a miss.
+/// The caller authorizes the path. The read runs on the blocking pool; a
+/// `motif-frame: ` error is a miss.
 #[napi]
 #[cfg_attr(test, allow(dead_code))] // napi registration is absent in a Rust unit-test executable.
 pub async fn motif_read_frame_scaled(path: String, div: u32) -> napi::Result<MotifScaledPixels> {
@@ -218,7 +203,7 @@ pub async fn motif_read_frame_scaled(path: String, div: u32) -> napi::Result<Mot
 
 #[napi]
 #[cfg_attr(test, allow(dead_code))] // napi registration is absent in a Rust unit-test executable.
-pub async fn motif_encode_png(png: Buffer, compressed: bool) -> napi::Result<Buffer> {
+pub async fn motif_encode_png(png: Buffer) -> napi::Result<Buffer> {
     let png = png.to_vec();
     tokio::task::spawn_blocking(move || {
         let mut reader =
@@ -229,7 +214,7 @@ pub async fn motif_encode_png(png: Buffer, compressed: bool) -> napi::Result<Buf
         limits.max_alloc = Some(MAX_BYTES as u64);
         reader.limits(limits);
         let img = reader.decode()?.into_rgba8();
-        encode(img.width(), img.height(), &img, compressed).map(Buffer::from)
+        encode(img.width(), img.height(), &img).map(Buffer::from)
     })
     .await
     .map_err(|e| napi::Error::from_reason(e.to_string()))?
@@ -242,32 +227,51 @@ use std::io::Read;
 mod tests {
     use super::*;
 
-    #[test]
-    fn both_codecs_preserve_every_alpha_and_rgb_byte() {
-        let pixels: Vec<u8> = (0..4096).map(|i| ((i * 73) % 256) as u8).collect();
-        for (compressed, codec) in [(false, 0), (true, 2)] {
-            let bytes = encode(32, 32, &pixels, compressed).unwrap();
-            assert_eq!(bytes[16..20], u32::to_le_bytes(codec));
-            assert_eq!(decode(&bytes).unwrap(), (32, 32, pixels.clone()));
-        }
+    fn pattern(multiplier: usize) -> Vec<u8> {
+        (0..4096).map(|i| ((i * multiplier) % 256) as u8).collect()
     }
 
     #[test]
-    fn reads_frames_written_by_the_former_lz4_codec() {
-        let pixels: Vec<u8> = (0..4096).map(|i| ((i * 31) % 256) as u8).collect();
-        let mut bytes = encode(32, 32, &pixels, false).unwrap();
-        bytes.truncate(HEADER);
-        bytes[16..20].copy_from_slice(&1u32.to_le_bytes());
-        bytes.extend_from_slice(&lz4_flex::block::compress(&pixels));
+    fn preserves_every_alpha_and_rgb_byte_behind_a_checksum() {
+        let pixels = pattern(73);
+        let bytes = encode(32, 32, &pixels).unwrap();
+        assert_eq!(&bytes[HEADER..HEADER + 4], &ZSTD_MAGIC);
+        assert_ne!(bytes[HEADER + 4] & 0x04, 0, "content checksum flag");
         assert_eq!(decode(&bytes).unwrap(), (32, 32, pixels));
     }
 
     #[test]
+    fn no_flipped_bit_yields_other_pixels() {
+        let pixels = pattern(73);
+        let bytes = encode(32, 32, &pixels).unwrap();
+        for bit in 0..bytes.len() * 8 {
+            let mut corrupt = bytes.clone();
+            corrupt[bit / 8] ^= 1 << (bit % 8);
+            if let Ok((w, h, rgba)) = decode(&corrupt) {
+                assert_eq!((w, h, rgba), (32, 32, pixels.clone()), "bit {bit}");
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_a_frame_without_a_checksum_or_in_a_former_format() {
+        let pixels = pattern(31);
+        let header = &encode(32, 32, &pixels).unwrap()[..HEADER];
+        let bare = [header, &zstd::bulk::compress(&pixels, 1).unwrap()].concat();
+        assert!(decode(&bare)
+            .unwrap_err()
+            .to_string()
+            .contains("no checksum"));
+        let mut former = encode(32, 32, &pixels).unwrap();
+        former[..8].copy_from_slice(b"WCMFRM01");
+        assert!(decode(&former).is_err());
+    }
+
+    #[test]
     fn rejects_a_payload_that_inflates_past_its_dimensions() {
-        let mut bytes = encode(2, 2, &[23; 16], true).unwrap();
-        bytes.truncate(HEADER);
-        bytes.extend_from_slice(&zstd::bulk::compress(&[23; 20], 1).unwrap());
-        assert!(decode(&bytes).is_err());
+        let header = &encode(2, 2, &[23; 16]).unwrap()[..HEADER];
+        let longer = &encode(5, 1, &[23; 20]).unwrap()[HEADER..];
+        assert!(decode(&[header, longer].concat()).is_err());
     }
 
     #[test]
@@ -381,38 +385,10 @@ mod tests {
     #[test]
     fn file_failures_are_rejected_before_scaling_with_the_frame_prefix() {
         let dir = tempfile::tempdir().unwrap();
-        let pixels: Vec<u8> = (0..4096).map(|i| ((i * 73) % 256) as u8).collect();
-        for compressed in [false, true] {
-            let mut bytes = encode(32, 32, &pixels, compressed).unwrap();
-            let path = write_frame(dir.path(), &bytes);
-            assert_eq!(read_scaled(&path, 1).unwrap().2, pixels);
-            let last = bytes.len() - 1;
-            bytes[last] ^= 1;
-            let path = write_frame(dir.path(), &bytes);
-            for div in [1, 2, 4] {
-                let error = read_scaled(&path, div).unwrap_err().to_string();
-                assert!(error.starts_with(FRAME_ERROR), "{error}");
-            }
-            let path = write_frame(dir.path(), &bytes[..(HEADER + bytes.len()) / 2]);
-            assert!(read_scaled(&path, 2)
-                .unwrap_err()
-                .to_string()
-                .starts_with(FRAME_ERROR));
-        }
-        let absent = dir.path().join("absent.wfrm");
-        let error = read_scaled(&absent.to_string_lossy(), 2).unwrap_err();
-        assert!(error.to_string().starts_with(FRAME_ERROR), "{error}");
-    }
-
-    #[test]
-    fn lz4_frames_scale() {
-        let dir = tempfile::tempdir().unwrap();
-        let pixels: Vec<u8> = (0..4096).map(|i| ((i * 31) % 256) as u8).collect();
-        let mut bytes = encode(32, 32, &pixels, false).unwrap();
-        bytes.truncate(HEADER);
-        bytes[16..20].copy_from_slice(&1u32.to_le_bytes());
-        bytes.extend_from_slice(&lz4_flex::block::compress(&pixels));
+        let pixels = pattern(73);
+        let mut bytes = encode(32, 32, &pixels).unwrap();
         let path = write_frame(dir.path(), &bytes);
+        assert_eq!(read_scaled(&path, 1).unwrap().2, pixels);
         for div in [2, 4] {
             let (w, h, rgba, _) = read_scaled(&path, div).unwrap();
             assert_eq!(
@@ -420,18 +396,30 @@ mod tests {
                 downscale(pixels.clone(), 32, 32, div).unwrap()
             );
         }
+        let last = bytes.len() - 1;
+        bytes[last] ^= 1;
+        let path = write_frame(dir.path(), &bytes);
+        for div in [1, 2, 4] {
+            let error = read_scaled(&path, div).unwrap_err().to_string();
+            assert!(error.starts_with(FRAME_ERROR), "{error}");
+        }
+        let path = write_frame(dir.path(), &bytes[..(HEADER + bytes.len()) / 2]);
+        assert!(read_scaled(&path, 2)
+            .unwrap_err()
+            .to_string()
+            .starts_with(FRAME_ERROR));
+        let absent = dir.path().join("absent.wfrm");
+        let error = read_scaled(&absent.to_string_lossy(), 2).unwrap_err();
+        assert!(error.to_string().starts_with(FRAME_ERROR), "{error}");
     }
 
     #[test]
     fn rejects_corruption_truncation_and_unbounded_dimensions() {
-        let bytes = encode(2, 2, &[23; 16], true).unwrap();
+        let bytes = encode(2, 2, &[23; 16]).unwrap();
         for length in 0..bytes.len() {
             assert!(decode(&bytes[..length]).is_err());
         }
-        let mut corrupt = bytes.clone();
-        corrupt[20] ^= 1;
-        assert!(decode(&corrupt).is_err());
-        corrupt = bytes;
+        let mut corrupt = bytes;
         corrupt[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
         assert!(decode(&corrupt).is_err());
     }

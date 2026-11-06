@@ -41,7 +41,7 @@ Posting from main's own thread cost it 12–37 ms per frame to serialize.
   `ImageBitmap`, or null when the frame is absent or invalid. Preview,
   scrubbing, export and finalization call only this. Live capture is not a
   read and stays full size.
-- **One native core** reads, decompresses, verifies BLAKE3 and downscales.
+- **One native core** reads, decompresses, verifies and downscales.
   Only delivery differs: Windows uploads the scaled frame into a texture slot
   sized for the divisor (ADR 0078); macOS and Linux run the core in one
   app-wide utility process that posts scaled RGBA on a `MessagePortMain` to a
@@ -60,8 +60,8 @@ Posting from main's own thread cost it 12–37 ms per frame to serialize.
   export and finalization read at 1. Alpha-weighted box filter, output size
   rounded up. The divisor is part of the L0 identity; a live capture serves
   every divisor. `MotifSprite` draws at the Motif's logical size.
-- **At most three reads in flight per document.** BLAKE3 stays: inventory is
-  stat-only, so the read is the only content check.
+- **At most three reads in flight per document.** Inventory is stat-only, so
+  the read is the only content check (zstd's checksum, ADR 0078).
 
 ## Consequences
 
@@ -71,8 +71,8 @@ Posting from main's own thread cost it 12–37 ms per frame to serialize.
 - A new long-lived utility process loads the native addon and restarts with
   backoff after a crash. Diagnostics appear as `motifReader` in the
   compositor perf snapshot.
-- Open: BLAKE3 is ~40% of M1 latency and the downscale is scalar; the Windows
-  30 / 70 ms read split seen in #62 (post-upload GPU copy) is unexplained.
+- Open: the downscale is scalar; the Windows 30 / 70 ms read split seen in #62
+  (post-upload GPU copy) is unexplained.
 
 Rejected: WASM decode in a renderer worker (slower than the IPC it saves;
 dense frames still cost the page 18 ms); posting from main's thread;

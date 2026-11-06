@@ -5,7 +5,7 @@ import { createMotifReaderHost } from './readerHost'
 
 const hash = 'a'.repeat(32)
 const root = path.join('workspace', 'project')
-const timing = { readMs: 1, decodeMs: 2, hashMs: 3, scaleMs: 4 }
+const timing = { readMs: 1, decodeMs: 2, scaleMs: 4 }
 
 function fixture() {
   const read = vi.fn(async (_file: string, div: number) => ({ width: 8 / div, height: 4 / div, rgba: new Uint8Array(4), timing }))
@@ -80,7 +80,7 @@ describe('Motif reader utility', () => {
     read.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject }))
     const pending = host.read({ id: 1, hash, frame: 2, div: 1 })
     host.control({ type: 'workspace', generation: 8, root })
-    fail(new Error('motif-frame: BLAKE3 mismatch'))
+    fail(new Error('motif-frame: Restored data doesn\'t match checksum'))
     expect(await pending).toEqual({ id: 1, miss: true })
     expect(report).toHaveBeenCalledWith({ type: 'miss', generation: 7, hash, frame: 2 })
 

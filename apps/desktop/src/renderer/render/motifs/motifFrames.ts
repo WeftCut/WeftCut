@@ -103,8 +103,10 @@ export interface MotifFrameCacheKeyInput {
 /// testing.
 export function motifFrameCacheKey(input: MotifFrameCacheKeyInput): string {
   return [
-    // Reject transparent frames baked by the accelerated-canvas PNG fallback.
-    "surface-v3",
+    // Moves whenever stored frames become unreadable or wrong: a new `.wfrm`
+    // layout or a capture fix (ADR 0078). Directories under an older
+    // namespace are no longer live, so collection removes them unread.
+    "surface-v4",
     input.motifId,
     String(input.version),
     input.contentHash ?? "",

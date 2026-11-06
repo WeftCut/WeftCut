@@ -20,24 +20,27 @@ async function replaceFile(temp: string, destination: string): Promise<void> {
 }
 
 export interface FrameCodec {
-  motifEncodePng(png: Buffer, compressed: boolean): Promise<Buffer>
+  motifEncodePng(png: Buffer): Promise<Buffer>
 }
 
 /** Uploads `file` scaled by `div` into a `width × height` texture. Rejects
  * with a `motif-frame: ` error when the file itself cannot be read. */
 export type MotifTextureUpload = (file: string, width: number, height: number, div: MotifReaderDiv) => Promise<MotifTextureFrame | MotifReadUnavailable>
 
-const HEADER_MAGIC = 'WCMFRM01'
+/** The native frame layout (`motif_frame.rs`): magic, width, height, then the
+ * checksummed zstd payload. */
+const HEADER_MAGIC = 'WCMFRM02'
+const HEADER_BYTES = 16
 /** The native core's dimension bounds (`motif_frame.rs`). */
 const MAX_DIMENSION = 8192
 
 /** Stored width and height from the `.wfrm` header, or null when the file is
  * absent, short or not a frame. The native read verifies everything else. */
 async function readHeaderSize(file: string): Promise<{ width: number; height: number } | null> {
-  const header = Buffer.alloc(16)
+  const header = Buffer.alloc(HEADER_BYTES)
   try {
     const handle = await fs.open(file, 'r')
-    try { if ((await handle.read(header, 0, 16, 0)).bytesRead < 16) return null } finally { await handle.close() }
+    try { if ((await handle.read(header, 0, HEADER_BYTES, 0)).bytesRead < HEADER_BYTES) return null } finally { await handle.close() }
   } catch { return null /* the native read would fail on the same file */ }
   if (header.toString('ascii', 0, 8) !== HEADER_MAGIC) return null
   const width = header.readUInt32LE(8), height = header.readUInt32LE(12)
@@ -129,7 +132,7 @@ export class MotifFrameStore {
       encoded,
       png: async png => {
         await fs.mkdir(path.dirname(stem), { recursive: true })
-        await encoded(await this.codec.motifEncodePng(Buffer.from(png.buffer, png.byteOffset, png.byteLength), true))
+        await encoded(await this.codec.motifEncodePng(Buffer.from(png.buffer, png.byteOffset, png.byteLength)))
       },
     }
   }
@@ -149,8 +152,8 @@ export class MotifFrameStore {
   }
 
   /** Stat-only (docs/motifs.md#preparation-l2-baking): opening each file costs
-   *  ~6 ms cold under on-access scanning. Header, dimensions and checksum are
-   *  verified by the reader, whose miss drops the frame from coverage and
+   *  ~6 ms cold under on-access scanning. Header, dimensions and the content
+   *  checksum are verified by the reader, whose miss drops the frame from coverage and
    *  admits a replacement capture. Inventory never follows directory/file links
    *  and ignores interrupted writes. */
   async inventory(hash: string): Promise<{ frame: number; bytes: number }[]> {
@@ -168,7 +171,7 @@ export class MotifFrameStore {
         let stat
         try { stat = await fs.lstat(path.join(dir, entry.name)) }
         catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error }
-        if (stat.isFile() && stat.size > 52) frames.push({ frame, bytes: stat.size })
+        if (stat.isFile() && stat.size > HEADER_BYTES) frames.push({ frame, bytes: stat.size })
       }
       return frames
     } catch (error) {

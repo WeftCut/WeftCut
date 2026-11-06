@@ -145,7 +145,7 @@ background so `background: transparent` stays real alpha.
 
 Frames are identified by content, not placement. The key
 (`motifFrameCacheKey`, `renderer/render/motifs/motifFrames.ts`) is
-`surface-v3 | motifId | version | contentHash | renderW | renderH | fpsNum |
+`surface-v4 | motifId | version | contentHash | renderW | renderH | fpsNum |
 fpsDen | contentDurationFrames | canonicalProps [| mediaKeys]`.
 
 - `contentHash` covers the manifest, HTML and every companion path and bytes,
@@ -175,10 +175,11 @@ persisted frames; otherwise it may capture its window.
 
 **L2 — disk.** One `.wfrm` per frame under
 `<workspace>/Cache/raster/<hash>/<frame>.wfrm`, where `<hash>` is
-`hashCacheKey` (two FNV-1a-64 lanes, 32 hex chars) of the key: a 52-byte header
-(magic `WCMFRM01`, dimensions, codec, BLAKE3 of the pixels) and straight RGBA8,
-zstd level 1 (LZ4 frames still read) (ADR 0078). Files are atomically replaced
-and disposable; PNG caches from older builds are ignored.
+`hashCacheKey` (two FNV-1a-64 lanes, 32 hex chars) of the key: a 16-byte header
+(magic `WCMFRM02`, dimensions) and straight RGBA8 as one zstd level-1 frame with
+its content checksum, the frame's only content check (ADR 0078). Files are
+atomically replaced and disposable. A format change moves the key namespace, so
+older directories are collected rather than read.
 
 ### Admission
 
@@ -200,9 +201,9 @@ One `MotifFrameReader` per document owns every stored-frame read
 ([ADR 0154](adr/0154-motif-frames-are-read-at-preview-scale-through-one-reader.md)):
 read `(cacheKey, frame, scaleDiv)` → `ImageBitmap`, or null when the frame is
 absent or fails verification. Preview reads at `playbackScaleDiv` (1 / 2 / 4);
-export and finalization read at 1. A native core reads, decompresses, verifies
-BLAKE3 and downscales (alpha-weighted box, size rounded up). At most three reads
-are in flight per document.
+export and finalization read at 1. A native core reads, decompresses (zstd
+verifies the checksum as it goes) and downscales (alpha-weighted box, size
+rounded up). At most three reads are in flight per document.
 
 - **Windows — texture lane.** Main's `MotifGpuTransport` uploads the scaled
   frame into a D3D11 slot sized for the divisor; preload completes the GPU read
@@ -262,7 +263,7 @@ demands and maps main's snapshots into the baked-key index and layer status;
   session whose texture readback failed stores nothing live: its display texture
   has no pixels main can read.
 - **Inventory is stat-only.** On open, a frame counts when `<n>.wfrm` is a
-  regular file larger than the 52-byte header; files are never opened. The
+  regular file larger than the 16-byte header; files are never opened. The
   first open of a file after boot costs ~6 ms on the Windows bench (Defender),
   which made a 10,337-frame project take 61 s to inventory; stat takes 0.73 s
   ([footprint findings](../poc/motif-frame-cache/FOOTPRINT-FINDINGS.md)). A

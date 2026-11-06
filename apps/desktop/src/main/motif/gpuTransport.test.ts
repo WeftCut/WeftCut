@@ -14,7 +14,7 @@ vi.mock('electron', () => ({ sharedTexture: {
   sendSharedTexture: vi.fn(async () => {}),
 } }))
 afterEach(() => { vi.useRealTimers(); hydratePerformanceSettings(undefined) })
-const timing: MotifUploadTiming = { read: { readMs: 1, decodeMs: 2, hashMs: 3, scaleMs: 4 }, premultiplyMs: 5, acquireMs: 6, gpuMs: 7 }
+const timing: MotifUploadTiming = { read: { readMs: 1, decodeMs: 2, scaleMs: 4 }, premultiplyMs: 5, acquireMs: 6, gpuMs: 7 }
 /** Most cases need a texture; an unavailable lane fails them like an error. */
 async function texture(read: Promise<MotifTextureFrame | MotifReadUnavailable>): Promise<MotifTextureFrame> {
   const frame = await read
@@ -511,7 +511,7 @@ describe('Motif GPU leases', () => {
       const store = new MotifFrameStore(async () => root, { motifEncodePng: vi.fn() }, changed)
       const hash = 'c'.repeat(32)
       const bytes = Buffer.alloc(68)
-      bytes.write('WCMFRM01'); bytes.writeUInt32LE(3841, 8); bytes.writeUInt32LE(2161, 12)
+      bytes.write('WCMFRM02'); bytes.writeUInt32LE(3841, 8); bytes.writeUInt32LE(2161, 12)
       await (await store.prepareWrite(hash, 0))!.encoded(bytes)
       changed.mockClear()
       const gpu = (file: string, width: number, height: number, div: 1 | 2 | 4) => transport.read(owner, file, width, height, div)

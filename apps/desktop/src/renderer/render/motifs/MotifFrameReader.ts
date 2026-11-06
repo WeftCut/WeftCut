@@ -17,8 +17,8 @@ const STAGE_WINDOW = 64;
 
 /** Native stages, then the texture lane's upload and import or the utility
  * lane's worker bitmap. */
-export type MotifReaderStage = 'readMs' | 'decodeMs' | 'hashMs' | 'scaleMs' | 'uploadMs' | 'importMs' | 'bitmapMs';
-const STAGES: readonly MotifReaderStage[] = ['readMs', 'decodeMs', 'hashMs', 'scaleMs', 'uploadMs', 'importMs', 'bitmapMs'];
+export type MotifReaderStage = 'readMs' | 'decodeMs' | 'scaleMs' | 'uploadMs' | 'importMs' | 'bitmapMs';
+const STAGES: readonly MotifReaderStage[] = ['readMs', 'decodeMs', 'scaleMs', 'uploadMs', 'importMs', 'bitmapMs'];
 
 export interface MotifReaderStats {
   /** Reads each lane answered, misses included. */

@@ -58,7 +58,7 @@ fn encode_pixels(pixels: Pixels) -> anyhow::Result<Buffer> {
         premultiplied: mut rgba,
     } = pixels;
     straighten(&mut rgba, bgra);
-    Ok(crate::motif_frame::encode(width, height, &rgba, true)?.into())
+    Ok(crate::motif_frame::encode(width, height, &rgba)?.into())
 }
 
 #[napi]
