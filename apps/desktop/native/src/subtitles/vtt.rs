@@ -20,7 +20,7 @@ pub fn parse(body: &str) -> Vec<Cue> {
             Some(t) => t,
             None => continue,
         };
-        let text = lines[time_idx + 1..].join("\n");
+        let text = decode_references(&lines[time_idx + 1..].join("\n"));
         if text.is_empty() {
             continue;
         }
@@ -32,6 +32,17 @@ pub fn parse(body: &str) -> Vec<Cue> {
         });
     }
     cues
+}
+
+/// The character references WebVTT names; `formatVtt` writes the first three.
+/// `&amp;` must stay last: any earlier and `&amp;lt;` decodes twice.
+fn decode_references(text: &str) -> String {
+    text.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&nbsp;", "\u{a0}")
+        .replace("&lrm;", "\u{200e}")
+        .replace("&rlm;", "\u{200f}")
+        .replace("&amp;", "&")
 }
 
 fn parse_time_range(line: &str) -> Option<(i64, i64)> {
@@ -108,6 +119,26 @@ mod tests {
         let cues = parse(body);
         assert_eq!(cues.len(), 1);
         assert_eq!(cues[0].text, "Present");
+    }
+
+    #[test]
+    fn decodes_vtt_character_references() {
+        // What `formatVtt` writes for `a < b & c --> d` must read back as typed.
+        let body = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\na &lt; b &amp; c --&gt; d\n";
+        assert_eq!(parse(body)[0].text, "a < b & c --> d");
+    }
+
+    #[test]
+    fn decodes_vtt_character_references_once() {
+        // Typed text that already looks like a reference survives a round trip.
+        let body = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n&amp;lt;\n";
+        assert_eq!(parse(body)[0].text, "&lt;");
+    }
+
+    #[test]
+    fn decodes_vtt_spacing_and_direction_references() {
+        let body = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\na&nbsp;b&lrm;c&rlm;d\n";
+        assert_eq!(parse(body)[0].text, "a\u{a0}b\u{200e}c\u{200f}d");
     }
 
     #[test]
