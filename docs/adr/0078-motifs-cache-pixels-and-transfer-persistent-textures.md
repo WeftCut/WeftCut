@@ -42,7 +42,10 @@ commit, not the compositor's raster.
   the optional FFmpeg component) owns bounded pools; handles are shared once
   and per-frame messages carry a slot lease. Bakes read the OSR texture on a
   native worker and encode `.wfrm` after the lease (ADR 0158). Straight alpha
-  is premultiplied for import.
+  is premultiplied for import, straight into the pool's own staging texture: a
+  shared texture cannot be CPU-writable, and the slot's mutex then covers one
+  GPU copy. The copy completes before the slot is released; leaving the order
+  to the keyed mutex alone moves that wait into the consumer's read barrier.
 - **A consumer completes the GPU read before acknowledging a slot**; a failed
   or timed-out consumer retires the texture instead of permitting reuse.
   Native pools outlive every Electron import. The consumer lifetime is a

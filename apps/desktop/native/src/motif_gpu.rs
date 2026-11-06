@@ -19,25 +19,56 @@ type TimedReply = tokio::sync::oneshot::Sender<Result<MotifUploadTiming, String>
 #[derive(Clone, Copy, Default)]
 pub struct MotifUploadTiming {
     pub read: crate::motif_frame::MotifReadTiming,
+    /// Premultiplying into the staging texture.
     pub premultiply_ms: f64,
     /// Waiting for the consumer to release the slot's keyed mutex.
     pub acquire_ms: f64,
-    /// `UpdateSubresource` through device completion.
+    /// The copy into the slot through device completion.
     pub gpu_ms: f64,
 }
 
+/// Premultiplies straight `src` rows of `row` bytes into `dst` rows `pitch`
+/// bytes apart.
+fn premultiply_rows(src: &[u8], dst: &mut [u8], row: usize, pitch: usize) {
+    #[cfg(target_arch = "x86_64")]
+    if std::arch::is_x86_feature_detected!("avx2") {
+        // SAFETY: the CPU supports AVX2.
+        return unsafe { premultiply_rows_avx2(src, dst, row, pitch) };
+    }
+    premultiply_rows_inline(src, dst, row, pitch)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn premultiply_rows_avx2(src: &[u8], dst: &mut [u8], row: usize, pitch: usize) {
+    premultiply_rows_inline(src, dst, row, pitch)
+}
+
+#[inline(always)]
+fn premultiply_rows_inline(src: &[u8], dst: &mut [u8], row: usize, pitch: usize) {
+    for (s, d) in src.chunks_exact(row).zip(dst.chunks_mut(pitch)) {
+        premultiply_into(s, &mut d[..row]);
+    }
+}
+
 /// Disk frames have straight alpha; Electron imports premultiplied textures.
-fn premultiply(pixels: &mut [u8]) {
-    for px in pixels.as_chunks_mut::<4>().0 {
-        match px[3] {
-            0 => px[..3].fill(0),
-            255 => {}
-            alpha => {
-                for c in &mut px[..3] {
-                    *c = ((u32::from(*c) * u32::from(alpha) + 127) / 255) as u8;
-                }
-            }
-        }
+/// `round(c * a / 255)` exactly, R and B in one multiply: neither 16-bit lane
+/// carries into the next. Branch-free, so it vectorizes whatever the alpha.
+#[inline(always)]
+fn premultiply_into(src: &[u8], dst: &mut [u8]) {
+    for (s, d) in src
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(dst.as_chunks_mut::<4>().0)
+    {
+        let x = u32::from_le_bytes(*s);
+        let a = x >> 24;
+        let rb = (x & 0x00FF_00FF) * a + 0x0080_0080;
+        let rb = ((rb + ((rb >> 8) & 0x00FF_00FF)) >> 8) & 0x00FF_00FF;
+        let g = ((x >> 8) & 0xFF) * a + 0x80;
+        let g = ((g + (g >> 8)) >> 8) & 0xFF;
+        *d = (rb | (g << 8) | (x & 0xFF00_0000)).to_le_bytes();
     }
 }
 
@@ -70,12 +101,13 @@ impl MotifGpuPool {
         std::thread::Builder::new()
             .name("motif-gpu".into())
             .spawn(move || {
-                let state = unsafe { Pool::new(width, height, count, bgra.unwrap_or(false)) };
+                let state = unsafe { Pool::new(width, height, count, bgra.unwrap_or(false)) }
+                    .and_then(|pool| Ok((pool, crate::motif_frame::FrameDecoder::new()?)));
                 match state {
                     Err(e) => {
                         let _ = ready_tx.send(Err(e.to_string()));
                     }
-                    Ok(pool) => {
+                    Ok((pool, mut decoder)) => {
                         let handles = pool
                             .slots
                             .iter()
@@ -95,18 +127,15 @@ impl MotifGpuPool {
                                 Command::Stop => break,
                             };
                             let result = (|| {
-                                let (w, h, mut pixels, read) =
-                                    crate::motif_frame::read_scaled(&path, div)?;
+                                let (w, h, pixels, read) = decoder.read_scaled(&path, div)?;
                                 // The file does not fit this pool: a miss, not a device failure.
                                 anyhow::ensure!(
                                     w == width && h == height,
                                     "{}scaled frame {w}x{h} does not fit the {width}x{height} pool",
                                     crate::motif_frame::FRAME_ERROR
                                 );
-                                let start = std::time::Instant::now();
-                                premultiply(&mut pixels);
-                                let premultiply_ms = start.elapsed().as_secs_f64() * 1000.0;
-                                let (acquire_ms, gpu_ms) = unsafe { pool.upload(slot, &pixels) }?;
+                                let (premultiply_ms, acquire_ms, gpu_ms) =
+                                    unsafe { pool.upload(slot, pixels) }?;
                                 Ok(MotifUploadTiming {
                                     read,
                                     premultiply_ms,
@@ -209,6 +238,10 @@ struct Pool {
     context: ID3D11DeviceContext,
     query: ID3D11Query,
     width: u32,
+    height: u32,
+    /// A shared texture cannot be CPU-writable: uploads land here first, so the
+    /// slot's mutex covers one GPU copy instead of a CPU upload.
+    staging: ID3D11Texture2D,
     slots: Vec<Slot>,
 }
 impl Pool {
@@ -261,6 +294,18 @@ impl Pool {
                 handle,
             });
         }
+        let mut staging = None;
+        device.CreateTexture2D(
+            &D3D11_TEXTURE2D_DESC {
+                Usage: D3D11_USAGE_STAGING,
+                BindFlags: 0,
+                CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+                MiscFlags: 0,
+                ..desc
+            },
+            None,
+            Some(&mut staging),
+        )?;
         let mut query = None;
         device.CreateQuery(
             &D3D11_QUERY_DESC {
@@ -274,22 +319,39 @@ impl Pool {
             context,
             query: query.unwrap(),
             width,
+            height,
+            staging: staging.unwrap(),
             slots,
         })
     }
 
-    /// Returns the keyed-mutex wait and the write through completion, in ms.
-    unsafe fn upload(&self, slot: usize, pixels: &[u8]) -> anyhow::Result<(f64, f64)> {
-        self.write(slot, |texture| {
-            self.context.UpdateSubresource(
-                texture,
-                0,
-                None,
-                pixels.as_ptr().cast(),
-                self.width * 4,
-                0,
-            );
-        })
+    /// Premultiplies straight `pixels` into the slot. Returns the premultiply,
+    /// the keyed-mutex wait and the copy through completion, in ms.
+    unsafe fn upload(&self, slot: usize, pixels: &[u8]) -> anyhow::Result<(f64, f64, f64)> {
+        let row = self.width as usize * 4;
+        anyhow::ensure!(
+            pixels.len() == row * self.height as usize,
+            "Motif upload does not fit the pool"
+        );
+        let start = std::time::Instant::now();
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        // The previous copy out of the staging texture completed before its
+        // slot was released, so this never waits on the GPU.
+        self.context
+            .Map(&self.staging, 0, D3D11_MAP_WRITE, 0, Some(&mut mapped))?;
+        let pitch = mapped.RowPitch as usize;
+        let rows = std::slice::from_raw_parts_mut(
+            mapped.pData.cast::<u8>(),
+            pitch * (self.height as usize - 1) + row,
+        );
+        premultiply_rows(pixels, rows, row, pitch);
+        self.context.Unmap(&self.staging, 0);
+        let premultiply_ms = start.elapsed().as_secs_f64() * 1000.0;
+        // Waits for the copy even though the keyed mutex would order it (ADR 0078).
+        let (acquire_ms, gpu_ms) = self.write(slot, |texture| {
+            self.context.CopyResource(texture, &self.staging)
+        })?;
+        Ok((premultiply_ms, acquire_ms, gpu_ms))
     }
 
     unsafe fn copy(&self, handle: usize, slot: usize) -> anyhow::Result<()> {
@@ -363,10 +425,10 @@ impl Pool {
 
 #[cfg(test)]
 mod tests {
-    use super::premultiply;
+    use super::{premultiply_rows, premultiply_rows_inline};
 
     #[test]
-    fn premultiplication_preserves_rounding_for_every_alpha_and_channel() {
+    fn premultiplication_rounds_every_alpha_and_channel_to_nearest() {
         let mut pixels = Vec::new();
         for alpha in 0..=255u8 {
             for channel in 0..=255u8 {
@@ -380,7 +442,20 @@ mod tests {
                 *c = ((u32::from(*c) * alpha + 127) / 255) as u8;
             }
         }
-        premultiply(&mut pixels);
-        assert_eq!(pixels, expected);
+        // Scalar and dispatched (AVX2 where present) alike.
+        let row = 256 * 4;
+        for premultiply in [premultiply_rows, premultiply_rows_inline] {
+            let mut out = vec![0; pixels.len()];
+            premultiply(&pixels, &mut out, row, row);
+            assert_eq!(out, expected);
+        }
+    }
+
+    #[test]
+    fn premultiplication_writes_rows_at_the_pitch_and_leaves_the_padding() {
+        let src = [[10, 20, 30, 128], [200, 100, 50, 255]].concat();
+        let mut dst = [7u8; 12];
+        premultiply_rows(&src, &mut dst, 4, 8);
+        assert_eq!(dst, [5, 10, 15, 128, 7, 7, 7, 7, 200, 100, 50, 255]);
     }
 }

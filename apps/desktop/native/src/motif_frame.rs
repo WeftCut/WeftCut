@@ -38,9 +38,10 @@ pub(crate) fn encode(w: u32, h: u32, rgba: &[u8]) -> anyhow::Result<Vec<u8>> {
     Ok(out)
 }
 
-/// zstd verifies the checksum while it decompresses. A frame without one is
-/// rejected: nothing else would notice its pixels changing.
-fn decode(bytes: &[u8]) -> anyhow::Result<(u32, u32, Vec<u8>)> {
+/// Dimensions, pixel byte length and zstd payload. zstd verifies the checksum
+/// while it decompresses. A frame without one is rejected: nothing else would
+/// notice its pixels changing.
+fn parse(bytes: &[u8]) -> anyhow::Result<(u32, u32, usize, &[u8])> {
     anyhow::ensure!(
         bytes.len() > HEADER + 4 && &bytes[..8] == MAGIC,
         "invalid motif frame header"
@@ -54,9 +55,62 @@ fn decode(bytes: &[u8]) -> anyhow::Result<(u32, u32, Vec<u8>)> {
         payload[..4] == ZSTD_MAGIC && payload[4] & 0x04 != 0,
         "motif frame has no checksum"
     );
+    Ok((w, h, size, payload))
+}
+
+fn decode(bytes: &[u8]) -> anyhow::Result<(u32, u32, Vec<u8>)> {
+    let (w, h, size, payload) = parse(bytes)?;
     let rgba = zstd::bulk::decompress(payload, size)?;
     anyhow::ensure!(rgba.len() == size, "invalid motif frame length");
     Ok((w, h, rgba))
+}
+
+/// Decode state one reader reuses frame after frame. A fresh output buffer per
+/// frame costs more than the decompression at 4K: the kernel faults in every page.
+pub(crate) struct FrameDecoder {
+    zstd: zstd::bulk::Decompressor<'static>,
+    rgba: Vec<u8>,
+    scaled: Vec<u8>,
+}
+
+impl FrameDecoder {
+    pub(crate) fn new() -> anyhow::Result<Self> {
+        Ok(Self {
+            zstd: zstd::bulk::Decompressor::new()?,
+            rgba: Vec::new(),
+            scaled: Vec::new(),
+        })
+    }
+
+    fn decode(&mut self, bytes: &[u8]) -> anyhow::Result<(u32, u32)> {
+        let (w, h, size, payload) = parse(bytes)?;
+        self.rgba.resize(size, 0);
+        // Into exactly `size` bytes: a payload that inflates further fails here.
+        let written = self
+            .zstd
+            .decompress_to_buffer(payload, &mut self.rgba[..])?;
+        anyhow::ensure!(written == size, "invalid motif frame length");
+        Ok((w, h))
+    }
+
+    /// [`read_scaled`] into buffers kept for the next read.
+    pub(crate) fn read_scaled(
+        &mut self,
+        path: &str,
+        div: u32,
+    ) -> anyhow::Result<(u32, u32, &[u8], MotifReadTiming)> {
+        let (mut timing, (w, h)) = read_decoded(path, div, |bytes| self.decode(bytes))?;
+        let start = std::time::Instant::now();
+        let scaled = scale(&self.rgba, w, h, div)?;
+        timing.scale_ms = elapsed_ms(start);
+        Ok(match scaled {
+            None => (w, h, &self.rgba[..], timing),
+            Some((sw, sh, pixels)) => {
+                self.scaled = pixels;
+                (sw, sh, &self.scaled[..], timing)
+            }
+        })
+    }
 }
 
 /// Alpha-weighted box downscale of straight RGBA by 1, 2 or 4 (ADR 0154): a
@@ -70,6 +124,11 @@ pub(crate) fn downscale(
     h: u32,
     div: u32,
 ) -> anyhow::Result<(u32, u32, Vec<u8>)> {
+    Ok(scale(&rgba, w, h, div)?.unwrap_or((w, h, rgba)))
+}
+
+/// [`downscale`] without taking the input; `None` when `div` is 1.
+fn scale(rgba: &[u8], w: u32, h: u32, div: u32) -> anyhow::Result<Option<(u32, u32, Vec<u8>)>> {
     anyhow::ensure!(
         matches!(div, 1 | 2 | 4),
         "invalid motif scale divisor {div}"
@@ -79,7 +138,7 @@ pub(crate) fn downscale(
         "invalid motif pixel length"
     );
     if div == 1 {
-        return Ok((w, h, rgba));
+        return Ok(None);
     }
     let (ow, oh) = (w.div_ceil(div), h.div_ceil(div));
     let (w, h, d, stride) = (w as usize, h as usize, div as usize, w as usize * 4);
@@ -108,7 +167,7 @@ pub(crate) fn downscale(
             px[3] = ((2 * a + n) / (2 * n)) as u8;
         }
     }
-    Ok((ow, oh, out))
+    Ok(Some((ow, oh, out)))
 }
 
 /// Every failure that comes from the file itself starts with this prefix: the
@@ -140,12 +199,25 @@ pub(crate) fn read_scaled(
     path: &str,
     div: u32,
 ) -> anyhow::Result<(u32, u32, Vec<u8>, MotifReadTiming)> {
+    let (mut timing, (w, h, rgba)) = read_decoded(path, div, decode)?;
+    let start = std::time::Instant::now();
+    let (w, h, rgba) = downscale(rgba, w, h, div)?;
+    timing.scale_ms = elapsed_ms(start);
+    Ok((w, h, rgba, timing))
+}
+
+/// The file read and `decode` of [`read_scaled`], timed; scaling is the caller's.
+fn read_decoded<T>(
+    path: &str,
+    div: u32,
+    decode: impl FnOnce(&[u8]) -> anyhow::Result<T>,
+) -> anyhow::Result<(MotifReadTiming, T)> {
     anyhow::ensure!(
         matches!(div, 1 | 2 | 4),
         "invalid motif scale divisor {div}"
     );
     let mut timing = MotifReadTiming::default();
-    let (w, h, rgba) = from_file(|| {
+    let frame = from_file(|| {
         let start = std::time::Instant::now();
         let bytes = read_file(path)?;
         timing.read_ms = elapsed_ms(start);
@@ -154,10 +226,7 @@ pub(crate) fn read_scaled(
         timing.decode_ms = elapsed_ms(start);
         Ok(frame)
     })?;
-    let start = std::time::Instant::now();
-    let (w, h, rgba) = downscale(rgba, w, h, div)?;
-    timing.scale_ms = elapsed_ms(start);
-    Ok((w, h, rgba, timing))
+    Ok((timing, frame))
 }
 
 fn read_file(path: &str) -> anyhow::Result<Vec<u8>> {
@@ -422,5 +491,46 @@ mod tests {
         let mut corrupt = bytes;
         corrupt[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
         assert!(decode(&corrupt).is_err());
+    }
+
+    #[test]
+    fn a_reused_decoder_reads_what_a_fresh_read_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut decoder = FrameDecoder::new().unwrap();
+        let large = pattern(73);
+        let small: Vec<u8> = pattern(31)[..256].to_vec();
+        // Larger, smaller, larger again: no bytes of an earlier frame survive.
+        for (w, h, pixels) in [(32, 32, &large), (8, 8, &small), (32, 32, &large)] {
+            let path = write_frame(dir.path(), &encode(w, h, pixels).unwrap());
+            for div in [1, 2, 4] {
+                let (fw, fh, fresh, _) = read_scaled(&path, div).unwrap();
+                let (rw, rh, reused, _) = decoder.read_scaled(&path, div).unwrap();
+                assert_eq!((rw, rh, reused), (fw, fh, &fresh[..]), "{w}x{h} div {div}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_reused_decoder_rejects_what_a_fresh_read_rejects() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut decoder = FrameDecoder::new().unwrap();
+        let pixels = pattern(73);
+        let bytes = encode(32, 32, &pixels).unwrap();
+        let path = write_frame(dir.path(), &bytes);
+        decoder.read_scaled(&path, 1).unwrap();
+        let header = &encode(2, 2, &[23; 16]).unwrap()[..HEADER];
+        let longer = &encode(5, 1, &[23; 20]).unwrap()[HEADER..];
+        // The last byte belongs to the content checksum.
+        let mut corrupt = bytes.clone();
+        *corrupt.last_mut().unwrap() ^= 1;
+        for bad in [
+            [header, longer].concat(),
+            corrupt,
+            bytes[..bytes.len() - 1].to_vec(),
+        ] {
+            let path = write_frame(dir.path(), &bad);
+            let error = decoder.read_scaled(&path, 1).unwrap_err().to_string();
+            assert!(error.starts_with(FRAME_ERROR), "{error}");
+        }
     }
 }
