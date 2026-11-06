@@ -400,6 +400,18 @@ describe("MotifSprite.refreshMotif", () => {
       expect(resolveMotifFrame).toHaveBeenCalledTimes(1);
     });
 
+    it("keeps reporting the shown frame after a play reset until the new session binds", () => {
+      const paused = bitmap();
+      getFrameMock.mockImplementation((_key, frame) => frame === 0 ? paused : null);
+      vi.mocked(resolveMotifFrame).mockReturnValue(new Promise(() => {}));
+      sprite.update(view, 0, 5_000_000, undefined, false);
+      expect(sprite.playbackSnapshot()).toMatchObject({ boundFrame: 0, shownFrame: 0 });
+      // Playback starts past the recent-frame window, so nothing new binds yet.
+      sprite.update(view, 300_000, 5_000_000, undefined, true);
+      expect(retainMock.mock.calls).toEqual([[paused]]);
+      expect(sprite.playbackSnapshot()).toMatchObject({ targetFrame: 9, boundFrame: null, shownFrame: 0 });
+    });
+
     it("does not substitute a recent cached frame for an exact paused target", () => {
       getFrameMock.mockImplementation((_key, frame) => frame === 2 ? bitmap() : null);
       vi.mocked(resolveMotifFrame).mockReturnValue(new Promise(() => {}));

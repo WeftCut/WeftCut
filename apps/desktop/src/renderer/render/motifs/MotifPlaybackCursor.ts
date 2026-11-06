@@ -8,7 +8,12 @@ import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
 
 export interface MotifPlaybackSnapshot {
   targetFrame: number | null;
+  /** The frame bound for the current target; a reset (seek, play or pause,
+   * content refresh) clears it. */
   boundFrame: number | null;
+  /** The frame on screen. A reset keeps it: the sprite holds its bitmap until
+   * the next frame binds. */
+  shownFrame: number | null;
   lagFrames: number | null;
   heldMs: number;
   maxLagFrames: number;
@@ -31,6 +36,7 @@ export class MotifPlaybackCursor {
   /** The Playback Resolution divisor of `target`; L0 hits match it exactly. */
   private scaleDiv: MotifReaderDiv = 1;
   private boundFrame: number | null = null;
+  private shownFrame: number | null = null;
   private boundAt = 0;
   private playing = false;
   private epoch = 0;
@@ -91,7 +97,7 @@ export class MotifPlaybackCursor {
   snapshot(): MotifPlaybackSnapshot {
     const { lagFrames, heldMs } = this.measureHold();
     return { targetFrame: this.target?.contentFrame ?? null, boundFrame: this.boundFrame,
-      lagFrames, heldMs, maxLagFrames: this.maxLagFrames, maxHeldMs: this.maxHeldMs,
+      shownFrame: this.shownFrame, lagFrames, heldMs, maxLagFrames: this.maxLagFrames, maxHeldMs: this.maxHeldMs,
       pending: this.pending !== null, completed: this.completed, discarded: this.discarded };
   }
 
@@ -115,6 +121,7 @@ export class MotifPlaybackCursor {
     this.measureHold();
     this.deps.bind(bitmap, this.lane(d), d);
     this.boundFrame = d.contentFrame;
+    this.shownFrame = d.contentFrame;
     this.boundAt = performance.now();
     this.failures = 0;
     this.retryAt = 0;

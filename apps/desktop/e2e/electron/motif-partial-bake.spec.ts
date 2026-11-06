@@ -126,7 +126,7 @@ for (const complete of [false, true]) {
             }
             // Cross the 512 MiB cache (about 64 decoded frames), remaining
             // inside the saved prefix even on a slow software GPU.
-            if ((row?.boundFrame ?? -1) >= 180) break
+            if ((row?.shownFrame ?? -1) >= 180) break
           }
         } finally { hook.transportPause() }
         return { rows, observedPlaybackPause }
@@ -142,12 +142,18 @@ for (const complete of [false, true]) {
         body: JSON.stringify({ complete, stats, rows, observedPlaybackPause, captureDiagnostics, bakeSnapshot, resources: await resourceDiagnostics(running.page) }),
         contentType: 'application/json',
       })
-      const frames = rows.map(row => row?.boundFrame).filter((frame): frame is number => frame != null)
-      expect(rows.every(row => row?.boundFrame != null), 'every sample must have a displayed frame').toBe(true)
+      // The shown frame, not the bound one: after the play reset the sprite keeps
+      // its bitmap until a frame of the new session binds.
+      const frames = rows.map(row => row?.shownFrame).filter((frame): frame is number => frame != null)
+      expect(rows.every(row => row?.shownFrame != null), 'every sample must have a displayed frame').toBe(true)
       expect(new Set(frames).size).toBeGreaterThan(3)
       expect(frames.at(-1)!).toBeGreaterThanOrEqual(180)
       expect(frames.every((frame, i) => i === 0 || frame >= frames[i - 1]!)).toBe(true)
-      expect(rows.every(row => row?.targetFrame != null && row.targetFrame < SAVED)).toBe(true)
+      // Starting playback resets the cursor's target some time after the call,
+      // and a sample can fall before the next composite sets it again.
+      const targets = rows.map(row => row?.targetFrame).filter((frame): frame is number => frame != null)
+      expect(targets.length).toBeGreaterThan(rows.length / 2)
+      expect(targets.every(frame => frame < SAVED)).toBe(true)
       // Frame rate and hold times depend on raster hardware and disk latency.
       // Gate bounded progress, monotonicity and saved-frame reuse; retain the
       // timing samples above for diagnosis rather than imposing a CI fps floor.
