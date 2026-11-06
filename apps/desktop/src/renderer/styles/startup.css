@@ -169,7 +169,10 @@ html.platform-mac :is(.startup-titlebar, .agent-titlebar, .perf-titlebar) {
   letter-spacing: 0.22em;
   text-indent: 0.22em;
   opacity: 0;
-  animation: splash-wordmark-in 2500ms ease both;
+  /* The text's wait is a delay, not held keyframes: a running opacity or
+   * transform animation keeps the text on a compositor layer, which draws
+   * it soft until the animation ends. */
+  animation: splash-wordmark-in 225ms ease 1282ms both;
 }
 
 .splash-copy {
@@ -190,7 +193,7 @@ html.platform-mac :is(.startup-titlebar, .agent-titlebar, .perf-titlebar) {
   font-size: var(--font-size-body);
   line-height: 1.35;
   text-align: center;
-  animation: splash-progress-in 2500ms ease both;
+  animation: splash-progress-in 350ms ease 1200ms both;
 }
 
 .splash-progress-dot {
@@ -237,13 +240,13 @@ html.platform-mac :is(.startup-titlebar, .agent-titlebar, .perf-titlebar) {
 }
 
 @keyframes splash-wordmark-in {
-  0%, 51.2963% { opacity: 0; transform: translateY(calc(6 * var(--ui-px))); }
-  60.2963%, 100% { opacity: 0.78; transform: translateY(0); }
+  0% { opacity: 0; transform: translateY(calc(6 * var(--ui-px))); }
+  100% { opacity: 0.78; transform: translateY(0); }
 }
 
 @keyframes splash-progress-in {
-  0%, 48% { opacity: 0; transform: translateY(calc(4 * var(--ui-px))); }
-  62%, 100% { opacity: 0.78; transform: translateY(0); }
+  0% { opacity: 0; transform: translateY(calc(4 * var(--ui-px))); }
+  100% { opacity: 0.78; transform: translateY(0); }
 }
 
 @keyframes splash-screen-out {
@@ -258,6 +261,7 @@ html.platform-mac :is(.startup-titlebar, .agent-titlebar, .perf-titlebar) {
   .splash-wordmark,
   .splash-progress {
     animation-duration: 120ms;
+    animation-delay: 0ms;
   }
 
   .splash-screen-exiting {
