@@ -137,7 +137,7 @@ describe('capture host page', () => {
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Security-Policy')).toBe(CAPTURE_HOST_CSP)
     const html = await res.text()
-    expect(html).toContain(`<iframe src="index.html?v=${hash}">`)
+    expect(html).toContain(`<iframe data-src="index.html?v=${hash}">`)
     expect(html).toContain('height:calc(100vh - 1px)')
   })
 

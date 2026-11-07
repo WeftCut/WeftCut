@@ -12,6 +12,8 @@ import { FRAME_MARKER_PIXELS, frameMarkerBits } from '../../shared/motifs/frameM
 
 let opened = 0
 let lastHost: EventEmitter | null = null
+/// The last window built, and whether the code under test destroyed it.
+let lastWindow: { destroyed: boolean } | null = null
 /// Whether the last host built takes shared textures (else bitmaps).
 let lastHostTexture = false
 /// The last `__motifRender(tSec, props, meta)` expression sent to the host —
@@ -160,7 +162,9 @@ vi.mock('electron', () => {
       this.texture = typeof options.webPreferences.offscreen === 'object'
       lastHostTexture = this.texture
       lastHost = this.webContents
+      lastWindow = this
     }
+    destroyed = false
     loadURL = async (url: string): Promise<void> => {
       currentUrl = url; freshSurface = true
       const lane = currentLane()
@@ -168,7 +172,7 @@ vi.mock('electron', () => {
     }
     // A new size is a new compositor surface too.
     setContentSize = (width: number, height: number): void => { contentSize = { width, height }; freshSurface = true }
-    destroy = (): void => {}
+    destroy = (): void => { this.destroyed = true }
   }
   return { BrowserWindow: FakeBrowserWindow, nativeImage: { createFromBuffer: () => { throw new Error('not in these tests') } }, shell: { openExternal: async () => {} } }
 })
@@ -303,15 +307,18 @@ describe('capture host shutdown', () => {
 
   it('a throwing __motifRender fails its lane without tearing the host down', async () => {
     // Content error: the Motif's own script throws while the window and CDP
-    // transport answer fine — the host must NOT be rebuilt, and a DIFFERENT
-    // motif's next capture reuses it (no new window).
+    // transport answer fine — its window must NOT be rebuilt. Another Motif
+    // then gets a window of its own, as every document does.
     throwingLanes.add('broken-motif@v1')
     const openedBefore = opened
     await expect(captureMotifFrameB64({ ...args, motifId: 'broken-motif', contentHash: 'v1' }))
       .rejects.toThrow(/__motifRender threw/)
-    expect(opened).toBe(openedBefore)
+    expect(opened).toBe(openedBefore + 1)
+    expect(lastWindow!.destroyed).toBe(false)
+    const broken = lastWindow!
     await expect(captureMotifFrameB64({ ...args, motifId: 'healthy-motif' })).resolves.toBe('UE5H')
-    expect(opened).toBe(openedBefore)
+    expect(opened).toBe(openedBefore + 2)
+    expect(broken.destroyed).toBe(true)
   })
 
   it.each(['Emulation.setDeviceMetricsOverride', 'Emulation.setDefaultBackgroundColorOverride'])(

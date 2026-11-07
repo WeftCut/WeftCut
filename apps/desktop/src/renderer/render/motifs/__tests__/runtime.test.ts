@@ -124,6 +124,19 @@ describe('capture host shell', () => {
     expect(performance.now() - started).toBeGreaterThanOrEqual(90);
   });
 
+  it('loads the Motif into its frame only when asked, after the runtime is in place', async () => {
+    const { window } = hostRuntime();
+    const frame: any = { dataset: { src: 'index.html?v=1' }, src: '', listeners: [] as Array<() => void>,
+      addEventListener(_type: string, cb: () => void) { this.listeners.push(cb); } };
+    window.document.querySelector = () => frame;
+    const loaded = window.__motifShellLoad();
+    expect(frame.src).toBe('index.html?v=1');
+    frame.listeners.forEach((cb: () => void) => cb());
+    await expect(loaded).resolves.toBe(true);
+    frame.dataset = {};
+    await expect(window.__motifShellLoad()).rejects.toThrow(/no Motif frame/);
+  });
+
   it('is ready only for its own Motif, and leaves other top pages in the Motif role', () => {
     const { window } = hostRuntime();
     expect(window.__motifHostReady('countdown')).toBe(true);

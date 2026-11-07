@@ -106,12 +106,12 @@ Gesture model (`renderer/properties/motifParamsHost.ts`):
 
 ## Capture host
 
-`main/motif/capture.ts` owns one lazily created offscreen `BrowserWindow`,
-reused across Motifs, frames and layers. It loads the capture host page beside
-the Motif's `index.html`, which frames the Motif at the capture size above one
-marker row; the runtime runs in both and forwards the entry points. Requesting
-another Motif navigates the same window (runtime re-injected, readiness
-re-probed). The host sets
+`main/motif/capture.ts` owns one lazily created offscreen `BrowserWindow` per
+document, reused across frames and layers of that Motif. It loads the capture
+host page beside the Motif's `index.html`, which frames the Motif at the capture
+size above one marker row; the runtime runs in both and forwards the entry
+points. Requesting another Motif or content version opens a new window (ADR
+0159): only a window's first document keeps alpha on a bitmap host. The host sets
 `Emulation.setDeviceMetricsOverride` (any resolution) and a transparent default
 background so `background: transparent` stays real alpha.
 

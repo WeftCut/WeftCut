@@ -36,6 +36,12 @@ after the previous one, so the renderer idled about three quarters of the time.
   Paints arrive in frame order, so a paint carrying a later id retires every
   earlier expected frame as skipped, and a skipped frame renders again. A
   navigation or resize waits for the frames in flight.
+- **A host window shows one document.** A window's first top-level document
+  is the only one a bitmap host paints with real alpha
+  (docs/notes/electron-chromium-behavior.md), so another Motif or content
+  version gets a new window: the script-free shell loads first, then the
+  runtime, then the Motif in the shell's frame. A new window costs about what
+  a navigation did.
 - **A texture-output failure switches the session to bitmaps**, including a
   failed readback; the frame at hand is captured again as a bitmap. The
   bitmap host keeps 2D canvases on the CPU (ADR 0078).
@@ -53,4 +59,7 @@ after the previous one, so the renderer idled about three quarters of the time.
   overlap.
 - `capturePage` stays unused: it needed a second try on a quarter of frames
   and failed with `UnknownVizError` on both systems.
+- The probe's screenshot cross-check could not see the alpha loss after a
+  navigation: the DECO Motifs are opaque and a screenshot keeps alpha. The
+  e2e Motifs with transparent backgrounds caught it.
 - Real macOS hardware has not run the bitmap lease.

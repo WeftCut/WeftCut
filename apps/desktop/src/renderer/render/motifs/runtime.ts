@@ -74,6 +74,16 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
       return document.readyState === 'complete' && location.hostname === motifId && !!w &&
         typeof w.__motifRender === 'function' && w.document.readyState === 'complete';
     };
+    // Main registers the runtime after the shell has loaded, then loads the
+    // Motif here, so the Motif's documents start with the runtime.
+    window.__motifShellLoad = function () {
+      return new Promise(function (resolve, reject) {
+        var f = document.querySelector('iframe');
+        if (!f || !f.dataset.src) { reject(new Error('capture host shell has no Motif frame')); return; }
+        f.addEventListener('load', function () { resolve(true); }, { once: true });
+        f.src = f.dataset.src;
+      });
+    };
     window.__motifSetup = function (props, meta) { return motifWindow().__motifSetup(props, meta); };
     // Resolves once the frame's rendering step has run: rAF callbacks run in
     // it, and the task after them belongs to the next frame. Main renders its

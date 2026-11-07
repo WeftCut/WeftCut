@@ -85,15 +85,15 @@ export function isMotifContentFailure(a: CaptureArgs, error: unknown): boolean {
 interface Host {
   win: BrowserWindow
   send: (method: string, params?: object, timeoutMs?: number, label?: string) => Promise<any>
-  loadedId: string | null
-  loadedV: string | null
+  loadedId: string
+  loadedV: string
   readyFor: string | null
   lastSize: { w: number; h: number } | null
   frames: OffscreenFrames
   /// Shared textures (Windows) or bitmaps; both are leased by frame id.
   texture: boolean
   /// The one URL the shell's frame may load: the Motif it was built for.
-  motifUrl: string | null
+  motifUrl: string
 }
 let host: Host | null = null
 let textureCaptureEnabled = false
@@ -277,9 +277,23 @@ async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise
   }
 }
 
-async function buildHost(): Promise<Host> {
-  if (!runtimeSource) throw new Error('motif runtime not registered yet (call motif_register_runtime)')
+/// Builds the host of one document. The shell page, which runs no scripts of
+/// its own, is the window's only top-level navigation: a bitmap host paints
+/// real alpha only for a window's first document
+/// (docs/notes/electron-chromium-behavior.md#a-bitmap-osr-window-paints-alpha-only-for-its-first-document),
+/// so another Motif or content version gets a new window. The runtime is
+/// registered once the shell has loaded, and the shell then loads the Motif
+/// into its frame, whose documents the runtime reaches before their scripts.
+async function buildHost(motifId: string, contentHash: string): Promise<Host> {
+  const runtime = runtimeSource
+  if (!runtime) throw new Error('motif runtime not registered yet (call motif_register_runtime)')
   const texture = textureCaptureEnabled && readFrameMarker !== null
+  const pinned = /^[0-9a-f]{64}$/.test(contentHash) && motifStore?.pinPackage?.(motifId, contentHash)
+  // The shell frames the Motif above the surface's marker rows
+  // (shared/motifs/frameMarker.ts); the Motif sees only its own size.
+  const dir = `motif://${motifId}/${pinned ? `.revisions/${contentHash}/` : ''}`
+  const query = `v=${encodeURIComponent(contentHash)}`
+  const motifUrl = `${dir}index.html?${query}`
   const win = new BrowserWindow({
     show: false,
     // The capture host renders untrusted, user-authored Motif content, so it runs
@@ -308,25 +322,31 @@ async function buildHost(): Promise<Host> {
   hardenWindow(win, { allowExternalOpen: false })
   // hardenWindow guards the top frame; the Motif runs in the shell's frame.
   win.webContents.on('will-frame-navigate', event => {
-    if (!event.isMainFrame && event.url !== host?.motifUrl) event.preventDefault()
+    if (!event.isMainFrame && event.url !== motifUrl) event.preventDefault()
   })
+  captureCounters.pageLoads++
+  diagnosticsLane(motifId, contentHash).pageLoads++
   // Destroy the offscreen window if CDP init throws mid-build, else it orphans.
   // Bounded to ≤1 (captures are serialized) but still a leak; never observed green.
   try {
-    await withTimeout(win.loadURL('about:blank'), CAPTURE_TIMEOUT_MS, 'about:blank')
     const dbg = win.webContents.debugger
     dbg.attach('1.3')
     // Every CDP command is bounded by construction, including Emulation.
     // Callers cannot accidentally wedge the serial queue with an untimed send.
     const send = (method: string, params: object = {}, timeoutMs = CAPTURE_TIMEOUT_MS, label = method) =>
       withTimeout(dbg.sendCommand(method, params), timeoutMs, label)
+    await timedCapture('loadMs', () => withTimeout(win.loadURL(`${dir}${CAPTURE_HOST_FILE}?${query}`), CAPTURE_TIMEOUT_MS * 2, 'loadURL motif'))
     await send('Page.enable')
     await send('Runtime.enable')
     await send('Page.addScriptToEvaluateOnNewDocument', {
-      source: texture ? runtimeSource : BITMAP_CANVAS_RUNTIME_SOURCE + runtimeSource,
+      source: texture ? runtime : BITMAP_CANVAS_RUNTIME_SOURCE + runtime,
     })
+    const shell = await timedCapture('loadMs', () => send('Runtime.evaluate', {
+      expression: `${runtime};window.__motifShellLoad()`, awaitPromise: true, returnByValue: true,
+    }, CAPTURE_TIMEOUT_MS * 2, 'load Motif frame'))
+    if (shell?.exceptionDetails) throw new Error('capture host shell failed: ' + JSON.stringify(shell.exceptionDetails))
     win.webContents.setFrameRate(CAPTURE_FRAME_RATE)
-    return { win, send, loadedId: null, loadedV: null, readyFor: null, lastSize: null, frames, texture, motifUrl: null }
+    return { win, send, loadedId: motifId, loadedV: contentHash, readyFor: null, lastSize: null, frames, texture, motifUrl }
   } catch (e) {
     frames.dispose()
     try { win.destroy() } catch { /* already gone */ }
@@ -363,23 +383,10 @@ export function shutdownCaptureHost(): void {
 }
 
 async function ensureHost(motifId: string, contentHash: string): Promise<Host> {
-  if (!host) host = await buildHost()
   // Reuse only when BOTH id and content version match (the ?v= cache-buster).
-  if (host.loadedId === motifId && host.loadedV === contentHash) return host
-  const pinned = /^[0-9a-f]{64}$/.test(contentHash) && motifStore?.pinPackage?.(motifId, contentHash)
-  // The shell frames the Motif above the surface's marker rows
-  // (shared/motifs/frameMarker.ts); the Motif sees only its own size.
-  const dir = `motif://${motifId}/${pinned ? `.revisions/${contentHash}/` : ''}`
-  const query = `v=${encodeURIComponent(contentHash)}`
-  captureCounters.pageLoads++
-  diagnosticsLane(motifId, contentHash).pageLoads++
-  host.motifUrl = `${dir}index.html?${query}`
-  const shell = `${dir}${CAPTURE_HOST_FILE}?${query}`
-  await timedCapture('loadMs', () => withTimeout(host!.win.loadURL(shell), CAPTURE_TIMEOUT_MS * 2, 'loadURL motif'))
-  host.loadedId = motifId
-  host.loadedV = contentHash
-  host.readyFor = null // re-probe; navigation re-runs addScriptToEvaluateOnNewDocument
-  host.lastSize = null // re-apply setDeviceMetricsOverride for the new page
+  if (host?.loadedId === motifId && host.loadedV === contentHash) return host
+  teardownHost()
+  host = await buildHost(motifId, contentHash)
   return host
 }
 
