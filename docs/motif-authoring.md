@@ -191,11 +191,11 @@ animation — deleting it breaks seeking back to earlier times.
   lowercase letter, then up to 31 lowercase letters, digits or underscores
   (anything else fails validation). A placed layer takes it unless the placing
   call names its own; absent means untagged.
-- **`settle_rafs`** — real browser frames the harness waits after a seek before
-  capturing; `{0, 1, 2}`, default `2`. Only built-in Motifs' values take
-  effect today: a user package's manifest island drops the field, and
-  shared-texture capture always waits 2. Write animation that is correct after
-  two frames.
+- **`settle_rafs`** — real browser frames the PNG capture waits after a seek
+  before its screenshot; `{0, 1, 2}`, default `2`. Only built-in Motifs' values
+  take effect today: a user package's manifest island drops the field, and
+  shared-texture capture waits for the frame itself instead. Draw the frame
+  during the seek; write animation that is correct after two frames.
 - **`fonts`** — declares bundled font files; meaningful only for Motifs
   installed as a directory with an `assets/` folder. A single-file
   Motif embeds fonts as `data:` URIs instead.

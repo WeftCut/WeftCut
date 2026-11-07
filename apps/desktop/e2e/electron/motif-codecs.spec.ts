@@ -96,7 +96,8 @@ test('Motif compressed models: Draco, ETC1S and UASTC render, seek and rebuild t
       expect((await capture(0)).equals(first)).toBe(true)
       const workerState = () => app.evaluate(async ({ webContents }, id) => {
         const host = webContents.getAllWebContents().find(w => w.getURL().startsWith('motif://' + id + '/'))!
-        return host.executeJavaScript('window.codecWorkers')
+        // The Motif runs in the capture host page's frame.
+        return host.mainFrame.frames[0]!.executeJavaScript('window.codecWorkers')
       }, id)
       const initialWorkers = await workerState()
       expect(initialWorkers.created).toBeGreaterThanOrEqual(texture ? 2 : 1)
@@ -177,7 +178,7 @@ test('Motif local and Blob workers retain offline CSP and deny JS eval', async (
     }), id)
     const results = await app.evaluate(async ({webContents}, id) => {
       const host = webContents.getAllWebContents().find(w=>w.getURL().startsWith('motif://'+id+'/'))!
-      return host.executeJavaScript('window.results')
+      return host.mainFrame.frames[0]!.executeJavaScript('window.results') // the Motif's frame
     }, id)
     expect(results).toEqual(Array.from({length:2},()=>({
       local:'package-local',evalBlocked:true,hasNode:false,

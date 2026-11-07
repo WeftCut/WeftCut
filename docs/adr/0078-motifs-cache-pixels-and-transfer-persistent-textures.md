@@ -27,9 +27,13 @@ out of scope. BLAKE3 over the pixels cost a second pass on write and read
 rejected every single-bit flip
 ([checksum](../notes/motif-frame-checksum-2026-11-06.md)).
 
-The first texture captured from a new compositor surface can be the previous
-or uninitialised surface even after two native rAFs: rAFs fence layout and
-commit, not the compositor's raster.
+Electron's offscreen output reports nothing that ties a paint to a commit: no
+BeginFrame control, and its paint metadata drops the frame sequence. Native
+rAFs fence layout and commit, not the compositor's raster, so waiting a fixed
+number of them is a timing guess. The first texture of a new compositor surface
+was observed holding the previous or uninitialised surface even after two.
+Only pixels drawn by the page travel with the commit that drew them
+([probe](../notes/motif-capture-frame-id-2026-11-08.md)).
 
 ## Decision
 
@@ -57,20 +61,39 @@ commit, not the compositor's raster.
   or timed-out consumer retires the texture instead of permitting reuse.
   Native pools outlive every Electron import. The consumer lifetime is a
   document: navigation retires its transport generation.
-- **A texture is leased only from a proven surface.** `OffscreenFrames` fences
-  each new surface — main-frame navigation, size change, GPU process restart —
-  with one full `Page.captureScreenshot` readback, and never fences a frame on
-  a proven surface. A clipped readback is not a fence.
+- **A texture is leased by the frame id it carries.** The capture host page is
+  a same-origin shell that frames the Motif at the capture size; on a texture
+  host it keeps one pixel row below it (`shared/motifs/frameMarker.ts`). The
+  Motif sees only its own size. After the frame's seek, with no rendering step between, the shell
+  writes a fresh 32-bit id with a magic and a check byte into that row.
+  Painting stays on; `OffscreenFrames` reads the row of each paint on a native
+  worker and leases the first texture carrying the id, releasing the rest.
+  Copies and readbacks take the rows above it. No settle wait, no
+  stop/start of painting, no surface fence: a new document, size or GPU
+  process's stale first paint carries no id or an old one. The host renderer
+  runs with checker imaging off, so a frame does not draw before its images
+  decode.
 - **The PNG host forces CPU-backed 2D canvases** (`willReadFrequently: true`):
   Electron 44 bitmap OSR can omit an accelerated canvas after navigation,
   which exported transparent frames.
 
 ## Consequences
 
-- The cache key namespace (`surface-v6`) discards frames baked before the
-  surface fence, the canvas policy and the current layout; collection deletes
+- The cache key namespace (`surface-v7`) discards frames captured before the
+  frame id, the canvas policy and the current layout; collection deletes
   their directories unread. Projects re-bake once after a layout change.
-- One readback per navigation, size change and GPU restart.
+- A texture frame costs the page's own work plus one pass through the
+  compositor; in a standalone probe on 61 real Motifs it matched the
+  settle-and-restart wait it
+  replaced (median 48 against 53 ms at 60 Hz) and every checked frame was
+  exact. Raising the frame rate gained nothing: the remaining time is
+  raster.
+- A PNG host uses the same shell with no marker row and still settles by the
+  manifest's `settle_rafs`. A PNG capture on a texture host drops the row from
+  the screenshot's PNG losslessly: a clipped screenshot left a WebGL Motif's
+  later frames blank.
+- Content outside the commit — a worker's OffscreenCanvas, video — is not
+  covered by the id.
 - An older app version finds no frames under its own namespace and captures
   again. The checksum's 32 bits miss about one random corruption in four
   billion; the header is outside it, but a damaged dimension almost always
@@ -83,4 +106,6 @@ Rejected: BLAKE3 over the compressed bytes (cannot see a wrong
 decompression); packing a clip into one file (shared mutable index, no gain on the
 measured bottleneck); inter-frame deltas (grow moving content, lose frame
 independence); unsynchronised texture capture after paint (returned old
-surfaces).
+surfaces); paint timestamps or counters as the id (rewritten by the capturer);
+the id inside the picture, removed by a second frame (25% slower at 60 Hz);
+forcing a capturer restart per frame (slower).

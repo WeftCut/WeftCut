@@ -1,4 +1,5 @@
-import type { OffscreenSharedTexture, WebContents } from 'electron'
+import type { WebContents } from 'electron'
+import type { MotifOsrFrame } from './offscreenFrames.js'
 import type { CaptureArgs } from './capture'
 import type { MotifFrameStore, FrameWriter } from './frameStore'
 import type { MotifCacheAddress, MotifTextureFrame, StoredMotifFrame } from '../../shared/motifs/frameTransport'
@@ -9,7 +10,9 @@ import { MotifFrameWriteQueue, type FrameRead, type QueuedWrite } from './frameW
 
 /** Pixels read back from a texture, held natively until `finish` encodes them. */
 export interface RawMotifFrame { finish(): Promise<Buffer> }
-export interface TextureEncoder { read(handle: Buffer): Promise<RawMotifFrame>; close(): void }
+/** Reads the top `height` rows of a shared texture: the picture above the
+ * capture host's marker rows. */
+export interface TextureEncoder { read(handle: Buffer, height: number): Promise<RawMotifFrame>; close(): void }
 export interface CaptureRequest extends CaptureArgs {
   coalesceKey?: string
   high?: boolean
@@ -20,9 +23,9 @@ export interface CaptureRequest extends CaptureArgs {
 }
 export interface CaptureServiceDeps {
   store: MotifFrameStore
-  texture: <T>(args: CaptureArgs, consume: (texture: OffscreenSharedTexture) => Promise<T>, key?: string, high?: boolean, isCurrent?: () => boolean) => Promise<T>
+  texture: <T>(args: CaptureArgs, consume: (frame: MotifOsrFrame) => Promise<T>, key?: string, high?: boolean, isCurrent?: () => boolean) => Promise<T>
   png: (args: CaptureArgs, key?: string, high?: boolean, isCurrent?: () => boolean) => Promise<string>
-  copy: ((owner: WebContents, texture: OffscreenSharedTexture, finalizationId?: number) => Promise<MotifTextureFrame>) | null
+  copy: ((owner: WebContents, frame: MotifOsrFrame, finalizationId?: number) => Promise<MotifTextureFrame>) | null
   createEncoder: (() => TextureEncoder) | null
   setTextureEnabled: (enabled: boolean) => void
   isContentFailure: (args: CaptureArgs, error: unknown) => boolean
@@ -166,9 +169,9 @@ export class MotifCaptureService {
       if (this.canReadTexture()) {
         let queued: QueuedWrite | undefined
         try {
-          queued = await this.deps.texture(args, async texture => {
+          queued = await this.deps.texture(args, async frame => {
             const writer = await prepare()
-            try { return await this.writes.offer(store, bake, 'wait', this.textureRead(texture, args, writer)) }
+            try { return await this.writes.offer(store, bake, 'wait', this.textureRead(frame, args, writer)) }
             catch { throw new ReadbackUnavailable('Motif texture readback unavailable') }
           }, coalesceKey, high, isCurrent)
         } catch (error) {
@@ -194,13 +197,13 @@ export class MotifCaptureService {
     return this.useTexture && !this.encoderFailed && !!this.deps.createEncoder
   }
 
-  private async readTexture(texture: OffscreenSharedTexture, args: CaptureArgs): Promise<RawMotifFrame> {
+  private async readTexture(frame: MotifOsrFrame, args: CaptureArgs): Promise<RawMotifFrame> {
     try {
-      const { codedSize, pixelFormat, handle } = texture.textureInfo
-      if (codedSize.width !== args.width || codedSize.height !== args.height ||
+      const { pixelFormat, handle } = frame.texture.textureInfo
+      if (frame.width !== args.width || frame.height !== args.height ||
           (pixelFormat !== 'rgba' && pixelFormat !== 'bgra') || !handle.ntHandle) throw new Error('Unsupported bake texture')
       this.encoder ??= this.deps.createEncoder!()
-      return await this.encoder.read(handle.ntHandle)
+      return await this.encoder.read(handle.ntHandle, frame.height)
     } catch (error) {
       this.encoderFailed = true
       this.encoder?.close(); this.encoder = null
@@ -208,9 +211,9 @@ export class MotifCaptureService {
     }
   }
 
-  private textureRead(texture: OffscreenSharedTexture, args: CaptureArgs, writer: FrameWriter): FrameRead {
+  private textureRead(frame: MotifOsrFrame, args: CaptureArgs, writer: FrameWriter): FrameRead {
     return async () => {
-      const raw = await this.readTexture(texture, args)
+      const raw = await this.readTexture(frame, args)
       return async () => writer.encoded(await raw.finish())
     }
   }
@@ -292,14 +295,14 @@ export class MotifCaptureService {
       if (this.useTexture && this.deps.copy) {
         const copy = this.deps.copy
         try {
-          const { frame, queued } = await this.deps.texture(args, async texture => {
+          const { frame, queued } = await this.deps.texture(args, async leased => {
             acceptingBake = false
             if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
-            const queued = await this.offerDisplayFrame(texture, request, args, kept, store)
+            const queued = await this.offerDisplayFrame(leased, request, args, kept, store)
             // Capture/encoding can finish after a document reload. Such work
             // cannot lease a texture to the new preload on the same WebContents.
             if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
-            return { frame: await copy(owner, texture, finalizationId), queued }
+            return { frame: await copy(owner, leased, finalizationId), queued }
           }, key, high, isCurrent)
           return { ...frame, persisted: kept ? await persisted(queued) : false }
         } catch (error) {
@@ -327,12 +330,12 @@ export class MotifCaptureService {
 
   /** Inside the lease. A frame nobody can store is still delivered: no failure
    * here reaches the display. */
-  private async offerDisplayFrame(texture: OffscreenSharedTexture, request: CaptureRequest, args: CaptureArgs, kept: { address: MotifCacheAddress; writer: Promise<FrameWriter | null> } | undefined, store: MotifFrameStore): Promise<QueuedWrite | null> {
+  private async offerDisplayFrame(frame: MotifOsrFrame, request: CaptureRequest, args: CaptureArgs, kept: { address: MotifCacheAddress; writer: Promise<FrameWriter | null> } | undefined, store: MotifFrameStore): Promise<QueuedWrite | null> {
     if (!this.canReadTexture()) return null
-    if (!kept) return this.offerLiveFrame(request, args, store, writer => this.textureRead(texture, args, writer))
+    if (!kept) return this.offerLiveFrame(request, args, store, writer => this.textureRead(frame, args, writer))
     try {
       const writer = await kept.writer
-      return writer ? await this.writes.offer(store, kept.address, 'wait', this.textureRead(texture, args, writer)) : null
+      return writer ? await this.writes.offer(store, kept.address, 'wait', this.textureRead(frame, args, writer)) : null
     } catch { return null }
   }
 

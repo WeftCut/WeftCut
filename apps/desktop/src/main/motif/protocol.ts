@@ -1,5 +1,6 @@
 import { protocol } from 'electron'
 import { PARAMS_PAGE_FILE } from '../../shared/motifs/catalog.js'
+import { CAPTURE_HOST_FILE, FRAME_MARKER_ROWS } from '../../shared/motifs/frameMarker.js'
 import fs from 'node:fs'
 import { resolveMotifFile } from './builtinAssets.js'
 import { servedMotifMedia } from './mediaProps.js'
@@ -36,6 +37,26 @@ export function cspForMotifFile(rest: string): string {
   return rest === PARAMS_PAGE_FILE ? MOTIF_PARAMS_CSP : MOTIF_CSP
 }
 
+/// CSP of the capture host page: it frames its own Motif and nothing else. Its
+/// only script is the runtime the capture host injects.
+export const CAPTURE_HOST_CSP = "default-src 'none'; frame-src 'self'; style-src 'unsafe-inline'"
+
+/// The capture host page beside a Motif's `index.html` (same origin, so the
+/// runtime can reach into the frame): the Motif at the top-left, sized to the
+/// viewport minus the `rows` query's marker rows (shared/motifs/frameMarker.ts).
+/// The rest of the query goes to the Motif.
+export function captureHostPage(search: string): string {
+  const query = new URLSearchParams(search)
+  const rows = query.get('rows') === String(FRAME_MARKER_ROWS) ? FRAME_MARKER_ROWS : 0
+  query.delete('rows')
+  const rest = query.toString()
+  const src = ('index.html' + (rest ? '?' + rest : '')).replace(/[&"<>]/g, c => `&#${c.charCodeAt(0)};`)
+  return '<!doctype html><html><head><meta charset="utf-8"><style>'
+    + 'html,body{margin:0;padding:0;overflow:hidden;background:transparent}'
+    + `iframe{position:fixed;left:0;top:0;width:100vw;height:calc(100vh - ${rows}px);border:0;display:block}`
+    + `</style></head><body><iframe src="${src}"></iframe></body></html>`
+}
+
 /// Exported so index.ts can spread it into the single registerSchemesAsPrivileged call.
 /// `standard:true` gives motif://<id>/… real origin semantics (same-origin assets +
 /// CSP); `secure:true` lets it host fonts; `supportFetchAPI:true` enables net.fetch.
@@ -67,6 +88,12 @@ export function registerMotifProtocol(builtinDir: string, store: UserMotifStore)
           headers: { 'Content-Type': picture.mime, 'Content-Security-Policy': MOTIF_CSP, 'Cache-Control': 'no-store' },
         })
       } catch { return new Response('not found: ' + id + '/' + rest, { status: 404 }) }
+    }
+    if (rest.replace(/^\.revisions\/[0-9a-f]{64}\//, '') === CAPTURE_HOST_FILE) {
+      return new Response(captureHostPage(url.search), {
+        status: 200,
+        headers: { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': CAPTURE_HOST_CSP, 'Cache-Control': 'no-store' },
+      })
     }
     const file = resolveMotifFile(builtinDir, store, id, rest)
     if (!file) return new Response('not found: ' + id + '/' + rest, { status: 404 })

@@ -1,10 +1,12 @@
-import { BrowserWindow, nativeImage, type OffscreenSharedTexture } from 'electron'
-import { OffscreenFrames } from './offscreenFrames.js'
+import { BrowserWindow, nativeImage } from 'electron'
+import { OffscreenFrames, type FrameLease, type FrameMarkerReader, type MotifOsrFrame } from './offscreenFrames.js'
 import { PNG_CANVAS_RUNTIME_SOURCE } from './pngCanvasRuntime.js'
 import { hardenWindow, markInternalWindow } from '../windows'
 import { BUILTIN_MANIFESTS, motifCtxDurationS, type Manifest } from '../../shared/motifs/catalog.js'
 import { CAPTURE_SUPERSEDED_MESSAGE, MotifCaptureTimeoutError } from '../../shared/motifs/captureErrors.js'
 import { resolveMotifMediaProps } from './mediaProps.js'
+import { dropPngRows } from './pngRows.js'
+import { CAPTURE_HOST_FILE, FRAME_MARKER_ROWS } from '../../shared/motifs/frameMarker.js'
 import type { UserMotifStore } from './store.js'
 
 export interface CaptureArgs {
@@ -81,6 +83,12 @@ interface Host {
   readyFor: string | null
   lastSize: { w: number; h: number } | null
   frames: OffscreenFrames | null
+  /// Rows the surface keeps below the picture: the frame id's, on a host
+  /// whose textures are leased by it. A PNG host has none, so its
+  /// screenshots need no crop.
+  markerRows: number
+  /// The one URL the shell's frame may load: the Motif it was built for.
+  motifUrl: string | null
 }
 let host: Host | null = null
 let textureCaptureEnabled = false
@@ -88,6 +96,13 @@ export function setTextureCaptureEnabled(enabled: boolean): void {
   if (textureCaptureEnabled === enabled) return
   textureCaptureEnabled = enabled
   teardownHost()
+}
+
+let readFrameMarker: FrameMarkerReader | null = null
+/// Set once at boot where the native marker reader exists; a texture capture
+/// without it fails and the capture service falls back to PNG.
+export function setFrameMarkerReader(read: FrameMarkerReader): void {
+  readFrameMarker = read
 }
 
 // Serialize ALL captures (on-demand sprite / prewarmer / baker / MCP) on the
@@ -250,7 +265,12 @@ async function buildHost(): Promise<Host> {
     // context isolation, web security. The complementary egress half (no network /
     // no remote code) is the per-document CSP served by `motif://`; see docs/security.md.
     transparent: textureCaptureEnabled,
-    webPreferences: { offscreen: textureCaptureEnabled ? { useSharedTexture: true } : true, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true },
+    webPreferences: {
+      offscreen: textureCaptureEnabled ? { useSharedTexture: true } : true, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true,
+      // A frame may otherwise draw before its images decode, and the frame id
+      // proves only the commit, not that its images are in it.
+      additionalArguments: ['--disable-checker-imaging'],
+    },
   })
   captureCounters.hostBuilds++
   // `offscreen: true` is a paint target, not a lifecycle class: unmarked, this
@@ -258,12 +278,16 @@ async function buildHost(): Promise<Host> {
   // closes (windows.ts → quitIfLastUserWindowClosed). Before the awaits, per its
   // same-tick contract.
   markInternalWindow(win)
-  const frames = textureCaptureEnabled ? new OffscreenFrames(win.webContents) : null
+  const frames = textureCaptureEnabled && readFrameMarker ? new OffscreenFrames(win.webContents, readFrameMarker, CAPTURE_TIMEOUT_MS) : null
   // Navigation lockdown for the untrusted Motif page: deny every `window.open`
   // OUTRIGHT (allowExternalOpen:false — a Motif must not be able to pop the user's
   // browser) and block any page-initiated navigation off the app's content. The
   // main-process `loadURL` calls below are programmatic and don't trip will-navigate.
   hardenWindow(win, { allowExternalOpen: false })
+  // hardenWindow guards the top frame; the Motif runs in the shell's frame.
+  win.webContents.on('will-frame-navigate', event => {
+    if (!event.isMainFrame && event.url !== host?.motifUrl) event.preventDefault()
+  })
   // Destroy the offscreen window if CDP init throws mid-build, else it orphans.
   // Bounded to ≤1 (captures are serialized) but still a leak; never observed green.
   try {
@@ -279,7 +303,7 @@ async function buildHost(): Promise<Host> {
     await send('Page.addScriptToEvaluateOnNewDocument', {
       source: textureCaptureEnabled ? runtimeSource : PNG_CANVAS_RUNTIME_SOURCE + runtimeSource,
     })
-    return { win, send, loadedId: null, loadedV: null, readyFor: null, lastSize: null, frames }
+    return { win, send, loadedId: null, loadedV: null, readyFor: null, lastSize: null, frames, markerRows: frames ? FRAME_MARKER_ROWS : 0, motifUrl: null }
   } catch (e) {
     try { win.destroy() } catch { /* already gone */ }
     throw e
@@ -313,23 +337,20 @@ export function shutdownCaptureHost(): void {
   teardownHost()
 }
 
-/// The GPU process restarted: the offscreen compositor's surface is new and
-/// its first paint is unproven again, exactly as after a navigation. The app
-/// wires this to Electron's `child-process-gone` for the GPU type; a PNG host
-/// has no leased surface and nothing to do.
-export function invalidateCaptureSurface(): void {
-  host?.frames?.surfaceChanged()
-}
-
 async function ensureHost(motifId: string, contentHash: string): Promise<Host> {
   if (!host) host = await buildHost()
   // Reuse only when BOTH id and content version match (the ?v= cache-buster).
   if (host.loadedId === motifId && host.loadedV === contentHash) return host
   const pinned = /^[0-9a-f]{64}$/.test(contentHash) && motifStore?.pinPackage?.(motifId, contentHash)
-  const url = `motif://${motifId}/${pinned ? `.revisions/${contentHash}/` : ''}index.html?v=${encodeURIComponent(contentHash)}`
+  // The shell frames the Motif above the surface's marker rows
+  // (shared/motifs/frameMarker.ts); the Motif sees only its own size.
+  const dir = `motif://${motifId}/${pinned ? `.revisions/${contentHash}/` : ''}`
+  const query = `v=${encodeURIComponent(contentHash)}`
   captureCounters.pageLoads++
   diagnosticsLane(motifId, contentHash).pageLoads++
-  await timedCapture('loadMs', () => withTimeout(host!.win.loadURL(url), CAPTURE_TIMEOUT_MS * 2, 'loadURL motif'))
+  host.motifUrl = `${dir}index.html?${query}`
+  const shell = `${dir}${CAPTURE_HOST_FILE}?rows=${host.markerRows}&${query}`
+  await timedCapture('loadMs', () => withTimeout(host!.win.loadURL(shell), CAPTURE_TIMEOUT_MS * 2, 'loadURL motif'))
   host.loadedId = motifId
   host.loadedV = contentHash
   host.readyFor = null // re-probe; navigation re-runs addScriptToEvaluateOnNewDocument
@@ -341,11 +362,10 @@ async function waitReady(h: Host, motifId: string): Promise<void> {
   if (h.readyFor === motifId) return
   // Throw-until-ready: a false boolean would resolve to ready falsely. The
   // hostname guard closes the navigate→stale-page race: with `standard:true`
-  // motif://<id>/index.html parses with hostname===id, so we verify the loaded
-  // page is actually the motif we want (not a stale about:blank or prior motif).
+  // motif://<id>/… parses with hostname===id, so we verify the loaded page is
+  // actually the motif we want (not a stale about:blank or prior motif).
   const probe =
-    `(typeof window.__motifRender==='function' && document.readyState==='complete'` +
-    ` && location.hostname===${JSON.stringify(motifId)})`
+    `(typeof window.__motifHostReady==='function' && window.__motifHostReady(${JSON.stringify(motifId)}))`
   for (let i = 0; i < READY_ATTEMPTS; i++) {
     // TIMED, unlike a plain send: a wedged offscreen renderer never settles a
     // sendCommand, and an untimed probe would hang the one serial capture
@@ -358,10 +378,12 @@ async function waitReady(h: Host, motifId: string): Promise<void> {
     if (r?.result?.value === true) { h.readyFor = motifId; return }
     await delay(READY_POLL_MS)
   }
-  throw new Error(`motif '${motifId}' never became ready (window.__motifRender undefined, document not complete, or wrong host page loaded)`)
+  throw new Error(`motif '${motifId}' never became ready (Motif frame not loaded, __motifRender undefined, or wrong host page loaded)`)
 }
 
-async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>): Promise<T> {
+/// `texture` captures lease the frame by its id; PNG captures, which a
+/// texture host also serves, take a screenshot after the manifest's settle.
+async function doCapture<T>(a: CaptureArgs, texture: boolean, output: (h: Host, lease: FrameLease | null) => Promise<T>): Promise<T> {
   // Refuse rather than resurrect — see shutdownCaptureHost.
   if (shuttingDown) throw new Error('motif capture host is shut down (the app is quitting)')
   motifStore?.assertRenderable?.(a.motifId)
@@ -369,6 +391,7 @@ async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>): Pr
   let h: Host
   try {
     h = await ensureHost(a.motifId, a.contentHash)
+    if (texture && !h.frames) throw new Error('Motif host has no shared texture output')
     await timedCapture('readyMs', () => waitReady(h, a.motifId))
   } catch (e) {
     // Transport class: no Motif code ran (host build, loadURL, wedged/never-
@@ -388,8 +411,7 @@ async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>): Pr
     a.fpsNum != null && a.fpsDen != null && a.fpsNum > 0 && a.fpsDen > 0
       ? a.fpsNum / a.fpsDen
       : 30
-  const meta = { duration, width: a.width, height: a.height, fps, settleRafs: h.frames ? 2 : a.settleRafs }
-  const expr = `window.__motifRender(${JSON.stringify(a.tSec)}, ${JSON.stringify(props)}, ${JSON.stringify(meta)})`
+  const meta = { duration, width: a.width, height: a.height, fps, settleRafs: texture ? 0 : a.settleRafs }
   try {
     if (h.lastSize?.w !== a.width || h.lastSize?.h !== a.height) {
       // BOTH hosts take the capture's size as their window size, not only the
@@ -402,13 +424,9 @@ async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>): Pr
       // (docs/notes/electron-chromium-behavior.md#macos-offscreen-bitmap-host-drops-the-first-commit-when-window-and-emulation-sizes-differ).
       // The emulation override stays: it is what pins deviceScaleFactor to 1
       // for the screenshot.
-      h.win.setContentSize(a.width, a.height)
-      await h.send('Emulation.setDeviceMetricsOverride', { width: a.width, height: a.height, deviceScaleFactor: 1, mobile: false })
+      h.win.setContentSize(a.width, a.height + h.markerRows)
+      await h.send('Emulation.setDeviceMetricsOverride', { width: a.width, height: a.height + h.markerRows, deviceScaleFactor: 1, mobile: false })
       await h.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } })
-      if (h.frames) {
-        h.win.webContents.startPainting()
-        await h.send('Runtime.evaluate', { expression: 'window.__motifPaintReady()', awaitPromise: true })
-      }
       h.lastSize = { w: a.width, h: a.height }
     }
   } catch (e) {
@@ -417,6 +435,7 @@ async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>): Pr
   }
   let ev: any
   let phase = '__motifSetup'
+  let lease: FrameLease | null = null
   try {
     const setup = await timedCapture('setupMs', () => h.send('Runtime.evaluate', {
       expression: `window.__motifSetup(${JSON.stringify(props)}, ${JSON.stringify(meta)})`,
@@ -427,10 +446,13 @@ async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>): Pr
     if (setup?.exceptionDetails) ev = setup
     else {
       phase = '__motifRender'
-      h.frames?.prepare()
+      if (texture) lease = h.frames!.expect(a.width, a.height)
+      const frameMeta = lease ? { ...meta, frameId: lease.id } : meta
+      const expr = `window.__motifRender(${JSON.stringify(a.tSec)}, ${JSON.stringify(props)}, ${JSON.stringify(frameMeta)})`
       ev = await timedCapture('renderMs', () => h.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }))
     }
   } catch (e) {
+    lease?.cancel()
     // A hung __motifSetup/__motifRender wedges the renderer for every other
     // lane, so the host is rebuilt whatever the cause. Whether the LANE is
     // latched depends on the author: a timeout is ambiguous (content or load)
@@ -446,13 +468,15 @@ async function doCapture<T>(a: CaptureArgs, output: (h: Host) => Promise<T>): Pr
     // answered fine, so tearing the host down would punish every other Motif
     // with re-navigation + runtime re-injection. Fail the LANE instead —
     // same-lane captures fast-reject until contentHash changes (see failedLanes).
+    lease?.cancel()
     const err = new Error(phase + ' threw: ' + JSON.stringify(ev.exceptionDetails))
     if (a.contentHash !== '') failLane(lane, err)
     throw err
   }
   try {
-    return await timedCapture('outputMs', () => output(h))
+    return await timedCapture('outputMs', () => output(h, lease))
   } catch (e) {
+    lease?.cancel()
     teardownHost() // wedged host: rebuild on next call
     throw e
   }
@@ -535,31 +559,29 @@ export function captureMotifFrameB64(a: CaptureArgs, coalesceKey?: string, high?
   return enqueueCapture(a, coalesceKey, () => {
     if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
     captureCounters.pngCaptures++
-    return doCapture(a, async h => {
+    return doCapture(a, false, async h => {
+    // Cropped after, never by `clip`: a clipped screenshot left a WebGL
+    // Motif's later frames blank.
     const shot = await h.send('Page.captureScreenshot', { format: 'png' })
     if (!shot?.data) throw new Error('captureScreenshot returned no data')
-    if (a.scale === undefined || a.scale === 1) return shot.data as string
+    const png = h.markerRows ? dropPngRows(Buffer.from(shot.data as string, 'base64'), h.markerRows) : null
+    if (a.scale === undefined || a.scale === 1) return png ? png.toString('base64') : shot.data as string
     // Scaled here, not by the screenshot's clip.scale: on a Windows host that
     // scaled a 1920×1080 page's width alone and returned its left half.
-    const full = nativeImage.createFromBuffer(Buffer.from(shot.data as string, 'base64'))
+    const full = nativeImage.createFromBuffer(png ?? Buffer.from(shot.data as string, 'base64'))
     return full.resize({ width: Math.max(1, Math.round(a.width * a.scale)), height: Math.max(1, Math.round(a.height * a.scale)), quality: 'best' }).toPNG().toString('base64')
     })
   }, high, isCurrent)
 }
 
-export function captureMotifTexture<T>(a: CaptureArgs, consume: (t: OffscreenSharedTexture) => Promise<T>, coalesceKey?: string, high?: boolean, isCurrent: () => boolean = () => true): Promise<T> {
-  if (!textureCaptureEnabled) return Promise.reject(new Error('Motif OSR unavailable'))
+export function captureMotifTexture<T>(a: CaptureArgs, consume: (frame: MotifOsrFrame) => Promise<T>, coalesceKey?: string, high?: boolean, isCurrent: () => boolean = () => true): Promise<T> {
+  if (!textureCaptureEnabled || !readFrameMarker) return Promise.reject(new Error('Motif OSR unavailable'))
   return enqueueCapture(a, coalesceKey, () => {
     if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
     captureCounters.textureCaptures++
-    return doCapture(a, async h => {
-    if (!h.frames) throw new Error('Motif host has no shared texture output')
-    // The lease fences an unproven surface (new document, new size, GPU
-    // restart) with one full readback before it hands out a texture: native
-    // rAFs settle layout but not the compositor's raster, and a clipped
-    // readback only fences its own tiles. Paid per surface, not per frame.
-    const texture = await h.frames.capture(a.width, a.height, () => h.send('Page.captureScreenshot', { format: 'png' }))
-    try { return await consume(texture) } finally { texture.release() }
+    return doCapture(a, true, async (_h, lease) => {
+    const frame = await lease!.frame
+    try { return await consume(frame) } finally { frame.texture.release() }
     })
   }, high, isCurrent)
 }

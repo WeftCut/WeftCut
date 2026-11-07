@@ -1,5 +1,6 @@
 import { MIB, performanceSettings, sharedResourceAllocationEnabled } from "../../shared/performance-settings";
-import { sharedTexture, type SharedTextureImported, type WebContents, type OffscreenSharedTexture } from 'electron'
+import { sharedTexture, type SharedTextureImported, type WebContents } from 'electron'
+import type { MotifOsrFrame } from './offscreenFrames.js'
 import { randomUUID } from 'node:crypto'
 import { CAPTURE_SUPERSEDED_MESSAGE } from '../../shared/motifs/captureErrors'
 import { isResourceCapacityError } from '../../shared/resource-policy'
@@ -143,12 +144,13 @@ export class MotifGpuTransport {
     }
   }
 
-  copy(owner: WebContents, texture: OffscreenSharedTexture, finalizationId?: number): Promise<MotifTextureFrame> {
-    const { codedSize, pixelFormat, handle } = texture.textureInfo
+  /** Copies the frame's picture, above the capture host's marker rows. */
+  copy(owner: WebContents, frame: MotifOsrFrame, finalizationId?: number): Promise<MotifTextureFrame> {
+    const { pixelFormat, handle } = frame.texture.textureInfo
     if ((pixelFormat !== 'rgba' && pixelFormat !== 'bgra') || !handle.ntHandle) {
       return Promise.reject(new Error('Unsupported Motif OSR texture'))
     }
-    return this.produce(owner, codedSize.width, codedSize.height, pixelFormat, 'copy',
+    return this.produce(owner, frame.width, frame.height, pixelFormat, 'copy',
       pool => pool.copyTexture(handle.ntHandle!, 0), finalizationId)
   }
 

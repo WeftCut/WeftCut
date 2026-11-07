@@ -28,9 +28,10 @@ before any Motif code:
 | GSAP and other rAF tweens, canvas/WebGL loops | `requestAnimationFrame` + `performance.now` owned; the controlled rAF queue is flushed |
 | `setTimeout` / `setInterval` / `Date.now` | stubbed to the virtual clock |
 
-`__motifRender(t, props, meta)` runs setup (once per props), `frame(t)`, the
-seek, then waits `settle_rafs` real browser frames (manifest value clamped to
-`{0,1,2}`, default 2) so the paint commits. The seek only pauses and sets
+`__motifRender(t, props, meta)` runs setup (once per props), `frame(t)` and the
+seek. A PNG capture then waits `settle_rafs` real browser frames (manifest
+value clamped to `{0,1,2}`, default 2); a texture capture instead waits for the
+paint carrying the frame's id (below). The seek only pauses and sets
 `currentTime`; cancelling or committing a finished animation would remove it
 from `getAnimations()` and break seeking back. A time source cached before the
 runtime installs, or one it does not own, is out of contract. 2D/DOM captures
@@ -107,16 +108,20 @@ Gesture model (`renderer/properties/motifParamsHost.ts`):
 ## Capture host
 
 `main/motif/capture.ts` owns one lazily created offscreen `BrowserWindow`,
-reused across Motifs, frames and layers. Requesting another Motif navigates the
-same window (runtime re-injected, readiness re-probed). The host sets
+reused across Motifs, frames and layers. It loads the capture host page beside
+the Motif's `index.html`, which frames the Motif at the capture size (above one
+marker row on a texture host); the runtime runs in both and forwards the entry
+points. Requesting
+another Motif navigates the same window (runtime re-injected, readiness
+re-probed). The host sets
 `Emulation.setDeviceMetricsOverride` (any resolution) and a transparent default
 background so `background: transparent` stays real alpha.
 
 - **Output.** Portable path: `Page.captureScreenshot` PNG. Windows: OSR shared
   textures copied into the Motif transport pool
   ([ADR 0078](adr/0078-motifs-cache-pixels-and-transfer-persistent-textures.md)).
-  A texture is leased only from a surface fenced once per navigation, size
-  change or GPU process restart (`OffscreenFrames`). A failure of the texture
+  A texture is leased only when its marker row carries the frame's id
+  (`OffscreenFrames`); a screenshot there drops the row from its PNG. A failure of the texture
   output itself switches the session to PNG; a timeout, disk error, capacity
   refusal, superseded request or Motif failure never does.
   `WEFTCUT_MOTIF_CAPTURE=png` forces PNG for diagnosis.
@@ -145,7 +150,7 @@ background so `background: transparent` stays real alpha.
 
 Frames are identified by content, not placement. The key
 (`motifFrameCacheKey`, `renderer/render/motifs/motifFrames.ts`) is
-`surface-v6 | motifId | version | contentHash | renderW | renderH | fpsNum |
+`surface-v7 | motifId | version | contentHash | renderW | renderH | fpsNum |
 fpsDen | contentDurationFrames | canonicalProps [| mediaKeys]`.
 
 - `contentHash` covers the manifest, HTML and every companion path and bytes,

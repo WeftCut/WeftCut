@@ -18,8 +18,9 @@ scrubbing, re-export and preview == export.
 ## Decision
 
 - **One capture path for every Motif.** A Motif is a normal HTML/CSS/JS page
-  loaded as the top-level document of one reused offscreen Electron
-  `BrowserWindow` and captured over the DevTools Protocol via
+  loaded into one reused offscreen Electron `BrowserWindow` — framed at its
+  own size by a same-origin capture host page (ADR 0078) — and driven over
+  the DevTools Protocol via
   `webContents.debugger` — a real browser raster, so taint never applies. No
   per-Motif engine field, no tiering. The portable output is lossless PNG
   from `Page.captureScreenshot` with a transparent backdrop; Windows takes

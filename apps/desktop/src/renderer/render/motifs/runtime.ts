@@ -1,3 +1,5 @@
+import { CAPTURE_HOST_FILE, FRAME_MARKER_PIXELS, FRAME_MARKER_ROWS, frameMarkerBits } from "../../../shared/motifs/frameMarker";
+
 /** Testable core: installs clock takeover onto an arbitrary global-like object. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function createMotifRuntime(g: any = {}) {
@@ -32,11 +34,14 @@ export function createMotifRuntime(g: any = {}) {
 
 /**
  * Browser-injection source. Injected into the hidden host window with CDP
- * `Page.addScriptToEvaluateOnNewDocument` (runs before the Motif's own
- * scripts), sourced from this string handed to main at boot via
- * `motif_register_runtime`. Installs the runtime on window, exposes
- * motif.define, and a window.__motifRender(t, props, meta) entry point that
- * main drives over CDP Runtime.evaluate(awaitPromise:true).
+ * `Page.addScriptToEvaluateOnNewDocument`, which runs it in every frame before
+ * the frame's own scripts; sourced from this string handed to main at boot via
+ * `motif_register_runtime`. It plays one of two roles:
+ * - In the capture host shell (`CAPTURE_HOST_FILE`, the top frame), it forwards
+ *   `__motifSetup`/`__motifRender` to the framed Motif and writes the frame id
+ *   into the marker row below it (`shared/motifs/frameMarker.ts`).
+ * - In the Motif's own frame, it installs the clock takeover, exposes
+ *   motif.define and the `__motifRender(t, props, meta)` entry point.
  *
  * String.raw template — the substitution below (createMotifRuntime.toString)
  * is resolved by TypeScript at module-evaluation time into a plain string.
@@ -46,16 +51,46 @@ export function createMotifRuntime(g: any = {}) {
  */
 export const MOTIF_RUNTIME_SOURCE: string = String.raw`
 (function () {
+  if (window.top === window && window.location && window.location.pathname.endsWith(${JSON.stringify('/' + CAPTURE_HOST_FILE)})) {
+    var markerBits = (${frameMarkerBits.toString()});
+    var motifWindow = function () { var f = document.querySelector('iframe'); return f && f.contentWindow; };
+    var marker = null;
+    var mark = function (id) {
+      if (!marker) {
+        marker = document.createElement('div');
+        marker.style.cssText = 'position:fixed;left:0;bottom:0;display:flex;width:${FRAME_MARKER_PIXELS}px;height:${FRAME_MARKER_ROWS}px;pointer-events:none';
+        for (var i = 0; i < ${FRAME_MARKER_PIXELS}; i++) {
+          var px = document.createElement('i');
+          px.style.cssText = 'display:block;flex:none;width:1px;height:${FRAME_MARKER_ROWS}px';
+          marker.appendChild(px);
+        }
+        document.body.appendChild(marker);
+      }
+      var bits = markerBits(id);
+      for (var j = 0; j < bits.length; j++) marker.children[j].style.background = bits[j] ? '#fff' : '#000';
+    };
+    window.__motifHostReady = function (motifId) {
+      var w = motifWindow();
+      return document.readyState === 'complete' && location.hostname === motifId && !!w &&
+        typeof w.__motifRender === 'function' && w.document.readyState === 'complete';
+    };
+    window.__motifSetup = function (props, meta) { return motifWindow().__motifSetup(props, meta); };
+    // The id is written after the frame's seek with no rendering step between
+    // them (only microtasks), so the commit that shows it shows that frame.
+    window.__motifRender = async function (t, props, meta) {
+      var done = await motifWindow().__motifRender(t, props, meta);
+      if (meta && typeof meta.frameId === 'number') mark(meta.frameId);
+      return done;
+    };
+    return;
+  }
+
   // Capture the NATIVE requestAnimationFrame BEFORE the factory overwrites it.
   // The factory installs a queued rAF (only fires on rt.seek) onto window.rAF.
   // The settle await inside __motifRender uses _nativeRaf so the Promise actually
-  // resolves after two real browser layout frames. Using the overwritten queued
+  // resolves after real browser layout frames. Using the overwritten queued
   // rAF would deadlock every render because seek() is never called during settle.
   var _nativeRaf = window.requestAnimationFrame.bind(window);
-  // Browser paint barrier; unlike the virtual clock this never advances t.
-  window.__motifPaintReady = function () {
-    return new Promise(function (resolve) { _nativeRaf(function () { _nativeRaf(resolve); }); });
-  };
 
   var rt = (${createMotifRuntime.toString()})(window);
   var def = null, didSetup = false, lastPropsKey = null;
@@ -134,6 +169,9 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
     if (!def) throw new Error("motif: no motif.define() called");
     var propsKey = JSON.stringify(props);
     if (didSetup && propsKey === lastPropsKey) return true;
+    // A frame whose color-scheme differs from its document's gets an opaque
+    // backdrop, which would cover a transparent Motif.
+    if (window.frameElement) window.frameElement.style.colorScheme = getComputedStyle(document.documentElement).colorScheme;
     didSetup = false;
     setupActive = true;
     var workerFailure = new Promise(function (_, reject) { rejectWorker = reject; });

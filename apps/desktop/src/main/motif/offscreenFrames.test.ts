@@ -1,81 +1,111 @@
 import { EventEmitter } from 'node:events'
 import type { WebContents } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
+import { FRAME_MARKER_PIXELS, frameMarkerBits } from '../../shared/motifs/frameMarker'
 import { OffscreenFrames } from './offscreenFrames'
 
-const fakeContents = () => Object.assign(new EventEmitter(), { stopPainting: vi.fn(), startPainting: vi.fn(), invalidate: vi.fn() })
-const texture = (w: number, h = 64) => ({ release: vi.fn(), textureInfo: { codedSize: { width: w, height: h } } })
-const fenced = () => vi.fn(async () => {})
+/// A paint whose marker row carries `id` (null: no marker, as a blank or
+/// unrelated surface). The fake handle is the id itself, for the fake reader.
+const texture = (id: number | null, w = 128, h = 65) => ({
+  release: vi.fn(),
+  textureInfo: { codedSize: { width: w, height: h }, handle: { ntHandle: Buffer.from(JSON.stringify(id)) } },
+})
+const markerRow = (id: number | null) => {
+  const rgba = new Uint8Array(FRAME_MARKER_PIXELS * 4)
+  if (id !== null) frameMarkerBits(id).forEach((bit, i) => rgba.set(bit ? [255, 255, 255, 255] : [0, 0, 0, 255], i * 4))
+  return rgba
+}
+const readMarker = vi.fn(async (handle: Buffer) => markerRow(JSON.parse(handle.toString()) as number | null))
+const settled = () => new Promise(resolve => setTimeout(resolve, 0))
+
+function setup(timeoutMs = 1000) {
+  const events = Object.assign(new EventEmitter(), { stopPainting: vi.fn(), startPainting: vi.fn() })
+  const frames = new OffscreenFrames(events as unknown as WebContents, readMarker, timeoutMs)
+  return { frames, events, paint: (t: ReturnType<typeof texture>) => events.emit('paint', { texture: t }) }
+}
 
 describe('OffscreenFrames', () => {
-  it('releases unrequested and wrong-size paints and leases only the requested surface', async () => {
-    const events = fakeContents()
-    const frames = new OffscreenFrames(events as unknown as WebContents)
-    const old = texture(128)
-    events.emit('paint', { texture: old })
-    expect(old.release).toHaveBeenCalledOnce()
-    const wanted = frames.capture(128, 64, fenced())
-    await Promise.resolve() // the fence settles before painting restarts
-    const wrong = texture(64)
-    events.emit('paint', { texture: wrong })
-    events.emit('paint', {}) // invalidate may return a NativeImage without a texture
-    expect(wrong.release).toHaveBeenCalledOnce()
-    const right = texture(128)
-    events.emit('paint', { texture: right })
-    expect(await wanted).toBe(right)
-    expect(right.release).not.toHaveBeenCalled() // caller owns it until the GPU copy completes
-    expect(events.stopPainting).toHaveBeenCalledOnce()
-    expect(events.startPainting).toHaveBeenCalledOnce()
-    right.release()
+  it('leases the first paint carrying the expected id and releases every other paint', async () => {
+    const { frames, paint } = setup()
+    const early = texture(null)
+    paint(early) // nobody is waiting
+    const lease = frames.expect(128, 64)
+    const stale = texture(lease.id + 1000), blank = texture(null), wrongSize = texture(lease.id, 64, 65), noMarkerRows = texture(lease.id, 128, 64)
+    for (const t of [stale, blank, wrongSize, noMarkerRows]) paint(t)
+    await settled()
+    for (const t of [early, stale, blank, wrongSize, noMarkerRows]) expect(t.release).toHaveBeenCalledOnce()
+    const right = texture(lease.id), later = texture(lease.id)
+    paint(right); paint(later)
+    const frame = await lease.frame
+    expect(frame).toEqual({ texture: right, width: 128, height: 64 })
+    expect(right.release).not.toHaveBeenCalled() // the holder owns it until its copy completes
+    await settled()
+    expect(later.release).toHaveBeenCalledOnce()
+  })
+
+  it('gives each frame a new id, so a repeated picture still needs its own paint', async () => {
+    const { frames, paint } = setup()
+    const first = frames.expect(128, 64)
+    paint(texture(first.id))
+    await first.frame
+    const second = frames.expect(128, 64)
+    expect(second.id).not.toBe(first.id)
+    const repeat = texture(first.id)
+    paint(repeat)
+    await settled()
+    expect(repeat.release).toHaveBeenCalledOnce()
+    paint(texture(second.id))
+    await second.frame
+  })
+
+  it('a cancelled lease takes no paint and frees the slot for the next frame', async () => {
+    const { frames, paint } = setup()
+    const lease = frames.expect(128, 64)
+    expect(() => frames.expect(128, 64)).toThrow('Overlapping')
+    lease.cancel()
+    const t = texture(lease.id)
+    paint(t)
+    await settled()
+    expect(t.release).toHaveBeenCalledOnce()
+    const next = frames.expect(128, 64)
+    paint(texture(next.id))
+    await next.frame
+  })
+
+  it('times out, and a failed marker read fails the frame', async () => {
+    const slow = setup(5)
+    await expect(slow.frames.expect(128, 64).frame).rejects.toThrow('timed out')
+    readMarker.mockRejectedValueOnce(new Error('device lost'))
+    const { frames, paint } = setup()
+    const lease = frames.expect(128, 64)
+    const t = texture(lease.id)
+    paint(t)
+    await expect(lease.frame).rejects.toThrow('device lost')
+    expect(t.release).toHaveBeenCalledOnce()
+  })
+
+  it('restarts the capturer while a frame goes without its paint, and stops once it arrives', async () => {
+    vi.useFakeTimers()
+    try {
+      const { frames, events, paint } = setup(5000)
+      const lease = frames.expect(128, 64)
+      await vi.advanceTimersByTimeAsync(150)
+      expect(events.startPainting).not.toHaveBeenCalled() // a prompt paint needs no restart
+      await vi.advanceTimersByTimeAsync(300)
+      expect(events.stopPainting).toHaveBeenCalledTimes(2)
+      expect(events.startPainting).toHaveBeenCalledTimes(2)
+      paint(texture(lease.id))
+      await vi.advanceTimersByTimeAsync(0)
+      await lease.frame
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(events.startPainting).toHaveBeenCalledTimes(2)
+    } finally { vi.useRealTimers() }
+  })
+
+  it('rejects a pending frame on host teardown', async () => {
+    const { frames } = setup()
+    const lease = frames.expect(128, 64)
     frames.dispose()
-  })
-
-  it('fences a surface once: a new document, a new size or a GPU restart make it unproven again', async () => {
-    const events = fakeContents()
-    const frames = new OffscreenFrames(events as unknown as WebContents)
-    const fence = fenced()
-    const lease = async (w: number, h: number) => {
-      const wanted = frames.capture(w, h, fence)
-      await Promise.resolve(); await Promise.resolve()
-      events.emit('paint', { texture: texture(w, h) })
-      await wanted
-    }
-    await lease(128, 64)
-    await lease(128, 64)
-    expect(fence).toHaveBeenCalledTimes(1) // the proven surface is leased without a readback
-    await lease(256, 64)
-    expect(fence).toHaveBeenCalledTimes(2) // a new size is a new surface
-    events.emit('did-start-navigation', { isMainFrame: true, isSameDocument: true })
-    events.emit('did-start-navigation', { isMainFrame: false, isSameDocument: false })
-    await lease(256, 64)
-    expect(fence).toHaveBeenCalledTimes(2) // same-document and subframe navigations keep the surface
-    events.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
-    await lease(256, 64)
-    expect(fence).toHaveBeenCalledTimes(3) // a new document is a new surface
-    frames.surfaceChanged()
-    await lease(256, 64)
-    expect(fence).toHaveBeenCalledTimes(4)
-  })
-
-  it('a failed fence leaves the surface unproven and starts no paint', async () => {
-    const events = fakeContents()
-    const frames = new OffscreenFrames(events as unknown as WebContents)
-    await expect(frames.capture(128, 64, async () => { throw new Error('readback failed') })).rejects.toThrow('readback failed')
-    expect(events.startPainting).not.toHaveBeenCalled()
-    const fence = fenced()
-    const wanted = frames.capture(128, 64, fence)
-    await Promise.resolve(); await Promise.resolve()
-    events.emit('paint', { texture: texture(128) })
-    await wanted
-    expect(fence).toHaveBeenCalledTimes(1)
-  })
-
-  it('rejects a pending capture on host teardown', async () => {
-    const events = fakeContents()
-    const frames = new OffscreenFrames(events as unknown as WebContents)
-    const wanted = frames.capture(128, 64, fenced())
-    await Promise.resolve(); await Promise.resolve()
-    frames.dispose()
-    await expect(wanted).rejects.toThrow('closed')
+    await expect(lease.frame).rejects.toThrow('closed')
   })
 })

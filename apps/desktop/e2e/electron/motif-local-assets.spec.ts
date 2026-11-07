@@ -127,7 +127,8 @@ test('@serial Three.js Motif ZIP round-trip loads local modules, GLB and texture
 
     const confinement = await app.evaluate(async ({ webContents }, motifId) => {
       const host = webContents.getAllWebContents().find(w => w.getURL().startsWith(`motif://${motifId}/`))!
-      return host.executeJavaScript(`(async () => {
+      // Inside the Motif's frame, under its own CSP.
+      return host.mainFrame.frames[0]!.executeJavaScript(`(async () => {
         const urls = ['https://example.invalid/model.glb', 'http://127.0.0.1:40000/model.glb',
           'motif://countdown/index.html', 'file:///not-a-motif', 'weftcut-media://not-a-motif'];
         const blocked = [];

@@ -5,9 +5,15 @@
 // effects under test.
 import { describe, it, expect, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
+import { PNG } from 'pngjs'
+import { FRAME_MARKER_PIXELS, frameMarkerBits } from '../../shared/motifs/frameMarker'
 
 let opened = 0
+let lastHost: EventEmitter | null = null
 let screenshotCalls = 0
+let lastScreenshotParams: Record<string, unknown> | null = null
+/// When true, screenshots are real PNGs of the window's content size.
+let realShots = false
 /// The last `__motifRender(tSec, props, meta)` expression sent to the host —
 /// the meta.fps assertions parse the third argument out of it.
 let lastRenderExpr: string | null = null
@@ -30,8 +36,9 @@ let slowScreenshots = 0
 /// typeof check) never settles — a wedged offscreen renderer.
 let hangReadyProbe = false
 let hungCommand: string | null = null
-let renderedSurface = -1
-let committedSurface = -1
+/// True from a navigation or resize until the next frame paints: the fake then
+/// paints the stale surface first, with no frame id, as a new surface can.
+let freshSurface = true
 let setupDelayMs = 0
 let hangSetup = false
 let hangFrame = false
@@ -49,8 +56,16 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /// `${motifId}@${contentHash}` of the page the fake host currently has loaded.
 function currentLane(): string | null {
-  const m = /motif:\/\/([^/]+)\/index\.html\?v=(.*)$/.exec(currentUrl)
+  const m = /motif:\/\/([^/]+)\/(?:\.revisions\/[0-9a-f]+\/)?\.weftcut-capture-host\.html\?rows=\d&v=(.*)$/.exec(currentUrl)
   return m ? `${m[1]}@${decodeURIComponent(m[2]!)}` : null
+}
+
+/// The marker row the fake native reader sees for a paint's handle.
+async function readMarker(handle: Buffer): Promise<Uint8Array> {
+  const id = JSON.parse(handle.toString()) as number | null
+  const rgba = new Uint8Array(FRAME_MARKER_PIXELS * 4)
+  if (id !== null) frameMarkerBits(id).forEach((bit, i) => rgba.set(bit ? [255, 255, 255, 255] : [0, 0, 0, 255], i * 4))
+  return rgba
 }
 
 vi.mock('electron', () => {
@@ -58,13 +73,17 @@ vi.mock('electron', () => {
     webContents = Object.assign(new EventEmitter(), {
       setZoomFactor: () => {},
       stopPainting: () => {},
-      startPainting: () => {
-        queueMicrotask(() => this.webContents.emit('paint', { texture: {
-          textureInfo: { codedSize: { ...contentSize } },
-          surface: committedSurface, release: () => {},
-        } }))
+      startPainting: () => {},
+      paintFrame: (frameId: number, surface: number) => {
+        const paints = freshSurface ? [{ id: null, surface: -1 }, { id: frameId, surface }] : [{ id: frameId, surface }]
+        freshSurface = false
+        queueMicrotask(() => {
+          for (const p of paints) this.webContents.emit('paint', { texture: {
+            textureInfo: { codedSize: { ...contentSize }, handle: { ntHandle: Buffer.from(JSON.stringify(p.id)) } },
+            surface: p.surface, release: () => {},
+          } })
+        })
       },
-      invalidate: () => {},
       setWindowOpenHandler: () => {},
       debugger: {
         attach: () => {},
@@ -72,10 +91,12 @@ vi.mock('electron', () => {
         sendCommand: (method: string, params?: { expression?: string }) => {
           if (method === hungCommand) return new Promise(() => {})
           if (method === 'Page.captureScreenshot') {
-            committedSurface = renderedSurface
             screenshotCalls++
+            lastScreenshotParams = params as Record<string, unknown>
             shotOrder.push(currentLane()?.split('@')[0] ?? currentUrl)
-            const data = emulatedSize && (emulatedSize.width !== contentSize.width || emulatedSize.height !== contentSize.height) ? BLANK : 'UE5H'
+            const data = realShots
+              ? PNG.sync.write(new PNG({ width: contentSize.width, height: contentSize.height })).toString('base64')
+              : emulatedSize && (emulatedSize.width !== contentSize.width || emulatedSize.height !== contentSize.height) ? BLANK : 'UE5H'
             if (slowScreenshots > 0) {
               slowScreenshots--
               return delay(250).then(() => ({ data }))
@@ -92,22 +113,19 @@ vi.mock('electron', () => {
               if (hangSetup) return new Promise(() => {})
               return (setupDelayMs ? delay(setupDelayMs) : Promise.resolve()).then(() => ({ result: { value: true } }))
             }
-            if (hangReadyProbe && expr.includes('typeof window.__motifRender')) {
+            if (hangReadyProbe && expr.includes('__motifHostReady')) {
               return new Promise(() => {})
             }
             if (expr.startsWith('window.__motifRender(')) {
               if (hangFrame) return new Promise(() => {})
               lastRenderExpr = expr
               renderCalls++
-              renderedSurface = JSON.parse(expr.slice('window.__motifRender('.length).split(',')[0]!)
-              // Model the observed navigation race: rAF completion does not
-              // flush the initial OSR surface. Once committed, normal frame
-              // updates arrive without an additional screenshot readback.
-              if (committedSurface !== -1) committedSurface = renderedSurface
               // The Motif's own script throws; the CDP transport answers fine.
               if (throwingLanes.has(currentLane() ?? '')) {
                 return Promise.resolve({ exceptionDetails: { text: 'boom' } })
               }
+              const frameId = lastRenderMeta().frameId
+              if (typeof frameId === 'number') this.webContents.paintFrame(frameId, JSON.parse(expr.slice('window.__motifRender('.length).split(',')[0]!))
             }
             return Promise.resolve({ result: { value: true } })
           }
@@ -117,20 +135,20 @@ vi.mock('electron', () => {
     })
     constructor() {
       opened++
+      lastHost = this.webContents
     }
     loadURL = async (url: string): Promise<void> => {
-      currentUrl = url; committedSurface = -1
-      // A new document is a new compositor surface; the OSR lease observes it.
-      this.webContents.emit('did-start-navigation', { url, isMainFrame: true, isSameDocument: false })
+      currentUrl = url; freshSurface = true
     }
-    // A new size is a new compositor surface too: its first paint is unproven.
-    setContentSize = (width: number, height: number): void => { contentSize = { width, height }; committedSurface = -1 }
+    // A new size is a new compositor surface too.
+    setContentSize = (width: number, height: number): void => { contentSize = { width, height }; freshSurface = true }
     destroy = (): void => {}
   }
   return { BrowserWindow: FakeBrowserWindow, shell: { openExternal: async () => {} } }
 })
 
-const { captureMotifFrameB64, captureMotifTexture, setTextureCaptureEnabled, setRuntimeSource, setMotifStore, shutdownCaptureHost, invalidateCaptureSurface, controlMotifCapture, captureDiagnostics, resetCaptureFailure } = await import('./capture')
+const { captureMotifFrameB64, captureMotifTexture, setTextureCaptureEnabled, setFrameMarkerReader, setRuntimeSource, setMotifStore, shutdownCaptureHost, controlMotifCapture, captureDiagnostics, resetCaptureFailure } = await import('./capture')
+setFrameMarkerReader(readMarker)
 type UserMotifStoreT = import('./store').UserMotifStore
 
 /// The third (`meta`) argument of the recorded `__motifRender(...)` call. The
@@ -379,7 +397,7 @@ describe('capture host shutdown', () => {
       // page, then another document at that size: the window follows each.
       await expect(read('sized-a', 2)).resolves.toBe('UE5H')
       await expect(read('sized-a', 3, 48, 24)).resolves.toBe('UE5H')
-      expect(contentSize).toEqual({ width: 48, height: 24 })
+      expect(contentSize).toEqual({ width: 48, height: 24 }) // a PNG host keeps no marker row
       await expect(read('sized-b', 4, 48, 24)).resolves.toBe('UE5H')
       // The fake's rule, for the record: a window left behind the emulation
       // reads back BLANK — what the macOS host did before the window followed.
@@ -391,51 +409,61 @@ describe('capture host shutdown', () => {
     }
   })
 
-  it('never leases the uninitialized surface after switching motifs', async () => {
+  it('leases the frame carrying its id, never a new surface\'s stale first paint', async () => {
     setRuntimeSource('/* clock-takeover runtime */')
     setTextureCaptureEnabled(true)
     try {
       const before = screenshotCalls
-      const read = (motifId: string, tSec: number) => captureMotifTexture(
-        { ...args, motifId, tSec },
-        async texture => (texture as unknown as { surface: number }).surface,
+      const read = (motifId: string, tSec: number, width = 32, height = 16) => captureMotifTexture(
+        { ...args, motifId, tSec, width, height },
+        async frame => ({ surface: (frame.texture as unknown as { surface: number }).surface, width: frame.width, height: frame.height }),
       )
-      expect(await read('surface-a', 2)).toBe(2)
-      expect(await read('surface-a', 3)).toBe(3)
-      expect(screenshotCalls - before).toBe(1)
-      expect(await read('surface-b', 4)).toBe(4)
-      expect(await read('surface-a', 5)).toBe(5)
-      expect(screenshotCalls - before).toBe(3)
-    } finally {
-      setTextureCaptureEnabled(false)
-    }
-  })
-
-  it('fences the first texture lease of a resized surface, not only a navigated one', async () => {
-    setRuntimeSource('/* clock-takeover runtime */')
-    setTextureCaptureEnabled(true)
-    try {
-      const before = screenshotCalls
-      const read = (tSec: number, width: number, height: number) => captureMotifTexture(
-        { ...args, motifId: 'surface-resize', tSec, width, height },
-        async texture => (texture as unknown as { surface: number }).surface,
-      )
-      expect(await read(2, 32, 16)).toBe(2)
-      expect(screenshotCalls - before).toBe(1)
-      // Same page, new size: a new surface. Without the fence this leased -1.
-      expect(await read(3, 48, 24)).toBe(3)
-      expect(screenshotCalls - before).toBe(2)
-      // The proven size is not fenced again.
-      expect(await read(4, 48, 24)).toBe(4)
-      expect(screenshotCalls - before).toBe(2)
-      // A GPU process restart hands the host a new surface behind its back.
-      invalidateCaptureSurface()
-      expect(await read(5, 48, 24)).toBe(5)
-      expect(screenshotCalls - before).toBe(3)
+      // A new document, the same one again, another, a new size: each new
+      // surface paints its stale picture first and is skipped.
+      expect(await read('surface-a', 2)).toEqual({ surface: 2, width: 32, height: 16 })
+      expect(await read('surface-a', 3)).toEqual({ surface: 3, width: 32, height: 16 })
+      expect(await read('surface-b', 4)).toEqual({ surface: 4, width: 32, height: 16 })
+      expect(await read('surface-b', 5, 48, 24)).toEqual({ surface: 5, width: 48, height: 24 })
+      expect(lastRenderMeta().settleRafs).toBe(0)
+      expect(screenshotCalls - before).toBe(0) // no readback fence
     } finally {
       setTextureCaptureEnabled(false)
       contentSize = { width: 32, height: 16 }
     }
+  })
+
+  it('a texture host still serves PNG captures, cropped above the marker row, without leasing', async () => {
+    setRuntimeSource('/* clock-takeover runtime */')
+    setTextureCaptureEnabled(true)
+    realShots = true
+    try {
+      const png = PNG.sync.read(Buffer.from(await captureMotifFrameB64({ ...args, motifId: 'png-on-texture' }), 'base64'))
+      expect([png.width, png.height]).toEqual([32, 16])
+      expect(contentSize).toEqual({ width: 32, height: 17 })
+      expect(lastRenderMeta().frameId).toBeUndefined()
+      expect(lastScreenshotParams).not.toHaveProperty('clip')
+      const frame = await captureMotifTexture({ ...args, motifId: 'png-on-texture', tSec: 1 }, async f => f.height)
+      expect(frame).toBe(16)
+    } finally {
+      realShots = false
+      setTextureCaptureEnabled(false)
+      contentSize = { width: 32, height: 16 }
+    }
+  })
+
+  it('lets the shell\'s frame load only the Motif it was built for', async () => {
+    setRuntimeSource('/* clock-takeover runtime */')
+    await captureMotifFrameB64({ ...args, motifId: 'framed', contentHash: 'v7' })
+    const navigate = (url: string, isMainFrame = false) => {
+      const event = { url, isMainFrame, preventDefault: vi.fn() }
+      lastHost!.emit('will-frame-navigate', event)
+      return event.preventDefault.mock.calls.length > 0
+    }
+    expect(navigate('motif://framed/index.html?v=v7')).toBe(false)
+    expect(navigate('motif://other/index.html?v=v7')).toBe(true)
+    expect(navigate('motif://framed/assets/x.html')).toBe(true)
+    expect(navigate('https://example.com/')).toBe(true)
+    expect(navigate('motif://framed/.weftcut-capture-host.html?v=v7', true)).toBe(false) // the top frame is hardenWindow's
   })
 
   it('a render timeout is probation: one retry on the rebuilt host, a second timeout latches the lane', async () => {

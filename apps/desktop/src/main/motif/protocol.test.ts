@@ -18,7 +18,8 @@ vi.mock('electron', () => ({
   },
 }))
 
-import { MOTIF_CSP, MOTIF_PARAMS_CSP, cspForMotifFile, registerMotifProtocol } from './protocol'
+import { CAPTURE_HOST_CSP, MOTIF_CSP, MOTIF_PARAMS_CSP, cspForMotifFile, registerMotifProtocol } from './protocol'
+import { CAPTURE_HOST_FILE } from '../../shared/motifs/frameMarker'
 import { UserMotifStore } from './store'
 
 const BUILTIN_DIR = path.resolve(__dirname, '../../shared/motifs/builtin')
@@ -126,5 +127,32 @@ describe('registerMotifProtocol responses', () => {
     const res = await handler!(new Request('motif://user-p/params.html?v=7'))
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Security-Policy')).toBe(MOTIF_PARAMS_CSP)
+  })
+})
+
+describe('capture host page', () => {
+  it('frames the Motif beside it with the same query, one marker row short of the viewport', async () => {
+    const hash = 'a'.repeat(64)
+    const res = await serve('countdown', `.revisions/${hash}/${CAPTURE_HOST_FILE}?rows=1&v=${hash}`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Content-Security-Policy')).toBe(CAPTURE_HOST_CSP)
+    const html = await res.text()
+    expect(html).toContain(`<iframe src="index.html?v=${hash}">`)
+    expect(html).toContain('height:calc(100vh - 1px)')
+    // A host without marker rows gives the Motif the whole viewport.
+    const plain = await (await serve('countdown', `${CAPTURE_HOST_FILE}?rows=0&v=`)).text()
+    expect(plain).toContain('<iframe src="index.html?v=">')
+    expect(plain).toContain('height:calc(100vh - 0px)')
+    expect(await (await serve('countdown', `${CAPTURE_HOST_FILE}?rows=9`)).text()).toContain('height:calc(100vh - 0px)')
+  })
+
+  it('escapes the query and is served only at the package root or a pinned revision', async () => {
+    expect(await (await serve('countdown', `${CAPTURE_HOST_FILE}?v="><script>`)).text()).not.toMatch(/"><script>|<script/)
+    expect((await serve('countdown', `assets/${CAPTURE_HOST_FILE}`)).status).toBe(404)
+  })
+
+  it('allows the frame but no script or network of its own', () => {
+    expect(CAPTURE_HOST_CSP).toContain("frame-src 'self'")
+    expect(CAPTURE_HOST_CSP).not.toMatch(/script-src|connect-src/)
   })
 })

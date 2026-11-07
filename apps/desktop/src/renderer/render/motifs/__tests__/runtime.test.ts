@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createMotifRuntime, MOTIF_RUNTIME_SOURCE } from "../runtime";
 import { runInNewContext } from 'node:vm';
+import { CAPTURE_HOST_FILE, decodeFrameMarker, FRAME_MARKER_PIXELS } from "../../../../shared/motifs/frameMarker";
 
 function pageRuntime() {
   const workers: Array<EventTarget & { terminate: ReturnType<typeof vi.fn> }> = [];
@@ -64,6 +65,57 @@ describe('Motif setup decoder workers', () => {
     window.motif.define({ frame() { new window.Worker('blob:animation'); } });
     await expect(window.__motifRender(0, {}, {})).rejects.toThrow(/setup/);
     expect(() => new window.SharedWorker('./persistent.js')).toThrow(/SharedWorker/);
+  });
+});
+
+/// The capture host shell: a top frame at CAPTURE_HOST_FILE framing a Motif
+/// page that already runs the runtime in its own role.
+function hostRuntime(pathname = '/' + CAPTURE_HOST_FILE) {
+  const motif = pageRuntime().window;
+  motif.document.readyState = 'complete';
+  const el = () => ({ style: {} as Record<string, string>, children: [] as any[], appendChild(c: unknown) { this.children.push(c); } });
+  const body = el();
+  const document = { readyState: 'complete', body, createElement: el, querySelector: () => ({ contentWindow: motif }) };
+  const window: any = { document, location: { pathname, hostname: 'countdown' }, requestAnimationFrame: () => 0, addEventListener: vi.fn() };
+  window.top = window;
+  runInNewContext(MOTIF_RUNTIME_SOURCE, { window, document, location: window.location, console });
+  const markerRow = () => {
+    const pixels = body.children[0]?.children ?? [];
+    const rgba = new Uint8Array(FRAME_MARKER_PIXELS * 4);
+    pixels.forEach((px: { style: { background: string } }, i: number) => rgba.set(px.style.background === '#fff' ? [255, 255, 255, 255] : [0, 0, 0, 255], i * 4));
+    return pixels.length ? decodeFrameMarker(rgba) : null;
+  };
+  return { window, motif, markerRow };
+}
+
+describe('capture host shell', () => {
+  it('forwards a frame to the Motif and marks its id only once the frame has run', async () => {
+    const { window, motif, markerRow } = hostRuntime();
+    let release!: () => void;
+    const frame = vi.fn();
+    motif.motif.define({ setup: () => new Promise<void>(resolve => { release = resolve; }), frame });
+    const rendered = window.__motifRender(0.5, { a: 1 }, { settleRafs: 0, frameId: 41 });
+    await Promise.resolve();
+    expect(markerRow()).toBeNull();
+    release(); await rendered;
+    expect(frame).toHaveBeenCalledWith(0.5, expect.anything());
+    expect(markerRow()).toBe(41);
+    await window.__motifRender(1, { a: 1 }, { settleRafs: 0, frameId: 42 });
+    expect(markerRow()).toBe(42);
+  });
+
+  it('is ready only for its own Motif, and leaves other top pages in the Motif role', () => {
+    const { window } = hostRuntime();
+    expect(window.__motifHostReady('countdown')).toBe(true);
+    expect(window.__motifHostReady('other')).toBe(false);
+    expect(hostRuntime('/index.html').window.__motifHostReady).toBeUndefined();
+  });
+
+  it('a throwing Motif frame rejects without marking', async () => {
+    const { window, motif, markerRow } = hostRuntime();
+    motif.motif.define({ frame() { throw new Error('bad frame'); } });
+    await expect(window.__motifRender(0, {}, { settleRafs: 0, frameId: 1 })).rejects.toThrow('bad frame');
+    expect(markerRow()).toBeNull();
   });
 });
 

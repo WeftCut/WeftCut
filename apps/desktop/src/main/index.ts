@@ -33,7 +33,7 @@ import { mediaMimeForExt } from './mediaMime.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
 import { registerMotifProtocol } from './motif/protocol.js'
 import { installPerformanceCalibration } from './performanceCalibration.js'
-import { setRuntimeSource, captureMotifFrameB64, captureMotifTexture, setTextureCaptureEnabled, isMotifContentFailure, setMotifStore, shutdownCaptureHost, invalidateCaptureSurface, controlMotifCapture, captureDiagnostics, resetCaptureFailure } from './motif/capture.js'
+import { setRuntimeSource, captureMotifFrameB64, captureMotifTexture, setTextureCaptureEnabled, isMotifContentFailure, setMotifStore, shutdownCaptureHost, setFrameMarkerReader, controlMotifCapture, captureDiagnostics, resetCaptureFailure } from './motif/capture.js'
 import { setMotifMediaSource } from './motif/mediaProps.js'
 import { rasterizeSvg } from './svgRaster.js'
 import { MotifCaptureService, type CaptureRequest, type TextureEncoder } from './motif/captureService.js'
@@ -1405,6 +1405,11 @@ app.whenReady().then(async () => {
   const motifGpu = process.platform === 'win32' && motifPoolClass
     ? new MotifGpuTransport((w, h, bgra, upload) => new motifPoolClass(w, h, 1, bgra, upload)) : null
   const encoderClass = (require_('@weftcut/core') as { MotifTextureEncoder?: new () => TextureEncoder }).MotifTextureEncoder
+  const markerClass = (require_('@weftcut/core') as { MotifMarkerReader?: new () => { read(handle: Buffer, pixels: number): Promise<Buffer> } }).MotifMarkerReader
+  if (process.platform === 'win32' && markerClass) {
+    let markers: InstanceType<typeof markerClass> | null = null
+    setFrameMarkerReader((handle, pixels) => (markers ??= new markerClass()).read(handle, pixels))
+  }
   const motifCapture = new MotifCaptureService({
     store: motifFrames, texture: captureMotifTexture, png: captureMotifFrameB64,
     copy: motifGpu ? (owner, texture, parent) => motifGpu.copy(owner, texture, parent) : null,
@@ -1428,7 +1433,6 @@ app.whenReady().then(async () => {
   app.once('will-quit', () => motifCapture.dispose())
   // A restarted GPU process gives the offscreen capture host a new, unproven
   // compositor surface: its next shared-texture lease must fence again.
-  app.on('child-process-gone', (_event, details) => { if (details.type === 'GPU') invalidateCaptureSurface() })
   const currentMotifStore = () => wsCache ? motifBakes!.store() : motifFrames
   motifReader = new MotifReaderService({
     fork: () => utilityProcess.fork(path.join(import.meta.dirname, 'motifReader.js'), [], {

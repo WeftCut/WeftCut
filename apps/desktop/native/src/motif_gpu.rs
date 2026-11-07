@@ -112,7 +112,8 @@ impl MotifGpuPool {
         std::thread::Builder::new()
             .name("motif-gpu".into())
             .spawn(move || {
-                let state = unsafe { Pool::new(width, height, count, bgra.unwrap_or(false), upload) };
+                let state =
+                    unsafe { Pool::new(width, height, count, bgra.unwrap_or(false), upload) };
                 match state {
                     Err(e) => {
                         let _ = ready_tx.send(Err(e.to_string()));
@@ -180,8 +181,9 @@ impl MotifGpuPool {
             .map_err(napi::Error::from_reason)
     }
 
-    /// Copy an OSR texture into our own pool before releasing Electron's scarce
-    /// capture surface. Completion includes the GPU copy, not just submission.
+    /// Copy an OSR texture's top-left slot-sized picture into our own pool before
+    /// releasing Electron's scarce capture surface. Completion includes the GPU
+    /// copy, not just submission.
     #[napi]
     pub async fn copy_texture(&self, handle: Buffer, slot: u32) -> napi::Result<()> {
         let bits: [u8; 8] = handle
@@ -349,7 +351,12 @@ impl Pool {
 
     /// Reads `path` scaled by `div`, premultiplying each band into the staging
     /// texture as it decodes, then copies it into the slot.
-    unsafe fn upload(&self, slot: usize, path: &str, div: u32) -> anyhow::Result<MotifUploadTiming> {
+    unsafe fn upload(
+        &self,
+        slot: usize,
+        path: &str,
+        div: u32,
+    ) -> anyhow::Result<MotifUploadTiming> {
         let staging = self
             .staging
             .as_ref()
@@ -400,8 +407,9 @@ impl Pool {
         );
         source.GetDesc(&mut src);
         target.texture.GetDesc(&mut dst);
+        // The capture host's surface keeps marker rows below the picture.
         anyhow::ensure!(
-            src.Width == dst.Width && src.Height == dst.Height && src.Format == dst.Format,
+            src.Width == dst.Width && src.Height >= dst.Height && src.Format == dst.Format,
             "OSR texture dimensions/format changed"
         );
         let mutex = source.cast::<IDXGIKeyedMutex>().ok();
@@ -409,7 +417,18 @@ impl Pool {
             let hr = (Interface::vtable(mutex).AcquireSync)(Interface::as_raw(mutex), 0, 1000);
             anyhow::ensure!(hr.0 == 0, "OSR mutex unavailable: {hr:?}");
         }
-        let result = self.write(slot, |texture| self.context.CopyResource(texture, &source));
+        let picture = D3D11_BOX {
+            left: 0,
+            top: 0,
+            front: 0,
+            right: dst.Width,
+            bottom: dst.Height,
+            back: 1,
+        };
+        let result = self.write(slot, |texture| {
+            self.context
+                .CopySubresourceRegion(texture, 0, 0, 0, 0, &source, 0, Some(&picture))
+        });
         if let Some(mutex) = mutex {
             mutex.ReleaseSync(0)?;
         }

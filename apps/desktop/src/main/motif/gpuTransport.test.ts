@@ -42,9 +42,9 @@ describe('Motif GPU leases', () => {
     const read = transport.read(owner, 'blocked', 1920, 1080, 1, 42);
     await vi.advanceTimersByTimeAsync(300);
     expect(await read).toEqual({ kind: 'unavailable' });
-    const rejected = expect(transport.copy(owner, { textureInfo: {
-      codedSize: { width: 1920, height: 1080 }, pixelFormat: 'bgra', handle: { ntHandle: Buffer.alloc(8) },
-    } } as Parameters<typeof transport.copy>[1], 43)).rejects.toBe(denied);
+    const rejected = expect(transport.copy(owner, { width: 1920, height: 1080, texture: { textureInfo: {
+      codedSize: { width: 1920, height: 1081 }, pixelFormat: 'bgra', handle: { ntHandle: Buffer.alloc(8) },
+    } } } as unknown as Parameters<typeof transport.copy>[1], 43)).rejects.toBe(denied);
     await vi.advanceTimersByTimeAsync(300);
     await rejected;
     expect(create).not.toHaveBeenCalled();
@@ -65,9 +65,9 @@ describe('Motif GPU leases', () => {
     });
     const cached = await texture(transport.read(owner, 'cached', 1920, 1080, 1, 42));
     transport.release(owner, cached.token);
-    const copying = transport.copy(owner, { textureInfo: {
-      codedSize: { width: 1920, height: 1080 }, pixelFormat: 'bgra', handle: { ntHandle: Buffer.alloc(8) },
-    } } as Parameters<typeof transport.copy>[1], 42);
+    const copying = transport.copy(owner, { width: 1920, height: 1080, texture: { textureInfo: {
+      codedSize: { width: 1920, height: 1081 }, pixelFormat: 'bgra', handle: { ntHandle: Buffer.alloc(8) },
+    } } } as unknown as Parameters<typeof transport.copy>[1], 42);
     // Observe rejection immediately too, so the regression doesn't leave an unhandled promise.
     const result = copying.then(frame => ({ frame }), error => ({ error }));
     await vi.waitFor(() => expect(retired).toHaveBeenCalledOnce());
@@ -445,9 +445,9 @@ describe('Motif GPU leases', () => {
     const reserve = vi.spyOn(buffers, 'reserve')
     const read = await texture(transport.read(owner, 'read', 128, 128, 1))
     transport.release(owner, read.token)
-    const copied = await transport.copy(owner, { textureInfo: {
-      codedSize: { width: 128, height: 128 }, pixelFormat: 'rgba', handle: { ntHandle: Buffer.alloc(8) },
-    } } as Parameters<typeof transport.copy>[1])
+    const copied = await transport.copy(owner, { width: 128, height: 128, texture: { textureInfo: {
+      codedSize: { width: 128, height: 129 }, pixelFormat: 'rgba', handle: { ntHandle: Buffer.alloc(8) },
+    } } } as unknown as Parameters<typeof transport.copy>[1])
     transport.release(owner, copied.token)
     expect(create.mock.calls).toEqual([[128, 128, false, true], [128, 128, false, false]])
     expect(reserve.mock.calls.map(([, bytes]) => bytes)).toEqual([128 * 128 * 8, 128 * 128 * 4])

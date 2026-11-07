@@ -12,7 +12,7 @@ vi.mock('../resources', async original => ({
 
 const owner = { id: 12 } as WebContents;
 const args = { motifId: 'synthetic', tSec: 0, propsJson: '{}', width: 2, height: 2, settleRafs: 2, contentHash: 'v1', coalesceKey: 'job', high: false, bake: { hash: 'a'.repeat(32), frame: 0 } };
-const texture = { textureInfo: { codedSize: { width: 2, height: 2 }, pixelFormat: 'bgra', handle: { ntHandle: Buffer.alloc(8) } } } as OffscreenSharedTexture;
+const frame = { texture: { textureInfo: { codedSize: { width: 2, height: 3 }, pixelFormat: 'bgra', handle: { ntHandle: Buffer.alloc(8) } } } as OffscreenSharedTexture, width: 2, height: 2 };
 function fixture(enabled = true) {
   const writer = { png: vi.fn(async () => {}), encoded: vi.fn(async () => {}) };
   const finish = vi.fn(async () => Buffer.from('wfrm'));
@@ -25,7 +25,7 @@ function fixture(enabled = true) {
   const readTexture = vi.fn();
   const deps = {
     store: { prepareWrite, has, hasRoom, read, readTexture } as unknown as MotifFrameStore,
-    texture: vi.fn(async (_args: unknown, consume: (t: OffscreenSharedTexture) => Promise<any>) => consume(texture)),
+    texture: vi.fn(async (_args: unknown, consume: (f: typeof frame) => Promise<any>) => consume(frame)),
     png: vi.fn(async () => Buffer.from('png').toString('base64')),
     copy: vi.fn(async () => ({ kind: 'texture' as const, key: 'pool', token: 'lease' })),
     createEncoder: vi.fn(() => encoder), setTextureEnabled: vi.fn(), isContentFailure: vi.fn(() => false),
@@ -43,7 +43,7 @@ describe('Motif capture and persistence', () => {
     let finish!: () => void;
     h.deps.texture.mockImplementationOnce(async (_args, consume) => {
       await new Promise<void>(resolve => { finish = resolve; });
-      return consume(texture);
+      return consume(frame);
     });
     const result = h.service.capture(owner, preview, () => current);
     current = false;
@@ -76,7 +76,7 @@ describe('Motif capture and persistence', () => {
     const h = fixture(); let finish!: () => void; let leaseEnded = false;
     h.writer.encoded.mockReturnValue(new Promise<void>(r => { finish = r; }));
     h.deps.texture.mockImplementationOnce(async (_args, consume) => {
-      const result = await consume(texture);
+      const result = await consume(frame);
       leaseEnded = true;
       return result;
     });
@@ -104,6 +104,7 @@ describe('Motif capture and persistence', () => {
     expect(await h.service.capture(owner, args)).toMatchObject({ kind: 'texture', persisted: false });
     expect(await h.service.capture(owner, args)).toMatchObject({ kind: 'texture', persisted: false });
     expect(h.encoder.read).toHaveBeenCalledTimes(1);
+    expect(h.encoder.read).toHaveBeenCalledWith(frame.texture.textureInfo.handle.ntHandle, 2); // the picture rows only
     expect(h.encoder.close).toHaveBeenCalledTimes(1);
     expect(h.deps.png).not.toHaveBeenCalled(); expect(h.writer.encoded).not.toHaveBeenCalled();
   });
@@ -208,7 +209,7 @@ describe('Motif capture and persistence', () => {
     const h = fixture(); let current = true; let finish!: () => void;
     h.deps.texture.mockImplementationOnce(async (_args, consume) => {
       await new Promise<void>(resolve => { finish = resolve; });
-      return consume(texture);
+      return consume(frame);
     });
     const result = h.service.persist(args, () => current);
     current = false; finish();
@@ -240,7 +241,7 @@ describe('Motif capture and persistence', () => {
     const h = fixture(); let finish!: () => void;
     h.deps.texture.mockImplementationOnce(async (_args, consume) => {
       await new Promise<void>(resolve => { finish = resolve; });
-      return consume(texture);
+      return consume(frame);
     });
     const { bake: _bake, ...preview } = args;
     const display = h.service.capture(owner, preview);
@@ -314,7 +315,7 @@ describe('Motif capture and persistence', () => {
     const h = fixture(); let finish!: () => void; let backgroundCurrent = true;
     h.deps.texture.mockImplementationOnce(async (_args, consume) => {
       await new Promise<void>(resolve => { finish = resolve; });
-      return consume(texture);
+      return consume(frame);
     });
     const persist = h.service.persist(args, () => backgroundCurrent);
     const rejected = expect(persist).rejects.toThrow('superseded');
@@ -331,7 +332,7 @@ describe('Motif capture and persistence', () => {
     const h = fixture(); let finish!: () => void;
     h.deps.texture.mockImplementationOnce(async (_args, consume) => {
       await new Promise<void>(resolve => { finish = resolve; });
-      return consume(texture);
+      return consume(frame);
     });
     const persist = h.service.persist(args);
     const { bake: _bake, ...preview } = args;
@@ -374,7 +375,7 @@ describe('Motif capture and persistence', () => {
     const h = fixture(); let finish!: () => void;
     h.deps.texture.mockImplementationOnce(async (_args, consume) => {
       await new Promise<void>(resolve => { finish = resolve; });
-      return consume(texture);
+      return consume(frame);
     });
     h.writer.encoded.mockRejectedValue(new Error('disk full'));
     const persist = h.service.persist(args);
