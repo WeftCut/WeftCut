@@ -216,8 +216,12 @@ first two):
    (the etiquette equals the skill's head), `mcp.skill-conformance` (every
    name the skill uses is advertised).
 6. **A tool names its nearest sibling** in *Siblings* below: one line on why
-   both exist. Before adding a tool, check an existing tool's arguments: two
-   verbs that differ by one boolean are one tool with a flag. Review gate.
+   both exist. The descriptions route both ways: the first sentence states
+   the axis the tool owns, and the last names the sibling for each
+   neighbouring intent. An agent that sees a tool through a search sees only
+   it, not the neighbour that would have told the two apart. Before adding a
+   tool, check an existing tool's arguments: two verbs that differ by one
+   boolean are one tool with a flag. Review gate.
 
 ### Projects and the no-project rule
 
@@ -354,6 +358,11 @@ One line per tool with a near neighbour: why both exist (convention 6).
   a trim changes one edge of the window.
 - `move_layers` vs `move_layers_to_composition`: within one composition vs into
   another (the only crossing besides the Group tools).
+- `move_layers` vs `restack_layer`: a named lane or a time vs drawing order
+  against an anchor layer or track, time kept.
+- `move_layers_to_composition` vs `add_group_members`: lands at a chosen time
+  on the destination's clock vs keeps the members' place on the outer
+  timeline.
 - `move_layers` vs `paste_layers`: one landing vocabulary; a move relocates the
   set, a paste copies it.
 - `paste_layers` vs `add_layers`: copies existing layers with their params,
@@ -390,6 +399,8 @@ One line per tool with a near neighbour: why both exist (convention 6).
   in `local_t_us`) vs one scalar track in timeline `t_us`.
 - `set_position` vs `translate_position`: replaces the record vs offsets it in
   either mode.
+- `update_layer_params` x/y vs `set_position`: one static spot (flattening XY
+  motion; Path refuses it) vs the whole record, motion included.
 - `add_effect` vs `update_effect`: adds a working effect with its params vs
   patches one already on the layer.
 - `create_group` vs `add_layers` kind `group` vs `add_group_members`:
@@ -1021,14 +1032,19 @@ sentence is a standing cost.
   enums for closed vocabularies; `param_key` as the animatable enum plus the
   effects pattern; `update_layer_params.patch` as one `oneOf` per kind,
   generated from the parser's key table. A `null` arm only where null means
-  something omission does not.
+  something omission does not. A variant is a self-contained `oneOf` arm that
+  repeats every sibling field, and no tool schema branches at its root:
+  Codex renders only the arms of an object that has both, so fields beside
+  constraint-only arms vanish. A cross-field rule ("exactly one of") is the
+  description's and the parser's.
 - **Neither carries**: types in prose, mechanics, rationale, history (this
   doc), or the moment-of-failure explanation (the error message).
 - **Gates**: `mcp.description-budget.test.ts` caps descriptions at 700 chars
   (≤ 17 allowlisted complex tools at 1100), nested property descriptions at
   260, and the compact tools array at 158,000 UTF-8 bytes; it also refuses
   `$schema`, `title`, `format` and `default: null` in schemas.
-  `mcp.schema-semantics` pins enums and variants to the parsers.
+  `mcp.schema-semantics` pins enums and variants to the parsers and refuses
+  a root-level branch or an arm that drops a sibling field.
   `npm run mcp:catalog:check` regenerates the Rust snapshot from the built
   addon and fails on drift (CI, `build`, `build:e2e`).
   `mcp.docs-coverage.test.ts` requires every advertised tool, resource and

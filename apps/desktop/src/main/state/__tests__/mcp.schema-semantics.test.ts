@@ -141,6 +141,45 @@ describe('enums where the parser has one', () => {
     expect(content.properties.kind.enum).toEqual([...ADD_LAYER_KINDS])
     expect(content.oneOf.map((a: Schema) => a.properties.kind.const)).toEqual([...ADD_LAYER_KINDS])
   })
+
+  it('set_position advertises one self-contained arm per mode, with the fields parsePosition takes for it', () => {
+    const position = def('set_position').properties.position as Schema
+    const arms = (position.oneOf as Schema[]).map((a) => [a.properties.mode.const, Object.keys(a.properties).sort(), [...a.required].sort()])
+    expect(arms).toEqual([
+      ['XY', ['mode', 'x', 'y'], ['mode', 'x', 'y']],
+      ['Path', ['mode', 'path', 'progress'], ['mode', 'path', 'progress']],
+    ])
+  })
+})
+
+// Codex turns a schema into a TypeScript signature and, for an object with
+// both `properties` and `oneOf` / `anyOf`, renders only the arms: fields that
+// live beside constraint-only arms vanish from what the model sees. A variant
+// is therefore a self-contained arm that repeats every sibling field, and a
+// cross-field rule ("exactly one of") is the description's and the parser's.
+describe('every oneOf / anyOf arm is self-contained, so clients that render only the arms lose nothing', () => {
+  it('no tool schema branches at its root', () => {
+    const rooted = merged.filter((t) => ['oneOf', 'anyOf', 'allOf'].some((k) => k in (t.inputSchema ?? {}))).map((t) => t.name)
+    expect(rooted).toEqual([])
+  })
+
+  it('each arm declares properties, including every field its parent declares beside it', () => {
+    const problems: string[] = []
+    const walk = (s: unknown, path: string): void => {
+      if (s === null || typeof s !== 'object') return
+      const o = s as Schema
+      const siblings = Object.keys(o.properties ?? {})
+      for (const alt of ['oneOf', 'anyOf'] as const) for (const [i, arm] of ((o[alt] ?? []) as Schema[]).entries()) {
+        if (arm.type !== 'object' && o.type !== 'object') continue
+        const own = Object.keys(arm.properties ?? {})
+        if (own.length === 0) problems.push(`${path}.${alt}[${i}] declares no properties`)
+        for (const f of siblings) if (!own.includes(f)) problems.push(`${path}.${alt}[${i}] drops sibling field ${f}`)
+      }
+      for (const [k, v] of Object.entries(o)) walk(v, k === 'properties' ? path : `${path}.${k}`)
+    }
+    for (const t of merged) walk(t.inputSchema, t.name)
+    expect(problems).toEqual([])
+  })
 })
 
 describe('null arms are advertised only where null means something omission does not', () => {
