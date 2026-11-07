@@ -49,6 +49,23 @@ describe('main-owned Motif bake demand', () => {
     expect(h.deps.inventory).toHaveBeenCalledTimes(61);
   });
 
+  it('keeps three frames of its clip in flight, and a promotion takes the next free slot', async () => {
+    const settle: Array<() => void> = [];
+    const started: string[] = [];
+    const h = fixture({ persist: (c, f) => new Promise<void>(resolve => { started.push(`${c.cacheKey}:${f}`); settle.push(resolve); }) });
+    await h.coordinator.reconcile(plan([content('a', 10), content('b', 10)]));
+    for (let i = 0; i < 10; i++) await h.tick();
+    expect(started).toEqual(['a:0', 'a:1', 'a:2']);
+    await h.coordinator.reconcile({ ...plan([content('a', 10), content('b', 10)]), promoteKeys: ['b'] });
+    settle.shift()!();
+    for (let i = 0; i < 10; i++) await h.tick();
+    expect(started).toEqual(['a:0', 'a:1', 'a:2', 'b:0']);
+    while (settle.length) { settle.shift()!(); for (let i = 0; i < 4; i++) await h.tick(); }
+    expect(started.filter(s => s.startsWith('b:'))).toHaveLength(10);
+    expect(h.coordinator.snapshot().statuses.b!.phase).toBe('ready');
+    h.coordinator.dispose();
+  });
+
   it('does not rotate unfinished clips on elapsed time or ordinary reconciliation', async () => {
     const h = fixture();
     await h.coordinator.reconcile(plan([content('a'), content('b')]));

@@ -256,7 +256,9 @@ pauses, bounded retries and collection
 Automatic demand covers used ranges when the `prebake_motifs` setting
 ("Pre-bake all motif content", default off) is on; **Pre-bake now** on a layer demands its
 full content and moves it (or a Group's Motifs) to the front. Clips finish in
-timeline order (start time, then track/layer order).
+timeline order (start time, then track/layer order). Up to three frames of the
+current clip are in the capture queue at once (ADR 0159); the order is decided
+again as each settles.
 Renderer reload and preview disposal do not cancel main's work; close, reopen
 and Save As retire the session, and admitted writes cannot publish into the next
 one. In the renderer, `MotifFrameService` projects committed layers into

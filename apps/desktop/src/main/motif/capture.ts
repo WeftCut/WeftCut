@@ -284,7 +284,7 @@ async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise
 /// so another Motif or content version gets a new window. The runtime is
 /// registered once the shell has loaded, and the shell then loads the Motif
 /// into its frame, whose documents the runtime reaches before their scripts.
-async function buildHost(motifId: string, contentHash: string): Promise<Host> {
+async function buildHost(motifId: string, contentHash: string, width: number, height: number): Promise<Host> {
   const runtime = runtimeSource
   if (!runtime) throw new Error('motif runtime not registered yet (call motif_register_runtime)')
   const texture = textureCaptureEnabled && readFrameMarker !== null
@@ -294,8 +294,13 @@ async function buildHost(motifId: string, contentHash: string): Promise<Host> {
   const dir = `motif://${motifId}/${pinned ? `.revisions/${contentHash}/` : ''}`
   const query = `v=${encodeURIComponent(contentHash)}`
   const motifUrl = `${dir}index.html?${query}`
+  // Sized to the capture before its document loads: the macOS bitmap host
+  // drops a new document's first commit while the window and the page's
+  // emulated size differ
+  // (docs/notes/electron-chromium-behavior.md#macos-offscreen-bitmap-host-drops-the-first-commit-when-window-and-emulation-sizes-differ).
   const win = new BrowserWindow({
     show: false,
+    width, height: height + FRAME_MARKER_ROWS, useContentSize: true,
     // The capture host renders untrusted, user-authored Motif content, so it runs
     // at the same isolation baseline as every other window: OS sandbox on, no Node,
     // context isolation, web security. The complementary egress half (no network /
@@ -341,12 +346,16 @@ async function buildHost(motifId: string, contentHash: string): Promise<Host> {
     await send('Page.addScriptToEvaluateOnNewDocument', {
       source: texture ? runtime : BITMAP_CANVAS_RUNTIME_SOURCE + runtime,
     })
+    // The emulation pins deviceScaleFactor to 1; the default background keeps
+    // `background: transparent` real alpha.
+    await send('Emulation.setDeviceMetricsOverride', { width, height: height + FRAME_MARKER_ROWS, deviceScaleFactor: 1, mobile: false })
+    await send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } })
     const shell = await timedCapture('loadMs', () => send('Runtime.evaluate', {
       expression: `${runtime};window.__motifShellLoad()`, awaitPromise: true, returnByValue: true,
     }, CAPTURE_TIMEOUT_MS * 2, 'load Motif frame'))
     if (shell?.exceptionDetails) throw new Error('capture host shell failed: ' + JSON.stringify(shell.exceptionDetails))
     win.webContents.setFrameRate(CAPTURE_FRAME_RATE)
-    return { win, send, loadedId: motifId, loadedV: contentHash, readyFor: null, lastSize: null, frames, texture, motifUrl }
+    return { win, send, loadedId: motifId, loadedV: contentHash, readyFor: null, lastSize: { w: width, h: height }, frames, texture, motifUrl }
   } catch (e) {
     frames.dispose()
     try { win.destroy() } catch { /* already gone */ }
@@ -382,11 +391,11 @@ export function shutdownCaptureHost(): void {
   teardownHost()
 }
 
-async function ensureHost(motifId: string, contentHash: string): Promise<Host> {
+async function ensureHost(a: CaptureArgs): Promise<Host> {
   // Reuse only when BOTH id and content version match (the ?v= cache-buster).
-  if (host?.loadedId === motifId && host.loadedV === contentHash) return host
+  if (host?.loadedId === a.motifId && host.loadedV === a.contentHash) return host
   teardownHost()
-  host = await buildHost(motifId, contentHash)
+  host = await buildHost(a.motifId, a.contentHash, a.width, a.height)
   return host
 }
 
@@ -440,7 +449,7 @@ async function doCapture<T>(a: CaptureArgs, output: (frame: MotifOsrFrame) => Pr
   while (framesInFlight.size >= MAX_FRAMES_IN_FLIGHT) await Promise.race(framesInFlight)
   let h: Host
   try {
-    h = await ensureHost(a.motifId, a.contentHash)
+    h = await ensureHost(a)
     await timedCapture('readyMs', () => waitReady(h, a.motifId))
   } catch (e) {
     // Transport class: no Motif code ran (host build, loadURL, wedged/never-
@@ -463,15 +472,9 @@ async function doCapture<T>(a: CaptureArgs, output: (frame: MotifOsrFrame) => Pr
   const meta = { duration, width: a.width, height: a.height, fps }
   try {
     if (h.lastSize?.w !== a.width || h.lastSize?.h !== a.height) {
-      // The window takes the capture's size, not only the emulation. With the
-      // window left at its 800×600 default and the page emulated at the
-      // capture size, the macOS bitmap host's first committed frame of a new
-      // document could be empty
-      // (docs/notes/electron-chromium-behavior.md#macos-offscreen-bitmap-host-drops-the-first-commit-when-window-and-emulation-sizes-differ).
-      // The emulation override pins deviceScaleFactor to 1.
+      // Another size for the same document; the window follows, as at build.
       h.win.setContentSize(a.width, a.height + FRAME_MARKER_ROWS)
       await h.send('Emulation.setDeviceMetricsOverride', { width: a.width, height: a.height + FRAME_MARKER_ROWS, deviceScaleFactor: 1, mobile: false })
-      await h.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } })
       h.lastSize = { w: a.width, h: a.height }
     }
   } catch (e) {

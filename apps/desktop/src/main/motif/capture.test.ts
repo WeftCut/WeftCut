@@ -157,8 +157,10 @@ vi.mock('electron', () => {
         },
       },
     })
-    constructor(options: { webPreferences: { offscreen: unknown } }) {
+    constructor(options: { width: number; height: number; webPreferences: { offscreen: unknown } }) {
       opened++
+      contentSize = { width: options.width, height: options.height }
+      freshSurface = true
       this.texture = typeof options.webPreferences.offscreen === 'object'
       lastHostTexture = this.texture
       lastHost = this.webContents

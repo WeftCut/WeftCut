@@ -20,9 +20,16 @@ interface ContentState {
   hydrated: boolean;
   status: MotifBakeStatus;
   cursor: number;
+  /** Frames handed to `persist` and not yet settled. */
+  pending: Set<number>;
   failures: number;
   retryAt: number;
 }
+
+/// Frames one coordinator keeps in the capture queue, so the capture host
+/// renders the next while earlier ones are still on their way to a paint
+/// (ADR 0159).
+const FRAMES_IN_FLIGHT = 3;
 
 function ranges(content: MotifBakeContent): MotifFrameRange[] {
   const sorted = content.ranges.map(r => ({ start: Math.max(0, Math.ceil(r.start)), end: Math.min(content.contentFrames, Math.floor(r.end)) }))
@@ -37,7 +44,9 @@ function ranges(content: MotifBakeContent): MotifFrameRange[] {
 }
 
 /** One workspace's persistent Motif demand. Capture remains serialized by the
- * capture host; this module owns clip order, discovery, recovery and coverage. */
+ * capture host; this module owns clip order, discovery, recovery and coverage.
+ * It keeps up to `FRAMES_IN_FLIGHT` frames of its chosen clip in the queue and
+ * decides the order again as each one settles. */
 export class MotifBakeCoordinator {
   private generation = 0;
   private epoch = 0;
@@ -46,13 +55,15 @@ export class MotifBakeCoordinator {
   private disposed = false;
   private discovering = false;
   private discovery: Promise<void> = Promise.resolve();
-  private running = false;
+  /** Frames being persisted, plus a hydration, which runs alone. */
+  private active = 0;
   private cancelTimer?: () => void;
   private sequence: NonNullable<MotifBakePlan['sequence']> = [];
   private sequenceIndex = 0;
   private priority: string[] = [];
   private lastPublish = -Infinity;
-  private inFlight = new Set<string>();
+  /** Persists in flight per content hash; collection keeps their files. */
+  private inFlight = new Map<string, number>();
   private collecting?: Set<string>;
   private readonly now: () => number;
   private readonly schedule: (callback: () => void, delayMs: number) => () => void;
@@ -102,7 +113,7 @@ export class MotifBakeCoordinator {
       let state = this.states.get(key);
       if (!state || state.hash !== ref.hash) {
         state = { cacheKey: key, hash: ref.hash, frames: new Set(), hydrated: false,
-          status: { phase: 'queued', done: 0, total: 0 }, cursor: 0,
+          status: { phase: 'queued', done: 0, total: 0 }, cursor: 0, pending: new Set(),
           failures: 0, retryAt: 0 };
         this.states.set(key, state);
       }
@@ -127,7 +138,7 @@ export class MotifBakeCoordinator {
       if (!current()) return;
       if (plan.collect && this.deps.collect) {
         const keep = new Set([...this.states.values()].map(s => s.hash));
-        for (const hash of this.inFlight) keep.add(hash);
+        for (const hash of this.inFlight.keys()) keep.add(hash);
         this.collecting = keep;
         try { await this.deps.collect(keep); }
         catch { /* Cache collection is best effort; discovery and writes remain authoritative. */ }
@@ -155,7 +166,7 @@ export class MotifBakeCoordinator {
   wake(): void {
     if (this.disposed) return;
     this.cancelTimer?.(); this.cancelTimer = undefined;
-    if (!this.running && !this.discovering) this.arm(0);
+    if (this.active < FRAMES_IN_FLIGHT && !this.discovering) this.arm(0);
   }
 
   /** Storage is shared with foreground captures and cache reads. Their writes
@@ -229,7 +240,7 @@ export class MotifBakeCoordinator {
     for (const [from, to] of [[state.cursor, Infinity], [0, state.cursor]]) {
       for (const range of ranges) {
         for (let frame = Math.max(range.start, from!); frame < Math.min(range.end, to!); frame++) {
-          if (!state.frames.has(frame)) return frame;
+          if (!state.frames.has(frame) && !state.pending.has(frame)) return frame;
         }
       }
     }
@@ -259,7 +270,7 @@ export class MotifBakeCoordinator {
   }
 
   private async step(): Promise<void> {
-    if (this.running || this.disposed || this.discovering) return;
+    if (this.active >= FRAMES_IN_FLIGHT || this.disposed || this.discovering) return;
     const candidates = [...this.states.values()].filter(s => (!s.hydrated || s.content) && s.status.phase !== 'ready' && s.status.phase !== 'error');
     if (!candidates.length) { this.emit(true); return; }
     const pause = this.deps.pause();
@@ -289,7 +300,8 @@ export class MotifBakeCoordinator {
         || (state.hydrated && this.nextFrame(state, entry.ranges) === undefined)) {
         // Retire completed prefixes once, rather than scanning their saved
         // frames for every frame of a later occurrence. Read misses reopen it.
-        if (i === this.sequenceIndex) this.sequenceIndex++;
+        // A clip whose last frames are in flight is passed over, not retired.
+        if (i === this.sequenceIndex && !state?.pending.size) this.sequenceIndex++;
         continue;
       }
       if (available.has(entry.cacheKey)) {
@@ -299,34 +311,57 @@ export class MotifBakeCoordinator {
     // Unknown inventory without capture demand still gets its bounded retry.
     chosen ??= eligible[0]!;
     const epoch = this.epoch;
-    this.running = true;
+    if (!chosen.hydrated) {
+      // Hydration reads the clip's inventory; nothing else may run beside it.
+      if (this.active > 0) return;
+      this.active++;
+      try { await this.hydrate(chosen, epoch); }
+      finally {
+        this.active--;
+        if (!this.disposed && !this.discovering) this.arm(0);
+      }
+      return;
+    }
+    const frame = this.nextFrame(chosen, targetRanges);
+    if (frame === undefined) {
+      // Frames still in flight settle the clip themselves.
+      if (!chosen.pending.size) { this.refresh(chosen); this.emit(chosen.status.phase === 'ready'); }
+      return;
+    }
+    chosen.status = { ...chosen.status, phase: 'baking', reason: undefined, error: undefined };
+    this.emit();
+    chosen.pending.add(frame);
+    chosen.cursor = frame + 1;
+    this.active++;
+    this.inFlight.set(chosen.hash, (this.inFlight.get(chosen.hash) ?? 0) + 1);
+    void this.persistFrame(chosen, chosen.content!, frame, epoch);
+    this.arm(0);
+  }
+
+  private async persistFrame(chosen: ContentState, content: MotifBakeContent, frame: number, epoch: number): Promise<void> {
     try {
-      if (!chosen.hydrated) { await this.hydrate(chosen, epoch); return; }
-      const frame = this.nextFrame(chosen, targetRanges);
-      if (frame === undefined) { this.refresh(chosen); return; }
-      const content = chosen.content!;
-      chosen.status = { ...chosen.status, phase: 'baking', reason: undefined, error: undefined };
-      this.emit();
-      this.inFlight.add(chosen.hash);
       await this.deps.persist(content, frame, () => this.current(chosen, epoch) && !!chosen.content);
       if (!this.current(chosen, epoch)) return;
       const newlyCovered = !chosen.frames.has(frame);
       chosen.frames.add(frame);
-      chosen.cursor = frame + 1;
       chosen.failures = 0; chosen.retryAt = 0;
       chosen.status.lastProgressAt = this.now();
-      // Re-evaluate order after every frame: user promotion and foreground
-      // captures remain responsive without rotating incomplete clips.
+      // Order is decided again after every frame: user promotion and
+      // foreground captures stay responsive without rotating incomplete clips.
       if (newlyCovered && chosen.content?.ranges.some(r => frame >= r.start && frame < r.end)) chosen.status.done++;
-      chosen.status.phase = chosen.status.done === chosen.status.total ? 'ready' : 'queued';
-      if (chosen.status.phase === 'ready') this.priority = this.priority.filter(key => key !== chosen.cacheKey);
+      if (chosen.status.done === chosen.status.total) {
+        chosen.status.phase = 'ready';
+        this.priority = this.priority.filter(key => key !== chosen.cacheKey);
+      }
       this.emit(chosen.status.phase === 'ready');
     } catch (error) {
       if (this.current(chosen, epoch) && chosen.content) this.fail(chosen, error);
     } finally {
-      if (this.current(chosen, epoch) && chosen.status.phase === 'baking') chosen.status.phase = 'queued';
-      this.inFlight.delete(chosen.hash);
-      this.running = false;
+      chosen.pending.delete(frame);
+      if (this.current(chosen, epoch) && chosen.status.phase === 'baking' && !chosen.pending.size) chosen.status.phase = 'queued';
+      const left = (this.inFlight.get(chosen.hash) ?? 1) - 1;
+      if (left > 0) this.inFlight.set(chosen.hash, left); else this.inFlight.delete(chosen.hash);
+      this.active--;
       if (!this.disposed && !this.discovering) this.arm(0);
     }
   }

@@ -35,7 +35,10 @@ after the previous one, so the renderer idled about three quarters of the time.
   same page while up to three earlier frames are still on their way to a paint.
   Paints arrive in frame order, so a paint carrying a later id retires every
   earlier expected frame as skipped, and a skipped frame renders again. A
-  navigation or resize waits for the frames in flight.
+  navigation or resize waits for the frames in flight. The bake coordinator
+  keeps up to three frames of its chosen clip in the queue, so background
+  preparation reaches the pipeline too, and decides the order again as each
+  frame settles.
 - **A host window shows one document.** A window's first top-level document
   is the only one a bitmap host paints with real alpha
   (docs/notes/electron-chromium-behavior.md), so another Motif or content
