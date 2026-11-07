@@ -325,8 +325,19 @@ fn scale_into(rgba: &[u8], w: u32, h: u32, div: u32, out: &mut [u8]) {
                     b += u32::from(s[2]) * alpha;
                 }
             }
-            let colour = |c: u32| if a == 0 { 0 } else { ((2 * c + a) / (2 * a)) as u8 };
-            *px = [colour(r), colour(g), colour(b), ((2 * a + n) / (2 * n)) as u8];
+            let colour = |c: u32| {
+                if a == 0 {
+                    0
+                } else {
+                    ((2 * c + a) / (2 * a)) as u8
+                }
+            };
+            *px = [
+                colour(r),
+                colour(g),
+                colour(b),
+                ((2 * a + n) / (2 * n)) as u8,
+            ];
         }
     }
 }
@@ -563,8 +574,14 @@ mod tests {
 
     #[test]
     fn bands_are_whole_scale_blocks_and_at_most_eight() {
-        assert_eq!((band_rows(2160), 2160u32.div_ceil(band_rows(2160))), (272, 8));
-        assert_eq!((band_rows(1080), 1080u32.div_ceil(band_rows(1080))), (136, 8));
+        assert_eq!(
+            (band_rows(2160), 2160u32.div_ceil(band_rows(2160))),
+            (272, 8)
+        );
+        assert_eq!(
+            (band_rows(1080), 1080u32.div_ceil(band_rows(1080))),
+            (136, 8)
+        );
         for h in 1..=600 {
             let (rows, count) = (band_rows(h), h.div_ceil(band_rows(h)));
             assert!(rows % 4 == 0 && (1..=BANDS).contains(&count), "{h}");
@@ -749,7 +766,15 @@ mod tests {
     fn band_by_band_scaling_matches_the_whole_frame() {
         let dir = tempfile::tempdir().unwrap();
         // Heights around band and block edges; widths with partial blocks.
-        for (w, h) in [(5, 1), (3, 7), (7, 9), (6, 33), (17, 70), (9, 135), (31, 271)] {
+        for (w, h) in [
+            (5, 1),
+            (3, 7),
+            (7, 9),
+            (6, 33),
+            (17, 70),
+            (9, 135),
+            (31, 271),
+        ] {
             let pixels = noise(w, h, w * 1000 + h);
             let path = write_frame(dir.path(), &encode(w, h, &pixels).unwrap());
             for div in [1, 2, 4] {
@@ -824,7 +849,11 @@ mod tests {
         for line in out.chunks(pitch) {
             assert!(line[row..].iter().all(|&b| b == 0xA5), "padding written");
         }
-        Ok(out.chunks(pitch).flat_map(|line| &line[..row]).copied().collect())
+        Ok(out
+            .chunks(pitch)
+            .flat_map(|line| &line[..row])
+            .copied()
+            .collect())
     }
 
     #[test]
@@ -882,8 +911,11 @@ mod tests {
         // The smallest that fits, not the first.
         scratch.clear();
         scratch.with(50, |_| scratch.with(20, |_| ()));
-        let mut kept: Vec<(usize, *const u8)> =
-            scratch.kept().iter().map(|b| (b.len(), b.as_ptr())).collect();
+        let mut kept: Vec<(usize, *const u8)> = scratch
+            .kept()
+            .iter()
+            .map(|b| (b.len(), b.as_ptr()))
+            .collect();
         kept.sort();
         let [(20, small), (50, large)] = kept[..] else {
             panic!("{kept:?}")
