@@ -5,7 +5,7 @@ import { createMotifReaderHost } from './readerHost'
 
 const hash = 'a'.repeat(32)
 const root = path.join('workspace', 'project')
-const timing = { readMs: 1, decodeMs: 2, scaleMs: 4 }
+const timing = { readMs: 1, decodeMs: 2 }
 
 function fixture() {
   const read = vi.fn(async (_file: string, div: number) => ({ width: 8 / div, height: 4 / div, rgba: new Uint8Array(4), timing }))

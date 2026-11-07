@@ -12,8 +12,9 @@ export const isMotifReaderDiv = (div: unknown): div is MotifReaderDiv =>
 export interface MotifReadRequest { id: number; hash: string; frame: number; div: MotifReaderDiv }
 
 /** Native stage times of one read, in milliseconds. `decodeMs` includes the
- * content checksum, the frame's only integrity check (ADR 0078). */
-export interface MotifReadTiming { readMs: number; decodeMs: number; scaleMs: number }
+ * content checksum, the frame's only integrity check (ADR 0078), and scaling:
+ * each band scales as it decodes. */
+export interface MotifReadTiming { readMs: number; decodeMs: number }
 
 /** Scaled straight RGBA; `width` and `height` are the input size divided by
  * the divisor, rounded up. */

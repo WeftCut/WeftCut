@@ -145,7 +145,7 @@ background so `background: transparent` stays real alpha.
 
 Frames are identified by content, not placement. The key
 (`motifFrameCacheKey`, `renderer/render/motifs/motifFrames.ts`) is
-`surface-v5 | motifId | version | contentHash | renderW | renderH | fpsNum |
+`surface-v6 | motifId | version | contentHash | renderW | renderH | fpsNum |
 fpsDen | contentDurationFrames | canonicalProps [| mediaKeys]`.
 
 - `contentHash` covers the manifest, HTML and every companion path and bytes,
@@ -178,8 +178,8 @@ persisted frames; otherwise it may capture its window.
 `hashCacheKey` (two FNV-1a-64 lanes, 32 hex chars) of the key: a 16-byte header
 (magic `WCMFRM03`, dimensions), the band count and lengths, then straight RGBA8
 in up to eight bands of rows, each a zstd level-1 frame with its content
-checksum, the frame's only content check (ADR 0078). Bands encode and decode in
-parallel. Files are
+checksum, the frame's only content check (ADR 0078). A band's rows are a
+multiple of 4, so each band decodes and scales on its own, in parallel. Files are
 atomically replaced and disposable. A format change moves the key namespace, so
 older directories are collected rather than read.
 
@@ -218,8 +218,12 @@ rounded up). At most three reads are in flight per document.
   to the oldest waiter. Pool memory is `motif_gpu_mib` (default 128 MiB) across at
   most `motif_gpu_sessions` (default 8) size/format pools, or the shared
   `gpu_buffer_mib` when shared allocation is on; allocation waits at most
-  250 ms. If no slot can be used, main answers `unavailable` and the read takes
-  the utility lane.
+  250 ms. A pool that reads stored frames counts twice its slot: it also holds
+  the staging texture its frames are premultiplied into. A lane the budget
+  cannot give a pool of its own takes the next idle pool of the same shape
+  rather than retiring it. Decoded bands go through buffers every reader
+  shares, at most 32 MiB of them idle. If no slot can be used, main answers
+  `unavailable` and the read takes the utility lane.
 - **macOS, Linux and the Windows fallback — utility lane.** One app-wide
   utility process (`motif-reader-host.ts`, started on first use, restarted with
   backoff) runs the core and posts scaled RGBA on a `MessagePortMain` to the

@@ -1401,9 +1401,9 @@ app.whenReady().then(async () => {
     async () => JSON.parse(await backend!.invoke('workspace_dir', '{}')) as string | null,
     require_('@weftcut/core') as typeof import('@weftcut/core'),
   )
-  const motifPoolClass = (require_('@weftcut/core') as { MotifGpuPool?: new (w: number, h: number, count: number, bgra: boolean) => MotifPool }).MotifGpuPool
+  const motifPoolClass = (require_('@weftcut/core') as { MotifGpuPool?: new (w: number, h: number, count: number, bgra: boolean, upload: boolean) => MotifPool }).MotifGpuPool
   const motifGpu = process.platform === 'win32' && motifPoolClass
-    ? new MotifGpuTransport((w, h, bgra) => new motifPoolClass(w, h, 1, bgra)) : null
+    ? new MotifGpuTransport((w, h, bgra, upload) => new motifPoolClass(w, h, 1, bgra, upload)) : null
   const encoderClass = (require_('@weftcut/core') as { MotifTextureEncoder?: new () => TextureEncoder }).MotifTextureEncoder
   const motifCapture = new MotifCaptureService({
     store: motifFrames, texture: captureMotifTexture, png: captureMotifFrameB64,

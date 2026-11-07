@@ -106,7 +106,7 @@ export function motifFrameCacheKey(input: MotifFrameCacheKeyInput): string {
     // Moves whenever stored frames become unreadable or wrong: a new `.wfrm`
     // layout or a capture fix (ADR 0078). Directories under an older
     // namespace are no longer live, so collection removes them unread.
-    "surface-v5",
+    "surface-v6",
     input.motifId,
     String(input.version),
     input.contentHash ?? "",

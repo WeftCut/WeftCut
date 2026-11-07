@@ -122,3 +122,44 @@ between a quarter and nine tenths done; 16.0 and 15.6 at 1080p).
   a shared one.
 - **The main-process overhead.** About 2.3 ms remains; the 7 ms seen the day
   before came from a loaded machine.
+
+## Memory the reads hold
+
+Each texture-lane pool used to keep a whole decoded frame for reuse and a
+staging texture, neither counted by the Motif GPU budget: about three times
+what the budget showed, and the decode buffer was source-sized, so a 4K Motif
+read at a quarter held 16 times its slot. Now:
+
+- Bands are cut at multiples of 4 rows, so each band decodes, scales and is
+  premultiplied on its own thread. No reader holds a whole decoded frame; the
+  band buffers come from one process-wide set, at most 32 MiB idle, freed when
+  the last pool closes.
+- Only pools that read stored frames have a staging texture, and the budget
+  counts it like the slot. The export plan's GPU lane allowance doubles with
+  it.
+- A lane the budget cannot give a pool of its own takes the next idle pool of
+  the same shape. Without this, legacy allocation at the default 128 MiB fit
+  two 4K read pools for three lanes, and the third lane retired the others'
+  pools to make room: 4K playback fell to 14 pictures per second.
+
+Same machine and projects, budget mode (the default) unless noted:
+
+| | before | after |
+| --- | --- | --- |
+| 4K paused reads, one / three in flight | 85 / 169 per s | 91 / 190–195 per s |
+| 4K playback, one read end to end | 19 ms | 16 ms |
+| 4K at half resolution, one read end to end | 28–30 ms | 18–20 ms |
+| 4K at a quarter, paused reads three in flight | | 196–206 per s |
+| 1080p paused reads, three in flight | 382–430 per s | 480–505 per s |
+| main process private memory, peak during a 4K pass | 507–564 MB | 390–494 MB |
+
+Before, a half-resolution read decoded the whole frame and scaled it on one
+thread. Late ticks stayed at 0–1 per pass, and a fingerprint check of 400
+reads at full and at half resolution found no wrong frame. Baking 4K from an
+empty cache, arms alternated twice, ran at 11.2 and 11.4 frames per second
+before and 11.6 and 11.5 after, while the main process peaked at 684–703 MB
+before and 515–567 MB after.
+
+Legacy allocation at 128 MiB now plays at 51.4 pictures per second with no
+late tick; paused reads with three in flight reach about 150 per second against
+195 at 256 MiB, since two read pools serve three lanes.

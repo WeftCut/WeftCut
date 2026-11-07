@@ -19,10 +19,9 @@ type TimedReply = tokio::sync::oneshot::Sender<Result<MotifUploadTiming, String>
 #[derive(Clone, Copy, Default)]
 pub struct MotifUploadTiming {
     pub read: crate::motif_frame::MotifReadTiming,
-    /// Filling the staging texture beyond reading and decoding: mapping it, and
-    /// premultiplying a scaled frame. A full-size frame premultiplies each band
-    /// as it decodes, inside `read.decode_ms`.
-    pub premultiply_ms: f64,
+    /// Mapping and unmapping the staging texture. Each band premultiplies into
+    /// it as it decodes, inside `read.decode_ms`.
+    pub map_ms: f64,
     /// Waiting for the consumer to release the slot's keyed mutex.
     pub acquire_ms: f64,
     /// The copy into the slot through device completion.
@@ -89,12 +88,22 @@ pub struct MotifGpuPool {
 #[napi]
 impl MotifGpuPool {
     #[napi(constructor)]
-    pub fn new(width: u32, height: u32, count: u32, bgra: Option<bool>) -> napi::Result<Self> {
+    /// `upload` pools read stored frames and hold a staging texture as large
+    /// as a slot; the caller's budget counts it.
+    pub fn new(
+        width: u32,
+        height: u32,
+        count: u32,
+        bgra: Option<bool>,
+        upload: Option<bool>,
+    ) -> napi::Result<Self> {
+        let upload = upload.unwrap_or(false);
         if width == 0
             || height == 0
             || count == 0
             || count > 4
-            || u64::from(width) * u64::from(height) * 4 * u64::from(count) > 128 * 1024 * 1024
+            || u64::from(width) * u64::from(height) * 4 * u64::from(count + u32::from(upload))
+                > 128 * 1024 * 1024
         {
             return Err(napi::Error::from_reason("Motif GPU pool exceeds budget"));
         }
@@ -103,13 +112,13 @@ impl MotifGpuPool {
         std::thread::Builder::new()
             .name("motif-gpu".into())
             .spawn(move || {
-                let state = unsafe { Pool::new(width, height, count, bgra.unwrap_or(false)) };
+                let state = unsafe { Pool::new(width, height, count, bgra.unwrap_or(false), upload) };
                 match state {
                     Err(e) => {
                         let _ = ready_tx.send(Err(e.to_string()));
                     }
                     Ok(pool) => {
-                        let mut decoder = crate::motif_frame::FrameDecoder::default();
+                        let _live = Live::new();
                         let handles = pool
                             .slots
                             .iter()
@@ -128,28 +137,8 @@ impl MotifGpuPool {
                                 }
                                 Command::Stop => break,
                             };
-                            let result = (|| {
-                                let (read, premultiply_ms, acquire_ms, gpu_ms) = unsafe {
-                                    pool.upload(slot, |rows| {
-                                        decoder.read_with(&path, div, |w, h| {
-                                            // A file that does not fit this pool is a miss,
-                                            // not a device failure.
-                                            anyhow::ensure!(
-                                                w == width && h == height,
-                                                "scaled frame {w}x{h} does not fit the {width}x{height} pool"
-                                            );
-                                            Ok(())
-                                        }, rows)
-                                    })
-                                }?;
-                                Ok(MotifUploadTiming {
-                                    read,
-                                    premultiply_ms,
-                                    acquire_ms,
-                                    gpu_ms,
-                                })
-                            })();
-                            let _ = reply.send(result.map_err(|e: anyhow::Error| e.to_string()));
+                            let result = unsafe { pool.upload(slot, &path, div) };
+                            let _ = reply.send(result.map_err(|e| e.to_string()));
                         }
                     }
                 }
@@ -239,15 +228,21 @@ impl Drop for Slot {
         }
     }
 }
-/// The mapped staging texture, written by every band's thread at disjoint rows.
-struct Mapping(*mut u8);
-// SAFETY: the pointer outlives the fill, and writers never share a row.
-unsafe impl Sync for Mapping {}
+/// Counts live pool workers; the last to stop frees the kept band buffers.
+struct Live;
+static LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-impl Mapping {
-    /// Through a method, so a closure captures the `Sync` wrapper, not the pointer.
-    unsafe fn at(&self, offset: usize) -> *mut u8 {
-        self.0.add(offset)
+impl Live {
+    fn new() -> Self {
+        LIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self
+    }
+}
+impl Drop for Live {
+    fn drop(&mut self) {
+        if LIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+            crate::motif_frame::release_scratch();
+        }
     }
 }
 
@@ -258,12 +253,19 @@ struct Pool {
     width: u32,
     height: u32,
     /// A shared texture cannot be CPU-writable: uploads land here first, so the
-    /// slot's mutex covers one GPU copy instead of a CPU upload.
-    staging: ID3D11Texture2D,
+    /// slot's mutex covers one GPU copy instead of a CPU upload. Only an
+    /// upload pool has one.
+    staging: Option<ID3D11Texture2D>,
     slots: Vec<Slot>,
 }
 impl Pool {
-    unsafe fn new(width: u32, height: u32, count: u32, bgra: bool) -> anyhow::Result<Self> {
+    unsafe fn new(
+        width: u32,
+        height: u32,
+        count: u32,
+        bgra: bool,
+        upload: bool,
+    ) -> anyhow::Result<Self> {
         let (mut device, mut context) = (None, None);
         D3D11CreateDevice(
             None,
@@ -313,17 +315,19 @@ impl Pool {
             });
         }
         let mut staging = None;
-        device.CreateTexture2D(
-            &D3D11_TEXTURE2D_DESC {
-                Usage: D3D11_USAGE_STAGING,
-                BindFlags: 0,
-                CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
-                MiscFlags: 0,
-                ..desc
-            },
-            None,
-            Some(&mut staging),
-        )?;
+        if upload {
+            device.CreateTexture2D(
+                &D3D11_TEXTURE2D_DESC {
+                    Usage: D3D11_USAGE_STAGING,
+                    BindFlags: 0,
+                    CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+                    MiscFlags: 0,
+                    ..desc
+                },
+                None,
+                Some(&mut staging),
+            )?;
+        }
         let mut query = None;
         device.CreateQuery(
             &D3D11_QUERY_DESC {
@@ -338,58 +342,50 @@ impl Pool {
             query: query.unwrap(),
             width,
             height,
-            staging: staging.unwrap(),
+            staging,
             slots,
         })
     }
 
-    /// Premultiplies the straight rows `fill` hands over, `rows(first_row,
-    /// pixels)`, into the staging texture, then copies it into the slot.
-    /// Returns `fill`'s timing, the rest of the fill, the keyed-mutex wait and
-    /// the copy through completion, in ms.
-    unsafe fn upload(
-        &self,
-        slot: usize,
-        fill: impl FnOnce(
-            &(dyn Fn(usize, &[u8]) + Sync),
-        ) -> anyhow::Result<crate::motif_frame::MotifReadTiming>,
-    ) -> anyhow::Result<(crate::motif_frame::MotifReadTiming, f64, f64, f64)> {
+    /// Reads `path` scaled by `div`, premultiplying each band into the staging
+    /// texture as it decodes, then copies it into the slot.
+    unsafe fn upload(&self, slot: usize, path: &str, div: u32) -> anyhow::Result<MotifUploadTiming> {
+        let staging = self
+            .staging
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Motif GPU pool does not upload"))?;
         let row = self.width as usize * 4;
         let start = std::time::Instant::now();
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
         // The previous copy out of the staging texture completed before its
         // slot was released, so this never waits on the GPU.
         self.context
-            .Map(&self.staging, 0, D3D11_MAP_WRITE, 0, Some(&mut mapped))?;
+            .Map(staging, 0, D3D11_MAP_WRITE, 0, Some(&mut mapped))?;
         let pitch = mapped.RowPitch as usize;
         let len = pitch * (self.height as usize - 1) + row;
-        let base = Mapping(mapped.pData.cast::<u8>());
-        let rows = |first: usize, pixels: &[u8]| {
-            let count = pixels.len() / row;
-            let offset = first * pitch;
-            assert!(
-                count > 0
-                    && pixels.len() == count * row
-                    && offset + pitch * (count - 1) + row <= len,
-                "Motif rows outside the staging texture"
-            );
-            // SAFETY: inside the mapping, and each call writes rows no other call writes.
-            let dst = std::slice::from_raw_parts_mut(base.at(offset), pitch * (count - 1) + row);
-            premultiply_rows(pixels, dst, row, pitch);
-        };
-        let read = fill(&rows);
-        self.context.Unmap(&self.staging, 0);
+        // SAFETY: the mapping holds `height` rows `pitch` apart until Unmap.
+        let out = std::slice::from_raw_parts_mut(mapped.pData.cast::<u8>(), len);
+        let read = crate::motif_frame::read_into(
+            path,
+            div,
+            (self.width, self.height),
+            out,
+            pitch,
+            &|pixels, rows| premultiply_rows(pixels, rows, row, pitch),
+        );
+        self.context.Unmap(staging, 0);
         let read = read?;
-        let premultiply_ms = (start.elapsed().as_secs_f64() * 1000.0
-            - read.read_ms
-            - read.decode_ms
-            - read.scale_ms)
-            .max(0.0);
+        let map_ms =
+            (start.elapsed().as_secs_f64() * 1000.0 - read.read_ms - read.decode_ms).max(0.0);
         // Waits for the copy even though the keyed mutex would order it (ADR 0078).
-        let (acquire_ms, gpu_ms) = self.write(slot, |texture| {
-            self.context.CopyResource(texture, &self.staging)
-        })?;
-        Ok((read, premultiply_ms, acquire_ms, gpu_ms))
+        let (acquire_ms, gpu_ms) =
+            self.write(slot, |texture| self.context.CopyResource(texture, staging))?;
+        Ok(MotifUploadTiming {
+            read,
+            map_ms,
+            acquire_ms,
+            gpu_ms,
+        })
     }
 
     unsafe fn copy(&self, handle: usize, slot: usize) -> anyhow::Result<()> {

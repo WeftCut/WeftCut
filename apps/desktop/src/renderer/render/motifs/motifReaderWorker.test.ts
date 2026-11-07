@@ -32,7 +32,7 @@ describe('motifReaderWorker', () => {
     h.send({ port: port as unknown as MessagePort, epoch: 1 });
     h.send({ id: 1, hash: 'a'.repeat(32), frame: 0, div: 2 });
     expect(port.postMessage).toHaveBeenCalledWith({ id: 1, hash: 'a'.repeat(32), frame: 0, div: 2 });
-    const timing = { readMs: 1, decodeMs: 1, scaleMs: 1 };
+    const timing = { readMs: 1, decodeMs: 1 };
     port.reply({ id: 1, frame: { width: 2, height: 1, rgba: new Uint8Array(8), timing } });
     await flush();
     expect(h.makeBitmap).toHaveBeenCalledWith(expect.any(Uint8Array), 2, 1);

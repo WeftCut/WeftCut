@@ -10,12 +10,10 @@ const MAGIC: &[u8; 8] = b"WCMFRM03";
 /// Magic, then width and height (little-endian u32). The band count and each
 /// band's compressed length (u32) follow, then the bands' zstd frames in order.
 const HEADER: usize = 16;
-/// Rows go into this many bands of `ceil(h / BANDS)` rows (fewer when `h` is
-/// smaller), each its own zstd frame, so bands encode and decode in parallel
-/// (ADR 0078). More bands than threads lets the thread count change alone.
+/// Rows go into at most this many bands, each its own zstd frame, so bands
+/// encode and decode in parallel (ADR 0078). More bands than threads lets the
+/// thread count change alone.
 const BANDS: u32 = 8;
-/// Reading accepts any band count up to this, so `BANDS` can change alone.
-const MAX_BANDS: u32 = 64;
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
 const MAX_BYTES: usize = 256 * 1024 * 1024;
 
@@ -27,6 +25,12 @@ fn byte_len(w: u32, h: u32) -> anyhow::Result<usize> {
     let n = w as usize * h as usize * 4;
     anyhow::ensure!(n <= MAX_BYTES, "motif frame exceeds budget");
     Ok(n)
+}
+
+/// An eighth of the rows, rounded up to a multiple of 4 so that a band scales
+/// by 2 or 4 without another band's rows. A short frame has fewer bands.
+fn band_rows(h: u32) -> u32 {
+    h.div_ceil(BANDS).next_multiple_of(4)
 }
 
 /// Threads one frame's bands share: one per eight hardware threads, at most
@@ -83,12 +87,74 @@ fn per_thread<I: Send, T: Send>(
     })
 }
 
+/// Band buffers kept between reads. A fresh buffer faults in every page, which
+/// at 4K costs as much as decompressing into it. Idle buffers stay under
+/// `limit` bytes in all, however many pools read; a band that does not fit is
+/// allocated per read.
+struct Scratch {
+    kept: std::sync::Mutex<Vec<Vec<u8>>>,
+    limit: usize,
+}
+
+/// Three texture lanes of two band threads at 4K, a decoded and a scaled
+/// band each, fit.
+static SCRATCH: Scratch = Scratch::new(32 << 20);
+
+impl Scratch {
+    const fn new(limit: usize) -> Self {
+        Self {
+            kept: std::sync::Mutex::new(Vec::new()),
+            limit,
+        }
+    }
+
+    fn kept(&self) -> std::sync::MutexGuard<'_, Vec<Vec<u8>>> {
+        self.kept
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Runs `work` on `len` bytes of the smallest kept buffer that is long
+    /// enough, else the longest, grown. The bytes hold whatever an earlier read
+    /// left: `work` overwrites every one it hands on.
+    fn with<T>(&self, len: usize, work: impl FnOnce(&mut [u8]) -> T) -> T {
+        let mut buffer = {
+            let mut kept = self.kept();
+            let fits = (0..kept.len())
+                .filter(|&i| kept[i].len() >= len)
+                .min_by_key(|&i| kept[i].len());
+            fits.or_else(|| (0..kept.len()).max_by_key(|&i| kept[i].len()))
+                .map(|i| kept.swap_remove(i))
+                .unwrap_or_default()
+        };
+        if buffer.len() < len {
+            buffer.resize(len, 0);
+        }
+        let out = work(&mut buffer[..len]);
+        let mut kept = self.kept();
+        if kept.iter().map(Vec::len).sum::<usize>() + buffer.len() <= self.limit {
+            kept.push(buffer);
+        }
+        out
+    }
+
+    fn clear(&self) {
+        self.kept().clear();
+    }
+}
+
+/// Frees the kept band buffers, for when no reader is left.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn release_scratch() {
+    SCRATCH.clear();
+}
+
 /// zstd level 1 with its content checksum per band, the frame's only content
 /// check: it is taken over the pixels as captured and verified over the pixels
 /// a read restores, so it covers the file and the decompression alike.
 pub(crate) fn encode(w: u32, h: u32, rgba: &[u8]) -> anyhow::Result<Vec<u8>> {
     anyhow::ensure!(rgba.len() == byte_len(w, h)?, "invalid motif pixel length");
-    let band = h.div_ceil(BANDS.min(h)) as usize * w as usize * 4;
+    let band = band_rows(h) as usize * w as usize * 4;
     let payloads = per_thread(rgba.chunks(band), band_threads(), |pixels| {
         let mut zstd = zstd::bulk::Compressor::new(1)?;
         zstd.set_parameter(zstd::zstd_safe::CParameter::ChecksumFlag(true))?;
@@ -133,11 +199,8 @@ fn parse(bytes: &[u8]) -> anyhow::Result<Frame<'_>> {
     };
     let (w, h, count) = (number(8)?, number(12)?, number(HEADER)?);
     byte_len(w, h)?;
-    // Every band holds at least one row, so the count follows from the rows.
-    anyhow::ensure!(
-        (1..=MAX_BANDS).contains(&count) && h.div_ceil(h.div_ceil(count)) == count,
-        "invalid motif band count"
-    );
+    let rows = band_rows(h);
+    anyhow::ensure!(count == h.div_ceil(rows), "invalid motif band count");
     let mut payload = HEADER + 4 + 4 * count as usize;
     let mut bands = Vec::with_capacity(count as usize);
     for i in 0..count as usize {
@@ -157,129 +220,96 @@ fn parse(bytes: &[u8]) -> anyhow::Result<Frame<'_>> {
     Ok(Frame {
         w,
         h,
-        rows: h.div_ceil(count) as usize,
+        rows: rows as usize,
         bands,
     })
 }
 
+/// Writes a band's packed rows into rows `pitch` bytes apart, as the caller
+/// stores pixels (the texture lane premultiplies them).
+pub(crate) type Store<'a> = dyn Fn(&[u8], &mut [u8]) + Sync + 'a;
+
 impl Frame<'_> {
-    fn byte_len(&self) -> usize {
-        self.w as usize * self.h as usize * 4
+    fn scaled(&self, div: u32) -> (u32, u32) {
+        (self.w.div_ceil(div), self.h.div_ceil(div))
     }
 
-    /// Decompresses the bands in parallel into their rows of `rgba`, handing
-    /// each to `rows(first_row, pixels)` on its thread while it is still in
-    /// cache.
+    /// Decompresses the bands in parallel, scales each by `div` and writes it
+    /// into its rows of `out`, which are `pitch` bytes apart (the last need
+    /// only be a row long). `store` writes a band on its thread while it is
+    /// still in cache; without one the rows are copied as they are.
     fn decode_into(
         &self,
-        rgba: &mut [u8],
-        rows: &(dyn Fn(usize, &[u8]) + Sync),
+        div: u32,
+        out: &mut [u8],
+        pitch: usize,
+        store: Option<&Store<'_>>,
     ) -> anyhow::Result<()> {
-        let band = self.rows * self.w as usize * 4;
+        let (w, h) = self.scaled(div);
+        let row = w as usize * 4;
+        assert!(
+            pitch >= row && out.len() == pitch * (h as usize - 1) + row,
+            "motif output does not match the frame"
+        );
+        let chunks: Vec<&mut [u8]> = out.chunks_mut(self.rows / div as usize * pitch).collect();
+        assert_eq!(chunks.len(), self.bands.len(), "a band per output chunk");
+        let put = |pixels: &[u8], rows: &mut [u8]| match store {
+            Some(store) => store(pixels, rows),
+            None => copy_rows(pixels, rows, row, pitch),
+        };
         per_thread(
-            self.bands.iter().zip(rgba.chunks_mut(band)).enumerate(),
+            self.bands.iter().zip(chunks).enumerate(),
             band_threads(),
-            |(i, (payload, pixels))| {
-                // Into exactly its rows: a band that inflates further fails here.
-                let written = zstd::bulk::decompress_to_buffer(payload, pixels)?;
-                anyhow::ensure!(written == pixels.len(), "invalid motif frame length");
-                rows(i * self.rows, pixels);
-                Ok(())
+            |(i, (payload, rows))| {
+                let lines = self.rows.min(self.h as usize - i * self.rows);
+                if div == 1 && store.is_none() && pitch == row {
+                    return inflate(payload, rows);
+                }
+                SCRATCH.with(lines * self.w as usize * 4, |band| {
+                    inflate(payload, band)?;
+                    if div == 1 {
+                        put(band, rows);
+                    } else {
+                        SCRATCH.with(lines.div_ceil(div as usize) * row, |scaled| {
+                            scale_into(band, self.w, lines as u32, div, scaled);
+                            put(scaled, rows);
+                        });
+                    }
+                    Ok(())
+                })
             },
         )?;
         Ok(())
     }
 }
 
-fn decode(bytes: &[u8]) -> anyhow::Result<(u32, u32, Vec<u8>)> {
-    let frame = parse(bytes)?;
-    let mut rgba = vec![0; frame.byte_len()];
-    frame.decode_into(&mut rgba, &|_, _| {})?;
-    Ok((frame.w, frame.h, rgba))
+/// Into exactly `out`: a band that inflates to more or less fails.
+fn inflate(payload: &[u8], out: &mut [u8]) -> anyhow::Result<()> {
+    let written = zstd::bulk::decompress_to_buffer(payload, out)?;
+    anyhow::ensure!(written == out.len(), "invalid motif frame length");
+    Ok(())
 }
 
-/// Decode state one reader reuses frame after frame. A fresh output buffer per
-/// frame costs more than the decompression at 4K: the kernel faults in every page.
-#[derive(Default)]
-pub(crate) struct FrameDecoder {
-    rgba: Vec<u8>,
-}
-
-impl FrameDecoder {
-    /// Reads and verifies `path`, scaled by `div`, and hands its pixels to
-    /// `rows(first_row, pixels)` once `fits(width, height)` accepts the scaled
-    /// size. At `div` 1 each band arrives on a decoding thread as it decodes;
-    /// otherwise the scaled frame arrives whole. Any failure, `fits` included,
-    /// is a miss (`FRAME_ERROR`).
-    pub(crate) fn read_with(
-        &mut self,
-        path: &str,
-        div: u32,
-        fits: impl FnOnce(u32, u32) -> anyhow::Result<()>,
-        rows: &(dyn Fn(usize, &[u8]) + Sync),
-    ) -> anyhow::Result<MotifReadTiming> {
-        anyhow::ensure!(
-            matches!(div, 1 | 2 | 4),
-            "invalid motif scale divisor {div}"
-        );
-        let mut timing = MotifReadTiming::default();
-        from_file(|| {
-            let start = std::time::Instant::now();
-            let bytes = read_file(path)?;
-            timing.read_ms = elapsed_ms(start);
-            let start = std::time::Instant::now();
-            let frame = parse(&bytes)?;
-            self.rgba.resize(frame.byte_len(), 0);
-            if div == 1 {
-                fits(frame.w, frame.h)?;
-                frame.decode_into(&mut self.rgba, rows)?;
-                timing.decode_ms = elapsed_ms(start);
-                return Ok(());
-            }
-            frame.decode_into(&mut self.rgba, &|_, _| {})?;
-            timing.decode_ms = elapsed_ms(start);
-            let start = std::time::Instant::now();
-            let (w, h, scaled) = scale(&self.rgba, frame.w, frame.h, div)?.expect("div is 2 or 4");
-            timing.scale_ms = elapsed_ms(start);
-            fits(w, h)?;
-            rows(0, &scaled);
-            Ok(())
-        })?;
-        Ok(timing)
+fn copy_rows(src: &[u8], dst: &mut [u8], row: usize, pitch: usize) {
+    for (s, d) in src.chunks_exact(row).zip(dst.chunks_mut(pitch)) {
+        d[..row].copy_from_slice(s);
     }
 }
 
-/// Alpha-weighted box downscale of straight RGBA by 1, 2 or 4 (ADR 0154): a
-/// fully transparent texel carries no colour. The output is `ceil(w / div)` ×
-/// `ceil(h / div)`; a partial edge block averages only the texels it covers.
+/// Alpha-weighted box downscale of straight RGBA by 2 or 4 (ADR 0154) into
+/// `out`, `ceil(w / div)` × `ceil(h / div)`: a fully transparent texel carries
+/// no colour, and a partial edge block averages only the texels it covers.
 /// Rounds half up, so every lane produces the same bytes
-/// (`tests/fixtures/motif-downscale-vectors.json`). `div` 1 returns `rgba` as is.
-pub(crate) fn downscale(
-    rgba: Vec<u8>,
-    w: u32,
-    h: u32,
-    div: u32,
-) -> anyhow::Result<(u32, u32, Vec<u8>)> {
-    Ok(scale(&rgba, w, h, div)?.unwrap_or((w, h, rgba)))
-}
-
-/// [`downscale`] without taking the input; `None` when `div` is 1.
-fn scale(rgba: &[u8], w: u32, h: u32, div: u32) -> anyhow::Result<Option<(u32, u32, Vec<u8>)>> {
-    anyhow::ensure!(
-        matches!(div, 1 | 2 | 4),
-        "invalid motif scale divisor {div}"
-    );
-    anyhow::ensure!(
-        rgba.len() == w as usize * h as usize * 4,
-        "invalid motif pixel length"
-    );
-    if div == 1 {
-        return Ok(None);
-    }
-    let (ow, oh) = (w.div_ceil(div), h.div_ceil(div));
+/// (`tests/fixtures/motif-downscale-vectors.json`). Writes every byte of `out`,
+/// which may hold an earlier frame's pixels.
+fn scale_into(rgba: &[u8], w: u32, h: u32, div: u32, out: &mut [u8]) {
+    let (ow, oh) = (w.div_ceil(div) as usize, h.div_ceil(div) as usize);
     let (w, h, d, stride) = (w as usize, h as usize, div as usize, w as usize * 4);
-    let mut out = vec![0u8; ow as usize * oh as usize * 4];
-    for (y, row) in out.chunks_exact_mut(ow as usize * 4).enumerate() {
+    assert!(
+        matches!(div, 2 | 4) && rgba.len() == w * h * 4 && out.len() == ow * oh * 4,
+        "invalid motif downscale"
+    );
+    for (y, row) in out.chunks_exact_mut(ow * 4).enumerate() {
         let lines = &rgba[y * d * stride..((y + 1) * d).min(h) * stride];
         let covered = lines.len() / stride;
         for (x, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
@@ -295,15 +325,10 @@ fn scale(rgba: &[u8], w: u32, h: u32, div: u32) -> anyhow::Result<Option<(u32, u
                     b += u32::from(s[2]) * alpha;
                 }
             }
-            if a != 0 {
-                px[0] = ((2 * r + a) / (2 * a)) as u8;
-                px[1] = ((2 * g + a) / (2 * a)) as u8;
-                px[2] = ((2 * b + a) / (2 * a)) as u8;
-            }
-            px[3] = ((2 * a + n) / (2 * n)) as u8;
+            let colour = |c: u32| if a == 0 { 0 } else { ((2 * c + a) / (2 * a)) as u8 };
+            *px = [colour(r), colour(g), colour(b), ((2 * a + n) / (2 * n)) as u8];
         }
     }
-    Ok(Some((ow, oh, out)))
 }
 
 /// Every failure that comes from the file itself starts with this prefix: the
@@ -320,45 +345,82 @@ fn from_file<T>(read: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
 #[cfg_attr(test, allow(dead_code))] // Host-only wire type; read by `perf.motifs`.
 pub struct MotifReadTiming {
     pub read_ms: f64,
-    /// Decompression, checksums included, and whatever the reader does with
-    /// each band as it decodes.
+    /// Decompression with its checksums, scaling, and whatever the reader does
+    /// with each band as it decodes.
     pub decode_ms: f64,
-    pub scale_ms: f64,
 }
 
 fn elapsed_ms(start: std::time::Instant) -> f64 {
     start.elapsed().as_secs_f64() * 1000.0
 }
 
-/// Read, decompress (verifying) and downscale one frame, timed per stage. An
-/// invalid `div` is the caller's error and is rejected before the file is read.
-pub(crate) fn read_scaled(
+/// Reads and parses `path`, then `decode`s it, timed. An invalid `div` is the
+/// caller's error and is rejected before the file is read; any later failure
+/// is a miss (`FRAME_ERROR`).
+fn read<T>(
     path: &str,
     div: u32,
-) -> anyhow::Result<(u32, u32, Vec<u8>, MotifReadTiming)> {
+    decode: impl FnOnce(&Frame) -> anyhow::Result<T>,
+) -> anyhow::Result<(T, MotifReadTiming)> {
     anyhow::ensure!(
         matches!(div, 1 | 2 | 4),
         "invalid motif scale divisor {div}"
     );
     let mut timing = MotifReadTiming::default();
-    let (w, h, rgba) = from_file(|| {
+    let out = from_file(|| {
         let start = std::time::Instant::now();
         let bytes = read_file(path)?;
         timing.read_ms = elapsed_ms(start);
         let start = std::time::Instant::now();
-        let frame = decode(&bytes)?;
+        let out = decode(&parse(&bytes)?)?;
         timing.decode_ms = elapsed_ms(start);
-        Ok(frame)
+        Ok(out)
     })?;
-    let start = std::time::Instant::now();
-    let (w, h, rgba) = downscale(rgba, w, h, div)?;
-    timing.scale_ms = elapsed_ms(start);
+    Ok((out, timing))
+}
+
+/// Reads, verifies and downscales one frame into a buffer of its own.
+pub(crate) fn read_scaled(
+    path: &str,
+    div: u32,
+) -> anyhow::Result<(u32, u32, Vec<u8>, MotifReadTiming)> {
+    let ((w, h, rgba), timing) = read(path, div, |frame| {
+        let (w, h) = frame.scaled(div);
+        let mut rgba = vec![0; w as usize * h as usize * 4];
+        frame.decode_into(div, &mut rgba, w as usize * 4, None)?;
+        Ok((w, h, rgba))
+    })?;
     Ok((w, h, rgba, timing))
+}
+
+/// Reads, verifies and downscales one frame into `out`, rows `pitch` bytes
+/// apart, each band through `store`. A frame that is not `size` once scaled is
+/// a miss.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn read_into(
+    path: &str,
+    div: u32,
+    size: (u32, u32),
+    out: &mut [u8],
+    pitch: usize,
+    store: &Store<'_>,
+) -> anyhow::Result<MotifReadTiming> {
+    let ((), timing) = read(path, div, |frame| {
+        let (w, h) = frame.scaled(div);
+        anyhow::ensure!(
+            (w, h) == size,
+            "scaled frame {w}x{h} does not fit {}x{}",
+            size.0,
+            size.1
+        );
+        frame.decode_into(div, out, pitch, Some(store))
+    })?;
+    Ok(timing)
 }
 
 fn read_file(path: &str) -> anyhow::Result<Vec<u8>> {
     // Each band adds a length field and its own zstd frame header and checksum.
-    let limit = HEADER + 4 + zstd::zstd_safe::compress_bound(MAX_BYTES) + MAX_BANDS as usize * 64;
+    let limit = HEADER + 4 + zstd::zstd_safe::compress_bound(MAX_BYTES) + BANDS as usize * 64;
     let file = std::fs::File::open(path)?;
     anyhow::ensure!(
         file.metadata()?.len() <= limit as u64,
@@ -428,6 +490,20 @@ mod tests {
         (0..4096).map(|i| ((i * multiplier) % 256) as u8).collect()
     }
 
+    /// `w`×`h` texels of noise, every fifth one fully transparent with colour.
+    fn noise(w: u32, h: u32, seed: u32) -> Vec<u8> {
+        let mut state = seed.wrapping_mul(2654435761) | 1;
+        (0..w * h)
+            .flat_map(|i| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                let [r, g, b, a] = state.to_le_bytes();
+                [r, g, b, if i % 5 == 0 { 0 } else { a }]
+            })
+            .collect()
+    }
+
     /// A file of `w`×`h` holding these zstd frames as its bands.
     fn with_bands(w: u32, h: u32, bands: &[Vec<u8>]) -> Vec<u8> {
         let mut out = MAGIC.to_vec();
@@ -448,6 +524,30 @@ mod tests {
         zstd.compress(pixels).unwrap()
     }
 
+    fn decode(bytes: &[u8]) -> anyhow::Result<(u32, u32, Vec<u8>)> {
+        let frame = parse(bytes)?;
+        let mut rgba = vec![0; frame.w as usize * frame.h as usize * 4];
+        frame.decode_into(1, &mut rgba, frame.w as usize * 4, None)?;
+        Ok((frame.w, frame.h, rgba))
+    }
+
+    /// The whole frame scaled at once: what every band-wise read must equal.
+    fn downscale(rgba: Vec<u8>, w: u32, h: u32, div: u32) -> (u32, u32, Vec<u8>) {
+        if div == 1 {
+            return (w, h, rgba);
+        }
+        let (ow, oh) = (w.div_ceil(div), h.div_ceil(div));
+        let mut out = vec![0; ow as usize * oh as usize * 4];
+        scale_into(&rgba, w, h, div, &mut out);
+        (ow, oh, out)
+    }
+
+    fn write_frame(dir: &std::path::Path, bytes: &[u8]) -> String {
+        let path = dir.join("0.wfrm");
+        std::fs::write(&path, bytes).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
     #[test]
     fn preserves_every_alpha_and_rgb_byte_behind_a_checksum() {
         let pixels = pattern(73);
@@ -459,6 +559,17 @@ mod tests {
             assert_ne!(band[4] & 0x04, 0, "content checksum flag");
         }
         assert_eq!(decode(&bytes).unwrap(), (32, 32, pixels));
+    }
+
+    #[test]
+    fn bands_are_whole_scale_blocks_and_at_most_eight() {
+        assert_eq!((band_rows(2160), 2160u32.div_ceil(band_rows(2160))), (272, 8));
+        assert_eq!((band_rows(1080), 1080u32.div_ceil(band_rows(1080))), (136, 8));
+        for h in 1..=600 {
+            let (rows, count) = (band_rows(h), h.div_ceil(band_rows(h)));
+            assert!(rows % 4 == 0 && (1..=BANDS).contains(&count), "{h}");
+            assert!((count - 1) * rows < h, "{h}: no empty band");
+        }
     }
 
     #[test]
@@ -482,26 +593,25 @@ mod tests {
     }
 
     #[test]
-    fn a_frame_shorter_than_the_band_count_has_a_band_per_row() {
-        let pixels = pattern(5)[..48].to_vec();
-        let bytes = encode(4, 3, &pixels).unwrap();
-        assert_eq!(parse(&bytes).unwrap().bands.len(), 3);
-        assert_eq!(decode(&bytes).unwrap(), (4, 3, pixels));
-    }
-
-    #[test]
-    fn rejects_band_counts_that_leave_a_band_empty_and_trailing_bytes() {
-        let rows = |n: usize| pattern(9)[..n * 8].to_vec();
-        // 9 rows: 8 bands would need 2 rows each, so only 5 bands exist.
-        let five: Vec<_> = (0..5)
-            .map(|i| checked(&rows(if i < 4 { 2 } else { 1 })))
-            .collect();
-        assert!(decode(&with_bands(2, 9, &five)).is_ok());
-        let mut eight = five.clone();
-        eight.extend((0..3).map(|_| checked(&[])));
-        assert!(decode(&with_bands(2, 9, &eight)).is_err());
+    fn rejects_band_counts_other_than_the_rows_imply_and_trailing_bytes() {
+        // 9 rows of 2 texels: bands of 4, 4 and 1 rows.
+        let image = pattern(9)[..9 * 8].to_vec();
+        let split = |rows: &[usize]| -> Vec<Vec<u8>> {
+            let mut at = 0;
+            rows.iter()
+                .map(|&n| {
+                    at += n * 8;
+                    checked(&image[at - n * 8..at])
+                })
+                .collect()
+        };
+        let three = split(&[4, 4, 1]);
+        assert_eq!(decode(&with_bands(2, 9, &three)).unwrap().2, image);
+        let five = split(&[2, 2, 2, 2, 1]);
+        assert!(decode(&with_bands(2, 9, &five)).is_err());
+        assert!(decode(&with_bands(2, 9, &three[..2])).is_err());
         assert!(decode(&with_bands(2, 9, &[])).is_err());
-        let mut trailing = with_bands(2, 9, &five);
+        let mut trailing = with_bands(2, 9, &three);
         trailing.push(0);
         assert!(decode(&trailing).is_err());
     }
@@ -522,12 +632,12 @@ mod tests {
     #[test]
     fn rejects_a_frame_without_a_checksum_or_in_a_former_format() {
         let pixels = pattern(31);
-        let bare = with_bands(32, 32, &[zstd::bulk::compress(&pixels, 1).unwrap()]);
+        let bare = with_bands(32, 4, &[zstd::bulk::compress(&pixels[..512], 1).unwrap()]);
         assert!(decode(&bare)
             .unwrap_err()
             .to_string()
             .contains("no checksum"));
-        assert!(decode(&with_bands(32, 32, &[checked(&pixels)])).is_ok());
+        assert!(decode(&with_bands(32, 4, &[checked(&pixels[..512])])).is_ok());
         let mut former = encode(32, 32, &pixels).unwrap();
         former[..8].copy_from_slice(b"WCMFRM01");
         assert!(decode(&former).is_err());
@@ -540,18 +650,26 @@ mod tests {
     }
 
     #[test]
+    fn rejects_corruption_truncation_and_unbounded_dimensions() {
+        let bytes = encode(2, 2, &[23; 16]).unwrap();
+        for length in 0..bytes.len() {
+            assert!(decode(&bytes[..length]).is_err());
+        }
+        let mut corrupt = bytes;
+        corrupt[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(decode(&corrupt).is_err());
+    }
+
+    #[test]
     fn downscale_weights_colour_by_alpha_and_rounds_half_up() {
         // One 2×2 block: opaque red, transparent white, half-alpha blue, opaque green.
         let block = vec![
             255, 0, 0, 255, 255, 255, 255, 0, 0, 0, 255, 128, 0, 255, 0, 255,
         ];
         // r = 255·255 / 638, g = 255·255 / 638, b = 255·128 / 638, a = 638 / 4.
+        assert_eq!(downscale(block, 2, 2, 2), (1, 1, vec![102, 102, 51, 160]));
         assert_eq!(
-            downscale(block, 2, 2, 2).unwrap(),
-            (1, 1, vec![102, 102, 51, 160])
-        );
-        assert_eq!(
-            downscale([9, 9, 9, 0].repeat(16), 4, 4, 4).unwrap(),
+            downscale([9, 9, 9, 0].repeat(16), 4, 4, 4),
             (1, 1, vec![0, 0, 0, 0])
         );
     }
@@ -565,7 +683,7 @@ mod tests {
             .collect();
         let grey = |v: u8| [v, v, v, 255];
         assert_eq!(
-            downscale(image, 3, 3, 2).unwrap(),
+            downscale(image, 3, 3, 2),
             (2, 2, [grey(30), grey(46), grey(76), grey(90)].concat())
         );
         // 5×3 at div 4: the right block covers one column of three texels, so
@@ -577,34 +695,13 @@ mod tests {
             })
             .collect();
         assert_eq!(
-            downscale(image, 5, 3, 4).unwrap(),
+            downscale(image, 5, 3, 4),
             (2, 1, vec![0, 0, 0, 0, 200, 200, 200, 20])
         );
     }
 
     #[test]
-    fn downscale_by_one_returns_the_same_buffer() {
-        let pixels: Vec<u8> = (0..24).collect();
-        let address = pixels.as_ptr();
-        let (w, h, out) = downscale(pixels, 3, 2, 1).unwrap();
-        assert_eq!((w, h, out.as_ptr()), (3, 2, address));
-        assert_eq!(out, (0..24).collect::<Vec<u8>>());
-    }
-
-    #[test]
-    fn downscale_rejects_other_divisors_and_wrong_lengths() {
-        for div in [0, 3, 8] {
-            assert!(downscale(vec![0; 64], 4, 4, div).is_err());
-            assert!(read_scaled("absent.wfrm", div)
-                .unwrap_err()
-                .to_string()
-                .starts_with("invalid motif scale divisor"));
-        }
-        assert!(downscale(vec![0; 60], 4, 4, 2).is_err());
-    }
-
-    #[test]
-    fn downscale_matches_the_shared_reference_vectors() {
+    fn downscale_matches_the_shared_reference_vectors_whole_and_from_a_file() {
         #[derive(serde::Deserialize)]
         struct Expected {
             width: u32,
@@ -630,43 +727,80 @@ mod tests {
         .unwrap();
         assert!(vectors.cases.iter().any(|c| c.div == 2));
         assert!(vectors.cases.iter().any(|c| c.div == 4));
+        let dir = tempfile::tempdir().unwrap();
         for case in vectors.cases {
-            let got = downscale(case.rgba, case.width, case.height, case.div).unwrap();
+            let path = write_frame(
+                dir.path(),
+                &encode(case.width, case.height, &case.rgba).unwrap(),
+            );
             let want = (
                 case.expected.width,
                 case.expected.height,
                 case.expected.rgba,
             );
+            let (w, h, rgba, _) = read_scaled(&path, case.div).unwrap();
+            assert_eq!((w, h, rgba), want, "{} from a file", case.name);
+            let got = downscale(case.rgba, case.width, case.height, case.div);
             assert_eq!(got, want, "{}", case.name);
         }
     }
 
-    fn write_frame(dir: &std::path::Path, bytes: &[u8]) -> String {
-        let path = dir.join("0.wfrm");
-        std::fs::write(&path, bytes).unwrap();
-        path.to_string_lossy().into_owned()
+    #[test]
+    fn band_by_band_scaling_matches_the_whole_frame() {
+        let dir = tempfile::tempdir().unwrap();
+        // Heights around band and block edges; widths with partial blocks.
+        for (w, h) in [(5, 1), (3, 7), (7, 9), (6, 33), (17, 70), (9, 135), (31, 271)] {
+            let pixels = noise(w, h, w * 1000 + h);
+            let path = write_frame(dir.path(), &encode(w, h, &pixels).unwrap());
+            for div in [1, 2, 4] {
+                let (sw, sh, rgba, _) = read_scaled(&path, div).unwrap();
+                assert_eq!(
+                    (sw, sh, rgba),
+                    downscale(pixels.clone(), w, h, div),
+                    "{w}x{h} div {div}"
+                );
+            }
+        }
     }
 
     #[test]
-    fn file_failures_are_rejected_before_scaling_with_the_frame_prefix() {
+    fn invalid_divisors_are_the_callers_error() {
+        for div in [0, 3, 8] {
+            let mut out = [0; 4];
+            for error in [
+                read_scaled("absent.wfrm", div).map(|_| ()),
+                read_into("absent.wfrm", div, (1, 1), &mut out, 4, &|_, _| {}).map(|_| ()),
+            ] {
+                assert!(error
+                    .unwrap_err()
+                    .to_string()
+                    .starts_with("invalid motif scale divisor"));
+            }
+        }
+    }
+
+    #[test]
+    fn file_failures_are_misses_with_the_frame_prefix() {
         let dir = tempfile::tempdir().unwrap();
         let pixels = pattern(73);
         let mut bytes = encode(32, 32, &pixels).unwrap();
         let path = write_frame(dir.path(), &bytes);
         assert_eq!(read_scaled(&path, 1).unwrap().2, pixels);
-        for div in [2, 4] {
-            let (w, h, rgba, _) = read_scaled(&path, div).unwrap();
-            assert_eq!(
-                (w, h, rgba),
-                downscale(pixels.clone(), 32, 32, div).unwrap()
-            );
-        }
+        // The last byte belongs to the last band's checksum.
         let last = bytes.len() - 1;
         bytes[last] ^= 1;
         let path = write_frame(dir.path(), &bytes);
+        let mut out = vec![0; 32 * 32 * 4];
         for div in [1, 2, 4] {
-            let error = read_scaled(&path, div).unwrap_err().to_string();
-            assert!(error.starts_with(FRAME_ERROR), "{error}");
+            let (w, h) = (32 / div, 32 / div);
+            let out = &mut out[..(w * h * 4) as usize];
+            for error in [
+                read_scaled(&path, div).map(|_| ()),
+                read_into(&path, div, (w, h), out, w as usize * 4, &|_, _| {}).map(|_| ()),
+            ] {
+                let error = error.unwrap_err().to_string();
+                assert!(error.starts_with(FRAME_ERROR), "{error}");
+            }
         }
         let path = write_frame(dir.path(), &bytes[..(HEADER + bytes.len()) / 2]);
         assert!(read_scaled(&path, 2)
@@ -678,57 +812,38 @@ mod tests {
         assert!(error.to_string().starts_with(FRAME_ERROR), "{error}");
     }
 
-    #[test]
-    fn rejects_corruption_truncation_and_unbounded_dimensions() {
-        let bytes = encode(2, 2, &[23; 16]).unwrap();
-        for length in 0..bytes.len() {
-            assert!(decode(&bytes[..length]).is_err());
+    /// Reads through `read_into` into rows `pitch` bytes apart, padding marked,
+    /// and returns the packed rows after checking the padding was not touched.
+    fn read_padded(path: &str, div: u32, (w, h): (u32, u32)) -> anyhow::Result<Vec<u8>> {
+        let row = w as usize * 4;
+        let pitch = row + 12;
+        let mut out = vec![0xA5; pitch * (h as usize - 1) + row];
+        read_into(path, div, (w, h), &mut out, pitch, &|src, dst| {
+            copy_rows(src, dst, row, pitch)
+        })?;
+        for line in out.chunks(pitch) {
+            assert!(line[row..].iter().all(|&b| b == 0xA5), "padding written");
         }
-        let mut corrupt = bytes;
-        corrupt[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
-        assert!(decode(&corrupt).is_err());
-    }
-
-    /// Collects what `read_with` hands over, checking it arrives within the frame.
-    fn read_with(
-        decoder: &mut FrameDecoder,
-        path: &str,
-        div: u32,
-    ) -> anyhow::Result<(u32, u32, Vec<u8>)> {
-        let size = std::sync::Mutex::new((0, 0));
-        let out = std::sync::Mutex::new(Vec::new());
-        decoder.read_with(
-            path,
-            div,
-            |w, h| {
-                *size.lock().unwrap() = (w, h);
-                *out.lock().unwrap() = vec![0; w as usize * h as usize * 4];
-                Ok(())
-            },
-            &|first, pixels| {
-                let row = size.lock().unwrap().0 as usize * 4;
-                out.lock().unwrap()[first * row..first * row + pixels.len()]
-                    .copy_from_slice(pixels);
-            },
-        )?;
-        let (w, h) = *size.lock().unwrap();
-        Ok((w, h, out.into_inner().unwrap()))
+        Ok(out.chunks(pitch).flat_map(|line| &line[..row]).copied().collect())
     }
 
     #[test]
-    fn a_reused_decoder_hands_over_what_a_fresh_read_reads() {
+    fn a_read_into_rows_apart_matches_a_read_of_its_own_whatever_came_before() {
         let dir = tempfile::tempdir().unwrap();
-        let mut decoder = FrameDecoder::default();
-        let large = pattern(73);
-        let small: Vec<u8> = pattern(31)[..256].to_vec();
-        // Larger, smaller, larger again: no bytes of an earlier frame survive.
-        for (w, h, pixels) in [(32, 32, &large), (8, 8, &small), (32, 32, &large)] {
-            let path = write_frame(dir.path(), &encode(w, h, pixels).unwrap());
+        // Opaque colour, then transparent noise into the same kept buffers: no
+        // byte of an earlier frame may survive, transparent texels included.
+        let opaque = [200, 100, 50, 255].repeat(37 * 70);
+        for (w, h, pixels) in [
+            (37, 70, opaque),
+            (37, 70, noise(37, 70, 7)),
+            (8, 9, noise(8, 9, 3)),
+        ] {
+            let path = write_frame(dir.path(), &encode(w, h, &pixels).unwrap());
             for div in [1, 2, 4] {
-                let (fw, fh, fresh, _) = read_scaled(&path, div).unwrap();
+                let (sw, sh, fresh, _) = read_scaled(&path, div).unwrap();
                 assert_eq!(
-                    read_with(&mut decoder, &path, div).unwrap(),
-                    (fw, fh, fresh),
+                    read_padded(&path, div, (sw, sh)).unwrap(),
+                    fresh,
                     "{w}x{h} div {div}"
                 );
             }
@@ -736,29 +851,49 @@ mod tests {
     }
 
     #[test]
-    fn a_reused_decoder_rejects_what_a_fresh_read_rejects_and_what_does_not_fit() {
+    fn a_read_into_refuses_a_frame_of_another_size_before_writing() {
         let dir = tempfile::tempdir().unwrap();
-        let mut decoder = FrameDecoder::default();
-        let bytes = encode(32, 32, &pattern(73)).unwrap();
-        let path = write_frame(dir.path(), &bytes);
-        read_with(&mut decoder, &path, 1).unwrap();
-        let refused = decoder
-            .read_with(&path, 2, |_, _| anyhow::bail!("too big"), &|_, _| {
-                panic!("handed over")
-            })
-            .unwrap_err()
-            .to_string();
+        let path = write_frame(dir.path(), &encode(32, 32, &pattern(73)).unwrap());
+        let mut out = vec![0; 16 * 16 * 4];
+        let refused = read_into(&path, 1, (16, 16), &mut out, 16 * 4, &|_, _| {
+            panic!("handed over")
+        })
+        .unwrap_err()
+        .to_string();
         assert!(
-            refused.starts_with(FRAME_ERROR) && refused.ends_with("too big"),
+            refused.starts_with(FRAME_ERROR) && refused.ends_with("does not fit 16x16"),
             "{refused}"
         );
-        // The last byte belongs to the last band's checksum.
-        let mut corrupt = bytes.clone();
-        *corrupt.last_mut().unwrap() ^= 1;
-        for bad in [corrupt, bytes[..bytes.len() - 1].to_vec()] {
-            let path = write_frame(dir.path(), &bad);
-            let error = read_with(&mut decoder, &path, 1).unwrap_err().to_string();
-            assert!(error.starts_with(FRAME_ERROR), "{error}");
-        }
+        assert!(read_into(&path, 2, (16, 16), &mut out, 16 * 4, &|_, _| {}).is_ok());
+    }
+
+    #[test]
+    fn scratch_reuses_the_closest_buffer_and_keeps_at_most_its_limit() {
+        let scratch = Scratch::new(100);
+        let address = scratch.with(60, |b| b.as_ptr());
+        // Shorter fits the kept buffer; longer grows it.
+        assert_eq!(scratch.with(10, |b| (b.len(), b.as_ptr())), (10, address));
+        assert_eq!(scratch.with(80, |b| b.len()), 80);
+        assert_eq!(scratch.kept().iter().map(Vec::len).sum::<usize>(), 80);
+        // Two at once: the second is fresh, and keeping both would pass 100.
+        scratch.with(80, |_| scratch.with(30, |_| ()));
+        let kept: Vec<usize> = scratch.kept().iter().map(Vec::len).collect();
+        assert_eq!(kept, [30]);
+        // The smallest that fits, not the first.
+        scratch.clear();
+        scratch.with(50, |_| scratch.with(20, |_| ()));
+        let mut kept: Vec<(usize, *const u8)> =
+            scratch.kept().iter().map(|b| (b.len(), b.as_ptr())).collect();
+        kept.sort();
+        let [(20, small), (50, large)] = kept[..] else {
+            panic!("{kept:?}")
+        };
+        assert_eq!(scratch.with(10, |b| b.as_ptr()), small);
+        assert_eq!(scratch.with(30, |b| b.as_ptr()), large);
+        // Over the limit alone: used, never kept.
+        scratch.with(500, |b| assert_eq!(b.len(), 500));
+        assert!(scratch.kept().iter().all(|b| b.len() <= 100));
+        scratch.clear();
+        assert!(scratch.kept().is_empty());
     }
 }

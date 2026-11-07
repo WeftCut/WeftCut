@@ -39,7 +39,10 @@ commit, not the compositor's raster.
   which is the frame's only content check. Bands encode and decode in parallel:
   one zstd frame cannot, and at 4K it was the read's largest stage. Threads
   per frame stay few, because three lanes decode at once beside playback. A
-  band without the checksum flag, or a frame in another layout, is a miss. Files are independent and atomically replaced.
+  band's rows are a multiple of 4, so a read scales each band by 2 or 4 on its
+  own and never holds a whole decoded frame; the band buffers it reuses are
+  shared by every reader and bounded. A band without the checksum flag, or a
+  frame in another layout, is a miss. Files are independent and atomically replaced.
   Older caches are not read or migrated: the key namespace moves.
 - **Windows moves pixels as persistent D3D11 textures.** The core addon (not
   the optional FFmpeg component) owns bounded pools; handles are shared once
@@ -47,7 +50,8 @@ commit, not the compositor's raster.
   native worker and encode `.wfrm` after the lease (ADR 0158). Straight alpha
   is premultiplied for import, straight into the pool's own staging texture: a
   shared texture cannot be CPU-writable, and the slot's mutex then covers one
-  GPU copy. The copy completes before the slot is released; leaving the order
+  GPU copy. Only a pool that reads stored frames has one, and its budget
+  counts it like the slot. The copy completes before the slot is released; leaving the order
   to the keyed mutex alone moves that wait into the consumer's read barrier.
 - **A consumer completes the GPU read before acknowledging a slot**; a failed
   or timed-out consumer retires the texture instead of permitting reuse.
@@ -63,7 +67,7 @@ commit, not the compositor's raster.
 
 ## Consequences
 
-- The cache key namespace (`surface-v5`) discards frames baked before the
+- The cache key namespace (`surface-v6`) discards frames baked before the
   surface fence, the canvas policy and the current layout; collection deletes
   their directories unread. Projects re-bake once after a layout change.
 - One readback per navigation, size change and GPU restart.

@@ -1,7 +1,7 @@
 import type { MotifReaderDiv, MotifReadTiming } from './readerProtocol'
 
 /** Native stage times of one texture-lane read, in milliseconds. */
-export interface MotifUploadTiming { read: MotifReadTiming; premultiplyMs: number; acquireMs: number; gpuMs: number }
+export interface MotifUploadTiming { read: MotifReadTiming; mapMs: number; acquireMs: number; gpuMs: number }
 
 /** `timing` is present when the texture was read from the frame cache. */
 export type MotifTextureFrame = { kind: 'texture'; key: string; token: string; timing?: MotifUploadTiming }

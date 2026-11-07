@@ -4,7 +4,7 @@ import type { MotifTextureRead } from './frameTransport';
 import type { MotifReaderWorkerIn, MotifReaderWorkerOut } from './motifReaderWorker';
 import type { MotifReadRequest } from '../../../shared/motifs/readerProtocol';
 
-const timing = { readMs: 1, decodeMs: 2, scaleMs: 4 };
+const timing = { readMs: 1, decodeMs: 2 };
 function bitmap() { return { width: 2, height: 2, close: vi.fn() } as unknown as ImageBitmap; }
 const flush = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
 
@@ -66,7 +66,7 @@ describe('MotifFrameReader utility lane', () => {
     expect(h.connect).toHaveBeenCalledTimes(1);
     expect(h.reader.stats).toMatchObject({
       reads: { texture: 0, utility: 2 }, misses: 1, fallbacks: 0, transportFailures: 0, restarts: 0,
-      stages: { readMs: 1, decodeMs: 2, scaleMs: 4, bitmapMs: 5, importMs: null, uploadMs: null },
+      stages: { readMs: 1, decodeMs: 2, bitmapMs: 5, importMs: null, uploadMs: null },
     });
   });
 
@@ -232,7 +232,7 @@ describe('MotifFrameReader texture lane', () => {
     const frame = bitmap();
     h.readTexture.mockResolvedValueOnce({
       bitmap: frame, importMs: 2,
-      timing: { read: timing, premultiplyMs: 1, acquireMs: 1, gpuMs: 1 },
+      timing: { read: timing, mapMs: 1, acquireMs: 1, gpuMs: 1 },
     });
     await expect(h.reader.read('key', 7, 4, { finalizationToken: 'fin' })).resolves.toBe(frame);
     expect(h.readTexture).toHaveBeenCalledWith(expect.objectContaining({ frame: 7, div: 4, finalizationToken: 'fin' }));

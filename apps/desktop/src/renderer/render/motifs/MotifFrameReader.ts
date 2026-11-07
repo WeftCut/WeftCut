@@ -17,8 +17,8 @@ const STAGE_WINDOW = 64;
 
 /** Native stages, then the texture lane's upload and import or the utility
  * lane's worker bitmap. */
-export type MotifReaderStage = 'readMs' | 'decodeMs' | 'scaleMs' | 'uploadMs' | 'importMs' | 'bitmapMs';
-const STAGES: readonly MotifReaderStage[] = ['readMs', 'decodeMs', 'scaleMs', 'uploadMs', 'importMs', 'bitmapMs'];
+export type MotifReaderStage = 'readMs' | 'decodeMs' | 'uploadMs' | 'importMs' | 'bitmapMs';
+const STAGES: readonly MotifReaderStage[] = ['readMs', 'decodeMs', 'uploadMs', 'importMs', 'bitmapMs'];
 
 export interface MotifReaderStats {
   /** Reads each lane answered, misses included. */
@@ -142,8 +142,8 @@ export class MotifFrameReader {
     if (result === null || result === 'unavailable') return result;
     const stages: Stages = {};
     if (result.timing) {
-      const { read, premultiplyMs, acquireMs, gpuMs } = result.timing;
-      Object.assign(stages, read, { uploadMs: premultiplyMs + acquireMs + gpuMs });
+      const { read, mapMs, acquireMs, gpuMs } = result.timing;
+      Object.assign(stages, read, { uploadMs: mapMs + acquireMs + gpuMs });
     }
     if (result.importMs !== undefined) stages.importMs = result.importMs;
     return { bitmap: result.bitmap, stages };

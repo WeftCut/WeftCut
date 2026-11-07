@@ -17,7 +17,10 @@ export interface MotifPool {
   copyTexture(handle: Buffer, slot: number): Promise<void>
   close(): void
 }
-type PoolFactory = (w: number, h: number, bgra: boolean) => MotifPool
+/** An `upload` pool reads stored frames through a staging texture as large as
+ * its slot; a copy pool holds the slot alone. */
+type PoolFactory = (w: number, h: number, bgra: boolean, upload: boolean) => MotifPool
+type PoolUse = 'upload' | 'copy'
 type Session = { finalizationId?: number | undefined; owner: WebContents; key: string; width: number; height: number; pool: MotifPool; imported: SharedTextureImported; busy: boolean }
 const BUDGET_WAIT_MS = 250
 const CONSUMER_CLOSED_MESSAGE = 'Motif consumer closed'
@@ -80,6 +83,21 @@ export class MotifGpuTransport {
     })
   }
 
+  /** Moves an idle session of this shape from another lane to `address`.
+   * Taking it costs nothing; retiring it to make room for a new pool would keep
+   * its memory charged until Chromium releases it, and the lanes would rebuild
+   * each other's pools. */
+  private adopt(prefix: string, address: string): Session | undefined {
+    for (const [key, s] of this.sessions) {
+      if (key.startsWith(prefix) && !s.busy) {
+        this.sessions.delete(key)
+        this.sessions.set(address, s)
+        return s
+      }
+    }
+    return undefined
+  }
+
   private retire(owner: WebContents): void {
     for (const [address, s] of this.sessions) if (s.owner === owner) this.retireSession(address, s)
   }
@@ -117,7 +135,7 @@ export class MotifGpuTransport {
    * read, and the reader falls back to the utility lane (ADR 0154). */
   async read(owner: WebContents, file: string, width: number, height: number, div: MotifReaderDiv, finalizationId?: number): Promise<MotifTextureFrame | MotifReadUnavailable> {
     try {
-      return await this.produce(owner, width, height, 'rgba', pool => pool.uploadFile(file, 0, div), finalizationId)
+      return await this.produce(owner, width, height, 'rgba', 'upload', pool => pool.uploadFile(file, 0, div), finalizationId)
     } catch (error) {
       const message = String((error as Error | undefined)?.message ?? error)
       if (isMotifFrameError(error) || message === CONSUMER_CLOSED_MESSAGE || message === CAPTURE_SUPERSEDED_MESSAGE) throw error
@@ -130,7 +148,7 @@ export class MotifGpuTransport {
     if ((pixelFormat !== 'rgba' && pixelFormat !== 'bgra') || !handle.ntHandle) {
       return Promise.reject(new Error('Unsupported Motif OSR texture'))
     }
-    return this.produce(owner, codedSize.width, codedSize.height, pixelFormat,
+    return this.produce(owner, codedSize.width, codedSize.height, pixelFormat, 'copy',
       pool => pool.copyTexture(handle.ntHandle!, 0), finalizationId)
   }
 
@@ -141,7 +159,7 @@ export class MotifGpuTransport {
     return (sharedResourceAllocationEnabled() ? settings.gpu_buffer_mib : settings.motif_gpu_mib) * MIB
   }
 
-  private async produce(owner: WebContents, width: number, height: number, format: 'rgba' | 'bgra', fill: (pool: MotifPool) => Promise<MotifUploadTiming | void>, finalizationId?: number): Promise<MotifTextureFrame> {
+  private async produce(owner: WebContents, width: number, height: number, format: 'rgba' | 'bgra', use: PoolUse, fill: (pool: MotifPool) => Promise<MotifUploadTiming | void>, finalizationId?: number): Promise<MotifTextureFrame> {
     if (this.unavailable.has(owner)) throw new Error('Motif shared textures unavailable for this renderer')
     const generation = this.generations.get(owner) ?? 0
     let exportOpen = true
@@ -160,15 +178,15 @@ export class MotifGpuTransport {
     // Reuse an idle pool before rotating lanes. Retirement keeps its memory
     // charged until Chromium releases every reference; needless rotation would
     // require a second pool even for a one-frame export plan.
-    const prefix = `${owner.id}:${finalizationId ?? "preview"}:${width}:${height}:${format}:`
+    const prefix = `${owner.id}:${finalizationId ?? "preview"}:${use}:${width}:${height}:${format}:`
     const reusable = this.freeLanes.find(lane => this.sessions.has(`${prefix}${lane}`))
     const lane = await this.acquireLane(reusable)
     const unlock = (): void => this.releaseLane(lane)
     let active: Session | undefined
-    const address = `${owner.id}:${finalizationId ?? "preview"}:${width}:${height}:${format}:${lane}`
+    const address = `${prefix}${lane}`
     try {
       assertOpen()
-      let s = this.sessions.get(address)
+      let s = this.sessions.get(address) ?? this.adopt(prefix, address)
       if (s) { this.sessions.delete(address); this.sessions.set(address, s) }
       if (!s) {
         // Export retains at most one size per idle lane. Its parent reservation
@@ -176,12 +194,16 @@ export class MotifGpuTransport {
         if (finalizationId !== undefined) {
           for (const [key, old] of this.sessions) if (old.finalizationId === finalizationId && !old.busy) this.retireSession(key, old);
         }
-        const bytes = width * height * 4
+        // The staging texture counts like the slot.
+        const bytes = width * height * 4 * (use === 'upload' ? 2 : 1)
         if (!Number.isSafeInteger(bytes) || width <= 0 || height <= 0 || bytes > this.textureBudgetBytes()) throw new Error('Motif GPU budget exhausted')
         const deadline = performance.now() + BUDGET_WAIT_MS
         let bufferLease: GpuBufferLease | null = null
         for (;;) {
           assertOpen()
+          // A session of this shape finishing its read serves this one too.
+          s = this.adopt(prefix, address)
+          if (s) break
           let capacityError: unknown
           for (const [key, old] of this.sessions) {
             const global = this.buffers.snapshot()
@@ -203,8 +225,10 @@ export class MotifGpuTransport {
           }
           // Retired imports can outlive their document. Keep their pools alive,
           // but let the caller use another lane instead of wedging every GPU lane.
-          // Once stalled, new allocations fail promptly until references free.
-          if (this.budgetStalled || performance.now() >= deadline) {
+          // Once stalled, new allocations fail promptly until references free,
+          // unless a pool of this shape will come free when its read is acked.
+          const sibling = [...this.sessions.keys()].some(key => key.startsWith(prefix))
+          if ((this.budgetStalled && !sibling) || performance.now() >= deadline) {
             // Preserve hard admission failures: never turn them into a PNG
             // retry that bypasses the export's resource plan.
             if (capacityError) throw capacityError
@@ -213,46 +237,48 @@ export class MotifGpuTransport {
           }
           await this.waitForBudget(deadline)
         }
-        // Reserve before awaiting the global import queue: another lane must
-        // account for allocations whose import has not completed yet.
-        this.allocatedBytes += bytes
-        this.allocatedSessions++
-        const releaseBudget = (): void => {
-          this.buffers.release(bufferLease)
-          this.allocatedBytes -= bytes
-          this.allocatedSessions--
-          this.budgetStalled = false
-          this.budgetChanged()
-        }
-        s = await withSharedTextureQueue(async () => {
-          try { assertOpen() } catch (error) { releaseBudget(); throw error }
-          let pool: MotifPool
-          try { pool = this.createPool(width, height, format === 'bgra') }
-          catch (error) { releaseBudget(); this.unavailable.add(owner); throw error }
-          const key = `motif-${randomUUID()}`
-          let imported: SharedTextureImported | undefined
-          try {
-            imported = sharedTexture.importSharedTexture({
-              textureInfo: {
-                codedSize: { width, height }, pixelFormat: format,
-                colorSpace: { primaries: 'bt709', transfer: 'srgb', matrix: 'rgb', range: 'full' },
-                handle: { ntHandle: pool.handles()[0]! },
-              },
-              allReferencesReleased: () => { try { pool.close() } finally { releaseBudget() } },
-            })
-            owner.send('evt:previewGpu:slot', { streamId: key, slot: 0 })
-            await sharedTexture.sendSharedTexture({ frame: owner.mainFrame, importedSharedTexture: imported })
-            assertOpen()
-            return { finalizationId, owner, key, width, height, pool, imported, busy: true }
-          } catch (error) {
-            if ((this.generations.get(owner) ?? 0) === generation) this.unavailable.add(owner)
-            this.notifyRetired(owner, key)
-            if (imported) imported.release()
-            else { try { pool.close() } finally { releaseBudget() } }
-            throw error
+        if (!s) {
+          // Reserve before awaiting the global import queue: another lane must
+          // account for allocations whose import has not completed yet.
+          this.allocatedBytes += bytes
+          this.allocatedSessions++
+          const releaseBudget = (): void => {
+            this.buffers.release(bufferLease)
+            this.allocatedBytes -= bytes
+            this.allocatedSessions--
+            this.budgetStalled = false
+            this.budgetChanged()
           }
-        })
-        this.sessions.set(address, s)
+          s = await withSharedTextureQueue(async () => {
+            try { assertOpen() } catch (error) { releaseBudget(); throw error }
+            let pool: MotifPool
+            try { pool = this.createPool(width, height, format === 'bgra', use === 'upload') }
+            catch (error) { releaseBudget(); this.unavailable.add(owner); throw error }
+            const key = `motif-${randomUUID()}`
+            let imported: SharedTextureImported | undefined
+            try {
+              imported = sharedTexture.importSharedTexture({
+                textureInfo: {
+                  codedSize: { width, height }, pixelFormat: format,
+                  colorSpace: { primaries: 'bt709', transfer: 'srgb', matrix: 'rgb', range: 'full' },
+                  handle: { ntHandle: pool.handles()[0]! },
+                },
+                allReferencesReleased: () => { try { pool.close() } finally { releaseBudget() } },
+              })
+              owner.send('evt:previewGpu:slot', { streamId: key, slot: 0 })
+              await sharedTexture.sendSharedTexture({ frame: owner.mainFrame, importedSharedTexture: imported })
+              assertOpen()
+              return { finalizationId, owner, key, width, height, pool, imported, busy: true }
+            } catch (error) {
+              if ((this.generations.get(owner) ?? 0) === generation) this.unavailable.add(owner)
+              this.notifyRetired(owner, key)
+              if (imported) imported.release()
+              else { try { pool.close() } finally { releaseBudget() } }
+              throw error
+            }
+          })
+          this.sessions.set(address, s)
+        }
       }
       active = s
       s.busy = true
