@@ -13,7 +13,6 @@ export function newDraftSource(name: string): { manifest: MotifManifest; html: s
     size: [1280, 320],
     default_duration_s: 5,
     content_duration_s: 0.6,
-    settle_rafs: 1,
     props_schema: {
       title: { type: "string", default: name, max_length: 60 },
       accent: { type: "color", default: "#2266ff" },

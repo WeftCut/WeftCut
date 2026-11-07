@@ -14,7 +14,7 @@ vi.mock('./frameTransport', async importOriginal => ({
 }));
 
 const bitmap = () => ({ width: 1, height: 1, close: vi.fn() }) as unknown as ImageBitmap;
-const motif = { manifest: { id: 'long', size: [1, 1], settle_rafs: 2 } } as unknown as Parameters<typeof resolveMotifFrame>[0];
+const motif = { manifest: { id: 'long', size: [1, 1] } } as unknown as Parameters<typeof resolveMotifFrame>[0];
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 let cleanup: (() => void)[];
 
@@ -100,7 +100,7 @@ it('foreground demand promotes a waiting main-owned frame and still shares one c
   const foreground = resolveMotifFrame(motif, 'long', 0, 0, 20, {}, 'sprite', 60, 1);
   await settle();
   expect(captureMotifFrameResult).toHaveBeenCalledOnce();
-  expect(vi.mocked(captureMotifFrameResult).mock.calls[0]![9].high).toBe(true);
+  expect(vi.mocked(captureMotifFrameResult).mock.calls[0]![8].high).toBe(true);
   cleanup.at(-1)!();
   (await foreground).bitmap.close();
   await settle();
@@ -182,7 +182,7 @@ it('reads saved frames at the preview divisor and captures holes at full size', 
   expect(read).toHaveBeenCalledExactlyOnceWith('long', 0, 4);
   expect([saved.scaleDiv, hole.scaleDiv]).toEqual([4, 'live']);
   // A capture's `stored` reply is read at the same divisor.
-  expect(vi.mocked(captureMotifFrameResult).mock.calls[0]![9].scaleDiv).toBe(4);
+  expect(vi.mocked(captureMotifFrameResult).mock.calls[0]![8].scaleDiv).toBe(4);
 });
 
 it('missing frames release disk capacity and use only one capture slot', async () => {
@@ -273,7 +273,7 @@ it('a project reset fences work waiting for inventory restoration', async () => 
 it('retiring prewarm demand does not cancel the foreground subscriber sharing its capture', async () => {
   const h = warm();
   await settle();
-  expect(vi.mocked(captureMotifFrameResult).mock.calls[0]![9].high).toBe(false);
+  expect(vi.mocked(captureMotifFrameResult).mock.calls[0]![8].high).toBe(false);
   const finish = cleanup.at(-1)!;
   const foreground = resolveMotifFrame(motif, 'long', 0, 0, 20, {}, 'sprite', 60, 1);
   h.prewarmer.setTargets([]);

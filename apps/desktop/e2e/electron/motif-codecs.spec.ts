@@ -84,7 +84,7 @@ test('Motif compressed models: Draco, ETC1S and UASTC render, seek and rebuild t
       const capture = async (tSec: number, scale = 1) => Buffer.from(await page.evaluate(async args => Array.from(
         await (window as any).api.backend.invoke('motif_capture_frame', args) as Uint8Array), {
         motifId: id, tSec, propsJson: JSON.stringify({ model: './assets/model.glb', speed: 0.5, scale }),
-        width: 128, height: 128, settleRafs: 2, contentHash,
+        width: 128, height: 128, contentHash,
       }))
       const first = await capture(0)
       const pixels = PNG.sync.read(first)
@@ -124,7 +124,7 @@ test('Motif decoder failures report setup errors and a healthy package can rende
         try {
           const png = await (window as any).api.backend.invoke('motif_capture_frame', {
             motifId:id,tSec:0,propsJson:JSON.stringify({model:'./assets/model.glb',scale:1,speed:0.5}),
-            width:128,height:128,settleRafs:2,contentHash:id,
+            width:128,height:128,contentHash:id,
           })
           return {bytes:png.length,error:''}
         } catch (error) { return {bytes:0,error:String(error)} }
@@ -174,7 +174,7 @@ test('Motif local and Blob workers retain offline CSP and deny JS eval', async (
   try {
     const id = await page.evaluate(async path => (await (window as any).api.backend.invoke('open_motif_draft', {source:{kind:'zip',path}})).motif_id, zip)
     await page.evaluate(id => (window as any).api.backend.invoke('motif_capture_frame', {
-      motifId:id,tSec:0,propsJson:'{}',width:64,height:64,settleRafs:2,contentHash:'confinement',
+      motifId:id,tSec:0,propsJson:'{}',width:64,height:64,contentHash:'confinement',
     }), id)
     const results = await app.evaluate(async ({webContents}, id) => {
       const host = webContents.getAllWebContents().find(w=>w.getURL().startsWith('motif://'+id+'/'))!

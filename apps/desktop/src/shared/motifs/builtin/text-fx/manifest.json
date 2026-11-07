@@ -4,7 +4,6 @@
   "version": 1,
   "size": [1920, 1080],
   "default_duration_s": 5.0,
-  "settle_rafs": 1,
   "fonts": [{ "family": "Inter", "file": "Inter.woff2", "weight": 700 }],
   "props_schema": {
     "effect": {

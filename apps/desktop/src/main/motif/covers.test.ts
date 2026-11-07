@@ -17,7 +17,7 @@ beforeEach(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), 'motif-cover-'))
   source = { contentHash: 'package-a', manifest: {
     id: 'badge', name: 'Badge', version: 1, size: [1920, 1080], default_duration_s: 5,
-    content_duration_s: 1, settle_rafs: 3, props_schema: { title: { type: 'string', default: 'Hello' } },
+    content_duration_s: 1, props_schema: { title: { type: 'string', default: 'Hello' } },
   } }
   version = 'runtime-a'
   vi.clearAllMocks()
@@ -32,7 +32,7 @@ describe('Motif covers', () => {
     expect(capture).toHaveBeenCalledOnce()
     expect(capture).toHaveBeenCalledWith({
       motifId: 'badge', contentHash: 'package-a', width: 1920, height: 1080,
-      propsJson: '{"title":"Hello"}', tSec: 1, settleRafs: 3, fpsNum: 30, fpsDen: 1,
+      propsJson: '{"title":"Hello"}', tSec: 1, fpsNum: 30, fpsDen: 1,
     })
     expect(thumbnail).toHaveBeenCalledWith(Buffer.from('full-size-capture'))
     expect(await make().get('badge', 'package-a')).toEqual(png)

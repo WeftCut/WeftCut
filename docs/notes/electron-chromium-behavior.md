@@ -177,12 +177,12 @@ first-after-navigation captures were fully transparent (never stale or
 partial); Windows and Linux never missed. On a blank, paint events after
 `__motifRender`, `capturePage`, a second readback, a 100 ms wait,
 `invalidate` and `stopPainting`/`startPainting` were all blank too;
-`settleRafs` 1 vs 2 and a discarded first readback changed nothing. Only
+waiting one or two extra frames and a discarded first readback changed nothing. Only
 re-rendering recovered (14/14). Sizing the window to the capture with
 `setContentSize` removed every blank (384/384 captures). A verify-and-re-render
 fallback also passed but costs a decode per surface and was rejected. The
 emulation override stays: it pins `deviceScaleFactor` to 1. Not reproduced on a
-Mac outside CI. Gated by `e2e/electron/motif-png-capture.spec.ts` and the
+Mac outside CI. Gated by `e2e/electron/motif-bitmap-capture.spec.ts` and the
 capture-host fake in `main/motif/capture.test.ts`.
 
 ## Platform facts from the 2026-10 full verification runs

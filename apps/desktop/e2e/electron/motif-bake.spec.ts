@@ -19,7 +19,7 @@ const addon = fileURLToPath(new URL('../../native/index.js', import.meta.url))
 
 test('Pre-bake now moves a clip ahead of unfinished background work @serial', async () => {
   test.setTimeout(120_000)
-  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'png' } })
+  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'bitmap' } })
   try {
     await newProject(page, { parentFolder: tmpDir('weftcut-bake-order-'), name: 'Ordered preparation',
       canvas: { width: 64, height: 64, fpsNum: 30, fpsDen: 1 } })
@@ -75,7 +75,7 @@ for (const missingFrame of [null, 7] as const) {
 test(`Motif pre-bake survives a cold app restart and captures only missing frames (${missingFrame ?? 'complete'}) @serial`, async () => {
   test.setTimeout(120_000)
   const userDataDir = tmpDir('weftcut-bake-reopen-user-')
-  let running = await launchApp({ userDataDir, env: { WEFTCUT_MOTIF_CAPTURE: 'png' } })
+  let running = await launchApp({ userDataDir, env: { WEFTCUT_MOTIF_CAPTURE: 'bitmap' } })
   try {
     await newProject(running.page, {
       parentFolder: tmpDir('weftcut-bake-reopen-project-'), name: 'persistent-bake',
@@ -96,7 +96,7 @@ test(`Motif pre-bake survives a cold app restart and captures only missing frame
     ))
     await running.app.close()
     if (missingFrame !== null) await fs.unlink(path.join(baked.hashDir, `${missingFrame}.wfrm`))
-    running = await launchApp({ userDataDir, env: { WEFTCUT_MOTIF_CAPTURE: 'png' } })
+    running = await launchApp({ userDataDir, env: { WEFTCUT_MOTIF_CAPTURE: 'bitmap' } })
     await waitForHook(running.page, 'motifReopenProject')
     // Install before opening the project: the new renderer has no cached or
     // in-flight frame reads yet. Clearing L0 after prewarming is insufficient,
@@ -167,7 +167,7 @@ for (const mode of ['native', 'png', 'readback-failure', 'warm-cache'] as const)
     const needsGpu = mode === 'native' || mode === 'readback-failure'
     test.skip(needsGpu && process.platform !== 'win32', 'D3D11 capture is Windows-only')
     test.setTimeout(120_000)
-    const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: needsGpu ? 'texture' : 'png' } })
+    const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: needsGpu ? 'texture' : 'bitmap' } })
     try {
       if (needsGpu) {
         test.skip(!await supportsMotifSharedTextures(app), 'Chromium cannot share D3D textures; PNG compatibility cases still run')
@@ -333,7 +333,7 @@ test('A live capture stores the same pixels a bake stores at its address, and co
 
 test('Motif background work survives renderer reload and reuses pages across multiple contents @serial', async ({}, testInfo) => {
   test.setTimeout(120_000)
-  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'png' } })
+  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'bitmap' } })
   try {
     await newProject(page, {
       parentFolder: tmpDir('weftcut-bake-many-'), name: 'Many contents',
@@ -389,7 +389,7 @@ test('Motif background work survives renderer reload and reuses pages across mul
 
 test('Motif background preparation resumes automatically after a failed workspace switch in the same generation @serial', async ({}, testInfo) => {
   test.setTimeout(120_000)
-  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'png' } })
+  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'bitmap' } })
   try {
     await newProject(page, {
       parentFolder: tmpDir('weftcut-bake-failed-open-'), name: 'Preparation recovery',

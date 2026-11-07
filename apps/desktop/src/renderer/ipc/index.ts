@@ -3180,9 +3180,6 @@ export interface MotifSummary {
   content_duration_s?: number;
   /// The graphic role a placed layer defaults to; absent = untagged.
   graphic_role?: string | null;
-  /// Number of rAF ticks the capture engine waits for settle before
-  /// snapshotting. Forwarded verbatim from the Rust manifest.
-  settle_rafs?: number;
   status?: "builtin" | "installed" | "draft";
   content_hash?: string;
   /// The installed Motif last published from this retained draft.

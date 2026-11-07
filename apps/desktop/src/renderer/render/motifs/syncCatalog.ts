@@ -12,7 +12,7 @@ export async function syncUserMotifsFromBackend(): Promise<void> {
   try {
     const payload = await ipcListMotifs();
     // The IPC payload is a manifest superset (adds `html`); MotifSummary
-    // declares content_duration_s + settle_rafs, so it structurally satisfies
+    // declares content_duration_s, so it structurally satisfies
     // MotifManifest. The extra `html` field on live wire values is harmless —
     // setUserMotifs only reads manifest fields. Strip nothing.
     setUserMotifs(payload as MotifManifest[]);

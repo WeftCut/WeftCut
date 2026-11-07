@@ -9,9 +9,10 @@ export type MotifTextureFrame = { kind: 'texture'; key: string; token: string; t
  * main sends no pixels. The renderer reads it through its `MotifFrameReader`
  * at its own divisor (ADR 0154). If that read misses, the renderer captures
  * again without `cache`, so a corrupt file cannot loop. */
+/** `pixels`: a bitmap host's picture as straight RGBA, `width × height`. */
 export type StoredMotifFrame = (
   | MotifTextureFrame
-  | { kind: 'png'; bytes: Uint8Array }
+  | { kind: 'pixels'; width: number; height: number; bytes: Uint8Array }
   | { kind: 'stored' }
 ) & { persisted?: boolean }
 

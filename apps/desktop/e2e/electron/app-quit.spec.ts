@@ -46,7 +46,6 @@ test('closing the window quits the app after a Motif has been rendered', async (
         propsJson: '{}',
         width: 320,
         height: 180,
-        settleRafs: 1,
         contentHash: '',
       })) as Uint8Array
       // By signature, not size: a default lower-third is mostly transparent and

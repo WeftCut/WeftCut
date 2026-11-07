@@ -1,15 +1,15 @@
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
-import { PNG_CANVAS_RUNTIME_SOURCE } from './pngCanvasRuntime';
+import { BITMAP_CANVAS_RUNTIME_SOURCE } from './bitmapCanvasRuntime';
 
-describe('PNG capture canvas backing', () => {
+describe('bitmap host canvas backing', () => {
   it('requests CPU 2D storage before creation while preserving authored options and context identity', () => {
     const context = {};
     const get = vi.fn(function (this: unknown, ..._args: unknown[]) { return context; });
     class Canvas { getContext = get; }
     // Real canvases expose getContext on the prototype.
     Object.defineProperty(Canvas.prototype, 'getContext', { value: get, writable: true });
-    runInNewContext(PNG_CANVAS_RUNTIME_SOURCE, { HTMLCanvasElement: Canvas, OffscreenCanvas: Canvas });
+    runInNewContext(BITMAP_CANVAS_RUNTIME_SOURCE, { HTMLCanvasElement: Canvas, OffscreenCanvas: Canvas });
     const canvas = Object.create(Canvas.prototype) as Canvas;
     const options = { alpha: true, colorSpace: 'display-p3', willReadFrequently: false };
     expect(canvas.getContext('2d', options)).toBe(context);
@@ -24,7 +24,7 @@ describe('PNG capture canvas backing', () => {
     const get = vi.fn();
     class Canvas {}
     Object.defineProperty(Canvas.prototype, 'getContext', { value: get, writable: true });
-    runInNewContext(PNG_CANVAS_RUNTIME_SOURCE, { HTMLCanvasElement: Canvas });
+    runInNewContext(BITMAP_CANVAS_RUNTIME_SOURCE, { HTMLCanvasElement: Canvas });
     const canvas = new Canvas() as Canvas & { getContext: typeof get };
     for (const kind of ['webgl', 'webgl2', 'bitmaprenderer']) {
       const options = { alpha: false };

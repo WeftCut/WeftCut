@@ -32,8 +32,8 @@ describe("motifContentHash", () => {
     expect(motifContentHash({ ...m, graphic_role: "logo" }, "<a/>")).not.toBe(motifContentHash(m, "<a/>"));
     expect(motifContentHash({ ...m, graphic_role: null }, "<a/>")).toBe(motifContentHash(m, "<a/>"));
   });
-  it("ignores decoration fields (status/content_hash/target_id/settle_rafs)", () => {
-    const decorated = { ...m, status: "draft", content_hash: "deadbeef", target_id: "y", settle_rafs: 3 } as Manifest;
+  it("ignores decoration fields (status/content_hash/target_id)", () => {
+    const decorated = { ...m, status: "draft", content_hash: "deadbeef", target_id: "y" } as Manifest;
     expect(motifContentHash(decorated, "<a/>")).toBe(motifContentHash(m, "<a/>"));
   });
 });

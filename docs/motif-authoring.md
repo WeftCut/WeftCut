@@ -147,7 +147,8 @@ motif.define({
   it owns, declare animations fresh, and `await` every asset (fonts included —
   see below) before resolving. No state may survive from a previous run.
 - **`frame(t, ctx)`** — optional; called at every seeked time. `t` is content
-  time in **seconds**. Pure-declarative Motifs omit it.
+  time in **seconds**. Pure-declarative Motifs omit it. Captures take the
+  paint carrying the frame's id (marker row), so an author never tunes a wait.
 - **`ctx`** = `{ duration, width, height, fps, frame, random }` — `duration`
   in seconds, `ctx.fps` the composition's frame rate (`ctx.frame` is the
   integer frame index `round(t × ctx.fps)`; `setup` sees t = 0).
@@ -191,11 +192,6 @@ animation — deleting it breaks seeking back to earlier times.
   lowercase letter, then up to 31 lowercase letters, digits or underscores
   (anything else fails validation). A placed layer takes it unless the placing
   call names its own; absent means untagged.
-- **`settle_rafs`** — real browser frames the PNG capture waits after a seek
-  before its screenshot; `{0, 1, 2}`, default `2`. Only built-in Motifs' values
-  take effect today: a user package's manifest island drops the field, and
-  shared-texture capture waits for the frame itself instead. Draw the frame
-  during the seek; write animation that is correct after two frames.
 - **`fonts`** — declares bundled font files; meaningful only for Motifs
   installed as a directory with an `assets/` folder. A single-file
   Motif embeds fonts as `data:` URIs instead.
@@ -331,8 +327,8 @@ The document renders in an offline, isolated capture host. Hard limits:
 Ship the library and any addons locally. Build the scene and `await` loaders in
 `setup`, then calculate transforms from the absolute `t` and call
 `renderer.render(scene, camera)` in `frame(t)`. For example,
-`mesh.rotation.y = t * speed`, never `mesh.rotation.y += speed`. Keep
-`settle_rafs: 2`, use `alpha: true` for transparent overlays, and dispose the old
+`mesh.rotation.y = t * speed`, never `mesh.rotation.y += speed`. Use
+`alpha: true` for transparent overlays, and dispose the old
 renderer/geometries/materials/textures when rebuilding after a props change.
 `GLTFLoader.loadAsync('./assets/model.glb')` and texture loaders read local
 files, including embedded GLB textures materialized as Blob URLs.

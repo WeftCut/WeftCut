@@ -107,7 +107,7 @@ async function eventually<T>(read: () => Promise<T | null | undefined>, message:
 
 const launch = () => launchApp({ env: {
   ELECTRON_RENDERER_URL: '',
-  WEFTCUT_MOTIF_CAPTURE: 'png',
+  WEFTCUT_MOTIF_CAPTURE: 'bitmap',
   WEFTCUT_E2E_MOTIF_READER_HOLD_FRAME: String(HOLD),
 } })
 

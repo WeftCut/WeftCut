@@ -1,8 +1,10 @@
 // `electron` can't load under Vitest, so `BrowserWindow` is stubbed down to what
 // `buildHost` + `hardenWindow` touch, and the CDP `debugger` to canned replies.
-// The fake's behavior flags let each test script the failure it needs (slow
-// screenshot, wedged ready-probe); `opened`/`screenshotCalls` count the side
-// effects under test.
+// The fake paints like an offscreen host: after each render, a paint carrying
+// the frame's id in its marker row, as a shared texture or a bitmap by the
+// host's kind. Behavior flags let each test script the failure it needs (slow
+// render, withheld paint, wedged ready-probe); `opened`/`renderCalls` count the
+// side effects under test.
 import { describe, it, expect, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { PNG } from 'pngjs'
@@ -10,10 +12,8 @@ import { FRAME_MARKER_PIXELS, frameMarkerBits } from '../../shared/motifs/frameM
 
 let opened = 0
 let lastHost: EventEmitter | null = null
-let screenshotCalls = 0
-let lastScreenshotParams: Record<string, unknown> | null = null
-/// When true, screenshots are real PNGs of the window's content size.
-let realShots = false
+/// Whether the last host built takes shared textures (else bitmaps).
+let lastHostTexture = false
 /// The last `__motifRender(tSec, props, meta)` expression sent to the host —
 /// the meta.fps assertions parse the third argument out of it.
 let lastRenderExpr: string | null = null
@@ -21,17 +21,23 @@ let lastRenderExpr: string | null = null
 /// same-lane capture never reaches the page.
 let renderCalls = 0
 /// The URL the fake host last loadURL'd — lets behavior flags key on which
-/// motif page is "loaded" (lane tests) and which motif a screenshot served
+/// motif page is "loaded" (lane tests) and which motif a render served
 /// (priority-order test).
 let currentUrl = 'about:blank'
-/// Motif ids in screenshot order — the priority test asserts a queued keyed
-/// capture runs before a queued keyless one.
-const shotOrder: string[] = []
+/// Motif ids in render order — the priority tests assert a queued keyed
+/// capture renders before a queued keyless one.
+const renderOrder: string[] = []
+/// Page events in order (`load:<motif>`, `render:<frameId>`, `paint:<frameId>`).
+const events: string[] = []
 /// Lanes (`motifId@contentHash`) whose __motifRender throws — a Motif's own
 /// script raising, with the transport otherwise healthy.
 const throwingLanes = new Set<string>()
-/// Upcoming Page.captureScreenshot calls to slow down (occupies the queue).
-let slowScreenshots = 0
+/// Upcoming __motifRender calls to slow down (occupies the queue).
+let slowRenders = 0
+/// Delay before a frame's paint arrives, ms.
+let paintDelayMs = 0
+/// Frame ids whose paint never comes: the compositor skipped them.
+const skippedPaints = new Set<number>()
 /// When true, the waitReady probe (Runtime.evaluate of the __motifRender
 /// typeof check) never settles — a wedged offscreen renderer.
 let hangReadyProbe = false
@@ -45,44 +51,70 @@ let hangFrame = false
 /// The capture host's current content size — the fake paints at it, and a
 /// change models a new compositor surface (see setContentSize).
 let contentSize = { width: 32, height: 16 }
-/// The size the page is emulated at (Emulation.setDeviceMetricsOverride). A
-/// PNG readback while the window and the emulation disagree is BLANK: the
-/// macOS bitmap OSR host's empty first frame of a new document
-/// (docs/notes/electron-chromium-behavior.md).
-let emulatedSize: { width: number; height: number } | null = null
-const BLANK = 'QkxBTks='
+/// Texture handles released by the code under test.
+let released = 0
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /// `${motifId}@${contentHash}` of the page the fake host currently has loaded.
 function currentLane(): string | null {
-  const m = /motif:\/\/([^/]+)\/(?:\.revisions\/[0-9a-f]+\/)?\.weftcut-capture-host\.html\?rows=\d&v=(.*)$/.exec(currentUrl)
+  const m = /motif:\/\/([^/]+)\/(?:\.revisions\/[0-9a-f]+\/)?\.weftcut-capture-host\.html\?v=(.*)$/.exec(currentUrl)
   return m ? `${m[1]}@${decodeURIComponent(m[2]!)}` : null
 }
 
-/// The marker row the fake native reader sees for a paint's handle.
-async function readMarker(handle: Buffer): Promise<Uint8Array> {
-  const id = JSON.parse(handle.toString()) as number | null
+const markerRow = (id: number | null) => {
   const rgba = new Uint8Array(FRAME_MARKER_PIXELS * 4)
   if (id !== null) frameMarkerBits(id).forEach((bit, i) => rgba.set(bit ? [255, 255, 255, 255] : [0, 0, 0, 255], i * 4))
   return rgba
 }
 
+/// The marker row the fake native reader sees for a paint's handle.
+async function readMarker(handle: Buffer): Promise<Uint8Array> {
+  return markerRow((JSON.parse(handle.toString()) as { id: number | null }).id)
+}
+
+/// A bitmap host's paint: `surface` names the picture, the last row the id.
+/// The picture's PNG is the bytes `PNG` (`UE5H` in base64).
+function bitmap(id: number | null, surface: number, size: { width: number; height: number }) {
+  const picture = (width: number, height: number): any => ({
+    surface, size: { width, height },
+    toPNG: () => Buffer.from('PNG'),
+    resize: (to: { width: number; height: number }) => picture(to.width, to.height),
+  })
+  return {
+    isEmpty: () => false,
+    getSize: () => ({ ...size }),
+    crop: (rect: { x: number; y: number; width: number; height: number }) => rect.height === 1 && rect.y === size.height - 1
+      ? { toBitmap: () => Buffer.from(markerRow(id)) }
+      : picture(rect.width, rect.height),
+  }
+}
+
 vi.mock('electron', () => {
   class FakeBrowserWindow {
+    texture: boolean
     webContents = Object.assign(new EventEmitter(), {
       setZoomFactor: () => {},
+      setFrameRate: () => {},
       stopPainting: () => {},
       startPainting: () => {},
       paintFrame: (frameId: number, surface: number) => {
         const paints = freshSurface ? [{ id: null, surface: -1 }, { id: frameId, surface }] : [{ id: frameId, surface }]
         freshSurface = false
-        queueMicrotask(() => {
-          for (const p of paints) this.webContents.emit('paint', { texture: {
-            textureInfo: { codedSize: { ...contentSize }, handle: { ntHandle: Buffer.from(JSON.stringify(p.id)) } },
-            surface: p.surface, release: () => {},
-          } })
-        })
+        const size = { ...contentSize }
+        const emit = () => {
+          for (const p of paints) {
+            if (p.id !== null && skippedPaints.delete(p.id)) continue
+            if (p.id !== null) events.push(`paint:${p.id}`)
+            if (this.texture) this.webContents.emit('paint', { texture: {
+              textureInfo: { codedSize: size, pixelFormat: 'bgra', handle: { ntHandle: Buffer.from(JSON.stringify({ id: p.id, surface: p.surface })) } },
+              surface: p.surface, release: () => { released++ },
+            } }, {}, null)
+            else this.webContents.emit('paint', {}, {}, bitmap(p.id, p.surface, size))
+          }
+        }
+        if (paintDelayMs) setTimeout(emit, paintDelayMs)
+        else queueMicrotask(emit)
       },
       setWindowOpenHandler: () => {},
       debugger: {
@@ -90,23 +122,7 @@ vi.mock('electron', () => {
         detach: () => {},
         sendCommand: (method: string, params?: { expression?: string }) => {
           if (method === hungCommand) return new Promise(() => {})
-          if (method === 'Page.captureScreenshot') {
-            screenshotCalls++
-            lastScreenshotParams = params as Record<string, unknown>
-            shotOrder.push(currentLane()?.split('@')[0] ?? currentUrl)
-            const data = realShots
-              ? PNG.sync.write(new PNG({ width: contentSize.width, height: contentSize.height })).toString('base64')
-              : emulatedSize && (emulatedSize.width !== contentSize.width || emulatedSize.height !== contentSize.height) ? BLANK : 'UE5H'
-            if (slowScreenshots > 0) {
-              slowScreenshots--
-              return delay(250).then(() => ({ data }))
-            }
-            return Promise.resolve({ data })
-          }
-          if (method === 'Emulation.setDeviceMetricsOverride') {
-            const p = params as unknown as { width: number; height: number }
-            emulatedSize = { width: p.width, height: p.height }
-          }
+          if (method === 'Page.captureScreenshot') throw new Error('captures never take screenshots')
           if (method === 'Runtime.evaluate') {
             const expr = params?.expression ?? ''
             if (expr.startsWith('window.__motifSetup(')) {
@@ -120,12 +136,18 @@ vi.mock('electron', () => {
               if (hangFrame) return new Promise(() => {})
               lastRenderExpr = expr
               renderCalls++
+              renderOrder.push(currentLane()?.split('@')[0] ?? currentUrl)
               // The Motif's own script throws; the CDP transport answers fine.
               if (throwingLanes.has(currentLane() ?? '')) {
                 return Promise.resolve({ exceptionDetails: { text: 'boom' } })
               }
-              const frameId = lastRenderMeta().frameId
-              if (typeof frameId === 'number') this.webContents.paintFrame(frameId, JSON.parse(expr.slice('window.__motifRender('.length).split(',')[0]!))
+              const frameId = lastRenderMeta().frameId as number
+              events.push(`render:${frameId}`)
+              this.webContents.paintFrame(frameId, JSON.parse(expr.slice('window.__motifRender('.length).split(',')[0]!))
+              if (slowRenders > 0) {
+                slowRenders--
+                return delay(250).then(() => ({ result: { value: true } }))
+              }
             }
             return Promise.resolve({ result: { value: true } })
           }
@@ -133,21 +155,25 @@ vi.mock('electron', () => {
         },
       },
     })
-    constructor() {
+    constructor(options: { webPreferences: { offscreen: unknown } }) {
       opened++
+      this.texture = typeof options.webPreferences.offscreen === 'object'
+      lastHostTexture = this.texture
       lastHost = this.webContents
     }
     loadURL = async (url: string): Promise<void> => {
       currentUrl = url; freshSurface = true
+      const lane = currentLane()
+      if (lane) events.push(`load:${lane.split('@')[0]}`)
     }
     // A new size is a new compositor surface too.
     setContentSize = (width: number, height: number): void => { contentSize = { width, height }; freshSurface = true }
     destroy = (): void => {}
   }
-  return { BrowserWindow: FakeBrowserWindow, shell: { openExternal: async () => {} } }
+  return { BrowserWindow: FakeBrowserWindow, nativeImage: { createFromBuffer: () => { throw new Error('not in these tests') } }, shell: { openExternal: async () => {} } }
 })
 
-const { captureMotifFrameB64, captureMotifTexture, setTextureCaptureEnabled, setFrameMarkerReader, setRuntimeSource, setMotifStore, shutdownCaptureHost, controlMotifCapture, captureDiagnostics, resetCaptureFailure } = await import('./capture')
+const { captureMotifFrameB64, captureMotifFrame, setTextureCaptureEnabled, setFrameMarkerReader, setTexturePngReader, setRuntimeSource, setMotifStore, shutdownCaptureHost, controlMotifCapture, captureDiagnostics, resetCaptureFailure } = await import('./capture')
 setFrameMarkerReader(readMarker)
 type UserMotifStoreT = import('./store').UserMotifStore
 
@@ -173,14 +199,13 @@ function lastRenderMeta(): Record<string, unknown> {
 }
 
 // An unknown motif id keeps the catalog out of it: no manifest means the default
-// duration, which is all doCapture needs to reach the screenshot.
+// duration, which is all doCapture needs to reach the paint.
 const args = {
   motifId: 'not-a-builtin',
   tSec: 0,
   propsJson: '{}',
   width: 32,
   height: 16,
-  settleRafs: null,
   contentHash: 'v1',
 }
 
@@ -198,10 +223,10 @@ describe('capture host shutdown', () => {
     vi.useFakeTimers()
     try {
       setupDelayMs = 6000
-      const shotsBefore = screenshotCalls
+      const rendersBefore = renderCalls
       const slow = captureMotifFrameB64({ ...args, motifId: 'slow-setup' })
       await vi.advanceTimersByTimeAsync(5001)
-      expect(screenshotCalls).toBe(shotsBefore)
+      expect(renderCalls).toBe(rendersBefore)
       await vi.advanceTimersByTimeAsync(1000)
       await expect(slow).resolves.toBe('UE5H')
       setupDelayMs = 0
@@ -229,22 +254,22 @@ describe('capture host shutdown', () => {
   it('supersedes a queued same-key request without executing it', async () => {
     // Occupy the chain with a slow keyless capture; queue two same-key
     // requests behind it. The newer must replace the older IMMEDIATELY, and
-    // the older's chain slot must do no screenshot work when reached.
-    slowScreenshots = 1
-    const before = screenshotCalls
+    // the older's chain slot must do no render work when reached.
+    slowRenders = 1
+    const before = renderCalls
     const p0 = captureMotifFrameB64(args)
     const pA = captureMotifFrameB64(args, 'sprite:layer-1')
     const pB = captureMotifFrameB64(args, 'sprite:layer-1')
     await expect(pA).rejects.toThrow(/superseded by a newer request/)
     await expect(p0).resolves.toBe('UE5H')
     await expect(pB).resolves.toBe('UE5H')
-    expect(screenshotCalls - before).toBe(2) // p0 + pB only — pA never executed
+    expect(renderCalls - before).toBe(2) // p0 + pB only — pA never executed
   })
 
   it('a keyed request that reaches the chain head runs (no self-supersede)', async () => {
-    const before = screenshotCalls
+    const before = renderCalls
     await expect(captureMotifFrameB64(args, 'sprite:layer-2')).resolves.toBe('UE5H')
-    expect(screenshotCalls - before).toBe(1)
+    expect(renderCalls - before).toBe(1)
   })
 
   it('meta.fps is the passed fpsNum/fpsDen', async () => {
@@ -328,15 +353,15 @@ describe('capture host shutdown', () => {
     // behind it, then a keyed one. The keyed ticket (HIGH — the frame the user
     // is looking at NOW) must run before the queued keyless ticket (LOW),
     // while the RUNNING capture is never preempted.
-    slowScreenshots = 1
-    const orderBefore = shotOrder.length
+    slowRenders = 1
+    const orderBefore = renderOrder.length
     const p0 = captureMotifFrameB64({ ...args, motifId: 'low-first' })
     const p1 = captureMotifFrameB64({ ...args, motifId: 'low-second' })
     const p2 = captureMotifFrameB64({ ...args, motifId: 'high-sprite' }, 'sprite:prio')
     await expect(p0).resolves.toBe('UE5H')
     await expect(p1).resolves.toBe('UE5H')
     await expect(p2).resolves.toBe('UE5H')
-    expect(shotOrder.slice(orderBefore)).toEqual(['low-first', 'high-sprite', 'low-second'])
+    expect(renderOrder.slice(orderBefore)).toEqual(['low-first', 'high-sprite', 'low-second'])
   })
 
   it('reads the manifest once per (motifId, contentHash), not per frame', async () => {
@@ -367,28 +392,28 @@ describe('capture host shutdown', () => {
   })
 
   it('promotes a shared background capture when a preview joins it', async () => {
-    slowScreenshots = 1
-    shotOrder.length = 0
+    slowRenders = 1
+    renderOrder.length = 0
     const running = captureMotifFrameB64({ ...args, motifId: 'running' })
     const background = captureMotifFrameB64({ ...args, motifId: 'background' }, 'job-bg', false)
     const joined = captureMotifFrameB64({ ...args, motifId: 'joined' }, 'job-joined', false)
     controlMotifCapture('job-joined', 'promote')
     await Promise.all([running, background, joined])
-    expect(shotOrder).toEqual(['running', 'joined', 'background'])
+    expect(renderOrder).toEqual(['running', 'joined', 'background'])
   })
 
   it('cancels an abandoned broker ticket without capturing it', async () => {
-    slowScreenshots = 1
-    const before = screenshotCalls
+    slowRenders = 1
+    const before = renderCalls
     const running = captureMotifFrameB64(args)
     const abandoned = captureMotifFrameB64(args, 'abandoned', false)
     controlMotifCapture('abandoned', 'cancel')
     await expect(abandoned).rejects.toThrow('superseded')
     await running
-    expect(screenshotCalls - before).toBe(1)
+    expect(renderCalls - before).toBe(1)
   })
 
-  it('sizes the PNG host window to the capture, so its readback is never the mismatched-size blank', async () => {
+  it('sizes the host window to the capture plus its marker row', async () => {
     setRuntimeSource('/* clock-takeover runtime */')
     const read = (motifId: string, tSec: number, width = 32, height = 16) =>
       captureMotifFrameB64({ ...args, motifId, tSec, width, height })
@@ -397,58 +422,104 @@ describe('capture host shutdown', () => {
       // page, then another document at that size: the window follows each.
       await expect(read('sized-a', 2)).resolves.toBe('UE5H')
       await expect(read('sized-a', 3, 48, 24)).resolves.toBe('UE5H')
-      expect(contentSize).toEqual({ width: 48, height: 24 }) // a PNG host keeps no marker row
+      expect(contentSize).toEqual({ width: 48, height: 25 })
       await expect(read('sized-b', 4, 48, 24)).resolves.toBe('UE5H')
-      // The fake's rule, for the record: a window left behind the emulation
-      // reads back BLANK — what the macOS host did before the window followed.
-      contentSize = { width: 800, height: 600 }
-      await expect(read('sized-b', 5, 48, 24)).resolves.toBe(BLANK)
     } finally {
       contentSize = { width: 32, height: 16 }
-      emulatedSize = null
     }
   })
 
-  it('leases the frame carrying its id, never a new surface\'s stale first paint', async () => {
+  it.each([false, true])('leases the frame carrying its id, never a new surface\'s stale first paint (texture host: %s)', async texture => {
     setRuntimeSource('/* clock-takeover runtime */')
-    setTextureCaptureEnabled(true)
+    setTextureCaptureEnabled(texture)
     try {
-      const before = screenshotCalls
-      const read = (motifId: string, tSec: number, width = 32, height = 16) => captureMotifTexture(
+      const read = (motifId: string, tSec: number, width = 32, height = 16) => captureMotifFrame(
         { ...args, motifId, tSec, width, height },
-        async frame => ({ surface: (frame.texture as unknown as { surface: number }).surface, width: frame.width, height: frame.height }),
+        async frame => ({
+          kind: frame.kind,
+          surface: frame.kind === 'texture' ? (frame.texture as unknown as { surface: number }).surface : (frame.image.crop({ x: 0, y: 0, width: frame.width, height: frame.height }) as unknown as { surface: number }).surface,
+          width: frame.width, height: frame.height,
+        }),
       )
       // A new document, the same one again, another, a new size: each new
       // surface paints its stale picture first and is skipped.
-      expect(await read('surface-a', 2)).toEqual({ surface: 2, width: 32, height: 16 })
-      expect(await read('surface-a', 3)).toEqual({ surface: 3, width: 32, height: 16 })
-      expect(await read('surface-b', 4)).toEqual({ surface: 4, width: 32, height: 16 })
-      expect(await read('surface-b', 5, 48, 24)).toEqual({ surface: 5, width: 48, height: 24 })
-      expect(lastRenderMeta().settleRafs).toBe(0)
-      expect(screenshotCalls - before).toBe(0) // no readback fence
+      const kind = texture ? 'texture' : 'bitmap'
+      expect(await read('surface-a', 2)).toEqual({ kind, surface: 2, width: 32, height: 16 })
+      expect(lastHostTexture).toBe(texture)
+      expect(await read('surface-a', 3)).toEqual({ kind, surface: 3, width: 32, height: 16 })
+      expect(await read('surface-b', 4)).toEqual({ kind, surface: 4, width: 32, height: 16 })
+      expect(await read('surface-b', 5, 48, 24)).toEqual({ kind, surface: 5, width: 48, height: 24 })
     } finally {
       setTextureCaptureEnabled(false)
       contentSize = { width: 32, height: 16 }
     }
   })
 
-  it('a texture host still serves PNG captures, cropped above the marker row, without leasing', async () => {
+  it('a texture host serves PNG captures from the leased texture\'s picture, and releases it', async () => {
     setRuntimeSource('/* clock-takeover runtime */')
     setTextureCaptureEnabled(true)
-    realShots = true
+    const reads: number[] = []
+    setTexturePngReader(async (_handle, height) => {
+      reads.push(height)
+      return PNG.sync.write(new PNG({ width: 32, height }))
+    })
     try {
+      const releasedBefore = released
       const png = PNG.sync.read(Buffer.from(await captureMotifFrameB64({ ...args, motifId: 'png-on-texture' }), 'base64'))
       expect([png.width, png.height]).toEqual([32, 16])
+      expect(reads).toEqual([16])
       expect(contentSize).toEqual({ width: 32, height: 17 })
-      expect(lastRenderMeta().frameId).toBeUndefined()
-      expect(lastScreenshotParams).not.toHaveProperty('clip')
-      const frame = await captureMotifTexture({ ...args, motifId: 'png-on-texture', tSec: 1 }, async f => f.height)
-      expect(frame).toBe(16)
+      expect(released - releasedBefore).toBeGreaterThanOrEqual(1)
     } finally {
-      realShots = false
       setTextureCaptureEnabled(false)
       contentSize = { width: 32, height: 16 }
     }
+  })
+
+  it('renders the next frame of a page while earlier frames are still on their way to a paint', async () => {
+    setRuntimeSource('/* clock-takeover runtime */')
+    await captureMotifFrameB64({ ...args, motifId: 'pipelined' })
+    paintDelayMs = 50
+    events.length = 0
+    try {
+      const frames = [1, 2, 3, 4].map(tSec => captureMotifFrameB64({ ...args, motifId: 'pipelined', tSec }))
+      await expect(Promise.all(frames)).resolves.toEqual(['UE5H', 'UE5H', 'UE5H', 'UE5H'])
+      const renders = events.filter(e => e.startsWith('render:'))
+      // Three frames render before the first paint; the fourth waits for room.
+      expect(events.indexOf(renders[2]!)).toBeLessThan(events.findIndex(e => e.startsWith('paint:')))
+      expect(events.indexOf(renders[3]!)).toBeGreaterThan(events.findIndex(e => e.startsWith('paint:')))
+      // Another page waits until every paint of this one has arrived.
+      events.length = 0
+      const first = captureMotifFrameB64({ ...args, motifId: 'pipelined', tSec: 5 })
+      const other = captureMotifFrameB64({ ...args, motifId: 'pipelined-next' })
+      await Promise.all([first, other])
+      expect(events.slice(0, 3)).toEqual([expect.stringMatching(/^render:/), expect.stringMatching(/^paint:/), 'load:pipelined-next'])
+    } finally { paintDelayMs = 0 }
+  })
+
+  it('renders a frame the compositor skipped again', async () => {
+    setRuntimeSource('/* clock-takeover runtime */')
+    await captureMotifFrameB64({ ...args, motifId: 'skipping' })
+    captureDiagnostics(true)
+    paintDelayMs = 20
+    try {
+      const rendersBefore = renderCalls
+      // The next frame id the host will take is unknown here; skip whichever
+      // frame renders first.
+      const firstRender = new Promise<number>(resolve => {
+        const check = setInterval(() => {
+          const r = events.findLast(e => e.startsWith('render:'))
+          if (r && renderCalls > rendersBefore) { clearInterval(check); resolve(Number(r.slice(7))) }
+        }, 0)
+      })
+      events.length = 0
+      const a = captureMotifFrameB64({ ...args, motifId: 'skipping', tSec: 1 })
+      skippedPaints.add(await firstRender)
+      const b = captureMotifFrameB64({ ...args, motifId: 'skipping', tSec: 2 })
+      await expect(Promise.all([a, b])).resolves.toEqual(['UE5H', 'UE5H'])
+      expect(renderCalls - rendersBefore).toBe(3)
+      expect(captureDiagnostics()).toMatchObject({ completed: 2, failed: 0, skippedFrames: 1 })
+    } finally { paintDelayMs = 0; skippedPaints.clear() }
   })
 
   it('lets the shell\'s frame load only the Motif it was built for', async () => {
@@ -507,18 +578,18 @@ describe('capture host shutdown', () => {
   })
 
   it('respects explicit foreground priority without a coalescing key', async () => {
-    slowScreenshots = 1
-    const before = shotOrder.length
+    slowRenders = 1
+    const before = renderOrder.length
     const running = captureMotifFrameB64({ ...args, motifId: 'keyless-running' })
     const background = captureMotifFrameB64({ ...args, motifId: 'keyless-background' }, undefined, false)
     const foreground = captureMotifFrameB64({ ...args, motifId: 'keyless-foreground' }, undefined, true)
     await Promise.all([running, background, foreground])
-    expect(shotOrder.slice(before)).toEqual(['keyless-running', 'keyless-foreground', 'keyless-background'])
+    expect(renderOrder.slice(before)).toEqual(['keyless-running', 'keyless-foreground', 'keyless-background'])
   })
 
   it('checks session currency after waiting in the capture queue, before page IO', async () => {
-    slowScreenshots = 1
-    const before = screenshotCalls
+    slowRenders = 1
+    const before = renderCalls
     const running = captureMotifFrameB64({ ...args, motifId: 'session-running' })
     let current = true
     const queued = captureMotifFrameB64({ ...args, motifId: 'stale-session' }, undefined, false, () => current)
@@ -526,7 +597,7 @@ describe('capture host shutdown', () => {
     current = false
     await running
     await rejected
-    expect(screenshotCalls - before).toBe(1)
+    expect(renderCalls - before).toBe(1)
     expect(currentUrl).toContain('session-running')
   })
 
@@ -536,7 +607,7 @@ describe('capture host shutdown', () => {
     await captureMotifFrameB64({ ...args, motifId: 'diagnostics', tSec: 1 })
     await captureMotifFrameB64({ ...args, motifId: 'diagnostics-next', tSec: 0 })
     const stats = captureDiagnostics()
-    expect(stats).toMatchObject({ captures: 3, completed: 3, failed: 0, pageLoads: 2, pngCaptures: 3, textureCaptures: 0 })
+    expect(stats).toMatchObject({ captures: 3, completed: 3, failed: 0, pageLoads: 2, bitmapCaptures: 3, textureCaptures: 0 })
     expect(stats.captureMs).toBeGreaterThanOrEqual(0)
     expect(stats.loadMs).toBeGreaterThanOrEqual(0)
     expect(captureDiagnostics(true)).toMatchObject({ captures: 0, pageLoads: 0 })
@@ -560,7 +631,7 @@ describe('capture host shutdown', () => {
   it('ages waiting background frames without letting an old batch monopolize foreground', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] })
     try {
-      const before = shotOrder.length
+      const before = renderOrder.length
       setupDelayMs = 2500
       const running = captureMotifFrameB64({ ...args, motifId: 'age-running' })
       await vi.advanceTimersByTimeAsync(1)
@@ -571,7 +642,7 @@ describe('capture host shutdown', () => {
       const highB = captureMotifFrameB64({ ...args, motifId: 'age-high-b' }, 'age-high-b', true)
       await vi.advanceTimersByTimeAsync(2501)
       await Promise.all([running, lowA, lowB, highA, highB])
-      expect(shotOrder.slice(before)).toEqual(['age-running', 'age-low-a', 'age-high-a', 'age-low-b', 'age-high-b'])
+      expect(renderOrder.slice(before)).toEqual(['age-running', 'age-low-a', 'age-high-a', 'age-low-b', 'age-high-b'])
     } finally { setupDelayMs = 0; vi.useRealTimers() }
   })
 

@@ -61,21 +61,22 @@ Only pixels drawn by the page travel with the commit that drew them
   or timed-out consumer retires the texture instead of permitting reuse.
   Native pools outlive every Electron import. The consumer lifetime is a
   document: navigation retires its transport generation.
-- **A texture is leased by the frame id it carries.** The capture host page is
-  a same-origin shell that frames the Motif at the capture size; on a texture
-  host it keeps one pixel row below it (`shared/motifs/frameMarker.ts`). The
+- **A paint is leased by the frame id it carries.** The capture host page is
+  a same-origin shell that frames the Motif at the capture size and keeps one
+  pixel row below it (`shared/motifs/frameMarker.ts`). The
   Motif sees only its own size. After the frame's seek, with no rendering step between, the shell
   writes a fresh 32-bit id with a magic and a check byte into that row.
-  Painting stays on; `OffscreenFrames` reads the row of each paint on a native
-  worker and leases the first texture carrying the id, releasing the rest.
+  Painting stays on; `OffscreenFrames` reads the row of each paint (a
+  texture's on a native worker, a bitmap's in main) and leases the first paint
+  carrying the id, releasing the rest.
   Copies and readbacks take the rows above it. No settle wait, no
   stop/start of painting, no surface fence: a new document, size or GPU
   process's stale first paint carries no id or an old one. The host renderer
   runs with checker imaging off, so a frame does not draw before its images
   decode.
-- **The PNG host forces CPU-backed 2D canvases** (`willReadFrequently: true`):
+- **The bitmap host forces CPU-backed 2D canvases** (`willReadFrequently: true`):
   Electron 44 bitmap OSR can omit an accelerated canvas after navigation,
-  which exported transparent frames.
+  which exported transparent frames, and the id cannot see a missing layer.
 
 ## Consequences
 
@@ -86,12 +87,12 @@ Only pixels drawn by the page travel with the commit that drew them
   compositor; in a standalone probe on 61 real Motifs it matched the
   settle-and-restart wait it
   replaced (median 48 against 53 ms at 60 Hz) and every checked frame was
-  exact. Raising the frame rate gained nothing: the remaining time is
-  raster.
-- A PNG host uses the same shell with no marker row and still settles by the
-  manifest's `settle_rafs`. A PNG capture on a texture host drops the row from
-  the screenshot's PNG losslessly: a clipped screenshot left a WebGL Motif's
-  later frames blank.
+  exact. Raising the frame rate gained nothing for one frame at a time: a
+  trace splits the time into the wait for the next BeginFrame, the Motif's
+  canvas raster on the GPU process main thread and the copy's completion,
+  which ADR 0159 overlaps across frames.
+- A bitmap host leases its paints the same way (ADR 0159); no capture takes a
+  screenshot.
 - Content outside the commit — a worker's OffscreenCanvas, video — is not
   covered by the id.
 - An older app version finds no frames under its own namespace and captures

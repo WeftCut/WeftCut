@@ -61,7 +61,7 @@ export class MotifCovers {
     const png = this.deps.thumbnail(await this.deps.capture({
       motifId: id, contentHash, width: manifest.size[0], height: manifest.size[1],
       propsJson: JSON.stringify(Object.fromEntries(Object.entries(manifest.props_schema).map(([k, v]) => [k, v.default]))),
-      tSec: motifPosterTime(manifest), settleRafs: manifest.settle_rafs ?? null,
+      tSec: motifPosterTime(manifest),
       fpsNum: 30, fpsDen: 1,
     }))
     // Edits/deletion during capture must not publish old pixels as a new cover.

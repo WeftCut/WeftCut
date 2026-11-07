@@ -75,22 +75,30 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
         typeof w.__motifRender === 'function' && w.document.readyState === 'complete';
     };
     window.__motifSetup = function (props, meta) { return motifWindow().__motifSetup(props, meta); };
+    // Resolves once the frame's rendering step has run: rAF callbacks run in
+    // it, and the task after them belongs to the next frame. Main renders its
+    // next frame then, while this one is still on its way to a paint (ADR
+    // 0159). Pacing only: the marker, not this wait, proves what a paint
+    // shows. The timeout keeps a host that stopped producing frames from
+    // holding the render.
+    var committed = function () {
+      return new Promise(function (resolve) {
+        var timer = window.setTimeout(resolve, 100);
+        window.requestAnimationFrame(function () { window.setTimeout(function () { window.clearTimeout(timer); resolve(); }, 0); });
+      });
+    };
     // The id is written after the frame's seek with no rendering step between
     // them (only microtasks), so the commit that shows it shows that frame.
     window.__motifRender = async function (t, props, meta) {
       var done = await motifWindow().__motifRender(t, props, meta);
-      if (meta && typeof meta.frameId === 'number') mark(meta.frameId);
+      if (meta && typeof meta.frameId === 'number') {
+        mark(meta.frameId);
+        await committed();
+      }
       return done;
     };
     return;
   }
-
-  // Capture the NATIVE requestAnimationFrame BEFORE the factory overwrites it.
-  // The factory installs a queued rAF (only fires on rt.seek) onto window.rAF.
-  // The settle await inside __motifRender uses _nativeRaf so the Promise actually
-  // resolves after real browser layout frames. Using the overwritten queued
-  // rAF would deadlock every render because seek() is never called during settle.
-  var _nativeRaf = window.requestAnimationFrame.bind(window);
 
   var rt = (${createMotifRuntime.toString()})(window);
   var def = null, didSetup = false, lastPropsKey = null;
@@ -189,24 +197,14 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
   };
 
   // Driven from the Electron main process (main/motif/capture.ts) via CDP
-  // Runtime.evaluate(awaitPromise:true).
-  // Resolves once setup (once-per-props) + frame(t) + seek + a double-rAF settle
-  // have run, i.e. the frame for time t (seconds) is visually ready to capture.
+  // Runtime.evaluate(awaitPromise:true), through the capture host shell.
+  // Resolves once setup (once-per-props), frame(t) and the seek to t
+  // (seconds) have run; the shell's frame id proves which commit shows it.
   window.__motifRender = function (t, props, meta) {
     return (async function () {
       await window.__motifSetup(props, meta);
       if (def.frame) def.frame(t, ctxFor(t, props, meta));
       rt.seek(t * 1000);
-      // settleRafs: how many real browser frames to wait so the paint commits.
-      // 2 (default) is safe for canvas/WebGL; 1 suffices for CSS-only Motifs;
-      // 0 captures immediately after seek(). Clamp to {0,1,2}; default 2.
-      var sr = meta && typeof meta.settleRafs === 'number' ? meta.settleRafs : 2;
-      sr = sr === 2 ? 2 : (sr === 1 ? 1 : (sr === 0 ? 0 : 2));
-      if (sr === 2) {
-        await new Promise(function (r) { _nativeRaf(function () { _nativeRaf(r); }); });
-      } else if (sr === 1) {
-        await new Promise(function (r) { _nativeRaf(r); });
-      }
       return true;
     })();
   };

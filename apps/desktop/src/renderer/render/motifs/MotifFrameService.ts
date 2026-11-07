@@ -385,7 +385,7 @@ export class MotifFrameService {
         contentFrames: desc.contentDurationFrames, ranges: [range],
         capture: { motifId: motif.manifest.id, contentHash: motif.manifest.content_hash ?? '',
           propsJson: JSON.stringify(desc.canonicalProps), width: desc.renderW, height: desc.renderH,
-          settleRafs: motif.manifest.settle_rafs ?? null, fpsNum, fpsDen },
+          fpsNum, fpsDen },
       });
     }
     plan.contents = [...contents.values()];

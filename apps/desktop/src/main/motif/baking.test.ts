@@ -4,7 +4,7 @@ import type { MotifBakeContent, MotifBakePause, MotifBakePlan } from '../../shar
 
 const content = (key: string, frames = 90): MotifBakeContent => ({
   cacheKey: key, hash: key, contentFrames: frames, ranges: [{ start: 0, end: frames }],
-  capture: { motifId: key, contentHash: key, propsJson: '{}', width: 2, height: 2, settleRafs: null, fpsNum: 30, fpsDen: 1 },
+  capture: { motifId: key, contentHash: key, propsJson: '{}', width: 2, height: 2, fpsNum: 30, fpsDen: 1 },
 });
 const plan = (contents: MotifBakeContent[], generation = 1): MotifBakePlan => ({ generation, contents, live: contents, collect: true });
 function fixture(extra: Partial<MotifBakeCoordinatorDeps> = {}) {

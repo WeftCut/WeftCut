@@ -491,11 +491,111 @@ pub async fn motif_encode_png(png: Buffer) -> napi::Result<Buffer> {
     .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
+/// Premultiplied RGBA (or BGRA) to straight RGBA in place, as the cache stores
+/// pixels. Every premultiplied channel value survives a roundtrip.
+pub(crate) fn straighten(rgba: &mut [u8], bgra: bool) {
+    for px in rgba.as_chunks_mut::<4>().0 {
+        if bgra {
+            px.swap(0, 2);
+        }
+        let alpha = u32::from(px[3]);
+        for c in &mut px[..3] {
+            *c = (u32::from(*c) * 255 + alpha / 2)
+                .checked_div(alpha)
+                .unwrap_or(0)
+                .min(255) as u8;
+        }
+    }
+}
+
+/// Straight RGBA as a PNG, fast compression: these PNGs leave the app as
+/// previews and covers, never as stored frames.
+#[cfg_attr(not(windows), allow(dead_code))] // only the texture lane reads pixels natively.
+pub(crate) fn encode_png(w: u32, h: u32, rgba: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+    use image::ImageEncoder;
+    anyhow::ensure!(rgba.len() == byte_len(w, h)?, "invalid motif pixel length");
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new_with_quality(
+        &mut png,
+        image::codecs::png::CompressionType::Fast,
+        image::codecs::png::FilterType::Adaptive,
+    )
+    .write_image(&rgba, w, h, image::ExtendedColorType::Rgba8)?;
+    Ok(png)
+}
+
+/// The top `height` rows of a bitmap capture's premultiplied BGRA rows,
+/// `width` pixels each, as straight RGBA (ADR 0159). Bands straighten in
+/// parallel.
+#[napi]
+#[cfg_attr(test, allow(dead_code))] // napi registration is absent in a Rust unit-test executable.
+pub async fn motif_straighten_bgra(bgra: Buffer, width: u32, height: u32) -> napi::Result<Buffer> {
+    let len = byte_len(width, height).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    if bgra.len() < len {
+        return Err(napi::Error::from_reason(
+            "motif bitmap is smaller than its picture",
+        ));
+    }
+    let mut rgba = bgra[..len].to_vec();
+    tokio::task::spawn_blocking(move || {
+        let band = band_rows(height) as usize * width as usize * 4;
+        per_thread(rgba.chunks_mut(band), band_threads(), |pixels| {
+            straighten(pixels, true);
+            Ok(())
+        })?;
+        Ok::<_, anyhow::Error>(Buffer::from(rgba))
+    })
+    .await
+    .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+/// Straight RGBA as a stored frame.
+#[napi]
+#[cfg_attr(test, allow(dead_code))] // napi registration is absent in a Rust unit-test executable.
+pub async fn motif_encode_rgba(rgba: Buffer, width: u32, height: u32) -> napi::Result<Buffer> {
+    let rgba = rgba.to_vec();
+    tokio::task::spawn_blocking(move || encode(width, height, &rgba).map(Buffer::from))
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?
+        .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
 use std::io::Read;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_png_keeps_every_straight_rgba_byte() {
+        let rgba: Vec<u8> = (0..3 * 2 * 4).map(|i| (i * 37 % 256) as u8).collect();
+        let png = encode_png(3, 2, rgba.clone()).unwrap();
+        let decoded = image::load_from_memory_with_format(&png, image::ImageFormat::Png)
+            .unwrap()
+            .into_rgba8();
+        assert_eq!((decoded.width(), decoded.height()), (3, 2));
+        assert_eq!(decoded.into_raw(), rgba);
+    }
+
+    #[test]
+    fn every_valid_premultiplied_channel_roundtrips_exactly() {
+        for alpha in 0..=255u32 {
+            for channel in 0..=alpha {
+                let mut pixel = [channel as u8, 0, 0, alpha as u8];
+                straighten(&mut pixel, false);
+                assert_eq!((u32::from(pixel[0]) * alpha + 127) / 255, channel);
+                assert_eq!(pixel[3], alpha as u8);
+            }
+        }
+    }
+
+    #[test]
+    fn bgra_is_reordered_and_transparent_rgb_is_cleared() {
+        let mut pixels = [16, 32, 64, 128, 20, 30, 40, 0];
+        straighten(&mut pixels, true);
+        assert_eq!(pixels, [128, 64, 32, 128, 0, 0, 0, 0]);
+    }
 
     fn pattern(multiplier: usize) -> Vec<u8> {
         (0..4096).map(|i| ((i * multiplier) % 256) as u8).collect()

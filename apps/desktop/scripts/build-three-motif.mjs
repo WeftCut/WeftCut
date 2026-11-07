@@ -72,7 +72,7 @@ export function buildThreeMotifFiles({ assetsDir, model = assetsDir ? 'model.glb
   const loader = buildSync({ stdin: { contents: loaderSource, resolveDir: template, sourcefile: 'model-loader.js' },
     bundle: true, format: 'esm', external: ['three'], write: false });
   add('vendor/model-loader.js', loader.outputFiles[0].contents);
-  add('manifest.json', Buffer.from(JSON.stringify({ name: '3D Model', size: [960, 540], default_duration_s: 5, settle_rafs: 2,
+  add('manifest.json', Buffer.from(JSON.stringify({ name: '3D Model', size: [960, 540], default_duration_s: 5,
     props_schema: { model: { type: 'string', default: './assets/' + model.split('/').map(encodeURIComponent).join('/') }, speed: { type: 'number', default: 0.5, min: -4, max: 4 }, scale: { type: 'number', default: 1, min: 0.1, max: 4 } },
   }, null, 2)));
   add('DEPENDENCIES.json', Buffer.from(JSON.stringify({ three: THREE_VERSION, dracoSource: 'three/examples/jsm/libs/draco/gltf', basisBuild: 'vendor/basis/BUILD.json', offline: true }, null, 2)));

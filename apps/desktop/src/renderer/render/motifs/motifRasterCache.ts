@@ -126,7 +126,7 @@ export async function resolveMotifFrame(
   // (`motifCtxDurationS`, shared/motifs/catalog.ts) from props. Kept in the
   // signature for caller parity across the read paths.
   void durationSec;
-  const bitmap = await rasterMotifFrame(motif.manifest.id, tSec, canonicalProps, w!, h!, motif.manifest.settle_rafs, motif.manifest.content_hash, coalesceKey, fpsNum, fpsDen);
+  const bitmap = await rasterMotifFrame(motif.manifest.id, tSec, canonicalProps, w!, h!, motif.manifest.content_hash, coalesceKey, fpsNum, fpsDen);
   return { bitmap, persisted: false, scaleDiv: 'live' };
 }
 
@@ -142,7 +142,7 @@ function acquireFrame(
     if (epoch !== requestEpoch || !ticket.wanted()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE);
     const [w, h] = motif.manifest.size;
     return frameScheduler.acquire({ cacheKey, frame, scaleDiv, ticket, captureOnly: overlay,
-      capture: () => captureMotifFrameResult(motif.manifest.id, tSec, props, w!, h!, motif.manifest.settle_rafs,
+      capture: () => captureMotifFrameResult(motif.manifest.id, tSec, props, w!, h!,
         motif.manifest.content_hash, fpsNum, fpsDen, {
           key: ticket.key, high: ticket.high(), scaleDiv,
           ...(!overlay ? { cache: { hash: hashCacheKey(cacheKey), frame } } : {}),
