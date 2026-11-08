@@ -10,7 +10,6 @@
 import { MotifFrameCache } from "./frameCache";
 import { BakedKeyIndex } from "./bakedKeyIndex";
 import type { Motif } from "./catalog";
-import { rasterMotifFrame } from "./motifRaster";
 import { motifPreviewActive, subscribeMotifPreview } from "./previewOverlay";
 import { FrameBroker } from './FrameBroker';
 import { MotifFrameScheduler } from './MotifFrameScheduler';
@@ -72,8 +71,9 @@ subscribeMotifPreview(() => {
   if (!motifPreviewActive()) sharedMotifOverlayCache.clearAll();
 });
 
-/// Process-wide index of which cacheKeys have frames baked on disk. The
-/// Compositor hydrates it on project load; the baker `add`s on each write.
+/// Process-wide index of which cacheKeys have frames baked on disk.
+/// MotifFrameService restores it from main's bake snapshot; a stored write
+/// `add`s its frame.
 export const sharedBakedKeyIndex = new BakedKeyIndex(() => frameScheduler.wake());
 const frameScheduler = new MotifFrameScheduler({
   shouldRead: (key, frame) => sharedBakedKeyIndex.hasFrame(key, frame) !== false,
@@ -100,7 +100,6 @@ export async function resolveMotifFrame(
   cacheKey: string,
   frame: number,
   tSec: number,
-  durationSec: number,
   canonicalProps: Record<string, unknown>,
   coalesceKey?: string,
   /// Composition fps `tSec` was computed on — forwarded so the capture's
@@ -111,38 +110,13 @@ export async function resolveMotifFrame(
   priority: 'foreground' | 'background' = 'foreground',
   scaleDiv: MotifReaderDiv = 1,
 ): Promise<CapturedFrame> {
-  // The DOM-less export path and node tests retain the portable producer.
-  if (typeof window !== 'undefined' && typeof MessageChannel !== 'undefined') {
-    return acquireFrame(motif, cacheKey, frame, scaleDiv, tSec, canonicalProps, coalesceKey, fpsNum, fpsDen, overlay, priority);
-  }
-  if (!overlay) await sharedBakedKeyIndex.whenHydrated();
-  if (!overlay && sharedBakedKeyIndex.hasFrame(cacheKey, frame) !== false) {
-    // Only a miss (null) falls through to live raster; a transport error rejects.
-    const bitmap = await sharedMotifFrameCache.readBitmap(cacheKey, frame, scaleDiv);
-    if (bitmap) return { bitmap, persisted: true, scaleDiv };
-  }
-  const [w, h] = motif.manifest.size;
-  // durationSec is unused by the CDP path — duration is derived in main
-  // (`motifCtxDurationS`, shared/motifs/catalog.ts) from props. Kept in the
-  // signature for caller parity across the read paths.
-  void durationSec;
-  const bitmap = await rasterMotifFrame(motif.manifest.id, tSec, canonicalProps, w!, h!, motif.manifest.content_hash, coalesceKey, fpsNum, fpsDen);
-  return { bitmap, persisted: false, scaleDiv: 'live' };
-}
-
-function acquireFrame(
-  motif: Motif, cacheKey: string, frame: number, scaleDiv: MotifReaderDiv, tSec: number, props: Record<string, unknown>,
-  coalesceKey: string | undefined, fpsNum: number | undefined, fpsDen: number | undefined,
-  overlay: boolean,
-  priority: 'foreground' | 'background' = 'foreground',
-): Promise<CapturedFrame> {
   const epoch = requestEpoch;
   return (overlay ? overlayBroker : committedBroker).acquire(cacheKey, frame, scaleDiv, async ticket => {
     if (!overlay) await sharedBakedKeyIndex.whenHydrated();
     if (epoch !== requestEpoch || !ticket.wanted()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE);
     const [w, h] = motif.manifest.size;
     return frameScheduler.acquire({ cacheKey, frame, scaleDiv, ticket, captureOnly: overlay,
-      capture: () => captureMotifFrameResult(motif.manifest.id, tSec, props, w!, h!,
+      capture: () => captureMotifFrameResult(motif.manifest.id, tSec, canonicalProps, w!, h!,
         motif.manifest.content_hash, fpsNum, fpsDen, {
           key: ticket.key, high: ticket.high(), scaleDiv,
           ...(!overlay ? { cache: { hash: hashCacheKey(cacheKey), frame } } : {}),

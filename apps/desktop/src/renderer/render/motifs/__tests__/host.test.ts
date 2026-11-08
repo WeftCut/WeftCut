@@ -43,7 +43,6 @@ describe("captureMotifFramePngBlob", () => {
 
   it('passes optional main persistence and finalization ownership over the capture transport', async () => {
     vi.stubGlobal('window', { postMessage: vi.fn() });
-    vi.stubGlobal('MessageChannel', class {});
     const bitmap = {} as ImageBitmap;
     vi.mocked(captureMotifResult).mockResolvedValue({ bitmap, persisted: true, scaleDiv: 1 });
     const bake = { hash: 'a'.repeat(32), frame: 75 };
@@ -57,7 +56,6 @@ describe("captureMotifFramePngBlob", () => {
 
   it('reads a `stored` reply at the preview divisor it is given', async () => {
     vi.stubGlobal('window', { postMessage: vi.fn() });
-    vi.stubGlobal('MessageChannel', class {});
     vi.mocked(captureMotifResult).mockResolvedValue({ bitmap: {} as ImageBitmap, persisted: true, scaleDiv: 2 });
     await captureMotifFrameResult('countdown', 0, {}, 480, 480, 'revision', 30, 1, { key: 'preview', high: true, scaleDiv: 2 });
     expect(captureMotifResult).toHaveBeenLastCalledWith(expect.anything(), 2);

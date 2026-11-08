@@ -50,7 +50,7 @@ function warm(keys = ['long']) {
   cleanup.unshift(() => prewarmer.dispose());
   const specs = keys.map(cacheKey => ({
     cacheKey, contentFrame: 0, contentDurationFrames: 1_000, frameBytes: 4,
-    render: (frame: number, key: string) => resolveMotifFrame(motif, cacheKey, frame, frame / 60, 1_000 / 60, {}, key, 60, 1, false, 'background'),
+    render: (frame: number, key: string) => resolveMotifFrame(motif, cacheKey, frame, frame / 60, {}, key, 60, 1, false, 'background'),
   }));
   prewarmer.setTargets(specs);
   callbacks.shift()!();
@@ -97,7 +97,7 @@ it('foreground demand promotes a waiting main-owned frame and still shares one c
   setMotifPreparationCoverage(['long']);
   warm();
   await settle();
-  const foreground = resolveMotifFrame(motif, 'long', 0, 0, 20, {}, 'sprite', 60, 1);
+  const foreground = resolveMotifFrame(motif, 'long', 0, 0, {}, 'sprite', 60, 1);
   await settle();
   expect(captureMotifFrameResult).toHaveBeenCalledOnce();
   expect(vi.mocked(captureMotifFrameResult).mock.calls[0]![8].high).toBe(true);
@@ -162,12 +162,12 @@ it('a transport error preserves disk coverage and never starts a replacement cap
   sharedBakedKeyIndex.restoreFrames('long', new Set([0]));
   const read = vi.spyOn(sharedMotifFrameCache, 'readBitmap').mockRejectedValueOnce(new MotifTransportError('utility', 'closed'));
   vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: bitmap(), persisted: false, scaleDiv: 'live' });
-  await expect(resolveMotifFrame(motif, 'long', 0, 0, 1, {}, 'first', 60, 1, false, 'foreground', 2))
+  await expect(resolveMotifFrame(motif, 'long', 0, 0, {}, 'first', 60, 1, false, 'foreground', 2))
     .rejects.toBeInstanceOf(MotifTransportError);
   expect(sharedBakedKeyIndex.hasFrame('long', 0)).toBe(true);
   expect(captureMotifFrameResult).not.toHaveBeenCalled();
   read.mockResolvedValue(bitmap());
-  await expect(resolveMotifFrame(motif, 'long', 0, 0, 1, {}, 'retry', 60, 1, false, 'foreground', 2))
+  await expect(resolveMotifFrame(motif, 'long', 0, 0, {}, 'retry', 60, 1, false, 'foreground', 2))
     .resolves.toMatchObject({ persisted: true, scaleDiv: 2 });
   expect(read.mock.calls.map(([, , div]) => div)).toEqual([2, 2]);
   expect(captureMotifFrameResult).not.toHaveBeenCalled();
@@ -177,8 +177,8 @@ it('reads saved frames at the preview divisor and captures holes at full size', 
   sharedBakedKeyIndex.restoreFrames('long', new Set([0]));
   const read = vi.spyOn(sharedMotifFrameCache, 'readBitmap').mockResolvedValue(bitmap());
   vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: bitmap(), persisted: false, scaleDiv: 'live' });
-  const saved = await resolveMotifFrame(motif, 'long', 0, 0, 1, {}, 'a', 60, 1, false, 'foreground', 4);
-  const hole = await resolveMotifFrame(motif, 'long', 1, 1 / 60, 1, {}, 'b', 60, 1, false, 'foreground', 4);
+  const saved = await resolveMotifFrame(motif, 'long', 0, 0, {}, 'a', 60, 1, false, 'foreground', 4);
+  const hole = await resolveMotifFrame(motif, 'long', 1, 1 / 60, {}, 'b', 60, 1, false, 'foreground', 4);
   expect(read).toHaveBeenCalledExactlyOnceWith('long', 0, 4);
   expect([saved.scaleDiv, hole.scaleDiv]).toEqual([4, 'live']);
   // A capture's `stored` reply is read at the same divisor.
@@ -247,7 +247,7 @@ it('foreground demand promotes a queued prewarm read without acquiring it twice'
   }));
   warm();
   await settle();
-  const foreground = resolveMotifFrame(motif, 'long', 9, 9 / 60, 1_000 / 60, {}, 'sprite', 60, 1);
+  const foreground = resolveMotifFrame(motif, 'long', 9, 9 / 60, {}, 'sprite', 60, 1);
   finish.get(0)!();
   await settle();
   expect(read.mock.calls.map(([, frame]) => frame)).toEqual([0, 1, 2, 9]);
@@ -261,7 +261,7 @@ it('foreground demand promotes a queued prewarm read without acquiring it twice'
 
 it('a project reset fences work waiting for inventory restoration', async () => {
   sharedBakedKeyIndex.beginHydration();
-  const old = resolveMotifFrame(motif, 'long', 0, 0, 20, {}, 'old-project', 60, 1);
+  const old = resolveMotifFrame(motif, 'long', 0, 0, {}, 'old-project', 60, 1);
   const rejected = expect(old).rejects.toThrow('superseded');
   await settle();
   resetMotifFrameRequests();
@@ -275,7 +275,7 @@ it('retiring prewarm demand does not cancel the foreground subscriber sharing it
   await settle();
   expect(vi.mocked(captureMotifFrameResult).mock.calls[0]![8].high).toBe(false);
   const finish = cleanup.at(-1)!;
-  const foreground = resolveMotifFrame(motif, 'long', 0, 0, 20, {}, 'sprite', 60, 1);
+  const foreground = resolveMotifFrame(motif, 'long', 0, 0, {}, 'sprite', 60, 1);
   h.prewarmer.setTargets([]);
   finish();
   const value = await foreground;
@@ -288,9 +288,9 @@ it('retiring prewarm demand does not cancel the foreground subscriber sharing it
 
 it('a capture failure returns its slot and allows a later retry', async () => {
   vi.mocked(captureMotifFrameResult).mockRejectedValueOnce(new Error('capture failed'));
-  const failed = resolveMotifFrame(motif, 'long', 0, 0, 20, {}, 'sprite', 60, 1);
+  const failed = resolveMotifFrame(motif, 'long', 0, 0, {}, 'sprite', 60, 1);
   await expect(failed).rejects.toThrow('capture failed');
-  const retry = resolveMotifFrame(motif, 'long', 0, 0, 20, {}, 'sprite', 60, 1);
+  const retry = resolveMotifFrame(motif, 'long', 0, 0, {}, 'sprite', 60, 1);
   await settle();
   expect(captureMotifFrameResult).toHaveBeenCalledTimes(2);
   cleanup.at(-1)!();

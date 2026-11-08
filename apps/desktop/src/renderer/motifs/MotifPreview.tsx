@@ -38,10 +38,9 @@ export function useDebounced<T>(value: T, delay: number): T {
   return debounced;
 }
 
-/// Static still of a Motif's poster frame (see `motifPosterTime`), captured via a
-/// single CDP screenshot (`captureMotifFramePngBlob`).
-/// CDP cost (~80ms) makes continuous animation impractical here, and the
-/// picker's job is "show what this Motif looks like", not animate it.
+/// Static still of a Motif's poster frame (see `motifPosterTime`), captured once
+/// as a PNG (`captureMotifFramePngBlob`). A capture costs tens of milliseconds,
+/// and the picker's job is "show what this Motif looks like", not animate it.
 export function MotifPreview({
   motif,
   props,

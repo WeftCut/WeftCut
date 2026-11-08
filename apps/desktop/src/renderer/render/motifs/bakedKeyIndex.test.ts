@@ -25,14 +25,6 @@ describe("BakedKeyIndex", () => {
     expect(idx.has("a")).toBe(true);
   });
 
-  it("hydrate keeps only live keys whose hash is on disk", () => {
-    const idx = new BakedKeyIndex();
-    idx.setLiveCandidates(["live", "stale"]);
-    idx.hydrateFromHashes(new Set(["deadbeef"]), (k) => (k === "live" ? "deadbeef" : "00000000"));
-    expect(idx.has("live")).toBe(true);
-    expect(idx.has("stale")).toBe(false);
-  });
-
   it("clear empties the set", () => {
     const idx = new BakedKeyIndex();
     idx.add("a");
@@ -51,15 +43,6 @@ describe("BakedKeyIndex", () => {
     idx.clear();
     expect(idx.framesFor("a")).toBeUndefined();
     expect(idx.isComplete("a", 3)).toBe(false);
-  });
-
-  it("forgets coverage for directories that GC removed before an undo", () => {
-    const idx = new BakedKeyIndex();
-    idx.restoreFrames("a", new Set([0, 1]));
-    idx.setLiveCandidates(["a"]);
-    idx.hydrateFromHashes(new Set());
-    expect(idx.framesFor("a")).toBeUndefined();
-    expect(idx.isComplete("a", 2)).toBe(false);
   });
 
   it("a concurrent write does not turn unknown coverage into a scanned inventory", () => {

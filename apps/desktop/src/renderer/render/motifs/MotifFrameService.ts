@@ -286,7 +286,6 @@ export class MotifFrameService {
       // getters return at raster time (which could drift if the project fps
       // changes).
       const canonicalProps = desc.canonicalProps;
-      const durationSec = desc.durationSec;
       // Saved frames read at the divisor; holes are captured at full size.
       // Plan only fully saved content at the smaller size, so the window
       // never outgrows L0 with captures.
@@ -308,7 +307,6 @@ export class MotifFrameService {
             desc.cacheKey,
             frame,
             (frame * fpsDen) / fpsNum,
-            durationSec,
             canonicalProps,
             requestKey,
             fpsNum,

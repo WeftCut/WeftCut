@@ -224,9 +224,9 @@ export interface E2EHook {
   /// layer-relative times and read back the interior pixel of each bound
   /// raster. Exercises the full sprite chain in real Electron renderer:
   /// `update(view, tInLayerUs, durationUs)` → frame index → `frameTimeSec` →
-  /// `resolveMotifFrame` → `rasterMotifFrame` (CDP) → bound `Texture`. The spec
-  /// asserts the two frames differ (the motif animated across the
-  /// timeline). The spec's page.evaluate can't import the bundled `MotifSprite`,
+  /// `resolveMotifFrame` → `captureMotifFrameResult` (offscreen capture host)
+  /// → bound `Texture`. The spec asserts the two frames differ (the motif
+  /// animated across the timeline). The spec's page.evaluate can't import the bundled `MotifSprite`,
   /// so it's constructed here and the result reduced to plain numbers.
   ///
   /// Returns, per requested time: the bound bitmap dims + a content checksum
@@ -277,12 +277,6 @@ export interface E2EHook {
     expectedFrames: number;
     timeoutMs?: number;
   }): Promise<{ hashDir: string; hashName: string; frameCount: number }>;
-  /// List the hash dir names currently present under `<workspace>/Cache/raster/`.
-  /// Returns an empty array when no project is open or the dir doesn't exist.
-  listBakedHashDirs(): Promise<string[]>;
-  /// Run the GC against `activeCacheKeys`: removes every `Cache/raster/<hash>` dir
-  /// whose hash isn't in the active set. Mirrors `MotifFrameCache.gcUnreferenced`.
-  gcRasterDirs(activeCacheKeys: string[]): Promise<void>;
   /// Compute the cacheKey for a motif layer by looking up its current state in
   /// the project summary. Returns null if the layer doesn't exist or isn't a Motif.
   cacheKeyForLayer(layerId: string): Promise<string | null>;
@@ -1020,19 +1014,6 @@ export function installMotifTestHooks(): void {
       );
     }
     return { hashDir, hashName, frameCount };
-  };
-
-  hookSlot().listBakedHashDirs = async () => {
-    const ws = await workspaceDir();
-    if (!ws) return [];
-    const root = await pathJoin(ws, "Cache", "raster");
-    if (!(await exists(root))) return [];
-    const entries = await readDir(root);
-    return entries.flatMap((e) => e.isDirectory ? [e.name ?? ""] : []);
-  };
-
-  hookSlot().gcRasterDirs = async (activeCacheKeys) => {
-    await sharedMotifFrameCache.gcUnreferenced(activeCacheKeys);
   };
 
   hookSlot().cacheKeyForLayer = async (layerId) => {

@@ -469,7 +469,7 @@ describe("MotifSprite.refreshMotif", () => {
         sprite.update(view, 0, 5_000_000, undefined, true);
         sibling.update(view, 1_000_000, 5_000_000, undefined, true);
         const calls = vi.mocked(resolveMotifFrame).mock.calls;
-        expect(calls[0]![6]).not.toBe(calls[1]![6]);
+        expect(calls[0]![5]).not.toBe(calls[1]![5]);
       } finally { sibling.dispose(); }
     });
 
@@ -529,7 +529,7 @@ describe("MotifSprite.refreshMotif", () => {
         div = 1;
         scaled.update(view, 0, 5_000_000);
         expect(getFrameMock).toHaveBeenLastCalledWith(expect.any(String), 0, 1);
-        expect(vi.mocked(resolveMotifFrame).mock.calls.map(call => call[11])).toEqual([2, 1]);
+        expect(vi.mocked(resolveMotifFrame).mock.calls.map(call => call[10])).toEqual([2, 1]);
         expect(releaseMock).not.toHaveBeenCalledWith(half); // still on screen
       } finally { scaled.dispose(); }
     });

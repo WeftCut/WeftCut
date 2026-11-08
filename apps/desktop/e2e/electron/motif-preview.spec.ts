@@ -2,7 +2,7 @@
 //
 // Chain under test:
 //   motifAddCountdown() → Compositor.compositeFrame → MotifSprite →
-//   resolveMotifFrame → rasterMotifFrame (captureMotifFrameB64 via CDP host) →
+//   resolveMotifFrame → captureMotifFrameResult (offscreen capture host) →
 //   ImageBitmap → live Pixi stage.
 //
 // We create a 480×480 project (countdown native size → fills the frame),

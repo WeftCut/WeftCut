@@ -4,14 +4,13 @@ import type { MotifView } from "../../ipc";
 import { canonicalizePropsLenient, resolveMotifContentDurationUs, type Motif } from "./catalog";
 import { overlayMotifProps } from "./previewOverlay";
 import {
-  US_PER_SEC,
   frameTimeSec,
   motifContentFrame,
   motifFrameCacheKey,
 } from "./motifFrames";
 
 /// `renderW/renderH/contentDurationUs/srcInUs/contentDurationFrames` are carried
-/// for the prewarmer path; the sprite only uses cacheKey/contentFrame/tSec/durationSec/canonicalProps.
+/// for the prewarmer path; the sprite only uses cacheKey/contentFrame/tSec/canonicalProps.
 export interface MotifFrameDescriptor {
   cacheKey: string;
   contentFrame: number;
@@ -22,7 +21,6 @@ export interface MotifFrameDescriptor {
   renderH: number;
   canonicalProps: Record<string, unknown>;
   tSec: number;
-  durationSec: number;
   /// True when a pending params-page patch was folded into this descriptor
   /// (layerId given AND the layer has one). The sprite routes such frames to
   /// the small overlay lane instead of the committed-content LRU, so gesture
@@ -92,7 +90,6 @@ export function motifFrameDescriptor(
     cacheKey, contentFrame: frame, contentDurationFrames, contentDurationUs, srcInUs,
     renderW, renderH, canonicalProps,
     tSec: frameTimeSec(frame, fpsNum, fpsDen),
-    durationSec: contentDurationUs / US_PER_SEC,
     overlayActive,
   };
 }

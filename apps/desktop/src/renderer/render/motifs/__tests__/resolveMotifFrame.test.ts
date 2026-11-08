@@ -1,61 +1,51 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetMotifFrameRequests, resolveMotifFrame, sharedBakedKeyIndex, sharedMotifFrameCache } from "../motifRasterCache";
+import { captureMotifFrameResult } from "../host";
+import { hashCacheKey } from "../../../../shared/motifs/cacheKey";
 
-vi.mock("../motifRaster", () => ({ rasterMotifFrame: vi.fn(async () => ({ id: "cdp" }) as unknown as ImageBitmap) }));
-import { rasterMotifFrame } from "../motifRaster";
-import { resolveMotifFrame, sharedBakedKeyIndex, sharedMotifFrameCache } from "../motifRasterCache";
-import { MotifTransportError } from "../frameTransport";
+vi.mock("../host", () => ({ captureMotifFrameResult: vi.fn() }));
+vi.mock("../frameTransport", async importOriginal => ({
+  ...await importOriginal<typeof import("../frameTransport")>(), controlStoredMotifCapture: vi.fn(),
+}));
 
 const motif = { manifest: { id: "countdown", size: [480, 480] } } as unknown as Parameters<typeof resolveMotifFrame>[0];
+const bitmap = () => ({ width: 1, height: 1, close: vi.fn() }) as unknown as ImageBitmap;
 
-describe("resolveMotifFrame → Motif CDP", () => {
-  beforeEach(() => (rasterMotifFrame as unknown as ReturnType<typeof vi.fn>).mockClear());
-
-  it("on a non-baked key, produces the frame via rasterMotifFrame with id and manifest size", async () => {
-    expect(sharedBakedKeyIndex.has("k-not-baked")).toBe(false);
-    const bmp = await resolveMotifFrame(motif, "k-not-baked", 7, 2.5, 5, { seconds: 5 });
-    expect(rasterMotifFrame).toHaveBeenCalledWith("countdown", 2.5, { seconds: 5 }, 480, 480, undefined, undefined, undefined, undefined);
-    expect(bmp).toEqual({ bitmap: { id: "cdp" }, persisted: false, scaleDiv: "live" });
+describe("resolveMotifFrame", () => {
+  beforeEach(() => {
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("createImageBitmap", vi.fn(async () => bitmap()));
+  });
+  afterEach(() => {
+    resetMotifFrameRequests();
+    sharedBakedKeyIndex.clear();
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
   });
 
-  it("forwards the composition fps so meta.fps matches the rate tSec was computed on", async () => {
-    await resolveMotifFrame(motif, "k-not-baked", 7, 2.5, 5, { seconds: 5 }, undefined, 30000, 1001);
-    expect(rasterMotifFrame).toHaveBeenCalledWith("countdown", 2.5, { seconds: 5 }, 480, 480, undefined, undefined, 30000, 1001);
+  it("captures an unsaved frame at manifest size with the composition fps and its cache address", async () => {
+    const live = bitmap();
+    vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: live, persisted: false, scaleDiv: "live" });
+    const got = await resolveMotifFrame(motif, "k-not-baked", 7, 2.5, { seconds: 5 }, "sprite", 30000, 1001);
+    expect(got).toMatchObject({ persisted: false, scaleDiv: "live" });
+    expect(createImageBitmap).toHaveBeenCalledExactlyOnceWith(live);
+    expect(captureMotifFrameResult).toHaveBeenCalledExactlyOnceWith("countdown", 2.5, { seconds: 5 }, 480, 480,
+      undefined, 30000, 1001, expect.objectContaining({ scaleDiv: 1, cache: { hash: hashCacheKey("k-not-baked"), frame: 7 } }));
   });
 
   it("an on-demand frame waits for restoration and reads the saved pixels without capture", async () => {
-    const saved = { id: "saved" } as unknown as ImageBitmap;
+    const saved = bitmap();
     const read = vi.spyOn(sharedMotifFrameCache, "readBitmap").mockResolvedValue(saved);
     sharedBakedKeyIndex.beginHydration();
-    try {
-      const pending = resolveMotifFrame(motif, "restored", 0, 0, 5, { seconds: 5 });
-      await Promise.resolve();
-      expect(rasterMotifFrame).not.toHaveBeenCalled();
-      sharedBakedKeyIndex.restoreFrames("restored", new Set([0]));
-      sharedBakedKeyIndex.finishHydration();
-      expect(await pending).toEqual({ bitmap: saved, persisted: true, scaleDiv: 1 });
-      expect(rasterMotifFrame).not.toHaveBeenCalled();
-      expect(read).toHaveBeenCalledWith("restored", 0, 1);
-    } finally {
-      sharedBakedKeyIndex.clear();
-      read.mockRestore();
-    }
-  });
-
-  it("reads at the preview divisor; a miss captures, a transport error does not", async () => {
-    const saved = { id: "half" } as unknown as ImageBitmap;
-    const read = vi.spyOn(sharedMotifFrameCache, "readBitmap").mockResolvedValueOnce(saved)
-      .mockResolvedValueOnce(null).mockRejectedValueOnce(new MotifTransportError("utility", "timeout"));
-    sharedBakedKeyIndex.restoreFrames("saved", new Set([0, 1, 2]));
-    try {
-      const at = (frame: number) => resolveMotifFrame(motif, "saved", frame, 0, 5, {}, undefined, undefined, undefined, false, "foreground", 2);
-      expect(await at(0)).toEqual({ bitmap: saved, persisted: true, scaleDiv: 2 });
-      expect(await at(1)).toEqual({ bitmap: { id: "cdp" }, persisted: false, scaleDiv: "live" });
-      await expect(at(2)).rejects.toBeInstanceOf(MotifTransportError);
-      expect(rasterMotifFrame).toHaveBeenCalledTimes(1);
-      expect(read.mock.calls).toEqual([["saved", 0, 2], ["saved", 1, 2], ["saved", 2, 2]]);
-    } finally {
-      sharedBakedKeyIndex.clear();
-      read.mockRestore();
-    }
+    const pending = resolveMotifFrame(motif, "restored", 0, 0, { seconds: 5 }, "sprite");
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(read).not.toHaveBeenCalled();
+    sharedBakedKeyIndex.restoreFrames("restored", new Set([0]));
+    sharedBakedKeyIndex.finishHydration();
+    expect(await pending).toMatchObject({ persisted: true, scaleDiv: 1 });
+    expect(createImageBitmap).toHaveBeenCalledExactlyOnceWith(saved);
+    expect(read).toHaveBeenCalledExactlyOnceWith("restored", 0, 1);
+    expect(captureMotifFrameResult).not.toHaveBeenCalled();
   });
 });

@@ -153,7 +153,7 @@ export class MotifPlaybackCursor {
     const d = request.descriptor;
     try {
       const { bitmap, scaleDiv } = await resolveMotifFrame(motif, d.cacheKey, d.contentFrame,
-        d.tSec, d.durationSec, d.canonicalProps, this.requestKey,
+        d.tSec, d.canonicalProps, this.requestKey,
         this.deps.fpsNum, this.deps.fpsDen, d.overlayActive, 'foreground', request.scaleDiv);
       if (this.disposed || request.epoch !== this.epoch) {
         bitmap.close(); this.discarded++; return;

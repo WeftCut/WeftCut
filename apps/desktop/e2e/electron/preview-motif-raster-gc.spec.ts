@@ -1,7 +1,11 @@
-// e2e gate: the L2 raster GC (`hydrateBakedIndexAndGc` → `gcUnreferenced`)
-// must NEVER delete on-disk motif frames while a motif layer is unresolvable
-// (catalog sync lost the race with project open / transient list_motifs
-// failure / draft temporarily missing) — "can't resolve" is not "orphaned".
+// e2e gate: the L2 raster GC must NEVER delete on-disk motif frames while a
+// motif layer is unresolvable (catalog sync lost the race with project open /
+// transient list_motifs failure / draft temporarily missing) — "can't
+// resolve" is not "orphaned". Path under test: the renderer's bake plan
+// (MotifFrameService) sets `collect` false whenever `collectLiveRasterKeys`
+// reports an unresolved Motif; main's `MotifBakeCoordinator` removes
+// unreferenced `Cache/raster/<hash>` dirs only for a `collect` plan, after
+// discovery (`MotifFrameStore.collect`, wired in src/main/motif/bakeWorkspace.ts).
 // Deleting on a guess is unrecoverable: a full re-bake costs tens of minutes
 // of serial capture time. The control half pins the other side: with every
 // motif resolvable, a genuinely unreferenced hash dir IS reclaimed.

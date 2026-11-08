@@ -510,28 +510,18 @@ describe("MotifFrameCache — content coverage", () => {
 });
 
 describe("MotifFrameCache — L2 worker-safety (no window bridge)", () => {
-  // Asserts every L2 disk op degrades to a clean no-op when `window` (and with
-  // it the IPC bridge) is absent. Why: `rasterRootDir` in frameCache.ts.
+  // The export Worker and node tests have no window, so no reader or IPC
+  // bridge: L2 must degrade to a clean no-op rather than throw.
   const realWindow = (globalThis as Record<string, unknown>).window;
   afterEach(() => {
     (globalThis as Record<string, unknown>).window = realWindow;
   });
 
-  test("listBakedHashes resolves to an empty set when window is undefined", async () => {
-    delete (globalThis as Record<string, unknown>).window;
-    await expect(new MotifFrameCache().listBakedHashes()).resolves.toEqual(new Set());
-  });
-
-  test("gcUnreferenced does not throw when window is undefined", async () => {
-    delete (globalThis as Record<string, unknown>).window;
-    await expect(new MotifFrameCache().gcUnreferenced(["k"])).resolves.toBeUndefined();
-  });
-
-  test("readBitmap / hasPersistedFrame return the empty result when window is undefined", async () => {
+  test("readBitmap misses and writeFrame no-ops when window is undefined", async () => {
     delete (globalThis as Record<string, unknown>).window;
     const c = new MotifFrameCache();
     await expect(c.readBitmap("k", 0, 1)).resolves.toBeNull();
-    await expect(c.hasPersistedFrame("k", 0)).resolves.toBe(false);
+    await expect(c.writeFrame("k", 0, new Blob([]))).resolves.toBeUndefined();
   });
 });
 
@@ -569,15 +559,6 @@ describe("hashCacheKey", () => {
     expect(zh).toBe(hashCacheKey("{\"标题\":\"你好\"}"));
     expect(zh).toMatch(/^[0-9a-f]{32}$/);
     expect(zh).not.toBe(hashCacheKey("{\"标题\":\"好你\"}"));
-  });
-
-  test("old-format (8-hex) dirs are not live-set members, so gcUnreferenced reclaims them", () => {
-    // The Phase-3 32-bit FNV dirs (8 hex chars) can never equal a live key's
-    // 32-char hash — gcUnreferenced deletes any dir name not in the live set,
-    // with no name-format filter, so the migration is "next GC reclaims them".
-    const legacyDir = "deadbeef";
-    expect(legacyDir).not.toBe(hashCacheKey("motif|3|640|360|{}"));
-    expect(legacyDir.length).not.toBe(hashCacheKey("anything").length);
   });
 });
 

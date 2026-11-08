@@ -20,14 +20,8 @@ export function captureMotifFrameResult(
   contentHash: string | undefined,
   fpsNum: number | undefined, fpsDen: number | undefined, options: CaptureOptions,
 ): Promise<CapturedFrame> {
-  if (typeof window === 'undefined' || typeof window.postMessage !== 'function' || typeof MessageChannel === 'undefined') {
-    return captureMotifFrame(motifId, tSec, props, width, height, contentHash,
-      options.key, fpsNum, fpsDen).then(bitmap => ({ bitmap, persisted: false, scaleDiv: 'live' as const }));
-  }
-  if (typeof window !== 'undefined') {
-    const perf = (window as unknown as { __weftcutMotifPerf?: { renders: number } }).__weftcutMotifPerf;
-    if (perf) perf.renders++;
-  }
+  const perf = (window as unknown as { __weftcutMotifPerf?: { renders: number } }).__weftcutMotifPerf;
+  if (perf) perf.renders++;
   return captureMotifResult({
     motifId, tSec, propsJson: JSON.stringify(props), width, height,
     contentHash: contentHash ?? '', fpsNum, fpsDen,
@@ -40,9 +34,8 @@ export function captureMotifFrameResult(
 /**
  * Render a Motif to a single frame and return the raw PNG as a `Blob`.
  *
- * Drives the `motif_capture_frame` IPC channel (offscreen Electron window
- * + `motif:` scheme + CDP `Page.captureScreenshot` via webContents.debugger).
- * The PNG is taint-free (CDP screenshot, not a canvas readback).
+ * Drives the `motif_capture_frame` IPC channel: main encodes the leased paint
+ * of the offscreen capture host as a PNG (ADR 0159).
  *
  * @param motifId    built-in Motif id (e.g. "countdown")
  * @param tSec       content time in SECONDS
@@ -68,8 +61,7 @@ export async function captureMotifFramePngBlob(
   fpsDen?: number,
 ): Promise<Blob> {
   // The channel returns the PNG bytes as a Uint8Array (structured-clone
-  // native) — main decodes the CDP base64 once, so this side pays no
-  // atob/byte-copy on the capture hot path.
+  // native), so this side pays no atob/byte-copy.
   const bytes = await invoke<Uint8Array>("motif_capture_frame", {
     motifId,
     tSec,
@@ -87,11 +79,9 @@ export async function captureMotifFramePngBlob(
 }
 
 /**
- * Capture to a fresh ImageBitmap. The preload transport consumes a shared GPU
- * texture on supported Windows hosts, otherwise PNG; virtual-time rendering
- * is identical. The PNG-only function above remains available for image callers.
- *
- * The bitmap can be uploaded to WebGPU/Pixi without cross-origin tainting.
+ * Capture to a fresh ImageBitmap through the preload transport: a shared GPU
+ * texture on Windows, straight RGBA elsewhere (ADR 0159). Used by the e2e
+ * hook; the editor goes through `captureMotifFrameResult`.
  *
  * @param motifId    built-in Motif id (e.g. "countdown")
  * @param tSec       content time in SECONDS
@@ -112,16 +102,12 @@ export async function captureMotifFrame(
   fpsNum?: number,
   fpsDen?: number,
 ): Promise<ImageBitmap> {
-  if (typeof window !== "undefined" && typeof window.postMessage === "function" && typeof MessageChannel !== "undefined") {
-    const { captureStoredMotifFrame } = await import("./frameTransport");
-    return captureStoredMotifFrame({
-      motifId, tSec, propsJson: JSON.stringify(props), width, height,
-      contentHash: contentHash ?? "",
-      coalesceKey, fpsNum, fpsDen,
-    });
-  }
-  const blob = await captureMotifFramePngBlob(motifId, tSec, props, width, height, contentHash, coalesceKey, fpsNum, fpsDen);
-  return createImageBitmap(blob);
+  const { captureStoredMotifFrame } = await import("./frameTransport");
+  return captureStoredMotifFrame({
+    motifId, tSec, propsJson: JSON.stringify(props), width, height,
+    contentHash: contentHash ?? "",
+    coalesceKey, fpsNum, fpsDen,
+  });
 }
 
 /// True when a capture rejection is the chain's latest-wins replacement

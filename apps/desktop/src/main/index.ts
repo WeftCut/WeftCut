@@ -1575,7 +1575,6 @@ app.whenReady().then(async () => {
     }
     if (channel === 'motif_bake_snapshot') return motifBakes!.snapshot()
     if (channel === 'motif_capture_diagnostics') return captureDiagnostics(args?.reset === true)
-    if (channel === 'motif_has_cached_frame') return currentMotifStore().has(args.hash, args.frame)
     if (channel === 'motif_write_cached_frame') return currentMotifStore().write(args.hash, args.frame, args.png)
     if (channel === 'agent_connections') return mcpHost.connectionSnapshot()
     if (channel === COMPUTE_JOBS_SNAPSHOT_CHANNEL) return computeJobs!.snapshot()

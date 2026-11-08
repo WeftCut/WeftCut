@@ -353,24 +353,11 @@ export class MotifFrameCache {
   // L2 — opt-in zstd frame sequence on disk
   //
   // Layout: `<workspace>/Cache/raster/<hash>/<i>.wfrm`, where `<hash>` is
-  // a stable 128-bit hash of `cacheKey` (32 lowercase hex chars — see
-  // `hashCacheKey`).
-  //
-  // MIGRATION: the hash was FNV-1a 32-bit (8 hex chars) before the Phase-4
-  // hardening. Workspaces from before carry `<hash>` dirs in the OLD format;
-  // no live key hashes to them anymore, so the next `gcUnreferenced` reclaims
-  // them (it removes every dir not in the live set — there is no name-format
-  // filter to skip them) and the frames re-bake on demand. Regenerable cache,
-  // so the loss is acceptable.
-  //
-  // Disk I/O goes through `@/bridge/fs` (`window.api.fs.*` → the Electron main
-  // process), so `mkdir`/`writeFile`/`readDir`/`remove`/`exists` against
-  // `<workspace>/Cache/raster/...` work whenever a project is open; there is no
-  // capability gating. The methods run against the real fs: a genuine not-found
-  // yields null/no-op, but an unexpected IO error surfaces as a thrown error
-  // rather than being masked. The fs-bridge imports are loaded lazily so the L0
-  // path never pulls the bridge — keeps `frameCache.ts` Node-loadable for the
-  // unit test.
+  // `hashCacheKey(cacheKey)` (32 lowercase hex chars). Main owns the
+  // directory — writes, inventory and collection of unreferenced dirs live in
+  // `MotifFrameStore` (src/main/motif/frameStore.ts). This side only reads
+  // and forwards writes; both load their bridge lazily so the L0 path stays
+  // Node-loadable for the unit test.
   // ----------------------------------------------------------------
 
   /// A stored frame at `scaleDiv`, through the document's `MotifFrameReader`
@@ -383,15 +370,6 @@ export class MotifFrameCache {
     return motifFrameReader().read(cacheKey, frameIndex, scaleDiv, options);
   }
 
-  /// True if the new-format frame exists on disk. Cheaper than `readBitmap`
-  /// (no byte read) — the baker uses it to skip already-baked frames.
-  /// Null project / not-found → false; permission errors propagate.
-  async hasPersistedFrame(cacheKey: string, frameIndex: number): Promise<boolean> {
-    if (typeof window === "undefined") return false;
-    const { invoke } = await import("@/bridge/ipc");
-    return invoke<boolean>("motif_has_cached_frame", { hash: hashCacheKey(cacheKey), frame: frameIndex });
-  }
-
   /// Encode a PNG capture into the frame cache, creating the `<hash>` dir as needed. No-op when
   /// no project is open (nowhere to anchor `<workspace>/Cache/`).
   async writeFrame(cacheKey: string, frameIndex: number, png: Blob): Promise<void> {
@@ -400,87 +378,6 @@ export class MotifFrameCache {
     const bytes = new Uint8Array(await png.arrayBuffer());
     await invoke<void>("motif_write_cached_frame", { hash: hashCacheKey(cacheKey), frame: frameIndex, png: bytes });
   }
-
-  /// Prune `Cache/raster/<hash>` dirs whose hash isn't referenced by any
-  /// currently-active cacheKey. Used to reclaim disk after layers are
-  /// deleted or their props/dims change (a new key → a new hash dir, the
-  /// old one becomes unreferenced). A missing `Cache/raster` is treated
-  /// as nothing-to-GC, not an error.
-  /// `isCurrent` revokes a snapshot's deletion authority across async I/O;
-  /// it is checked immediately before each removal, not only before GC starts.
-  async gcUnreferenced(activeCacheKeys: string[], isCurrent: () => boolean = () => true): Promise<void> {
-    const root = await rasterRootDir();
-    if (root === null || !isCurrent()) return;
-    const [{ readDir, remove, exists }, { join }] = await Promise.all([
-      import("@/bridge/fs"),
-      import("@/bridge/path"),
-    ]);
-    if (!(await exists(root))) return;
-    const live = new Set(activeCacheKeys.map(hashCacheKey));
-    const entries = await readDir(root);
-    for (const entry of entries) {
-      if (!isCurrent()) return;
-      if (!entry.isDirectory) continue;
-      if (live.has(entry.name)) continue;
-      const dir = await join(root, entry.name);
-      // Recheck AFTER the last await, immediately before issuing deletion.
-      // Once remove has been sent to main it cannot be retracted.
-      if (!isCurrent()) return;
-      await remove(dir, { recursive: true });
-    }
-  }
-
-  /// The set of `<hash>` dir names currently under `Cache/raster`. Empty when
-  /// no project is open or the dir doesn't exist. Used to hydrate the
-  /// in-RAM baked-key index on project load.
-  async listBakedHashes(): Promise<Set<string>> {
-    const root = await rasterRootDir();
-    if (root === null) return new Set();
-    const { readDir, exists } = await import("@/bridge/fs");
-    if (!(await exists(root))) return new Set();
-    const entries = await readDir(root);
-    const out = new Set<string>();
-    for (const e of entries) if (e.isDirectory) out.add(e.name);
-    return out;
-  }
-
-  /// One directory read restores exact coverage, including interrupted bakes.
-  /// Ignore old PNGs, temporary writes, directories and noncanonical names.
-  async listPersistedFrames(cacheKey: string): Promise<Set<number>> {
-    const root = await rasterRootDir();
-    if (root === null) return new Set();
-    const [{ readDir }, { join }] = await Promise.all([
-      import("@/bridge/fs"), import("@/bridge/path"),
-    ]);
-    const entries = await readDir(await join(root, hashCacheKey(cacheKey)));
-    const frames = new Set<number>();
-    for (const entry of entries) {
-      if (!entry.isFile || entry.isSymlink || !/^(0|[1-9]\d*)\.wfrm$/.test(entry.name)) continue;
-      const frame = Number(entry.name.slice(0, -5));
-      if (Number.isSafeInteger(frame)) frames.add(frame);
-    }
-    return frames;
-  }
-}
-
-/// `<workspace>/Cache/raster`, or null when no project is open — or when the
-/// L2 bridge is unreachable off the main renderer thread.
-///
-/// Every L2 disk op funnels through here, and reaching the workspace root goes
-/// `workspaceDir()` → `invoke()` → `window.api.backend` — the main-process IPC
-/// bridge. The export Compositor runs in a Worker (`worker/exportWorker.ts`),
-/// where `window` is undefined and no such bridge exists, so the whole L2 layer
-/// is unreachable there. Return null (every caller no-ops on a null root)
-/// instead of letting the bare `window` reference throw
-/// `ReferenceError: window is not defined` — which `hydrateBakedIndexAndGc`
-/// swallowed but logged as a scary warning on every export setProject.
-async function rasterRootDir(): Promise<string | null> {
-  if (typeof window === "undefined") return null;
-  const { workspaceDir } = await import("../../ipc");
-  const ws = await workspaceDir();
-  if (!ws) return null;
-  const { join } = await import("@/bridge/path");
-  return join(ws, "Cache", "raster");
 }
 
 export { hashCacheKey } from "../../../shared/motifs/cacheKey";

@@ -70,7 +70,6 @@ describe("motifFrameDescriptor", () => {
     const d = motifFrameDescriptor(view({}, 1_000_000), 2_000_000, durationUs, 30, 1, uncapped)!;
     expect(d.contentDurationUs).toBe(durationUs);
     expect(d.srcInUs).toBe(0);               // src_in ignored when uncapped
-    expect(d.durationSec).toBeCloseTo(4, 6);
   });
 
   it("yields a descriptor even when a layer carries an unknown prop (lenient render)", () => {
