@@ -35,6 +35,10 @@ export const MOTIF_TUNING_SPEC = {
   /** How long a background capture waits before it gets one frame between
    * foreground ones (ms). Not measured. */
   backgroundAgingMs: { default: 2000, range: [100, 60_000] },
+  /** How long a capture whose Motif has no capture host lets younger captures
+   * of its class whose Motif has one go first (ms); 0 keeps arrival order.
+   * Not measured. */
+  hostAffinityMs: { default: 250, range: [0, 10_000] },
   /** How long expected frames may go without a paint before the capturer is
    * restarted (ms). Not measured; one new window once sent no paint for 1.5 s
    * (docs/notes/motif-capture-frame-id-2026-11-08.md). */

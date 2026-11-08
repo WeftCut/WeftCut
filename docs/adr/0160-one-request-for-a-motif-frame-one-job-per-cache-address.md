@@ -34,8 +34,10 @@ send the frame back to a read that missed again, without end.
   that id. Nothing is inferred from keys. A withdrawn request is answered
   `superseded`, not thrown: `ipcMain.handle` logs every rejection with its
   stack, and a cancelled capture is routine.
-- **Main serves the three priorities in order** on its one queue; background
-  waiting `backgroundAgingMs` gets a frame between higher ones.
+- **Main serves the three priorities in order.** A capture leaves main's
+  queue only when a capture host can take its frame, so a `current` request
+  goes before lookahead queued earlier; background waiting
+  `backgroundAgingMs` gets a frame between higher ones.
 - **One job per cache address and workspace store.** Every request that arrives
   before the capture's lease joins it; the capture runs at the highest priority
   left and is cancelled when the last request leaves. Only a display without
@@ -73,12 +75,15 @@ send the frame back to a read that missed again, without end.
   a loop.
 - A display joined to a bake that times out fails with it instead of capturing
   again on its own.
-- Resources are reserved once per job, when it is queued, borrowed from the
-  plan of the first export in it at that point. An export that joins later is
-  not charged, which its plan allows: the plan budgets a capture in flight per
-  producer frame whether or not that capture is shared. A refusal by that plan fails every request in the
-  job `capacity`. The charge lasts until the job ends, even when the export has
-  withdrawn, so that export's finalization can wait for one capture.
+- Resources are reserved once per job, when its capture reaches a host,
+  borrowed from the plan of the first export in it at that point. A queued job
+  holds nothing: at 4K a reservation is about 143 MiB, so jobs charged while
+  they wait would be refused `capacity` with no pixels in hand. An export that
+  joins later is not charged, which its plan allows: the plan budgets a
+  capture in flight per producer frame whether or not that capture is shared.
+  A refusal by that plan fails every request in the job `capacity`. The charge
+  lasts until the job ends, even when the export has withdrawn, so that
+  export's finalization can wait for one capture.
 - A running capture is never preempted: a cancel during its render still costs
   that render, and the caller drops the result.
 - Renderer and main must speak the same wire; both ship in one app build.

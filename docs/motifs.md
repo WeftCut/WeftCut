@@ -136,20 +136,29 @@ switch to another Motif replaces it.
   every other [failure code](#failure-codes) (a timeout, disk error, capacity
   refusal, held mutex, superseded request or Motif failure) never does.
   `WEFTCUT_MOTIF_CAPTURE=bitmap` forces bitmaps for diagnosis.
-- **Ordered, pipelined.** Captures leave the queue in order, and each host
-  renders one frame at a time; different hosts render at once. A render
-  returns once its frame has committed, and the next frame on the same host
-  renders while up to three earlier ones are still on their way to a paint
-  (ADR 0159). A resize waits for that host's paints. The next capture waits
-  while its host is rendering, or while every host is rendering and it has
-  none, and the captures behind it wait too. A frame the compositor skipped (a
-  later id painted first) renders again, keeping its place and its ticket.
-  Every capture states a [priority](#admission): queued `current` captures run
-  first, then `ahead`, then `background`, and a `background` capture waiting
-  2 s gets one frame between higher ones. A queued capture moves when its
-  priority changes, up or down, and leaves the queue when its request is
-  cancelled (it rejects as superseded); a running one finishes and its caller
-  drops what it no longer wants.
+- **Pipelined.** Each host renders one frame at a time; different hosts
+  render at once. A render returns once its frame has committed, and the next
+  frame on the same host renders while up to three earlier ones are still on
+  their way to a paint (ADR 0159). A resize waits for that host's paints. A
+  frame the compositor skipped (a later id painted first) renders again from
+  the head of its class, as the same ticket.
+- **Dispatched at a free slot.** A capture stays queued until a host can take
+  its frame: its own host is not rendering and has room among its frames in
+  flight, or a slot is free, or a host can be replaced. The order is decided
+  then, so a `current` capture queued after `ahead` ones goes first at the
+  next free slot and waits at most for one render step and one paint on its
+  own host; a running frame is never preempted. Every capture states a
+  [priority](#admission): `current` first, then `ahead`, then `background`,
+  and a `background` capture waiting 2 s gets one frame between higher ones.
+  Within a class, a capture whose Motif has a host goes before an older one
+  whose Motif has none until that one has waited `hostAffinityMs` (250 ms), so
+  one host serves two Motifs in runs rather than replacing itself every frame;
+  affinity never crosses a class. A capture waiting for its busy host keeps
+  that host from being replaced by captures ranked below it, while the other
+  hosts go on serving them. A queued capture moves when its priority changes,
+  up or down, and leaves the queue when its request is cancelled (it rejects
+  as superseded); a running one finishes and its caller drops what it no
+  longer wants. On quit every queued capture rejects `closed` at once.
 - **Deadlines.** Every CDP command goes through the host's timed `send`
   (5 s); awaited setup gets 30 s; the renderer's capture transport allows 60 s
   so it does not pre-empt setup. A timeout rejects with code `timeout` and
@@ -285,8 +294,11 @@ address of the workspace store
   session first and captures again for persistence, as a bitmap. A failed
   write fails persistence with its code, keeps the pixels displays already
   have and reports a kept display not persisted.
-- A job reserves its capture memory once, when queued, borrowed from the plan
-  of the first export in it then; an export joining later is not charged.
+- A job reserves its capture memory once, when its capture reaches a host,
+  borrowed from the plan of the first export in it then; an export joining
+  later is not charged. A queued job holds nothing, a refusal fails every
+  request `capacity` there, and a job nobody wants by then is superseded
+  without reserving.
 
 Captures without a cache address (parameter previews, the e2e hook) and PNG
 captures (MCP, covers, the Motif panel's preview, all `background`) are never

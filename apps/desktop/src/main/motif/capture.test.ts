@@ -474,6 +474,45 @@ describe('MotifCapturer', () => {
     } finally { paintDelayMs = 0 }
   })
 
+  it('with one host, two Motifs asking for current frames switch hosts once per hostAffinityMs, not every frame', async () => {
+    vi.useFakeTimers()
+    // Each Motif keeps more current captures in main than its host has room
+    // for in flight, so some always wait in the queue, for one second.
+    const run = async (hostAffinityMs: number) => {
+      capturer.shutdown()
+      capturer = newCapturer({ tuning: { ...MOTIF_TUNING_DEFAULTS, hostAffinityMs } })
+      let running = true
+      const done = { a: 0, b: 0 }
+      const lane = async (id: 'a' | 'b') => {
+        for (let t = 0; running; t++) {
+          await capturer.capturePng({ ...args, motifId: `alternating-${id}`, tSec: t }, { priority: 'current' })
+          done[id]++
+        }
+      }
+      const outstanding = MOTIF_TUNING_DEFAULTS.framesInFlight + 1
+      const lanes = (['a', 'b'] as const).flatMap(id => Array.from({ length: outstanding }, () => lane(id)))
+      await vi.advanceTimersByTimeAsync(1000)
+      running = false
+      await vi.advanceTimersByTimeAsync(1000)
+      await Promise.all(lanes)
+      return { ...capturer.diagnostics(), done }
+    }
+    paintDelayMs = 10
+    try {
+      const arrival = await run(0)
+      const affinity = await run(250)
+      // Both Motifs keep being served either way.
+      for (const stats of [arrival, affinity]) expect(Math.min(stats.done.a, stats.done.b)).toBeGreaterThan(10)
+      expect(arrival.hostBuilds).toBeGreaterThan(20)
+      // One build per 250 ms window, the last one draining the queue.
+      expect(affinity.hostBuilds).toBeLessThanOrEqual(1000 / 250 + 2)
+      expect(affinity.affinityPicks).toBeGreaterThan(0)
+    } finally {
+      paintDelayMs = 0
+      vi.useRealTimers()
+    }
+  })
+
   it('a consumer\'s failure leaves the host and the other frames in flight alone', async () => {
     await capturer.capturePng({ ...args, motifId: 'consumer-fails' }, bg)
     const before = opened

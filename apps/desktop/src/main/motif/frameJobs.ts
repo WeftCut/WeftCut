@@ -269,14 +269,18 @@ export class MotifFrameJobs {
 
   private queue(job: Job): void {
     job.state = 'queued'
-    if (!job.release) {
-      // One reservation per job, borrowed from the plan of the first export
-      // in it now; an export joining later is not charged (ADR 0160).
-      const finalizationId = [...job.members].find(member => member.display?.finalizationId !== undefined)?.display?.finalizationId
-      try { job.release = reserve(0, 16 + job.args.width * job.args.height * 16 / 1048576, finalizationId) }
-      catch (error) { this.fail(job, error); return }
-    }
     void this.run(job)
+  }
+
+  /** When the job's capture reaches its host, on every attempt: superseded
+   * when nobody wants it any more, else its resources are reserved, once per
+   * job, borrowed from the plan of the first export in it now; an export
+   * joining later is not charged (ADR 0160). A refusal throws `capacity`. */
+  private dispatched(job: Job): void {
+    if (!this.wanted(job)) throw motifSuperseded()
+    if (job.release) return
+    const finalizationId = [...job.members].find(member => live(member) && member.display?.finalizationId !== undefined)?.display?.finalizationId
+    job.release = reserve(0, 16 + job.args.width * job.args.height * 16 / 1048576, finalizationId)
   }
 
   /** Captures until a lease takes the job. A failure of the shared-texture
@@ -289,7 +293,7 @@ export class MotifFrameJobs {
         // Inside the try: a capture that throws before it returns fails the
         // job like one that rejects, instead of leaving it queued.
         const { result, ticket } = this.session.capture(job.args, frame => this.lease(job, frame), {
-          priority: this.priority(job), isCurrent: () => this.wanted(job),
+          priority: this.priority(job), dispatch: () => this.dispatched(job),
         })
         job.ticket = ticket
         await result

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { HostPool, type HostKey, type PooledHost } from './hostPool'
 import { CaptureQueue, type CaptureArgs } from './captureQueue'
 
@@ -10,8 +10,12 @@ let evictions: number
 class FakeHost implements PooledHost {
   retired = false
   framesInFlight = 0
+  /// Frames in flight the host has room for.
+  bound = 3
   private paints: (() => void)[] = []
+  private settled: (() => void)[] = []
   constructor(readonly key: HostKey, readonly size: { width: number; height: number }) {}
+  get hasRoom(): boolean { return this.framesInFlight < this.bound }
   /// A frame rendered on this host whose paint has not arrived.
   inFlight(): void {
     this.framesInFlight++
@@ -19,6 +23,10 @@ class FakeHost implements PooledHost {
   paint(): void {
     this.framesInFlight = 0
     for (const resolve of this.paints.splice(0)) resolve()
+    for (const listener of this.settled) listener()
+  }
+  onFrameSettled(listener: () => void): void {
+    this.settled.push(listener)
   }
   drain(): Promise<void> {
     events.push(`drain:${this.key.motifId}`)
@@ -96,6 +104,35 @@ describe('HostPool', () => {
     await lease('c')
     expect(a.host.retired).toBe(false)
     expect(b.host.retired).toBe(true)
+  })
+
+  it('a host without room among its frames in flight is busy until a paint, which tells the queue', async () => {
+    const { pool, lease, key } = newPool(1)
+    const changed = vi.fn()
+    pool.onChange(changed)
+    const a = await lease('a')
+    a.release()
+    a.host.bound = 1
+    a.host.inFlight()
+    expect(pool.state(key('a'))).toBe('busy')
+    changed.mockClear()
+    a.host.paint()
+    expect(changed).toHaveBeenCalled()
+    expect(pool.state(key('a'))).toBe('ready')
+  })
+
+  it('never replaces a host the queue keeps for a better-ranked ticket', async () => {
+    const { pool, lease, key } = newPool(2)
+    ;(await lease('a')).release()
+    ;(await lease('b')).release()
+    const keep = new Set([key('a')])
+    expect(pool.canOpen(keep)).toBe(true)
+    const c = argsOf('c')
+    const leased = pool.acquire(key('c'), c, keep)
+    await leased.host(c)
+    leased.release()
+    expect(pool.diagnostics().map(h => h.motifId).sort()).toEqual(['a', 'c'])
+    expect(pool.canOpen(new Set([key('a'), key('c')]))).toBe(false)
   })
 
   it('drains a replaced host\'s frames in flight, then retires it, then opens the new one', async () => {
@@ -251,8 +288,8 @@ describe('HostPool', () => {
 
   it('two hosts render at once when captureHosts is 2', async () => {
     const { pool } = newPool(2)
-    const queue = new CaptureQueue(pool, { skippedFrameRetries: 0, backgroundAgingMs: 2000 }, {
-      refuse: () => null, started: () => {}, settled: () => {},
+    const queue = new CaptureQueue(pool, { skippedFrameRetries: 0, backgroundAgingMs: 2000, hostAffinityMs: 0 }, {
+      refuse: () => null, started: () => {}, settled: () => {}, affinityPick: () => {},
     })
     let rendering = 0, peak = 0
     let open!: () => void

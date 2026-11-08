@@ -9,11 +9,15 @@ export interface HostKey { motifId: string; contentHash: string; texture: boolea
 export interface PooledHost {
   readonly retired: boolean
   readonly framesInFlight: number
+  /** Room for another frame in flight. */
+  readonly hasRoom: boolean
   readonly size: { width: number; height: number }
   /** Settles once every frame rendered on the host has its paint. */
   drain(): Promise<void>
   /** Closes the host; its frames in flight fail. */
   retire(): void
+  /** Calls `listener` after each frame in flight settles. */
+  onFrameSettled(listener: () => void): void
 }
 
 export interface HostPoolDeps<H extends PooledHost> {
@@ -77,15 +81,15 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
     this.sweep()
     const slot = this.slots.get(key)
     if (!slot) return 'absent'
-    return slot.rendering || slot.evictedBy ? 'busy' : 'ready'
+    return slot.rendering || slot.evictedBy || !slot.host?.hasRoom ? 'busy' : 'ready'
   }
 
-  canOpen(): boolean {
+  canOpen(keep: ReadonlySet<string> = new Set()): boolean {
     this.sweep()
-    return this.live() < this.deps.capacity || this.idle() !== null
+    return this.live() < this.deps.capacity || this.idle(keep) !== null
   }
 
-  acquire(key: string, args: CaptureArgs): HostPoolLease<H> {
+  acquire(key: string, args: CaptureArgs, keep: ReadonlySet<string> = new Set()): HostPoolLease<H> {
     this.sweep()
     let slot = this.slots.get(key)
     if (slot) {
@@ -93,7 +97,7 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
     } else {
       slot = { key, hostKey: this.deps.hostKeyOf(args), host: null, rendering: false, usedAt: 0, captures: 0, evicts: null, evictedBy: null }
       if (this.live() >= this.deps.capacity) {
-        const victim = this.idle()
+        const victim = this.idle(keep)
         if (!victim) throw new Error('no capture host slot is free')
         victim.evictedBy = slot
         slot.evicts = victim
@@ -175,6 +179,8 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
     // Every host retired while it opened, so it shows the old mode; the
     // caller asks again.
     if (generation !== this.generation) host.retire()
+    // A paint makes room on the host, or retires it.
+    host.onFrameSettled(() => this.changed())
     slot.hostKey = hostKey
     slot.host = host
     return host
@@ -228,11 +234,12 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
     return n
   }
 
-  /// The least recently used host that is not rendering or being replaced.
-  private idle(): Slot<H> | null {
+  /// The least recently used host that is not rendering, being replaced or
+  /// kept.
+  private idle(keep: ReadonlySet<string> = new Set()): Slot<H> | null {
     let lru: Slot<H> | null = null
     for (const slot of this.slots.values()) {
-      if (slot.rendering || slot.evictedBy) continue
+      if (slot.rendering || slot.evictedBy || keep.has(slot.key)) continue
       if (!lru || slot.usedAt < lru.usedAt) lru = slot
     }
     return lru

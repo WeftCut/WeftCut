@@ -64,6 +64,7 @@ export class CaptureHost implements PooledHost {
   /// Paints still to arrive for frames already rendered (ADR 0159). Settled
   /// whatever the outcome; tracked only to bound and drain the pipeline.
   private readonly inFlight = new Set<Promise<void>>()
+  private readonly settledListeners: (() => void)[] = []
 
   private constructor(
     readonly key: HostKey,
@@ -153,6 +154,7 @@ export class CaptureHost implements PooledHost {
 
   get retired(): boolean { return this.retiredFlag }
   get framesInFlight(): number { return this.inFlight.size }
+  get hasRoom(): boolean { return this.inFlight.size < this.env.tuning.framesInFlight }
   get size(): { width: number; height: number } { return { ...this.lastSize } }
 
   /** Gets the host ready for a frame at `width` × `height`: room in the
@@ -239,8 +241,15 @@ export class CaptureHost implements PooledHost {
     })
     const settled = delivered.then(() => {}, () => {})
     this.inFlight.add(settled)
-    void settled.then(() => this.inFlight.delete(settled))
+    void settled.then(() => {
+      this.inFlight.delete(settled)
+      for (const listener of this.settledListeners) listener()
+    })
     return { delivered }
+  }
+
+  onFrameSettled(listener: () => void): void {
+    this.settledListeners.push(listener)
   }
 
   async drain(): Promise<void> {

@@ -14,7 +14,7 @@ import type { UserMotifStore } from './store.js'
 import type { MotifFramePriority } from '../../shared/motifs/frameTransport.js'
 
 /** The tuning keys the capture hosts run on (`shared/motifs/tuning.ts`). */
-export type CaptureTuning = Pick<MotifTuning, 'captureHosts' | 'framesInFlight' | 'captureFrameRate' | 'skippedFrameRetries' | 'backgroundAgingMs' | 'stallNudgeMs'>
+export type CaptureTuning = Pick<MotifTuning, 'captureHosts' | 'framesInFlight' | 'captureFrameRate' | 'skippedFrameRetries' | 'backgroundAgingMs' | 'hostAffinityMs' | 'stallNudgeMs'>
 
 /** The picture above the marker rows of a shared texture, as a PNG. */
 export type TexturePngReader = (handle: Buffer, height: number) => Promise<Buffer>
@@ -37,7 +37,7 @@ export interface MotifCapturerDeps {
   readTexturePng: TexturePngReader | null
 }
 
-const newCaptureCounters = () => ({ captures: 0, completed: 0, failed: 0, pageLoads: 0, hostBuilds: 0, hostEvictions: 0, textureCaptures: 0, bitmapCaptures: 0, skippedFrames: 0, queueMs: 0, captureMs: 0, loadMs: 0, readyMs: 0, setupMs: 0, renderMs: 0, outputMs: 0 })
+const newCaptureCounters = () => ({ captures: 0, completed: 0, failed: 0, pageLoads: 0, hostBuilds: 0, hostEvictions: 0, affinityPicks: 0, textureCaptures: 0, bitmapCaptures: 0, skippedFrames: 0, queueMs: 0, captureMs: 0, loadMs: 0, readyMs: 0, setupMs: 0, renderMs: 0, outputMs: 0 })
 type CaptureCounters = ReturnType<typeof newCaptureCounters>
 
 const DIAGNOSTIC_LANE_CAP = 128
@@ -49,6 +49,7 @@ const MANIFEST_CACHE_CAP = 32
 const HOSTS_PER_STEP = 3
 
 const laneKeyOf = (motifId: string, contentHash: string) => `${motifId}\0${contentHash}`
+const closedError = () => new MotifError('closed', 'motif capture host is shut down (the app is quitting)')
 
 /** Renders Motif frames on a pool of offscreen capture hosts for every
  * consumer: preview, export, preparation, covers and MCP. The queue orders
@@ -108,6 +109,7 @@ export class MotifCapturer {
         else if (outcome === 'skipped') this.counters.skippedFrames++
         else this.counters.failed++
       },
+      affinityPick: () => { this.counters.affinityPicks++ },
     })
   }
 
@@ -162,15 +164,17 @@ export class MotifCapturer {
   }
 
   /// Retire the hosts for the rest of the process's life; the app's
-  /// `before-quit` calls this.
+  /// `before-quit` calls this. Queued captures, and any queued later, reject
+  /// `closed` at once.
   ///
   /// The latch is the load-bearing half, not the teardown. Quitting closes every
-  /// window ASYNCHRONOUSLY, and a capture still queued resumes inside that gap:
-  /// were it to open a host, Electron's window list would never empty,
+  /// window ASYNCHRONOUSLY, and a capture already running resumes inside that
+  /// gap: were it to open a host, Electron's window list would never empty,
   /// `will-quit` would never fire, and the process would run forever. Retiring
   /// the hosts without also refusing later captures re-opens that race.
   shutdown(): void {
     this.shuttingDown = true
+    this.queue.close(closedError())
     this.pool.shutdown()
   }
 
@@ -225,7 +229,7 @@ export class MotifCapturer {
   /// committed. `output` runs inside the frame's lease.
   private async render<T>(lease: HostPoolLease<CaptureHost>, a: CaptureArgs, output: (frame: MotifOsrFrame) => Promise<T>): Promise<Rendered<T>> {
     // Refuse rather than resurrect — see `shutdown`.
-    if (this.shuttingDown) throw new MotifError('closed', 'motif capture host is shut down (the app is quitting)')
+    if (this.shuttingDown) throw closedError()
     this.store.assertRenderable(a.motifId)
     const manifest = this.manifestFor(a)
     // A `media` prop becomes a URL on the Motif's origin before setup sees it.

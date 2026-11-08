@@ -1,13 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { CaptureQueue, type CaptureArgs, type CaptureQueueHooks, type HostLease, type HostSlots } from './captureQueue'
 import { MotifFrameSkippedError } from './offscreenFrames'
-import { MotifError } from '../../shared/motifs/errors'
+import { MotifError, motifSuperseded } from '../../shared/motifs/errors'
 import type { MotifFramePriority } from '../../shared/motifs/frameTransport'
 
 /// Host slots keyed by Motif id, `capacity` of them; a key without a host
-/// replaces any idle one. Records which keys hold a lease at once.
+/// replaces the oldest one that is not rendering or kept. Records which keys
+/// hold a lease at once.
 class FakeSlots implements HostSlots<HostLease> {
-  readonly hosts = new Map<string, { rendering: boolean }>()
+  /// `full`: no room among its frames in flight.
+  readonly hosts = new Map<string, { rendering: boolean; full: boolean }>()
   /// The most keys rendering at once.
   peak = 0
   private readonly listeners: (() => void)[] = []
@@ -15,14 +17,14 @@ class FakeSlots implements HostSlots<HostLease> {
   keyOf(a: CaptureArgs) { return a.motifId }
   state(key: string) {
     const host = this.hosts.get(key)
-    return !host ? 'absent' as const : host.rendering ? 'busy' as const : 'ready' as const
+    return !host ? 'absent' as const : host.rendering || host.full ? 'busy' as const : 'ready' as const
   }
-  canOpen() { return this.hosts.size < this.capacity || [...this.hosts.values()].some(h => !h.rendering) }
-  acquire(key: string) {
+  canOpen(keep: ReadonlySet<string>) { return this.hosts.size < this.capacity || this.victim(keep) !== undefined }
+  acquire(key: string, _args: CaptureArgs, keep: ReadonlySet<string>) {
     let host = this.hosts.get(key)
     if (!host) {
-      if (this.hosts.size >= this.capacity) this.hosts.delete([...this.hosts].find(([, h]) => !h.rendering)![0])
-      host = { rendering: false }
+      if (this.hosts.size >= this.capacity) this.hosts.delete(this.victim(keep)!)
+      host = { rendering: false, full: false }
       this.hosts.set(key, host)
     }
     if (host.rendering) throw new Error('leased twice')
@@ -32,6 +34,14 @@ class FakeSlots implements HostSlots<HostLease> {
     return { release: () => { leased.rendering = false; for (const l of this.listeners) l() } }
   }
   onChange(listener: () => void) { this.listeners.push(listener) }
+  /// The key's host fills up with frames in flight, or a paint makes room.
+  setFull(key: string, full: boolean) {
+    this.hosts.get(key)!.full = full
+    for (const l of this.listeners) l()
+  }
+  private victim(keep: ReadonlySet<string>) {
+    return [...this.hosts].find(([key, h]) => !h.rendering && !keep.has(key))?.[0]
+  }
 }
 
 function deferred<T = void>() {
@@ -40,27 +50,29 @@ function deferred<T = void>() {
   return { promise, resolve, reject }
 }
 
-const tuning = { skippedFrameRetries: 3, backgroundAgingMs: 2000 }
+/// Arrival order within a class unless a test asks for host affinity.
+const tuning = { skippedFrameRetries: 3, backgroundAgingMs: 2000, hostAffinityMs: 0 }
 const argsOf = (motifId: string): CaptureArgs => ({ motifId, tSec: 0, propsJson: '{}', width: 32, height: 16, contentHash: 'v1' })
 
 let slots: FakeSlots
 let queue: CaptureQueue<HostLease>
 /// Motif ids in the order their render step started.
 let order: string[]
-let counts: { started: number; completed: number; skipped: number; failed: number }
+let counts: { started: number; completed: number; skipped: number; failed: number; affinityPicks: number }
 let refused: Map<string, Error>
 
-function newQueue(capacity = 1) {
+function newQueue(capacity = 1, overrides: Partial<typeof tuning> = {}) {
   slots = new FakeSlots(capacity)
   order = []
-  counts = { started: 0, completed: 0, skipped: 0, failed: 0 }
+  counts = { started: 0, completed: 0, skipped: 0, failed: 0, affinityPicks: 0 }
   refused = new Map()
   const hooks: CaptureQueueHooks = {
     refuse: a => refused.get(a.motifId) ?? null,
     started: () => { counts.started++ },
     settled: outcome => { counts[outcome]++ },
+    affinityPick: () => { counts.affinityPicks++ },
   }
-  queue = new CaptureQueue(slots, tuning, hooks)
+  queue = new CaptureQueue(slots, { ...tuning, ...overrides }, hooks)
 }
 beforeEach(() => newQueue())
 
@@ -69,15 +81,17 @@ interface Step {
   hold?: Promise<unknown>
   /// The frame's paint: by default it arrives at once with the Motif id.
   delivered?: () => Promise<string>
-  isCurrent?: () => boolean
+  dispatch?: () => void
+  /// Recorded in `order` instead of the Motif id.
+  label?: string
 }
 /// Queues a capture whose render step records its Motif id.
 const capture = (motifId: string, priority: MotifFramePriority, step: Step = {}) =>
   queue.enqueue(argsOf(motifId), async () => {
-    order.push(motifId)
+    order.push(step.label ?? motifId)
     await step.hold
     return { delivered: step.delivered?.() ?? Promise.resolve(motifId) }
-  }, { priority, isCurrent: step.isCurrent })
+  }, { priority, dispatch: step.dispatch })
 
 describe('CaptureQueue', () => {
   it('serves queued captures current, then ahead, then background, never preempting a running one', async () => {
@@ -123,11 +137,11 @@ describe('CaptureQueue', () => {
     await expect(running.result).resolves.toBe('running')
   })
 
-  it('checks currency when the ticket reaches its host, before rendering', async () => {
+  it('runs dispatch when the ticket reaches its host, before rendering', async () => {
     const gate = deferred()
     const running = capture('running', 'background', { hold: gate.promise })
     let current = true
-    const stale = capture('stale', 'background', { isCurrent: () => current })
+    const stale = capture('stale', 'background', { dispatch: () => { if (!current) throw motifSuperseded() } })
     current = false
     gate.resolve()
     await running.result
@@ -238,7 +252,7 @@ describe('CaptureQueue', () => {
     expect(slots.peak).toBe(1)
   })
 
-  it('with two hosts, different Motifs render at once and the same Motif waits for its host', async () => {
+  it('with two hosts, a ticket waiting for its busy host holds back no other host', async () => {
     newQueue(2)
     const gateA = deferred(), gateB = deferred()
     const a = capture('a', 'ahead', { hold: gateA.promise })
@@ -248,22 +262,24 @@ describe('CaptureQueue', () => {
     await Promise.resolve()
     expect(order).toEqual(['a', 'b'])
     expect(queue.rendering).toBe(2)
-    // `a` again waits for its host, and `c`, behind it, waits too: dispatch
-    // keeps arrival order.
+    // `a` again waits for its host; `c`, behind it, takes `b`'s host the
+    // moment it is free, and never `a`'s.
     gateB.resolve()
     await b.result
-    expect(order).toEqual(['a', 'b'])
+    await c.result
+    expect(order).toEqual(['a', 'b', 'c'])
+    expect([...slots.hosts.keys()].sort()).toEqual(['a', 'c'])
     gateA.resolve()
-    await Promise.all([a.result, a2.result, c.result])
-    expect(order).toEqual(['a', 'b', 'a', 'c'])
+    await Promise.all([a.result, a2.result])
+    expect(order).toEqual(['a', 'b', 'c', 'a'])
     expect(slots.peak).toBe(2)
   })
 
   it('rejects a ticket whose host cannot be leased and dispatches the next', async () => {
     const acquire = slots.acquire.bind(slots)
-    slots.acquire = (key: string) => {
+    slots.acquire = (key, a, keep) => {
       if (key === 'broken') throw new Error('no capture host slot is free')
-      return acquire(key)
+      return acquire(key, a, keep)
     }
     const broken = capture('broken', 'current')
     const next = capture('next', 'current')
@@ -271,5 +287,129 @@ describe('CaptureQueue', () => {
     await expect(next.result).resolves.toBe('next')
     expect(order).toEqual(['next'])
     expect(queue).toMatchObject({ queued: 0, rendering: 0 })
+  })
+
+  it('a current ticket queued last overtakes queued ahead ones at the next free slot', async () => {
+    await capture('a', 'ahead').result
+    // The host's frames in flight fill its pipeline: nothing leaves the queue.
+    slots.setFull('a', true)
+    const ahead = [capture('a', 'ahead', { label: 'ahead-1' }), capture('a', 'ahead', { label: 'ahead-2' })]
+    const current = capture('a', 'current', { label: 'current' })
+    await Promise.resolve()
+    expect(order).toEqual(['a'])
+    expect(queue.queued).toBe(3)
+    // A paint makes room: the current ticket goes first.
+    slots.setFull('a', false)
+    await Promise.all([current, ...ahead].map(r => r.result))
+    expect(order).toEqual(['a', 'current', 'ahead-1', 'ahead-2'])
+  })
+
+  describe('host affinity', () => {
+    /// Holds `motifId`'s host in a render step until the returned gate opens.
+    const occupy = (motifId: string) => {
+      const gate = deferred()
+      const run = capture(motifId, 'ahead', { hold: gate.promise })
+      return { run, open: () => { gate.resolve(); return run.result } }
+    }
+
+    it('a ticket whose Motif has a host goes before an older one of its class whose Motif has none', async () => {
+      newQueue(1, { hostAffinityMs: 10_000 })
+      const held = occupy('a')
+      const other = capture('b', 'ahead')
+      const same = capture('a', 'ahead')
+      await held.open()
+      await Promise.all([other.result, same.result])
+      expect(order).toEqual(['a', 'a', 'b'])
+      expect(counts.affinityPicks).toBe(1)
+    })
+
+    it('a ticket without a host goes in arrival order once it has waited hostAffinityMs', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] })
+      try {
+        newQueue(1, { hostAffinityMs: 100 })
+        const first = occupy('a')
+        const other = capture('b', 'ahead')
+        const gate = deferred()
+        const second = capture('a', 'ahead', { hold: gate.promise })
+        await vi.advanceTimersByTimeAsync(50)
+        // Within the window the host's own ticket goes first, and it keeps
+        // coming.
+        await first.open()
+        expect(order).toEqual(['a', 'a'])
+        const third = capture('a', 'ahead')
+        await vi.advanceTimersByTimeAsync(60)
+        // Past it, `b` goes before the younger ticket of the host's Motif.
+        gate.resolve()
+        await Promise.all([second.result, other.result, third.result])
+        expect(order).toEqual(['a', 'a', 'b', 'a'])
+        expect(counts.affinityPicks).toBe(1)
+      } finally { vi.useRealTimers() }
+    })
+
+    it('never crosses a class: a current ticket without a host goes before ahead ones with a host', async () => {
+      newQueue(1, { hostAffinityMs: 10_000 })
+      const held = occupy('a')
+      const other = capture('b', 'current')
+      const same = capture('a', 'ahead')
+      await held.open()
+      await Promise.all([other.result, same.result])
+      expect(order).toEqual(['a', 'b', 'a'])
+      expect(counts.affinityPicks).toBe(0)
+    })
+
+    it('hostAffinityMs=0 keeps arrival order', async () => {
+      const held = occupy('a')
+      const other = capture('b', 'ahead')
+      const same = capture('a', 'ahead')
+      await held.open()
+      await Promise.all([other.result, same.result])
+      expect(order).toEqual(['a', 'b', 'a'])
+      expect(counts.affinityPicks).toBe(0)
+    })
+
+    it('a ticket waiting for its full host keeps a younger one of another Motif from replacing it', async () => {
+      await capture('a', 'ahead').result
+      slots.setFull('a', true)
+      const same = capture('a', 'ahead')
+      const other = capture('b', 'ahead')
+      await Promise.resolve()
+      expect(order).toEqual(['a'])
+      slots.setFull('a', false)
+      await Promise.all([same.result, other.result])
+      expect(order).toEqual(['a', 'a', 'b'])
+    })
+  })
+
+  it('a throwing dispatch rejects the capture with its error, without rendering', async () => {
+    const refusal = new MotifError('capacity', 'no room for the capture')
+    const refused = capture('refused', 'current', { dispatch: () => { throw refusal } })
+    const next = capture('next', 'current')
+    await expect(refused.result).rejects.toMatchObject({ code: 'capacity' })
+    await expect(next.result).resolves.toBe('next')
+    expect(order).toEqual(['next'])
+    expect(queue).toMatchObject({ queued: 0, rendering: 0 })
+  })
+
+  it('dispatch runs again on a skipped frame\'s retry', async () => {
+    let dispatches = 0, paints = 0
+    const skipping = capture('skipping', 'ahead', {
+      dispatch: () => { dispatches++ },
+      delivered: () => ++paints === 1 ? Promise.reject(new MotifFrameSkippedError(1)) : Promise.resolve('skipping'),
+    })
+    await expect(skipping.result).resolves.toBe('skipping')
+    expect(dispatches).toBe(2)
+  })
+
+  it('close rejects every queued ticket at once, and later ones; a running one finishes', async () => {
+    const gate = deferred()
+    const running = capture('running', 'ahead', { hold: gate.promise })
+    const queued = [capture('a', 'current'), capture('b', 'background')]
+    queue.close(new MotifError('closed', 'shut down'))
+    for (const r of queued) await expect(r.result).rejects.toMatchObject({ code: 'closed' })
+    expect(queue.queued).toBe(0)
+    await expect(capture('later', 'current').result).rejects.toMatchObject({ code: 'closed' })
+    gate.resolve()
+    await expect(running.result).resolves.toBe('running')
+    expect(order).toEqual(['running'])
   })
 })

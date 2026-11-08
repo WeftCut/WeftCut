@@ -44,8 +44,9 @@ function deferred<T = void>() {
 interface FakeCapture {
   options: CaptureOptions;
   ticket: { setPriority: Mock<(priority: MotifFramePriority) => void>; cancel: Mock<() => void> };
-  /** The host starts rendering: a cancel no longer stops the capture. */
-  start(): void;
+  /** The capture reaches its host: its dispatch runs, and a cancel no longer
+   * stops it. False when the dispatch threw, which rejected the capture. */
+  start(): boolean;
   lease(frame?: MotifOsrFrame): Promise<void>;
   fail(error: unknown): void;
 }
@@ -64,13 +65,17 @@ function harness({ texture = true } = {}) {
     capture: vi.fn((_args: unknown, consume: (frame: MotifOsrFrame) => Promise<any>, options: CaptureOptions): CaptureRun<any> => {
       const result = deferred<any>();
       let started = false;
+      const start = () => {
+        if (started) return true;
+        started = true;
+        try { options.dispatch?.(); return true; } catch (error) { result.reject(error); return false; }
+      };
       const capture: FakeCapture = {
         options,
         ticket: { setPriority: vi.fn(), cancel: vi.fn(() => { if (!started) { started = true; result.reject(motifSuperseded()); } }) },
-        start: () => { started = true; },
+        start,
         lease: async (frame = textures ? textureFrame : bitmapFrame) => {
-          started = true;
-          if (options.isCurrent && !options.isCurrent()) { result.reject(motifSuperseded()); return; }
+          if (!start()) return;
           try { result.resolve(await consume(frame)); } catch (error) { result.reject(error); }
         },
         fail: error => { started = true; result.reject(error); },
@@ -510,19 +515,61 @@ describe('MotifFrameJobs: failures', () => {
     h.session.capture.mockImplementationOnce(() => { throw failure; });
     const display = h.display(1, { afterMiss: true });
     await expect(display.result).rejects.toBe(failure);
-    expect(resources.released).toBe(1);
+    expect(resources.reserved).toHaveLength(0);
+    expect(resources.released).toBe(0);
     // The job left the table: the next request captures.
     h.persist();
     await h.queued(1);
   });
 
-  it('a capacity refusal fails every request `capacity` and releases nothing', async () => {
+  it('a capacity refusal at dispatch fails every request `capacity` and releases nothing', async () => {
     const h = harness(); resources.refuse = true;
     const display = h.display(1, { afterMiss: true }), bake = h.persist();
+    await h.queued(1);
+    expect(h.captures[0]!.start()).toBe(false);
     await expect(display.result).rejects.toMatchObject({ code: 'capacity' });
     await expect(bake.result).rejects.toMatchObject({ code: 'capacity' });
-    expect(h.session.capture).not.toHaveBeenCalled();
+    expect(h.session.capture).toHaveBeenCalledOnce();
+    expect(h.session.useBitmaps).not.toHaveBeenCalled();
     expect(resources.released).toBe(0);
+  });
+
+  it('reserves when the capture reaches its host, not when it is queued', async () => {
+    const h = harness();
+    const display = h.display(1, { finalizationId: 4 });
+    await h.queued(1);
+    expect(resources.reserved).toEqual([]);
+    h.captures[0]!.start();
+    expect(resources.reserved).toEqual([4]);
+    await h.captures[0]!.lease();
+    await display.result;
+    // Still the one job reservation, then the live write's.
+    expect(resources.reserved).toEqual([4, undefined]);
+  });
+
+  it('a job cancelled before its capture reaches a host reserves nothing', async () => {
+    const h = harness();
+    const display = h.display(1), bake = h.persist();
+    await h.queued(1);
+    display.handle.cancel(); bake.handle.cancel();
+    await expect(display.result).rejects.toMatchObject({ code: 'superseded' });
+    await expect(bake.result).rejects.toMatchObject({ code: 'superseded' });
+    await settle();
+    expect(resources.reserved).toEqual([]);
+    expect(resources.released).toBe(0);
+  });
+
+  it('reserves once per job across a bitmap retry', async () => {
+    const h = harness();
+    const bake = h.persist();
+    await h.queued(1);
+    h.captures[0]!.start();
+    h.captures[0]!.fail(new MotifError('device', 'OSR lost'));
+    await h.queued(2);
+    await h.captures[1]!.lease();
+    await bake.result;
+    expect(resources.reserved).toHaveLength(1);
+    expect(resources.released).toBe(1);
   });
 
   it('a job releases its reservation once, though a live write releases it at the lease', async () => {

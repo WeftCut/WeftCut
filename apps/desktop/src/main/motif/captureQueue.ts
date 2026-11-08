@@ -20,8 +20,10 @@ export interface CaptureTicket {
 }
 export interface CaptureOptions {
   priority: MotifFramePriority
-  /// Checked when the ticket reaches its host, before any page IO.
-  isCurrent?: () => boolean
+  /// Runs when the ticket reaches its host, before any page IO, on every
+  /// attempt (a skipped frame's retry too). A throw rejects the capture with
+  /// that error.
+  dispatch?: () => void
 }
 export interface CaptureRun<T> { result: Promise<T>; ticket: CaptureTicket }
 
@@ -35,13 +37,16 @@ export interface HostLease { release(): void }
  * one host, one render step at a time on it. */
 export interface HostSlots<L extends HostLease> {
   keyOf(args: CaptureArgs): string
-  /// `ready`: the key's host can take a frame now. `busy`: it is rendering (or
-  /// being replaced). `absent`: the key has no host.
+  /// `ready`: the key's host can take a frame now (no render step on it, room
+  /// among its frames in flight). `busy`: it cannot yet, or it is being
+  /// replaced. `absent`: the key has no host.
   state(key: string): 'ready' | 'busy' | 'absent'
-  /// A key without a host could have one now: a slot is free or a host is idle.
-  canOpen(): boolean
-  /// Reserves the key's host, or a slot for it, until the lease is released.
-  acquire(key: string, args: CaptureArgs): L
+  /// A key without a host could have one now: a slot is free, or a host whose
+  /// key is not in `keep` is not rendering.
+  canOpen(keep: ReadonlySet<string>): boolean
+  /// Reserves the key's host, or a slot for it, until the lease is released;
+  /// a host it replaces is never one in `keep`.
+  acquire(key: string, args: CaptureArgs, keep: ReadonlySet<string>): L
   /// Called whenever a host may have become available.
   onChange(listener: () => void): void
 }
@@ -56,9 +61,13 @@ export interface CaptureQueueHooks {
   /// One attempt settled after `captureMs`: its frame was consumed, skipped and
   /// queued again, or failed.
   settled(outcome: 'completed' | 'skipped' | 'failed', captureMs: number): void
+  /// A ticket went ahead of an older one of its class by host affinity.
+  affinityPick(): void
 }
 
-export type CaptureQueueTuning = Pick<MotifTuning, 'skippedFrameRetries' | 'backgroundAgingMs'>
+export type CaptureQueueTuning = Pick<MotifTuning, 'skippedFrameRetries' | 'backgroundAgingMs' | 'hostAffinityMs'>
+
+type HostState = ReturnType<HostSlots<HostLease>['state']>
 
 interface Ticket<L> {
   args: CaptureArgs
@@ -75,28 +84,47 @@ interface Ticket<L> {
   /// Rejects the ticket without rendering it.
   fail: (error: unknown) => void
 }
+
+/** A queued ticket in dispatch order. */
+interface Candidate<L> {
+  ticket: Ticket<L>
+  key: string
+  /// An aged background ticket, ranked ahead of the foreground ones.
+  aged: boolean
+  /// Ranked ahead of an older ticket of its class whose Motif has no host.
+  affinity: boolean
+}
+
 const PRIORITIES: readonly MotifFramePriority[] = ['current', 'ahead', 'background']
 
 const settledTicket: CaptureTicket = { setPriority: () => {}, cancel: () => {} }
 
 /** Orders every capture (preview, export, preparation, MCP) onto the capture
- * hosts. One FIFO queue per priority: a `current` ticket dispatches ahead of
- * any queued `ahead` one, and both ahead of `background`, so lookahead and
- * preparation never hold the frame the user is looking at. A `background`
- * ticket waiting `backgroundAgingMs` gets one frame between higher ones, so
- * enabled background work cannot starve. A running ticket is never preempted.
+ * hosts. A ticket stays queued until a host can take its frame, so the order
+ * is decided at each free slot and a ticket queued later can still go first.
  *
- * Dispatch is strictly in that order: the next ticket waits while its host is
- * rendering, or while every host is rendering and it has none, and holds back
- * every ticket behind it. A host's slot is held from dispatch until its frame
- * has committed, not until its paint: the next frame renders while earlier
- * ones are still on their way to the capture (ADR 0159). */
+ * Rank: one FIFO queue per priority, `current` ahead of `ahead` ahead of
+ * `background`; a `background` ticket waiting `backgroundAgingMs` gets one
+ * frame between higher ones, so enabled background work cannot starve. Within
+ * a class, a ticket whose Motif has a host goes before an older one whose
+ * Motif has none until that one has waited `hostAffinityMs`: a switch costs a
+ * window build and the replaced host's drain (ADR 0159). Affinity never
+ * crosses a class.
+ *
+ * Dispatch: the best-ranked ticket a host can take now goes. One whose host
+ * cannot take a frame yet keeps that host from tickets ranked below it being
+ * replaced, and the hosts it does not need go on serving the others. A host
+ * takes a frame when it is not mid render step and has room among its frames
+ * in flight, so a `current` ticket waits at most for one render step and one
+ * paint on its own host. A running ticket is never preempted. */
 export class CaptureQueue<L extends HostLease> {
   private readonly queues: Record<MotifFramePriority, Ticket<L>[]> = { current: [], ahead: [], background: [] }
   private pumping = false
   /// The last dispatch was an aged background ticket: the next one is not.
   private agedLast = false
   private renderingCount = 0
+  /// Set by `close`: every ticket queued from then on rejects with it.
+  private closed: { error: unknown } | null = null
 
   constructor(
     private readonly slots: HostSlots<L>,
@@ -113,7 +141,7 @@ export class CaptureQueue<L extends HostLease> {
   /** Queues a capture. `render` renders its frame on the leased host; a frame
    * the compositor skipped goes back to the head of its queue, as the same
    * ticket, up to `skippedFrameRetries` times. */
-  enqueue<T>(args: CaptureArgs, render: (lease: L) => Promise<Rendered<T>>, { priority, isCurrent = () => true }: CaptureOptions): CaptureRun<T> {
+  enqueue<T>(args: CaptureArgs, render: (lease: L) => Promise<Rendered<T>>, { priority, dispatch }: CaptureOptions): CaptureRun<T> {
     const queuedAt = performance.now()
     let resolve!: (value: T) => void, reject!: (e: unknown) => void
     const result = new Promise<T>((res, rej) => { resolve = res; reject = rej })
@@ -135,7 +163,7 @@ export class CaptureQueue<L extends HostLease> {
         reject(ticket.cancelled && error instanceof MotifFrameSkippedError ? motifSuperseded() : error)
       }
       try {
-        if (!isCurrent()) throw motifSuperseded()
+        dispatch?.()
         const { delivered } = await render(lease)
         delivered.then(value => finish(null, value), finish)
       } catch (e) { finish(e) }
@@ -157,7 +185,7 @@ export class CaptureQueue<L extends HostLease> {
           if (!ticket.queued) return
           this.unschedule(ticket)
           reject(motifSuperseded())
-          // It may have held back the tickets behind it.
+          // It may have kept a host from the tickets ranked below it.
           this.pump()
         },
       },
@@ -169,7 +197,20 @@ export class CaptureQueue<L extends HostLease> {
     return { result: Promise.reject(error), ticket: settledTicket }
   }
 
+  /** Rejects every queued ticket with `error` at once, and every ticket queued
+   * from now on, a skipped frame's retry included. Running ones finish. */
+  close(error: unknown): void {
+    this.closed = { error }
+    for (const priority of PRIORITIES) {
+      for (const ticket of this.queues[priority].splice(0)) {
+        ticket.queued = false
+        ticket.fail(error)
+      }
+    }
+  }
+
   private schedule(t: Ticket<L>, first = false): void {
+    if (this.closed) { t.fail(this.closed.error); return }
     const queue = this.queues[t.priority]
     if (first) queue.unshift(t)
     else queue.push(t)
@@ -184,15 +225,44 @@ export class CaptureQueue<L extends HostLease> {
     t.queued = false
   }
 
-  /// The ticket that dispatches next, and whether it is an aged background one.
-  private next(): { ticket: Ticket<L>; aged: boolean } | null {
+  /// Every queued ticket, best first (see the class comment).
+  private ranked(now: number, stateOf: (key: string) => HostState): Candidate<L>[] {
     const queues = this.queues
-    const next = queues.current[0] ?? queues.ahead[0]
     const waiting = queues.background[0]
-    const aged = !this.agedLast && next !== undefined && waiting !== undefined
-      && performance.now() - waiting.queuedAt >= this.tuning.backgroundAgingMs
-    const ticket = aged || !next ? waiting : next
-    return ticket ? { ticket, aged } : null
+    const aged = !this.agedLast && waiting !== undefined && queues.current.length + queues.ahead.length > 0
+      && now - waiting.queuedAt >= this.tuning.backgroundAgingMs
+    const ranked: Candidate<L>[] = []
+    if (aged) ranked.push({ ticket: waiting, key: this.slots.keyOf(waiting.args), aged: true, affinity: false })
+    for (const priority of PRIORITIES) {
+      // A class's tickets without a host, not yet waited out, behind the rest.
+      const later: Candidate<L>[] = []
+      for (const ticket of queues[priority]) {
+        if (aged && ticket === waiting) continue
+        const key = this.slots.keyOf(ticket.args)
+        if (stateOf(key) === 'absent' && now - ticket.queuedAt < this.tuning.hostAffinityMs) later.push({ ticket, key, aged: false, affinity: false })
+        else ranked.push({ ticket, key, aged: false, affinity: later.length > 0 })
+      }
+      ranked.push(...later)
+    }
+    return ranked
+  }
+
+  /// The best-ranked ticket a host can take now, and the hosts it may not
+  /// replace: those that better-ranked tickets wait for.
+  private pick(): (Candidate<L> & { keep: ReadonlySet<string> }) | null {
+    const states = new Map<string, HostState>()
+    const stateOf = (key: string) => {
+      let state = states.get(key)
+      if (!state) { state = this.slots.state(key); states.set(key, state) }
+      return state
+    }
+    const keep = new Set<string>()
+    for (const candidate of this.ranked(performance.now(), stateOf)) {
+      const state = stateOf(candidate.key)
+      if (state === 'ready' || (state === 'absent' && this.slots.canOpen(keep))) return { ...candidate, keep }
+      if (state === 'busy') keep.add(candidate.key)
+    }
+    return null
   }
 
   private pump(): void {
@@ -200,17 +270,18 @@ export class CaptureQueue<L extends HostLease> {
     this.pumping = true
     try {
       for (;;) {
-        const next = this.next()
-        if (!next) { this.agedLast = false; return }
-        const { ticket, aged } = next
-        const key = this.slots.keyOf(ticket.args)
-        const state = this.slots.state(key)
-        if (state === 'busy' || (state === 'absent' && !this.slots.canOpen())) return
+        const next = this.pick()
+        if (!next) {
+          if (this.queued === 0) this.agedLast = false
+          return
+        }
+        const { ticket, key, keep } = next
         this.unschedule(ticket)
         let lease: L
         // Unscheduled, a ticket whose acquire throws would otherwise never settle.
-        try { lease = this.slots.acquire(key, ticket.args) } catch (e) { ticket.fail(e); continue }
-        this.agedLast = aged
+        try { lease = this.slots.acquire(key, ticket.args, keep) } catch (e) { ticket.fail(e); continue }
+        this.agedLast = next.aged
+        if (next.affinity) this.hooks.affinityPick()
         void this.dispatch(ticket, lease)
       }
     } finally {
