@@ -77,7 +77,7 @@ describe('streamed Motif selection', () => {
     const task = planExportMotifFrame(summary(), 1_000_000, 'export-token')[0]!;
     expect(await task.read(new AbortController().signal)).toBe(b);
     expect(captureMotifFrameResult).toHaveBeenCalledOnce();
-    expect(vi.mocked(captureMotifFrameResult).mock.calls[0]?.[9]).toMatchObject({
+    expect(vi.mocked(captureMotifFrameResult).mock.calls[0]?.[8]).toMatchObject({
       bake: { hash: expect.stringMatching(/^[0-9a-f]{32}$/), frame: 60 },
       finalizationToken: 'export-token', high: true,
     });

@@ -177,13 +177,33 @@ first-after-navigation captures were fully transparent (never stale or
 partial); Windows and Linux never missed. On a blank, paint events after
 `__motifRender`, `capturePage`, a second readback, a 100 ms wait,
 `invalidate` and `stopPainting`/`startPainting` were all blank too;
-`settleRafs` 1 vs 2 and a discarded first readback changed nothing. Only
+waiting one or two extra frames and a discarded first readback changed nothing. Only
 re-rendering recovered (14/14). Sizing the window to the capture with
 `setContentSize` removed every blank (384/384 captures). A verify-and-re-render
 fallback also passed but costs a decode per surface and was rejected. The
 emulation override stays: it pins `deviceScaleFactor` to 1. Not reproduced on a
-Mac outside CI. Gated by `e2e/electron/motif-png-capture.spec.ts` and the
+Mac outside CI. Gated by `e2e/electron/motif-bitmap-capture.spec.ts` and the
 capture-host fake in `main/motif/capture.test.ts`.
+
+## A bitmap OSR window paints alpha only for its first document
+
+Electron 44, `offscreen: true`, `transparent: true`, software compositing (a
+2-core Linux box; the GitHub Linux and Windows runners failed the same way),
+2026-11-08. The `paint` bitmap of a window's first top-level document keeps
+real alpha (20 of 20 fresh windows). A window that loaded `about:blank` first,
+or any later top-level navigation, paints its next document over opaque white,
+or alternates opaque and transparent between paints where the frame is not
+damaged. A `Page.captureScreenshot` of the same state stays transparent, so a
+screenshot cross-check does not catch it. `Emulation.setDefaultBackgroundColorOverride`,
+`setBackgroundColor`, `invalidate` and `stopPainting`/`startPainting` did not
+restore alpha reliably. An iframe navigation inside the first document keeps it.
+
+CDP commands sent before a window's first navigation do not take effect in time:
+an awaited `Page.enable` never settles, and an `addScriptToEvaluateOnNewDocument`
+sent unawaited lands after the document's scripts (0 of 20). So the capture host
+loads a script-free shell first, registers the runtime, then loads the Motif
+into the shell's frame, and opens a new window for each document
+(`main/motif/capture.ts` §buildHost, ADR 0159).
 
 ## Platform facts from the 2026-10 full verification runs
 

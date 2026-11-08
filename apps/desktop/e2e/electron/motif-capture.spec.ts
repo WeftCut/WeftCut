@@ -11,7 +11,7 @@ test('motif_capture_frame: deterministic transparent PNG via offscreen CDP', asy
     page.evaluate(async (tSec) => {
       const bytes = (await (window as any).api.backend.invoke('motif_capture_frame', {
         motifId: 'countdown', tSec, propsJson: JSON.stringify({ seconds: 5, accent: '#ff4d4d' }),
-        width: 480, height: 480, settleRafs: 1, contentHash: '',
+        width: 480, height: 480, contentHash: '',
       })) as Uint8Array
       let bin = ''
       for (let i = 0; i < bytes.length; i += 0x8000) {

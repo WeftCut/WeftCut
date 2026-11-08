@@ -5,7 +5,6 @@
   "size": [1280, 320],
   "default_duration_s": 5.0,
   "content_duration_s": 0.8,
-  "settle_rafs": 1,
   "fonts": [{ "family": "Inter", "file": "Inter.woff2", "weight": 700 }],
   "props_schema": {
     "title":    { "type": "string", "default": "Jane Doe", "max_length": 40 },

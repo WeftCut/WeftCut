@@ -8,11 +8,20 @@ import { backgroundResourcePause, reserveResources } from '../resources'
 import { isResourceCapacityError } from '../../shared/resource-policy'
 import { MotifFrameWriteQueue, type FrameRead, type QueuedWrite } from './frameWriteQueue'
 
-/** Pixels read back from a texture, held natively until `finish` encodes them. */
-export interface RawMotifFrame { finish(): Promise<Buffer> }
+/** Pixels read back from a texture, held natively until `finish` encodes them
+ * as a stored frame or `finishPng` as a PNG. */
+export interface RawMotifFrame { finish(): Promise<Buffer>; finishPng(): Promise<Buffer> }
 /** Reads the top `height` rows of a shared texture: the picture above the
  * capture host's marker rows. */
 export interface TextureEncoder { read(handle: Buffer, height: number): Promise<RawMotifFrame>; close(): void }
+/** Native conversions of a bitmap host's paint. */
+export interface MotifPixelCodec {
+  /** The top `height` rows of premultiplied BGRA rows `width` pixels wide, as
+   * straight RGBA. */
+  motifStraightenBgra(bgra: Buffer, width: number, height: number): Promise<Buffer>
+  /** Straight RGBA as a stored frame. */
+  motifEncodeRgba(rgba: Buffer, width: number, height: number): Promise<Buffer>
+}
 export interface CaptureRequest extends CaptureArgs {
   coalesceKey?: string
   high?: boolean
@@ -21,12 +30,14 @@ export interface CaptureRequest extends CaptureArgs {
   cache?: MotifCacheAddress
   finalizationToken?: string
 }
+type TextureOsrFrame = Extract<MotifOsrFrame, { kind: 'texture' }>
+type BitmapOsrFrame = Extract<MotifOsrFrame, { kind: 'bitmap' }>
 export interface CaptureServiceDeps {
   store: MotifFrameStore
-  texture: <T>(args: CaptureArgs, consume: (frame: MotifOsrFrame) => Promise<T>, key?: string, high?: boolean, isCurrent?: () => boolean) => Promise<T>
-  png: (args: CaptureArgs, key?: string, high?: boolean, isCurrent?: () => boolean) => Promise<string>
-  copy: ((owner: WebContents, frame: MotifOsrFrame, finalizationId?: number) => Promise<MotifTextureFrame>) | null
+  frame: <T>(args: CaptureArgs, consume: (frame: MotifOsrFrame) => Promise<T>, key?: string, high?: boolean, isCurrent?: () => boolean) => Promise<T>
+  copy: ((owner: WebContents, frame: TextureOsrFrame, finalizationId?: number) => Promise<MotifTextureFrame>) | null
   createEncoder: (() => TextureEncoder) | null
+  pixels: MotifPixelCodec
   setTextureEnabled: (enabled: boolean) => void
   isContentFailure: (args: CaptureArgs, error: unknown) => boolean
   promote?: (key: string) => void
@@ -41,12 +52,11 @@ interface WorkspaceJobs {
   display: Map<string, DisplayJob>
   persist: Map<string, PersistenceJob>
 }
-class ReadbackUnavailable extends Error {}
 
 // The store object is a workspace-session capability, not merely a directory.
 // Two openings of the same project may reuse files, never pending receipts.
 function captureIdentity(a: CaptureArgs): string {
-  return JSON.stringify([a.motifId, a.contentHash, a.tSec, a.propsJson, a.width, a.height, a.settleRafs, a.fpsNum, a.fpsDen])
+  return JSON.stringify([a.motifId, a.contentHash, a.tSec, a.propsJson, a.width, a.height, a.fpsNum, a.fpsDen])
 }
 const sameAddress = (a: MotifCacheAddress, b: MotifCacheAddress) => a.hash === b.hash && a.frame === b.frame
 /** Main never reads stored pixels on the capture path (ADR 0154). */
@@ -54,28 +64,48 @@ const storedFrame = (): StoredMotifFrame => ({ kind: 'stored', persisted: true }
 
 /** A capture reads its pixels inside the OSR lease and stores them through
  * `MotifFrameWriteQueue`, after the lease (ADR 0158). A failed write costs the
- * cache, never the pixels a display already has. A readback failure keeps the
- * captured bitmap available for the PNG writer. */
+ * cache, never the pixels a display already has. A shared texture goes to the
+ * display by GPU copy; a bitmap goes as straight RGBA (ADR 0159). */
 export class MotifCaptureService {
   private useTexture: boolean
   private encoder: TextureEncoder | null = null
-  private encoderFailed = false
   private liveWriteWarned = false
   private readonly writes = new MotifFrameWriteQueue()
   private readonly workspaceJobs = new WeakMap<MotifFrameStore, WorkspaceJobs>()
   constructor(private readonly deps: CaptureServiceDeps, enabled: boolean) {
-    this.useTexture = enabled && !!(deps.copy || deps.createEncoder)
+    this.useTexture = enabled && !!deps.copy && !!deps.createEncoder
     deps.setTextureEnabled(this.useTexture)
   }
 
-  /** Only a failure of the shared-texture output itself may switch the session
-   * to PNG. A disk write, a resource refusal, a superseded request, the Motif's
-   * own script and a hung host all happened before or beside that output: a
-   * PNG retry would not fix them, and the downgrade would cost every later
-   * frame its GPU path. */
+  /** Only a failure of the shared-texture output itself (its lease, GPU copy
+   * or readback) may switch the session to bitmaps. A disk write, a resource
+   * refusal, a superseded request, the Motif's own script and a hung host all
+   * happened before or beside that output: a bitmap retry would not fix them,
+   * and the switch would cost every later frame its GPU path. */
   private keepsTexturePath(args: CaptureArgs, error: unknown, writeFailed = false): boolean {
     return writeFailed || isResourceCapacityError(error) || String(error).includes(CAPTURE_SUPERSEDED_MESSAGE)
       || error instanceof MotifCaptureTimeoutError || this.deps.isContentFailure(args, error)
+  }
+
+  /** Runs `capture`; a failure of the shared-texture output moves the session
+   * to the bitmap host, which captures the same frame again. */
+  private async withFallback<T>(args: CaptureArgs, capture: () => Promise<T>, writeFailed: () => boolean = () => false): Promise<T> {
+    for (;;) {
+      const texture = this.useTexture
+      try { return await capture() }
+      catch (error) {
+        if (!texture || this.keepsTexturePath(args, error, writeFailed())) throw error
+        this.useBitmaps(error)
+      }
+    }
+  }
+
+  private useBitmaps(reason: unknown): void {
+    if (!this.useTexture) return
+    console.warn('[weftcut/motif] Shared-texture capture failed; using bitmap capture:', reason)
+    this.useTexture = false
+    this.encoder?.close(); this.encoder = null
+    this.deps.setTextureEnabled(false)
   }
 
   private jobsFor(store: MotifFrameStore): WorkspaceJobs {
@@ -166,55 +196,43 @@ export class MotifCaptureService {
       } catch (error) { writeFailed = true; throw error }
     }
     try {
-      if (this.canReadTexture()) {
-        let queued: QueuedWrite | undefined
-        try {
-          queued = await this.deps.texture(args, async frame => {
-            const writer = await prepare()
-            try { return await this.writes.offer(store, bake, 'wait', this.textureRead(frame, args, writer)) }
-            catch { throw new ReadbackUnavailable('Motif texture readback unavailable') }
-          }, coalesceKey, high, isCurrent)
-        } catch (error) {
-          if (this.keepsTexturePath(args, error, writeFailed)) throw error
-          // Readback failure is independent from OSR/display transport. A PNG
-          // retry needs no renderer and subsequent persistence skips readback.
-          if (!(error instanceof ReadbackUnavailable)) {
-            console.warn('[weftcut/motif] Shared-texture capture failed; using PNG fallback:', error)
-            this.useTexture = false
-            this.deps.setTextureEnabled(false)
-          }
-        }
-        if (queued) { await queued.written; return }
-      }
-      if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
-      const bytes = Buffer.from(await this.deps.png(args, coalesceKey, high, isCurrent), 'base64')
-      const writer = await prepare()
-      await (await this.writes.offer(store, bake, 'wait', async () => () => writer.png(bytes))).written
+      const queued = await this.withFallback(args, () => this.deps.frame(args, async frame => {
+        const writer = await prepare()
+        return this.writes.offer(store, bake, 'wait', this.frameRead(frame, args, writer))
+      }, coalesceKey, high, isCurrent), () => writeFailed)
+      await queued.written
     } finally { releaseResources() }
   }
 
-  private canReadTexture(): boolean {
-    return this.useTexture && !this.encoderFailed && !!this.deps.createEncoder
-  }
-
-  private async readTexture(frame: MotifOsrFrame, args: CaptureArgs): Promise<RawMotifFrame> {
-    try {
-      const { pixelFormat, handle } = frame.texture.textureInfo
-      if (frame.width !== args.width || frame.height !== args.height ||
-          (pixelFormat !== 'rgba' && pixelFormat !== 'bgra') || !handle.ntHandle) throw new Error('Unsupported bake texture')
-      this.encoder ??= this.deps.createEncoder!()
-      return await this.encoder.read(handle.ntHandle, frame.height)
-    } catch (error) {
-      this.encoderFailed = true
-      this.encoder?.close(); this.encoder = null
+  private async readTexture(frame: TextureOsrFrame, args: CaptureArgs): Promise<RawMotifFrame> {
+    const { pixelFormat, handle } = frame.texture.textureInfo
+    if (frame.width !== args.width || frame.height !== args.height ||
+        (pixelFormat !== 'rgba' && pixelFormat !== 'bgra') || !handle.ntHandle || !this.deps.createEncoder) throw new Error('Unsupported bake texture')
+    this.encoder ??= this.deps.createEncoder()
+    try { return await this.encoder.read(handle.ntHandle, frame.height) }
+    catch (error) {
+      // The session can no longer store textures; later frames are bitmaps.
+      // A display still shows this one.
+      this.useBitmaps(error)
       throw error
     }
   }
 
-  private textureRead(frame: MotifOsrFrame, args: CaptureArgs, writer: FrameWriter): FrameRead {
-    return async () => {
+  /** A bitmap's picture as straight RGBA. */
+  private straighten(frame: BitmapOsrFrame): Promise<Buffer> {
+    return this.deps.pixels.motifStraightenBgra(frame.image.toBitmap(), frame.width, frame.height)
+  }
+
+  /** Reads the frame's pixels; the returned step encodes and stores them.
+   * `rgba` is a bitmap's picture when the display already straightened it. */
+  private frameRead(frame: MotifOsrFrame, args: CaptureArgs, writer: FrameWriter, rgba?: Buffer): FrameRead {
+    if (frame.kind === 'texture') return async () => {
       const raw = await this.readTexture(frame, args)
       return async () => writer.encoded(await raw.finish())
+    }
+    return async () => {
+      const picture = rgba ?? await this.straighten(frame)
+      return async () => writer.encoded(await this.deps.pixels.motifEncodeRgba(picture, frame.width, frame.height))
     }
   }
 
@@ -292,36 +310,24 @@ export class MotifCaptureService {
         if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
         if (stored && (!kept || sameAddress(cache, kept.address))) return storedFrame()
       }
-      if (this.useTexture && this.deps.copy) {
-        const copy = this.deps.copy
-        try {
-          const { frame, queued } = await this.deps.texture(args, async leased => {
-            acceptingBake = false
-            if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
-            const queued = await this.offerDisplayFrame(leased, request, args, kept, store)
-            // Capture/encoding can finish after a document reload. Such work
-            // cannot lease a texture to the new preload on the same WebContents.
-            if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
-            return { frame: await copy(owner, leased, finalizationId), queued }
-          }, key, high, isCurrent)
-          return { ...frame, persisted: kept ? await persisted(queued) : false }
-        } catch (error) {
-          if (this.keepsTexturePath(args, error)) throw error
-          console.warn('[weftcut/motif] Shared-texture capture failed; using PNG fallback:', error)
-          this.useTexture = false
-          this.deps.setTextureEnabled(false)
+      const { frame, queued } = await this.withFallback(args, () => this.deps.frame(args, async leased => {
+        acceptingBake = false
+        if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+        if (leased.kind === 'texture') {
+          if (!this.deps.copy) throw new Error('Motif texture capture without a GPU transport')
+          const queued = await this.offerDisplayFrame(leased, request, args, kept, store)
+          // Capture/encoding can finish after a document reload. Such work
+          // cannot lease a texture to the new preload on the same WebContents.
+          if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+          return { frame: await this.deps.copy(owner, leased, finalizationId) as StoredMotifFrame, queued }
         }
-      }
-      const bytes = Buffer.from(await this.deps.png(args, key, high, isCurrent), 'base64')
-      acceptingBake = false
-      if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
-      if (!kept) {
-        await this.offerLiveFrame(request, args, store, writer => async () => () => writer.png(bytes))
-        return { kind: 'png', bytes, persisted: false }
-      }
-      const writer = await kept.writer
-      const queued = writer ? await this.writes.offer(store, kept.address, 'wait', async () => () => writer.png(bytes)) : null
-      return { kind: 'png', bytes, persisted: await persisted(queued) }
+        const rgba = await this.straighten(leased)
+        if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+        const queued = await this.offerDisplayFrame(leased, request, args, kept, store, rgba)
+        const pixels: StoredMotifFrame = { kind: 'pixels', width: leased.width, height: leased.height, bytes: new Uint8Array(rgba.buffer, rgba.byteOffset, rgba.byteLength) }
+        return { frame: pixels, queued }
+      }, key, high, isCurrent))
+      return { ...frame, persisted: kept ? await persisted(queued) : false }
     } finally {
       releaseResources()
       acceptingBake = false
@@ -330,12 +336,11 @@ export class MotifCaptureService {
 
   /** Inside the lease. A frame nobody can store is still delivered: no failure
    * here reaches the display. */
-  private async offerDisplayFrame(frame: MotifOsrFrame, request: CaptureRequest, args: CaptureArgs, kept: { address: MotifCacheAddress; writer: Promise<FrameWriter | null> } | undefined, store: MotifFrameStore): Promise<QueuedWrite | null> {
-    if (!this.canReadTexture()) return null
-    if (!kept) return this.offerLiveFrame(request, args, store, writer => this.textureRead(frame, args, writer))
+  private async offerDisplayFrame(frame: MotifOsrFrame, request: CaptureRequest, args: CaptureArgs, kept: { address: MotifCacheAddress; writer: Promise<FrameWriter | null> } | undefined, store: MotifFrameStore, rgba?: Buffer): Promise<QueuedWrite | null> {
+    if (!kept) return this.offerLiveFrame(request, args, store, writer => this.frameRead(frame, args, writer, rgba))
     try {
       const writer = await kept.writer
-      return writer ? await this.writes.offer(store, kept.address, 'wait', this.textureRead(frame, args, writer)) : null
+      return writer ? await this.writes.offer(store, kept.address, 'wait', this.frameRead(frame, args, writer, rgba)) : null
     } catch { return null }
   }
 

@@ -4,7 +4,7 @@ import type { MotifBakeContent, MotifBakePause, MotifBakePlan } from '../../shar
 
 const content = (key: string, frames = 90): MotifBakeContent => ({
   cacheKey: key, hash: key, contentFrames: frames, ranges: [{ start: 0, end: frames }],
-  capture: { motifId: key, contentHash: key, propsJson: '{}', width: 2, height: 2, settleRafs: null, fpsNum: 30, fpsDen: 1 },
+  capture: { motifId: key, contentHash: key, propsJson: '{}', width: 2, height: 2, fpsNum: 30, fpsDen: 1 },
 });
 const plan = (contents: MotifBakeContent[], generation = 1): MotifBakePlan => ({ generation, contents, live: contents, collect: true });
 function fixture(extra: Partial<MotifBakeCoordinatorDeps> = {}) {
@@ -47,6 +47,23 @@ describe('main-owned Motif bake demand', () => {
     expect(h.writes[3600]).toBe('c60:0');
     expect(Object.values(h.coordinator.snapshot().statuses).every(s => s.phase === 'ready')).toBe(true);
     expect(h.deps.inventory).toHaveBeenCalledTimes(61);
+  });
+
+  it('keeps three frames of its clip in flight, and a promotion takes the next free slot', async () => {
+    const settle: Array<() => void> = [];
+    const started: string[] = [];
+    const h = fixture({ persist: (c, f) => new Promise<void>(resolve => { started.push(`${c.cacheKey}:${f}`); settle.push(resolve); }) });
+    await h.coordinator.reconcile(plan([content('a', 10), content('b', 10)]));
+    for (let i = 0; i < 10; i++) await h.tick();
+    expect(started).toEqual(['a:0', 'a:1', 'a:2']);
+    await h.coordinator.reconcile({ ...plan([content('a', 10), content('b', 10)]), promoteKeys: ['b'] });
+    settle.shift()!();
+    for (let i = 0; i < 10; i++) await h.tick();
+    expect(started).toEqual(['a:0', 'a:1', 'a:2', 'b:0']);
+    while (settle.length) { settle.shift()!(); for (let i = 0; i < 4; i++) await h.tick(); }
+    expect(started.filter(s => s.startsWith('b:'))).toHaveLength(10);
+    expect(h.coordinator.snapshot().statuses.b!.phase).toBe('ready');
+    h.coordinator.dispose();
   });
 
   it('does not rotate unfinished clips on elapsed time or ordinary reconciliation', async () => {

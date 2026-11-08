@@ -410,7 +410,7 @@
         "ubuntu-latest": 0,
         "macos-latest": 0
       },
-      "motif-png-capture.spec.ts": {
+      "motif-bitmap-capture.spec.ts": {
         "macos-latest": 0,
         "ubuntu-latest": 29,
         "windows-latest": 29

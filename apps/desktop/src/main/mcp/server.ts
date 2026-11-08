@@ -742,7 +742,7 @@ async function dispatchTool(
     for (const tSec of a.local_t_s) {
       const b64 = await captureMotifFrameB64({
         motifId, tSec, propsJson: JSON.stringify(props),
-        width: canvasW, height: canvasH, scale, settleRafs: null, contentHash: entry?.revision ?? '',
+        width: canvasW, height: canvasH, scale, contentHash: entry?.revision ?? '',
         ...(rootFps ? { fpsNum: rootFps.num, fpsDen: rootFps.den } : {}),
       })
       frames.push({ tSec, png: new Uint8Array(Buffer.from(b64, 'base64')) })

@@ -41,8 +41,9 @@ export function installMotifFrames(
           try { bitmap = await createImageBitmap(vf) } finally { vf.close() }
           bitmap = await finishRead(bitmap)
           importMs = performance.now() - start
-        } else if (frame?.kind === 'png') {
-          bitmap = await createImageBitmap(new Blob([frame.bytes as BlobPart], { type: 'image/png' }))
+        } else if (frame?.kind === 'pixels') {
+          const rgba = new Uint8ClampedArray(frame.bytes.buffer as ArrayBuffer, frame.bytes.byteOffset, frame.bytes.byteLength)
+          bitmap = await createImageBitmap(new ImageData(rgba, frame.width, frame.height))
         }
         // `stored`: no pixels; the renderer reads the frame through its reader.
         port.postMessage({

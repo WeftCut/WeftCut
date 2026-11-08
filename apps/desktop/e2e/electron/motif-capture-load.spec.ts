@@ -60,14 +60,14 @@ async function installProbePort(page: Page): Promise<void> {
 const probe = (page: Page, capture: Capture): Promise<Probe> => page.evaluate(c => (window as any).__probe(c), capture);
 interface Diagnostics {
   captures: number; completed: number; failed: number; hostBuilds: number; pageLoads: number;
-  textureCaptures: number; pngCaptures: number;
+  textureCaptures: number; bitmapCaptures: number;
 }
 const diagnostics = (page: Page) => invokeCmd<Diagnostics>(page, 'motif_capture_diagnostics');
 /// Which backend the host actually used: shared textures where the platform
 /// offers them (Windows OSR), PNG elsewhere or after a fallback.
 const backend = async (page: Page) => {
   const d = await diagnostics(page);
-  return `backend: ${d.textureCaptures} texture / ${d.pngCaptures} png captures, ${d.hostBuilds} host builds, ${d.failed} failed`;
+  return `backend: ${d.textureCaptures} texture / ${d.bitmapCaptures} bitmap captures, ${d.hostBuilds} host builds, ${d.failed} failed`;
 };
 const isTimeout = (r: Probe) => !r.ok && /timed out/.test(r.error ?? '');
 
@@ -81,7 +81,7 @@ async function publish(page: Page, id: string, html: string): Promise<{ motifId:
   return { motifId, contentHash };
 }
 
-const BASE = { width: 1920, height: 1080, settleRafs: 2, fpsNum: 25, fpsDen: 1 };
+const BASE = { width: 1920, height: 1080, fpsNum: 25, fpsDen: 1 };
 const request = (m: { motifId: string; contentHash: string }, tSec: number, props: Record<string, unknown>): Capture =>
   ({ ...BASE, ...m, tSec, propsJson: JSON.stringify(props) });
 

@@ -1,11 +1,10 @@
 import { BrowserWindow, nativeImage } from 'electron'
-import { OffscreenFrames, type FrameLease, type FrameMarkerReader, type MotifOsrFrame } from './offscreenFrames.js'
-import { PNG_CANVAS_RUNTIME_SOURCE } from './pngCanvasRuntime.js'
+import { MotifFrameSkippedError, OffscreenFrames, type FrameMarkerReader, type MotifOsrFrame } from './offscreenFrames.js'
+import { BITMAP_CANVAS_RUNTIME_SOURCE } from './bitmapCanvasRuntime.js'
 import { hardenWindow, markInternalWindow } from '../windows'
 import { BUILTIN_MANIFESTS, motifCtxDurationS, type Manifest } from '../../shared/motifs/catalog.js'
 import { CAPTURE_SUPERSEDED_MESSAGE, MotifCaptureTimeoutError } from '../../shared/motifs/captureErrors.js'
 import { resolveMotifMediaProps } from './mediaProps.js'
-import { dropPngRows } from './pngRows.js'
 import { CAPTURE_HOST_FILE, FRAME_MARKER_ROWS } from '../../shared/motifs/frameMarker.js'
 import type { UserMotifStore } from './store.js'
 
@@ -15,7 +14,6 @@ export interface CaptureArgs {
   propsJson: string
   width: number
   height: number
-  settleRafs: number | null
   contentHash: string
   /// Composition fps as an exact rational, when the caller knows it. Absent or
   /// invalid falls back to 30 (the pre-threading behaviour), keeping MCP and
@@ -32,8 +30,17 @@ const SETUP_TIMEOUT_MS = 30_000
 const READY_ATTEMPTS = 30
 const READY_POLL_MS = 100
 const MAX_BACKGROUND_WAIT_MS = 2000
+/// Frames rendered while earlier ones are still on their way to a paint
+/// (ADR 0159). Each frame's render returns once the frame has committed, so a
+/// deeper pipeline only holds more capture surfaces.
+const MAX_FRAMES_IN_FLIGHT = 3
+/// Paint rate of the capture host while frames are in flight; the host renders
+/// one pipelined frame per BeginFrame.
+const CAPTURE_FRAME_RATE = 120
+/// A frame the compositor skipped is rendered again at most this many times.
+const SKIPPED_FRAME_RETRIES = 3
 
-const newCaptureCounters = () => ({ captures: 0, completed: 0, failed: 0, pageLoads: 0, hostBuilds: 0, textureCaptures: 0, pngCaptures: 0, queueMs: 0, captureMs: 0, loadMs: 0, readyMs: 0, setupMs: 0, renderMs: 0, outputMs: 0 })
+const newCaptureCounters = () => ({ captures: 0, completed: 0, failed: 0, pageLoads: 0, hostBuilds: 0, textureCaptures: 0, bitmapCaptures: 0, skippedFrames: 0, queueMs: 0, captureMs: 0, loadMs: 0, readyMs: 0, setupMs: 0, renderMs: 0, outputMs: 0 })
 let captureCounters = newCaptureCounters()
 const captureLanes = new Map<string, { motifId: string; contentHash: string; captures: number; pageLoads: number }>()
 function diagnosticsLane(motifId: string, contentHash: string) {
@@ -78,20 +85,20 @@ export function isMotifContentFailure(a: CaptureArgs, error: unknown): boolean {
 interface Host {
   win: BrowserWindow
   send: (method: string, params?: object, timeoutMs?: number, label?: string) => Promise<any>
-  loadedId: string | null
-  loadedV: string | null
+  loadedId: string
+  loadedV: string
   readyFor: string | null
   lastSize: { w: number; h: number } | null
-  frames: OffscreenFrames | null
-  /// Rows the surface keeps below the picture: the frame id's, on a host
-  /// whose textures are leased by it. A PNG host has none, so its
-  /// screenshots need no crop.
-  markerRows: number
+  frames: OffscreenFrames
+  /// Shared textures (Windows) or bitmaps; both are leased by frame id.
+  texture: boolean
   /// The one URL the shell's frame may load: the Motif it was built for.
-  motifUrl: string | null
+  motifUrl: string
 }
 let host: Host | null = null
 let textureCaptureEnabled = false
+/// Switches the host between shared textures and bitmaps; the next capture
+/// builds the host anew.
 export function setTextureCaptureEnabled(enabled: boolean): void {
   if (textureCaptureEnabled === enabled) return
   textureCaptureEnabled = enabled
@@ -99,10 +106,19 @@ export function setTextureCaptureEnabled(enabled: boolean): void {
 }
 
 let readFrameMarker: FrameMarkerReader | null = null
-/// Set once at boot where the native marker reader exists; a texture capture
-/// without it fails and the capture service falls back to PNG.
+/// Set once at boot where the native marker reader exists. Without it the host
+/// takes bitmaps, which need no native reader.
 export function setFrameMarkerReader(read: FrameMarkerReader): void {
   readFrameMarker = read
+}
+
+/** The picture above the marker rows of a shared texture, as a PNG. */
+export type TexturePngReader = (handle: Buffer, height: number) => Promise<Buffer>
+let readTexturePng: TexturePngReader | null = null
+/// Set once at boot beside the marker reader: PNG captures on a texture host
+/// read the leased texture.
+export function setTexturePngReader(read: TexturePngReader): void {
+  readTexturePng = read
 }
 
 // Serialize ALL captures (on-demand sprite / prewarmer / baker / MCP) on the
@@ -113,6 +129,8 @@ export function setFrameMarkerReader(read: FrameMarkerReader): void {
 // while fresh sprite frames waited behind it (5b7cbaec). A RUNNING capture is
 // never preempted. Old LOW work receives one frame between HIGH frames after
 // two seconds, so explicitly enabled background work cannot starve forever.
+// The pump waits for a frame's render, not its paint: the next frame renders
+// while earlier ones are still on their way to the capture (ADR 0159).
 interface Ticket {
   /// Coalesce key when keyed; lets the pump drop the ticket from queuedKeys
   /// the moment it passes the replaceable window.
@@ -123,16 +141,19 @@ interface Ticket {
   /// so the pump must skip this ticket instead of executing a stale frame.
   stale: boolean
   reject: (e: Error) => void
-  /// Settles the ticket's own waiter; must never throw (a throw would strand
-  /// every ticket queued behind it).
+  /// Renders the ticket's frame and returns once it has committed; the
+  /// ticket's own waiter settles when its paint is consumed. Must never throw
+  /// (a throw would strand every ticket queued behind it).
   run: () => Promise<void>
 }
 const highQueue: Ticket[] = []
 const lowQueue: Ticket[] = []
 let pumping = false
 
-function schedule(t: Ticket): void {
-  ;(t.high ? highQueue : lowQueue).push(t)
+function schedule(t: Ticket, first = false): void {
+  const queue = t.high ? highQueue : lowQueue
+  if (first) queue.unshift(t)
+  else queue.push(t)
   void pump()
 }
 
@@ -256,17 +277,37 @@ async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise
   }
 }
 
-async function buildHost(): Promise<Host> {
-  if (!runtimeSource) throw new Error('motif runtime not registered yet (call motif_register_runtime)')
+/// Builds the host of one document. The shell page, which runs no scripts of
+/// its own, is the window's only top-level navigation: a bitmap host paints
+/// real alpha only for a window's first document
+/// (docs/notes/electron-chromium-behavior.md#a-bitmap-osr-window-paints-alpha-only-for-its-first-document),
+/// so another Motif or content version gets a new window. The runtime is
+/// registered once the shell has loaded, and the shell then loads the Motif
+/// into its frame, whose documents the runtime reaches before their scripts.
+async function buildHost(motifId: string, contentHash: string, width: number, height: number): Promise<Host> {
+  const runtime = runtimeSource
+  if (!runtime) throw new Error('motif runtime not registered yet (call motif_register_runtime)')
+  const texture = textureCaptureEnabled && readFrameMarker !== null
+  const pinned = /^[0-9a-f]{64}$/.test(contentHash) && motifStore?.pinPackage?.(motifId, contentHash)
+  // The shell frames the Motif above the surface's marker rows
+  // (shared/motifs/frameMarker.ts); the Motif sees only its own size.
+  const dir = `motif://${motifId}/${pinned ? `.revisions/${contentHash}/` : ''}`
+  const query = `v=${encodeURIComponent(contentHash)}`
+  const motifUrl = `${dir}index.html?${query}`
+  // Sized to the capture before its document loads: the macOS bitmap host
+  // drops a new document's first commit while the window and the page's
+  // emulated size differ
+  // (docs/notes/electron-chromium-behavior.md#macos-offscreen-bitmap-host-drops-the-first-commit-when-window-and-emulation-sizes-differ).
   const win = new BrowserWindow({
     show: false,
+    width, height: height + FRAME_MARKER_ROWS, useContentSize: true,
     // The capture host renders untrusted, user-authored Motif content, so it runs
     // at the same isolation baseline as every other window: OS sandbox on, no Node,
     // context isolation, web security. The complementary egress half (no network /
     // no remote code) is the per-document CSP served by `motif://`; see docs/security.md.
-    transparent: textureCaptureEnabled,
+    transparent: true,
     webPreferences: {
-      offscreen: textureCaptureEnabled ? { useSharedTexture: true } : true, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true,
+      offscreen: texture ? { useSharedTexture: true } : true, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true,
       // A frame may otherwise draw before its images decode, and the frame id
       // proves only the commit, not that its images are in it.
       additionalArguments: ['--disable-checker-imaging'],
@@ -278,7 +319,7 @@ async function buildHost(): Promise<Host> {
   // closes (windows.ts → quitIfLastUserWindowClosed). Before the awaits, per its
   // same-tick contract.
   markInternalWindow(win)
-  const frames = textureCaptureEnabled && readFrameMarker ? new OffscreenFrames(win.webContents, readFrameMarker, CAPTURE_TIMEOUT_MS) : null
+  const frames = new OffscreenFrames(win.webContents, texture ? readFrameMarker : null, CAPTURE_TIMEOUT_MS)
   // Navigation lockdown for the untrusted Motif page: deny every `window.open`
   // OUTRIGHT (allowExternalOpen:false — a Motif must not be able to pop the user's
   // browser) and block any page-initiated navigation off the app's content. The
@@ -286,37 +327,50 @@ async function buildHost(): Promise<Host> {
   hardenWindow(win, { allowExternalOpen: false })
   // hardenWindow guards the top frame; the Motif runs in the shell's frame.
   win.webContents.on('will-frame-navigate', event => {
-    if (!event.isMainFrame && event.url !== host?.motifUrl) event.preventDefault()
+    if (!event.isMainFrame && event.url !== motifUrl) event.preventDefault()
   })
+  captureCounters.pageLoads++
+  diagnosticsLane(motifId, contentHash).pageLoads++
   // Destroy the offscreen window if CDP init throws mid-build, else it orphans.
   // Bounded to ≤1 (captures are serialized) but still a leak; never observed green.
   try {
-    await withTimeout(win.loadURL('about:blank'), CAPTURE_TIMEOUT_MS, 'about:blank')
     const dbg = win.webContents.debugger
     dbg.attach('1.3')
     // Every CDP command is bounded by construction, including Emulation.
     // Callers cannot accidentally wedge the serial queue with an untimed send.
     const send = (method: string, params: object = {}, timeoutMs = CAPTURE_TIMEOUT_MS, label = method) =>
       withTimeout(dbg.sendCommand(method, params), timeoutMs, label)
+    await timedCapture('loadMs', () => withTimeout(win.loadURL(`${dir}${CAPTURE_HOST_FILE}?${query}`), CAPTURE_TIMEOUT_MS * 2, 'loadURL motif'))
     await send('Page.enable')
     await send('Runtime.enable')
     await send('Page.addScriptToEvaluateOnNewDocument', {
-      source: textureCaptureEnabled ? runtimeSource : PNG_CANVAS_RUNTIME_SOURCE + runtimeSource,
+      source: texture ? runtime : BITMAP_CANVAS_RUNTIME_SOURCE + runtime,
     })
-    return { win, send, loadedId: null, loadedV: null, readyFor: null, lastSize: null, frames, markerRows: frames ? FRAME_MARKER_ROWS : 0, motifUrl: null }
+    // The emulation pins deviceScaleFactor to 1; the default background keeps
+    // `background: transparent` real alpha.
+    await send('Emulation.setDeviceMetricsOverride', { width, height: height + FRAME_MARKER_ROWS, deviceScaleFactor: 1, mobile: false })
+    await send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } })
+    const shell = await timedCapture('loadMs', () => send('Runtime.evaluate', {
+      expression: `${runtime};window.__motifShellLoad()`, awaitPromise: true, returnByValue: true,
+    }, CAPTURE_TIMEOUT_MS * 2, 'load Motif frame'))
+    if (shell?.exceptionDetails) throw new Error('capture host shell failed: ' + JSON.stringify(shell.exceptionDetails))
+    win.webContents.setFrameRate(CAPTURE_FRAME_RATE)
+    return { win, send, loadedId: motifId, loadedV: contentHash, readyFor: null, lastSize: { w: width, h: height }, frames, texture, motifUrl }
   } catch (e) {
+    frames.dispose()
     try { win.destroy() } catch { /* already gone */ }
     throw e
   }
 }
 
-function teardownHost(): void {
-  if (host) {
-    host.frames?.dispose()
-    try { host.win.webContents.debugger.detach() } catch { /* already gone */ }
-    try { host.win.destroy() } catch { /* already gone */ }
-    host = null
-  }
+/// Tears down `which` (default: the current host). A frame in flight on a host
+/// already replaced must not tear down its successor.
+function teardownHost(which: Host | null = host): void {
+  if (!which) return
+  which.frames.dispose()
+  try { which.win.webContents.debugger.detach() } catch { /* already gone */ }
+  try { which.win.destroy() } catch { /* already gone */ }
+  if (host === which) host = null
 }
 
 /// Latched by `shutdownCaptureHost` — a capture that wakes up afterwards must not
@@ -337,24 +391,11 @@ export function shutdownCaptureHost(): void {
   teardownHost()
 }
 
-async function ensureHost(motifId: string, contentHash: string): Promise<Host> {
-  if (!host) host = await buildHost()
+async function ensureHost(a: CaptureArgs): Promise<Host> {
   // Reuse only when BOTH id and content version match (the ?v= cache-buster).
-  if (host.loadedId === motifId && host.loadedV === contentHash) return host
-  const pinned = /^[0-9a-f]{64}$/.test(contentHash) && motifStore?.pinPackage?.(motifId, contentHash)
-  // The shell frames the Motif above the surface's marker rows
-  // (shared/motifs/frameMarker.ts); the Motif sees only its own size.
-  const dir = `motif://${motifId}/${pinned ? `.revisions/${contentHash}/` : ''}`
-  const query = `v=${encodeURIComponent(contentHash)}`
-  captureCounters.pageLoads++
-  diagnosticsLane(motifId, contentHash).pageLoads++
-  host.motifUrl = `${dir}index.html?${query}`
-  const shell = `${dir}${CAPTURE_HOST_FILE}?rows=${host.markerRows}&${query}`
-  await timedCapture('loadMs', () => withTimeout(host!.win.loadURL(shell), CAPTURE_TIMEOUT_MS * 2, 'loadURL motif'))
-  host.loadedId = motifId
-  host.loadedV = contentHash
-  host.readyFor = null // re-probe; navigation re-runs addScriptToEvaluateOnNewDocument
-  host.lastSize = null // re-apply setDeviceMetricsOverride for the new page
+  if (host?.loadedId === a.motifId && host.loadedV === a.contentHash) return host
+  teardownHost()
+  host = await buildHost(a.motifId, a.contentHash, a.width, a.height)
   return host
 }
 
@@ -381,17 +422,34 @@ async function waitReady(h: Host, motifId: string): Promise<void> {
   throw new Error(`motif '${motifId}' never became ready (Motif frame not loaded, __motifRender undefined, or wrong host page loaded)`)
 }
 
-/// `texture` captures lease the frame by its id; PNG captures, which a
-/// texture host also serves, take a screenshot after the manifest's settle.
-async function doCapture<T>(a: CaptureArgs, texture: boolean, output: (h: Host, lease: FrameLease | null) => Promise<T>): Promise<T> {
+/// Paints still to arrive for frames already rendered (ADR 0159). Settled
+/// whatever the outcome; tracked only to bound and drain the pipeline.
+const framesInFlight = new Set<Promise<void>>()
+
+/// Waits until every rendered frame has its paint. A navigation or resize
+/// replaces the surface those paints come from.
+async function drainFrames(): Promise<void> {
+  while (framesInFlight.size) await Promise.all(framesInFlight)
+}
+
+/** A rendered frame: `delivered` settles once its paint is consumed. */
+interface Rendered<T> { delivered: Promise<T> }
+
+/// Renders one frame and leases the paint carrying its id; returns once the
+/// frame has committed, so the queue can render the next one while this one is
+/// still on its way to the capture. `output` runs inside the lease.
+async function doCapture<T>(a: CaptureArgs, output: (frame: MotifOsrFrame) => Promise<T>): Promise<Rendered<T>> {
   // Refuse rather than resurrect — see shutdownCaptureHost.
   if (shuttingDown) throw new Error('motif capture host is shut down (the app is quitting)')
   motifStore?.assertRenderable?.(a.motifId)
   const lane = laneKeyOf(a.motifId, a.contentHash)
+  const samePage = host?.loadedId === a.motifId && host.loadedV === a.contentHash
+    && host.lastSize?.w === a.width && host.lastSize?.h === a.height
+  if (!samePage) await drainFrames()
+  while (framesInFlight.size >= MAX_FRAMES_IN_FLIGHT) await Promise.race(framesInFlight)
   let h: Host
   try {
-    h = await ensureHost(a.motifId, a.contentHash)
-    if (texture && !h.frames) throw new Error('Motif host has no shared texture output')
+    h = await ensureHost(a)
     await timedCapture('readyMs', () => waitReady(h, a.motifId))
   } catch (e) {
     // Transport class: no Motif code ran (host build, loadURL, wedged/never-
@@ -411,31 +469,21 @@ async function doCapture<T>(a: CaptureArgs, texture: boolean, output: (h: Host, 
     a.fpsNum != null && a.fpsDen != null && a.fpsNum > 0 && a.fpsDen > 0
       ? a.fpsNum / a.fpsDen
       : 30
-  const meta = { duration, width: a.width, height: a.height, fps, settleRafs: texture ? 0 : a.settleRafs }
+  const meta = { duration, width: a.width, height: a.height, fps }
   try {
     if (h.lastSize?.w !== a.width || h.lastSize?.h !== a.height) {
-      // BOTH hosts take the capture's size as their window size, not only the
-      // shared-texture one. With the window left at its 800×600 default and the
-      // page emulated at the capture size, the macOS bitmap OSR host's first
-      // committed frame of a new document could be empty — every paint and
-      // readback transparent until the page drew again (7% of
-      // first-after-navigation captures on the macOS runner); sized to match,
-      // 384 of 384 captures were whole
-      // (docs/notes/electron-chromium-behavior.md#macos-offscreen-bitmap-host-drops-the-first-commit-when-window-and-emulation-sizes-differ).
-      // The emulation override stays: it is what pins deviceScaleFactor to 1
-      // for the screenshot.
-      h.win.setContentSize(a.width, a.height + h.markerRows)
-      await h.send('Emulation.setDeviceMetricsOverride', { width: a.width, height: a.height + h.markerRows, deviceScaleFactor: 1, mobile: false })
-      await h.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } })
+      // Another size for the same document; the window follows, as at build.
+      h.win.setContentSize(a.width, a.height + FRAME_MARKER_ROWS)
+      await h.send('Emulation.setDeviceMetricsOverride', { width: a.width, height: a.height + FRAME_MARKER_ROWS, deviceScaleFactor: 1, mobile: false })
       h.lastSize = { w: a.width, h: a.height }
     }
   } catch (e) {
-    teardownHost() // transport: wedged host — rebuild on next call
+    teardownHost(h) // transport: wedged host — rebuild on next call
     throw e
   }
   let ev: any
   let phase = '__motifSetup'
-  let lease: FrameLease | null = null
+  let lease: ReturnType<OffscreenFrames['expect']> | null = null
   try {
     const setup = await timedCapture('setupMs', () => h.send('Runtime.evaluate', {
       expression: `window.__motifSetup(${JSON.stringify(props)}, ${JSON.stringify(meta)})`,
@@ -446,9 +494,8 @@ async function doCapture<T>(a: CaptureArgs, texture: boolean, output: (h: Host, 
     if (setup?.exceptionDetails) ev = setup
     else {
       phase = '__motifRender'
-      if (texture) lease = h.frames!.expect(a.width, a.height)
-      const frameMeta = lease ? { ...meta, frameId: lease.id } : meta
-      const expr = `window.__motifRender(${JSON.stringify(a.tSec)}, ${JSON.stringify(props)}, ${JSON.stringify(frameMeta)})`
+      lease = h.frames.expect(a.width, a.height)
+      const expr = `window.__motifRender(${JSON.stringify(a.tSec)}, ${JSON.stringify(props)}, ${JSON.stringify({ ...meta, frameId: lease.id })})`
       ev = await timedCapture('renderMs', () => h.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }))
     }
   } catch (e) {
@@ -459,7 +506,7 @@ async function doCapture<T>(a: CaptureArgs, texture: boolean, output: (h: Host, 
     // and earns one retry on the rebuilt host; anything else, and a second
     // consecutive timeout, latches it so its sprites stop retrying.
     if (a.contentHash !== '' && !(e instanceof MotifCaptureTimeoutError && grantProbation(lane))) failLane(lane, e as Error)
-    teardownHost()
+    teardownHost(h)
     throw e
   }
   probationLanes.delete(lane)
@@ -473,16 +520,26 @@ async function doCapture<T>(a: CaptureArgs, texture: boolean, output: (h: Host, 
     if (a.contentHash !== '') failLane(lane, err)
     throw err
   }
-  try {
-    return await timedCapture('outputMs', () => output(h, lease))
-  } catch (e) {
-    lease?.cancel()
-    teardownHost() // wedged host: rebuild on next call
-    throw e
-  }
+  const leased = lease!
+  const delivered = timedCapture('outputMs', async () => {
+    let frame: MotifOsrFrame
+    try { frame = await leased.frame }
+    catch (e) {
+      // A skipped frame is rendered again; the host is healthy.
+      if (!(e instanceof MotifFrameSkippedError)) teardownHost(h)
+      throw e
+    }
+    try { return await output(frame) }
+    catch (e) { teardownHost(h); throw e } // wedged host: rebuild on next call
+    finally { if (frame.kind === 'texture') frame.texture.release() }
+  })
+  const settled = delivered.then(() => {}, () => {})
+  framesInFlight.add(settled)
+  void settled.then(() => framesInFlight.delete(settled))
+  return { delivered }
 }
 
-function enqueueCapture<T>(a: CaptureArgs, coalesceKey: string | undefined, run: () => Promise<T>, high = coalesceKey !== undefined, isCurrent: () => boolean = () => true): Promise<T> {
+function enqueueCapture<T>(a: CaptureArgs, coalesceKey: string | undefined, run: () => Promise<Rendered<T>>, high = coalesceKey !== undefined, isCurrent: () => boolean = () => true): Promise<T> {
   // Fast-reject a lane whose content already failed this session: same
   // (motifId, contentHash) means the same throwing script against the same
   // page — don't spend queue slots or CDP round trips proving it again.
@@ -490,30 +547,42 @@ function enqueueCapture<T>(a: CaptureArgs, coalesceKey: string | undefined, run:
   const laneError = failedLanes.get(lane)
   if (laneError) return Promise.reject(laneError)
   const queuedAt = performance.now()
-  const measured = async () => {
-    if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+  let resolve!: (value: T) => void, reject!: (e: Error) => void
+  const out = new Promise<T>((res, rej) => { resolve = res; reject = rej })
+  // Renders the frame; its waiter settles with the paint. A frame the
+  // compositor skipped goes back to the head of its queue.
+  const attempt = async (retries: number): Promise<void> => {
+    // The lane may have failed while this ticket sat queued.
+    const err = failedLanes.get(lane)
+    if (err) { reject(err); return }
     const started = performance.now(), counters = captureCounters
-    counters.queueMs += started - queuedAt
-    counters.captures++
-    diagnosticsLane(a.motifId, a.contentHash).captures++
-    try { const result = await run(); counters.completed++; return result }
-    catch (error) { counters.failed++; throw error }
-    finally { counters.captureMs += performance.now() - started }
+    if (retries === 0) {
+      counters.queueMs += started - queuedAt
+      counters.captures++
+      diagnosticsLane(a.motifId, a.contentHash).captures++
+    }
+    const finish = (error: unknown | null, value?: T) => {
+      counters.captureMs += performance.now() - started
+      if (error === null) { counters.completed++; resolve(value as T); return }
+      if (error instanceof MotifFrameSkippedError && retries < SKIPPED_FRAME_RETRIES) {
+        counters.skippedFrames++
+        schedule({ key: undefined, high, queuedAt, stale: false, reject, run: () => attempt(retries + 1) }, true)
+        return
+      }
+      counters.failed++
+      reject(error as Error)
+    }
+    try {
+      if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+      const { delivered } = await run()
+      delivered.then(value => finish(null, value), finish)
+    } catch (e) { finish(e) }
   }
   if (!coalesceKey) {
     // LOW priority: keyless prewarmer/baker/MCP work yields to on-demand
     // sprite frames queued behind it.
-    return new Promise<T>((resolve, reject) => {
-      schedule({
-        key: undefined, high, queuedAt, stale: false, reject,
-        run: async () => {
-          // The lane may have failed while this ticket sat queued.
-          const err = failedLanes.get(lane)
-          if (err) { reject(err); return }
-          try { resolve(await measured()) } catch (e) { reject(e as Error) }
-        },
-      })
-    })
+    schedule({ key: undefined, high, queuedAt, stale: false, reject, run: () => attempt(0) })
+    return out
   }
   // Legacy keyed requests are HIGH; broker jobs explicitly choose their lane.
   // Latest-wins per key: wake the previous queued waiter right away and stale
@@ -523,16 +592,7 @@ function enqueueCapture<T>(a: CaptureArgs, coalesceKey: string | undefined, run:
     prev.stale = true
     prev.reject(new Error(CAPTURE_SUPERSEDED_MESSAGE))
   }
-  const ticket: Ticket = { key: coalesceKey, high, queuedAt, stale: false, reject: () => {}, run: async () => {} }
-  const out = new Promise<T>((resolve, reject) => {
-    ticket.reject = reject
-    ticket.run = async () => {
-      // The lane may have failed while this ticket sat queued.
-      const err = failedLanes.get(lane)
-      if (err) { reject(err); return }
-      try { resolve(await measured()) } catch (e) { reject(e as Error) }
-    }
-  })
+  const ticket: Ticket = { key: coalesceKey, high, queuedAt, stale: false, reject, run: () => attempt(0) }
   queuedKeys.set(coalesceKey, ticket)
   schedule(ticket)
   return out
@@ -555,33 +615,36 @@ export function controlMotifCapture(key: string, action: 'promote' | 'cancel'): 
   }
 }
 
+/** One frame as a PNG of the picture, scaled by `a.scale` (MCP previews,
+ * covers and the renderer's direct capture). */
 export function captureMotifFrameB64(a: CaptureArgs, coalesceKey?: string, high?: boolean, isCurrent: () => boolean = () => true): Promise<string> {
-  return enqueueCapture(a, coalesceKey, () => {
-    if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
-    captureCounters.pngCaptures++
-    return doCapture(a, false, async h => {
-    // Cropped after, never by `clip`: a clipped screenshot left a WebGL
-    // Motif's later frames blank.
-    const shot = await h.send('Page.captureScreenshot', { format: 'png' })
-    if (!shot?.data) throw new Error('captureScreenshot returned no data')
-    const png = h.markerRows ? dropPngRows(Buffer.from(shot.data as string, 'base64'), h.markerRows) : null
-    if (a.scale === undefined || a.scale === 1) return png ? png.toString('base64') : shot.data as string
-    // Scaled here, not by the screenshot's clip.scale: on a Windows host that
-    // scaled a 1920×1080 page's width alone and returned its left half.
-    const full = nativeImage.createFromBuffer(png ?? Buffer.from(shot.data as string, 'base64'))
-    return full.resize({ width: Math.max(1, Math.round(a.width * a.scale)), height: Math.max(1, Math.round(a.height * a.scale)), quality: 'best' }).toPNG().toString('base64')
-    })
-  }, high, isCurrent)
+  return enqueueCapture(a, coalesceKey, () => doCapture(a, async frame => {
+    countFrame(frame)
+    const png = frame.kind === 'bitmap'
+      ? frame.image.crop({ x: 0, y: 0, width: frame.width, height: frame.height })
+      : await texturePng(frame)
+    if (a.scale === undefined || a.scale === 1) return (Buffer.isBuffer(png) ? png : png.toPNG()).toString('base64')
+    const image = Buffer.isBuffer(png) ? nativeImage.createFromBuffer(png) : png
+    return image.resize({ width: Math.max(1, Math.round(a.width * a.scale)), height: Math.max(1, Math.round(a.height * a.scale)), quality: 'best' }).toPNG().toString('base64')
+  }), high, isCurrent)
 }
 
-export function captureMotifTexture<T>(a: CaptureArgs, consume: (frame: MotifOsrFrame) => Promise<T>, coalesceKey?: string, high?: boolean, isCurrent: () => boolean = () => true): Promise<T> {
-  if (!textureCaptureEnabled || !readFrameMarker) return Promise.reject(new Error('Motif OSR unavailable'))
-  return enqueueCapture(a, coalesceKey, () => {
-    if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
-    captureCounters.textureCaptures++
-    return doCapture(a, true, async (_h, lease) => {
-    const frame = await lease!.frame
-    try { return await consume(frame) } finally { frame.texture.release() }
-    })
-  }, high, isCurrent)
+async function texturePng(frame: Extract<MotifOsrFrame, { kind: 'texture' }>): Promise<Buffer> {
+  const handle = frame.texture.textureInfo.handle.ntHandle
+  if (!readTexturePng || !handle) throw new Error('Motif texture PNG readback unavailable')
+  return readTexturePng(handle, frame.height)
+}
+
+function countFrame(frame: MotifOsrFrame): void {
+  if (frame.kind === 'texture') captureCounters.textureCaptures++
+  else captureCounters.bitmapCaptures++
+}
+
+/** One frame leased to `consume`: a shared texture, released after `consume`
+ * settles, or a bitmap. */
+export function captureMotifFrame<T>(a: CaptureArgs, consume: (frame: MotifOsrFrame) => Promise<T>, coalesceKey?: string, high?: boolean, isCurrent: () => boolean = () => true): Promise<T> {
+  return enqueueCapture(a, coalesceKey, () => doCapture(a, frame => {
+    countFrame(frame)
+    return consume(frame)
+  }), high, isCurrent)
 }

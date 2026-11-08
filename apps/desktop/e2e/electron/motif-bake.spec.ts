@@ -19,7 +19,7 @@ const addon = fileURLToPath(new URL('../../native/index.js', import.meta.url))
 
 test('Pre-bake now moves a clip ahead of unfinished background work @serial', async () => {
   test.setTimeout(120_000)
-  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'png' } })
+  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'bitmap' } })
   try {
     await newProject(page, { parentFolder: tmpDir('weftcut-bake-order-'), name: 'Ordered preparation',
       canvas: { width: 64, height: 64, fpsNum: 30, fpsDen: 1 } })
@@ -36,14 +36,14 @@ test('Pre-bake now moves a clip ahead of unfinished background work @serial', as
     }
     await app.evaluate((_electron, addon) => {
       const native = process.getBuiltinModule('module').createRequire(addon)(addon)
-      const original = native.motifEncodePng
+      const original = native.motifEncodeRgba
       let release!: () => void
       const gate = new Promise<void>(resolve => { release = resolve })
-      const state = { calls: 0, held: false, release: () => { native.motifEncodePng = original; release() } }
+      const state = { calls: 0, held: false, release: () => { native.motifEncodeRgba = original; release() } }
       ;(globalThis as any).__bakeOrderGate = state
       // The preview stores the frame under the playhead too, so up to three of
       // these encodes are not the bake's. A clip finishes before the next starts.
-      native.motifEncodePng = async (...args: any[]) => {
+      native.motifEncodeRgba = async (...args: any[]) => {
         if (++state.calls === 7) { state.held = true; await gate }
         return original(...args)
       }
@@ -75,7 +75,7 @@ for (const missingFrame of [null, 7] as const) {
 test(`Motif pre-bake survives a cold app restart and captures only missing frames (${missingFrame ?? 'complete'}) @serial`, async () => {
   test.setTimeout(120_000)
   const userDataDir = tmpDir('weftcut-bake-reopen-user-')
-  let running = await launchApp({ userDataDir, env: { WEFTCUT_MOTIF_CAPTURE: 'png' } })
+  let running = await launchApp({ userDataDir, env: { WEFTCUT_MOTIF_CAPTURE: 'bitmap' } })
   try {
     await newProject(running.page, {
       parentFolder: tmpDir('weftcut-bake-reopen-project-'), name: 'persistent-bake',
@@ -96,7 +96,7 @@ test(`Motif pre-bake survives a cold app restart and captures only missing frame
     ))
     await running.app.close()
     if (missingFrame !== null) await fs.unlink(path.join(baked.hashDir, `${missingFrame}.wfrm`))
-    running = await launchApp({ userDataDir, env: { WEFTCUT_MOTIF_CAPTURE: 'png' } })
+    running = await launchApp({ userDataDir, env: { WEFTCUT_MOTIF_CAPTURE: 'bitmap' } })
     await waitForHook(running.page, 'motifReopenProject')
     // Install before opening the project: the new renderer has no cached or
     // in-flight frame reads yet. Clearing L0 after prewarming is insufficient,
@@ -162,28 +162,28 @@ test(`Motif pre-bake survives a cold app restart and captures only missing frame
 })
 }
 
-for (const mode of ['native', 'png', 'readback-failure', 'warm-cache'] as const) {
+for (const mode of ['native', 'bitmap', 'readback-failure', 'warm-cache'] as const) {
   test(`Motif bake persists readable transparent frames (${mode}) @serial`, async () => {
     const needsGpu = mode === 'native' || mode === 'readback-failure'
     test.skip(needsGpu && process.platform !== 'win32', 'D3D11 capture is Windows-only')
     test.setTimeout(120_000)
-    const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: needsGpu ? 'texture' : 'png' } })
+    const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: needsGpu ? 'texture' : 'bitmap' } })
     try {
       if (needsGpu) {
-        test.skip(!await supportsMotifSharedTextures(app), 'Chromium cannot share D3D textures; PNG compatibility cases still run')
+        test.skip(!await supportsMotifSharedTextures(app), 'Chromium cannot share D3D textures; bitmap cases still run')
         const available = await app.evaluate((_electron, addon) => {
           const native = process.getBuiltinModule('module').createRequire(addon)(addon)
           try { const encoder = new native.MotifTextureEncoder(); encoder.close(); return true }
           catch { return false }
         }, addon)
-        test.skip(!available, 'No D3D11 hardware device; PNG compatibility cases still run')
+        test.skip(!available, 'No D3D11 hardware device; bitmap cases still run')
       }
       await app.evaluate((_electron, { addon, mode }) => {
         const native = process.getBuiltinModule('module').createRequire(addon)(addon)
-        const stats = { native: 0, png: 0 }
+        const stats = { native: 0, bitmap: 0 }
         ;(globalThis as any).__motifBakeStats = stats
-        const encodePng = native.motifEncodePng
-        native.motifEncodePng = (...args: any[]) => { stats.png++; return encodePng(...args) }
+        const encodeRgba = native.motifEncodeRgba
+        native.motifEncodeRgba = (...args: any[]) => { stats.bitmap++; return encodeRgba(...args) }
         if (native.MotifTextureEncoder) {
           const read = native.MotifTextureEncoder.prototype.read
           native.MotifTextureEncoder.prototype.read = function (...args: any[]) {
@@ -238,10 +238,11 @@ for (const mode of ['native', 'png', 'readback-failure', 'warm-cache'] as const)
       expect(decoded.partial).toBeGreaterThan(0)
       if (mode === 'native') {
         expect(decoded.stats.native).toBeGreaterThan(0)
-        expect(decoded.stats.native + decoded.stats.png).toBe(30)
+        expect(decoded.stats.native + decoded.stats.bitmap).toBe(30)
       } else {
+        // A failed readback moves the session to bitmaps, its own frame too.
         expect(decoded.stats.native).toBe(mode === 'readback-failure' ? 1 : 0)
-        expect(decoded.stats.png).toBe(30)
+        expect(decoded.stats.bitmap).toBe(30)
       }
       if (mode === 'warm-cache') {
         // Warming stored its frames, so the bake captures only those it skipped.
@@ -333,7 +334,7 @@ test('A live capture stores the same pixels a bake stores at its address, and co
 
 test('Motif background work survives renderer reload and reuses pages across multiple contents @serial', async ({}, testInfo) => {
   test.setTimeout(120_000)
-  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'png' } })
+  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'bitmap' } })
   try {
     await newProject(page, {
       parentFolder: tmpDir('weftcut-bake-many-'), name: 'Many contents',
@@ -389,7 +390,7 @@ test('Motif background work survives renderer reload and reuses pages across mul
 
 test('Motif background preparation resumes automatically after a failed workspace switch in the same generation @serial', async ({}, testInfo) => {
   test.setTimeout(120_000)
-  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'png' } })
+  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'bitmap' } })
   try {
     await newProject(page, {
       parentFolder: tmpDir('weftcut-bake-failed-open-'), name: 'Preparation recovery',
@@ -415,12 +416,12 @@ test('Motif background preparation resumes automatically after a failed workspac
     // preparation even on fast hardware; no production scheduling is mocked.
     await app.evaluate((_electron, addon) => {
       const native = process.getBuiltinModule('module').createRequire(addon)(addon)
-      const original = native.motifEncodePng
+      const original = native.motifEncodeRgba
       let release!: () => void
       const gate = new Promise<void>(resolve => { release = resolve })
-      const state = { calls: 0, held: false, release: () => { native.motifEncodePng = original; release() } }
+      const state = { calls: 0, held: false, release: () => { native.motifEncodeRgba = original; release() } }
       ;(globalThis as any).__failedOpenBakeGate = state
-      native.motifEncodePng = async (...args: any[]) => {
+      native.motifEncodeRgba = async (...args: any[]) => {
         if (++state.calls === 4) { state.held = true; await gate }
         return original(...args)
       }

@@ -29,9 +29,8 @@ before any Motif code:
 | `setTimeout` / `setInterval` / `Date.now` | stubbed to the virtual clock |
 
 `__motifRender(t, props, meta)` runs setup (once per props), `frame(t)` and the
-seek. A PNG capture then waits `settle_rafs` real browser frames (manifest
-value clamped to `{0,1,2}`, default 2); a texture capture instead waits for the
-paint carrying the frame's id (below). The seek only pauses and sets
+seek. Captures take the paint carrying the frame's id (marker row, below), so
+an author never tunes a wait. The seek only pauses and sets
 `currentTime`; cancelling or committing a finished animation would remove it
 from `getAnimations()` and break seeking back. A time source cached before the
 runtime installs, or one it does not own, is out of contract. 2D/DOM captures
@@ -107,26 +106,31 @@ Gesture model (`renderer/properties/motifParamsHost.ts`):
 
 ## Capture host
 
-`main/motif/capture.ts` owns one lazily created offscreen `BrowserWindow`,
-reused across Motifs, frames and layers. It loads the capture host page beside
-the Motif's `index.html`, which frames the Motif at the capture size (above one
-marker row on a texture host); the runtime runs in both and forwards the entry
-points. Requesting
-another Motif navigates the same window (runtime re-injected, readiness
-re-probed). The host sets
+`main/motif/capture.ts` owns one lazily created offscreen `BrowserWindow` per
+document, reused across frames and layers of that Motif. It loads the capture
+host page beside the Motif's `index.html`, which frames the Motif at the capture
+size above one marker row; the runtime runs in both and forwards the entry
+points. Requesting another Motif or content version opens a new window (ADR
+0159): only a window's first document keeps alpha on a bitmap host. The host sets
 `Emulation.setDeviceMetricsOverride` (any resolution) and a transparent default
 background so `background: transparent` stays real alpha.
 
-- **Output.** Portable path: `Page.captureScreenshot` PNG. Windows: OSR shared
-  textures copied into the Motif transport pool
+- **Output.** Every capture is the paint whose marker row carries the frame's
+  id (`OffscreenFrames`). Windows: OSR shared textures, copied into the Motif
+  transport pool
   ([ADR 0078](adr/0078-motifs-cache-pixels-and-transfer-persistent-textures.md)).
-  A texture is leased only when its marker row carries the frame's id
-  (`OffscreenFrames`); a screenshot there drops the row from its PNG. A failure of the texture
-  output itself switches the session to PNG; a timeout, disk error, capacity
-  refusal, superseded request or Motif failure never does.
-  `WEFTCUT_MOTIF_CAPTURE=png` forces PNG for diagnosis.
-- **One serial chain.** Render + capture is serialized so preview, preparation,
-  export and cover requests cannot screenshot a stale frame. Sprite requests
+  Elsewhere: the paint's bitmap, straightened natively and sent as RGBA
+  ([ADR 0159](adr/0159-motif-captures-are-pipelined-paints.md)). No capture
+  takes a screenshot; PNGs (MCP previews, covers) are encoded from the leased
+  pixels. A failure of the texture output itself (lease, GPU copy, readback)
+  switches the session to bitmaps; a timeout, disk error, capacity refusal,
+  superseded request or Motif failure never does. `WEFTCUT_MOTIF_CAPTURE=bitmap`
+  forces bitmaps for diagnosis.
+- **One serial chain, pipelined.** Renders are serialized in queue order; a
+  render returns once its frame has committed, and the next frame of the same
+  page renders while up to three earlier ones are still on their way to a paint
+  (ADR 0159). A navigation or resize waits for those paints. A frame the
+  compositor skipped (a later id painted first) renders again. Sprite requests
   carry a coalesce key: a newer request replaces a queued older one from the
   same sprite (the replaced waiter rejects as superseded). Foreground tickets run
   first; a background ticket waiting 2 s gets one frame between them.
@@ -143,8 +147,9 @@ background so `background: transparent` stays real alpha.
   box: a 3.5 s frame timed out under load and rendered in 4.8 s once it lifted).
   Other mid-render transport failures (detached debugger, crashed renderer)
   still latch at once.
-- **PNG host canvases** are forced CPU-backed (`willReadFrequently`) by
-  `pngCanvasRuntime.ts` (ADR 0078).
+- **Bitmap host canvases** are forced CPU-backed (`willReadFrequently`) by
+  `bitmapCanvasRuntime.ts` (ADR 0078): the marker cannot see a missing
+  accelerated canvas layer.
 
 ## Frame cache
 
@@ -251,7 +256,9 @@ pauses, bounded retries and collection
 Automatic demand covers used ranges when the `prebake_motifs` setting
 ("Pre-bake all motif content", default off) is on; **Pre-bake now** on a layer demands its
 full content and moves it (or a Group's Motifs) to the front. Clips finish in
-timeline order (start time, then track/layer order).
+timeline order (start time, then track/layer order). Up to three frames of the
+current clip are in the capture queue at once (ADR 0159); the order is decided
+again as each settles.
 Renderer reload and preview disposal do not cancel main's work; close, reopen
 and Save As retire the session, and admitted writes cannot publish into the next
 one. In the renderer, `MotifFrameService` projects committed layers into
@@ -263,9 +270,9 @@ demands and maps main's snapshots into the baked-key index and layer status;
   nobody has asked for are generated. Disk use is limited by the temporary cache
   space, not by the setting.
 - **Persistence owns no display bitmap.** On Windows a native worker reads the
-  OSR texture inside the lease and encodes `.wfrm` after it (falling back to a PNG
-  compatibility writer); with PNG capture main stores the capture directly. The
-  write is atomic before main marks the frame complete.
+  OSR texture inside the lease and encodes `.wfrm` after it; a bitmap is
+  straightened natively and encoded the same way. The write is atomic before
+  main marks the frame complete.
 - **Every stored frame goes through `MotifFrameWriteQueue`**
   ([ADR 0158](adr/0158-stored-frames-leave-the-capture-lease.md)). At most two
   frames hold pixels, one write per address. A frame someone asked to keep (bake,

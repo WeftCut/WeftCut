@@ -114,7 +114,7 @@ test('@serial Three.js Motif ZIP round-trip loads local modules, GLB and texture
       const bytes = await page.evaluate(async (args) => {
         const data = await (window as any).api.backend.invoke('motif_capture_frame', args)
         return Array.from(data as Uint8Array)
-      }, { motifId, tSec, propsJson: '{}', width: 64, height: 64, settleRafs: 2, contentHash })
+      }, { motifId, tSec, propsJson: '{}', width: 64, height: 64, contentHash })
       return Buffer.from(bytes)
     }
     const firstHash = await hash(id)

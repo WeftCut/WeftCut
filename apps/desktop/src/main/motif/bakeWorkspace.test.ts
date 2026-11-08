@@ -17,7 +17,7 @@ function frameBytes(width = 2, height = 2) {
 }
 const content = (key: string, width = 2): MotifBakeContent => ({ cacheKey: key, hash: hashCacheKey(key), contentFrames: 1,
   ranges: [{ start: 0, end: 1 }],
-  capture: { motifId: key, contentHash: key, propsJson: '{}', width, height: 2, fpsNum: 30, fpsDen: 1, settleRafs: null } });
+  capture: { motifId: key, contentHash: key, propsJson: '{}', width, height: 2, fpsNum: 30, fpsDen: 1 } });
 const plan = (contents: MotifBakeContent[], generation = 1): MotifBakePlan => ({ generation, contents, live: contents, collect: true });
 async function until(condition: () => boolean) {
   for (let i = 0; i < 500; i++) { if (condition()) return; await new Promise(resolve => setTimeout(resolve, 5)); }
@@ -157,7 +157,6 @@ describe('Motif workspace ownership', () => {
       (p: MotifBakePlan) => { p.contents[0]!.capture.propsJson = 'null'; },
       (p: MotifBakePlan) => { p.contents[0]!.ranges[0]!.end = 2; },
       (p: MotifBakePlan) => { p.sequence = [{ cacheKey: p.contents[0]!.cacheKey, ranges: [{ start: 0, end: 2 }] }]; },
-      (p: MotifBakePlan) => { p.contents[0]!.capture.settleRafs = -1; },
       (p: MotifBakePlan) => { p.live.push(null as never); },
     ]) {
       const malformed = structuredClone(good); mutate(malformed);

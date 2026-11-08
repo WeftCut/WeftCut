@@ -26,15 +26,15 @@ describe('Motif setup decoder workers', () => {
     });
     const frame = vi.fn();
     window.motif.define({ setup, frame });
-    const first = window.__motifRender(0, {}, { settleRafs: 0 });
+    const first = window.__motifRender(0, {}, {});
     expect(frame).not.toHaveBeenCalled();
     ready(); await first;
     expect(workers[0]!.terminate).toHaveBeenCalledOnce();
-    await window.__motifRender(1, {}, { settleRafs: 0 });
-    await window.__motifRender(0, {}, { settleRafs: 0 });
+    await window.__motifRender(1, {}, {});
+    await window.__motifRender(0, {}, {});
     expect(setup).toHaveBeenCalledOnce();
     expect(() => new window.Worker('blob:late')).toThrow(/setup/);
-    const changed = window.__motifRender(0, { scale: 2 }, { settleRafs: 0 });
+    const changed = window.__motifRender(0, { scale: 2 }, {});
     ready(); await changed;
     expect(setup).toHaveBeenCalledTimes(2);
     expect(workers[1]!.terminate).toHaveBeenCalledOnce();
@@ -76,7 +76,11 @@ function hostRuntime(pathname = '/' + CAPTURE_HOST_FILE) {
   const el = () => ({ style: {} as Record<string, string>, children: [] as any[], appendChild(c: unknown) { this.children.push(c); } });
   const body = el();
   const document = { readyState: 'complete', body, createElement: el, querySelector: () => ({ contentWindow: motif }) };
-  const window: any = { document, location: { pathname, hostname: 'countdown' }, requestAnimationFrame: () => 0, addEventListener: vi.fn() };
+  // The host's rendering steps run when the test says so.
+  const rafs: Array<() => void> = [];
+  const window: any = { document, location: { pathname, hostname: 'countdown' }, addEventListener: vi.fn(),
+    requestAnimationFrame: (cb: () => void) => rafs.push(cb), setTimeout, clearTimeout };
+  const renderStep = () => { for (const cb of rafs.splice(0)) cb(); };
   window.top = window;
   runInNewContext(MOTIF_RUNTIME_SOURCE, { window, document, location: window.location, console });
   const markerRow = () => {
@@ -85,23 +89,52 @@ function hostRuntime(pathname = '/' + CAPTURE_HOST_FILE) {
     pixels.forEach((px: { style: { background: string } }, i: number) => rgba.set(px.style.background === '#fff' ? [255, 255, 255, 255] : [0, 0, 0, 255], i * 4));
     return pixels.length ? decodeFrameMarker(rgba) : null;
   };
-  return { window, motif, markerRow };
+  return { window, motif, markerRow, renderStep };
 }
 
 describe('capture host shell', () => {
   it('forwards a frame to the Motif and marks its id only once the frame has run', async () => {
-    const { window, motif, markerRow } = hostRuntime();
+    const { window, motif, markerRow, renderStep } = hostRuntime();
     let release!: () => void;
     const frame = vi.fn();
     motif.motif.define({ setup: () => new Promise<void>(resolve => { release = resolve; }), frame });
-    const rendered = window.__motifRender(0.5, { a: 1 }, { settleRafs: 0, frameId: 41 });
+    const rendered = window.__motifRender(0.5, { a: 1 }, { frameId: 41 });
     await Promise.resolve();
     expect(markerRow()).toBeNull();
-    release(); await rendered;
+    release()
+    await vi.waitFor(() => expect(markerRow()).toBe(41));
     expect(frame).toHaveBeenCalledWith(0.5, expect.anything());
-    expect(markerRow()).toBe(41);
-    await window.__motifRender(1, { a: 1 }, { settleRafs: 0, frameId: 42 });
-    expect(markerRow()).toBe(42);
+    renderStep(); await rendered;
+    const next = window.__motifRender(1, { a: 1 }, { frameId: 42 });
+    await vi.waitFor(() => expect(markerRow()).toBe(42));
+    renderStep(); await next;
+  });
+
+  it('returns only after the rendering step that commits the frame, or a bounded wait', async () => {
+    const { window, motif, renderStep } = hostRuntime();
+    motif.motif.define({ frame() {} });
+    let done = false;
+    const rendered = window.__motifRender(0, {}, { frameId: 7 }).then(() => { done = true; });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(done).toBe(false);
+    renderStep(); await rendered;
+    // No rendering step at all: the render still returns.
+    const started = performance.now();
+    await window.__motifRender(0, {}, { frameId: 8 });
+    expect(performance.now() - started).toBeGreaterThanOrEqual(90);
+  });
+
+  it('loads the Motif into its frame only when asked, after the runtime is in place', async () => {
+    const { window } = hostRuntime();
+    const frame: any = { dataset: { src: 'index.html?v=1' }, src: '', listeners: [] as Array<() => void>,
+      addEventListener(_type: string, cb: () => void) { this.listeners.push(cb); } };
+    window.document.querySelector = () => frame;
+    const loaded = window.__motifShellLoad();
+    expect(frame.src).toBe('index.html?v=1');
+    frame.listeners.forEach((cb: () => void) => cb());
+    await expect(loaded).resolves.toBe(true);
+    frame.dataset = {};
+    await expect(window.__motifShellLoad()).rejects.toThrow(/no Motif frame/);
   });
 
   it('is ready only for its own Motif, and leaves other top pages in the Motif role', () => {
@@ -114,16 +147,8 @@ describe('capture host shell', () => {
   it('a throwing Motif frame rejects without marking', async () => {
     const { window, motif, markerRow } = hostRuntime();
     motif.motif.define({ frame() { throw new Error('bad frame'); } });
-    await expect(window.__motifRender(0, {}, { settleRafs: 0, frameId: 1 })).rejects.toThrow('bad frame');
+    await expect(window.__motifRender(0, {}, { frameId: 1 })).rejects.toThrow('bad frame');
     expect(markerRow()).toBeNull();
-  });
-});
-
-describe("MOTIF_RUNTIME_SOURCE settle", () => {
-  it("contains a meta.settleRafs read (branch behavior verified in real Chromium/Electron)", () => {
-    // The render entry must consult meta.settleRafs to choose the settle depth.
-    // The browser's actual paint barrier is exercised in Electron.
-    expect(MOTIF_RUNTIME_SOURCE).toContain("meta.settleRafs");
   });
 });
 

@@ -49,6 +49,30 @@ impl MotifRawFrame {
             .map_err(error)?
             .map_err(error)
     }
+
+    /// The same pixels as a PNG, for captures that leave the app as images.
+    #[napi]
+    pub async fn finish_png(&self) -> napi::Result<Buffer> {
+        let pixels = self
+            .pixels
+            .lock()
+            .map_err(error)?
+            .take()
+            .ok_or_else(|| error("motif frame already finished"))?;
+        tokio::task::spawn_blocking(move || {
+            let Pixels {
+                width,
+                height,
+                bgra,
+                premultiplied: mut rgba,
+            } = pixels;
+            crate::motif_frame::straighten(&mut rgba, bgra);
+            crate::motif_frame::encode_png(width, height, rgba).map(Buffer::from)
+        })
+        .await
+        .map_err(error)?
+        .map_err(error)
+    }
 }
 
 fn encode_pixels(pixels: Pixels) -> anyhow::Result<Buffer> {
@@ -58,7 +82,7 @@ fn encode_pixels(pixels: Pixels) -> anyhow::Result<Buffer> {
         bgra,
         premultiplied: mut rgba,
     } = pixels;
-    straighten(&mut rgba, bgra);
+    crate::motif_frame::straighten(&mut rgba, bgra);
     Ok(crate::motif_frame::encode(width, height, &rgba)?.into())
 }
 
@@ -296,44 +320,5 @@ impl Reader {
             bgra: desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM,
             premultiplied: result?,
         })
-    }
-}
-
-fn straighten(rgba: &mut [u8], bgra: bool) {
-    for px in rgba.as_chunks_mut::<4>().0 {
-        if bgra {
-            px.swap(0, 2);
-        }
-        let alpha = u32::from(px[3]);
-        for c in &mut px[..3] {
-            *c = (u32::from(*c) * 255 + alpha / 2)
-                .checked_div(alpha)
-                .unwrap_or(0)
-                .min(255) as u8;
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::straighten;
-
-    #[test]
-    fn every_valid_premultiplied_channel_roundtrips_exactly() {
-        for alpha in 0..=255u32 {
-            for channel in 0..=alpha {
-                let mut pixel = [channel as u8, 0, 0, alpha as u8];
-                straighten(&mut pixel, false);
-                assert_eq!((u32::from(pixel[0]) * alpha + 127) / 255, channel);
-                assert_eq!(pixel[3], alpha as u8);
-            }
-        }
-    }
-
-    #[test]
-    fn bgra_is_reordered_and_transparent_rgb_is_cleared() {
-        let mut pixels = [16, 32, 64, 128, 20, 30, 40, 0];
-        straighten(&mut pixels, true);
-        assert_eq!(pixels, [128, 64, 32, 128, 0, 0, 0, 0]);
     }
 }

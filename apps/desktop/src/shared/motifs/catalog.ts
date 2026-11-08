@@ -46,7 +46,6 @@ export interface Manifest {
   graphic_role?: string | null;
   // Extra optional fields present in the renderer's MotifManifest — preserved
   // so its `MotifManifest = Manifest` re-export doesn't drop fields.
-  settle_rafs?: number;
   content_hash?: string;
   status?: "builtin" | "installed" | "draft";
   target_id?: string;
@@ -408,7 +407,7 @@ function findCi(haystack: string, needle: string): number {
 /**
  * The core manifest fields that live in the on-disk island — the ONLY fields the
  * composed island and the content hash serialize. Excludes payload-decoration
- * fields (`status`, `content_hash`, `target_id`, `settle_rafs`) so the island +
+ * fields (`status`, `content_hash`, `target_id`) so the island +
  * hash are stable. Keys emitted in a fixed order for deterministic JSON.
  * (Consumed by `composeMotifHtml` and `motifContentHash`.)
  */

@@ -59,7 +59,6 @@ test('capture fixed motif frames for cross-OS comparison @serial', async () => {
           propsJson: props,
           width,
           height,
-          settleRafs: 3,
           contentHash: 'det',
         })) as Uint8Array
         let bin = ''

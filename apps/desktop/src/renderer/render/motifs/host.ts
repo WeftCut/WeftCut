@@ -17,11 +17,11 @@ export interface CaptureOptions {
 
 export function captureMotifFrameResult(
   motifId: string, tSec: number, props: Record<string, unknown>, width: number, height: number,
-  settleRafs: number | undefined, contentHash: string | undefined,
+  contentHash: string | undefined,
   fpsNum: number | undefined, fpsDen: number | undefined, options: CaptureOptions,
 ): Promise<CapturedFrame> {
   if (typeof window === 'undefined' || typeof window.postMessage !== 'function' || typeof MessageChannel === 'undefined') {
-    return captureMotifFrame(motifId, tSec, props, width, height, settleRafs, contentHash,
+    return captureMotifFrame(motifId, tSec, props, width, height, contentHash,
       options.key, fpsNum, fpsDen).then(bitmap => ({ bitmap, persisted: false, scaleDiv: 'live' as const }));
   }
   if (typeof window !== 'undefined') {
@@ -30,7 +30,7 @@ export function captureMotifFrameResult(
   }
   return captureMotifResult({
     motifId, tSec, propsJson: JSON.stringify(props), width, height,
-    settleRafs: settleRafs ?? null, contentHash: contentHash ?? '', fpsNum, fpsDen,
+    contentHash: contentHash ?? '', fpsNum, fpsDen,
     coalesceKey: options.key, high: options.high, bake: options.bake,
     cache: options.cache,
     finalizationToken: options.finalizationToken,
@@ -49,7 +49,6 @@ export function captureMotifFrameResult(
  * @param props      Motif props (will be JSON-serialized for the IPC boundary)
  * @param width      capture width in pixels
  * @param height     capture height in pixels
- * @param settleRafs optional extra rAF settle count before capture
  * @param contentHash optional blake3 content hash — threaded to the host URL's
  *                    `?v=` cache-buster so an in-place draft edit reloads the
  *                    capture host (else it re-captures the stale loaded DOM).
@@ -63,7 +62,6 @@ export async function captureMotifFramePngBlob(
   props: Record<string, unknown>,
   width: number,
   height: number,
-  settleRafs?: number,
   contentHash?: string,
   coalesceKey?: string,
   fpsNum?: number,
@@ -78,7 +76,6 @@ export async function captureMotifFramePngBlob(
     propsJson: JSON.stringify(props),
     width,
     height,
-    settleRafs: settleRafs ?? null,
     contentHash: contentHash ?? "",
     // Latest-wins queueing on the serial capture chain (main/motif/capture.ts):
     // a newer same-key request replaces a still-queued older one.
@@ -101,7 +98,6 @@ export async function captureMotifFramePngBlob(
  * @param props      Motif props (will be JSON-serialized for the IPC boundary)
  * @param width      capture width in pixels
  * @param height     capture height in pixels
- * @param settleRafs optional extra rAF settle count before capture
  * @param contentHash optional blake3 content hash — threaded to the host URL's
  *                    `?v=` cache-buster (see `captureMotifFramePngBlob`).
  */
@@ -111,7 +107,6 @@ export async function captureMotifFrame(
   props: Record<string, unknown>,
   width: number,
   height: number,
-  settleRafs?: number,
   contentHash?: string,
   coalesceKey?: string,
   fpsNum?: number,
@@ -121,11 +116,11 @@ export async function captureMotifFrame(
     const { captureStoredMotifFrame } = await import("./frameTransport");
     return captureStoredMotifFrame({
       motifId, tSec, propsJson: JSON.stringify(props), width, height,
-      settleRafs: settleRafs ?? null, contentHash: contentHash ?? "",
+      contentHash: contentHash ?? "",
       coalesceKey, fpsNum, fpsDen,
     });
   }
-  const blob = await captureMotifFramePngBlob(motifId, tSec, props, width, height, settleRafs, contentHash, coalesceKey, fpsNum, fpsDen);
+  const blob = await captureMotifFramePngBlob(motifId, tSec, props, width, height, contentHash, coalesceKey, fpsNum, fpsDen);
   return createImageBitmap(blob);
 }
 

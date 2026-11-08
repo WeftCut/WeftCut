@@ -8,7 +8,6 @@
   ],
   "default_duration_s": 4.0,
   "max_duration_prop": "duration_s",
-  "settle_rafs": 1,
   "graphic_role": "title",
   "props_schema": {
     "duration_s": {

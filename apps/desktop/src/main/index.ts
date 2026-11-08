@@ -22,7 +22,7 @@ import { execFile } from 'node:child_process'
 import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, Menu, nativeImage, nativeTheme, net, Notification, protocol, screen, shell, utilityProcess } from 'electron'
 import { createHash } from 'node:crypto'
 import { MotifCovers } from './motif/covers.js'
-import { PNG_CANVAS_RUNTIME_SOURCE } from './motif/pngCanvasRuntime.js'
+import { BITMAP_CANVAS_RUNTIME_SOURCE } from './motif/bitmapCanvasRuntime.js'
 import { builtinMotifs, getMotifSource, motifSourceFiles } from './motif/authoring.js'
 import { motifContentHash } from './motif/contentHash.js'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
@@ -33,10 +33,10 @@ import { mediaMimeForExt } from './mediaMime.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
 import { registerMotifProtocol } from './motif/protocol.js'
 import { installPerformanceCalibration } from './performanceCalibration.js'
-import { setRuntimeSource, captureMotifFrameB64, captureMotifTexture, setTextureCaptureEnabled, isMotifContentFailure, setMotifStore, shutdownCaptureHost, setFrameMarkerReader, controlMotifCapture, captureDiagnostics, resetCaptureFailure } from './motif/capture.js'
+import { setRuntimeSource, captureMotifFrameB64, captureMotifFrame, setTextureCaptureEnabled, isMotifContentFailure, setMotifStore, shutdownCaptureHost, setFrameMarkerReader, setTexturePngReader, controlMotifCapture, captureDiagnostics, resetCaptureFailure } from './motif/capture.js'
 import { setMotifMediaSource } from './motif/mediaProps.js'
 import { rasterizeSvg } from './svgRaster.js'
-import { MotifCaptureService, type CaptureRequest, type TextureEncoder } from './motif/captureService.js'
+import { MotifCaptureService, type CaptureRequest, type MotifPixelCodec, type TextureEncoder } from './motif/captureService.js'
 import { UserMotifStore } from './motif/store.js'
 import { MotifFrameStore } from './motif/frameStore.js'
 import { createMotifConsumers } from './motif/consumers.js'
@@ -1406,17 +1406,21 @@ app.whenReady().then(async () => {
     ? new MotifGpuTransport((w, h, bgra, upload) => new motifPoolClass(w, h, 1, bgra, upload)) : null
   const encoderClass = (require_('@weftcut/core') as { MotifTextureEncoder?: new () => TextureEncoder }).MotifTextureEncoder
   const markerClass = (require_('@weftcut/core') as { MotifMarkerReader?: new () => { read(handle: Buffer, pixels: number): Promise<Buffer> } }).MotifMarkerReader
-  if (process.platform === 'win32' && markerClass) {
+  // A texture host needs both native readers; without them the host takes bitmaps.
+  if (process.platform === 'win32' && markerClass && encoderClass) {
     let markers: InstanceType<typeof markerClass> | null = null
+    let pngs: TextureEncoder | null = null
     setFrameMarkerReader((handle, pixels) => (markers ??= new markerClass()).read(handle, pixels))
+    setTexturePngReader(async (handle, height) => (await (pngs ??= new encoderClass()).read(handle, height)).finishPng())
   }
   const motifCapture = new MotifCaptureService({
-    store: motifFrames, texture: captureMotifTexture, png: captureMotifFrameB64,
+    store: motifFrames, frame: captureMotifFrame,
     copy: motifGpu ? (owner, texture, parent) => motifGpu.copy(owner, texture, parent) : null,
     createEncoder: process.platform === 'win32' && encoderClass ? () => new encoderClass() : null,
+    pixels: require_('@weftcut/core') as MotifPixelCodec,
     setTextureEnabled: setTextureCaptureEnabled, isContentFailure: isMotifContentFailure,
     promote: key => controlMotifCapture(key, 'promote'),
-  }, process.env.WEFTCUT_MOTIF_CAPTURE !== 'png')
+  }, process.env.WEFTCUT_MOTIF_CAPTURE !== 'bitmap')
   motifBakes = new MotifBakeWorkspace({
     session: () => {
       const generation = workspaceEvents.current()
@@ -1583,14 +1587,14 @@ app.whenReady().then(async () => {
     // at boot; main injects it into the offscreen capture host via CDP.
     if (channel === 'motif_register_runtime') {
       setRuntimeSource((args as { source: string }).source)
-      coverRuntimeVersion = createHash('sha256').update(PNG_CANVAS_RUNTIME_SOURCE).update((args as { source: string }).source).digest('hex')
+      coverRuntimeVersion = createHash('sha256').update(BITMAP_CANVAS_RUNTIME_SOURCE).update((args as { source: string }).source).digest('hex')
       return null
     }
     // Motif frame capture: offscreen CDP path — never falls through to Rust.
     if (channel === 'motif_capture_frame') {
       const a = args as {
         motifId: string; tSec: number; propsJson: string
-        width: number; height: number; settleRafs: number | null; contentHash: string
+        width: number; height: number; contentHash: string
         coalesceKey: string | null; fpsNum: number | null; fpsDen: number | null
       }
       const { coalesceKey, fpsNum, fpsDen, ...captureArgs } = a

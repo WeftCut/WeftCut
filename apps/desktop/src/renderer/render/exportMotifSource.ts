@@ -45,7 +45,7 @@ export function planExportMotifFrame(
         try {
           ({ bitmap, persisted } = await captureMotifFrameResult(spec.motif.manifest.id,
             desc.tSec, desc.canonicalProps, desc.renderW, desc.renderH,
-            spec.motif.manifest.settle_rafs, spec.motif.manifest.content_hash,
+            spec.motif.manifest.content_hash,
             comp.fps_num, comp.fps_den, { key, high: true,
               bake: { hash: hashCacheKey(desc.cacheKey), frame: desc.contentFrame },
               ...(finalizationToken ? { finalizationToken } : {}) }));

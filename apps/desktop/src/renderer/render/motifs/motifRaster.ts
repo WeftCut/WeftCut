@@ -10,7 +10,6 @@ export async function rasterMotifFrame(
   props: Record<string, unknown>,
   width: number,
   height: number,
-  settleRafs?: number,
   contentHash?: string,
   coalesceKey?: string,
   fpsNum?: number,
@@ -21,7 +20,7 @@ export async function rasterMotifFrame(
       .__weftcutMotifPerf;
     if (perf) perf.renders++;
   }
-  return captureMotifFrame(motifId, tSec, props, width, height, settleRafs, contentHash, coalesceKey, fpsNum, fpsDen);
+  return captureMotifFrame(motifId, tSec, props, width, height, contentHash, coalesceKey, fpsNum, fpsDen);
 }
 
 /// Portable direct-capture helper, at the motif's manifest size. The editor's
@@ -37,5 +36,5 @@ export function bakeMotifFrame(
   canonicalProps: Record<string, unknown>,
 ): Promise<ImageBitmap> {
   const [w, h] = motif.manifest.size;
-  return rasterMotifFrame(motif.manifest.id, (frame * fpsDen) / fpsNum, canonicalProps, w!, h!, motif.manifest.settle_rafs, motif.manifest.content_hash, undefined, fpsNum, fpsDen);
+  return rasterMotifFrame(motif.manifest.id, (frame * fpsDen) / fpsNum, canonicalProps, w!, h!, motif.manifest.content_hash, undefined, fpsNum, fpsDen);
 }

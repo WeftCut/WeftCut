@@ -82,7 +82,7 @@ describe("the Motifs panel's approval card", () => {
     expect(within(card).getByText(/Props — added: tagline/)).toBeTruthy();
     expect(within(card).getByText("No clips in this project change.")).toBeTruthy();
     // The preview player captures the frozen package, at the proposed revision.
-    await waitFor(() => expect(capture.mock.calls.some((c) => c[0] === "badge-draft--proposal" && c[6] === "rev-9")).toBe(true));
+    await waitFor(() => expect(capture.mock.calls.some((c) => c[0] === "badge-draft--proposal" && c[5] === "rev-9")).toBe(true));
   });
 
   it("Approve publishes through the renderer-only channel, and the card goes", async () => {

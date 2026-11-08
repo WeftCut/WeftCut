@@ -4,8 +4,8 @@ import { invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver';
 import { createMotifDraft, publishMotifDraft } from './helpers/motif';
 
 /// The two Windows OSR regressions this guards: an accelerated 2D canvas layer
-/// omitted after navigation (pngCanvasRuntime.ts), and a screenshot clip that
-/// scaled width alone. The macOS one: the first committed frame of a new
+/// omitted after navigation (bitmapCanvasRuntime.ts), and a scaled capture
+/// that scaled width alone. The macOS one: the first committed frame of a new
 /// document carrying no canvas at all while the host window and the page's
 /// emulated size disagreed (capture.ts §setContentSize;
 /// docs/notes/electron-chromium-behavior.md). Every
@@ -20,13 +20,13 @@ const NETWORK_PROPS = {
 };
 const MAX_DUMPS = 8;
 
-test('PNG capture preserves canvas pixels across Motif navigation', async ({}, testInfo) => {
+test('bitmap capture preserves canvas pixels across Motif navigation', async ({}, testInfo) => {
   test.setTimeout(240_000);
-  // Exercise the real fallback backend even on a machine with shared textures.
-  // Without this, a successful GPU run never tests PNG canvas compositing.
-  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'png' } });
+  // Exercise the bitmap host even on a machine with shared textures. Without
+  // this, a successful GPU run never tests bitmap canvas compositing.
+  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'bitmap' } });
   try {
-    await newProject(page, { parentFolder: tmpDir('weftcut-png-capture-'), name: 'Capture',
+    await newProject(page, { parentFolder: tmpDir('weftcut-bitmap-capture-'), name: 'Capture',
       canvas: { width: 1920, height: 1080, fpsNum: 25, fpsDen: 1 } });
     // Frame i is captured at tSec = 2 + i/25; the solid canvas paints green =
     // (i * 5) % 256 so a capture can tell "previous frame" from "no frame".
@@ -82,7 +82,7 @@ test('PNG capture preserves canvas pixels across Motif navigation', async ({}, t
             channel.port1.postMessage({ id: i, capture: {
               motifId: network ? networkId : solid, tSec: 2 + i / 25,
               propsJson: JSON.stringify(network ? networkProps : {}), width: 1920, height: 1080,
-              settleRafs: 1, contentHash: '', fpsNum: 25, fpsDen: 1, high: true,
+              contentHash: '', fpsNum: 25, fpsDen: 1, high: true,
             } });
           });
           const ms = Math.round(performance.now() - started);
@@ -108,12 +108,12 @@ test('PNG capture preserves canvas pixels across Motif navigation', async ({}, t
       return { missing, details, dumps };
     }, { solid, networkId, plan, networkProps: NETWORK_PROPS, maxDumps: MAX_DUMPS });
     for (const { i, png } of result.dumps) {
-      const file = testInfo.outputPath(`png-capture-frame-${i}.png`);
+      const file = testInfo.outputPath(`bitmap-capture-frame-${i}.png`);
       writeFileSync(file, Buffer.from(png, 'base64'));
       await testInfo.attach(`frame-${i}`, { path: file, contentType: 'image/png' });
     }
-    const diagnostics = await invokeCmd<{ pngCaptures: number; pageLoads: number }>(page, 'motif_capture_diagnostics');
-    console.log(`[png-capture] ${result.missing.length ? 'MISSES' : 'all frames opaque'}; host pngCaptures=${diagnostics.pngCaptures} pageLoads=${diagnostics.pageLoads}`);
-    expect(result.missing, 'opaque authored canvases must survive the PNG capture backend\n' + JSON.stringify(result.details, null, 1)).toEqual([]);
+    const diagnostics = await invokeCmd<{ bitmapCaptures: number; pageLoads: number }>(page, 'motif_capture_diagnostics');
+    console.log(`[bitmap-capture] ${result.missing.length ? 'MISSES' : 'all frames opaque'}; host bitmapCaptures=${diagnostics.bitmapCaptures} pageLoads=${diagnostics.pageLoads}`);
+    expect(result.missing, 'opaque authored canvases must survive the bitmap capture host\n' + JSON.stringify(result.details, null, 1)).toEqual([]);
   } finally { await app.close(); }
 });

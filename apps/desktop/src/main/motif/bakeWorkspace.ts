@@ -191,7 +191,6 @@ export function validateBakePlan(plan: MotifBakePlan): void {
       || !Number.isSafeInteger(c.height) || c.height < 1 || c.height > 8192
       || c.width * c.height * 4 > 256 * 1048576
       || !Number.isSafeInteger(c.fpsNum) || c.fpsNum <= 0 || !Number.isSafeInteger(c.fpsDen) || c.fpsDen <= 0
-      || (c.settleRafs !== null && (!Number.isSafeInteger(c.settleRafs) || c.settleRafs < 0 || c.settleRafs > 120))
       || !Array.isArray(content.ranges) || content.ranges.length > 10000) invalid();
     let props: unknown;
     try { props = JSON.parse(c.propsJson); } catch { invalid(); }

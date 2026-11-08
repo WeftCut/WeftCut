@@ -145,7 +145,7 @@ export class MotifGpuTransport {
   }
 
   /** Copies the frame's picture, above the capture host's marker rows. */
-  copy(owner: WebContents, frame: MotifOsrFrame, finalizationId?: number): Promise<MotifTextureFrame> {
+  copy(owner: WebContents, frame: Extract<MotifOsrFrame, { kind: 'texture' }>, finalizationId?: number): Promise<MotifTextureFrame> {
     const { pixelFormat, handle } = frame.texture.textureInfo
     if ((pixelFormat !== 'rgba' && pixelFormat !== 'bgra') || !handle.ntHandle) {
       return Promise.reject(new Error('Unsupported Motif OSR texture'))

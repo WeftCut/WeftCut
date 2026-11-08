@@ -89,7 +89,7 @@ const KNOWN_NON_TOOLS = new Set([
   'initialize',
   // motif-authoring.md — manifest fields
   'id', 'version', 'name', 'size', 'default_duration_s', 'max_duration_s',
-  'max_duration_prop', 'content_duration_s', 'settle_rafs', 'fonts',
+  'max_duration_prop', 'content_duration_s', 'fonts',
   'props_schema', 'graphic_role',
   // motif-authoring.md — props_schema variants + their constraint fields
   'string', 'color', 'number', 'enum', 'default', 'max_length', 'multiline',

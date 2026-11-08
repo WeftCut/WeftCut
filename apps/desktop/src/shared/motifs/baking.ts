@@ -13,7 +13,6 @@ export interface MotifBakeContent {
     propsJson: string;
     width: number;
     height: number;
-    settleRafs: number | null;
     fpsNum: number;
     fpsDen: number;
   };
