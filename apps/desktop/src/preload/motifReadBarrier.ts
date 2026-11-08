@@ -1,3 +1,5 @@
+import { MOTIF_DEADLINES } from '../shared/motifs/tuning'
+
 // Complete shared-texture reads off the UI thread. Transferring the bitmap to
 // this worker preserves ownership; only return it after the GPU has run the
 // copy that `createImageBitmap` recorded, so main may safely reuse the source
@@ -82,7 +84,7 @@ export class MotifReadBarrier {
     }
     const id = ++this.sequence
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => this.fail(new Error('Motif read barrier timed out')), 2000)
+      const timer = setTimeout(() => this.fail(new Error('Motif read barrier timed out')), MOTIF_DEADLINES.readBarrierMs)
       this.pending.set(id, { resolve, reject, timer })
       try { this.worker!.postMessage({ id, bitmap }, [bitmap]) }
       catch (error) {

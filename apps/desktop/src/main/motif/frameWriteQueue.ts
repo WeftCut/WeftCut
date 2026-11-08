@@ -6,19 +6,21 @@ export type FrameRead = () => Promise<() => Promise<void>>
 
 export interface QueuedWrite { written: Promise<void> }
 
-/** Two writes hold at most two frames of pixels: one encoding, one behind it.
- * Encoding outruns capture, so a third frame would only be memory. */
-const WRITE_SLOTS = 2
-
-/** Stored frames leave the capture lease here (ADR 0158). A frame holds a slot
- * from before its pixels are read until its file is written, and one address
- * has one write per store. `wait` is for a frame someone asked to keep: waiting
+/** Stored frames leave the capture lease here (ADR 0158). A frame holds one of
+ * `slots` from before its pixels are read until its file is written, so the
+ * slots bound the frames of pixels held (`writeSlots`), and one address has
+ * one write per store. `wait` is for a frame someone asked to keep: waiting
  * inside the lease is the backpressure on capture. `skip` is for a frame that
  * can be captured again. */
 export class MotifFrameWriteQueue {
-  private free = WRITE_SLOTS
+  private free: number
   private readonly waiting: (() => void)[] = []
   private readonly writes = new WeakMap<object, Map<string, Promise<void>>>()
+
+  constructor(slots: number) {
+    if (!Number.isInteger(slots) || slots < 1) throw new Error('Invalid Motif write slot count')
+    this.free = slots
+  }
 
   inFlight(store: object, address: MotifCacheAddress): Promise<void> | undefined {
     return this.writes.get(store)?.get(addressKey(address))

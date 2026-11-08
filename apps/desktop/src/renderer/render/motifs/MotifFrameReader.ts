@@ -2,6 +2,8 @@ import { hashCacheKey } from '../../../shared/motifs/cacheKey';
 import type { MotifCacheAddress, MotifReadUnavailable, MotifTextureReadRequest } from '../../../shared/motifs/frameTransport';
 import { isMotifReaderDiv, type MotifReaderDiv, type MotifReadRequest } from '../../../shared/motifs/readerProtocol';
 import { rendererOS } from '../../platform';
+import { MOTIF_DEADLINES } from '../../../shared/motifs/tuning';
+import { motifTuning } from './tuning';
 import {
   MotifTransportError, readMotifTexture,
   type MotifReaderLane, type MotifTextureRead, type MotifTransportFailure,
@@ -10,9 +12,6 @@ import type { MotifReaderWorkerIn, MotifReaderWorkerOut } from './motifReaderWor
 
 export { MotifTransportError, type MotifReaderLane, type MotifTransportFailure } from './frameTransport';
 
-/** At most three reads in flight per document (ADR 0154); later reads queue. */
-export const MOTIF_READS_IN_FLIGHT = 3;
-const READ_TIMEOUT_MS = 15_000;
 const STAGE_WINDOW = 64;
 
 /** Native stages, then the texture lane's upload and import or the utility
@@ -95,7 +94,7 @@ export class MotifFrameReader {
   private laneResetGeneration = 0;
 
   constructor(private readonly deps: MotifFrameReaderDeps) {
-    this.utility = new UtilityLane(deps, deps.timeoutMs ?? READ_TIMEOUT_MS);
+    this.utility = new UtilityLane(deps, deps.timeoutMs ?? MOTIF_DEADLINES.readTransportMs);
     deps.listen({
       port: port => this.utility.attach(port),
       reset: () => { this.textureOff = null; this.utility.reset(); },
@@ -184,8 +183,9 @@ export class MotifFrameReader {
     return { bitmap: result.bitmap, stages };
   }
 
+  /** At most `readsInFlight` reads per document (ADR 0154); later reads queue. */
   private admit(): Promise<void> {
-    if (this.active < MOTIF_READS_IN_FLIGHT) { this.active++; return Promise.resolve(); }
+    if (this.active < motifTuning().readsInFlight) { this.active++; return Promise.resolve(); }
     // The finishing read hands its slot over without releasing it.
     return new Promise(resolve => this.queue.push(resolve));
   }

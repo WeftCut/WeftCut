@@ -1,4 +1,5 @@
 import { CAPTURE_HOST_FILE, FRAME_MARKER_PIXELS, FRAME_MARKER_ROWS, frameMarkerBits } from "../../../shared/motifs/frameMarker";
+import { MOTIF_DEADLINES } from "../../../shared/motifs/tuning";
 
 /** Testable core: installs clock takeover onto an arbitrary global-like object. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -93,7 +94,7 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
     // holding the render.
     var committed = function () {
       return new Promise(function (resolve) {
-        var timer = window.setTimeout(resolve, 100);
+        var timer = window.setTimeout(resolve, ${MOTIF_DEADLINES.renderStepMs});
         window.requestAnimationFrame(function () { window.setTimeout(function () { window.clearTimeout(timer); resolve(); }, 0); });
       });
     };

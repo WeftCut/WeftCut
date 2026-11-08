@@ -6,6 +6,7 @@ import { isMotifFrameAddress, motifFrameStem } from './frameAddress'
 import { MotifError, motifErrorCode } from '../../shared/motifs/errors.js'
 import { isMotifReaderDiv, type MotifReaderDiv } from '../../shared/motifs/readerProtocol.js'
 import { fitsMotifFrame } from '../../shared/motifs/limits.js'
+import { MOTIF_DEADLINES } from '../../shared/motifs/tuning.js'
 import type { MotifReadUnavailable, MotifTextureFrame, MotifTextureReadResult } from '../../shared/motifs/frameTransport.js'
 
 async function replaceFile(temp: string, destination: string): Promise<void> {
@@ -13,10 +14,10 @@ async function replaceFile(temp: string, destination: string): Promise<void> {
     try { await fs.rename(temp, destination); return }
     catch (error) {
       const code = (error as NodeJS.ErrnoException).code
-      if (attempt >= 4 || (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES')) throw error
+      if (attempt >= MOTIF_DEADLINES.storeReplaceRetries || (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES')) throw error
       // Windows readers / scanners can briefly hold the destination open.
       // Keep the old complete frame visible; never delete it before replacing.
-      await new Promise(resolve => setTimeout(resolve, 10 * (attempt + 1)))
+      await new Promise(resolve => setTimeout(resolve, MOTIF_DEADLINES.storeReplaceBackoffMs * (attempt + 1)))
     }
   }
 }

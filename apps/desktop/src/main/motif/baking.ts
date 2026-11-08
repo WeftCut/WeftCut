@@ -1,5 +1,6 @@
 import type { MotifBakeContent, MotifBakePause, MotifBakePlan, MotifBakeSnapshot, MotifBakeStatus, MotifFrameRange } from '../../shared/motifs/baking';
 import { motifErrorCode } from '../../shared/motifs/errors';
+import { MOTIF_DEADLINES } from '../../shared/motifs/tuning';
 
 export interface MotifBakeCoordinatorDeps {
   inventory(content: { cacheKey: string; hash: string }): Promise<number[]>;
@@ -9,6 +10,10 @@ export interface MotifBakeCoordinatorDeps {
   collect?(liveHashes: ReadonlySet<string>): Promise<void>;
   now?(): number;
   schedule?(callback: () => void, delayMs: number): () => void;
+  /** The capture host's `framesInFlight`: the coordinator keeps as many frames
+   * of its chosen clip in the capture queue, so the host renders the next while
+   * earlier ones are still on their way to a paint (ADR 0159). */
+  framesInFlight: number;
 }
 
 interface ContentState {
@@ -25,11 +30,6 @@ interface ContentState {
   retryAt: number;
 }
 
-/// Frames one coordinator keeps in the capture queue, so the capture host
-/// renders the next while earlier ones are still on their way to a paint
-/// (ADR 0159).
-const FRAMES_IN_FLIGHT = 3;
-
 function ranges(content: MotifBakeContent): MotifFrameRange[] {
   const sorted = content.ranges.map(r => ({ start: Math.max(0, Math.ceil(r.start)), end: Math.min(content.contentFrames, Math.floor(r.end)) }))
     .filter(r => r.end > r.start).sort((a, b) => a.start - b.start);
@@ -44,7 +44,7 @@ function ranges(content: MotifBakeContent): MotifFrameRange[] {
 
 /** One workspace's persistent Motif demand. Capture remains serialized by the
  * capture host; this module owns clip order, discovery, recovery and coverage.
- * It keeps up to `FRAMES_IN_FLIGHT` frames of its chosen clip in the queue and
+ * It keeps up to `framesInFlight` frames of its chosen clip in the queue and
  * decides the order again as each one settles. */
 export class MotifBakeCoordinator {
   private generation = 0;
@@ -165,7 +165,7 @@ export class MotifBakeCoordinator {
   wake(): void {
     if (this.disposed) return;
     this.cancelTimer?.(); this.cancelTimer = undefined;
-    if (this.active < FRAMES_IN_FLIGHT && !this.discovering) this.arm(0);
+    if (this.active < this.deps.framesInFlight && !this.discovering) this.arm(0);
   }
 
   /** Storage is shared with foreground captures and cache reads. Their writes
@@ -250,7 +250,7 @@ export class MotifBakeCoordinator {
     const message = String(error);
     const code = motifErrorCode(error);
     if (code === 'capacity' || code === 'disk') {
-      state.retryAt = this.now() + 1000;
+      state.retryAt = this.now() + MOTIF_DEADLINES.bakePauseRetryMs;
       state.status = { ...state.status, phase: 'paused', reason: code, error: message };
     } else {
       // The Motif's own failure is terminal; anything else retries, bounded.
@@ -259,8 +259,8 @@ export class MotifBakeCoordinator {
       // a capture host restart: one incident is one failure.
       if (!content && state.retryAt > this.now()) return;
       state.failures++;
-      const terminal = content || state.failures >= 3;
-      state.retryAt = terminal ? Infinity : this.now() + 250 * 2 ** (state.failures - 1);
+      const terminal = content || state.failures >= MOTIF_DEADLINES.bakeFailures;
+      state.retryAt = terminal ? Infinity : this.now() + MOTIF_DEADLINES.bakeRetryBaseMs * 2 ** (state.failures - 1);
       state.status = { ...state.status, phase: terminal ? 'error' : 'retrying', reason: undefined, error: message };
     }
     this.emit(true);
@@ -275,7 +275,7 @@ export class MotifBakeCoordinator {
   }
 
   private async step(): Promise<void> {
-    if (this.active >= FRAMES_IN_FLIGHT || this.disposed || this.discovering) return;
+    if (this.active >= this.deps.framesInFlight || this.disposed || this.discovering) return;
     const candidates = [...this.states.values()].filter(s => (!s.hydrated || s.content) && s.status.phase !== 'ready' && s.status.phase !== 'error');
     if (!candidates.length) { this.emit(true); return; }
     const pause = this.deps.pause();

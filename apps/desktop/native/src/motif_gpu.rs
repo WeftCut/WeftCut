@@ -21,10 +21,18 @@ type TimedReply = tokio::sync::oneshot::Sender<Result<MotifUploadTiming, String>
 /// side still holds the key after the wait.
 const WAIT_TIMEOUT: i32 = 0x102;
 
-/// Takes `mutex` with key 0, waiting at most a second. A timeout is transient:
-/// the other side still holds the key.
+/// The longest a Motif GPU path waits for a keyed mutex. A protocol deadline,
+/// like those in `MOTIF_DEADLINES` (`src/shared/motifs/tuning.ts`).
+const ACQUIRE_SYNC_TIMEOUT_MS: u32 = 1000;
+
+/// Takes `mutex` with key 0, waiting at most `ACQUIRE_SYNC_TIMEOUT_MS`. A
+/// timeout is transient: the other side still holds the key.
 pub(crate) unsafe fn acquire_sync(mutex: &IDXGIKeyedMutex, what: &str) -> anyhow::Result<()> {
-    let hr = (Interface::vtable(mutex).AcquireSync)(Interface::as_raw(mutex), 0, 1000);
+    let hr = (Interface::vtable(mutex).AcquireSync)(
+        Interface::as_raw(mutex),
+        0,
+        ACQUIRE_SYNC_TIMEOUT_MS,
+    );
     match hr.0 {
         0 => Ok(()),
         WAIT_TIMEOUT => Err(coded(

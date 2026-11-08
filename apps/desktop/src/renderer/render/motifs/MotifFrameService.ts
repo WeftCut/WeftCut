@@ -17,7 +17,7 @@ import { MotifBakeClient } from './bakeClient';
 import type { MotifBakePlan, MotifBakeSession, MotifBakeSnapshot, MotifFrameRange } from '../../../shared/motifs/baking';
 import { hashCacheKey } from './frameCache';
 import { motifFrameDescriptor } from "./motifFrameDescriptor";
-import { MOTIF_RECENT_FRAMES } from "./motifFrames";
+import { motifTuning } from "./tuning";
 import {
   resolveMotifFrame,
   sharedBakedKeyIndex,
@@ -294,7 +294,7 @@ export class MotifFrameService {
         cacheKey: desc.cacheKey,
         contentFrame: desc.contentFrame,
         contentDurationFrames: desc.contentDurationFrames,
-        historyFrames: MOTIF_RECENT_FRAMES,
+        historyFrames: motifTuning().recentFrames,
         // What one warmed frame costs the byte-bounded L0 cache — the planner
         // budget is in bytes, so a small Motif warms deeper than a 1080p one.
         frameBytes: Math.ceil(desc.renderW / div) * Math.ceil(desc.renderH / div) * 4,
@@ -316,7 +316,7 @@ export class MotifFrameService {
             scaleDiv,
           ),
       });
-    }, 500_000);
+    }, motifTuning().prewarmLookaheadMs * 1000);
     this.prewarmer.setTargets(specs);
   }
 

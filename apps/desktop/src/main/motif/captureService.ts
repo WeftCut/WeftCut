@@ -42,6 +42,8 @@ export interface CaptureServiceDeps {
   pixels: MotifPixelCodec
   setTextureEnabled: (enabled: boolean) => void
   promote?: (key: string) => void
+  /** `writeSlots` (`shared/motifs/tuning.ts`). */
+  writeSlots: number
 }
 
 interface DisplayJob {
@@ -87,9 +89,10 @@ export class MotifCaptureService {
   private useTexture: boolean
   private encoder: TextureEncoder | null = null
   private liveWriteWarned = false
-  private readonly writes = new MotifFrameWriteQueue()
+  private readonly writes: MotifFrameWriteQueue
   private readonly workspaceJobs = new WeakMap<MotifFrameStore, WorkspaceJobs>()
   constructor(private readonly deps: CaptureServiceDeps, enabled: boolean) {
+    this.writes = new MotifFrameWriteQueue(deps.writeSlots)
     this.useTexture = enabled && !!deps.copy && !!deps.createEncoder
     deps.setTextureEnabled(this.useTexture)
   }

@@ -3,6 +3,7 @@ import type { SharedTextureImported } from 'electron'
 import { installMotifFrames } from './motifFrames'
 import { MotifReadBarrier, completeMotifReadOnGpu } from './motifReadBarrier'
 import { readLayoutThemeArgument } from '../shared/layout-theme'
+import { readMotifTuningArgument } from '../shared/motifs/tuning'
 import type {
   WeftcutApi,
   AppNotice,
@@ -166,6 +167,7 @@ const api: WeftcutApi = {
     notices: (): Promise<AppNotice[]> => ipcRenderer.invoke('app:notices') as Promise<AppNotice[]>,
     versions: (): Promise<AppVersions> => ipcRenderer.invoke('app:versions') as Promise<AppVersions>,
     launchLayoutTheme: readLayoutThemeArgument(process.argv),
+    motifTuning: readMotifTuningArgument(process.argv),
   },
 
   updates: {

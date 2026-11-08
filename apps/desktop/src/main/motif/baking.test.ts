@@ -15,7 +15,7 @@ function fixture(extra: Partial<MotifBakeCoordinatorDeps> = {}) {
   const deps: MotifBakeCoordinatorDeps = {
     inventory: vi.fn(async () => []),
     persist: vi.fn(async (c, f) => { writes.push(`${c.cacheKey}:${f}`); }),
-    pause: () => undefined, publish: vi.fn(), now: () => time,
+    pause: () => undefined, publish: vi.fn(), now: () => time, framesInFlight: 3,
     schedule: (run, delay) => { const timer = { run, at: time + delay, cancelled: false }; timers.push(timer); return () => { timer.cancelled = true; }; },
     ...extra,
   };
@@ -65,6 +65,17 @@ describe('main-owned Motif bake demand', () => {
     expect(started.filter(s => s.startsWith('b:'))).toHaveLength(10);
     expect(h.coordinator.snapshot().statuses.b!.phase).toBe('ready');
     h.coordinator.dispose();
+  });
+
+  it('keeps as many frames in the queue as the capture host has in flight', async () => {
+    for (const framesInFlight of [1, 5]) {
+      const started: string[] = [];
+      const h = fixture({ framesInFlight, persist: (c, f) => new Promise<void>(() => { started.push(`${c.cacheKey}:${f}`); }) });
+      await h.coordinator.reconcile(plan([content('a', 10)]));
+      for (let i = 0; i < 10; i++) await h.tick();
+      expect(started).toHaveLength(framesInFlight);
+      h.coordinator.dispose();
+    }
   });
 
   it('counts the frames in flight that fail together as one failure', async () => {

@@ -3,12 +3,18 @@ import { createMotifReaderHost } from './motif/readerHost'
 import { holdMotifReads, motifReadHoldFrame } from './motif/readerE2EHold'
 import { decodingMotifErrors } from '../shared/motifs/errors'
 import { assertMotifLimits, type MotifLimits } from '../shared/motifs/limits'
+import { readMotifTuningArgument } from '../shared/motifs/tuning'
+import { configureMotifCore } from './motif/tuning'
 
 // The app-wide Motif reader utility process (ADR 0154). It answers renderer
 // workers on the ports main hands it. Do not import Electron main bootstrap
 // or anything that needs `app` here.
 const native = createRequire(import.meta.url)('@weftcut/core') as Pick<typeof import('@weftcut/core'), 'motifReadFrameScaled'> & { motifLimits?(): MotifLimits }
 assertMotifLimits(native.motifLimits?.())
+// Main passes its resolved tuning on the fork's argv.
+const tuning = readMotifTuningArgument(process.argv)
+if (!tuning) throw new Error('The Motif reader utility needs the tuning main resolved')
+configureMotifCore(native, tuning)
 const read = (file: string, div: number) => decodingMotifErrors(() => native.motifReadFrameScaled(file, div))
 // E2E builds only: the reader conformance spec holds reads of one frame number
 // so it can kill this process or switch the workspace mid-read. Production

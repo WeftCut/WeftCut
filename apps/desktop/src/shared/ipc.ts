@@ -480,6 +480,9 @@ export interface WeftcutApi {
     /** The saved layout preset when main created this window (see
      *  shared/layout-theme.ts); null when main did not pass one. */
     launchLayoutTheme: import('./layout-theme').LayoutTheme | null
+    /** The Motif tuning main resolved for this run (see
+     *  shared/motifs/tuning.ts); null when main did not pass it. */
+    motifTuning: import('./motifs/tuning').ResolvedMotifTuning | null
   }
   updates: {
     status(): Promise<UpdateStatus>

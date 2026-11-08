@@ -26,7 +26,7 @@ const settled = () => new Promise(resolve => setTimeout(resolve, 0))
 
 function setup(timeoutMs = 1000, reader: typeof readMarker | null = readMarker) {
   const events = Object.assign(new EventEmitter(), { stopPainting: vi.fn(), startPainting: vi.fn() })
-  const frames = new OffscreenFrames(events as unknown as WebContents, reader, timeoutMs)
+  const frames = new OffscreenFrames(events as unknown as WebContents, reader, timeoutMs, 200)
   return {
     frames, events,
     paint: (t: ReturnType<typeof texture>) => events.emit('paint', { texture: t }, {}, null),

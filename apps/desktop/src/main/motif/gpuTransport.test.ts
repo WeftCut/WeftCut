@@ -31,7 +31,7 @@ function fixture(concurrency = 1) {
     return pool
   })
   const buffers = createGpuBufferBudget(() => performanceSettings().gpu_buffer_mib * MIB)
-  return { owner, pools, create, buffers, transport: new MotifGpuTransport(create, concurrency, buffers) }
+  return { owner, pools, create, buffers, transport: new MotifGpuTransport(create, { gpuLanes: concurrency, gpuBudgetWaitMs: 250 }, buffers) }
 }
 
 describe('Motif GPU leases', () => {

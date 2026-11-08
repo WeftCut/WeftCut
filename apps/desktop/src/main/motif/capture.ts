@@ -7,6 +7,7 @@ import { MotifError, motifErrorCode, motifSuperseded } from '../../shared/motifs
 import { resolveMotifMediaProps } from './mediaProps.js'
 import { CAPTURE_HOST_FILE, FRAME_MARKER_ROWS } from '../../shared/motifs/frameMarker.js'
 import { fitsMotifTexture } from '../../shared/motifs/limits.js'
+import { MOTIF_DEADLINES, MOTIF_TUNING_DEFAULTS, type MotifTuning } from '../../shared/motifs/tuning.js'
 import type { UserMotifStore } from './store.js'
 
 export interface CaptureArgs {
@@ -26,20 +27,14 @@ export interface CaptureArgs {
   scale?: number
 }
 
-const CAPTURE_TIMEOUT_MS = 5000
-const SETUP_TIMEOUT_MS = 30_000
-const READY_ATTEMPTS = 30
-const READY_POLL_MS = 100
-const MAX_BACKGROUND_WAIT_MS = 2000
-/// Frames rendered while earlier ones are still on their way to a paint
-/// (ADR 0159). Each frame's render returns once the frame has committed, so a
-/// deeper pipeline only holds more capture surfaces.
-const MAX_FRAMES_IN_FLIGHT = 3
-/// Paint rate of the capture host while frames are in flight; the host renders
-/// one pipelined frame per BeginFrame.
-const CAPTURE_FRAME_RATE = 120
-/// A frame the compositor skipped is rendered again at most this many times.
-const SKIPPED_FRAME_RETRIES = 3
+/** The tuning keys the capture host runs on (`shared/motifs/tuning.ts`). */
+export type CaptureTuning = Pick<MotifTuning, 'framesInFlight' | 'captureFrameRate' | 'skippedFrameRetries' | 'backgroundAgingMs' | 'stallNudgeMs'>
+let tuning: CaptureTuning = MOTIF_TUNING_DEFAULTS
+/// Set once at boot, before the first capture; a host already built keeps its
+/// frame rate and nudge.
+export function setCaptureTuning(t: CaptureTuning): void {
+  tuning = t
+}
 
 const newCaptureCounters = () => ({ captures: 0, completed: 0, failed: 0, pageLoads: 0, hostBuilds: 0, textureCaptures: 0, bitmapCaptures: 0, skippedFrames: 0, queueMs: 0, captureMs: 0, loadMs: 0, readyMs: 0, setupMs: 0, renderMs: 0, outputMs: 0 })
 let captureCounters = newCaptureCounters()
@@ -132,7 +127,7 @@ export function setTexturePngReader(read: TexturePngReader): void {
 // prewarmer/baker/MCP): during playback the prewarmer used to hold the chain
 // while fresh sprite frames waited behind it (5b7cbaec). A RUNNING capture is
 // never preempted. Old LOW work receives one frame between HIGH frames after
-// two seconds, so explicitly enabled background work cannot starve forever.
+// `backgroundAgingMs`, so explicitly enabled background work cannot starve forever.
 // The pump waits for a frame's render, not its paint: the next frame renders
 // while earlier ones are still on their way to the capture (ADR 0159).
 interface Ticket {
@@ -170,7 +165,7 @@ async function pump(): Promise<void> {
       while (highQueue[0]?.stale) highQueue.shift()
       while (lowQueue[0]?.stale) lowQueue.shift()
       const aged: boolean = !agedLast && highQueue.length > 0 && lowQueue[0] !== undefined
-        && performance.now() - lowQueue[0].queuedAt >= MAX_BACKGROUND_WAIT_MS
+        && performance.now() - lowQueue[0].queuedAt >= tuning.backgroundAgingMs
       const t = aged ? lowQueue.shift() : highQueue.shift() ?? lowQueue.shift()
       agedLast = aged
       if (!t) return
@@ -328,7 +323,7 @@ async function buildHost(motifId: string, contentHash: string, width: number, he
   // closes (windows.ts → quitIfLastUserWindowClosed). Before the awaits, per its
   // same-tick contract.
   markInternalWindow(win)
-  const frames = new OffscreenFrames(win.webContents, texture ? readFrameMarker : null, CAPTURE_TIMEOUT_MS)
+  const frames = new OffscreenFrames(win.webContents, texture ? readFrameMarker : null, MOTIF_DEADLINES.captureCommandMs, tuning.stallNudgeMs)
   // Navigation lockdown for the untrusted Motif page: deny every `window.open`
   // OUTRIGHT (allowExternalOpen:false — a Motif must not be able to pop the user's
   // browser) and block any page-initiated navigation off the app's content. The
@@ -347,9 +342,9 @@ async function buildHost(motifId: string, contentHash: string, width: number, he
     dbg.attach('1.3')
     // Every CDP command is bounded by construction, including Emulation.
     // Callers cannot accidentally wedge the serial queue with an untimed send.
-    const send = (method: string, params: object = {}, timeoutMs = CAPTURE_TIMEOUT_MS, label = method) =>
+    const send = (method: string, params: object = {}, timeoutMs = MOTIF_DEADLINES.captureCommandMs, label = method) =>
       withTimeout(dbg.sendCommand(method, params), timeoutMs, label)
-    await timedCapture('loadMs', () => withTimeout(win.loadURL(`${dir}${CAPTURE_HOST_FILE}?${query}`), CAPTURE_TIMEOUT_MS * 2, 'loadURL motif'))
+    await timedCapture('loadMs', () => withTimeout(win.loadURL(`${dir}${CAPTURE_HOST_FILE}?${query}`), MOTIF_DEADLINES.captureLoadMs, 'loadURL motif'))
     await send('Page.enable')
     await send('Runtime.enable')
     await send('Page.addScriptToEvaluateOnNewDocument', {
@@ -361,9 +356,9 @@ async function buildHost(motifId: string, contentHash: string, width: number, he
     await send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } })
     const shell = await timedCapture('loadMs', () => send('Runtime.evaluate', {
       expression: `${runtime};window.__motifShellLoad()`, awaitPromise: true, returnByValue: true,
-    }, CAPTURE_TIMEOUT_MS * 2, 'load Motif frame'))
+    }, MOTIF_DEADLINES.captureLoadMs, 'load Motif frame'))
     if (shell?.exceptionDetails) throw new Error('capture host shell failed: ' + JSON.stringify(shell.exceptionDetails))
-    win.webContents.setFrameRate(CAPTURE_FRAME_RATE)
+    win.webContents.setFrameRate(tuning.captureFrameRate)
     return { win, send, loadedId: motifId, loadedV: contentHash, readyFor: null, lastSize: { w: width, h: height }, frames, texture, motifUrl }
   } catch (e) {
     frames.dispose()
@@ -417,7 +412,7 @@ async function waitReady(h: Host, motifId: string): Promise<void> {
   // actually the motif we want (not a stale about:blank or prior motif).
   const probe =
     `(typeof window.__motifHostReady==='function' && window.__motifHostReady(${JSON.stringify(motifId)}))`
-  for (let i = 0; i < READY_ATTEMPTS; i++) {
+  for (let i = 0; i < MOTIF_DEADLINES.readyAttempts; i++) {
     // TIMED, unlike a plain send: a wedged offscreen renderer never settles a
     // sendCommand, and an untimed probe would hang the one serial capture
     // queue for the rest of the process's life — every motif in every project
@@ -427,7 +422,7 @@ async function waitReady(h: Host, motifId: string): Promise<void> {
     // remaining attempts (they exist for a LOADING page, which fails fast).
     const r = await h.send('Runtime.evaluate', { expression: probe, returnByValue: true })
     if (r?.result?.value === true) { h.readyFor = motifId; return }
-    await delay(READY_POLL_MS)
+    await delay(MOTIF_DEADLINES.readyPollMs)
   }
   throw new MotifError('content', `motif '${motifId}' never became ready (Motif frame not loaded, __motifRender undefined, or wrong host page loaded)`)
 }
@@ -456,7 +451,7 @@ async function doCapture<T>(a: CaptureArgs, output: (frame: MotifOsrFrame) => Pr
   const samePage = host?.loadedId === a.motifId && host.loadedV === a.contentHash
     && host.lastSize?.w === a.width && host.lastSize?.h === a.height
   if (!samePage) await drainFrames()
-  while (framesInFlight.size >= MAX_FRAMES_IN_FLIGHT) await Promise.race(framesInFlight)
+  while (framesInFlight.size >= tuning.framesInFlight) await Promise.race(framesInFlight)
   let h: Host
   try {
     h = await ensureHost(a)
@@ -498,7 +493,7 @@ async function doCapture<T>(a: CaptureArgs, output: (frame: MotifOsrFrame) => Pr
     const setup = await timedCapture('setupMs', () => h.send('Runtime.evaluate', {
       expression: `window.__motifSetup(${JSON.stringify(props)}, ${JSON.stringify(meta)})`,
       awaitPromise: true, returnByValue: true,
-    }, SETUP_TIMEOUT_MS, 'setup (model loading / decoder initialization)'))
+    }, MOTIF_DEADLINES.captureSetupMs, 'setup (model loading / decoder initialization)'))
     // Setup failures use the same lane handling as frame failures; the runtime
     // has already retired its workers. A timeout tears down the entire host.
     if (setup?.exceptionDetails) ev = setup
@@ -575,7 +570,7 @@ function enqueueCapture<T>(a: CaptureArgs, coalesceKey: string | undefined, run:
     const finish = (error: unknown | null, value?: T) => {
       counters.captureMs += performance.now() - started
       if (error === null) { counters.completed++; resolve(value as T); return }
-      if (error instanceof MotifFrameSkippedError && retries < SKIPPED_FRAME_RETRIES) {
+      if (error instanceof MotifFrameSkippedError && retries < tuning.skippedFrameRetries) {
         counters.skippedFrames++
         schedule({ key: undefined, high, queuedAt, stale: false, reject, run: () => attempt(retries + 1) }, true)
         return

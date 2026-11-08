@@ -1,5 +1,6 @@
 import { planPrewarmTargets, type PrewarmContent, type PrewarmTarget } from './prewarmPlan';
 import type { CapturedFrame, MotifFrameDiv } from './frameTransport';
+import { motifTuning } from './tuning';
 
 export interface PrewarmContentSpec extends PrewarmContent {
   /// The shared acquisition module owns disk/capture admission. The request
@@ -21,9 +22,6 @@ export interface MotifPrewarmerDeps {
 
 interface Request extends PrewarmTarget { key: string }
 const address = (target: PrewarmTarget) => JSON.stringify([target.cacheKey, target.frame]);
-// Small authored sizes can fit thousands of frames in the pixel budget. Also
-// bound subscription metadata and synchronous admission work (4s at 60 fps).
-const MAX_PREWARM_REQUESTS = 256;
 
 /** Owns a byte-bounded, playhead-relative demand window. Register the whole
  * window so holes waiting for capture cannot hide saved frames further ahead.
@@ -43,7 +41,9 @@ export class MotifPrewarmer {
   setTargets(specs: PrewarmContentSpec[]): void {
     if (this.disposed) return;
     this.specs = new Map(specs.map(spec => [spec.cacheKey, spec]));
-    this.targets = planPrewarmTargets(specs, this.deps.capBytes, MAX_PREWARM_REQUESTS);
+    // Small authored sizes can fit thousands of frames in the pixel budget;
+    // `prewarmRequests` also bounds subscriptions and admission work.
+    this.targets = planPrewarmTargets(specs, this.deps.capBytes, motifTuning().prewarmRequests);
     const wanted = new Set(this.targets.map(address));
     for (const [id, request] of this.requests) {
       if (!wanted.has(id)) {

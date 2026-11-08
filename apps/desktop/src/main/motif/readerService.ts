@@ -3,6 +3,7 @@ import {
   MOTIF_READER_PORT, MOTIF_READER_RESET,
   type MotifReaderControl, type MotifReaderMissReport, type MotifReaderReport,
 } from '../../shared/motifs/readerProtocol'
+import { MOTIF_DEADLINES } from '../../shared/motifs/tuning'
 
 /** `MessagePortMain`, as far as main uses it. */
 export interface MotifReaderPort { close(): void }
@@ -35,10 +36,6 @@ interface Dependencies {
   reportMiss(hash: string, frame: number): void
   log(line: string): void
 }
-
-const RESTART_MIN_MS = 250
-const RESTART_MAX_MS = 8_000
-const STABLE_MS = 60_000
 
 /** A document's one connection. `owed`: it asked and needs a channel from a
  * live utility; `sent`: `port1` is with the utility and main holds `port2`
@@ -174,8 +171,9 @@ export class MotifReaderService {
     this.child = null
     this.spawned = false
     if (this.stopped) return
-    if (Date.now() - this.startedAt >= STABLE_MS) this.failures = 0
-    const delay = Math.min(RESTART_MIN_MS * 2 ** this.failures, RESTART_MAX_MS)
+    const { readerRestartMinMs, readerRestartMaxMs, readerStableMs } = MOTIF_DEADLINES
+    if (Date.now() - this.startedAt >= readerStableMs) this.failures = 0
+    const delay = Math.min(readerRestartMinMs * 2 ** this.failures, readerRestartMaxMs)
     this.failures++
     this.notBefore = Date.now() + delay
     this.deps.log(`[motif-reader] utility process exited (${reason}); restarting in ${delay} ms`)

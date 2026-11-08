@@ -5,6 +5,7 @@ use crate::motif_error::{coded, to_napi, MotifCode};
 use crate::motif_limits::{MAX_DIMENSION, MAX_FRAME_BYTES};
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Moves with any layout or codec change, together with the cache key namespace
 /// (`motifFrameCacheKey`), so older files are collected instead of read.
@@ -34,15 +35,38 @@ fn band_rows(h: u32) -> u32 {
     h.div_ceil(BANDS).next_multiple_of(4)
 }
 
-/// Threads one frame's bands share: one per eight hardware threads, at most
-/// two. Three texture lanes decode at once, and more threads per frame made
-/// the preview tick late during 4K playback; see
-/// `docs/notes/motif-texture-upload-2026-11-07.md`.
+/// Threads one frame's bands share. Main resolves the count from the machine
+/// (`bandThreadDivisor`, `maxBandThreads` in `src/shared/motifs/tuning.ts`)
+/// and sets it with `motif_configure`; one until then.
+static BAND_THREADS: AtomicUsize = AtomicUsize::new(1);
+
 fn band_threads() -> usize {
-    static THREADS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *THREADS.get_or_init(|| {
-        std::thread::available_parallelism().map_or(1, |n| (n.get() / 8).clamp(1, 2))
-    })
+    BAND_THREADS.load(Ordering::Relaxed)
+}
+
+#[napi(object)]
+#[cfg_attr(test, allow(dead_code))] // Host-only wire type.
+pub struct MotifConfig {
+    /// `scratchIdleBytes` in `src/shared/motifs/tuning.ts`.
+    pub scratch_idle_bytes: u32,
+    /// The band thread count main resolved; zero counts as one.
+    pub band_threads: u32,
+}
+
+/// Sets this process's share of the Motif tuning; main and the reader utility
+/// each call it once, before their first frame read or write.
+#[napi]
+#[cfg_attr(test, allow(dead_code))] // napi registration is absent in a Rust unit-test executable.
+pub fn motif_configure(config: MotifConfig) {
+    configure(
+        config.scratch_idle_bytes as usize,
+        config.band_threads as usize,
+    );
+}
+
+fn configure(scratch_idle_bytes: usize, band_threads: usize) {
+    BAND_THREADS.store(band_threads.max(1), Ordering::Relaxed);
+    SCRATCH.set_limit(scratch_idle_bytes);
 }
 
 /// Runs `work` on every item across at most `threads` threads; the first
@@ -94,18 +118,24 @@ fn per_thread<I: Send, T: Send>(
 /// allocated per read.
 struct Scratch {
     kept: std::sync::Mutex<Vec<Vec<u8>>>,
-    limit: usize,
+    limit: AtomicUsize,
 }
 
-/// Three texture lanes of two band threads at 4K, a decoded and a scaled
-/// band each, fit.
-static SCRATCH: Scratch = Scratch::new(32 << 20);
+/// Keeps nothing until `motif_configure` sets `scratchIdleBytes`.
+static SCRATCH: Scratch = Scratch::new(0);
 
 impl Scratch {
     const fn new(limit: usize) -> Self {
         Self {
             kept: std::sync::Mutex::new(Vec::new()),
-            limit,
+            limit: AtomicUsize::new(limit),
+        }
+    }
+
+    /// A lower limit drops the kept buffers rather than choosing among them.
+    fn set_limit(&self, limit: usize) {
+        if self.limit.swap(limit, Ordering::Relaxed) > limit {
+            self.clear();
         }
     }
 
@@ -133,7 +163,9 @@ impl Scratch {
         }
         let out = work(&mut buffer[..len]);
         let mut kept = self.kept();
-        if kept.iter().map(Vec::len).sum::<usize>() + buffer.len() <= self.limit {
+        if kept.iter().map(Vec::len).sum::<usize>() + buffer.len()
+            <= self.limit.load(Ordering::Relaxed)
+        {
             kept.push(buffer);
         }
         out
@@ -1160,5 +1192,30 @@ mod tests {
         assert!(scratch.kept().iter().all(|b| b.len() <= 100));
         scratch.clear();
         assert!(scratch.kept().is_empty());
+    }
+
+    #[test]
+    fn a_lower_scratch_limit_drops_the_kept_buffers() {
+        let scratch = Scratch::new(100);
+        scratch.with(60, |_| ());
+        scratch.set_limit(200);
+        assert_eq!(scratch.kept().len(), 1);
+        scratch.set_limit(50);
+        assert!(scratch.kept().is_empty());
+        scratch.with(60, |_| ());
+        assert!(scratch.kept().is_empty());
+    }
+
+    #[test]
+    fn configure_sets_the_band_threads_and_the_idle_scratch() {
+        // The process-wide statics: end on the unconfigured values, which
+        // every other test also runs correctly under.
+        configure(64 << 20, 3);
+        assert_eq!(band_threads(), 3);
+        assert_eq!(SCRATCH.limit.load(Ordering::Relaxed), 64 << 20);
+        configure(0, 0);
+        assert_eq!(band_threads(), 1);
+        assert_eq!(SCRATCH.limit.load(Ordering::Relaxed), 0);
+        assert!(SCRATCH.kept().is_empty());
     }
 }

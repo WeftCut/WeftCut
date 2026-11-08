@@ -345,6 +345,24 @@ texture host again. Only a failure of the GPU path itself is sticky: a
 texture lane off for that document; a `device` or uncoded failure of the
 capture output moves the session to bitmaps.
 
+## Tuning
+
+The Motif frame path's performance numbers (frames and reads in flight,
+capture rate, write slots, GPU lanes, band threads, lookahead size and more)
+were measured on few machines, so they are tunable per run:
+`WEFTCUT_MOTIF_TUNING=readsInFlight=4,writeSlots=3`. `MOTIF_TUNING_SPEC` in
+`shared/motifs/tuning.ts` is the list: each key's default, the range an
+override may take, and where the default was measured. An entry naming no key,
+or a value outside its range, keeps the default and is reported in one warning
+at startup. The counts and times this page gives for these keys are their
+defaults.
+
+Main reads the variable once (`main/motif/tuning.ts`), before any Motif module
+exists, and hands the result to its modules, to renderer windows and the reader
+utility on their argv, and to the native core (`motifConfigure`) in each
+process that loads it. Protocol deadlines and retry schedules
+(`MOTIF_DEADLINES`, beside them) and the [limits](#limits) are not tunable.
+
 ## Failure codes
 
 A Motif failure is a `MotifError` (`shared/motifs/errors.ts`) with one code:

@@ -3,7 +3,8 @@ import type { MotifFrameDescriptor } from './motifFrameDescriptor';
 import type { MotifFrameCache } from './frameCache';
 import { cancelMotifFrameRequest, resolveMotifFrame, sharedMotifFrameCache, sharedMotifOverlayCache } from './motifRasterCache';
 import { motifErrorCode } from '../../../shared/motifs/errors';
-import { MOTIF_RECENT_FRAMES } from './motifFrames';
+import { MOTIF_DEADLINES } from '../../../shared/motifs/tuning';
+import { motifTuning } from './tuning';
 import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
 
 export interface MotifPlaybackSnapshot {
@@ -24,7 +25,6 @@ export interface MotifPlaybackSnapshot {
 }
 
 interface Request { descriptor: MotifFrameDescriptor; epoch: number; scaleDiv: MotifReaderDiv }
-const RETRY_MS = [250, 1_000, 4_000];
 
 /** Per-instance preview demand and frame selection. Ordinary forward playback
  * coalesces BEHIND admitted work; only discontinuities revoke its ownership.
@@ -135,7 +135,7 @@ export class MotifPlaybackCursor {
     const cached = this.lane(d).getFrame(d.cacheKey, d.contentFrame, this.scaleDiv);
     if (cached) { this.bind(d, cached); return; }
     if (this.playing) {
-      const oldest = Math.max(0, d.contentFrame - MOTIF_RECENT_FRAMES, (this.boundFrame ?? -1) + 1);
+      const oldest = Math.max(0, d.contentFrame - motifTuning().recentFrames, (this.boundFrame ?? -1) + 1);
       for (let frame = d.contentFrame - 1; frame >= oldest; frame--) {
         const recent = this.lane(d).getFrame(d.cacheKey, frame, this.scaleDiv);
         if (recent) { this.bind({ ...d, contentFrame: frame }, recent); break; }
@@ -176,7 +176,8 @@ export class MotifPlaybackCursor {
       // `MotifTransportError` included, keeps the bound frame and retries with
       // backoff; it never forgets or recaptures.
       if (motifErrorCode(error) !== 'superseded') {
-        this.retryAt = performance.now() + RETRY_MS[Math.min(this.failures++, RETRY_MS.length - 1)]!;
+        const retries = MOTIF_DEADLINES.previewRetryMs;
+        this.retryAt = performance.now() + retries[Math.min(this.failures++, retries.length - 1)]!;
         if (this.failures <= 3 || this.failures % 10 === 0) console.error('[weftcut/motifs] preview frame failed', error);
       }
     } finally {

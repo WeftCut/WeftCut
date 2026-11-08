@@ -15,6 +15,8 @@ export interface BakeWorkspaceDeps {
   diskBytes(): number;
   retain(paths: string[]): void;
   publish(snapshot: MotifBakeSnapshot): void;
+  /** The capture host's `framesInFlight` (`shared/motifs/tuning.ts`). */
+  framesInFlight: number;
 }
 
 /** Binds queue, storage and disk retention to a Workspace session. No renderer
@@ -84,6 +86,7 @@ export class MotifBakeWorkspace {
         await session.store.collect(live, current);
         if (current()) for (const hash of this.sizes.keys()) if (!live.has(hash)) this.sizes.delete(hash);
       },
+      framesInFlight: deps.framesInFlight,
     });
   }
 

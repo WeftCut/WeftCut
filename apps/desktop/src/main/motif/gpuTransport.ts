@@ -8,6 +8,7 @@ import { withSharedTextureQueue } from '../sharedTextureQueue.js'
 import { gpuBufferBudget, type GpuBufferBudget, type GpuBufferLease } from '../gpuBufferBudget.js'
 import { MOTIF_TEXTURE_LANE_RESET, type MotifReaderDiv } from '../../shared/motifs/readerProtocol.js'
 import { fitsMotifTexture } from '../../shared/motifs/limits.js'
+import { MOTIF_DEADLINES, type MotifTuning } from '../../shared/motifs/tuning.js'
 import type { MotifReadUnavailable, MotifTextureFrame, MotifUploadTiming } from '../../shared/motifs/frameTransport.js'
 
 export interface MotifPool {
@@ -23,7 +24,8 @@ export interface MotifPool {
 type PoolFactory = (w: number, h: number, bgra: boolean, upload: boolean) => MotifPool
 type PoolUse = 'upload' | 'copy'
 type Session = { finalizationId?: number | undefined; owner: WebContents; key: string; width: number; height: number; pool: MotifPool; imported: SharedTextureImported; busy: boolean }
-const BUDGET_WAIT_MS = 250
+/** The tuning keys the transport runs on (`shared/motifs/tuning.ts`). */
+export type GpuTransportTuning = Pick<MotifTuning, 'gpuLanes' | 'gpuBudgetWaitMs'>
 
 function consumerFrameAlive(owner: WebContents): boolean {
   try {
@@ -51,9 +53,11 @@ export class MotifGpuTransport {
    * `lane` until `close(owner)`. */
   private laneOff = new WeakSet<WebContents>()
   private generations = new WeakMap<WebContents, number>()
-  constructor(private readonly createPool: PoolFactory, concurrency = 3, private readonly buffers: GpuBufferBudget = gpuBufferBudget) {
-    if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 3) throw new Error('Invalid Motif transport concurrency')
-    this.freeLanes = Array.from({ length: concurrency }, (_, lane) => lane)
+  private readonly budgetWaitMs: number
+  constructor(private readonly createPool: PoolFactory, tuning: GpuTransportTuning, private readonly buffers: GpuBufferBudget = gpuBufferBudget) {
+    if (!Number.isInteger(tuning.gpuLanes) || tuning.gpuLanes < 1) throw new Error('Invalid Motif transport lane count')
+    this.freeLanes = Array.from({ length: tuning.gpuLanes }, (_, lane) => lane)
+    this.budgetWaitMs = tuning.gpuBudgetWaitMs
   }
 
   private acquireLane(preferred?: number): Promise<number> {
@@ -220,7 +224,7 @@ export class MotifGpuTransport {
         // The staging texture counts like the slot.
         const bytes = width * height * 4 * (use === 'upload' ? 2 : 1)
         if (bytes > this.textureBudgetBytes()) throw new MotifError('capacity', 'Motif GPU budget exhausted')
-        const deadline = performance.now() + BUDGET_WAIT_MS
+        const deadline = performance.now() + this.budgetWaitMs
         let bufferLease: GpuBufferLease | null = null
         for (;;) {
           assertOpen()
@@ -321,7 +325,7 @@ export class MotifGpuTransport {
         // Never overwrite a slot whose consumer hasn't acknowledged. Retire it;
         // a later request allocates a different resource, so late reads stay safe.
         this.release(owner, token, true)
-      }, 5000)
+      }, MOTIF_DEADLINES.gpuLeaseMs)
       this.pending.set(token, { owner: owner.id, retire: () => this.retireSession(address, s), release: () => {
         clearTimeout(timeout); s.busy = false; this.budgetChanged(); unlock()
       } })

@@ -1,6 +1,7 @@
 import type { MotifCacheAddress, MotifCaptureControl, MotifReadUnavailable, MotifTextureReadRequest, MotifUploadTiming } from '../../../shared/motifs/frameTransport';
 import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
 import { isMotifErrorCode, MotifError, type MotifErrorCode } from '../../../shared/motifs/errors';
+import { MOTIF_DEADLINES } from '../../../shared/motifs/tuning';
 
 /** The divisor a Motif bitmap is at. `'live'` is a live capture: full size
  * whatever was asked, because a frame that is not stored has no smaller form.
@@ -137,11 +138,10 @@ function request(args: Record<string, unknown>): Promise<FrameReply> {
   }
   const id = ++nextId;
   return new Promise((resolve, reject) => {
-    // Capture includes bounded initialization (30s), frame (5s) and queue/transport.
     const timeout = setTimeout(() => {
       pending.delete(id);
       reject(new FramePortTimeout());
-    }, args.capture ? 60_000 : 15_000);
+    }, args.capture ? MOTIF_DEADLINES.captureTransportMs : MOTIF_DEADLINES.readTransportMs);
     pending.set(id, {
       resolve: frame => { clearTimeout(timeout); resolve(frame); },
       reject: error => { clearTimeout(timeout); reject(error); },

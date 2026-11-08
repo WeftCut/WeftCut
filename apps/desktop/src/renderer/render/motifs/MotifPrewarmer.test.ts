@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { MotifPrewarmer, type PrewarmContentSpec } from "./MotifPrewarmer";
 import { MotifFrameCache } from "./frameCache";
+import { MOTIF_TUNING_DEFAULTS } from "../../../shared/motifs/tuning";
 
 function makeBmp(): ImageBitmap { return { close() {} } as unknown as ImageBitmap; }
 type Rendered = Awaited<ReturnType<PrewarmContentSpec['render']>>;
@@ -21,9 +22,9 @@ describe("MotifPrewarmer", () => {
       cacheKey, contentFrame: 0, contentDurationFrames: 1_000_000, frameBytes: 4, render,
     })));
     scheduled();
-    expect(render).toHaveBeenCalledTimes(256);
+    expect(render).toHaveBeenCalledTimes(MOTIF_TUNING_DEFAULTS.prewarmRequests);
     prewarmer.dispose();
-    expect(cancelRequest).toHaveBeenCalledTimes(256);
+    expect(cancelRequest).toHaveBeenCalledTimes(MOTIF_TUNING_DEFAULTS.prewarmRequests);
   });
   it("does not refill with an already in-flight frame after replanning", async () => {
     const pending: (() => void)[] = [];

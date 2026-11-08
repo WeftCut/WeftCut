@@ -34,7 +34,9 @@ import { mediaMimeForExt } from './mediaMime.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
 import { registerMotifProtocol } from './motif/protocol.js'
 import { installPerformanceCalibration } from './performanceCalibration.js'
-import { setRuntimeSource, captureMotifFrameB64, captureMotifFrame, setTextureCaptureEnabled, setMotifStore, shutdownCaptureHost, setFrameMarkerReader, setTexturePngReader, controlMotifCapture, captureDiagnostics, resetCaptureFailure } from './motif/capture.js'
+import { setRuntimeSource, captureMotifFrameB64, captureMotifFrame, setTextureCaptureEnabled, setMotifStore, shutdownCaptureHost, setFrameMarkerReader, setTexturePngReader, controlMotifCapture, captureDiagnostics, resetCaptureFailure, setCaptureTuning } from './motif/capture.js'
+import { configureMotifCore, resolveMotifTuning } from './motif/tuning.js'
+import { motifTuningArgument } from '../shared/motifs/tuning.js'
 import { setMotifMediaSource } from './motif/mediaProps.js'
 import { rasterizeSvg } from './svgRaster.js'
 import { MotifCaptureService, type CaptureRequest, type MotifPixelCodec, type TextureEncoder } from './motif/captureService.js'
@@ -113,6 +115,10 @@ const e2eStalledEncoderMs = process.env.WEFTCUT_E2E_BUILD === '1'
   ? stalledEncoderLimitMs(process.env.WEFTCUT_E2E_STALLED_ENCODER_MS) : null
 let mainWindow: BrowserWindow | null = null
 let layoutTheme = DEFAULT_LAYOUT_THEME
+// The one read of WEFTCUT_MOTIF_TUNING (docs/motifs.md#tuning). Every Motif
+// module, renderer window and the reader utility gets its values from here.
+const motifTuning = resolveMotifTuning(process.env)
+setCaptureTuning(motifTuning)
 
 /// Forward an `evt:*` event to the renderer, guarding against a native/backend
 /// callback firing during teardown. `mainWindow?.` only catches null — a window
@@ -345,7 +351,7 @@ async function createWindow(): Promise<BrowserWindow> {
     webPreferences: {
       preload: path.join(import.meta.dirname, '../preload/index.js'),
       // Theme the splash's first frame; settings hydration lands after it.
-      additionalArguments: [layoutThemeArgument(layoutTheme)],
+      additionalArguments: [layoutThemeArgument(layoutTheme), motifTuningArgument(motifTuning)],
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -1400,6 +1406,7 @@ app.whenReady().then(async () => {
   const { AUDIO_FX_CHANNELS, CLIP_COMPUTE_CHANNELS } = await import('./state/router.js')
 
   assertMotifLimits((require_('@weftcut/core') as { motifLimits?(): MotifLimits }).motifLimits?.())
+  configureMotifCore(require_('@weftcut/core'), motifTuning)
   const motifFrames = new MotifFrameStore(
     async () => JSON.parse(await backend!.invoke('workspace_dir', '{}')) as string | null,
     require_('@weftcut/core') as typeof import('@weftcut/core'),
@@ -1422,7 +1429,7 @@ app.whenReady().then(async () => {
     close: () => encoder.close(),
   })
   const motifGpu = process.platform === 'win32' && motifPoolClass
-    ? new MotifGpuTransport((w, h, bgra, upload) => decodedPool(constructed(() => new motifPoolClass(w, h, 1, bgra, upload)))) : null
+    ? new MotifGpuTransport((w, h, bgra, upload) => decodedPool(constructed(() => new motifPoolClass(w, h, 1, bgra, upload))), motifTuning) : null
   const encoderClass = (require_('@weftcut/core') as { MotifTextureEncoder?: new () => TextureEncoder }).MotifTextureEncoder
   const markerClass = (require_('@weftcut/core') as { MotifMarkerReader?: new () => { read(handle: Buffer, pixels: number): Promise<Buffer> } }).MotifMarkerReader
   // A texture host needs both native readers; without them the host takes bitmaps.
@@ -1439,6 +1446,7 @@ app.whenReady().then(async () => {
     pixels: require_('@weftcut/core') as MotifPixelCodec,
     setTextureEnabled: setTextureCaptureEnabled,
     promote: key => controlMotifCapture(key, 'promote'),
+    writeSlots: motifTuning.writeSlots,
   }, process.env.WEFTCUT_MOTIF_CAPTURE !== 'bitmap')
   motifBakes = new MotifBakeWorkspace({
     session: () => {
@@ -1450,6 +1458,7 @@ app.whenReady().then(async () => {
     diskBytes: () => resourceAllocation().disk_cache_mib * MIB,
     retain: retainRasterDirectories,
     publish: snapshot => emitToRenderer('motif:bake', snapshot),
+    framesInFlight: motifTuning.framesInFlight,
   })
   const offBakeResources = onBackgroundResourceChange(() => motifBakes?.wake())
   app.once('will-quit', () => { offBakeResources(); motifBakes?.dispose(); motifBakes = null })
@@ -1458,7 +1467,7 @@ app.whenReady().then(async () => {
   // compositor surface: its next shared-texture lease must fence again.
   const currentMotifStore = () => wsCache ? motifBakes!.store() : motifFrames
   motifReader = new MotifReaderService({
-    fork: () => utilityProcess.fork(path.join(import.meta.dirname, 'motifReader.js'), [], {
+    fork: () => utilityProcess.fork(path.join(import.meta.dirname, 'motifReader.js'), [motifTuningArgument(motifTuning)], {
       serviceName: 'WeftCut Motif reader', stdio: 'ignore',
     }),
     channel: () => new MessageChannelMain(),
@@ -2205,7 +2214,7 @@ app.whenReady().then(async () => {
   })
 
   // Secondary windows (Dev Performance Monitor etc.) via win:* IPC.
-  ipcMain.handle('win:create', (_e, { label, options }: { label: string; options?: SecondaryWinOpts }) => createSecondary(label, options, layoutTheme))
+  ipcMain.handle('win:create', (_e, { label, options }: { label: string; options?: SecondaryWinOpts }) => createSecondary(label, options, layoutTheme, motifTuning))
   ipcMain.handle('win:act', (_e, { label, action }: { label: string; action: 'show' | 'hide' | 'close' | 'center' | 'focus' }) => actOnSecondary(label, action))
   ipcMain.handle('win:exists', (_e, { label }: { label: string }) => secondaryExists(label))
 

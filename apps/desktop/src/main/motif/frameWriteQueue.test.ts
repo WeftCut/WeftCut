@@ -20,7 +20,7 @@ function heldWrite() {
 
 describe('MotifFrameWriteQueue', () => {
   it('hands the caller back after the read, before the store step finishes', async () => {
-    const queue = new MotifFrameWriteQueue(), write = heldWrite()
+    const queue = new MotifFrameWriteQueue(2), write = heldWrite()
     const queued = await queue.offer(store, at(0), 'wait', write.read)
     let written = false
     void queued.written.then(() => { written = true })
@@ -31,7 +31,7 @@ describe('MotifFrameWriteQueue', () => {
   })
 
   it('skips without reading once two frames are in flight, and takes a frame again after one ends', async () => {
-    const queue = new MotifFrameWriteQueue(), one = heldWrite(), two = heldWrite(), three = heldWrite()
+    const queue = new MotifFrameWriteQueue(2), one = heldWrite(), two = heldWrite(), three = heldWrite()
     const first = await queue.offer(store, at(0), 'skip', one.read)
     await queue.offer(store, at(1), 'skip', two.read)
     expect(await queue.offer(store, at(2), 'skip', three.read)).toBeNull()
@@ -42,8 +42,16 @@ describe('MotifFrameWriteQueue', () => {
     expect(three.read).toHaveBeenCalledOnce()
   })
 
+  it('holds as many frames as it has slots', async () => {
+    expect(() => new MotifFrameWriteQueue(0)).toThrow()
+    const queue = new MotifFrameWriteQueue(3), writes = [heldWrite(), heldWrite(), heldWrite(), heldWrite()]
+    for (let i = 0; i < 3; i++) expect(await queue.offer(store, at(i), 'skip', writes[i]!.read)).not.toBeNull()
+    expect(await queue.offer(store, at(3), 'skip', writes[3]!.read)).toBeNull()
+    for (const write of writes) write.finish()
+  })
+
   it('makes a kept frame wait for a slot, in the order they asked', async () => {
-    const queue = new MotifFrameWriteQueue(), one = heldWrite(), two = heldWrite(), three = heldWrite(), four = heldWrite()
+    const queue = new MotifFrameWriteQueue(2), one = heldWrite(), two = heldWrite(), three = heldWrite(), four = heldWrite()
     const first = await queue.offer(store, at(0), 'wait', one.read)
     await queue.offer(store, at(1), 'wait', two.read)
     const third = queue.offer(store, at(2), 'wait', three.read)
@@ -60,7 +68,7 @@ describe('MotifFrameWriteQueue', () => {
   })
 
   it('never reads an address twice while it is being written', async () => {
-    const queue = new MotifFrameWriteQueue(), one = heldWrite(), again = heldWrite()
+    const queue = new MotifFrameWriteQueue(2), one = heldWrite(), again = heldWrite()
     const first = await queue.offer(store, at(0), 'skip', one.read)
     const second = await queue.offer(store, at(0), 'wait', again.read)
     expect(second.written).toBe(first!.written)
@@ -72,7 +80,7 @@ describe('MotifFrameWriteQueue', () => {
   })
 
   it('joins a write still waiting for its slot, without a read of its own', async () => {
-    const queue = new MotifFrameWriteQueue(), one = heldWrite(), two = heldWrite(), waiter = heldWrite(), same = heldWrite()
+    const queue = new MotifFrameWriteQueue(2), one = heldWrite(), two = heldWrite(), waiter = heldWrite(), same = heldWrite()
     const first = await queue.offer(store, at(0), 'wait', one.read)
     await queue.offer(store, at(1), 'wait', two.read)
     const waiting = queue.offer(store, at(2), 'wait', waiter.read)
@@ -84,14 +92,14 @@ describe('MotifFrameWriteQueue', () => {
   })
 
   it('keeps stores apart: another workspace writes the same address itself', async () => {
-    const queue = new MotifFrameWriteQueue(), one = heldWrite(), other = heldWrite()
+    const queue = new MotifFrameWriteQueue(2), one = heldWrite(), other = heldWrite()
     await queue.offer(store, at(0), 'wait', one.read)
     await queue.offer({}, at(0), 'wait', other.read)
     expect(other.read).toHaveBeenCalledOnce()
   })
 
   it('a failed read rejects the offer and frees its slot', async () => {
-    const queue = new MotifFrameWriteQueue(), hold = heldWrite(), next = heldWrite()
+    const queue = new MotifFrameWriteQueue(2), hold = heldWrite(), next = heldWrite()
     await queue.offer(store, at(0), 'wait', hold.read)
     await expect(queue.offer(store, at(1), 'wait', async () => { throw new Error('device lost') })).rejects.toThrow('device lost')
     expect(queue.inFlight(store, at(1))).toBeUndefined()
@@ -99,7 +107,7 @@ describe('MotifFrameWriteQueue', () => {
   })
 
   it('a failed store step rejects written, frees its slot, and lets the address be retried', async () => {
-    const queue = new MotifFrameWriteQueue(), failing = heldWrite(), retry = heldWrite()
+    const queue = new MotifFrameWriteQueue(2), failing = heldWrite(), retry = heldWrite()
     const first = await queue.offer(store, at(0), 'wait', failing.read)
     failing.fail(new Error('disk full'))
     await expect(first.written).rejects.toThrow('disk full')
@@ -113,7 +121,7 @@ describe('MotifFrameWriteQueue', () => {
     const unhandled = vi.fn()
     process.on('unhandledRejection', unhandled)
     try {
-      const queue = new MotifFrameWriteQueue(), failing = heldWrite()
+      const queue = new MotifFrameWriteQueue(2), failing = heldWrite()
       await queue.offer(store, at(0), 'skip', failing.read)
       failing.fail(new Error('disk full'))
       await new Promise(resolve => setTimeout(resolve, 0))

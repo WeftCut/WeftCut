@@ -38,6 +38,7 @@ function fixture(enabled = true) {
     pixels: { motifStraightenBgra: vi.fn(async () => RGBA), motifEncodeRgba: vi.fn(async () => BITMAP_WFRM), motifEncodeBgra: vi.fn(async () => BITMAP_WFRM) },
     setTextureEnabled: vi.fn((on: boolean) => { textureHost = on; }),
     promote: vi.fn(),
+    writeSlots: 2,
   } satisfies CaptureServiceDeps;
   return { deps, writer, encoder, finish, prepareWrite, has, hasRoom, read, readTexture, service: new MotifCaptureService(deps, enabled) };
 }

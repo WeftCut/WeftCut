@@ -2,6 +2,7 @@ import { motifSuperseded } from '../../../shared/motifs/errors';
 import type { FrameTicket } from './FrameBroker';
 import type { CapturedFrame } from './frameTransport';
 import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
+import { motifTuning } from './tuning';
 
 interface Request {
   cacheKey: string;
@@ -19,14 +20,18 @@ interface Job extends Request {
   reject: (error: unknown) => void;
 }
 
-/** Resource admission AFTER broker deduplication. A bounded prewarm window
- * can contain both saved pixels and holes. Waiting captures never occupy a
- * disk-read slot; failed reads release theirs before joining capture work.
- * Priority and coverage are read at admission, not snapshotted by callers. */
+/** Resource admission AFTER broker deduplication: `readsInFlight` disk-read
+ * slots, the reader's own bound, and `captureSlots` capture slots. A bounded
+ * prewarm window can contain both saved pixels and holes. Waiting captures
+ * never occupy a disk-read slot; failed reads release theirs before joining
+ * capture work. Priority and coverage are read at admission, not snapshotted
+ * by callers. */
 export class MotifFrameScheduler {
   private queue: Job[] = [];
   private reads = 0;
   private captures = 0;
+  private readonly readSlots = motifTuning().readsInFlight;
+  private readonly captureSlots = motifTuning().captureSlots;
   private scheduled = false;
   private epoch = 0;
 
@@ -88,23 +93,21 @@ export class MotifFrameScheduler {
       for (let i = 0; i < this.queue.length;) {
         const job = this.queue[i]!;
         if (job.ticket.high() !== high) { i++; continue; }
-        if (!this.readsDisk(job) || this.reads >= 3) { i++; continue; }
+        if (!this.readsDisk(job) || this.reads >= this.readSlots) { i++; continue; }
         this.queue.splice(i, 1);
         this.reads++;
         void this.run(job, true);
       }
-      if (this.captures < 1) {
-        const candidates = this.queue.filter(job => job.ticket.high() === high && !this.readsDisk(job)
-          && (high || this.deps.backgroundCaptureAllowed(job.cacheKey)));
+      while (this.captures < this.captureSlots) {
         // Main-owned preparation has no competing background capture here.
         // Foreground promotion remains immediate; saved frames use separate
         // read slots even while a different content is being captured.
-        const job = candidates[0];
-        if (job) {
-          this.queue.splice(this.queue.indexOf(job), 1);
-          this.captures++;
-          void this.run(job, false);
-        }
+        const job = this.queue.find(job => job.ticket.high() === high && !this.readsDisk(job)
+          && (high || this.deps.backgroundCaptureAllowed(job.cacheKey)));
+        if (!job) break;
+        this.queue.splice(this.queue.indexOf(job), 1);
+        this.captures++;
+        void this.run(job, false);
       }
     }
   }

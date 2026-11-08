@@ -30,12 +30,6 @@ interface Pending {
   reject: (error: Error) => void
 }
 
-/// How long expected frames may go without a paint before the capturer is
-/// restarted to capture the surface again. A new window once drew the id and
-/// sent no paint for seconds; the restarted capture is checked like any other
-/// paint.
-const NUDGE_MS = 200
-
 /** Owns the capture host's paints. Painting stays on; a paint is leased only
  * when its marker row carries an expected frame id
  * (shared/motifs/frameMarker.ts, ADR 0078). That one check covers a new
@@ -51,7 +45,14 @@ export class OffscreenFrames {
   private nudge: ReturnType<typeof setInterval> | null = null
   private lastProgress = 0
 
-  constructor(private readonly contents: WebContents, private readonly readMarker: FrameMarkerReader | null, private readonly timeoutMs: number) {
+  /** `nudgeMs`: how long expected frames may go without a paint before the
+   * capturer is restarted to capture the surface again. A new window once drew
+   * the id and sent no paint for seconds; the restarted capture is checked like
+   * any other paint. */
+  constructor(
+    private readonly contents: WebContents, private readonly readMarker: FrameMarkerReader | null,
+    private readonly timeoutMs: number, private readonly nudgeMs: number,
+  ) {
     contents.on('paint', (event, _dirty, image) => {
       if (event.texture) this.paintTexture(event.texture)
       else this.paintBitmap(image)
@@ -75,7 +76,7 @@ export class OffscreenFrames {
     frame.catch(() => {})
     if (this.pending.size === 0) this.lastProgress = performance.now()
     this.pending.set(id, pending)
-    this.nudge ??= setInterval(() => this.restartIfStalled(), NUDGE_MS / 2)
+    this.nudge ??= setInterval(() => this.restartIfStalled(), this.nudgeMs / 2)
     return { id, frame, cancel: () => this.settle(pending, null) }
   }
 
@@ -84,7 +85,7 @@ export class OffscreenFrames {
   }
 
   private restartIfStalled(): void {
-    if (performance.now() - this.lastProgress < NUDGE_MS) return
+    if (performance.now() - this.lastProgress < this.nudgeMs) return
     this.lastProgress = performance.now()
     this.contents.stopPainting()
     this.contents.startPainting()
