@@ -250,30 +250,35 @@ export class MotifSprite implements StageableSprite {
     const previous = this.bound;
     const bitmap = raster.bitmap;
     this.bound = raster;
-    const resized = this.orig.width !== size.width || this.orig.height !== size.height;
-    this.orig.width = size.width;
-    this.orig.height = size.height;
-    // WebGPU caches batch BindGroups by source identity. Keep one source and
-    // texture per sprite: destroying them each frame leaves the previous
-    // batch bound to a dead source/sampler and produces a warning every tick.
-    if (this.source) {
-      this.source.resource = bitmap;
-      this.source.update(); // uploads new pixels; also resizes when needed
-      if (resized) this.texture!.update();
-    } else {
-      this.source = new MotifTextureSource({
-        resource: bitmap,
-        width: bitmap.width,
-        height: bitmap.height,
-      });
-      // Dynamic keeps Sprite geometry in sync when a placeholder, an edited
-      // Motif or a divisor changes dimensions while retaining the same Texture
-      // identity. No `frame`: it follows the source; `orig` is the local size.
-      this.texture = new Texture({ source: this.source, orig: this.orig, dynamic: true });
-      this.sprite.texture = this.texture;
+    // The new lease is bound whatever happens below; the previous one is
+    // released even when the upload throws, or its pin leaks.
+    try {
+      const resized = this.orig.width !== size.width || this.orig.height !== size.height;
+      this.orig.width = size.width;
+      this.orig.height = size.height;
+      // WebGPU caches batch BindGroups by source identity. Keep one source and
+      // texture per sprite: destroying them each frame leaves the previous
+      // batch bound to a dead source/sampler and produces a warning every tick.
+      if (this.source) {
+        this.source.resource = bitmap;
+        this.source.update(); // uploads new pixels; also resizes when needed
+        if (resized) this.texture!.update();
+      } else {
+        this.source = new MotifTextureSource({
+          resource: bitmap,
+          width: bitmap.width,
+          height: bitmap.height,
+        });
+        // Dynamic keeps Sprite geometry in sync when a placeholder, an edited
+        // Motif or a divisor changes dimensions while retaining the same Texture
+        // identity. No `frame`: it follows the source; `orig` is the local size.
+        this.texture = new Texture({ source: this.source, orig: this.orig, dynamic: true });
+        this.sprite.texture = this.texture;
+      }
+      this.boundOnce = true;
+    } finally {
+      if (previous !== raster) previous?.release();
     }
-    this.boundOnce = true;
-    previous?.release();
   }
 
   dispose(): void {

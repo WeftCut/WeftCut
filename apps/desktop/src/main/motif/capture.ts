@@ -9,19 +9,9 @@ import { CAPTURE_HOST_FILE, FRAME_MARKER_ROWS } from '../../shared/motifs/frameM
 import { fitsMotifTexture } from '../../shared/motifs/limits.js'
 import { MOTIF_DEADLINES, MOTIF_TUNING_DEFAULTS, type MotifTuning } from '../../shared/motifs/tuning.js'
 import type { UserMotifStore } from './store.js'
+import type { MotifCaptureArgs, MotifFramePriority } from '../../shared/motifs/frameTransport.js'
 
-export interface CaptureArgs {
-  motifId: string
-  tSec: number
-  propsJson: string
-  width: number
-  height: number
-  contentHash: string
-  /// Composition fps as an exact rational, when the caller knows it. Absent or
-  /// invalid falls back to 30 (the pre-threading behaviour), keeping MCP and
-  /// older callers safe.
-  fpsNum?: number
-  fpsDen?: number
+export interface CaptureArgs extends MotifCaptureArgs {
   /// PNG captures only: the page still renders at width × height, and the
   /// image comes back scaled by this factor (MCP previews). Absent means 1.
   scale?: number
@@ -52,7 +42,7 @@ function diagnosticsLane(motifId: string, contentHash: string) {
  * cold runs without exposing authored props or retaining an unbounded log. */
 export function captureDiagnostics(reset = false) {
   if (reset) { captureCounters = newCaptureCounters(); captureLanes.clear() }
-  return { ...captureCounters, queued: highQueue.filter(t => !t.stale).length + lowQueue.filter(t => !t.stale).length, running: pumping, lanes: [...captureLanes.values()].map(lane => ({ ...lane })) }
+  return { ...captureCounters, queued: PRIORITIES.reduce((sum, priority) => sum + queues[priority].length, 0), running: pumping, lanes: [...captureLanes.values()].map(lane => ({ ...lane })) }
 }
 async function timedCapture<T>(phase: 'loadMs' | 'readyMs' | 'setupMs' | 'renderMs' | 'outputMs', run: () => Promise<T>): Promise<T> {
   const started = performance.now(), counters = captureCounters
@@ -120,40 +110,45 @@ export function setTexturePngReader(read: TexturePngReader): void {
   readTexturePng = read
 }
 
-// Serialize ALL captures (on-demand sprite / prewarmer / baker / MCP) on the
-// one host — single-threaded but await-interleaved. Two FIFO queues replace a
-// bare promise chain so a HIGH ticket (keyed: the on-demand sprite frame the
-// user is looking at NOW) dequeues ahead of any queued LOW ticket (keyless
-// prewarmer/baker/MCP): during playback the prewarmer used to hold the chain
-// while fresh sprite frames waited behind it (5b7cbaec). A RUNNING capture is
-// never preempted. Old LOW work receives one frame between HIGH frames after
-// `backgroundAgingMs`, so explicitly enabled background work cannot starve forever.
-// The pump waits for a frame's render, not its paint: the next frame renders
-// while earlier ones are still on their way to the capture (ADR 0159).
+// Serialize ALL captures (preview, export, preparation, MCP) on the one host —
+// single-threaded but await-interleaved. One FIFO queue per priority: a
+// `current` ticket dequeues ahead of any queued `ahead` one, and both ahead of
+// `background`, so lookahead and preparation never hold the frame the user is
+// looking at. A RUNNING capture is never preempted. A `background` ticket
+// waiting `backgroundAgingMs` gets one frame between higher ones, so enabled
+// background work cannot starve. The pump waits for a frame's render, not its
+// paint: the next frame renders while earlier ones are still on their way to
+// the capture (ADR 0159).
 interface Ticket {
-  /// Coalesce key when keyed; lets the pump drop the ticket from queuedKeys
-  /// the moment it passes the replaceable window.
-  key: string | undefined
-  high: boolean
+  priority: MotifFramePriority
   queuedAt: number
-  /// Set by a superseding same-key request: the waiter was already rejected,
-  /// so the pump must skip this ticket instead of executing a stale frame.
-  stale: boolean
+  /// In its priority's queue, not running.
+  queued: boolean
+  /// Withdrawn by its caller: a skipped frame is not rendered again.
+  cancelled: boolean
   reject: (e: Error) => void
   /// Renders the ticket's frame and returns once it has committed; the
   /// ticket's own waiter settles when its paint is consumed. Must never throw
   /// (a throw would strand every ticket queued behind it).
   run: () => Promise<void>
 }
-const highQueue: Ticket[] = []
-const lowQueue: Ticket[] = []
+const PRIORITIES: readonly MotifFramePriority[] = ['current', 'ahead', 'background']
+const queues: Record<MotifFramePriority, Ticket[]> = { current: [], ahead: [], background: [] }
 let pumping = false
 
 function schedule(t: Ticket, first = false): void {
-  const queue = t.high ? highQueue : lowQueue
+  const queue = queues[t.priority]
   if (first) queue.unshift(t)
   else queue.push(t)
+  t.queued = true
   void pump()
+}
+
+function unschedule(t: Ticket): void {
+  const queue = queues[t.priority]
+  const i = queue.indexOf(t)
+  if (i >= 0) queue.splice(i, 1)
+  t.queued = false
 }
 
 async function pump(): Promise<void> {
@@ -162,34 +157,20 @@ async function pump(): Promise<void> {
   let agedLast = false
   try {
     for (;;) {
-      while (highQueue[0]?.stale) highQueue.shift()
-      while (lowQueue[0]?.stale) lowQueue.shift()
-      const aged: boolean = !agedLast && highQueue.length > 0 && lowQueue[0] !== undefined
-        && performance.now() - lowQueue[0].queuedAt >= tuning.backgroundAgingMs
-      const t = aged ? lowQueue.shift() : highQueue.shift() ?? lowQueue.shift()
+      const next = queues.current[0] ?? queues.ahead[0]
+      const waiting = queues.background[0]
+      const aged: boolean = !agedLast && next !== undefined && waiting !== undefined
+        && performance.now() - waiting.queuedAt >= tuning.backgroundAgingMs
+      const t = aged || !next ? queues.background.shift() : queues[next.priority].shift()
       agedLast = aged
       if (!t) return
-      // A superseded ticket must not occupy its HIGH slot when reached.
-      if (t.stale) continue
-      // Past the replaceable window — leave the map before running.
-      if (t.key !== undefined && queuedKeys.get(t.key) === t) queuedKeys.delete(t.key)
+      t.queued = false
       await t.run()
     }
   } finally {
     pumping = false
   }
 }
-
-/// Queued (not yet running) keyed captures, latest-wins per key. The on-demand
-/// sprite path keys by layer id, so during playback each tick's fresh frame
-/// replaces the still-queued previous one: its waiter rejects IMMEDIATELY as
-/// `superseded` and its queue slot no-ops when reached — the one
-/// serial queue never spends capture-seconds executing a frame nobody wants
-/// anymore. Without this, real-time playback enqueues ~30 requests/s per
-/// visible motif against a ~1 s/capture queue, and the unbounded backlog
-/// starves the prewarmer AND the L2 baker queued behind it. Keyless requests
-/// (prewarmer, baker, MCP) are never superseded: their frames stay wanted.
-const queuedKeys = new Map<string, Ticket>()
 
 /// Failed lanes: capture errors attributable to the Motif's OWN content
 /// (a throwing or hung __motifRender), keyed by `${motifId}\0${contentHash}`,
@@ -545,18 +526,36 @@ async function doCapture<T>(a: CaptureArgs, output: (frame: MotifOsrFrame) => Pr
   return { delivered }
 }
 
-function enqueueCapture<T>(a: CaptureArgs, coalesceKey: string | undefined, run: () => Promise<Rendered<T>>, high = coalesceKey !== undefined, isCurrent: () => boolean = () => true): Promise<T> {
+/** A capture's place in the queue. Only a queued capture moves or leaves it;
+ * a running one finishes, and the caller drops what it no longer wants. */
+export interface CaptureTicket {
+  /// Moves a queued capture to the back of `priority`'s queue, down as well as
+  /// up. A running one keeps the priority for a skipped frame's retry.
+  setPriority(priority: MotifFramePriority): void
+  /// Rejects a queued capture as superseded without rendering it.
+  cancel(): void
+}
+export interface CaptureOptions {
+  priority: MotifFramePriority
+  /// Checked when the ticket reaches the host, before any page IO.
+  isCurrent?: () => boolean
+}
+export interface CaptureRun<T> { result: Promise<T>; ticket: CaptureTicket }
+
+const settledTicket: CaptureTicket = { setPriority: () => {}, cancel: () => {} }
+
+function enqueueCapture<T>(a: CaptureArgs, run: () => Promise<Rendered<T>>, { priority, isCurrent = () => true }: CaptureOptions): CaptureRun<T> {
   // Fast-reject a lane whose content already failed this session: same
   // (motifId, contentHash) means the same throwing script against the same
   // page — don't spend queue slots or CDP round trips proving it again.
   const lane = laneKeyOf(a.motifId, a.contentHash)
   const laneError = failedLanes.get(lane)
-  if (laneError) return Promise.reject(laneError)
+  if (laneError) return { result: Promise.reject(laneError), ticket: settledTicket }
   const queuedAt = performance.now()
   let resolve!: (value: T) => void, reject!: (e: Error) => void
-  const out = new Promise<T>((res, rej) => { resolve = res; reject = rej })
+  const result = new Promise<T>((res, rej) => { resolve = res; reject = rej })
   // Renders the frame; its waiter settles with the paint. A frame the
-  // compositor skipped goes back to the head of its queue.
+  // compositor skipped goes back to the head of its queue, as the same ticket.
   const attempt = async (retries: number): Promise<void> => {
     // The lane may have failed while this ticket sat queued.
     const err = failedLanes.get(lane)
@@ -570,13 +569,14 @@ function enqueueCapture<T>(a: CaptureArgs, coalesceKey: string | undefined, run:
     const finish = (error: unknown | null, value?: T) => {
       counters.captureMs += performance.now() - started
       if (error === null) { counters.completed++; resolve(value as T); return }
-      if (error instanceof MotifFrameSkippedError && retries < tuning.skippedFrameRetries) {
+      if (error instanceof MotifFrameSkippedError && retries < tuning.skippedFrameRetries && !ticket.cancelled) {
         counters.skippedFrames++
-        schedule({ key: undefined, high, queuedAt, stale: false, reject, run: () => attempt(retries + 1) }, true)
+        ticket.run = () => attempt(retries + 1)
+        schedule(ticket, true)
         return
       }
       counters.failed++
-      reject(error as Error)
+      reject(ticket.cancelled && error instanceof MotifFrameSkippedError ? motifSuperseded() : error as Error)
     }
     try {
       if (!isCurrent()) throw motifSuperseded()
@@ -584,47 +584,32 @@ function enqueueCapture<T>(a: CaptureArgs, coalesceKey: string | undefined, run:
       delivered.then(value => finish(null, value), finish)
     } catch (e) { finish(e) }
   }
-  if (!coalesceKey) {
-    // LOW priority: keyless prewarmer/baker/MCP work yields to on-demand
-    // sprite frames queued behind it.
-    schedule({ key: undefined, high, queuedAt, stale: false, reject, run: () => attempt(0) })
-    return out
-  }
-  // Legacy keyed requests are HIGH; broker jobs explicitly choose their lane.
-  // Latest-wins per key: wake the previous queued waiter right away and stale
-  // its ticket — its queue slot then does no work when reached (pump skips it).
-  const prev = queuedKeys.get(coalesceKey)
-  if (prev) {
-    prev.stale = true
-    prev.reject(motifSuperseded())
-  }
-  const ticket: Ticket = { key: coalesceKey, high, queuedAt, stale: false, reject, run: () => attempt(0) }
-  queuedKeys.set(coalesceKey, ticket)
+  const ticket: Ticket = { priority, queuedAt, queued: false, cancelled: false, reject, run: () => attempt(0) }
   schedule(ticket)
-  return out
-}
-
-/** Broker jobs have a stable identity separate from their subscribers. A preview
- * may promote a background job; cancelling one subscriber need not cancel it. */
-export function controlMotifCapture(key: string, action: 'promote' | 'cancel'): void {
-  const ticket = queuedKeys.get(key)
-  if (!ticket) return // already running: finish safely, receiver retires its result
-  if (action === 'cancel') {
-    ticket.stale = true
-    queuedKeys.delete(key)
-    ticket.reject(motifSuperseded())
-  } else if (!ticket.high) {
-    const i = lowQueue.indexOf(ticket)
-    if (i >= 0) lowQueue.splice(i, 1)
-    ticket.high = true
-    highQueue.push(ticket)
+  return {
+    result,
+    ticket: {
+      setPriority: next => {
+        if (next === ticket.priority) return
+        if (!ticket.queued) { ticket.priority = next; return }
+        unschedule(ticket)
+        ticket.priority = next
+        schedule(ticket)
+      },
+      cancel: () => {
+        ticket.cancelled = true
+        if (!ticket.queued) return
+        unschedule(ticket)
+        reject(motifSuperseded())
+      },
+    },
   }
 }
 
 /** One frame as a PNG of the picture, scaled by `a.scale` (MCP previews,
- * covers and the renderer's direct capture). */
-export function captureMotifFrameB64(a: CaptureArgs, coalesceKey?: string, high?: boolean, isCurrent: () => boolean = () => true): Promise<string> {
-  return enqueueCapture(a, coalesceKey, () => doCapture(a, async frame => {
+ * covers and the Motif panel's preview). */
+export function captureMotifFrameB64(a: CaptureArgs, { priority }: { priority: MotifFramePriority }): Promise<string> {
+  return enqueueCapture(a, () => doCapture(a, async frame => {
     countFrame(frame)
     const png = frame.kind === 'bitmap'
       ? frame.image.crop({ x: 0, y: 0, width: frame.width, height: frame.height })
@@ -632,7 +617,7 @@ export function captureMotifFrameB64(a: CaptureArgs, coalesceKey?: string, high?
     if (a.scale === undefined || a.scale === 1) return (Buffer.isBuffer(png) ? png : png.toPNG()).toString('base64')
     const image = Buffer.isBuffer(png) ? nativeImage.createFromBuffer(png) : png
     return image.resize({ width: Math.max(1, Math.round(a.width * a.scale)), height: Math.max(1, Math.round(a.height * a.scale)), quality: 'best' }).toPNG().toString('base64')
-  }), high, isCurrent)
+  }), { priority }).result
 }
 
 async function texturePng(frame: Extract<MotifOsrFrame, { kind: 'texture' }>): Promise<Buffer> {
@@ -648,9 +633,9 @@ function countFrame(frame: MotifOsrFrame): void {
 
 /** One frame leased to `consume`: a shared texture, released after `consume`
  * settles, or a bitmap. */
-export function captureMotifFrame<T>(a: CaptureArgs, consume: (frame: MotifOsrFrame) => Promise<T>, coalesceKey?: string, high?: boolean, isCurrent: () => boolean = () => true): Promise<T> {
-  return enqueueCapture(a, coalesceKey, () => doCapture(a, frame => {
+export function captureMotifFrame<T>(a: CaptureArgs, consume: (frame: MotifOsrFrame) => Promise<T>, options: CaptureOptions): CaptureRun<T> {
+  return enqueueCapture(a, () => doCapture(a, frame => {
     countFrame(frame)
     return consume(frame)
-  }), high, isCurrent)
+  }), options)
 }

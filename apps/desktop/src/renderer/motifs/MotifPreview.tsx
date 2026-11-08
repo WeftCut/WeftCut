@@ -81,7 +81,7 @@ export function MotifPreview({
   useEffect(() => {
     let cancelled = false;
     setError(null);
-    captureMotifFramePngBlob(motif.id, tSec, props, w, h, motif.content_hash, undefined, fpsNum, fpsDen)
+    captureMotifFramePngBlob(motif.id, tSec, props, w, h, motif.content_hash, fpsNum, fpsDen)
       .then((blob) => {
         if (cancelled) return;
         const url = URL.createObjectURL(blob);

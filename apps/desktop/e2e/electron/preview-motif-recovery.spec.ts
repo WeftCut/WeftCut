@@ -4,10 +4,6 @@ import { createHash } from 'node:crypto'
 import type { E2EHook } from '../../src/renderer/testhook/e2eHook'
 import { launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
 
-declare global {
-  interface Window { __previewRecoveryCaptureBlocked?: boolean }
-}
-
 const probe = (page: Page) => page.evaluate(() =>
   (window as unknown as { __weftcutTest: E2EHook }).__weftcutTest.previewResourceProbe())
 
@@ -118,7 +114,7 @@ test('@serial motif preview survives LRU eviction, GPU unload and a failed prese
   }
 })
 
-test('@serial paused motif recovers after a real capture bitmap rejection without seeking', async ({}, testInfo) => {
+test('@serial paused motif recovers after real capture delivery failures without seeking', async ({}, testInfo) => {
   test.setTimeout(90_000)
   const { app, page } = await launchApp()
   const failures: string[] = []
@@ -129,18 +125,20 @@ test('@serial paused motif recovers after a real capture bitmap rejection withou
   })
   try {
     await setup(page)
-    await page.evaluate(() => {
-      // Reject the broker's owned bitmap snapshot after the capture returns.
-      // PNG decode / GPU import now belongs to the isolated preload world.
-      // This also blocks the prewarmer, so it cannot hide the initial failure.
-      const decode = window.createImageBitmap.bind(window)
-      window.__previewRecoveryCaptureBlocked = true
-      window.createImageBitmap = ((...args: Parameters<typeof createImageBitmap>) => {
-        if (window.__previewRecoveryCaptureBlocked && args[0] instanceof ImageBitmap) {
-          return Promise.reject(new Error('[e2e] temporary bitmap snapshot failure'))
-        }
-        return Reflect.apply(decode, window, args)
-      }) as typeof createImageBitmap
+    // Fail every Motif capture in main, where both lanes (shared texture and
+    // bitmap) start: the page's own globals never see a preview frame, whose
+    // pixels become a bitmap in the isolated preload world. Nothing is
+    // captured, so nothing is stored for a read to find, and the prewarmer
+    // cannot hide the initial failure.
+    await app.evaluate(({ ipcMain }) => {
+      const handlers = (ipcMain as any)._invokeHandlers as Map<string, (event: unknown, args: unknown) => unknown>
+      const capture = handlers.get('motif:capture')
+      if (!capture) throw new Error('motif:capture has no handler')
+      ;(globalThis as any).__previewRecoveryCaptureBlocked = true
+      handlers.set('motif:capture', async (event: unknown, args: unknown) => {
+        if ((globalThis as any).__previewRecoveryCaptureBlocked) throw new Error('[e2e] temporary capture delivery failure')
+        return capture(event, args)
+      })
     })
     await page.evaluate(() => (window as unknown as { __weftcutTest: E2EHook }).__weftcutTest.motifAddCountdown())
     await expect.poll(() => probe(page), { timeout: 30_000 }).not.toBeNull()
@@ -148,13 +146,13 @@ test('@serial paused motif recovers after a real capture bitmap rejection withou
     // would strand this paused target after the producer becomes healthy.
     await expect.poll(() => failures.length, { timeout: 30_000, intervals: [25] }).toBe(3)
     expect((await picture(page)).accent).toBe(0)
-    await page.evaluate(() => { window.__previewRecoveryCaptureBlocked = false })
+    await app.evaluate(() => { (globalThis as any).__previewRecoveryCaptureBlocked = false })
     await expect.poll(async () => (await picture(page)).accent, { timeout: 20_000 }).toBeGreaterThan(200)
     const recovered = (await probe(page))!
     expect(recovered.positionUs).toBe(0)
     expect(recovered.playing).toBe(false)
     expect(pageErrors).toEqual([])
-    expect(failures.every((failure) => failure.includes('[e2e] temporary bitmap snapshot failure'))).toBe(true)
+    expect(failures.every((failure) => failure.includes('[e2e] temporary capture delivery failure'))).toBe(true)
     await testInfo.attach('paused-recovered-preview.png', { body: (await picture(page)).bytes, contentType: 'image/png' })
   } finally {
     await app.close()
@@ -168,15 +166,20 @@ test('@serial motif content progresses when frame delivery is slower than the di
   page.on('pageerror', error => errors.push(error.message))
   try {
     await setup(page)
-    await page.evaluate(() => {
-      const clone = window.createImageBitmap.bind(window)
-      window.createImageBitmap = (async (...args: Parameters<typeof createImageBitmap>) => {
-        const bitmap = await Reflect.apply(clone, window, args)
-        if (args[0] instanceof ImageBitmap) await new Promise(resolve => setTimeout(resolve, 80))
-        return bitmap
-      }) as typeof createImageBitmap
-      return (window as unknown as { __weftcutTest: E2EHook }).__weftcutTest.motifAddCountdown()
+    // Slow every Motif capture in main, where both lanes start: preview
+    // pixels become a bitmap in the isolated preload world, out of reach of
+    // the page's own globals.
+    await app.evaluate(({ ipcMain }) => {
+      const handlers = (ipcMain as any)._invokeHandlers as Map<string, (event: unknown, args: unknown) => unknown>
+      const capture = handlers.get('motif:capture')
+      if (!capture) throw new Error('motif:capture has no handler')
+      handlers.set('motif:capture', async (event: unknown, args: unknown) => {
+        const reply = await capture(event, args)
+        await new Promise(resolve => setTimeout(resolve, 80))
+        return reply
+      })
     })
+    await page.evaluate(() => (window as unknown as { __weftcutTest: E2EHook }).__weftcutTest.motifAddCountdown())
     await expect.poll(async () => (await picture(page)).accent, { timeout: 30_000 }).toBeGreaterThan(200)
     const initial = await picture(page)
     const rows = await page.evaluate(async () => {

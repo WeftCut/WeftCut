@@ -1,5 +1,5 @@
-import type { MotifCacheAddress, MotifCaptureControl, MotifFramePriority, MotifReadUnavailable, MotifTextureReadRequest, MotifUploadTiming } from '../../../shared/motifs/frameTransport';
-import { isMotifErrorCode, MotifError, type MotifErrorCode } from '../../../shared/motifs/errors';
+import type { MotifCaptureControl, MotifCaptureRequest as MotifCaptureWireRequest, MotifFramePriority, MotifReadUnavailable, MotifTextureReadRequest, MotifUploadTiming } from '../../../shared/motifs/frameTransport';
+import { isMotifErrorCode, MotifError, motifSuperseded, type MotifErrorCode } from '../../../shared/motifs/errors';
 import { MOTIF_DEADLINES } from '../../../shared/motifs/tuning';
 
 interface FrameReply {
@@ -56,32 +56,11 @@ export async function readMotifTexture(read: MotifTextureReadRequest): Promise<M
   };
 }
 
-/** One capture of a Motif frame in main's capture host. */
-export interface MotifCaptureRequest {
-  motifId: string;
-  tSec: number;
-  propsJson: string;
-  width: number;
-  height: number;
-  contentHash: string;
-  /** The composition fps `tSec` was computed on; main falls back to 30. */
-  fpsNum?: number;
-  fpsDen?: number;
-  priority: MotifFramePriority;
-  /** The frame's cache address. Without one, main neither stores the frame
-   * nor answers `stored`. */
-  address?: MotifCacheAddress;
-  /** `keep`: main stores the frame and reports whether it did. `offer`
-   * (default): main stores it when it has room. */
-  store?: 'keep' | 'offer';
-  /** The renderer's read of `address` missed: main captures without checking
-   * the store, so a corrupt file cannot answer `stored` again. */
-  afterMiss?: boolean;
-  finalizationToken?: string;
-}
+/** One request for a Motif frame in main (ADR 0160); the transport names it. */
+export type MotifCaptureRequest = Omit<MotifCaptureWireRequest, 'requestId'>;
 
 /** `stored`: the frame is on disk at the request's address and main sent no
- * pixels; the caller reads it (ADR 0154). */
+ * pixels; the caller reads it (ADR 0154). Never the reply to `afterMiss`. */
 export type MotifCaptureReply =
   | { kind: 'pixels'; bitmap: ImageBitmap; persisted: boolean }
   | { kind: 'stored' };
@@ -90,50 +69,43 @@ export type MotifCaptureReply =
  * already running still answers, and the caller closes what arrives. */
 export interface MotifCaptureCall {
   reply: Promise<MotifCaptureReply>;
+  /** Up or down; main moves the queued capture. */
   setPriority(priority: MotifFramePriority): void;
   cancel(): void;
 }
 
-// Main keys queued captures by sender; a reloaded document must not reuse its
-// predecessor's keys.
-const callPrefix = `motif-capture:${crypto.randomUUID()}`;
-let nextCall = 0;
+// Unique per frame port, which is per document. Main keys requests by sender
+// as well, and a reloaded document's request takes over its predecessor's id.
+let nextRequestId = 0;
 
 export function captureMotif(request: MotifCaptureRequest): MotifCaptureCall {
   const perf = typeof window === 'undefined' ? undefined
     : (window as unknown as { __weftcutMotifPerf?: { renders: number } }).__weftcutMotifPerf;
   if (perf) perf.renders++;
-  const { priority, address, store, afterMiss, finalizationToken, ...args } = request;
-  // Main's queue has two classes: `current` is high, the rest are low. A
-  // promotion cannot be taken back.
-  const key = `${callPrefix}:${++nextCall}`;
-  let high = priority === 'current';
-  let settled = false;
+  const requestId = ++nextRequestId;
+  let priority = request.priority;
+  let open = true;
   const reply = (async (): Promise<MotifCaptureReply> => {
     try {
-      const { bitmap, persisted, stored } = await send({ capture: {
-        ...args, coalesceKey: key, high,
-        ...(address && store === 'keep' ? { bake: address } : {}),
-        ...(address && !afterMiss ? { cache: address } : {}),
-        ...(finalizationToken ? { finalizationToken } : {}),
-      } });
+      const { bitmap, persisted, stored } = await send({ capture: { ...request, requestId } satisfies MotifCaptureWireRequest });
       if (bitmap) return { kind: 'pixels', bitmap, persisted };
-      if (stored && address) return { kind: 'stored' };
+      if (stored && request.address) return { kind: 'stored' };
       throw new Error("Motif capture returned no frame");
-    } finally { settled = true; }
+    } finally { open = false; }
   })();
   // Same port as the capture, so a control cannot overtake its request.
-  const control = (action: MotifCaptureControl['action']) => {
-    if (!settled) port?.postMessage({ control: { key, action } });
-  };
+  const control = (message: MotifCaptureControl) => { if (open) port?.postMessage({ control: message }); };
   return {
     reply,
     setPriority: next => {
-      if (next !== 'current' || high) return;
-      high = true;
-      control('promote');
+      if (next === priority) return;
+      priority = next;
+      control({ requestId, action: 'priority', priority: next });
     },
-    cancel: () => control('cancel'),
+    cancel: () => {
+      control({ requestId, action: 'cancel' });
+      open = false;
+    },
   };
 }
 
@@ -147,6 +119,8 @@ interface FramePortMessage {
   timing?: MotifUploadTiming;
   importMs?: number;
   error?: string;
+  /** Main withdrew the capture; it rejects `superseded` here. */
+  superseded?: boolean;
   /** Present when `error` is a MotifError's detail (preload `motifFrames.ts`). */
   code?: MotifErrorCode;
 }
@@ -164,7 +138,8 @@ function send(args: Record<string, unknown>): Promise<FrameReply> {
       const request = pending.get(data.id);
       if (!request) { data.bitmap?.close(); return; }
       pending.delete(data.id);
-      if (data.error) request.reject(isMotifErrorCode(data.code) ? new MotifError(data.code, data.error) : new Error(data.error));
+      if (data.superseded) request.reject(motifSuperseded());
+      else if (data.error) request.reject(isMotifErrorCode(data.code) ? new MotifError(data.code, data.error) : new Error(data.error));
       else request.resolve({
         bitmap: data.bitmap ?? null, persisted: data.persisted === true,
         stored: data.stored === true, unavailable: unavailableReply(data),

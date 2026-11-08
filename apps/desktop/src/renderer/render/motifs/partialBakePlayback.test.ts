@@ -206,7 +206,8 @@ it('missing frames release disk capacity and use only one capture slot', async (
   await settle();
   expect(read).toHaveBeenCalledTimes(10);
   expect(captures).toHaveLength(1);
-  expect(captures[0]!.request.afterMiss).toBe(true);
+  // The first capture after a read miss lets main check the store.
+  expect(captures[0]!.request).not.toHaveProperty('afterMiss');
   for (let frame = 3; frame < 10; frame++) expect(sharedMotifFrameCache.hasFrame('long', frame, 1)).toBe(true);
   expect(sharedBakedKeyIndex.hasFrame('long', 0)).toBe(false);
 });

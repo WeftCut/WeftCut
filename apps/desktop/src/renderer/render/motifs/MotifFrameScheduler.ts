@@ -1,4 +1,4 @@
-import { motifSuperseded } from '../../../shared/motifs/errors';
+import { MotifError, motifSuperseded } from '../../../shared/motifs/errors';
 import type { MotifFramePriority } from '../../../shared/motifs/frameTransport';
 import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
 import type { MotifCaptureCall } from './frameTransport';
@@ -6,7 +6,6 @@ import type { MotifFrameDiv } from './frameCache';
 import { motifTuning } from './tuning';
 
 const PRIORITIES: readonly MotifFramePriority[] = ['current', 'ahead', 'background'];
-const rank = (priority: MotifFramePriority) => PRIORITIES.indexOf(priority);
 
 /** One deduplicated frame request (`motifFrameSource.ts`). */
 export interface FrameWork {
@@ -34,8 +33,10 @@ export interface ScheduledFrame { result: Promise<FrameResult>; changed(): void 
 interface Entry {
   work: FrameWork;
   epoch: number;
-  /** Its read missed: the next capture is `afterMiss`. */
+  /** Its last read missed: it captures instead of reading. */
   readMissed: boolean;
+  /** Main answered it `stored`: every later capture it sends is `afterMiss`. */
+  answeredStored: boolean;
   call: MotifCaptureCall | null;
   sentPriority: MotifFramePriority;
   resolve: (value: FrameResult) => void;
@@ -48,9 +49,15 @@ interface Entry {
  * saved pixels and holes. Waiting captures never occupy a disk-read slot.
  * Priority and coverage are read at admission, not snapshotted by callers.
  *
- * One loop per frame: a read miss queues it again as a capture `afterMiss`;
- * a `stored` capture reply queues it again as a read. A read's transport
- * error rejects: it says nothing about the file, so it never captures. */
+ * One bounded loop per frame: a read miss queues it again as a capture, and
+ * a `stored` reply queues it again as a read. The first capture lets main
+ * check the store, so a stale miss of a stored frame captures nothing; once
+ * main has answered `stored`, the next capture is `afterMiss`, which main
+ * never answers `stored` (ADR 0160). A stale miss costs one more read, a
+ * corrupt file one capture after that second read. A `stored` reply to
+ * `afterMiss` rejects as a `miss` and the caller backs off: reading again
+ * would cycle between the reply and a failed read. A read's transport error
+ * rejects: it says nothing about the file, so it never captures. */
 export class MotifFrameScheduler {
   private queue: Entry[] = [];
   private reads = 0;
@@ -73,7 +80,7 @@ export class MotifFrameScheduler {
   schedule(work: FrameWork): ScheduledFrame {
     let entry!: Entry;
     const result = new Promise<FrameResult>((resolve, reject) => {
-      entry = { work, epoch: this.epoch, readMissed: false, call: null, sentPriority: 'background', resolve, reject };
+      entry = { work, epoch: this.epoch, readMissed: false, answeredStored: false, call: null, sentPriority: 'background', resolve, reject };
     });
     this.queue.push(entry);
     this.wake();
@@ -110,7 +117,7 @@ export class MotifFrameScheduler {
       if (!this.wanted(entry)) call.cancel();
       else {
         const priority = entry.work.priority();
-        if (rank(priority) < rank(entry.sentPriority)) {
+        if (priority !== entry.sentPriority) {
           entry.sentPriority = priority;
           call.setPriority(priority);
         }
@@ -174,16 +181,19 @@ export class MotifFrameScheduler {
         return;
       }
       entry.sentPriority = work.priority();
-      entry.call = work.capture(entry.readMissed, entry.sentPriority);
+      const afterMiss = entry.answeredStored;
+      entry.call = work.capture(afterMiss, entry.sentPriority);
       const reply = await entry.call.reply;
       if (reply.kind === 'stored') {
+        if (afterMiss) throw new MotifError('miss', 'Motif frame answered stored after its read missed');
+        entry.answeredStored = true;
+        this.recordStored(entry);
         if (!this.wanted(entry)) throw motifSuperseded();
         entry.readMissed = false;
-        this.deps.stored(work.cacheKey, work.frame);
         again = true;
         return;
       }
-      if (reply.persisted && this.wanted(entry)) this.deps.stored(work.cacheKey, work.frame);
+      if (reply.persisted) this.recordStored(entry);
       this.settle(entry, { bitmap: reply.bitmap, div: 'live', persisted: reply.persisted });
     } catch (error) {
       entry.reject(error);
@@ -193,6 +203,12 @@ export class MotifFrameScheduler {
       if (again) this.queue.push(entry);
       this.wake();
     }
+  }
+
+  /** Coverage is true whoever still wants the frame, but only for the
+   * project opening that asked. */
+  private recordStored(entry: Entry): void {
+    if (entry.epoch === this.epoch) this.deps.stored(entry.work.cacheKey, entry.work.frame);
   }
 
   private settle(entry: Entry, value: FrameResult): void {

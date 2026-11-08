@@ -34,12 +34,12 @@ import { mediaMimeForExt } from './mediaMime.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
 import { registerMotifProtocol } from './motif/protocol.js'
 import { installPerformanceCalibration } from './performanceCalibration.js'
-import { setRuntimeSource, captureMotifFrameB64, captureMotifFrame, setTextureCaptureEnabled, setMotifStore, shutdownCaptureHost, setFrameMarkerReader, setTexturePngReader, controlMotifCapture, captureDiagnostics, resetCaptureFailure, setCaptureTuning } from './motif/capture.js'
+import { setRuntimeSource, captureMotifFrameB64, captureMotifFrame, setTextureCaptureEnabled, setMotifStore, shutdownCaptureHost, setFrameMarkerReader, setTexturePngReader, captureDiagnostics, resetCaptureFailure, setCaptureTuning } from './motif/capture.js'
 import { configureMotifCore, resolveMotifTuning } from './motif/tuning.js'
 import { motifTuningArgument } from '../shared/motifs/tuning.js'
 import { setMotifMediaSource } from './motif/mediaProps.js'
 import { rasterizeSvg } from './svgRaster.js'
-import { MotifCaptureService, type CaptureRequest, type MotifPixelCodec, type TextureEncoder } from './motif/captureService.js'
+import { MotifCaptureService, parseMotifCaptureControl, parseMotifCaptureRequest, type MotifPixelCodec, type TextureEncoder } from './motif/captureService.js'
 import { UserMotifStore } from './motif/store.js'
 import { MotifFrameStore } from './motif/frameStore.js'
 import { createMotifConsumers } from './motif/consumers.js'
@@ -1442,7 +1442,6 @@ app.whenReady().then(async () => {
     createEncoder: process.platform === 'win32' && encoderClass ? () => decodedEncoder(constructed(() => new encoderClass())) : null,
     pixels: require_('@weftcut/core') as MotifPixelCodec,
     setTextureEnabled: setTextureCaptureEnabled,
-    promote: key => controlMotifCapture(key, 'promote'),
     writeSlots: motifTuning.writeSlots,
   }, process.env.WEFTCUT_MOTIF_CAPTURE !== 'bitmap')
   motifBakes = new MotifBakeWorkspace({
@@ -1504,16 +1503,17 @@ app.whenReady().then(async () => {
     if (event.senderFrame && !event.senderFrame.detached) reader.connect(event.sender)
   })
   ipcMain.on('motif:ack', (event, { token, failed }: { token: string; failed?: boolean }) => motifGpu?.release(event.sender, token, failed))
-  ipcMain.on('motif:capture-control', (event, control: import('../shared/motifs/frameTransport').MotifCaptureControl) => {
-    if (!control || typeof control.key !== 'string') return
-    const { key, action } = control
-    if (action === 'promote' || action === 'cancel') controlMotifCapture(`${event.sender.id}:${key}`, action)
+  // One sender's IPC arrives in order, so a control finds the request it follows.
+  ipcMain.on('motif:capture-control', (event, payload: unknown) => {
+    const control = parseMotifCaptureControl(payload)
+    if (control) motifCapture.control(event.sender.id, control)
   })
-  ipcMain.handle('motif:capture', (event, args: CaptureRequest) => {
+  ipcMain.handle('motif:capture', (event, payload: unknown) => {
+    const request = parseMotifCaptureRequest(payload)
     const isCurrent = trackMotifConsumer(event.sender, event.senderFrame)
     const generation = workspaceEvents.current()
-    return motifCapture.capture(event.sender, args, () => isCurrent() && workspaceEvents.current() === generation,
-      resolveExportFinalization(event.sender.id, args.finalizationToken), currentMotifStore())
+    return motifCapture.capture(event.sender, request, () => isCurrent() && workspaceEvents.current() === generation,
+      resolveExportFinalization(event.sender.id, request.finalizationToken), currentMotifStore())
   })
 
   let coverRuntimeVersion = ''
@@ -1523,7 +1523,7 @@ app.whenReady().then(async () => {
       return { manifest: source.manifest, contentHash: motifContentHash(source.manifest, source.html, motifSourceFiles(motifStore, motifBuiltins, id)) }
     },
     renderVersion: () => `${process.versions.chrome}:${coverRuntimeVersion}`,
-    capture: async args => Buffer.from(await captureMotifFrameB64(args, undefined, false), 'base64'),
+    capture: async args => Buffer.from(await captureMotifFrameB64(args, { priority: 'background' }), 'base64'),
     valid: png => !nativeImage.createFromBuffer(png).isEmpty(),
     thumbnail: png => {
       const image = nativeImage.createFromBuffer(png)
@@ -1622,12 +1622,12 @@ app.whenReady().then(async () => {
       const a = args as {
         motifId: string; tSec: number; propsJson: string
         width: number; height: number; contentHash: string
-        coalesceKey: string | null; fpsNum: number | null; fpsDen: number | null
+        fpsNum: number | null; fpsDen: number | null
       }
-      const { coalesceKey, fpsNum, fpsDen, ...captureArgs } = a
+      const { fpsNum, fpsDen, ...captureArgs } = a
       const b64 = await captureMotifFrameB64(
         { ...captureArgs, fpsNum: fpsNum ?? undefined, fpsDen: fpsDen ?? undefined },
-        coalesceKey ?? undefined,
+        { priority: 'background' },
       )
       // Decode ONCE at the boundary: IPC structured clone carries a Uint8Array
       // natively, so the renderer skips the 33%-larger base64 string plus its

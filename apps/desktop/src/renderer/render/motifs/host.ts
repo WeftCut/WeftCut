@@ -5,7 +5,7 @@ import { captureMotif } from './frameTransport';
  * Render a Motif to a single frame and return the raw PNG as a `Blob`.
  *
  * Drives the `motif_capture_frame` IPC channel: main encodes the leased paint
- * of the offscreen capture host as a PNG (ADR 0159).
+ * of the offscreen capture host as a PNG (ADR 0159), at `background` priority.
  *
  * @param motifId    built-in Motif id (e.g. "countdown")
  * @param tSec       content time in SECONDS
@@ -26,7 +26,6 @@ export async function captureMotifFramePngBlob(
   width: number,
   height: number,
   contentHash?: string,
-  coalesceKey?: string,
   fpsNum?: number,
   fpsDen?: number,
 ): Promise<Blob> {
@@ -39,9 +38,6 @@ export async function captureMotifFramePngBlob(
     width,
     height,
     contentHash: contentHash ?? "",
-    // Latest-wins queueing on the serial capture chain (main/motif/capture.ts):
-    // a newer same-key request replaces a still-queued older one.
-    coalesceKey: coalesceKey ?? null,
     fpsNum: fpsNum ?? null,
     fpsDen: fpsDen ?? null,
   });

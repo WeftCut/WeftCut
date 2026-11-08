@@ -132,10 +132,13 @@ background so `background: transparent` stays real alpha.
   render returns once its frame has committed, and the next frame of the same
   page renders while up to three earlier ones are still on their way to a paint
   (ADR 0159). A navigation or resize waits for those paints. A frame the
-  compositor skipped (a later id painted first) renders again. Sprite requests
-  carry a coalesce key: a newer request replaces a queued older one from the
-  same sprite (the replaced waiter rejects as superseded). Foreground tickets run
-  first; a background ticket waiting 2 s gets one frame between them.
+  compositor skipped (a later id painted first) renders again, keeping its
+  place and its ticket. Every capture states a [priority](#admission): queued
+  `current` captures run first, then `ahead`, then `background`, and a
+  `background` capture waiting 2 s gets one frame between higher ones. A
+  queued capture moves when its priority changes, up or down, and leaves the
+  queue when its request is cancelled (it rejects as superseded); a running
+  one finishes and its caller drops what it no longer wants.
 - **Deadlines.** Every CDP command goes through the host's timed `send`
   (5 s); awaited setup gets 30 s; the renderer's capture transport allows 60 s
   so it does not pre-empt setup. A timeout rejects with code `timeout` and
@@ -213,8 +216,8 @@ Priorities, highest first: `current` (the frame on screen, an export frame),
 it). A `current` request from an `owner` supersedes that owner's previous one;
 aborting a request's signal withdraws it. Identical requests (lane, cache key,
 frame, divisor, finalization token) share one job at the highest priority of its
-subscribers, and a promotion reaches main's capture queue, where `current` is
-high and the rest low. The job publishes a preview result to L0 once and pins it
+subscribers, and a priority change or a cancel reaches main as a control of
+that capture request. The job publishes a preview result to L0 once and pins it
 for each subscriber; a result nobody wants any more is closed unpublished.
 Parameter-preview frames use the overlay lane: no cache address, never read,
 never stored. Export frames never enter L0.
@@ -225,13 +228,57 @@ the export stream's byte budget bounds it, and its frames pipeline. Admission
 consults exact per-frame coverage: known holes skip disk I/O, unknown coverage
 is probed, and a new write wakes queued requests so they read instead of
 capture. A read miss drops the frame from coverage, releases its read slot and
-captures without main's store check (`afterMiss`), so a corrupt file cannot
-answer `stored` again; a `stored` reply reads the frame. A read's transport
-error rejects and never captures. Content main is preparing is captured only for
-`current` demand. Committed and export requests wait for the baked-key
-inventory. A project reset supersedes queued and admitted work. Main's
-`MotifCaptureService` likewise shares overlapping display and persistence
-captures.
+captures; a `stored` reply reads the frame. The first capture of a job goes
+without `afterMiss`, so main stats the store, and a stale miss of a stored
+frame is answered `stored` and read again without a capture. Once main has
+answered `stored`, every later capture of that job is `afterMiss`, which main
+never answers `stored`: it captures and offers a write like any display. A
+skipped live write leaves the file as it was; the miss already dropped the
+frame from main's coverage, so preparation counts it as missing. A `stored`
+reply to one anyway rejects with code `miss`, which the cursor retries with
+backoff, so a corrupt file costs two reads and one capture and cannot cycle
+between `stored` and a failed read. A read's transport error rejects and never
+captures. A stored or persisted reply records the frame in coverage even when
+nobody wants it any more, but never across a project reset. Content main is
+preparing is captured only for `current` demand. Committed and export requests
+wait for the baked-key inventory. A project reset supersedes queued and admitted
+work.
+
+In main, each capture request (`motif:capture`) names itself with a request id,
+its priority, and optionally its cache address, `store: 'keep'` (export) and
+`afterMiss`; `motif:capture-control` changes the priority of a request or
+cancels it by `(sender, request id)`. A withdrawn request is answered
+`{ kind: 'superseded' }` rather than thrown, so a routine cancel logs nothing;
+the renderer's transport rejects it as a `superseded` MotifError. `MotifFrameJobs` holds one job per cache
+address of the workspace store
+([ADR 0160](adr/0160-one-request-for-a-motif-frame-one-job-per-cache-address.md)):
+
+- A display without `afterMiss` first stats the store; a stored frame answers
+  every such display `stored`. Persistence and `afterMiss` displays never take
+  that answer and go on to capture.
+- Until the capture's lease, any request joins the job, whose capture runs at
+  the highest priority of the requests left; the last one leaving cancels it.
+- At the lease every display gets pixels: on Windows its own GPU copy, on a
+  bitmap host one straightened picture for all. A persistence request or a kept
+  display makes the write one that waits for a slot; otherwise the displays
+  offer a [live write](#preparation-l2-baking). A display that was not kept
+  does not wait for the write.
+- A request after the lease waits for the write: once written, a display is
+  answered `stored` (an `afterMiss` one captures again) and persistence is done;
+  a failed or skipped write starts a new job.
+- A capture failure with its own code fails every request; a `device` or
+  uncoded failure before the lease moves the session to bitmaps and captures
+  again for all. One in the readback after the lease (an unsupported texture,
+  an encoder that cannot open, a texture leased before the switch) moves the
+  session first and captures again for persistence, as a bitmap. A failed
+  write fails persistence with its code, keeps the pixels displays already
+  have and reports a kept display not persisted.
+- A job reserves its capture memory once, when queued, borrowed from the plan
+  of the first export in it then; an export joining later is not charged.
+
+Captures without a cache address (parameter previews, the e2e hook) and PNG
+captures (MCP, covers, the Motif panel's preview, all `background`) are never
+shared.
 
 ### Reading stored frames
 
@@ -312,8 +359,10 @@ demands and maps main's snapshots into the baked-key index and layer status;
   is atomic before main marks the frame complete.
 - **Every stored frame goes through `MotifFrameWriteQueue`**
   ([ADR 0158](adr/0158-stored-frames-leave-the-capture-lease.md)). At most two
-  frames hold pixels, one write per address. A frame someone asked to keep (bake,
-  export) waits for a slot inside its lease, which is the backpressure on capture.
+  frames hold pixels. A frame someone asked to keep (bake, export) waits for a
+  slot inside its lease, which is the backpressure on capture. One write per
+  address is the job table's: every write of an address is its job's
+  ([Admission](#admission), ADR 0160).
 - **A live capture stores itself:** a committed preview frame offers itself at its
   cache address and is skipped when both slots are taken, under memory pressure or
   when the cache has no room. It is the tail of a foreground capture, so the
@@ -431,7 +480,8 @@ single frame over the budget fails with the resource-capacity error. Export does
 not wait for background baking.
 
 A missing frame is captured with the same host and frame-grid inputs as preview
-and stored through main's write queue, joining an overlapping bake. A failed
+and kept by main, sharing one capture with a bake or preview of the same frame
+queued at the time ([Admission](#admission)). A failed
 write leaves that frame uncached and the export keeps its pixels; a capture
 failure fails the export. Cancelling stops admission and keeps completed cache files.
 

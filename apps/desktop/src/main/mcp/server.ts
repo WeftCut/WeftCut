@@ -744,7 +744,7 @@ async function dispatchTool(
         motifId, tSec, propsJson: JSON.stringify(props),
         width: canvasW, height: canvasH, scale, contentHash: entry?.revision ?? '',
         ...(rootFps ? { fpsNum: rootFps.num, fpsDen: rootFps.den } : {}),
-      })
+      }, { priority: 'background' })
       frames.push({ tSec, png: new Uint8Array(Buffer.from(b64, 'base64')) })
     }
     const sheet = composeMotifSheet(frames)

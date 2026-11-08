@@ -82,7 +82,7 @@ test('bitmap capture preserves canvas pixels across Motif navigation', async ({}
             channel.port1.postMessage({ id: i, capture: {
               motifId: network ? networkId : solid, tSec: 2 + i / 25,
               propsJson: JSON.stringify(network ? networkProps : {}), width: 1920, height: 1080,
-              contentHash: '', fpsNum: 25, fpsDen: 1, high: true,
+              contentHash: '', fpsNum: 25, fpsDen: 1, requestId: i, priority: 'current',
             } });
           });
           const ms = Math.round(performance.now() - started);

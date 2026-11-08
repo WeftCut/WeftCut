@@ -29,10 +29,10 @@ async function fixture() {
   let budget = 1_000_000;
   const snapshots: MotifBakeSnapshot[] = [];
   const retain = vi.fn();
-  const persist = vi.fn(async (request: { width: number; height: number; bake?: { hash: string; frame: number } }, current: () => boolean, store?: MotifFrameStore) => {
-    if (!current()) throw new Error('superseded');
-    const address = request.bake!;
-    await (await store!.prepareWrite(address.hash, address.frame))!.encoded(frameBytes(request.width, request.height));
+  const persist = vi.fn(async (address: { hash: string; frame: number }, args: { width: number; height: number }, subscriber: { priority: string; isCurrent: () => boolean }, store?: MotifFrameStore) => {
+    expect(subscriber.priority).toBe('background');
+    if (!subscriber.isCurrent()) throw new Error('superseded');
+    await (await store!.prepareWrite(address.hash, address.frame))!.encoded(frameBytes(args.width, args.height));
   });
   const workspace = new MotifBakeWorkspace({
     session: () => session, capture: { persist } as unknown as MotifCaptureService,
@@ -74,8 +74,8 @@ describe('Motif workspace ownership', () => {
   it('ends a same-root reopened session and ignores its late completion', async () => {
     const h = await fixture(); const c = content('old');
     let finish!: () => void; let valid!: () => boolean;
-    h.persist.mockImplementationOnce(async (_request, current, store) => {
-      valid = current;
+    h.persist.mockImplementationOnce(async (_address, _args, { isCurrent }, store) => {
+      valid = isCurrent;
       const writer = await store!.prepareWrite(c.hash, 0);
       await new Promise<void>(resolve => { finish = resolve; });
       await writer!.encoded(frameBytes());

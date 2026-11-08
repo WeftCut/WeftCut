@@ -1,5 +1,5 @@
 import { ipcRenderer, type SharedTextureImported } from 'electron'
-import type { StoredMotifFrame, MotifCaptureControl, MotifReadUnavailable, MotifTextureReadRequest } from '../shared/motifs/frameTransport'
+import type { MotifCaptureControl, MotifCaptureReply, MotifCaptureRequest, MotifReadUnavailable, MotifTextureReadRequest } from '../shared/motifs/frameTransport'
 import { MOTIF_READER_CONNECT, MOTIF_READER_PORT, MOTIF_READER_RESET, MOTIF_TEXTURE_LANE_RESET, type MotifReaderDiv } from '../shared/motifs/readerProtocol'
 import { decodeMotifError, MotifError } from '../shared/motifs/errors'
 
@@ -22,14 +22,21 @@ export function installMotifFrames(
     if (event.data?.type !== 'weftcut:motif-frame-port') return
     const port = event.ports[0]
     if (!port) return
-    port.onmessage = async ({ data }: MessageEvent<{ id: number; hash: string; frame: number; div: MotifReaderDiv; finalizationToken?: string; capture?: Record<string, unknown>; control?: MotifCaptureControl }>) => {
+    port.onmessage = async ({ data }: MessageEvent<{ id: number; hash: string; frame: number; div: MotifReaderDiv; finalizationToken?: string; capture?: MotifCaptureRequest; control?: MotifCaptureControl }>) => {
+      // Same IPC sender as the request it follows, so main receives it after.
       if (data.control) { ipcRenderer.send('motif:capture-control', data.control); return }
-      let frame: StoredMotifFrame | MotifReadUnavailable | null = null
+      let frame: MotifCaptureReply | MotifReadUnavailable | null = null
       let bitmap: ImageBitmap | null = null
       let failed = true
       try {
         const read: MotifTextureReadRequest = { hash: data.hash, frame: data.frame, div: data.div, finalizationToken: data.finalizationToken }
-        frame = await ipcRenderer.invoke(data.capture ? 'motif:capture' : 'motif:read', data.capture ?? read) as StoredMotifFrame | MotifReadUnavailable | null
+        frame = await ipcRenderer.invoke(data.capture ? 'motif:capture' : 'motif:read', data.capture ?? read) as MotifCaptureReply | MotifReadUnavailable | null
+        // Withdrawn in main: not a failure (`MotifCaptureReply`).
+        if (frame?.kind === 'superseded') {
+          port.postMessage({ id: data.id, superseded: true })
+          failed = false
+          return
+        }
         // Not a miss and not a failure: the reader reads it on the utility lane.
         if (frame?.kind === 'unavailable') {
           port.postMessage({ id: data.id, unavailable: frame.reason, generation: frame.generation })

@@ -276,6 +276,27 @@ describe("MotifSprite.refreshMotif", () => {
     getFrameMock.mockImplementation(() => null);
   });
 
+  it("releases the previous frame even when uploading the next one throws", () => {
+    getMotifMock.mockReset();
+    getMotifMock.mockReturnValue(motifWith("A"));
+    const frame0 = { width: 480, height: 480 } as unknown as ImageBitmap;
+    const frame1 = { width: 480, height: 480 } as unknown as ImageBitmap;
+    getFrameMock.mockReset();
+    getFrameMock.mockReturnValueOnce(frame0).mockReturnValueOnce(frame1);
+    releaseMock.mockClear();
+
+    const sprite = new MotifSprite({ layerId: "L1", motifId: "d1", fpsNum: 30, fpsDen: 1 });
+    sprite.update(view, 0, 5_000_000);
+    vi.spyOn(sprite.sprite.texture.source, "update").mockImplementationOnce(() => { throw new Error("upload failed"); });
+    expect(() => sprite.update(view, 1_000_000, 5_000_000)).toThrow("upload failed");
+    expect(releaseMock.mock.calls).toEqual([[frame0]]);
+
+    sprite.dispose();
+    expect(releaseMock.mock.calls).toEqual([[frame0], [frame1]]);
+    getFrameMock.mockReset();
+    getFrameMock.mockImplementation(() => null);
+  });
+
   it("refreshMotif is a no-op once the sprite is disposed", () => {
     getMotifMock.mockReset();
     getMotifMock.mockReturnValue(motifWith("A"));

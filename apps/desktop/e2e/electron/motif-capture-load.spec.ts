@@ -41,7 +41,7 @@ async function installProbePort(page: Page): Promise<void> {
       try {
         const bitmap = await new Promise<ImageBitmap>((resolve, reject) => {
           pending.set(id, { resolve, reject });
-          channel.port1.postMessage({ id, capture: { ...capture, coalesceKey: `probe:${id}`, high: true } });
+          channel.port1.postMessage({ id, capture: { ...capture, requestId: id, priority: 'current' } });
         });
         try {
           context.clearRect(0, 0, 3, 1);

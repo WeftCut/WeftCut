@@ -18,9 +18,10 @@ again. Storage also had two writers, each with a texture and a PNG branch.
 ## Decision
 
 - **One write queue owns every stored frame**, whoever captured it. It holds at
-  most two frames of pixels and one write per address. Only the source of the
-  pixels differs: a texture readback or a bitmap capture. The renderer never
-  writes a stored frame; it learns from main whether one was stored.
+  most two frames of pixels; one write per address is the job table's (ADR
+  0160). Only the source of the pixels differs: a texture readback or a bitmap
+  capture. The renderer never writes a stored frame; it learns from main
+  whether one was stored.
 - **The lease covers the readback, nothing after it.** Encoding and the write
   run after the lease, off the D3D11 worker, so the next readback does not wait.
 - **A full queue answers by who asked.** A frame someone asked to keep (bake,

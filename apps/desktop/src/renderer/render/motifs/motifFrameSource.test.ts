@@ -22,6 +22,7 @@ interface FakeCall {
 let calls: FakeCall[];
 let read: MockInstance<MotifFrameCache['readBitmap']>;
 let pins: () => number;
+let overlayPins: () => number;
 
 const bitmap = () => ({ width: 4, height: 4, close: vi.fn() }) as unknown as ImageBitmap;
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
@@ -56,6 +57,9 @@ beforeEach(() => {
   const retain = vi.spyOn(sharedMotifFrameCache, 'retain');
   const release = vi.spyOn(sharedMotifFrameCache, 'release');
   pins = () => retain.mock.calls.length - release.mock.calls.length;
+  const overlayRetain = vi.spyOn(sharedMotifOverlayCache, 'retain');
+  const overlayRelease = vi.spyOn(sharedMotifOverlayCache, 'release');
+  overlayPins = () => overlayRetain.mock.calls.length - overlayRelease.mock.calls.length;
 });
 afterEach(async () => {
   resetMotifFrameRequests();
@@ -197,7 +201,20 @@ describe('owners and aborts', () => {
     await settle();
     expect(late.close).toHaveBeenCalledOnce();
     expect(sharedMotifFrameCache.size()).toBe(0);
-    expect(sharedBakedKeyIndex.hasFrame('k', 0)).not.toBe(true);
+    // Stored is stored, whoever still wants the frame.
+    expect(sharedBakedKeyIndex.hasFrame('k', 0)).toBe(true);
+  });
+
+  it('a `stored` reply after every subscriber left still records the frame, and reads nothing', async () => {
+    sharedBakedKeyIndex.restoreFrames('k', new Set());
+    const { lease, controller } = acquire(desc());
+    await settle();
+    controller.abort();
+    await expect(lease).rejects.toMatchObject(superseded);
+    calls[0]!.answer({ kind: 'stored' });
+    await settle();
+    expect(sharedBakedKeyIndex.hasFrame('k', 0)).toBe(true);
+    expect(read).not.toHaveBeenCalled();
   });
 });
 
@@ -216,19 +233,48 @@ describe('read or capture', () => {
     expect(calls).toHaveLength(1);
   });
 
-  it('a read miss captures once, after the miss, and drops the frame from coverage', async () => {
+  it('a read miss drops the frame from coverage and asks main without `afterMiss`, so main checks the store', async () => {
     sharedBakedKeyIndex.restoreFrames('k', new Set([0]));
     const { lease } = acquire(desc());
     await settle();
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.request).toMatchObject({ afterMiss: true, address: { hash: hashCacheKey('k'), frame: 0 } });
+    expect(calls[0]!.request).toMatchObject({ address: { hash: hashCacheKey('k'), frame: 0 } });
+    expect(calls[0]!.request).not.toHaveProperty('afterMiss');
     expect(sharedBakedKeyIndex.hasFrame('k', 0)).toBe(false);
     calls[0]!.answer(pixels());
     (await lease).release();
     expect(read).toHaveBeenCalledOnce();
   });
 
-  it('a stored frame that misses on read is captured after the miss', async () => {
+  it('a stale read miss of a stored frame reads it again and captures nothing', async () => {
+    sharedBakedKeyIndex.restoreFrames('k', new Set([0]));
+    const saved = bitmap();
+    read.mockResolvedValueOnce(null).mockResolvedValueOnce(saved);
+    const { lease } = acquire(desc());
+    await settle();
+    calls[0]!.answer({ kind: 'stored' });
+    expect((await lease).bitmap).toBe(saved);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(calls).toHaveLength(1);
+    expect(sharedBakedKeyIndex.hasFrame('k', 0)).toBe(true);
+  });
+
+  it('a stored frame that misses on every read is captured `afterMiss` after its second read, and never read a third time', async () => {
+    sharedBakedKeyIndex.restoreFrames('k', new Set([0]));
+    const { lease } = acquire(desc());
+    await settle();
+    calls[0]!.answer({ kind: 'stored' });
+    await settle();
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(calls.map(call => call.request.afterMiss)).toEqual([undefined, true]);
+    calls[1]!.answer(pixels());
+    (await lease).release();
+    await settle();
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('a stored frame that misses on read is captured `afterMiss`', async () => {
     sharedBakedKeyIndex.restoreFrames('k', new Set());
     const { lease } = acquire(desc());
     await settle();
@@ -238,6 +284,24 @@ describe('read or capture', () => {
     expect(calls.map(call => call.request.afterMiss)).toEqual([undefined, true]);
     calls[1]!.answer(pixels());
     (await lease).release();
+  });
+
+  it.each([
+    ['a `stored` reply and a read miss', new Set<number>(), 1],
+    ['a read miss, a `stored` reply and a read miss', new Set([0]), 2],
+  ])('after %s, a `stored` reply rejects as a miss instead of reading again', async (_name, saved, reads) => {
+    sharedBakedKeyIndex.restoreFrames('k', saved);
+    const { lease } = acquire(desc());
+    await settle();
+    calls[0]!.answer({ kind: 'stored' });
+    await settle();
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.request.afterMiss).toBe(true);
+    calls[1]!.answer({ kind: 'stored' });
+    await expect(lease).rejects.toMatchObject({ code: 'miss' });
+    await settle();
+    expect(read).toHaveBeenCalledTimes(reads);
+    expect(calls).toHaveLength(2);
   });
 
   it('a transport error rejects and never captures', async () => {
@@ -260,7 +324,9 @@ describe('read or capture', () => {
     const overlay = await lease;
     expect(sharedMotifOverlayCache.getFrame('k', 0, 1)).toBe(overlay.bitmap);
     expect(sharedMotifFrameCache.size()).toBe(0);
-    overlay.release();
+    expect([overlayPins(), pins()]).toEqual([1, 0]);
+    overlay.release(); overlay.release();
+    expect(overlayPins()).toBe(0);
   });
 });
 
@@ -299,6 +365,36 @@ describe('admission', () => {
     expect(late.close).toHaveBeenCalledOnce();
     expect(calls).toHaveLength(1);
     expect(sharedMotifFrameCache.size()).toBe(0);
+  });
+});
+
+describe('project reset', () => {
+  it('closes a read that lands after the reset, unpublished', async () => {
+    sharedBakedKeyIndex.restoreFrames('k', new Set([0]));
+    let land!: (bitmap: ImageBitmap) => void;
+    read.mockReturnValueOnce(new Promise(resolve => { land = resolve; }));
+    const { lease } = acquire(desc());
+    await settle();
+    resetMotifFrameRequests();
+    await expect(lease).rejects.toMatchObject(superseded);
+    const late = bitmap();
+    land(late);
+    await settle();
+    expect(late.close).toHaveBeenCalledOnce();
+    expect(sharedMotifFrameCache.size()).toBe(0);
+    expect(pins()).toBe(0);
+  });
+
+  it('a `stored` reply that lands after the reset reads nothing and records nothing', async () => {
+    sharedBakedKeyIndex.restoreFrames('k', new Set());
+    const { lease } = acquire(desc());
+    await settle();
+    resetMotifFrameRequests();
+    await expect(lease).rejects.toMatchObject(superseded);
+    calls[0]!.answer({ kind: 'stored' });
+    await settle();
+    expect(read).not.toHaveBeenCalled();
+    expect(sharedBakedKeyIndex.hasFrame('k', 0)).toBe(false);
   });
 });
 
@@ -362,5 +458,23 @@ describe('export', () => {
     expect(calls).toHaveLength(1);
     expect(createImageBitmap).toHaveBeenCalledOnce();
     expect(one.bitmap).not.toBe(two.bitmap);
+  });
+
+  it.each([0, 1])('an export aborted while the clones are made gets nothing, and its bitmap is closed (subscriber %i)', async aborted => {
+    let clone!: (bitmap: ImageBitmap) => void;
+    vi.mocked(createImageBitmap).mockReturnValueOnce(new Promise(resolve => { clone = resolve; }));
+    const requests = [exported(desc()), exported(desc())];
+    await settle();
+    const original = bitmap(), copy = bitmap();
+    calls[0]!.answer({ kind: 'pixels', bitmap: original, persisted: false });
+    await settle();
+    requests[aborted]!.controller.abort();
+    clone(copy);
+    await expect(requests[aborted]!.lease).rejects.toMatchObject(superseded);
+    const kept = await requests[1 - aborted]!.lease;
+    // The first subscriber gets the original, the rest a clone each.
+    expect(kept.bitmap).toBe(aborted === 0 ? copy : original);
+    expect((aborted === 0 ? original : copy).close).toHaveBeenCalledOnce();
+    kept.release();
   });
 });

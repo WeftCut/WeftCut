@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { captureMotif, readMotifTexture, type MotifCaptureRequest } from './frameTransport';
+import { MotifError } from '../../../shared/motifs/errors';
 
 // The preload's end of the frame port: answers each request from `replies`.
 type Reply = Record<string, unknown>;
@@ -29,20 +30,16 @@ const controls = () => requests.filter(r => r.control).map(r => r.control);
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 
 describe('captureMotif', () => {
-  it('asks main to check its store at the address, keep the frame for export, and skip the check after a miss', async () => {
-    replies = [{ bitmap: { width: 2 }, persisted: false }, { bitmap: { width: 2 }, persisted: true }, { bitmap: { width: 2 } }, { bitmap: { width: 2 } }];
+  it('sends the request as given, each with its own request id', async () => {
+    replies = [{ bitmap: { width: 2 }, persisted: false }, { bitmap: { width: 2 }, persisted: true }, { bitmap: { width: 2 } }];
     await expect(capture().reply).resolves.toEqual({ kind: 'pixels', bitmap: { width: 2 }, persisted: false });
     await capture({ store: 'keep', finalizationToken: 'fin' }).reply;
     await capture({ store: 'keep', afterMiss: true, priority: 'ahead' }).reply;
-    await unaddressed().reply;
     const sent = requests.map(r => r.capture as Record<string, unknown>);
-    expect(sent[0]).toMatchObject({ ...args, cache, high: true });
-    expect(sent[0]).not.toHaveProperty('bake');
-    expect(sent[1]).toMatchObject({ cache, bake: cache, finalizationToken: 'fin', high: true });
-    expect(sent[2]).toMatchObject({ bake: cache, high: false });
-    expect(sent[2]).not.toHaveProperty('cache');
-    expect(sent[3]).not.toHaveProperty('cache');
-    expect(new Set(sent.map(r => r.coalesceKey)).size).toBe(4);
+    expect(sent[0]).toEqual({ ...args, priority: 'current', address: cache, requestId: expect.any(Number) });
+    expect(sent[1]).toMatchObject({ address: cache, store: 'keep', finalizationToken: 'fin', priority: 'current' });
+    expect(sent[2]).toMatchObject({ address: cache, store: 'keep', afterMiss: true, priority: 'ahead' });
+    expect(new Set(sent.map(r => r.requestId)).size).toBe(3);
   });
 
   it('answers `stored` without pixels; an unaddressed capture must carry pixels', async () => {
@@ -51,19 +48,39 @@ describe('captureMotif', () => {
     await expect(unaddressed().reply).rejects.toThrow('Motif capture returned no frame');
   });
 
-  it('promotes to current once, never demotes, and controls only an unanswered capture', async () => {
+  it('sends each priority change, down as well as up, and controls only an open capture', async () => {
     replies = [{ bitmap: { width: 2 } }];
     const call = capture({ priority: 'background' });
-    call.setPriority('ahead');
     call.setPriority('current');
+    call.setPriority('current');
+    call.setPriority('ahead');
+    call.cancel();
     call.setPriority('current');
     call.cancel();
     await call.reply;
-    const key = (requests[0]!.capture as Record<string, unknown>).coalesceKey;
-    expect(controls()).toEqual([{ key, action: 'promote' }, { key, action: 'cancel' }]);
+    const requestId = (requests[0]!.capture as Record<string, unknown>).requestId;
+    expect(controls()).toEqual([
+      { requestId, action: 'priority', priority: 'current' },
+      { requestId, action: 'priority', priority: 'ahead' },
+      { requestId, action: 'cancel' },
+    ]);
+  });
+
+  it('sends no control after the reply', async () => {
+    replies = [{ bitmap: { width: 2 } }];
+    const call = capture();
+    await call.reply;
+    call.setPriority('background');
     call.cancel();
     await settle();
-    expect(controls()).toHaveLength(2);
+    expect(controls()).toEqual([]);
+  });
+
+  it('a capture main withdrew rejects `superseded`', async () => {
+    replies = [{ superseded: true }];
+    const error = await capture().reply.catch((error: unknown) => error);
+    expect(error).toBeInstanceOf(MotifError);
+    expect(error).toMatchObject({ code: 'superseded' });
   });
 
   it('a coded capture failure arrives with its code; an uncoded one stays plain', async () => {

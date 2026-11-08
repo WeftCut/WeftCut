@@ -64,10 +64,9 @@ export class MotifBakeWorkspace {
         }
         this.markWriting(content.hash, 1);
         try {
-          await this.deps.capture.persist({ ...content.capture, tSec: frame * content.capture.fpsDen / content.capture.fpsNum,
-            coalesceKey: `background:${session.generation}:${content.hash}:${frame}`, high: false,
-            bake: { hash: content.hash, frame },
-          }, isCurrent, session.store);
+          await this.deps.capture.persist({ hash: content.hash, frame },
+            { ...content.capture, tSec: frame * content.capture.fpsDen / content.capture.fpsNum },
+            { priority: 'background', isCurrent }, session.store);
         } finally {
           if (this.current === session) this.markWriting(content.hash, -1);
         }

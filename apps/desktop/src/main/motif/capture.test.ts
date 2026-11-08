@@ -179,7 +179,7 @@ vi.mock('electron', () => {
   return { BrowserWindow: FakeBrowserWindow, nativeImage: { createFromBuffer: () => { throw new Error('not in these tests') } }, shell: { openExternal: async () => {} } }
 })
 
-const { captureMotifFrameB64, captureMotifFrame, setTextureCaptureEnabled, setFrameMarkerReader, setTexturePngReader, setRuntimeSource, setMotifStore, shutdownCaptureHost, controlMotifCapture, captureDiagnostics, resetCaptureFailure } = await import('./capture')
+const { captureMotifFrameB64, captureMotifFrame, setTextureCaptureEnabled, setFrameMarkerReader, setTexturePngReader, setRuntimeSource, setMotifStore, shutdownCaptureHost, captureDiagnostics, resetCaptureFailure } = await import('./capture')
 setFrameMarkerReader(readMarker)
 type UserMotifStoreT = import('./store').UserMotifStore
 
@@ -214,13 +214,16 @@ const args = {
   height: 16,
   contentHash: 'v1',
 }
+const bg = { priority: 'background' } as const
+/// A capture whose frame resolves to its kind, with its ticket.
+const kind = (a: typeof args, priority: 'current' | 'ahead' | 'background') => captureMotifFrame(a, async frame => frame.kind, { priority })
 
 describe('capture host shutdown', () => {
   // Ordered on purpose: the shutdown latch is permanent, so every live-capture
   // test must run before the refusal test at the bottom.
   it('opens an offscreen host for a live capture', async () => {
     setRuntimeSource('/* clock-takeover runtime */')
-    await expect(captureMotifFrameB64(args)).resolves.toBe('UE5H')
+    await expect(captureMotifFrameB64(args, bg)).resolves.toBe('UE5H')
     expect(opened).toBe(1)
   })
 
@@ -230,24 +233,24 @@ describe('capture host shutdown', () => {
     try {
       setupDelayMs = 6000
       const rendersBefore = renderCalls
-      const slow = captureMotifFrameB64({ ...args, motifId: 'slow-setup' })
+      const slow = captureMotifFrameB64({ ...args, motifId: 'slow-setup' }, bg)
       await vi.advanceTimersByTimeAsync(5001)
       expect(renderCalls).toBe(rendersBefore)
       await vi.advanceTimersByTimeAsync(1000)
       await expect(slow).resolves.toBe('UE5H')
       setupDelayMs = 0
       hangSetup = true
-      const timeout = expect(captureMotifFrameB64({ ...args, motifId: 'hung-setup' })).rejects.toMatchObject({ code: 'timeout', message: expect.stringMatching(/30000ms.*setup/) })
+      const timeout = expect(captureMotifFrameB64({ ...args, motifId: 'hung-setup' }, bg)).rejects.toMatchObject({ code: 'timeout', message: expect.stringMatching(/30000ms.*setup/) })
       await vi.advanceTimersByTimeAsync(30_001)
       await timeout
       hangSetup = false
       hangFrame = true
-      const frameTimeout = expect(captureMotifFrameB64({ ...args, motifId: 'hung-frame' })).rejects.toMatchObject({ code: 'timeout', message: expect.stringMatching(/5000ms/) })
+      const frameTimeout = expect(captureMotifFrameB64({ ...args, motifId: 'hung-frame' }, bg)).rejects.toMatchObject({ code: 'timeout', message: expect.stringMatching(/5000ms/) })
       await vi.advanceTimersByTimeAsync(5001)
       await frameTimeout
       hangFrame = false
       const beforeRecovery = opened
-      const recovered = captureMotifFrameB64({ ...args, motifId: 'recovered' })
+      const recovered = captureMotifFrameB64({ ...args, motifId: 'recovered' }, bg)
       await vi.advanceTimersByTimeAsync(1)
       await expect(recovered).resolves.toBe('UE5H')
       expect(opened).toBe(beforeRecovery + 1)
@@ -257,40 +260,40 @@ describe('capture host shutdown', () => {
     }
   })
 
-  it('supersedes a queued same-key request without executing it', async () => {
-    // Occupy the chain with a slow keyless capture; queue two same-key
-    // requests behind it. The newer must replace the older IMMEDIATELY, and
-    // the older's chain slot must do no render work when reached.
+  it('cancels a queued capture without rendering it', async () => {
     slowRenders = 1
     const before = renderCalls
-    const p0 = captureMotifFrameB64(args)
-    const pA = captureMotifFrameB64(args, 'sprite:layer-1')
-    const pB = captureMotifFrameB64(args, 'sprite:layer-1')
-    await expect(pA).rejects.toMatchObject({ code: 'superseded' })
-    await expect(p0).resolves.toBe('UE5H')
-    await expect(pB).resolves.toBe('UE5H')
-    expect(renderCalls - before).toBe(2) // p0 + pB only — pA never executed
-  })
-
-  it('a keyed request that reaches the chain head runs (no self-supersede)', async () => {
-    const before = renderCalls
-    await expect(captureMotifFrameB64(args, 'sprite:layer-2')).resolves.toBe('UE5H')
+    const running = captureMotifFrameB64(args, bg)
+    const queued = kind(args, 'current')
+    queued.ticket.cancel()
+    await expect(queued.result).rejects.toMatchObject({ code: 'superseded' })
+    await running
     expect(renderCalls - before).toBe(1)
   })
 
+  it('a capture cancelled once it runs still answers', async () => {
+    slowRenders = 1
+    const before = renderCalls
+    const running = kind(args, 'current')
+    await vi.waitFor(() => expect(renderCalls - before).toBe(1))
+    running.ticket.cancel()
+    running.ticket.setPriority('background')
+    await expect(running.result).resolves.toBe('bitmap')
+  })
+
   it('meta.fps is the passed fpsNum/fpsDen', async () => {
-    await expect(captureMotifFrameB64({ ...args, fpsNum: 30000, fpsDen: 1001 })).resolves.toBe('UE5H')
+    await expect(captureMotifFrameB64({ ...args, fpsNum: 30000, fpsDen: 1001 }, bg)).resolves.toBe('UE5H')
     expect(lastRenderMeta().fps).toBeCloseTo(30000 / 1001)
-    await expect(captureMotifFrameB64({ ...args, fpsNum: 60, fpsDen: 1 })).resolves.toBe('UE5H')
+    await expect(captureMotifFrameB64({ ...args, fpsNum: 60, fpsDen: 1 }, bg)).resolves.toBe('UE5H')
     expect(lastRenderMeta().fps).toBe(60)
   })
 
   it('meta.fps falls back to 30 when fps is absent or invalid', async () => {
-    await expect(captureMotifFrameB64(args)).resolves.toBe('UE5H')
+    await expect(captureMotifFrameB64(args, bg)).resolves.toBe('UE5H')
     expect(lastRenderMeta().fps).toBe(30)
-    await expect(captureMotifFrameB64({ ...args, fpsNum: 60, fpsDen: 0 })).resolves.toBe('UE5H')
+    await expect(captureMotifFrameB64({ ...args, fpsNum: 60, fpsDen: 0 }, bg)).resolves.toBe('UE5H')
     expect(lastRenderMeta().fps).toBe(30)
-    await expect(captureMotifFrameB64({ ...args, fpsNum: -24, fpsDen: 1 })).resolves.toBe('UE5H')
+    await expect(captureMotifFrameB64({ ...args, fpsNum: -24, fpsDen: 1 }, bg)).resolves.toBe('UE5H')
     expect(lastRenderMeta().fps).toBe(30)
   })
 
@@ -300,10 +303,10 @@ describe('capture host shutdown', () => {
     // next capture rebuild and succeed — not hang the serial queue forever.
     hangReadyProbe = true
     const wedged = { ...args, motifId: 'wedged-motif' }
-    await expect(captureMotifFrameB64(wedged)).rejects.toThrow(/timed out/)
+    await expect(captureMotifFrameB64(wedged, bg)).rejects.toThrow(/timed out/)
     const openedAfterWedge = opened
     hangReadyProbe = false
-    await expect(captureMotifFrameB64(wedged)).resolves.toBe('UE5H')
+    await expect(captureMotifFrameB64(wedged, bg)).resolves.toBe('UE5H')
     expect(opened).toBe(openedAfterWedge + 1)
   }, 20_000)
 
@@ -313,12 +316,12 @@ describe('capture host shutdown', () => {
     // then gets a window of its own, as every document does.
     throwingLanes.add('broken-motif@v1')
     const openedBefore = opened
-    await expect(captureMotifFrameB64({ ...args, motifId: 'broken-motif', contentHash: 'v1' }))
+    await expect(captureMotifFrameB64({ ...args, motifId: 'broken-motif', contentHash: 'v1' }, bg))
       .rejects.toMatchObject({ code: 'content', message: expect.stringMatching(/__motifRender threw/) })
     expect(opened).toBe(openedBefore + 1)
     expect(lastWindow!.destroyed).toBe(false)
     const broken = lastWindow!
-    await expect(captureMotifFrameB64({ ...args, motifId: 'healthy-motif' })).resolves.toBe('UE5H')
+    await expect(captureMotifFrameB64({ ...args, motifId: 'healthy-motif' }, bg)).resolves.toBe('UE5H')
     expect(opened).toBe(openedBefore + 2)
     expect(broken.destroyed).toBe(true)
   })
@@ -329,12 +332,12 @@ describe('capture host shutdown', () => {
       try {
         hungCommand = method
         const request = { ...args, motifId: `emulation-${opened}`, width: 64 }
-        const failure = expect(captureMotifFrameB64(request)).rejects.toThrow(/timed out/)
+        const failure = expect(captureMotifFrameB64(request, bg)).rejects.toThrow(/timed out/)
         await vi.advanceTimersByTimeAsync(5001)
         await failure
         const before = opened
         hungCommand = null
-        await expect(captureMotifFrameB64(request)).resolves.toBe('UE5H')
+        await expect(captureMotifFrameB64(request, bg)).resolves.toBe('UE5H')
         expect(opened).toBe(before + 1)
         expect(vi.getTimerCount()).toBe(0)
       } finally {
@@ -349,28 +352,25 @@ describe('capture host shutdown', () => {
     // reaching the page (no __motifRender evaluation) — the per-sprite retry
     // storm against known-bad content is cut off at enqueue time.
     const renderBefore = renderCalls
-    await expect(captureMotifFrameB64({ ...args, motifId: 'broken-motif', contentHash: 'v1' }))
+    await expect(captureMotifFrameB64({ ...args, motifId: 'broken-motif', contentHash: 'v1' }, bg))
       .rejects.toThrow(/__motifRender threw/)
     expect(renderCalls).toBe(renderBefore)
     // A draft edit changes the contentHash → new lane → automatic recovery.
-    await expect(captureMotifFrameB64({ ...args, motifId: 'broken-motif', contentHash: 'v2' }))
+    await expect(captureMotifFrameB64({ ...args, motifId: 'broken-motif', contentHash: 'v2' }, bg))
       .resolves.toBe('UE5H')
   })
 
-  it('a queued keyed capture overtakes queued keyless work', async () => {
-    // Occupy the host with a slow keyless capture; queue a second keyless one
-    // behind it, then a keyed one. The keyed ticket (HIGH — the frame the user
-    // is looking at NOW) must run before the queued keyless ticket (LOW),
-    // while the RUNNING capture is never preempted.
+  it('serves queued captures current, then ahead, then background, never preempting a running one', async () => {
     slowRenders = 1
     const orderBefore = renderOrder.length
-    const p0 = captureMotifFrameB64({ ...args, motifId: 'low-first' })
-    const p1 = captureMotifFrameB64({ ...args, motifId: 'low-second' })
-    const p2 = captureMotifFrameB64({ ...args, motifId: 'high-sprite' }, 'sprite:prio')
-    await expect(p0).resolves.toBe('UE5H')
-    await expect(p1).resolves.toBe('UE5H')
-    await expect(p2).resolves.toBe('UE5H')
-    expect(renderOrder.slice(orderBefore)).toEqual(['low-first', 'high-sprite', 'low-second'])
+    const running = captureMotifFrameB64({ ...args, motifId: 'order-running' }, bg)
+    const queued = [
+      captureMotifFrameB64({ ...args, motifId: 'order-background' }, bg),
+      captureMotifFrameB64({ ...args, motifId: 'order-ahead' }, { priority: 'ahead' }),
+      captureMotifFrameB64({ ...args, motifId: 'order-current' }, { priority: 'current' }),
+    ]
+    await Promise.all([running, ...queued])
+    expect(renderOrder.slice(orderBefore)).toEqual(['order-running', 'order-current', 'order-ahead', 'order-background'])
   })
 
   it('reads the manifest once per (motifId, contentHash), not per frame', async () => {
@@ -389,7 +389,7 @@ describe('capture host shutdown', () => {
       },
     } as unknown as UserMotifStoreT)
     const at = (contentHash: string, tSec: number) =>
-      captureMotifFrameB64({ ...args, motifId: 'cached-motif', contentHash, tSec })
+      captureMotifFrameB64({ ...args, motifId: 'cached-motif', contentHash, tSec }, bg)
     await expect(at('h1', 0)).resolves.toBe('UE5H')
     await expect(at('h1', 0.5)).resolves.toBe('UE5H')
     expect(reads).toBe(1)
@@ -400,32 +400,23 @@ describe('capture host shutdown', () => {
     expect(reads).toBe(4)
   })
 
-  it('promotes a shared background capture when a preview joins it', async () => {
+  it('moves a queued capture up or down when its priority changes', async () => {
     slowRenders = 1
     renderOrder.length = 0
-    const running = captureMotifFrameB64({ ...args, motifId: 'running' })
-    const background = captureMotifFrameB64({ ...args, motifId: 'background' }, 'job-bg', false)
-    const joined = captureMotifFrameB64({ ...args, motifId: 'joined' }, 'job-joined', false)
-    controlMotifCapture('job-joined', 'promote')
-    await Promise.all([running, background, joined])
-    expect(renderOrder).toEqual(['running', 'joined', 'background'])
-  })
-
-  it('cancels an abandoned broker ticket without capturing it', async () => {
-    slowRenders = 1
-    const before = renderCalls
-    const running = captureMotifFrameB64(args)
-    const abandoned = captureMotifFrameB64(args, 'abandoned', false)
-    controlMotifCapture('abandoned', 'cancel')
-    await expect(abandoned).rejects.toMatchObject({ code: 'superseded' })
-    await running
-    expect(renderCalls - before).toBe(1)
+    const running = captureMotifFrameB64({ ...args, motifId: 'running' }, bg)
+    const promoted = kind({ ...args, motifId: 'promoted' }, 'background')
+    const demoted = kind({ ...args, motifId: 'demoted' }, 'current')
+    const ahead = kind({ ...args, motifId: 'ahead' }, 'ahead')
+    promoted.ticket.setPriority('current')
+    demoted.ticket.setPriority('background')
+    await Promise.all([running, promoted.result, demoted.result, ahead.result])
+    expect(renderOrder).toEqual(['running', 'promoted', 'ahead', 'demoted'])
   })
 
   it('sizes the host window to the capture plus its marker row', async () => {
     setRuntimeSource('/* clock-takeover runtime */')
     const read = (motifId: string, tSec: number, width = 32, height = 16) =>
-      captureMotifFrameB64({ ...args, motifId, tSec, width, height })
+      captureMotifFrameB64({ ...args, motifId, tSec, width, height }, bg)
     try {
       // New document at the host's current size, then a new size on the same
       // page, then another document at that size: the window follows each.
@@ -449,7 +440,8 @@ describe('capture host shutdown', () => {
           surface: frame.kind === 'texture' ? (frame.texture as unknown as { surface: number }).surface : (frame.image.crop({ x: 0, y: 0, width: frame.width, height: frame.height }) as unknown as { surface: number }).surface,
           width: frame.width, height: frame.height,
         }),
-      )
+        bg,
+      ).result
       // A new document, the same one again, another, a new size: each new
       // surface paints its stale picture first and is skipped.
       const kind = texture ? 'texture' : 'bitmap'
@@ -469,7 +461,7 @@ describe('capture host shutdown', () => {
     setTextureCaptureEnabled(true)
     try {
       const kind = (width: number, height: number, tSec: number) => captureMotifFrame(
-        { ...args, motifId: 'over-the-limit', tSec, width, height }, async frame => frame.kind)
+        { ...args, motifId: 'over-the-limit', tSec, width, height }, async frame => frame.kind, bg).result
       // 8192 × (4096 + the marker row) × 4 bytes is just over 128 MiB.
       const before = opened
       expect(await kind(8192, 4096, 1)).toBe('bitmap')
@@ -494,7 +486,7 @@ describe('capture host shutdown', () => {
     })
     try {
       const releasedBefore = released
-      const png = PNG.sync.read(Buffer.from(await captureMotifFrameB64({ ...args, motifId: 'png-on-texture' }), 'base64'))
+      const png = PNG.sync.read(Buffer.from(await captureMotifFrameB64({ ...args, motifId: 'png-on-texture' }, bg), 'base64'))
       expect([png.width, png.height]).toEqual([32, 16])
       expect(reads).toEqual([16])
       expect(contentSize).toEqual({ width: 32, height: 17 })
@@ -507,11 +499,11 @@ describe('capture host shutdown', () => {
 
   it('renders the next frame of a page while earlier frames are still on their way to a paint', async () => {
     setRuntimeSource('/* clock-takeover runtime */')
-    await captureMotifFrameB64({ ...args, motifId: 'pipelined' })
+    await captureMotifFrameB64({ ...args, motifId: 'pipelined' }, bg)
     paintDelayMs = 50
     events.length = 0
     try {
-      const frames = [1, 2, 3, 4].map(tSec => captureMotifFrameB64({ ...args, motifId: 'pipelined', tSec }))
+      const frames = [1, 2, 3, 4].map(tSec => captureMotifFrameB64({ ...args, motifId: 'pipelined', tSec }, bg))
       await expect(Promise.all(frames)).resolves.toEqual(['UE5H', 'UE5H', 'UE5H', 'UE5H'])
       const renders = events.filter(e => e.startsWith('render:'))
       // Three frames render before the first paint; the fourth waits for room.
@@ -519,8 +511,8 @@ describe('capture host shutdown', () => {
       expect(events.indexOf(renders[3]!)).toBeGreaterThan(events.findIndex(e => e.startsWith('paint:')))
       // Another page waits until every paint of this one has arrived.
       events.length = 0
-      const first = captureMotifFrameB64({ ...args, motifId: 'pipelined', tSec: 5 })
-      const other = captureMotifFrameB64({ ...args, motifId: 'pipelined-next' })
+      const first = captureMotifFrameB64({ ...args, motifId: 'pipelined', tSec: 5 }, bg)
+      const other = captureMotifFrameB64({ ...args, motifId: 'pipelined-next' }, bg)
       await Promise.all([first, other])
       expect(events.slice(0, 3)).toEqual([expect.stringMatching(/^render:/), expect.stringMatching(/^paint:/), 'load:pipelined-next'])
     } finally { paintDelayMs = 0 }
@@ -528,12 +520,12 @@ describe('capture host shutdown', () => {
 
   it('a consumer\'s failure leaves the host and the other frames in flight alone', async () => {
     setRuntimeSource('/* clock-takeover runtime */')
-    await captureMotifFrameB64({ ...args, motifId: 'consumer-fails' })
+    await captureMotifFrameB64({ ...args, motifId: 'consumer-fails' }, bg)
     const before = opened
     paintDelayMs = 20
     try {
       const frames = [1, 2, 3].map(tSec => captureMotifFrame({ ...args, motifId: 'consumer-fails', tSec },
-        async () => { if (tSec === 1) throw new Error('consumer gone'); return tSec }))
+        async () => { if (tSec === 1) throw new Error('consumer gone'); return tSec }, bg).result)
       const settled = await Promise.allSettled(frames)
       expect(settled.map(s => s.status)).toEqual(['rejected', 'fulfilled', 'fulfilled'])
       expect(opened).toBe(before)
@@ -542,7 +534,7 @@ describe('capture host shutdown', () => {
 
   it('renders a frame the compositor skipped again', async () => {
     setRuntimeSource('/* clock-takeover runtime */')
-    await captureMotifFrameB64({ ...args, motifId: 'skipping' })
+    await captureMotifFrameB64({ ...args, motifId: 'skipping' }, bg)
     captureDiagnostics(true)
     paintDelayMs = 20
     try {
@@ -556,18 +548,41 @@ describe('capture host shutdown', () => {
         }, 0)
       })
       events.length = 0
-      const a = captureMotifFrameB64({ ...args, motifId: 'skipping', tSec: 1 })
+      const a = captureMotifFrameB64({ ...args, motifId: 'skipping', tSec: 1 }, bg)
       skippedPaints.add(await firstRender)
-      const b = captureMotifFrameB64({ ...args, motifId: 'skipping', tSec: 2 })
+      const b = captureMotifFrameB64({ ...args, motifId: 'skipping', tSec: 2 }, bg)
       await expect(Promise.all([a, b])).resolves.toEqual(['UE5H', 'UE5H'])
       expect(renderCalls - rendersBefore).toBe(3)
       expect(captureDiagnostics()).toMatchObject({ completed: 2, failed: 0, skippedFrames: 1 })
     } finally { paintDelayMs = 0; skippedPaints.clear() }
   })
 
+  it('does not render a skipped frame again once its capture is cancelled', async () => {
+    setRuntimeSource('/* clock-takeover runtime */')
+    await captureMotifFrameB64({ ...args, motifId: 'skip-cancel' }, bg)
+    paintDelayMs = 20
+    try {
+      const rendersBefore = renderCalls
+      const firstRender = new Promise<number>(resolve => {
+        const check = setInterval(() => {
+          const r = events.findLast(e => e.startsWith('render:'))
+          if (r && renderCalls > rendersBefore) { clearInterval(check); resolve(Number(r.slice(7))) }
+        }, 0)
+      })
+      events.length = 0
+      const a = kind({ ...args, motifId: 'skip-cancel', tSec: 1 }, 'current')
+      skippedPaints.add(await firstRender)
+      a.ticket.cancel()
+      const b = captureMotifFrameB64({ ...args, motifId: 'skip-cancel', tSec: 2 }, bg)
+      await expect(a.result).rejects.toMatchObject({ code: 'superseded' })
+      await expect(b).resolves.toBe('UE5H')
+      expect(renderCalls - rendersBefore).toBe(2)
+    } finally { paintDelayMs = 0; skippedPaints.clear() }
+  })
+
   it('lets the shell\'s frame load only the Motif it was built for', async () => {
     setRuntimeSource('/* clock-takeover runtime */')
-    await captureMotifFrameB64({ ...args, motifId: 'framed', contentHash: 'v7' })
+    await captureMotifFrameB64({ ...args, motifId: 'framed', contentHash: 'v7' }, bg)
     const navigate = (url: string, isMainFrame = false) => {
       const event = { url, isMainFrame, preventDefault: vi.fn() }
       lastHost!.emit('will-frame-navigate', event)
@@ -585,7 +600,7 @@ describe('capture host shutdown', () => {
     try {
       const timeoutOnce = async (motifId: string) => {
         hangFrame = true
-        const hung = expect(captureMotifFrameB64({ ...args, motifId })).rejects.toThrow(/5000ms/)
+        const hung = expect(captureMotifFrameB64({ ...args, motifId }, bg)).rejects.toThrow(/5000ms/)
         await vi.advanceTimersByTimeAsync(5001)
         await hung
         hangFrame = false
@@ -593,25 +608,25 @@ describe('capture host shutdown', () => {
       // One timeout: the host is rebuilt and the same lane renders again.
       await timeoutOnce('probation')
       const rebuilt = opened
-      const retry = captureMotifFrameB64({ ...args, motifId: 'probation' })
+      const retry = captureMotifFrameB64({ ...args, motifId: 'probation' }, bg)
       await vi.advanceTimersByTimeAsync(1)
       await expect(retry).resolves.toBe('UE5H')
       expect(opened).toBe(rebuilt + 1)
       // Success cleared the probation: the next timeout is a first strike again.
       await timeoutOnce('probation')
-      const again = captureMotifFrameB64({ ...args, motifId: 'probation' })
+      const again = captureMotifFrameB64({ ...args, motifId: 'probation' }, bg)
       await vi.advanceTimersByTimeAsync(1)
       await expect(again).resolves.toBe('UE5H')
       // Two consecutive timeouts: the lane is latched and never reaches the page.
       await timeoutOnce('verdict')
       await timeoutOnce('verdict')
       const renders = renderCalls, hostsBefore = opened
-      await expect(captureMotifFrameB64({ ...args, motifId: 'verdict' })).rejects.toMatchObject({ code: 'content', message: '[motif:content] motif capture timed out after 5000ms: Runtime.evaluate' })
+      await expect(captureMotifFrameB64({ ...args, motifId: 'verdict' }, bg)).rejects.toMatchObject({ code: 'content', message: '[motif:content] motif capture timed out after 5000ms: Runtime.evaluate' })
       expect(renderCalls).toBe(renders)
       expect(opened).toBe(hostsBefore)
       // An explicit retry lifts the verdict like any other content latch.
       resetCaptureFailure('verdict', args.contentHash)
-      const lifted = captureMotifFrameB64({ ...args, motifId: 'verdict' })
+      const lifted = captureMotifFrameB64({ ...args, motifId: 'verdict' }, bg)
       await vi.advanceTimersByTimeAsync(1)
       await expect(lifted).resolves.toBe('UE5H')
     } finally {
@@ -620,23 +635,13 @@ describe('capture host shutdown', () => {
     }
   })
 
-  it('respects explicit foreground priority without a coalescing key', async () => {
-    slowRenders = 1
-    const before = renderOrder.length
-    const running = captureMotifFrameB64({ ...args, motifId: 'keyless-running' })
-    const background = captureMotifFrameB64({ ...args, motifId: 'keyless-background' }, undefined, false)
-    const foreground = captureMotifFrameB64({ ...args, motifId: 'keyless-foreground' }, undefined, true)
-    await Promise.all([running, background, foreground])
-    expect(renderOrder.slice(before)).toEqual(['keyless-running', 'keyless-foreground', 'keyless-background'])
-  })
-
   it('checks session currency after waiting in the capture queue, before page IO', async () => {
     slowRenders = 1
     const before = renderCalls
-    const running = captureMotifFrameB64({ ...args, motifId: 'session-running' })
+    const running = captureMotifFrameB64({ ...args, motifId: 'session-running' }, bg)
     let current = true
-    const queued = captureMotifFrameB64({ ...args, motifId: 'stale-session' }, undefined, false, () => current)
-    const rejected = expect(queued).rejects.toThrow('superseded')
+    const queued = captureMotifFrame({ ...args, motifId: 'stale-session' }, async frame => frame.kind, { priority: 'background', isCurrent: () => current })
+    const rejected = expect(queued.result).rejects.toThrow('superseded')
     current = false
     await running
     await rejected
@@ -646,9 +651,9 @@ describe('capture host shutdown', () => {
 
   it('reports page reuse independently of total captures and allows diagnostics reset', async () => {
     captureDiagnostics(true)
-    await captureMotifFrameB64({ ...args, motifId: 'diagnostics', tSec: 0 })
-    await captureMotifFrameB64({ ...args, motifId: 'diagnostics', tSec: 1 })
-    await captureMotifFrameB64({ ...args, motifId: 'diagnostics-next', tSec: 0 })
+    await captureMotifFrameB64({ ...args, motifId: 'diagnostics', tSec: 0 }, bg)
+    await captureMotifFrameB64({ ...args, motifId: 'diagnostics', tSec: 1 }, bg)
+    await captureMotifFrameB64({ ...args, motifId: 'diagnostics-next', tSec: 0 }, bg)
     const stats = captureDiagnostics()
     expect(stats).toMatchObject({ captures: 3, completed: 3, failed: 0, pageLoads: 2, bitmapCaptures: 3, textureCaptures: 0 })
     expect(stats.captureMs).toBeGreaterThanOrEqual(0)
@@ -661,14 +666,31 @@ describe('capture host shutdown', () => {
     throwingLanes.add('other-failure@v1')
     const retryArgs = { ...args, motifId: 'retry-content' }
     const otherArgs = { ...args, motifId: 'other-failure' }
-    await expect(captureMotifFrameB64(retryArgs)).rejects.toThrow('__motifRender threw')
-    await expect(captureMotifFrameB64(otherArgs)).rejects.toThrow('__motifRender threw')
+    await expect(captureMotifFrameB64(retryArgs, bg)).rejects.toThrow('__motifRender threw')
+    await expect(captureMotifFrameB64(otherArgs, bg)).rejects.toThrow('__motifRender threw')
     throwingLanes.delete('retry-content@v1')
     throwingLanes.delete('other-failure@v1')
-    await expect(captureMotifFrameB64(retryArgs)).rejects.toThrow('__motifRender threw')
+    await expect(captureMotifFrameB64(retryArgs, bg)).rejects.toThrow('__motifRender threw')
     resetCaptureFailure(retryArgs.motifId, retryArgs.contentHash)
-    await expect(captureMotifFrameB64(retryArgs)).resolves.toBe('UE5H')
-    await expect(captureMotifFrameB64(otherArgs)).rejects.toThrow('__motifRender threw')
+    await expect(captureMotifFrameB64(retryArgs, bg)).resolves.toBe('UE5H')
+    await expect(captureMotifFrameB64(otherArgs, bg)).rejects.toThrow('__motifRender threw')
+  })
+
+  it('a priority change keeps the time a capture has waited for aging', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] })
+    try {
+      const before = renderOrder.length
+      setupDelayMs = 2500
+      const running = captureMotifFrameB64({ ...args, motifId: 'keep-age-running' }, bg)
+      await vi.advanceTimersByTimeAsync(1)
+      setupDelayMs = 0
+      const demoted = kind({ ...args, motifId: 'keep-age-demoted' }, 'current')
+      const high = captureMotifFrameB64({ ...args, motifId: 'keep-age-high' }, { priority: 'current' })
+      demoted.ticket.setPriority('background')
+      await vi.advanceTimersByTimeAsync(2501)
+      await Promise.all([running, demoted.result, high])
+      expect(renderOrder.slice(before)).toEqual(['keep-age-running', 'keep-age-demoted', 'keep-age-high'])
+    } finally { setupDelayMs = 0; vi.useRealTimers() }
   })
 
   it('ages waiting background frames without letting an old batch monopolize foreground', async () => {
@@ -676,13 +698,14 @@ describe('capture host shutdown', () => {
     try {
       const before = renderOrder.length
       setupDelayMs = 2500
-      const running = captureMotifFrameB64({ ...args, motifId: 'age-running' })
+      const running = captureMotifFrameB64({ ...args, motifId: 'age-running' }, bg)
       await vi.advanceTimersByTimeAsync(1)
       setupDelayMs = 0
-      const lowA = captureMotifFrameB64({ ...args, motifId: 'age-low-a' }, 'age-low-a', false)
-      const lowB = captureMotifFrameB64({ ...args, motifId: 'age-low-b' }, 'age-low-b', false)
-      const highA = captureMotifFrameB64({ ...args, motifId: 'age-high-a' }, 'age-high-a', true)
-      const highB = captureMotifFrameB64({ ...args, motifId: 'age-high-b' }, 'age-high-b', true)
+      const lowA = captureMotifFrameB64({ ...args, motifId: 'age-low-a' }, bg)
+      const lowB = captureMotifFrameB64({ ...args, motifId: 'age-low-b' }, bg)
+      // Background ages past `ahead` as well as `current`.
+      const highA = captureMotifFrameB64({ ...args, motifId: 'age-high-a' }, { priority: 'current' })
+      const highB = captureMotifFrameB64({ ...args, motifId: 'age-high-b' }, { priority: 'ahead' })
       await vi.advanceTimersByTimeAsync(2501)
       await Promise.all([running, lowA, lowB, highA, highB])
       expect(renderOrder.slice(before)).toEqual(['age-running', 'age-low-a', 'age-high-a', 'age-low-b', 'age-high-b'])
@@ -692,7 +715,7 @@ describe('capture host shutdown', () => {
   it('refuses a capture queued past shutdown instead of reopening the host', async () => {
     const openedBefore = opened
     shutdownCaptureHost()
-    await expect(captureMotifFrameB64(args)).rejects.toThrow(/shut down/)
+    await expect(captureMotifFrameB64(args, bg)).rejects.toThrow(/shut down/)
     expect(opened).toBe(openedBefore)
   })
 })

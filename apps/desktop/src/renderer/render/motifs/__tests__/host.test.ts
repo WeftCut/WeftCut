@@ -24,7 +24,6 @@ describe("captureMotifFramePngBlob", () => {
       width: 480,
       height: 480,
       contentHash: "",
-      coalesceKey: null,
       fpsNum: null,
       fpsDen: null,
     });
@@ -34,7 +33,7 @@ describe("captureMotifFramePngBlob", () => {
 
   it("threads the composition fps through when given", async () => {
     invokeMock.mockResolvedValue(new Uint8Array([1, 2, 3]));
-    await captureMotifFramePngBlob("countdown", 2.5, { seconds: 5 }, 480, 480, "hash", undefined, 30000, 1001);
+    await captureMotifFramePngBlob("countdown", 2.5, { seconds: 5 }, 480, 480, "hash", 30000, 1001);
     expect(invokeMock).toHaveBeenCalledWith("motif_capture_frame", expect.objectContaining({
       fpsNum: 30000,
       fpsDen: 1001,
