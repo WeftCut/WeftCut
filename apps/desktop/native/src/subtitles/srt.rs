@@ -1,11 +1,17 @@
 use super::{Cue, CueStyle};
 
-/// Parse an SRT body into cues. Blocks are separated by blank lines; each
-/// block is `index / "HH:MM:SS,mmm --> HH:MM:SS,mmm" / text…`. Malformed
-/// blocks are skipped. Line breaks inside a cue are preserved as '\n'.
+/// Parse an SRT body into cues. Blocks are separated by blank lines, a line of
+/// only whitespace included; each block is
+/// `index / "HH:MM:SS,mmm --> HH:MM:SS,mmm" / text…`. Malformed blocks are
+/// skipped. Line breaks inside a cue are preserved as '\n'.
 pub fn parse(body: &str) -> Vec<Cue> {
     let mut cues = Vec::new();
     let normalized = body.replace("\r\n", "\n").replace('\r', "\n");
+    let normalized = normalized
+        .split('\n')
+        .map(|l| if l.trim().is_empty() { "" } else { l })
+        .collect::<Vec<_>>()
+        .join("\n");
     for block in normalized.split("\n\n") {
         let mut lines = block.lines().filter(|l| !l.trim().is_empty());
         // Optional numeric index line; skip if present.
@@ -77,6 +83,17 @@ mod tests {
         assert_eq!(cues[0].start_us, 1_000_000);
         assert_eq!(cues[0].end_us, 2_500_000);
         assert_eq!(cues[0].text, "Hello\nworld");
+        assert_eq!(cues[1].start_us, 3_000_000);
+        assert_eq!(cues[1].text, "Bye");
+    }
+
+    #[test]
+    fn a_whitespace_only_line_separates_cues() {
+        let body =
+            "1\n00:00:01,000 --> 00:00:02,000\nHello\n \t\n2\n00:00:03,000 --> 00:00:04,000\nBye\n";
+        let cues = parse(body);
+        assert_eq!(cues.len(), 2);
+        assert_eq!(cues[0].text, "Hello");
         assert_eq!(cues[1].start_us, 3_000_000);
         assert_eq!(cues[1].text, "Bye");
     }
