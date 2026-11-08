@@ -3,7 +3,7 @@
 // every client over either transport, its etiquette identical to the head of
 // the shipped skill so the two cannot drift, closed by the version a skill copy
 // must match, and small enough that a session pays for it without noticing.
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -12,8 +12,6 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { MCP_INSTRUCTION_LINES, mcpInstructions } from './instructions'
 import { buildMcpServer } from './server'
 import { createShim } from '../../cli/shim'
-
-vi.mock('../motif/capture.js', () => ({ captureMotifFrameB64: async () => 'iVBOR' }))
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../..')
 const RUST_CATALOG = readFileSync('fixtures/mcp/rust-catalog-snapshot.json', 'utf8')

@@ -23,7 +23,9 @@ import {
   ErrorCode,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js'
-import { captureMotifFrameB64 } from '../motif/capture.js'
+import type { CaptureArgs } from '../motif/capture.js'
+import { MotifError } from '../../shared/motifs/errors.js'
+import type { MotifFramePriority } from '../../shared/motifs/frameTransport.js'
 import { APP_SCOPE_RESOURCES, HYBRID_TOOLS, routeMcpTool, servesWithoutProject } from './mutationTools.js'
 import { canonicalizeProps, MotifPropError, type Manifest } from '../../shared/motifs/catalog.js'
 import { mediaPropProblem } from '../../shared/motifs/mediaProp.js'
@@ -146,6 +148,12 @@ const NO_VLM: VlmProvider = () => ({
  *  takes. */
 export type PeaksPathProvider = (subjectLayerId: string) => string | null
 const NO_PEAKS_PATH: PeaksPathProvider = () => null
+
+/** One Motif frame as a base64 PNG (`MotifCapturer.capturePng`). The host
+ *  supplies it once the capturer exists; until then, and in a build without
+ *  one, a preview is refused as `closed`. */
+export type MotifPngCapture = (args: CaptureArgs, options: { priority: MotifFramePriority }) => Promise<string>
+const NO_MOTIF_CAPTURE: MotifPngCapture = () => Promise.reject(new MotifError('closed', 'Motif capture is not available yet'))
 
 /** The arguments `preview_motif` takes: its advertised schema's, no alias. */
 const PREVIEW_MOTIF_ARGS: ReadonlySet<string> = new Set(Object.keys((MOTIF_TOOL_DEFS.find((d) => d.name === 'preview_motif')!.inputSchema as { properties: Record<string, unknown> }).properties))
@@ -399,6 +407,7 @@ export async function handleCallTool(
   peaksPathFor: PeaksPathProvider = NO_PEAKS_PATH,
   client?: string,
   compute?: ComputeCaller,
+  captureMotifPng: MotifPngCapture = NO_MOTIF_CAPTURE,
 ): Promise<ServerResult> {
   const route = routeMcpTool(name)
   // Nothing the user can see is open: every project tool refuses before it
@@ -413,7 +422,7 @@ export async function handleCallTool(
     // LANDMINE: no `await` may precede this call — the 'ts' route commits inside
     // `dispatchTool`'s synchronous prefix, and `withLog`'s commit window closes
     // at the first await (see its window-integrity cases).
-    return await dispatchTool(backend, getTsHost, route, name, args, getSpeech, getVlm, peaksPathFor, client, compute)
+    return await dispatchTool(backend, getTsHost, route, name, args, getSpeech, getVlm, peaksPathFor, client, compute, captureMotifPng)
   } catch (e) {
     if (e instanceof ComputeCancelledError) return cancelledToolResult(e)
     if (e instanceof ExportValidationError || e instanceof ExportJobError) return toolErrorResult(exportRefusal(e))
@@ -448,6 +457,7 @@ async function dispatchTool(
   peaksPathFor: PeaksPathProvider,
   client: string | undefined,
   compute: ComputeCaller | undefined,
+  captureMotifPng: MotifPngCapture,
 ): Promise<ServerResult> {
   const tsHost = getTsHost()
   if (route === 'export') {
@@ -740,7 +750,7 @@ async function dispatchTool(
     const scale = Math.min(2, ...fits)
     const frames: Array<{ tSec: number; png: Uint8Array }> = []
     for (const tSec of a.local_t_s) {
-      const b64 = await captureMotifFrameB64({
+      const b64 = await captureMotifPng({
         motifId, tSec, propsJson: JSON.stringify(props),
         width: canvasW, height: canvasH, scale, contentHash: entry?.revision ?? '',
         ...(rootFps ? { fpsNum: rootFps.num, fpsDen: rootFps.den } : {}),
@@ -1076,6 +1086,9 @@ export interface McpServerOptions {
    *  own routing table and actor — so it is typed out rather than left as a knob
    *  that would be accepted and silently overwritten. */
   log?: Omit<McpLogDeps, 'observe'>
+  /** Renders `preview_motif`'s frames. Omitted → every preview is refused as
+   *  `closed`. */
+  captureMotifPng?: MotifPngCapture
 }
 
 export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): Server {
@@ -1083,6 +1096,7 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
   const getSpeech = opts.getSpeech ?? NO_SPEECH
   const getVlm = opts.getVlm ?? NO_VLM
   const peaksPathFor = opts.peaksPathFor ?? NO_PEAKS_PATH
+  const captureMotifPng = opts.captureMotifPng ?? NO_MOTIF_CAPTURE
   // `observe` is the session's to supply, not the caller's: it is the one log
   // seam that needs the routing table and the actor. An un-instrumented build
   // gets no window at all — nothing would read it, and the subscribe/unsubscribe
@@ -1135,7 +1149,7 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
     const compute = COMPUTE_TOOLS.has(name)
       ? mcpComputeCaller({ extra, client: client ?? 'MCP', closed: () => server.transport === undefined, onPhase: activityPhase(getTsHost) })
       : undefined
-    return handleCallTool(backend, getTsHost, name, (req.params.arguments ?? {}) as Record<string, unknown>, getSpeech, getVlm, peaksPathFor, client, compute)
+    return handleCallTool(backend, getTsHost, name, (req.params.arguments ?? {}) as Record<string, unknown>, getSpeech, getVlm, peaksPathFor, client, compute, captureMotifPng)
   }, log, clientInfo)
   server.setRequestHandler(CallToolRequestSchema, (req: CallToolRequest, extra: unknown) =>
     callTool(req, extra))

@@ -19,8 +19,6 @@ import { seededGen, uuidV7Gen } from '../ids'
 import { blankProject } from '../model'
 import { root } from './fixtures/project'
 
-vi.mock('../../motif/capture.js', () => ({ captureMotifFrameB64: async () => 'iVBOR' }))
-
 const RUST_CATALOG = readFileSync('fixtures/mcp/rust-catalog-snapshot.json', 'utf8')
 const rust = JSON.parse(RUST_CATALOG) as {
   tools: Array<{ name: string; description: string; input_schema?: unknown; inputSchema?: unknown; annotations?: Record<string, unknown> }>

@@ -22,8 +22,6 @@ import { blankProject } from '../state/model'
 import { mediaItemTemplate } from '../state/mutations/media'
 import { root } from '../state/__tests__/fixtures/project'
 
-vi.mock('../motif/capture.js', () => ({ captureMotifFrameB64: async () => { throw new Error('no renderer in a unit test') } }))
-
 const MID = '00000000-0000-0000-0000-0000000000aa'
 const NOWHERE = '00000000-0000-7000-8000-00000000dead'
 const RUST_CATALOG = readFileSync('fixtures/mcp/rust-catalog-snapshot.json', 'utf8')
@@ -176,7 +174,8 @@ describe('handleCallTool — every route answers a refusal as an isError result'
   it('the preview capture failing is a result too', async () => {
     // A catalogued id, so the refusal comes from the CAPTURE and not from the
     // unknown-id check that now precedes it.
-    const out = asErr(await handleCallTool(fakeBackend(), () => tsHostStub({ motifTool: () => ({ manifest: { id: 'x', props_schema: {}, size: [10, 10] }, revision: 'r' }) }), 'preview_motif', { motif_id: 'x', local_t_s: [0] }))
+    const out = asErr(await handleCallTool(fakeBackend(), () => tsHostStub({ motifTool: () => ({ manifest: { id: 'x', props_schema: {}, size: [10, 10] }, revision: 'r' }) }), 'preview_motif', { motif_id: 'x', local_t_s: [0] },
+      undefined, undefined, undefined, undefined, undefined, async () => { throw new Error('no renderer in a unit test') }))
     expect(out.content[0].text).toContain('no renderer')
   })
 

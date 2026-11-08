@@ -15,7 +15,6 @@ function frame(args: { width: number; height: number; scale?: number }): string 
   return Buffer.from(encodePng({ width: w, height: h, pixels: new Uint8Array(w * h * 4).fill(200) })).toString('base64')
 }
 const capture = vi.fn(async (args: { width: number; height: number; scale?: number }) => frame(args))
-vi.mock('../motif/capture.js', () => ({ captureMotifFrameB64: (args: { width: number; height: number; scale?: number }) => capture(args) }))
 
 import { handleCallTool } from './server'
 import { createActor } from '../state/actor'
@@ -48,12 +47,14 @@ function host() {
 const backend = { mcpCallTool: async () => { throw new Error('rust must not be called') }, mcpReadResource: async () => '{}', mcpCatalog: async () => RUST_CATALOG } as any
 type Res = { isError?: boolean; content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> }
 const record = (out: Res) => JSON.parse(out.content[1]!.text!)
+/** `preview_motif` through the call funnel; `capture` records each frame's arguments. */
+const preview = (args: Record<string, unknown>) => handleCallTool(backend, host, 'preview_motif', args, undefined, undefined, undefined, undefined, undefined, frameArgs => capture(frameArgs))
 const sheetOf = (out: Res) => decodePng(new Uint8Array(Buffer.from(out.content[0]!.data!, 'base64')))
 
 describe('preview_motif renders what add_layers would place', () => {
   it('omitted props take the manifest defaults; a frame is 640 wide by default; one Motif is read', async () => {
     capture.mockClear(); reads.length = 0
-    const out = await handleCallTool(backend, host, 'preview_motif', { motif_id: 'lower-third', local_t_s: [1] }) as Res
+    const out = await preview({ motif_id: 'lower-third', local_t_s: [1] }) as Res
     expect(out.isError).toBeFalsy()
     expect(out.content[0]).toMatchObject({ type: 'image', mimeType: 'image/png' })
     expect(capture).toHaveBeenCalledWith(expect.objectContaining({
@@ -68,7 +69,7 @@ describe('preview_motif renders what add_layers would place', () => {
   it('every time lands on one labelled contact sheet, in order, up to four columns (ME6)', async () => {
     capture.mockClear()
     const times = [0, 0.5, 1, 2, 3, 4.5]
-    const out = await handleCallTool(backend, host, 'preview_motif', { motif_id: 'lower-third', local_t_s: times }) as Res
+    const out = await preview({ motif_id: 'lower-third', local_t_s: times }) as Res
     expect(out.content.filter((c) => c.type === 'image')).toHaveLength(1)
     expect(capture.mock.calls.map((c) => (c[0] as unknown as { tSec: number }).tSec)).toEqual(times)
     expect(record(out).sheet).toEqual({ width: 4 * 640, height: 2 * (360 + 26), columns: 4 })
@@ -82,26 +83,26 @@ describe('preview_motif renders what add_layers would place', () => {
 
   it('a requested size scales the whole canvas to fit; it never crops', async () => {
     capture.mockClear()
-    const out = await handleCallTool(backend, host, 'preview_motif', { motif_id: 'lower-third', local_t_s: [1], width: 640, height: 640 }) as Res
+    const out = await preview({ motif_id: 'lower-third', local_t_s: [1], width: 640, height: 640 }) as Res
     expect(capture).toHaveBeenCalledWith(expect.objectContaining({ width: 1920, height: 1080, scale: 1 / 3 }))
     expect(record(out)).toMatchObject({ canvas: [1920, 1080], image: [640, 360] })
     capture.mockClear()
-    await handleCallTool(backend, host, 'preview_motif', { motif_id: 'lower-third', local_t_s: [1], width: 960 })
+    await preview({ motif_id: 'lower-third', local_t_s: [1], width: 960 })
     expect(capture).toHaveBeenCalledWith(expect.objectContaining({ width: 1920, height: 1080, scale: 0.5 }))
     capture.mockClear()
-    await handleCallTool(backend, host, 'preview_motif', { motif_id: 'lower-third', local_t_s: [1], width: 7680, height: 4320 })
+    await preview({ motif_id: 'lower-third', local_t_s: [1], width: 7680, height: 4320 })
     expect(capture).toHaveBeenCalledWith(expect.objectContaining({ width: 1920, height: 1080, scale: 2 }))
   })
 
   it('a partial props object is filled from the defaults', async () => {
     capture.mockClear()
-    await handleCallTool(backend, host, 'preview_motif', { motif_id: 'lower-third', local_t_s: [0], props: { title: 'Ada' } })
+    await preview({ motif_id: 'lower-third', local_t_s: [0], props: { title: 'Ada' } })
     expect(capture).toHaveBeenCalledWith(expect.objectContaining({ propsJson: JSON.stringify({ subtitle: 'Role', title: 'Ada' }) }))
   })
 
   it('an unknown prop is refused naming it, before any capture', async () => {
     capture.mockClear()
-    const out = await handleCallTool(backend, host, 'preview_motif', { motif_id: 'lower-third', local_t_s: [0], props: { titel: 'x' } }) as Res
+    const out = await preview({ motif_id: 'lower-third', local_t_s: [0], props: { titel: 'x' } }) as Res
     expect(out.isError).toBe(true)
     expect(out.content[0].text).toContain('titel')
     expect(out.content[0].text).toContain('props_schema')
@@ -110,7 +111,7 @@ describe('preview_motif renders what add_layers would place', () => {
 
   it('an unknown motif id is refused naming list_motifs, before any capture', async () => {
     capture.mockClear()
-    const out = await handleCallTool(backend, host, 'preview_motif', { motif_id: 'title-card', local_t_s: [0] }) as Res
+    const out = await preview({ motif_id: 'title-card', local_t_s: [0] }) as Res
     expect(out.isError).toBe(true)
     expect(out.content[0].text).toContain("'title-card'")
     expect(out.content[0].text).toContain('list_motifs')
@@ -119,7 +120,7 @@ describe('preview_motif renders what add_layers would place', () => {
 
   it('a stale expected_revision names the current one, before any capture (ME19)', async () => {
     capture.mockClear()
-    const out = await handleCallTool(backend, host, 'preview_motif', { motif_id: 'lower-third', local_t_s: [0], expected_revision: 'old' }) as Res & { structuredContent: Record<string, unknown> }
+    const out = await preview({ motif_id: 'lower-third', local_t_s: [0], expected_revision: 'old' }) as Res & { structuredContent: Record<string, unknown> }
     expect(out.isError).toBe(true)
     expect(out.structuredContent).toMatchObject({ error: 'RevisionConflict', current_revision: 'rev-1' })
     expect(capture).not.toHaveBeenCalled()
@@ -127,16 +128,16 @@ describe('preview_motif renders what add_layers would place', () => {
 
   it('a call without local_t_s, with a scalar, or with an argument it does not take, is refused before any capture', async () => {
     capture.mockClear()
-    const plural = await handleCallTool(backend, host, 'preview_motif', { motif_id: 'lower-third', times_s: [0.5, 2] }) as Res
+    const plural = await preview({ motif_id: 'lower-third', times_s: [0.5, 2] }) as Res
     expect(plural.isError).toBe(true)
     expect(plural.content[0].text).toContain('times_s')
-    const bare = await handleCallTool(backend, host, 'preview_motif', { motif_id: 'lower-third' }) as Res
+    const bare = await preview({ motif_id: 'lower-third' }) as Res
     expect(bare.isError).toBe(true)
     expect(bare.content[0].text).toContain('local_t_s')
-    const scalar = await handleCallTool(backend, host, 'preview_motif', { motif_id: 'lower-third', local_t_s: 1 }) as Res
+    const scalar = await preview({ motif_id: 'lower-third', local_t_s: 1 }) as Res
     expect(scalar.isError).toBe(true)
     expect(scalar.content[0].text).toContain('local_t_s')
-    const empty = await handleCallTool(backend, host, 'preview_motif', { motif_id: 'lower-third', local_t_s: [] }) as Res
+    const empty = await preview({ motif_id: 'lower-third', local_t_s: [] }) as Res
     expect(empty.isError).toBe(true)
     expect(capture).not.toHaveBeenCalled()
   })

@@ -2,11 +2,8 @@
 // `project://taste` and `read_project { view: "taste" }` serve the host's
 // merged taste view, the same record both ways, and both answer on the start
 // screen (the default style alone) like the session view does.
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
-
-vi.mock('../motif/capture.js', () => ({ captureMotifFrameB64: async () => '' }))
-
 import { handleCallTool, handleReadResource } from './server'
 import { createActor } from '../state/actor'
 import { uuidV7Gen } from '../state/ids'

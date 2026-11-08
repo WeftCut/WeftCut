@@ -29,7 +29,7 @@ type TextureOsrFrame = Extract<MotifOsrFrame, { kind: 'texture' }>
 type BitmapOsrFrame = Extract<MotifOsrFrame, { kind: 'bitmap' }>
 export interface CaptureServiceDeps {
   store: MotifFrameStore
-  /** `captureMotifFrame`. */
+  /** `MotifCapturer.captureFrame`. */
   frame: <T>(args: CaptureArgs, consume: (frame: MotifOsrFrame) => Promise<T>, options: CaptureOptions) => CaptureRun<T>
   copy: ((owner: WebContents, frame: TextureOsrFrame, finalizationId?: number) => Promise<MotifTextureFrame>) | null
   createEncoder: (() => TextureEncoder) | null

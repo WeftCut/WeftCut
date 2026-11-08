@@ -13,7 +13,7 @@
 // text, admission JSON. Every refusal must come back in the error model's
 // shape, and no result text may carry those words or name an event no MCP
 // client receives.
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -32,7 +32,8 @@ import { blankProject, rootComposition } from '../model'
 import { root } from './fixtures/project'
 import { MotifRefusal, revisionConflict } from '../../motif/refusal'
 
-vi.mock('../../motif/capture.js', () => ({ captureMotifFrameB64: async () => { throw new Error("Error invoking remote method 'motif:capture': Error: capture failed") } }))
+/** A capture failing with the raw IPC text the model must never see. */
+const failingCapture = async (): Promise<string> => { throw new Error("Error invoking remote method 'motif:capture': Error: capture failed") }
 
 const L1 = '00000000-0000-7000-8000-000000000001'
 const L2 = '00000000-0000-7000-8000-000000000002'
@@ -353,7 +354,7 @@ describe('mcp.error-vocabulary over the whole catalog', () => {
       const schema = tool.inputSchema as Record<string, unknown>
       for (const args of [{}, dummy(schema) as Record<string, unknown>]) {
         const host = rawHost()
-        const r = await handleCallTool(rawBackend(), () => host as never, tool.name, args) as Answer
+        const r = await handleCallTool(rawBackend(), () => host as never, tool.name, args, undefined, undefined, undefined, undefined, undefined, failingCapture) as Answer
         assertInModel(tool.name, args, r)
       }
     })

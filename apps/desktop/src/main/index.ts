@@ -34,7 +34,8 @@ import { mediaMimeForExt } from './mediaMime.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
 import { registerMotifProtocol } from './motif/protocol.js'
 import { installPerformanceCalibration } from './performanceCalibration.js'
-import { setRuntimeSource, captureMotifFrameB64, captureMotifFrame, setTextureCaptureEnabled, setMotifStore, shutdownCaptureHost, setFrameMarkerReader, setTexturePngReader, captureDiagnostics, resetCaptureFailure, setCaptureTuning } from './motif/capture.js'
+import { MotifCapturer, type TexturePngReader } from './motif/capture.js'
+import type { FrameMarkerReader } from './motif/offscreenFrames.js'
 import { configureMotifCore, resolveMotifTuning } from './motif/tuning.js'
 import { motifTuningArgument } from '../shared/motifs/tuning.js'
 import { setMotifMediaSource } from './motif/mediaProps.js'
@@ -118,7 +119,6 @@ let layoutTheme = DEFAULT_LAYOUT_THEME
 // The one read of WEFTCUT_MOTIF_TUNING (docs/motifs.md#tuning). Every Motif
 // module, renderer window and the reader utility gets its values from here.
 const motifTuning = resolveMotifTuning(process.env)
-setCaptureTuning(motifTuning)
 
 /// Forward an `evt:*` event to the renderer, guarding against a native/backend
 /// callback firing during teardown. `mainWindow?.` only catches null — a window
@@ -149,6 +149,12 @@ let computeJobs: ComputeJobs | null = null
 // it, and it does not exist until whenReady has built the actor it subscribes to.
 let audioFxBaker: AudioFxBaker | null = null
 let motifWatcher: MotifWatcher | null = null
+// Built in whenReady once the native readers exist; module-scoped for the MCP
+// host, which starts before it, and for before-quit. `motifCaptureClosed`
+// records a before-quit that ran first, so a capturer built after it is shut
+// at once.
+let motifCapturer: MotifCapturer | null = null
+let motifCaptureClosed = false
 let motifBakes: MotifBakeWorkspace | null = null
 let motifAdmissionOpen = false
 // Held at module scope so the before-quit handler can flush the debounced
@@ -774,11 +780,10 @@ app.whenReady().then(async () => {
   // each call, merged by `getSpeech` below (ADR 0036).
 
   // Construct the motif store + resolve the built-in dir once at boot.
-  // Both are passed to the protocol handler and the capture singleton so
-  // captureMotifFrameB64 and registerMotifProtocol don't need the backend.
+  // Both are passed to the protocol handler and the capturer so neither
+  // needs the backend.
   const motifStore = new UserMotifStore(dataRoot.motifsDir)
   const motifBuiltinDir = builtinAssetDir()
-  setMotifStore(motifStore)
   // `media` props resolve against the open project's pool; video frames are kept here.
   setMotifMediaSource(() => (tsHost?.actor.snapshot().media_pool ?? null) as never, path.join(dataRoot.cacheDir, 'motif-media'))
 
@@ -1235,6 +1240,9 @@ app.whenReady().then(async () => {
     // `detect_pauses` reads the same peaks file the timeline draws, so the
     // agent's bands and the person's are the same bands.
     peaksPathFor,
+    captureMotifPng: (args, options) => motifCapturer
+      ? motifCapturer.capturePng(args, options)
+      : Promise.reject(new MotifError('closed', 'Motif capture is not ready yet')),
     // Every MCP request and transport lifecycle event → a LogBus row
     // (docs/status-log.md § Producers).
     log: {
@@ -1430,18 +1438,26 @@ app.whenReady().then(async () => {
   const encoderClass = (require_('@weftcut/core') as { MotifTextureEncoder?: new () => TextureEncoder }).MotifTextureEncoder
   const markerClass = (require_('@weftcut/core') as { MotifMarkerReader?: new () => { read(handle: Buffer, pixels: number): Promise<Buffer> } }).MotifMarkerReader
   // A texture host needs both native readers; without them the host takes bitmaps.
+  let readFrameMarker: FrameMarkerReader | null = null
+  let readTexturePng: TexturePngReader | null = null
   if (process.platform === 'win32' && markerClass && encoderClass) {
     let markers: InstanceType<typeof markerClass> | null = null
     let pngs: TextureEncoder | null = null
-    setFrameMarkerReader((handle, pixels) => decodingMotifErrors(() => (markers ??= new markerClass()).read(handle, pixels)))
-    setTexturePngReader((handle, height) => decodingMotifErrors(async () => (await (pngs ??= new encoderClass()).read(handle, height)).finishPng()))
+    readFrameMarker = (handle, pixels) => decodingMotifErrors(() => (markers ??= new markerClass()).read(handle, pixels))
+    readTexturePng = (handle, height) => decodingMotifErrors(async () => (await (pngs ??= new encoderClass()).read(handle, height)).finishPng())
   }
+  // The renderer registers the clock-takeover runtime once at boot
+  // (`motif_register_runtime` below).
+  let motifRuntime: string | null = null
+  const capturer = new MotifCapturer({ tuning: motifTuning, store: motifStore, runtimeSource: () => motifRuntime, readFrameMarker, readTexturePng })
+  if (motifCaptureClosed) capturer.shutdown()
+  motifCapturer = capturer
   const motifCapture = new MotifCaptureService({
-    store: motifFrames, frame: captureMotifFrame,
+    store: motifFrames, frame: (args, consume, options) => capturer.captureFrame(args, consume, options),
     copy: motifGpu ? (owner, texture, parent) => motifGpu.copy(owner, texture, parent) : null,
     createEncoder: process.platform === 'win32' && encoderClass ? () => decodedEncoder(constructed(() => new encoderClass())) : null,
     pixels: require_('@weftcut/core') as MotifPixelCodec,
-    setTextureEnabled: setTextureCaptureEnabled,
+    setTextureEnabled: enabled => capturer.setTextureEnabled(enabled),
     writeSlots: motifTuning.writeSlots,
   }, process.env.WEFTCUT_MOTIF_CAPTURE !== 'bitmap')
   motifBakes = new MotifBakeWorkspace({
@@ -1523,7 +1539,7 @@ app.whenReady().then(async () => {
       return { manifest: source.manifest, contentHash: motifContentHash(source.manifest, source.html, motifSourceFiles(motifStore, motifBuiltins, id)) }
     },
     renderVersion: () => `${process.versions.chrome}:${coverRuntimeVersion}`,
-    capture: async args => Buffer.from(await captureMotifFrameB64(args, { priority: 'background' }), 'base64'),
+    capture: async args => Buffer.from(await capturer.capturePng(args, { priority: 'background' }), 'base64'),
     valid: png => !nativeImage.createFromBuffer(png).isEmpty(),
     thumbnail: png => {
       const image = nativeImage.createFromBuffer(png)
@@ -1598,12 +1614,12 @@ app.whenReady().then(async () => {
       // Deliberate retries reopen only the requested content revisions, not
       // other failed Motifs. Normal project/playhead updates never reset them.
       if (Array.isArray(plan?.retryKeys)) for (const content of plan.contents ?? []) {
-        if (plan.retryKeys.includes(content.cacheKey)) resetCaptureFailure(content.capture.motifId, content.capture.contentHash)
+        if (plan.retryKeys.includes(content.cacheKey)) capturer.resetFailure(content.capture.motifId, content.capture.contentHash)
       }
       return motifBakes!.reconcile(plan)
     }
     if (channel === 'motif_bake_snapshot') return motifBakes!.snapshot()
-    if (channel === 'motif_capture_diagnostics') return captureDiagnostics(args?.reset === true)
+    if (channel === 'motif_capture_diagnostics') return capturer.diagnostics(args?.reset === true)
     if (channel === 'agent_connections') return mcpHost.connectionSnapshot()
     if (channel === COMPUTE_JOBS_SNAPSHOT_CHANNEL) return computeJobs!.snapshot()
     if (channel === COMPUTE_JOB_CANCEL_CHANNEL) return computeJobs!.cancel(String((args as { job_id?: unknown })?.job_id ?? ''))
@@ -1613,7 +1629,7 @@ app.whenReady().then(async () => {
     // Motif runtime registration: renderer sends its clock-takeover source once
     // at boot; main injects it into the offscreen capture host via CDP.
     if (channel === 'motif_register_runtime') {
-      setRuntimeSource((args as { source: string }).source)
+      motifRuntime = (args as { source: string }).source
       coverRuntimeVersion = createHash('sha256').update(BITMAP_CANVAS_RUNTIME_SOURCE).update((args as { source: string }).source).digest('hex')
       return null
     }
@@ -1625,13 +1641,13 @@ app.whenReady().then(async () => {
         fpsNum: number | null; fpsDen: number | null
       }
       const { fpsNum, fpsDen, ...captureArgs } = a
-      const b64 = await captureMotifFrameB64(
+      const b64 = await capturer.capturePng(
         { ...captureArgs, fpsNum: fpsNum ?? undefined, fpsDen: fpsDen ?? undefined },
         { priority: 'background' },
       )
       // Decode ONCE at the boundary: IPC structured clone carries a Uint8Array
       // natively, so the renderer skips the 33%-larger base64 string plus its
-      // atob + byte-copy decode. captureMotifFrameB64 keeps returning base64
+      // atob + byte-copy decode. capturePng keeps returning base64
       // internally (CDP speaks base64; the MCP image content type needs it).
       const buf = Buffer.from(b64, 'base64')
       return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)
@@ -2905,7 +2921,7 @@ app.whenReady().then(async () => {
   // LANDMINE: no `activate` handler re-creating a window on zero. The quit gate
   // (windows.ts) leaves no windowless app for one to serve, and a Dock click
   // inside the before-quit flush would have it resurrect a window the quit has
-  // stopped waiting for — the hazard shutdownCaptureHost already guards.
+  // stopped waiting for — the hazard MotifCapturer.shutdown already guards.
 })
 
 // Backstop for a window opened outside createWindow/createSecondary. The real
@@ -2938,8 +2954,9 @@ app.on('before-quit', (event) => {
   // outlives the quit holds the artifact's temp file open.
   audioFxBaker?.dispose(); audioFxBaker = null
   // Before Electron starts closing windows: a capture that outlives them rebuilds
-  // the offscreen host and wedges the quit (see shutdownCaptureHost).
-  shutdownCaptureHost()
+  // the offscreen host and wedges the quit (see MotifCapturer.shutdown).
+  motifCaptureClosed = true
+  motifCapturer?.shutdown()
   // Flush the debounced Workspace-layout write synchronously — an arrangement
   // change made inside the debounce window would otherwise be dropped on quit.
   workspaceStore?.flush()

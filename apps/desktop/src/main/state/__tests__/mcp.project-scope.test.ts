@@ -17,8 +17,6 @@ import { NO_PROJECT_OPEN_MESSAGE, UnknownToolError } from '../../mcp/toolResult'
 import { createTsActorHost } from '../ts-actor-host'
 import { PROJECT_OPENED_EVENT } from '../../../shared/project-events'
 
-vi.mock('../../motif/capture.js', () => ({ captureMotifFrameB64: async () => 'iVBOR' }))
-
 const RUST_CATALOG = readFileSync('fixtures/mcp/rust-catalog-snapshot.json', 'utf8')
 const rust = JSON.parse(RUST_CATALOG) as {
   tools: Array<{ name: string; description: string; input_schema?: unknown; inputSchema?: unknown; annotations?: Record<string, unknown> }>

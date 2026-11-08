@@ -22,11 +22,6 @@ import { blankProject } from '../state/model'
 import { mediaItemTemplate } from '../state/mutations/media'
 import { root } from '../state/__tests__/fixtures/project'
 
-// preview_motif's route ends in a real CDP frame capture, which has no
-// business running in a unit test. Stubbed so the tool still crosses the funnel
-// — what the sweep asserts is the row, not the picture.
-vi.mock('../motif/capture.js', () => ({ captureMotifFrameB64: async () => 'iVBOR' }))
-
 // The Rust-catalog reads are the fourth tool route, and the native module is not
 // loadable under Vitest — their names come from the committed catalog snapshot
 // instead, read at test time so a regenerated catalog flows into this gate.
