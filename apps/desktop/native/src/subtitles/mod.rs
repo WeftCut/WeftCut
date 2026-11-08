@@ -78,6 +78,9 @@ pub fn sniff(body: &str) -> SubFormat {
 }
 
 pub fn parse(body: &str, format: SubFormat) -> ParsedSubtitles {
+    // A file read as UTF-8 text keeps its byte-order mark, and no parser
+    // expects one: an SRT without index lines would lose its first cue.
+    let body = body.strip_prefix('\u{feff}').unwrap_or(body);
     match format {
         SubFormat::Srt => ParsedSubtitles {
             cues: srt::parse(body),
@@ -108,4 +111,18 @@ pub fn parse_subtitle_cues(
         return Err("no cues parsed from subtitle body".into());
     }
     Ok((parsed.cues, parsed.simplified))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_byte_order_mark_never_costs_the_first_cue() {
+        let body = "\u{feff}00:00:01,000 --> 00:00:02,000\nHello\n";
+        let parsed = parse(body, SubFormat::Srt);
+        assert_eq!(parsed.cues.len(), 1);
+        assert_eq!(parsed.cues[0].start_us, 1_000_000);
+        assert_eq!(parsed.cues[0].text, "Hello");
+    }
 }
