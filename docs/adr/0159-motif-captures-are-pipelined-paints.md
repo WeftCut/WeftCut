@@ -39,6 +39,11 @@ after the previous one, so the renderer idled about three quarters of the time.
   keeps up to three frames of its chosen clip in the queue, so background
   preparation reaches the pipeline too, and decides the order again as each
   frame settles.
+- **The frames in flight share their host.** A frame's consumer failing (a
+  superseded display, a failed write) leaves the host and the other frames
+  alone: the host painted that frame. A host failure fails every frame in
+  flight, and the bake coordinator counts the frames of a clip that fail
+  together as one failure toward its retry limit.
 - **A host window shows one document.** A window's first top-level document
   is the only one a bitmap host paints with real alpha
   (docs/notes/electron-chromium-behavior.md), so another Motif or content

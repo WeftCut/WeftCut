@@ -529,8 +529,9 @@ async function doCapture<T>(a: CaptureArgs, output: (frame: MotifOsrFrame) => Pr
       if (!(e instanceof MotifFrameSkippedError)) teardownHost(h)
       throw e
     }
+    // The host painted this frame, so an output failure is its consumer's.
+    // Tearing the host down here would fail the other frames in flight on it.
     try { return await output(frame) }
-    catch (e) { teardownHost(h); throw e } // wedged host: rebuild on next call
     finally { if (frame.kind === 'texture') frame.texture.release() }
   })
   const settled = delivered.then(() => {}, () => {})

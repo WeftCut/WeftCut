@@ -506,6 +506,20 @@ describe('capture host shutdown', () => {
     } finally { paintDelayMs = 0 }
   })
 
+  it('a consumer\'s failure leaves the host and the other frames in flight alone', async () => {
+    setRuntimeSource('/* clock-takeover runtime */')
+    await captureMotifFrameB64({ ...args, motifId: 'consumer-fails' })
+    const before = opened
+    paintDelayMs = 20
+    try {
+      const frames = [1, 2, 3].map(tSec => captureMotifFrame({ ...args, motifId: 'consumer-fails', tSec },
+        async () => { if (tSec === 1) throw new Error('consumer gone'); return tSec }))
+      const settled = await Promise.allSettled(frames)
+      expect(settled.map(s => s.status)).toEqual(['rejected', 'fulfilled', 'fulfilled'])
+      expect(opened).toBe(before)
+    } finally { paintDelayMs = 0 }
+  })
+
   it('renders a frame the compositor skipped again', async () => {
     setRuntimeSource('/* clock-takeover runtime */')
     await captureMotifFrameB64({ ...args, motifId: 'skipping' })

@@ -66,6 +66,23 @@ describe('main-owned Motif bake demand', () => {
     h.coordinator.dispose();
   });
 
+  it('counts the frames in flight that fail together as one failure', async () => {
+    const fail: Array<() => void> = [];
+    let failing = true;
+    const h = fixture({ persist: () => failing
+      ? new Promise<void>((_, reject) => { fail.push(() => reject(new Error('Motif capture host closed'))); })
+      : Promise.resolve() });
+    await h.coordinator.reconcile(plan([content('a', 10)]));
+    for (let i = 0; i < 10; i++) await h.tick();
+    expect(fail).toHaveLength(3);
+    failing = false;
+    for (const reject of fail) reject();
+    await h.flush();
+    expect(h.coordinator.snapshot().statuses.a!.phase).toBe('retrying');
+    await h.drain();
+    expect(h.coordinator.snapshot().statuses.a).toMatchObject({ phase: 'ready', done: 10 });
+  });
+
   it('does not rotate unfinished clips on elapsed time or ordinary reconciliation', async () => {
     const h = fixture();
     await h.coordinator.reconcile(plan([content('a'), content('b')]));

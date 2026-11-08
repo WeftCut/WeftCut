@@ -253,8 +253,12 @@ export class MotifBakeCoordinator {
       state.retryAt = this.now() + 1000;
       state.status = { ...state.status, phase: 'paused', reason: isResourceCapacityError(error) ? 'capacity' : 'disk', error: message };
     } else {
+      const content = this.deps.isContentFailure?.(error) ?? false;
+      // The clip's other frames in flight fail with the same incident, such as
+      // a capture host restart: one incident is one failure.
+      if (!content && state.retryAt > this.now()) return;
       state.failures++;
-      const terminal = this.deps.isContentFailure?.(error) || state.failures >= 3;
+      const terminal = content || state.failures >= 3;
       state.retryAt = terminal ? Infinity : this.now() + 250 * 2 ** (state.failures - 1);
       state.status = { ...state.status, phase: terminal ? 'error' : 'retrying', reason: undefined, error: message };
     }

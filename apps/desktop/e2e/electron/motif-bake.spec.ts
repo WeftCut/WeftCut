@@ -43,8 +43,10 @@ test('Pre-bake now moves a clip ahead of unfinished background work @serial', as
       ;(globalThis as any).__bakeOrderGate = state
       // The preview stores the frame under the playhead too, so up to three of
       // these encodes are not the bake's. A clip finishes before the next starts.
+      // Every encode from the seventh on waits: the bake keeps several frames
+      // in flight, and holding one alone would not stop its clip.
       native.motifEncodeRgba = async (...args: any[]) => {
-        if (++state.calls === 7) { state.held = true; await gate }
+        if (++state.calls >= 7) { state.held = true; await gate }
         return original(...args)
       }
     }, addon)
@@ -354,9 +356,16 @@ test('Motif background work survives renderer reload and reuses pages across mul
       const cacheKey = await page.evaluate(layerId => (window as any).__weftcutTest.cacheKeyForLayer(layerId), layerId) as string
       layers.push({ layerId, motifId, cacheKey })
     }
-    // Clear only measurements; all actual frame artifacts begin cold in this
-    // isolated project. Automatic demand survives renderer reconstruction.
+    // Clear only measurements. Automatic demand survives renderer
+    // reconstruction. The preview may already have stored frames while the
+    // layers were added; the bake reuses those instead of capturing them.
     await invokeCmd(page, 'motif_capture_diagnostics', { reset: true })
+    const raster = path.join(await invokeCmd<string>(page, 'workspace_dir'), 'Cache', 'raster')
+    let stored = 0
+    for (const layer of layers) {
+      const dir = path.join(raster, hashCacheKey(layer.cacheKey))
+      stored += (await fs.readdir(dir).catch(() => [] as string[])).filter(name => name.endsWith('.wfrm')).length
+    }
     await invokeCmd(page, 'app_settings_set', { patch: { prebake_motifs: true } })
     const readSnapshot = () => invokeCmd<MotifBakeSnapshot>(page, 'motif_bake_snapshot')
     await expect.poll(async () => {
@@ -377,8 +386,8 @@ test('Motif background work survives renderer reload and reuses pages across mul
     const selected = stats.lanes.filter(lane => layers.some(layer => layer.motifId === lane.motifId))
     const captures = selected.reduce((n, lane) => n + lane.captures, 0)
     const pageLoads = selected.reduce((n, lane) => n + lane.pageLoads, 0)
-    // Each layer's preview may have stored the frame under the playhead already.
-    expect(captures).toBeGreaterThanOrEqual(240 - layers.length)
+    // A frame stored just before the reset may still have been on its way to disk.
+    expect(captures).toBeGreaterThanOrEqual(240 - stored - layers.length)
     // A frame-round-robin implementation reloads almost every capture. A
     // bounded content slice must retain meaningful affinity on any hardware.
     expect(pageLoads).toBeLessThan(captures * .75)
