@@ -161,9 +161,22 @@ describe('Motif capture and persistence', () => {
     expect(await h.service.capture(owner, args)).toMatchObject({ kind: 'texture' });
   });
 
-  it('a held readback mutex costs the frame its receipt, not the GPU path', async () => {
-    const h = fixture(); h.encoder.read.mockRejectedValueOnce(new MotifError('transient', 'OSR mutex still held'));
+  it.each(['transient', 'oversize', 'closed'] as const)('a %s readback costs a display its receipt, not the GPU path', async code => {
+    const h = fixture(); h.encoder.read.mockRejectedValueOnce(new MotifError(code, 'synthetic readback'));
     expect(await h.service.capture(owner, args)).toMatchObject({ kind: 'texture', persisted: false });
+    expect(h.deps.setTextureEnabled).toHaveBeenCalledExactlyOnceWith(true);
+    expect(h.encoder.close).not.toHaveBeenCalled();
+  });
+
+  it.each(['transient', 'oversize', 'closed'] as const)('a %s readback fails that bake frame only; the next reads its texture', async code => {
+    const h = fixture();
+    const failure = new MotifError(code, 'synthetic readback');
+    h.encoder.read.mockRejectedValueOnce(failure);
+    await expect(h.service.persist(args)).rejects.toBe(failure);
+    expect(h.deps.frame).toHaveBeenCalledOnce();
+    await h.service.persist({ ...args, tSec: 1, bake: { ...args.bake, frame: 1 } });
+    expect(h.encoder.read).toHaveBeenCalledTimes(2);
+    expect(h.writer.encoded).toHaveBeenCalledExactlyOnceWith(Buffer.from('wfrm'));
     expect(h.deps.setTextureEnabled).toHaveBeenCalledExactlyOnceWith(true);
     expect(h.encoder.close).not.toHaveBeenCalled();
   });

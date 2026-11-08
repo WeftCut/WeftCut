@@ -5,6 +5,7 @@ import { notifyResourceCacheWrite } from '../resources'
 import { isMotifFrameAddress, motifFrameStem } from './frameAddress'
 import { MotifError, motifErrorCode } from '../../shared/motifs/errors.js'
 import { isMotifReaderDiv, type MotifReaderDiv } from '../../shared/motifs/readerProtocol.js'
+import { fitsMotifFrame } from '../../shared/motifs/limits.js'
 import type { MotifReadUnavailable, MotifTextureFrame, MotifTextureReadResult } from '../../shared/motifs/frameTransport.js'
 
 async function replaceFile(temp: string, destination: string): Promise<void> {
@@ -24,16 +25,22 @@ export interface FrameCodec {
   motifEncodePng(png: Buffer): Promise<Buffer>
 }
 
-/** Uploads `file` scaled by `div` into a `width × height` texture. Rejects
- * with a `miss` when the file itself cannot be read. */
-export type MotifTextureUpload = (file: string, width: number, height: number, div: MotifReaderDiv) => Promise<MotifTextureFrame | MotifReadUnavailable>
+/** The texture lane as one document finds it when its read arrives. */
+export interface MotifTextureLane {
+  /** `MotifGpuTransport.generation` of the document. */
+  generation: number
+  /** False while the lane is off for the document: the read answers `lane`
+   * without opening the file. */
+  available: boolean
+  /** Uploads `file` scaled by `div` into a `width × height` texture. Rejects
+   * with a `miss` when the file itself cannot be read. */
+  upload(file: string, width: number, height: number, div: MotifReaderDiv): Promise<MotifTextureFrame | MotifReadUnavailable>
+}
 
 /** The native frame layout (`motif_frame.rs`): magic, width, height, then the
  * checksummed zstd payload. */
 const HEADER_MAGIC = 'WCMFRM03'
 const HEADER_BYTES = 16
-/** The native core's dimension bounds (`motif_frame.rs`). */
-const MAX_DIMENSION = 8192
 
 /** Stored width and height from the `.wfrm` header. An absent, short or
  * foreign file is a `miss`; a file another process holds open (a writer
@@ -52,8 +59,7 @@ async function readHeaderSize(file: string): Promise<{ width: number; height: nu
   }
   if (bytesRead < HEADER_BYTES || header.toString('ascii', 0, 8) !== HEADER_MAGIC) throw new MotifError('miss', 'not a Motif frame')
   const width = header.readUInt32LE(8), height = header.readUInt32LE(12)
-  const valid = (n: number): boolean => n > 0 && n <= MAX_DIMENSION
-  if (!valid(width) || !valid(height)) throw new MotifError('miss', `invalid Motif frame size ${width}x${height}`)
+  if (!fitsMotifFrame(width, height)) throw new MotifError('miss', `invalid Motif frame size ${width}x${height}`)
   return { width, height }
 }
 
@@ -86,23 +92,25 @@ export class MotifFrameStore {
   }
 
   /** The Windows texture lane (ADR 0154). The header names the stored size;
-   * `gpu` uploads the frame scaled by `div` into a pool of the rounded-up size.
-   * A `miss` leaves coverage and returns null. A `transient` header read, like
-   * `unavailable` (no texture, GPU budget, a failed pool or import), keeps the
-   * frame and sends the read to the utility lane. */
-  async readTexture(hash: string, frame: number, div: MotifReaderDiv, gpu: MotifTextureUpload): Promise<MotifTextureReadResult> {
+   * `lane` uploads the frame scaled by `div` into a pool of the rounded-up
+   * size. A `miss` leaves coverage and returns null. A `transient` header
+   * read, like `unavailable`, keeps the frame and sends the read to the
+   * utility lane. */
+  async readTexture(hash: string, frame: number, div: MotifReaderDiv, lane: MotifTextureLane): Promise<MotifTextureReadResult> {
     if (!isMotifReaderDiv(div)) throw new Error('Invalid Motif read divisor')
+    const { generation } = lane
+    if (!lane.available) return { kind: 'unavailable', reason: 'lane', generation }
     const stem = await this.stem(hash, frame)
     if (!stem) return null
     const file = `${stem}.wfrm`
     let size: { width: number; height: number }
     try { size = await readHeaderSize(file) } catch (error) {
-      if (motifErrorCode(error) === 'transient') return { kind: 'unavailable' }
+      if (motifErrorCode(error) === 'transient') return { kind: 'unavailable', reason: 'read', generation }
       this.changed(hash, frame, false)
       return null
     }
     try {
-      return await gpu(file, Math.ceil(size.width / div), Math.ceil(size.height / div), div)
+      return await lane.upload(file, Math.ceil(size.width / div), Math.ceil(size.height / div), div)
     } catch (error) {
       // Lifecycle errors (closed consumer, superseded export) are not misses.
       if (motifErrorCode(error) !== 'miss') throw error

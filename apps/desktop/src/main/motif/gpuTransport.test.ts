@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { MotifGpuTransport } from './gpuTransport'
-import { MotifFrameStore } from './frameStore'
+import { MotifFrameStore, type MotifTextureLane } from './frameStore'
 import { MotifError } from '../../shared/motifs/errors'
 import { MIB, hydratePerformanceSettings, performanceSettings } from '../../shared/performance-settings'
 import { createGpuBufferBudget } from '../gpuBufferBudget'
@@ -42,7 +42,7 @@ describe('Motif GPU leases', () => {
     vi.spyOn(buffers, 'reserve').mockImplementation(() => { throw denied; });
     const read = transport.read(owner, 'blocked', 1920, 1080, 1, 42);
     await vi.advanceTimersByTimeAsync(300);
-    expect(await read).toEqual({ kind: 'unavailable' });
+    expect(await read).toEqual({ kind: 'unavailable', reason: 'read', generation: 0 });
     const rejected = expect(transport.copy(owner, { kind: 'texture', width: 1920, height: 1080, texture: { textureInfo: {
       codedSize: { width: 1920, height: 1081 }, pixelFormat: 'bgra', handle: { ntHandle: Buffer.alloc(8) },
     } } } as unknown as Parameters<typeof transport.copy>[1], 43)).rejects.toMatchObject({ code: 'capacity', cause: denied });
@@ -141,13 +141,13 @@ describe('Motif GPU leases', () => {
     transport.release(owner, frame.token)
     transport.close(owner)
     hydratePerformanceSettings({ gpu_buffer_mib: 256, motif_gpu_mib: 16 })
-    expect(await transport.read(owner, 'legacy', 4096, 2048, 1)).toEqual({ kind: 'unavailable' })
+    expect(await transport.read(owner, 'legacy', 4096, 2048, 1)).toEqual({ kind: 'unavailable', reason: 'read', generation: 1 })
   })
   it('shares the byte limit with video and retries after video releases capacity', async () => {
     hydratePerformanceSettings({ gpu_buffer_mib: 64 })
     const { owner, buffers, transport, create } = fixture()
     const video = buffers.reserve('preview', 60 * MIB)!
-    expect(await transport.read(owner, 'blocked', 2048, 1024, 1)).toEqual({ kind: 'unavailable' })
+    expect(await transport.read(owner, 'blocked', 2048, 1024, 1)).toEqual({ kind: 'unavailable', reason: 'read', generation: 0 })
     expect(create).not.toHaveBeenCalled()
     buffers.release(video)
     const frame = await texture(transport.read(owner, 'allowed', 2048, 1024, 1))
@@ -175,7 +175,7 @@ describe('Motif GPU leases', () => {
     const { owner, pools, transport } = fixture(2)
     const first = await texture(transport.read(owner, 'first', 4096, 2048, 1))
     hydratePerformanceSettings({ motif_gpu_mib: 16 })
-    expect(await transport.read(owner, 'too-large', 2048, 4096, 1)).toEqual({ kind: 'unavailable' })
+    expect(await transport.read(owner, 'too-large', 2048, 4096, 1)).toEqual({ kind: 'unavailable', reason: 'read', generation: 0 })
     expect(pools[0]!.close).not.toHaveBeenCalled()
     transport.release(owner, first.token)
     hydratePerformanceSettings({ motif_gpu_mib: 64, motif_gpu_sessions: 1 })
@@ -265,7 +265,7 @@ describe('Motif GPU leases', () => {
       vi.mocked(owner.send).mockClear()
       throw new Error('Texture transfer failed')
     })
-    expect(await transport.read(owner, 'a', 128, 128, 1)).toEqual({ kind: 'unavailable' })
+    expect(await transport.read(owner, 'a', 128, 128, 1)).toEqual({ kind: 'unavailable', reason: 'lane', generation: 0 })
     expect(owner.send).not.toHaveBeenCalled()
     expect(pools[0]!.close).toHaveBeenCalledOnce()
     transport.close(owner)
@@ -305,10 +305,10 @@ describe('Motif GPU leases', () => {
       const settled = vi.fn()
       void transport.read(owner, 'blocked', 256, 128, 1).then(settled, error => settled(error.message))
       await vi.advanceTimersByTimeAsync(1000)
-      expect(settled).toHaveBeenCalledWith({ kind: 'unavailable' })
+      expect(settled).toHaveBeenCalledWith({ kind: 'unavailable', reason: 'read', generation: 0 })
       // Later frames must take the utility lane immediately, rather than each
       // waiting through the same unavailable allocation.
-      expect(await transport.read(owner, 'next', 256, 128, 1)).toEqual({ kind: 'unavailable' })
+      expect(await transport.read(owner, 'next', 256, 128, 1)).toEqual({ kind: 'unavailable', reason: 'read', generation: 0 })
       expect(pools).toHaveLength(8)
       for (const pool of pools) expect(pool.close).not.toHaveBeenCalled()
       released.shift()!()
@@ -482,9 +482,9 @@ describe('Motif GPU leases', () => {
 
   it.each([
     ['rejects a file failure for the caller\'s miss', new MotifError('miss', 'BLAKE3 mismatch'), 'reject'],
-    ['answers a device failure as unavailable', new MotifError('device', 'Motif GPU upload timed out'), 'unavailable'],
-    ['answers a held mutex as unavailable', new MotifError('transient', 'Motif GPU mutex still held'), 'unavailable'],
-    ['answers an uncoded failure as unavailable', new Error('unexpected'), 'unavailable'],
+    ['answers a device failure for this read', new MotifError('device', 'Motif GPU upload timed out'), 'unavailable'],
+    ['answers a held mutex for this read', new MotifError('transient', 'Motif GPU mutex still held'), 'unavailable'],
+    ['answers an uncoded failure for this read', new Error('unexpected'), 'unavailable'],
   ] as const)('rolls back a failed upload, %s, and allows the next request to proceed', async (_, error, outcome) => {
     const { owner, pools, transport } = fixture()
     const a = await texture(transport.read(owner, 'a', 128, 128, 1))
@@ -492,7 +492,7 @@ describe('Motif GPU leases', () => {
     pools[0]!.uploadFile.mockRejectedValueOnce(error)
     const read = transport.read(owner, 'b', 128, 128, 1)
     if (outcome === 'reject') await expect(read).rejects.toBe(error)
-    else expect(await read).toEqual({ kind: 'unavailable' })
+    else expect(await read).toEqual({ kind: 'unavailable', reason: 'read', generation: 0 })
     expect(pools[0]!.close).toHaveBeenCalledOnce()
     const c = await texture(transport.read(owner, 'c', 128, 128, 1))
     transport.release(owner, c.token)
@@ -517,15 +517,60 @@ describe('Motif GPU leases', () => {
     transport.close(owner)
   })
 
-  it('answers an owner whose shared textures failed as unavailable until it closes', async () => {
+  it('turns the lane off for an owner whose pool device failed, until it closes', async () => {
     const { owner, create, transport } = fixture()
-    create.mockImplementationOnce(() => { throw new Error('D3D11 device lost') })
-    expect(await transport.read(owner, 'a', 128, 128, 1)).toEqual({ kind: 'unavailable' })
-    expect(await transport.read(owner, 'b', 128, 128, 1)).toEqual({ kind: 'unavailable' })
+    create.mockImplementationOnce(() => { throw new MotifError('device', 'D3D11 device lost') })
+    const lane = { kind: 'unavailable', reason: 'lane', generation: 0 }
+    expect(await transport.read(owner, 'a', 128, 128, 1)).toEqual(lane)
+    expect(transport.available(owner)).toBe(false)
+    // Later reads are answered without a pool, an upload or a file.
+    expect(await transport.read(owner, 'b', 128, 128, 1)).toEqual(lane)
     expect(create).toHaveBeenCalledOnce()
+    await expect(transport.copy(owner, { kind: 'texture', width: 128, height: 128, texture: { textureInfo: {
+      codedSize: { width: 128, height: 129 }, pixelFormat: 'rgba', handle: { ntHandle: Buffer.alloc(8) },
+    } } } as unknown as Parameters<typeof transport.copy>[1])).rejects.toMatchObject({ code: 'device' })
     transport.close(owner)
+    expect(owner.send).toHaveBeenCalledWith('motif:texture-lane-reset', 1)
+    expect(transport.available(owner)).toBe(true)
     const fresh = await texture(transport.read(owner, 'c', 128, 128, 1))
     transport.release(owner, fresh.token)
+    vi.mocked(owner.send).mockClear()
+    transport.close(owner)
+    expect(owner.send).not.toHaveBeenCalledWith('motif:texture-lane-reset', expect.anything())
+  })
+
+  it('turns the lane off when an import fails', async () => {
+    const { owner, transport } = fixture()
+    vi.mocked(sharedTexture.importSharedTexture).mockImplementationOnce(() => { throw new Error('import refused') })
+    expect(await transport.read(owner, 'a', 128, 128, 1)).toEqual({ kind: 'unavailable', reason: 'lane', generation: 0 })
+    expect(transport.available(owner)).toBe(false)
+    transport.close(owner)
+  })
+
+  it('a native oversize pool answers that read alone and keeps the lane', async () => {
+    const { owner, create, transport } = fixture()
+    create.mockImplementationOnce(() => { throw new MotifError('oversize', 'Motif GPU pool exceeds budget') })
+    expect(await transport.read(owner, 'a', 128, 128, 1)).toEqual({ kind: 'unavailable', reason: 'read', generation: 0 })
+    expect(transport.available(owner)).toBe(true)
+    const next = await texture(transport.read(owner, 'b', 128, 128, 1))
+    expect(create).toHaveBeenCalledTimes(2)
+    transport.release(owner, next.token)
+    transport.close(owner)
+  })
+
+  it('a frame over the texture limit takes the utility lane for that read alone, before any pool', async () => {
+    hydratePerformanceSettings({ gpu_buffer_mib: 8192 }, null, true)
+    const { owner, create, transport } = fixture()
+    // An upload pool counts its staging texture: 4096 × 4097 × 4 × 2 is just over 128 MiB.
+    expect(await transport.read(owner, 'big', 4096, 4097, 1)).toEqual({ kind: 'unavailable', reason: 'read', generation: 0 })
+    await expect(transport.copy(owner, { kind: 'texture', width: 8192, height: 4097, texture: { textureInfo: {
+      codedSize: { width: 8192, height: 4098 }, pixelFormat: 'bgra', handle: { ntHandle: Buffer.alloc(8) },
+    } } } as unknown as Parameters<typeof transport.copy>[1])).rejects.toMatchObject({ code: 'oversize' })
+    expect(create).not.toHaveBeenCalled()
+    expect(transport.available(owner)).toBe(true)
+    const fits = await texture(transport.read(owner, 'fits', 4096, 4096, 1))
+    expect(create).toHaveBeenCalledExactlyOnceWith(4096, 4096, false, true)
+    transport.release(owner, fits.token)
     transport.close(owner)
   })
 
@@ -540,19 +585,22 @@ describe('Motif GPU leases', () => {
       bytes.write('WCMFRM03'); bytes.writeUInt32LE(3841, 8); bytes.writeUInt32LE(2161, 12)
       await (await store.prepareWrite(hash, 0))!.encoded(bytes)
       changed.mockClear()
-      const gpu = (file: string, width: number, height: number, div: 1 | 2 | 4) => transport.read(owner, file, width, height, div)
-      const frame = await store.readTexture(hash, 0, 4, gpu)
+      const gpu = (): MotifTextureLane => ({
+        generation: transport.generation(owner), available: transport.available(owner),
+        upload: (file, width, height, div) => transport.read(owner, file, width, height, div),
+      })
+      const frame = await store.readTexture(hash, 0, 4, gpu())
       expect(frame).toMatchObject({ kind: 'texture' })
       transport.release(owner, (frame as MotifTextureFrame).token)
       expect(create).toHaveBeenLastCalledWith(961, 541, false, true)
       expect(pools[0]!.uploadFile).toHaveBeenLastCalledWith(path.join(root, 'Cache', 'raster', hash, '0.wfrm'), 0, 4)
       pools[0]!.uploadFile.mockRejectedValueOnce(new Error('D3D11 map failed'))
-      expect(await store.readTexture(hash, 0, 4, gpu)).toEqual({ kind: 'unavailable' })
+      expect(await store.readTexture(hash, 0, 4, gpu())).toEqual({ kind: 'unavailable', reason: 'read', generation: 0 })
       expect(changed).not.toHaveBeenCalled()
       // The failed lane was retired; the next read opens another pool.
-      transport.release(owner, ((await store.readTexture(hash, 0, 4, gpu)) as MotifTextureFrame).token)
+      transport.release(owner, ((await store.readTexture(hash, 0, 4, gpu())) as MotifTextureFrame).token)
       pools[1]!.uploadFile.mockRejectedValueOnce(new MotifError('miss', 'BLAKE3 mismatch'))
-      expect(await store.readTexture(hash, 0, 4, gpu)).toBeNull()
+      expect(await store.readTexture(hash, 0, 4, gpu())).toBeNull()
       expect(changed.mock.calls).toEqual([[hash, 0, false]])
       transport.close(owner)
     } finally { await fs.rm(root, { recursive: true, force: true }) }

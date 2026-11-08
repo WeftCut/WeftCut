@@ -116,6 +116,11 @@ describe("validateManifest", () => {
     expect(() => validateManifest({ ...base(), size: [99999, 100] })).toThrow();
   });
   it("rejects negative size", () => { expect(() => validateManifest({ ...base(), size: [-1, 100] })).toThrow(); });
+  it("takes sizes up to the frame limit in whole pixels", () => {
+    expect(() => validateManifest({ ...base(), size: [8192, 8192] })).not.toThrow();
+    expect(() => validateManifest({ ...base(), size: [8193, 100] })).toThrow(/within \[1,8192\]/);
+    expect(() => validateManifest({ ...base(), size: [100.5, 100] })).toThrow(/whole pixels/);
+  });
   it("rejects bad durations", () => {
     expect(() => validateManifest({ ...base(), default_duration_s: 0 })).toThrow();
     expect(() => validateManifest({ ...base(), content_duration_s: -1 })).toThrow();

@@ -19,9 +19,16 @@ export type StoredMotifFrame = (
 /** `motif:read` (ADR 0154): the Windows texture lane at a Playback Resolution
  * divisor. Export and finalization reads use 1. */
 export interface MotifTextureReadRequest { hash: string; frame: number; div: MotifReaderDiv; finalizationToken?: string }
-/** The texture lane cannot serve this read (no shared textures, GPU budget,
- * a failed pool or import). Not a miss: the frame stays in coverage. */
-export type MotifReadUnavailable = { kind: 'unavailable' }
+/** The texture lane does not serve this read; the reader takes the utility
+ * lane. Not a miss: the frame stays in coverage.
+ * - `lane`: the lane is off for this document (no shared textures, a failed
+ *   GPU device, import or send) until main sends `MOTIF_TEXTURE_LANE_RESET`
+ *   with a newer `generation`.
+ * - `read`: this read alone (a frame over the texture limit or the GPU
+ *   budget, a held file or mutex, a failed upload).
+ * `generation` is the document's lane generation in main, which every
+ * `MotifGpuTransport.close` of the document advances. */
+export type MotifReadUnavailable = { kind: 'unavailable'; reason: 'lane' | 'read'; generation: number }
 /** null is a miss: the frame is absent or invalid and has left coverage. */
 export type MotifTextureReadResult = MotifTextureFrame | MotifReadUnavailable | null
 

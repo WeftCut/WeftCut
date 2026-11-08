@@ -2,6 +2,7 @@
 //! independent: seeks never decode preceding frames. A read checks the frame
 //! through zstd's content checksum and may downscale it (ADR 0154).
 use crate::motif_error::{coded, to_napi, MotifCode};
+use crate::motif_limits::{MAX_DIMENSION, MAX_FRAME_BYTES};
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 
@@ -16,15 +17,14 @@ const HEADER: usize = 16;
 /// thread count change alone.
 const BANDS: u32 = 8;
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
-const MAX_BYTES: usize = 256 * 1024 * 1024;
 
 fn byte_len(w: u32, h: u32) -> anyhow::Result<usize> {
     anyhow::ensure!(
-        w > 0 && h > 0 && w <= 8192 && h <= 8192,
+        w > 0 && h > 0 && w <= MAX_DIMENSION && h <= MAX_DIMENSION,
         "invalid motif dimensions"
     );
     let n = w as usize * h as usize * 4;
-    anyhow::ensure!(n <= MAX_BYTES, "motif frame exceeds budget");
+    anyhow::ensure!(n <= MAX_FRAME_BYTES as usize, "motif frame exceeds budget");
     Ok(n)
 }
 
@@ -478,7 +478,10 @@ pub(crate) fn read_into(
 
 fn read_file(path: &str) -> anyhow::Result<Vec<u8>> {
     // Each band adds a length field and its own zstd frame header and checksum.
-    let limit = HEADER + 4 + zstd::zstd_safe::compress_bound(MAX_BYTES) + BANDS as usize * 64;
+    let limit = HEADER
+        + 4
+        + zstd::zstd_safe::compress_bound(MAX_FRAME_BYTES as usize)
+        + BANDS as usize * 64;
     let file = std::fs::File::open(path)?;
     anyhow::ensure!(
         file.metadata()?.len() <= limit as u64,
@@ -526,9 +529,9 @@ pub async fn motif_encode_png(png: Buffer) -> napi::Result<Buffer> {
         let mut reader =
             image::ImageReader::with_format(std::io::Cursor::new(png), image::ImageFormat::Png);
         let mut limits = image::Limits::default();
-        limits.max_image_width = Some(8192);
-        limits.max_image_height = Some(8192);
-        limits.max_alloc = Some(MAX_BYTES as u64);
+        limits.max_image_width = Some(MAX_DIMENSION);
+        limits.max_image_height = Some(MAX_DIMENSION);
+        limits.max_alloc = Some(u64::from(MAX_FRAME_BYTES));
         reader.limits(limits);
         let img = reader.decode()?.into_rgba8();
         encode(img.width(), img.height(), &img).map(Buffer::from)
@@ -895,6 +898,14 @@ mod tests {
         let mut corrupt = bytes;
         corrupt[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
         assert!(decode(&corrupt).is_err());
+    }
+
+    #[test]
+    fn a_frame_may_be_8192_square_and_no_larger() {
+        assert_eq!(byte_len(8192, 8192).unwrap(), MAX_FRAME_BYTES as usize);
+        assert!(byte_len(8193, 1).is_err());
+        assert!(byte_len(1, 8193).is_err());
+        assert!(byte_len(0, 1).is_err());
     }
 
     #[test]

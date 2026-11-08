@@ -4,6 +4,7 @@ import { MotifFrameStore, type FrameCodec } from './frameStore';
 import type { MotifCaptureService } from './captureService';
 import { hashCacheKey } from '../../shared/motifs/cacheKey';
 import { MotifError, motifSuperseded } from '../../shared/motifs/errors';
+import { fitsMotifFrame } from '../../shared/motifs/limits';
 import type { MotifBakePlan, MotifBakePause, MotifBakeSnapshot } from '../../shared/motifs/baking';
 
 export interface BakeWorkspaceDeps {
@@ -187,9 +188,7 @@ export function validateBakePlan(plan: MotifBakePlan): void {
     if (!c || typeof c.motifId !== 'string' || typeof c.contentHash !== 'string' || typeof c.propsJson !== 'string'
       || !Number.isSafeInteger(content.contentFrames) || content.contentFrames < 1
       || (content.explicit !== undefined && typeof content.explicit !== 'boolean')
-      || !Number.isSafeInteger(c.width) || c.width < 1 || c.width > 8192
-      || !Number.isSafeInteger(c.height) || c.height < 1 || c.height > 8192
-      || c.width * c.height * 4 > 256 * 1048576
+      || !fitsMotifFrame(c.width, c.height)
       || !Number.isSafeInteger(c.fpsNum) || c.fpsNum <= 0 || !Number.isSafeInteger(c.fpsDen) || c.fpsDen <= 0
       || !Array.isArray(content.ranges) || content.ranges.length > 10000) invalid();
     let props: unknown;

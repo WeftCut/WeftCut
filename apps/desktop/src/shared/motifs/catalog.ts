@@ -17,6 +17,7 @@ import clippingPaperJson from "./builtin/clipping-paper/manifest.json";
 import clippingStickerJson from "./builtin/clipping-sticker/manifest.json";
 import { graphicRoleProblem } from "../graphicRole";
 import { isMediaPropValue } from "./mediaProp";
+import { fitsMotifFrame, MOTIF_LIMITS } from "./limits";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -451,7 +452,6 @@ export function composeMotifHtml(manifest: Manifest, html: string): string {
 // Validation and duration resolution
 // ---------------------------------------------------------------------------
 
-const MAX_DIMENSION = 8192;
 const MAX_PROPS = 64;
 
 /** Validate a default value against its own spec. */
@@ -463,8 +463,8 @@ export function validateDefaultFor(key: string, spec: PropSpec): void {
 export function validateManifest(m: Manifest): void {
   if (m.name.trim() === "") throw new MotifPropError("name must not be empty");
   const [w, h] = m.size;
-  if (w < 1 || h < 1 || w > MAX_DIMENSION || h > MAX_DIMENSION) {
-    throw new MotifPropError(`size [${w},${h}] must be within [1,${MAX_DIMENSION}] on each axis`);
+  if (!fitsMotifFrame(w, h)) {
+    throw new MotifPropError(`size [${w},${h}] must be whole pixels within [1,${MOTIF_LIMITS.maxDimension}] on each axis`);
   }
   if (!(Number.isFinite(m.default_duration_s) && m.default_duration_s > 0)) {
     throw new MotifPropError("default_duration_s must be finite and > 0");

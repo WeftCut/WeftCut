@@ -53,3 +53,6 @@ export type MotifReaderReport = MotifReaderMissReport | MotifReaderPortReady
 export const MOTIF_READER_CONNECT = 'motif:reader-connect'
 export const MOTIF_READER_PORT = 'motif:reader-port'
 export const MOTIF_READER_RESET = 'motif:reader-reset'
+/** Main → renderer: the document's texture lane is on again from this
+ * `generation` (a number); an older `lane` answer no longer applies. */
+export const MOTIF_TEXTURE_LANE_RESET = 'motif:texture-lane-reset'

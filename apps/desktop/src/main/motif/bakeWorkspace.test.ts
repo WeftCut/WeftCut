@@ -151,9 +151,14 @@ describe('Motif workspace ownership', () => {
   it('rejects malformed ranges, addresses and capture inputs before scheduling', () => {
     const good = plan([content('example')]);
     expect(() => validateBakePlan(good)).not.toThrow();
+    const largest = structuredClone(good);
+    largest.contents[0]!.capture.width = 8192; largest.contents[0]!.capture.height = 8192;
+    expect(() => validateBakePlan(largest)).not.toThrow();
     for (const mutate of [
       (p: MotifBakePlan) => { p.contents[0]!.hash = 'bad'; },
-      (p: MotifBakePlan) => { p.contents[0]!.capture.width = 9000; },
+      (p: MotifBakePlan) => { p.contents[0]!.capture.width = 8193; },
+      (p: MotifBakePlan) => { p.contents[0]!.capture.height = 8193; },
+      (p: MotifBakePlan) => { p.contents[0]!.capture.width = 1.5; },
       (p: MotifBakePlan) => { p.contents[0]!.capture.propsJson = 'null'; },
       (p: MotifBakePlan) => { p.contents[0]!.ranges[0]!.end = 2; },
       (p: MotifBakePlan) => { p.sequence = [{ cacheKey: p.contents[0]!.cacheKey, ranges: [{ start: 0, end: 2 }] }]; },

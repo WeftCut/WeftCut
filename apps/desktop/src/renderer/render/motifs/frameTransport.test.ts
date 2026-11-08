@@ -74,10 +74,11 @@ describe('capture `stored` reply', () => {
 });
 
 describe('texture lane read', () => {
-  it('sends the divisor; `unavailable` and an error reply are distinct', async () => {
-    replies = [{ unavailable: true }, { error: 'Motif texture import missing' }];
-    await expect(readMotifTexture({ hash: cache.hash, frame: 1, div: 4 })).resolves.toBe('unavailable');
+  it('sends the divisor; `unavailable` keeps its reason and generation, and an error reply is distinct', async () => {
+    replies = [{ unavailable: 'lane', generation: 2 }, { unavailable: 'read', generation: 2 }, { error: 'Motif texture import missing' }];
+    await expect(readMotifTexture({ hash: cache.hash, frame: 1, div: 4 })).resolves.toEqual({ kind: 'unavailable', reason: 'lane', generation: 2 });
     expect(requests[0]).toMatchObject({ hash: cache.hash, frame: 1, div: 4 });
+    await expect(readMotifTexture({ hash: cache.hash, frame: 1, div: 4 })).resolves.toEqual({ kind: 'unavailable', reason: 'read', generation: 2 });
     await expect(readMotifTexture({ hash: cache.hash, frame: 1, div: 4 })).rejects.toMatchObject({ name: 'MotifTransportError', lane: 'texture', reason: 'error' });
   });
 });

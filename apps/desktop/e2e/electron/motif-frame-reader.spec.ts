@@ -16,7 +16,8 @@ import { VECTORS_PATH, compareReadback, downscaleReference, encodePng, synthetic
 // - macOS and Linux: `utility`, the reader utility process and worker.
 // - Windows: `texture`, the shared-texture lane (skipped where Chromium cannot
 //   import D3D shared images), and `fallback`, the utility lane reached because
-//   `motif:read` is replaced to answer `unavailable` for every read.
+//   `motif:read` is replaced to answer `unavailable` (reason `read`) for every
+//   read, so every read still asks the texture lane first.
 //
 // Seams. The texture lane is forced `unavailable`, injected with a failure or
 // held by replacing its IPC handler or the native pool method from the spec.
@@ -117,7 +118,8 @@ async function requireLane(app: ElectronApplication, lane: Lane): Promise<void> 
   }
 }
 
-/** The Windows fallback: the texture lane answers `unavailable` to every read. */
+/** The Windows fallback: the texture lane answers `unavailable` to every read.
+ * Reason `read`: a `lane` answer would stop the reader asking at all. */
 async function forceUtilityFallback(app: ElectronApplication): Promise<void> {
   await app.evaluate(({ ipcMain }) => {
     const g = globalThis as { __readerConformanceTexture?: { asked: number } }
@@ -125,7 +127,7 @@ async function forceUtilityFallback(app: ElectronApplication): Promise<void> {
     const state = { asked: 0 }
     g.__readerConformanceTexture = state
     ipcMain.removeHandler('motif:read')
-    ipcMain.handle('motif:read', async () => { state.asked++; return { kind: 'unavailable' } })
+    ipcMain.handle('motif:read', async () => { state.asked++; return { kind: 'unavailable', reason: 'read', generation: 0 } })
   })
 }
 

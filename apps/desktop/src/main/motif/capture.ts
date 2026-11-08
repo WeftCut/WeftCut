@@ -6,6 +6,7 @@ import { BUILTIN_MANIFESTS, motifCtxDurationS, type Manifest } from '../../share
 import { MotifError, motifErrorCode, motifSuperseded } from '../../shared/motifs/errors.js'
 import { resolveMotifMediaProps } from './mediaProps.js'
 import { CAPTURE_HOST_FILE, FRAME_MARKER_ROWS } from '../../shared/motifs/frameMarker.js'
+import { fitsMotifTexture } from '../../shared/motifs/limits.js'
 import type { UserMotifStore } from './store.js'
 
 export interface CaptureArgs {
@@ -85,7 +86,8 @@ interface Host {
   readyFor: string | null
   lastSize: { w: number; h: number } | null
   frames: OffscreenFrames
-  /// Shared textures (Windows) or bitmaps; both are leased by frame id.
+  /// Shared textures (Windows) or bitmaps; both are leased by frame id. See
+  /// `wantsTextureHost`.
   texture: boolean
   /// The one URL the shell's frame may load: the Motif it was built for.
   motifUrl: string
@@ -105,6 +107,13 @@ let readFrameMarker: FrameMarkerReader | null = null
 /// takes bitmaps, which need no native reader.
 export function setFrameMarkerReader(read: FrameMarkerReader): void {
   readFrameMarker = read
+}
+
+/// Shared textures only while the surface, marker rows included, fits the
+/// texture limit: its readback and copy must. A larger frame takes a bitmap
+/// host, which costs that size its GPU path and nothing else.
+function wantsTextureHost(width: number, height: number): boolean {
+  return textureCaptureEnabled && readFrameMarker !== null && fitsMotifTexture(width, height + FRAME_MARKER_ROWS, 'copy')
 }
 
 /** The picture above the marker rows of a shared texture, as a PNG. */
@@ -287,7 +296,7 @@ async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise
 async function buildHost(motifId: string, contentHash: string, width: number, height: number): Promise<Host> {
   const runtime = runtimeSource
   if (!runtime) throw new MotifError('closed', 'motif runtime not registered yet (call motif_register_runtime)')
-  const texture = textureCaptureEnabled && readFrameMarker !== null
+  const texture = wantsTextureHost(width, height)
   const pinned = /^[0-9a-f]{64}$/.test(contentHash) && motifStore?.pinPackage?.(motifId, contentHash)
   // The shell frames the Motif above the surface's marker rows
   // (shared/motifs/frameMarker.ts); the Motif sees only its own size.
@@ -392,8 +401,9 @@ export function shutdownCaptureHost(): void {
 }
 
 async function ensureHost(a: CaptureArgs): Promise<Host> {
-  // Reuse only when BOTH id and content version match (the ?v= cache-buster).
-  if (host?.loadedId === a.motifId && host.loadedV === a.contentHash) return host
+  // Reuse only when BOTH id and content version match (the ?v= cache-buster)
+  // and the size wants the same kind of host.
+  if (host?.loadedId === a.motifId && host.loadedV === a.contentHash && host.texture === wantsTextureHost(a.width, a.height)) return host
   teardownHost()
   host = await buildHost(a.motifId, a.contentHash, a.width, a.height)
   return host

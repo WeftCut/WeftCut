@@ -1,4 +1,4 @@
-import type { MotifCacheAddress, MotifCaptureControl, MotifTextureReadRequest, MotifUploadTiming } from '../../../shared/motifs/frameTransport';
+import type { MotifCacheAddress, MotifCaptureControl, MotifReadUnavailable, MotifTextureReadRequest, MotifUploadTiming } from '../../../shared/motifs/frameTransport';
 import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
 import { isMotifErrorCode, MotifError, type MotifErrorCode } from '../../../shared/motifs/errors';
 
@@ -12,8 +12,8 @@ interface FrameReply {
   persisted: boolean;
   /** Capture only: the frame is on disk and main sent no pixels. */
   stored: boolean;
-  /** `motif:read` only: the texture lane cannot serve this read. */
-  unavailable: boolean;
+  /** `motif:read` only: the texture lane does not serve this read. */
+  unavailable: MotifReadUnavailable | null;
   timing?: MotifUploadTiming;
   importMs?: number;
 }
@@ -41,7 +41,7 @@ class FramePortTimeout extends Error {
 /** One texture-lane answer: a bitmap, a miss (null), or `unavailable`. */
 export type MotifTextureRead =
   | { bitmap: ImageBitmap; timing?: MotifUploadTiming; importMs?: number }
-  | 'unavailable'
+  | MotifReadUnavailable
   | null;
 
 /** The Windows texture lane at a divisor; `MotifFrameReader` is its only
@@ -52,7 +52,7 @@ export async function readMotifTexture(read: MotifTextureReadRequest): Promise<M
   catch (error) {
     throw new MotifTransportError('texture', error instanceof FramePortTimeout ? 'timeout' : 'error', (error as Error).message);
   }
-  if (reply.unavailable) return 'unavailable';
+  if (reply.unavailable) return reply.unavailable;
   if (!reply.bitmap) return null;
   return {
     bitmap: reply.bitmap,
@@ -102,12 +102,18 @@ interface FramePortMessage {
   bitmap?: ImageBitmap | null;
   persisted?: boolean;
   stored?: boolean;
-  unavailable?: boolean;
+  unavailable?: MotifReadUnavailable['reason'];
+  generation?: number;
   timing?: MotifUploadTiming;
   importMs?: number;
   error?: string;
   /** Present when `error` is a MotifError's detail (preload `motifFrames.ts`). */
   code?: MotifErrorCode;
+}
+
+function unavailableReply({ unavailable, generation }: FramePortMessage): MotifReadUnavailable | null {
+  if (unavailable !== 'lane' && unavailable !== 'read') return null;
+  return { kind: 'unavailable', reason: unavailable, generation: typeof generation === 'number' ? generation : 0 };
 }
 
 function request(args: Record<string, unknown>): Promise<FrameReply> {
@@ -121,7 +127,7 @@ function request(args: Record<string, unknown>): Promise<FrameReply> {
       if (data.error) request.reject(isMotifErrorCode(data.code) ? new MotifError(data.code, data.error) : new Error(data.error));
       else request.resolve({
         bitmap: data.bitmap ?? null, persisted: data.persisted === true,
-        stored: data.stored === true, unavailable: data.unavailable === true,
+        stored: data.stored === true, unavailable: unavailableReply(data),
         ...(data.timing ? { timing: data.timing } : {}),
         ...(typeof data.importMs === 'number' ? { importMs: data.importMs } : {}),
       });

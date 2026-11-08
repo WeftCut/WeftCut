@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MotifFrameReader, MotifTransportError, type MotifFrameReaderDeps, type MotifReaderWorkerLike } from './MotifFrameReader';
+import { MotifFrameReader, MotifTransportError, type MotifFrameReaderDeps, type MotifReaderEvents, type MotifReaderWorkerLike } from './MotifFrameReader';
 import type { MotifTextureRead } from './frameTransport';
 import type { MotifReaderWorkerIn, MotifReaderWorkerOut } from './motifReaderWorker';
 import type { MotifReadRequest } from '../../../shared/motifs/readerProtocol';
@@ -23,7 +23,7 @@ class FakeWorker implements MotifReaderWorkerLike {
 
 function setup(options: { textureLane?: boolean; autoPort?: boolean } = {}) {
   const workers: FakeWorker[] = [];
-  let events!: { port(port: MessagePort): void; reset(): void };
+  let events!: MotifReaderEvents;
   const port = () => events.port({ close: vi.fn() } as unknown as MessagePort);
   const connect = vi.fn(() => { if (options.autoPort !== false) port(); });
   const readTexture = vi.fn<MotifFrameReaderDeps['readTexture']>(async () => null);
@@ -38,6 +38,7 @@ function setup(options: { textureLane?: boolean; autoPort?: boolean } = {}) {
   return {
     reader, connect, readTexture, workers, port,
     reset: () => events.reset(),
+    laneReset: (generation: number) => events.laneReset(generation),
     get worker() { return workers.at(-1)!; },
   };
 }
@@ -242,7 +243,7 @@ describe('MotifFrameReader texture lane', () => {
 
   it('`unavailable` falls back to the utility lane and is not a transport failure', async () => {
     const h = setup({ textureLane: true });
-    h.readTexture.mockResolvedValueOnce('unavailable' satisfies MotifTextureRead);
+    h.readTexture.mockResolvedValueOnce({ kind: 'unavailable', reason: 'read', generation: 0 } satisfies MotifTextureRead);
     const read = h.reader.read('key', 0, 2);
     await flush();
     expect(h.worker.reads).toEqual([expect.objectContaining({ frame: 0, div: 2 })]);
@@ -250,6 +251,60 @@ describe('MotifFrameReader texture lane', () => {
     h.worker.answer({ id: h.worker.reads[0]!.id, bitmap: frame, timing, bitmapMs: 1 });
     await expect(read).resolves.toBe(frame);
     expect(h.reader.stats).toMatchObject({ reads: { texture: 0, utility: 1 }, fallbacks: 1, transportFailures: 0 });
+  });
+
+  /** Reads `frame` with the utility lane answering a miss at once. */
+  async function readMissing(h: ReturnType<typeof setup>, frame: number): Promise<void> {
+    const read = h.reader.read('key', frame, 1);
+    await flush();
+    const request = h.worker.reads.at(-1);
+    if (request?.frame === frame) h.worker.answer({ id: request.id, miss: true });
+    await read;
+  }
+
+  it('a `read` answer falls back for that read alone', async () => {
+    const h = setup({ textureLane: true });
+    h.readTexture.mockResolvedValueOnce({ kind: 'unavailable', reason: 'read', generation: 0 });
+    await readMissing(h, 0);
+    await readMissing(h, 1);
+    expect(h.readTexture).toHaveBeenCalledTimes(2);
+    expect(h.worker.reads).toHaveLength(1);
+  });
+
+  it('a `lane` answer sends every later read to the utility lane until the lane resets', async () => {
+    const h = setup({ textureLane: true });
+    h.readTexture.mockResolvedValueOnce({ kind: 'unavailable', reason: 'lane', generation: 2 });
+    await readMissing(h, 0);
+    await readMissing(h, 1);
+    expect(h.readTexture).toHaveBeenCalledTimes(1);
+    expect(h.worker.reads.map(read => read.frame)).toEqual([0, 1]);
+    expect(h.reader.stats).toMatchObject({ reads: { texture: 0, utility: 2 }, fallbacks: 1 });
+    // A reset from before the answer changes nothing.
+    h.laneReset(2);
+    await readMissing(h, 2);
+    expect(h.readTexture).toHaveBeenCalledTimes(1);
+    h.laneReset(3);
+    await readMissing(h, 3);
+    expect(h.readTexture).toHaveBeenCalledTimes(2);
+  });
+
+  it('a `lane` answer older than the newest lane reset is ignored', async () => {
+    const h = setup({ textureLane: true });
+    h.laneReset(4);
+    h.readTexture.mockResolvedValueOnce({ kind: 'unavailable', reason: 'lane', generation: 3 });
+    await readMissing(h, 0);
+    await readMissing(h, 1);
+    expect(h.readTexture).toHaveBeenCalledTimes(2);
+  });
+
+  it('a utility reset turns the texture lane back on too', async () => {
+    const h = setup({ textureLane: true });
+    h.readTexture.mockResolvedValueOnce({ kind: 'unavailable', reason: 'lane', generation: 0 });
+    await readMissing(h, 0);
+    h.reset();
+    await flush();
+    await readMissing(h, 1);
+    expect(h.readTexture).toHaveBeenCalledTimes(2);
   });
 
   it('a texture miss is null; a transport error retries once and then throws', async () => {

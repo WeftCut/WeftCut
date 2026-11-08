@@ -1,5 +1,5 @@
 import { hashCacheKey } from '../../../shared/motifs/cacheKey';
-import type { MotifCacheAddress, MotifTextureReadRequest } from '../../../shared/motifs/frameTransport';
+import type { MotifCacheAddress, MotifReadUnavailable, MotifTextureReadRequest } from '../../../shared/motifs/frameTransport';
 import { isMotifReaderDiv, type MotifReaderDiv, type MotifReadRequest } from '../../../shared/motifs/readerProtocol';
 import { rendererOS } from '../../platform';
 import {
@@ -59,8 +59,18 @@ export interface MotifFrameReaderDeps {
   /** `motif:reader-connect`: main answers with one port and retires the previous one. */
   connect(): void;
   /** Ports and resets the preload forwards from main. */
-  listen(events: { port(port: MessagePort): void; reset(): void }): void;
+  listen(events: MotifReaderEvents): void;
   timeoutMs?: number;
+}
+
+/** What the preload forwards from main. */
+export interface MotifReaderEvents {
+  /** A utility port, answering `connect`. */
+  port(port: MessagePort): void;
+  /** The utility restarted. */
+  reset(): void;
+  /** `MOTIF_TEXTURE_LANE_RESET`: the texture lane is on again from `generation`. */
+  laneReset(generation: number): void;
 }
 
 type Stages = Partial<Record<MotifReaderStage, number>>;
@@ -77,9 +87,23 @@ export class MotifFrameReader {
   private readonly queue: (() => void)[] = [];
   private readonly counts = { texture: 0, utility: 0, misses: 0, fallbacks: 0, transportFailures: 0 };
   private readonly samples = new Map<MotifReaderStage, number[]>();
+  /** The generation of a `lane` answer: while set, reads skip the texture
+   * lane. */
+  private textureOff: number | null = null;
+  /** The newest texture-lane reset: a `lane` answer from before it is stale,
+   * since the reply and the reset reach the page by different routes. */
+  private laneResetGeneration = 0;
 
   constructor(private readonly deps: MotifFrameReaderDeps) {
     this.utility = new UtilityLane(deps, deps.timeoutMs ?? READ_TIMEOUT_MS);
+    deps.listen({
+      port: port => this.utility.attach(port),
+      reset: () => { this.textureOff = null; this.utility.reset(); },
+      laneReset: generation => {
+        this.laneResetGeneration = Math.max(this.laneResetGeneration, generation);
+        if (this.textureOff !== null && this.textureOff < generation) this.textureOff = null;
+      },
+    });
   }
 
   read(cacheKey: string, frame: number, scaleDiv: MotifReaderDiv, options: MotifReadOptions = {}): Promise<ImageBitmap | null> {
@@ -114,15 +138,21 @@ export class MotifFrameReader {
   }
 
   private async readAdmitted(address: MotifCacheAddress, div: MotifReaderDiv, options: MotifReadOptions): Promise<ImageBitmap | null> {
-    let lane: MotifReaderLane = this.deps.textureLane ? 'texture' : 'utility';
+    let lane: MotifReaderLane = this.deps.textureLane && this.textureOff === null ? 'texture' : 'utility';
     let retried = false;
     for (;;) {
       try {
         const frame = lane === 'texture'
           ? await this.readTexture({ ...address, div, ...(options.finalizationToken ? { finalizationToken: options.finalizationToken } : {}) })
           : await this.utility.read({ ...address, div });
-        // Not a miss and not a failure: this read goes to the utility lane.
-        if (frame === 'unavailable') { this.counts.fallbacks++; lane = 'utility'; continue; }
+        // Not a miss and not a failure: this read goes to the utility lane,
+        // and after `lane` every read until the lane resets.
+        if (frame && 'kind' in frame) {
+          this.counts.fallbacks++;
+          if (frame.reason === 'lane') this.turnTextureOff(frame.generation);
+          lane = 'utility';
+          continue;
+        }
         this.counts[lane]++;
         if (!frame) { this.counts.misses++; return null; }
         this.record(frame.stages);
@@ -137,9 +167,14 @@ export class MotifFrameReader {
     }
   }
 
-  private async readTexture(request: MotifTextureReadRequest): Promise<LaneFrame | 'unavailable' | null> {
+  private turnTextureOff(generation: number): void {
+    if (generation < this.laneResetGeneration) return;
+    this.textureOff = Math.max(this.textureOff ?? generation, generation);
+  }
+
+  private async readTexture(request: MotifTextureReadRequest): Promise<LaneFrame | MotifReadUnavailable | null> {
     const result = await this.deps.readTexture(request);
-    if (result === null || result === 'unavailable') return result;
+    if (result === null || 'kind' in result) return result;
     const stages: Stages = {};
     if (result.timing) {
       const { read, mapMs, acquireMs, gpuMs } = result.timing;
@@ -200,13 +235,12 @@ class UtilityLane {
   private nextId = 0;
   private readonly pending = new Map<number, PendingRead>();
 
-  constructor(private readonly deps: MotifFrameReaderDeps, private readonly timeoutMs: number) {
-    deps.listen({
-      port: port => this.attach(port),
-      // While connecting, the port main is about to send is already the
-      // restarted utility's.
-      reset: () => { if (this.state === 'open') this.fail('reset'); },
-    });
+  constructor(private readonly deps: MotifFrameReaderDeps, private readonly timeoutMs: number) {}
+
+  /** The utility restarted. While connecting, the port main is about to send
+   * is already the restarted utility's. */
+  reset(): void {
+    if (this.state === 'open') this.fail('reset');
   }
 
   read(address: { hash: string; frame: number; div: MotifReaderDiv }): Promise<LaneFrame | null> {
@@ -224,7 +258,7 @@ class UtilityLane {
     });
   }
 
-  private attach(port: MessagePort): void {
+  attach(port: MessagePort): void {
     const worker = this.worker ??= this.spawn();
     // Reads posted on a superseded port will not be answered.
     if (this.state === 'open') this.fail('closed', read => read.epoch !== null);
@@ -303,11 +337,13 @@ export function motifFrameReader(): MotifFrameReader {
     readTexture: readMotifTexture,
     createWorker: () => new Worker(new URL('./motifReaderWorker.ts', import.meta.url), { type: 'module' }) as MotifReaderWorkerLike,
     connect: () => window.postMessage({ type: 'weftcut:motif-reader-connect' }, '*'),
-    listen: ({ port, reset }) => window.addEventListener('message', event => {
+    listen: ({ port, reset, laneReset }) => window.addEventListener('message', event => {
       if (event.source !== window) return;
-      const type = (event.data as { type?: unknown } | null)?.type;
+      const data = event.data as { type?: unknown; generation?: unknown } | null;
+      const type = data?.type;
       if (type === 'weftcut:motif-reader-port' && event.ports[0]) port(event.ports[0]);
       else if (type === 'weftcut:motif-reader-reset') reset();
+      else if (type === 'weftcut:motif-texture-lane-reset' && typeof data?.generation === 'number') laneReset(data.generation);
     }),
   });
 }

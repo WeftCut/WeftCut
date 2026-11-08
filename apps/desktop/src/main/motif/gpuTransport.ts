@@ -6,7 +6,8 @@ import { asMotifCapacity, MotifError, motifErrorCode, motifSuperseded } from '..
 import { isResourceCapacityError } from '../../shared/resource-policy'
 import { withSharedTextureQueue } from '../sharedTextureQueue.js'
 import { gpuBufferBudget, type GpuBufferBudget, type GpuBufferLease } from '../gpuBufferBudget.js'
-import type { MotifReaderDiv } from '../../shared/motifs/readerProtocol.js'
+import { MOTIF_TEXTURE_LANE_RESET, type MotifReaderDiv } from '../../shared/motifs/readerProtocol.js'
+import { fitsMotifTexture } from '../../shared/motifs/limits.js'
 import type { MotifReadUnavailable, MotifTextureFrame, MotifUploadTiming } from '../../shared/motifs/frameTransport.js'
 
 export interface MotifPool {
@@ -46,7 +47,9 @@ export class MotifGpuTransport {
   private budgetWaiters = new Set<() => void>()
   private budgetStalled = false
   private pending = new Map<string, { owner: number; retire: () => void; release: () => void }>()
-  private unavailable = new WeakSet<WebContents>()
+  /** Owners whose pool device, import or send failed: their reads answer
+   * `lane` until `close(owner)`. */
+  private laneOff = new WeakSet<WebContents>()
   private generations = new WeakMap<WebContents, number>()
   constructor(private readonly createPool: PoolFactory, concurrency = 3, private readonly buffers: GpuBufferBudget = gpuBufferBudget) {
     if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 3) throw new Error('Invalid Motif transport concurrency')
@@ -127,18 +130,36 @@ export class MotifGpuTransport {
     }
   }
 
+  /** False once the owner's pool device, import or send failed, until
+   * `close(owner)`. */
+  available(owner: WebContents): boolean {
+    return !this.laneOff.has(owner)
+  }
+
+  /** The owner's lane generation; every `close(owner)` advances it. */
+  generation(owner: WebContents): number {
+    return this.generations.get(owner) ?? 0
+  }
+
+  private turnLaneOff(owner: WebContents, generation: number): void {
+    if (this.generation(owner) === generation) this.laneOff.add(owner)
+  }
+
   /** Uploads a cached frame scaled by `div` into a session of the scaled
    * `width × height`. A `miss`, a `closed` consumer or pool and a `superseded`
-   * export reject; any other failure (budget, pool, import, device, a held
-   * file) means this lane cannot serve the read, and the reader falls back to
-   * the utility lane (ADR 0154). */
+   * export reject. Any other failure sends the read to the utility lane
+   * (ADR 0154): `lane` once the owner's lane is off, else `read` (the texture
+   * limit, the GPU budget, a held file or mutex, a failed upload). */
   async read(owner: WebContents, file: string, width: number, height: number, div: MotifReaderDiv, finalizationId?: number): Promise<MotifTextureFrame | MotifReadUnavailable> {
+    const generation = this.generation(owner)
+    if (!this.available(owner)) return { kind: 'unavailable', reason: 'lane', generation }
     try {
       return await this.produce(owner, width, height, 'rgba', 'upload', pool => pool.uploadFile(file, 0, div), finalizationId)
     } catch (error) {
       const code = motifErrorCode(error)
       if (code === 'miss' || code === 'closed' || code === 'superseded') throw error
-      return { kind: 'unavailable' }
+      const off = !this.available(owner) && this.generation(owner) === generation
+      return { kind: 'unavailable', reason: off ? 'lane' : 'read', generation }
     }
   }
 
@@ -160,8 +181,10 @@ export class MotifGpuTransport {
   }
 
   private async produce(owner: WebContents, width: number, height: number, format: 'rgba' | 'bgra', use: PoolUse, fill: (pool: MotifPool) => Promise<MotifUploadTiming | void>, finalizationId?: number): Promise<MotifTextureFrame> {
-    if (this.unavailable.has(owner)) throw new Error('Motif shared textures unavailable for this renderer')
-    const generation = this.generations.get(owner) ?? 0
+    if (!this.available(owner)) throw new MotifError('device', 'Motif shared textures are off for this document')
+    // Over the limit is this frame's size, never the lane's health.
+    if (!fitsMotifTexture(width, height, use)) throw new MotifError('oversize', `Motif ${use} texture ${width}x${height} exceeds the texture limit`)
+    const generation = this.generation(owner)
     let exportOpen = true
     const cancelExport = () => { exportOpen = false }
     if (finalizationId !== undefined) {
@@ -171,7 +194,7 @@ export class MotifGpuTransport {
     }
     const assertOpen = (): void => {
       if (!exportOpen) throw motifSuperseded()
-      if (!consumerFrameAlive(owner) || (this.generations.get(owner) ?? 0) !== generation) throw new MotifError('closed', 'Motif consumer closed')
+      if (!consumerFrameAlive(owner) || this.generation(owner) !== generation) throw new MotifError('closed', 'Motif consumer closed')
     }
     // Independent leases let native reading/upload overlap the preceding
     // consumer's GPU read. A lane still cannot overwrite an unacknowledged slot.
@@ -196,7 +219,7 @@ export class MotifGpuTransport {
         }
         // The staging texture counts like the slot.
         const bytes = width * height * 4 * (use === 'upload' ? 2 : 1)
-        if (!Number.isSafeInteger(bytes) || width <= 0 || height <= 0 || bytes > this.textureBudgetBytes()) throw new MotifError('capacity', 'Motif GPU budget exhausted')
+        if (bytes > this.textureBudgetBytes()) throw new MotifError('capacity', 'Motif GPU budget exhausted')
         const deadline = performance.now() + BUDGET_WAIT_MS
         let bufferLease: GpuBufferLease | null = null
         for (;;) {
@@ -253,7 +276,12 @@ export class MotifGpuTransport {
             try { assertOpen() } catch (error) { releaseBudget(); throw error }
             let pool: MotifPool
             try { pool = this.createPool(width, height, format === 'bgra', use === 'upload') }
-            catch (error) { releaseBudget(); this.unavailable.add(owner); throw error }
+            catch (error) {
+              releaseBudget()
+              // Native `oversize` is this size's; only the device is the lane's.
+              if (motifErrorCode(error) === 'device') this.turnLaneOff(owner, generation)
+              throw error
+            }
             const key = `motif-${randomUUID()}`
             let imported: SharedTextureImported | undefined
             try {
@@ -270,11 +298,15 @@ export class MotifGpuTransport {
               assertOpen()
               return { finalizationId, owner, key, width, height, pool, imported, busy: true }
             } catch (error) {
-              if ((this.generations.get(owner) ?? 0) === generation) this.unavailable.add(owner)
+              const code = motifErrorCode(error)
+              const failed = code !== 'closed' && code !== 'superseded'
+              if (failed) this.turnLaneOff(owner, generation)
               this.notifyRetired(owner, key)
               if (imported) imported.release()
               else { try { pool.close() } finally { releaseBudget() } }
-              throw error
+              throw failed && code === undefined
+                ? new MotifError('device', `Motif shared texture import failed: ${String((error as Error | undefined)?.message ?? error)}`, { cause: error })
+                : error
             }
           })
           this.sessions.set(address, s)
@@ -313,9 +345,14 @@ export class MotifGpuTransport {
     }
   }
 
+  /** Retires the owner's sessions and leases and turns its lane on again. A
+   * renderer told `lane` hears of it through `MOTIF_TEXTURE_LANE_RESET`. */
   close(owner: WebContents): void {
-    this.generations.set(owner, (this.generations.get(owner) ?? 0) + 1)
-    this.unavailable.delete(owner)
+    const generation = this.generation(owner) + 1
+    this.generations.set(owner, generation)
+    if (this.laneOff.delete(owner)) {
+      try { if (consumerFrameAlive(owner)) owner.send(MOTIF_TEXTURE_LANE_RESET, generation) } catch { /* renderer/frame already gone */ }
+    }
     this.retire(owner)
     for (const [token, lease] of this.pending) if (lease.owner === owner.id) this.release(owner, token)
     this.budgetChanged()

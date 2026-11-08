@@ -1,6 +1,6 @@
 import { ipcRenderer, type SharedTextureImported } from 'electron'
 import type { StoredMotifFrame, MotifCaptureControl, MotifReadUnavailable, MotifTextureReadRequest } from '../shared/motifs/frameTransport'
-import { MOTIF_READER_CONNECT, MOTIF_READER_PORT, MOTIF_READER_RESET, type MotifReaderDiv } from '../shared/motifs/readerProtocol'
+import { MOTIF_READER_CONNECT, MOTIF_READER_PORT, MOTIF_READER_RESET, MOTIF_TEXTURE_LANE_RESET, type MotifReaderDiv } from '../shared/motifs/readerProtocol'
 import { decodeMotifError, MotifError } from '../shared/motifs/errors'
 
 // ImageBitmap cannot cross contextBridge. A same-renderer MessagePort transfers
@@ -13,6 +13,9 @@ export function installMotifFrames(
   // reader worker (ADR 0154); pixels never pass through here.
   ipcRenderer.on(MOTIF_READER_PORT, event => window.postMessage({ type: 'weftcut:motif-reader-port' }, '*', event.ports))
   ipcRenderer.on(MOTIF_READER_RESET, () => window.postMessage({ type: 'weftcut:motif-reader-reset' }, '*'))
+  ipcRenderer.on(MOTIF_TEXTURE_LANE_RESET, (_event, generation: unknown) => {
+    if (typeof generation === 'number') window.postMessage({ type: 'weftcut:motif-texture-lane-reset', generation }, '*')
+  })
   window.addEventListener('message', (event) => {
     if (event.source !== window) return
     if (event.data?.type === 'weftcut:motif-reader-connect') { ipcRenderer.send(MOTIF_READER_CONNECT); return }
@@ -29,7 +32,7 @@ export function installMotifFrames(
         frame = await ipcRenderer.invoke(data.capture ? 'motif:capture' : 'motif:read', data.capture ?? read) as StoredMotifFrame | MotifReadUnavailable | null
         // Not a miss and not a failure: the reader reads it on the utility lane.
         if (frame?.kind === 'unavailable') {
-          port.postMessage({ id: data.id, unavailable: true })
+          port.postMessage({ id: data.id, unavailable: frame.reason, generation: frame.generation })
           failed = false
           return
         }

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { MotifFrameStore, type FrameCodec, type MotifTextureUpload } from './frameStore'
+import { MotifFrameStore, type FrameCodec, type MotifTextureLane } from './frameStore'
 import { MotifError } from '../../shared/motifs/errors'
 
 const roots: string[] = []
@@ -13,9 +13,11 @@ async function fixture() {
   roots.push(root)
   const codec: FrameCodec = { motifEncodePng: vi.fn(async () => Buffer.from('fast cache')) }
   const changed = vi.fn()
-  const gpu = vi.fn<MotifTextureUpload>(async () => texture)
+  const gpu = vi.fn<MotifTextureLane['upload']>(async () => texture)
   return { root, codec, changed, gpu, store: new MotifFrameStore(async () => root, codec, changed) }
 }
+/** A lane that is on for the document, at generation 3. */
+const on = (upload: MotifTextureLane['upload']): MotifTextureLane => ({ generation: 3, available: true, upload })
 /** A `.wfrm` header (magic, width, height) padded to the minimum frame size. */
 function frameHeader(width: number, height: number): Buffer {
   const bytes = Buffer.alloc(68)
@@ -28,19 +30,19 @@ describe('MotifFrameStore', () => {
   it.each([
     [3840, 2160, 1, 3840, 2160], [3840, 2160, 2, 1920, 1080], [3840, 2160, 4, 960, 540],
     [3841, 2161, 1, 3841, 2161], [3841, 2161, 2, 1921, 1081], [3841, 2161, 4, 961, 541],
-    [1, 1, 4, 1, 1], [5, 3, 2, 3, 2],
+    [1, 1, 4, 1, 1], [5, 3, 2, 3, 2], [8192, 8192, 4, 2048, 2048],
   ] as const)('uploads %ix%i at 1/%i into a %ix%i texture', async (width, height, div, scaledWidth, scaledHeight) => {
     const { root, store, gpu, changed } = await fixture()
     await (await store.prepareWrite(hash, 3))!.encoded(frameHeader(width, height))
     changed.mockClear()
-    expect(await store.readTexture(hash, 3, div, gpu)).toEqual(texture)
+    expect(await store.readTexture(hash, 3, div, on(gpu))).toEqual(texture)
     expect(gpu).toHaveBeenCalledExactlyOnceWith(path.join(root, 'Cache', 'raster', hash, '3.wfrm'), scaledWidth, scaledHeight, div)
     expect(changed).not.toHaveBeenCalled()
   })
 
   it('reads an absent frame as a miss without touching the texture lane', async () => {
     const { store, gpu, changed } = await fixture()
-    expect(await store.readTexture(hash, 0, 1, gpu)).toBeNull()
+    expect(await store.readTexture(hash, 0, 1, on(gpu))).toBeNull()
     expect(gpu).not.toHaveBeenCalled()
     expect(changed.mock.calls).toEqual([[hash, 0, false]])
   })
@@ -49,12 +51,13 @@ describe('MotifFrameStore', () => {
     ['a short file', Buffer.from('WCMFRM03')],
     ['a former format', Buffer.concat([Buffer.from('WCMFRM02'), frameHeader(2, 2).subarray(8)])],
     ['a zero width', frameHeader(0, 2)],
-    ['a width beyond the native bound', frameHeader(9000, 2)],
+    ['a width beyond the frame limit', frameHeader(8193, 2)],
+    ['a height beyond the frame limit', frameHeader(2, 8193)],
   ])('reads a bad header (%s) as a miss', async (_, bytes) => {
     const { store, gpu, changed } = await fixture()
     await (await store.prepareWrite(hash, 1))!.encoded(bytes)
     changed.mockClear()
-    expect(await store.readTexture(hash, 1, 2, gpu)).toBeNull()
+    expect(await store.readTexture(hash, 1, 2, on(gpu))).toBeNull()
     expect(gpu).not.toHaveBeenCalled()
     expect(changed.mock.calls).toEqual([[hash, 1, false]])
   })
@@ -67,7 +70,7 @@ describe('MotifFrameStore', () => {
     await (await store.prepareWrite(hash, 2))!.encoded(frameHeader(3840, 2160))
     changed.mockClear()
     gpu.mockRejectedValueOnce(new MotifError('miss', message))
-    expect(await store.readTexture(hash, 2, 2, gpu)).toBeNull()
+    expect(await store.readTexture(hash, 2, 2, on(gpu))).toBeNull()
     expect(changed.mock.calls).toEqual([[hash, 2, false]])
   })
 
@@ -75,8 +78,21 @@ describe('MotifFrameStore', () => {
     const { store, gpu, changed } = await fixture()
     await (await store.prepareWrite(hash, 2))!.encoded(frameHeader(16, 16))
     changed.mockClear()
-    gpu.mockResolvedValueOnce({ kind: 'unavailable' })
-    expect(await store.readTexture(hash, 2, 1, gpu)).toEqual({ kind: 'unavailable' })
+    gpu.mockResolvedValueOnce({ kind: 'unavailable', reason: 'read', generation: 3 })
+    expect(await store.readTexture(hash, 2, 1, on(gpu))).toEqual({ kind: 'unavailable', reason: 'read', generation: 3 })
+    expect(changed).not.toHaveBeenCalled()
+  })
+
+  it('answers a document whose lane is off before opening the file', async () => {
+    const { store, gpu, changed } = await fixture()
+    await (await store.prepareWrite(hash, 2))!.encoded(frameHeader(16, 16))
+    changed.mockClear()
+    const open = vi.spyOn(fs, 'open')
+    try {
+      expect(await store.readTexture(hash, 2, 1, { ...on(gpu), available: false })).toEqual({ kind: 'unavailable', reason: 'lane', generation: 3 })
+      expect(open).not.toHaveBeenCalled()
+    } finally { open.mockRestore() }
+    expect(gpu).not.toHaveBeenCalled()
     expect(changed).not.toHaveBeenCalled()
   })
 
@@ -85,7 +101,7 @@ describe('MotifFrameStore', () => {
     await (await store.prepareWrite(hash, 2))!.encoded(frameHeader(16, 16))
     changed.mockClear()
     gpu.mockRejectedValueOnce(new MotifError('closed', 'Motif consumer closed'))
-    await expect(store.readTexture(hash, 2, 1, gpu)).rejects.toMatchObject({ code: 'closed' })
+    await expect(store.readTexture(hash, 2, 1, on(gpu))).rejects.toMatchObject({ code: 'closed' })
     expect(changed).not.toHaveBeenCalled()
   })
 
@@ -95,7 +111,7 @@ describe('MotifFrameStore', () => {
     changed.mockClear()
     const open = vi.spyOn(fs, 'open').mockRejectedValueOnce(Object.assign(new Error('held'), { code }))
     try {
-      expect(await store.readTexture(hash, 2, 1, gpu)).toEqual({ kind: 'unavailable' })
+      expect(await store.readTexture(hash, 2, 1, on(gpu))).toEqual({ kind: 'unavailable', reason: 'read', generation: 3 })
     } finally { open.mockRestore() }
     expect(gpu).not.toHaveBeenCalled()
     expect(changed).not.toHaveBeenCalled()
@@ -114,7 +130,7 @@ describe('MotifFrameStore', () => {
   it('answers no workspace as a miss that leaves coverage alone', async () => {
     const { codec, changed, gpu } = await fixture()
     const store = new MotifFrameStore(async () => null, codec, changed)
-    expect(await store.readTexture(hash, 0, 1, gpu)).toBeNull()
+    expect(await store.readTexture(hash, 0, 1, on(gpu))).toBeNull()
     expect(gpu).not.toHaveBeenCalled()
     expect(changed).not.toHaveBeenCalled()
   })
@@ -145,7 +161,7 @@ describe('MotifFrameStore', () => {
     await fs.mkdir(dir, { recursive: true })
     await fs.writeFile(path.join(dir, '0.png'), Buffer.from('old PNG'))
     expect(await store.has(hash, 0)).toBe(false)
-    expect(await store.readTexture(hash, 0, 1, gpu)).toBeNull()
+    expect(await store.readTexture(hash, 0, 1, on(gpu))).toBeNull()
     expect(gpu).not.toHaveBeenCalled()
     expect(codec.motifEncodePng).not.toHaveBeenCalled()
     await store.write(hash, 0, new Uint8Array([1]))
@@ -158,7 +174,7 @@ describe('MotifFrameStore', () => {
     vi.mocked(codec.motifEncodePng).mockRejectedValue(new Error('encode failed'))
     await expect(store.write(hash, 0, new Uint8Array([1]))).rejects.toThrow('encode failed')
     expect(await store.has(hash, 0)).toBe(false)
-    expect(await store.readTexture(hash, 0, 1, gpu)).toBeNull()
+    expect(await store.readTexture(hash, 0, 1, on(gpu))).toBeNull()
     expect(await fs.readdir(path.join(root, 'Cache', 'raster', hash))).toEqual([])
   })
 
@@ -167,14 +183,14 @@ describe('MotifFrameStore', () => {
     const workspace = vi.fn(async () => null)
     const store = new MotifFrameStore(workspace, codec)
     for (const [key, frame] of [['../outside', 0], [hash, -1], [hash, 0.5]] as const) {
-      await expect(store.readTexture(key, frame, 1, gpu)).rejects.toThrow('Invalid Motif cache address')
+      await expect(store.readTexture(key, frame, 1, on(gpu))).rejects.toThrow('Invalid Motif cache address')
     }
     for (const div of [0, 3, 8, 1.5, '2']) {
-      await expect(store.readTexture(hash, 0, div as 1, gpu)).rejects.toThrow('Invalid Motif read divisor')
+      await expect(store.readTexture(hash, 0, div as 1, on(gpu))).rejects.toThrow('Invalid Motif read divisor')
     }
     expect(workspace).not.toHaveBeenCalled()
     expect(gpu).not.toHaveBeenCalled()
-    expect(await store.readTexture(hash, 0, 1, gpu)).toBeNull()
+    expect(await store.readTexture(hash, 0, 1, on(gpu))).toBeNull()
   })
 
   it('inventories canonical frames by stat alone while rejecting header-only files and temporary files', async () => {
@@ -197,7 +213,7 @@ describe('MotifFrameStore', () => {
     const { store, changed, gpu } = await fixture()
     await (await store.prepareWrite(hash, 4))!.encoded(frameHeader(9000, 2))
     expect(await store.inventory(hash)).toEqual([{ frame: 4, bytes: 68 }])
-    expect(await store.readTexture(hash, 4, 1, gpu)).toBeNull()
+    expect(await store.readTexture(hash, 4, 1, on(gpu))).toBeNull()
     expect(changed).toHaveBeenLastCalledWith(hash, 4, false)
   })
 
@@ -249,7 +265,7 @@ describe('MotifFrameStore', () => {
     await (await store.prepareWrite(hash, 7))!.encoded(frameHeader(2, 2))
     expect(changed).toHaveBeenLastCalledWith(hash, 7, true, 68)
     gpu.mockRejectedValueOnce(new MotifError('miss', 'Restored data doesn\'t match checksum'))
-    expect(await store.readTexture(hash, 7, 1, gpu)).toBeNull()
+    expect(await store.readTexture(hash, 7, 1, on(gpu))).toBeNull()
     expect(changed).toHaveBeenLastCalledWith(hash, 7, false)
   })
 

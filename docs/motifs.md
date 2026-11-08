@@ -122,8 +122,9 @@ background so `background: transparent` stays real alpha.
   Elsewhere: the paint's bitmap, straightened natively and sent as RGBA
   ([ADR 0159](adr/0159-motif-captures-are-pipelined-paints.md)). No capture
   takes a screenshot; PNGs (MCP previews, covers) are encoded from the leased
-  pixels. A `device` failure or an uncoded one, which comes from the texture
-  output itself (lease, GPU copy, readback), switches the session to bitmaps;
+  pixels. A surface over the [texture limit](#limits) gets a bitmap host for
+  that size only. A `device` failure or an uncoded one, which comes from the
+  texture output itself (lease, GPU copy, readback), switches the session to bitmaps;
   every other [failure code](#failure-codes) (a timeout, disk error, capacity
   refusal, held mutex, superseded request or Motif failure) never does.
   `WEFTCUT_MOTIF_CAPTURE=bitmap` forces bitmaps for diagnosis.
@@ -234,8 +235,18 @@ rounded up). At most three reads are in flight per document.
   the staging texture its frames are premultiplied into. A lane the budget
   cannot give a pool of its own takes the next idle pool of the same shape
   rather than retiring it. Decoded bands go through buffers every reader
-  shares, at most 32 MiB of them idle. If no slot can be used, main answers
-  `unavailable` and the read takes the utility lane.
+  shares, at most 32 MiB of them idle. A read the lane does not serve is
+  answered `unavailable` with a reason, and takes the utility lane. `read`
+  concerns that read alone: a frame over the [texture limit](#limits), the
+  GPU budget or its 250 ms wait, a held file or mutex, a failed upload.
+  `lane` means the lane is off for the document: its pool's GPU device, a
+  shared-texture import or its send to the page failed. Main then answers
+  every read `lane` before opening the file, and the document's reader stops
+  asking until the lane is reset: `MotifGpuTransport.close` for the document
+  (a navigation, a new document, an export's preparation) turns it on again
+  and sends `motif:texture-lane-reset` with the document's lane generation. A
+  `lane` answer from an older generation is ignored, as the answer and the
+  reset reach the page by different routes.
 - **macOS, Linux and the Windows fallback — utility lane.** One app-wide
   utility process (`motif-reader-host.ts`, started on first use, restarted with
   backoff) runs the core and posts scaled RGBA on a `MessagePortMain` to the
@@ -287,8 +298,9 @@ demands and maps main's snapshots into the baked-key index and layer status;
   write reaches neither the display nor the GPU path. Replays then read instead of
   capturing again. Parameter previews have no cache address and store nothing. A
   session whose texture readback failed stores nothing live: its display texture
-  has no pixels main can read. A readback refused for a held mutex or the
-  budget costs that frame its receipt only.
+  has no pixels main can read. A readback refused for a held mutex, the texture
+  limit or a closed reader costs a display that frame's receipt and fails a
+  bake's frame; the next frame reads its texture again.
 - **Inventory is stat-only.** On open, a frame counts when `<n>.wfrm` is a
   regular file larger than the 16-byte header; files are never opened. The
   first open of a file after boot costs ~6 ms on the Windows bench (Defender),
@@ -311,6 +323,28 @@ resource admission or disk capacity (a `capacity` or `disk` failure); a
 times; `ready` means the requested range is persisted. The renderer adds `warming` for L0-only coverage. The timeline status
 dot and the property panel show these; idle and ready need no panel row.
 
+## Limits
+
+`native/src/motif_limits.rs` holds the fixed sizes and
+`shared/motifs/limits.ts` mirrors them; main and the reader utility refuse to
+start when the addon's `motifLimits()` differ from the mirror.
+
+- **A frame** is at most 8192 pixels on each side, 256 MiB of straight RGBA
+  (`fitsMotifFrame`). Manifests, bake plans, stored headers and the native
+  encoder and reader all check it.
+- **A GPU texture** is at most 128 MiB (`fitsMotifTexture`): a pool's slots
+  plus, for a pool that reads stored frames, its staging texture; and the
+  capture host's surface, marker row included, which the bake reads back. A
+  full-size 8K frame does not fit. Pools hold at most four slots.
+
+A frame over the texture limit never turns a lane off: its read takes the
+utility lane, and its capture gets a bitmap host (the host is rebuilt when the
+size asks for the other kind). A smaller frame of the same Motif gets the
+texture host again. Only a failure of the GPU path itself is sticky: a
+`device` failure of a pool, or a shared-texture import or send, turns the
+texture lane off for that document; a `device` or uncoded failure of the
+capture output moves the session to bitmaps.
+
 ## Failure codes
 
 A Motif failure is a `MotifError` (`shared/motifs/errors.ts`) with one code:
@@ -326,8 +360,8 @@ meets it.
 
 A stored frame the native read cannot use is a `miss`; one another process
 holds open (Windows sharing violation, or a busy header read) is `transient`,
-which sends a texture-lane read to the utility lane and keeps the frame in
-coverage.
+which sends a texture-lane read to the utility lane (`unavailable`, reason
+`read`) and keeps the frame in coverage.
 
 ## Compositor
 

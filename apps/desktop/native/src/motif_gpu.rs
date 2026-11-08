@@ -2,6 +2,7 @@
 //! All D3D objects and operations live on ONE worker. Caller owns admission and
 //! must finish the consumer read before reusing a slot (same contract as video).
 use crate::motif_error::{coded, to_napi, MotifCode};
+use crate::motif_limits::{textures_fit, MAX_POOL_SLOTS};
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 use std::sync::mpsc;
@@ -138,12 +139,9 @@ impl MotifGpuPool {
         upload: Option<bool>,
     ) -> napi::Result<Self> {
         let upload = upload.unwrap_or(false);
-        if width == 0
-            || height == 0
-            || count == 0
-            || count > 4
-            || u64::from(width) * u64::from(height) * 4 * u64::from(count + u32::from(upload))
-                > 128 * 1024 * 1024
+        if count == 0
+            || count > MAX_POOL_SLOTS
+            || !textures_fit(width, height, count + u32::from(upload))
         {
             return Err(to_napi(coded(
                 MotifCode::Oversize,

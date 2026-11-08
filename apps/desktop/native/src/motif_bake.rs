@@ -4,6 +4,7 @@
 //! under the caller's OSR lease; `finish` runs after it (ADR 0158).
 use crate::motif_error::{coded, to_napi, MotifCode};
 use crate::motif_gpu::{acquire_sync, device};
+use crate::motif_limits::textures_fit;
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 use std::sync::mpsc;
@@ -253,10 +254,7 @@ impl Reader {
         if desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM && desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM {
             return Err(device(anyhow::anyhow!("unsupported OSR format")));
         }
-        if desc.Width == 0
-            || desc.Height == 0
-            || u64::from(desc.Width) * u64::from(desc.Height) * 4 > 128 * 1024 * 1024
-        {
+        if !textures_fit(desc.Width, desc.Height, 1) {
             return Err(coded(
                 MotifCode::Oversize,
                 anyhow::anyhow!("readback budget"),

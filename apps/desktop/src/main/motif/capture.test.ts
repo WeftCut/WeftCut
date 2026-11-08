@@ -464,6 +464,26 @@ describe('capture host shutdown', () => {
     }
   })
 
+  it('a frame whose surface exceeds the texture limit gets a bitmap host; a smaller one the texture host again', async () => {
+    setRuntimeSource('/* clock-takeover runtime */')
+    setTextureCaptureEnabled(true)
+    try {
+      const kind = (width: number, height: number, tSec: number) => captureMotifFrame(
+        { ...args, motifId: 'over-the-limit', tSec, width, height }, async frame => frame.kind)
+      // 8192 × (4096 + the marker row) × 4 bytes is just over 128 MiB.
+      const before = opened
+      expect(await kind(8192, 4096, 1)).toBe('bitmap')
+      expect(lastHostTexture).toBe(false)
+      expect(await kind(8192, 4095, 2)).toBe('texture')
+      expect(lastHostTexture).toBe(true)
+      expect(await kind(8192, 4096, 3)).toBe('bitmap')
+      expect(opened - before).toBe(3)
+    } finally {
+      setTextureCaptureEnabled(false)
+      contentSize = { width: 32, height: 16 }
+    }
+  })
+
   it('a texture host serves PNG captures from the leased texture\'s picture, and releases it', async () => {
     setRuntimeSource('/* clock-takeover runtime */')
     setTextureCaptureEnabled(true)

@@ -48,6 +48,7 @@ import { isMotifFrameAddress } from './motif/frameAddress.js'
 import { MotifBakeWorkspace, validateBakePlan } from './motif/bakeWorkspace.js'
 import { MOTIF_BAKE_READY_EVENT, type MotifBakePlan } from '../shared/motifs/baking.js'
 import { MotifGpuTransport, type MotifPool } from './motif/gpuTransport.js'
+import { assertMotifLimits, type MotifLimits } from '../shared/motifs/limits.js'
 import { spawnMotifWatcher, type MotifWatcher } from './motif/watcher.js'
 import { MotifWorkspace } from './motif/workspace.js'
 import { builtinAssetDir } from './motif/builtinAssets.js'
@@ -1398,6 +1399,7 @@ app.whenReady().then(async () => {
   const { callClipComputeTool, readMediaFrameDataUrl, readMediaDescription } = await import('./mcp/server.js')
   const { AUDIO_FX_CHANNELS, CLIP_COMPUTE_CHANNELS } = await import('./state/router.js')
 
+  assertMotifLimits((require_('@weftcut/core') as { motifLimits?(): MotifLimits }).motifLimits?.())
   const motifFrames = new MotifFrameStore(
     async () => JSON.parse(await backend!.invoke('workspace_dir', '{}')) as string | null,
     require_('@weftcut/core') as typeof import('@weftcut/core'),
@@ -1477,13 +1479,17 @@ app.whenReady().then(async () => {
   // through the Motif reader utility, never through main.
   ipcMain.handle('motif:read', async (event, args: MotifTextureReadRequest): Promise<MotifTextureReadResult> => {
     if (!isMotifFrameAddress(args?.hash, args?.frame) || !isMotifReaderDiv(args.div)) throw new Error('Invalid Motif read request')
-    if (!motifGpu) return { kind: 'unavailable' }
+    if (!motifGpu) return { kind: 'unavailable', reason: 'lane', generation: 0 }
     const owner = event.sender
     const isCurrent = trackMotifConsumer(owner, event.senderFrame)
     const parent = resolveExportFinalization(owner.id, args.finalizationToken)
-    return currentMotifStore().readTexture(args.hash, args.frame, args.div, (file, w, h, div) => {
-      if (!isCurrent()) return Promise.reject(new MotifError('closed', 'Motif consumer closed'))
-      return motifGpu.read(owner, file, w, h, div, parent)
+    return currentMotifStore().readTexture(args.hash, args.frame, args.div, {
+      generation: motifGpu.generation(owner),
+      available: motifGpu.available(owner),
+      upload: (file, w, h, div) => {
+        if (!isCurrent()) return Promise.reject(new MotifError('closed', 'Motif consumer closed'))
+        return motifGpu.read(owner, file, w, h, div, parent)
+      },
     })
   })
   ipcMain.on(MOTIF_READER_CONNECT, event => {
