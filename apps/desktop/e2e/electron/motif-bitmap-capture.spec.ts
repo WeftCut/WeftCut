@@ -7,7 +7,7 @@ import { createMotifDraft, publishMotifDraft } from './helpers/motif';
 /// omitted after navigation (bitmapCanvasRuntime.ts), and a scaled capture
 /// that scaled width alone. The macOS one: the first committed frame of a new
 /// document carrying no canvas at all while the host window and the page's
-/// emulated size disagreed (capture.ts §setContentSize;
+/// emulated size disagreed (captureHost.ts §open;
 /// docs/notes/electron-chromium-behavior.md). Every
 /// capture in the first phase navigates (two Motifs alternate on the one
 /// capture host); the second phase repeats one Motif so a blank that is NOT

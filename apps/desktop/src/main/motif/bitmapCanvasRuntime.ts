@@ -4,7 +4,7 @@
  * host; the shared-texture host retains accelerated canvases. Install before
  * authored scripts create their contexts. WebGL and bitmaprenderer contexts
  * keep their original options and backend. (The macOS empty-first-frame case
- * was the host window's size, not the canvas backend: capture.ts
+ * was the host window's size, not the canvas backend: captureHost.ts
  * §setContentSize.) */
 export const BITMAP_CANVAS_RUNTIME_SOURCE = String.raw`
 (() => {

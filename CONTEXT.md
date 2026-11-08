@@ -601,6 +601,12 @@ can be reprioritized or cancelled. Requests for the same frame share one job:
 in the renderer per frame and divisor, in main per cache address. See ADR 0160.
 _Avoid_: coalesce key, ticket (the capture queue's word), broker job
 
+**Capture host**:
+An offscreen window showing one Motif content version, which renders its frames
+for capture. Main keeps a pool of them, at most one per content version. See
+[motifs.md](docs/motifs.md#capture-host).
+_Avoid_: capture page
+
 **Props schema (data plane)**:
 A Motif's `props_schema`: five typed variants (string, color, number, enum,
 media). The data contract only, no presentation. See ADR 0045, ADR 0132.

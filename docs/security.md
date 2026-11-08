@@ -38,7 +38,7 @@ owning WebContents and main frame. Captures are never persisted.
 A Motif is untrusted, user- or agent-authored web content that the app runs to
 capture frames ([motifs.md](motifs.md)). Two orthogonal axes bound it:
 
-- **Process isolation.** The offscreen capture window (`main/motif/capture.ts`)
+- **Process isolation.** The offscreen capture window (`main/motif/captureHost.ts`)
   is sandboxed, context-isolated, without Node and with **no preload**, so no
   IPC bridge exists. This bounds what a Motif can do to the host.
 - **Content confinement.** Every render document is served by the `motif:`

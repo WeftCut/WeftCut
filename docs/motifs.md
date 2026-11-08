@@ -106,14 +106,22 @@ Gesture model (`renderer/properties/motifParamsHost.ts`):
 
 ## Capture host
 
-`main/motif/capture.ts` owns one lazily created offscreen `BrowserWindow` per
-document, reused across frames and layers of that Motif. It loads the capture
-host page beside the Motif's `index.html`, which frames the Motif at the capture
-size above one marker row; the runtime runs in both and forwards the entry
-points. Requesting another Motif or content version opens a new window (ADR
-0159): only a window's first document keeps alpha on a bitmap host. The host sets
-`Emulation.setDeviceMetricsOverride` (any resolution) and a transparent default
-background so `background: transparent` stays real alpha.
+A capture host (`main/motif/captureHost.ts`) is one offscreen `BrowserWindow`
+showing one Motif content version, reused across frames and layers of it. It
+loads the capture host page beside the Motif's `index.html`, which frames the
+Motif at the capture size above one marker row; the runtime runs in both and
+forwards the entry points. Another Motif or content version gets another window
+(ADR 0159): only a window's first document keeps alpha on a bitmap host. The
+host sets `Emulation.setDeviceMetricsOverride` (any resolution) and a
+transparent default background so `background: transparent` stays real alpha.
+
+`MotifCapturer` (`capture.ts`) is the one entry point. It orders captures in a
+queue (`captureQueue.ts`) onto a pool of hosts (`hostPool.ts`): at most one
+host per Motif content version and texture kind, and `captureHosts` (default 1)
+in all. A capture whose Motif has no host takes a free slot, else replaces the
+least recently used host that is not rendering: that host's frames in flight
+drain, it closes, and only then does the new one open. With one host, every
+switch to another Motif replaces it.
 
 - **Output.** Every capture is the paint whose marker row carries the frame's
   id (`OffscreenFrames`). Windows: OSR shared textures, copied into the Motif
@@ -128,23 +136,27 @@ background so `background: transparent` stays real alpha.
   every other [failure code](#failure-codes) (a timeout, disk error, capacity
   refusal, held mutex, superseded request or Motif failure) never does.
   `WEFTCUT_MOTIF_CAPTURE=bitmap` forces bitmaps for diagnosis.
-- **One serial chain, pipelined.** Renders are serialized in queue order; a
-  render returns once its frame has committed, and the next frame of the same
-  page renders while up to three earlier ones are still on their way to a paint
-  (ADR 0159). A navigation or resize waits for those paints. A frame the
-  compositor skipped (a later id painted first) renders again, keeping its
-  place and its ticket. Every capture states a [priority](#admission): queued
-  `current` captures run first, then `ahead`, then `background`, and a
-  `background` capture waiting 2 s gets one frame between higher ones. A
-  queued capture moves when its priority changes, up or down, and leaves the
-  queue when its request is cancelled (it rejects as superseded); a running
-  one finishes and its caller drops what it no longer wants.
+- **Ordered, pipelined.** Captures leave the queue in order, and each host
+  renders one frame at a time; different hosts render at once. A render
+  returns once its frame has committed, and the next frame on the same host
+  renders while up to three earlier ones are still on their way to a paint
+  (ADR 0159). A resize waits for that host's paints. The next capture waits
+  while its host is rendering, or while every host is rendering and it has
+  none, and the captures behind it wait too. A frame the compositor skipped (a
+  later id painted first) renders again, keeping its place and its ticket.
+  Every capture states a [priority](#admission): queued `current` captures run
+  first, then `ahead`, then `background`, and a `background` capture waiting
+  2 s gets one frame between higher ones. A queued capture moves when its
+  priority changes, up or down, and leaves the queue when its request is
+  cancelled (it rejects as superseded); a running one finishes and its caller
+  drops what it no longer wants.
 - **Deadlines.** Every CDP command goes through the host's timed `send`
   (5 s); awaited setup gets 30 s; the renderer's capture transport allows 60 s
   so it does not pre-empt setup. A timeout rejects with code `timeout` and
-  tears the host down for rebuild.
-- **Failure latching.** A Motif whose script throws fails its lane
-  (`motifId` + `contentHash`) until an edit changes the hash or an explicit
+  closes the host; the next capture opens another. A host's failure fails only
+  the frames rendered on it.
+- **Failure latching** (`lanePolicy.ts`). A Motif whose script throws fails
+  its lane (`motifId` + `contentHash`) until an edit changes the hash or an explicit
   retry. A timeout is probation: one more attempt on the rebuilt host; a second
   consecutive timeout latches the lane, a success clears it. Load cannot be told
   from an infinite loop, and a heavy 1080p page normally takes ~1 s, so one

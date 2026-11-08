@@ -21,11 +21,11 @@ describe('resolveMotifTuning', () => {
   })
 
   it('keeps the default for an out-of-range, unknown or garbled entry, with one warning naming each', () => {
-    const { tuning, warn } = resolve('framesInFlight=0,captureHosts=2,lanes=4,gpuLanes=two,readsInFlight=2.5,garbage,writeSlots=4')
+    const { tuning, warn } = resolve('framesInFlight=0,captureHosts=9,lanes=4,gpuLanes=two,readsInFlight=2.5,garbage,writeSlots=4')
     expect(tuning).toEqual({ ...MOTIF_TUNING_DEFAULTS, writeSlots: 4, bandThreads: 2 })
     expect(warn).toHaveBeenCalledOnce()
     const message = warn.mock.calls[0]![0] as string
-    for (const part of ['framesInFlight=0', 'captureHosts=2', "'lanes'", 'gpuLanes=two', 'readsInFlight=2.5', "'garbage'"]) {
+    for (const part of ['framesInFlight=0', 'captureHosts=9', "'lanes'", 'gpuLanes=two', 'readsInFlight=2.5', "'garbage'"]) {
       expect(message).toContain(part)
     }
   })

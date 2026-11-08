@@ -23,7 +23,7 @@ import {
   ErrorCode,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js'
-import type { CaptureArgs } from '../motif/capture.js'
+import type { CaptureArgs } from '../motif/captureQueue.js'
 import { MotifError } from '../../shared/motifs/errors.js'
 import type { MotifFramePriority } from '../../shared/motifs/frameTransport.js'
 import { APP_SCOPE_RESOURCES, HYBRID_TOOLS, routeMcpTool, servesWithoutProject } from './mutationTools.js'

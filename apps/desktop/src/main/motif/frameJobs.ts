@@ -1,6 +1,6 @@
 import type { WebContents } from 'electron'
 import type { MotifOsrFrame } from './offscreenFrames'
-import type { CaptureArgs, CaptureOptions, CaptureRun, CaptureTicket } from './capture'
+import type { CaptureArgs, CaptureOptions, CaptureRun, CaptureTicket } from './captureQueue'
 import type { FrameWriter, MotifFrameStore } from './frameStore'
 import type { FrameRead, MotifFrameWriteQueue, QueuedWrite } from './frameWriteQueue'
 import type { MotifCacheAddress, MotifFramePriority, StoredMotifFrame } from '../../shared/motifs/frameTransport'

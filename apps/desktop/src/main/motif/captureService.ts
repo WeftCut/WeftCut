@@ -1,6 +1,6 @@
 import type { WebContents } from 'electron'
 import type { MotifOsrFrame } from './offscreenFrames.js'
-import type { CaptureArgs, CaptureOptions, CaptureRun } from './capture'
+import type { CaptureArgs, CaptureOptions, CaptureRun } from './captureQueue'
 import type { MotifFrameStore, FrameWriter } from './frameStore'
 import type { MotifCacheAddress, MotifCaptureControl, MotifCaptureReply, MotifCaptureRequest, MotifFramePriority, MotifTextureFrame } from '../../shared/motifs/frameTransport'
 import { MotifError, motifErrorCode } from '../../shared/motifs/errors'

@@ -3,7 +3,7 @@ import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promise
 import path from 'node:path'
 import type { Manifest } from '../../shared/motifs/catalog'
 import { motifPosterTime } from '../../shared/motifs/poster'
-import type { CaptureArgs } from './capture'
+import type { CaptureArgs } from './captureQueue'
 
 export interface CoverSource { manifest: Manifest; contentHash: string }
 interface CoverDeps {

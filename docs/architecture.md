@@ -24,7 +24,7 @@ Paths are under `apps/desktop/`.
 | Renderer | `src/renderer/index.html`, preload `src/preload/index.ts` | React UI, PixiJS compositor, decoded-frame intake, Web Audio preview mixer. |
 | Renderer workers | `render/worker/exportWorker.ts`, `render/motifs/motifReaderWorker.ts`, `render/positionConversion.worker.ts` | Export render and encode on an `OffscreenCanvas`; Motif frame reads; offline position conversion. |
 | Utility processes | `src/main/motif-reader-host.ts`, `decode-probe-host.ts` (macOS), `hardware-probe-host.ts` (Linux) | Motif frame decode off main ([ADR 0154](adr/0154-motif-frames-are-read-at-preview-scale-through-one-reader.md)); crash-isolated hardware probes. |
-| Hidden windows | `src/main/motif/capture.ts`, `svgRaster.ts`, `screenPick.ts` | Offscreen Motif capture over CDP ([ADR 0017](adr/0017-motifs-cdp-webcap-clock-takeover.md), [motifs.md](motifs.md#capture-host)); SVG rasterizing on import; screen color pick. |
+| Hidden windows | `src/main/motif/captureHost.ts`, `svgRaster.ts`, `screenPick.ts` | Offscreen Motif capture over CDP ([ADR 0017](adr/0017-motifs-cdp-webcap-clock-takeover.md), [motifs.md](motifs.md#capture-host)); SVG rasterizing on import; screen color pick. |
 | Child processes | `native/src/ffmpeg/`, `speech/`, `vlm/`, `native/reaper/` | ffmpeg/ffprobe via `ffmpeg-sidecar`; local speech (whisper.cpp, FunASR) and VLM engines as sidecars; on macOS and Linux the `weftcut-reaper` that ends ffmpeg children after the app ([ADR 0155](adr/0155-an-ffmpeg-child-never-outlives-the-app.md)). |
 | `weftcut-mcp` shim | `src/cli/` | Stdio MCP server that bridges agent clients to the app's HTTP endpoint ([mcp.md](mcp.md#transport--deployment)). |
 

@@ -207,7 +207,7 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
     } finally { retireWorkers(); }
   };
 
-  // Driven from the Electron main process (main/motif/capture.ts) via CDP
+  // Driven from the Electron main process (main/motif/captureHost.ts) via CDP
   // Runtime.evaluate(awaitPromise:true), through the capture host shell.
   // Resolves once setup (once-per-props), frame(t) and the seek to t
   // (seconds) have run; the shell's frame id proves which commit shows it.

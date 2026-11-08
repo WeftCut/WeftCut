@@ -203,7 +203,7 @@ an awaited `Page.enable` never settles, and an `addScriptToEvaluateOnNewDocument
 sent unawaited lands after the document's scripts (0 of 20). So the capture host
 loads a script-free shell first, registers the runtime, then loads the Motif
 into the shell's frame, and opens a new window for each document
-(`main/motif/capture.ts` §buildHost, ADR 0159).
+(`main/motif/captureHost.ts` §open, ADR 0159).
 
 ## Platform facts from the 2026-10 full verification runs
 

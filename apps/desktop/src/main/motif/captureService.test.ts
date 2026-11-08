@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NativeImage, OffscreenSharedTexture, WebContents } from 'electron';
 import type { MotifOsrFrame } from './offscreenFrames';
-import type { CaptureOptions, CaptureRun } from './capture';
+import type { CaptureOptions, CaptureRun } from './captureQueue';
 import { MotifCaptureService, parseMotifCaptureControl, parseMotifCaptureRequest, type CaptureServiceDeps } from './captureService';
 import type { MotifFrameStore } from './frameStore';
 import type { MotifCaptureRequest } from '../../shared/motifs/frameTransport';

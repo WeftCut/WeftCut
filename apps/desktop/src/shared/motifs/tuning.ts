@@ -17,10 +17,11 @@ interface TuningKey {
  * default was chosen, not swept. Every machine named is the Windows bench
  * (Windows 11, i5-13400 with 16 threads, RTX 3050) unless it says otherwise. */
 export const MOTIF_TUNING_SPEC = {
-  /** Capture host windows. One host serializes every capture; the host pool
-   * will widen this range. */
-  captureHosts: { default: 1, range: [1, 1] },
-  /** Frames the capture host renders while earlier ones are still on their way
+  /** Capture hosts open at once, each showing one Motif content version.
+   * More than 1 is not measured: each host is a renderer process and a
+   * capture surface. */
+  captureHosts: { default: 1, range: [1, 4] },
+  /** Frames a capture host renders while earlier ones are still on their way
    * to a paint; the bake coordinator keeps as many in the capture queue.
    * Measured: ADR 0159; 5 in flight gained about 2% on a 4K bake
    * (docs/notes/motif-bake-write-path-2026-11-08.md). */

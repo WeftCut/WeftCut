@@ -2,7 +2,8 @@
 // `buildHost` + `hardenWindow` touch, and the CDP `debugger` to canned replies.
 // The fake paints like an offscreen host: after each render, a paint carrying
 // the frame's id in its marker row, as a shared texture or a bitmap by the
-// host's kind. Behavior flags let each test script the failure it needs (slow
+// host's kind. Like Electron's, a destroyed window paints no more and throws
+// "Object has been destroyed" from every call into it. Behavior flags let each test script the failure it needs (slow
 // render, withheld paint, wedged ready-probe); `opened`/`renderCalls` count the
 // side effects under test.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -13,7 +14,8 @@ import { FRAME_MARKER_PIXELS, frameMarkerBits } from '../../shared/motifs/frameM
 let opened = 0
 let lastHost: EventEmitter | null = null
 /// The last window built, and whether the code under test destroyed it.
-let lastWindow: { destroyed: boolean } | null = null
+/// `silent`: the window paints no more, like a host gone silent.
+let lastWindow: { destroyed: boolean; silent: boolean } | null = null
 /// Whether the last host built takes shared textures (else bitmaps).
 let lastHostTexture = false
 /// The last `__motifRender(tSec, props, meta)` expression sent to the host —
@@ -22,13 +24,6 @@ let lastRenderExpr: string | null = null
 /// Total __motifRender evaluations — the lane fast-reject test asserts a
 /// same-lane capture never reaches the page.
 let renderCalls = 0
-/// The URL the fake host last loadURL'd — lets behavior flags key on which
-/// motif page is "loaded" (lane tests) and which motif a render served
-/// (priority-order test).
-let currentUrl = 'about:blank'
-/// Motif ids in render order — the priority tests assert a queued keyed
-/// capture renders before a queued keyless one.
-const renderOrder: string[] = []
 /// Page events in order (`load:<motif>`, `render:<frameId>`, `paint:<frameId>`).
 const events: string[] = []
 /// Lanes (`motifId@contentHash`) whose __motifRender throws — a Motif's own
@@ -40,27 +35,25 @@ let slowRenders = 0
 let paintDelayMs = 0
 /// Frame ids whose paint never comes: the compositor skipped them.
 const skippedPaints = new Set<number>()
+/// Lanes whose windows never paint again: a host gone silent.
+const silentLanes = new Set<string>()
 /// When true, the waitReady probe (Runtime.evaluate of the __motifRender
 /// typeof check) never settles — a wedged offscreen renderer.
 let hangReadyProbe = false
 let hungCommand: string | null = null
-/// True from a navigation or resize until the next frame paints: the fake then
-/// paints the stale surface first, with no frame id, as a new surface can.
-let freshSurface = true
 let setupDelayMs = 0
 let hangSetup = false
 let hangFrame = false
-/// The capture host's current content size — the fake paints at it, and a
-/// change models a new compositor surface (see setContentSize).
+/// The content size a fake host was last given; each window paints at its own.
 let contentSize = { width: 32, height: 16 }
 /// Texture handles released by the code under test.
 let released = 0
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-/// `${motifId}@${contentHash}` of the page the fake host currently has loaded.
-function currentLane(): string | null {
-  const m = /motif:\/\/([^/]+)\/(?:\.revisions\/[0-9a-f]+\/)?\.weftcut-capture-host\.html\?v=(.*)$/.exec(currentUrl)
+/// `${motifId}@${contentHash}` of the page loaded at `url`.
+function laneOf(url: string): string | null {
+  const m = /motif:\/\/([^/]+)\/(?:\.revisions\/[0-9a-f]+\/)?\.weftcut-capture-host\.html\?v=(.*)$/.exec(url)
   return m ? `${m[1]}@${decodeURIComponent(m[2]!)}` : null
 }
 
@@ -95,16 +88,29 @@ function bitmap(id: number | null, surface: number, size: { width: number; heigh
 vi.mock('electron', () => {
   class FakeBrowserWindow {
     texture: boolean
+    /// The page loaded last; behavior flags key on its lane.
+    url = 'about:blank'
+    /// The window's content size: it paints at it, and a change models a new
+    /// compositor surface (see setContentSize).
+    size: { width: number; height: number }
+    /// True from a navigation or resize until the next frame paints: the fake then
+    /// paints the stale surface first, with no frame id, as a new surface can.
+    fresh = true
+    destroyed = false
+    silent = false
+    /// Throws as Electron does for a call into a destroyed window.
+    alive = (): void => { if (this.destroyed) throw new TypeError('Object has been destroyed') }
     webContents = Object.assign(new EventEmitter(), {
       setZoomFactor: () => {},
-      setFrameRate: () => {},
+      setFrameRate: () => { this.alive() },
       stopPainting: () => {},
       startPainting: () => {},
       paintFrame: (frameId: number, surface: number) => {
-        const paints = freshSurface ? [{ id: null, surface: -1 }, { id: frameId, surface }] : [{ id: frameId, surface }]
-        freshSurface = false
-        const size = { ...contentSize }
+        const paints = this.fresh ? [{ id: null, surface: -1 }, { id: frameId, surface }] : [{ id: frameId, surface }]
+        this.fresh = false
+        const size = { ...this.size }
         const emit = () => {
+          if (this.destroyed || this.silent || silentLanes.has(laneOf(this.url) ?? '')) return
           for (const p of paints) {
             if (p.id !== null && skippedPaints.delete(p.id)) continue
             if (p.id !== null) events.push(`paint:${p.id}`)
@@ -120,9 +126,10 @@ vi.mock('electron', () => {
       },
       setWindowOpenHandler: () => {},
       debugger: {
-        attach: () => {},
-        detach: () => {},
+        attach: () => { this.alive() },
+        detach: () => { this.alive() },
         sendCommand: (method: string, params?: { expression?: string }) => {
+          this.alive()
           if (method === hungCommand) return new Promise(() => {})
           if (method === 'Page.captureScreenshot') throw new Error('captures never take screenshots')
           if (method === 'Runtime.evaluate') {
@@ -138,9 +145,8 @@ vi.mock('electron', () => {
               if (hangFrame) return new Promise(() => {})
               lastRenderExpr = expr
               renderCalls++
-              renderOrder.push(currentLane()?.split('@')[0] ?? currentUrl)
               // The Motif's own script throws; the CDP transport answers fine.
-              if (throwingLanes.has(currentLane() ?? '')) {
+              if (throwingLanes.has(laneOf(this.url) ?? '')) {
                 return Promise.resolve({ exceptionDetails: { text: 'boom' } })
               }
               const frameId = lastRenderMeta().frameId as number
@@ -159,22 +165,21 @@ vi.mock('electron', () => {
     })
     constructor(options: { width: number; height: number; webPreferences: { offscreen: unknown } }) {
       opened++
-      contentSize = { width: options.width, height: options.height }
-      freshSurface = true
+      this.size = contentSize = { width: options.width, height: options.height }
       this.texture = typeof options.webPreferences.offscreen === 'object'
       lastHostTexture = this.texture
       lastHost = this.webContents
       lastWindow = this
     }
-    destroyed = false
     loadURL = async (url: string): Promise<void> => {
-      currentUrl = url; freshSurface = true
-      const lane = currentLane()
+      this.alive()
+      this.url = url; this.fresh = true
+      const lane = laneOf(url)
       if (lane) events.push(`load:${lane.split('@')[0]}`)
     }
     // A new size is a new compositor surface too.
-    setContentSize = (width: number, height: number): void => { contentSize = { width, height }; freshSurface = true }
-    destroy = (): void => { this.destroyed = true }
+    setContentSize = (width: number, height: number): void => { this.alive(); this.size = contentSize = { width, height }; this.fresh = true }
+    destroy = (): void => { this.alive(); this.destroyed = true }
   }
   return { BrowserWindow: FakeBrowserWindow, nativeImage: { createFromBuffer: () => { throw new Error('not in these tests') } }, shell: { openExternal: async () => {} } }
 })
@@ -234,8 +239,6 @@ const args = {
   contentHash: 'v1',
 }
 const bg = { priority: 'background' } as const
-/// A capture whose frame resolves to its kind, with its ticket.
-const kind = (a: typeof args, priority: 'current' | 'ahead' | 'background') => capturer.captureFrame(a, async frame => frame.kind, { priority })
 
 describe('MotifCapturer', () => {
   it('opens an offscreen host for a live capture', async () => {
@@ -274,27 +277,6 @@ describe('MotifCapturer', () => {
       setupDelayMs = 0; hangSetup = false; hangFrame = false
       vi.useRealTimers()
     }
-  })
-
-  it('cancels a queued capture without rendering it', async () => {
-    slowRenders = 1
-    const before = renderCalls
-    const running = capturer.capturePng(args, bg)
-    const queued = kind(args, 'current')
-    queued.ticket.cancel()
-    await expect(queued.result).rejects.toMatchObject({ code: 'superseded' })
-    await running
-    expect(renderCalls - before).toBe(1)
-  })
-
-  it('a capture cancelled once it runs still answers', async () => {
-    slowRenders = 1
-    const before = renderCalls
-    const running = kind(args, 'current')
-    await vi.waitFor(() => expect(renderCalls - before).toBe(1))
-    running.ticket.cancel()
-    running.ticket.setPriority('background')
-    await expect(running.result).resolves.toBe('bitmap')
   })
 
   it('meta.fps is the passed fpsNum/fpsDen', async () => {
@@ -379,19 +361,6 @@ describe('MotifCapturer', () => {
       .resolves.toBe('UE5H')
   })
 
-  it('serves queued captures current, then ahead, then background, never preempting a running one', async () => {
-    slowRenders = 1
-    const orderBefore = renderOrder.length
-    const running = capturer.capturePng({ ...args, motifId: 'order-running' }, bg)
-    const queued = [
-      capturer.capturePng({ ...args, motifId: 'order-background' }, bg),
-      capturer.capturePng({ ...args, motifId: 'order-ahead' }, { priority: 'ahead' }),
-      capturer.capturePng({ ...args, motifId: 'order-current' }, { priority: 'current' }),
-    ]
-    await Promise.all([running, ...queued])
-    expect(renderOrder.slice(orderBefore)).toEqual(['order-running', 'order-current', 'order-ahead', 'order-background'])
-  })
-
   it('reads the manifest once per (motifId, contentHash), not per frame', async () => {
     // getMotif is readFileSync + parse on the capture hot path; the content
     // hash is the invalidation signal, so repeat captures of one lane resolve
@@ -420,19 +389,6 @@ describe('MotifCapturer', () => {
     await expect(at('', 0)).resolves.toBe('UE5H')
     await expect(at('', 1)).resolves.toBe('UE5H')
     expect(reads).toBe(4)
-  })
-
-  it('moves a queued capture up or down when its priority changes', async () => {
-    slowRenders = 1
-    renderOrder.length = 0
-    const running = capturer.capturePng({ ...args, motifId: 'running' }, bg)
-    const promoted = kind({ ...args, motifId: 'promoted' }, 'background')
-    const demoted = kind({ ...args, motifId: 'demoted' }, 'current')
-    const ahead = kind({ ...args, motifId: 'ahead' }, 'ahead')
-    promoted.ticket.setPriority('current')
-    demoted.ticket.setPriority('background')
-    await Promise.all([running, promoted.result, demoted.result, ahead.result])
-    expect(renderOrder).toEqual(['running', 'promoted', 'ahead', 'demoted'])
   })
 
   it('sizes the host window to the capture plus its marker row', async () => {
@@ -555,28 +511,6 @@ describe('MotifCapturer', () => {
     } finally { paintDelayMs = 0; skippedPaints.clear() }
   })
 
-  it('does not render a skipped frame again once its capture is cancelled', async () => {
-    await capturer.capturePng({ ...args, motifId: 'skip-cancel' }, bg)
-    paintDelayMs = 20
-    try {
-      const rendersBefore = renderCalls
-      const firstRender = new Promise<number>(resolve => {
-        const check = setInterval(() => {
-          const r = events.findLast(e => e.startsWith('render:'))
-          if (r && renderCalls > rendersBefore) { clearInterval(check); resolve(Number(r.slice(7))) }
-        }, 0)
-      })
-      events.length = 0
-      const a = kind({ ...args, motifId: 'skip-cancel', tSec: 1 }, 'current')
-      skippedPaints.add(await firstRender)
-      a.ticket.cancel()
-      const b = capturer.capturePng({ ...args, motifId: 'skip-cancel', tSec: 2 }, bg)
-      await expect(a.result).rejects.toMatchObject({ code: 'superseded' })
-      await expect(b).resolves.toBe('UE5H')
-      expect(renderCalls - rendersBefore).toBe(2)
-    } finally { paintDelayMs = 0; skippedPaints.clear() }
-  })
-
   it('lets the shell\'s frame load only the Motif it was built for', async () => {
     await capturer.capturePng({ ...args, motifId: 'framed', contentHash: 'v7' }, bg)
     const navigate = (url: string, isMainFrame = false) => {
@@ -631,30 +565,160 @@ describe('MotifCapturer', () => {
     }
   })
 
-  it('checks session currency after waiting in the capture queue, before page IO', async () => {
-    slowRenders = 1
-    const before = renderCalls
-    const running = capturer.capturePng({ ...args, motifId: 'session-running' }, bg)
-    let current = true
-    const queued = capturer.captureFrame({ ...args, motifId: 'stale-session' }, async frame => frame.kind, { priority: 'background', isCurrent: () => current })
-    const rejected = expect(queued.result).rejects.toThrow('superseded')
-    current = false
-    await running
-    await rejected
-    expect(renderCalls - before).toBe(1)
-    expect(currentUrl).toContain('session-running')
-  })
-
   it('reports page reuse independently of total captures and allows diagnostics reset', async () => {
     capturer.diagnostics(true)
     await capturer.capturePng({ ...args, motifId: 'diagnostics', tSec: 0 }, bg)
     await capturer.capturePng({ ...args, motifId: 'diagnostics', tSec: 1 }, bg)
     await capturer.capturePng({ ...args, motifId: 'diagnostics-next', tSec: 0 }, bg)
     const stats = capturer.diagnostics()
-    expect(stats).toMatchObject({ captures: 3, completed: 3, failed: 0, pageLoads: 2, bitmapCaptures: 3, textureCaptures: 0 })
+    expect(stats).toMatchObject({ captures: 3, completed: 3, failed: 0, pageLoads: 2, hostEvictions: 1, bitmapCaptures: 3, textureCaptures: 0, queued: 0, rendering: 0 })
+    expect(stats.hosts).toEqual([expect.objectContaining({ motifId: 'diagnostics-next', contentHash: 'v1', texture: false, width: 32, height: 16, rendering: false, captures: 1 })])
     expect(stats.captureMs).toBeGreaterThanOrEqual(0)
     expect(stats.loadMs).toBeGreaterThanOrEqual(0)
-    expect(capturer.diagnostics(true)).toMatchObject({ captures: 0, pageLoads: 0 })
+    expect(capturer.diagnostics(true)).toMatchObject({ captures: 0, pageLoads: 0, hostEvictions: 0 })
+  })
+
+  it('with two capture hosts, two Motifs render at once on a host each, and the least recently used one is replaced', async () => {
+    capturer = newCapturer({ tuning: { ...MOTIF_TUNING_DEFAULTS, captureHosts: 2 } })
+    const before = opened
+    slowRenders = 2
+    const a = capturer.capturePng({ ...args, motifId: 'pool-a' }, bg)
+    const b = capturer.capturePng({ ...args, motifId: 'pool-b', width: 48, height: 24 }, bg)
+    await vi.waitFor(() => expect(capturer.diagnostics()).toMatchObject({ rendering: 2, hosts: [{ motifId: 'pool-a', rendering: true }, { motifId: 'pool-b', rendering: true }] }))
+    await expect(Promise.all([a, b])).resolves.toEqual(['UE5H', 'UE5H'])
+    await capturer.capturePng({ ...args, motifId: 'pool-b', tSec: 1, width: 48, height: 24 }, bg)
+    await capturer.capturePng({ ...args, motifId: 'pool-a', tSec: 1 }, bg)
+    expect(opened - before).toBe(2)
+    expect(capturer.diagnostics()).toMatchObject({
+      captures: 4, completed: 4, hostBuilds: 2, hostEvictions: 0, rendering: 0, queued: 0,
+      hosts: [
+        { motifId: 'pool-a', texture: false, width: 32, height: 16, rendering: false, captures: 2 },
+        { motifId: 'pool-b', texture: false, width: 48, height: 24, rendering: false, captures: 2 },
+      ],
+    })
+    // `pool-b` rendered less recently: a third Motif replaces it.
+    await capturer.capturePng({ ...args, motifId: 'pool-c' }, bg)
+    const stats = capturer.diagnostics()
+    expect(stats).toMatchObject({ hostBuilds: 3, hostEvictions: 1 })
+    expect(stats.hosts.map(host => host.motifId)).toEqual(['pool-a', 'pool-c'])
+    expect(stats.hosts[0]!.idleMs).toBeGreaterThanOrEqual(0)
+  })
+
+  it('with two capture hosts, a host that stops painting fails only its own frames', async () => {
+    vi.useFakeTimers()
+    try {
+      capturer = newCapturer({ tuning: { ...MOTIF_TUNING_DEFAULTS, captureHosts: 2 } })
+      const warm = (motifId: string) => {
+        const done = capturer.capturePng({ ...args, motifId }, bg)
+        return vi.advanceTimersByTimeAsync(1).then(() => done)
+      }
+      await warm('pool-healthy')
+      const healthyWindow = lastWindow!
+      await warm('pool-silent')
+      const silentWindow = lastWindow!
+      silentLanes.add('pool-silent@v1')
+      const lost = expect(capturer.capturePng({ ...args, motifId: 'pool-silent', tSec: 1 }, bg)).rejects.toThrow(/paint timed out/)
+      const healthy = [1, 2].map(tSec => capturer.capturePng({ ...args, motifId: 'pool-healthy', tSec }, bg))
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(Promise.all(healthy)).resolves.toEqual(['UE5H', 'UE5H'])
+      expect(capturer.diagnostics().hosts.find(host => host.motifId === 'pool-silent')?.framesInFlight).toBe(1)
+      await vi.advanceTimersByTimeAsync(5001)
+      await lost
+      expect(silentWindow.destroyed).toBe(true)
+      expect(healthyWindow.destroyed).toBe(false)
+      expect(capturer.diagnostics().hosts.map(host => host.motifId)).toEqual(['pool-healthy'])
+    } finally {
+      silentLanes.clear()
+      vi.useRealTimers()
+    }
+  })
+
+  it('a step waiting for room renders on a rebuilt host when a frame in flight times out, and its lane stays open', async () => {
+    vi.useFakeTimers()
+    try {
+      const capture = (tSec: number) => capturer.capturePng({ ...args, motifId: 'timeout-in-flight', tSec }, bg)
+      const warm = capture(0)
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(warm).resolves.toBe('UE5H')
+      const silent = lastWindow!
+      silent.silent = true
+      const before = { opened, renders: renderCalls }
+      const lost = Promise.allSettled([1, 2, 3].map(capture))
+      const waiting = capture(4)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(renderCalls - before.renders).toBe(3)
+      await vi.advanceTimersByTimeAsync(5001)
+      expect((await lost).map(s => s.status)).toEqual(['rejected', 'rejected', 'rejected'])
+      await expect(waiting).resolves.toBe('UE5H')
+      expect(silent.destroyed).toBe(true)
+      expect(opened).toBe(before.opened + 1)
+      const next = capture(5)
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(next).resolves.toBe('UE5H')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a texture switch while a step waits for room renders it on a bitmap host, and its lane stays open', async () => {
+    vi.useFakeTimers()
+    try {
+      capturer.setTextureEnabled(true)
+      const capture = (tSec: number) => capturer.captureFrame({ ...args, motifId: 'switch-in-flight', tSec }, async frame => frame.kind, bg).result
+      const warm = capture(0)
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(warm).resolves.toBe('texture')
+      const textureWindow = lastWindow!
+      paintDelayMs = 50
+      const before = { opened, renders: renderCalls }
+      const lost = Promise.allSettled([1, 2, 3].map(capture))
+      const waiting = capture(4)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(renderCalls - before.renders).toBe(3)
+      capturer.setTextureEnabled(false)
+      await vi.advanceTimersByTimeAsync(100)
+      expect((await lost).map(s => s.status)).toEqual(['rejected', 'rejected', 'rejected'])
+      await expect(waiting).resolves.toBe('bitmap')
+      expect(textureWindow.destroyed).toBe(true)
+      expect(lastHostTexture).toBe(false)
+      // The host it opened serves the lane's next frame.
+      const next = capture(5)
+      await vi.advanceTimersByTimeAsync(100)
+      await expect(next).resolves.toBe('bitmap')
+      expect(opened).toBe(before.opened + 1)
+      expect(capturer.diagnostics().hosts).toEqual([expect.objectContaining({ motifId: 'switch-in-flight', texture: false })])
+    } finally {
+      paintDelayMs = 0
+      vi.useRealTimers()
+    }
+  })
+
+  it('a resize waiting for its host\'s frames renders on a rebuilt host when that host retires', async () => {
+    vi.useFakeTimers()
+    try {
+      const capture = (tSec: number, width = 32, height = 16) => capturer.capturePng({ ...args, motifId: 'resize-retired', tSec, width, height }, bg)
+      const warm = capture(0)
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(warm).resolves.toBe('UE5H')
+      const silent = lastWindow!
+      silent.silent = true
+      const before = { opened, renders: renderCalls }
+      const lost = expect(capture(1)).rejects.toThrow(/paint timed out/)
+      const resized = capture(2, 48, 24)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(renderCalls - before.renders).toBe(1)
+      await vi.advanceTimersByTimeAsync(5001)
+      await lost
+      await expect(resized).resolves.toBe('UE5H')
+      expect(silent.destroyed).toBe(true)
+      expect(opened).toBe(before.opened + 1)
+      expect(contentSize).toEqual({ width: 48, height: 25 })
+      const next = capture(3, 48, 24)
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(next).resolves.toBe('UE5H')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('explicit retry clears only the selected content failure latch', async () => {
@@ -670,42 +734,6 @@ describe('MotifCapturer', () => {
     capturer.resetFailure(retryArgs.motifId, retryArgs.contentHash)
     await expect(capturer.capturePng(retryArgs, bg)).resolves.toBe('UE5H')
     await expect(capturer.capturePng(otherArgs, bg)).rejects.toThrow('__motifRender threw')
-  })
-
-  it('a priority change keeps the time a capture has waited for aging', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] })
-    try {
-      const before = renderOrder.length
-      setupDelayMs = 2500
-      const running = capturer.capturePng({ ...args, motifId: 'keep-age-running' }, bg)
-      await vi.advanceTimersByTimeAsync(1)
-      setupDelayMs = 0
-      const demoted = kind({ ...args, motifId: 'keep-age-demoted' }, 'current')
-      const high = capturer.capturePng({ ...args, motifId: 'keep-age-high' }, { priority: 'current' })
-      demoted.ticket.setPriority('background')
-      await vi.advanceTimersByTimeAsync(2501)
-      await Promise.all([running, demoted.result, high])
-      expect(renderOrder.slice(before)).toEqual(['keep-age-running', 'keep-age-demoted', 'keep-age-high'])
-    } finally { setupDelayMs = 0; vi.useRealTimers() }
-  })
-
-  it('ages waiting background frames without letting an old batch monopolize foreground', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] })
-    try {
-      const before = renderOrder.length
-      setupDelayMs = 2500
-      const running = capturer.capturePng({ ...args, motifId: 'age-running' }, bg)
-      await vi.advanceTimersByTimeAsync(1)
-      setupDelayMs = 0
-      const lowA = capturer.capturePng({ ...args, motifId: 'age-low-a' }, bg)
-      const lowB = capturer.capturePng({ ...args, motifId: 'age-low-b' }, bg)
-      // Background ages past `ahead` as well as `current`.
-      const highA = capturer.capturePng({ ...args, motifId: 'age-high-a' }, { priority: 'current' })
-      const highB = capturer.capturePng({ ...args, motifId: 'age-high-b' }, { priority: 'ahead' })
-      await vi.advanceTimersByTimeAsync(2501)
-      await Promise.all([running, lowA, lowB, highA, highB])
-      expect(renderOrder.slice(before)).toEqual(['age-running', 'age-low-a', 'age-high-a', 'age-low-b', 'age-high-b'])
-    } finally { setupDelayMs = 0; vi.useRealTimers() }
   })
 
   it('refuses a capture queued past shutdown instead of reopening the host', async () => {
