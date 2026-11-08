@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { MotifBakeCoordinator } from './baking';
-import { MotifFrameStore, type FrameCodec } from './frameStore';
+import { MotifFrameStore } from './frameStore';
 import type { MotifCaptureService } from './captureService';
 import { hashCacheKey } from '../../shared/motifs/cacheKey';
 import { MotifError, motifSuperseded } from '../../shared/motifs/errors';
@@ -9,7 +9,6 @@ import type { MotifBakePlan, MotifBakePause, MotifBakeSnapshot } from '../../sha
 
 export interface BakeWorkspaceDeps {
   session(): { generation: number; root: string } | null;
-  codec: FrameCodec;
   capture: MotifCaptureService;
   pause(): MotifBakePause | undefined;
   diskBytes(): number;
@@ -124,7 +123,7 @@ export class MotifBakeWorkspace {
     this.bootstrap = true;
     this.live.clear(); this.writing.clear(); this.sizes.clear(); this.inventoryChanges.clear();
     const session = { ...next, store: null as unknown as MotifFrameStore };
-    session.store = new MotifFrameStore(async () => next.root, this.deps.codec, (hash, frame, present, bytes) => {
+    session.store = new MotifFrameStore(async () => next.root, (hash, frame, present, bytes) => {
       if (this.current !== session) return;
       let sizes = this.sizes.get(hash);
       if (!sizes) this.sizes.set(hash, sizes = new Map());

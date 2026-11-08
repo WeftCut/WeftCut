@@ -1,4 +1,3 @@
-import { hashCacheKey } from "../../../shared/motifs/cacheKey";
 import { MIB, PERFORMANCE_DEFAULTS } from "../../../shared/performance-settings";
 import { isMotifReaderDiv, type MotifReaderDiv } from "../../../shared/motifs/readerProtocol";
 import { cacheBudget } from '../cacheBudget';
@@ -355,9 +354,9 @@ export class MotifFrameCache {
   // Layout: `<workspace>/Cache/raster/<hash>/<i>.wfrm`, where `<hash>` is
   // `hashCacheKey(cacheKey)` (32 lowercase hex chars). Main owns the
   // directory — writes, inventory and collection of unreferenced dirs live in
-  // `MotifFrameStore` (src/main/motif/frameStore.ts). This side only reads
-  // and forwards writes; both load their bridge lazily so the L0 path stays
-  // Node-loadable for the unit test.
+  // `MotifFrameStore` (src/main/motif/frameStore.ts). This side only reads,
+  // and loads its reader lazily so the L0 path stays Node-loadable for the
+  // unit test.
   // ----------------------------------------------------------------
 
   /// A stored frame at `scaleDiv`, through the document's `MotifFrameReader`
@@ -368,15 +367,6 @@ export class MotifFrameCache {
     if (typeof window === "undefined") return null;
     const { motifFrameReader } = await import("./MotifFrameReader");
     return motifFrameReader().read(cacheKey, frameIndex, scaleDiv, options);
-  }
-
-  /// Encode a PNG capture into the frame cache, creating the `<hash>` dir as needed. No-op when
-  /// no project is open (nowhere to anchor `<workspace>/Cache/`).
-  async writeFrame(cacheKey: string, frameIndex: number, png: Blob): Promise<void> {
-    if (typeof window === "undefined") return;
-    const { invoke } = await import("@/bridge/ipc");
-    const bytes = new Uint8Array(await png.arrayBuffer());
-    await invoke<void>("motif_write_cached_frame", { hash: hashCacheKey(cacheKey), frame: frameIndex, png: bytes });
   }
 }
 

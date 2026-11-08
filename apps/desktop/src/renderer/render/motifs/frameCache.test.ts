@@ -510,18 +510,17 @@ describe("MotifFrameCache — content coverage", () => {
 });
 
 describe("MotifFrameCache — L2 worker-safety (no window bridge)", () => {
-  // The export Worker and node tests have no window, so no reader or IPC
-  // bridge: L2 must degrade to a clean no-op rather than throw.
+  // The export Worker and node tests have no window, so no reader: L2 must
+  // degrade to a clean miss rather than throw.
   const realWindow = (globalThis as Record<string, unknown>).window;
   afterEach(() => {
     (globalThis as Record<string, unknown>).window = realWindow;
   });
 
-  test("readBitmap misses and writeFrame no-ops when window is undefined", async () => {
+  test("readBitmap misses when window is undefined", async () => {
     delete (globalThis as Record<string, unknown>).window;
     const c = new MotifFrameCache();
     await expect(c.readBitmap("k", 0, 1)).resolves.toBeNull();
-    await expect(c.writeFrame("k", 0, new Blob([]))).resolves.toBeUndefined();
   });
 });
 

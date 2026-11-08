@@ -579,7 +579,7 @@ describe('Motif GPU leases', () => {
     try {
       const { owner, pools, transport, create } = fixture()
       const changed = vi.fn()
-      const store = new MotifFrameStore(async () => root, { motifEncodePng: vi.fn() }, changed)
+      const store = new MotifFrameStore(async () => root, changed)
       const hash = 'c'.repeat(32)
       const bytes = Buffer.alloc(68)
       bytes.write('WCMFRM03'); bytes.writeUInt32LE(3841, 8); bytes.writeUInt32LE(2161, 12)

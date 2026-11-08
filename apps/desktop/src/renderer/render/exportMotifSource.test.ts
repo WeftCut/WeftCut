@@ -9,7 +9,7 @@ import { timeUsAtFrame } from "../frames";
 
 vi.mock("./motifs/motifRasterCache", () => ({
   sharedBakedKeyIndex: { has: vi.fn(() => true), add: vi.fn() },
-  sharedMotifFrameCache: { readBitmap: vi.fn(), writeFrame: vi.fn() },
+  sharedMotifFrameCache: { readBitmap: vi.fn() },
 }));
 vi.mock("./motifs/host", () => ({ captureMotifFrameResult: vi.fn() }));
 vi.mock("./motifs/frameTransport", () => ({ controlStoredMotifCapture: vi.fn() }));
@@ -28,11 +28,8 @@ const bitmap = () => ({ width: 480, height: 480, close: vi.fn() }) as unknown as
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(sharedBakedKeyIndex.has).mockReturnValue(true);
-  vi.stubGlobal('OffscreenCanvas', class {
-    width = 480; height = 480;
-    getContext() { return { drawImage: vi.fn() }; }
-    async convertToBlob() { return new Blob(['pixels']); }
-  });
+  // The renderer never draws or encodes a Motif frame for the cache.
+  vi.stubGlobal('OffscreenCanvas', vi.fn(() => { throw new Error('No renderer encode expected'); }));
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -59,21 +56,18 @@ describe('streamed Motif selection', () => {
     expect(tasks.map(t => t.frame)).toEqual([0, 9]);
   });
 
-  it('reuses disk frames without capturing or writing', async () => {
+  it('reuses disk frames without capturing', async () => {
     const b = bitmap(); vi.mocked(sharedMotifFrameCache.readBitmap).mockResolvedValue(b);
     expect(await planExportMotifFrame(summary(), 0, 'export-token')[0]!.read(new AbortController().signal)).toBe(b);
     // Export and finalization read full size, whatever preview's divisor.
     expect(sharedMotifFrameCache.readBitmap).toHaveBeenCalledWith(expect.any(String), 0, 1, { finalizationToken: 'export-token' });
     expect(captureMotifFrameResult).not.toHaveBeenCalled();
-    expect(sharedMotifFrameCache.writeFrame).not.toHaveBeenCalled();
   });
 
-  it('persists cold export frames in main without drawing or encoding pixels again in the renderer', async () => {
+  it('persists cold export frames in main and marks them baked', async () => {
     const b = bitmap();
     vi.mocked(sharedBakedKeyIndex.has).mockReturnValue(false);
     vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: b, persisted: true, scaleDiv: 'live' });
-    const canvas = vi.fn(() => { throw new Error('No renderer encode expected'); });
-    vi.stubGlobal('OffscreenCanvas', canvas);
     const task = planExportMotifFrame(summary(), 1_000_000, 'export-token')[0]!;
     expect(await task.read(new AbortController().signal)).toBe(b);
     expect(captureMotifFrameResult).toHaveBeenCalledOnce();
@@ -81,20 +75,18 @@ describe('streamed Motif selection', () => {
       bake: { hash: expect.stringMatching(/^[0-9a-f]{32}$/), frame: 60 },
       finalizationToken: 'export-token', high: true,
     });
-    expect(canvas).not.toHaveBeenCalled();
-    expect(sharedMotifFrameCache.writeFrame).not.toHaveBeenCalled();
     expect(sharedBakedKeyIndex.add).toHaveBeenCalledWith(expect.any(String), 60);
   });
 
   // The reader answers a missing or corrupt frame alike: null.
-  it.each(['missing or corrupt', 'unbaked'])('repairs a %s frame and makes it reusable', async kind => {
-    const b = bitmap(); vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: b, persisted: false, scaleDiv: 'live' });
+  it.each(['missing or corrupt', 'unbaked'])('recaptures a %s frame and makes it reusable', async kind => {
+    const b = bitmap(); vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: b, persisted: true, scaleDiv: 'live' });
     vi.mocked(sharedMotifFrameCache.readBitmap).mockResolvedValue(null);
     if (kind === 'unbaked') vi.mocked(sharedBakedKeyIndex.has).mockReturnValue(false);
     const task = planExportMotifFrame(summary(), 0)[0]!;
     expect(await task.read(new AbortController().signal)).toBe(b);
-    expect(sharedMotifFrameCache.writeFrame).toHaveBeenCalledOnce();
-    expect(sharedBakedKeyIndex.add).toHaveBeenCalledOnce();
+    expect(captureMotifFrameResult).toHaveBeenCalledOnce();
+    expect(sharedBakedKeyIndex.add).toHaveBeenCalledExactlyOnceWith(expect.any(String), 0);
   });
 
   it('a transport error fails the export instead of capturing', async () => {
@@ -106,10 +98,8 @@ describe('streamed Motif selection', () => {
     expect(sharedBakedKeyIndex.add).not.toHaveBeenCalled();
   });
 
-  it('continues with valid pixels when cache persistence fails, and propagates capture failures', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('keeps valid pixels uncached when main failed to store them, and propagates capture failures', async () => {
     const b = bitmap(); vi.mocked(captureMotifFrameResult).mockResolvedValueOnce({ bitmap: b, persisted: false, scaleDiv: 'live' });
-    vi.mocked(sharedMotifFrameCache.writeFrame).mockRejectedValue(new Error('disk full'));
     const task = planExportMotifFrame(summary(), 0)[0]!;
     expect(await task.read(new AbortController().signal)).toBe(b);
     expect(b.close).not.toHaveBeenCalled(); expect(sharedBakedKeyIndex.add).not.toHaveBeenCalled();
@@ -117,7 +107,7 @@ describe('streamed Motif selection', () => {
     await expect(task.read(new AbortController().signal)).rejects.toThrow('capture failed');
   });
 
-  it('cancels an admitted capture and skips cache writes for late results', async () => {
+  it('cancels an admitted capture and does not mark a late result baked', async () => {
     let resolve!: (v: CapturedFrame) => void;
     vi.mocked(captureMotifFrameResult).mockReturnValue(new Promise(r => { resolve = r; }));
     const ctrl = new AbortController();
@@ -125,8 +115,8 @@ describe('streamed Motif selection', () => {
     await vi.waitFor(() => expect(captureMotifFrameResult).toHaveBeenCalledOnce());
     ctrl.abort();
     expect(controlStoredMotifCapture).toHaveBeenCalledWith(expect.objectContaining({ action: 'cancel' }));
-    const b = bitmap(); resolve({ bitmap: b, persisted: false, scaleDiv: 'live' });
+    const b = bitmap(); resolve({ bitmap: b, persisted: true, scaleDiv: 'live' });
     expect(await read).toBe(b); // producer owns and closes this late result
-    expect(sharedMotifFrameCache.writeFrame).not.toHaveBeenCalled();
+    expect(sharedBakedKeyIndex.add).not.toHaveBeenCalled();
   });
 });

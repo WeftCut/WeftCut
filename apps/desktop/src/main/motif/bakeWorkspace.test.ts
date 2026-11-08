@@ -36,7 +36,7 @@ async function fixture() {
   });
   const workspace = new MotifBakeWorkspace({
     session: () => session, capture: { persist } as unknown as MotifCaptureService,
-    codec: { motifEncodePng: async () => frameBytes() }, pause: () => undefined, diskBytes: () => budget, retain,
+    pause: () => undefined, diskBytes: () => budget, retain,
     publish: snapshot => snapshots.push(snapshot), framesInFlight: 3,
   });
   workspaces.push(workspace);

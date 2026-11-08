@@ -1,8 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { PNG } from 'pngjs'
-import { VECTORS_PATH, compareReadback, downscaleReference, encodePng, premultiply, syntheticFrame } from './motif-downscale.mjs'
+import { VECTORS_PATH, compareReadback, downscaleReference, premultiply, syntheticFrame } from './motif-downscale.mjs'
 
 const vectors = JSON.parse(readFileSync(VECTORS_PATH, 'utf8'))
 
@@ -37,13 +36,6 @@ test('the synthetic frame has transparent, opaque and translucent texels', () =>
   const alphas = new Set()
   for (let i = 3; i < rgba.length; i += 4) alphas.add(rgba[i])
   assert.ok(alphas.has(0) && alphas.has(255) && alphas.has(1) && alphas.has(128))
-})
-
-test('PNG encoding keeps straight pixels exactly', () => {
-  const rgba = syntheticFrame(37, 23)
-  const decoded = PNG.sync.read(encodePng(rgba, 37, 23))
-  assert.deepEqual([decoded.width, decoded.height], [37, 23])
-  assert.deepEqual([...decoded.data], [...rgba])
 })
 
 /** What a canvas read-back of a premultiplied surface returns. */

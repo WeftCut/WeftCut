@@ -50,30 +50,9 @@ export function planExportMotifFrame(
               bake: { hash: hashCacheKey(desc.cacheKey), frame: desc.contentFrame },
               ...(finalizationToken ? { finalizationToken } : {}) }));
         } finally { signal.removeEventListener("abort", cancel); }
-        if (persisted) {
-          if (!signal.aborted) sharedBakedKeyIndex.add(desc.cacheKey, desc.contentFrame);
-          return bitmap;
-        }
-        // Cache is an optimization: failure must never discard valid pixels.
-        // Main stores the frame it captured; only a failed write or an
-        // unavailable native readback needs this PNG compatibility path.
-        // Await within the read reservation so writes cannot build an unbounded queue.
-        if (!signal.aborted) {
-          let canvas: OffscreenCanvas | undefined;
-          try {
-            canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-            const ctx = canvas.getContext("2d");
-            if (!ctx) throw new Error("Motif cache canvas unavailable");
-            ctx.drawImage(bitmap, 0, 0);
-            const png = await canvas.convertToBlob({ type: "image/png" });
-            if (!signal.aborted) {
-              await sharedMotifFrameCache.writeFrame(desc.cacheKey, desc.contentFrame, png);
-              sharedBakedKeyIndex.add(desc.cacheKey, desc.contentFrame);
-            }
-          } catch (error) {
-            console.warn("[weftcut/export] Motif cache write skipped:", error);
-          } finally { if (canvas) canvas.width = canvas.height = 0; }
-        }
+        // Main stores what it captures (ADR 0158). A frame it failed to store
+        // stays uncached; export keeps its pixels either way.
+        if (persisted && !signal.aborted) sharedBakedKeyIndex.add(desc.cacheKey, desc.contentFrame);
         return bitmap;
       },
     };

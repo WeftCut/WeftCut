@@ -8,7 +8,7 @@ import { supportsMotifSharedTextures } from './helpers/motif-gpu'
 import { createMotifDraft, publishMotifDraft } from './helpers/motif'
 import { hashCacheKey } from '../../src/shared/motifs/cacheKey'
 import type { MotifBakeSnapshot } from '../../src/shared/motifs/baking'
-import { VECTORS_PATH, compareReadback, downscaleReference, encodePng, syntheticFrame } from '../lib/motif-downscale.mjs'
+import { VECTORS_PATH, compareReadback, downscaleReference, syntheticFrame } from '../lib/motif-downscale.mjs'
 
 // ADR 0154 completion criterion 1: one conformance suite for every Motif read
 // lane. The same five cases run on each lane the platform has:
@@ -153,14 +153,14 @@ async function countConnects(app: ElectronApplication): Promise<void> {
 const connectCount = (app: ElectronApplication) =>
   app.evaluate(() => (globalThis as { __readerConformanceConnects?: { count: number } }).__readerConformanceConnects?.count ?? 0)
 
-/** `.wfrm` bytes for each PNG, from the native encoder main uses. */
-async function encodeFrames(app: ElectronApplication, pngs: Buffer[]): Promise<Buffer[]> {
-  const encoded = await app.evaluate(async (_electron, { addon, pngs }) => {
+/** `.wfrm` bytes for each reference, from the native encoder main uses. */
+async function encodeFrames(app: ElectronApplication, refs: Reference[]): Promise<Buffer[]> {
+  const encoded = await app.evaluate(async (_electron, { addon, refs }) => {
     const native = process.getBuiltinModule('module').createRequire(addon)(addon)
     const out: string[] = []
-    for (const png of pngs) out.push((await native.motifEncodePng(Buffer.from(png, 'base64'))).toString('base64'))
+    for (const { width, height, rgba } of refs) out.push((await native.motifEncodeRgba(Buffer.from(rgba, 'base64'), width, height)).toString('base64'))
     return out
-  }, { addon, pngs: pngs.map(png => png.toString('base64')) })
+  }, { addon, refs: refs.map(({ width, height, rgba }) => ({ width, height, rgba: Buffer.from(rgba).toString('base64') })) })
   return encoded.map(value => Buffer.from(value, 'base64'))
 }
 
@@ -331,7 +331,7 @@ for (const lane of LANES) {
     try {
       await requireLane(app, lane)
       const ws = await openWorkspace(app, page, lane, 'Reader pixels')
-      const encoded = await encodeFrames(app, REFERENCES.map(ref => encodePng(ref.rgba, ref.width, ref.height)))
+      const encoded = await encodeFrames(app, REFERENCES)
       await fs.mkdir(ws.dir, { recursive: true })
       for (const [i, bytes] of encoded.entries()) await fs.writeFile(path.join(ws.dir, `${FIRST_REFERENCE + i}.wfrm`), bytes)
 
@@ -440,7 +440,7 @@ for (const lane of LANES) {
     const { app, page } = await launch()
     try {
       await requireLane(app, lane)
-      const [probe] = await encodeFrames(app, [encodePng(PROBE.rgba, PROBE.width, PROBE.height)])
+      const [probe] = await encodeFrames(app, [PROBE])
       const ws = await openWorkspace(app, page, lane, 'Reader transport', { files: { [FIRST_REFERENCE]: probe!, [HOLD]: probe! } })
       const expected = reference(PROBE, 1)
       const readProbe = async (label: string) => expectPixels(await readFrame(page, ws.hash, FIRST_REFERENCE, 1), expected, RULE[lane], label)
@@ -516,7 +516,7 @@ for (const lane of LANES) {
     const { app, page } = await launch()
     try {
       await requireLane(app, lane)
-      const [valid] = await encodeFrames(app, [encodePng(PROBE.rgba, PROBE.width, PROBE.height)])
+      const [valid] = await encodeFrames(app, [PROBE])
       // The same Motif layer in both projects names the same frame addresses.
       // The new workspace holds a valid HOLD frame and a corrupt SENTINEL; the
       // old one a corrupt HOLD frame.
@@ -594,7 +594,7 @@ for (const lane of LANES) {
     try {
       await requireLane(app, lane)
       await countConnects(app)
-      const [probe] = await encodeFrames(app, [encodePng(PROBE.rgba, PROBE.width, PROBE.height)])
+      const [probe] = await encodeFrames(app, [PROBE])
       const ws = await openWorkspace(app, page, lane, 'Reader lifetime', { files: { [FIRST_REFERENCE]: probe!, [HOLD]: probe! } })
       const file = path.join(ws.dir, `${FIRST_REFERENCE}.wfrm`)
       const readAll = async (label: string) => {

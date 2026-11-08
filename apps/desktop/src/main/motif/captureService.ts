@@ -305,8 +305,8 @@ export class MotifCaptureService {
     }
     register(attach)
     if (bake) attach(bake)
-    // A kept frame reports whether its file exists, so a joined baker and the
-    // export's PNG fallback can act on it. A failed write costs only the cache.
+    // A kept frame reports whether its file exists, so a joined baker and an
+    // export can act on it. A failed write costs only the cache.
     const persisted = async (queued: QueuedWrite | null) => {
       if (!queued) return false
       try { await queued.written; return true }

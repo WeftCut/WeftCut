@@ -1407,10 +1407,7 @@ app.whenReady().then(async () => {
 
   assertMotifLimits((require_('@weftcut/core') as { motifLimits?(): MotifLimits }).motifLimits?.())
   configureMotifCore(require_('@weftcut/core'), motifTuning)
-  const motifFrames = new MotifFrameStore(
-    async () => JSON.parse(await backend!.invoke('workspace_dir', '{}')) as string | null,
-    require_('@weftcut/core') as typeof import('@weftcut/core'),
-  )
+  const motifFrames = new MotifFrameStore(async () => JSON.parse(await backend!.invoke('workspace_dir', '{}')) as string | null)
   const motifPoolClass = (require_('@weftcut/core') as { MotifGpuPool?: new (w: number, h: number, count: number, bgra: boolean, upload: boolean) => MotifPool }).MotifGpuPool
   // The native Motif readers' failures cross napi as `[motif:<code>]`
   // messages; these adapters decode them once, here.
@@ -1453,7 +1450,7 @@ app.whenReady().then(async () => {
       const generation = workspaceEvents.current()
       return motifAdmissionOpen && generation !== null && wsCache ? { generation, root: wsCache } : null
     },
-    codec: require_('@weftcut/core') as typeof import('@weftcut/core'), capture: motifCapture,
+    capture: motifCapture,
     pause: backgroundResourcePause,
     diskBytes: () => resourceAllocation().disk_cache_mib * MIB,
     retain: retainRasterDirectories,
@@ -1607,7 +1604,6 @@ app.whenReady().then(async () => {
     }
     if (channel === 'motif_bake_snapshot') return motifBakes!.snapshot()
     if (channel === 'motif_capture_diagnostics') return captureDiagnostics(args?.reset === true)
-    if (channel === 'motif_write_cached_frame') return currentMotifStore().write(args.hash, args.frame, args.png)
     if (channel === 'agent_connections') return mcpHost.connectionSnapshot()
     if (channel === COMPUTE_JOBS_SNAPSHOT_CHANNEL) return computeJobs!.snapshot()
     if (channel === COMPUTE_JOB_CANCEL_CHANNEL) return computeJobs!.cancel(String((args as { job_id?: unknown })?.job_id ?? ''))

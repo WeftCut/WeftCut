@@ -45,21 +45,16 @@ for (const complete of [false, true]) {
         (window as unknown as { __weftcutTest: E2EHook }).__weftcutTest.cacheKeyForLayer(layerId), layerId)
       expect(cacheKey).not.toBeNull()
       const projectPath = await invokeCmd<string>(running.page, 'workspace_dir')
-      const pngs = await running.page.evaluate(() => {
-        const canvas = document.createElement('canvas')
-        canvas.width = 1920; canvas.height = 1080
-        const ctx = canvas.getContext('2d')!
-        return ['#20d060', '#a020f0'].map(color => {
-          ctx.fillStyle = color; ctx.fillRect(0, 0, 1920, 1080)
-          return canvas.toDataURL('image/png').split(',')[1]!
-        })
-      })
-      const encoded = await running.app.evaluate(async (_electron, { addon, pngs }) => {
+      // The Motif's two colours, #20d060 and #a020f0, as straight RGBA.
+      const encoded = await running.app.evaluate(async (_electron, { addon, colors }) => {
         const native = process.getBuiltinModule('module').createRequire(addon)(addon)
         const result: string[] = []
-        for (const png of pngs) result.push((await native.motifEncodePng(Buffer.from(png, 'base64'))).toString('base64'))
+        for (const color of colors) {
+          const rgba = Buffer.alloc(1920 * 1080 * 4, Buffer.from(color))
+          result.push((await native.motifEncodeRgba(rgba, 1920, 1080)).toString('base64'))
+        }
         return result
-      }, { addon, pngs })
+      }, { addon, colors: [[0x20, 0xd0, 0x60, 255], [0xa0, 0x20, 0xf0, 255]] })
       await running.app.close()
       const directory = path.join(projectPath, 'Cache', 'raster', hashCacheKey(cacheKey!))
       await fs.mkdir(directory, { recursive: true })

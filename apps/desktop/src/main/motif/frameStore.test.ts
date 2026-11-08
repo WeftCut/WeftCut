@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { MotifFrameStore, type FrameCodec, type MotifTextureLane } from './frameStore'
+import { MotifFrameStore, type MotifTextureLane } from './frameStore'
 import { MotifError } from '../../shared/motifs/errors'
 
 const roots: string[] = []
@@ -11,10 +11,9 @@ const texture = { kind: 'texture', key: 'motif-key', token: 'lease' } as const
 async function fixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'motif-store-test-'))
   roots.push(root)
-  const codec: FrameCodec = { motifEncodePng: vi.fn(async () => Buffer.from('fast cache')) }
   const changed = vi.fn()
   const gpu = vi.fn<MotifTextureLane['upload']>(async () => texture)
-  return { root, codec, changed, gpu, store: new MotifFrameStore(async () => root, codec, changed) }
+  return { root, changed, gpu, store: new MotifFrameStore(async () => root, changed) }
 }
 /** A lane that is on for the document, at generation 3. */
 const on = (upload: MotifTextureLane['upload']): MotifTextureLane => ({ generation: 3, available: true, upload })
@@ -128,60 +127,40 @@ describe('MotifFrameStore', () => {
   })
 
   it('answers no workspace as a miss that leaves coverage alone', async () => {
-    const { codec, changed, gpu } = await fixture()
-    const store = new MotifFrameStore(async () => null, codec, changed)
+    const { changed, gpu } = await fixture()
+    const store = new MotifFrameStore(async () => null, changed)
     expect(await store.readTexture(hash, 0, 1, on(gpu))).toBeNull()
     expect(gpu).not.toHaveBeenCalled()
     expect(changed).not.toHaveBeenCalled()
   })
 
   it('binds a native write to the workspace at admission and uses the same reader', async () => {
-    const { root, codec } = await fixture()
+    const { root } = await fixture()
     let workspace: string | null = root
-    const store = new MotifFrameStore(async () => workspace, codec)
+    const store = new MotifFrameStore(async () => workspace)
     const writer = await store.prepareWrite(hash, 2)
     workspace = null
     await writer!.encoded(Buffer.from('native frame'))
     expect(await fs.readFile(path.join(root, 'Cache', 'raster', hash, '2.wfrm'), 'utf8')).toBe('native frame')
-    expect(codec.motifEncodePng).not.toHaveBeenCalled()
     expect(await fs.readdir(path.join(root, 'Cache', 'raster', hash))).toEqual(['2.wfrm'])
-  })
-  it('persists only the new format', async () => {
-    const { root, store, codec } = await fixture()
-    const png = new Uint8Array([1, 2, 3])
-    await store.write(hash, 7, png)
-    expect(await store.has(hash, 7)).toBe(true)
-    expect(codec.motifEncodePng).toHaveBeenCalledTimes(1)
-    expect(await fs.readdir(path.join(root, 'Cache', 'raster', hash))).toEqual(['7.wfrm'])
   })
 
   it('ignores old PNGs so the baker regenerates missing frames without migration', async () => {
-    const { root, store, codec, gpu } = await fixture()
+    const { root, store, gpu } = await fixture()
     const dir = path.join(root, 'Cache', 'raster', hash)
     await fs.mkdir(dir, { recursive: true })
     await fs.writeFile(path.join(dir, '0.png'), Buffer.from('old PNG'))
     expect(await store.has(hash, 0)).toBe(false)
     expect(await store.readTexture(hash, 0, 1, on(gpu))).toBeNull()
     expect(gpu).not.toHaveBeenCalled()
-    expect(codec.motifEncodePng).not.toHaveBeenCalled()
-    await store.write(hash, 0, new Uint8Array([1]))
+    await (await store.prepareWrite(hash, 0))!.encoded(frameHeader(2, 2))
     expect(await store.has(hash, 0)).toBe(true)
-    expect(codec.motifEncodePng).toHaveBeenCalledExactlyOnceWith(Buffer.from([1]))
-  })
-
-  it('does not mark a frame persisted when encoding fails', async () => {
-    const { root, store, codec, gpu } = await fixture()
-    vi.mocked(codec.motifEncodePng).mockRejectedValue(new Error('encode failed'))
-    await expect(store.write(hash, 0, new Uint8Array([1]))).rejects.toThrow('encode failed')
-    expect(await store.has(hash, 0)).toBe(false)
-    expect(await store.readTexture(hash, 0, 1, on(gpu))).toBeNull()
-    expect(await fs.readdir(path.join(root, 'Cache', 'raster', hash))).toEqual([])
   })
 
   it('rejects traversal, negative and fractional frame addresses before accessing a workspace', async () => {
-    const { codec, gpu } = await fixture()
+    const { gpu } = await fixture()
     const workspace = vi.fn(async () => null)
-    const store = new MotifFrameStore(workspace, codec)
+    const store = new MotifFrameStore(workspace)
     for (const [key, frame] of [['../outside', 0], [hash, -1], [hash, 0.5]] as const) {
       await expect(store.readTexture(key, frame, 1, on(gpu))).rejects.toThrow('Invalid Motif cache address')
     }
@@ -218,14 +197,13 @@ describe('MotifFrameStore', () => {
   })
 
   it('takes a reader utility miss as a failed read: the frame leaves coverage, nothing else', async () => {
-    const { root, codec } = await fixture()
+    const { root } = await fixture()
     const changed = vi.fn()
     const admit = vi.fn()
-    const store = new MotifFrameStore(async () => root, codec, changed, admit)
+    const store = new MotifFrameStore(async () => root, changed, admit)
     store.reportMiss(hash, 4)
     expect(changed.mock.calls).toEqual([[hash, 4, false]])
     expect(admit).not.toHaveBeenCalled()
-    expect(codec.motifEncodePng).not.toHaveBeenCalled()
   })
 
   it('keeps other inventory entries when one frame disappears during enumeration', async () => {
@@ -269,17 +247,17 @@ describe('MotifFrameStore', () => {
     expect(changed).toHaveBeenLastCalledWith(hash, 7, false)
   })
 
-  it('checks encoded size before either native or PNG writes and keeps the queue usable after refusal', async () => {
-    const { root, codec } = await fixture()
+  it('checks encoded size before writing and keeps the queue usable after refusal', async () => {
+    const { root } = await fixture()
     const admit = vi.fn().mockImplementationOnce(() => { throw new MotifError('disk', 'full') })
     const changed = vi.fn()
-    const store = new MotifFrameStore(async () => root, codec, changed, admit)
+    const store = new MotifFrameStore(async () => root, changed, admit)
     await expect((await store.prepareWrite(hash, 0))!.encoded(Buffer.from('native'))).rejects.toMatchObject({ code: 'disk' })
     expect(changed).not.toHaveBeenCalled()
     expect(await store.has(hash, 0)).toBe(false)
-    await store.write(hash, 1, new Uint8Array([1]))
+    await (await store.prepareWrite(hash, 1))!.encoded(frameHeader(2, 2))
     expect(admit).toHaveBeenNthCalledWith(1, hash, 0, 6)
-    expect(admit).toHaveBeenNthCalledWith(2, hash, 1, Buffer.byteLength('fast cache'))
+    expect(admit).toHaveBeenNthCalledWith(2, hash, 1, 68)
     expect(await store.has(hash, 1)).toBe(true)
   })
 
@@ -288,7 +266,7 @@ describe('MotifFrameStore', () => {
     roots.push(root)
     const events: number[] = []
     let refuse = false
-    const store = new MotifFrameStore(async () => root, { motifEncodePng: async () => Buffer.alloc(0) }, () => {}, () => {
+    const store = new MotifFrameStore(async () => root, () => {}, () => {
       if (refuse) throw new MotifError('disk', 'full')
     }, (_hash, delta) => events.push(delta))
     await (await store.prepareWrite(hash, 0))!.encoded(frameHeader(2, 2))

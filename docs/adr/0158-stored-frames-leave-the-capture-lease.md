@@ -19,7 +19,8 @@ again. Storage also had two writers, each with a texture and a PNG branch.
 
 - **One write queue owns every stored frame**, whoever captured it. It holds at
   most two frames of pixels and one write per address. Only the source of the
-  pixels differs: a texture readback or PNG bytes.
+  pixels differs: a texture readback or a bitmap capture. The renderer never
+  writes a stored frame; it learns from main whether one was stored.
 - **The lease covers the readback, nothing after it.** Encoding and the write
   run after the lease, off the D3D11 worker, so the next readback does not wait.
 - **A full queue answers by who asked.** A frame someone asked to keep (bake,
@@ -33,8 +34,8 @@ again. Storage also had two writers, each with a texture and a PNG branch.
   Temporary cache space alone limits the disk. *Baked* means the requested
   range is on disk, however it got there.
 - **A failed write costs the cache, never pixels a display already has.** A
-  baker and an export's fallback learn the frame was not stored; a display does
-  not fail.
+  baker learns the frame was not stored; an export uses the pixels and leaves
+  the frame uncached; a display does not fail.
 - **Live writes ignore *Continue background processing during playback*.** They
   are the tail of a foreground capture and bounded by the two slots; stopping
   them during playback would stop them when they are most useful.

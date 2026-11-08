@@ -22,10 +22,6 @@ async function replaceFile(temp: string, destination: string): Promise<void> {
   }
 }
 
-export interface FrameCodec {
-  motifEncodePng(png: Buffer): Promise<Buffer>
-}
-
 /** The texture lane as one document finds it when its read arrives. */
 export interface MotifTextureLane {
   /** `MotifGpuTransport.generation` of the document. */
@@ -69,7 +65,6 @@ const diskCoded = (error: unknown): unknown => (error as NodeJS.ErrnoException |
   ? new MotifError('disk', String((error as Error).message), { cause: error }) : error
 
 export interface FrameWriter {
-  png(png: Uint8Array): Promise<void>
   encoded(bytes: Uint8Array): Promise<void>
 }
 
@@ -79,7 +74,6 @@ export class MotifFrameStore {
   private writeTail: Promise<void> = Promise.resolve()
   constructor(
     private readonly workspace: () => Promise<string | null>,
-    private readonly codec: FrameCodec,
     private readonly changed: (hash: string, frame: number, present: boolean, bytes?: number) => void = () => {},
     private readonly admitWrite: (hash: string, frame: number, encodedBytes: number) => void = () => {},
     /** +1 when a file is about to be written, -1 when that write ended. */
@@ -126,11 +120,6 @@ export class MotifFrameStore {
     this.changed(hash, frame, false)
   }
 
-  async write(hash: string, frame: number, png: Uint8Array): Promise<void> {
-    const writer = await this.prepareWrite(hash, frame)
-    if (writer) await writer.png(png)
-  }
-
   /** Bind the destination BEFORE capture: a project switch cannot redirect a
    * completed frame into the next workspace. Native bytes never cross renderer IPC. */
   async prepareWrite(hash: string, frame: number): Promise<FrameWriter | null> {
@@ -156,13 +145,7 @@ export class MotifFrameStore {
       this.writeTail = write.catch(() => {})
       return write
     }
-    return {
-      encoded,
-      png: async png => {
-        await fs.mkdir(path.dirname(stem), { recursive: true }).catch(error => { throw diskCoded(error) })
-        await encoded(await this.codec.motifEncodePng(Buffer.from(png.buffer, png.byteOffset, png.byteLength)))
-      },
-    }
+    return { encoded }
   }
 
   /** False when the next write of any size would be refused, so a frame that

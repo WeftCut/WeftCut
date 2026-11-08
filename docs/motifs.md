@@ -403,9 +403,9 @@ frame over the budget fails with the resource-capacity error. Export does not
 wait for background baking.
 
 A missing frame is captured with the same host and frame-grid inputs as preview
-and stored through the write queue, joining an overlapping bake. A cache-write
-failure keeps the valid pixels and only logs; a capture failure fails the
-export. Cancelling stops admission and keeps completed cache files.
+and stored through main's write queue, joining an overlapping bake. A failed
+write leaves that frame uncached and the export keeps its pixels; a capture
+failure fails the export. Cancelling stops admission and keeps completed cache files.
 
 ## User Motifs
 

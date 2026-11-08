@@ -3,6 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
 import { supportsMotifSharedTextures } from './helpers/motif-gpu'
+import { compareReadback } from '../lib/motif-downscale.mjs'
 
 interface ReaderStats {
   reads: { texture: number; utility: number };
@@ -21,26 +22,18 @@ test('@serial cached Motif frames survive concurrent reads and slot reuse', asyn
     const parent = tmpDir('weftcut-motif-transport-')
     await newProject(page, { parentFolder: parent, name: 'Transport', canvas: { width: 1920, height: 1080, fpsNum: 60, fpsDen: 1 } })
     const hash = '0123456789abcdef0123456789abcdef'
-    const pngs = await page.evaluate(() => {
-      const canvas = document.createElement('canvas')
-      canvas.width = 1920; canvas.height = 1080
-      const ctx = canvas.getContext('2d')!
-      return Array.from({ length: 6 }, (_, i) => {
-        ctx.clearRect(0, 0, canvas.width, canvas.height)
-        ctx.fillStyle = `rgba(${i * 40}, ${200 - i * 30}, 80, 0.5)`
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
-        return canvas.toDataURL('image/png').split(',')[1]!
-      })
-    })
+    // Six solid, half-transparent frames, as straight RGBA.
+    const colors = Array.from({ length: 6 }, (_, i) => [i * 40, 200 - i * 30, 80, 128])
     const addon = fileURLToPath(new URL('../../native/index.js', import.meta.url))
-    await app.evaluate(async (_electron, { addon, directory, pngs }) => {
+    await app.evaluate(async (_electron, { addon, directory, colors }) => {
       const native = process.getBuiltinModule('module').createRequire(addon)(addon)
       const fs = process.getBuiltinModule('fs/promises')
       await fs.mkdir(directory, { recursive: true })
-      for (let i = 0; i < pngs.length; i++) {
-        await fs.writeFile(`${directory}/${i}.wfrm`, await native.motifEncodePng(Buffer.from(pngs[i]!, 'base64')))
+      for (const [i, color] of colors.entries()) {
+        const rgba = Buffer.alloc(1920 * 1080 * 4, Buffer.from(color))
+        await fs.writeFile(`${directory}/${i}.wfrm`, await native.motifEncodeRgba(rgba, 1920, 1080))
       }
-    }, { addon, directory: path.join(parent, 'Transport', 'Cache', 'raster', hash), pngs })
+    }, { addon, directory: path.join(parent, 'Transport', 'Cache', 'raster', hash), colors })
     await waitForHook(page, 'readMotifFrame')
     await waitForHook(page, 'motifReaderStats')
     const { pixels, before, after } = await page.evaluate(async hash => {
@@ -67,9 +60,12 @@ test('@serial cached Motif frames survive concurrent reads and slot reuse', asyn
       })
       return { pixels, before, after: stats() }
     }, hash) as { pixels: number[][]; before: ReaderStats; after: ReaderStats }
+    // The reader conformance rule for the lane that answered
+    // (e2e/lib/motif-downscale.mjs): a canvas read-back premultiplies once.
+    const rule = sharedTextures ? 'premultiplied' : 'straight'
     for (let i = 0; i < pixels.length; i++) {
-      const expected = [(i % 6) * 40, 200 - (i % 6) * 30, 80, 128]
-      expected.forEach((value, channel) => expect(Math.abs(pixels[i]![channel]! - value)).toBeLessThanOrEqual(2))
+      const result = compareReadback({ expected: Uint8Array.from(colors[i % 6]!), actual: Uint8Array.from(pixels[i]!), width: 1, height: 1, rule })
+      expect(result.mismatches, `frame ${i % 6} read back ${pixels[i]}, expected ${colors[i % 6]} (${rule})`).toBe(0)
     }
     // Shared textures take the texture lane; everything else the utility lane.
     // Windows without shared textures asks the texture lane first and falls
@@ -90,19 +86,13 @@ test('@serial cached Motif transport stays responsive across renderer reloads', 
     const parent = tmpDir('weftcut-motif-reload-')
     await newProject(page, { parentFolder: parent, name: 'Reload', canvas: { width: 1920, height: 1080, fpsNum: 60, fpsDen: 1 } })
     const hash = '123456789abcdef0123456789abcdef0'
-    const png = await page.evaluate(() => {
-      const canvas = document.createElement('canvas')
-      canvas.width = 1920; canvas.height = 1080
-      const ctx = canvas.getContext('2d')!
-      ctx.fillStyle = '#d04080'; ctx.fillRect(0, 0, canvas.width, canvas.height)
-      return canvas.toDataURL('image/png').split(',')[1]!
-    })
     const addon = fileURLToPath(new URL('../../native/index.js', import.meta.url))
-    await app.evaluate(async ({ ipcMain }, { addon, directory, png }) => {
+    await app.evaluate(async ({ ipcMain }, { addon, directory }) => {
       const native = process.getBuiltinModule('module').createRequire(addon)(addon)
       const fs = process.getBuiltinModule('fs/promises')
       await fs.mkdir(directory, { recursive: true })
-      const encoded = await native.motifEncodePng(Buffer.from(png, 'base64'))
+      // Solid #d04080, opaque.
+      const encoded = await native.motifEncodeRgba(Buffer.alloc(1920 * 1080 * 4, Buffer.from([208, 64, 128, 255])), 1920, 1080)
       await fs.writeFile(`${directory}/0.wfrm`, encoded)
       await fs.writeFile(`${directory}/1.wfrm`, encoded)
       const handler = ipcMain._invokeHandlers.get('motif:read')!
@@ -112,7 +102,7 @@ test('@serial cached Motif transport stays responsive across renderer reloads', 
         if (args.frame === 0) (globalThis as any).__motifReloadKinds.push(result?.kind)
         return result
       })
-    }, { addon, directory: path.join(parent, 'Reload', 'Cache', 'raster', hash), png })
+    }, { addon, directory: path.join(parent, 'Reload', 'Cache', 'raster', hash) })
     for (let round = 0; round < 9; round++) {
       if (round) await page.reload()
       const results = await page.evaluate(async hash => {

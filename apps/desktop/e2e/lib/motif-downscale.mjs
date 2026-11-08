@@ -1,13 +1,11 @@
 // Reference for the Motif frame reader conformance spec (ADR 0154,
 // e2e/electron/motif-frame-reader.spec.ts): the native downscale written
-// again in plain JS, synthetic frames, PNG encoding, and the per-lane rule for
-// comparing a bitmap read back from a canvas with the reference.
+// again in plain JS, synthetic frames, and the per-lane rule for comparing a
+// bitmap read back from a canvas with the reference.
 //
 // The downscale must equal native/src/motif_frame.rs `downscale` byte for byte;
 // motif-downscale.test.mjs holds it to the shared vectors in
 // native/tests/fixtures/motif-downscale-vectors.json.
-import { PNG } from 'pngjs'
-
 export const VECTORS_PATH = new URL('../../native/tests/fixtures/motif-downscale-vectors.json', import.meta.url)
 
 /** Alpha-weighted box filter. The output is ceil(w/div) × ceil(h/div); a
@@ -61,12 +59,6 @@ export function syntheticFrame(width, height) {
     }
   }
   return rgba
-}
-
-/** An 8-bit RGBA PNG of straight pixels (no colour chunks), as a Buffer. */
-export function encodePng(rgba, width, height) {
-  return PNG.sync.write({ width, height, data: Buffer.from(rgba.buffer, rgba.byteOffset, rgba.byteLength) },
-    { colorType: 6, inputColorType: 6, bitDepth: 8, inputHasAlpha: true })
 }
 
 /** How an 8-bit premultiplied surface stores a straight channel. Never a tie:

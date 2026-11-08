@@ -553,26 +553,6 @@ pub async fn motif_read_frame_scaled(path: String, div: u32) -> napi::Result<Mot
     .map_err(to_napi)
 }
 
-#[napi]
-#[cfg_attr(test, allow(dead_code))] // napi registration is absent in a Rust unit-test executable.
-pub async fn motif_encode_png(png: Buffer) -> napi::Result<Buffer> {
-    let png = png.to_vec();
-    tokio::task::spawn_blocking(move || {
-        let mut reader =
-            image::ImageReader::with_format(std::io::Cursor::new(png), image::ImageFormat::Png);
-        let mut limits = image::Limits::default();
-        limits.max_image_width = Some(MAX_DIMENSION);
-        limits.max_image_height = Some(MAX_DIMENSION);
-        limits.max_alloc = Some(u64::from(MAX_FRAME_BYTES));
-        reader.limits(limits);
-        let img = reader.decode()?.into_rgba8();
-        encode(img.width(), img.height(), &img).map(Buffer::from)
-    })
-    .await
-    .map_err(|e| napi::Error::from_reason(e.to_string()))?
-    .map_err(to_napi)
-}
-
 /// The straight value of premultiplied channel `c` at alpha `a`, at index
 /// `a << 8 | c`: `(c * 255 + a / 2) / a`, at most 255, and 0 where `a` is 0.
 static STRAIGHT: [u8; 65536] = {

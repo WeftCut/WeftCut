@@ -62,7 +62,7 @@ export class BakedKeyIndex {
     return this.keys.has(cacheKey);
   }
 
-  /// Mark a cacheKey baked (called after a successful `writeFrame`).
+  /// Mark a cacheKey baked (called once main reports the frame stored).
   add(cacheKey: string, frame?: number): void {
     this.keys.add(cacheKey);
     if (frame !== undefined) {

@@ -19,7 +19,7 @@ const bitmapFrame = { kind: 'bitmap' as const, image: { toBitmap: () => Buffer.a
 const RGBA = Buffer.from('straight rgba 16');
 const BITMAP_WFRM = Buffer.from('wfrm from bitmap');
 function fixture(enabled = true) {
-  const writer = { png: vi.fn(async () => {}), encoded: vi.fn(async () => {}) };
+  const writer = { encoded: vi.fn(async () => {}) };
   const finish = vi.fn(async () => Buffer.from('wfrm'));
   const encoder = { read: vi.fn(async () => ({ finish, finishPng: vi.fn() })), close: vi.fn() };
   // The host takes textures while the service keeps them enabled.
