@@ -1,4 +1,5 @@
-import { isMotifFrameAddress, isMotifFrameError, motifFrameStem } from './frameAddress'
+import { isMotifFrameAddress, motifFrameStem } from './frameAddress'
+import { motifErrorCode } from '../../shared/motifs/errors'
 import { isMotifReaderDiv, type MotifReadReply, type MotifReaderControl, type MotifReaderReport, type MotifReadTiming } from '../../shared/motifs/readerProtocol'
 
 export interface MotifReaderHostPort {
@@ -10,6 +11,7 @@ export interface MotifReaderHostPort {
 }
 
 interface Dependencies {
+  /** Rejects decoded: a stored frame that cannot be read is a `miss`. */
   read(path: string, div: number): Promise<{ width: number; height: number; rgba: Uint8Array; timing: MotifReadTiming }>
   /** To main: miss reports and port acknowledgements. */
   report(message: MotifReaderReport): void
@@ -35,7 +37,7 @@ export function createMotifReaderHost(deps: Dependencies) {
       const { width, height, rgba, timing } = await deps.read(`${motifFrameStem(root, hash, frame as number)}.wfrm`, div)
       return { id, frame: { width, height, rgba, timing } }
     } catch (error) {
-      if (!isMotifFrameError(error)) return { id, error: String((error as Error)?.message ?? error).slice(0, 512) }
+      if (motifErrorCode(error) !== 'miss') return { id, error: String((error as Error)?.message ?? error).slice(0, 512) }
       deps.report({ type: 'miss', generation, hash, frame: frame as number })
       return { id, miss: true }
     }

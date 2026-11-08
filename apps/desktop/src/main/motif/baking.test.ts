@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MotifBakeCoordinator, type MotifBakeCoordinatorDeps } from './baking';
+import { MotifError, type MotifErrorCode } from '../../shared/motifs/errors';
 import type { MotifBakeContent, MotifBakePause, MotifBakePlan } from '../../shared/motifs/baking';
 
 const content = (key: string, frames = 90): MotifBakeContent => ({
@@ -204,7 +205,7 @@ describe('main-owned Motif bake demand', () => {
 
   it('shows policy pauses, resumes on wake, and does not spend failures on capacity', async () => {
     let pause: MotifBakePause | undefined = 'playback';
-    const persist = vi.fn(async () => {}).mockRejectedValueOnce(new Error('resource-capacity-exceeded'));
+    const persist = vi.fn(async () => {}).mockRejectedValueOnce(new MotifError('capacity', 'resource-capacity-exceeded: busy'));
     const h = fixture({ pause: () => pause, persist });
     await h.coordinator.reconcile(plan([content('a', 1)])); await h.tick();
     expect(h.coordinator.snapshot().statuses.a).toMatchObject({ phase: 'paused', reason: 'playback' });
@@ -255,14 +256,14 @@ describe('main-owned Motif bake demand', () => {
   });
 
   it('keeps disk capacity waits recoverable and supports explicit retry of terminal errors', async () => {
-    let problem = 'motif-disk-capacity';
-    const h = fixture({ persist: async () => { if (problem) throw new Error(problem); }, isContentFailure: e => String(e).includes('bad script') });
+    let problem: MotifErrorCode | undefined = 'disk';
+    const h = fixture({ persist: async () => { if (problem) throw new MotifError(problem, 'synthetic'); } });
     await h.coordinator.reconcile(plan([content('a', 1)]));
     for (let i = 0; i < 8; i++) await h.tick();
     expect(h.coordinator.snapshot().statuses.a).toMatchObject({ phase: 'paused', reason: 'disk' });
-    problem = 'bad script'; await h.tick(); await h.tick();
+    problem = 'content'; await h.tick(); await h.tick();
     expect(h.coordinator.snapshot().statuses.a.phase).toBe('error');
-    problem = ''; h.coordinator.retry('a'); await h.drain();
+    problem = undefined; h.coordinator.retry('a'); await h.drain();
     expect(h.coordinator.snapshot().statuses.a.phase).toBe('ready');
   });
 
@@ -277,7 +278,7 @@ describe('main-owned Motif bake demand', () => {
 
   it('retains explicit full demand across renderer replacement and retries only requested failures', async () => {
     let failed = true;
-    const h = fixture({ persist: async () => { if (failed) throw new Error('content failed'); }, isContentFailure: () => true });
+    const h = fixture({ persist: async () => { if (failed) throw new MotifError('content', 'content failed'); } });
     const c = { ...content('a', 3), explicit: true };
     await h.coordinator.reconcile(plan([c])); await h.drain();
     expect(h.coordinator.snapshot().statuses.a.phase).toBe('error');

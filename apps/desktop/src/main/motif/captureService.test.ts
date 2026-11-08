@@ -3,7 +3,7 @@ import type { NativeImage, OffscreenSharedTexture, WebContents } from 'electron'
 import type { MotifOsrFrame } from './offscreenFrames';
 import { MotifCaptureService, type CaptureServiceDeps } from './captureService';
 import type { MotifFrameStore } from './frameStore';
-import { MotifCaptureTimeoutError } from '../../shared/motifs/captureErrors';
+import { MotifError } from '../../shared/motifs/errors';
 
 const pressure = vi.hoisted(() => ({ pause: undefined as 'memory' | 'playback' | undefined }));
 vi.mock('../resources', async original => ({
@@ -36,7 +36,7 @@ function fixture(enabled = true) {
     copy: vi.fn(async () => ({ kind: 'texture' as const, key: 'pool', token: 'lease' })),
     createEncoder: vi.fn(() => encoder),
     pixels: { motifStraightenBgra: vi.fn(async () => RGBA), motifEncodeRgba: vi.fn(async () => BITMAP_WFRM), motifEncodeBgra: vi.fn(async () => BITMAP_WFRM) },
-    setTextureEnabled: vi.fn((on: boolean) => { textureHost = on; }), isContentFailure: vi.fn(() => false),
+    setTextureEnabled: vi.fn((on: boolean) => { textureHost = on; }),
     promote: vi.fn(),
   } satisfies CaptureServiceDeps;
   return { deps, writer, encoder, finish, prepareWrite, has, hasRoom, read, readTexture, service: new MotifCaptureService(deps, enabled) };
@@ -56,7 +56,7 @@ describe('Motif capture and persistence', () => {
     const result = h.service.capture(owner, preview, () => current);
     current = false;
     finish();
-    await expect(result).rejects.toThrow('superseded');
+    await expect(result).rejects.toMatchObject({ code: 'superseded' });
     expect(h.deps.copy).not.toHaveBeenCalled();
     expect(h.deps.pixels.motifStraightenBgra).not.toHaveBeenCalled();
     expect(h.deps.setTextureEnabled).toHaveBeenCalledExactlyOnceWith(true);
@@ -112,7 +112,7 @@ describe('Motif capture and persistence', () => {
   });
 
   it('a failed readback still shows its texture, and later frames are bitmaps', async () => {
-    const h = fixture(); h.encoder.read.mockRejectedValue(new Error('device unavailable'));
+    const h = fixture(); h.encoder.read.mockRejectedValue(new MotifError('device', 'device unavailable'));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(await h.service.capture(owner, args)).toMatchObject({ kind: 'texture', persisted: false });
     expect(h.encoder.read).toHaveBeenCalledWith(frame.texture.textureInfo.handle.ntHandle, 2); // the picture rows only
@@ -142,7 +142,7 @@ describe('Motif capture and persistence', () => {
 
   it('a hung host keeps its error and the shared-texture path: no bitmap switch for the session', async () => {
     const h = fixture();
-    const hung = new MotifCaptureTimeoutError(5000, 'Runtime.evaluate');
+    const hung = new MotifError('timeout', 'motif capture timed out after 5000ms: Runtime.evaluate');
     h.deps.frame.mockRejectedValueOnce(hung);
     await expect(h.service.capture(owner, args)).rejects.toBe(hung);
     h.deps.frame.mockRejectedValueOnce(hung);
@@ -152,9 +152,25 @@ describe('Motif capture and persistence', () => {
     expect(await h.service.capture(owner, args)).toMatchObject({ kind: 'texture' });
   });
 
+  it.each(['content', 'transient', 'capacity', 'superseded'] as const)('a %s failure keeps the shared-texture path', async code => {
+    const h = fixture();
+    const failure = new MotifError(code, 'synthetic');
+    h.deps.frame.mockRejectedValueOnce(failure);
+    await expect(h.service.capture(owner, args)).rejects.toBe(failure);
+    expect(h.deps.setTextureEnabled).toHaveBeenCalledExactlyOnceWith(true);
+    expect(await h.service.capture(owner, args)).toMatchObject({ kind: 'texture' });
+  });
+
+  it('a held readback mutex costs the frame its receipt, not the GPU path', async () => {
+    const h = fixture(); h.encoder.read.mockRejectedValueOnce(new MotifError('transient', 'OSR mutex still held'));
+    expect(await h.service.capture(owner, args)).toMatchObject({ kind: 'texture', persisted: false });
+    expect(h.deps.setTextureEnabled).toHaveBeenCalledExactlyOnceWith(true);
+    expect(h.encoder.close).not.toHaveBeenCalled();
+  });
+
   it('content errors and superseded requests do not trigger recapture', async () => {
-    const h = fixture(); h.deps.isContentFailure.mockReturnValue(true);
-    h.deps.frame.mockRejectedValue(new Error('broken motif'));
+    const h = fixture();
+    h.deps.frame.mockRejectedValue(new MotifError('content', 'broken motif'));
     await expect(h.service.capture(owner, args)).rejects.toThrow('broken motif');
     expect(h.deps.pixels.motifStraightenBgra).not.toHaveBeenCalled();
     expect(h.writer.encoded).not.toHaveBeenCalled();
@@ -197,7 +213,7 @@ describe('Motif capture and persistence', () => {
   });
 
   it('a failed readback persists the same frame as a bitmap, and later frames too', async () => {
-    const h = fixture(); h.encoder.read.mockRejectedValue(new Error('device unavailable'));
+    const h = fixture(); h.encoder.read.mockRejectedValue(new MotifError('device', 'device unavailable'));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await h.service.persist(args);
     await h.service.persist({ ...args, tSec: 1, bake: { ...args.bake, frame: 1 } });
@@ -220,7 +236,7 @@ describe('Motif capture and persistence', () => {
 
   it('already-cancelled persistence performs no capture or disk work', async () => {
     const h = fixture();
-    await expect(h.service.persist(args, () => false)).rejects.toThrow('superseded');
+    await expect(h.service.persist(args, () => false)).rejects.toMatchObject({ code: 'superseded' });
     expect(h.prepareWrite).not.toHaveBeenCalled();
     expect(h.deps.frame).not.toHaveBeenCalled();
     expect(h.deps.pixels.motifStraightenBgra).not.toHaveBeenCalled();
@@ -234,7 +250,7 @@ describe('Motif capture and persistence', () => {
     });
     const result = h.service.persist(args, () => current);
     current = false; finish();
-    await expect(result).rejects.toThrow('superseded');
+    await expect(result).rejects.toMatchObject({ code: 'superseded' });
     expect(h.prepareWrite).not.toHaveBeenCalled();
     expect(h.encoder.read).not.toHaveBeenCalled();
   });
@@ -339,7 +355,7 @@ describe('Motif capture and persistence', () => {
       return consume(frame);
     });
     const persist = h.service.persist(args, () => backgroundCurrent);
-    const rejected = expect(persist).rejects.toThrow('superseded');
+    const rejected = expect(persist).rejects.toMatchObject({ code: 'superseded' });
     const { bake: _bake, ...preview } = args;
     const display = h.service.capture(owner, preview);
     backgroundCurrent = false; finish();
@@ -409,7 +425,7 @@ describe('Motif capture and persistence', () => {
   });
 
   it('a kept frame never swallows content errors', async () => {
-    const h = fixture(); h.deps.frame.mockRejectedValue(new Error('broken content')); h.deps.isContentFailure.mockReturnValue(true);
+    const h = fixture(); h.deps.frame.mockRejectedValue(new MotifError('content', 'broken content'));
     await expect(h.service.capture(owner, args)).rejects.toThrow('broken content');
     expect(h.deps.pixels.motifStraightenBgra).not.toHaveBeenCalled();
   });
@@ -522,7 +538,7 @@ describe('Motif capture and persistence', () => {
     it('and a failed readback delivers this frame and takes bitmaps after it', async () => {
       const h = fixture(); missing(h);
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      h.encoder.read.mockRejectedValue(new Error('device unavailable'));
+      h.encoder.read.mockRejectedValue(new MotifError('device', 'device unavailable'));
       await expect(h.service.capture(owner, at(0))).resolves.toMatchObject({ kind: 'texture' });
       await expect(h.service.capture(owner, at(1))).resolves.toMatchObject({ kind: 'pixels' });
       expect(h.encoder.read).toHaveBeenCalledOnce();

@@ -31,6 +31,7 @@ mod gpu_hardware;
 mod linux_gpu_memory;
 #[cfg(windows)]
 mod motif_bake;
+mod motif_error;
 mod motif_frame;
 #[cfg(windows)]
 mod motif_gpu;

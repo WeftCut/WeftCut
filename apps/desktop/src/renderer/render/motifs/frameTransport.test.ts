@@ -57,10 +57,18 @@ describe('capture `stored` reply', () => {
     expect(requests).toHaveLength(4);
   });
 
+  it('a coded capture failure arrives with its code; an uncoded one stays plain', async () => {
+    replies = [{ error: 'superseded by a newer request', code: 'superseded' }, { error: 'Error: boom' }];
+    await expect(captureMotifResult(capture)).rejects.toMatchObject({ code: 'superseded', message: '[motif:superseded] superseded by a newer request' });
+    const plain = await captureMotifResult(capture).catch((error: unknown) => error);
+    expect(plain).not.toHaveProperty('code');
+    expect(plain).toMatchObject({ message: 'Error: boom' });
+  });
+
   it('a transport error propagates and does not capture again', async () => {
     reader.readAddress.mockRejectedValueOnce(new MotifTransportError('utility', 'reset'));
     replies = [{ bitmap: null, persisted: true, stored: true }];
-    await expect(captureMotifResult(capture)).rejects.toBeInstanceOf(MotifTransportError);
+    await expect(captureMotifResult(capture)).rejects.toMatchObject({ name: 'MotifTransportError', code: 'transport' });
     expect(requests).toHaveLength(1);
   });
 });

@@ -15,7 +15,7 @@ import { FrameBroker } from './FrameBroker';
 import { MotifFrameScheduler } from './MotifFrameScheduler';
 import { captureMotifFrameResult } from './host';
 import { controlStoredMotifCapture, type CapturedFrame } from './frameTransport';
-import { CAPTURE_SUPERSEDED_MESSAGE } from '../../../shared/motifs/captureErrors';
+import { motifSuperseded } from '../../../shared/motifs/errors';
 import { hashCacheKey } from '../../../shared/motifs/cacheKey';
 import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
 
@@ -113,7 +113,7 @@ export async function resolveMotifFrame(
   const epoch = requestEpoch;
   return (overlay ? overlayBroker : committedBroker).acquire(cacheKey, frame, scaleDiv, async ticket => {
     if (!overlay) await sharedBakedKeyIndex.whenHydrated();
-    if (epoch !== requestEpoch || !ticket.wanted()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE);
+    if (epoch !== requestEpoch || !ticket.wanted()) throw motifSuperseded();
     const [w, h] = motif.manifest.size;
     return frameScheduler.acquire({ cacheKey, frame, scaleDiv, ticket, captureOnly: overlay,
       capture: () => captureMotifFrameResult(motif.manifest.id, tSec, canonicalProps, w!, h!,

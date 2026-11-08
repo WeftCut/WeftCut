@@ -3,7 +3,7 @@ import { MotifFrameSkippedError, OffscreenFrames, type FrameMarkerReader, type M
 import { BITMAP_CANVAS_RUNTIME_SOURCE } from './bitmapCanvasRuntime.js'
 import { hardenWindow, markInternalWindow } from '../windows'
 import { BUILTIN_MANIFESTS, motifCtxDurationS, type Manifest } from '../../shared/motifs/catalog.js'
-import { CAPTURE_SUPERSEDED_MESSAGE, MotifCaptureTimeoutError } from '../../shared/motifs/captureErrors.js'
+import { MotifError, motifErrorCode, motifSuperseded } from '../../shared/motifs/errors.js'
 import { resolveMotifMediaProps } from './mediaProps.js'
 import { CAPTURE_HOST_FILE, FRAME_MARKER_ROWS } from '../../shared/motifs/frameMarker.js'
 import type { UserMotifStore } from './store.js'
@@ -75,11 +75,6 @@ let motifStore: UserMotifStore | null = null
 /// the setRuntimeSource singleton pattern so MCP and IPC call sites stay thin.
 export function setMotifStore(s: UserMotifStore): void {
   motifStore = s
-}
-
-export function isMotifContentFailure(a: CaptureArgs, error: unknown): boolean {
-  return failedLanes.get(laneKeyOf(a.motifId, a.contentHash)) === error
-    || /__motif(?:Setup|Render) threw:/.test(String(error))
 }
 
 interface Host {
@@ -183,8 +178,8 @@ async function pump(): Promise<void> {
 
 /// Queued (not yet running) keyed captures, latest-wins per key. The on-demand
 /// sprite path keys by layer id, so during playback each tick's fresh frame
-/// replaces the still-queued previous one: its waiter rejects IMMEDIATELY with
-/// CAPTURE_SUPERSEDED_MESSAGE and its queue slot no-ops when reached — the one
+/// replaces the still-queued previous one: its waiter rejects IMMEDIATELY as
+/// `superseded` and its queue slot no-ops when reached — the one
 /// serial queue never spends capture-seconds executing a frame nobody wants
 /// anymore. Without this, real-time playback enqueues ~30 requests/s per
 /// visible motif against a ~1 s/capture queue, and the unbounded backlog
@@ -193,7 +188,8 @@ async function pump(): Promise<void> {
 const queuedKeys = new Map<string, Ticket>()
 
 /// Failed lanes: capture errors attributable to the Motif's OWN content
-/// (a throwing or hung __motifRender), keyed by `${motifId}\0${contentHash}`.
+/// (a throwing or hung __motifRender), keyed by `${motifId}\0${contentHash}`,
+/// each a `content` MotifError.
 /// The window and CDP transport are healthy, so the host is NOT torn down —
 /// one broken Motif must not force re-navigation + runtime re-injection for
 /// every other Motif. Same-lane captures fast-reject with the recorded error
@@ -215,9 +211,13 @@ export function resetCaptureFailure(motifId: string, contentHash: string): void 
   failedLanes.delete(laneKeyOf(motifId, contentHash))
 }
 
-function failLane(key: string, err: Error): void {
+/** Latches the lane; returns the `content` error its captures now reject with. */
+function failLane(key: string, error: unknown): MotifError {
+  const err = motifErrorCode(error) === 'content' ? error as MotifError
+    : new MotifError('content', error instanceof MotifError ? error.detail : String((error as Error | undefined)?.message ?? error), { cause: error })
   if (failedLanes.size >= FAILED_LANE_CAP) failedLanes.delete(failedLanes.keys().next().value!)
   failedLanes.set(key, err)
+  return err
 }
 
 /// Lanes whose last attempt timed out and that hold one more try. A hung
@@ -269,7 +269,7 @@ async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise
     return await Promise.race([
       p,
       new Promise<T>((_, rej) => {
-        timer = setTimeout(() => rej(new MotifCaptureTimeoutError(ms, label)), ms)
+        timer = setTimeout(() => rej(new MotifError('timeout', `motif capture timed out after ${ms}ms: ${label}`)), ms)
       }),
     ])
   } finally {
@@ -286,7 +286,7 @@ async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise
 /// into its frame, whose documents the runtime reaches before their scripts.
 async function buildHost(motifId: string, contentHash: string, width: number, height: number): Promise<Host> {
   const runtime = runtimeSource
-  if (!runtime) throw new Error('motif runtime not registered yet (call motif_register_runtime)')
+  if (!runtime) throw new MotifError('closed', 'motif runtime not registered yet (call motif_register_runtime)')
   const texture = textureCaptureEnabled && readFrameMarker !== null
   const pinned = /^[0-9a-f]{64}$/.test(contentHash) && motifStore?.pinPackage?.(motifId, contentHash)
   // The shell frames the Motif above the surface's marker rows
@@ -419,7 +419,7 @@ async function waitReady(h: Host, motifId: string): Promise<void> {
     if (r?.result?.value === true) { h.readyFor = motifId; return }
     await delay(READY_POLL_MS)
   }
-  throw new Error(`motif '${motifId}' never became ready (Motif frame not loaded, __motifRender undefined, or wrong host page loaded)`)
+  throw new MotifError('content', `motif '${motifId}' never became ready (Motif frame not loaded, __motifRender undefined, or wrong host page loaded)`)
 }
 
 /// Paints still to arrive for frames already rendered (ADR 0159). Settled
@@ -440,7 +440,7 @@ interface Rendered<T> { delivered: Promise<T> }
 /// still on its way to the capture. `output` runs inside the lease.
 async function doCapture<T>(a: CaptureArgs, output: (frame: MotifOsrFrame) => Promise<T>): Promise<Rendered<T>> {
   // Refuse rather than resurrect — see shutdownCaptureHost.
-  if (shuttingDown) throw new Error('motif capture host is shut down (the app is quitting)')
+  if (shuttingDown) throw new MotifError('closed', 'motif capture host is shut down (the app is quitting)')
   motifStore?.assertRenderable?.(a.motifId)
   const lane = laneKeyOf(a.motifId, a.contentHash)
   const samePage = host?.loadedId === a.motifId && host.loadedV === a.contentHash
@@ -505,8 +505,8 @@ async function doCapture<T>(a: CaptureArgs, output: (frame: MotifOsrFrame) => Pr
     // latched depends on the author: a timeout is ambiguous (content or load)
     // and earns one retry on the rebuilt host; anything else, and a second
     // consecutive timeout, latches it so its sprites stop retrying.
-    if (a.contentHash !== '' && !(e instanceof MotifCaptureTimeoutError && grantProbation(lane))) failLane(lane, e as Error)
     teardownHost(h)
+    if (a.contentHash !== '' && !(motifErrorCode(e) === 'timeout' && grantProbation(lane))) throw failLane(lane, e)
     throw e
   }
   probationLanes.delete(lane)
@@ -516,7 +516,7 @@ async function doCapture<T>(a: CaptureArgs, output: (frame: MotifOsrFrame) => Pr
     // with re-navigation + runtime re-injection. Fail the LANE instead —
     // same-lane captures fast-reject until contentHash changes (see failedLanes).
     lease?.cancel()
-    const err = new Error(phase + ' threw: ' + JSON.stringify(ev.exceptionDetails))
+    const err = new MotifError('content', phase + ' threw: ' + JSON.stringify(ev.exceptionDetails))
     if (a.contentHash !== '') failLane(lane, err)
     throw err
   }
@@ -574,7 +574,7 @@ function enqueueCapture<T>(a: CaptureArgs, coalesceKey: string | undefined, run:
       reject(error as Error)
     }
     try {
-      if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+      if (!isCurrent()) throw motifSuperseded()
       const { delivered } = await run()
       delivered.then(value => finish(null, value), finish)
     } catch (e) { finish(e) }
@@ -591,7 +591,7 @@ function enqueueCapture<T>(a: CaptureArgs, coalesceKey: string | undefined, run:
   const prev = queuedKeys.get(coalesceKey)
   if (prev) {
     prev.stale = true
-    prev.reject(new Error(CAPTURE_SUPERSEDED_MESSAGE))
+    prev.reject(motifSuperseded())
   }
   const ticket: Ticket = { key: coalesceKey, high, queuedAt, stale: false, reject, run: () => attempt(0) }
   queuedKeys.set(coalesceKey, ticket)
@@ -607,7 +607,7 @@ export function controlMotifCapture(key: string, action: 'promote' | 'cancel'): 
   if (action === 'cancel') {
     ticket.stale = true
     queuedKeys.delete(key)
-    ticket.reject(new Error(CAPTURE_SUPERSEDED_MESSAGE))
+    ticket.reject(motifSuperseded())
   } else if (!ticket.high) {
     const i = lowQueue.indexOf(ticket)
     if (i >= 0) lowQueue.splice(i, 1)
@@ -632,7 +632,7 @@ export function captureMotifFrameB64(a: CaptureArgs, coalesceKey?: string, high?
 
 async function texturePng(frame: Extract<MotifOsrFrame, { kind: 'texture' }>): Promise<Buffer> {
   const handle = frame.texture.textureInfo.handle.ntHandle
-  if (!readTexturePng || !handle) throw new Error('Motif texture PNG readback unavailable')
+  if (!readTexturePng || !handle) throw new MotifError('device', 'Motif texture PNG readback unavailable')
   return readTexturePng(handle, frame.height)
 }
 

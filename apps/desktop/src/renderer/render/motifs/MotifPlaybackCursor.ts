@@ -2,7 +2,7 @@ import type { Motif } from './catalog';
 import type { MotifFrameDescriptor } from './motifFrameDescriptor';
 import type { MotifFrameCache } from './frameCache';
 import { cancelMotifFrameRequest, resolveMotifFrame, sharedMotifFrameCache, sharedMotifOverlayCache } from './motifRasterCache';
-import { isCaptureSuperseded } from './host';
+import { motifErrorCode } from '../../../shared/motifs/errors';
 import { MOTIF_RECENT_FRAMES } from './motifFrames';
 import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
 
@@ -172,9 +172,10 @@ export class MotifPlaybackCursor {
       // A warmed frame can overtake the read before it fails. That is already
       // successful progress, so the obsolete failure must not throttle demand.
       if (this.boundFrame !== null && this.boundFrame >= d.contentFrame) return;
-      // Any other failure, a `MotifTransportError` included, keeps the bound
-      // frame and retries with backoff; it never forgets or recaptures.
-      if (!isCaptureSuperseded(error)) {
+      // A superseded request is not a failure. Any other, a
+      // `MotifTransportError` included, keeps the bound frame and retries with
+      // backoff; it never forgets or recaptures.
+      if (motifErrorCode(error) !== 'superseded') {
         this.retryAt = performance.now() + RETRY_MS[Math.min(this.failures++, RETRY_MS.length - 1)]!;
         if (this.failures <= 3 || this.failures % 10 === 0) console.error('[weftcut/motifs] preview frame failed', error);
       }

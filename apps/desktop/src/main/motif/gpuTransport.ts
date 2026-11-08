@@ -2,18 +2,17 @@ import { MIB, performanceSettings, sharedResourceAllocationEnabled } from "../..
 import { sharedTexture, type SharedTextureImported, type WebContents } from 'electron'
 import type { MotifOsrFrame } from './offscreenFrames.js'
 import { randomUUID } from 'node:crypto'
-import { CAPTURE_SUPERSEDED_MESSAGE } from '../../shared/motifs/captureErrors'
+import { asMotifCapacity, MotifError, motifErrorCode, motifSuperseded } from '../../shared/motifs/errors'
 import { isResourceCapacityError } from '../../shared/resource-policy'
 import { withSharedTextureQueue } from '../sharedTextureQueue.js'
 import { gpuBufferBudget, type GpuBufferBudget, type GpuBufferLease } from '../gpuBufferBudget.js'
-import { isMotifFrameError } from './frameAddress'
 import type { MotifReaderDiv } from '../../shared/motifs/readerProtocol.js'
 import type { MotifReadUnavailable, MotifTextureFrame, MotifUploadTiming } from '../../shared/motifs/frameTransport.js'
 
 export interface MotifPool {
   handles(): Buffer[]
   /** Reads, verifies and downscales by `div` (default 1); the pool must have
-   * the scaled size. A `motif-frame: ` rejection is about the file. */
+   * the scaled size. A `miss` rejection is about the file. */
   uploadFile(path: string, slot: number, div?: number): Promise<MotifUploadTiming>
   copyTexture(handle: Buffer, slot: number): Promise<void>
   close(): void
@@ -24,7 +23,6 @@ type PoolFactory = (w: number, h: number, bgra: boolean, upload: boolean) => Mot
 type PoolUse = 'upload' | 'copy'
 type Session = { finalizationId?: number | undefined; owner: WebContents; key: string; width: number; height: number; pool: MotifPool; imported: SharedTextureImported; busy: boolean }
 const BUDGET_WAIT_MS = 250
-const CONSUMER_CLOSED_MESSAGE = 'Motif consumer closed'
 
 function consumerFrameAlive(owner: WebContents): boolean {
   try {
@@ -130,16 +128,16 @@ export class MotifGpuTransport {
   }
 
   /** Uploads a cached frame scaled by `div` into a session of the scaled
-   * `width × height`. A file failure rejects with its `motif-frame: ` error and
-   * a closed consumer or superseded export rejects as before; any other
-   * failure (budget, pool, import, device) means this lane cannot serve the
-   * read, and the reader falls back to the utility lane (ADR 0154). */
+   * `width × height`. A `miss`, a `closed` consumer or pool and a `superseded`
+   * export reject; any other failure (budget, pool, import, device, a held
+   * file) means this lane cannot serve the read, and the reader falls back to
+   * the utility lane (ADR 0154). */
   async read(owner: WebContents, file: string, width: number, height: number, div: MotifReaderDiv, finalizationId?: number): Promise<MotifTextureFrame | MotifReadUnavailable> {
     try {
       return await this.produce(owner, width, height, 'rgba', 'upload', pool => pool.uploadFile(file, 0, div), finalizationId)
     } catch (error) {
-      const message = String((error as Error | undefined)?.message ?? error)
-      if (isMotifFrameError(error) || message === CONSUMER_CLOSED_MESSAGE || message === CAPTURE_SUPERSEDED_MESSAGE) throw error
+      const code = motifErrorCode(error)
+      if (code === 'miss' || code === 'closed' || code === 'superseded') throw error
       return { kind: 'unavailable' }
     }
   }
@@ -172,8 +170,8 @@ export class MotifGpuTransport {
       this.exportCancellations.set(finalizationId, readers)
     }
     const assertOpen = (): void => {
-      if (!exportOpen) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
-      if (!consumerFrameAlive(owner) || (this.generations.get(owner) ?? 0) !== generation) throw new Error(CONSUMER_CLOSED_MESSAGE)
+      if (!exportOpen) throw motifSuperseded()
+      if (!consumerFrameAlive(owner) || (this.generations.get(owner) ?? 0) !== generation) throw new MotifError('closed', 'Motif consumer closed')
     }
     // Independent leases let native reading/upload overlap the preceding
     // consumer's GPU read. A lane still cannot overwrite an unacknowledged slot.
@@ -198,7 +196,7 @@ export class MotifGpuTransport {
         }
         // The staging texture counts like the slot.
         const bytes = width * height * 4 * (use === 'upload' ? 2 : 1)
-        if (!Number.isSafeInteger(bytes) || width <= 0 || height <= 0 || bytes > this.textureBudgetBytes()) throw new Error('Motif GPU budget exhausted')
+        if (!Number.isSafeInteger(bytes) || width <= 0 || height <= 0 || bytes > this.textureBudgetBytes()) throw new MotifError('capacity', 'Motif GPU budget exhausted')
         const deadline = performance.now() + BUDGET_WAIT_MS
         let bufferLease: GpuBufferLease | null = null
         for (;;) {
@@ -233,9 +231,9 @@ export class MotifGpuTransport {
           if ((this.budgetStalled && !sibling) || performance.now() >= deadline) {
             // Preserve hard admission failures: never turn them into a PNG
             // retry that bypasses the export's resource plan.
-            if (capacityError) throw capacityError
+            if (capacityError) throw asMotifCapacity(capacityError)
             this.budgetStalled = true
-            throw new Error('Motif GPU budget exhausted while awaiting texture release')
+            throw new MotifError('capacity', 'Motif GPU budget exhausted while awaiting texture release')
           }
           await this.waitForBudget(deadline)
         }

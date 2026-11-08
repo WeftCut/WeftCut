@@ -262,7 +262,7 @@ it('foreground demand promotes a queued prewarm read without acquiring it twice'
 it('a project reset fences work waiting for inventory restoration', async () => {
   sharedBakedKeyIndex.beginHydration();
   const old = resolveMotifFrame(motif, 'long', 0, 0, {}, 'old-project', 60, 1);
-  const rejected = expect(old).rejects.toThrow('superseded');
+  const rejected = expect(old).rejects.toMatchObject({ code: 'superseded' });
   await settle();
   resetMotifFrameRequests();
   sharedBakedKeyIndex.finishHydration();

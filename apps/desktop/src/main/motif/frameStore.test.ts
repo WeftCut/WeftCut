@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { MotifFrameStore, type FrameCodec, type MotifTextureUpload } from './frameStore'
+import { MotifError } from '../../shared/motifs/errors'
 
 const roots: string[] = []
 const hash = 'a'.repeat(32)
@@ -59,13 +60,13 @@ describe('MotifFrameStore', () => {
   })
 
   it.each([
-    'motif-frame: Restored data doesn\'t match checksum',
-    'motif-frame: scaled frame 1920x1080 does not fit the 1921x1081 pool',
+    'Restored data doesn\'t match checksum',
+    'scaled frame 1920x1080 does not fit the 1921x1081 pool',
   ])('takes a native file failure from the upload as a miss: %s', async message => {
     const { store, gpu, changed } = await fixture()
     await (await store.prepareWrite(hash, 2))!.encoded(frameHeader(3840, 2160))
     changed.mockClear()
-    gpu.mockRejectedValueOnce(new Error(message))
+    gpu.mockRejectedValueOnce(new MotifError('miss', message))
     expect(await store.readTexture(hash, 2, 2, gpu)).toBeNull()
     expect(changed.mock.calls).toEqual([[hash, 2, false]])
   })
@@ -83,9 +84,31 @@ describe('MotifFrameStore', () => {
     const { store, gpu, changed } = await fixture()
     await (await store.prepareWrite(hash, 2))!.encoded(frameHeader(16, 16))
     changed.mockClear()
-    gpu.mockRejectedValueOnce(new Error('Motif consumer closed'))
-    await expect(store.readTexture(hash, 2, 1, gpu)).rejects.toThrow('Motif consumer closed')
+    gpu.mockRejectedValueOnce(new MotifError('closed', 'Motif consumer closed'))
+    await expect(store.readTexture(hash, 2, 1, gpu)).rejects.toMatchObject({ code: 'closed' })
     expect(changed).not.toHaveBeenCalled()
+  })
+
+  it.each(['EBUSY', 'EPERM', 'EACCES'])('sends a frame whose header is held (%s) to the utility lane and keeps it', async code => {
+    const { store, gpu, changed } = await fixture()
+    await (await store.prepareWrite(hash, 2))!.encoded(frameHeader(16, 16))
+    changed.mockClear()
+    const open = vi.spyOn(fs, 'open').mockRejectedValueOnce(Object.assign(new Error('held'), { code }))
+    try {
+      expect(await store.readTexture(hash, 2, 1, gpu)).toEqual({ kind: 'unavailable' })
+    } finally { open.mockRestore() }
+    expect(gpu).not.toHaveBeenCalled()
+    expect(changed).not.toHaveBeenCalled()
+  })
+
+  it('codes a full disk as disk and keeps the queue usable', async () => {
+    const { store } = await fixture()
+    const writeFile = vi.spyOn(fs, 'writeFile').mockRejectedValueOnce(Object.assign(new Error('no space'), { code: 'ENOSPC' }))
+    try {
+      await expect((await store.prepareWrite(hash, 3))!.encoded(frameHeader(2, 2))).rejects.toMatchObject({ code: 'disk' })
+    } finally { writeFile.mockRestore() }
+    await (await store.prepareWrite(hash, 3))!.encoded(frameHeader(2, 2))
+    expect(await store.has(hash, 3)).toBe(true)
   })
 
   it('answers no workspace as a miss that leaves coverage alone', async () => {
@@ -225,17 +248,17 @@ describe('MotifFrameStore', () => {
     const { store, changed, gpu } = await fixture()
     await (await store.prepareWrite(hash, 7))!.encoded(frameHeader(2, 2))
     expect(changed).toHaveBeenLastCalledWith(hash, 7, true, 68)
-    gpu.mockRejectedValueOnce(new Error('motif-frame: Restored data doesn\'t match checksum'))
+    gpu.mockRejectedValueOnce(new MotifError('miss', 'Restored data doesn\'t match checksum'))
     expect(await store.readTexture(hash, 7, 1, gpu)).toBeNull()
     expect(changed).toHaveBeenLastCalledWith(hash, 7, false)
   })
 
   it('checks encoded size before either native or PNG writes and keeps the queue usable after refusal', async () => {
     const { root, codec } = await fixture()
-    const admit = vi.fn().mockImplementationOnce(() => { throw new Error('motif-disk-capacity') })
+    const admit = vi.fn().mockImplementationOnce(() => { throw new MotifError('disk', 'full') })
     const changed = vi.fn()
     const store = new MotifFrameStore(async () => root, codec, changed, admit)
-    await expect((await store.prepareWrite(hash, 0))!.encoded(Buffer.from('native'))).rejects.toThrow('motif-disk-capacity')
+    await expect((await store.prepareWrite(hash, 0))!.encoded(Buffer.from('native'))).rejects.toMatchObject({ code: 'disk' })
     expect(changed).not.toHaveBeenCalled()
     expect(await store.has(hash, 0)).toBe(false)
     await store.write(hash, 1, new Uint8Array([1]))
@@ -250,11 +273,11 @@ describe('MotifFrameStore', () => {
     const events: number[] = []
     let refuse = false
     const store = new MotifFrameStore(async () => root, { motifEncodePng: async () => Buffer.alloc(0) }, () => {}, () => {
-      if (refuse) throw new Error('motif-disk-capacity')
+      if (refuse) throw new MotifError('disk', 'full')
     }, (_hash, delta) => events.push(delta))
     await (await store.prepareWrite(hash, 0))!.encoded(frameHeader(2, 2))
     refuse = true
-    await expect((await store.prepareWrite(hash, 1))!.encoded(frameHeader(2, 2))).rejects.toThrow('motif-disk-capacity')
+    await expect((await store.prepareWrite(hash, 1))!.encoded(frameHeader(2, 2))).rejects.toMatchObject({ code: 'disk' })
     expect(events).toEqual([1, -1, 1, -1])
     expect(store.hasRoom(hash, 1)).toBe(false)
     refuse = false

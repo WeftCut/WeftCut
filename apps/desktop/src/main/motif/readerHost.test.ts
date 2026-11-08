@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { createMotifReaderHost } from './readerHost'
+import { MotifError } from '../../shared/motifs/errors'
 
 const hash = 'a'.repeat(32)
 const root = path.join('workspace', 'project')
@@ -80,12 +81,15 @@ describe('Motif reader utility', () => {
     read.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject }))
     const pending = host.read({ id: 1, hash, frame: 2, div: 1 })
     host.control({ type: 'workspace', generation: 8, root })
-    fail(new Error('motif-frame: Restored data doesn\'t match checksum'))
+    fail(new MotifError('miss', 'Restored data doesn\'t match checksum'))
     expect(await pending).toEqual({ id: 1, miss: true })
     expect(report).toHaveBeenCalledWith({ type: 'miss', generation: 7, hash, frame: 2 })
 
     read.mockRejectedValueOnce(new Error('invalid divisor'))
     expect(await host.read({ id: 2, hash, frame: 3, div: 1 })).toEqual({ id: 2, error: 'invalid divisor' })
+    // A held file is not a miss: the worker's lane fails and retries.
+    read.mockRejectedValueOnce(new MotifError('transient', 'sharing violation'))
+    expect(await host.read({ id: 3, hash, frame: 3, div: 1 })).toEqual({ id: 3, error: '[motif:transient] sharing violation' })
     expect(report).toHaveBeenCalledTimes(1)
   })
 

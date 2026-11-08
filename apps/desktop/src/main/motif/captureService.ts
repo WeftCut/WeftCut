@@ -3,9 +3,8 @@ import type { MotifOsrFrame } from './offscreenFrames.js'
 import type { CaptureArgs } from './capture'
 import type { MotifFrameStore, FrameWriter } from './frameStore'
 import type { MotifCacheAddress, MotifTextureFrame, StoredMotifFrame } from '../../shared/motifs/frameTransport'
-import { CAPTURE_SUPERSEDED_MESSAGE, MotifCaptureTimeoutError } from '../../shared/motifs/captureErrors'
+import { asMotifCapacity, MotifError, motifErrorCode, motifSuperseded } from '../../shared/motifs/errors'
 import { backgroundResourcePause, reserveResources } from '../resources'
-import { isResourceCapacityError } from '../../shared/resource-policy'
 import { MotifFrameWriteQueue, type FrameRead, type QueuedWrite } from './frameWriteQueue'
 
 /** Pixels read back from a texture, held natively until `finish` encodes them
@@ -42,7 +41,6 @@ export interface CaptureServiceDeps {
   createEncoder: (() => TextureEncoder) | null
   pixels: MotifPixelCodec
   setTextureEnabled: (enabled: boolean) => void
-  isContentFailure: (args: CaptureArgs, error: unknown) => boolean
   promote?: (key: string) => void
 }
 
@@ -65,6 +63,22 @@ const sameAddress = (a: MotifCacheAddress, b: MotifCacheAddress) => a.hash === b
 /** Main never reads stored pixels on the capture path (ADR 0154). */
 const storedFrame = (): StoredMotifFrame => ({ kind: 'stored', persisted: true })
 
+/** `reserveResources`, its refusal coded `capacity`. */
+function reserve(...args: Parameters<typeof reserveResources>): () => void {
+  try { return reserveResources(...args) } catch (error) { throw asMotifCapacity(error) }
+}
+
+/** Only a `device` failure, or an uncoded one, which comes from the
+ * shared-texture output itself (its lease, GPU copy or readback), switches the
+ * session to bitmaps. Every coded failure (a disk write, a resource refusal, a
+ * superseded request, the Motif's own script, a hung host, a held mutex)
+ * happened before or beside that output: a bitmap retry would not fix it, and
+ * the switch would cost every later frame its GPU path. */
+function failsTexturePath(error: unknown): boolean {
+  const code = motifErrorCode(error)
+  return code === undefined || code === 'device'
+}
+
 /** A capture reads its pixels inside the OSR lease and stores them through
  * `MotifFrameWriteQueue`, after the lease (ADR 0158). A failed write costs the
  * cache, never the pixels a display already has. A shared texture goes to the
@@ -80,24 +94,15 @@ export class MotifCaptureService {
     deps.setTextureEnabled(this.useTexture)
   }
 
-  /** Only a failure of the shared-texture output itself (its lease, GPU copy
-   * or readback) may switch the session to bitmaps. A disk write, a resource
-   * refusal, a superseded request, the Motif's own script and a hung host all
-   * happened before or beside that output: a bitmap retry would not fix them,
-   * and the switch would cost every later frame its GPU path. */
-  private keepsTexturePath(args: CaptureArgs, error: unknown, writeFailed = false): boolean {
-    return writeFailed || isResourceCapacityError(error) || String(error).includes(CAPTURE_SUPERSEDED_MESSAGE)
-      || error instanceof MotifCaptureTimeoutError || this.deps.isContentFailure(args, error)
-  }
-
   /** Runs `capture`; a failure of the shared-texture output moves the session
-   * to the bitmap host, which captures the same frame again. */
-  private async withFallback<T>(args: CaptureArgs, capture: () => Promise<T>, writeFailed: () => boolean = () => false): Promise<T> {
+   * to the bitmap host, which captures the same frame again. A failed write
+   * never does. */
+  private async withFallback<T>(capture: () => Promise<T>, writeFailed: () => boolean = () => false): Promise<T> {
     for (;;) {
       const texture = this.useTexture
       try { return await capture() }
       catch (error) {
-        if (!texture || this.keepsTexturePath(args, error, writeFailed())) throw error
+        if (!texture || writeFailed() || !failsTexturePath(error)) throw error
         this.useBitmaps(error)
       }
     }
@@ -118,7 +123,7 @@ export class MotifCaptureService {
   }
 
   async capture(owner: WebContents, request: CaptureRequest, isCurrent: () => boolean = () => true, finalizationId?: number, store = this.deps.store): Promise<StoredMotifFrame> {
-    if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+    if (!isCurrent()) throw motifSuperseded()
     const jobs = this.jobsFor(store), identity = captureIdentity(request)
     const pending = jobs.persist.get(identity)
     if (pending && (!request.bake || sameAddress(pending.address, request.bake))) {
@@ -127,14 +132,14 @@ export class MotifCaptureService {
       if (pending.key && (request.high ?? request.coalesceKey !== undefined)) this.deps.promote?.(pending.key)
       try {
         await pending.result
-        if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+        if (!isCurrent()) throw motifSuperseded()
         // Persisted: the renderer reads it through its reader (ADR 0154).
         return storedFrame()
       } catch (error) {
         // Neither cancelled background interest nor a failed write invalidates
         // a still-current display: it captures its own pixels. A Motif's own
         // failure would fail that capture too.
-        if (!isCurrent() || this.deps.isContentFailure(request, error)) throw error
+        if (!isCurrent() || motifErrorCode(error) === 'content') throw error
       } finally { pending.consumers.delete(consumer) }
     }
     const job: DisplayJob = { attach: () => false, result: Promise.resolve(null as unknown as StoredMotifFrame) }
@@ -147,7 +152,7 @@ export class MotifCaptureService {
   /** A persistence-only consumer owns no renderer document or GPU transport
    * lease. Its bound store and current-session guard are supplied at admission. */
   async persist(request: CaptureRequest & { bake: MotifCacheAddress }, isCurrent: () => boolean = () => true, store = this.deps.store): Promise<void> {
-    if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+    if (!isCurrent()) throw motifSuperseded()
     const jobs = this.jobsFor(store), identity = captureIdentity(request)
     const pending = jobs.persist.get(identity)
     const consumer = () => isCurrent()
@@ -155,7 +160,7 @@ export class MotifCaptureService {
       pending.consumers.add(consumer)
       try {
         await pending.result
-        if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+        if (!isCurrent()) throw motifSuperseded()
         return
       } finally { pending.consumers.delete(consumer) }
     }
@@ -166,9 +171,9 @@ export class MotifCaptureService {
     const result = (async () => {
       if (joined) {
         try { if ((await joined).persisted) return }
-        catch (error) { if (!String(error).includes(CAPTURE_SUPERSEDED_MESSAGE)) throw error }
+        catch (error) { if (motifErrorCode(error) !== 'superseded') throw error }
       }
-      if (!wanted()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+      if (!wanted()) throw motifSuperseded()
       // A display's write that outlived its lease needs no second capture.
       const writing = this.writes.inFlight(store, request.bake)
       if (writing && await writing.then(() => true, () => false)) return
@@ -178,7 +183,7 @@ export class MotifCaptureService {
     jobs.persist.set(identity, job)
     try {
       await result
-      if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+      if (!isCurrent()) throw motifSuperseded()
     } finally {
       consumers.delete(consumer)
       if (jobs.persist.get(identity) === job) jobs.persist.delete(identity)
@@ -187,19 +192,19 @@ export class MotifCaptureService {
 
   private async persistFrame(request: CaptureRequest & { bake: MotifCacheAddress }, isCurrent: () => boolean, store: MotifFrameStore): Promise<void> {
     const { coalesceKey, high, bake, cache: _cache, finalizationToken: _token, ...args } = request
-    const releaseResources = reserveResources(0, 16 + request.width * request.height * 16 / 1048576)
+    const releaseResources = reserve(0, 16 + request.width * request.height * 16 / 1048576)
     let writeFailed = false
     const prepare = async () => {
-      if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+      if (!isCurrent()) throw motifSuperseded()
       try {
         const writer = await store.prepareWrite(bake.hash, bake.frame)
-        if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
-        if (!writer) throw new Error('Motif bake has no open workspace')
+        if (!isCurrent()) throw motifSuperseded()
+        if (!writer) throw new MotifError('closed', 'Motif bake has no open workspace')
         return writer
       } catch (error) { writeFailed = true; throw error }
     }
     try {
-      const queued = await this.withFallback(args, () => this.deps.frame(args, async frame => {
+      const queued = await this.withFallback(() => this.deps.frame(args, async frame => {
         const writer = await prepare()
         return this.writes.offer(store, bake, 'wait', this.frameRead(frame, args, writer))
       }, coalesceKey, high, isCurrent), () => writeFailed)
@@ -210,13 +215,13 @@ export class MotifCaptureService {
   private async readTexture(frame: TextureOsrFrame, args: CaptureArgs): Promise<RawMotifFrame> {
     const { pixelFormat, handle } = frame.texture.textureInfo
     if (frame.width !== args.width || frame.height !== args.height ||
-        (pixelFormat !== 'rgba' && pixelFormat !== 'bgra') || !handle.ntHandle || !this.deps.createEncoder) throw new Error('Unsupported bake texture')
+        (pixelFormat !== 'rgba' && pixelFormat !== 'bgra') || !handle.ntHandle || !this.deps.createEncoder) throw new MotifError('device', 'Unsupported bake texture')
     this.encoder ??= this.deps.createEncoder()
     try { return await this.encoder.read(handle.ntHandle, frame.height) }
     catch (error) {
       // The session can no longer store textures; later frames are bitmaps.
       // A display still shows this one.
-      this.useBitmaps(error)
+      if (failsTexturePath(error)) this.useBitmaps(error)
       throw error
     }
   }
@@ -257,10 +262,10 @@ export class MotifCaptureService {
       const address = this.liveWriteAddress(request, store)
       if (!address) return null
       const queued = await this.writes.offer(store, address, 'skip', async () => {
-        const release = reserveResources(0, args.width * args.height * 8 / 1048576)
+        const release = reserve(0, args.width * args.height * 8 / 1048576)
         try {
           const writer = await store.prepareWrite(address.hash, address.frame)
-          if (!writer) throw new Error('Motif frame has no open workspace')
+          if (!writer) throw new MotifError('closed', 'Motif frame has no open workspace')
           const encodeAndStore = await read(writer)()
           return () => encodeAndStore().finally(release)
         } catch (error) { release(); throw error }
@@ -274,14 +279,15 @@ export class MotifCaptureService {
   }
 
   private warnLiveWrite(error: unknown): void {
-    if (this.liveWriteWarned || isResourceCapacityError(error) || String(error).includes(CAPTURE_SUPERSEDED_MESSAGE)) return
+    const code = motifErrorCode(error)
+    if (this.liveWriteWarned || code === 'capacity' || code === 'superseded') return
     this.liveWriteWarned = true
     console.warn('[weftcut/motif] Live capture not stored:', error)
   }
 
   private async captureDisplay(owner: WebContents, request: CaptureRequest, isCurrent: () => boolean, finalizationId: number | undefined, store: MotifFrameStore, register: (attach: DisplayJob['attach']) => void): Promise<StoredMotifFrame> {
-    if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
-    const releaseResources = reserveResources(0, 16 + request.width * request.height * 16 / 1048576, finalizationId)
+    if (!isCurrent()) throw motifSuperseded()
+    const releaseResources = reserve(0, 16 + request.width * request.height * 16 / 1048576, finalizationId)
     const { coalesceKey, high, bake, cache, finalizationToken: _token, ...args } = request
     const key = coalesceKey === undefined ? undefined : `${owner.id}:${coalesceKey}`
     // Begin resolving the workspace now, without postponing capture admission:
@@ -313,22 +319,22 @@ export class MotifCaptureService {
         // reader reads and verifies it, and an unreadable entry captures live
         // as before.
         const stored = await store.has(cache.hash, cache.frame).catch(() => false)
-        if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+        if (!isCurrent()) throw motifSuperseded()
         if (stored && (!kept || sameAddress(cache, kept.address))) return storedFrame()
       }
-      const { frame, queued } = await this.withFallback(args, () => this.deps.frame(args, async leased => {
+      const { frame, queued } = await this.withFallback(() => this.deps.frame(args, async leased => {
         acceptingBake = false
-        if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+        if (!isCurrent()) throw motifSuperseded()
         if (leased.kind === 'texture') {
-          if (!this.deps.copy) throw new Error('Motif texture capture without a GPU transport')
+          if (!this.deps.copy) throw new MotifError('device', 'Motif texture capture without a GPU transport')
           const queued = await this.offerDisplayFrame(leased, request, args, kept, store)
           // Capture/encoding can finish after a document reload. Such work
           // cannot lease a texture to the new preload on the same WebContents.
-          if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+          if (!isCurrent()) throw motifSuperseded()
           return { frame: await this.deps.copy(owner, leased, finalizationId) as StoredMotifFrame, queued }
         }
         const rgba = await this.straighten(leased)
-        if (!isCurrent()) throw new Error(CAPTURE_SUPERSEDED_MESSAGE)
+        if (!isCurrent()) throw motifSuperseded()
         const queued = await this.offerDisplayFrame(leased, request, args, kept, store, rgba)
         const pixels: StoredMotifFrame = { kind: 'pixels', width: leased.width, height: leased.height, bytes: new Uint8Array(rgba.buffer, rgba.byteOffset, rgba.byteLength) }
         return { frame: pixels, queued }

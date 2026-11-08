@@ -237,12 +237,12 @@ describe('capture host shutdown', () => {
       await expect(slow).resolves.toBe('UE5H')
       setupDelayMs = 0
       hangSetup = true
-      const timeout = expect(captureMotifFrameB64({ ...args, motifId: 'hung-setup' })).rejects.toThrow(/30000ms.*setup/)
+      const timeout = expect(captureMotifFrameB64({ ...args, motifId: 'hung-setup' })).rejects.toMatchObject({ code: 'timeout', message: expect.stringMatching(/30000ms.*setup/) })
       await vi.advanceTimersByTimeAsync(30_001)
       await timeout
       hangSetup = false
       hangFrame = true
-      const frameTimeout = expect(captureMotifFrameB64({ ...args, motifId: 'hung-frame' })).rejects.toThrow(/5000ms/)
+      const frameTimeout = expect(captureMotifFrameB64({ ...args, motifId: 'hung-frame' })).rejects.toMatchObject({ code: 'timeout', message: expect.stringMatching(/5000ms/) })
       await vi.advanceTimersByTimeAsync(5001)
       await frameTimeout
       hangFrame = false
@@ -266,7 +266,7 @@ describe('capture host shutdown', () => {
     const p0 = captureMotifFrameB64(args)
     const pA = captureMotifFrameB64(args, 'sprite:layer-1')
     const pB = captureMotifFrameB64(args, 'sprite:layer-1')
-    await expect(pA).rejects.toThrow(/superseded by a newer request/)
+    await expect(pA).rejects.toMatchObject({ code: 'superseded' })
     await expect(p0).resolves.toBe('UE5H')
     await expect(pB).resolves.toBe('UE5H')
     expect(renderCalls - before).toBe(2) // p0 + pB only — pA never executed
@@ -314,7 +314,7 @@ describe('capture host shutdown', () => {
     throwingLanes.add('broken-motif@v1')
     const openedBefore = opened
     await expect(captureMotifFrameB64({ ...args, motifId: 'broken-motif', contentHash: 'v1' }))
-      .rejects.toThrow(/__motifRender threw/)
+      .rejects.toMatchObject({ code: 'content', message: expect.stringMatching(/__motifRender threw/) })
     expect(opened).toBe(openedBefore + 1)
     expect(lastWindow!.destroyed).toBe(false)
     const broken = lastWindow!
@@ -417,7 +417,7 @@ describe('capture host shutdown', () => {
     const running = captureMotifFrameB64(args)
     const abandoned = captureMotifFrameB64(args, 'abandoned', false)
     controlMotifCapture('abandoned', 'cancel')
-    await expect(abandoned).rejects.toThrow('superseded')
+    await expect(abandoned).rejects.toMatchObject({ code: 'superseded' })
     await running
     expect(renderCalls - before).toBe(1)
   })
@@ -586,7 +586,7 @@ describe('capture host shutdown', () => {
       await timeoutOnce('verdict')
       await timeoutOnce('verdict')
       const renders = renderCalls, hostsBefore = opened
-      await expect(captureMotifFrameB64({ ...args, motifId: 'verdict' })).rejects.toThrow(/5000ms/)
+      await expect(captureMotifFrameB64({ ...args, motifId: 'verdict' })).rejects.toMatchObject({ code: 'content', message: '[motif:content] motif capture timed out after 5000ms: Runtime.evaluate' })
       expect(renderCalls).toBe(renders)
       expect(opened).toBe(hostsBefore)
       // An explicit retry lifts the verdict like any other content latch.

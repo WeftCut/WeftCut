@@ -197,7 +197,7 @@ describe('Motif workspace ownership', () => {
     await h.workspace.reconcile({ ...plan([]), live: [c] });
     const store = h.workspace.store();
     await (await store.prepareWrite(c.hash, 0))!.encoded(frameBytes());
-    await expect((await store.prepareWrite(c.hash, 1))!.encoded(frameBytes())).rejects.toThrow('motif-disk-capacity');
+    await expect((await store.prepareWrite(c.hash, 1))!.encoded(frameBytes())).rejects.toMatchObject({ code: 'disk' });
     expect(await store.has(c.hash, 1)).toBe(false);
     h.setBudget(10);
     await expect((await store.prepareWrite(c.hash, 0))!.encoded(frameBytes())).resolves.toBeUndefined();

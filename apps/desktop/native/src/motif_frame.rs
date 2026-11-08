@@ -1,6 +1,7 @@
 //! Disposable straight-alpha RGBA8 frame cache (ADR 0078). Each frame is
 //! independent: seeks never decode preceding frames. A read checks the frame
 //! through zstd's content checksum and may downscale it (ADR 0154).
+use crate::motif_error::{coded, to_napi, MotifCode};
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 
@@ -368,12 +369,32 @@ fn scale_into(rgba: &[u8], w: u32, h: u32, div: u32, out: &mut [u8]) {
     }
 }
 
-/// Every failure that comes from the file itself starts with this prefix: the
-/// caller treats it as a miss (absent or invalid frame), not a transport failure.
-pub(crate) const FRAME_ERROR: &str = "motif-frame: ";
-
+/// A failure that comes from the file itself is a miss (absent or invalid
+/// frame), never a transport failure; a file another process holds is
+/// transient.
 fn from_file<T>(read: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
-    read().map_err(|e| anyhow::anyhow!("{FRAME_ERROR}{e:#}"))
+    read().map_err(|e| {
+        let code = if held(&e) {
+            MotifCode::Transient
+        } else {
+            MotifCode::Miss
+        };
+        coded(code, e)
+    })
+}
+
+/// ERROR_SHARING_VIOLATION or ERROR_LOCK_VIOLATION: a writer or an on-access
+/// scanner has the file open.
+#[cfg(windows)]
+fn held(e: &anyhow::Error) -> bool {
+    e.chain()
+        .filter_map(|c| c.downcast_ref::<std::io::Error>())
+        .any(|io| matches!(io.raw_os_error(), Some(32 | 33)))
+}
+
+#[cfg(not(windows))]
+fn held(_: &anyhow::Error) -> bool {
+    false
 }
 
 /// Stage times of one read, in milliseconds.
@@ -393,7 +414,7 @@ fn elapsed_ms(start: std::time::Instant) -> f64 {
 
 /// Reads and parses `path`, then `decode`s it, timed. An invalid `div` is the
 /// caller's error and is rejected before the file is read; any later failure
-/// is a miss (`FRAME_ERROR`).
+/// is coded by `from_file`.
 fn read<T>(
     path: &str,
     div: u32,
@@ -479,7 +500,7 @@ pub struct MotifScaledPixels {
 }
 
 /// The caller authorizes the path. The read runs on the blocking pool; a
-/// `motif-frame: ` error is a miss.
+/// `[motif:miss]` error is a miss.
 #[napi]
 #[cfg_attr(test, allow(dead_code))] // napi registration is absent in a Rust unit-test executable.
 pub async fn motif_read_frame_scaled(path: String, div: u32) -> napi::Result<MotifScaledPixels> {
@@ -494,7 +515,7 @@ pub async fn motif_read_frame_scaled(path: String, div: u32) -> napi::Result<Mot
     })
     .await
     .map_err(|e| napi::Error::from_reason(e.to_string()))?
-    .map_err(|e| napi::Error::from_reason(e.to_string()))
+    .map_err(to_napi)
 }
 
 #[napi]
@@ -514,7 +535,7 @@ pub async fn motif_encode_png(png: Buffer) -> napi::Result<Buffer> {
     })
     .await
     .map_err(|e| napi::Error::from_reason(e.to_string()))?
-    .map_err(|e| napi::Error::from_reason(e.to_string()))
+    .map_err(to_napi)
 }
 
 /// The straight value of premultiplied channel `c` at alpha `a`, at index
@@ -576,7 +597,7 @@ pub(crate) fn encode_png(w: u32, h: u32, rgba: Vec<u8>) -> anyhow::Result<Vec<u8
 #[napi]
 #[cfg_attr(test, allow(dead_code))] // napi registration is absent in a Rust unit-test executable.
 pub async fn motif_straighten_bgra(bgra: Buffer, width: u32, height: u32) -> napi::Result<Buffer> {
-    let len = byte_len(width, height).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let len = byte_len(width, height).map_err(to_napi)?;
     if bgra.len() < len {
         return Err(napi::Error::from_reason(
             "motif bitmap is smaller than its picture",
@@ -593,7 +614,7 @@ pub async fn motif_straighten_bgra(bgra: Buffer, width: u32, height: u32) -> nap
     })
     .await
     .map_err(|e| napi::Error::from_reason(e.to_string()))?
-    .map_err(|e| napi::Error::from_reason(e.to_string()))
+    .map_err(to_napi)
 }
 
 /// The top `height` rows of a bitmap capture's premultiplied BGRA rows,
@@ -602,7 +623,7 @@ pub async fn motif_straighten_bgra(bgra: Buffer, width: u32, height: u32) -> nap
 #[napi]
 #[cfg_attr(test, allow(dead_code))] // napi registration is absent in a Rust unit-test executable.
 pub async fn motif_encode_bgra(bgra: Buffer, width: u32, height: u32) -> napi::Result<Buffer> {
-    let len = byte_len(width, height).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let len = byte_len(width, height).map_err(to_napi)?;
     if bgra.len() < len {
         return Err(napi::Error::from_reason(
             "motif bitmap is smaller than its picture",
@@ -614,7 +635,7 @@ pub async fn motif_encode_bgra(bgra: Buffer, width: u32, height: u32) -> napi::R
     })
     .await
     .map_err(|e| napi::Error::from_reason(e.to_string()))?
-    .map_err(|e| napi::Error::from_reason(e.to_string()))
+    .map_err(to_napi)
 }
 
 /// Straight RGBA as a stored frame.
@@ -625,7 +646,7 @@ pub async fn motif_encode_rgba(rgba: Buffer, width: u32, height: u32) -> napi::R
     tokio::task::spawn_blocking(move || encode(width, height, &rgba).map(Buffer::from))
         .await
         .map_err(|e| napi::Error::from_reason(e.to_string()))?
-        .map_err(|e| napi::Error::from_reason(e.to_string()))
+        .map_err(to_napi)
 }
 
 use std::io::Read;
@@ -995,16 +1016,16 @@ mod tests {
                 read_scaled("absent.wfrm", div).map(|_| ()),
                 read_into("absent.wfrm", div, (1, 1), &mut out, 4, &|_, _| {}).map(|_| ()),
             ] {
-                assert!(error
-                    .unwrap_err()
-                    .to_string()
-                    .starts_with("invalid motif scale divisor"));
+                let error = error.unwrap_err();
+                assert!(error.to_string().starts_with("invalid motif scale divisor"));
+                assert_eq!(crate::motif_error::code_of(&error), None);
             }
         }
     }
 
     #[test]
-    fn file_failures_are_misses_with_the_frame_prefix() {
+    fn file_failures_are_misses() {
+        use crate::motif_error::code_of;
         let dir = tempfile::tempdir().unwrap();
         let pixels = pattern(73);
         let mut bytes = encode(32, 32, &pixels).unwrap();
@@ -1022,18 +1043,20 @@ mod tests {
                 read_scaled(&path, div).map(|_| ()),
                 read_into(&path, div, (w, h), out, w as usize * 4, &|_, _| {}).map(|_| ()),
             ] {
-                let error = error.unwrap_err().to_string();
-                assert!(error.starts_with(FRAME_ERROR), "{error}");
+                let error = error.unwrap_err();
+                assert_eq!(code_of(&error), Some(MotifCode::Miss), "{error:#}");
             }
         }
         let path = write_frame(dir.path(), &bytes[..(HEADER + bytes.len()) / 2]);
-        assert!(read_scaled(&path, 2)
-            .unwrap_err()
-            .to_string()
-            .starts_with(FRAME_ERROR));
+        let error = read_scaled(&path, 2).unwrap_err();
+        assert_eq!(code_of(&error), Some(MotifCode::Miss), "{error:#}");
         let absent = dir.path().join("absent.wfrm");
         let error = read_scaled(&absent.to_string_lossy(), 2).unwrap_err();
-        assert!(error.to_string().starts_with(FRAME_ERROR), "{error}");
+        assert_eq!(code_of(&error), Some(MotifCode::Miss), "{error:#}");
+        assert!(
+            format!("{error:#}").starts_with("[motif:miss] "),
+            "{error:#}"
+        );
     }
 
     /// Reads through `read_into` into rows `pitch` bytes apart, padding marked,
@@ -1086,11 +1109,11 @@ mod tests {
         let refused = read_into(&path, 1, (16, 16), &mut out, 16 * 4, &|_, _| {
             panic!("handed over")
         })
-        .unwrap_err()
-        .to_string();
+        .unwrap_err();
+        assert_eq!(crate::motif_error::code_of(&refused), Some(MotifCode::Miss));
         assert!(
-            refused.starts_with(FRAME_ERROR) && refused.ends_with("does not fit 16x16"),
-            "{refused}"
+            format!("{refused:#}").ends_with("does not fit 16x16"),
+            "{refused:#}"
         );
         assert!(read_into(&path, 2, (16, 16), &mut out, 16 * 4, &|_, _| {}).is_ok());
     }

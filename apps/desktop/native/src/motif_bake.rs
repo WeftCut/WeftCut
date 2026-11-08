@@ -2,6 +2,8 @@
 //! the capture host's frame marker check. Each reader keeps its D3D11 device
 //! and staging texture on its own worker. `MotifTextureEncoder::read` runs
 //! under the caller's OSR lease; `finish` runs after it (ADR 0158).
+use crate::motif_error::{coded, to_napi, MotifCode};
+use crate::motif_gpu::{acquire_sync, device};
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 use std::sync::mpsc;
@@ -13,10 +15,17 @@ use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Dxgi::IDXGIKeyedMutex;
 
+/// For errors that are not `anyhow::Error`; those go through `to_napi`.
 fn error(e: impl std::fmt::Display) -> napi::Error {
     napi::Error::from_reason(e.to_string())
 }
 
+/// The reader's worker is gone or dropped the reply without answering.
+fn worker_lost(e: impl std::fmt::Display) -> napi::Error {
+    to_napi(device(anyhow::anyhow!("Motif reader worker lost: {e}")))
+}
+
+/// Worker replies carry `format!("{e:#}")`, which keeps a `[motif:<code>]` tag.
 type Reply = tokio::sync::oneshot::Sender<Result<Pixels, String>>;
 
 struct Pixels {
@@ -47,7 +56,7 @@ impl MotifRawFrame {
         tokio::task::spawn_blocking(move || encode_pixels(pixels))
             .await
             .map_err(error)?
-            .map_err(error)
+            .map_err(to_napi)
     }
 
     /// The same pixels as a PNG, for captures that leave the app as images.
@@ -71,7 +80,7 @@ impl MotifRawFrame {
         })
         .await
         .map_err(error)?
-        .map_err(error)
+        .map_err(to_napi)
     }
 }
 
@@ -100,17 +109,17 @@ fn spawn_reader(name: &str) -> napi::Result<mpsc::Sender<Job>> {
                     reader
                 }
                 Err(e) => {
-                    let _ = ready_tx.send(Err(e.to_string()));
+                    let _ = ready_tx.send(Err(format!("{:#}", device(e))));
                     return;
                 }
             };
             while let Ok((handle, region, reply)) = rx.recv() {
-                let result = unsafe { reader.read(handle, region) }.map_err(|e| e.to_string());
+                let result = unsafe { reader.read(handle, region) }.map_err(|e| format!("{e:#}"));
                 let _ = reply.send(result);
             }
         })
-        .map_err(error)?;
-    ready_rx.recv().map_err(error)?.map_err(error)?;
+        .map_err(|e| to_napi(device(e)))?;
+    ready_rx.recv().map_err(worker_lost)?.map_err(error)?;
     Ok(tx)
 }
 
@@ -121,10 +130,15 @@ async fn request(
 ) -> napi::Result<Pixels> {
     let bits: [u8; 8] = handle.as_ref().try_into().map_err(error)?;
     let (reply, rx) = tokio::sync::oneshot::channel();
-    tx.ok_or_else(|| error("reader closed"))?
-        .send((u64::from_le_bytes(bits) as usize, region, reply))
-        .map_err(error)?;
-    rx.await.map_err(error)?.map_err(error)
+    tx.ok_or_else(|| {
+        to_napi(coded(
+            MotifCode::Closed,
+            anyhow::anyhow!("Motif reader closed"),
+        ))
+    })?
+    .send((u64::from_le_bytes(bits) as usize, region, reply))
+    .map_err(worker_lost)?;
+    rx.await.map_err(worker_lost)?.map_err(error)
 }
 
 #[napi]
@@ -230,19 +244,24 @@ impl Reader {
     }
 
     unsafe fn read(&mut self, handle: usize, region: Region) -> anyhow::Result<Pixels> {
-        let source: ID3D11Texture2D = self.device.OpenSharedResource1(HANDLE(handle as *mut _))?;
+        let source: ID3D11Texture2D = self
+            .device
+            .OpenSharedResource1(HANDLE(handle as *mut _))
+            .map_err(device)?;
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         source.GetDesc(&mut desc);
-        anyhow::ensure!(
-            desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM || desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM,
-            "unsupported OSR format"
-        );
-        anyhow::ensure!(
-            desc.Width > 0
-                && desc.Height > 0
-                && u64::from(desc.Width) * u64::from(desc.Height) * 4 <= 128 * 1024 * 1024,
-            "readback budget"
-        );
+        if desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM && desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM {
+            return Err(device(anyhow::anyhow!("unsupported OSR format")));
+        }
+        if desc.Width == 0
+            || desc.Height == 0
+            || u64::from(desc.Width) * u64::from(desc.Height) * 4 > 128 * 1024 * 1024
+        {
+            return Err(coded(
+                MotifCode::Oversize,
+                anyhow::anyhow!("readback budget"),
+            ));
+        }
         let (left, top, width, height) = match region {
             Region::Top(rows) => {
                 anyhow::ensure!(
@@ -274,14 +293,14 @@ impl Reader {
             };
             let mut staging = None;
             self.device
-                .CreateTexture2D(&staging_desc, None, Some(&mut staging))?;
+                .CreateTexture2D(&staging_desc, None, Some(&mut staging))
+                .map_err(device)?;
             self.staging = staging;
             self.size = size;
         }
         let mutex = source.cast::<IDXGIKeyedMutex>().ok();
         if let Some(ref m) = mutex {
-            let hr = (Interface::vtable(m).AcquireSync)(Interface::as_raw(m), 0, 1000);
-            anyhow::ensure!(hr.0 == 0, "OSR mutex unavailable: {hr:?}");
+            acquire_sync(m, "OSR")?;
         }
         let staging = self.staging.as_ref().unwrap();
         let result = (|| -> anyhow::Result<Vec<u8>> {
@@ -297,7 +316,8 @@ impl Reader {
                 .CopySubresourceRegion(staging, 0, 0, 0, 0, &source, 0, Some(&area));
             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
             self.context
-                .Map(staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
+                .Map(staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
+                .map_err(device)?;
             let row = width as usize * 4;
             let mut pixels = vec![0; row * height as usize];
             for y in 0..height as usize {
@@ -311,7 +331,7 @@ impl Reader {
             Ok(pixels)
         })();
         if let Some(m) = mutex {
-            m.ReleaseSync(0)?;
+            m.ReleaseSync(0).map_err(device)?;
         }
         Ok(Pixels {
             width,

@@ -2,7 +2,8 @@ import path from 'node:path'
 import { promises as fs } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { notifyResourceCacheWrite } from '../resources'
-import { isMotifFrameAddress, isMotifFrameError, motifFrameStem } from './frameAddress'
+import { isMotifFrameAddress, motifFrameStem } from './frameAddress'
+import { MotifError, motifErrorCode } from '../../shared/motifs/errors.js'
 import { isMotifReaderDiv, type MotifReaderDiv } from '../../shared/motifs/readerProtocol.js'
 import type { MotifReadUnavailable, MotifTextureFrame, MotifTextureReadResult } from '../../shared/motifs/frameTransport.js'
 
@@ -24,7 +25,7 @@ export interface FrameCodec {
 }
 
 /** Uploads `file` scaled by `div` into a `width × height` texture. Rejects
- * with a `motif-frame: ` error when the file itself cannot be read. */
+ * with a `miss` when the file itself cannot be read. */
 export type MotifTextureUpload = (file: string, width: number, height: number, div: MotifReaderDiv) => Promise<MotifTextureFrame | MotifReadUnavailable>
 
 /** The native frame layout (`motif_frame.rs`): magic, width, height, then the
@@ -34,19 +35,31 @@ const HEADER_BYTES = 16
 /** The native core's dimension bounds (`motif_frame.rs`). */
 const MAX_DIMENSION = 8192
 
-/** Stored width and height from the `.wfrm` header, or null when the file is
- * absent, short or not a frame. The native read verifies everything else. */
-async function readHeaderSize(file: string): Promise<{ width: number; height: number } | null> {
+/** Stored width and height from the `.wfrm` header. An absent, short or
+ * foreign file is a `miss`; a file another process holds open (a writer
+ * replacing it, an on-access scanner) is `transient`. The native read
+ * verifies everything else. */
+async function readHeaderSize(file: string): Promise<{ width: number; height: number }> {
   const header = Buffer.alloc(HEADER_BYTES)
+  let bytesRead: number
   try {
     const handle = await fs.open(file, 'r')
-    try { if ((await handle.read(header, 0, HEADER_BYTES, 0)).bytesRead < HEADER_BYTES) return null } finally { await handle.close() }
-  } catch { return null /* the native read would fail on the same file */ }
-  if (header.toString('ascii', 0, 8) !== HEADER_MAGIC) return null
+    try { ({ bytesRead } = await handle.read(header, 0, HEADER_BYTES, 0)) } finally { await handle.close() }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    const held = code === 'EBUSY' || code === 'EPERM' || code === 'EACCES'
+    throw new MotifError(held ? 'transient' : 'miss', `Motif frame header unreadable: ${code ?? String(error)}`, { cause: error })
+  }
+  if (bytesRead < HEADER_BYTES || header.toString('ascii', 0, 8) !== HEADER_MAGIC) throw new MotifError('miss', 'not a Motif frame')
   const width = header.readUInt32LE(8), height = header.readUInt32LE(12)
   const valid = (n: number): boolean => n > 0 && n <= MAX_DIMENSION
-  return valid(width) && valid(height) ? { width, height } : null
+  if (!valid(width) || !valid(height)) throw new MotifError('miss', `invalid Motif frame size ${width}x${height}`)
+  return { width, height }
 }
+
+/** ENOSPC as `disk`, the code the bake pauses on. */
+const diskCoded = (error: unknown): unknown => (error as NodeJS.ErrnoException | undefined)?.code === 'ENOSPC'
+  ? new MotifError('disk', String((error as Error).message), { cause: error }) : error
 
 export interface FrameWriter {
   png(png: Uint8Array): Promise<void>
@@ -74,20 +87,25 @@ export class MotifFrameStore {
 
   /** The Windows texture lane (ADR 0154). The header names the stored size;
    * `gpu` uploads the frame scaled by `div` into a pool of the rounded-up size.
-   * A file failure is a miss: the frame leaves coverage and null is returned.
-   * `unavailable` (no texture, GPU budget, a failed pool or import) keeps it. */
+   * A `miss` leaves coverage and returns null. A `transient` header read, like
+   * `unavailable` (no texture, GPU budget, a failed pool or import), keeps the
+   * frame and sends the read to the utility lane. */
   async readTexture(hash: string, frame: number, div: MotifReaderDiv, gpu: MotifTextureUpload): Promise<MotifTextureReadResult> {
     if (!isMotifReaderDiv(div)) throw new Error('Invalid Motif read divisor')
     const stem = await this.stem(hash, frame)
     if (!stem) return null
     const file = `${stem}.wfrm`
-    const size = await readHeaderSize(file)
-    if (!size) { this.changed(hash, frame, false); return null }
+    let size: { width: number; height: number }
+    try { size = await readHeaderSize(file) } catch (error) {
+      if (motifErrorCode(error) === 'transient') return { kind: 'unavailable' }
+      this.changed(hash, frame, false)
+      return null
+    }
     try {
       return await gpu(file, Math.ceil(size.width / div), Math.ceil(size.height / div), div)
     } catch (error) {
       // Lifecycle errors (closed consumer, superseded export) are not misses.
-      if (!isMotifFrameError(error)) throw error
+      if (motifErrorCode(error) !== 'miss') throw error
       this.changed(hash, frame, false)
       return null
     }
@@ -116,14 +134,15 @@ export class MotifFrameStore {
       this.writing(hash, 1)
       const write = this.writeTail.then(async () => {
         this.admitWrite(hash, frame, bytes.byteLength)
-        await fs.mkdir(path.dirname(stem), { recursive: true })
         const temp = `${stem}.${randomUUID()}.tmp`
         try {
+          await fs.mkdir(path.dirname(stem), { recursive: true })
           await fs.writeFile(temp, bytes, { flag: 'wx' })
           await replaceFile(temp, `${stem}.wfrm`)
           this.changed(hash, frame, true, bytes.byteLength)
           notifyResourceCacheWrite()
-        } finally { await fs.rm(temp, { force: true }).catch(() => {}) }
+        } catch (error) { throw diskCoded(error) }
+        finally { await fs.rm(temp, { force: true }).catch(() => {}) }
       }).finally(() => this.writing(hash, -1))
       this.writeTail = write.catch(() => {})
       return write
@@ -131,7 +150,7 @@ export class MotifFrameStore {
     return {
       encoded,
       png: async png => {
-        await fs.mkdir(path.dirname(stem), { recursive: true })
+        await fs.mkdir(path.dirname(stem), { recursive: true }).catch(error => { throw diskCoded(error) })
         await encoded(await this.codec.motifEncodePng(Buffer.from(png.buffer, png.byteOffset, png.byteLength)))
       },
     }

@@ -71,7 +71,7 @@ describe('FrameBroker ownership and subscribers', () => {
     const bake = h.broker.acquire('c', 0, 1, produce);
     await flush(); expect(ticket.high()).toBe(false);
     const old = h.broker.acquire('c', 0, 1, produce, 'sprite:1');
-    const rejected = expect(old).rejects.toThrow('superseded');
+    const rejected = expect(old).rejects.toMatchObject({ code: 'superseded' });
     expect(ticket.high()).toBe(true);
     expect(h.control).toHaveBeenCalledWith(ticket.key, 'promote');
     const fresh = h.broker.acquire('c', 1, 1, async () => ({ bitmap: bitmap(), persisted: false, scaleDiv: 'live' as const }), 'sprite:1');
@@ -86,7 +86,7 @@ describe('FrameBroker ownership and subscribers', () => {
     const h = setup(), wait = deferred<CapturedFrame>(), source = bitmap();
     let key = '';
     const old = h.broker.acquire('c', 0, 1, t => { key = t.key; return wait.promise; }, 'sprite:1');
-    const rejected = expect(old).rejects.toThrow('superseded');
+    const rejected = expect(old).rejects.toMatchObject({ code: 'superseded' });
     await flush();
     const next = h.broker.acquire('c', 1, 1, async () => ({ bitmap: bitmap(), persisted: false, scaleDiv: 'live' as const }), 'sprite:1');
     await rejected; expect(h.control).toHaveBeenCalledWith(key, 'cancel');
@@ -102,7 +102,7 @@ describe('FrameBroker ownership and subscribers', () => {
     const capture = vi.fn((t: FrameTicket) => { ticket = t; return wait.promise; });
     const bake = h.broker.acquire('c', 0, 1, capture);
     const preview = h.broker.acquire('c', 0, 1, capture, 'instance');
-    const rejected = expect(preview).rejects.toThrow('superseded');
+    const rejected = expect(preview).rejects.toMatchObject({ code: 'superseded' });
     await flush();
     h.broker.cancel('instance');
     await rejected;

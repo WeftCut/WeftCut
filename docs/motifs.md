@@ -122,10 +122,11 @@ background so `background: transparent` stays real alpha.
   Elsewhere: the paint's bitmap, straightened natively and sent as RGBA
   ([ADR 0159](adr/0159-motif-captures-are-pipelined-paints.md)). No capture
   takes a screenshot; PNGs (MCP previews, covers) are encoded from the leased
-  pixels. A failure of the texture output itself (lease, GPU copy, readback)
-  switches the session to bitmaps; a timeout, disk error, capacity refusal,
-  superseded request or Motif failure never does. `WEFTCUT_MOTIF_CAPTURE=bitmap`
-  forces bitmaps for diagnosis.
+  pixels. A `device` failure or an uncoded one, which comes from the texture
+  output itself (lease, GPU copy, readback), switches the session to bitmaps;
+  every other [failure code](#failure-codes) (a timeout, disk error, capacity
+  refusal, held mutex, superseded request or Motif failure) never does.
+  `WEFTCUT_MOTIF_CAPTURE=bitmap` forces bitmaps for diagnosis.
 - **One serial chain, pipelined.** Renders are serialized in queue order; a
   render returns once its frame has committed, and the next frame of the same
   page renders while up to three earlier ones are still on their way to a paint
@@ -136,7 +137,7 @@ background so `background: transparent` stays real alpha.
   first; a background ticket waiting 2 s gets one frame between them.
 - **Deadlines.** Every CDP command goes through the host's timed `send`
   (5 s); awaited setup gets 30 s; the renderer's capture transport allows 60 s
-  so it does not pre-empt setup. A timeout throws `MotifCaptureTimeoutError` and
+  so it does not pre-empt setup. A timeout rejects with code `timeout` and
   tears the host down for rebuild.
 - **Failure latching.** A Motif whose script throws fails its lane
   (`motifId` + `contentHash`) until an edit changes the hash or an explicit
@@ -146,7 +147,8 @@ background so `background: transparent` stays real alpha.
   slow frame must not lose a Motif for the session (measured on a 2-core Linux
   box: a 3.5 s frame timed out under load and rendered in 4.8 s once it lifted).
   Other mid-render transport failures (detached debugger, crashed renderer)
-  still latch at once.
+  still latch at once. A thrown script, a frame that never becomes ready and a
+  latched lane reject with code `content`.
 - **Bitmap host canvases** are forced CPU-backed (`willReadFrequently`) by
   `bitmapCanvasRuntime.ts` (ADR 0078): the marker cannot see a missing
   accelerated canvas layer.
@@ -285,7 +287,8 @@ demands and maps main's snapshots into the baked-key index and layer status;
   write reaches neither the display nor the GPU path. Replays then read instead of
   capturing again. Parameter previews have no cache address and store nothing. A
   session whose texture readback failed stores nothing live: its display texture
-  has no pixels main can read.
+  has no pixels main can read. A readback refused for a held mutex or the
+  budget costs that frame its receipt only.
 - **Inventory is stat-only.** On open, a frame counts when `<n>.wfrm` is a
   regular file larger than the 16-byte header; files are never opened. The
   first open of a file after boot costs ~6 ms on the Windows bench (Defender),
@@ -303,9 +306,28 @@ demands and maps main's snapshots into the baked-key index and layer status;
 
 Status: main reports `queued | baking | paused | retrying | ready | error` with
 completed/requested counts; `paused` names playback policy, memory pressure,
-resource admission or disk capacity; `ready` means the requested range is
-persisted. The renderer adds `warming` for L0-only coverage. The timeline status
+resource admission or disk capacity (a `capacity` or `disk` failure); a
+`content` failure is `error` at once, any other retries a bounded number of
+times; `ready` means the requested range is persisted. The renderer adds `warming` for L0-only coverage. The timeline status
 dot and the property panel show these; idle and ready need no panel row.
+
+## Failure codes
+
+A Motif failure is a `MotifError` (`shared/motifs/errors.ts`) with one code:
+`superseded`, `closed`, `miss`, `content`, `timeout`, `capacity`, `disk`,
+`oversize`, `transient`, `device` or `transport`. napi, `ipcMain.handle` and
+message ports carry only a message, so the code travels as a
+`[motif:<code>] detail` tag (the native side: `native/src/motif_error.rs`),
+decoded once where a message enters a process: the addon adapters in main, the
+reader utility, the preload frame port and the renderer's frame transport.
+In-process code checks the code, never the message. The app-wide
+`resource-capacity-exceeded` refusal becomes `capacity` where a Motif path
+meets it.
+
+A stored frame the native read cannot use is a `miss`; one another process
+holds open (Windows sharing violation, or a busy header read) is `transient`,
+which sends a texture-lane read to the utility lane and keeps the frame in
+coverage.
 
 ## Compositor
 

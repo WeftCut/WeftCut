@@ -10,6 +10,7 @@ import { configureSkillBundle } from './mcp/skillResources.js'
 import { setResourceHolders } from './mcp/faultText.js'
 import { installResourceIpc, resolveExportFinalization } from './resourceIpc.js'
 import { hydrateResourceAllocation, resourceAllocation } from '../shared/resource-policy.js'
+import { decodeMotifError, decodingMotifErrors, MotifError, motifSuperseded } from '../shared/motifs/errors.js'
 import { gpuBufferBudget } from './gpuBufferBudget.js'
 import { MIB } from '../shared/performance-settings.js'
 import type { PerformanceGpuHardware } from '../shared/performance-budgets.js'
@@ -33,7 +34,7 @@ import { mediaMimeForExt } from './mediaMime.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
 import { registerMotifProtocol } from './motif/protocol.js'
 import { installPerformanceCalibration } from './performanceCalibration.js'
-import { setRuntimeSource, captureMotifFrameB64, captureMotifFrame, setTextureCaptureEnabled, isMotifContentFailure, setMotifStore, shutdownCaptureHost, setFrameMarkerReader, setTexturePngReader, controlMotifCapture, captureDiagnostics, resetCaptureFailure } from './motif/capture.js'
+import { setRuntimeSource, captureMotifFrameB64, captureMotifFrame, setTextureCaptureEnabled, setMotifStore, shutdownCaptureHost, setFrameMarkerReader, setTexturePngReader, controlMotifCapture, captureDiagnostics, resetCaptureFailure } from './motif/capture.js'
 import { setMotifMediaSource } from './motif/mediaProps.js'
 import { rasterizeSvg } from './svgRaster.js'
 import { MotifCaptureService, type CaptureRequest, type MotifPixelCodec, type TextureEncoder } from './motif/captureService.js'
@@ -1402,23 +1403,39 @@ app.whenReady().then(async () => {
     require_('@weftcut/core') as typeof import('@weftcut/core'),
   )
   const motifPoolClass = (require_('@weftcut/core') as { MotifGpuPool?: new (w: number, h: number, count: number, bgra: boolean, upload: boolean) => MotifPool }).MotifGpuPool
+  // The native Motif readers' failures cross napi as `[motif:<code>]`
+  // messages; these adapters decode them once, here.
+  const constructed = <T>(make: () => T): T => { try { return make() } catch (error) { throw decodeMotifError(error) } }
+  const decodedPool = (pool: MotifPool): MotifPool => ({
+    handles: () => pool.handles(),
+    uploadFile: (file, slot, div) => decodingMotifErrors(() => pool.uploadFile(file, slot, div)),
+    copyTexture: (handle, slot) => decodingMotifErrors(() => pool.copyTexture(handle, slot)),
+    close: () => pool.close(),
+  })
+  const decodedEncoder = (encoder: TextureEncoder): TextureEncoder => ({
+    read: (handle, height) => decodingMotifErrors(async () => {
+      const raw = await encoder.read(handle, height)
+      return { finish: () => decodingMotifErrors(() => raw.finish()), finishPng: () => decodingMotifErrors(() => raw.finishPng()) }
+    }),
+    close: () => encoder.close(),
+  })
   const motifGpu = process.platform === 'win32' && motifPoolClass
-    ? new MotifGpuTransport((w, h, bgra, upload) => new motifPoolClass(w, h, 1, bgra, upload)) : null
+    ? new MotifGpuTransport((w, h, bgra, upload) => decodedPool(constructed(() => new motifPoolClass(w, h, 1, bgra, upload)))) : null
   const encoderClass = (require_('@weftcut/core') as { MotifTextureEncoder?: new () => TextureEncoder }).MotifTextureEncoder
   const markerClass = (require_('@weftcut/core') as { MotifMarkerReader?: new () => { read(handle: Buffer, pixels: number): Promise<Buffer> } }).MotifMarkerReader
   // A texture host needs both native readers; without them the host takes bitmaps.
   if (process.platform === 'win32' && markerClass && encoderClass) {
     let markers: InstanceType<typeof markerClass> | null = null
     let pngs: TextureEncoder | null = null
-    setFrameMarkerReader((handle, pixels) => (markers ??= new markerClass()).read(handle, pixels))
-    setTexturePngReader(async (handle, height) => (await (pngs ??= new encoderClass()).read(handle, height)).finishPng())
+    setFrameMarkerReader((handle, pixels) => decodingMotifErrors(() => (markers ??= new markerClass()).read(handle, pixels)))
+    setTexturePngReader((handle, height) => decodingMotifErrors(async () => (await (pngs ??= new encoderClass()).read(handle, height)).finishPng()))
   }
   const motifCapture = new MotifCaptureService({
     store: motifFrames, frame: captureMotifFrame,
     copy: motifGpu ? (owner, texture, parent) => motifGpu.copy(owner, texture, parent) : null,
-    createEncoder: process.platform === 'win32' && encoderClass ? () => new encoderClass() : null,
+    createEncoder: process.platform === 'win32' && encoderClass ? () => decodedEncoder(constructed(() => new encoderClass())) : null,
     pixels: require_('@weftcut/core') as MotifPixelCodec,
-    setTextureEnabled: setTextureCaptureEnabled, isContentFailure: isMotifContentFailure,
+    setTextureEnabled: setTextureCaptureEnabled,
     promote: key => controlMotifCapture(key, 'promote'),
   }, process.env.WEFTCUT_MOTIF_CAPTURE !== 'bitmap')
   motifBakes = new MotifBakeWorkspace({
@@ -1465,7 +1482,7 @@ app.whenReady().then(async () => {
     const isCurrent = trackMotifConsumer(owner, event.senderFrame)
     const parent = resolveExportFinalization(owner.id, args.finalizationToken)
     return currentMotifStore().readTexture(args.hash, args.frame, args.div, (file, w, h, div) => {
-      if (!isCurrent()) return Promise.reject(new Error('Motif consumer closed'))
+      if (!isCurrent()) return Promise.reject(new MotifError('closed', 'Motif consumer closed'))
       return motifGpu.read(owner, file, w, h, div, parent)
     })
   })
@@ -1565,7 +1582,7 @@ app.whenReady().then(async () => {
     if (channel === 'motif_bake_reconcile') {
       const plan = args.plan as MotifBakePlan
       validateBakePlan(plan)
-      if (!motifAdmissionOpen || plan.generation !== workspaceEvents.requireCurrent()) throw new Error('Motif workspace superseded')
+      if (!motifAdmissionOpen || plan.generation !== workspaceEvents.requireCurrent()) throw motifSuperseded()
       // Deliberate retries reopen only the requested content revisions, not
       // other failed Motifs. Normal project/playhead updates never reset them.
       if (Array.isArray(plan?.retryKeys)) for (const content of plan.contents ?? []) {

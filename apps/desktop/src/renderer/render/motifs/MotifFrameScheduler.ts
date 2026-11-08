@@ -1,4 +1,4 @@
-import { CAPTURE_SUPERSEDED_MESSAGE } from '../../../shared/motifs/captureErrors';
+import { motifSuperseded } from '../../../shared/motifs/errors';
 import type { FrameTicket } from './FrameBroker';
 import type { CapturedFrame } from './frameTransport';
 import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
@@ -64,7 +64,7 @@ export class MotifFrameScheduler {
 
   reset(): void {
     this.epoch++;
-    for (const job of this.queue) job.reject(new Error(CAPTURE_SUPERSEDED_MESSAGE));
+    for (const job of this.queue) job.reject(motifSuperseded());
     this.queue = [];
     // Admitted work keeps its resource until it actually settles. Its result
     // cannot cross into the new project opening.
@@ -81,7 +81,7 @@ export class MotifFrameScheduler {
   private drain(): void {
     this.queue = this.queue.filter(job => {
       if (this.wanted(job)) return true;
-      job.reject(new Error(CAPTURE_SUPERSEDED_MESSAGE));
+      job.reject(motifSuperseded());
       return false;
     });
     for (const high of [true, false]) {
@@ -118,7 +118,7 @@ export class MotifFrameScheduler {
         // and preview keeps its previous frame and retries later.
         const bitmap = await this.deps.read(job.cacheKey, job.frame, job.scaleDiv);
         if (!bitmap) {
-          if (!this.wanted(job)) throw new Error(CAPTURE_SUPERSEDED_MESSAGE);
+          if (!this.wanted(job)) throw motifSuperseded();
           job.readMiss = true;
           this.deps.readMiss(job.cacheKey, job.frame);
           this.queue.push(job);
@@ -130,7 +130,7 @@ export class MotifFrameScheduler {
       }
       if (!this.wanted(job)) {
         value.bitmap.close();
-        throw new Error(CAPTURE_SUPERSEDED_MESSAGE);
+        throw motifSuperseded();
       }
       job.resolve(value);
     } catch (error) {

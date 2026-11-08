@@ -1,5 +1,4 @@
 import { invoke } from "@/bridge/ipc";
-import { CAPTURE_SUPERSEDED_MESSAGE } from "../../../shared/motifs/captureErrors";
 import { captureMotifResult, type CapturedFrame } from './frameTransport';
 import type { MotifCacheAddress } from '../../../shared/motifs/frameTransport';
 import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
@@ -108,11 +107,4 @@ export async function captureMotifFrame(
     contentHash: contentHash ?? "",
     coalesceKey, fpsNum, fpsDen,
   });
-}
-
-/// True when a capture rejection is the chain's latest-wins replacement
-/// (CAPTURE_SUPERSEDED_MESSAGE), i.e. NOT a capture failure — callers must not
-/// count it against retry budgets or log it as an error.
-export function isCaptureSuperseded(e: unknown): boolean {
-  return String(e).includes(CAPTURE_SUPERSEDED_MESSAGE);
 }

@@ -1,4 +1,4 @@
-import { CAPTURE_SUPERSEDED_MESSAGE } from '../../../shared/motifs/captureErrors';
+import { motifSuperseded } from '../../../shared/motifs/errors';
 import type { CapturedFrame } from './frameTransport';
 import type { MotifFrameCache } from './frameCache';
 import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
@@ -58,7 +58,7 @@ export class FrameBroker {
       // Microtask admission lets synchronous subscribers join before choosing
       // priority. A disk read may await; producer rechecks ticket before capture.
       created.result = Promise.resolve().then(() => {
-        if (!subscribers.size) throw new Error(CAPTURE_SUPERSEDED_MESSAGE);
+        if (!subscribers.size) throw motifSuperseded();
         // A hit may be a live capture serving this divisor; callers re-store
         // it at `scaleDiv`, and L0 keeps the entry that already serves it.
         return cached ? { bitmap: cached, persisted: false, scaleDiv } : produce({
@@ -82,7 +82,7 @@ export class FrameBroker {
         active: true, high: !!coalesceKey && priority === 'foreground',
         cancel: () => {
           if (!subscriber.active) return;
-          subscriber.active = false; reject(new Error(CAPTURE_SUPERSEDED_MESSAGE)); retire();
+          subscriber.active = false; reject(motifSuperseded()); retire();
         },
       };
       current.subscribers.add(subscriber);

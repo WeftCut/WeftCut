@@ -6,6 +6,7 @@ import path from "node:path";
 import { parseManifestIsland, type Manifest } from "../../shared/motifs/catalog";
 import { motifFileSegments, readMotifFile, readMotifDirectory, type MotifFile } from './packageFiles';
 import { motifContentHash } from './contentHash';
+import { MotifError } from '../../shared/motifs/errors';
 
 export const DRAFTS_DIR = "drafts";
 /** Frozen packages of pending publications, one per draft (`workspace.ts`). */
@@ -38,7 +39,7 @@ export class UserMotifStore {
     const file=path.join(this._root,'.workspaces',id+'.json');
     if(existsSync(file)){
       const diagnostic=JSON.parse(readFileSync(file,'utf8')).diagnostic;
-      if(diagnostic)throw new Error('Motif working directory is invalid: '+diagnostic);
+      if(diagnostic)throw new MotifError('content','Motif working directory is invalid: '+diagnostic);
     }
   }
   private draftsRoot(): string { return path.join(this._root, DRAFTS_DIR); }

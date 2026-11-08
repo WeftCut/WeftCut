@@ -3,6 +3,7 @@ import { MotifBakeCoordinator } from './baking';
 import { MotifFrameStore, type FrameCodec } from './frameStore';
 import type { MotifCaptureService } from './captureService';
 import { hashCacheKey } from '../../shared/motifs/cacheKey';
+import { MotifError, motifSuperseded } from '../../shared/motifs/errors';
 import type { MotifBakePlan, MotifBakePause, MotifBakeSnapshot } from '../../shared/motifs/baking';
 
 export interface BakeWorkspaceDeps {
@@ -35,7 +36,7 @@ export class MotifBakeWorkspace {
         this.inventoryChanges.set(content.hash, changes);
         try {
           const rows = await session.store.inventory(content.hash);
-          if (this.current !== session) throw new Error('Motif workspace superseded');
+          if (this.current !== session) throw motifSuperseded();
           const sizes = new Map(rows.map(row => [row.frame, row.bytes]));
           // Foreground requests may persist or reject a cache read while disk
           // discovery awaits I/O. Its later events supersede the enumeration.
@@ -57,7 +58,7 @@ export class MotifBakeWorkspace {
         const raw = content.capture.width * content.capture.height * 4;
         const next = raw + Math.ceil(raw / 255) + 84;
         if (this.bytes() + next > this.deps.diskBytes()) {
-          throw new Error('motif-disk-capacity: temporary cache space cannot retain the next frame');
+          throw new MotifError('disk', 'temporary cache space cannot retain the next frame');
         }
         this.markWriting(content.hash, 1);
         try {
@@ -82,7 +83,6 @@ export class MotifBakeWorkspace {
         await session.store.collect(live, current);
         if (current()) for (const hash of this.sizes.keys()) if (!live.has(hash)) this.sizes.delete(hash);
       },
-      isContentFailure: error => /__motif(?:Setup|Render)|never became ready|invalid motif/i.test(String(error)),
     });
   }
 
@@ -129,14 +129,14 @@ export class MotifBakeWorkspace {
       if (!present || bytes !== undefined) this.inventoryChanges.get(hash)?.set(frame, present ? bytes! : null);
       this.jobs.frameChanged(hash, frame, present);
     }, (hash, frame, bytes) => {
-      if (this.current !== session || this.deps.session()?.generation !== session.generation) throw new Error('Motif workspace superseded');
+      if (this.current !== session || this.deps.session()?.generation !== session.generation) throw motifSuperseded();
       const previous = this.sizes.get(hash)?.get(frame) ?? 0;
       if (bytes <= previous) return; // Replacing an existing frame cannot worsen an over-target cache.
       // Before first discovery this accounts only observed writes; thereafter
       // inventory supplies existing sizes. The policy remains cooperative,
       // while every concurrent writer shares this exact admitted-byte check.
       if (this.bytes() - previous + bytes > this.deps.diskBytes()) {
-        throw new Error('motif-disk-capacity: temporary cache space cannot retain the encoded frame');
+        throw new MotifError('disk', 'temporary cache space cannot retain the encoded frame');
       }
     }, (hash, delta) => { if (this.current === session) this.markWriting(hash, delta); });
     this.current = session;
@@ -155,7 +155,7 @@ export class MotifBakeWorkspace {
   async reconcile(plan: MotifBakePlan): Promise<MotifBakeSnapshot> {
     const session = this.requireSession();
     validateBakePlan(plan);
-    if (plan.generation !== session.generation) throw new Error('Motif workspace superseded');
+    if (plan.generation !== session.generation) throw motifSuperseded();
     const revision = ++this.revision;
     if (!plan.collect) this.bootstrap = true;
     this.live = new Set([...plan.live.map(item => item.hash), ...plan.contents.map(item => item.hash)]);

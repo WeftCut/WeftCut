@@ -1,5 +1,5 @@
 import type { MotifBakeContent, MotifBakePause, MotifBakePlan, MotifBakeSnapshot, MotifBakeStatus, MotifFrameRange } from '../../shared/motifs/baking';
-import { isResourceCapacityError } from '../../shared/resource-policy';
+import { motifErrorCode } from '../../shared/motifs/errors';
 
 export interface MotifBakeCoordinatorDeps {
   inventory(content: { cacheKey: string; hash: string }): Promise<number[]>;
@@ -7,7 +7,6 @@ export interface MotifBakeCoordinatorDeps {
   pause(): MotifBakePause | undefined;
   publish(snapshot: MotifBakeSnapshot): void;
   collect?(liveHashes: ReadonlySet<string>): Promise<void>;
-  isContentFailure?(error: unknown): boolean;
   now?(): number;
   schedule?(callback: () => void, delayMs: number): () => void;
 }
@@ -249,11 +248,13 @@ export class MotifBakeCoordinator {
 
   private fail(state: ContentState, error: unknown): void {
     const message = String(error);
-    if (isResourceCapacityError(error) || /ENOSPC|disk.*full|motif-disk-capacity/i.test(message)) {
+    const code = motifErrorCode(error);
+    if (code === 'capacity' || code === 'disk') {
       state.retryAt = this.now() + 1000;
-      state.status = { ...state.status, phase: 'paused', reason: isResourceCapacityError(error) ? 'capacity' : 'disk', error: message };
+      state.status = { ...state.status, phase: 'paused', reason: code, error: message };
     } else {
-      const content = this.deps.isContentFailure?.(error) ?? false;
+      // The Motif's own failure is terminal; anything else retries, bounded.
+      const content = code === 'content';
       // The clip's other frames in flight fail with the same incident, such as
       // a capture host restart: one incident is one failure.
       if (!content && state.retryAt > this.now()) return;

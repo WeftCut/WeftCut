@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { MotifGpuTransport } from './gpuTransport'
 import { MotifFrameStore } from './frameStore'
+import { MotifError } from '../../shared/motifs/errors'
 import { MIB, hydratePerformanceSettings, performanceSettings } from '../../shared/performance-settings'
 import { createGpuBufferBudget } from '../gpuBufferBudget'
 import type { MotifReadUnavailable, MotifTextureFrame, MotifUploadTiming } from '../../shared/motifs/frameTransport'
@@ -44,7 +45,7 @@ describe('Motif GPU leases', () => {
     expect(await read).toEqual({ kind: 'unavailable' });
     const rejected = expect(transport.copy(owner, { kind: 'texture', width: 1920, height: 1080, texture: { textureInfo: {
       codedSize: { width: 1920, height: 1081 }, pixelFormat: 'bgra', handle: { ntHandle: Buffer.alloc(8) },
-    } } } as unknown as Parameters<typeof transport.copy>[1], 43)).rejects.toBe(denied);
+    } } } as unknown as Parameters<typeof transport.copy>[1], 43)).rejects.toMatchObject({ code: 'capacity', cause: denied });
     await vi.advanceTimersByTimeAsync(300);
     await rejected;
     expect(create).not.toHaveBeenCalled();
@@ -106,7 +107,7 @@ describe('Motif GPU leases', () => {
     let finish!: () => void;
     vi.mocked(sharedTexture.sendSharedTexture).mockImplementationOnce(() => new Promise<void>(resolve => {finish=resolve}));
     const reading=texture(transport.read(owner, 'late', 128, 128, 1, 42));
-    const rejected=expect(reading).rejects.toThrow('superseded');
+    const rejected=expect(reading).rejects.toMatchObject({ code: 'superseded' });
     await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
     transport.closeExport(owner,42);
     finish();
@@ -187,7 +188,7 @@ describe('Motif GPU leases', () => {
   it('rejects work for a disposed frame before allocating or announcing a texture', async () => {
     const { owner, create, transport } = fixture()
     vi.mocked(owner.mainFrame.isDestroyed).mockReturnValue(true)
-    await expect(texture(transport.read(owner, 'a', 128, 128, 1))).rejects.toThrow('Motif consumer closed')
+    await expect(texture(transport.read(owner, 'a', 128, 128, 1))).rejects.toMatchObject({ code: 'closed' })
     expect(create).not.toHaveBeenCalled()
     expect(owner.send).not.toHaveBeenCalled()
   })
@@ -480,15 +481,17 @@ describe('Motif GPU leases', () => {
   })
 
   it.each([
-    ['rejects a file failure for the caller\'s miss', 'motif-frame: BLAKE3 mismatch', 'reject'],
-    ['answers a device failure as unavailable', 'Motif GPU upload timed out', 'unavailable'],
-  ] as const)('rolls back a failed upload, %s, and allows the next request to proceed', async (_, message, outcome) => {
+    ['rejects a file failure for the caller\'s miss', new MotifError('miss', 'BLAKE3 mismatch'), 'reject'],
+    ['answers a device failure as unavailable', new MotifError('device', 'Motif GPU upload timed out'), 'unavailable'],
+    ['answers a held mutex as unavailable', new MotifError('transient', 'Motif GPU mutex still held'), 'unavailable'],
+    ['answers an uncoded failure as unavailable', new Error('unexpected'), 'unavailable'],
+  ] as const)('rolls back a failed upload, %s, and allows the next request to proceed', async (_, error, outcome) => {
     const { owner, pools, transport } = fixture()
     const a = await texture(transport.read(owner, 'a', 128, 128, 1))
     transport.release(owner, a.token)
-    pools[0]!.uploadFile.mockRejectedValueOnce(new Error(message))
+    pools[0]!.uploadFile.mockRejectedValueOnce(error)
     const read = transport.read(owner, 'b', 128, 128, 1)
-    if (outcome === 'reject') await expect(read).rejects.toThrow(message)
+    if (outcome === 'reject') await expect(read).rejects.toBe(error)
     else expect(await read).toEqual({ kind: 'unavailable' })
     expect(pools[0]!.close).toHaveBeenCalledOnce()
     const c = await texture(transport.read(owner, 'c', 128, 128, 1))
@@ -548,7 +551,7 @@ describe('Motif GPU leases', () => {
       expect(changed).not.toHaveBeenCalled()
       // The failed lane was retired; the next read opens another pool.
       transport.release(owner, ((await store.readTexture(hash, 0, 4, gpu)) as MotifTextureFrame).token)
-      pools[1]!.uploadFile.mockRejectedValueOnce(new Error('motif-frame: BLAKE3 mismatch'))
+      pools[1]!.uploadFile.mockRejectedValueOnce(new MotifError('miss', 'BLAKE3 mismatch'))
       expect(await store.readTexture(hash, 0, 4, gpu)).toBeNull()
       expect(changed.mock.calls).toEqual([[hash, 0, false]])
       transport.close(owner)

@@ -1,6 +1,7 @@
 import { ipcRenderer, type SharedTextureImported } from 'electron'
 import type { StoredMotifFrame, MotifCaptureControl, MotifReadUnavailable, MotifTextureReadRequest } from '../shared/motifs/frameTransport'
 import { MOTIF_READER_CONNECT, MOTIF_READER_PORT, MOTIF_READER_RESET, type MotifReaderDiv } from '../shared/motifs/readerProtocol'
+import { decodeMotifError, MotifError } from '../shared/motifs/errors'
 
 // ImageBitmap cannot cross contextBridge. A same-renderer MessagePort transfers
 // ownership to the main world without serializing pixels or changing isolation.
@@ -54,7 +55,11 @@ export function installMotifFrames(
         bitmap = null
         failed = false
       } catch (error) {
-        port.postMessage({ id: data.id, error: String(error) })
+        // The page cannot see the class; the code crosses beside the detail.
+        const failure = decodeMotifError(error)
+        port.postMessage(failure instanceof MotifError
+          ? { id: data.id, error: failure.detail, code: failure.code }
+          : { id: data.id, error: String(error) })
       } finally {
         bitmap?.close()
         if (frame?.kind === 'texture') ipcRenderer.send('motif:ack', { token: frame.token, failed })

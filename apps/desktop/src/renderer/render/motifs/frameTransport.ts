@@ -1,5 +1,6 @@
 import type { MotifCacheAddress, MotifCaptureControl, MotifTextureReadRequest, MotifUploadTiming } from '../../../shared/motifs/frameTransport';
 import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
+import { isMotifErrorCode, MotifError, type MotifErrorCode } from '../../../shared/motifs/errors';
 
 /** The divisor a Motif bitmap is at. `'live'` is a live capture: full size
  * whatever was asked, because a frame that is not stored has no smaller form.
@@ -23,12 +24,13 @@ const pending = new Map<number, { resolve: (frame: FrameReply) => void; reject: 
 export type MotifReaderLane = 'texture' | 'utility';
 export type MotifTransportFailure = 'timeout' | 'closed' | 'reset' | 'error';
 
-/** A Motif read lane failed (ADR 0154). Not a miss: the frame stays in
- * coverage, and the caller keeps its previous frame or fails the export. */
-export class MotifTransportError extends Error {
-  override readonly name = 'MotifTransportError';
+/** A Motif read lane failed (ADR 0154), code `transport`. Not a miss: the
+ * frame stays in coverage, and the caller keeps its previous frame or fails
+ * the export. */
+export class MotifTransportError extends MotifError {
+  override name = 'MotifTransportError';
   constructor(readonly lane: MotifReaderLane, readonly reason: MotifTransportFailure, detail?: string) {
-    super(`Motif ${lane} lane ${reason}${detail ? `: ${detail}` : ''}`);
+    super('transport', `Motif ${lane} lane ${reason}${detail ? `: ${detail}` : ''}`);
   }
 }
 
@@ -104,6 +106,8 @@ interface FramePortMessage {
   timing?: MotifUploadTiming;
   importMs?: number;
   error?: string;
+  /** Present when `error` is a MotifError's detail (preload `motifFrames.ts`). */
+  code?: MotifErrorCode;
 }
 
 function request(args: Record<string, unknown>): Promise<FrameReply> {
@@ -114,7 +118,7 @@ function request(args: Record<string, unknown>): Promise<FrameReply> {
       const request = pending.get(data.id);
       if (!request) { data.bitmap?.close(); return; }
       pending.delete(data.id);
-      if (data.error) request.reject(new Error(data.error));
+      if (data.error) request.reject(isMotifErrorCode(data.code) ? new MotifError(data.code, data.error) : new Error(data.error));
       else request.resolve({
         bitmap: data.bitmap ?? null, persisted: data.persisted === true,
         stored: data.stored === true, unavailable: data.unavailable === true,
