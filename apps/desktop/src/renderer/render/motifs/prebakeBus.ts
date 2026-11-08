@@ -6,15 +6,23 @@
 type Listener = (layerId: string) => void;
 
 const listeners = new Set<Listener>();
+/** Requests made while no Compositor is subscribed: the preview builds one
+ * only after its Application initializes, at mount and on every rebuild. */
+const unheard = new Set<string>();
 
-/// Request full pre-bake at the queue front for a Motif or a Group's Motifs. No-op if no
-/// Compositor is subscribed (e.g. before the preview mounts).
+/// Request full pre-bake at the queue front for a Motif or a Group's Motifs.
+/// Without a subscribed Compositor the request waits for the next one.
 export function requestPrebake(layerId: string): void {
+  if (listeners.size === 0) { unheard.add(layerId); return; }
   for (const l of listeners) l(layerId);
 }
 
-/// Subscribe (Compositor). Returns an unsubscribe fn for teardown.
+/// Subscribe (Compositor), receiving the requests that waited for one.
+/// Returns an unsubscribe fn for teardown.
 export function onPrebakeRequest(listener: Listener): () => void {
   listeners.add(listener);
+  const waiting = [...unheard];
+  unheard.clear();
+  for (const layerId of waiting) listener(layerId);
   return () => listeners.delete(listener);
 }

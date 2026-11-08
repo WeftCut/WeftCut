@@ -199,6 +199,19 @@ describe('MotifFrameService prewarm admission', () => {
     } finally { service.dispose(); }
   });
 
+  it('keeps a pre-bake request made before the preview has a Compositor or its project', async () => {
+    vi.stubGlobal('document', {}); state.automatic = false;
+    requestPrebake('early');
+    let summary: ReturnType<typeof summaryFixture> | null = null;
+    const service = new MotifFrameService({ projectSummary: () => summary, openCompositionId: () => ROOT_ID,
+      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0 });
+    try {
+      summary = summaryFixture({ root: { tracks: [track([motif('early', 0, 1_000_000)])] } });
+      service.handleProjectChanged(); await Promise.resolve();
+      expect(bake.mock.lastCall![0].contents).toMatchObject([{ explicit: true, ranges: [{ start: 0, end: 150 }] }]);
+    } finally { service.dispose(); }
+  });
+
   it('orders clips by timeline position across tracks and keeps shared-content windows separate', async () => {
     vi.stubGlobal('document', {});
     const early = motif('early', 0, 1_000_000);

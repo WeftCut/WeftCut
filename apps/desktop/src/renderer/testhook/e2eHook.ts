@@ -88,6 +88,7 @@ import {
   setRoleGainOverride,
 } from "../render/audio/roleGainOverrides";
 import type { AudioRole, RoleMixView } from "../ipc";
+import type { MotifBakeSnapshot } from "../../shared/motifs/baking";
 import {
   decodeBenchRun,
   decodeBenchPhase,
@@ -265,7 +266,8 @@ export interface E2EHook {
     samples: Array<{ tInLayerUs: number; width: number; height: number; checksum: number }>;
   }>;
   /// Trigger a persisted pre-bake of a motif layer (via the prebakeBus) and
-  /// wait until at least `expectedFrames` .wfrm files appear under
+  /// wait until main prepares its content and at least `expectedFrames` .wfrm
+  /// files appear under
   /// `<workspace>/Cache/raster/<hash>/`. Returns the absolute path to the hash
   /// dir and the number of frames found. Rejects on timeout (default 60 s). The
   /// cacheKey is computed internally from the current project summary so the
@@ -969,7 +971,9 @@ export function installMotifTestHooks(): void {
   };
 
   // Trigger a full L2 pre-bake of a motif layer (via the prebakeBus) and
-  // wait until `expectedFrames` .wfrm files appear on disk. The cacheKey is
+  // wait until main prepares its content and `expectedFrames` .wfrm files
+  // appear on disk. The preview's own captures store frames too, so files
+  // alone do not show that the request reached main. The cacheKey is
   // computed from the live project summary so the spec needs only the layerId.
   hookSlot().prebakeLayerAndWait = async ({ layerId, expectedFrames, timeoutMs = 60_000 }) => {
     // Derive the cacheKey from the current project summary.
@@ -999,14 +1003,17 @@ export function installMotifTestHooks(): void {
 
     const deadline = Date.now() + timeoutMs;
     let frameCount = 0;
+    let prepared = false;
     while (Date.now() < deadline) {
+      prepared ||= cacheKey in (await invoke<MotifBakeSnapshot>("motif_bake_snapshot")).statuses;
       if (await exists(hashDir)) {
         const entries = await readDir(hashDir);
         frameCount = entries.filter((e) => !e.isDirectory && e.name?.endsWith(".wfrm")).length;
-        if (frameCount >= expectedFrames) break;
+        if (prepared && frameCount >= expectedFrames) break;
       }
       await new Promise((r) => setTimeout(r, 500));
     }
+    if (!prepared) throw new Error(`prebakeLayerAndWait: main never prepared ${cacheKey}`);
     if (frameCount < expectedFrames) {
       throw new Error(
         `prebakeLayerAndWait: timed out — found ${frameCount}/${expectedFrames} frames in ${hashDir}`,

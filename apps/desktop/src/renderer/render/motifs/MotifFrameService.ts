@@ -78,6 +78,10 @@ export class MotifFrameService {
   private bakeStatusByCacheKey = new Map<string, LayerBakeStatus>();
   private lastBakeStatusSig = '';
   private manualPrebakeLayers = new Set<string>();
+  /** "Pre-bake now" requests for layers this service's project does not show
+   * yet: the Compositor gets its project after construction, and an edit
+   * after the timeline shows it. */
+  private unresolvedPrebakes = new Set<string>();
   private pendingRetryLayers = new Set<string>();
   private liveCacheKeys: string[] = [];
   private prebakeUnsub: (() => void) | null = null;
@@ -122,32 +126,51 @@ export class MotifFrameService {
       if (next.settings.prebake_motifs !== previous.settings.prebake_motifs) this.handleProjectChanged();
     });
     if (this.client) this.prebakeUnsub = onPrebakeRequest(layerId => {
-      const summary = this.deps.projectSummary();
-      const selected = summary && Object.values(summary.compositions).flatMap(c => c.tracks.flatMap(t => t.layers)).find(l => l.id === layerId);
+      this.unresolvedPrebakes.add(layerId);
+      if (this.resolvePrebakes()) this.submitBakePlan();
+    });
+  }
+
+  /// Marks the requested layers this service's project shows, expanding a
+  /// Group to its Motifs. Returns whether any request resolved.
+  private resolvePrebakes(): boolean {
+    const summary = this.deps.projectSummary();
+    if (!summary || this.unresolvedPrebakes.size === 0) return false;
+    const layers = new Map(Object.values(summary.compositions).flatMap(c => c.tracks.flatMap(t => t.layers)).map(l => [l.id, l]));
+    let resolved = false;
+    for (const layerId of [...this.unresolvedPrebakes]) {
+      const selected = layers.get(layerId);
+      if (!selected) continue;
+      this.unresolvedPrebakes.delete(layerId);
+      resolved = true;
       const ids = new Set<string>();
-      if (selected?.params.kind === 'CompositionRef') {
-        forEachLayer(summary!, selected.params.composition_id, ({ layer }) => {
+      if (selected.params.kind === 'CompositionRef') {
+        forEachLayer(summary, selected.params.composition_id, ({ layer }) => {
           if (layer.params.kind === 'Motif') ids.add(layer.id);
         });
-      } else if (selected?.params.kind === 'Motif') ids.add(layerId);
+      } else if (selected.params.kind === 'Motif') ids.add(layerId);
       for (const id of ids) {
         this.manualPrebakeLayers.add(id);
         this.pendingRetryLayers.add(id);
       }
       this.pendingPriorityGroups.unshift([...ids]);
-      this.submitBakePlan();
-    });
+    }
+    return resolved;
   }
 
   handleProjectChanged(): void {
     if (this.disposed || !this.client) return;
+    const resolved = this.resolvePrebakes();
     const signature = JSON.stringify([motifPlanningInputs(this.deps.projectSummary()),
       this.deps.openCompositionId(), this.deps.fpsNum(), this.deps.fpsDen(),
       motifCatalogRevision(), useAppSettingsStore.getState().settings.prebake_motifs]);
     // Do not invalidate an in-flight acknowledgement, disk inventory or warm
     // targets for unrelated edits. Session-ready recovery belongs to the client
     // and explicit requests submit directly, bypassing this project-input gate.
-    if (signature === this.planningSignature && !this.preparationError) return;
+    if (signature === this.planningSignature && !this.preparationError) {
+      if (resolved) this.submitBakePlan();
+      return;
+    }
     this.planningSignature = signature;
     this.client.invalidate();
     this.lastPrewarmFrame = -1;
@@ -156,6 +179,7 @@ export class MotifFrameService {
     if (this.diskDiscoveryPending) sharedBakedKeyIndex.beginHydration();
     else {
       sharedBakedKeyIndex.clear();
+      this.unresolvedPrebakes.clear();
       this.manualPrebakeLayers.clear();
       this.pendingRetryLayers.clear();
       this.pendingPriorityGroups = [];
