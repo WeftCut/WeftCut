@@ -269,10 +269,11 @@ demands and maps main's snapshots into the baked-key index and layer status;
   address is stored, whoever captured it; the setting only decides whether frames
   nobody has asked for are generated. Disk use is limited by the temporary cache
   space, not by the setting.
-- **Persistence owns no display bitmap.** On Windows a native worker reads the
-  OSR texture inside the lease and encodes `.wfrm` after it; a bitmap is
-  straightened natively and encoded the same way. The write is atomic before
-  main marks the frame complete.
+- **Persistence owns no display bitmap.** Inside the lease a native worker
+  reads the OSR texture (Windows) or the paint's bitmap is copied; after it,
+  each band is straightened by the thread that compresses it into `.wfrm`. A
+  display's live write encodes the picture it already straightened. The write
+  is atomic before main marks the frame complete.
 - **Every stored frame goes through `MotifFrameWriteQueue`**
   ([ADR 0158](adr/0158-stored-frames-leave-the-capture-lease.md)). At most two
   frames hold pixels, one write per address. A frame someone asked to keep (bake,

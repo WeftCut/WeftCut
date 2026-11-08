@@ -21,6 +21,9 @@ export interface MotifPixelCodec {
   motifStraightenBgra(bgra: Buffer, width: number, height: number): Promise<Buffer>
   /** Straight RGBA as a stored frame. */
   motifEncodeRgba(rgba: Buffer, width: number, height: number): Promise<Buffer>
+  /** The top `height` rows of premultiplied BGRA rows `width` pixels wide, as
+   * a stored frame. */
+  motifEncodeBgra(bgra: Buffer, width: number, height: number): Promise<Buffer>
 }
 export interface CaptureRequest extends CaptureArgs {
   coalesceKey?: string
@@ -224,15 +227,18 @@ export class MotifCaptureService {
   }
 
   /** Reads the frame's pixels; the returned step encodes and stores them.
-   * `rgba` is a bitmap's picture when the display already straightened it. */
+   * `rgba` is a bitmap's picture when the display already straightened it.
+   * Otherwise only the copy happens in the lease: the paint straightens on
+   * the threads that encode it. */
   private frameRead(frame: MotifOsrFrame, args: CaptureArgs, writer: FrameWriter, rgba?: Buffer): FrameRead {
     if (frame.kind === 'texture') return async () => {
       const raw = await this.readTexture(frame, args)
       return async () => writer.encoded(await raw.finish())
     }
+    if (rgba) return async () => async () => writer.encoded(await this.deps.pixels.motifEncodeRgba(rgba, frame.width, frame.height))
     return async () => {
-      const picture = rgba ?? await this.straighten(frame)
-      return async () => writer.encoded(await this.deps.pixels.motifEncodeRgba(picture, frame.width, frame.height))
+      const bgra = frame.image.toBitmap()
+      return async () => writer.encoded(await this.deps.pixels.motifEncodeBgra(bgra, frame.width, frame.height))
     }
   }
 

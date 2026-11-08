@@ -80,10 +80,9 @@ fn encode_pixels(pixels: Pixels) -> anyhow::Result<Buffer> {
         width,
         height,
         bgra,
-        premultiplied: mut rgba,
+        mut premultiplied,
     } = pixels;
-    crate::motif_frame::straighten(&mut rgba, bgra);
-    Ok(crate::motif_frame::encode(width, height, &rgba)?.into())
+    Ok(crate::motif_frame::encode_premultiplied(width, height, &mut premultiplied, bgra)?.into())
 }
 
 type Job = (usize, Region, Reply);

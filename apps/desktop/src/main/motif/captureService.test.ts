@@ -35,7 +35,7 @@ function fixture(enabled = true) {
     frame: vi.fn(async (_args: unknown, consume: (f: MotifOsrFrame) => Promise<any>) => consume(textureHost ? frame : bitmapFrame)),
     copy: vi.fn(async () => ({ kind: 'texture' as const, key: 'pool', token: 'lease' })),
     createEncoder: vi.fn(() => encoder),
-    pixels: { motifStraightenBgra: vi.fn(async () => RGBA), motifEncodeRgba: vi.fn(async () => BITMAP_WFRM) },
+    pixels: { motifStraightenBgra: vi.fn(async () => RGBA), motifEncodeRgba: vi.fn(async () => BITMAP_WFRM), motifEncodeBgra: vi.fn(async () => BITMAP_WFRM) },
     setTextureEnabled: vi.fn((on: boolean) => { textureHost = on; }), isContentFailure: vi.fn(() => false),
     promote: vi.fn(),
   } satisfies CaptureServiceDeps;
@@ -175,9 +175,12 @@ describe('Motif capture and persistence', () => {
     expect(h.deps.pixels.motifStraightenBgra).not.toHaveBeenCalled();
   });
 
-  it('persists bitmaps without shared texture support', async () => {
+  it('persists bitmaps without shared texture support, straightened only by the encode', async () => {
     const h = fixture(false);
     await h.service.persist(args);
+    expect(h.deps.pixels.motifEncodeBgra).toHaveBeenCalledExactlyOnceWith(Buffer.alloc(2 * 3 * 4, 7), 2, 2);
+    expect(h.deps.pixels.motifStraightenBgra).not.toHaveBeenCalled();
+    expect(h.deps.pixels.motifEncodeRgba).not.toHaveBeenCalled();
     expect(h.writer.encoded).toHaveBeenCalledExactlyOnceWith(BITMAP_WFRM);
     expect(h.deps.copy).not.toHaveBeenCalled();
     expect(h.deps.frame).toHaveBeenCalledOnce();

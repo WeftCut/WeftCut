@@ -36,19 +36,23 @@ test('Pre-bake now moves a clip ahead of unfinished background work @serial', as
     }
     await app.evaluate((_electron, addon) => {
       const native = process.getBuiltinModule('module').createRequire(addon)(addon)
-      const original = native.motifEncodeRgba
+      // A bake encodes a bitmap's paint, a display's live write its picture.
+      const names = ['motifEncodeRgba', 'motifEncodeBgra'] as const
+      const originals = names.map(name => native[name])
       let release!: () => void
       const gate = new Promise<void>(resolve => { release = resolve })
-      const state = { calls: 0, held: false, release: () => { native.motifEncodeRgba = original; release() } }
+      const state = { calls: 0, held: false, release: () => { names.forEach((name, i) => { native[name] = originals[i] }); release() } }
       ;(globalThis as any).__bakeOrderGate = state
       // The preview stores the frame under the playhead too, so up to three of
       // these encodes are not the bake's. A clip finishes before the next starts.
       // Every encode from the seventh on waits: the bake keeps several frames
       // in flight, and holding one alone would not stop its clip.
-      native.motifEncodeRgba = async (...args: any[]) => {
-        if (++state.calls >= 7) { state.held = true; await gate }
-        return original(...args)
-      }
+      names.forEach((name, i) => {
+        native[name] = async (...args: any[]) => {
+          if (++state.calls >= 7) { state.held = true; await gate }
+          return originals[i](...args)
+        }
+      })
     }, addon)
     await invokeCmd(page, 'app_settings_set', { patch: { prebake_motifs: true } })
     await expect.poll(() => app.evaluate(() => (globalThis as any).__bakeOrderGate.held), { timeout: 30_000 }).toBe(true)
@@ -184,8 +188,10 @@ for (const mode of ['native', 'bitmap', 'readback-failure', 'warm-cache'] as con
         const native = process.getBuiltinModule('module').createRequire(addon)(addon)
         const stats = { native: 0, bitmap: 0 }
         ;(globalThis as any).__motifBakeStats = stats
-        const encodeRgba = native.motifEncodeRgba
-        native.motifEncodeRgba = (...args: any[]) => { stats.bitmap++; return encodeRgba(...args) }
+        for (const name of ['motifEncodeRgba', 'motifEncodeBgra']) {
+          const encode = native[name]
+          native[name] = (...args: any[]) => { stats.bitmap++; return encode(...args) }
+        }
         if (native.MotifTextureEncoder) {
           const read = native.MotifTextureEncoder.prototype.read
           native.MotifTextureEncoder.prototype.read = function (...args: any[]) {
@@ -425,15 +431,18 @@ test('Motif background preparation resumes automatically after a failed workspac
     // preparation even on fast hardware; no production scheduling is mocked.
     await app.evaluate((_electron, addon) => {
       const native = process.getBuiltinModule('module').createRequire(addon)(addon)
-      const original = native.motifEncodeRgba
+      const names = ['motifEncodeRgba', 'motifEncodeBgra'] as const
+      const originals = names.map(name => native[name])
       let release!: () => void
       const gate = new Promise<void>(resolve => { release = resolve })
-      const state = { calls: 0, held: false, release: () => { native.motifEncodeRgba = original; release() } }
+      const state = { calls: 0, held: false, release: () => { names.forEach((name, i) => { native[name] = originals[i] }); release() } }
       ;(globalThis as any).__failedOpenBakeGate = state
-      native.motifEncodeRgba = async (...args: any[]) => {
-        if (++state.calls === 4) { state.held = true; await gate }
-        return original(...args)
-      }
+      names.forEach((name, i) => {
+        native[name] = async (...args: any[]) => {
+          if (++state.calls === 4) { state.held = true; await gate }
+          return originals[i](...args)
+        }
+      })
     }, addon)
     await invokeCmd(page, 'app_settings_set', { patch: { prebake_motifs: true } })
     await expect.poll(() => app.evaluate(() => (globalThis as any).__failedOpenBakeGate.held), { timeout: 30_000 }).toBe(true)

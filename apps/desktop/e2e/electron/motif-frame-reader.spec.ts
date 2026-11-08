@@ -377,12 +377,13 @@ for (const lane of LANES) {
       // land, so the dropped coverage stays observable.
       await app.evaluate((_electron, addon) => {
         const native = process.getBuiltinModule('module').createRequire(addon)(addon)
-        const original = native.motifEncodeRgba
+        const names = ['motifEncodeRgba', 'motifEncodeBgra'] as const
+        const originals = names.map(name => native[name])
         let release!: () => void
         const gate = new Promise<void>(resolve => { release = resolve })
-        const state = { calls: 0, release: () => { native.motifEncodeRgba = original; release() } }
+        const state = { calls: 0, release: () => { names.forEach((name, i) => { native[name] = originals[i] }); release() } }
         ;(globalThis as any).__readerConformanceEncodes = state
-        native.motifEncodeRgba = async (...args: unknown[]) => { state.calls++; await gate; return original(...args) }
+        names.forEach((name, i) => { native[name] = async (...args: unknown[]) => { state.calls++; await gate; return originals[i](...args) } })
       }, addon)
       const files = {
         corrupt: path.join(ws.dir, `${damaged.corrupt}.wfrm`),

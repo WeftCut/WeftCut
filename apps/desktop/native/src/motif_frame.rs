@@ -155,11 +155,37 @@ pub(crate) fn release_scratch() {
 pub(crate) fn encode(w: u32, h: u32, rgba: &[u8]) -> anyhow::Result<Vec<u8>> {
     anyhow::ensure!(rgba.len() == byte_len(w, h)?, "invalid motif pixel length");
     let band = band_rows(h) as usize * w as usize * 4;
-    let payloads = per_thread(rgba.chunks(band), band_threads(), |pixels| {
-        let mut zstd = zstd::bulk::Compressor::new(1)?;
-        zstd.set_parameter(zstd::zstd_safe::CParameter::ChecksumFlag(true))?;
-        Ok(zstd.compress(pixels)?)
+    let payloads = per_thread(rgba.chunks(band), band_threads(), compress_band)?;
+    Ok(frame_bytes(w, h, &payloads))
+}
+
+/// A capture's premultiplied pixels as a stored frame: each band is
+/// straightened by the thread that compresses it, while it is in cache.
+pub(crate) fn encode_premultiplied(
+    w: u32,
+    h: u32,
+    pixels: &mut [u8],
+    bgra: bool,
+) -> anyhow::Result<Vec<u8>> {
+    anyhow::ensure!(
+        pixels.len() == byte_len(w, h)?,
+        "invalid motif pixel length"
+    );
+    let band = band_rows(h) as usize * w as usize * 4;
+    let payloads = per_thread(pixels.chunks_mut(band), band_threads(), |band| {
+        straighten(band, bgra);
+        compress_band(band)
     })?;
+    Ok(frame_bytes(w, h, &payloads))
+}
+
+fn compress_band(pixels: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let mut zstd = zstd::bulk::Compressor::new(1)?;
+    zstd.set_parameter(zstd::zstd_safe::CParameter::ChecksumFlag(true))?;
+    Ok(zstd.compress(pixels)?)
+}
+
+fn frame_bytes(w: u32, h: u32, payloads: &[Vec<u8>]) -> Vec<u8> {
     let mut out = Vec::with_capacity(
         HEADER + 4 + 4 * payloads.len() + payloads.iter().map(Vec::len).sum::<usize>(),
     );
@@ -167,13 +193,13 @@ pub(crate) fn encode(w: u32, h: u32, rgba: &[u8]) -> anyhow::Result<Vec<u8>> {
     out.extend_from_slice(&w.to_le_bytes());
     out.extend_from_slice(&h.to_le_bytes());
     out.extend_from_slice(&(payloads.len() as u32).to_le_bytes());
-    for payload in &payloads {
+    for payload in payloads {
         out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
     }
-    for payload in &payloads {
+    for payload in payloads {
         out.extend_from_slice(payload);
     }
-    Ok(out)
+    out
 }
 
 /// A verified header: dimensions and one zstd frame per band of `rows` rows.
@@ -491,6 +517,23 @@ pub async fn motif_encode_png(png: Buffer) -> napi::Result<Buffer> {
     .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
+/// The straight value of premultiplied channel `c` at alpha `a`, at index
+/// `a << 8 | c`: `(c * 255 + a / 2) / a`, at most 255, and 0 where `a` is 0.
+static STRAIGHT: [u8; 65536] = {
+    let mut table = [0u8; 65536];
+    let mut a = 1;
+    while a < 256 {
+        let mut c = 0;
+        while c < 256 {
+            let v = (c * 255 + a / 2) / a;
+            table[a << 8 | c] = if v > 255 { 255 } else { v as u8 };
+            c += 1;
+        }
+        a += 1;
+    }
+    table
+};
+
 /// Premultiplied RGBA (or BGRA) to straight RGBA in place, as the cache stores
 /// pixels. Every premultiplied channel value survives a roundtrip.
 pub(crate) fn straighten(rgba: &mut [u8], bgra: bool) {
@@ -498,12 +541,15 @@ pub(crate) fn straighten(rgba: &mut [u8], bgra: bool) {
         if bgra {
             px.swap(0, 2);
         }
-        let alpha = u32::from(px[3]);
-        for c in &mut px[..3] {
-            *c = (u32::from(*c) * 255 + alpha / 2)
-                .checked_div(alpha)
-                .unwrap_or(0)
-                .min(255) as u8;
+        match px[3] {
+            255 => {}
+            0 => px[..3].fill(0),
+            alpha => {
+                let row = &STRAIGHT[usize::from(alpha) << 8..][..256];
+                for c in &mut px[..3] {
+                    *c = row[usize::from(*c)];
+                }
+            }
         }
     }
 }
@@ -550,6 +596,27 @@ pub async fn motif_straighten_bgra(bgra: Buffer, width: u32, height: u32) -> nap
     .map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
+/// The top `height` rows of a bitmap capture's premultiplied BGRA rows,
+/// `width` pixels each, as a stored frame: each band is straightened by the
+/// thread that compresses it (ADR 0159).
+#[napi]
+#[cfg_attr(test, allow(dead_code))] // napi registration is absent in a Rust unit-test executable.
+pub async fn motif_encode_bgra(bgra: Buffer, width: u32, height: u32) -> napi::Result<Buffer> {
+    let len = byte_len(width, height).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    if bgra.len() < len {
+        return Err(napi::Error::from_reason(
+            "motif bitmap is smaller than its picture",
+        ));
+    }
+    let mut pixels = bgra[..len].to_vec();
+    tokio::task::spawn_blocking(move || {
+        encode_premultiplied(width, height, &mut pixels, true).map(Buffer::from)
+    })
+    .await
+    .map_err(|e| napi::Error::from_reason(e.to_string()))?
+    .map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
 /// Straight RGBA as a stored frame.
 #[napi]
 #[cfg_attr(test, allow(dead_code))] // napi registration is absent in a Rust unit-test executable.
@@ -576,6 +643,38 @@ mod tests {
             .into_rgba8();
         assert_eq!((decoded.width(), decoded.height()), (3, 2));
         assert_eq!(decoded.into_raw(), rgba);
+    }
+
+    #[test]
+    fn the_straight_table_is_the_rounded_quotient_for_every_channel_and_alpha() {
+        for alpha in 0..=255u32 {
+            for channel in 0..=255u32 {
+                let mut pixel = [channel as u8, channel as u8, channel as u8, alpha as u8];
+                straighten(&mut pixel, false);
+                let want = (channel * 255 + alpha / 2)
+                    .checked_div(alpha)
+                    .unwrap_or(0)
+                    .min(255) as u8;
+                assert_eq!(
+                    pixel,
+                    [want, want, want, alpha as u8],
+                    "c={channel} a={alpha}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_premultiplied_capture_encodes_as_its_straightened_pixels() {
+        let (w, h) = (16, 21);
+        let premultiplied = noise(w, h, 7);
+        let mut straight = premultiplied.clone();
+        straighten(&mut straight, true);
+        let mut captured = premultiplied.clone();
+        assert_eq!(
+            encode_premultiplied(w, h, &mut captured, true).unwrap(),
+            encode(w, h, &straight).unwrap()
+        );
     }
 
     #[test]
