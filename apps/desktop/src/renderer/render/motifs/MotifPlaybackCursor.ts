@@ -1,7 +1,5 @@
-import type { Motif } from './catalog';
-import type { MotifFrameDescriptor } from './motifFrameDescriptor';
-import type { MotifFrameCache } from './frameCache';
-import { cancelMotifFrameRequest, resolveMotifFrame, sharedMotifFrameCache, sharedMotifOverlayCache } from './motifRasterCache';
+import { atFrame, type MotifFrameDescriptor } from './motifFrameDescriptor';
+import { acquireMotifFrame, peekMotifFrame, type MotifFrameLease } from './motifFrameSource';
 import { motifErrorCode } from '../../../shared/motifs/errors';
 import { MOTIF_DEADLINES } from '../../../shared/motifs/tuning';
 import { motifTuning } from './tuning';
@@ -24,14 +22,13 @@ export interface MotifPlaybackSnapshot {
   discarded: number;
 }
 
-interface Request { descriptor: MotifFrameDescriptor; epoch: number; scaleDiv: MotifReaderDiv }
+interface Request { descriptor: MotifFrameDescriptor; epoch: number; scaleDiv: MotifReaderDiv; controller: AbortController }
 
 /** Per-instance preview demand and frame selection. Ordinary forward playback
- * coalesces BEHIND admitted work; only discontinuities revoke its ownership.
- * The shared broker still owns cross-consumer deduplication and transport.
- * Bitmaps are cache-owned before bind; the sprite retains its existing pin. */
+ * coalesces BEHIND admitted work; only discontinuities abort it. Requests are
+ * `current` and owned by the cursor (`acquireMotifFrame`), which deduplicates
+ * across consumers. Each bound frame is a lease the sprite holds. */
 export class MotifPlaybackCursor {
-  private readonly requestKey = `motif-preview:${crypto.randomUUID()}`;
   private target: MotifFrameDescriptor | null = null;
   /** The Playback Resolution divisor of `target`; L0 hits match it exactly. */
   private scaleDiv: MotifReaderDiv = 1;
@@ -50,11 +47,8 @@ export class MotifPlaybackCursor {
   private discarded = 0;
 
   constructor(private readonly deps: {
-    motif: () => Motif | null;
-    fpsNum: number;
-    fpsDen: number;
-    /** The sprite draws the frame at the descriptor's render size. */
-    bind: (bitmap: ImageBitmap, lane: MotifFrameCache, descriptor: MotifFrameDescriptor) => void;
+    /** Takes the lease; the sprite draws it at the descriptor's render size. */
+    bind: (lease: MotifFrameLease, descriptor: MotifFrameDescriptor) => void;
     onLoaded: () => void;
     /** Preview's Playback Resolution divisor, read on each update. */
     scaleDiv: () => MotifReaderDiv;
@@ -83,7 +77,7 @@ export class MotifPlaybackCursor {
   /** Seek (including same-target seeks), content refresh, or suspension. */
   invalidate(): void {
     this.epoch++;
-    if (this.pending) cancelMotifFrameRequest(this.requestKey);
+    this.pending?.controller.abort();
     this.pending = null;
     this.target = null;
     this.boundFrame = null;
@@ -103,10 +97,6 @@ export class MotifPlaybackCursor {
 
   dispose(): void { this.invalidate(); this.disposed = true; }
 
-  private lane(d: MotifFrameDescriptor): MotifFrameCache {
-    return d.overlayActive ? sharedMotifOverlayCache : sharedMotifFrameCache;
-  }
-
   private measureHold(): { lagFrames: number | null; heldMs: number } {
     const lagFrames = this.target && this.boundFrame !== null
       ? Math.max(0, this.target.contentFrame - this.boundFrame) : null;
@@ -117,9 +107,9 @@ export class MotifPlaybackCursor {
     return { lagFrames, heldMs };
   }
 
-  private bind(d: MotifFrameDescriptor, bitmap: ImageBitmap): void {
+  private bind(d: MotifFrameDescriptor, lease: MotifFrameLease): void {
     this.measureHold();
-    this.deps.bind(bitmap, this.lane(d), d);
+    this.deps.bind(lease, d);
     this.boundFrame = d.contentFrame;
     this.shownFrame = d.contentFrame;
     this.boundAt = performance.now();
@@ -132,41 +122,38 @@ export class MotifPlaybackCursor {
     if (this.disposed || !d || this.boundFrame === d.contentFrame) return;
     // Cache progress can overtake an admitted read; adopt it immediately and
     // never allow that older completion to roll the bitmap back.
-    const cached = this.lane(d).getFrame(d.cacheKey, d.contentFrame, this.scaleDiv);
+    const cached = peekMotifFrame(d, this.scaleDiv);
     if (cached) { this.bind(d, cached); return; }
     if (this.playing) {
       const oldest = Math.max(0, d.contentFrame - motifTuning().recentFrames, (this.boundFrame ?? -1) + 1);
       for (let frame = d.contentFrame - 1; frame >= oldest; frame--) {
-        const recent = this.lane(d).getFrame(d.cacheKey, frame, this.scaleDiv);
-        if (recent) { this.bind({ ...d, contentFrame: frame }, recent); break; }
+        const recent = peekMotifFrame(d, this.scaleDiv, frame);
+        if (recent) { this.bind(atFrame(d, frame), recent); break; }
       }
     }
     if (this.pending || performance.now() < this.retryAt) return;
-    const motif = this.deps.motif();
-    if (!motif) return;
-    const request = { descriptor: d, epoch: this.epoch, scaleDiv: this.scaleDiv };
+    const request = { descriptor: d, epoch: this.epoch, scaleDiv: this.scaleDiv, controller: new AbortController() };
     this.pending = request;
-    void this.acquire(request, motif);
+    void this.acquire(request);
   }
 
-  private async acquire(request: Request, motif: Motif): Promise<void> {
+  private async acquire(request: Request): Promise<void> {
     const d = request.descriptor;
     try {
-      const { bitmap, scaleDiv } = await resolveMotifFrame(motif, d.cacheKey, d.contentFrame,
-        d.tSec, d.canonicalProps, this.requestKey,
-        this.deps.fpsNum, this.deps.fpsDen, d.overlayActive, 'foreground', request.scaleDiv);
+      const lease = await acquireMotifFrame(d, {
+        scaleDiv: request.scaleDiv, priority: 'current', signal: request.controller.signal, owner: this,
+      });
       if (this.disposed || request.epoch !== this.epoch) {
-        bitmap.close(); this.discarded++; return;
+        lease.release(); this.discarded++; return;
       }
-      const canonical = this.lane(d).setFrame(d.cacheKey, d.contentFrame, scaleDiv, bitmap);
       this.completed++;
       const target = this.target;
       if (target && d.contentFrame <= target.contentFrame &&
         (this.boundFrame === null || d.contentFrame > this.boundFrame) &&
         (this.playing || d.contentFrame === target.contentFrame)) {
-        this.bind(d, canonical);
+        this.bind(d, lease);
         this.deps.onLoaded();
-      }
+      } else lease.release();
     } catch (error) {
       if (this.disposed || request.epoch !== this.epoch) return;
       // A warmed frame can overtake the read before it fails. That is already

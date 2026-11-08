@@ -1,18 +1,12 @@
 // Motif layer rendered via the CDP capture path → per-frame raster → texture.
 // A Motif animates over its layer duration. A per-instance playback cursor
-// selects cache-owned bitmaps and coalesces asynchronous frame demand.
+// selects frames and coalesces asynchronous frame demand.
 //
-// Frames are stored in a process-wide `sharedMotifFrameCache` (an in-RAM
-// LRU keyed by `(cacheKey, frameIndex, scaleDiv)`) so two sprites referencing
-// the same Motif with the same canonical props / dims / fps share one bitmap
-// per frame. Frames whose descriptor resolved with a pending params-page patch
-// (`overlayActive`) go to the separate small `sharedMotifOverlayCache`
-// instead, so gesture churn can't evict committed content. Sprite dispose
-// tears down the sprite's Pixi Texture wrapper but does NOT close the
-// underlying bitmap — the cache (whichever lane holds it) owns its lifetime.
-//
-// Cache misses resolve through the shared broker (disk first, then the hidden
-// capture host). Useful late results advance forward playback. The export
+// Preview frames come from `acquireMotifFrame` / `peekMotifFrame`
+// (`motifFrameSource.ts`): L0, a stored frame, or the hidden capture host.
+// Each bound frame is a lease that pins its L0 bitmap, so eviction cannot
+// close it under the texture; the sprite releases the previous lease after
+// binding the next. Useful late results advance forward playback. The export
 // Worker binds exact pre-baked `injectedFrames` by index instead.
 //
 // Preview reads stored frames at the Playback Resolution divisor (ADR 0154).
@@ -26,9 +20,7 @@ import { frameIndexInLayer } from "../../frames";
 import { anchorPivot, textureExtent } from "../anchorPivot";
 import type { ResolvedMotifView } from "../resolveView";
 import { getMotif, type Motif } from "../motifs/catalog";
-import { sharedMotifFrameCache } from "../motifs/motifRasterCache";
 import { MotifPlaybackCursor, type MotifPlaybackSnapshot } from "../motifs/MotifPlaybackCursor";
-import type { MotifFrameCache } from "../motifs/frameCache";
 import { motifFrameDescriptor } from "../motifs/motifFrameDescriptor";
 import { motifDurationFrames } from "../motifs/motifFrames";
 import type { StageableSprite } from "./StageableSprite";
@@ -68,6 +60,9 @@ export interface MotifSpriteInit {
   scaleDiv?: () => MotifReaderDiv;
 }
 
+interface BoundRaster { bitmap: ImageBitmap | HTMLCanvasElement; release(): void }
+const unpinned = (bitmap: ImageBitmap | HTMLCanvasElement): BoundRaster => ({ bitmap, release: () => {} });
+
 export class MotifSprite implements StageableSprite {
   readonly sprite: Sprite;
   readonly layerId: string;
@@ -87,12 +82,11 @@ export class MotifSprite implements StageableSprite {
   /// The texture's frame still follows the bitmap, so a 1/2 bitmap stretches
   /// over the same quad.
   private readonly orig = new Rectangle();
-  /// The raster `source` wraps, pinned in its lane cache while bound so an
-  /// LRU eviction can't close it under a texture Pixi may still re-upload.
-  private bound: ImageBitmap | HTMLCanvasElement | null = null;
-  /// The lane `bound` was pinned in (shared or overlay) — the release on
-  /// rebind/dispose must go to the same lane the retain went to.
-  private boundCache: MotifFrameCache | null = null;
+  /// The lease on the raster `source` wraps. A preview frame's lease pins it
+  /// in L0, so an LRU eviction can't close it under a texture Pixi may still
+  /// re-upload; the placeholder and export frames hold a lease that does
+  /// nothing.
+  private bound: BoundRaster | null = null;
   private onLoaded: (() => void) | null;
   private disposed = false;
   private boundOnce = false;
@@ -109,8 +103,7 @@ export class MotifSprite implements StageableSprite {
     this.onLoaded = init.onLoaded ?? null;
     this.motif = getMotif(this.motifId);
     this.playback = new MotifPlaybackCursor({
-      motif: () => this.motif, fpsNum: this.fpsNum, fpsDen: this.fpsDen,
-      bind: (bitmap, lane, d) => this.bindBitmap(bitmap, lane, { width: d.renderW, height: d.renderH }),
+      bind: (lease, d) => this.bindRaster(lease, { width: d.renderW, height: d.renderH }),
       onLoaded: () => this.onLoaded?.(),
       scaleDiv: init.scaleDiv ?? (() => 1),
     });
@@ -181,7 +174,7 @@ export class MotifSprite implements StageableSprite {
       if ("bitmap" in injectedFrames) {
         // Each streamed bitmap has its own lifetime, even when output fps
         // repeats the same composition frame. Never reuse a closed binding.
-        if (this.bound !== injectedFrames.bitmap) this.bindBitmap(injectedFrames.bitmap);
+        if (this.bound?.bitmap !== injectedFrames.bitmap) this.bindRaster(unpinned(injectedFrames.bitmap));
         this.injectedFrame = injectedFrames.frame;
         return;
       }
@@ -204,7 +197,7 @@ export class MotifSprite implements StageableSprite {
       if (idx === this.injectedFrame) return;
       const bitmap = injectedFrames[idx];
       if (bitmap) {
-        this.bindBitmap(bitmap);
+        this.bindRaster(unpinned(bitmap));
         this.injectedFrame = idx;
       }
       return;
@@ -228,7 +221,7 @@ export class MotifSprite implements StageableSprite {
     }
     this.playback.update(desc, playing);
     if (!this.boundOnce && this.texture === null && typeof document !== "undefined") {
-      this.bindBitmap(neutralPlaceholder());
+      this.bindRaster(unpinned(neutralPlaceholder()));
     }
   }
 
@@ -246,25 +239,17 @@ export class MotifSprite implements StageableSprite {
     this.playback.invalidate();
   }
 
-  /// `pinCache` is the lane the bitmap belongs to (shared / overlay); the pin
-  /// lands there and the matching release reads `boundCache`, so the two lanes'
-  /// pin tables never cross. Foreign bitmaps (the placeholder canvas, export-
-  /// injected frames) pin in the shared lane as before — retain is safe on
-  /// anything, the cache never closes what it doesn't hold. `size` is the
-  /// local size the bitmap is drawn at; foreign bitmaps keep their own.
-  private bindBitmap(
-    bitmap: ImageBitmap | HTMLCanvasElement,
-    pinCache: MotifFrameCache = sharedMotifFrameCache,
-    size: { width: number; height: number } = bitmap,
+  /// Takes `raster`'s lease. `size` is the local size the bitmap is drawn
+  /// at; the placeholder and export frames keep their own.
+  private bindRaster(
+    raster: BoundRaster,
+    size: { width: number; height: number } = raster.bitmap,
   ): void {
-    // Pin the new raster before letting go of the old one, so a rebind of the
-    // same bitmap never drops its count to zero in between. The old pin is
-    // released only after the source no longer references it below.
-    pinCache.retain(bitmap);
+    // Release the previous lease only once the source no longer references
+    // its bitmap below: its last release may close an evicted bitmap.
     const previous = this.bound;
-    const previousCache = this.boundCache;
-    this.bound = bitmap;
-    this.boundCache = pinCache;
+    const bitmap = raster.bitmap;
+    this.bound = raster;
     const resized = this.orig.width !== size.width || this.orig.height !== size.height;
     this.orig.width = size.width;
     this.orig.height = size.height;
@@ -288,7 +273,7 @@ export class MotifSprite implements StageableSprite {
       this.sprite.texture = this.texture;
     }
     this.boundOnce = true;
-    if (previous) (previousCache ?? sharedMotifFrameCache).release(previous);
+    previous?.release();
   }
 
   dispose(): void {
@@ -307,8 +292,7 @@ export class MotifSprite implements StageableSprite {
     }
     this.texture = null;
     this.source = null;
-    if (this.bound) (this.boundCache ?? sharedMotifFrameCache).release(this.bound);
+    this.bound?.release();
     this.bound = null;
-    this.boundCache = null;
   }
 }

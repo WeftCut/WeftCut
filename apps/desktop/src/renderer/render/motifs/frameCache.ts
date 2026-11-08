@@ -2,7 +2,6 @@ import { MIB, PERFORMANCE_DEFAULTS } from "../../../shared/performance-settings"
 import { isMotifReaderDiv, type MotifReaderDiv } from "../../../shared/motifs/readerProtocol";
 import { cacheBudget } from '../cacheBudget';
 import type { MotifReadOptions } from "./MotifFrameReader";
-import type { MotifFrameDiv } from "./frameTransport";
 // Per-frame raster cache for animated motifs.
 //
 // A motif animates over its duration: each composition frame is a distinct
@@ -25,13 +24,18 @@ import type { MotifFrameDiv } from "./frameTransport";
 //   L2 (opt-in, lighter) — a zstd frame sequence persisted to disk
 //   under `<workspace>/Cache/raster/<hash>/<i>.wfrm`. Driven by a global
 //   "Pre-bake" setting and a per-layer "Pre-bake now" action; read on the
-//   default preview path via `resolveMotifFrame` (disk-first, gated by
+//   default preview path through `acquireMotifFrame` (disk-first, gated by
 //   an in-RAM baked-key index). Main-owned preparation writes durable frames.
 //
 // `cacheKey` is an opaque STRING the caller builds from
 // `(motifId, version, canonicalPropsJSON, renderW, renderH,
 // fpsNum, fpsDen, durationFrames)`. The cache never parses it; it only
 // hashes it (for the L2 dir name) and uses it as the L0 key prefix.
+
+/** The divisor a Motif bitmap is at. `'live'` is a live capture: full size
+ * whatever was asked, because a frame that is not stored has no smaller form.
+ * L0 stores it as divisor 1 (ADR 0154). */
+export type MotifFrameDiv = MotifReaderDiv | 'live';
 
 /// Minimal contract the L0 store needs from a cached frame. The browser
 /// `ImageBitmap` satisfies this; a vitest can pass `{ close: vi.fn() }`.
@@ -95,7 +99,7 @@ export class MotifFrameCache {
   }
   /// Sum of the stored entries' `bytes` — the quantity eviction bounds.
   private bytesUsed = 0;
-  /// Bound-by-a-sprite counts. A frame that leaves the store while pinned is
+  /// Frame-lease counts. A frame that leaves the store while pinned is
   /// parked in `retired` and closed on its last release: Pixi re-reads a
   /// texture's resource whenever it (re)creates the GPU copy — after its GC
   /// unloads an idle texture, or on a deferred first upload — and a closed
@@ -178,9 +182,9 @@ export class MotifFrameCache {
   /// evict the unplayed near future when a farther-ahead frame arrives.
   /// Targets are highest-priority first. This only reorders existing entries:
   /// it neither allocates nor pins bitmaps, and the byte budget still applies.
-  prioritizeFrames(targets: readonly { cacheKey: string; frame: number }[], scaleDiv: MotifReaderDiv): void {
+  prioritizeFrames(targets: readonly { cacheKey: string; frame: number; scaleDiv: MotifReaderDiv }[]): void {
     for (let i = targets.length - 1; i >= 0; i--) {
-      const { cacheKey, frame } = targets[i]!;
+      const { cacheKey, frame, scaleDiv } = targets[i]!;
       const key = this.serving(cacheKey, frame, scaleDiv);
       if (key === undefined) continue;
       const entry = this.store.get(key)!;
@@ -263,9 +267,9 @@ export class MotifFrameCache {
     else bmp.close();
   }
 
-  /// Pin a bitmap a sprite has bound, so eviction cannot close it under the
-  /// sprite. Safe on anything — a placeholder canvas or an export-injected
-  /// frame the cache never held is counted but never closed by the cache.
+  /// Pin a bitmap a frame lease holds (`motifFrameSource.ts`), so eviction
+  /// cannot close it under the sprite that bound it. Safe on anything — a
+  /// bitmap the cache never held is counted but never closed by the cache.
   retain(bmp: object): void {
     this.pins.set(bmp, (this.pins.get(bmp) ?? 0) + 1);
   }

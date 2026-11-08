@@ -1,38 +1,38 @@
 import { planPrewarmTargets, type PrewarmContent, type PrewarmTarget } from './prewarmPlan';
-import type { CapturedFrame, MotifFrameDiv } from './frameTransport';
+import { atFrame, type MotifFrameDescriptor } from './motifFrameDescriptor';
+import type { acquireMotifFrame, MotifFrameCoverage } from './motifFrameSource';
+import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
 import { motifTuning } from './tuning';
 
 export interface PrewarmContentSpec extends PrewarmContent {
-  /// The shared acquisition module owns disk/capture admission. The request
-  /// key is a cancellable BACKGROUND subscription, not foreground demand.
-  render: (frame: number, requestKey: string) => Promise<Pick<CapturedFrame, 'bitmap' | 'scaleDiv'>>;
+  /// The content at the playhead; targets are other frames of it.
+  descriptor: MotifFrameDescriptor;
+  /// The divisor frames are requested at.
+  scaleDiv: MotifReaderDiv;
 }
 
 export interface MotifPrewarmerDeps {
   capBytes: number;
-  hasFrame: (cacheKey: string, frame: number) => boolean;
-  /// `scaleDiv` is the divisor the rendered bitmap is at.
-  setFrame: (cacheKey: string, frame: number, scaleDiv: MotifFrameDiv, bmp: ImageBitmap) => void;
-  prioritizeFrames: (targets: readonly PrewarmTarget[]) => void;
+  coverage: Pick<MotifFrameCoverage, 'has' | 'prioritize'>;
+  acquire: typeof acquireMotifFrame;
   schedule: (cb: () => void) => number;
   cancel: (token: number) => void;
-  cancelRequest: (requestKey: string) => void;
   onProgress?: () => void;
 }
 
-interface Request extends PrewarmTarget { key: string }
 const address = (target: PrewarmTarget) => JSON.stringify([target.cacheKey, target.frame]);
 
 /** Owns a byte-bounded, playhead-relative demand window. Register the whole
  * window so holes waiting for capture cannot hide saved frames further ahead.
- * Requests carry metadata only until the shared acquisition module admits
- * actual work. Replans retain useful subscriptions and cancel obsolete ones. */
+ * Frames at or after a playhead are `ahead`, history behind it `background`.
+ * A request lands its frame in L0; replans keep useful requests and abort
+ * obsolete ones. */
 export class MotifPrewarmer {
   private specs = new Map<string, PrewarmContentSpec>();
+  /** Per content, the earliest playhead among its windows. */
+  private playheads = new Map<string, number>();
   private targets: PrewarmTarget[] = [];
-  private readonly requests = new Map<string, Request>();
-  private readonly prefix = `motif-prewarm:${crypto.randomUUID()}`;
-  private sequence = 0;
+  private readonly requests = new Map<string, AbortController>();
   private scheduled: number | null = null;
   private disposed = false;
 
@@ -41,19 +41,22 @@ export class MotifPrewarmer {
   setTargets(specs: PrewarmContentSpec[]): void {
     if (this.disposed) return;
     this.specs = new Map(specs.map(spec => [spec.cacheKey, spec]));
+    this.playheads = new Map();
+    for (const { cacheKey, contentFrame } of specs) {
+      this.playheads.set(cacheKey, Math.min(this.playheads.get(cacheKey) ?? Infinity, contentFrame));
+    }
     // Small authored sizes can fit thousands of frames in the pixel budget;
-    // `prewarmRequests` also bounds subscriptions and admission work.
+    // `prewarmRequests` also bounds requests and admission work.
     this.targets = planPrewarmTargets(specs, this.deps.capBytes, motifTuning().prewarmRequests);
     const wanted = new Set(this.targets.map(address));
     for (const [id, request] of this.requests) {
       if (!wanted.has(id)) {
         this.requests.delete(id);
-        this.deps.cancelRequest(request.key);
+        request.abort();
       }
     }
-    this.deps.prioritizeFrames(this.targets);
-    if (this.scheduled === null && this.targets.some(target =>
-      !this.requests.has(address(target)) && !this.deps.hasFrame(target.cacheKey, target.frame))) {
+    this.deps.coverage.prioritize(this.targets.map(target => ({ ...target, scaleDiv: this.specs.get(target.cacheKey)!.scaleDiv })));
+    if (this.scheduled === null && this.targets.some(target => !this.requests.has(address(target)) && !this.cached(target))) {
       this.scheduled = this.deps.schedule(() => {
         this.scheduled = null;
         this.pump();
@@ -61,31 +64,32 @@ export class MotifPrewarmer {
     }
   }
 
+  private cached({ cacheKey, frame }: PrewarmTarget): boolean {
+    return this.deps.coverage.has(cacheKey, frame, this.specs.get(cacheKey)!.scaleDiv);
+  }
+
   private pump(): void {
     if (this.disposed) return;
     for (const target of this.targets) {
       const id = address(target);
-      if (this.requests.has(id) || this.deps.hasFrame(target.cacheKey, target.frame)) continue;
-      const spec = this.specs.get(target.cacheKey);
-      if (!spec) continue;
-      const request = { ...target, key: `${this.prefix}:${++this.sequence}` };
-      this.requests.set(id, request);
-      void this.acquire(id, request, spec);
+      if (this.requests.has(id) || this.cached(target)) continue;
+      const controller = new AbortController();
+      this.requests.set(id, controller);
+      void this.acquire(id, controller, this.specs.get(target.cacheKey)!, target.frame);
     }
   }
 
-  private async acquire(id: string, request: Request, spec: PrewarmContentSpec): Promise<void> {
-    let owned: ImageBitmap | null = null;
+  private async acquire(id: string, controller: AbortController, spec: PrewarmContentSpec, frame: number): Promise<void> {
     try {
-      const { bitmap, scaleDiv } = await spec.render(request.frame, request.key);
-      owned = bitmap;
-      if (this.disposed || this.requests.get(id) !== request) return;
-      this.deps.setFrame(request.cacheKey, request.frame, scaleDiv, owned);
-      owned = null;
+      const lease = await this.deps.acquire(atFrame(spec.descriptor, frame), {
+        scaleDiv: spec.scaleDiv, signal: controller.signal,
+        priority: frame >= this.playheads.get(spec.cacheKey)! ? 'ahead' : 'background',
+      });
+      // The frame is in L0 now; warming holds no pin.
+      lease.release();
     } catch { /* Retry failures on the next demand update, never in a tight loop. */ }
     finally {
-      owned?.close();
-      if (this.requests.get(id) === request) this.requests.delete(id);
+      if (this.requests.get(id) === controller) this.requests.delete(id);
       if (!this.disposed) this.deps.onProgress?.();
     }
   }
@@ -94,7 +98,7 @@ export class MotifPrewarmer {
     this.disposed = true;
     if (this.scheduled !== null) this.deps.cancel(this.scheduled);
     this.scheduled = null;
-    for (const request of this.requests.values()) this.deps.cancelRequest(request.key);
+    for (const request of this.requests.values()) request.abort();
     this.requests.clear();
     this.targets = [];
     this.specs.clear();

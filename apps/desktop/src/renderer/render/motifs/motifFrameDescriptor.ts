@@ -9,10 +9,17 @@ import {
   motifFrameCacheKey,
 } from "./motifFrames";
 
-/// `renderW/renderH/contentDurationUs/srcInUs/contentDurationFrames` are carried
-/// for the prewarmer path; the sprite only uses cacheKey/contentFrame/tSec/canonicalProps.
+/// Everything a request for one Motif frame needs: its cache identity and the
+/// capture inputs (`acquireMotifFrame`). `contentDurationUs/srcInUs/
+/// contentDurationFrames` are carried for planning.
 export interface MotifFrameDescriptor {
   cacheKey: string;
+  motifId: string;
+  /// The manifest's content hash; empty for a built-in without one.
+  contentHash: string;
+  /// The composition fps `tSec` is computed on.
+  fpsNum: number;
+  fpsDen: number;
   contentFrame: number;
   contentDurationFrames: number;
   contentDurationUs: number;
@@ -87,9 +94,15 @@ export function motifFrameDescriptor(
     ...(view.media_keys && { mediaKeys: view.media_keys }),
   });
   return {
-    cacheKey, contentFrame: frame, contentDurationFrames, contentDurationUs, srcInUs,
+    cacheKey, motifId: motif.manifest.id, contentHash: motif.manifest.content_hash ?? '', fpsNum, fpsDen,
+    contentFrame: frame, contentDurationFrames, contentDurationUs, srcInUs,
     renderW, renderH, canonicalProps,
     tSec: frameTimeSec(frame, fpsNum, fpsDen),
     overlayActive,
   };
+}
+
+/// The same content at another content frame.
+export function atFrame(d: MotifFrameDescriptor, frame: number): MotifFrameDescriptor {
+  return frame === d.contentFrame ? d : { ...d, contentFrame: frame, tSec: frameTimeSec(frame, d.fpsNum, d.fpsDen) };
 }

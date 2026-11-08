@@ -1,34 +1,5 @@
 import { invoke } from "@/bridge/ipc";
-import { captureMotifResult, type CapturedFrame } from './frameTransport';
-import type { MotifCacheAddress } from '../../../shared/motifs/frameTransport';
-import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
-
-export interface CaptureOptions {
-  key: string;
-  high: boolean;
-  bake?: MotifCacheAddress;
-  cache?: MotifCacheAddress;
-  finalizationToken?: string;
-  /** The divisor a `stored` reply is read at; 1 when absent. A live capture
-   * is always full size. */
-  scaleDiv?: MotifReaderDiv;
-}
-
-export function captureMotifFrameResult(
-  motifId: string, tSec: number, props: Record<string, unknown>, width: number, height: number,
-  contentHash: string | undefined,
-  fpsNum: number | undefined, fpsDen: number | undefined, options: CaptureOptions,
-): Promise<CapturedFrame> {
-  const perf = (window as unknown as { __weftcutMotifPerf?: { renders: number } }).__weftcutMotifPerf;
-  if (perf) perf.renders++;
-  return captureMotifResult({
-    motifId, tSec, propsJson: JSON.stringify(props), width, height,
-    contentHash: contentHash ?? '', fpsNum, fpsDen,
-    coalesceKey: options.key, high: options.high, bake: options.bake,
-    cache: options.cache,
-    finalizationToken: options.finalizationToken,
-  }, options.scaleDiv ?? 1);
-}
+import { captureMotif } from './frameTransport';
 
 /**
  * Render a Motif to a single frame and return the raw PNG as a `Blob`.
@@ -79,8 +50,9 @@ export async function captureMotifFramePngBlob(
 
 /**
  * Capture to a fresh ImageBitmap through the preload transport: a shared GPU
- * texture on Windows, straight RGBA elsewhere (ADR 0159). Used by the e2e
- * hook; the editor goes through `captureMotifFrameResult`.
+ * texture on Windows, straight RGBA elsewhere (ADR 0159). Unaddressed, so main
+ * neither stores nor deduplicates it. Used by the e2e hook; the editor goes
+ * through `acquireMotifFrame`.
  *
  * @param motifId    built-in Motif id (e.g. "countdown")
  * @param tSec       content time in SECONDS
@@ -97,14 +69,12 @@ export async function captureMotifFrame(
   width: number,
   height: number,
   contentHash?: string,
-  coalesceKey?: string,
-  fpsNum?: number,
-  fpsDen?: number,
 ): Promise<ImageBitmap> {
-  const { captureStoredMotifFrame } = await import("./frameTransport");
-  return captureStoredMotifFrame({
+  const reply = await captureMotif({
     motifId, tSec, propsJson: JSON.stringify(props), width, height,
-    contentHash: contentHash ?? "",
-    coalesceKey, fpsNum, fpsDen,
-  });
+    contentHash: contentHash ?? "", priority: "current",
+  }).reply;
+  // An unaddressed capture always carries pixels.
+  if (reply.kind !== "pixels") throw new Error("Motif capture returned no frame");
+  return reply.bitmap;
 }

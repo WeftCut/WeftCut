@@ -9,7 +9,7 @@ import type { AudioGraph } from "./audio/AudioGraph";
 import type { DecoderPool } from "./decoder/session";
 import { getMotif } from "./motifs/catalog";
 import { motifFrameDescriptor } from "./motifs/motifFrameDescriptor";
-import { sharedMotifFrameCache } from "./motifs/motifRasterCache";
+import { sharedMotifFrameCache } from "./motifs/motifFrameSource";
 
 afterEach(() => {
   sharedMotifFrameCache.clearAll();

@@ -1,33 +1,58 @@
 import { motifSuperseded } from '../../../shared/motifs/errors';
-import type { FrameTicket } from './FrameBroker';
-import type { CapturedFrame } from './frameTransport';
+import type { MotifFramePriority } from '../../../shared/motifs/frameTransport';
 import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
+import type { MotifCaptureCall } from './frameTransport';
+import type { MotifFrameDiv } from './frameCache';
 import { motifTuning } from './tuning';
 
-interface Request {
+const PRIORITIES: readonly MotifFramePriority[] = ['current', 'ahead', 'background'];
+const rank = (priority: MotifFramePriority) => PRIORITIES.indexOf(priority);
+
+/** One deduplicated frame request (`motifFrameSource.ts`). */
+export interface FrameWork {
   cacheKey: string;
   frame: number;
   /** The divisor a stored frame is read at; a capture is full size. */
   scaleDiv: MotifReaderDiv;
-  ticket: FrameTicket;
-  capture: () => Promise<CapturedFrame>;
+  /** A parameter-preview frame has no cache address: it is never read. */
   captureOnly: boolean;
+  /** Export work starts at once, outside the read and capture slots: the
+   * export stream's byte budget bounds it, and it pipelines frames. */
+  unbounded: boolean;
+  /** The highest priority among its subscribers, read at admission. */
+  priority(): MotifFramePriority;
+  wanted(): boolean;
+  /** A stored frame, or null when it is absent or invalid. */
+  read(): Promise<ImageBitmap | null>;
+  capture(afterMiss: boolean, priority: MotifFramePriority): MotifCaptureCall;
 }
-interface Job extends Request {
+
+export interface FrameResult { bitmap: ImageBitmap; div: MotifFrameDiv; persisted: boolean }
+/** `changed` reports a new priority or a lost subscriber. */
+export interface ScheduledFrame { result: Promise<FrameResult>; changed(): void }
+
+interface Entry {
+  work: FrameWork;
   epoch: number;
-  readMiss: boolean;
-  resolve: (value: CapturedFrame) => void;
+  /** Its read missed: the next capture is `afterMiss`. */
+  readMissed: boolean;
+  call: MotifCaptureCall | null;
+  sentPriority: MotifFramePriority;
+  resolve: (value: FrameResult) => void;
   reject: (error: unknown) => void;
 }
 
-/** Resource admission AFTER broker deduplication: `readsInFlight` disk-read
- * slots, the reader's own bound, and `captureSlots` capture slots. A bounded
- * prewarm window can contain both saved pixels and holes. Waiting captures
- * never occupy a disk-read slot; failed reads release theirs before joining
- * capture work. Priority and coverage are read at admission, not snapshotted
- * by callers. */
+/** Resource admission after deduplication: `readsInFlight` disk-read slots,
+ * the reader's own bound, and `captureSlots` capture slots, served `current`,
+ * then `ahead`, then `background`. A bounded prewarm window can contain both
+ * saved pixels and holes. Waiting captures never occupy a disk-read slot.
+ * Priority and coverage are read at admission, not snapshotted by callers.
+ *
+ * One loop per frame: a read miss queues it again as a capture `afterMiss`;
+ * a `stored` capture reply queues it again as a read. A read's transport
+ * error rejects: it says nothing about the file, so it never captures. */
 export class MotifFrameScheduler {
-  private queue: Job[] = [];
+  private queue: Entry[] = [];
   private reads = 0;
   private captures = 0;
   private readonly readSlots = motifTuning().readsInFlight;
@@ -37,21 +62,25 @@ export class MotifFrameScheduler {
 
   constructor(private readonly deps: {
     shouldRead: (cacheKey: string, frame: number) => boolean;
-    read: (cacheKey: string, frame: number, scaleDiv: MotifReaderDiv) => Promise<ImageBitmap | null>;
     readMiss: (cacheKey: string, frame: number) => void;
-    /** Main owns background production for these content keys. Foreground
-     * subscribers can still promote the same queued request immediately. */
+    /** Main reported the frame stored. */
+    stored: (cacheKey: string, frame: number) => void;
+    /** Main owns background production for these content keys. A `current`
+     * subscriber can still promote the same queued request immediately. */
     backgroundCaptureAllowed: (cacheKey: string) => boolean;
   }) {}
 
-  acquire(request: Request): Promise<CapturedFrame> {
-    return new Promise((resolve, reject) => {
-      this.queue.push({ ...request, epoch: this.epoch, readMiss: false, resolve, reject });
-      this.wake();
+  schedule(work: FrameWork): ScheduledFrame {
+    let entry!: Entry;
+    const result = new Promise<FrameResult>((resolve, reject) => {
+      entry = { work, epoch: this.epoch, readMissed: false, call: null, sentPriority: 'background', resolve, reject };
     });
+    this.queue.push(entry);
+    this.wake();
+    return { result, changed: () => this.changed(entry) };
   }
 
-  /** Coverage, subscriber cancellation or foreground promotion changed. */
+  /** Coverage or a priority changed. */
   wake(): void {
     if (this.scheduled) return;
     this.scheduled = true;
@@ -61,86 +90,114 @@ export class MotifFrameScheduler {
   /** Authoritative disk coverage changed. A previously missing frame may now
    * be saved; retry its read without ever opening a competing background page. */
   coverageChanged(): void {
-    for (const job of this.queue) {
-      if (job.readMiss && this.deps.shouldRead(job.cacheKey, job.frame)) job.readMiss = false;
+    for (const entry of this.queue) {
+      if (entry.readMissed && this.deps.shouldRead(entry.work.cacheKey, entry.work.frame)) entry.readMissed = false;
     }
     this.wake();
   }
 
+  /** Rejects queued work. Admitted work keeps its slot until it settles; its
+   * result cannot cross into the next project opening. */
   reset(): void {
     this.epoch++;
-    for (const job of this.queue) job.reject(motifSuperseded());
+    for (const entry of this.queue) entry.reject(motifSuperseded());
     this.queue = [];
-    // Admitted work keeps its resource until it actually settles. Its result
-    // cannot cross into the new project opening.
   }
 
-  private wanted(job: Job): boolean {
-    return job.epoch === this.epoch && job.ticket.wanted();
+  private changed(entry: Entry): void {
+    const { call } = entry;
+    if (call) {
+      if (!this.wanted(entry)) call.cancel();
+      else {
+        const priority = entry.work.priority();
+        if (rank(priority) < rank(entry.sentPriority)) {
+          entry.sentPriority = priority;
+          call.setPriority(priority);
+        }
+      }
+    }
+    this.wake();
   }
 
-  private readsDisk(job: Job): boolean {
-    return !job.captureOnly && !job.readMiss && this.deps.shouldRead(job.cacheKey, job.frame);
+  private wanted(entry: Entry): boolean {
+    return entry.epoch === this.epoch && entry.work.wanted();
+  }
+
+  private readsDisk(entry: Entry): boolean {
+    return !entry.work.captureOnly && !entry.readMissed && this.deps.shouldRead(entry.work.cacheKey, entry.work.frame);
   }
 
   private drain(): void {
-    this.queue = this.queue.filter(job => {
-      if (this.wanted(job)) return true;
-      job.reject(motifSuperseded());
+    this.queue = this.queue.filter(entry => {
+      if (this.wanted(entry)) return true;
+      entry.reject(motifSuperseded());
       return false;
     });
-    for (const high of [true, false]) {
+    for (const priority of PRIORITIES) {
       for (let i = 0; i < this.queue.length;) {
-        const job = this.queue[i]!;
-        if (job.ticket.high() !== high) { i++; continue; }
-        if (!this.readsDisk(job) || this.reads >= this.readSlots) { i++; continue; }
+        const entry = this.queue[i]!;
+        if (entry.work.priority() !== priority || !this.readsDisk(entry) ||
+          (!entry.work.unbounded && this.reads >= this.readSlots)) { i++; continue; }
         this.queue.splice(i, 1);
-        this.reads++;
-        void this.run(job, true);
+        void this.run(entry, 'read');
       }
-      while (this.captures < this.captureSlots) {
-        // Main-owned preparation has no competing background capture here.
-        // Foreground promotion remains immediate; saved frames use separate
-        // read slots even while a different content is being captured.
-        const job = this.queue.find(job => job.ticket.high() === high && !this.readsDisk(job)
-          && (high || this.deps.backgroundCaptureAllowed(job.cacheKey)));
-        if (!job) break;
-        this.queue.splice(this.queue.indexOf(job), 1);
-        this.captures++;
-        void this.run(job, false);
+      for (;;) {
+        // Main-owned preparation has no competing speculative capture here;
+        // saved frames use separate read slots even while a different content
+        // is being captured.
+        const entry = this.queue.find(entry => entry.work.priority() === priority && !this.readsDisk(entry)
+          && (entry.work.unbounded || this.captures < this.captureSlots)
+          && (priority === 'current' || this.deps.backgroundCaptureAllowed(entry.work.cacheKey)));
+        if (!entry) break;
+        this.queue.splice(this.queue.indexOf(entry), 1);
+        void this.run(entry, 'capture');
       }
     }
   }
 
-  private async run(job: Job, read: boolean): Promise<void> {
+  private async run(entry: Entry, kind: 'read' | 'capture'): Promise<void> {
+    const { work } = entry;
+    const bounded = !work.unbounded;
+    if (bounded) { if (kind === 'read') this.reads++; else this.captures++; }
+    let again = false;
     try {
-      let value: CapturedFrame;
-      if (read) {
-        // Only an authoritative miss (null) permits a new capture. A
-        // `MotifTransportError` says nothing about disk coverage: it rejects,
-        // and preview keeps its previous frame and retries later.
-        const bitmap = await this.deps.read(job.cacheKey, job.frame, job.scaleDiv);
+      if (kind === 'read') {
+        const bitmap = await work.read();
         if (!bitmap) {
-          if (!this.wanted(job)) throw motifSuperseded();
-          job.readMiss = true;
-          this.deps.readMiss(job.cacheKey, job.frame);
-          this.queue.push(job);
+          if (!this.wanted(entry)) throw motifSuperseded();
+          entry.readMissed = true;
+          this.deps.readMiss(work.cacheKey, work.frame);
+          again = true;
           return;
         }
-        value = { bitmap, persisted: true, scaleDiv: job.scaleDiv };
-      } else {
-        value = await job.capture();
+        this.settle(entry, { bitmap, div: work.scaleDiv, persisted: true });
+        return;
       }
-      if (!this.wanted(job)) {
-        value.bitmap.close();
-        throw motifSuperseded();
+      entry.sentPriority = work.priority();
+      entry.call = work.capture(entry.readMissed, entry.sentPriority);
+      const reply = await entry.call.reply;
+      if (reply.kind === 'stored') {
+        if (!this.wanted(entry)) throw motifSuperseded();
+        entry.readMissed = false;
+        this.deps.stored(work.cacheKey, work.frame);
+        again = true;
+        return;
       }
-      job.resolve(value);
+      if (reply.persisted && this.wanted(entry)) this.deps.stored(work.cacheKey, work.frame);
+      this.settle(entry, { bitmap: reply.bitmap, div: 'live', persisted: reply.persisted });
     } catch (error) {
-      job.reject(error);
+      entry.reject(error);
     } finally {
-      if (read) this.reads--; else this.captures--;
+      entry.call = null;
+      if (bounded) { if (kind === 'read') this.reads--; else this.captures--; }
+      if (again) this.queue.push(entry);
       this.wake();
     }
+  }
+
+  private settle(entry: Entry, value: FrameResult): void {
+    if (this.wanted(entry)) { entry.resolve(value); return; }
+    value.bitmap.close();
+    entry.reject(motifSuperseded());
   }
 }

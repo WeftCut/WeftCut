@@ -181,9 +181,10 @@ sprite releases it. L0 keeps per-content frame counts for O(1) coverage queries.
 playback and while paused. Identical contents dedupe; `planPrewarmTargets`
 splits the byte budget across contents by per-frame cost and orders
 playhead-first, then forward, then a few earlier frames; retention follows the
-same priority so the next frame to play is not evicted. It registers at most 256
-cancellable subscriptions, round-robin across contents. Results outside the
-latest window are closed. For content main is preparing, lookahead only reads
+same priority so the next frame to play is not evicted. It holds at most 256
+requests, round-robin across contents: `ahead` for frames at or after a
+playhead, `background` for history behind it. A replan aborts requests outside
+the latest window. For content main is preparing, lookahead only reads
 persisted frames; otherwise it may capture its window.
 
 **L2 — disk.** One `.wfrm` per frame under
@@ -198,17 +199,39 @@ older directories are collected rather than read.
 
 ### Admission
 
-`FrameBroker` deduplicates identical requests and serves L0 hits; each consumer
-gets its own bitmap clone, and cancelling one consumer never closes another's
-frame. Behind it, `MotifFrameScheduler` admits work for preview, lookahead,
-baking and transient parameter previews with **three disk-read slots and one
-capture slot**. Admission consults exact per-frame coverage: known holes skip
-disk I/O, unknown coverage is probed, and a new write wakes queued requests so
-they read instead of capture. A read miss releases its read slot before joining
-the capture queue and invalidates that frame's coverage. Foreground subscribers
-promote queued work; background baking and speculative capture alternate. A
-project reset fences queued and admitted work. Main's `MotifCaptureService`
-likewise shares overlapping display and persistence captures.
+Every renderer consumer gets a frame through `motifFrameSource.ts`:
+`peekMotifFrame` for a synchronous L0 hit, `acquireMotifFrame(descriptor,
+{ scaleDiv, priority, signal, owner?, purpose?, finalizationToken? })` for any
+frame. The descriptor carries the cache identity and the capture inputs. A frame
+comes back as a lease: a preview lease pins its L0 bitmap until `release`, so
+eviction never closes a frame a sprite has bound; an export lease owns its
+bitmap. Callers never learn whether a frame was read or captured, or which
+divisor L0 stored it under.
+
+Priorities, highest first: `current` (the frame on screen, an export frame),
+`ahead` (lookahead at or after the playhead), `background` (lookahead behind
+it). A `current` request from an `owner` supersedes that owner's previous one;
+aborting a request's signal withdraws it. Identical requests (lane, cache key,
+frame, divisor, finalization token) share one job at the highest priority of its
+subscribers, and a promotion reaches main's capture queue, where `current` is
+high and the rest low. The job publishes a preview result to L0 once and pins it
+for each subscriber; a result nobody wants any more is closed unpublished.
+Parameter-preview frames use the overlay lane: no cache address, never read,
+never stored. Export frames never enter L0.
+
+`MotifFrameScheduler` admits jobs with **three disk-read slots and one capture
+slot**, `current` before `ahead` before `background`. Export work takes neither:
+the export stream's byte budget bounds it, and its frames pipeline. Admission
+consults exact per-frame coverage: known holes skip disk I/O, unknown coverage
+is probed, and a new write wakes queued requests so they read instead of
+capture. A read miss drops the frame from coverage, releases its read slot and
+captures without main's store check (`afterMiss`), so a corrupt file cannot
+answer `stored` again; a `stored` reply reads the frame. A read's transport
+error rejects and never captures. Content main is preparing is captured only for
+`current` demand. Committed and export requests wait for the baked-key
+inventory. A project reset supersedes queued and admitted work. Main's
+`MotifCaptureService` likewise shares overlapping display and persistence
+captures.
 
 ### Reading stored frames
 
@@ -385,22 +408,27 @@ which sends a texture-lane read to the utility lane (`unavailable`, reason
 
 `MotifSprite` receives the layer-relative time `tInLayerUs`, maps it to a frame
 with `frameIndexInLayer` on the exact rational grid (never `round(µs·fps)`),
-clamps to the content, obtains the frame through L0 → reader → capture, and
-binds it as its texture. It draws a reduced bitmap at the Motif's logical size,
-so geometry, anchors and the gizmo do not change with the divisor.
+clamps to the content, and binds the frame its `MotifPlaybackCursor` gets: an L0
+hit (`peekMotifFrame`), else a `current` request the cursor owns. The sprite
+holds the bound frame's lease and releases the previous one after binding. It
+draws a reduced bitmap at the Motif's logical size, so geometry, anchors and the
+gizmo do not change with the divisor.
 
 ## Export
 
 The export Worker never captures or touches filesystem IPC. `MotifFrameProducer`
 (`renderer/render/worker/motifStream.ts`) plans the content frames each output
-frame needs (trims, nested Groups, retiming), reads them through the reader or
-requests a foreground capture, and transfers owned bitmaps to the Worker. Credits
-return only when the Worker has composited and closed a packet's bitmaps, not on
-transfer. The window is at most three output frames
-(`resourcePlan.motifFrames`) and a byte budget from the export resource plan;
-each task reserves twice its pixels (readback or persistence), and a single
-frame over the budget fails with the resource-capacity error. Export does not
-wait for background baking.
+frame needs (trims, nested Groups, retiming), gets each through one
+`acquireMotifFrame` (purpose `export`, `current`, full size, the export's
+finalization token), and transfers the owned bitmaps to the Worker. A request
+waits for the baked-key inventory, reads a covered frame, and otherwise asks
+main to capture and keep it; main may answer that the frame is already stored,
+and the request reads it. Credits return only when the Worker has composited and
+closed a packet's bitmaps, not on transfer. The window is at most three output
+frames (`resourcePlan.motifFrames`) and a byte budget from the export resource
+plan; each task reserves twice its pixels (readback or persistence), and a
+single frame over the budget fails with the resource-capacity error. Export does
+not wait for background baking.
 
 A missing frame is captured with the same host and frame-grid inputs as preview
 and stored through main's write queue, joining an overlapping bake. A failed

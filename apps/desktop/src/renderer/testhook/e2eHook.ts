@@ -32,7 +32,7 @@ import {
 } from "../ipc";
 import { captureMotifFrame } from "../render/motifs/host";
 import { hashCacheKey } from "../render/motifs/frameCache";
-import { sharedMotifFrameCache, sharedBakedKeyIndex } from "../render/motifs/motifRasterCache";
+import { sharedMotifFrameCache, sharedBakedKeyIndex } from "../render/motifs/motifFrameSource";
 import { motifFrameDescriptor } from "../render/motifs/motifFrameDescriptor";
 import {
   currentMotifFrameReader,
@@ -224,7 +224,7 @@ export interface E2EHook {
   /// layer-relative times and read back the interior pixel of each bound
   /// raster. Exercises the full sprite chain in real Electron renderer:
   /// `update(view, tInLayerUs, durationUs)` → frame index → `frameTimeSec` →
-  /// `resolveMotifFrame` → `captureMotifFrameResult` (offscreen capture host)
+  /// `acquireMotifFrame` → `captureMotif` (offscreen capture host)
   /// → bound `Texture`. The spec asserts the two frames differ (the motif
   /// animated across the timeline). The spec's page.evaluate can't import the bundled `MotifSprite`,
   /// so it's constructed here and the result reduced to plain numbers.

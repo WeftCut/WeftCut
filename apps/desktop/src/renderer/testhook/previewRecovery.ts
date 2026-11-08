@@ -2,7 +2,7 @@
 // eviction uses the shared cache, unload uses Pixi's texture-GC entry point,
 // and the injected present error is consumed by the app's real ticker listener.
 import { type Application, type Container, Sprite } from "pixi.js";
-import { sharedMotifFrameCache } from "../render/motifs/motifRasterCache";
+import { sharedMotifFrameCache } from "../render/motifs/motifFrameSource";
 
 export function previewRecoveryControls(app: Application) {
   return async (action: "evict-and-unload" | "throw-next-present") => {

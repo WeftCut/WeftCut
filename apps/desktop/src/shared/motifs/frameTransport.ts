@@ -33,4 +33,9 @@ export type MotifReadUnavailable = { kind: 'unavailable'; reason: 'lane' | 'read
 export type MotifTextureReadResult = MotifTextureFrame | MotifReadUnavailable | null
 
 export interface MotifCacheAddress { hash: string; frame: number }
+
+/** Why a Motif frame is wanted, highest first: `current` is on screen or in
+ * an export, `ahead` is lookahead at or after the playhead, `background` is
+ * history behind it. Admission serves them in that order. */
+export type MotifFramePriority = 'current' | 'ahead' | 'background'
 export type MotifCaptureControl = { key: string; action: 'promote' | 'cancel' }

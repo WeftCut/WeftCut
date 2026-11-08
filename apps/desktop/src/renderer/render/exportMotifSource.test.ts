@@ -2,17 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { summaryFixture, compositionFixture } from "../testing/summaryFixture";
 import type { LayerSummary, TrackSummary } from "../ipc";
 import { exportMotifPlanner, planExportMotifFrame } from "./exportMotifSource";
-import { sharedBakedKeyIndex, sharedMotifFrameCache } from "./motifs/motifRasterCache";
-import { captureMotifFrameResult } from "./motifs/host";
-import { controlStoredMotifCapture, type CapturedFrame } from "./motifs/frameTransport";
+import { acquireMotifFrame } from "./motifs/motifFrameSource";
+import { MotifTransportError } from "./motifs/frameTransport";
 import { timeUsAtFrame } from "../frames";
 
-vi.mock("./motifs/motifRasterCache", () => ({
-  sharedBakedKeyIndex: { has: vi.fn(() => true), add: vi.fn() },
-  sharedMotifFrameCache: { readBitmap: vi.fn() },
-}));
-vi.mock("./motifs/host", () => ({ captureMotifFrameResult: vi.fn() }));
-vi.mock("./motifs/frameTransport", () => ({ controlStoredMotifCapture: vi.fn() }));
+vi.mock("./motifs/motifFrameSource", () => ({ acquireMotifFrame: vi.fn() }));
 
 const stat = (value: number) => ({ mode: "Static", value });
 function motif(id = 'm', start = 0, end = 5_000_000): LayerSummary {
@@ -25,13 +19,8 @@ const track = (layers: LayerSummary[]): TrackSummary => ({ id: 't', enabled: tru
 const summary = () => summaryFixture({ root: { duration_us: 5_000_000, fps_num: 60, fps_den: 1, tracks: [track([motif()])] } });
 const bitmap = () => ({ width: 480, height: 480, close: vi.fn() }) as unknown as ImageBitmap;
 
-beforeEach(() => {
-  vi.resetAllMocks();
-  vi.mocked(sharedBakedKeyIndex.has).mockReturnValue(true);
-  // The renderer never draws or encodes a Motif frame for the cache.
-  vi.stubGlobal('OffscreenCanvas', vi.fn(() => { throw new Error('No renderer encode expected'); }));
-});
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+beforeEach(() => { vi.resetAllMocks(); });
+afterEach(() => { vi.restoreAllMocks(); });
 
 describe('streamed Motif selection', () => {
   it('samples only output frames, including a non-grid range start and repeated composition frames', () => {
@@ -56,67 +45,22 @@ describe('streamed Motif selection', () => {
     expect(tasks.map(t => t.frame)).toEqual([0, 9]);
   });
 
-  it('reuses disk frames without capturing', async () => {
-    const b = bitmap(); vi.mocked(sharedMotifFrameCache.readBitmap).mockResolvedValue(b);
-    expect(await planExportMotifFrame(summary(), 0, 'export-token')[0]!.read(new AbortController().signal)).toBe(b);
+  it('gets each frame through one full-size export request that the stream then owns', async () => {
+    const b = bitmap(), release = vi.fn();
+    vi.mocked(acquireMotifFrame).mockResolvedValue({ bitmap: b, frame: 60, release });
+    const signal = new AbortController().signal;
+    expect(await planExportMotifFrame(summary(), 1_000_000, 'export-token')[0]!.read(signal)).toBe(b);
+    const [desc, request] = vi.mocked(acquireMotifFrame).mock.calls[0]!;
+    expect(desc).toMatchObject({ motifId: 'countdown', contentFrame: 60, fpsNum: 60, fpsDen: 1, renderW: 480, renderH: 480, overlayActive: false });
     // Export and finalization read full size, whatever preview's divisor.
-    expect(sharedMotifFrameCache.readBitmap).toHaveBeenCalledWith(expect.any(String), 0, 1, { finalizationToken: 'export-token' });
-    expect(captureMotifFrameResult).not.toHaveBeenCalled();
+    expect(request).toEqual({ scaleDiv: 1, priority: 'current', signal, purpose: 'export', finalizationToken: 'export-token' });
+    expect(release).not.toHaveBeenCalled();
   });
 
-  it('persists cold export frames in main and marks them baked', async () => {
-    const b = bitmap();
-    vi.mocked(sharedBakedKeyIndex.has).mockReturnValue(false);
-    vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: b, persisted: true, scaleDiv: 'live' });
-    const task = planExportMotifFrame(summary(), 1_000_000, 'export-token')[0]!;
-    expect(await task.read(new AbortController().signal)).toBe(b);
-    expect(captureMotifFrameResult).toHaveBeenCalledOnce();
-    expect(vi.mocked(captureMotifFrameResult).mock.calls[0]?.[8]).toMatchObject({
-      bake: { hash: expect.stringMatching(/^[0-9a-f]{32}$/), frame: 60 },
-      finalizationToken: 'export-token', high: true,
-    });
-    expect(sharedBakedKeyIndex.add).toHaveBeenCalledWith(expect.any(String), 60);
-  });
-
-  // The reader answers a missing or corrupt frame alike: null.
-  it.each(['missing or corrupt', 'unbaked'])('recaptures a %s frame and makes it reusable', async kind => {
-    const b = bitmap(); vi.mocked(captureMotifFrameResult).mockResolvedValue({ bitmap: b, persisted: true, scaleDiv: 'live' });
-    vi.mocked(sharedMotifFrameCache.readBitmap).mockResolvedValue(null);
-    if (kind === 'unbaked') vi.mocked(sharedBakedKeyIndex.has).mockReturnValue(false);
-    const task = planExportMotifFrame(summary(), 0)[0]!;
-    expect(await task.read(new AbortController().signal)).toBe(b);
-    expect(captureMotifFrameResult).toHaveBeenCalledOnce();
-    expect(sharedBakedKeyIndex.add).toHaveBeenCalledExactlyOnceWith(expect.any(String), 0);
-  });
-
-  it('a transport error fails the export instead of capturing', async () => {
-    const { MotifTransportError } = await vi.importActual<typeof import('./motifs/frameTransport')>('./motifs/frameTransport');
-    vi.mocked(sharedMotifFrameCache.readBitmap).mockRejectedValue(new MotifTransportError('utility', 'closed'));
+  it('sends no token outside a finalized export, and a failure fails the read', async () => {
+    vi.mocked(acquireMotifFrame).mockRejectedValue(new MotifTransportError('utility', 'closed'));
     const task = planExportMotifFrame(summary(), 0)[0]!;
     await expect(task.read(new AbortController().signal)).rejects.toBeInstanceOf(MotifTransportError);
-    expect(captureMotifFrameResult).not.toHaveBeenCalled();
-    expect(sharedBakedKeyIndex.add).not.toHaveBeenCalled();
-  });
-
-  it('keeps valid pixels uncached when main failed to store them, and propagates capture failures', async () => {
-    const b = bitmap(); vi.mocked(captureMotifFrameResult).mockResolvedValueOnce({ bitmap: b, persisted: false, scaleDiv: 'live' });
-    const task = planExportMotifFrame(summary(), 0)[0]!;
-    expect(await task.read(new AbortController().signal)).toBe(b);
-    expect(b.close).not.toHaveBeenCalled(); expect(sharedBakedKeyIndex.add).not.toHaveBeenCalled();
-    vi.mocked(captureMotifFrameResult).mockRejectedValueOnce(new Error('capture failed'));
-    await expect(task.read(new AbortController().signal)).rejects.toThrow('capture failed');
-  });
-
-  it('cancels an admitted capture and does not mark a late result baked', async () => {
-    let resolve!: (v: CapturedFrame) => void;
-    vi.mocked(captureMotifFrameResult).mockReturnValue(new Promise(r => { resolve = r; }));
-    const ctrl = new AbortController();
-    const read = planExportMotifFrame(summary(), 0)[0]!.read(ctrl.signal);
-    await vi.waitFor(() => expect(captureMotifFrameResult).toHaveBeenCalledOnce());
-    ctrl.abort();
-    expect(controlStoredMotifCapture).toHaveBeenCalledWith(expect.objectContaining({ action: 'cancel' }));
-    const b = bitmap(); resolve({ bitmap: b, persisted: true, scaleDiv: 'live' });
-    expect(await read).toBe(b); // producer owns and closes this late result
-    expect(sharedBakedKeyIndex.add).not.toHaveBeenCalled();
+    expect(vi.mocked(acquireMotifFrame).mock.calls[0]![1]).not.toHaveProperty('finalizationToken');
   });
 });

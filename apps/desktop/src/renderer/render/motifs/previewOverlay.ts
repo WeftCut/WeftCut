@@ -78,7 +78,7 @@ export function overlayMotifProps(
 }
 
 /// True while any layer has a pending patch — i.e. a gesture is live. The
-/// overlay frame lane (motifRasterCache) watches the transition to false to
+/// overlay frame lane (motifFrameSource) watches the transition to false to
 /// wipe its transient frames.
 export function motifPreviewActive(): boolean {
   return pending.size > 0;

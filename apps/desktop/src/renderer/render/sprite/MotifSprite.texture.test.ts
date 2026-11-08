@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { Container, getTextureBatchBindGroup, type BindGroup } from "pixi.js";
 import { MotifSprite } from "./MotifSprite";
 import type { ResolvedMotifView } from "../resolveView";
-import { sharedMotifFrameCache } from "../motifs/motifRasterCache";
+import { sharedMotifFrameCache } from "../motifs/motifFrameSource";
 import { getMotif, type Motif } from "../motifs/catalog";
 import { motifFrameDescriptor } from "../motifs/motifFrameDescriptor";
 
@@ -11,14 +11,11 @@ import { motifFrameDescriptor } from "../motifs/motifFrameDescriptor";
 vi.mock("../motifs/catalog", async (importOriginal) => ({
   ...await importOriginal<typeof import("../motifs/catalog")>(), getMotif: vi.fn(() => null),
 }));
-vi.mock("../motifs/motifRasterCache", async () => {
-  const { MotifFrameCache } = await import("../motifs/frameCache");
-  return {
-    sharedMotifFrameCache: new MotifFrameCache(),
-    sharedMotifOverlayCache: new MotifFrameCache(),
-    resolveMotifFrame: vi.fn(),
-  };
-});
+// L0 is real; nothing reaches the capture host.
+vi.mock("../motifs/frameTransport", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../motifs/frameTransport")>(),
+  captureMotif: vi.fn(() => ({ reply: new Promise(() => {}), setPriority: vi.fn(), cancel: vi.fn() })),
+}));
 
 const view: ResolvedMotifView = {
   motif_id: "texture-lifecycle", x: 0, y: 0, scale_x: 1, scale_y: 1,
@@ -162,21 +159,27 @@ it("draws a 1/2 preview frame with the same world bounds and pivot as a full one
 });
 
 it("keeps an evicted shared bitmap alive until both sprites have moved off it", () => {
-  const old = frame();
-  sharedMotifFrameCache.setFrame("shared", 0, 1, old);
-  const a = makeSprite();
-  const b = makeSprite();
-  const frames = [old, frame()];
-  a.update(view, 0, 1_000_000, frames);
-  b.update(view, 0, 1_000_000, frames);
-  sharedMotifFrameCache.clearAll();
-  expect(old.close).not.toHaveBeenCalled();
-  a.update(view, 33_333, 1_000_000, frames);
-  expect(old.close).not.toHaveBeenCalled();
-  const bSource = b.sprite.texture.source;
-  vi.mocked(old.close).mockImplementation(() => {
-    expect(bSource.resource).not.toBe(old);
-  });
-  b.update(view, 33_333, 1_000_000, frames);
-  expect(old.close).toHaveBeenCalledTimes(1);
+  const motif = { manifest: { id: view.motif_id, name: "M", version: 1, size: [480, 270],
+    default_duration_s: 1, props_schema: {} }, hasParamsUi: false } as unknown as Motif;
+  vi.mocked(getMotif).mockReturnValue(motif);
+  try {
+    const { cacheKey } = motifFrameDescriptor(view, 0, 1_000_000, 30, 1, motif)!;
+    const old = frame(), next = frame();
+    sharedMotifFrameCache.setFrame(cacheKey, 0, 1, old);
+    const a = makeSprite();
+    const b = makeSprite();
+    a.update(view, 0, 1_000_000);
+    b.update(view, 0, 1_000_000);
+    sharedMotifFrameCache.clearAll();
+    sharedMotifFrameCache.setFrame(cacheKey, 1, 1, next);
+    expect(old.close).not.toHaveBeenCalled();
+    a.update(view, 33_333, 1_000_000);
+    expect(old.close).not.toHaveBeenCalled();
+    const bSource = b.sprite.texture.source;
+    vi.mocked(old.close).mockImplementation(() => {
+      expect(bSource.resource).not.toBe(old);
+    });
+    b.update(view, 33_333, 1_000_000);
+    expect(old.close).toHaveBeenCalledTimes(1);
+  } finally { vi.mocked(getMotif).mockReturnValue(null); }
 });

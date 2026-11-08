@@ -19,13 +19,12 @@ import { hashCacheKey } from './frameCache';
 import { motifFrameDescriptor } from "./motifFrameDescriptor";
 import { motifTuning } from "./tuning";
 import {
-  resolveMotifFrame,
+  acquireMotifFrame,
+  motifFrameCoverage,
   sharedBakedKeyIndex,
-  sharedMotifFrameCache,
   resetMotifFrameRequests,
-  cancelMotifFrameRequest,
   setMotifPreparationCoverage,
-} from "./motifRasterCache";
+} from "./motifFrameSource";
 import { onPrebakeRequest } from "./prebakeBus";
 import { collectLiveRasterKeys } from "./liveRasterKeys";
 import type { MotifReaderDiv } from "../../../shared/motifs/readerProtocol";
@@ -99,15 +98,11 @@ export class MotifFrameService {
     this.prewarmer =
       typeof document !== "undefined"
         ? new MotifPrewarmer({
-            capBytes: sharedMotifFrameCache.capacityBytes(),
-            hasFrame: (k, f) => sharedMotifFrameCache.hasFrame(k, f, this.div),
-            prioritizeFrames: (targets) => sharedMotifFrameCache.prioritizeFrames(targets, this.div),
-            setFrame: (k, f, div, b) => {
-              sharedMotifFrameCache.setFrame(k, f, div, b);
-            },
+            capBytes: motifFrameCoverage.capacityBytes(),
+            coverage: motifFrameCoverage,
+            acquire: acquireMotifFrame,
             schedule: (cb) => scheduleIdle(cb),
             cancel: (t) => cancelIdle(t),
-            cancelRequest: cancelMotifFrameRequest,
             onProgress: () => this.recomputeBakeStatuses(),
           })
         : null;
@@ -276,16 +271,8 @@ export class MotifFrameService {
       const motif = getMotif(layer.params.motif_id);
       if (!motif) return;
       const durationUs = layer.t_end_us - layer.t_start_us;
-      const view = layer.params;
-      const fpsNum = this.deps.fpsNum();
-      const fpsDen = this.deps.fpsDen();
-      const desc = motifFrameDescriptor(view, tInLayerUs, durationUs, fpsNum, fpsDen, motif);
+      const desc = motifFrameDescriptor(layer.params, tInLayerUs, durationUs, this.deps.fpsNum(), this.deps.fpsDen(), motif);
       if (!desc) return;
-      // Capture the plan-time inputs in locals so the async render closure
-      // binds the values that produced THIS cacheKey, not whatever the fps
-      // getters return at raster time (which could drift if the project fps
-      // changes).
-      const canonicalProps = desc.canonicalProps;
       // Saved frames read at the divisor; holes are captured at full size.
       // Plan only fully saved content at the smaller size, so the window
       // never outgrows L0 with captures.
@@ -298,23 +285,10 @@ export class MotifFrameService {
         // What one warmed frame costs the byte-bounded L0 cache — the planner
         // budget is in bytes, so a small Motif warms deeper than a 1080p one.
         frameBytes: Math.ceil(desc.renderW / div) * Math.ceil(desc.renderH / div) * 4,
-        // tSec for an arbitrary content frame = frame * fpsDen / fpsNum.
-        // Disk-first: prefer a baked frame over a live raster, falling through
-        // to a live capture inside the resolver on a miss.
-        render: (frame: number, requestKey: string) =>
-          resolveMotifFrame(
-            motif,
-            desc.cacheKey,
-            frame,
-            (frame * fpsDen) / fpsNum,
-            canonicalProps,
-            requestKey,
-            fpsNum,
-            fpsDen,
-            false,
-            'background',
-            scaleDiv,
-          ),
+        // The descriptor binds the plan-time fps, so a later fps change
+        // cannot drift the frames it names.
+        descriptor: desc,
+        scaleDiv,
       });
     }, motifTuning().prewarmLookaheadMs * 1000);
     this.prewarmer.setTargets(specs);
@@ -494,7 +468,7 @@ export class MotifFrameService {
       // L0 coverage of this layer's content frames — the "is preview warm"
       // signal that drives the green bar — the cache owns exact O(1) counts,
       // including frames that predate this service (e.g. preview remount).
-      const covered = sharedMotifFrameCache.frameCount(desc.cacheKey, this.div);
+      const covered = motifFrameCoverage.count(desc.cacheKey, this.div);
       const status = motifWarmPhase(
         live ?? null,
         covered,

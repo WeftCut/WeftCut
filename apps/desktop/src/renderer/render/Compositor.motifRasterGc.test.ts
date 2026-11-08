@@ -7,7 +7,7 @@ import type { DecoderPool } from "./decoder/session";
 import { Compositor } from "./Compositor";
 import { getMotif } from "./motifs/catalog";
 import { motifFrameDescriptor } from "./motifs/motifFrameDescriptor";
-import { sharedBakedKeyIndex } from "./motifs/motifRasterCache";
+import { sharedBakedKeyIndex } from "./motifs/motifFrameSource";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { useMotifBakeStatusStore, setLayerBakeStatuses } from "../timeline/motifBakeStatusStore";
 import { summaryFixture } from "../testing/summaryFixture";

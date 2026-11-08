@@ -11,33 +11,37 @@ vi.mock("../motifs/catalog", async (importOriginal) => {
   return { ...actual, getMotif: (id: string) => getMotifMock(id) };
 });
 
-// Observe the (cacheKey, frame) the sprite requests, and never resolve a real
-// raster (the async path is irrelevant to the refresh-guard assertion).
+// Observe the (cacheKey, frame, divisor) the sprite peeks at in the committed
+// lane, and the leases it takes and releases. Overlay frames go through the
+// real lane. `acquireMotifFrame` is controlled per test.
 const getFrameMock = vi.fn(
   (_cacheKey: string, _frame: number, _div?: number): ImageBitmap | null => null,
 );
-const setFrameMock = vi.fn((_k: string, _f: number, _div: unknown, b: unknown) => b);
 const retainMock = vi.fn((_b: unknown) => {});
 const releaseMock = vi.fn((_b: unknown) => {});
-vi.mock("../motifs/motifRasterCache", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../motifs/motifRasterCache")>();
+vi.mock("../motifs/motifFrameSource", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../motifs/motifFrameSource")>();
   return {
     ...actual,
-    sharedMotifFrameCache: {
-      getFrame: (cacheKey: string, frame: number, div: number) => getFrameMock(cacheKey, frame, div),
-      setFrame: (k: string, f: number, div: unknown, b: unknown) => setFrameMock(k, f, div, b),
-      retain: (b: unknown) => retainMock(b),
-      release: (b: unknown) => releaseMock(b),
-      readPng: vi.fn(async () => null),
+    peekMotifFrame: (d: MotifFrameDescriptor, div: MotifReaderDiv, frame = d.contentFrame) => {
+      if (d.overlayActive) return actual.peekMotifFrame(d, div, frame);
+      const bitmap = getFrameMock(d.cacheKey, frame, div);
+      if (!bitmap) return null;
+      retainMock(bitmap);
+      return { bitmap, frame, release: () => releaseMock(bitmap) };
     },
-    resolveMotifFrame: vi.fn(async () => frameOf({} as ImageBitmap)),
+    acquireMotifFrame: vi.fn(() => new Promise(() => {})),
   };
 });
+vi.mock("../motifs/frameTransport", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../motifs/frameTransport")>(), captureMotif: vi.fn(),
+}));
 
-/// A `resolveMotifFrame` result: a live capture, full size.
-function frameOf(bitmap: ImageBitmap) {
-  return { bitmap, persisted: false, scaleDiv: "live" as const };
+/// An acquired frame. Its pin is the source's; the test sees its release.
+function leaseOf(bitmap: ImageBitmap, frame = 0): MotifFrameLease {
+  return { bitmap, frame, release: () => releaseMock(bitmap) };
 }
+const bound = (sprite: MotifSprite) => sprite.sprite.texture.source?.resource;
 
 import {
   frameTimeSec,
@@ -48,15 +52,18 @@ import {
 import type { MotifManifest, Motif } from "../motifs/catalog";
 import type { ResolvedMotifView } from "../resolveView";
 import { MotifSprite } from "./MotifSprite";
-import { resolveMotifFrame, sharedMotifOverlayCache } from "../motifs/motifRasterCache";
+import {
+  acquireMotifFrame, resetMotifFrameRequests, sharedMotifFrameCache, sharedMotifOverlayCache, type MotifFrameLease,
+} from "../motifs/motifFrameSource";
+import type { MotifFrameDescriptor } from "../motifs/motifFrameDescriptor";
+import type { MotifReaderDiv } from "../../../shared/motifs/readerProtocol";
 import { resetMotifPreview, setMotifPreviewProps } from "../motifs/previewOverlay";
-import { MotifTransportError } from "../motifs/frameTransport";
+import { captureMotif, MotifTransportError } from "../motifs/frameTransport";
 
 describe("MotifSprite export frames", () => {
   it("renders baked user Motifs without a runtime catalog in the Worker", () => {
     getMotifMock.mockReset().mockReturnValue(null);
-    retainMock.mockClear();
-    vi.mocked(resolveMotifFrame).mockClear();
+    vi.mocked(acquireMotifFrame).mockClear();
     const frames = [
       { width: 480, height: 480 },
       { width: 480, height: 480 },
@@ -72,11 +79,11 @@ describe("MotifSprite export frames", () => {
     try {
       sprite.update(view, 0, 1_000_000, frames);
       expect(sprite.stageReady).toBe(true);
-      expect(retainMock).toHaveBeenLastCalledWith(frames[0]);
+      expect(bound(sprite)).toBe(frames[0]);
       sprite.update({ ...view, opacity: 0.5 }, 33_333, 1_000_000, frames);
-      expect(retainMock).toHaveBeenLastCalledWith(frames[1]);
+      expect(bound(sprite)).toBe(frames[1]);
       expect(sprite.sprite.alpha).toBe(0.5);
-      expect(resolveMotifFrame).not.toHaveBeenCalled();
+      expect(acquireMotifFrame).not.toHaveBeenCalled();
     } finally {
       sprite.dispose();
     }
@@ -289,7 +296,7 @@ describe("MotifSprite.refreshMotif", () => {
       getFrameMock.mockReset().mockReturnValue(null);
       retainMock.mockClear();
       releaseMock.mockClear();
-      vi.mocked(resolveMotifFrame).mockReset();
+      vi.mocked(acquireMotifFrame).mockReset();
       sprite = new MotifSprite({ layerId: "recovery", motifId: "d1", fpsNum: 30, fpsDen: 1 });
     });
     afterEach(() => {
@@ -299,111 +306,113 @@ describe("MotifSprite.refreshMotif", () => {
     });
 
     it("adopts a warmed frame after capture failure without moving the playhead", async () => {
-      vi.mocked(resolveMotifFrame).mockRejectedValueOnce(new Error("capture unavailable"));
+      vi.mocked(acquireMotifFrame).mockRejectedValueOnce(new Error("capture unavailable"));
       sprite.update(view, 0, 5_000_000);
       await flush();
       const recovered = bitmap();
       getFrameMock.mockReturnValue(recovered);
       sprite.update(view, 0, 5_000_000);
       expect(retainMock).toHaveBeenCalledWith(recovered);
-      expect(resolveMotifFrame).toHaveBeenCalledTimes(1);
+      expect(acquireMotifFrame).toHaveBeenCalledTimes(1);
     });
 
     it("retries a failed capture after a delay and stops requesting once bound", async () => {
       const recovered = bitmap();
-      vi.mocked(resolveMotifFrame).mockRejectedValueOnce(new Error("capture unavailable"))
-        .mockResolvedValueOnce(frameOf(recovered));
+      vi.mocked(acquireMotifFrame).mockRejectedValueOnce(new Error("capture unavailable"))
+        .mockResolvedValueOnce(leaseOf(recovered));
       sprite.update(view, 0, 5_000_000);
       await flush();
       for (let tick = 0; tick < 120; tick++) sprite.update(view, 0, 5_000_000);
-      expect(resolveMotifFrame).toHaveBeenCalledTimes(1);
+      expect(acquireMotifFrame).toHaveBeenCalledTimes(1);
       vi.advanceTimersByTime(250);
       sprite.update(view, 0, 5_000_000);
       await flush();
-      expect(retainMock).toHaveBeenCalledWith(recovered);
+      expect(bound(sprite)).toBe(recovered);
       for (let tick = 0; tick < 120; tick++) sprite.update(view, 0, 5_000_000);
-      expect(resolveMotifFrame).toHaveBeenCalledTimes(2);
+      expect(acquireMotifFrame).toHaveBeenCalledTimes(2);
     });
 
     it("backs off repeated failures without abandoning recovery after a prolonged outage", async () => {
-      vi.mocked(resolveMotifFrame).mockRejectedValue(new Error("capture unavailable"));
+      vi.mocked(acquireMotifFrame).mockRejectedValue(new Error("capture unavailable"));
       sprite.update(view, 0, 5_000_000);
       await flush();
       let attempts = 1;
       for (const delay of [250, 1_000, 4_000, 4_000]) {
         vi.advanceTimersByTime(delay - 1);
         for (let tick = 0; tick < 120; tick++) sprite.update(view, 0, 5_000_000);
-        expect(resolveMotifFrame).toHaveBeenCalledTimes(attempts);
+        expect(acquireMotifFrame).toHaveBeenCalledTimes(attempts);
         vi.advanceTimersByTime(1);
         sprite.update(view, 0, 5_000_000);
         await flush();
-        expect(resolveMotifFrame).toHaveBeenCalledTimes(++attempts);
+        expect(acquireMotifFrame).toHaveBeenCalledTimes(++attempts);
       }
       const recovered = bitmap();
-      vi.mocked(resolveMotifFrame).mockResolvedValueOnce(frameOf(recovered));
+      vi.mocked(acquireMotifFrame).mockResolvedValueOnce(leaseOf(recovered));
       vi.advanceTimersByTime(4_000);
       sprite.update(view, 0, 5_000_000);
       await flush();
-      expect(retainMock).toHaveBeenCalledWith(recovered);
+      expect(bound(sprite)).toBe(recovered);
     });
 
     it("does not duplicate an in-flight request", async () => {
       let finish!: (value: ImageBitmap) => void;
-      vi.mocked(resolveMotifFrame).mockReturnValue(new Promise((resolve) => { finish = b => resolve(frameOf(b)); }));
+      vi.mocked(acquireMotifFrame).mockReturnValue(new Promise((resolve) => { finish = b => resolve(leaseOf(b)); }));
       for (let tick = 0; tick < 120; tick++) sprite.update(view, 0, 5_000_000);
-      expect(resolveMotifFrame).toHaveBeenCalledTimes(1);
+      expect(acquireMotifFrame).toHaveBeenCalledTimes(1);
       const recovered = bitmap();
       finish(recovered);
       await flush();
-      expect(retainMock).toHaveBeenCalledWith(recovered);
+      expect(bound(sprite)).toBe(recovered);
     });
 
     it("keeps a useful late frame while continuous playback advances its target", async () => {
       let finish!: (value: ImageBitmap) => void;
-      vi.mocked(resolveMotifFrame).mockReturnValueOnce(new Promise(resolve => { finish = b => resolve(frameOf(b)); }))
+      vi.mocked(acquireMotifFrame).mockReturnValueOnce(new Promise(resolve => { finish = b => resolve(leaseOf(b)); }))
         .mockReturnValue(new Promise(() => {}));
       sprite.update(view, 0, 5_000_000, undefined, true);
       sprite.update(view, 33_333, 5_000_000, undefined, true);
       sprite.update(view, 66_667, 5_000_000, undefined, true);
       // Moving demand coalesces behind the one admitted request instead of
       // cancelling it each display tick and starving the visible bitmap.
-      expect(resolveMotifFrame).toHaveBeenCalledTimes(1);
+      expect(acquireMotifFrame).toHaveBeenCalledTimes(1);
       const ready = bitmap();
       finish(ready);
       await flush();
-      expect(retainMock).toHaveBeenCalledWith(ready);
-      expect(resolveMotifFrame).toHaveBeenCalledTimes(2);
-      expect(vi.mocked(resolveMotifFrame).mock.calls[1]![2]).toBe(2);
+      expect(bound(sprite)).toBe(ready);
+      expect(acquireMotifFrame).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(acquireMotifFrame).mock.calls[1]![0].contentFrame).toBe(2);
     });
 
     it("never rolls back a newer warmed bitmap when an older playback request finishes", async () => {
       let finish!: (value: ImageBitmap) => void;
-      vi.mocked(resolveMotifFrame).mockReturnValueOnce(new Promise(resolve => { finish = b => resolve(frameOf(b)); }));
+      vi.mocked(acquireMotifFrame).mockReturnValueOnce(new Promise(resolve => { finish = b => resolve(leaseOf(b)); }));
       sprite.update(view, 0, 5_000_000, undefined, true);
       const newer = bitmap();
       getFrameMock.mockReturnValue(newer);
       sprite.update(view, 66_667, 5_000_000, undefined, true);
-      finish(bitmap());
+      const late = bitmap();
+      finish(late);
       await flush();
-      expect(retainMock.mock.calls).toEqual([[newer]]);
+      expect(bound(sprite)).toBe(newer);
+      expect(releaseMock.mock.calls).toEqual([[late]]);
       expect(sprite.playbackSnapshot().boundFrame).toBe(2);
     });
 
     it("uses a newer recent cached frame while waiting for the exact playback target", () => {
       const recent = bitmap();
-      vi.mocked(resolveMotifFrame).mockReturnValue(new Promise(() => {}));
+      vi.mocked(acquireMotifFrame).mockReturnValue(new Promise(() => {}));
       getFrameMock.mockImplementation((_key, frame) => frame === 2 ? recent : null);
       sprite.update(view, 100_000, 5_000_000, undefined, true);
       expect(retainMock).toHaveBeenCalledWith(recent);
       expect(sprite.playbackSnapshot().boundFrame).toBe(2);
       expect(sprite.playbackSnapshot().lagFrames).toBe(1);
-      expect(resolveMotifFrame).toHaveBeenCalledTimes(1);
+      expect(acquireMotifFrame).toHaveBeenCalledTimes(1);
     });
 
     it("keeps reporting the shown frame after a play reset until the new session binds", () => {
       const paused = bitmap();
       getFrameMock.mockImplementation((_key, frame) => frame === 0 ? paused : null);
-      vi.mocked(resolveMotifFrame).mockReturnValue(new Promise(() => {}));
+      vi.mocked(acquireMotifFrame).mockReturnValue(new Promise(() => {}));
       sprite.update(view, 0, 5_000_000, undefined, false);
       expect(sprite.playbackSnapshot()).toMatchObject({ boundFrame: 0, shownFrame: 0 });
       // Playback starts past the recent-frame window, so nothing new binds yet.
@@ -414,11 +423,11 @@ describe("MotifSprite.refreshMotif", () => {
 
     it("does not substitute a recent cached frame for an exact paused target", () => {
       getFrameMock.mockImplementation((_key, frame) => frame === 2 ? bitmap() : null);
-      vi.mocked(resolveMotifFrame).mockReturnValue(new Promise(() => {}));
+      vi.mocked(acquireMotifFrame).mockReturnValue(new Promise(() => {}));
       sprite.update(view, 100_000, 5_000_000, undefined, false);
       expect(retainMock).not.toHaveBeenCalled();
       expect(sprite.playbackSnapshot().boundFrame).toBeNull();
-      expect(vi.mocked(resolveMotifFrame).mock.calls[0]![2]).toBe(3);
+      expect(vi.mocked(acquireMotifFrame).mock.calls[0]![0].contentFrame).toBe(3);
     });
 
     it("counts outdated holds but not time holding the correct capped content frame", async () => {
@@ -427,55 +436,57 @@ describe("MotifSprite.refreshMotif", () => {
       getMotifMock.mockReturnValue(capped);
       sprite.refreshMotif();
       const frame = bitmap();
-      vi.mocked(resolveMotifFrame).mockResolvedValue(frameOf(frame));
+      vi.mocked(acquireMotifFrame).mockResolvedValue(leaseOf(frame));
       sprite.update(view, 10_000_000, 12_000_000, undefined, true);
       await flush();
       const bound = sprite.playbackSnapshot().boundFrame;
       vi.advanceTimersByTime(1_000);
       sprite.update(view, 11_000_000, 12_000_000, undefined, true);
       expect(sprite.playbackSnapshot()).toMatchObject({ boundFrame: bound, lagFrames: 0, heldMs: 0 });
-      expect(resolveMotifFrame).toHaveBeenCalledTimes(1);
+      expect(acquireMotifFrame).toHaveBeenCalledTimes(1);
     });
 
     it("rejects an in-flight frame across an explicit same-target seek", async () => {
       let finish!: (value: ImageBitmap) => void;
-      vi.mocked(resolveMotifFrame).mockReturnValueOnce(new Promise(resolve => { finish = b => resolve(frameOf(b)); }))
+      vi.mocked(acquireMotifFrame).mockReturnValueOnce(new Promise(resolve => { finish = b => resolve(leaseOf(b)); }))
         .mockReturnValue(new Promise(() => {}));
       sprite.update(view, 0, 5_000_000, undefined, true);
       sprite.invalidatePlayback();
+      expect(vi.mocked(acquireMotifFrame).mock.calls[0]![1].signal.aborted).toBe(true);
       sprite.update(view, 0, 5_000_000, undefined, true);
       const stale = bitmap(); finish(stale);
       await flush();
-      expect(retainMock).not.toHaveBeenCalled();
-      expect(stale.close).toHaveBeenCalledOnce();
+      expect(bound(sprite)).not.toBe(stale);
+      expect(releaseMock.mock.calls).toEqual([[stale]]);
     });
 
     it("converges to the exact paused target instead of binding the earlier playback result", async () => {
       const finishes: ((value: ImageBitmap) => void)[] = [];
-      vi.mocked(resolveMotifFrame).mockImplementation(() => new Promise(resolve => finishes.push(b => resolve(frameOf(b)))));
+      vi.mocked(acquireMotifFrame).mockImplementation(() => new Promise(resolve => finishes.push(b => resolve(leaseOf(b)))));
       sprite.update(view, 0, 5_000_000, undefined, true);
       sprite.update(view, 66_667, 5_000_000, undefined, false);
       const old = bitmap(), exact = bitmap();
       finishes[0]!(old); finishes[1]!(exact); await flush();
-      expect(retainMock.mock.calls).toEqual([[exact]]);
-      expect(old.close).toHaveBeenCalledOnce();
+      expect(bound(sprite)).toBe(exact);
+      expect(releaseMock.mock.calls).toEqual([[old]]);
       expect(sprite.playbackSnapshot().lagFrames).toBe(0);
     });
 
     it("keeps identical layer ids in different Group instances on independent request subscriptions", () => {
-      vi.mocked(resolveMotifFrame).mockReturnValue(new Promise(() => {}));
+      vi.mocked(acquireMotifFrame).mockReturnValue(new Promise(() => {}));
       const sibling = new MotifSprite({ layerId: "recovery", motifId: "d1", fpsNum: 30, fpsDen: 1 });
       try {
         sprite.update(view, 0, 5_000_000, undefined, true);
         sibling.update(view, 1_000_000, 5_000_000, undefined, true);
-        const calls = vi.mocked(resolveMotifFrame).mock.calls;
-        expect(calls[0]![5]).not.toBe(calls[1]![5]);
+        const owners = vi.mocked(acquireMotifFrame).mock.calls.map(([, request]) => request.owner);
+        expect(owners[0]).toBeDefined();
+        expect(owners[0]).not.toBe(owners[1]);
       } finally { sibling.dispose(); }
     });
 
     it("ignores an old failure after another frame has bound", async () => {
       let fail!: (error: Error) => void;
-      vi.mocked(resolveMotifFrame).mockReturnValueOnce(new Promise((_resolve, reject) => { fail = reject; }));
+      vi.mocked(acquireMotifFrame).mockReturnValueOnce(new Promise((_resolve, reject) => { fail = reject; }));
       sprite.update(view, 0, 5_000_000);
       const next = bitmap();
       getFrameMock.mockReturnValue(next);
@@ -485,13 +496,13 @@ describe("MotifSprite.refreshMotif", () => {
       getFrameMock.mockReturnValue(null);
       vi.advanceTimersByTime(10_000);
       sprite.update(view, 1_000_000, 5_000_000);
-      expect(resolveMotifFrame).toHaveBeenCalledTimes(1);
+      expect(acquireMotifFrame).toHaveBeenCalledTimes(1);
       expect(retainMock.mock.calls).toEqual([[next]]);
     });
 
     it("does not back off forward playback when a cache hit has overtaken a failing request", async () => {
       let fail!: (error: Error) => void;
-      vi.mocked(resolveMotifFrame).mockReturnValueOnce(new Promise((_resolve, reject) => { fail = reject; }))
+      vi.mocked(acquireMotifFrame).mockReturnValueOnce(new Promise((_resolve, reject) => { fail = reject; }))
         .mockReturnValue(new Promise(() => {}));
       sprite.update(view, 0, 5_000_000, undefined, true);
       getFrameMock.mockReturnValue(bitmap());
@@ -499,19 +510,21 @@ describe("MotifSprite.refreshMotif", () => {
       fail(new Error('old read failed')); await flush();
       getFrameMock.mockReturnValue(null);
       sprite.update(view, 100_000, 5_000_000, undefined, true);
-      expect(resolveMotifFrame).toHaveBeenCalledTimes(2);
+      expect(acquireMotifFrame).toHaveBeenCalledTimes(2);
     });
 
     it("does not bind a stale capture when seeking away and back", async () => {
       let finish!: (value: ImageBitmap) => void;
-      vi.mocked(resolveMotifFrame).mockReturnValueOnce(new Promise((resolve) => { finish = b => resolve(frameOf(b)); }))
+      vi.mocked(acquireMotifFrame).mockReturnValueOnce(new Promise((resolve) => { finish = b => resolve(leaseOf(b)); }))
         .mockReturnValue(new Promise(() => {}));
       sprite.update(view, 0, 5_000_000);
       sprite.update(view, 1_000_000, 5_000_000);
       sprite.update(view, 0, 5_000_000);
-      finish(bitmap());
+      const stale = bitmap();
+      finish(stale);
       await flush();
-      expect(retainMock).not.toHaveBeenCalled();
+      expect(bound(sprite)).not.toBe(stale);
+      expect(releaseMock.mock.calls).toEqual([[stale]]);
     });
 
     it("reads at the preview divisor and refills on a change, keeping the bound frame meanwhile", async () => {
@@ -519,45 +532,45 @@ describe("MotifSprite.refreshMotif", () => {
       const scaled = new MotifSprite({ layerId: "scaled", motifId: "d1", fpsNum: 30, fpsDen: 1, scaleDiv: () => div });
       try {
         const half = bitmap();
-        vi.mocked(resolveMotifFrame).mockResolvedValueOnce({ bitmap: half, persisted: true, scaleDiv: 2 })
+        vi.mocked(acquireMotifFrame).mockResolvedValueOnce(leaseOf(half))
           .mockReturnValue(new Promise(() => {}));
         scaled.update(view, 0, 5_000_000);
         expect(getFrameMock).toHaveBeenLastCalledWith(expect.any(String), 0, 2);
         await flush();
-        expect(setFrameMock).toHaveBeenLastCalledWith(expect.any(String), 0, 2, half);
-        expect(retainMock).toHaveBeenLastCalledWith(half);
+        expect(bound(scaled)).toBe(half);
         div = 1;
         scaled.update(view, 0, 5_000_000);
         expect(getFrameMock).toHaveBeenLastCalledWith(expect.any(String), 0, 1);
-        expect(vi.mocked(resolveMotifFrame).mock.calls.map(call => call[10])).toEqual([2, 1]);
+        expect(vi.mocked(acquireMotifFrame).mock.calls.map(([, request]) => request.scaleDiv)).toEqual([2, 1]);
         expect(releaseMock).not.toHaveBeenCalledWith(half); // still on screen
       } finally { scaled.dispose(); }
     });
 
     it("keeps the bound frame on a transport error and retries after the backoff", async () => {
       const shown = bitmap();
-      vi.mocked(resolveMotifFrame).mockResolvedValueOnce(frameOf(shown))
+      vi.mocked(acquireMotifFrame).mockResolvedValueOnce(leaseOf(shown))
         .mockRejectedValueOnce(new MotifTransportError("utility", "closed"))
         .mockReturnValue(new Promise(() => {}));
       sprite.update(view, 0, 5_000_000); await flush();
       sprite.update(view, 1_000_000, 5_000_000); await flush();
-      expect(retainMock.mock.calls).toEqual([[shown]]);
+      expect(bound(sprite)).toBe(shown);
       expect(releaseMock).not.toHaveBeenCalled();
       sprite.update(view, 1_000_000, 5_000_000);
-      expect(resolveMotifFrame).toHaveBeenCalledTimes(2);
+      expect(acquireMotifFrame).toHaveBeenCalledTimes(2);
       vi.advanceTimersByTime(250);
       sprite.update(view, 1_000_000, 5_000_000);
-      expect(resolveMotifFrame).toHaveBeenCalledTimes(3);
+      expect(acquireMotifFrame).toHaveBeenCalledTimes(3);
     });
 
     it("does not bind a capture completed after disposal", async () => {
       let finish!: (value: ImageBitmap) => void;
-      vi.mocked(resolveMotifFrame).mockReturnValueOnce(new Promise((resolve) => { finish = b => resolve(frameOf(b)); }));
+      vi.mocked(acquireMotifFrame).mockReturnValueOnce(new Promise((resolve) => { finish = b => resolve(leaseOf(b)); }));
       sprite.update(view, 0, 5_000_000);
       sprite.dispose();
-      finish(bitmap());
+      const late = bitmap();
+      finish(late);
       await flush();
-      expect(retainMock).not.toHaveBeenCalled();
+      expect(releaseMock.mock.calls).toEqual([[late]]);
     });
   });
 });
@@ -591,23 +604,27 @@ describe("MotifSprite overlay gesture lane", () => {
     anchor_x: 0.5, anchor_y: 0.5, opacity: 1, src_in_us: 0, props: {},
   };
 
-  const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
+  const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+  const frame = () => ({ width: 480, height: 480, close: vi.fn() }) as unknown as ImageBitmap;
 
   let sprite: MotifSprite | null = null;
-  beforeEach(() => {
+  beforeEach(async () => {
     getMotifMock.mockReset();
     getMotifMock.mockReturnValue(motifWith("A"));
     getFrameMock.mockReset().mockReturnValue(null);
-    setFrameMock.mockClear();
     sharedMotifOverlayCache.clearAll();
-    // Lane entries need dims + close(): the real cache accounts
-    // width × height × 4 per frame and retires via close().
-    vi.mocked(resolveMotifFrame).mockReset();
-    vi.mocked(resolveMotifFrame).mockImplementation(async () =>
-      frameOf({ width: 480, height: 480, close: vi.fn() } as unknown as ImageBitmap));
+    // The real acquire, with the capture host answering at once. Lane entries
+    // need dims + close(): the real cache accounts width × height × 4 per
+    // frame and retires via close().
+    const actual = await vi.importActual<typeof import("../motifs/motifFrameSource")>("../motifs/motifFrameSource");
+    vi.mocked(acquireMotifFrame).mockReset().mockImplementation(actual.acquireMotifFrame);
+    vi.mocked(captureMotif).mockReset().mockImplementation(() => ({
+      reply: Promise.resolve({ kind: "pixels", bitmap: frame(), persisted: false }), setPriority: vi.fn(), cancel: vi.fn(),
+    }));
   });
   afterEach(() => {
     sprite?.dispose();
+    resetMotifFrameRequests();
     resetMotifPreview();
     sharedMotifOverlayCache.clearAll();
   });
@@ -617,9 +634,10 @@ describe("MotifSprite overlay gesture lane", () => {
     sprite = new MotifSprite({ layerId: "L1", motifId: "d1", fpsNum: 30, fpsDen: 1 });
     sprite.update(overlayView, 0, 5_000_000);
     expect(getFrameMock).not.toHaveBeenCalled(); // no shared-LRU read
-    await flush();
-    expect(setFrameMock).not.toHaveBeenCalled(); // no shared-LRU write
+    await settle();
+    expect(sharedMotifFrameCache.size()).toBe(0); // no shared-LRU write
     expect(sharedMotifOverlayCache.size()).toBe(1); // the frame lives in the lane
+    expect(bound(sprite)).toBe(sharedMotifOverlayCache.getFrame(vi.mocked(acquireMotifFrame).mock.calls[0]![0].cacheKey, 0, 1));
   });
 
   it("uses the shared LRU exactly as before when no patch is pending", () => {
@@ -633,23 +651,26 @@ describe("MotifSprite overlay gesture lane", () => {
     setMotifPreviewProps("L1", { seconds: 9 });
     sprite = new MotifSprite({ layerId: "L1", motifId: "d1", fpsNum: 30, fpsDen: 1 });
     sprite.update(overlayView, 0, 5_000_000);
-    await flush();
+    await settle();
     expect(sharedMotifOverlayCache.size()).toBe(1);
+    const shown = bound(sprite) as ImageBitmap;
 
     // Commit/cancel clears the pending patch → the lane's frames are garbage.
     resetMotifPreview();
     expect(sharedMotifOverlayCache.size()).toBe(0);
     // …and the sprite's still-bound lane frame was parked, not closed under
     // its texture (same retire path as LRU eviction) — dispose releases it.
+    expect(shown.close).not.toHaveBeenCalled();
     sprite.dispose();
+    expect(shown.close).toHaveBeenCalledOnce();
   });
 
   it("a lane-cached gesture frame binds from the lane on a later visit", async () => {
     setMotifPreviewProps("L1", { seconds: 9 });
     sprite = new MotifSprite({ layerId: "L1", motifId: "d1", fpsNum: 30, fpsDen: 1 });
     sprite.update(overlayView, 0, 5_000_000);
-    await flush();
-    expect(vi.mocked(resolveMotifFrame)).toHaveBeenCalledTimes(1);
+    await settle();
+    expect(vi.mocked(acquireMotifFrame)).toHaveBeenCalledTimes(1);
 
     // A second sprite at the same gesture state hits the LANE — no recapture,
     // no committed-LRU read.
@@ -657,7 +678,9 @@ describe("MotifSprite overlay gesture lane", () => {
     setMotifPreviewProps("L2", { seconds: 9 });
     sibling.update(overlayView, 0, 5_000_000);
     expect(getFrameMock).not.toHaveBeenCalled();
-    expect(vi.mocked(resolveMotifFrame)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(acquireMotifFrame)).toHaveBeenCalledTimes(1);
+    expect(captureMotif).toHaveBeenCalledOnce();
+    expect(bound(sibling)).toBe(bound(sprite));
     sibling.dispose();
   });
 });

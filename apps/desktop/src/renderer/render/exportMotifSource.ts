@@ -4,10 +4,7 @@ import { snapFrameFloor } from "../frames";
 import { motifLayersToBake } from "./exportBake";
 import { motifFrameDescriptor } from "./motifs/motifFrameDescriptor";
 import { tInLayerUsForLayerLocalFrame } from "./motifs/motifFrames";
-import { captureMotifFrameResult } from "./motifs/host";
-import { controlStoredMotifCapture } from "./motifs/frameTransport";
-import { hashCacheKey } from "./motifs/frameCache";
-import { sharedBakedKeyIndex, sharedMotifFrameCache } from "./motifs/motifRasterCache";
+import { acquireMotifFrame } from "./motifs/motifFrameSource";
 import { frameTimeUs } from "./worker/frameGrid";
 import type { MotifReadTask } from "./worker/motifStream";
 
@@ -27,33 +24,16 @@ export function planExportMotifFrame(
       layerId: spec.layerId, frame: spec.firstFrame,
       bytes: desc.renderW * desc.renderH * 4,
       async read(signal) {
-        signal.throwIfAborted();
-        if (sharedBakedKeyIndex.has(desc.cacheKey)) {
-          // Export reads full size. A missing or corrupt frame (null) is
-          // captured below; a `MotifTransportError` fails the export instead,
-          // because the file is not known to be bad (ADR 0154).
-          const bitmap = await sharedMotifFrameCache.readBitmap(desc.cacheKey, desc.contentFrame, 1,
-            finalizationToken ? { finalizationToken } : {});
-          if (bitmap) return bitmap; // producer closes late results on cancel
-        }
-        signal.throwIfAborted();
-        const key = `export-motif:${crypto.randomUUID()}`;
-        const cancel = () => controlStoredMotifCapture({ key, action: "cancel" });
-        signal.addEventListener("abort", cancel, { once: true });
-        let bitmap: ImageBitmap;
-        let persisted: boolean;
-        try {
-          ({ bitmap, persisted } = await captureMotifFrameResult(spec.motif.manifest.id,
-            desc.tSec, desc.canonicalProps, desc.renderW, desc.renderH,
-            spec.motif.manifest.content_hash,
-            comp.fps_num, comp.fps_den, { key, high: true,
-              bake: { hash: hashCacheKey(desc.cacheKey), frame: desc.contentFrame },
-              ...(finalizationToken ? { finalizationToken } : {}) }));
-        } finally { signal.removeEventListener("abort", cancel); }
-        // Main stores what it captures (ADR 0158). A frame it failed to store
-        // stays uncached; export keeps its pixels either way.
-        if (persisted && !signal.aborted) sharedBakedKeyIndex.add(desc.cacheKey, desc.contentFrame);
-        return bitmap;
+        // Full size, read through the export's finalization or captured and
+        // kept by main (ADR 0158). A transport error fails the export: the
+        // file is not known to be bad (ADR 0154). A frame main failed to
+        // store stays uncached and the export keeps its pixels.
+        const lease = await acquireMotifFrame(desc, {
+          scaleDiv: 1, priority: 'current', signal, purpose: 'export',
+          ...(finalizationToken ? { finalizationToken } : {}),
+        });
+        // The stream owns the bitmap from here: it transfers or closes it.
+        return lease.bitmap;
       },
     };
   });

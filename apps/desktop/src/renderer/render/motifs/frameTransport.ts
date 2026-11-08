@@ -1,13 +1,7 @@
-import type { MotifCacheAddress, MotifCaptureControl, MotifReadUnavailable, MotifTextureReadRequest, MotifUploadTiming } from '../../../shared/motifs/frameTransport';
-import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
+import type { MotifCacheAddress, MotifCaptureControl, MotifFramePriority, MotifReadUnavailable, MotifTextureReadRequest, MotifUploadTiming } from '../../../shared/motifs/frameTransport';
 import { isMotifErrorCode, MotifError, type MotifErrorCode } from '../../../shared/motifs/errors';
 import { MOTIF_DEADLINES } from '../../../shared/motifs/tuning';
 
-/** The divisor a Motif bitmap is at. `'live'` is a live capture: full size
- * whatever was asked, because a frame that is not stored has no smaller form.
- * L0 stores it as divisor 1 (ADR 0154). */
-export type MotifFrameDiv = MotifReaderDiv | 'live';
-export interface CapturedFrame { bitmap: ImageBitmap; persisted: boolean; scaleDiv: MotifFrameDiv }
 interface FrameReply {
   bitmap: ImageBitmap | null;
   persisted: boolean;
@@ -49,7 +43,7 @@ export type MotifTextureRead =
  * caller. An error reply or a silent port is a `MotifTransportError`. */
 export async function readMotifTexture(read: MotifTextureReadRequest): Promise<MotifTextureRead> {
   let reply: FrameReply;
-  try { reply = await request({ ...read }); }
+  try { reply = await send({ ...read }); }
   catch (error) {
     throw new MotifTransportError('texture', error instanceof FramePortTimeout ? 'timeout' : 'error', (error as Error).message);
   }
@@ -62,40 +56,85 @@ export async function readMotifTexture(read: MotifTextureReadRequest): Promise<M
   };
 }
 
-export async function captureStoredMotifFrame(capture: Record<string, unknown>): Promise<ImageBitmap> {
-  return (await captureMotifResult(capture)).bitmap;
+/** One capture of a Motif frame in main's capture host. */
+export interface MotifCaptureRequest {
+  motifId: string;
+  tSec: number;
+  propsJson: string;
+  width: number;
+  height: number;
+  contentHash: string;
+  /** The composition fps `tSec` was computed on; main falls back to 30. */
+  fpsNum?: number;
+  fpsDen?: number;
+  priority: MotifFramePriority;
+  /** The frame's cache address. Without one, main neither stores the frame
+   * nor answers `stored`. */
+  address?: MotifCacheAddress;
+  /** `keep`: main stores the frame and reports whether it did. `offer`
+   * (default): main stores it when it has room. */
+  store?: 'keep' | 'offer';
+  /** The renderer's read of `address` missed: main captures without checking
+   * the store, so a corrupt file cannot answer `stored` again. */
+  afterMiss?: boolean;
+  finalizationToken?: string;
 }
 
-/** `scaleDiv` is the divisor a `stored` reply is read at. */
-export function captureMotifResult(capture: Record<string, unknown>, scaleDiv: MotifReaderDiv = 1): Promise<CapturedFrame> {
-  return captureOnce(capture, scaleDiv, false);
+/** `stored`: the frame is on disk at the request's address and main sent no
+ * pixels; the caller reads it (ADR 0154). */
+export type MotifCaptureReply =
+  | { kind: 'pixels'; bitmap: ImageBitmap; persisted: boolean }
+  | { kind: 'stored' };
+
+/** A capture in flight. `cancel` withdraws it from main's queue; a capture
+ * already running still answers, and the caller closes what arrives. */
+export interface MotifCaptureCall {
+  reply: Promise<MotifCaptureReply>;
+  setPriority(priority: MotifFramePriority): void;
+  cancel(): void;
 }
 
-async function captureOnce(capture: Record<string, unknown>, scaleDiv: MotifReaderDiv, recaptured: boolean): Promise<CapturedFrame> {
-  const { bitmap, persisted, stored } = await request({ capture });
-  if (bitmap) return { bitmap, persisted, scaleDiv: 'live' };
-  if (!stored) throw new Error("Motif capture returned no frame");
-  // Main sent no pixels (ADR 0154): read the frame through the reader. A
-  // joined bake persisted at `bake`; otherwise the `cache` re-check found it.
-  const address = (capture.bake ?? capture.cache) as MotifCacheAddress | undefined;
-  if (address) {
-    const { motifFrameReader } = await import('./MotifFrameReader');
-    // A transport error propagates: the file is not known to be bad.
-    const read = await motifFrameReader().readAddress(address, scaleDiv,
-      typeof capture.finalizationToken === 'string' ? { finalizationToken: capture.finalizationToken } : {});
-    if (read) return { bitmap: read, persisted: true, scaleDiv };
-  }
-  // The stored frame did not read, and the reader reported it to main. Capture
-  // live, without the `cache` re-check, so a corrupt file cannot loop.
-  if (recaptured) throw new Error("Motif capture returned no frame");
-  const live = { ...capture };
-  delete live.cache;
-  return captureOnce(live, scaleDiv, true);
-}
+// Main keys queued captures by sender; a reloaded document must not reuse its
+// predecessor's keys.
+const callPrefix = `motif-capture:${crypto.randomUUID()}`;
+let nextCall = 0;
 
-// Same port as capture admission, so promote/cancel cannot overtake its request.
-export function controlStoredMotifCapture(control: MotifCaptureControl): void {
-  port?.postMessage({ control });
+export function captureMotif(request: MotifCaptureRequest): MotifCaptureCall {
+  const perf = typeof window === 'undefined' ? undefined
+    : (window as unknown as { __weftcutMotifPerf?: { renders: number } }).__weftcutMotifPerf;
+  if (perf) perf.renders++;
+  const { priority, address, store, afterMiss, finalizationToken, ...args } = request;
+  // Main's queue has two classes: `current` is high, the rest are low. A
+  // promotion cannot be taken back.
+  const key = `${callPrefix}:${++nextCall}`;
+  let high = priority === 'current';
+  let settled = false;
+  const reply = (async (): Promise<MotifCaptureReply> => {
+    try {
+      const { bitmap, persisted, stored } = await send({ capture: {
+        ...args, coalesceKey: key, high,
+        ...(address && store === 'keep' ? { bake: address } : {}),
+        ...(address && !afterMiss ? { cache: address } : {}),
+        ...(finalizationToken ? { finalizationToken } : {}),
+      } });
+      if (bitmap) return { kind: 'pixels', bitmap, persisted };
+      if (stored && address) return { kind: 'stored' };
+      throw new Error("Motif capture returned no frame");
+    } finally { settled = true; }
+  })();
+  // Same port as the capture, so a control cannot overtake its request.
+  const control = (action: MotifCaptureControl['action']) => {
+    if (!settled) port?.postMessage({ control: { key, action } });
+  };
+  return {
+    reply,
+    setPriority: next => {
+      if (next !== 'current' || high) return;
+      high = true;
+      control('promote');
+    },
+    cancel: () => control('cancel'),
+  };
 }
 
 interface FramePortMessage {
@@ -117,7 +156,7 @@ function unavailableReply({ unavailable, generation }: FramePortMessage): MotifR
   return { kind: 'unavailable', reason: unavailable, generation: typeof generation === 'number' ? generation : 0 };
 }
 
-function request(args: Record<string, unknown>): Promise<FrameReply> {
+function send(args: Record<string, unknown>): Promise<FrameReply> {
   if (!port) {
     const channel = new MessageChannel();
     port = channel.port1;

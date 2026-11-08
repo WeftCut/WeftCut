@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const invokeMock = vi.fn();
 vi.mock("@/bridge/ipc", () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
-vi.mock('../frameTransport', () => ({ captureMotifResult: vi.fn() }));
+vi.mock('../frameTransport', () => ({ captureMotif: vi.fn() }));
 
-import { captureMotifFramePngBlob, captureMotifFrameResult } from "../host";
-import { captureMotifResult } from '../frameTransport';
+import { captureMotifFrame, captureMotifFramePngBlob } from "../host";
+import { captureMotif } from '../frameTransport';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -40,24 +40,18 @@ describe("captureMotifFramePngBlob", () => {
       fpsDen: 1001,
     }));
   });
+});
 
-  it('passes optional main persistence and finalization ownership over the capture transport', async () => {
-    vi.stubGlobal('window', { postMessage: vi.fn() });
+describe("captureMotifFrame", () => {
+  it("captures unaddressed at current priority and returns the pixels", async () => {
     const bitmap = {} as ImageBitmap;
-    vi.mocked(captureMotifResult).mockResolvedValue({ bitmap, persisted: true, scaleDiv: 1 });
-    const bake = { hash: 'a'.repeat(32), frame: 75 };
-    await expect(captureMotifFrameResult('countdown', 2.5, { seconds: 5 }, 480, 480,
-      'revision', 30, 1, { key: 'export', high: true, bake, finalizationToken: 'finalization' }))
-      .resolves.toEqual({ bitmap, persisted: true, scaleDiv: 1 });
-    expect(captureMotifResult).toHaveBeenCalledWith(expect.objectContaining({
-      bake, finalizationToken: 'finalization', coalesceKey: 'export',
-    }), 1);
-  });
-
-  it('reads a `stored` reply at the preview divisor it is given', async () => {
-    vi.stubGlobal('window', { postMessage: vi.fn() });
-    vi.mocked(captureMotifResult).mockResolvedValue({ bitmap: {} as ImageBitmap, persisted: true, scaleDiv: 2 });
-    await captureMotifFrameResult('countdown', 0, {}, 480, 480, 'revision', 30, 1, { key: 'preview', high: true, scaleDiv: 2 });
-    expect(captureMotifResult).toHaveBeenLastCalledWith(expect.anything(), 2);
+    vi.mocked(captureMotif).mockReturnValue({
+      reply: Promise.resolve({ kind: 'pixels', bitmap, persisted: false }), setPriority: vi.fn(), cancel: vi.fn(),
+    });
+    await expect(captureMotifFrame('countdown', 2.5, { seconds: 5 }, 480, 480)).resolves.toBe(bitmap);
+    expect(captureMotif).toHaveBeenCalledExactlyOnceWith({
+      motifId: 'countdown', tSec: 2.5, propsJson: JSON.stringify({ seconds: 5 }),
+      width: 480, height: 480, contentHash: '', priority: 'current',
+    });
   });
 });

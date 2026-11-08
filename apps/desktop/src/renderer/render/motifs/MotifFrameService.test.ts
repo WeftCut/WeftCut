@@ -4,7 +4,7 @@ import { compositionFixture, groupLayerFixture, ROOT_ID, summaryFixture } from '
 import type { PrewarmContentSpec } from './MotifPrewarmer';
 import { MotifFrameService } from './MotifFrameService';
 import { requestPrebake } from './prebakeBus';
-import { sharedBakedKeyIndex } from './motifRasterCache';
+import { sharedBakedKeyIndex } from './motifFrameSource';
 import { useMotifBakeStatusStore } from '../../timeline/motifBakeStatusStore';
 import { syncUserMotifsFromBackend } from './syncCatalog';
 import { setUserMotifs } from './catalog';
