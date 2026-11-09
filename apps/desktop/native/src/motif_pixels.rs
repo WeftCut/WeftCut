@@ -1,6 +1,13 @@
 //! Motif pixel formats on every OS: straightening a capture's premultiplied
-//! pixels, premultiplying stored frames for the texture lane, and PNGs. The
-//! stored frame format itself lives in `motif_frame.rs`.
+//! pixels, premultiplying stored frames for the texture lane, PNGs, and the
+//! one conversion export (`motif_convert`). The stored frame format itself
+//! lives in `motif_frame.rs`.
+use crate::motif_error::to_napi;
+use crate::motif_frame::{
+    band_rows, band_threads, byte_len, encode, encode_premultiplied, per_thread,
+};
+use napi::bindgen_prelude::Buffer;
+use napi_derive::napi;
 
 /// The straight value of premultiplied channel `c` at alpha `a`, at index
 /// `a << 8 | c`: `(c * 255 + a / 2) / a`, at most 255, and 0 where `a` is 0.
@@ -93,10 +100,7 @@ fn premultiply_into(src: &[u8], dst: &mut [u8]) {
 #[cfg_attr(not(windows), allow(dead_code))] // only the texture lane reads pixels natively.
 pub(crate) fn encode_png(w: u32, h: u32, rgba: Vec<u8>) -> anyhow::Result<Vec<u8>> {
     use image::ImageEncoder;
-    anyhow::ensure!(
-        rgba.len() == crate::motif_frame::byte_len(w, h)?,
-        "invalid motif pixel length"
-    );
+    anyhow::ensure!(rgba.len() == byte_len(w, h)?, "invalid motif pixel length");
     let mut png = Vec::new();
     image::codecs::png::PngEncoder::new_with_quality(
         &mut png,
@@ -105,6 +109,102 @@ pub(crate) fn encode_png(w: u32, h: u32, rgba: Vec<u8>) -> anyhow::Result<Vec<u8
     )
     .write_image(&rgba, w, h, image::ExtendedColorType::Rgba8)?;
     Ok(png)
+}
+
+/// What a conversion reads: straight RGBA, or a bitmap host's paint.
+#[napi(string_enum = "camelCase")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, allow(dead_code))] // Host-only wire type.
+pub enum MotifPixelSource {
+    Rgba,
+    PremultipliedBgra,
+}
+
+/// What a conversion makes: a stored frame, straight RGBA or a PNG.
+#[napi(string_enum = "camelCase")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, allow(dead_code))] // Host-only wire type.
+pub enum MotifPixelTarget {
+    Frame,
+    Rgba,
+    Png,
+}
+
+/// A picture of exactly `width × height` pixels in `source`'s format.
+pub(crate) struct Pixels {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) source: MotifPixelSource,
+    pub(crate) data: Vec<u8>,
+}
+
+impl Pixels {
+    /// The top `height` rows of `pixels`, rows `width` pixels each: a bitmap
+    /// host's paint carries the marker rows below its picture.
+    fn top_rows(
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+        source: MotifPixelSource,
+    ) -> anyhow::Result<Self> {
+        let len = byte_len(width, height)?;
+        anyhow::ensure!(
+            pixels.len() >= len,
+            "motif bitmap is smaller than its picture"
+        );
+        Ok(Self {
+            width,
+            height,
+            source,
+            data: pixels[..len].to_vec(),
+        })
+    }
+}
+
+/// Converts on the band threads (ADR 0159): a paint encoded as a stored frame
+/// is straightened band by band by the thread that compresses it. Valid pairs
+/// are rgba to frame and premultipliedBgra to frame or rgba; any other is the
+/// caller's error, untagged.
+pub(crate) fn convert(px: Pixels, to: MotifPixelTarget) -> anyhow::Result<Vec<u8>> {
+    let Pixels {
+        width,
+        height,
+        source,
+        mut data,
+    } = px;
+    match (source, to) {
+        (MotifPixelSource::Rgba, MotifPixelTarget::Frame) => encode(width, height, &data),
+        (MotifPixelSource::PremultipliedBgra, MotifPixelTarget::Frame) => {
+            encode_premultiplied(width, height, &mut data, true)
+        }
+        (MotifPixelSource::PremultipliedBgra, MotifPixelTarget::Rgba) => {
+            let band = band_rows(height) as usize * width as usize * 4;
+            per_thread(data.chunks_mut(band), band_threads(), |pixels| {
+                straighten(pixels, true);
+                Ok(())
+            })?;
+            Ok(data)
+        }
+        (from, to) => anyhow::bail!("motif pixels cannot convert from {from:?} to {to:?}"),
+    }
+}
+
+/// The top `height` rows of `pixels`, `width` pixels each, converted from
+/// `from` to `to` (`convert`) on the blocking pool.
+#[napi]
+#[cfg_attr(test, allow(dead_code))] // napi registration is absent in a Rust unit-test executable.
+pub async fn motif_convert(
+    pixels: Buffer,
+    width: u32,
+    height: u32,
+    from: MotifPixelSource,
+    to: MotifPixelTarget,
+) -> napi::Result<Buffer> {
+    let px = Pixels::top_rows(&pixels, width, height, from).map_err(to_napi)?;
+    tokio::task::spawn_blocking(move || convert(px, to).map(Buffer::from))
+        .await
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?
+        .map_err(to_napi)
 }
 
 #[cfg(test)]
@@ -190,5 +290,78 @@ mod tests {
         let mut dst = [7u8; 12];
         premultiply_rows(&src, &mut dst, 4, 8);
         assert_eq!(dst, [5, 10, 15, 128, 7, 7, 7, 7, 200, 100, 50, 255]);
+    }
+
+    fn picture(source: MotifPixelSource, data: &[u8], width: u32, height: u32) -> Pixels {
+        Pixels::top_rows(data, width, height, source).unwrap()
+    }
+
+    /// `w`×`h` texels of noise, every fifth one fully transparent with colour.
+    fn noise(w: u32, h: u32, seed: u32) -> Vec<u8> {
+        let mut state = seed.wrapping_mul(2654435761) | 1;
+        (0..w * h)
+            .flat_map(|i| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                let [r, g, b, a] = state.to_le_bytes();
+                [r, g, b, if i % 5 == 0 { 0 } else { a }]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn each_valid_pair_converts_as_its_steps_do() {
+        let (w, h) = (16, 21);
+        let paint = noise(w, h, 3);
+        let mut straight = paint.clone();
+        straighten(&mut straight, true);
+        let rgba = |data: &[u8]| picture(MotifPixelSource::Rgba, data, w, h);
+        let bgra = |data: &[u8]| picture(MotifPixelSource::PremultipliedBgra, data, w, h);
+        assert_eq!(
+            convert(bgra(&paint), MotifPixelTarget::Rgba).unwrap(),
+            straight
+        );
+        assert_eq!(
+            convert(bgra(&paint), MotifPixelTarget::Frame).unwrap(),
+            encode(w, h, &straight).unwrap()
+        );
+        assert_eq!(
+            convert(rgba(&straight), MotifPixelTarget::Frame).unwrap(),
+            encode(w, h, &straight).unwrap()
+        );
+    }
+
+    #[test]
+    fn only_the_top_rows_are_the_picture() {
+        let (w, h) = (4, 3);
+        let mut paint = noise(w, h + 1, 5);
+        let marker = paint.split_off((w * h * 4) as usize);
+        let mut with_marker = paint.clone();
+        with_marker.extend_from_slice(&marker);
+        for source in [MotifPixelSource::Rgba, MotifPixelSource::PremultipliedBgra] {
+            assert_eq!(picture(source, &with_marker, w, h).data, paint);
+            let short = Pixels::top_rows(&paint[..paint.len() - 1], w, h, source);
+            assert!(short.is_err());
+        }
+    }
+
+    #[test]
+    fn any_other_pair_is_the_callers_error_untagged() {
+        let px = |source| picture(source, &[0; 16], 2, 2);
+        for (source, to) in [
+            (MotifPixelSource::Rgba, MotifPixelTarget::Rgba),
+            (MotifPixelSource::Rgba, MotifPixelTarget::Png),
+            (MotifPixelSource::PremultipliedBgra, MotifPixelTarget::Png),
+        ] {
+            let error = convert(px(source), to).unwrap_err();
+            assert_eq!(
+                crate::motif_error::code_of(&error),
+                None,
+                "{source:?} to {to:?}"
+            );
+        }
+        let oversized = Pixels::top_rows(&[0; 16], 8193, 1, MotifPixelSource::Rgba);
+        assert_eq!(crate::motif_error::code_of(&oversized.err().unwrap()), None);
     }
 }

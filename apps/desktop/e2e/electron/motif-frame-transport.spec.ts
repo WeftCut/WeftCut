@@ -32,7 +32,7 @@ test('@serial cached Motif frames survive concurrent reads and slot reuse', asyn
       await fs.mkdir(directory, { recursive: true })
       for (const [i, color] of colors.entries()) {
         const rgba = Buffer.alloc(1920 * 1080 * 4, Buffer.from(color))
-        await fs.writeFile(`${directory}/${i}.wfrm`, await native.motifEncodeRgba(rgba, 1920, 1080))
+        await fs.writeFile(`${directory}/${i}.wfrm`, await native.motifConvert(rgba, 1920, 1080, 'rgba', 'frame'))
       }
     }, { addon, directory: path.join(parent, 'Transport', 'Cache', 'raster', hash), colors })
     await waitForHook(page, 'readMotifFrame')
@@ -97,7 +97,7 @@ test('@serial cached Motif transport stays responsive across renderer reloads', 
       const fs = process.getBuiltinModule('fs/promises')
       await fs.mkdir(directory, { recursive: true })
       // Solid #d04080, opaque.
-      const encoded = await native.motifEncodeRgba(Buffer.alloc(1920 * 1080 * 4, Buffer.from([208, 64, 128, 255])), 1920, 1080)
+      const encoded = await native.motifConvert(Buffer.alloc(1920 * 1080 * 4, Buffer.from([208, 64, 128, 255])), 1920, 1080, 'rgba', 'frame')
       await fs.writeFile(`${directory}/0.wfrm`, encoded)
       await fs.writeFile(`${directory}/1.wfrm`, encoded)
       const handler = ipcMain._invokeHandlers.get('motif:read')!

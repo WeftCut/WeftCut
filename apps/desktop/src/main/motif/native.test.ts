@@ -33,9 +33,7 @@ function fakeCore() {
     motifLimits: vi.fn(() => ({ ...MOTIF_LIMITS })),
     motifConfigure: vi.fn(),
     motifReadFrameScaled: vi.fn(async () => ({ width: 2, height: 1, rgba: Buffer.alloc(8), timing: timing.read })),
-    motifStraightenBgra: vi.fn(async () => Buffer.from('rgba')),
-    motifEncodeBgra: vi.fn(async () => Buffer.from('frame from bgra')),
-    motifEncodeRgba: vi.fn(async () => Buffer.from('frame from rgba')),
+    motifConvert: vi.fn(async (_pixels: Buffer, _width: number, _height: number, from: string, to: string) => Buffer.from(`${from} as ${to}`)),
     ...classes,
   }
   return { core, raw, pool, encoder, marker, classes }
@@ -62,9 +60,9 @@ describe('loadMotifNative', () => {
 
   it('names every missing export and asks for a rebuild', () => {
     const { core } = fakeCore()
-    delete core.motifEncodeRgba
+    delete core.motifConvert
     delete core.motifConfigure
-    expect(() => load(core)).toThrow(/motifConfigure, motifEncodeRgba: rebuild it/)
+    expect(() => load(core)).toThrow(/motifConfigure, motifConvert: rebuild it/)
     expect(() => load(null)).toThrow(/rebuild it/)
   })
 
@@ -80,21 +78,20 @@ describe('loadMotifNative', () => {
   })
 
   describe('convert', () => {
-    it('maps each conversion to its native export', async () => {
+    it('hands each conversion to the native core by name', async () => {
       const { core } = fakeCore()
       const native = load(core, 'linux')
       const px = Buffer.alloc(12)
-      expect(String(await native.convert({ from: 'rgba', to: 'frame' }, px, 3, 1))).toBe('frame from rgba')
-      expect(String(await native.convert({ from: 'premultipliedBgra', to: 'frame' }, px, 3, 1))).toBe('frame from bgra')
-      expect(String(await native.convert({ from: 'premultipliedBgra', to: 'rgba' }, px, 3, 1))).toBe('rgba')
-      for (const name of ['motifEncodeRgba', 'motifEncodeBgra', 'motifStraightenBgra']) expect(core[name], name).toHaveBeenCalledExactlyOnceWith(px, 3, 1)
+      expect(String(await native.convert({ from: 'rgba', to: 'frame' }, px, 3, 1))).toBe('rgba as frame')
+      expect(String(await native.convert({ from: 'premultipliedBgra', to: 'frame' }, px, 3, 1))).toBe('premultipliedBgra as frame')
+      expect(String(await native.convert({ from: 'premultipliedBgra', to: 'rgba' }, px, 3, 1))).toBe('premultipliedBgra as rgba')
+      expect(core.motifConvert).toHaveBeenLastCalledWith(px, 3, 1, 'premultipliedBgra', 'rgba')
     })
 
     it('decodes a tagged failure of every conversion', async () => {
       const { core } = fakeCore()
-      core.motifEncodeRgba = async () => { throw tagged('disk') }
-      core.motifEncodeBgra = async () => { throw tagged('oversize') }
-      core.motifStraightenBgra = async () => { throw tagged('capacity') }
+      const codes: Record<string, string> = { 'rgba as frame': 'disk', 'premultipliedBgra as frame': 'oversize', 'premultipliedBgra as rgba': 'capacity' }
+      core.motifConvert = async (_px: Buffer, _w: number, _h: number, from: string, to: string) => { throw tagged(codes[`${from} as ${to}`]!) }
       const native = load(core, 'linux')
       await expect(native.convert({ from: 'rgba', to: 'frame' }, Buffer.alloc(4), 1, 1)).rejects.toEqual(expectCode('disk'))
       await expect(native.convert({ from: 'premultipliedBgra', to: 'frame' }, Buffer.alloc(4), 1, 1)).rejects.toEqual(expectCode('oversize'))
@@ -104,7 +101,7 @@ describe('loadMotifNative', () => {
     it('leaves an untagged failure as it is', async () => {
       const { core } = fakeCore()
       const failure = new Error('motif bitmap is smaller than its picture')
-      core.motifEncodeBgra = async () => { throw failure }
+      core.motifConvert = async () => { throw failure }
       await expect(load(core, 'linux').convert({ from: 'premultipliedBgra', to: 'frame' }, Buffer.alloc(4), 1, 1)).rejects.toBe(failure)
     })
   })
@@ -192,9 +189,9 @@ describe('loadMotifNative', () => {
     it('a replaced export', async () => {
       const { core } = fakeCore()
       const native = load(core, 'linux')
-      const original = core.motifEncodeBgra as (...args: unknown[]) => Promise<Buffer>
+      const original = core.motifConvert as (...args: unknown[]) => Promise<Buffer>
       let held = 0
-      core.motifEncodeBgra = (...args: unknown[]) => { held++; return original(...args) }
+      core.motifConvert = (...args: unknown[]) => { held++; return original(...args) }
       await native.convert({ from: 'premultipliedBgra', to: 'frame' }, Buffer.alloc(4), 1, 1)
       core.motifReadFrameScaled = async () => ({ width: 9, height: 9, rgba: Buffer.alloc(0), timing: timing.read })
       await expect(native.openFrameReader().read('x.wfrm', 1)).resolves.toMatchObject({ width: 9 })

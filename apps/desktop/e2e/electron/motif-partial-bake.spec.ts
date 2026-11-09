@@ -51,7 +51,7 @@ for (const complete of [false, true]) {
         const result: string[] = []
         for (const color of colors) {
           const rgba = Buffer.alloc(1920 * 1080 * 4, Buffer.from(color))
-          result.push((await native.motifEncodeRgba(rgba, 1920, 1080)).toString('base64'))
+          result.push((await native.motifConvert(rgba, 1920, 1080, 'rgba', 'frame')).toString('base64'))
         }
         return result
       }, { addon, colors: [[0x20, 0xd0, 0x60, 255], [0xa0, 0x20, 0xf0, 255]] })

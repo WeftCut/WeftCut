@@ -32,7 +32,7 @@ pub(crate) fn byte_len(w: u32, h: u32) -> anyhow::Result<usize> {
 
 /// An eighth of the rows, rounded up to a multiple of 4 so that a band scales
 /// by 2 or 4 without another band's rows. A short frame has fewer bands.
-fn band_rows(h: u32) -> u32 {
+pub(crate) fn band_rows(h: u32) -> u32 {
     h.div_ceil(BANDS).next_multiple_of(4)
 }
 
@@ -41,7 +41,7 @@ fn band_rows(h: u32) -> u32 {
 /// and sets it with `motif_configure`; one until then.
 static BAND_THREADS: AtomicUsize = AtomicUsize::new(1);
 
-fn band_threads() -> usize {
+pub(crate) fn band_threads() -> usize {
     BAND_THREADS.load(Ordering::Relaxed)
 }
 
@@ -72,7 +72,7 @@ fn configure(scratch_idle_bytes: usize, band_threads: usize) {
 
 /// Runs `work` on every item across at most `threads` threads; the first
 /// failure wins. Results keep the items' order.
-fn per_thread<I: Send, T: Send>(
+pub(crate) fn per_thread<I: Send, T: Send>(
     items: impl Iterator<Item = I>,
     threads: usize,
     work: impl Fn(I) -> anyhow::Result<T> + Sync,
@@ -552,64 +552,6 @@ pub async fn motif_read_frame_scaled(path: String, div: u32) -> napi::Result<Mot
     .await
     .map_err(|e| napi::Error::from_reason(e.to_string()))?
     .map_err(to_napi)
-}
-
-/// The top `height` rows of a bitmap capture's premultiplied BGRA rows,
-/// `width` pixels each, as straight RGBA (ADR 0159). Bands straighten in
-/// parallel.
-#[napi]
-#[cfg_attr(test, allow(dead_code))] // napi registration is absent in a Rust unit-test executable.
-pub async fn motif_straighten_bgra(bgra: Buffer, width: u32, height: u32) -> napi::Result<Buffer> {
-    let len = byte_len(width, height).map_err(to_napi)?;
-    if bgra.len() < len {
-        return Err(napi::Error::from_reason(
-            "motif bitmap is smaller than its picture",
-        ));
-    }
-    let mut rgba = bgra[..len].to_vec();
-    tokio::task::spawn_blocking(move || {
-        let band = band_rows(height) as usize * width as usize * 4;
-        per_thread(rgba.chunks_mut(band), band_threads(), |pixels| {
-            straighten(pixels, true);
-            Ok(())
-        })?;
-        Ok::<_, anyhow::Error>(Buffer::from(rgba))
-    })
-    .await
-    .map_err(|e| napi::Error::from_reason(e.to_string()))?
-    .map_err(to_napi)
-}
-
-/// The top `height` rows of a bitmap capture's premultiplied BGRA rows,
-/// `width` pixels each, as a stored frame: each band is straightened by the
-/// thread that compresses it (ADR 0159).
-#[napi]
-#[cfg_attr(test, allow(dead_code))] // napi registration is absent in a Rust unit-test executable.
-pub async fn motif_encode_bgra(bgra: Buffer, width: u32, height: u32) -> napi::Result<Buffer> {
-    let len = byte_len(width, height).map_err(to_napi)?;
-    if bgra.len() < len {
-        return Err(napi::Error::from_reason(
-            "motif bitmap is smaller than its picture",
-        ));
-    }
-    let mut pixels = bgra[..len].to_vec();
-    tokio::task::spawn_blocking(move || {
-        encode_premultiplied(width, height, &mut pixels, true).map(Buffer::from)
-    })
-    .await
-    .map_err(|e| napi::Error::from_reason(e.to_string()))?
-    .map_err(to_napi)
-}
-
-/// Straight RGBA as a stored frame.
-#[napi]
-#[cfg_attr(test, allow(dead_code))] // napi registration is absent in a Rust unit-test executable.
-pub async fn motif_encode_rgba(rgba: Buffer, width: u32, height: u32) -> napi::Result<Buffer> {
-    let rgba = rgba.to_vec();
-    tokio::task::spawn_blocking(move || encode(width, height, &rgba).map(Buffer::from))
-        .await
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?
-        .map_err(to_napi)
 }
 
 use std::io::Read;

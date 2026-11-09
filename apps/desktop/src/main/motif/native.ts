@@ -10,9 +10,9 @@ import type { ResolvedMotifTuning } from '../../shared/motifs/tuning'
 // decodes every `[motif:<code>]` failure (docs/motifs.md#failure-codes). No
 // Electron import: the reader utility loads it too.
 
-/** A pixel conversion the native core runs on its band threads. `rgba` is
- * straight RGBA; `premultipliedBgra` is a bitmap host's paint, of which only
- * the top `height` rows are read. `frame` is a stored frame (`.wfrm`). */
+/** A pixel conversion the native core runs on its band threads, of the top
+ * `height` rows of the pixels. `rgba` is straight RGBA; `premultipliedBgra` is
+ * a bitmap host's paint. `frame` is a stored frame (`.wfrm`). */
 export type MotifConversion =
   | { from: 'rgba'; to: 'frame' }
   | { from: 'premultipliedBgra'; to: 'frame' | 'rgba' }
@@ -96,17 +96,14 @@ interface NativeMotifCore {
   motifLimits(): unknown
   motifConfigure(config: { scratchIdleBytes: number; bandThreads: number }): void
   motifReadFrameScaled(path: string, div: number): Promise<MotifReadPixels>
-  motifStraightenBgra(bgra: Buffer, width: number, height: number): Promise<Buffer>
-  motifEncodeBgra(bgra: Buffer, width: number, height: number): Promise<Buffer>
-  motifEncodeRgba(rgba: Buffer, width: number, height: number): Promise<Buffer>
+  motifConvert(pixels: Buffer, width: number, height: number, from: MotifConversion['from'], to: MotifConversion['to']): Promise<Buffer>
   MotifGpuPool?: new (width: number, height: number, count: number, bgra: boolean, upload: boolean) => NativePool
   MotifTextureEncoder?: new () => NativeTextureEncoder
   MotifMarkerReader?: new () => NativeMarkerReader
 }
 
 const REQUIRED = [
-  'motifLimits', 'motifConfigure', 'motifReadFrameScaled',
-  'motifStraightenBgra', 'motifEncodeBgra', 'motifEncodeRgba',
+  'motifLimits', 'motifConfigure', 'motifReadFrameScaled', 'motifConvert',
 ] as const satisfies readonly (keyof NativeMotifCore)[]
 const GPU_CLASSES = ['MotifGpuPool', 'MotifTextureEncoder', 'MotifMarkerReader'] as const satisfies readonly (keyof NativeMotifCore)[]
 
@@ -171,12 +168,8 @@ export function loadMotifNative(
   } : null
 
   return {
-    convert: (conversion, pixels, width, height) => decodingMotifErrors(() => {
-      if (conversion.from === 'rgba') return native.motifEncodeRgba(pixels, width, height)
-      return conversion.to === 'frame'
-        ? native.motifEncodeBgra(pixels, width, height)
-        : native.motifStraightenBgra(pixels, width, height)
-    }),
+    convert: (conversion, pixels, width, height) =>
+      decodingMotifErrors(() => native.motifConvert(pixels, width, height, conversion.from, conversion.to)),
     openFrameReader: () => ({
       read: (path, div) => decodingMotifErrors(() => native.motifReadFrameScaled(path, div)),
       close: () => {},

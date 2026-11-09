@@ -308,21 +308,24 @@ describe('Motif capture and persistence', () => {
   describe('a bitmap\'s native conversion failure keeps its code', () => {
     const tagged = (code: string) => vi.fn(async (..._: PixelArgs): Promise<Buffer> => { throw new Error(`[motif:${code}] synthetic`); });
     /** The addon's conversions through the native adapter. */
-    const nativeConvert = (conversions: { motifStraightenBgra?: unknown; motifEncodeRgba?: unknown; motifEncodeBgra?: unknown }) =>
-      loadMotifNative({ scratchIdleBytes: 0, bandThreads: 1 }, {
+    type Conversion = (pixels: Buffer, width: number, height: number) => Promise<Buffer>;
+    const nativeConvert = (conversions: { straighten?: Conversion; encodeRgba?: Conversion; encodeBgra?: Conversion }) => {
+      const { straighten = async () => RGBA, encodeRgba = tagged('content'), encodeBgra = tagged('content') } = conversions;
+      return loadMotifNative({ scratchIdleBytes: 0, bandThreads: 1 }, {
         motifLimits: () => ({ ...MOTIF_LIMITS }), motifConfigure: () => {}, motifReadFrameScaled: tagged('miss'),
-        motifStraightenBgra: async () => RGBA, motifEncodeRgba: tagged('content'), motifEncodeBgra: tagged('content'),
-        ...conversions,
+        motifConvert: (px: Buffer, width: number, height: number, from: string, to: string) =>
+          (from === 'rgba' ? encodeRgba : to === 'rgba' ? straighten : encodeBgra)(px, width, height),
       }, 'linux').convert;
+    };
 
     it('in the straighten a display waits on', async () => {
-      const h = fixture(false, frame, { convert: nativeConvert({ motifStraightenBgra: tagged('oversize') }) });
+      const h = fixture(false, frame, { convert: nativeConvert({ straighten: tagged('oversize') }) });
       await expect(h.service.capture(owner, kept())).rejects.toMatchObject({ code: 'oversize' });
     });
 
     it('in the encode of the picture a display offers: a refusal is not warned about', async () => {
       const encode = tagged('capacity');
-      const h = fixture(false, frame, { convert: nativeConvert({ motifEncodeRgba: encode }) });
+      const h = fixture(false, frame, { convert: nativeConvert({ encodeRgba: encode }) });
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       await expect(h.service.capture(owner, preview({ address: bake }))).resolves.toMatchObject({ kind: 'pixels', persisted: false });
       await vi.waitFor(() => expect(encode).toHaveBeenCalledExactlyOnceWith(RGBA, 2, 2));
@@ -332,7 +335,7 @@ describe('Motif capture and persistence', () => {
     });
 
     it('in the encode of a paint', async () => {
-      const h = fixture(false, frame, { convert: nativeConvert({ motifEncodeBgra: tagged('disk') }) });
+      const h = fixture(false, frame, { convert: nativeConvert({ encodeBgra: tagged('disk') }) });
       await expect(h.service.persist(bake, args, background)).rejects.toMatchObject({ code: 'disk' });
     });
   });

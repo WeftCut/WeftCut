@@ -158,7 +158,7 @@ async function encodeFrames(app: ElectronApplication, refs: Reference[]): Promis
   const encoded = await app.evaluate(async (_electron, { addon, refs }) => {
     const native = process.getBuiltinModule('module').createRequire(addon)(addon)
     const out: string[] = []
-    for (const { width, height, rgba } of refs) out.push((await native.motifEncodeRgba(Buffer.from(rgba, 'base64'), width, height)).toString('base64'))
+    for (const { width, height, rgba } of refs) out.push((await native.motifConvert(Buffer.from(rgba, 'base64'), width, height, 'rgba', 'frame')).toString('base64'))
     return out
   }, { addon, refs: refs.map(({ width, height, rgba }) => ({ width, height, rgba: Buffer.from(rgba).toString('base64') })) })
   return encoded.map(value => Buffer.from(value, 'base64'))
@@ -379,13 +379,15 @@ for (const lane of LANES) {
       // land, so the dropped coverage stays observable.
       await app.evaluate((_electron, addon) => {
         const native = process.getBuiltinModule('module').createRequire(addon)(addon)
-        const names = ['motifEncodeRgba', 'motifEncodeBgra'] as const
-        const originals = names.map(name => native[name])
+        const original = native.motifConvert
         let release!: () => void
         const gate = new Promise<void>(resolve => { release = resolve })
-        const state = { calls: 0, release: () => { names.forEach((name, i) => { native[name] = originals[i] }); release() } }
+        const state = { calls: 0, release: () => { native.motifConvert = original; release() } }
         ;(globalThis as any).__readerConformanceEncodes = state
-        names.forEach((name, i) => { native[name] = async (...args: unknown[]) => { state.calls++; await gate; return originals[i](...args) } })
+        native.motifConvert = async (...args: unknown[]) => {
+          if (args[4] === 'frame') { state.calls++; await gate }
+          return original(...args)
+        }
       }, addon)
       const files = {
         corrupt: path.join(ws.dir, `${damaged.corrupt}.wfrm`),
