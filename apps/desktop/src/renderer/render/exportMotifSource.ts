@@ -31,7 +31,7 @@ export function planExportMotifFrame(
         const lease = await acquireMotifFrame(desc, {
           scaleDiv: 1, priority: 'current', signal, purpose: 'export',
           ...(finalizationToken ? { finalizationToken } : {}),
-        });
+        }).lease;
         // The stream owns the bitmap from here: it transfers or closes it.
         return lease.bitmap;
       },

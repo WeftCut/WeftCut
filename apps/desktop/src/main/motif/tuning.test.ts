@@ -15,17 +15,17 @@ describe('resolveMotifTuning', () => {
   })
 
   it('applies valid overrides, the ends of a range included', () => {
-    const { tuning, warn } = resolve(' readsInFlight=4 , writeSlots=1,captureFrameRate=240,')
-    expect(tuning).toMatchObject({ readsInFlight: 4, writeSlots: 1, captureFrameRate: 240, framesInFlight: 3 })
+    const { tuning, warn } = resolve(' readsInFlight=4 , writeSlots=1,captureFrameRate=240,captureRequests=32,')
+    expect(tuning).toMatchObject({ readsInFlight: 4, writeSlots: 1, captureFrameRate: 240, captureRequests: 32, framesInFlight: 3 })
     expect(warn).not.toHaveBeenCalled()
   })
 
   it('keeps the default for an out-of-range, unknown or garbled entry, with one warning naming each', () => {
-    const { tuning, warn } = resolve('framesInFlight=0,captureHosts=9,lanes=4,gpuLanes=two,readsInFlight=2.5,garbage,writeSlots=4')
+    const { tuning, warn } = resolve('framesInFlight=0,captureHosts=9,captureRequests=33,captureSlots=2,lanes=4,gpuLanes=two,readsInFlight=2.5,garbage,writeSlots=4')
     expect(tuning).toEqual({ ...MOTIF_TUNING_DEFAULTS, writeSlots: 4, bandThreads: 2 })
     expect(warn).toHaveBeenCalledOnce()
     const message = warn.mock.calls[0]![0] as string
-    for (const part of ['framesInFlight=0', 'captureHosts=9', "'lanes'", 'gpuLanes=two', 'readsInFlight=2.5', "'garbage'"]) {
+    for (const part of ['framesInFlight=0', 'captureHosts=9', 'captureRequests=33', "'captureSlots'", "'lanes'", 'gpuLanes=two', 'readsInFlight=2.5', "'garbage'"]) {
       expect(message).toContain(part)
     }
   })

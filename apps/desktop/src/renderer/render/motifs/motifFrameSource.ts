@@ -73,6 +73,9 @@ export interface MotifFrameRequest {
   /** Preview's Playback Resolution divisor; export reads at 1. */
   scaleDiv: MotifReaderDiv;
   priority: MotifFramePriority;
+  /** Rank within its priority class: lower is sent to main first, equal ranks
+   * in arrival order. Unranked requests go after ranked ones. */
+  order?: number;
   /** Aborting rejects the request with `superseded`; the work stops once
    * nobody else wants the frame. */
   signal: AbortSignal;
@@ -83,12 +86,21 @@ export interface MotifFrameRequest {
   finalizationToken?: string;
 }
 
+/** A request in progress. `setPriority` re-classes and re-ranks it (`order`
+ * omitted keeps its rank); its job follows, a capture in main moves between
+ * classes, and once the request settled it does nothing. */
+export interface MotifFrameAcquisition {
+  readonly lease: Promise<MotifFrameLease>;
+  setPriority(priority: MotifFramePriority, order?: number): void;
+}
+
 /** `committed` and `overlay` publish into their L0 lane; `export` never
  * touches L0. */
 type Lane = 'committed' | 'overlay' | 'export';
 
 interface Subscriber {
   priority: MotifFramePriority;
+  order: number;
   owner: object | undefined;
   job: Job | null;
   settled: boolean;
@@ -152,34 +164,47 @@ export function peekMotifFrame(d: MotifFrameDescriptor, scaleDiv: MotifReaderDiv
   return bitmap ? pinned(cache, bitmap, frame) : null;
 }
 
+const settledAcquisition = (lease: Promise<MotifFrameLease>): MotifFrameAcquisition => ({ lease, setPriority: () => {} });
+
 /** One Motif frame: L0, else a stored frame read at `scaleDiv`, else a full-
  * size capture. Identical requests share one job whose priority is the highest
- * of its subscribers; a preview result is published to L0 once and each
- * subscriber gets its own pin. A `MotifTransportError` rejects: it is not a
- * miss and captures nothing. */
-export function acquireMotifFrame(d: MotifFrameDescriptor, request: MotifFrameRequest): Promise<MotifFrameLease> {
+ * of its subscribers and whose order the lowest; a preview result is published
+ * to L0 once and each subscriber gets its own pin. A `MotifTransportError`
+ * rejects: it is not a miss and captures nothing. */
+export function acquireMotifFrame(d: MotifFrameDescriptor, request: MotifFrameRequest): MotifFrameAcquisition {
   const { signal, owner, priority } = request;
   const lane: Lane = request.purpose === 'export' ? 'export' : d.overlayActive ? 'overlay' : 'committed';
-  if (signal.aborted) return Promise.reject(motifSuperseded());
+  if (signal.aborted) return settledAcquisition(Promise.reject(motifSuperseded()));
   if (owner && priority === 'current') {
     const previous = owners.get(owner);
     if (previous) reject(previous, motifSuperseded());
   }
   if (lane !== 'export') {
     const hit = peekMotifFrame(d, request.scaleDiv);
-    if (hit) return Promise.resolve(hit);
+    if (hit) return settledAcquisition(Promise.resolve(hit));
   }
-  return new Promise<MotifFrameLease>((resolve, rejectRequest) => {
-    const subscriber: Subscriber = {
-      priority, owner, job: null, settled: false, resolve, reject: rejectRequest, detach: () => {},
+  let subscriber!: Subscriber;
+  const lease = new Promise<MotifFrameLease>((resolve, rejectRequest) => {
+    subscriber = {
+      priority, order: request.order ?? Infinity, owner, job: null, settled: false,
+      resolve, reject: rejectRequest, detach: () => {},
     };
-    const abort = () => reject(subscriber, motifSuperseded());
-    signal.addEventListener('abort', abort, { once: true });
-    subscriber.detach = () => signal.removeEventListener('abort', abort);
-    unsettled.add(subscriber);
-    if (owner && priority === 'current') owners.set(owner, subscriber);
-    void admit(subscriber, d, request, lane);
   });
+  const abort = () => reject(subscriber, motifSuperseded());
+  signal.addEventListener('abort', abort, { once: true });
+  subscriber.detach = () => signal.removeEventListener('abort', abort);
+  unsettled.add(subscriber);
+  if (owner && priority === 'current') owners.set(owner, subscriber);
+  void admit(subscriber, d, request, lane);
+  return {
+    lease,
+    setPriority: (next, order = subscriber.order) => {
+      if (subscriber.settled || (next === subscriber.priority && order === subscriber.order)) return;
+      subscriber.priority = next;
+      subscriber.order = order;
+      subscriber.job?.scheduled.changed();
+    },
+  };
 }
 
 async function admit(subscriber: Subscriber, d: MotifFrameDescriptor, request: MotifFrameRequest, lane: Lane): Promise<void> {
@@ -209,6 +234,7 @@ function createJob(key: string, lane: Lane, d: MotifFrameDescriptor, scaleDiv: M
       captureOnly: lane === 'overlay',
       unbounded: lane === 'export',
       priority: () => highest(subscribers),
+      order: () => lowestOrder(subscribers),
       wanted: () => subscribers.size > 0,
       read: () => sharedMotifFrameCache.readBitmap(cacheKey, frame, scaleDiv, token ? { finalizationToken: token } : {}),
       capture: (afterMiss, priority) => captureMotif({
@@ -234,6 +260,12 @@ function highest(subscribers: Set<Subscriber>): MotifFramePriority {
     if (priority === 'ahead') best = priority;
   }
   return best;
+}
+
+function lowestOrder(subscribers: Set<Subscriber>): number {
+  let lowest = Infinity;
+  for (const { order } of subscribers) lowest = Math.min(lowest, order);
+  return lowest;
 }
 
 function retire(job: Job): Subscriber[] {

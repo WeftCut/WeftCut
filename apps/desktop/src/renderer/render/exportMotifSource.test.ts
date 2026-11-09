@@ -47,7 +47,7 @@ describe('streamed Motif selection', () => {
 
   it('gets each frame through one full-size export request that the stream then owns', async () => {
     const b = bitmap(), release = vi.fn();
-    vi.mocked(acquireMotifFrame).mockResolvedValue({ bitmap: b, frame: 60, release });
+    vi.mocked(acquireMotifFrame).mockReturnValue({ lease: Promise.resolve({ bitmap: b, frame: 60, release }), setPriority: vi.fn() });
     const signal = new AbortController().signal;
     expect(await planExportMotifFrame(summary(), 1_000_000, 'export-token')[0]!.read(signal)).toBe(b);
     const [desc, request] = vi.mocked(acquireMotifFrame).mock.calls[0]!;
@@ -58,7 +58,7 @@ describe('streamed Motif selection', () => {
   });
 
   it('sends no token outside a finalized export, and a failure fails the read', async () => {
-    vi.mocked(acquireMotifFrame).mockRejectedValue(new MotifTransportError('utility', 'closed'));
+    vi.mocked(acquireMotifFrame).mockImplementation(() => ({ lease: Promise.reject(new MotifTransportError('utility', 'closed')), setPriority: vi.fn() }));
     const task = planExportMotifFrame(summary(), 0)[0]!;
     await expect(task.read(new AbortController().signal)).rejects.toBeInstanceOf(MotifTransportError);
     expect(vi.mocked(acquireMotifFrame).mock.calls[0]![1]).not.toHaveProperty('finalizationToken');

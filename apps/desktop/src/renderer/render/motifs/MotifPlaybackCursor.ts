@@ -142,7 +142,7 @@ export class MotifPlaybackCursor {
     try {
       const lease = await acquireMotifFrame(d, {
         scaleDiv: request.scaleDiv, priority: 'current', signal: request.controller.signal, owner: this,
-      });
+      }).lease;
       if (this.disposed || request.epoch !== this.epoch) {
         lease.release(); this.discarded++; return;
       }

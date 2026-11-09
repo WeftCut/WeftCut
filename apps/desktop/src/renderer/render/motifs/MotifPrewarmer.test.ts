@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { MotifPrewarmer, type MotifPrewarmerDeps, type PrewarmContentSpec } from "./MotifPrewarmer";
 import { MotifFrameCache, type MotifFrameDiv } from "./frameCache";
-import type { MotifFrameLease, MotifFrameRequest } from "./motifFrameSource";
+import type { MotifFrameAcquisition, MotifFrameLease, MotifFrameRequest } from "./motifFrameSource";
+import type { MotifFramePriority } from "../../../shared/motifs/frameTransport";
 import type { MotifFrameDescriptor } from "./motifFrameDescriptor";
 import { MOTIF_TUNING_DEFAULTS } from "../../../shared/motifs/tuning";
 import type { MotifReaderDiv } from "../../../shared/motifs/readerProtocol";
@@ -26,20 +27,30 @@ function spec(cacheKey: string, contentFrame: number, contentDurationFrames: num
   };
 }
 
+/** `acquire` as the prewarmer sees it: each re-class or re-rank of a request
+ * reaches `setPriority` with the request's frame. */
+function handles(acquire: Acquire, setPriority: (frame: number, priority: MotifFramePriority, order?: number) => void = () => {}) {
+  return (d: MotifFrameDescriptor, request: MotifFrameRequest): MotifFrameAcquisition => ({
+    lease: acquire(d, request),
+    setPriority: (priority, order) => setPriority(d.contentFrame, priority, order),
+  });
+}
+
 /** A prewarmer whose idle slices run on `drain`. `cached` stands in for L0. */
 function rig(acquire: Acquire, capBytes: number, cached = new Set<string>(), overrides: Partial<MotifPrewarmerDeps> = {}) {
   const pending: (() => void)[] = [];
   const acquireSpy = vi.fn(acquire);
+  const setPriority = vi.fn<(frame: number, priority: MotifFramePriority, order?: number) => void>();
   const prewarmer = new MotifPrewarmer({
     capBytes,
     coverage: { has: (k, f) => cached.has(`${k}#${f}`), prioritize: () => {} },
-    acquire: acquireSpy,
+    acquire: handles(acquireSpy, setPriority),
     schedule: (cb) => { pending.push(cb); return pending.length; },
     cancel: () => {},
     ...overrides,
   });
   const frames = () => acquireSpy.mock.calls.map(([d]) => d.contentFrame);
-  return { prewarmer, pending, acquire: acquireSpy, frames };
+  return { prewarmer, pending, acquire: acquireSpy, setPriority, frames };
 }
 
 describe("MotifPrewarmer", () => {
@@ -131,6 +142,38 @@ describe("MotifPrewarmer", () => {
     expect(signals).toEqual([[0, true], [1, false], [2, false]]);
     r.prewarmer.dispose();
   });
+
+  it("ranks each request by its place in the plan", () => {
+    const r = rig(() => new Promise(() => {}), 4);
+    r.prewarmer.setTargets([spec("a", 2, 10, 1, 1, 1)]);
+    r.pending.shift()!();
+    expect(r.acquire.mock.calls.map(([d, request]) => [d.contentFrame, request.priority, request.order]))
+      .toEqual([[2, "ahead", 0], [3, "ahead", 1], [4, "ahead", 2], [1, "background", 3]]);
+    r.prewarmer.dispose();
+  });
+
+  it("a playhead that passes a kept frame demotes it to background, and re-ranks the rest", () => {
+    const r = rig(() => new Promise(() => {}), 4);
+    r.prewarmer.setTargets([spec("a", 0, 10, 1, 1, 2)]);
+    r.pending.shift()!(); // frames 0..3, all ahead
+    r.prewarmer.setTargets([spec("a", 1, 10, 1, 1, 2)]);
+    // Plan [1, 2, 3, 0]: 0 is history now.
+    expect(r.setPriority.mock.calls).toEqual([[1, "ahead", 0], [2, "ahead", 1], [3, "ahead", 2], [0, "background", 3]]);
+    r.prewarmer.dispose();
+  });
+
+  it("a seek back before kept history re-classes it ahead", () => {
+    const r = rig(() => new Promise(() => {}), 4);
+    r.prewarmer.setTargets([spec("a", 5, 10, 1, 1, 1)]);
+    r.pending.shift()!(); // plan [5, 6, 7, 4]
+    expect(r.acquire.mock.calls.map(([d, request]) => [d.contentFrame, request.priority])).toEqual([[5, "ahead"], [6, "ahead"], [7, "ahead"], [4, "background"]]);
+    r.setPriority.mockClear();
+    r.prewarmer.setTargets([spec("a", 4, 10, 1, 1, 1)]);
+    // Plan [4, 5, 6, 3]: 4 was history and leads now; 7 left the plan.
+    expect(r.setPriority.mock.calls).toEqual([[4, "ahead", 0], [5, "ahead", 1], [6, "ahead", 2]]);
+    expect(r.acquire.mock.calls.find(([d]) => d.contentFrame === 7)![1].signal.aborted).toBe(true);
+    r.prewarmer.dispose();
+  });
 });
 
 // Exercise the real byte-bounded cache together with the real prewarm queue.
@@ -153,7 +196,7 @@ describe("MotifPrewarmer cache retention", () => {
     const prewarmer = new MotifPrewarmer({
       capBytes: cache.capacityBytes(),
       coverage: { has: (k, f, div) => cache.hasFrame(k, f, div), prioritize: (targets) => cache.prioritizeFrames(targets) },
-      acquire,
+      acquire: handles(acquire),
       schedule: (cb) => { pending.push(cb); return pending.length; },
       cancel: () => { pending.length = 0; },
     });
@@ -244,7 +287,7 @@ describe("MotifPrewarmer cache retention", () => {
     const prewarmer = new MotifPrewarmer({
       capBytes: cache.capacityBytes(),
       coverage: { has: (k, f, div) => cache.hasFrame(k, f, div), prioritize: (targets) => cache.prioritizeFrames(targets) },
-      acquire,
+      acquire: handles(acquire),
       schedule: (cb) => { pending.push(cb); return pending.length; },
       cancel: () => {},
     });

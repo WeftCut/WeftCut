@@ -15,11 +15,14 @@ export interface FrameWork {
   scaleDiv: MotifReaderDiv;
   /** A parameter-preview frame has no cache address: it is never read. */
   captureOnly: boolean;
-  /** Export work starts at once, outside the read and capture slots: the
-   * export stream's byte budget bounds it, and it pipelines frames. */
+  /** Export work starts at once, outside the read slots and the send window:
+   * the export stream's byte budget bounds it, and it pipelines frames. */
   unbounded: boolean;
   /** The highest priority among its subscribers, read at admission. */
   priority(): MotifFramePriority;
+  /** Its rank within its priority class, lowest sent first: the lowest among
+   * its subscribers, read at admission. */
+  order(): number;
   wanted(): boolean;
   /** A stored frame, or null when it is absent or invalid. */
   read(): Promise<ImageBitmap | null>;
@@ -39,15 +42,21 @@ interface Entry {
   answeredStored: boolean;
   call: MotifCaptureCall | null;
   sentPriority: MotifFramePriority;
+  /** Its capture holds a place in the send window until it settles, even
+   * once promoted to `current`: a promotion never lets more lookahead in. */
+  windowed: boolean;
   resolve: (value: FrameResult) => void;
   reject: (error: unknown) => void;
 }
 
 /** Resource admission after deduplication: `readsInFlight` disk-read slots,
- * the reader's own bound, and `captureSlots` capture slots, served `current`,
- * then `ahead`, then `background`. A bounded prewarm window can contain both
- * saved pixels and holes. Waiting captures never occupy a disk-read slot.
- * Priority and coverage are read at admission, not snapshotted by callers.
+ * the reader's own bound, and a capture send window, served `current`, then
+ * `ahead`, then `background`. A `current` capture is sent at once; `ahead` and
+ * `background` ones are sent lowest order first, ties in arrival order, while
+ * fewer than `captureRequests` of them are in main (main orders what it holds,
+ * ADR 0161). A bounded prewarm window can contain both saved pixels and holes.
+ * Waiting captures never occupy a disk-read slot. Priority, order and coverage
+ * are read at admission, not snapshotted by callers.
  *
  * One bounded loop per frame: a read miss queues it again as a capture, and
  * a `stored` reply queues it again as a read. The first capture lets main
@@ -61,9 +70,10 @@ interface Entry {
 export class MotifFrameScheduler {
   private queue: Entry[] = [];
   private reads = 0;
-  private captures = 0;
+  /** Captures in main holding a place in the send window. */
+  private sent = 0;
   private readonly readSlots = motifTuning().readsInFlight;
-  private readonly captureSlots = motifTuning().captureSlots;
+  private readonly captureRequests = motifTuning().captureRequests;
   private scheduled = false;
   private epoch = 0;
 
@@ -80,7 +90,10 @@ export class MotifFrameScheduler {
   schedule(work: FrameWork): ScheduledFrame {
     let entry!: Entry;
     const result = new Promise<FrameResult>((resolve, reject) => {
-      entry = { work, epoch: this.epoch, readMissed: false, answeredStored: false, call: null, sentPriority: 'background', resolve, reject };
+      entry = {
+        work, epoch: this.epoch, readMissed: false, answeredStored: false,
+        call: null, sentPriority: 'background', windowed: false, resolve, reject,
+      };
     });
     this.queue.push(entry);
     this.wake();
@@ -121,6 +134,9 @@ export class MotifFrameScheduler {
           entry.sentPriority = priority;
           call.setPriority(priority);
         }
+        // A `current` capture demoted while in main takes a place in the
+        // window from then on, so the window counts what main holds.
+        if (priority !== 'current' && !entry.windowed && !entry.work.unbounded) this.hold(entry);
       }
     }
     this.wake();
@@ -148,24 +164,29 @@ export class MotifFrameScheduler {
         this.queue.splice(i, 1);
         void this.run(entry, 'read');
       }
-      for (;;) {
-        // Main-owned preparation has no competing speculative capture here;
-        // saved frames use separate read slots even while a different content
-        // is being captured.
-        const entry = this.queue.find(entry => entry.work.priority() === priority && !this.readsDisk(entry)
-          && (entry.work.unbounded || this.captures < this.captureSlots)
-          && (priority === 'current' || this.deps.backgroundCaptureAllowed(entry.work.cacheKey)));
-        if (!entry) break;
+      // Main-owned preparation has no competing speculative capture here;
+      // saved frames use separate read slots even while a different content
+      // is being captured. `sort` is stable: equal orders keep arrival order.
+      const captures = this.queue.filter(entry => entry.work.priority() === priority && !this.readsDisk(entry));
+      if (priority !== 'current') captures.sort((a, b) => Math.sign(a.work.order() - b.work.order()) || 0);
+      for (const entry of captures) {
+        if (priority !== 'current' && (!this.deps.backgroundCaptureAllowed(entry.work.cacheKey) ||
+          (!entry.work.unbounded && this.sent >= this.captureRequests))) continue;
         this.queue.splice(this.queue.indexOf(entry), 1);
         void this.run(entry, 'capture');
       }
     }
   }
 
+  private hold(entry: Entry): void {
+    entry.windowed = true;
+    this.sent++;
+  }
+
   private async run(entry: Entry, kind: 'read' | 'capture'): Promise<void> {
     const { work } = entry;
     const bounded = !work.unbounded;
-    if (bounded) { if (kind === 'read') this.reads++; else this.captures++; }
+    if (bounded && kind === 'read') this.reads++;
     let again = false;
     try {
       if (kind === 'read') {
@@ -181,6 +202,7 @@ export class MotifFrameScheduler {
         return;
       }
       entry.sentPriority = work.priority();
+      if (bounded && entry.sentPriority !== 'current') this.hold(entry);
       const afterMiss = entry.answeredStored;
       entry.call = work.capture(afterMiss, entry.sentPriority);
       const reply = await entry.call.reply;
@@ -199,7 +221,8 @@ export class MotifFrameScheduler {
       entry.reject(error);
     } finally {
       entry.call = null;
-      if (bounded) { if (kind === 'read') this.reads--; else this.captures--; }
+      if (bounded && kind === 'read') this.reads--;
+      if (entry.windowed) { entry.windowed = false; this.sent--; }
       if (again) this.queue.push(entry);
       this.wake();
     }

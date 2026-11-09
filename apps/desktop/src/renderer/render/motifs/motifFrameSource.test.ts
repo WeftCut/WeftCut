@@ -7,6 +7,7 @@ import { captureMotif, MotifTransportError, type MotifCaptureReply, type MotifCa
 import type { MotifFrameDescriptor } from './motifFrameDescriptor';
 import type { MotifFrameCache } from './frameCache';
 import { hashCacheKey } from '../../../shared/motifs/cacheKey';
+import { MOTIF_TUNING_DEFAULTS } from '../../../shared/motifs/tuning';
 
 vi.mock('./frameTransport', async importOriginal => ({
   ...await importOriginal<typeof import('./frameTransport')>(), captureMotif: vi.fn(),
@@ -36,11 +37,14 @@ function desc(frame = 0, cacheKey = 'k', overlayActive = false): MotifFrameDescr
 }
 function acquire(d: MotifFrameDescriptor, request: Partial<MotifFrameRequest> = {}) {
   const controller = new AbortController();
-  const lease = acquireMotifFrame(d, { scaleDiv: 1, priority: 'current', signal: controller.signal, ...request });
+  const { lease, setPriority } = acquireMotifFrame(d, { scaleDiv: 1, priority: 'current', signal: controller.signal, ...request });
   // Requests a test leaves pending are superseded by the reset after it.
   lease.catch(() => {});
-  return { lease, controller };
+  return { lease, controller, setPriority };
 }
+/** Lookahead captures the send window keeps in main at once. */
+const sendWindow = MOTIF_TUNING_DEFAULTS.captureRequests;
+const sentFrames = () => calls.map(call => call.request.address!.frame);
 const superseded = { code: 'superseded' };
 
 beforeEach(() => {
@@ -182,7 +186,7 @@ describe('owners and aborts', () => {
 
   it('an abort before admission captures nothing', async () => {
     const aborted = new AbortController(); aborted.abort();
-    await expect(acquireMotifFrame(desc(), { scaleDiv: 1, priority: 'current', signal: aborted.signal })).rejects.toMatchObject(superseded);
+    await expect(acquireMotifFrame(desc(), { scaleDiv: 1, priority: 'current', signal: aborted.signal }).lease).rejects.toMatchObject(superseded);
     const { lease, controller } = acquire(desc());
     controller.abort();
     await expect(lease).rejects.toMatchObject(superseded);
@@ -331,7 +335,7 @@ describe('read or capture', () => {
 });
 
 describe('admission', () => {
-  it('serves current, then ahead, then background, and a promotion reaches the running capture', async () => {
+  it('sends current, then ahead, then background, and a promotion reaches the capture in main', async () => {
     sharedBakedKeyIndex.restoreFrames('k', new Set());
     const running = acquire(desc(0), { priority: 'background' });
     await settle();
@@ -344,9 +348,97 @@ describe('admission', () => {
       calls[i]!.answer(pixels());
       await settle();
     }
-    expect(calls.map(call => call.request.address!.frame)).toEqual([0, 3, 2, 1]);
+    expect(sentFrames()).toEqual([0, 3, 2, 1]);
     for (const { lease } of [running, promoted, ...queued]) (await lease).release();
     expect(pins()).toBe(0);
+  });
+
+  it('sends a current capture at once while the send window is full of lookahead', async () => {
+    sharedBakedKeyIndex.restoreFrames('k', new Set());
+    for (let frame = 0; frame <= sendWindow; frame++) acquire(desc(frame), { priority: 'ahead' });
+    await settle();
+    expect(calls).toHaveLength(sendWindow);
+    acquire(desc(50));
+    await settle();
+    expect(sentFrames()).toEqual([...Array.from({ length: sendWindow }, (_, i) => i), 50]);
+    expect(calls.at(-1)!.request.priority).toBe('current');
+  });
+
+  it('keeps at most `captureRequests` lookahead captures in main, a promoted one included', async () => {
+    sharedBakedKeyIndex.restoreFrames('k', new Set());
+    for (let frame = 0; frame < sendWindow + 2; frame++) acquire(desc(frame), { priority: 'ahead' });
+    await settle();
+    expect(calls).toHaveLength(sendWindow);
+    // Promoted, frame 0 keeps its place: frame `sendWindow` still waits.
+    const shown = acquire(desc(0));
+    await settle();
+    expect(calls[0]!.setPriority).toHaveBeenCalledExactlyOnceWith('current');
+    expect(calls).toHaveLength(sendWindow);
+    calls[0]!.answer(pixels());
+    (await shown.lease).release();
+    await settle();
+    expect(calls).toHaveLength(sendWindow + 1);
+    calls[1]!.answer(pixels());
+    await settle();
+    expect(calls).toHaveLength(sendWindow + 2);
+  });
+
+  it('a current capture demoted in main takes a place in the send window', async () => {
+    sharedBakedKeyIndex.restoreFrames('k', new Set());
+    const shown = acquire(desc(9));
+    acquire(desc(9), { priority: 'ahead' });
+    await settle();
+    for (let frame = 0; frame < sendWindow; frame++) acquire(desc(frame), { priority: 'ahead' });
+    shown.controller.abort();
+    await settle();
+    expect(calls[0]!.setPriority).toHaveBeenCalledExactlyOnceWith('ahead');
+    expect(sentFrames()).toEqual([9, ...Array.from({ length: sendWindow - 1 }, (_, i) => i)]);
+  });
+
+  it('sends lookahead lowest order first, ties in arrival order, and a re-rank changes what goes next', async () => {
+    sharedBakedKeyIndex.restoreFrames('k', new Set());
+    for (let i = 0; i < sendWindow; i++) acquire(desc(100 + i), { priority: 'ahead', order: -1 });
+    await settle();
+    const late = acquire(desc(1), { priority: 'ahead', order: 5 });
+    acquire(desc(2), { priority: 'ahead', order: 3 });
+    acquire(desc(3), { priority: 'ahead', order: 3 });
+    acquire(desc(4), { priority: 'ahead' });
+    await settle();
+    late.setPriority('ahead', 0);
+    for (let i = 0; i < 4; i++) {
+      calls[i]!.answer(pixels());
+      await settle();
+    }
+    expect(sentFrames().slice(sendWindow)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('a job takes the lowest order among its subscribers', async () => {
+    sharedBakedKeyIndex.restoreFrames('k', new Set());
+    for (let i = 0; i < sendWindow; i++) acquire(desc(100 + i), { priority: 'ahead', order: -1 });
+    await settle();
+    acquire(desc(1), { priority: 'ahead', order: 1 });
+    acquire(desc(2), { priority: 'ahead', order: 2 });
+    acquire(desc(2), { priority: 'ahead', order: 0 });
+    await settle();
+    calls[0]!.answer(pixels());
+    await settle();
+    expect(sentFrames().at(-1)).toBe(2);
+  });
+
+  it('a demotion reaches the capture in main, and promoting a waiting one sends it at once', async () => {
+    sharedBakedKeyIndex.restoreFrames('k', new Set());
+    const warm = acquire(desc(0), { priority: 'ahead' });
+    await settle();
+    warm.setPriority('background');
+    await settle();
+    expect(calls[0]!.setPriority).toHaveBeenCalledExactlyOnceWith('background');
+    for (let i = 1; i < sendWindow; i++) acquire(desc(i), { priority: 'ahead' });
+    const queued = acquire(desc(9), { priority: 'background' });
+    await settle();
+    expect(calls).toHaveLength(sendWindow);
+    queued.setPriority('current');
+    await settle();
+    expect(calls.at(-1)!.request).toMatchObject({ priority: 'current', address: { frame: 9 } });
   });
 
   it('a project reset fences queued work and work waiting for the inventory', async () => {
@@ -442,12 +534,13 @@ describe('export', () => {
     expect(captureMotif).not.toHaveBeenCalled();
   });
 
-  it('pipelines captures while a preview holds the capture slot', async () => {
+  it('pipelines captures outside the send window', async () => {
     sharedBakedKeyIndex.restoreFrames('k', new Set());
-    acquire(desc(0));
-    exported(desc(1)); exported(desc(2));
+    for (let frame = 0; frame < sendWindow; frame++) acquire(desc(frame), { priority: 'ahead' });
     await settle();
-    expect(calls.map(call => call.request.address!.frame)).toEqual([0, 1, 2]);
+    exported(desc(10)); exported(desc(11));
+    await settle();
+    expect(sentFrames()).toEqual([...Array.from({ length: sendWindow }, (_, i) => i), 10, 11]);
   });
 
   it('two exports of one frame share a capture and own separate bitmaps', async () => {

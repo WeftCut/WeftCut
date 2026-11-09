@@ -158,7 +158,12 @@ switch to another Motif replaces it.
   hosts go on serving them. A queued capture moves when its priority changes,
   up or down, and leaves the queue when its request is cancelled (it rejects
   as superseded); a running one finishes and its caller drops what it no
-  longer wants. On quit every queued capture rejects `closed` at once.
+  longer wants. On quit every queued capture rejects `closed` at once. Each
+  renderer document keeps at most `captureRequests` (2) `ahead` and
+  `background` captures in the queue and every `current` one
+  ([Admission](#admission)), so main orders the near future without holding
+  lookahead past the transport deadline
+  ([ADR 0161](adr/0161-main-orders-motif-captures-over-a-pool-of-capture-hosts.md)).
 - **Deadlines.** Every CDP command goes through the host's timed `send`
   (5 s); awaited setup gets 30 s; the renderer's capture transport allows 60 s
   so it does not pre-empt setup. A timeout rejects with code `timeout` and
@@ -207,9 +212,12 @@ splits the byte budget across contents by per-frame cost and orders
 playhead-first, then forward, then a few earlier frames; retention follows the
 same priority so the next frame to play is not evicted. It holds at most 256
 requests, round-robin across contents: `ahead` for frames at or after a
-playhead, `background` for history behind it. A replan aborts requests outside
-the latest window. For content main is preparing, lookahead only reads
-persisted frames; otherwise it may capture its window.
+playhead, `background` for history behind it, each ranked by its place in the
+plan. A replan aborts requests outside the latest window and re-classes and
+re-ranks the ones it keeps: a frame the playhead passed drops to `background`,
+a seek back raises kept history to `ahead` and to the front, and main moves a
+capture already in its queue. For content main is preparing, lookahead only
+reads persisted frames; otherwise it may capture its window.
 
 **L2 — disk.** One `.wfrm` per frame under
 `<workspace>/Cache/raster/<hash>/<frame>.wfrm`, where `<hash>` is
@@ -225,9 +233,11 @@ older directories are collected rather than read.
 
 Every renderer consumer gets a frame through `motifFrameSource.ts`:
 `peekMotifFrame` for a synchronous L0 hit, `acquireMotifFrame(descriptor,
-{ scaleDiv, priority, signal, owner?, purpose?, finalizationToken? })` for any
-frame. The descriptor carries the cache identity and the capture inputs. A frame
-comes back as a lease: a preview lease pins its L0 bitmap until `release`, so
+{ scaleDiv, priority, order?, signal, owner?, purpose?, finalizationToken? })`
+for any frame. The descriptor carries the cache identity and the capture
+inputs. It returns `{ lease, setPriority(priority, order?) }`; `setPriority`
+re-classes and re-ranks the request while it is pending. A frame comes back as
+a lease: a preview lease pins its L0 bitmap until `release`, so
 eviction never closes a frame a sprite has bound; an export lease owns its
 bitmap. Callers never learn whether a frame was read or captured, or which
 divisor L0 stored it under.
@@ -235,17 +245,23 @@ divisor L0 stored it under.
 Priorities, highest first: `current` (the frame on screen, an export frame),
 `ahead` (lookahead at or after the playhead), `background` (lookahead behind
 it). A `current` request from an `owner` supersedes that owner's previous one;
-aborting a request's signal withdraws it. Identical requests (lane, cache key,
-frame, divisor, finalization token) share one job at the highest priority of its
-subscribers, and a priority change or a cancel reaches main as a control of
-that capture request. The job publishes a preview result to L0 once and pins it
+aborting a request's signal withdraws it. `order` ranks a request within its
+class, lowest first; unranked ones go last. Identical requests (lane, cache
+key, frame, divisor, finalization token) share one job at the highest priority
+and lowest order of its subscribers, and a priority change, up or down, or a
+cancel reaches main as a control of that capture request. The job publishes a preview result to L0 once and pins it
 for each subscriber; a result nobody wants any more is closed unpublished.
 Parameter-preview frames use the overlay lane: no cache address, never read,
 never stored. Export frames never enter L0.
 
-`MotifFrameScheduler` admits jobs with **three disk-read slots and one capture
-slot**, `current` before `ahead` before `background`. Export work takes neither:
-the export stream's byte budget bounds it, and its frames pipeline. Admission
+`MotifFrameScheduler` admits jobs with **three disk-read slots and a capture
+send window**, `current` before `ahead` before `background`. A `current`
+capture is sent to main at once, never held behind lookahead. `ahead` and
+`background` captures are sent lowest order first, ties in arrival order,
+while fewer than `captureRequests` (2) of them are in main. One promoted to
+`current` there keeps its place until it settles, and one demoted from
+`current` there takes a place, so later lookahead waits for both. Export work takes neither: the export
+stream's byte budget bounds it, and its frames pipeline. Admission
 consults exact per-frame coverage: known holes skip disk I/O, unknown coverage
 is probed, and a new write wakes queued requests so they read instead of
 capture. A read miss drops the frame from coverage, releases its read slot and

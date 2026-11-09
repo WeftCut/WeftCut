@@ -50,9 +50,14 @@ export const MOTIF_TUNING_SPEC = {
    * scheduler's disk-read slots. Measured on the bench and an M1 8 GB:
    * ADR 0154, docs/notes/motif-texture-read-path-2026-11-06.md. */
   readsInFlight: { default: 3, range: [1, 8] },
-  /** Captures one renderer document admits at once; main serializes them on
-   * its capture hosts. Not measured. */
-  captureSlots: { default: 1, range: [1, 4] },
+  /** `ahead` and `background` captures one renderer document keeps in main's
+   * capture queue; `current` captures are never held back. Measured on the
+   * bench and an M1 8 GB (ADR 0161): keeping 2 lookahead captures outstanding
+   * doubled uncached heavy DECO Motifs (M1 12→30 fps, a mid-weight one on the
+   * bench 17→30); 3, or `framesInFlight` 5, added nothing but queueing in
+   * main. Each request sent must reach a host within `captureTransportMs`,
+   * and may be stale after a seek. */
+  captureRequests: { default: 2, range: [1, 32] },
   /** Texture-lane uploads main runs at once. Measured with three reads in
    * flight (docs/notes/motif-texture-upload-2026-11-07.md); other counts not
    * measured. */
