@@ -58,9 +58,10 @@ export interface MotifTextureReader {
   close(): void
 }
 
-/** Reads the first `pixels` of a shared texture's last row as RGBA. */
+/** Reads a shared texture's bottom `rows` rows (the capture host's marker
+ * rows) as RGBA, row after row. */
 export interface MotifMarkerReader {
-  read(handle: Buffer, pixels: number): Promise<Uint8Array>
+  read(handle: Buffer, rows: number): Promise<Uint8Array>
   close(): void
 }
 
@@ -94,7 +95,7 @@ interface NativePoolClass {
 }
 interface NativeRawFrame { finish(to: 'frame' | 'png'): Promise<Buffer> }
 interface NativeTextureEncoder { read(handle: Buffer, height: number): Promise<NativeRawFrame>; close(): void }
-interface NativeMarkerReader { read(handle: Buffer, pixels: number): Promise<Buffer>; close(): void }
+interface NativeMarkerReader { read(handle: Buffer, rows: number): Promise<Buffer>; close(): void }
 interface NativeFrameFileReader { read(path: string, div: number): Promise<MotifReadPixels>; close(): void }
 
 /** The addon's Motif exports, written by hand: the generated `index.d.ts` is
@@ -165,7 +166,7 @@ export function loadMotifNative(
     openMarkerReader: () => {
       const reader = decoding(() => new native.MotifMarkerReader!())
       return {
-        read: (handle, pixels) => decodingMotifErrors(() => reader.read(handle, pixels)),
+        read: (handle, rows) => decodingMotifErrors(() => reader.read(handle, rows)),
         close: () => decoding(() => reader.close()),
       }
     },

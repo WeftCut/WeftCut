@@ -29,7 +29,7 @@ before any Motif code:
 | `setTimeout` / `setInterval` / `Date.now` | stubbed to the virtual clock |
 
 `__motifRender(t, props, meta)` runs setup (once per props), `frame(t)` and the
-seek. Captures take the paint carrying the frame's id (marker row, below), so
+seek. Captures take the paint carrying the frame's id (marker rows, below), so
 an author never tunes a wait. The seek only pauses and sets
 `currentTime`; cancelling or committing a finished animation would remove it
 from `getAnimations()` and break seeking back. A time source cached before the
@@ -109,7 +109,7 @@ Gesture model (`renderer/properties/motifParamsHost.ts`):
 A capture host (`main/motif/captureHost.ts`) is one offscreen `BrowserWindow`
 showing one Motif content version, reused across frames and layers of it. It
 loads the capture host page beside the Motif's `index.html`, which frames the
-Motif at the capture size above one marker row; the runtime runs in both and
+Motif at the capture size above its marker rows; the runtime runs in both and
 forwards the entry points. Another Motif or content version gets another window
 (ADR 0159): only a window's first document keeps alpha on a bitmap host. The
 host sets `Emulation.setDeviceMetricsOverride` (any resolution) and a
@@ -123,7 +123,7 @@ least recently used host that is not rendering: that host's frames in flight
 drain, it closes, and only then does the new one open. With one host, every
 switch to another Motif replaces it.
 
-- **Output.** Every capture is the paint whose marker row carries the frame's
+- **Output.** Every capture is the paint whose marker rows carry the frame's
   id and its canvas witness (`OffscreenFrames`, `shared/motifs/frameMarker.ts`):
   a new window's first commit can show the id without any canvas, and that
   frame renders again. Windows: OSR shared textures, copied into the Motif
@@ -479,7 +479,7 @@ a Motif export (`loadMotifNative`).
   encoder and reader all check it.
 - **A GPU texture** is at most 128 MiB (`fitsMotifTexture`): a pool's one slot
   plus, for a pool that reads stored frames, its staging texture; and the
-  capture host's surface, marker row included, which the bake reads back. A
+  capture host's surface, marker rows included, which the bake reads back. A
   full-size 8K frame does not fit.
 
 A frame over the texture limit never turns a lane off: its read takes the

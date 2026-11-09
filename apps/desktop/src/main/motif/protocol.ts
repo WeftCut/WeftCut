@@ -1,6 +1,6 @@
 import { protocol } from 'electron'
 import { PARAMS_PAGE_FILE } from '../../shared/motifs/catalog.js'
-import { CAPTURE_HOST_FILE, FRAME_MARKER_ROWS } from '../../shared/motifs/frameMarker.js'
+import { CAPTURE_HOST_FILE } from '../../shared/motifs/frameMarker.js'
 import fs from 'node:fs'
 import { resolveMotifFile } from './builtinAssets.js'
 import { servedMotifMedia } from './mediaProps.js'
@@ -42,16 +42,17 @@ export function cspForMotifFile(rest: string): string {
 export const CAPTURE_HOST_CSP = "default-src 'none'; frame-src 'self'; style-src 'unsafe-inline'"
 
 /// The capture host page beside a Motif's `index.html` (same origin, so the
-/// runtime can reach into the frame): the Motif at the top-left, sized to the
-/// viewport minus the marker rows (shared/motifs/frameMarker.ts). The query
-/// goes to the Motif. The frame stays empty until the runtime loads it
-/// (`__motifShellLoad`), so the Motif's documents start with the runtime.
+/// runtime can reach into the frame): the Motif at the top-left, above the
+/// marker rows (shared/motifs/frameMarker.ts); the runtime sizes it to the
+/// capture (`__motifShellFit`). The query goes to the Motif. The frame stays
+/// empty until the runtime loads it (`__motifShellLoad`), so the Motif's
+/// documents start with the runtime.
 export function captureHostPage(search: string): string {
   const rest = new URLSearchParams(search).toString()
   const src = ('index.html' + (rest ? '?' + rest : '')).replace(/[&"<>]/g, c => `&#${c.charCodeAt(0)};`)
   return '<!doctype html><html><head><meta charset="utf-8"><style>'
     + 'html,body{margin:0;padding:0;overflow:hidden;background:transparent}'
-    + `iframe{position:fixed;left:0;top:0;width:100vw;height:calc(100vh - ${FRAME_MARKER_ROWS}px);border:0;display:block}`
+    + 'iframe{position:fixed;left:0;top:0;border:0;display:block}'
     + `</style></head><body><iframe data-src="${src}"></iframe></body></html>`
 }
 

@@ -4,7 +4,7 @@ import type { MotifMarkerReader } from './native.js'
 import { BITMAP_CANVAS_RUNTIME_SOURCE } from './bitmapCanvasRuntime.js'
 import { hardenWindow, markInternalWindow } from '../windows'
 import { MotifError, motifErrorCode } from '../../shared/motifs/errors.js'
-import { CAPTURE_HOST_FILE, FRAME_MARKER_ROWS } from '../../shared/motifs/frameMarker.js'
+import { CAPTURE_HOST_FILE, frameMarkerRows } from '../../shared/motifs/frameMarker.js'
 import { MOTIF_DEADLINES, type MotifTuning } from '../../shared/motifs/tuning.js'
 import type { Rendered } from './captureQueue.js'
 import type { HostKey, PooledHost } from './hostPool.js'
@@ -88,6 +88,7 @@ export class CaptureHost implements PooledHost {
   static async open(key: HostKey, size: { width: number; height: number }, pinned: boolean, env: CaptureHostEnv): Promise<CaptureHost> {
     const { motifId, contentHash, texture } = key
     const { width, height } = size
+    const surfaceHeight = height + frameMarkerRows(width)
     // The shell frames the Motif above the surface's marker rows
     // (shared/motifs/frameMarker.ts); the Motif sees only its own size.
     const dir = `motif://${motifId}/${pinned ? `.revisions/${contentHash}/` : ''}`
@@ -99,7 +100,7 @@ export class CaptureHost implements PooledHost {
     // (docs/notes/electron-chromium-behavior.md#macos-offscreen-bitmap-host-drops-the-first-commit-when-window-and-emulation-sizes-differ).
     const win = new BrowserWindow({
       show: false,
-      width, height: height + FRAME_MARKER_ROWS, useContentSize: true,
+      width, height: surfaceHeight, useContentSize: true,
       // The capture host renders untrusted, user-authored Motif content, so it runs
       // at the same isolation baseline as every other window: OS sandbox on, no Node,
       // context isolation, web security. The complementary egress half (no network /
@@ -139,10 +140,11 @@ export class CaptureHost implements PooledHost {
       })
       // The emulation pins deviceScaleFactor to 1; the default background keeps
       // `background: transparent` real alpha.
-      await host.send('Emulation.setDeviceMetricsOverride', { width, height: height + FRAME_MARKER_ROWS, deviceScaleFactor: 1, mobile: false })
+      await host.send('Emulation.setDeviceMetricsOverride', { width, height: surfaceHeight, deviceScaleFactor: 1, mobile: false })
       await host.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } })
       const shell = await env.timed('loadMs', () => host.send('Runtime.evaluate', {
-        expression: `${env.runtime};window.__motifShellLoad()`, awaitPromise: true, returnByValue: true,
+        expression: `${env.runtime};window.__motifShellFit(${width}, ${height}, ${frameMarkerRows(width)});window.__motifShellLoad()`,
+        awaitPromise: true, returnByValue: true,
       }, MOTIF_DEADLINES.captureLoadMs, 'load Motif frame'))
       if (shell?.exceptionDetails) throw new Error('capture host shell failed: ' + JSON.stringify(shell.exceptionDetails))
       win.webContents.setFrameRate(env.tuning.captureFrameRate)
@@ -176,9 +178,13 @@ export class CaptureHost implements PooledHost {
     try {
       await this.env.timed('readyMs', () => this.waitReady())
       if (resize) {
-        // Another size for the same document; the window follows, as at build.
-        this.win.setContentSize(width, height + FRAME_MARKER_ROWS)
-        await this.send('Emulation.setDeviceMetricsOverride', { width, height: height + FRAME_MARKER_ROWS, deviceScaleFactor: 1, mobile: false })
+        // Another size for the same document; the window and the shell's
+        // layout follow, as at build.
+        const rows = frameMarkerRows(width)
+        this.win.setContentSize(width, height + rows)
+        await this.send('Emulation.setDeviceMetricsOverride', { width, height: height + rows, deviceScaleFactor: 1, mobile: false })
+        const fit = await this.send('Runtime.evaluate', { expression: `window.__motifShellFit(${width}, ${height}, ${rows})`, returnByValue: true })
+        if (fit?.exceptionDetails) throw new Error('capture host shell fit failed: ' + JSON.stringify(fit.exceptionDetails))
         this.lastSize = { width, height }
       }
     } catch (e) {

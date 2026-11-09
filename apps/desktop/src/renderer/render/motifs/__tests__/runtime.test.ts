@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createMotifRuntime, MOTIF_RUNTIME_SOURCE } from "../runtime";
 import { runInNewContext } from 'node:vm';
-import { CAPTURE_HOST_FILE, decodeFrameMarker, FRAME_MARKER_PIXELS } from "../../../../shared/motifs/frameMarker";
+import { CAPTURE_HOST_FILE, decodeFrameMarker, FRAME_MARKER_PIXELS, FRAME_MARKER_READ_PIXELS, frameMarkerRows } from "../../../../shared/motifs/frameMarker";
 
 function pageRuntime() {
   const workers: Array<EventTarget & { terminate: ReturnType<typeof vi.fn> }> = [];
@@ -69,21 +69,23 @@ describe('Motif setup decoder workers', () => {
 });
 
 /// The capture host shell: a top frame at CAPTURE_HOST_FILE framing a Motif
-/// page that already runs the runtime in its own role.
-function hostRuntime(pathname = '/' + CAPTURE_HOST_FILE) {
+/// page that already runs the runtime in its own role, fitted to a picture
+/// `width` pixels wide.
+function hostRuntime(pathname = '/' + CAPTURE_HOST_FILE, width = 640) {
   const motif = pageRuntime().window;
   motif.document.readyState = 'complete';
-  // A canvas records its fills per pixel column, for the witness.
+  // A canvas records its fills by their place in the marker run, row after row.
   const el = (tag?: string) => {
     const node: any = { style: {} as Record<string, string>, children: [] as any[], appendChild(c: unknown) { this.children.push(c); } };
     if (tag === 'canvas') {
-      node.columns = [] as string[];
-      node.getContext = () => ({ fillStyle: '', fillRect(x: number) { node.columns[x] = this.fillStyle; } });
+      node.run = [] as string[];
+      node.getContext = () => ({ fillStyle: '', fillRect(x: number, y: number) { node.run[y * node.width + x] = this.fillStyle; } });
     }
     return node;
   };
   const body = el();
-  const document = { readyState: 'complete', body, createElement: el, querySelector: () => ({ contentWindow: motif }) };
+  const frame = { contentWindow: motif, style: {} as Record<string, string> };
+  const document = { readyState: 'complete', body, createElement: el, querySelector: () => frame };
   // The host's rendering steps run when the test says so.
   const rafs: Array<() => void> = [];
   const window: any = { document, location: { pathname, hostname: 'countdown' }, addEventListener: vi.fn(),
@@ -91,18 +93,22 @@ function hostRuntime(pathname = '/' + CAPTURE_HOST_FILE) {
   const renderStep = () => { for (const cb of rafs.splice(0)) cb(); };
   window.top = window;
   runInNewContext(MOTIF_RUNTIME_SOURCE, { window, document, location: window.location, console });
+  window.__motifShellFit?.(width, 360, frameMarkerRows(width));
   const markerRow = () => {
     const pixels = body.children[0]?.children ?? [];
     const rgba = new Uint8Array(FRAME_MARKER_PIXELS * 4);
     pixels.forEach((px: { style: { background: string } }, i: number) => rgba.set(px.style.background === '#fff' ? [255, 255, 255, 255] : [0, 0, 0, 255], i * 4));
     return pixels.length ? decodeFrameMarker(rgba) : null;
   };
-  /// The id's low byte as the witness canvas painted it, or null before any.
+  /// The id's low byte as the witness canvas painted it after the id, or null
+  /// before any.
   const witness = () => {
-    const columns: string[] | undefined = body.children[1]?.columns;
-    return columns?.length ? columns.reduce((byte, c) => (byte << 1) | (c === '#fff' ? 1 : 0), 0) : null;
+    const run: string[] | undefined = body.children[1]?.run;
+    return run?.length
+      ? run.slice(FRAME_MARKER_PIXELS, FRAME_MARKER_READ_PIXELS).reduce((byte, c) => (byte << 1) | (c === '#fff' ? 1 : 0), 0)
+      : null;
   };
-  return { window, motif, markerRow, witness, renderStep };
+  return { window, motif, markerRow, witness, renderStep, frame, body };
 }
 
 describe('capture host shell', () => {
@@ -128,6 +134,28 @@ describe('capture host shell', () => {
     await vi.waitFor(() => expect(markerRow()).toBe(0x1ff));
     expect(witness()).toBe(0xff); // the id's low byte
     renderStep(); await third;
+  });
+
+  it('sizes the Motif to the picture and wraps the marker below a narrow one', async () => {
+    const { window, motif, markerRow, witness, renderStep, frame, body } = hostRuntime(undefined, 32);
+    motif.motif.define({ frame() {} });
+    expect(frame.style).toMatchObject({ width: '32px', height: '360px' });
+    const rendered = window.__motifRender(0, {}, { frameId: 0x1234 });
+    await vi.waitFor(() => expect(markerRow()).toBe(0x1234));
+    expect(witness()).toBe(0x34);
+    const [marker, canvas] = body.children;
+    expect(marker.style.cssText).toContain('top:360px;width:32px;height:2px;');
+    expect(marker.style.cssText).toContain('flex-wrap:wrap');
+    expect(canvas).toMatchObject({ width: 32, height: 2 });
+    renderStep(); await rendered;
+    // A resize lays the rows out again before the next mark.
+    window.__motifShellFit(640, 48, 1);
+    const next = window.__motifRender(0, {}, { frameId: 0x1235 });
+    await vi.waitFor(() => expect(markerRow()).toBe(0x1235));
+    expect(witness()).toBe(0x35);
+    expect(canvas).toMatchObject({ width: 640, height: 1 });
+    expect(frame.style).toMatchObject({ width: '640px', height: '48px' });
+    renderStep(); await next;
   });
 
   it('returns only after the rendering step that commits the frame, or a bounded wait', async () => {

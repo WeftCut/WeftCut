@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { decodeFrameMarker, FRAME_MARKER_PIXELS, FRAME_MARKER_READ_PIXELS, frameMarkerBits, frameWitnessBits, frameWitnessed } from './frameMarker'
+import { decodeFrameMarker, FRAME_MARKER_PIXELS, FRAME_MARKER_READ_PIXELS, frameMarkerBits, frameMarkerRows, frameWitnessBits, frameWitnessed } from './frameMarker'
 
 const row = (bits: number[]) => {
   const rgba = new Uint8Array(bits.length * 4)
@@ -8,6 +8,14 @@ const row = (bits: number[]) => {
 }
 
 describe('frame marker', () => {
+  it('takes as many rows as a picture of that width needs to hold it whole', () => {
+    expect(frameMarkerRows(3840)).toBe(1)
+    expect(frameMarkerRows(FRAME_MARKER_READ_PIXELS)).toBe(1)
+    expect(frameMarkerRows(FRAME_MARKER_READ_PIXELS - 1)).toBe(2)
+    expect(frameMarkerRows(32)).toBe(2)
+    expect(frameMarkerRows(1)).toBe(FRAME_MARKER_READ_PIXELS)
+  })
+
   it('round-trips ids across the 32-bit range', () => {
     for (const id of [0, 1, 2, 255, 256, 65_535, 0x12345678, 0xffff_fffe, 0xffff_ffff]) {
       const bits = frameMarkerBits(id)

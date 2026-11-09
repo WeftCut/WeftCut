@@ -1,4 +1,4 @@
-import { CAPTURE_HOST_FILE, FRAME_MARKER_PIXELS, FRAME_MARKER_ROWS, FRAME_WITNESS_PIXELS, frameMarkerBits, frameWitnessBits } from "../../../shared/motifs/frameMarker";
+import { CAPTURE_HOST_FILE, FRAME_MARKER_PIXELS, frameMarkerBits, frameWitnessBits } from "../../../shared/motifs/frameMarker";
 import { MOTIF_DEADLINES } from "../../../shared/motifs/tuning";
 
 /** Testable core: installs clock takeover onto an arbitrary global-like object. */
@@ -40,7 +40,7 @@ export function createMotifRuntime(g: any = {}) {
  * `motif_register_runtime`. It plays one of two roles:
  * - In the capture host shell (`CAPTURE_HOST_FILE`, the top frame), it forwards
  *   `__motifSetup`/`__motifRender` to the framed Motif and writes the frame id
- *   and its canvas witness into the marker row below it
+ *   and its canvas witness into the marker rows below it
  *   (`shared/motifs/frameMarker.ts`).
  * - In the Motif's own frame, it installs the clock takeover, exposes
  *   motif.define and the `__motifRender(t, props, meta)` entry point.
@@ -57,31 +57,49 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
     var markerBits = (${frameMarkerBits.toString()});
     var witnessBits = (${frameWitnessBits.toString()});
     var motifWindow = function () { var f = document.querySelector('iframe'); return f && f.contentWindow; };
-    var marker = null, witness = null;
+    // The capture's picture size and its marker rows (frameMarkerRows),
+    // set by main before the Motif loads and on every resize.
+    var size = null, laidOut = null;
+    var marker = null, canvas = null, witness = null;
+    window.__motifShellFit = function (width, height, rows) {
+      var f = document.querySelector('iframe');
+      if (!f) throw new Error('capture host shell has no Motif frame');
+      f.style.width = width + 'px';
+      f.style.height = height + 'px';
+      size = { width: width, height: height, rows: rows };
+    };
+    // The id's pixels are DOM, wrapping at the picture's width; the witness
+    // canvas covers the marker rows, transparent but for the pixels after the
+    // id, so both read as one run of pixels, row after row.
     var mark = function (id) {
+      if (!size) throw new Error('capture host shell was never fitted');
       if (!marker) {
         marker = document.createElement('div');
-        marker.style.cssText = 'position:fixed;left:0;bottom:0;display:flex;width:${FRAME_MARKER_PIXELS}px;height:${FRAME_MARKER_ROWS}px;pointer-events:none';
         for (var i = 0; i < ${FRAME_MARKER_PIXELS}; i++) {
           var px = document.createElement('i');
-          px.style.cssText = 'display:block;flex:none;width:1px;height:${FRAME_MARKER_ROWS}px';
+          px.style.cssText = 'display:block;flex:none;width:1px;height:1px';
           marker.appendChild(px);
         }
         document.body.appendChild(marker);
-      }
-      var bits = markerBits(id);
-      for (var j = 0; j < bits.length; j++) marker.children[j].style.background = bits[j] ? '#fff' : '#000';
-      if (!witness) {
-        var canvas = document.createElement('canvas');
-        canvas.width = ${FRAME_WITNESS_PIXELS}; canvas.height = ${FRAME_MARKER_ROWS};
-        canvas.style.cssText = 'position:fixed;left:${FRAME_MARKER_PIXELS}px;bottom:0;display:block;width:${FRAME_WITNESS_PIXELS}px;height:${FRAME_MARKER_ROWS}px;pointer-events:none';
+        canvas = document.createElement('canvas');
         document.body.appendChild(canvas);
         witness = canvas.getContext('2d');
       }
+      if (laidOut !== size) {
+        var box = 'position:fixed;left:0;top:' + size.height + 'px;width:' + size.width + 'px;height:' + size.rows + 'px;pointer-events:none;';
+        marker.style.cssText = box + 'display:flex;flex-wrap:wrap;align-content:flex-start';
+        canvas.width = size.width;
+        canvas.height = size.rows;
+        canvas.style.cssText = box + 'display:block';
+        laidOut = size;
+      }
+      var bits = markerBits(id);
+      for (var j = 0; j < bits.length; j++) marker.children[j].style.background = bits[j] ? '#fff' : '#000';
       var wbits = witnessBits(id);
       for (var w = 0; w < wbits.length; w++) {
+        var at = ${FRAME_MARKER_PIXELS} + w;
         witness.fillStyle = wbits[w] ? '#fff' : '#000';
-        witness.fillRect(w, 0, 1, ${FRAME_MARKER_ROWS});
+        witness.fillRect(at % size.width, Math.floor(at / size.width), 1, 1);
       }
     };
     window.__motifHostReady = function (motifId) {

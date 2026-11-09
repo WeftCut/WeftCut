@@ -4,30 +4,35 @@ import { describe, expect, it, vi } from 'vitest'
 import { FRAME_MARKER_PIXELS, FRAME_MARKER_READ_PIXELS, frameMarkerBits, frameWitnessBits } from '../../shared/motifs/frameMarker'
 import { MotifFrameSkippedError, OffscreenFrames } from './offscreenFrames'
 
-/// A paint whose marker row carries `id` (null: no marker, as a blank or
+/// A paint whose marker rows carry `id` (null: no marker, as a blank or
 /// unrelated surface) and, unless `canvases` is false, the id's canvas
-/// witness. The fake handle encodes both, for the fake reader.
+/// witness. The fake handle encodes both and the width, for the fake reader.
 const texture = (id: number | null, w = 128, h = 65, canvases = true) => ({
   release: vi.fn(),
-  textureInfo: { codedSize: { width: w, height: h }, handle: { ntHandle: Buffer.from(JSON.stringify([id, canvases])) } },
+  textureInfo: { codedSize: { width: w, height: h }, handle: { ntHandle: Buffer.from(JSON.stringify([id, canvases, w])) } },
 })
-const markerRow = (id: number | null, canvases = true) => {
-  const rgba = new Uint8Array(FRAME_MARKER_READ_PIXELS * 4)
+/// `pixels` of marker rows, row after row.
+const markerRows = (id: number | null, canvases: boolean, pixels: number) => {
+  const rgba = new Uint8Array(pixels * 4)
   const write = (bits: number[], at: number) => bits.forEach((bit, i) => rgba.set(bit ? [255, 255, 255, 255] : [0, 0, 0, 255], (at + i) * 4))
   if (id !== null) write(frameMarkerBits(id), 0)
   if (id !== null && canvases) write(frameWitnessBits(id), FRAME_MARKER_PIXELS)
   return rgba
 }
-const readMarker = vi.fn(async (handle: Buffer, pixels: number) => {
-  expect(pixels).toBe(FRAME_MARKER_READ_PIXELS)
-  const [id, canvases] = JSON.parse(handle.toString()) as [number | null, boolean]
-  return markerRow(id, canvases)
+/// The texture's bottom `rows`, as the native reader returns them.
+const readMarker = vi.fn(async (handle: Buffer, rows: number) => {
+  const [id, canvases, w] = JSON.parse(handle.toString()) as [number | null, boolean, number]
+  return markerRows(id, canvases, w * rows)
 })
-/// A bitmap host's paint: its last row carries `id`.
-const bitmap = (id: number | null, w = 128, h = 65, canvases = true) => ({
+/// A bitmap host's paint: its rows below a `marker`-row-short picture carry `id`.
+const bitmap = (id: number | null, w = 128, h = 65, canvases = true, marker = 1) => ({
   isEmpty: () => false,
   getSize: () => ({ width: w, height: h }),
-  crop: (rect: { y: number }) => ({ toBitmap: () => Buffer.from(rect.y === h - 1 ? markerRow(id, canvases) : new Uint8Array(FRAME_MARKER_READ_PIXELS * 4)) }),
+  crop: (rect: { y: number; width: number; height: number }) => ({
+    toBitmap: () => Buffer.from(rect.y === h - marker
+      ? markerRows(id, canvases, rect.width * rect.height)
+      : new Uint8Array(rect.width * rect.height * 4)),
+  }),
 })
 const settled = () => new Promise(resolve => setTimeout(resolve, 0))
 
@@ -102,6 +107,21 @@ describe('OffscreenFrames', () => {
     paint(lateB) // paints arrive in frame order; a stray one is released
     await settled()
     expect(lateB.release).toHaveBeenCalledOnce()
+  })
+
+  it('reads a marker wrapped over the rows below a picture narrower than it', async () => {
+    const { frames, paint } = setup()
+    const narrow = frames.expect(32, 32)
+    const oneRow = texture(narrow.id, 32, 33), wrapped = texture(narrow.id, 32, 34)
+    paint(oneRow); paint(wrapped)
+    expect(await narrow.frame).toMatchObject({ texture: wrapped, width: 32, height: 32 })
+    expect(oneRow.release).toHaveBeenCalledOnce()
+    expect(readMarker).toHaveBeenLastCalledWith(expect.any(Buffer), 2)
+    expect(FRAME_MARKER_READ_PIXELS).toBeGreaterThan(32)
+    const bitmapHost = setup(1000, null)
+    const tiny = bitmapHost.frames.expect(1, 1)
+    bitmapHost.paintBitmap(bitmap(tiny.id, 1, 1 + FRAME_MARKER_READ_PIXELS, true, FRAME_MARKER_READ_PIXELS))
+    expect(await tiny.frame).toMatchObject({ kind: 'bitmap', width: 1, height: 1 })
   })
 
   it('skips a frame whose paint carries its id without its canvases, so it renders again', async () => {

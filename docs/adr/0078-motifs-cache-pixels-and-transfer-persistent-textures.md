@@ -62,18 +62,20 @@ Only pixels drawn by the page travel with the commit that drew them
   Native pools outlive every Electron import. The consumer lifetime is a
   document: navigation retires its transport generation.
 - **A paint is leased by the frame id it carries.** The capture host page is
-  a same-origin shell that frames the Motif at the capture size and keeps one
-  pixel row below it (`shared/motifs/frameMarker.ts`). The
+  a same-origin shell that frames the Motif at the capture size and keeps
+  marker rows below it: one, or as many as a picture narrower than the
+  marker needs for it to wrap (`shared/motifs/frameMarker.ts`), so the surface
+  keeps the picture's width. The
   Motif sees only its own size. After the frame's seek, with no rendering step between, the shell
-  writes a fresh 32-bit id with a magic and a check byte into that row, and a
-  2D canvas beside it paints the id's low byte (the canvas witness). A new
+  writes a fresh 32-bit id with a magic and a check byte into those rows, and a
+  2D canvas paints the id's low byte after it (the canvas witness). A new
   window's first commits can carry the id while every canvas of the page is
   missing, and such a commit never fills in, so a paint carrying the id
   without its witness skips the frame and it renders again
-  (docs/notes/electron-chromium-behavior.md). Painting stays on; `OffscreenFrames` reads the row of each paint (a
+  (docs/notes/electron-chromium-behavior.md). Painting stays on; `OffscreenFrames` reads the marker rows of each paint (a
   texture's on a native worker, a bitmap's in main) and leases the first paint
   carrying the id, releasing the rest.
-  Copies and readbacks take the rows above it. No settle wait, no
+  Copies and readbacks take the rows above them. No settle wait, no
   stop/start of painting, no surface fence: a new document, size or GPU
   process's stale first paint carries no id or an old one. The host renderer
   runs with checker imaging off, so a frame does not draw before its images

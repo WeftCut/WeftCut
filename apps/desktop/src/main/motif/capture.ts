@@ -8,7 +8,7 @@ import { LanePolicy } from './lanePolicy.js'
 import { BUILTIN_MANIFESTS, motifCtxDurationS, type Manifest } from '../../shared/motifs/catalog.js'
 import { MotifError } from '../../shared/motifs/errors.js'
 import { resolveMotifMediaProps } from './mediaProps.js'
-import { FRAME_MARKER_ROWS } from '../../shared/motifs/frameMarker.js'
+import { frameMarkerRows } from '../../shared/motifs/frameMarker.js'
 import { fitsMotifTexture } from '../../shared/motifs/limits.js'
 import type { MotifTuning } from '../../shared/motifs/tuning.js'
 import type { UserMotifStore } from './store.js'
@@ -195,7 +195,7 @@ export class MotifCapturer {
   /// texture limit: its readback and copy must. A larger frame takes a bitmap
   /// host, which costs that size its GPU path and nothing else.
   private wantsTextureHost(width: number, height: number): boolean {
-    return this.textureEnabled && this.markerReader !== null && fitsMotifTexture(width, height + FRAME_MARKER_ROWS, 'copy')
+    return this.textureEnabled && this.markerReader !== null && fitsMotifTexture(width, height + frameMarkerRows(width), 'copy')
   }
 
   private openHost(key: HostKey, a: CaptureArgs): Promise<CaptureHost> {

@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { PNG } from 'pngjs'
-import { FRAME_MARKER_PIXELS, FRAME_MARKER_READ_PIXELS, frameMarkerBits, frameWitnessBits } from '../../shared/motifs/frameMarker'
+import { FRAME_MARKER_PIXELS, FRAME_MARKER_READ_PIXELS, frameMarkerBits, frameMarkerRows, frameWitnessBits } from '../../shared/motifs/frameMarker'
 
 let opened = 0
 let lastHost: EventEmitter | null = null
@@ -24,6 +24,8 @@ let lastRenderExpr: string | null = null
 /// Total __motifRender evaluations — the lane fast-reject test asserts a
 /// same-lane capture never reaches the page.
 let renderCalls = 0
+/// The arguments of each `__motifShellFit(width, height, rows)` sent, in order.
+const fits: string[] = []
 /// Page events in order (`load:<motif>`, `render:<frameId>`, `paint:<frameId>`).
 const events: string[] = []
 /// Lanes (`motifId@contentHash`) whose __motifRender throws — a Motif's own
@@ -68,13 +70,13 @@ const markerRow = (id: number | null, canvases = true) => {
   return rgba
 }
 
-/// The marker row the fake native reader sees for a paint's handle.
+/// The marker rows the fake native reader sees for a paint's handle.
 async function readMarker(handle: Buffer): Promise<Uint8Array> {
   const { id, canvases } = JSON.parse(handle.toString()) as { id: number | null; canvases: boolean }
   return markerRow(id, canvases)
 }
 
-/// A bitmap host's paint: `surface` names the picture, the last row the id.
+/// A bitmap host's paint: `surface` names the picture, the rows below it the id.
 /// The picture's PNG is the bytes `PNG` (`UE5H` in base64).
 function bitmap(id: number | null, surface: number, size: { width: number; height: number }, canvases = true) {
   const picture = (width: number, height: number): any => ({
@@ -85,7 +87,7 @@ function bitmap(id: number | null, surface: number, size: { width: number; heigh
   return {
     isEmpty: () => false,
     getSize: () => ({ ...size }),
-    crop: (rect: { x: number; y: number; width: number; height: number }) => rect.height === 1 && rect.y === size.height - 1
+    crop: (rect: { x: number; y: number; width: number; height: number }) => rect.y === size.height - frameMarkerRows(size.width)
       ? { toBitmap: () => Buffer.from(markerRow(id, canvases)) }
       : picture(rect.width, rect.height),
   }
@@ -144,6 +146,8 @@ vi.mock('electron', () => {
           if (method === 'Page.captureScreenshot') throw new Error('captures never take screenshots')
           if (method === 'Runtime.evaluate') {
             const expr = params?.expression ?? ''
+            const fit = /__motifShellFit\(([^)]*)\)/.exec(expr)
+            if (fit) fits.push(fit[1]!)
             if (expr.startsWith('window.__motifSetup(')) {
               if (hangSetup) return new Promise(() => {})
               return (setupDelayMs ? delay(setupDelayMs) : Promise.resolve()).then(() => ({ result: { value: true } }))
@@ -404,15 +408,18 @@ describe('MotifCapturer', () => {
     expect(reads).toBe(4)
   })
 
-  it('sizes the host window to the capture plus its marker row', async () => {
+  it('sizes the host window to the capture plus its marker rows', async () => {
     const read = (motifId: string, tSec: number, width = 32, height = 16) =>
       capturer.capturePng({ ...args, motifId, tSec, width, height }, bg)
     // New document at the host's current size, then a new size on the same
-    // page, then another document at that size: the window follows each.
+    // page, then another document at that size: the window and the shell's
+    // layout follow each.
+    fits.length = 0
     await expect(read('sized-a', 2)).resolves.toBe('UE5H')
     await expect(read('sized-a', 3, 48, 24)).resolves.toBe('UE5H')
-    expect(contentSize).toEqual({ width: 48, height: 25 })
+    expect(contentSize).toEqual({ width: 48, height: 26 }) // two marker rows below 48 pixels
     await expect(read('sized-b', 4, 48, 24)).resolves.toBe('UE5H')
+    expect(fits).toEqual(['32, 16, 2', '48, 24, 2', '48, 24, 2'])
   })
 
   it.each([false, true])('leases the frame carrying its id, never a new surface\'s stale first paint (texture host: %s)', async texture => {
@@ -480,7 +487,7 @@ describe('MotifCapturer', () => {
     const png = PNG.sync.read(Buffer.from(await capturer.capturePng({ ...args, motifId: 'png-on-texture' }, bg), 'base64'))
     expect([png.width, png.height]).toEqual([32, 16])
     expect(reads).toEqual([16])
-    expect(contentSize).toEqual({ width: 32, height: 17 })
+    expect(contentSize).toEqual({ width: 32, height: 18 })
     expect(released - releasedBefore).toBeGreaterThanOrEqual(1)
   })
 
@@ -782,7 +789,7 @@ describe('MotifCapturer', () => {
       await expect(resized).resolves.toBe('UE5H')
       expect(silent.destroyed).toBe(true)
       expect(opened).toBe(before.opened + 1)
-      expect(contentSize).toEqual({ width: 48, height: 25 })
+      expect(contentSize).toEqual({ width: 48, height: 26 }) // two marker rows below 48 pixels
       const next = capture(3, 48, 24)
       await vi.advanceTimersByTimeAsync(1)
       await expect(next).resolves.toBe('UE5H')

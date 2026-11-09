@@ -1,5 +1,5 @@
 import type { NativeImage, OffscreenSharedTexture, WebContents } from 'electron'
-import { decodeFrameMarker, FRAME_MARKER_READ_PIXELS, FRAME_MARKER_ROWS, frameWitnessed } from '../../shared/motifs/frameMarker.js'
+import { decodeFrameMarker, FRAME_MARKER_READ_PIXELS, frameMarkerRows, frameWitnessed } from '../../shared/motifs/frameMarker.js'
 import type { MotifMarkerReader } from './native.js'
 
 /** A leased capture and the picture size it holds above the marker rows. A
@@ -30,7 +30,7 @@ interface Pending {
 }
 
 /** Owns the capture host's paints. Painting stays on; a paint is leased only
- * when its marker row carries an expected frame id and that id's canvas
+ * when its marker rows carry an expected frame id and that id's canvas
  * witness (shared/motifs/frameMarker.ts, ADR 0078). That one check covers a new
  * document, a new size and a GPU process restart alike: their stale or blank
  * first paints carry no id or an old one, and a commit missing the page's
@@ -102,12 +102,13 @@ export class OffscreenFrames {
   private paintTexture(texture: OffscreenSharedTexture): void {
     const size = this.expectedSize()
     const { codedSize, handle } = texture.textureInfo
-    if (!size || !this.markers || !handle.ntHandle || codedSize.width !== size.width || codedSize.height !== size.height + FRAME_MARKER_ROWS) {
+    const rows = size ? frameMarkerRows(size.width) : 0
+    if (!size || !this.markers || !handle.ntHandle || codedSize.width !== size.width || codedSize.height !== size.height + rows) {
       texture.release()
       return
     }
-    this.markers.read(handle.ntHandle, FRAME_MARKER_READ_PIXELS).then(row => {
-      const request = this.arrived(row)
+    this.markers.read(handle.ntHandle, rows).then(marker => {
+      const request = this.arrived(marker)
       if (!request) { texture.release(); return }
       request.resolve({ kind: 'texture', texture, width: request.width, height: request.height })
     }, (error: unknown) => {
@@ -121,17 +122,19 @@ export class OffscreenFrames {
     const size = this.expectedSize()
     if (!size || !image || image.isEmpty()) return
     const { width, height } = image.getSize()
-    if (width !== size.width || height !== size.height + FRAME_MARKER_ROWS) return
-    const row = image.crop({ x: 0, y: size.height, width: FRAME_MARKER_READ_PIXELS, height: 1 }).toBitmap()
-    const request = this.arrived(row)
+    const rows = frameMarkerRows(width)
+    if (width !== size.width || height !== size.height + rows) return
+    // One row holds the whole marker, or the marker fills every row but the last.
+    const marker = image.crop({ x: 0, y: size.height, width: Math.min(width, FRAME_MARKER_READ_PIXELS), height: rows }).toBitmap()
+    const request = this.arrived(marker)
     request?.resolve({ kind: 'bitmap', image, width: request.width, height: request.height })
   }
 
-  /** Retires the expected frame a paint with marker row prefix `row` shows,
-   * and every earlier one as skipped; without its canvas witness, that frame
-   * is skipped too. Returns the shown frame's request, if expected and whole. */
-  private arrived(row: Uint8Array): Pending | null {
-    const id = decodeFrameMarker(row)
+  /** Retires the expected frame a paint with marker rows `marker` shows, and
+   * every earlier one as skipped; without its canvas witness, that frame is
+   * skipped too. Returns the shown frame's request, if expected and whole. */
+  private arrived(marker: Uint8Array): Pending | null {
+    const id = decodeFrameMarker(marker)
     if (id === null) return null
     for (const earlier of [...this.pending.values()]) {
       if (earlier.id >= id) break
@@ -140,7 +143,7 @@ export class OffscreenFrames {
     const request = this.pending.get(id) ?? null
     if (!request) return null
     this.lastProgress = performance.now()
-    if (!frameWitnessed(row, id)) {
+    if (!frameWitnessed(marker, id)) {
       this.settle(request, new MotifFrameSkippedError(id))
       return null
     }

@@ -107,16 +107,17 @@ impl MotifMarkerReader {
         })
     }
 
-    /// The first `pixels` of the texture's last row, as RGBA.
+    /// The texture's bottom `rows` rows, the capture host's marker rows, as
+    /// RGBA, row after row.
     #[napi]
-    pub async fn read(&self, handle: Buffer, pixels: u32) -> napi::Result<Buffer> {
-        let mut row = request(&self.worker, handle, Region::LastRow(pixels)).await?;
-        if row.source == MotifPixelSource::PremultipliedBgra {
-            for px in row.data.as_chunks_mut::<4>().0 {
+    pub async fn read(&self, handle: Buffer, rows: u32) -> napi::Result<Buffer> {
+        let mut marker = request(&self.worker, handle, Region::Bottom(rows)).await?;
+        if marker.source == MotifPixelSource::PremultipliedBgra {
+            for px in marker.data.as_chunks_mut::<4>().0 {
                 px.swap(0, 2);
             }
         }
-        Ok(row.data.into())
+        Ok(marker.data.into())
     }
 
     #[napi]
@@ -130,8 +131,8 @@ impl MotifMarkerReader {
 enum Region {
     /// The top rows.
     Top(u32),
-    /// The first pixels of the last row.
-    LastRow(u32),
+    /// The bottom rows.
+    Bottom(u32),
 }
 
 struct Reader {
@@ -172,13 +173,13 @@ impl Reader {
                 );
                 (0, 0, desc.Width, rows)
             }
-            Region::LastRow(pixels) => {
+            Region::Bottom(rows) => {
                 anyhow::ensure!(
-                    pixels > 0 && pixels <= desc.Width,
-                    "{pixels} pixels of a {}-pixel row",
-                    desc.Width
+                    rows > 0 && rows <= desc.Height,
+                    "{rows} rows of a {}-row texture",
+                    desc.Height
                 );
-                (0, desc.Height - 1, pixels, 1)
+                (0, desc.Height - rows, desc.Width, rows)
             }
         };
         let size = (width, height, desc.Format);
