@@ -555,6 +555,19 @@ describe('MotifFrameJobs: failures', () => {
     expect(resources.reserved).toEqual([4, undefined]);
   });
 
+  it('an export that joins an editor\'s queued job is charged to its plan when the capture reaches its host', async () => {
+    const h = harness();
+    const preview = h.display(1, { priority: 'ahead' });
+    await h.queued(1);
+    const exported = h.display(2, { finalizationId: 9, keep: true });
+    h.captures[0]!.start();
+    expect(resources.reserved).toEqual([9]);
+    await h.captures[0]!.lease();
+    await preview.result;
+    await exported.result;
+    expect(h.session.capture).toHaveBeenCalledOnce();
+  });
+
   it('a job nobody wants by a skipped frame\'s retry is superseded there and releases its reservation once', async () => {
     const h = harness(); let current = true;
     const display = h.display(1, { isCurrent: () => current });

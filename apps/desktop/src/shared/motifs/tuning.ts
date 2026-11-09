@@ -17,10 +17,13 @@ interface TuningKey {
  * default was chosen, not swept. Every machine named is the Windows bench
  * (Windows 11, i5-13400 with 16 threads, RTX 3050) unless it says otherwise. */
 export const MOTIF_TUNING_SPEC = {
-  /** Capture hosts open at once, each showing one Motif content version.
-   * More than 1 is not measured: each host is a renderer process and a
-   * capture surface. */
-  captureHosts: { default: 1, range: [1, 4] },
+  /** Capture hosts open at once, each showing one Motif content version, at a
+   * renderer process and a capture surface each. Measured on the bench and an
+   * M1 8 GB (ADR 0161): with 2, two stacked Motifs went from 1.6–3.7 fps per
+   * lane to 10–30, and the M1 stayed at normal memory pressure without swap
+   * growth; one Motif never opens a second host. More than 2 is not
+   * measured. */
+  captureHosts: { default: 2, range: [1, 4] },
   /** Frames a capture host renders while earlier ones are still on their way
    * to a paint; the bake coordinator keeps as many in the capture queue.
    * Measured: ADR 0159; 5 in flight gained about 2% on a 4K bake

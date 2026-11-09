@@ -40,7 +40,7 @@ after a seek back.
   flight, drains them before a resize, and retires itself on a transport
   failure or a hung setup or render, failing only its own frames.
 - Main keeps a **pool**: at most one host per key and `captureHosts` in all
-  (default 1, range 1–4). A capture whose key has no host takes a free slot,
+  (default 2, range 1–4). A capture whose key has no host takes a free slot,
   else replaces the least recently used host that is not rendering, after it
   drains. Each host renders one frame at a time; hosts render concurrently.
 - One queue orders captures by class (`current`, `ahead`, `background`, with
@@ -82,7 +82,21 @@ after a seek back.
 - With `captureHosts=1`, alternating Motifs drain and replace the host;
   affinity turns per-frame switches into runs only while the queue holds work
   for the warm host. More hosts keep their windows and render in parallel, at
-  a renderer process and a capture surface each; `captureHosts` above 1 is not
-  measured yet.
+  a renderer process and a capture surface each. A single Motif never opens a
+  second host.
+- Measured with 1 and 2 hosts (fps per lane, two stacked Motifs uncached):
+
+  | Machine | Light pair | Heavy DECO pair | `current` latency, DECO pair |
+  |---|---|---|---|
+  | M1 8 GB | 3.7 → 30 | 2.5 → 26.6 / 18.9 | 399 → 49 ms |
+  | Bench (i5-13400, RTX 3050) | 3.4 → 29.9 | 1.6 → 20 / 10 | 552 → 103 ms |
+
+  With 1 host the M1 rebuilt it 71 times per 10 s and stalled over 500 ms
+  4 times. With 2, its memory pressure stayed normal and swap did not grow;
+  the app's peak footprint rose 1.7 → 2.1 GB, mostly the editor renderer and
+  GPU process handling more frames (the second host is ~60–120 MB). The
+  bench's GPU memory rose ~1.5 GB, following the frame rate. Hence the
+  default 2; above 2 is not measured. `captureRequests=1` lowered throughput
+  on both machines (M1 DECO pair 30 → 22 fps), so it stays 2.
 - Diagnostics report `rendering` (render steps in progress), `hostEvictions`,
   `affinityPicks` and one row per host.

@@ -203,6 +203,8 @@ function newCapturer(deps: Partial<MotifCapturerDeps> = {}) {
     ...deps,
   })
 }
+/** For tests whose subject is the only host being replaced. */
+const ONE_HOST = { ...MOTIF_TUNING_DEFAULTS, captureHosts: 1 }
 let capturer = newCapturer()
 beforeEach(() => { capturer = newCapturer() })
 afterEach(() => { capturer.shutdown() })
@@ -312,6 +314,7 @@ describe('MotifCapturer', () => {
     // Content error: the Motif's own script throws while the window and CDP
     // transport answer fine — its window must NOT be rebuilt. Another Motif
     // then gets a window of its own, as every document does.
+    capturer = newCapturer({ tuning: ONE_HOST })
     throwingLanes.add('broken-motif@v1')
     const openedBefore = opened
     await expect(capturer.capturePng({ ...args, motifId: 'broken-motif', contentHash: 'v1' }, bg))
@@ -424,6 +427,7 @@ describe('MotifCapturer', () => {
   })
 
   it('a frame whose surface exceeds the texture limit gets a bitmap host; a smaller one the texture host again', async () => {
+    capturer = newCapturer({ tuning: ONE_HOST })
     capturer.setTextureEnabled(true)
     const kind = (width: number, height: number, tSec: number) => capturer.captureFrame(
       { ...args, motifId: 'over-the-limit', tSec, width, height }, async frame => frame.kind, bg).result
@@ -455,6 +459,7 @@ describe('MotifCapturer', () => {
   })
 
   it('renders the next frame of a page while earlier frames are still on their way to a paint', async () => {
+    capturer = newCapturer({ tuning: ONE_HOST })
     await capturer.capturePng({ ...args, motifId: 'pipelined' }, bg)
     paintDelayMs = 50
     events.length = 0
@@ -480,7 +485,7 @@ describe('MotifCapturer', () => {
     // for in flight, so some always wait in the queue, for one second.
     const run = async (hostAffinityMs: number) => {
       capturer.shutdown()
-      capturer = newCapturer({ tuning: { ...MOTIF_TUNING_DEFAULTS, hostAffinityMs } })
+      capturer = newCapturer({ tuning: { ...ONE_HOST, hostAffinityMs } })
       let running = true
       const done = { a: 0, b: 0 }
       const lane = async (id: 'a' | 'b') => {
@@ -605,7 +610,7 @@ describe('MotifCapturer', () => {
   })
 
   it('reports page reuse independently of total captures and allows diagnostics reset', async () => {
-    capturer.diagnostics(true)
+    capturer = newCapturer({ tuning: ONE_HOST })
     await capturer.capturePng({ ...args, motifId: 'diagnostics', tSec: 0 }, bg)
     await capturer.capturePng({ ...args, motifId: 'diagnostics', tSec: 1 }, bg)
     await capturer.capturePng({ ...args, motifId: 'diagnostics-next', tSec: 0 }, bg)

@@ -117,7 +117,7 @@ transparent default background so `background: transparent` stays real alpha.
 
 `MotifCapturer` (`capture.ts`) is the one entry point. It orders captures in a
 queue (`captureQueue.ts`) onto a pool of hosts (`hostPool.ts`): at most one
-host per Motif content version and texture kind, and `captureHosts` (default 1)
+host per Motif content version and texture kind, and `captureHosts` (default 2)
 in all. A capture whose Motif has no host takes a free slot, else replaces the
 least recently used host that is not rendering: that host's frames in flight
 drain, it closes, and only then does the new one open. With one host, every
@@ -153,8 +153,9 @@ switch to another Motif replaces it.
   has none until that Motif has waited `hostAffinityMs` (250 ms) without a
   host; then the latter ranks as if queued when its Motif began waiting. The
   wait is the Motif's, so a scrub that cancels and re-sends its `current`
-  capture every tick does not restart it. One host serves two Motifs in runs
-  rather than replacing itself every frame; affinity never crosses a class.
+  capture every tick does not restart it. When Motifs outnumber hosts, a host
+  serves them in runs rather than being replaced every frame; affinity never
+  crosses a class.
   A `current` capture whose Motif has a host thus waits for the `current`
   captures ahead of it (export frames are `current` too), at most one aged
   `background` frame, then the render step in progress and one paint on its

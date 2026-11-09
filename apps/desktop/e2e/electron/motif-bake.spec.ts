@@ -19,7 +19,9 @@ const addon = fileURLToPath(new URL('../../native/index.js', import.meta.url))
 
 test('Pre-bake now moves a clip ahead of unfinished background work @serial', async () => {
   test.setTimeout(120_000)
-  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'bitmap' } })
+  // One host: order shows only when clips wait for the same host. With two,
+  // the background clip bakes on its own beside the promoted one.
+  const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_CAPTURE: 'bitmap', WEFTCUT_MOTIF_TUNING: 'captureHosts=1' } })
   try {
     await newProject(page, { parentFolder: tmpDir('weftcut-bake-order-'), name: 'Ordered preparation',
       canvas: { width: 64, height: 64, fpsNum: 30, fpsDen: 1 } })
