@@ -39,6 +39,10 @@ let paintDelayMs = 0
 const skippedPaints = new Set<number>()
 /// Lanes whose windows never paint again: a host gone silent.
 const silentLanes = new Set<string>()
+/// Lanes whose frame holds an error body: the protocol did not serve the page.
+const unservedLanes = new Set<string>()
+/// Lanes whose __motifRender loses its CDP transport: the renderer went away.
+const brokenTransportLanes = new Set<string>()
 /// Windows built while set paint their first frame without its canvases, as a
 /// new window's first commit can.
 let firstFrameWithoutCanvases = false
@@ -152,11 +156,13 @@ vi.mock('electron', () => {
               if (hangSetup) return new Promise(() => {})
               return (setupDelayMs ? delay(setupDelayMs) : Promise.resolve()).then(() => ({ result: { value: true } }))
             }
-            if (hangReadyProbe && expr.includes('__motifHostReady')) {
-              return new Promise(() => {})
+            if (expr.includes('__motifHostReady')) {
+              if (hangReadyProbe) return new Promise(() => {})
+              return Promise.resolve({ result: { value: unservedLanes.has(laneOf(this.url) ?? '') ? 'unserved 404' : 'ready' } })
             }
             if (expr.startsWith('window.__motifRender(')) {
               if (hangFrame) return new Promise(() => {})
+              if (brokenTransportLanes.has(laneOf(this.url) ?? '')) return Promise.reject(new Error('Target closed'))
               lastRenderExpr = expr
               renderCalls++
               // The Motif's own script throws; the CDP transport answers fine.
@@ -203,7 +209,7 @@ const { MOTIF_TUNING_DEFAULTS } = await import('../../shared/motifs/tuning')
 type MotifCapturerDeps = import('./capture').MotifCapturerDeps
 
 /// A store that knows no user Motif: the default duration, nothing pinned.
-const emptyStore: MotifCapturerDeps['store'] = { getMotif: () => null, assertRenderable: () => {}, pinPackage: () => false }
+const emptyStore: MotifCapturerDeps['store'] = { getMotif: () => null, assertRenderable: () => {}, pinPackage: () => null }
 
 /// A capturer of its own per test, with the runtime registered and the native
 /// marker reader present; `deps` replaces any of its seams.
@@ -361,6 +367,52 @@ describe('MotifCapturer', () => {
       }
     },
   )
+
+  it('a frame holding an error body retires its host and leaves the lane open', async () => {
+    unservedLanes.add('unserved-motif@v1')
+    const before = opened
+    await expect(capturer.capturePng({ ...args, motifId: 'unserved-motif' }, bg))
+      .rejects.toMatchObject({ code: 'transient', message: expect.stringMatching(/not served \(status 404\)/) })
+    expect(lastWindow!.destroyed).toBe(true)
+    unservedLanes.delete('unserved-motif@v1')
+    await expect(capturer.capturePng({ ...args, motifId: 'unserved-motif' }, bg)).resolves.toBe('UE5H')
+    expect(opened).toBe(before + 2)
+  })
+
+  it('a transport failure mid-render is probation: one retry on a new host, a second in a row latches', async () => {
+    const crash = (motifId: string) => expect(capturer.capturePng({ ...args, motifId }, bg)).rejects.toThrow(/Target closed/)
+    brokenTransportLanes.add('crashed-once@v1')
+    await crash('crashed-once')
+    brokenTransportLanes.delete('crashed-once@v1')
+    await expect(capturer.capturePng({ ...args, motifId: 'crashed-once' }, bg)).resolves.toBe('UE5H')
+    brokenTransportLanes.add('crashes@v1')
+    await crash('crashes')
+    await crash('crashes')
+    brokenTransportLanes.delete('crashes@v1')
+    const hosts = opened
+    await expect(capturer.capturePng({ ...args, motifId: 'crashes' }, bg)).rejects.toMatchObject({ code: 'content' })
+    expect(opened).toBe(hosts)
+  })
+
+  it("holds a host's revision pin until the host retires", async () => {
+    const revision = 'a'.repeat(64)
+    const held: string[] = [], released: string[] = []
+    const store: MotifCapturerDeps['store'] = { ...emptyStore, pinPackage: (motifId) => {
+      held.push(motifId)
+      let done = false
+      return { release: () => { if (!done) { done = true; released.push(motifId) } } }
+    } }
+    capturer = newCapturer({ store, tuning: ONE_HOST })
+    await capturer.capturePng({ ...args, motifId: 'pinned-a', contentHash: revision }, bg)
+    await capturer.capturePng({ ...args, motifId: 'pinned-a', contentHash: revision, tSec: 1 }, bg)
+    expect(held).toEqual(['pinned-a'])
+    expect(released).toEqual([])
+    // Another Motif replaces the only host.
+    await capturer.capturePng({ ...args, motifId: 'pinned-b', contentHash: revision }, bg)
+    expect(released).toEqual(['pinned-a'])
+    capturer.shutdown()
+    expect(released).toEqual(['pinned-a', 'pinned-b'])
+  })
 
   it('a failed lane fast-rejects until its contentHash changes', async () => {
     throwingLanes.add('broken-motif@v1')

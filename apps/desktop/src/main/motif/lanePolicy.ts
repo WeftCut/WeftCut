@@ -14,11 +14,12 @@ const laneKeyOf = (motifId: string, contentHash: string) => `${motifId}\0${conte
  * callers) is never marked: with no hash there is no recovery signal. */
 export class LanePolicy {
   private readonly failed = new Map<string, MotifError>()
-  /// Lanes whose last attempt timed out and that hold one more try. A hung
-  /// `__motifSetup`/`__motifRender` has two possible authors, the Motif's own
-  /// script (an infinite loop) or a host wedged by load, and the deadline
-  /// cannot tell them apart. Without probation one slow frame under contention
-  /// lost every frame of a user Motif for the session.
+  /// Lanes whose last attempt failed ambiguously and that hold one more try.
+  /// A hung `__motifSetup`/`__motifRender`, or a window or CDP failing
+  /// mid-step, has two possible authors, the Motif's own script (an infinite
+  /// loop, a crash) or a host under load, and the failure cannot tell them
+  /// apart. Without probation one such failure under contention lost every
+  /// frame of a user Motif for the session.
   private readonly probation = new Set<string>()
 
   /** The error a capture of this lane rejects with, if the lane failed. */
@@ -37,9 +38,9 @@ export class LanePolicy {
     return err
   }
 
-  /** A setup or render ran past its deadline: the lane's first strike is
+  /** An ambiguous failure (see `probation`): the lane's first strike is
    * probation and returns `error`; a second consecutive one latches it. */
-  hung(motifId: string, contentHash: string, error: unknown): unknown {
+  ambiguous(motifId: string, contentHash: string, error: unknown): unknown {
     if (contentHash === '') return error
     const key = laneKeyOf(motifId, contentHash)
     if (this.probation.has(key)) return this.threw(motifId, contentHash, error)
@@ -48,7 +49,8 @@ export class LanePolicy {
     return error
   }
 
-  /** The page answered a setup and render: the lane's probation ends. */
+  /** The page answered a setup and render, or its own script threw: the
+   * lane's probation ends. */
   rendered(motifId: string, contentHash: string): void {
     this.probation.delete(laneKeyOf(motifId, contentHash))
   }

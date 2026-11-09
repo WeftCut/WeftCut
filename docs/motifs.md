@@ -114,6 +114,15 @@ forwards the entry points. Another Motif or content version gets another window
 (ADR 0159): only a window's first document keeps alpha on a bitmap host. The
 host sets `Emulation.setDeviceMetricsOverride` (any resolution) and a
 transparent default background so `background: transparent` stays real alpha.
+A user Motif's host loads it from a revision snapshot (`/.revisions/<hash>/`)
+that it holds until it retires; the store keeps two more that no host holds.
+The host is ready once the Motif's frame holds the page the protocol served
+with a success status: an error body also runs the runtime, but no Motif, so
+setup would fail it as the Motif's own (measured 2026-11-09: with two
+snapshots and no holds, a third host's pin dropped one a host was still
+loading, and under stacked Motifs the lane latched for the session). A frame
+without its served page, or never ready, retires the host with `transient` and
+leaves the lane open.
 
 `MotifCapturer` (`capture.ts`) is the one entry point. It orders captures in a
 queue (`captureQueue.ts`) onto a pool of hosts (`hostPool.ts`): at most one
@@ -187,9 +196,9 @@ switch to another Motif replaces it.
   from an infinite loop, and a heavy 1080p page normally takes ~1 s, so one
   slow frame must not lose a Motif for the session (measured on a 2-core Linux
   box: a 3.5 s frame timed out under load and rendered in 4.8 s once it lifted).
-  Other mid-render transport failures (detached debugger, crashed renderer)
-  still latch at once. A thrown script, a frame that never becomes ready and a
-  latched lane reject with code `content`.
+  A mid-step transport failure (detached debugger, crashed renderer) is
+  probation too: a Motif can crash its renderer, and so can a host under load.
+  A thrown script and a latched lane reject with code `content`.
 - **Bitmap host canvases** are forced CPU-backed (`willReadFrequently`) by
   `bitmapCanvasRuntime.ts` (ADR 0078): Electron's bitmap backend omitted an
   accelerated 2D layer after navigation.

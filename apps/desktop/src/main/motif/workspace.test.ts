@@ -171,7 +171,7 @@ it('keeps a capture navigation on the same resource bytes while the directory ad
     const store = new UserMotifStore(temp()), workspace = new MotifWorkspace(store, []), directory = folder();
     writeFileSync(path.join(directory, 'scene.js'), 'old');
     const draft = workspace.open({ kind: 'directory', path: directory });
-    expect(store.pinPackage(draft.motif_id, draft.revision)).toBe(true);
+    expect(store.pinPackage(draft.motif_id, draft.revision)).not.toBeNull();
     writeFileSync(path.join(directory, 'scene.js'), 'new');
     const next = workspace.read(draft.motif_id);
     expect(next.revision).not.toBe(draft.revision);

@@ -201,14 +201,16 @@ export class MotifCapturer {
   private openHost(key: HostKey, a: CaptureArgs): Promise<CaptureHost> {
     const runtime = this.runtimeSource()
     if (!runtime) throw new MotifError('closed', 'motif runtime not registered yet (call motif_register_runtime)')
-    const pinned = /^[0-9a-f]{64}$/.test(key.contentHash) && this.store.pinPackage(key.motifId, key.contentHash)
+    const pin = /^[0-9a-f]{64}$/.test(key.contentHash) ? this.store.pinPackage(key.motifId, key.contentHash) : null
     this.counters.hostBuilds++
     this.counters.pageLoads++
     this.diagnosticsLane(key.motifId, key.contentHash).pageLoads++
-    return CaptureHost.open(key, { width: a.width, height: a.height }, pinned, {
+    // The host releases the pin when it retires; a build that throws before
+    // the host exists releases it here.
+    return CaptureHost.open(key, { width: a.width, height: a.height }, pin, {
       runtime, markerReader: this.markerReader, tuning: this.tuning,
       timed: (phase, run) => this.timed(phase, run),
-    })
+    }).catch((e: unknown) => { pin?.release(); throw e })
   }
 
   private manifestFor(a: CaptureArgs): Manifest | undefined {
@@ -245,10 +247,13 @@ export class MotifCapturer {
     // failure retires the host and the next capture opens another.
     let host = await lease.host(a)
     for (let hosts = 1; ; hosts++) {
-      await host.prepare(a.width, a.height)
+      // A frame without the Motif's served page (`unready`) is the host's: it
+      // retired, and its `transient` error leaves the lane open to the retry.
+      try { await host.prepare(a.width, a.height) }
+      catch (e) { throw e instanceof HostRenderError ? e.error : e }
       // LANDMINE: no await between this check and `host.render`. A host that
       // retired while the step waited would fail the render as a transport
-      // failure and latch a lane whose content never ran.
+      // failure and spend the lane's probation on content that never ran.
       if (!host.retired) break
       if (hosts >= HOSTS_PER_STEP) throw new MotifError('transient', `motif capture host retired ${hosts} times before the frame could render`)
       host = await lease.host(a)
@@ -259,11 +264,12 @@ export class MotifCapturer {
       return rendered
     } catch (e) {
       if (!(e instanceof HostRenderError)) throw e
-      // A timeout is ambiguous (content or load) and earns the lane one retry
-      // on a new host; a throw, a transport failure mid-render and a second
-      // consecutive timeout latch it so its sprites stop retrying.
-      if (e.kind === 'hung') throw this.failures.hung(a.motifId, a.contentHash, e.error)
-      if (e.kind === 'threw') this.failures.rendered(a.motifId, a.contentHash)
+      // A timeout or a transport failure mid-step is ambiguous (content or
+      // load) and earns the lane one retry on a new host; a throw in the
+      // Motif's served page, and a second consecutive ambiguous failure, latch
+      // it so its sprites stop retrying.
+      if (e.kind !== 'threw') throw this.failures.ambiguous(a.motifId, a.contentHash, e.error)
+      this.failures.rendered(a.motifId, a.contentHash)
       throw this.failures.threw(a.motifId, a.contentHash, e.error)
     }
   }

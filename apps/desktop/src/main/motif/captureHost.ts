@@ -8,6 +8,7 @@ import { CAPTURE_HOST_FILE, frameMarkerRows } from '../../shared/motifs/frameMar
 import { MOTIF_DEADLINES, type MotifTuning } from '../../shared/motifs/tuning.js'
 import type { Rendered } from './captureQueue.js'
 import type { HostKey, PooledHost } from './hostPool.js'
+import type { PinnedPackage } from './store.js'
 
 /** The capture phases whose time the capturer accumulates. */
 export type CapturePhase = 'loadMs' | 'readyMs' | 'setupMs' | 'renderMs' | 'outputMs'
@@ -31,11 +32,13 @@ export interface RenderStep {
   meta: { duration: number; width: number; height: number; fps: number }
 }
 
-/** Why a render step failed. `threw`: the Motif's script threw, the host is
- * healthy. `hung`: setup or render ran past its deadline. `transport`: the
- * window or CDP failed mid-step. A hung or transport failure retires the host. */
+/** Why a step failed. `threw`: the Motif's script threw in its served page,
+ * the host is healthy. `hung`: setup or render ran past its deadline.
+ * `transport`: the window or CDP failed mid-step. `unready`: the Motif's frame
+ * holds no served page (an error status) or never finished loading. Every
+ * kind but `threw` retires the host. */
 export class HostRenderError extends Error {
-  constructor(readonly kind: 'transport' | 'hung' | 'threw', readonly error: unknown) {
+  constructor(readonly kind: 'transport' | 'hung' | 'threw' | 'unready', readonly error: unknown) {
     super(String((error as Error | undefined)?.message ?? error), { cause: error })
   }
 }
@@ -73,6 +76,9 @@ export class CaptureHost implements PooledHost {
     private readonly frames: OffscreenFrames,
     private readonly env: CaptureHostEnv,
     size: { width: number; height: number },
+    /// The revision snapshot its page and companion URLs come from, held until
+    /// the host retires.
+    private readonly pin: PinnedPackage | null,
   ) {
     this.lastSize = size
   }
@@ -84,9 +90,11 @@ export class CaptureHost implements PooledHost {
   /// so another Motif or content version gets a new window. The runtime is
   /// registered once the shell has loaded, and the shell then loads the Motif
   /// into its frame, whose documents the runtime reaches before their scripts.
-  /// `pinned`: the content version is served from its pinned revision.
-  static async open(key: HostKey, size: { width: number; height: number }, pinned: boolean, env: CaptureHostEnv): Promise<CaptureHost> {
+  /// `pin`: the content version is served from its pinned revision, which the
+  /// host releases when it retires, the failed build included.
+  static async open(key: HostKey, size: { width: number; height: number }, pin: PinnedPackage | null, env: CaptureHostEnv): Promise<CaptureHost> {
     const { motifId, contentHash, texture } = key
+    const pinned = pin !== null
     const { width, height } = size
     const surfaceHeight = height + frameMarkerRows(width)
     // The shell frames the Motif above the surface's marker rows
@@ -128,7 +136,7 @@ export class CaptureHost implements PooledHost {
     win.webContents.on('will-frame-navigate', event => {
       if (!event.isMainFrame && event.url !== motifUrl) event.preventDefault()
     })
-    const host = new CaptureHost(key, win, frames, env, { width, height })
+    const host = new CaptureHost(key, win, frames, env, { width, height }, pin)
     // A CDP init that throws mid-build must not orphan the window.
     try {
       win.webContents.debugger.attach('1.3')
@@ -269,6 +277,7 @@ export class CaptureHost implements PooledHost {
     this.frames.dispose()
     try { this.win.webContents.debugger.detach() } catch { /* already gone */ }
     try { this.win.destroy() } catch { /* already gone */ }
+    this.pin?.release()
   }
 
   /// Every CDP command is bounded by construction, including Emulation: an
@@ -280,20 +289,25 @@ export class CaptureHost implements PooledHost {
   private async waitReady(): Promise<void> {
     if (this.readyFor) return
     const motifId = this.key.motifId
-    // Throw-until-ready: a false boolean would resolve to ready falsely. The
-    // hostname guard closes the navigate→stale-page race: with `standard:true`
-    // motif://<id>/… parses with hostname===id, so we verify the loaded page is
-    // actually the motif we want (not a stale about:blank or prior motif).
+    // The shell answers `ready` only once the Motif's frame has finished
+    // loading the page the protocol served for it with a success status, so
+    // setup never runs against an error body. The hostname guard closes the
+    // navigate→stale-page race: with `standard:true` motif://<id>/… parses
+    // with hostname===id.
     const probe =
-      `(typeof window.__motifHostReady==='function' && window.__motifHostReady(${JSON.stringify(motifId)}))`
+      `(typeof window.__motifHostReady==='function' ? window.__motifHostReady(${JSON.stringify(motifId)}) : 'loading')`
     for (let i = 0; i < MOTIF_DEADLINES.readyAttempts; i++) {
       // Timed like every send: a wedged page does not unwedge between polls,
       // so the throw also skips the remaining attempts (they exist for a
       // LOADING page, which fails fast).
       const r = await this.send('Runtime.evaluate', { expression: probe, returnByValue: true })
-      if (r?.result?.value === true) { this.readyFor = true; return }
+      const state: unknown = r?.result?.value
+      if (state === 'ready') { this.readyFor = true; return }
+      if (typeof state === 'string' && state.startsWith('unserved')) {
+        throw new HostRenderError('unready', new MotifError('transient', `motif '${motifId}' page was not served (status ${state.slice('unserved '.length)})`))
+      }
       await delay(MOTIF_DEADLINES.readyPollMs)
     }
-    throw new MotifError('content', `motif '${motifId}' never became ready (Motif frame not loaded, __motifRender undefined, or wrong host page loaded)`)
+    throw new HostRenderError('unready', new MotifError('transient', `motif '${motifId}' never became ready (Motif frame not loaded, or wrong host page loaded)`))
   }
 }

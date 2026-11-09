@@ -9,12 +9,14 @@ import { isResourceCapacityError } from '../resource-policy'
  * - `superseded`: nobody wants the result any more; not a failure.
  * - `closed`: the consumer, reader or pool went away.
  * - `miss`: the stored frame is absent or invalid; capture it again.
- * - `content`: the Motif's own script threw, never became ready or hung twice.
+ * - `content`: the Motif's own script threw, or its steps hung or lost the
+ *   host twice in a row.
  * - `timeout`: a bounded capture step ran past its deadline.
  * - `capacity`: a resource admission refused the work; retry later.
  * - `disk`: the temporary cache space or the disk is full.
  * - `oversize`: the frame or pool exceeds a fixed budget.
- * - `transient`: a file or mutex is briefly held; retrying may succeed.
+ * - `transient`: a file or mutex is briefly held, or a host lacked the Motif's
+ *   served page; retrying may succeed.
  * - `device`: the GPU device or a native worker failed.
  * - `transport`: a renderer read lane failed (`MotifTransportError`). */
 export type MotifErrorCode =

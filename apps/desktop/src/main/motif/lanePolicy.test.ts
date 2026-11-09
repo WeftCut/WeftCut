@@ -20,21 +20,21 @@ describe('LanePolicy', () => {
     expect(lanes.threw('m', 'v1', content)).toBe(content)
   })
 
-  it('a timeout is probation; a second consecutive one latches the lane', () => {
+  it('an ambiguous failure is probation; a second consecutive one latches the lane', () => {
     const lanes = new LanePolicy()
     const first = timeout()
-    expect(lanes.hung('m', 'v1', first)).toBe(first)
+    expect(lanes.ambiguous('m', 'v1', first)).toBe(first)
     expect(lanes.failure('m', 'v1')).toBeUndefined()
-    expect(lanes.hung('m', 'v1', timeout())).toMatchObject({ code: 'content', message: '[motif:content] motif capture timed out after 5000ms: Runtime.evaluate' })
+    expect(lanes.ambiguous('m', 'v1', timeout())).toMatchObject({ code: 'content', message: '[motif:content] motif capture timed out after 5000ms: Runtime.evaluate' })
     expect(lanes.failure('m', 'v1')).toMatchObject({ code: 'content' })
   })
 
-  it('a render between two timeouts ends the probation', () => {
+  it('a render between two ambiguous failures ends the probation', () => {
     const lanes = new LanePolicy()
-    lanes.hung('m', 'v1', timeout())
+    lanes.ambiguous('m', 'v1', timeout())
     lanes.rendered('m', 'v1')
     const again = timeout()
-    expect(lanes.hung('m', 'v1', again)).toBe(again)
+    expect(lanes.ambiguous('m', 'v1', again)).toBe(again)
     expect(lanes.failure('m', 'v1')).toBeUndefined()
   })
 
@@ -42,9 +42,9 @@ describe('LanePolicy', () => {
     const lanes = new LanePolicy()
     const thrown = new Error('boom')
     expect(lanes.threw('m', '', thrown)).toBe(thrown)
-    lanes.hung('m', '', timeout())
+    lanes.ambiguous('m', '', timeout())
     const second = timeout()
-    expect(lanes.hung('m', '', second)).toBe(second)
+    expect(lanes.ambiguous('m', '', second)).toBe(second)
     expect(lanes.failure('m', '')).toBeUndefined()
   })
 

@@ -195,7 +195,7 @@ describe('the proposal preview id', () => {
     w.call('install_motif', { motif_id: d.motif_id, expected_revision: d.revision })
     const id = proposalPreviewId(d.motif_id)
     expect(w.store.getMotif(id)).not.toBeNull()
-    expect(w.store.pinPackage(id, d.revision)).toBe(true)
+    expect(w.store.pinPackage(id, d.revision)).not.toBeNull()
     expect(() => w.call('read_motif', { motif_id: id })).toThrow(/Invalid Motif id/)
     expect(() => w.call('delete_motif', { motif_id: id })).toThrow(/Invalid Motif id/)
   })

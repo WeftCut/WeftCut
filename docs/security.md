@@ -60,7 +60,7 @@ exploit reaching the OS, so both axes are load-bearing.
 Serving rules: the file resolver (`main/motif/packageFiles.ts`) rejects
 traversal and symbolic links, and never serves the private `target` draft
 metadata. Responses carry `Cache-Control: no-store`; captures pin user packages
-under `/.revisions/<hash>/`. Linked author directories are copied into validated
+under `/.revisions/<hash>/` for the life of the host that loads them. Linked author directories are copied into validated
 app-owned snapshots and never become protocol roots. Inline file writes
 (`update_motif_files` `{path, base64}`) are canonical base64, at most 256 KiB
 decoded per file and 4 MiB per call, and pass the same path checks.

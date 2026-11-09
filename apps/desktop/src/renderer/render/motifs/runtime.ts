@@ -102,10 +102,16 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
         witness.fillRect(at % size.width, Math.floor(at / size.width), 1, 1);
       }
     };
+    // 'ready' once the Motif's frame holds the page the protocol served for it
+    // with a success status; 'unserved <status>' for an error body, which has
+    // the runtime but no Motif; 'loading' before either.
     window.__motifHostReady = function (motifId) {
       var w = motifWindow();
-      return document.readyState === 'complete' && location.hostname === motifId && !!w &&
-        typeof w.__motifRender === 'function' && w.document.readyState === 'complete';
+      if (document.readyState !== 'complete' || location.hostname !== motifId || !w ||
+        typeof w.__motifRender !== 'function' || typeof w.__motifServed !== 'function' ||
+        w.document.readyState !== 'complete') return 'loading';
+      var status = w.__motifServed();
+      return status >= 200 && status < 300 ? 'ready' : 'unserved ' + status;
     };
     // Main registers the runtime after the shell has loaded, then loads the
     // Motif here, so the Motif's documents start with the runtime.
@@ -143,6 +149,13 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
     return;
   }
 
+  // The status of the response this document came from, read before the clock
+  // takeover replaces performance.
+  var pagePerformance = window.performance;
+  window.__motifServed = function () {
+    var navigation = pagePerformance.getEntriesByType('navigation')[0];
+    return navigation ? navigation.responseStatus : 0;
+  };
   var rt = (${createMotifRuntime.toString()})(window);
   var def = null, didSetup = false, lastPropsKey = null;
   // Decoder workers belong to one setup. They must not outlive it and mutate

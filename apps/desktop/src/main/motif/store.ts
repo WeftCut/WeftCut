@@ -29,8 +29,15 @@ function safeSeg(seg: string): string {
 type MotifSource = { manifest: Manifest; html: string };
 
 /** On-disk store of user Motifs rooted at `<userData>/motifs/`. */
+/** A capture host's hold on a pinned revision snapshot; `release` is idempotent. */
+export interface PinnedPackage { release(): void }
+
+/** Snapshots no host holds that stay for reuse; held ones never leave. */
+const UNHELD_SNAPSHOTS = 2;
+
 export class UserMotifStore {
-  private pinned = new Map<string, Map<string, Buffer>>();
+  /** Revision snapshots by `id/revision`, oldest first, with their holders. */
+  private pinned = new Map<string, { files: Map<string, Buffer>; holders: number }>();
   constructor(private readonly _root: string) {}
 
   root(): string { return this._root; }
@@ -59,24 +66,52 @@ export class UserMotifStore {
 
   readFile(id: string, rel: string): Buffer | null {
     const revision = /^\.revisions\/([0-9a-f]{64})\/(.+)$/.exec(rel);
-    if (revision) return this.pinned.get(`${id}/${revision[1]}`)?.get(revision[2]!) ?? null;
+    if (revision) return this.pinned.get(`${id}/${revision[1]}`)?.files.get(revision[2]!) ?? null;
     if (!motifFileSegments(rel) || rel.toLowerCase() === 'target') return null;
     const pkg = this.packageRel(id);
     return pkg ? readMotifFile(this._root, `${pkg}/${rel}`) : null;
   }
 
-  /** Two navigation snapshots bound retained memory; companion URLs use the
-   * revision directory so a source save cannot mix old HTML with new assets. */
-  pinPackage(id:string, revision:string): boolean {
-    const key=`${id}/${revision}`;
-    if(this.pinned.has(key))return true;
-    const source=this.getMotif(id);
-    if(!source)return false;
-    const files=this.packageFiles(id);
-    if(motifContentHash(source.manifest,source.html,files)!==revision)throw new Error('Motif revision changed before capture; refresh the catalog');
-    this.pinned.set(key,new Map(files.map(f=>[f.path,f.bytes])));
-    while(this.pinned.size>2)this.pinned.delete(this.pinned.keys().next().value!);
-    return true;
+  /** Pins the revision's files for a capture host, which serves its page and
+   * companion URLs from the revision directory, so a source save cannot mix
+   * old HTML with new assets. A held snapshot stays until every host holding
+   * it releases it: a host still loading its page must not lose it to a later
+   * pin. Null when the Motif is gone. */
+  pinPackage(id: string, revision: string): PinnedPackage | null {
+    const key = `${id}/${revision}`;
+    let snapshot = this.pinned.get(key);
+    if (snapshot) this.pinned.delete(key);
+    else {
+      const source = this.getMotif(id);
+      if (!source) return null;
+      const files = this.packageFiles(id);
+      if (motifContentHash(source.manifest, source.html, files) !== revision) throw new Error('Motif revision changed before capture; refresh the catalog');
+      snapshot = { files: new Map(files.map(f => [f.path, f.bytes])), holders: 0 };
+    }
+    snapshot.holders++;
+    // Most recently pinned last.
+    this.pinned.set(key, snapshot);
+    const held = snapshot;
+    let released = false;
+    return {
+      release: () => {
+        if (released) return;
+        released = true;
+        held.holders--;
+        this.trimPinned();
+      },
+    };
+  }
+
+  private trimPinned(): void {
+    let unheld = 0;
+    for (const s of this.pinned.values()) if (s.holders === 0) unheld++;
+    for (const [key, s] of this.pinned) {
+      if (unheld <= UNHELD_SNAPSHOTS) return;
+      if (s.holders > 0) continue;
+      this.pinned.delete(key);
+      unheld--;
+    }
   }
 
   packageFiles(id: string): MotifFile[] {

@@ -3,7 +3,8 @@ import { createMotifRuntime, MOTIF_RUNTIME_SOURCE } from "../runtime";
 import { runInNewContext } from 'node:vm';
 import { CAPTURE_HOST_FILE, decodeFrameMarker, FRAME_MARKER_PIXELS, FRAME_MARKER_READ_PIXELS, frameMarkerRows } from "../../../../shared/motifs/frameMarker";
 
-function pageRuntime() {
+/// A Motif page's runtime; `status` is the HTTP status its document came with.
+function pageRuntime(status = 200) {
   const workers: Array<EventTarget & { terminate: ReturnType<typeof vi.fn> }> = [];
   class Worker extends EventTarget {
     terminate = vi.fn();
@@ -11,7 +12,8 @@ function pageRuntime() {
   }
   const document = { fonts: { ready: Promise.resolve() }, getAnimations: () => [], body: {} };
   const window: any = { Worker, SharedWorker: Worker, document, addEventListener: vi.fn(),
-    requestAnimationFrame: (cb: () => void) => queueMicrotask(cb) };
+    requestAnimationFrame: (cb: () => void) => queueMicrotask(cb),
+    performance: { getEntriesByType: (type: string) => type === 'navigation' ? [{ responseStatus: status }] : [] } };
   runInNewContext(MOTIF_RUNTIME_SOURCE, { window, document, console });
   return { window, workers };
 }
@@ -71,8 +73,8 @@ describe('Motif setup decoder workers', () => {
 /// The capture host shell: a top frame at CAPTURE_HOST_FILE framing a Motif
 /// page that already runs the runtime in its own role, fitted to a picture
 /// `width` pixels wide.
-function hostRuntime(pathname = '/' + CAPTURE_HOST_FILE, width = 640) {
-  const motif = pageRuntime().window;
+function hostRuntime(pathname = '/' + CAPTURE_HOST_FILE, width = 640, status = 200) {
+  const motif = pageRuntime(status).window;
   motif.document.readyState = 'complete';
   // A canvas records its fills by their place in the marker run, row after row.
   const el = (tag?: string) => {
@@ -187,9 +189,14 @@ describe('capture host shell', () => {
 
   it('is ready only for its own Motif, and leaves other top pages in the Motif role', () => {
     const { window } = hostRuntime();
-    expect(window.__motifHostReady('countdown')).toBe(true);
-    expect(window.__motifHostReady('other')).toBe(false);
+    expect(window.__motifHostReady('countdown')).toBe('ready');
+    expect(window.__motifHostReady('other')).toBe('loading');
     expect(hostRuntime('/index.html').window.__motifHostReady).toBeUndefined();
+  });
+
+  it('a frame holding an error body, which runs the runtime but no Motif, is not ready', () => {
+    const { window } = hostRuntime('/' + CAPTURE_HOST_FILE, 640, 404);
+    expect(window.__motifHostReady('countdown')).toBe('unserved 404');
   });
 
   it('a throwing Motif frame rejects without marking', async () => {
