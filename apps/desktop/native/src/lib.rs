@@ -36,6 +36,7 @@ mod motif_frame;
 #[cfg(windows)]
 mod motif_gpu;
 mod motif_limits;
+mod motif_pixels;
 mod napi_backend;
 mod resources;
 // Always compiled: `io::probe` spawns ffprobe even in the base build, so the

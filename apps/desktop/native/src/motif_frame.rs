@@ -3,6 +3,7 @@
 //! through zstd's content checksum and may downscale it (ADR 0154).
 use crate::motif_error::{coded, to_napi, MotifCode};
 use crate::motif_limits::{MAX_DIMENSION, MAX_FRAME_BYTES};
+use crate::motif_pixels::straighten;
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -19,7 +20,7 @@ const HEADER: usize = 16;
 const BANDS: u32 = 8;
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
 
-fn byte_len(w: u32, h: u32) -> anyhow::Result<usize> {
+pub(crate) fn byte_len(w: u32, h: u32) -> anyhow::Result<usize> {
     anyhow::ensure!(
         w > 0 && h > 0 && w <= MAX_DIMENSION && h <= MAX_DIMENSION,
         "invalid motif dimensions"
@@ -553,59 +554,6 @@ pub async fn motif_read_frame_scaled(path: String, div: u32) -> napi::Result<Mot
     .map_err(to_napi)
 }
 
-/// The straight value of premultiplied channel `c` at alpha `a`, at index
-/// `a << 8 | c`: `(c * 255 + a / 2) / a`, at most 255, and 0 where `a` is 0.
-static STRAIGHT: [u8; 65536] = {
-    let mut table = [0u8; 65536];
-    let mut a = 1;
-    while a < 256 {
-        let mut c = 0;
-        while c < 256 {
-            let v = (c * 255 + a / 2) / a;
-            table[a << 8 | c] = if v > 255 { 255 } else { v as u8 };
-            c += 1;
-        }
-        a += 1;
-    }
-    table
-};
-
-/// Premultiplied RGBA (or BGRA) to straight RGBA in place, as the cache stores
-/// pixels. Every premultiplied channel value survives a roundtrip.
-pub(crate) fn straighten(rgba: &mut [u8], bgra: bool) {
-    for px in rgba.as_chunks_mut::<4>().0 {
-        if bgra {
-            px.swap(0, 2);
-        }
-        match px[3] {
-            255 => {}
-            0 => px[..3].fill(0),
-            alpha => {
-                let row = &STRAIGHT[usize::from(alpha) << 8..][..256];
-                for c in &mut px[..3] {
-                    *c = row[usize::from(*c)];
-                }
-            }
-        }
-    }
-}
-
-/// Straight RGBA as a PNG, fast compression: these PNGs leave the app as
-/// previews and covers, never as stored frames.
-#[cfg_attr(not(windows), allow(dead_code))] // only the texture lane reads pixels natively.
-pub(crate) fn encode_png(w: u32, h: u32, rgba: Vec<u8>) -> anyhow::Result<Vec<u8>> {
-    use image::ImageEncoder;
-    anyhow::ensure!(rgba.len() == byte_len(w, h)?, "invalid motif pixel length");
-    let mut png = Vec::new();
-    image::codecs::png::PngEncoder::new_with_quality(
-        &mut png,
-        image::codecs::png::CompressionType::Fast,
-        image::codecs::png::FilterType::Adaptive,
-    )
-    .write_image(&rgba, w, h, image::ExtendedColorType::Rgba8)?;
-    Ok(png)
-}
-
 /// The top `height` rows of a bitmap capture's premultiplied BGRA rows,
 /// `width` pixels each, as straight RGBA (ADR 0159). Bands straighten in
 /// parallel.
@@ -671,36 +619,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_png_keeps_every_straight_rgba_byte() {
-        let rgba: Vec<u8> = (0..3 * 2 * 4).map(|i| (i * 37 % 256) as u8).collect();
-        let png = encode_png(3, 2, rgba.clone()).unwrap();
-        let decoded = image::load_from_memory_with_format(&png, image::ImageFormat::Png)
-            .unwrap()
-            .into_rgba8();
-        assert_eq!((decoded.width(), decoded.height()), (3, 2));
-        assert_eq!(decoded.into_raw(), rgba);
-    }
-
-    #[test]
-    fn the_straight_table_is_the_rounded_quotient_for_every_channel_and_alpha() {
-        for alpha in 0..=255u32 {
-            for channel in 0..=255u32 {
-                let mut pixel = [channel as u8, channel as u8, channel as u8, alpha as u8];
-                straighten(&mut pixel, false);
-                let want = (channel * 255 + alpha / 2)
-                    .checked_div(alpha)
-                    .unwrap_or(0)
-                    .min(255) as u8;
-                assert_eq!(
-                    pixel,
-                    [want, want, want, alpha as u8],
-                    "c={channel} a={alpha}"
-                );
-            }
-        }
-    }
-
-    #[test]
     fn a_premultiplied_capture_encodes_as_its_straightened_pixels() {
         let (w, h) = (16, 21);
         let premultiplied = noise(w, h, 7);
@@ -711,25 +629,6 @@ mod tests {
             encode_premultiplied(w, h, &mut captured, true).unwrap(),
             encode(w, h, &straight).unwrap()
         );
-    }
-
-    #[test]
-    fn every_valid_premultiplied_channel_roundtrips_exactly() {
-        for alpha in 0..=255u32 {
-            for channel in 0..=alpha {
-                let mut pixel = [channel as u8, 0, 0, alpha as u8];
-                straighten(&mut pixel, false);
-                assert_eq!((u32::from(pixel[0]) * alpha + 127) / 255, channel);
-                assert_eq!(pixel[3], alpha as u8);
-            }
-        }
-    }
-
-    #[test]
-    fn bgra_is_reordered_and_transparent_rgb_is_cleared() {
-        let mut pixels = [16, 32, 64, 128, 20, 30, 40, 0];
-        straighten(&mut pixels, true);
-        assert_eq!(pixels, [128, 64, 32, 128, 0, 0, 0, 0]);
     }
 
     fn pattern(multiplier: usize) -> Vec<u8> {

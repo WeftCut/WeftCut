@@ -76,8 +76,8 @@ impl MotifRawFrame {
                 bgra,
                 premultiplied: mut rgba,
             } = pixels;
-            crate::motif_frame::straighten(&mut rgba, bgra);
-            crate::motif_frame::encode_png(width, height, rgba).map(Buffer::from)
+            crate::motif_pixels::straighten(&mut rgba, bgra);
+            crate::motif_pixels::encode_png(width, height, rgba).map(Buffer::from)
         })
         .await
         .map_err(error)?

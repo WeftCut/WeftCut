@@ -77,51 +77,6 @@ pub struct MotifUploadTiming {
     pub gpu_ms: f64,
 }
 
-/// Premultiplies straight `src` rows of `row` bytes into `dst` rows `pitch`
-/// bytes apart.
-fn premultiply_rows(src: &[u8], dst: &mut [u8], row: usize, pitch: usize) {
-    #[cfg(target_arch = "x86_64")]
-    if std::arch::is_x86_feature_detected!("avx2") {
-        // SAFETY: the CPU supports AVX2.
-        return unsafe { premultiply_rows_avx2(src, dst, row, pitch) };
-    }
-    premultiply_rows_inline(src, dst, row, pitch)
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-unsafe fn premultiply_rows_avx2(src: &[u8], dst: &mut [u8], row: usize, pitch: usize) {
-    premultiply_rows_inline(src, dst, row, pitch)
-}
-
-#[inline(always)]
-fn premultiply_rows_inline(src: &[u8], dst: &mut [u8], row: usize, pitch: usize) {
-    for (s, d) in src.chunks_exact(row).zip(dst.chunks_mut(pitch)) {
-        premultiply_into(s, &mut d[..row]);
-    }
-}
-
-/// Disk frames have straight alpha; Electron imports premultiplied textures.
-/// `round(c * a / 255)` exactly, R and B in one multiply: neither 16-bit lane
-/// carries into the next. Branch-free, so it vectorizes whatever the alpha.
-#[inline(always)]
-fn premultiply_into(src: &[u8], dst: &mut [u8]) {
-    for (s, d) in src
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .zip(dst.as_chunks_mut::<4>().0)
-    {
-        let x = u32::from_le_bytes(*s);
-        let a = x >> 24;
-        let rb = (x & 0x00FF_00FF) * a + 0x0080_0080;
-        let rb = ((rb + ((rb >> 8) & 0x00FF_00FF)) >> 8) & 0x00FF_00FF;
-        let g = ((x >> 8) & 0xFF) * a + 0x80;
-        let g = ((g + (g >> 8)) >> 8) & 0xFF;
-        *d = (rb | (g << 8) | (x & 0xFF00_0000)).to_le_bytes();
-    }
-}
-
 enum Command {
     Upload(String, usize, u32, TimedReply),
     Copy(usize, usize, Reply),
@@ -428,7 +383,7 @@ impl Pool {
             (self.width, self.height),
             out,
             pitch,
-            &|pixels, rows| premultiply_rows(pixels, rows, row, pitch),
+            &|pixels, rows| crate::motif_pixels::premultiply_rows(pixels, rows, row, pitch),
         );
         self.context.Unmap(staging, 0);
         let read = read?;
@@ -527,42 +482,5 @@ impl Pool {
         result?;
         release.map_err(device)?;
         Ok((acquire_ms, gpu_ms))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{premultiply_rows, premultiply_rows_inline};
-
-    #[test]
-    fn premultiplication_rounds_every_alpha_and_channel_to_nearest() {
-        let mut pixels = Vec::new();
-        for alpha in 0..=255u8 {
-            for channel in 0..=255u8 {
-                pixels.extend_from_slice(&[channel, 255 - channel, channel ^ 127, alpha]);
-            }
-        }
-        let mut expected = pixels.clone();
-        for px in expected.as_chunks_mut::<4>().0 {
-            let alpha = u32::from(px[3]);
-            for c in &mut px[..3] {
-                *c = ((u32::from(*c) * alpha + 127) / 255) as u8;
-            }
-        }
-        // Scalar and dispatched (AVX2 where present) alike.
-        let row = 256 * 4;
-        for premultiply in [premultiply_rows, premultiply_rows_inline] {
-            let mut out = vec![0; pixels.len()];
-            premultiply(&pixels, &mut out, row, row);
-            assert_eq!(out, expected);
-        }
-    }
-
-    #[test]
-    fn premultiplication_writes_rows_at_the_pitch_and_leaves_the_padding() {
-        let src = [[10, 20, 30, 128], [200, 100, 50, 255]].concat();
-        let mut dst = [7u8; 12];
-        premultiply_rows(&src, &mut dst, 4, 8);
-        assert_eq!(dst, [5, 10, 15, 128, 7, 7, 7, 7, 200, 100, 50, 255]);
     }
 }
