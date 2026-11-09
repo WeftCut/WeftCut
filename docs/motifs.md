@@ -543,11 +543,17 @@ gizmo do not change with the divisor.
 A Motif behind its target keeps showing its latest earlier frame, as a late
 video frame does. A visible Motif with no frame of its target's content at or
 before the target (a first visit, a jump back, new props) would show nothing
-over a black canvas, so the preview keeps its last picture instead, for up to
-`previewHoldMs` (500 ms) or until the Motif's capture fails, then presents
-without it. The scene gate is the one a video clip's first visit uses
+over a black canvas, so the preview keeps its last picture until that frame
+comes, as a video clip's first visit does. The scene gate is the same
 (`CompositionNode` §canPresentClipsAt); it moves the Motif's demand but never
-its texture. Export waits for every frame and never holds.
+its texture. A failure retrying can fix (refused capacity, a restarting reader
+or device, a timeout) keeps the hold while the request retries, and a paused
+preview repaints when the retry is due. Only a `content` or `oversize` failure
+ends it, and `previewHoldMs` (5 s) bounds it so a capture that never lands
+cannot freeze the preview; then the preview presents without the Motif. A hold
+is timed from the last seek, play or pause, or the Motif's return to the
+playhead, never from an earlier visit. Export waits for every frame and never
+holds.
 
 ## Export
 

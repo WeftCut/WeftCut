@@ -716,20 +716,26 @@ export class CompositionNode {
   private canPresentClipsAt(tUs: number): boolean {
     let ready = true;
     for (const layer of this.layerById.values()) {
-      if (!layer.enabled) continue;
-      if (!this.trackEnabledByLayer.get(layer.id)) continue;
-      if (tUs < layer.t_start_us || tUs >= layer.t_end_us) continue;
+      if (!layer.enabled || !this.trackEnabledByLayer.get(layer.id) ||
+        tUs < layer.t_start_us || tUs >= layer.t_end_us) {
+        // A Motif's hold counts only while it is on the playhead.
+        if (layer.params.kind === "Motif") this.activeMotifs.get(layer.id)?.sprite.leave();
+        else if (layer.params.kind === "CompositionRef") this.refs.get(layer.id)?.sprite.node.leavePlayhead();
+        continue;
+      }
       if (layer.params.kind === "CompositionRef") {
         const child = this.ensureCompositionRef(layer)?.sprite.node;
         const localUs = contentAtUs(layer.params, tUs - layer.t_start_us);
-        if (child && localUs >= 0 && localUs < child.durationUs() && !child.canPresentClipsAt(localUs)) ready = false;
+        if (child && (localUs < 0 || localUs >= child.durationUs())) child.leavePlayhead();
+        else if (child && !child.canPresentClipsAt(localUs)) ready = false;
         continue;
       }
       if (layer.params.kind === "Motif") {
         // Nothing of its own to show draws nothing, and the canvas below is
-        // black: hold the scene for up to `previewHoldMs`. `demand` keeps its
-        // frames coming while the scene holds and leaves the texture the held
-        // scene draws alone; the frame binds when the sweep presents it.
+        // black: hold the scene while its frame comes, up to `previewHoldMs`.
+        // `demand` keeps its frames coming while the scene holds and leaves
+        // the texture the held scene draws alone; the frame binds when the
+        // sweep presents it.
         const motif = this.ensureMotif(layer);
         if (!motif) continue;
         const tInLayerUs = tUs - layer.t_start_us;
@@ -754,6 +760,12 @@ export class CompositionNode {
       ready = false;
     }
     return ready;
+  }
+
+  /// Every Motif here and in nested Groups is off the playhead.
+  private leavePlayhead(): void {
+    for (const m of this.activeMotifs.values()) m.sprite.leave();
+    for (const r of this.refs.values()) r.sprite.node.leavePlayhead();
   }
 
   private wakeAfterMotifHold(until: number): void {

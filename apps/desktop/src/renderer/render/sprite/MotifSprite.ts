@@ -53,10 +53,11 @@ export interface MotifSpriteInit {
   /// with the same exact-rational math the rest of the renderer uses.
   fpsNum: number;
   fpsDen: number;
-  /// Fires after a freshly-rasterized bitmap is chosen. The host uses it to
-  /// schedule a repaint when the playhead is paused (no rAF tick in flight to
-  /// present it). NOT fired on a synchronous cache hit — that happens inside
-  /// the current paint, so a repaint would be churn.
+  /// Fires after a freshly-rasterized bitmap is chosen, or when a failed
+  /// frame's retry is due. The host uses it to schedule a repaint when the
+  /// playhead is paused (no rAF tick in flight to present the bitmap or
+  /// request the retry). NOT fired on a synchronous cache hit — that happens
+  /// inside the current paint, so a repaint would be churn.
   onLoaded?: () => void;
   /// Preview's Playback Resolution divisor; 1 when absent.
   scaleDiv?: () => MotifReaderDiv;
@@ -110,6 +111,7 @@ export class MotifSprite implements StageableSprite {
     this.playback = new MotifPlaybackCursor({
       bind: (lease, d) => this.choose(lease, { width: d.renderW, height: d.renderH }),
       onLoaded: () => this.onLoaded?.(),
+      onRetryDue: () => this.onLoaded?.(),
       scaleDiv: init.scaleDiv ?? (() => 1),
     });
     if (!this.motif && typeof document !== "undefined") {
@@ -253,6 +255,8 @@ export class MotifSprite implements StageableSprite {
   /** See `MotifPlaybackCursor.holdDeadline`; null for a Motif the catalog
    * lacks, which never binds. */
   holdDeadline(now?: number): number | null { return this.motif ? this.playback.holdDeadline(now) : null; }
+  /** The layer is off the playhead; see `MotifPlaybackCursor.leave`. */
+  leave(): void { this.playback.leave(); }
   invalidatePlayback(): void { this.playback.invalidate(); }
 
   /// Re-fetch this layer's Motif from the runtime catalog and reset the render

@@ -64,6 +64,8 @@ import type { MotifFrameDescriptor } from "../motifs/motifFrameDescriptor";
 import type { MotifReaderDiv } from "../../../shared/motifs/readerProtocol";
 import { resetMotifPreview, setMotifPreviewProps } from "../motifs/previewOverlay";
 import { captureMotif, MotifTransportError } from "../motifs/frameTransport";
+import { MotifError } from "../../../shared/motifs/errors";
+import { MOTIF_DEADLINES } from "../../../shared/motifs/tuning";
 
 describe("MotifSprite export frames", () => {
   it("renders baked user Motifs without a runtime catalog in the Worker", () => {
@@ -337,14 +339,30 @@ describe("MotifSprite.refreshMotif", () => {
 
       it("holds while it has nothing of its own to show, for at most previewHoldMs", () => {
         acquireLease.mockReturnValue(new Promise(() => {}));
-        sprite.demand(view, 0, 5_000_000);
+        sprite.demand(view, 0, 5_000_000, true);
         const until = sprite.holdDeadline();
-        expect(until).toBe(now() + 500);
-        vi.advanceTimersByTime(499);
-        sprite.update(view, frameUs(1), 5_000_000);
-        expect(sprite.holdDeadline()).toBe(until); // one hold, however the target moves
+        expect(until).toBe(now() + MOTIF_DEADLINES.previewHoldMs);
+        vi.advanceTimersByTime(MOTIF_DEADLINES.previewHoldMs - 1);
+        sprite.update(view, frameUs(1), 5_000_000, undefined, true);
+        expect(sprite.holdDeadline()).toBe(until); // one hold while playback moves the target
         vi.advanceTimersByTime(1);
         expect(sprite.holdDeadline()).toBeNull();
+      });
+
+      it("a hold starts again after a seek or a stay off the playhead", () => {
+        acquireLease.mockReturnValue(new Promise(() => {}));
+        const fresh = () => expect(sprite.holdDeadline()).toBe(now() + MOTIF_DEADLINES.previewHoldMs);
+        sprite.demand(view, 0, 5_000_000);
+        fresh();
+        // Left before its frame landed, back at the same target much later.
+        sprite.leave();
+        vi.advanceTimersByTime(MOTIF_DEADLINES.previewHoldMs + 1_000);
+        sprite.demand(view, 0, 5_000_000);
+        fresh();
+        // A seek within the layer.
+        vi.advanceTimersByTime(MOTIF_DEADLINES.previewHoldMs - 1);
+        sprite.demand(view, frameUs(2), 5_000_000);
+        fresh();
       });
 
       it("presents its target or an earlier frame of it; a jump back or new content holds again", async () => {
@@ -394,8 +412,35 @@ describe("MotifSprite.refreshMotif", () => {
         expect(releaseMock.mock.calls).toEqual([[late], [shown]]);
       });
 
-      it("a failed capture, or a Motif the catalog lacks, holds nothing", async () => {
-        acquireLease.mockRejectedValueOnce(new Error("capture unavailable"));
+      it("holds through a failure retrying can fix and asks for a repaint when the retry is due", async () => {
+        vi.useFakeTimers({ toFake: ["performance", "setTimeout", "clearTimeout"] });
+        const onLoaded = vi.fn();
+        const held = new MotifSprite({ layerId: "held", motifId: "d1", fpsNum: 30, fpsDen: 1, onLoaded });
+        for (const code of ["capacity", "transient", "timeout", "device", "transport", "closed", "miss", "disk"] as const) {
+          acquireLease.mockRejectedValueOnce(new MotifError(code, "refused"));
+          held.invalidatePlayback();
+          held.demand(view, 0, 5_000_000);
+          await flush();
+          expect(held.holdDeadline(), code).not.toBeNull();
+        }
+        acquireLease.mockRejectedValueOnce(new Error("untyped"));
+        held.invalidatePlayback();
+        held.demand(view, 0, 5_000_000);
+        await flush();
+        expect(held.holdDeadline()).not.toBeNull();
+        expect(onLoaded).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(MOTIF_DEADLINES.previewRetryMs[0]! + 1);
+        expect(onLoaded).toHaveBeenCalledTimes(1);
+        held.dispose();
+      });
+
+      it("a failure retrying cannot fix, or a Motif the catalog lacks, holds nothing", async () => {
+        acquireLease.mockRejectedValueOnce(new MotifError("content", "script threw"));
+        sprite.update(view, 0, 5_000_000);
+        await flush();
+        expect(sprite.holdDeadline()).toBeNull();
+        acquireLease.mockRejectedValueOnce(new MotifError("oversize", "frame too large"));
+        sprite.invalidatePlayback();
         sprite.update(view, 0, 5_000_000);
         await flush();
         expect(sprite.holdDeadline()).toBeNull();

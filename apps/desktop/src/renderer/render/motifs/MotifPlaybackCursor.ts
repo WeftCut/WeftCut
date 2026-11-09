@@ -1,6 +1,6 @@
 import { atFrame, type MotifFrameDescriptor } from './motifFrameDescriptor';
 import { acquireMotifFrame, peekMotifFrame, type MotifFrameLease } from './motifFrameSource';
-import { motifErrorCode } from '../../../shared/motifs/errors';
+import { motifErrorCode, type MotifErrorCode } from '../../../shared/motifs/errors';
 import { MOTIF_DEADLINES } from '../../../shared/motifs/tuning';
 import { motifTuning } from './tuning';
 import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
@@ -22,6 +22,12 @@ export interface MotifPlaybackSnapshot {
   discarded: number;
 }
 
+/** Failures that retrying cannot fix for this content at this size: the
+ * Motif's own script fails, or its frame exceeds a fixed budget. Any other
+ * failure is backpressure or a lane, reader or device that recovers, so the
+ * scene keeps holding while demand retries. */
+const HOLD_ENDING_FAILURES: ReadonlySet<MotifErrorCode> = new Set(['content', 'oversize']);
+
 interface Request { descriptor: MotifFrameDescriptor; epoch: number; scaleDiv: MotifReaderDiv; controller: AbortController }
 
 /** Per-instance preview demand and frame selection. Ordinary forward playback
@@ -37,8 +43,14 @@ export class MotifPlaybackCursor {
   private shownFrame: number | null = null;
   /** The content `shownFrame` belongs to. */
   private shownKey: string | null = null;
-  /** When the instance began having nothing of its target's to show. */
+  /** When the instance began having nothing of its target's to show. A
+   * discontinuity (`invalidate`) or leaving the playhead (`leave`) ends it. */
   private holdSince: number | null = null;
+  /** The current target failed in a way retrying cannot fix. */
+  private failedForGood = false;
+  /** A repaint when a failed frame's retry is due: a paused preview has no
+   * tick to retry on. */
+  private retryWake: ReturnType<typeof setTimeout> | null = null;
   private boundAt = 0;
   private playing = false;
   private epoch = 0;
@@ -56,6 +68,8 @@ export class MotifPlaybackCursor {
      * when it next presents. */
     bind: (lease: MotifFrameLease, descriptor: MotifFrameDescriptor) => void;
     onLoaded: () => void;
+    /** A failed frame's retry is due; the next update requests it. */
+    onRetryDue: () => void;
     /** Preview's Playback Resolution divisor, read on each update. */
     scaleDiv: () => MotifReaderDiv;
   }) {}
@@ -89,10 +103,17 @@ export class MotifPlaybackCursor {
     this.boundFrame = null;
     this.boundAt = performance.now();
     this.failures = 0;
+    this.failedForGood = false;
     this.retryAt = 0;
+    if (this.retryWake) clearTimeout(this.retryWake);
+    this.retryWake = null;
+    this.holdSince = null;
     this.maxLagFrames = 0;
     this.maxHeldMs = 0;
   }
+
+  /** The instance is off the playhead: a later visit holds from its own start. */
+  leave(): void { this.holdSince = null; }
 
   snapshot(): MotifPlaybackSnapshot {
     const { lagFrames, heldMs } = this.measureHold();
@@ -105,13 +126,15 @@ export class MotifPlaybackCursor {
 
   /** Until when the preview should keep its last picture rather than present
    * this instance: it has no frame of its target's content at or before the
-   * target to show (a first visit, a jump back, new content), nothing has
-   * failed, and that began less than `previewHoldMs` ago. Null: present now.
-   * A frame a few behind still presents, as a late video frame does. */
+   * target to show (a first visit, a jump back, new content), no failure of
+   * the target has ended the hold (`HOLD_ENDING_FAILURES`), and that began,
+   * on the playhead and since the last discontinuity, less than
+   * `previewHoldMs` ago. Null: present now. A frame a few behind still
+   * presents, as a late video frame does. */
   holdDeadline(now = performance.now()): number | null {
     const d = this.target;
     const showsTarget = d !== null && this.shownKey === d.cacheKey && this.shownFrame !== null && this.shownFrame <= d.contentFrame;
-    if (!d || showsTarget || this.failures > 0) { this.holdSince = null; return null; }
+    if (!d || showsTarget || this.failedForGood) { this.holdSince = null; return null; }
     this.holdSince ??= now;
     const until = this.holdSince + MOTIF_DEADLINES.previewHoldMs;
     return now < until ? until : null;
@@ -135,6 +158,7 @@ export class MotifPlaybackCursor {
     this.shownKey = d.cacheKey;
     this.boundAt = performance.now();
     this.failures = 0;
+    this.failedForGood = false;
     this.retryAt = 0;
   }
 
@@ -183,9 +207,14 @@ export class MotifPlaybackCursor {
       // A superseded request is not a failure. Any other, a
       // `MotifTransportError` included, keeps the bound frame and retries with
       // backoff; it never forgets or recaptures.
-      if (motifErrorCode(error) !== 'superseded') {
+      const code = motifErrorCode(error);
+      if (code !== 'superseded') {
         const retries = MOTIF_DEADLINES.previewRetryMs;
-        this.retryAt = performance.now() + retries[Math.min(this.failures++, retries.length - 1)]!;
+        const delay = retries[Math.min(this.failures++, retries.length - 1)]!;
+        this.retryAt = performance.now() + delay;
+        if (code !== undefined && HOLD_ENDING_FAILURES.has(code)) this.failedForGood = true;
+        if (this.retryWake) clearTimeout(this.retryWake);
+        this.retryWake = setTimeout(() => { this.retryWake = null; this.deps.onRetryDue(); }, delay + 1);
         if (this.failures <= 3 || this.failures % 10 === 0) console.error('[weftcut/motifs] preview frame failed', error);
       }
     } finally {
