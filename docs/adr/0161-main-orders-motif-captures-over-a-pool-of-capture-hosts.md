@@ -37,12 +37,17 @@ after a seek back.
 
 - A **capture host** is one offscreen window showing one Motif content version
   (Motif id, content hash, shared texture or bitmap). It owns its frames in
-  flight, drains them before a resize, and retires itself on a transport
-  failure or a hung setup or render, failing only its own frames.
+  flight, drains them before a resize or a version switch, and retires itself
+  on a transport failure or a hung setup or render, failing only its own
+  frames. Another Motif gets another window: one renderer process per Motif.
 - Main keeps a **pool**: at most one host per key and `captureHosts` in all
-  (default 2, range 1–4). A capture whose key has no host takes a free slot,
-  else replaces the least recently used host that is not rendering, after it
-  drains. Each host renders one frame at a time; hosts render concurrently.
+  (default 2, range 1–4). A capture whose key has no host first takes an idle
+  host of another content version of its Motif on its lane: once that host
+  drains, its shell's frame loads the new version's page, and a page that
+  does not load retires the host and the slot opens a new one. Else it takes
+  a free slot, else replaces the least recently used host that is not
+  rendering, after it drains. Each host renders one frame at a time; hosts
+  render concurrently.
 - One queue orders captures by class (`current`, `ahead`, `background`, with
   background aging) and **dispatches at a free slot**: a capture leaves it only
   when a host can take its frame, so nothing in the queue holds a `current`
@@ -84,6 +89,11 @@ after a seek back.
   for the warm host. More hosts keep their windows and render in parallel, at
   a renderer process and a capture surface each. A single Motif never opens a
   second host.
+- A content version switch (a draft edit) keeps the window: in a 2026-11-09
+  probe a new colour reached the screen in a median ~56 ms on the M1 and
+  ~74 ms on the Windows bench, against ~174 / ~205 ms with a new window, with
+  alpha correct on 32 of 32 checks on both lanes and no growth in host memory
+  over 22 switches.
 - Measured with 1 and 2 hosts (fps per lane, two stacked Motifs uncached):
 
   | Machine | Light pair | Heavy DECO pair | `current` latency, DECO pair |

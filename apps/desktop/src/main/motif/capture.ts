@@ -35,7 +35,7 @@ export interface MotifCapturerDeps {
   textureReader: Pick<MotifTextureReader, 'read'> | null
 }
 
-const newCaptureCounters = () => ({ captures: 0, completed: 0, failed: 0, pageLoads: 0, hostBuilds: 0, hostEvictions: 0, affinityPicks: 0, textureCaptures: 0, bitmapCaptures: 0, skippedFrames: 0, queueMs: 0, captureMs: 0, loadMs: 0, readyMs: 0, setupMs: 0, renderMs: 0, outputMs: 0 })
+const newCaptureCounters = () => ({ captures: 0, completed: 0, failed: 0, pageLoads: 0, hostBuilds: 0, hostSwaps: 0, hostEvictions: 0, affinityPicks: 0, textureCaptures: 0, bitmapCaptures: 0, skippedFrames: 0, queueMs: 0, captureMs: 0, loadMs: 0, readyMs: 0, setupMs: 0, renderMs: 0, outputMs: 0 })
 type CaptureCounters = ReturnType<typeof newCaptureCounters>
 
 const DIAGNOSTIC_LANE_CAP = 128
@@ -89,9 +89,11 @@ export class MotifCapturer {
     this.textureReader = deps.textureReader
     this.pool = new HostPool({
       capacity: deps.tuning.captureHosts,
+      affinityMs: deps.tuning.hostAffinityMs,
       hostKeyOf: a => ({ motifId: a.motifId, contentHash: a.contentHash, texture: this.wantsTextureHost(a.width, a.height) }),
       open: (key, a) => this.openHost(key, a),
       evicted: () => { this.counters.hostEvictions++ },
+      swap: (host, key) => this.swapHost(host, key),
     })
     this.queue = new CaptureQueue(this.pool, deps.tuning, {
       // Fast-reject a lane whose content failed while the ticket waited.
@@ -211,6 +213,16 @@ export class MotifCapturer {
       runtime, markerReader: this.markerReader, tuning: this.tuning,
       timed: (phase, run) => this.timed(phase, run),
     }).catch((e: unknown) => { pin?.release(); throw e })
+  }
+
+  /// Shows another content version of `host`'s Motif in its window, from a
+  /// pin of that version's revision.
+  private swapHost(host: CaptureHost, key: HostKey): Promise<boolean> {
+    const pin = /^[0-9a-f]{64}$/.test(key.contentHash) ? this.store.pinPackage(key.motifId, key.contentHash) : null
+    this.counters.hostSwaps++
+    this.counters.pageLoads++
+    this.diagnosticsLane(key.motifId, key.contentHash).pageLoads++
+    return host.swap(key, pin)
   }
 
   private manifestFor(a: CaptureArgs): Manifest | undefined {

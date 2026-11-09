@@ -202,8 +202,9 @@ CDP commands sent before a window's first navigation do not take effect in time:
 an awaited `Page.enable` never settles, and an `addScriptToEvaluateOnNewDocument`
 sent unawaited lands after the document's scripts (0 of 20). So the capture host
 loads a script-free shell first, registers the runtime, then loads the Motif
-into the shell's frame, and opens a new window for each document
-(`main/motif/captureHost.ts` §open, ADR 0159).
+into the shell's frame, and opens a new window for each Motif; another
+content version loads in the frame (`main/motif/captureHost.ts` §open, §swap,
+ADR 0159).
 
 ## A new capture window's first commits can omit its canvases
 

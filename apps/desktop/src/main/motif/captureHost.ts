@@ -58,9 +58,18 @@ async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise
   }
 }
 
+/// The Motif page a host's frame shows: its pinned revision's, else the
+/// Motif's own.
+function motifFrameUrl(key: HostKey, pinned: boolean): string {
+  const dir = `motif://${key.motifId}/${pinned ? `.revisions/${key.contentHash}/` : ''}`
+  return `${dir}index.html?v=${encodeURIComponent(key.contentHash)}`
+}
+
 /** An offscreen window showing one Motif content version (`key`), and the
  * frames rendered on it that are still on their way to a paint. One render
- * step at a time; its owner (`HostPool`) serializes them. */
+ * step at a time; its owner (`HostPool`) serializes them. Another content
+ * version of the same Motif replaces the document in the window's frame
+ * (`swap`). */
 export class CaptureHost implements PooledHost {
   private readyFor = false
   private lastSize: { width: number; height: number }
@@ -70,38 +79,41 @@ export class CaptureHost implements PooledHost {
   private readonly inFlight = new Set<Promise<void>>()
   private readonly settledListeners: (() => void)[] = []
 
+  /// The Motif page the window's frame may navigate to.
+  private frameUrl: string
+
   private constructor(
-    readonly key: HostKey,
+    private currentKey: HostKey,
     private readonly win: BrowserWindow,
     private readonly frames: OffscreenFrames,
     private readonly env: CaptureHostEnv,
     size: { width: number; height: number },
     /// The revision snapshot its page and companion URLs come from, held until
-    /// the host retires.
-    private readonly pin: PinnedPackage | null,
+    /// the host retires or shows another version.
+    private pin: PinnedPackage | null,
   ) {
     this.lastSize = size
+    this.frameUrl = motifFrameUrl(currentKey, pin !== null)
   }
 
-  /// Builds the host of one document. The shell page, which runs no scripts of
+  get key(): HostKey { return this.currentKey }
+
+  /// Builds the host of one Motif. The shell page, which runs no scripts of
   /// its own, is the window's only top-level navigation: a bitmap host paints
   /// real alpha only for a window's first document
   /// (docs/notes/electron-chromium-behavior.md#a-bitmap-osr-window-paints-alpha-only-for-its-first-document),
-  /// so another Motif or content version gets a new window. The runtime is
+  /// so another Motif gets a new window, and another content version only a
+  /// new document in the shell's frame (`swap`). The runtime is
   /// registered once the shell has loaded, and the shell then loads the Motif
   /// into its frame, whose documents the runtime reaches before their scripts.
   /// `pin`: the content version is served from its pinned revision, which the
   /// host releases when it retires, the failed build included.
   static async open(key: HostKey, size: { width: number; height: number }, pin: PinnedPackage | null, env: CaptureHostEnv): Promise<CaptureHost> {
-    const { motifId, contentHash, texture } = key
-    const pinned = pin !== null
+    const { motifId, texture } = key
     const { width, height } = size
     const surfaceHeight = height + frameMarkerRows(width)
     // The shell frames the Motif above the surface's marker rows
     // (shared/motifs/frameMarker.ts); the Motif sees only its own size.
-    const dir = `motif://${motifId}/${pinned ? `.revisions/${contentHash}/` : ''}`
-    const query = `v=${encodeURIComponent(contentHash)}`
-    const motifUrl = `${dir}index.html?${query}`
     // Sized to the capture before its document loads: the macOS bitmap host
     // drops a new document's first commit while the window and the page's
     // emulated size differ
@@ -132,15 +144,16 @@ export class CaptureHost implements PooledHost {
     // browser) and block any page-initiated navigation off the app's content. The
     // main-process `loadURL` calls below are programmatic and don't trip will-navigate.
     hardenWindow(win, { allowExternalOpen: false })
-    // hardenWindow guards the top frame; the Motif runs in the shell's frame.
-    win.webContents.on('will-frame-navigate', event => {
-      if (!event.isMainFrame && event.url !== motifUrl) event.preventDefault()
-    })
     const host = new CaptureHost(key, win, frames, env, { width, height }, pin)
+    // hardenWindow guards the top frame; the Motif runs in the shell's frame,
+    // which goes only to the version the host shows.
+    win.webContents.on('will-frame-navigate', event => {
+      if (!event.isMainFrame && event.url !== host.frameUrl) event.preventDefault()
+    })
     // A CDP init that throws mid-build must not orphan the window.
     try {
       win.webContents.debugger.attach('1.3')
-      await env.timed('loadMs', () => withTimeout(win.loadURL(`${dir}${CAPTURE_HOST_FILE}?${query}`), MOTIF_DEADLINES.captureLoadMs, 'loadURL motif'))
+      await env.timed('loadMs', () => withTimeout(win.loadURL(`motif://${motifId}/${CAPTURE_HOST_FILE}`), MOTIF_DEADLINES.captureLoadMs, 'loadURL motif'))
       await host.send('Page.enable')
       await host.send('Runtime.enable')
       await host.send('Page.addScriptToEvaluateOnNewDocument', {
@@ -151,7 +164,7 @@ export class CaptureHost implements PooledHost {
       await host.send('Emulation.setDeviceMetricsOverride', { width, height: surfaceHeight, deviceScaleFactor: 1, mobile: false })
       await host.send('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } })
       const shell = await env.timed('loadMs', () => host.send('Runtime.evaluate', {
-        expression: `${env.runtime};window.__motifShellFit(${width}, ${height}, ${frameMarkerRows(width)});window.__motifShellLoad()`,
+        expression: `${env.runtime};window.__motifShellFit(${width}, ${height}, ${frameMarkerRows(width)});window.__motifShellLoad(${JSON.stringify(host.frameUrl)})`,
         awaitPromise: true, returnByValue: true,
       }, MOTIF_DEADLINES.captureLoadMs, 'load Motif frame'))
       if (shell?.exceptionDetails) throw new Error('capture host shell failed: ' + JSON.stringify(shell.exceptionDetails))
@@ -271,6 +284,39 @@ export class CaptureHost implements PooledHost {
     while (this.inFlight.size) await Promise.all(this.inFlight)
   }
 
+  /** Shows `key`, another content version of this host's Motif on its lane,
+   * served from `pin`'s revision: the shell's frame loads its page, and the
+   * next step waits for it to be ready as at build. The window, its shell and
+   * the frame ids stay; a frame navigation keeps a bitmap host's alpha
+   * (docs/notes/electron-chromium-behavior.md#a-bitmap-osr-window-paints-alpha-only-for-its-first-document).
+   * The caller drained the frames in flight. False, with the host retired:
+   * the frame did not load, or `key` is not this host's Motif and lane. */
+  async swap(key: HostKey, pin: PinnedPackage | null): Promise<boolean> {
+    if (this.retiredFlag || key.motifId !== this.currentKey.motifId || key.texture !== this.currentKey.texture || this.inFlight.size > 0) {
+      pin?.release()
+      this.retire()
+      return false
+    }
+    const url = motifFrameUrl(key, pin !== null)
+    this.frameUrl = url
+    this.readyFor = false
+    try {
+      const loaded = await this.env.timed('loadMs', () => this.send('Runtime.evaluate', {
+        expression: `window.__motifShellLoad(${JSON.stringify(url)})`,
+        awaitPromise: true, returnByValue: true,
+      }, MOTIF_DEADLINES.captureLoadMs, 'load Motif frame'))
+      if (loaded?.exceptionDetails) throw new Error('capture host frame load failed: ' + JSON.stringify(loaded.exceptionDetails))
+    } catch {
+      pin?.release()
+      this.retire()
+      return false
+    }
+    this.pin?.release()
+    this.pin = pin
+    this.currentKey = key
+    return true
+  }
+
   retire(): void {
     if (this.retiredFlag) return
     this.retiredFlag = true
@@ -288,7 +334,7 @@ export class CaptureHost implements PooledHost {
 
   private async waitReady(): Promise<void> {
     if (this.readyFor) return
-    const motifId = this.key.motifId
+    const motifId = this.currentKey.motifId
     // The shell answers `ready` only once the Motif's frame has finished
     // loading the page the protocol served for it with a success status, so
     // setup never runs against an error body. The hostname guard closes the

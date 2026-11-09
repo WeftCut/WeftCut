@@ -41,19 +41,17 @@ export function cspForMotifFile(rest: string): string {
 /// only script is the runtime the capture host injects.
 export const CAPTURE_HOST_CSP = "default-src 'none'; frame-src 'self'; style-src 'unsafe-inline'"
 
-/// The capture host page beside a Motif's `index.html` (same origin, so the
-/// runtime can reach into the frame): the Motif at the top-left, above the
+/// The capture host page of a Motif (same origin as its pages, so the runtime
+/// can reach into the frame): the Motif's frame at the top-left, above the
 /// marker rows (shared/motifs/frameMarker.ts); the runtime sizes it to the
-/// capture (`__motifShellFit`). The query goes to the Motif. The frame stays
-/// empty until the runtime loads it (`__motifShellLoad`), so the Motif's
-/// documents start with the runtime.
-export function captureHostPage(search: string): string {
-  const rest = new URLSearchParams(search).toString()
-  const src = ('index.html' + (rest ? '?' + rest : '')).replace(/[&"<>]/g, c => `&#${c.charCodeAt(0)};`)
+/// capture (`__motifShellFit`). The frame stays empty until the runtime loads
+/// a page of the Motif into it (`__motifShellLoad`), so the Motif's documents
+/// start with the runtime.
+export function captureHostPage(): string {
   return '<!doctype html><html><head><meta charset="utf-8"><style>'
     + 'html,body{margin:0;padding:0;overflow:hidden;background:transparent}'
     + 'iframe{position:fixed;left:0;top:0;border:0;display:block}'
-    + `</style></head><body><iframe data-src="${src}"></iframe></body></html>`
+    + '</style></head><body><iframe></iframe></body></html>'
 }
 
 /// Exported so index.ts can spread it into the single registerSchemesAsPrivileged call.
@@ -89,7 +87,7 @@ export function registerMotifProtocol(builtinDir: string, store: UserMotifStore)
       } catch { return new Response('not found: ' + id + '/' + rest, { status: 404 }) }
     }
     if (rest.replace(/^\.revisions\/[0-9a-f]{64}\//, '') === CAPTURE_HOST_FILE) {
-      return new Response(captureHostPage(url.search), {
+      return new Response(captureHostPage(), {
         status: 200,
         headers: { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': CAPTURE_HOST_CSP, 'Cache-Control': 'no-store' },
       })

@@ -102,25 +102,29 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
         witness.fillRect(at % size.width, Math.floor(at / size.width), 1, 1);
       }
     };
-    // 'ready' once the Motif's frame holds the page the protocol served for it
-    // with a success status; 'unserved <status>' for an error body, which has
-    // the runtime but no Motif; 'loading' before either.
+    // 'ready' once the Motif's frame holds the page it was last sent to, as
+    // the protocol served it with a success status; 'unserved <status>' for an
+    // error body, which has the runtime but no Motif; 'loading' before either,
+    // and while an earlier version's document is still there.
     window.__motifHostReady = function (motifId) {
+      var f = document.querySelector('iframe');
       var w = motifWindow();
-      if (document.readyState !== 'complete' || location.hostname !== motifId || !w ||
+      if (document.readyState !== 'complete' || location.hostname !== motifId || !w || !f.src ||
+        w.location.href !== f.src ||
         typeof w.__motifRender !== 'function' || typeof w.__motifServed !== 'function' ||
         w.document.readyState !== 'complete') return 'loading';
       var status = w.__motifServed();
       return status >= 200 && status < 300 ? 'ready' : 'unserved ' + status;
     };
     // Main registers the runtime after the shell has loaded, then loads the
-    // Motif here, so the Motif's documents start with the runtime.
-    window.__motifShellLoad = function () {
+    // Motif's page src here, so the Motif's documents start with the
+    // runtime; another content version of the Motif loads the same way.
+    window.__motifShellLoad = function (src) {
       return new Promise(function (resolve, reject) {
         var f = document.querySelector('iframe');
-        if (!f || !f.dataset.src) { reject(new Error('capture host shell has no Motif frame')); return; }
+        if (!f) { reject(new Error('capture host shell has no Motif frame')); return; }
         f.addEventListener('load', function () { resolve(true); }, { once: true });
-        f.src = f.dataset.src;
+        f.src = src;
       });
     };
     window.__motifSetup = function (props, meta) { return motifWindow().__motifSetup(props, meta); };

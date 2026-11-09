@@ -73,9 +73,13 @@ describe('Motif setup decoder workers', () => {
 /// The capture host shell: a top frame at CAPTURE_HOST_FILE framing a Motif
 /// page that already runs the runtime in its own role, fitted to a picture
 /// `width` pixels wide.
+/// The Motif page the host shell's frame was sent to.
+const MOTIF_PAGE = 'motif://countdown/index.html?v=1';
+
 function hostRuntime(pathname = '/' + CAPTURE_HOST_FILE, width = 640, status = 200) {
   const motif = pageRuntime(status).window;
   motif.document.readyState = 'complete';
+  motif.location = { href: MOTIF_PAGE };
   // A canvas records its fills by their place in the marker run, row after row.
   const el = (tag?: string) => {
     const node: any = { style: {} as Record<string, string>, children: [] as any[], appendChild(c: unknown) { this.children.push(c); } };
@@ -86,7 +90,7 @@ function hostRuntime(pathname = '/' + CAPTURE_HOST_FILE, width = 640, status = 2
     return node;
   };
   const body = el();
-  const frame = { contentWindow: motif, style: {} as Record<string, string> };
+  const frame: any = { contentWindow: motif, src: MOTIF_PAGE, style: {} as Record<string, string> };
   const document = { readyState: 'complete', body, createElement: el, querySelector: () => frame };
   // The host's rendering steps run when the test says so.
   const rafs: Array<() => void> = [];
@@ -174,17 +178,27 @@ describe('capture host shell', () => {
     expect(performance.now() - started).toBeGreaterThanOrEqual(90);
   });
 
-  it('loads the Motif into its frame only when asked, after the runtime is in place', async () => {
+  it('loads the page main names into its frame only when asked, after the runtime is in place', async () => {
     const { window } = hostRuntime();
-    const frame: any = { dataset: { src: 'index.html?v=1' }, src: '', listeners: [] as Array<() => void>,
+    const frame: any = { src: '', listeners: [] as Array<() => void>,
       addEventListener(_type: string, cb: () => void) { this.listeners.push(cb); } };
     window.document.querySelector = () => frame;
-    const loaded = window.__motifShellLoad();
-    expect(frame.src).toBe('index.html?v=1');
+    const loaded = window.__motifShellLoad(MOTIF_PAGE);
+    expect(frame.src).toBe(MOTIF_PAGE);
     frame.listeners.forEach((cb: () => void) => cb());
     await expect(loaded).resolves.toBe(true);
-    frame.dataset = {};
-    await expect(window.__motifShellLoad()).rejects.toThrow(/no Motif frame/);
+    window.document.querySelector = () => null;
+    await expect(window.__motifShellLoad(MOTIF_PAGE)).rejects.toThrow(/no Motif frame/);
+  });
+
+  it('is not ready while its frame still holds an earlier version\'s document', () => {
+    const { window, frame, motif } = hostRuntime();
+    expect(window.__motifHostReady('countdown')).toBe('ready');
+    // Sent to another version: the old document, complete, is still there.
+    frame.src = 'motif://countdown/index.html?v=2';
+    expect(window.__motifHostReady('countdown')).toBe('loading');
+    motif.location.href = frame.src;
+    expect(window.__motifHostReady('countdown')).toBe('ready');
   });
 
   it('is ready only for its own Motif, and leaves other top pages in the Motif role', () => {

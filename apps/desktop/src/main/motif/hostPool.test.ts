@@ -14,7 +14,7 @@ class FakeHost implements PooledHost {
   bound = 3
   private paints: (() => void)[] = []
   private settled: (() => void)[] = []
-  constructor(readonly key: HostKey, readonly size: { width: number; height: number }) {}
+  constructor(public key: HostKey, readonly size: { width: number; height: number }) {}
   get hasRoom(): boolean { return this.framesInFlight < this.bound }
   /// A frame rendered on this host whose paint has not arrived.
   inFlight(): void {
@@ -40,14 +40,15 @@ class FakeHost implements PooledHost {
   }
 }
 
-const argsOf = (motifId: string): CaptureArgs => ({ motifId, tSec: 0, propsJson: '{}', width: 32, height: 16, contentHash: 'v1' })
+const argsOf = (motifId: string, contentHash = 'v1'): CaptureArgs => ({ motifId, tSec: 0, propsJson: '{}', width: 32, height: 16, contentHash })
 
-function newPool(capacity: number) {
+function newPool(capacity: number, affinityMs = 0) {
   const opened: FakeHost[] = []
   /// The capturer's texture switch.
   const mode = { texture: false }
   const pool = new HostPool<FakeHost>({
     capacity,
+    affinityMs,
     hostKeyOf: a => ({ motifId: a.motifId, contentHash: a.contentHash, texture: mode.texture }),
     open: async (key, a) => {
       events.push(`open:${key.motifId}`)
@@ -56,17 +57,35 @@ function newPool(capacity: number) {
       return host
     },
     evicted: () => { evictions++ },
+    swap: async (host, key) => {
+      events.push(`swap:${host.key.motifId}@${key.contentHash}`)
+      if (swapFails) { host.retire(); return false }
+      host.key = key
+      return true
+    },
   })
-  /// Leases `motifId`'s host and opens it.
-  const lease = async (motifId: string) => {
-    const a = argsOf(motifId)
+  /// Leases `motifId`'s host at `contentHash` and opens it.
+  const lease = async (motifId: string, contentHash = 'v1') => {
+    const a = argsOf(motifId, contentHash)
     const leased = pool.acquire(pool.keyOf(a), a)
     return { host: await leased.host(a), release: leased.release }
   }
-  return { pool, opened, mode, lease, key: (motifId: string) => pool.keyOf(argsOf(motifId)) }
+  return { pool, opened, mode, lease, key: (motifId: string, contentHash = 'v1') => pool.keyOf(argsOf(motifId, contentHash)) }
 }
 
-beforeEach(() => { events = []; evictions = 0 })
+/// The next swaps fail: the host's frame does not load the version.
+let swapFails = false
+
+beforeEach(() => { events = []; evictions = 0; swapFails = false })
+
+/// Opens and releases `a`'s host at v1.
+async function lease1(pool: HostPool<FakeHost>, key: (m: string, h?: string) => string): Promise<FakeHost> {
+  const a = argsOf('a', 'v1')
+  const leased = pool.acquire(key('a', 'v1'), a)
+  const host = await leased.host(a)
+  leased.release()
+  return host
+}
 
 describe('HostPool', () => {
   it('keeps one host per key and reuses it', async () => {
@@ -163,6 +182,101 @@ describe('HostPool', () => {
     expect(pool.state(key('a'))).toBe('ready')
     expect(pool.state(key('b'))).toBe('absent')
     expect(evictions).toBe(0)
+  })
+
+  it('another content version takes an idle host of its Motif, after its frames in flight, before a free slot', async () => {
+    const { pool, opened, lease, key } = newPool(2)
+    const v1 = await lease('a', 'v1')
+    v1.host.inFlight()
+    v1.release()
+    events.length = 0
+    const switching = lease('a', 'v2')
+    await Promise.resolve()
+    expect(events).toEqual(['drain:a'])
+    v1.host.paint()
+    const v2 = await switching
+    expect(events).toEqual(['drain:a', 'swap:a@v2'])
+    expect(v2.host).toBe(v1.host)
+    expect(opened).toHaveLength(1)
+    expect(evictions).toBe(0)
+    v2.release()
+    expect(pool.state(key('a', 'v1'))).toBe('absent')
+    expect(pool.state(key('a', 'v2'))).toBe('ready')
+  })
+
+  it('a host used within affinityMs keeps its version while a slot is free; with none free, it switches', async () => {
+    const { opened, lease } = newPool(2, 60_000)
+    const v1 = await lease('a', 'v1'); v1.release()
+    const v2 = await lease('a', 'v2'); v2.release()
+    expect(v2.host).not.toBe(v1.host)
+    expect(opened).toHaveLength(2)
+    events.length = 0
+    const v3 = await lease('a', 'v3')
+    expect(events).toEqual(['drain:a', 'swap:a@v3'])
+    expect(v3.host).toBe(v1.host) // the least recently used of the two
+    expect(evictions).toBe(0)
+  })
+
+  it('a version switch takes no host that renders, that the queue keeps, or of another Motif or lane', async () => {
+    const { pool, opened, mode, lease, key } = newPool(4)
+    const rendering = await lease('a', 'v1')
+    const b = await lease('b', 'v1'); b.release()
+    const switching = await lease('a', 'v2')
+    expect(switching.host).not.toBe(rendering.host)
+    rendering.release(); switching.release()
+    // v1 is kept for a better-ranked ticket: v3 opens its own host.
+    const v3 = argsOf('a', 'v3')
+    const kept = pool.acquire(key('a', 'v3'), v3, new Set([key('a', 'v1'), key('a', 'v2')]))
+    await kept.host(v3)
+    kept.release()
+    expect(opened).toHaveLength(4)
+    // Another lane: a texture host is not a bitmap host's sibling.
+    mode.texture = true
+    expect(pool.canOpen()).toBe(true)
+    events.length = 0
+    ;(await lease('b', 'v2')).release()
+    expect(events.some(e => e.startsWith('swap:'))).toBe(false)
+  })
+
+  it('a version whose page does not load retires the host and opens one in its slot', async () => {
+    const { pool, opened, lease } = newPool(1)
+    const v1 = await lease('a', 'v1'); v1.release()
+    swapFails = true
+    const v2 = await lease('a', 'v2')
+    expect(v1.host.retired).toBe(true)
+    expect(v2.host).not.toBe(v1.host)
+    expect(opened).toHaveLength(2)
+    expect(evictions).toBe(0)
+    v2.release()
+    expect(pool.diagnostics().map(h => h.contentHash)).toEqual(['v2'])
+  })
+
+  it('a version switch whose lease is released unused leaves the host on its version', async () => {
+    const { pool, key } = newPool(1)
+    const v1 = await lease1(pool, key)
+    const v2 = argsOf('a', 'v2')
+    const unused = pool.acquire(key('a', 'v2'), v2)
+    unused.release()
+    expect(v1.retired).toBe(false)
+    expect(events.some(e => e.startsWith('swap:'))).toBe(false)
+    expect(pool.state(key('a', 'v1'))).toBe('ready')
+    expect(pool.state(key('a', 'v2'))).toBe('absent')
+  })
+
+  it('a version switch released unused while its version opened elsewhere retires the host, which never serves the switch', async () => {
+    const { pool, lease, key } = newPool(2)
+    const v1 = await lease1(pool, key)
+    const v2 = argsOf('a', 'v2')
+    const unused = pool.acquire(key('a', 'v2'), v2)
+    // v1's captures meanwhile open their own host in the free slot.
+    const again = await lease('a', 'v1')
+    again.release()
+    unused.release()
+    expect(v1.retired).toBe(true)
+    expect(events.some(e => e.startsWith('swap:'))).toBe(false)
+    expect(pool.state(key('a', 'v2'))).toBe('absent')
+    expect(pool.state(key('a', 'v1'))).toBe('ready')
+    expect(pool.diagnostics()).toHaveLength(1)
   })
 
   it('a host that retires itself leaves its slot; the other hosts and their frames stay', async () => {

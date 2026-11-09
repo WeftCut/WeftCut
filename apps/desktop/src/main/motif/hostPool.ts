@@ -2,7 +2,8 @@ import { MotifError } from '../../shared/motifs/errors.js'
 import type { CaptureArgs, HostLease, HostSlots } from './captureQueue.js'
 
 /** What a capture host shows: one Motif content version, as shared textures
- * or bitmaps. A host never changes key. */
+ * or bitmaps. A host changes key only to another content version of its Motif
+ * on the same lane (`HostPoolDeps.swap`). */
 export interface HostKey { motifId: string; contentHash: string; texture: boolean }
 
 /** The part of a capture host (`CaptureHost`) the pool manages. */
@@ -23,11 +24,18 @@ export interface PooledHost {
 export interface HostPoolDeps<H extends PooledHost> {
   /// Hosts open at once (tuning `captureHosts`).
   capacity: number
+  /// A host used within this long may still be wanted for its version: another
+  /// version takes it only when no slot is free (tuning `hostAffinityMs`).
+  affinityMs: number
   hostKeyOf(args: CaptureArgs): HostKey
   /// Opens a host for `key`, sized to `args`.
   open(key: HostKey, args: CaptureArgs): Promise<H>
   /// A host was retired to make room for another key.
   evicted(): void
+  /// Shows `key`, another content version of the host's Motif on its lane, in
+  /// the host's window; its frames in flight have drained. False: the host
+  /// retired and the slot opens a new one.
+  swap(host: H, key: HostKey): Promise<boolean>
 }
 
 export interface HostPoolLease<H extends PooledHost> extends HostLease {
@@ -51,15 +59,20 @@ interface Slot<H> {
   evicts: Slot<H> | null
   /// The slot replacing this one: no ticket may lease it any more.
   evictedBy: Slot<H> | null
+  /// The content version the slot's host switches to before its next frame.
+  swapTo: HostKey | null
 }
 
 const keyString = (key: HostKey) => `${key.motifId}\0${key.contentHash}\0${key.texture ? 'texture' : 'bitmap'}`
 
 /** The capture hosts, at most one per key and `capacity` in all. A key without
- * a host takes a free slot, else replaces the least recently used host that is
- * not rendering: that host's frames in flight drain, it retires, and only then
- * does the new one open, so the pool never holds more than `capacity` windows.
- * A host that retires itself (a transport failure) leaves its slot. */
+ * a host takes an idle host of another content version of its Motif on its
+ * lane, which drains and switches its window's frame to the key's version:
+ * first one unused for `affinityMs`, then a free slot, then any such host.
+ * Else it replaces the least recently used host that is not rendering: that
+ * host's frames in flight drain, it retires, and only then does the new one
+ * open, so the pool never holds more than `capacity` windows. A host that
+ * retires itself (a transport failure) leaves its slot. */
 export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H>> {
   private readonly slots = new Map<string, Slot<H>>()
   private readonly listeners: (() => void)[] = []
@@ -91,19 +104,8 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
 
   acquire(key: string, args: CaptureArgs, keep: ReadonlySet<string> = new Set()): HostPoolLease<H> {
     this.sweep()
-    let slot = this.slots.get(key)
-    if (slot) {
-      if (slot.rendering || slot.evictedBy) throw new Error('capture host is already leased')
-    } else {
-      slot = { key, hostKey: this.deps.hostKeyOf(args), host: null, rendering: false, usedAt: 0, captures: 0, evicts: null, evictedBy: null }
-      if (this.live() >= this.deps.capacity) {
-        const victim = this.idle(keep)
-        if (!victim) throw new Error('no capture host slot is free')
-        victim.evictedBy = slot
-        slot.evicts = victim
-      }
-      this.slots.set(key, slot)
-    }
+    const slot = this.slots.get(key) ?? this.reserve(key, args, keep)
+    if (slot.rendering || slot.evictedBy) throw new Error('capture host is already leased')
     slot.rendering = true
     const leased = slot
     let released = false
@@ -151,8 +153,51 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
     }] : [])
   }
 
+  /// A slot for a key without one: an idle host of another content version of
+  /// its Motif, which switches before its next frame, unless it was used
+  /// within `affinityMs` and a slot is free; else a free slot; else one
+  /// replacing the least recently used idle host.
+  private reserve(key: string, args: CaptureArgs, keep: ReadonlySet<string>): Slot<H> {
+    const hostKey = this.deps.hostKeyOf(args)
+    const sibling = this.sibling(hostKey, keep)
+    const free = this.live() < this.deps.capacity
+    if (sibling && (!free || performance.now() - sibling.usedAt >= this.deps.affinityMs)) {
+      this.slots.delete(sibling.key)
+      sibling.key = key
+      sibling.swapTo = hostKey
+      this.slots.set(key, sibling)
+      return sibling
+    }
+    const slot: Slot<H> = { key, hostKey, host: null, rendering: false, usedAt: 0, captures: 0, evicts: null, evictedBy: null, swapTo: null }
+    if (!free) {
+      const victim = this.idle(keep)
+      if (!victim) throw new Error('no capture host slot is free')
+      victim.evictedBy = slot
+      slot.evicts = victim
+    }
+    this.slots.set(key, slot)
+    return slot
+  }
+
   private async hostFor(slot: Slot<H>, args: CaptureArgs): Promise<H> {
     slot.captures++
+    const swapTo = slot.swapTo
+    if (swapTo) {
+      slot.swapTo = null
+      const host = slot.host
+      if (host && !host.retired) {
+        // The old version's frames commit before its document goes.
+        await host.drain()
+        // Keyed again after the wait, as an open is: a texture switch meanwhile
+        // wants another kind of host.
+        const hostKey = this.deps.hostKeyOf(args)
+        if (!this.closed && !host.retired && hostKey.texture === slot.hostKey.texture && await this.deps.swap(host, hostKey).catch(() => false)) {
+          slot.hostKey = hostKey
+          return host
+        }
+        host.retire()
+      }
+    }
     if (slot.host && !slot.host.retired) return slot.host
     this.forget(slot)
     const victim = slot.evicts
@@ -188,6 +233,9 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
 
   private release(slot: Slot<H>): void {
     slot.rendering = false
+    // A switch its lease never asked for: the host still shows its version,
+    // under which `rekey` files the slot again.
+    slot.swapTo = null
     slot.usedAt = performance.now()
     const victim = slot.evicts
     if (victim) { victim.evictedBy = null; slot.evicts = null }
@@ -197,11 +245,13 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
   }
 
   /// Files a slot under its host's key once it differs from the leased one.
-  /// Should another slot hold that key meanwhile, this one stays put and is
-  /// replaced like any idle host.
+  /// Should another slot hold that key meanwhile, the host retires: filed
+  /// under the leased key, it would serve that key's captures with what it
+  /// shows, another kind of host or another content version.
   private rekey(slot: Slot<H>): void {
     const key = keyString(slot.hostKey)
-    if (key === slot.key || this.slots.has(key)) return
+    if (key === slot.key) return
+    if (this.slots.has(key)) { slot.host!.retire(); this.remove(slot); return }
     this.slots.delete(slot.key)
     slot.key = key
     this.slots.set(key, slot)
@@ -232,6 +282,19 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
     let n = 0
     for (const slot of this.slots.values()) if (!slot.evictedBy) n++
     return n
+  }
+
+  /// An idle host showing another content version of `key`'s Motif on its
+  /// lane, the least recently used first.
+  private sibling(key: HostKey, keep: ReadonlySet<string>): Slot<H> | null {
+    let lru: Slot<H> | null = null
+    for (const slot of this.slots.values()) {
+      if (slot.rendering || slot.evictedBy || keep.has(slot.key) || !slot.host || slot.host.retired) continue
+      const k = slot.hostKey
+      if (k.motifId !== key.motifId || k.texture !== key.texture || k.contentHash === key.contentHash) continue
+      if (!lru || slot.usedAt < lru.usedAt) lru = slot
+    }
+    return lru
   }
 
   /// The least recently used host that is not rendering, being replaced or

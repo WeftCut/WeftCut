@@ -108,10 +108,13 @@ Gesture model (`renderer/properties/motifParamsHost.ts`):
 
 A capture host (`main/motif/captureHost.ts`) is one offscreen `BrowserWindow`
 showing one Motif content version, reused across frames and layers of it. It
-loads the capture host page beside the Motif's `index.html`, which frames the
-Motif at the capture size above its marker rows; the runtime runs in both and
-forwards the entry points. Another Motif or content version gets another window
-(ADR 0159): only a window's first document keeps alpha on a bitmap host. The
+loads the Motif's capture host page, which frames the Motif's page at the
+capture size above its marker rows; the runtime runs in both and forwards the
+entry points. Another Motif gets another window (ADR 0159): only a window's
+first document keeps alpha on a bitmap host. Another content version of the
+same Motif loads in the shell's frame once the host's frames in flight have
+drained (ADR 0161); the next step waits for that page to be ready as at build,
+and a page that does not load retires the host. The
 host sets `Emulation.setDeviceMetricsOverride` (any resolution) and a
 transparent default background so `background: transparent` stays real alpha.
 A user Motif's host loads it from a revision snapshot (`/.revisions/<hash>/`)

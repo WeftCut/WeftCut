@@ -131,17 +131,17 @@ describe('registerMotifProtocol responses', () => {
 })
 
 describe('capture host page', () => {
-  it('frames the Motif beside it with the same query, at the top-left', async () => {
+  it('holds an empty frame for the Motif, at the top-left', async () => {
     const hash = 'a'.repeat(64)
     const res = await serve('countdown', `.revisions/${hash}/${CAPTURE_HOST_FILE}?v=${hash}`)
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Security-Policy')).toBe(CAPTURE_HOST_CSP)
     const html = await res.text()
-    expect(html).toContain(`<iframe data-src="index.html?v=${hash}">`)
+    expect(html).toContain('<iframe></iframe>')
     expect(html).toContain('iframe{position:fixed;left:0;top:0;')
   })
 
-  it('escapes the query and is served only at the package root or a pinned revision', async () => {
+  it('ignores the query and is served only at the package root or a pinned revision', async () => {
     expect(await (await serve('countdown', `${CAPTURE_HOST_FILE}?v="><script>`)).text()).not.toMatch(/"><script>|<script/)
     expect((await serve('countdown', `assets/${CAPTURE_HOST_FILE}`)).status).toBe(404)
   })

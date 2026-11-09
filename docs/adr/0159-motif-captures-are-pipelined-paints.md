@@ -44,12 +44,12 @@ after the previous one, so the renderer idled about three quarters of the time.
   alone: the host painted that frame. A host failure fails every frame in
   flight, and the bake coordinator counts the frames of a clip that fail
   together as one failure toward its retry limit.
-- **A host window shows one document.** A window's first top-level document
-  is the only one a bitmap host paints with real alpha
-  (docs/notes/electron-chromium-behavior.md), so another Motif or content
-  version gets a new window: the script-free shell loads first, then the
-  runtime, then the Motif in the shell's frame. A new window costs about what
-  a navigation did.
+- **A host window loads one top-level document.** A window's first top-level
+  document is the only one a bitmap host paints with real alpha
+  (docs/notes/electron-chromium-behavior.md), so the script-free shell loads
+  first, then the runtime, then the Motif in the shell's frame, and another
+  Motif gets a new window. Another content version of the same Motif loads in
+  the shell's frame, which keeps alpha (ADR 0161).
 - **A texture-output failure switches the session to bitmaps**, including a
   failed readback; the frame at hand is captured again as a bitmap. The
   bitmap host keeps 2D canvases on the CPU (ADR 0078).

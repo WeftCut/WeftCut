@@ -603,7 +603,8 @@ _Avoid_: coalesce key, ticket (the capture queue's word), broker job
 
 **Capture host**:
 An offscreen window showing one Motif content version, which renders its frames
-for capture. Main keeps a pool of them, at most one per content version. See
+for capture; another version of the same Motif can replace it in the window.
+Main keeps a pool of them, at most one per content version. See
 [motifs.md](docs/motifs.md#capture-host).
 _Avoid_: capture page
 

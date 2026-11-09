@@ -43,6 +43,8 @@ const silentLanes = new Set<string>()
 const unservedLanes = new Set<string>()
 /// Lanes whose __motifRender loses its CDP transport: the renderer went away.
 const brokenTransportLanes = new Set<string>()
+/// Lanes whose page the shell's frame fails to load.
+const failingFrameLoads = new Set<string>()
 /// Windows built while set paint their first frame without its canvases, as a
 /// new window's first commit can.
 let firstFrameWithoutCanvases = false
@@ -60,9 +62,9 @@ let released = 0
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-/// `${motifId}@${contentHash}` of the page loaded at `url`.
+/// `${motifId}@${contentHash}` of the Motif page loaded at `url`.
 function laneOf(url: string): string | null {
-  const m = /motif:\/\/([^/]+)\/(?:\.revisions\/[0-9a-f]+\/)?\.weftcut-capture-host\.html\?v=(.*)$/.exec(url)
+  const m = /motif:\/\/([^/]+)\/(?:\.revisions\/[0-9a-f]+\/)?index\.html\?v=(.*)$/.exec(url)
   return m ? `${m[1]}@${decodeURIComponent(m[2]!)}` : null
 }
 
@@ -100,8 +102,10 @@ function bitmap(id: number | null, surface: number, size: { width: number; heigh
 vi.mock('electron', () => {
   class FakeBrowserWindow {
     texture: boolean
-    /// The page loaded last; behavior flags key on its lane.
+    /// The shell page loaded last.
     url = 'about:blank'
+    /// The Motif page in the shell's frame; behavior flags key on its lane.
+    frame = 'about:blank'
     /// The window's content size: it paints at it, and a change models a new
     /// compositor surface (see setContentSize).
     size: { width: number; height: number }
@@ -126,7 +130,7 @@ vi.mock('electron', () => {
         this.canvasless = false
         const size = { ...this.size }
         const emit = () => {
-          if (this.destroyed || this.silent || silentLanes.has(laneOf(this.url) ?? '')) return
+          if (this.destroyed || this.silent || silentLanes.has(laneOf(this.frame) ?? '')) return
           for (const p of paints) {
             if (p.id !== null && skippedPaints.delete(p.id)) continue
             if (p.id !== null) events.push(`paint:${p.id}`)
@@ -152,21 +156,29 @@ vi.mock('electron', () => {
             const expr = params?.expression ?? ''
             const fit = /__motifShellFit\(([^)]*)\)/.exec(expr)
             if (fit) fits.push(fit[1]!)
+            const load = /__motifShellLoad\(("[^"]*")\)/.exec(expr)
+            if (load) {
+              const url = JSON.parse(load[1]!) as string
+              const lane = laneOf(url)
+              if (lane && failingFrameLoads.delete(lane)) return Promise.resolve({ exceptionDetails: { text: 'frame load failed' } })
+              this.frame = url
+              if (lane) events.push(`load:${lane.split('@')[0]}`)
+            }
             if (expr.startsWith('window.__motifSetup(')) {
               if (hangSetup) return new Promise(() => {})
               return (setupDelayMs ? delay(setupDelayMs) : Promise.resolve()).then(() => ({ result: { value: true } }))
             }
             if (expr.includes('__motifHostReady')) {
               if (hangReadyProbe) return new Promise(() => {})
-              return Promise.resolve({ result: { value: unservedLanes.has(laneOf(this.url) ?? '') ? 'unserved 404' : 'ready' } })
+              return Promise.resolve({ result: { value: unservedLanes.has(laneOf(this.frame) ?? '') ? 'unserved 404' : 'ready' } })
             }
             if (expr.startsWith('window.__motifRender(')) {
               if (hangFrame) return new Promise(() => {})
-              if (brokenTransportLanes.has(laneOf(this.url) ?? '')) return Promise.reject(new Error('Target closed'))
+              if (brokenTransportLanes.has(laneOf(this.frame) ?? '')) return Promise.reject(new Error('Target closed'))
               lastRenderExpr = expr
               renderCalls++
               // The Motif's own script throws; the CDP transport answers fine.
-              if (throwingLanes.has(laneOf(this.url) ?? '')) {
+              if (throwingLanes.has(laneOf(this.frame) ?? '')) {
                 return Promise.resolve({ exceptionDetails: { text: 'boom' } })
               }
               const frameId = lastRenderMeta().frameId as number
@@ -194,8 +206,6 @@ vi.mock('electron', () => {
     loadURL = async (url: string): Promise<void> => {
       this.alive()
       this.url = url; this.fresh = true
-      const lane = laneOf(url)
-      if (lane) events.push(`load:${lane.split('@')[0]}`)
     }
     // A new size is a new compositor surface too.
     setContentSize = (width: number, height: number): void => { this.alive(); this.size = contentSize = { width, height }; this.fresh = true }
@@ -651,7 +661,52 @@ describe('MotifCapturer', () => {
     expect(navigate('motif://other/index.html?v=v7')).toBe(true)
     expect(navigate('motif://framed/assets/x.html')).toBe(true)
     expect(navigate('https://example.com/')).toBe(true)
-    expect(navigate('motif://framed/.weftcut-capture-host.html?v=v7', true)).toBe(false) // the top frame is hardenWindow's
+    expect(navigate('motif://framed/.weftcut-capture-host.html', true)).toBe(false) // the top frame is hardenWindow's
+  })
+
+  it('another content version of a Motif loads in the same window, after its frames in flight', async () => {
+    const v1 = 'a'.repeat(64), v2 = 'b'.repeat(64)
+    const held: string[] = [], released: string[] = []
+    capturer = newCapturer({ tuning: ONE_HOST, store: { ...emptyStore, pinPackage: (_motifId, revision) => {
+      held.push(revision.slice(0, 1))
+      let done = false
+      return { release: () => { if (!done) { done = true; released.push(revision.slice(0, 1)) } } }
+    } } })
+    const before = opened, from = events.length
+    paintDelayMs = 20
+    try {
+      const first = capturer.capturePng({ ...args, motifId: 'versioned', contentHash: v1 }, bg)
+      await capturer.capturePng({ ...args, motifId: 'versioned', contentHash: v2 }, bg)
+      await first
+    } finally { paintDelayMs = 0 }
+    expect(opened - before).toBe(1)
+    // The first version's frame painted before the second version's page loaded.
+    const loads = events.slice(from).filter(e => e.startsWith('load:') || e.startsWith('paint:'))
+    expect(loads).toEqual(['load:versioned', expect.stringMatching(/^paint:/), 'load:versioned', expect.stringMatching(/^paint:/)])
+    expect(held).toEqual(['a', 'b'])
+    expect(released).toEqual(['a'])
+    const navigate = (url: string) => {
+      const event = { url, isMainFrame: false, preventDefault: vi.fn() }
+      lastHost!.emit('will-frame-navigate', event)
+      return event.preventDefault.mock.calls.length > 0
+    }
+    expect(navigate(`motif://versioned/.revisions/${v2}/index.html?v=${v2}`)).toBe(false)
+    expect(navigate(`motif://versioned/.revisions/${v1}/index.html?v=${v1}`)).toBe(true)
+    expect(capturer.diagnostics()).toMatchObject({ hostBuilds: 1, hostSwaps: 1, pageLoads: 2, hostEvictions: 0 })
+    capturer.shutdown()
+    expect(released).toEqual(['a', 'b'])
+  })
+
+  it('a version whose page fails to load in the window gets a host of its own', async () => {
+    capturer = newCapturer({ tuning: ONE_HOST })
+    await capturer.capturePng({ ...args, motifId: 'versioned', contentHash: 'v1' }, bg)
+    const firstWindow = lastWindow!
+    // The page fails to load once: in the old window, not in the new one.
+    failingFrameLoads.add('versioned@v2')
+    try { await capturer.capturePng({ ...args, motifId: 'versioned', contentHash: 'v2' }, bg) }
+    finally { failingFrameLoads.clear() }
+    expect(firstWindow.destroyed).toBe(true)
+    expect(capturer.diagnostics()).toMatchObject({ hostBuilds: 2, hostSwaps: 1, completed: 2, failed: 0 })
   })
 
   it('a render timeout is probation: one retry on the rebuilt host, a second timeout latches the lane', async () => {
