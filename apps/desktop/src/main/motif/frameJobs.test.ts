@@ -400,6 +400,46 @@ describe('MotifFrameJobs: cancellation', () => {
     expect(resources.released).toBe(1);
   });
 
+  it('a display cancelled during its GPU copy still gets the copy', async () => {
+    const h = harness(); const copy = deferred();
+    h.session.copy.mockImplementationOnce(async o => { await copy.promise; return { kind: 'texture' as const, key: `copy-${o.id}`, token: 't' }; });
+    const display = h.display(1);
+    await h.queued(1);
+    const lease = h.captures[0]!.lease();
+    await vi.waitFor(() => expect(h.session.copy).toHaveBeenCalledOnce());
+    display.handle.cancel();
+    display.handle.cancel();
+    copy.resolve();
+    await lease;
+    await expect(display.result).resolves.toMatchObject({ kind: 'texture', key: 'copy-1' });
+  });
+
+  it('persistence cancelled after the lease is superseded once its write lands, and the write stands', async () => {
+    const h = harness(); const write = deferred();
+    h.writer.encoded.mockReturnValueOnce(write.promise);
+    const bake = h.persist();
+    await h.queued(1);
+    await h.captures[0]!.lease();
+    bake.handle.cancel();
+    let settled = false;
+    void bake.result.catch(() => { settled = true; });
+    await settle();
+    expect(settled).toBe(false);
+    write.resolve();
+    await expect(bake.result).rejects.toMatchObject({ code: 'superseded' });
+    expect(h.writer.encoded).toHaveBeenCalledOnce();
+  });
+
+  it('a request already answered ignores a cancel and a priority change', async () => {
+    const h = harness();
+    const display = h.display(1);
+    await h.queued(1);
+    await h.captures[0]!.lease();
+    await display.result;
+    expect(() => { display.handle.cancel(); display.handle.setPriority('background'); }).not.toThrow();
+    expect(h.captures[0]!.ticket.setPriority).not.toHaveBeenCalled();
+  });
+
   it('a request cancelled during the check is not captured', async () => {
     const h = harness(); const stat = deferred<boolean>();
     h.store.has.mockReturnValueOnce(stat.promise);

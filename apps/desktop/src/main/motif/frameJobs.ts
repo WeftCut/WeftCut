@@ -52,20 +52,43 @@ export interface FrameJobSession {
   liveWriteFailed(error: unknown): void
 }
 
+/** Where a request stands. `new`: before its first admission. `joined`: in a
+ * job before its lease. `waiting`: arrived after a lease, it waits for that
+ * job's write. `leased`: its job's lease took it; a cancel only marks it.
+ * `settled`: answered. */
+type Stage =
+  | { kind: 'new' }
+  | { kind: 'joined'; job: Job }
+  | { kind: 'waiting' }
+  | { kind: 'leased'; cancelled: boolean }
+  | { kind: 'settled' }
+
+/** Every move a request makes (`move`). A leased or waiting request that
+ * still needs a capture is admitted again, from where it stands. */
+const MOVES: { readonly [K in Stage['kind']]: readonly Stage['kind'][] } = {
+  new: ['joined', 'waiting', 'settled'],
+  joined: ['leased', 'settled'],
+  waiting: ['joined', 'waiting', 'settled'],
+  leased: ['joined', 'waiting', 'settled'],
+  settled: [],
+}
+
 interface Member {
   /** Null for persistence. */
   display: DisplaySubscriber | null
   afterMiss: boolean
   priority: MotifFramePriority
   isCurrent: () => boolean
-  cancelled: boolean
-  settled: boolean
-  /** `joined`: in a job before its lease. `leased`: its job's lease took it.
-   * `waiting`: arrived after a lease and waits for that job's write. */
-  stage: 'joined' | 'leased' | 'waiting'
-  job: Job | null
+  stage: Stage
+  /** Both move the request to `settled`. */
   resolve(value: StoredMotifFrame | undefined): void
   reject(error: unknown): void
+}
+
+/** Any move outside `MOVES` is a bug in this module, thrown. */
+function move(member: Member, stage: Stage): void {
+  if (!MOVES[member.stage.kind].includes(stage.kind)) throw new Error(`Motif frame request cannot move from ${member.stage.kind} to ${stage.kind}`)
+  member.stage = stage
 }
 
 type JobState = 'probing' | 'queued' | 'leased' | 'writing' | 'done'
@@ -87,7 +110,8 @@ interface Job {
 
 const RANK: Record<MotifFramePriority, number> = { current: 0, ahead: 1, background: 2 }
 const addressKey = (address: MotifCacheAddress) => `${address.hash}:${address.frame}`
-const live = (member: Member) => !member.cancelled && member.isCurrent()
+const live = ({ stage, isCurrent }: Member) =>
+  stage.kind !== 'settled' && !(stage.kind === 'leased' && stage.cancelled) && isCurrent()
 /** Main never reads stored pixels on the capture path (ADR 0154). */
 const storedFrame = (): StoredMotifFrame => ({ kind: 'stored', persisted: true })
 
@@ -136,10 +160,9 @@ export class MotifFrameJobs {
     let member!: Member
     const result = new Promise<StoredMotifFrame | undefined>((resolve, reject) => {
       member = {
-        display, afterMiss, priority: subscriber.priority, isCurrent: subscriber.isCurrent,
-        cancelled: false, settled: false, stage: 'joined', job: null,
-        resolve: value => { if (!member.settled) { member.settled = true; resolve(value) } },
-        reject: error => { if (!member.settled) { member.settled = true; reject(error) } },
+        display, afterMiss, priority: subscriber.priority, isCurrent: subscriber.isCurrent, stage: { kind: 'new' },
+        resolve: value => { move(member, { kind: 'settled' }); resolve(value) },
+        reject: error => { move(member, { kind: 'settled' }); reject(error) },
       }
     })
     this.admit(member, address, args)
@@ -148,15 +171,16 @@ export class MotifFrameJobs {
       handle: {
         setPriority: priority => {
           member.priority = priority
-          if (member.job) this.prioritize(member.job)
+          if (member.stage.kind === 'joined') this.prioritize(member.stage.job)
         },
         cancel: () => this.cancel(member),
       },
     }
   }
 
+  /** The one way into a job, for a new request and for one that needs a
+   * capture again. */
   private admit(member: Member, address: MotifCacheAddress | undefined, args: CaptureArgs): void {
-    if (member.settled) return
     if (!live(member)) { member.reject(motifSuperseded()); return }
     if (!address) {
       const job = this.create(null, undefined, args)
@@ -182,13 +206,12 @@ export class MotifFrameJobs {
     // Past its lease: this job's write decides. The job leaves the table
     // before its outcome settles, so a request that still needs a capture
     // starts a new job.
-    member.stage = 'waiting'
-    member.job = null
+    move(member, { kind: 'waiting' })
     void job.outcome.then(written => {
-      if (member.settled) return
+      // A cancel has settled it.
+      if (member.stage.kind !== 'waiting') return
       if (!live(member)) { member.reject(motifSuperseded()); return }
       if (written && !(member.display && member.afterMiss)) { member.resolve(member.display ? storedFrame() : undefined); return }
-      member.stage = 'joined'
       this.admit(member, address, args)
     })
   }
@@ -200,9 +223,8 @@ export class MotifFrameJobs {
   }
 
   private join(job: Job, member: Member): void {
+    move(member, { kind: 'joined', job })
     job.members.add(member)
-    member.stage = 'joined'
-    member.job = job
     // Bind the destination before capture: a project switch cannot redirect
     // the frame into the next workspace.
     if (job.address && (!member.display || member.display.keep)) this.prepare(job)
@@ -218,7 +240,7 @@ export class MotifFrameJobs {
 
   private priority(job: Job): MotifFramePriority {
     let best: MotifFramePriority = 'background'
-    for (const member of job.members) if (!member.cancelled && RANK[member.priority] < RANK[best]) best = member.priority
+    for (const member of job.members) if (RANK[member.priority] < RANK[best]) best = member.priority
     return best
   }
 
@@ -232,15 +254,14 @@ export class MotifFrameJobs {
   }
 
   private cancel(member: Member): void {
-    if (member.settled || member.cancelled) return
-    member.cancelled = true
+    const { stage } = member
+    if (stage.kind === 'settled') return
     // A leased request keeps its place: a copy already made is still sent,
     // and the renderer closes what arrives.
-    if (member.stage === 'leased') return
-    const job = member.job
-    member.job = null
+    if (stage.kind === 'leased') { stage.cancelled = true; return }
     member.reject(motifSuperseded())
-    if (!job) return
+    if (stage.kind !== 'joined') return
+    const { job } = stage
     job.members.delete(member)
     if (job.state !== 'queued') return
     if (job.members.size > 0) { this.prioritize(job); return }
@@ -259,7 +280,6 @@ export class MotifFrameJobs {
     for (const member of [...job.members]) {
       if (live(member) && !(stored && member.display && !member.afterMiss)) continue
       job.members.delete(member)
-      member.job = null
       if (live(member)) member.resolve(storedFrame())
       else member.reject(motifSuperseded())
     }
@@ -318,8 +338,7 @@ export class MotifFrameJobs {
     job.ticket = null
     const leased: Member[] = []
     for (const member of job.members) {
-      member.job = null
-      if (live(member)) { member.stage = 'leased'; leased.push(member) }
+      if (live(member)) { move(member, { kind: 'leased', cancelled: false }); leased.push(member) }
       else member.reject(motifSuperseded())
     }
     job.members.clear()
@@ -379,7 +398,6 @@ export class MotifFrameJobs {
     } catch (error) {
       if (frame.kind === 'texture' && failsTexturePath(error)) {
         this.session.useBitmaps(error)
-        member.stage = 'joined'
         this.admit(member, job.address, job.args)
       } else member.reject(error)
     }
@@ -422,14 +440,13 @@ export class MotifFrameJobs {
     for (const member of persists) {
       if (!live(member)) member.reject(motifSuperseded())
       else if (written) member.resolve(undefined)
-      else if (recapture) { member.stage = 'joined'; this.admit(member, job.address, job.args) }
+      else if (recapture) this.admit(member, job.address, job.args)
       else member.reject(failure ?? new MotifError('closed', 'Motif frame was not stored'))
     }
   }
 
   private fail(job: Job, error: unknown): void {
     for (const member of job.members) {
-      member.job = null
       member.reject(live(member) ? error : motifSuperseded())
     }
     job.members.clear()
