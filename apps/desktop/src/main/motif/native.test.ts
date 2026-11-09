@@ -24,6 +24,10 @@ function fakeCore() {
   }
   const encoder = { read: vi.fn(async (_handle: Buffer, _height: number) => raw), close: vi.fn() }
   const marker = { read: vi.fn(async (_handle: Buffer, pixels: number) => Buffer.alloc(pixels * 4, 1)), close: vi.fn() }
+  const frames = {
+    read: vi.fn(async (_path: string, _div: number) => ({ width: 2, height: 1, rgba: Buffer.alloc(8), timing: timing.read })),
+    close: vi.fn(),
+  }
   const classes = {
     MotifGpuPool: vi.fn(function (_w: number, _h: number, _count: number, _bgra: boolean, _upload: boolean) { return pool }),
     MotifTextureEncoder: vi.fn(function () { return encoder }),
@@ -32,11 +36,11 @@ function fakeCore() {
   const core: Record<string, unknown> = {
     motifLimits: vi.fn(() => ({ ...MOTIF_LIMITS })),
     motifConfigure: vi.fn(),
-    motifReadFrameScaled: vi.fn(async () => ({ width: 2, height: 1, rgba: Buffer.alloc(8), timing: timing.read })),
     motifConvert: vi.fn(async (_pixels: Buffer, _width: number, _height: number, from: string, to: string) => Buffer.from(`${from} as ${to}`)),
+    MotifFrameFileReader: vi.fn(function () { return frames }),
     ...classes,
   }
-  return { core, raw, pool, encoder, marker, classes }
+  return { core, raw, pool, encoder, marker, frames, classes }
 }
 
 const load = (core: unknown, platform: NodeJS.Platform = 'win32') => loadMotifNative(TUNING, core, platform)
@@ -46,7 +50,7 @@ describe('loadMotifNative', () => {
     const { core } = fakeCore()
     const native = load(core)
     await native.convert({ from: 'rgba', to: 'frame' }, Buffer.alloc(8), 2, 1)
-    await native.openFrameReader().read('0.wfrm', 1)
+    await native.openFrameFileReader().read('0.wfrm', 1)
     native.gpu!.openPool({ use: 'upload', width: 2, height: 1 })
     expect(core.motifConfigure).toHaveBeenCalledExactlyOnceWith({ scratchIdleBytes: TUNING.scratchIdleBytes, bandThreads: 3 })
   })
@@ -62,7 +66,8 @@ describe('loadMotifNative', () => {
     const { core } = fakeCore()
     delete core.motifConvert
     delete core.motifConfigure
-    expect(() => load(core)).toThrow(/motifConfigure, motifConvert: rebuild it/)
+    delete core.MotifFrameFileReader
+    expect(() => load(core)).toThrow(/motifConfigure, motifConvert, MotifFrameFileReader: rebuild it/)
     expect(() => load(null)).toThrow(/rebuild it/)
   })
 
@@ -106,14 +111,24 @@ describe('loadMotifNative', () => {
     })
   })
 
-  it('reads stored frames, decoding a miss', async () => {
-    const { core } = fakeCore()
-    const reader = load(core, 'linux').openFrameReader()
+  it('opens a native frame file reader per reader and closes it, decoding every failure', async () => {
+    const { core, frames } = fakeCore()
+    const native = load(core, 'linux')
+    expect(core.MotifFrameFileReader).not.toHaveBeenCalled()
+    const reader = native.openFrameFileReader()
+    expect(core.MotifFrameFileReader).toHaveBeenCalledOnce()
     await expect(reader.read('a.wfrm', 2)).resolves.toMatchObject({ width: 2, height: 1 })
-    expect(core.motifReadFrameScaled).toHaveBeenCalledExactlyOnceWith('a.wfrm', 2)
-    core.motifReadFrameScaled = async () => { throw tagged('miss') }
+    expect(frames.read).toHaveBeenCalledExactlyOnceWith('a.wfrm', 2)
+    frames.read.mockRejectedValueOnce(tagged('miss'))
     await expect(reader.read('b.wfrm', 1)).rejects.toEqual(expectCode('miss'))
     reader.close()
+    expect(frames.close).toHaveBeenCalledOnce()
+    frames.read.mockRejectedValueOnce(tagged('closed'))
+    await expect(reader.read('c.wfrm', 1)).rejects.toEqual(expectCode('closed'))
+    frames.close.mockImplementationOnce(() => { throw tagged('device') })
+    expect(thrown(() => reader.close())).toEqual(expectCode('device'))
+    ;(core.MotifFrameFileReader as ReturnType<typeof vi.fn>).mockImplementationOnce(function () { throw tagged('oversize') })
+    expect(thrown(() => native.openFrameFileReader())).toEqual(expectCode('oversize'))
   })
 
   describe('gpu', () => {
@@ -193,9 +208,24 @@ describe('loadMotifNative', () => {
       let held = 0
       core.motifConvert = (...args: unknown[]) => { held++; return original(...args) }
       await native.convert({ from: 'premultipliedBgra', to: 'frame' }, Buffer.alloc(4), 1, 1)
-      core.motifReadFrameScaled = async () => ({ width: 9, height: 9, rgba: Buffer.alloc(0), timing: timing.read })
-      await expect(native.openFrameReader().read('x.wfrm', 1)).resolves.toMatchObject({ width: 9 })
       expect(held).toBe(1)
+    })
+
+    it('a replaced frame file reader class or its read', async () => {
+      class Reader {
+        read(_path: string, _div: number) { return Promise.resolve({ width: 9, height: 9, rgba: Buffer.alloc(0), timing: timing.read }) }
+        close() {}
+      }
+      const { core } = fakeCore()
+      const native = load(core, 'linux')
+      core.MotifFrameFileReader = Reader
+      const reader = native.openFrameFileReader()
+      await expect(reader.read('x.wfrm', 1)).resolves.toMatchObject({ width: 9 })
+      const read = Reader.prototype.read
+      const reads: string[] = []
+      Reader.prototype.read = function (this: Reader, path: string, div: number) { reads.push(path); return read.call(this, path, div) }
+      await reader.read('held.wfrm', 1)
+      expect(reads).toEqual(['held.wfrm'])
     })
 
     it('a replaced class or prototype method', async () => {

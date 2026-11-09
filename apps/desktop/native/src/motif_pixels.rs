@@ -3,9 +3,8 @@
 //! one conversion export (`motif_convert`). The stored frame format itself
 //! lives in `motif_frame.rs`.
 use crate::motif_error::to_napi;
-use crate::motif_frame::{
-    band_rows, band_threads, byte_len, encode, encode_premultiplied, per_thread,
-};
+use crate::motif_frame::{band_rows, byte_len, encode, encode_premultiplied};
+use crate::motif_runtime::{band_threads, blocking, per_thread};
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 
@@ -201,10 +200,7 @@ pub async fn motif_convert(
     to: MotifPixelTarget,
 ) -> napi::Result<Buffer> {
     let px = Pixels::top_rows(&pixels, width, height, from).map_err(to_napi)?;
-    tokio::task::spawn_blocking(move || convert(px, to).map(Buffer::from))
-        .await
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?
-        .map_err(to_napi)
+    blocking(move || convert(px, to).map(Buffer::from)).await
 }
 
 #[cfg(test)]

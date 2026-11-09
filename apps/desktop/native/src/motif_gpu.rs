@@ -247,7 +247,7 @@ impl Live {
 impl Drop for Live {
     fn drop(&mut self) {
         if LIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1 {
-            crate::motif_frame::release_scratch();
+            crate::motif_runtime::release_scratch();
         }
     }
 }

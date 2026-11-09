@@ -312,7 +312,7 @@ describe('Motif capture and persistence', () => {
     const nativeConvert = (conversions: { straighten?: Conversion; encodeRgba?: Conversion; encodeBgra?: Conversion }) => {
       const { straighten = async () => RGBA, encodeRgba = tagged('content'), encodeBgra = tagged('content') } = conversions;
       return loadMotifNative({ scratchIdleBytes: 0, bandThreads: 1 }, {
-        motifLimits: () => ({ ...MOTIF_LIMITS }), motifConfigure: () => {}, motifReadFrameScaled: tagged('miss'),
+        motifLimits: () => ({ ...MOTIF_LIMITS }), motifConfigure: () => {}, MotifFrameFileReader: class {},
         motifConvert: (px: Buffer, width: number, height: number, from: string, to: string) =>
           (from === 'rgba' ? encodeRgba : to === 'rgba' ? straighten : encodeBgra)(px, width, height),
       }, 'linux').convert;

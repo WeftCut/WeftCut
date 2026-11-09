@@ -1,6 +1,6 @@
 import { isMotifFrameAddress, motifFrameStem } from './frameAddress'
 import { motifErrorCode } from '../../shared/motifs/errors'
-import { isMotifReaderDiv, type MotifReadReply, type MotifReaderControl, type MotifReaderReport, type MotifReadTiming } from '../../shared/motifs/readerProtocol'
+import { isMotifReaderDiv, type MotifReadPixels, type MotifReadReply, type MotifReaderControl, type MotifReaderReport } from '../../shared/motifs/readerProtocol'
 
 export interface MotifReaderHostPort {
   on(event: 'message', listener: (event: { data: unknown }) => void): unknown
@@ -10,9 +10,17 @@ export interface MotifReaderHostPort {
   close(): void
 }
 
-interface Dependencies {
+/** The native frame file reader (`MotifFrameFileReader` in `native.ts`). */
+export interface MotifReaderHostReader {
   /** Rejects decoded: a stored frame that cannot be read is a `miss`. */
-  read(path: string, div: number): Promise<{ width: number; height: number; rgba: Uint8Array; timing: MotifReadTiming }>
+  read(path: string, div: number): Promise<MotifReadPixels>
+  close(): void
+}
+
+interface Dependencies {
+  /** Opened at the first document port and closed after the last: an open
+   * reader keeps the process's band buffers (docs/motifs.md#reading-stored-frames). */
+  openReader(): MotifReaderHostReader
   /** To main: miss reports and port acknowledgements. */
   report(message: MotifReaderReport): void
 }
@@ -23,6 +31,7 @@ interface Dependencies {
 export function createMotifReaderHost(deps: Dependencies) {
   let workspace: { generation: number | null; root: string | null } = { generation: null, root: null }
   const ports = new Map<number, MotifReaderHostPort>()
+  let reader: MotifReaderHostReader | null = null
 
   async function read(request: unknown): Promise<MotifReadReply | null> {
     if (!request || typeof request !== 'object') return null
@@ -33,8 +42,9 @@ export function createMotifReaderHost(deps: Dependencies) {
     // generation that named the file, which main then ignores.
     const { generation, root } = workspace
     if (!root || generation === null) return { id, miss: true }
+    if (!reader) return { id, error: 'No document is attached to the Motif reader' }
     try {
-      const { width, height, rgba, timing } = await deps.read(`${motifFrameStem(root, hash, frame as number)}.wfrm`, div)
+      const { width, height, rgba, timing } = await reader.read(`${motifFrameStem(root, hash, frame as number)}.wfrm`, div)
       return { id, frame: { width, height, rgba, timing } }
     } catch (error) {
       if (motifErrorCode(error) !== 'miss') return { id, error: String((error as Error)?.message ?? error).slice(0, 512) }
@@ -43,14 +53,30 @@ export function createMotifReaderHost(deps: Dependencies) {
     }
   }
 
-  function retire(id: number) {
-    const port = ports.get(id)
-    ports.delete(id)
+  function closePort(port: MotifReaderHostPort | undefined) {
     try { port?.close() } catch { /* already closed by the document */ }
   }
 
+  function detached() {
+    if (ports.size > 0 || !reader) return
+    const last = reader
+    reader = null
+    last.close()
+  }
+
+  function retire(id: number) {
+    const port = ports.get(id)
+    ports.delete(id)
+    closePort(port)
+    detached()
+  }
+
   function attach(id: number, port: MotifReaderHostPort) {
-    retire(id)
+    reader ??= deps.openReader()
+    // Not `retire`: a port replaced under its id keeps the reader open.
+    const replaced = ports.get(id)
+    ports.delete(id)
+    closePort(replaced)
     ports.set(id, port)
     port.on('message', event => {
       void read(event.data).then(reply => {
@@ -62,7 +88,11 @@ export function createMotifReaderHost(deps: Dependencies) {
       })
     })
     // The document's end closes on navigation, reload or crash.
-    port.on('close', () => { if (ports.get(id) === port) ports.delete(id) })
+    port.on('close', () => {
+      if (ports.get(id) !== port) return
+      ports.delete(id)
+      detached()
+    })
     port.start()
     // Main hands the document its end only once this one is attached here.
     deps.report({ type: 'port-ready', id })

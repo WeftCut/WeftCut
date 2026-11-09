@@ -18,8 +18,8 @@ describe('E2E Motif read hold', () => {
   })
 
   it('passes other frames straight through', async () => {
-    const read = vi.fn(async (name: string) => name)
-    const held = holdMotifReads(read, 5000)
+    const read = vi.fn(async (name: string, _div: number) => name)
+    const held = holdMotifReads(5000)({ read, close: () => {} }).read
     await expect(held(file(0), 1)).resolves.toBe(file(0))
     await expect(held(file(50000), 2)).resolves.toBe(file(50000))
     await expect(held(path.join('x', '5000.png'), 1)).resolves.toBe(path.join('x', '5000.png'))
@@ -28,7 +28,7 @@ describe('E2E Motif read hold', () => {
 
   it('holds the frame until the next frame number is read, then reads the admitted path', async () => {
     const read = vi.fn(async (name: string, div: number) => `${name}@${div}`)
-    const held = holdMotifReads(read, 5000)
+    const held = holdMotifReads(5000)({ read, close: () => {} }).read
     let settled: string | null = null
     const first = held(file(5000), 2).then(value => { settled = value })
     const second = held(path.join('other', '5000.wfrm'), 4)
@@ -46,5 +46,31 @@ describe('E2E Motif read hold', () => {
     void held(file(5000), 1).then(() => { later = true })
     await tick()
     expect(later).toBe(false)
+  })
+
+  it('releases a read held by a closed reader from the next one, which answers closed', async () => {
+    const hold = holdMotifReads(5000)
+    const reader = () => {
+      let open = true
+      const read = vi.fn(async (name: string, _div: number) => {
+        if (!open) throw new Error('[motif:closed] Motif frame file reader closed')
+        return name
+      })
+      return { read, close: vi.fn(() => { open = false }) }
+    }
+    const first = reader()
+    const firstHeld = hold(first)
+    const stranded = firstHeld.read(file(5000), 1)
+    void stranded.catch(() => {})
+    await tick()
+    firstHeld.close()
+    expect(first.close).toHaveBeenCalledOnce()
+
+    // The document reloaded: the host opened another reader.
+    const second = reader()
+    await expect(hold(second).read(file(5001), 1)).resolves.toBe(file(5001))
+    await expect(stranded).rejects.toThrow(/\[motif:closed\]/)
+    expect(first.read).toHaveBeenCalledWith(file(5000), 1)
+    expect(second.read).not.toHaveBeenCalledWith(file(5000), 1)
   })
 })

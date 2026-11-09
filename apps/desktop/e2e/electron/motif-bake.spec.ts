@@ -232,7 +232,8 @@ for (const mode of ['native', 'bitmap', 'readback-failure', 'warm-cache'] as con
       expect(files.some(f => f.endsWith('.png'))).toBe(false)
       const decoded = await app.evaluate(async (_electron, { addon, file }) => {
         const native = process.getBuiltinModule('module').createRequire(addon)(addon)
-        const { width, height, rgba } = await native.motifReadFrameScaled(file, 1)
+        const reader = new native.MotifFrameFileReader()
+        const { width, height, rgba } = await reader.read(file, 1).finally(() => reader.close())
         let clear = 0, visible = 0, partial = 0
         for (let i = 3; i < rgba.length; i += 4) {
           if (rgba[i] === 0) clear++
@@ -287,7 +288,8 @@ test('A live capture stores the same pixels a bake stores at its address, and co
   const { app, page } = await launchApp()
   const differingBytes = (a: string, b: string) => app.evaluate(async (_electron, { addon, a, b }) => {
     const native = process.getBuiltinModule('module').createRequire(addon)(addon)
-    const [left, right] = await Promise.all([native.motifReadFrameScaled(a, 1), native.motifReadFrameScaled(b, 1)])
+    const reader = new native.MotifFrameFileReader()
+    const [left, right] = await Promise.all([reader.read(a, 1), reader.read(b, 1)]).finally(() => reader.close())
     let differing = 0
     for (let i = 0; i < left.rgba.length; i++) if (left.rgba[i] !== right.rgba[i]) differing++
     return differing

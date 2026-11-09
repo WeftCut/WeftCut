@@ -8,17 +8,25 @@ const hash = 'a'.repeat(32)
 const root = path.join('workspace', 'project')
 const timing = { readMs: 1, decodeMs: 2 }
 
-function fixture() {
-  const read = vi.fn(async (_file: string, div: number) => ({ width: 8 / div, height: 4 / div, rgba: new Uint8Array(4), timing }))
-  const report = vi.fn()
-  const host = createMotifReaderHost({ read, report })
-  return { host, read, report }
-}
-
 class Port extends EventEmitter {
   postMessage = vi.fn()
   start = vi.fn()
   close = vi.fn(() => { this.emit('close') })
+}
+
+/** A host with a document port attached unless `attached` is false; `read`
+ * stands for every reader it opens. */
+function fixture({ attached = true } = {}) {
+  const read = vi.fn(async (_file: string, div: number) => ({ width: 8 / div, height: 4 / div, rgba: new Uint8Array(4), timing }))
+  const close = vi.fn()
+  const openReader = vi.fn(() => ({ read, close }))
+  const report = vi.fn()
+  const host = createMotifReaderHost({ openReader, report })
+  if (attached) {
+    host.control({ type: 'port', id: 0 }, [new Port()])
+    report.mockClear()
+  }
+  return { host, read, close, openReader, report }
 }
 
 describe('Motif reader utility', () => {
@@ -94,7 +102,7 @@ describe('Motif reader utility', () => {
   })
 
   it('acknowledges each document port once attached and answers on it until it is retired or closed', async () => {
-    const { host, report } = fixture()
+    const { host, report } = fixture({ attached: false })
     host.control({ type: 'workspace', generation: 1, root })
     const a = new Port()
     const b = new Port()
@@ -115,5 +123,34 @@ describe('Motif reader utility', () => {
     host.control({ type: 'port', id: 3 }, [])
     expect(host.ports).toBe(0)
     expect(report).toHaveBeenCalledTimes(2)
+  })
+
+  it('holds one reader while any document port is attached', async () => {
+    const { host, read, close, openReader } = fixture({ attached: false })
+    host.control({ type: 'workspace', generation: 1, root })
+    expect(await host.read({ id: 1, hash, frame: 0, div: 1 })).toEqual({ id: 1, error: expect.any(String) })
+    expect(openReader).not.toHaveBeenCalled()
+
+    const [a, b, c] = [new Port(), new Port(), new Port()]
+    host.control({ type: 'port', id: 1 }, [a])
+    host.control({ type: 'port', id: 2 }, [b])
+    // A port replaced under its id is not the last one going.
+    host.control({ type: 'port', id: 2 }, [c])
+    expect(b.close).toHaveBeenCalled()
+    expect(openReader).toHaveBeenCalledOnce()
+    host.control({ type: 'retire', id: 1 })
+    expect(close).not.toHaveBeenCalled()
+    await host.read({ id: 2, hash, frame: 0, div: 1 })
+    expect(read).toHaveBeenCalledOnce()
+
+    c.emit('close')
+    expect(close).toHaveBeenCalledOnce()
+    expect(await host.read({ id: 3, hash, frame: 0, div: 1 })).toEqual({ id: 3, error: expect.any(String) })
+    expect(read).toHaveBeenCalledOnce()
+
+    host.control({ type: 'port', id: 4 }, [new Port()])
+    expect(openReader).toHaveBeenCalledTimes(2)
+    host.control({ type: 'retire', id: 4 })
+    expect(close).toHaveBeenCalledTimes(2)
   })
 })

@@ -346,7 +346,8 @@ for (const lane of LANES) {
           // The native core every lane runs: straight, and exact.
           const core = await app.evaluate(async (_electron, { addon, file, div }) => {
             const native = process.getBuiltinModule('module').createRequire(addon)(addon)
-            const { width, height, rgba } = await native.motifReadFrameScaled(file, div)
+            const reader = new native.MotifFrameFileReader()
+            const { width, height, rgba } = await reader.read(file, div).finally(() => reader.close())
             return { width, height, rgba: Buffer.from(rgba).toString('base64') }
           }, { addon, file: path.join(ws.dir, `${frame}.wfrm`), div })
           expect([core.width, core.height], `${label}: core output size`).toEqual([expected.width, expected.height])

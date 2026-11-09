@@ -360,8 +360,7 @@ rounded up). At most three reads are in flight per document.
   250 ms. A pool that reads stored frames counts twice its slot: it also holds
   the staging texture its frames are premultiplied into. A lane the budget
   cannot give a pool of its own takes the next idle pool of the same shape
-  rather than retiring it. Decoded bands go through buffers every reader
-  shares, at most 32 MiB of them idle. A read the lane does not serve is
+  rather than retiring it. A read the lane does not serve is
   answered `unavailable` with a reason, and takes the utility lane. `read`
   concerns that read alone: a frame over the [texture limit](#limits), the
   GPU budget or its 250 ms wait, a held file or mutex, a failed upload.
@@ -380,6 +379,12 @@ rounded up). At most three reads are in flight per document.
   `(hash, frame, scaleDiv)`; the utility resolves them under the raster root and
   workspace generation main gives it and reports misses to main with that
   generation.
+
+Decoded bands go through band buffers the readers of a process share. A process
+keeps up to `scratchIdleBytes` of them idle (32 MiB) while it has an open
+reader, and frees them when its last reader closes. The utility holds its one
+frame file reader while any document has a port to it; on Windows, main's GPU
+pools are its readers.
 
 A transport failure (the utility exits, a port or slot fails) is not a miss: the
 reader restarts the lane and retries once, then preview keeps its previous frame

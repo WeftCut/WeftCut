@@ -12,19 +12,30 @@ export function motifReadHoldFrame(value: string | undefined): number | null {
 
 const FRAME_FILE = /(?:^|[\\/])(\d+)\.wfrm$/
 
-/** Wraps the utility's file read. A read of frame `frame` (any hash) waits
- * until a read of frame `frame + 1` arrives, then proceeds on the path it was
- * admitted with. A process that dies first never answers it. */
-export function holdMotifReads<T>(
-  read: (file: string, div: number) => Promise<T>,
-  frame: number,
-): (file: string, div: number) => Promise<T> {
+interface HoldableReader<T> {
+  read(file: string, div: number): Promise<T>
+  close(): void
+}
+
+/** One hold per process. A read of frame `frame` (any hash) waits until a read
+ * of frame `frame + 1` arrives through any reader the hold wrapped, then
+ * proceeds on the reader and path it was admitted with. A process that dies
+ * first never answers it.
+ *
+ * Shared across readers because the utility closes its reader after the last
+ * document detaches and opens a new one at the next attach: a hold per reader
+ * would strand a read held before a reload, and the release read would release
+ * nothing. Released after its reader closed, the read answers `closed`. */
+export function holdMotifReads(frame: number) {
   const held: (() => void)[] = []
-  return async (file, div) => {
-    const match = FRAME_FILE.exec(file)
-    const requested = match ? Number(match[1]) : null
-    if (requested === frame) await new Promise<void>(resolve => held.push(resolve))
-    else if (requested === frame + 1) for (const release of held.splice(0)) release()
-    return read(file, div)
-  }
+  return <T>(reader: HoldableReader<T>): HoldableReader<T> => ({
+    read: async (file, div) => {
+      const match = FRAME_FILE.exec(file)
+      const requested = match ? Number(match[1]) : null
+      if (requested === frame) await new Promise<void>(resolve => held.push(resolve))
+      else if (requested === frame + 1) for (const release of held.splice(0)) release()
+      return reader.read(file, div)
+    },
+    close: () => reader.close(),
+  })
 }

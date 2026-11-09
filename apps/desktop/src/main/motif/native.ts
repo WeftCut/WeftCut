@@ -17,8 +17,10 @@ export type MotifConversion =
   | { from: 'rgba'; to: 'frame' }
   | { from: 'premultipliedBgra'; to: 'frame' | 'rgba' }
 
-/** Reads stored frames. */
-export interface MotifFrameReader {
+/** Reads stored frames. While one is open, its process keeps up to
+ * `scratchIdleBytes` of band buffers for the next read; `close` lets them go
+ * once no other reader is open (docs/motifs.md#reading-stored-frames). */
+export interface MotifFrameFileReader {
   /** Reads, verifies and downscales by `div`; the caller authorizes the path.
    * A `miss` rejection is about the file. */
   read(path: string, div: number): Promise<MotifReadPixels>
@@ -72,7 +74,7 @@ export interface MotifNativeGpu {
 
 export interface MotifNative {
   convert(conversion: MotifConversion, pixels: Buffer, width: number, height: number): Promise<Buffer>
-  openFrameReader(): MotifFrameReader
+  openFrameFileReader(): MotifFrameFileReader
   /** Null off Windows, or when the addon has no D3D11 classes. */
   readonly gpu: MotifNativeGpu | null
 }
@@ -89,21 +91,22 @@ interface NativePool {
 interface NativeRawFrame { finish(): Promise<Buffer>; finishPng(): Promise<Buffer> }
 interface NativeTextureEncoder { read(handle: Buffer, height: number): Promise<NativeRawFrame>; close(): void }
 interface NativeMarkerReader { read(handle: Buffer, pixels: number): Promise<Buffer>; close(): void }
+interface NativeFrameFileReader { read(path: string, div: number): Promise<MotifReadPixels>; close(): void }
 
 /** The addon's Motif exports, written by hand: the generated `index.d.ts` is
  * per platform and lacks the Windows classes elsewhere. */
 interface NativeMotifCore {
   motifLimits(): unknown
   motifConfigure(config: { scratchIdleBytes: number; bandThreads: number }): void
-  motifReadFrameScaled(path: string, div: number): Promise<MotifReadPixels>
   motifConvert(pixels: Buffer, width: number, height: number, from: MotifConversion['from'], to: MotifConversion['to']): Promise<Buffer>
+  MotifFrameFileReader: new () => NativeFrameFileReader
   MotifGpuPool?: new (width: number, height: number, count: number, bgra: boolean, upload: boolean) => NativePool
   MotifTextureEncoder?: new () => NativeTextureEncoder
   MotifMarkerReader?: new () => NativeMarkerReader
 }
 
 const REQUIRED = [
-  'motifLimits', 'motifConfigure', 'motifReadFrameScaled', 'motifConvert',
+  'motifLimits', 'motifConfigure', 'motifConvert', 'MotifFrameFileReader',
 ] as const satisfies readonly (keyof NativeMotifCore)[]
 const GPU_CLASSES = ['MotifGpuPool', 'MotifTextureEncoder', 'MotifMarkerReader'] as const satisfies readonly (keyof NativeMotifCore)[]
 
@@ -170,10 +173,13 @@ export function loadMotifNative(
   return {
     convert: (conversion, pixels, width, height) =>
       decodingMotifErrors(() => native.motifConvert(pixels, width, height, conversion.from, conversion.to)),
-    openFrameReader: () => ({
-      read: (path, div) => decodingMotifErrors(() => native.motifReadFrameScaled(path, div)),
-      close: () => {},
-    }),
+    openFrameFileReader: () => {
+      const reader = decoding(() => new native.MotifFrameFileReader())
+      return {
+        read: (path, div) => decodingMotifErrors(() => reader.read(path, div)),
+        close: () => decoding(() => reader.close()),
+      }
+    },
     gpu,
   }
 }
