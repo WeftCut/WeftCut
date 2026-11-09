@@ -23,22 +23,30 @@ describe("highlights adjustment strength", () => {
   });
 
   it("never reverses tone order or exceeds SDR bounds", () => {
+    // Plain comparisons and one expect at the end, not one per sample: ~330k
+    // expect() calls take seconds and time out on slow CI runners. The negated
+    // comparisons make NaN a failure, as the matchers would.
+    const failures: string[] = [];
     for (const amount of [-100, -99, -75, -50, -25, -1, 1, 25, 50, 100]) {
       let last = -1;
       for (let i=0; i<=4096; i++) {
         const v=i/4096;
-        const [r,g,b,a]=highlightsReference([v,v,v,1], amount);
-        expect(r!).toBeGreaterThanOrEqual(last - 1e-12);
-        expect(r).toBe(g);
-        expect(g).toBe(b);
-        expect(a).toBe(1);
-        expect(r!).toBeGreaterThanOrEqual(0);
-        expect(r!).toBeLessThanOrEqual(1);
-        if (amount<0) expect(r!).toBeLessThanOrEqual(v+1e-12);
-        if (amount>0) expect(r!).toBeGreaterThanOrEqual(v-1e-12);
-        last=r!;
+        const [r,g,b,a]=highlightsReference([v,v,v,1], amount) as [number,number,number,number];
+        const broken = [
+          !(r >= last - 1e-12) && "reverses tone order",
+          !Object.is(r, g) && "r !== g",
+          !Object.is(g, b) && "g !== b",
+          !Object.is(a, 1) && "alpha changed",
+          !(r >= 0) && "below 0",
+          !(r <= 1) && "above 1",
+          amount<0 && !(r <= v+1e-12) && "brightened while lowering",
+          amount>0 && !(r >= v-1e-12) && "darkened while raising",
+        ].filter(Boolean);
+        if (broken.length && failures.length < 20) failures.push(`amount ${amount}, v ${v}: ${broken.join(", ")} (out ${r},${g},${b},${a})`);
+        last=r;
       }
     }
+    expect(failures).toEqual([]);
   });
 
   it("preserves warm colour ratios and partial alpha when lowering highlights", () => {
