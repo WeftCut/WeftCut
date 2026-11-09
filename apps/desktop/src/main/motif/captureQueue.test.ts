@@ -81,6 +81,7 @@ interface Step {
   hold?: Promise<unknown>
   /// The frame's paint: by default it arrives at once with the Motif id.
   delivered?: () => Promise<string>
+  wanted?: () => boolean
   dispatch?: () => void
   /// Recorded in `order` instead of the Motif id.
   label?: string
@@ -91,7 +92,7 @@ const capture = (motifId: string, priority: MotifFramePriority, step: Step = {})
     order.push(step.label ?? motifId)
     await step.hold
     return { delivered: step.delivered?.() ?? Promise.resolve(motifId) }
-  }, { priority, dispatch: step.dispatch })
+  }, { priority, wanted: step.wanted, dispatch: step.dispatch })
 
 describe('CaptureQueue', () => {
   it('serves queued captures current, then ahead, then background, never preempting a running one', async () => {
@@ -148,6 +149,33 @@ describe('CaptureQueue', () => {
     await expect(stale.result).rejects.toMatchObject({ code: 'superseded' })
     expect(order).toEqual(['running'])
     expect(counts).toMatchObject({ started: 2, completed: 1, failed: 1 })
+  })
+
+  it('asks wanted before leasing a host: an unwanted ticket rejects superseded, uncounted, replacing no host', async () => {
+    const gate = deferred()
+    const running = capture('running', 'background', { hold: gate.promise })
+    let current = true
+    const dispatch = vi.fn()
+    const stale = capture('stale', 'background', { wanted: () => current, dispatch })
+    current = false
+    gate.resolve()
+    await running.result
+    await expect(stale.result).rejects.toMatchObject({ code: 'superseded' })
+    expect(order).toEqual(['running'])
+    expect(dispatch).not.toHaveBeenCalled()
+    expect([...slots.hosts.keys()]).toEqual(['running'])
+    expect(counts).toMatchObject({ started: 1, completed: 1, failed: 0 })
+  })
+
+  it('a skipped frame nobody wants by its retry rejects superseded without rendering again', async () => {
+    let wanted = true, paints = 0
+    const skipping = capture('skipping', 'current', {
+      wanted: () => wanted,
+      delivered: () => { wanted = false; return ++paints === 1 ? Promise.reject(new MotifFrameSkippedError(1)) : Promise.resolve('skipping') },
+    })
+    await expect(skipping.result).rejects.toMatchObject({ code: 'superseded' })
+    expect(order).toEqual(['skipping'])
+    expect(counts).toMatchObject({ started: 1, skipped: 1, failed: 0 })
   })
 
   it('rejects a ticket the hooks refuse when it reaches its host, without counting it', async () => {
@@ -323,7 +351,7 @@ describe('CaptureQueue', () => {
       expect(counts.affinityPicks).toBe(1)
     })
 
-    it('a ticket without a host goes in arrival order once it has waited hostAffinityMs', async () => {
+    it('a ticket without a host goes in arrival order once its Motif has waited hostAffinityMs', async () => {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] })
       try {
         newQueue(1, { hostAffinityMs: 100 })
@@ -343,6 +371,55 @@ describe('CaptureQueue', () => {
         await Promise.all([second.result, other.result, third.result])
         expect(order).toEqual(['a', 'a', 'b', 'a'])
         expect(counts.affinityPicks).toBe(1)
+      } finally { vi.useRealTimers() }
+    })
+
+    it('a scrub re-issuing both Motifs\' current tickets still serves the one without a host within hostAffinityMs and one render step', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] })
+      try {
+        newQueue(1, { hostAffinityMs: 100 })
+        // A render step outlasts a scrub tick, so `a` always has a ticket
+        // queued when its host frees.
+        const stepMs = 40, tickMs = 16
+        const served: Record<string, number[]> = { a: [], b: [] }
+        const queued = new Map<string, { ticket: { cancel(): void } }>()
+        const issue = (id: string) => {
+          queued.get(id)?.ticket.cancel()
+          const run = queue.enqueue(argsOf(id), async () => {
+            served[id]!.push(performance.now())
+            await new Promise(resolve => setTimeout(resolve, stepMs))
+            return { delivered: Promise.resolve(id) }
+          }, { priority: 'current' })
+          run.result.catch(() => {})
+          queued.set(id, run)
+        }
+        await capture('a', 'current').result
+        const start = performance.now()
+        for (let tick = 0; tick < 40 && served.b!.length === 0; tick++) {
+          issue('a'); issue('b')
+          await vi.advanceTimersByTimeAsync(tickMs)
+        }
+        expect(served.a!.length).toBeGreaterThan(1)
+        expect(served.b!.length).toBe(1)
+        expect(served.b![0]! - start).toBeLessThanOrEqual(100 + stepMs)
+      } finally { vi.useRealTimers() }
+    })
+
+    it('a Motif none of whose tickets was queued for hostAffinityMs starts its wait again', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] })
+      try {
+        newQueue(1, { hostAffinityMs: 100 })
+        const held = occupy('a')
+        const dropped = capture('b', 'ahead')
+        dropped.ticket.cancel()
+        await expect(dropped.result).rejects.toMatchObject({ code: 'superseded' })
+        await vi.advanceTimersByTimeAsync(150)
+        const other = capture('b', 'ahead')
+        const same = capture('a', 'ahead')
+        await vi.advanceTimersByTimeAsync(10)
+        await held.open()
+        await Promise.all([other.result, same.result])
+        expect(order).toEqual(['a', 'a', 'b'])
       } finally { vi.useRealTimers() }
     })
 

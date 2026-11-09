@@ -85,16 +85,21 @@ export function captureMotif(request: MotifCaptureRequest): MotifCaptureCall {
   const requestId = ++nextRequestId;
   let priority = request.priority;
   let open = true;
+  // Same port as the capture, so a control cannot overtake its request.
+  const control = (message: MotifCaptureControl) => { if (open) port?.postMessage({ control: message }); };
   const reply = (async (): Promise<MotifCaptureReply> => {
     try {
       const { bitmap, persisted, stored } = await send({ capture: { ...request, requestId } satisfies MotifCaptureWireRequest });
       if (bitmap) return { kind: 'pixels', bitmap, persisted };
       if (stored && request.address) return { kind: 'stored' };
       throw new Error("Motif capture returned no frame");
+    } catch (error) {
+      // Main still holds a capture this side gave up on: withdraw it, or it
+      // keeps a place in main's queue that the send window no longer counts.
+      if (error instanceof FramePortTimeout) control({ requestId, action: 'cancel' });
+      throw error;
     } finally { open = false; }
   })();
-  // Same port as the capture, so a control cannot overtake its request.
-  const control = (message: MotifCaptureControl) => { if (open) port?.postMessage({ control: message }); };
   return {
     reply,
     setPriority: next => {

@@ -45,25 +45,34 @@ after a seek back.
   drains. Each host renders one frame at a time; hosts render concurrently.
 - One queue orders captures by class (`current`, `ahead`, `background`, with
   background aging) and **dispatches at a free slot**: a capture leaves it only
-  when a host can take its frame, so `current` waits at most one render step
-  and one paint on its host. A running frame is never preempted.
+  when a host can take its frame, so nothing in the queue holds a `current`
+  capture's place. A running frame is never preempted.
 - **Host affinity** within a class: a capture whose Motif has a host goes
-  before an older one without until that one has waited `hostAffinityMs`
-  (default 250, not measured). It never crosses a class.
+  before one without until that Motif has waited `hostAffinityMs` (default
+  250, not measured) without a host; then it ranks from when its Motif began
+  waiting. The wait is the Motif's, not the capture's, so a scrub that
+  re-sends `current` every tick cannot starve it. Affinity never crosses a
+  class.
 - A capture's frame memory is reserved when it reaches its host, once per job
   (ADR 0160), so a queued capture holds nothing.
 - **Renderer send window.** A document sends `current` captures at once and at
   most `captureRequests` (default 2, range 1–32) `ahead` and `background` ones;
   a promoted one keeps its place until it settles. Waiting ones go lowest
   order first; the prewarmer ranks requests by their place in its plan and
-  re-classes and re-ranks kept ones on every replan, and main moves a queued
-  capture whose class changed.
+  re-classes and re-ranks kept ones on every replan. The rank stays in the
+  renderer: main moves a queued capture whose class changed to the back of
+  its new class.
 
 ## Consequences
 
-- `current` is never held behind lookahead in the renderer and waits at most
-  one paint in main. Heavy uncached Motifs that one slot capped play about
-  twice as fast where the host keeps up.
+- `current` is never held behind lookahead in the renderer. In main, one whose
+  Motif has a host waits for the `current` captures ahead of it (export frames
+  are `current` too), at most one aged `background` frame, then the render
+  step in progress and one paint on its host; a resize first drains that
+  host's frames in flight. One whose Motif has no host can wait
+  `hostAffinityMs`, then for the replaced host to drain and a window build.
+  Heavy uncached Motifs that one slot capped play about twice as fast where
+  the host keeps up.
 - Where the host does not keep up (a heavy DECO Motif on the bench, ~40 ms per
   serial render, 7.8→12.3 fps), half of the lookahead lands behind the
   playhead: lookahead does not yet know which frames the playhead will pass

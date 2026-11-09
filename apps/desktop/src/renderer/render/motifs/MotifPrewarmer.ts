@@ -84,9 +84,16 @@ export class MotifPrewarmer {
       if (this.requests.has(id) || this.cached(target)) return;
       const spec = this.specs.get(target.cacheKey)!;
       const controller = new AbortController();
-      const handle = this.deps.acquire(atFrame(spec.descriptor, target.frame), {
-        scaleDiv: spec.scaleDiv, signal: controller.signal, priority: this.priority(target), order: index,
-      });
+      let handle: MotifFrameAcquisition;
+      try {
+        handle = this.deps.acquire(atFrame(spec.descriptor, target.frame), {
+          scaleDiv: spec.scaleDiv, signal: controller.signal, priority: this.priority(target), order: index,
+        });
+      } catch {
+        // As a failed request: retried on the next demand update, and the
+        // other targets still go.
+        return;
+      }
       const request = { controller, handle };
       this.requests.set(id, request);
       void this.settle(id, request);

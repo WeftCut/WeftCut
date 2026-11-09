@@ -44,9 +44,12 @@ function deferred<T = void>() {
 interface FakeCapture {
   options: CaptureOptions;
   ticket: { setPriority: Mock<(priority: MotifFramePriority) => void>; cancel: Mock<() => void> };
-  /** The capture reaches its host: its dispatch runs, and a cancel no longer
-   * stops it. False when the dispatch threw, which rejected the capture. */
+  /** The capture reaches its host as the queue brings it there: unwanted, it
+   * rejects superseded; else its dispatch runs, and a cancel no longer stops
+   * it. False when it rejected. */
   start(): boolean;
+  /** A skipped frame's retry reaches the host again. */
+  retry(): boolean;
   lease(frame?: MotifOsrFrame): Promise<void>;
   fail(error: unknown): void;
 }
@@ -65,15 +68,20 @@ function harness({ texture = true } = {}) {
     capture: vi.fn((_args: unknown, consume: (frame: MotifOsrFrame) => Promise<any>, options: CaptureOptions): CaptureRun<any> => {
       const result = deferred<any>();
       let started = false;
+      const reach = () => {
+        if (options.wanted && !options.wanted()) { result.reject(motifSuperseded()); return false; }
+        try { options.dispatch?.(); return true; } catch (error) { result.reject(error); return false; }
+      };
       const start = () => {
         if (started) return true;
         started = true;
-        try { options.dispatch?.(); return true; } catch (error) { result.reject(error); return false; }
+        return reach();
       };
       const capture: FakeCapture = {
         options,
         ticket: { setPriority: vi.fn(), cancel: vi.fn(() => { if (!started) { started = true; result.reject(motifSuperseded()); } }) },
         start,
+        retry: reach,
         lease: async (frame = textures ? textureFrame : bitmapFrame) => {
           if (!start()) return;
           try { result.resolve(await consume(frame)); } catch (error) { result.reject(error); }
@@ -545,6 +553,21 @@ describe('MotifFrameJobs: failures', () => {
     await display.result;
     // Still the one job reservation, then the live write's.
     expect(resources.reserved).toEqual([4, undefined]);
+  });
+
+  it('a job nobody wants by a skipped frame\'s retry is superseded there and releases its reservation once', async () => {
+    const h = harness(); let current = true;
+    const display = h.display(1, { isCurrent: () => current });
+    await h.queued(1);
+    expect(h.captures[0]!.start()).toBe(true);
+    expect(resources.reserved).toHaveLength(1);
+    current = false;
+    expect(h.captures[0]!.retry()).toBe(false);
+    await expect(display.result).rejects.toMatchObject({ code: 'superseded' });
+    await settle();
+    expect(resources.released).toBe(1);
+    expect(h.session.useBitmaps).not.toHaveBeenCalled();
+    expect(h.session.capture).toHaveBeenCalledOnce();
   });
 
   it('a job cancelled before its capture reaches a host reserves nothing', async () => {

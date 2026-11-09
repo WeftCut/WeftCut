@@ -272,12 +272,11 @@ export class MotifFrameJobs {
     void this.run(job)
   }
 
-  /** When the job's capture reaches its host, on every attempt: superseded
-   * when nobody wants it any more, else its resources are reserved, once per
-   * job, borrowed from the plan of the first export in it now; an export
-   * joining later is not charged (ADR 0160). A refusal throws `capacity`. */
+  /** When the job's capture reaches its host (the queue has just asked
+   * `wanted`), on every attempt: its resources are reserved, once per job,
+   * borrowed from the plan of the first export in it now; an export joining
+   * later is not charged (ADR 0160). A refusal throws `capacity`. */
   private dispatched(job: Job): void {
-    if (!this.wanted(job)) throw motifSuperseded()
     if (job.release) return
     const finalizationId = [...job.members].find(member => live(member) && member.display?.finalizationId !== undefined)?.display?.finalizationId
     job.release = reserve(0, 16 + job.args.width * job.args.height * 16 / 1048576, finalizationId)
@@ -293,7 +292,7 @@ export class MotifFrameJobs {
         // Inside the try: a capture that throws before it returns fails the
         // job like one that rejects, instead of leaving it queued.
         const { result, ticket } = this.session.capture(job.args, frame => this.lease(job, frame), {
-          priority: this.priority(job), dispatch: () => this.dispatched(job),
+          priority: this.priority(job), wanted: () => this.wanted(job), dispatch: () => this.dispatched(job),
         })
         job.ticket = ticket
         await result

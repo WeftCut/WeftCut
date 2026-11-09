@@ -117,6 +117,17 @@ describe("MotifPrewarmer", () => {
     expect(r.pending).toHaveLength(0);
   });
 
+  it("a target whose request throws at once does not stop the others", () => {
+    const r = rig(d => {
+      if (d.contentFrame === 1) throw new Error("synthetic");
+      return new Promise(() => {});
+    }, 3);
+    r.prewarmer.setTargets([spec("a", 0, 10)]);
+    r.pending.shift()!();
+    expect(r.frames()).toEqual([0, 1, 2]);
+    r.prewarmer.dispose();
+  });
+
   it("dispose cancels the idle slice before any request", async () => {
     const r = rig(async (d) => lease(d.contentFrame), 240);
     r.prewarmer.setTargets([spec("a", 0, 5)]);

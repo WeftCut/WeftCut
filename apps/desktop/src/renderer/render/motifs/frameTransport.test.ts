@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { captureMotif, readMotifTexture, type MotifCaptureRequest } from './frameTransport';
 import { MotifError } from '../../../shared/motifs/errors';
+import { MOTIF_DEADLINES } from '../../../shared/motifs/tuning';
 
 // The preload's end of the frame port: answers each request from `replies`.
-type Reply = Record<string, unknown>;
+type Reply = Record<string, unknown> | null;
 const requests: Record<string, unknown>[] = [];
 let replies: Reply[] = [];
 let preloadPort: MessagePort | null = null;
@@ -14,7 +15,10 @@ beforeAll(() => {
       preloadPort = port!;
       port!.onmessage = ({ data }: MessageEvent<Record<string, unknown>>) => {
         requests.push(data);
-        if (!data.control) port!.postMessage({ id: data.id, ...replies.shift() });
+        if (data.control) return;
+        const reply = replies.shift();
+        // `null`: the preload never answers.
+        if (reply !== null) port!.postMessage({ id: data.id, ...reply });
       };
     },
   });
@@ -74,6 +78,19 @@ describe('captureMotif', () => {
     call.cancel();
     await settle();
     expect(controls()).toEqual([]);
+  });
+
+  it('a capture that times out withdraws itself from main', async () => {
+    replies = [null];
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const call = capture({ priority: 'ahead' });
+      const failed = call.reply.catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(MOTIF_DEADLINES.captureTransportMs);
+      expect(await failed).toMatchObject({ message: 'Motif frame transport timed out' });
+    } finally { vi.useRealTimers(); }
+    const requestId = (requests[0]!.capture as Record<string, unknown>).requestId;
+    await vi.waitFor(() => expect(controls()).toEqual([{ requestId, action: 'cancel' }]));
   });
 
   it('a capture main withdrew rejects `superseded`', async () => {
