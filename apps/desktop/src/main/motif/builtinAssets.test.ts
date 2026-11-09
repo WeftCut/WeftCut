@@ -1,9 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { resolveMotifFile, contentTypeFor } from "./builtinAssets";
 import { UserMotifStore } from "./store";
+
+// The real `electron` package, required without its binary (the unit CI job
+// installs none), downloads that binary on the spot.
+vi.mock("electron", () => ({ app: { isPackaged: false } }));
 
 // The real relocated built-in dir, resolved from THIS test file's location
 // (src/main/motif → ../../shared/motifs/builtin = src/shared/motifs/builtin).
