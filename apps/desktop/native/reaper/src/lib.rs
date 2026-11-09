@@ -13,6 +13,9 @@
 //! child wedged in a hardware session ignores the SIGTERM it did get
 //! (docs/notes/macos-runner-videotoolbox-kill-2026-10-31.md).
 //!
+//! The addon starts it with [`command`], in a process group of its own, so a
+//! signal to the app's group never reaches it.
+//!
 //! Unix only. Windows puts the children in a kill-on-close job instead
 //! (`crate::ffmpeg::guard` in the addon).
 
@@ -26,6 +29,23 @@ pub const STOP_GRACE: Duration = Duration::from_secs(2);
 
 /// The executable's file name, beside the addon.
 pub const BINARY: &str = "weftcut-reaper";
+
+/// How a reaper at `binary` is started. Its own process group keeps what the
+/// app's group gets (a terminal's Ctrl-C, `kill -- -<pgid>`) from it from its
+/// first instruction: the group is set before exec. Nothing of the app's
+/// stdio: the reaper must not hold a parent's pipes open after the app exits.
+#[cfg(unix)]
+pub fn command(binary: &std::path::Path) -> std::process::Command {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    let mut command = std::process::Command::new(binary);
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0);
+    command
+}
 
 /// The line that hands the reaper a child.
 pub fn adopt_line(pid: u32, start: u64) -> String {
@@ -190,9 +210,9 @@ pub fn sweep(children: &Children, grace: Duration) {
 /// Let nothing but the addon's pipe decide when the reaper acts, and hold
 /// nothing of the app's open:
 ///
-/// - Interrupts and termination requests are ignored. The app's process group
-///   gets the same Ctrl-C or SIGTERM as the app, and the reaper is what runs
-///   after it. SIGKILL still ends it.
+/// - Interrupts and termination requests are ignored, should one be sent to
+///   the reaper itself; [`command`]'s process group already keeps the app's
+///   group's from it. SIGKILL still ends it.
 /// - Every descriptor but stdio is closed. The app's own (a test runner's
 ///   pipes, say) would otherwise stay open as long as the reaper runs.
 #[cfg(unix)]

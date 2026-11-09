@@ -43,10 +43,12 @@ It is taken back when its owner drops the reaped process.
   kernel closes that pipe however the app exits. On EOF the reaper runs the
   owner's stop for every child still held: SIGTERM, `STOP_GRACE`, SIGKILL.
   The start time is checked before every signal, so a reused pid is never
-  hit. The reaper ignores SIGINT, SIGHUP and SIGTERM, which the app's
-  process group may receive with the app. It closes inherited descriptors and
-  holds none of the app's stdio. If it dies, the addon starts another and
-  re-sends every child.
+  hit. The reaper leads a process group of its own, set before it execs, so
+  what the app's group receives with the app (a terminal's Ctrl-C, a signal
+  to the group) never reaches it; ignoring those signals only in its own
+  `main` would leave its startup exposed. It also ignores SIGINT, SIGHUP and
+  SIGTERM sent to it alone. It closes inherited descriptors and holds none of the
+  app's stdio. If it dies, the addon starts another and re-sends every child.
 - **Windows: a job object** with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. The
   handle is created once, never inherited and never closed, so the app's exit
   closes it and the kernel kills whatever is left. Windows has no SIGTERM, and

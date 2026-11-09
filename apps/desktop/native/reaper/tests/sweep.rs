@@ -7,13 +7,20 @@ use std::os::unix::process::ExitStatusExt;
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
-use weftcut_reaper::{adopt_line, release_line, start_time, STOP_GRACE};
+use weftcut_reaper::{adopt_line, command, release_line, start_time, STOP_GRACE};
 
+/// The reaper as the addon starts it, returned once it printed `ready`
+/// (interrupts are ignored).
 fn reaper() -> (Child, ChildStdin) {
-    let mut reaper = Command::new(env!("CARGO_BIN_EXE_weftcut-reaper"))
-        .stdin(Stdio::piped())
+    let mut reaper = command(std::path::Path::new(env!("CARGO_BIN_EXE_weftcut-reaper")))
+        .stdout(Stdio::piped())
         .spawn()
         .expect("spawn the reaper");
+    let mut line = String::new();
+    BufReader::new(reaper.stdout.as_mut().expect("piped"))
+        .read_line(&mut line)
+        .expect("read ready");
+    assert_eq!(line.trim(), "ready");
     let input = reaper.stdin.take().expect("piped");
     (reaper, input)
 }
@@ -61,9 +68,14 @@ fn a_closed_input_stops_children_with_sigterm_then_sigkill() {
     let (mut polite, mut stubborn) = (polite, stubborn);
     adopt(&mut input, &polite);
     adopt(&mut input, &stubborn);
-    // The app's group gets the same SIGTERM the app does; the reaper stays.
+    // A signal to the app's group never reaches the reaper: it leads a group
+    // of its own from the start. One sent to the reaper itself is ignored.
+    let pid = reaper.id() as libc::pid_t;
+    // SAFETY: plain syscalls on a child we hold.
     unsafe {
-        libc::kill(reaper.id() as libc::pid_t, libc::SIGTERM);
+        assert_eq!(libc::getpgid(pid), pid);
+        assert_ne!(libc::getpgid(pid), libc::getpgid(0));
+        libc::kill(pid, libc::SIGTERM);
     }
     assert!(wait_by(&mut reaper, Duration::from_millis(200)).is_none());
 

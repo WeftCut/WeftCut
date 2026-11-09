@@ -35,11 +35,11 @@ mod unix {
     use std::io::Write;
     use std::os::unix::ffi::OsStrExt;
     use std::path::PathBuf;
-    use std::process::{Child, ChildStdin, Command, Stdio};
+    use std::process::{Child, ChildStdin};
     use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
 
     use tracing::warn;
-    use weftcut_reaper::{adopt_line, release_line, start_time, BINARY};
+    use weftcut_reaper::{adopt_line, command, release_line, start_time, BINARY};
 
     /// A child the reaper holds. Dropping it takes the child back; drop it
     /// only once the child is reaped (or its owner is gone with it).
@@ -109,13 +109,7 @@ mod unix {
             let Some(binary) = self.binary.get_or_insert_with(locate).clone() else {
                 return;
             };
-            // Nothing of the app's stdio: the reaper must not hold a parent's
-            // pipes open after the app exits.
-            let spawned = Command::new(&binary)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn();
+            let spawned = command(&binary).spawn();
             let mut process = match spawned {
                 Ok(process) => process,
                 Err(error) => {
