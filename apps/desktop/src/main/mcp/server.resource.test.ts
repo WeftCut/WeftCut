@@ -13,6 +13,21 @@ import { createActor } from '../state/actor'
 import { uuidV7Gen } from '../state/ids'
 import { blankProject, rootComposition } from '../state/model'
 
+// A still's thumbnail goes through Electron's image decoder. Unit jobs install
+// no Electron binary, and loading `electron` without one downloads it
+// synchronously, past the test timeout. Keyed by path: a still not listed here
+// is one the decoder cannot read.
+const stills = vi.hoisted(() => new Map<string, { width: number; height: number }>())
+vi.mock('electron', () => {
+  const image = (size: { width: number; height: number } | undefined, label: string) => ({
+    isEmpty: () => !size,
+    getSize: () => size ?? { width: 0, height: 0 },
+    resize: ({ width }: { width: number }) => image(size && { width, height: Math.round(size.height * width / size.width) }, `${label} resized`),
+    toJPEG: (quality: number) => Buffer.from(`${label} ${size?.width}x${size?.height} q${quality}`),
+  })
+  return { nativeImage: { createFromPath: (file: string) => image(stills.get(file), file) } }
+})
+
 function tsHostStub() {
   const idGen = uuidV7Gen()
   const actor = createActor({ initial: blankProject(idGen, 'res'), idGen, clock: () => '<TS>' })
@@ -247,6 +262,24 @@ describe('read_project picture views answer an image block from the media reader
     const out = await handleCallTool(fakeBackend(spy), () => ts, 'read_project', { view: 'media_thumbnail', id: IMG }) as { content: Array<Record<string, unknown>> }
     expect(spy.mock.calls[0][0]).toBe(`media://${IMG}/frame/0`)
     expect(out.content[0]).toEqual({ type: 'image', data: 'SU1H', mimeType: 'image/jpeg' })
+  })
+  it('a still the image decoder reads is its own thumbnail, at most 640 px wide', async () => {
+    const ts = tsHostStub()
+    const [WIDE, SMALL] = ['00000000-0000-0000-0000-0000000000bc', '00000000-0000-0000-0000-0000000000bd']
+    for (const [id, path, size] of [[WIDE, '/stills/wide.png', { width: 1920, height: 1080 }], [SMALL, '/stills/small.png', { width: 320, height: 240 }]] as const) {
+      ts.actor.dispatch('add_media_item', { media: { ...mediaItemTemplate(id, 'Image', 0), kind: 'Image', path_abs: path } })
+      stills.set(path, size)
+    }
+    ts.mcpCall = (n: string, a: string) => ts.actor.mcpCall(n, a)
+    const spy = vi.fn(async (_u: string, _s?: string) => { throw new Error('a decoded still reads no frame') })
+    const jpeg = async (id: string) => {
+      const out = await handleCallTool(fakeBackend(spy), () => ts, 'read_project', { view: 'media_thumbnail', id }) as { content: Array<{ data: string; mimeType: string }> }
+      expect(out.content[0]!.mimeType).toBe('image/jpeg')
+      return Buffer.from(out.content[0]!.data, 'base64').toString()
+    }
+    expect(await jpeg(WIDE)).toBe('/stills/wide.png resized 640x360 q85')
+    expect(await jpeg(SMALL)).toBe('/stills/small.png 320x240 q85')
+    expect(spy).not.toHaveBeenCalled()
   })
   it('media_frame needs src_us and reads media://{id}/frame/{src_us}', async () => {
     const ts = host()
