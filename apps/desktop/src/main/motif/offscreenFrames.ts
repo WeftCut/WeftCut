@@ -1,8 +1,6 @@
 import type { NativeImage, OffscreenSharedTexture, WebContents } from 'electron'
 import { decodeFrameMarker, FRAME_MARKER_PIXELS, FRAME_MARKER_ROWS } from '../../shared/motifs/frameMarker.js'
-
-/** Reads the first `pixels` of a shared texture's last row as RGBA. */
-export type FrameMarkerReader = (handle: Buffer, pixels: number) => Promise<Uint8Array>
+import type { MotifMarkerReader } from './native.js'
 
 /** A leased capture and the picture size it holds above the marker rows. A
  * texture host's shared texture is released by its holder; a bitmap host's
@@ -50,7 +48,7 @@ export class OffscreenFrames {
    * the id and sent no paint for seconds; the restarted capture is checked like
    * any other paint. */
   constructor(
-    private readonly contents: WebContents, private readonly readMarker: FrameMarkerReader | null,
+    private readonly contents: WebContents, private readonly markers: Pick<MotifMarkerReader, 'read'> | null,
     private readonly timeoutMs: number, private readonly nudgeMs: number,
   ) {
     contents.on('paint', (event, _dirty, image) => {
@@ -101,11 +99,11 @@ export class OffscreenFrames {
   private paintTexture(texture: OffscreenSharedTexture): void {
     const size = this.expectedSize()
     const { codedSize, handle } = texture.textureInfo
-    if (!size || !this.readMarker || !handle.ntHandle || codedSize.width !== size.width || codedSize.height !== size.height + FRAME_MARKER_ROWS) {
+    if (!size || !this.markers || !handle.ntHandle || codedSize.width !== size.width || codedSize.height !== size.height + FRAME_MARKER_ROWS) {
       texture.release()
       return
     }
-    this.readMarker(handle.ntHandle, FRAME_MARKER_PIXELS).then(row => {
+    this.markers.read(handle.ntHandle, FRAME_MARKER_PIXELS).then(row => {
       const request = this.arrived(decodeFrameMarker(row))
       if (!request) { texture.release(); return }
       request.resolve({ kind: 'texture', texture, width: request.width, height: request.height })

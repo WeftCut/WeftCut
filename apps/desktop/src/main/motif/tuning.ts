@@ -15,17 +15,3 @@ export function resolveMotifTuning(
   if (problems.length) warn(`[weftcut/motifs] WEFTCUT_MOTIF_TUNING: ${problems.join('; ')}; using the defaults for those`)
   return Object.freeze({ ...tuning, bandThreads: motifBandThreads(tuning, parallelism) })
 }
-
-/** The addon's `motifConfigure`, as far as a process calls it. */
-interface MotifCore {
-  motifConfigure?(config: { scratchIdleBytes: number; bandThreads: number }): void
-}
-
-/** Gives the native core its share of the tuning; every process that loads the
- * addon calls it once, before its first frame read or write. Until then the
- * core uses one band thread and keeps no idle buffers. */
-export function configureMotifCore(core: unknown, tuning: ResolvedMotifTuning): void {
-  const configure = (core as MotifCore | null)?.motifConfigure
-  if (typeof configure !== 'function') throw new Error('The native core has no motifConfigure: rebuild it')
-  configure({ scratchIdleBytes: tuning.scratchIdleBytes, bandThreads: tuning.bandThreads })
-}

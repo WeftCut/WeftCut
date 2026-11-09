@@ -455,7 +455,8 @@ dot and the property panel show these; idle and ready need no panel row.
 
 `native/src/motif_limits.rs` holds the fixed sizes and
 `shared/motifs/limits.ts` mirrors them; main and the reader utility refuse to
-start when the addon's `motifLimits()` differ from the mirror.
+start when the addon's `motifLimits()` differ from the mirror, or when it lacks
+a Motif export (`loadMotifNative`).
 
 - **A frame** is at most 8192 pixels on each side, 256 MiB of straight RGBA
   (`fitsMotifFrame`). Manifests, bake plans, stored headers and the native
@@ -487,9 +488,10 @@ defaults.
 
 Main reads the variable once (`main/motif/tuning.ts`), before any Motif module
 exists, and hands the result to its modules, to renderer windows and the reader
-utility on their argv, and to the native core (`motifConfigure`) in each
-process that loads it. Protocol deadlines and retry schedules
-(`MOTIF_DEADLINES`, beside them) and the [limits](#limits) are not tunable.
+utility on their argv. In each of the two processes that load the native core,
+`loadMotifNative` (`main/motif/native.ts`) gives it its share once. Protocol
+deadlines and retry schedules (`MOTIF_DEADLINES`, beside them) and the
+[limits](#limits) are not tunable.
 
 ## Failure codes
 
@@ -498,8 +500,9 @@ A Motif failure is a `MotifError` (`shared/motifs/errors.ts`) with one code:
 `oversize`, `transient`, `device` or `transport`. napi, `ipcMain.handle` and
 message ports carry only a message, so the code travels as a
 `[motif:<code>] detail` tag (the native side: `native/src/motif_error.rs`),
-decoded once where a message enters a process: the addon adapters in main, the
-reader utility, the preload frame port and the renderer's frame transport.
+decoded once where a message enters a process: the native adapter
+(`main/motif/native.ts`, in main and the reader utility), the preload frame
+port and the renderer's frame transport.
 In-process code checks the code, never the message. The app-wide
 `resource-capacity-exceeded` refusal becomes `capacity` where a Motif path
 meets it.

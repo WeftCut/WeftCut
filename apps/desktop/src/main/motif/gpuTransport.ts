@@ -10,19 +10,10 @@ import { MOTIF_TEXTURE_LANE_RESET, type MotifReaderDiv } from '../../shared/moti
 import { fitsMotifTexture } from '../../shared/motifs/limits.js'
 import { MOTIF_DEADLINES, type MotifTuning } from '../../shared/motifs/tuning.js'
 import type { MotifReadUnavailable, MotifTextureFrame, MotifUploadTiming } from '../../shared/motifs/frameTransport.js'
+import type { MotifNativeGpu, MotifPool, MotifPoolSpec } from './native.js'
 
-export interface MotifPool {
-  handles(): Buffer[]
-  /** Reads, verifies and downscales by `div` (default 1); the pool must have
-   * the scaled size. A `miss` rejection is about the file. */
-  uploadFile(path: string, slot: number, div?: number): Promise<MotifUploadTiming>
-  copyTexture(handle: Buffer, slot: number): Promise<void>
-  close(): void
-}
-/** An `upload` pool reads stored frames through a staging texture as large as
- * its slot; a copy pool holds the slot alone. */
-type PoolFactory = (w: number, h: number, bgra: boolean, upload: boolean) => MotifPool
-type PoolUse = 'upload' | 'copy'
+type PoolFactory = MotifNativeGpu['openPool']
+type PoolUse = MotifPoolSpec['use']
 type Session = { finalizationId?: number | undefined; owner: WebContents; key: string; width: number; height: number; pool: MotifPool; imported: SharedTextureImported; busy: boolean }
 /** The tuning keys the transport runs on (`shared/motifs/tuning.ts`). */
 export type GpuTransportTuning = Pick<MotifTuning, 'gpuLanes' | 'gpuBudgetWaitMs'>
@@ -158,7 +149,7 @@ export class MotifGpuTransport {
     const generation = this.generation(owner)
     if (!this.available(owner)) return { kind: 'unavailable', reason: 'lane', generation }
     try {
-      return await this.produce(owner, width, height, 'rgba', 'upload', pool => pool.uploadFile(file, 0, div), finalizationId)
+      return await this.produce(owner, width, height, 'rgba', 'upload', pool => pool.upload(file, div), finalizationId)
     } catch (error) {
       const code = motifErrorCode(error)
       if (code === 'miss' || code === 'closed' || code === 'superseded') throw error
@@ -174,7 +165,7 @@ export class MotifGpuTransport {
       return Promise.reject(new Error('Unsupported Motif OSR texture'))
     }
     return this.produce(owner, frame.width, frame.height, pixelFormat, 'copy',
-      pool => pool.copyTexture(handle.ntHandle!, 0), finalizationId)
+      pool => pool.copy(handle.ntHandle!), finalizationId)
   }
 
   private textureBudgetBytes(): number {
@@ -279,7 +270,7 @@ export class MotifGpuTransport {
           s = await withSharedTextureQueue(async () => {
             try { assertOpen() } catch (error) { releaseBudget(); throw error }
             let pool: MotifPool
-            try { pool = this.createPool(width, height, format === 'bgra', use === 'upload') }
+            try { pool = this.createPool(use === 'upload' ? { use, width, height } : { use, width, height, format }) }
             catch (error) {
               releaseBudget()
               // Native `oversize` is this size's; only the device is the lane's.
@@ -293,7 +284,7 @@ export class MotifGpuTransport {
                 textureInfo: {
                   codedSize: { width, height }, pixelFormat: format,
                   colorSpace: { primaries: 'bt709', transfer: 'srgb', matrix: 'rgb', range: 'full' },
-                  handle: { ntHandle: pool.handles()[0]! },
+                  handle: { ntHandle: pool.handle() },
                 },
                 allReferencesReleased: () => { try { pool.close() } finally { releaseBudget() } },
               })

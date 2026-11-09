@@ -10,7 +10,7 @@ import { configureSkillBundle } from './mcp/skillResources.js'
 import { setResourceHolders } from './mcp/faultText.js'
 import { installResourceIpc, resolveExportFinalization } from './resourceIpc.js'
 import { hydrateResourceAllocation, resourceAllocation } from '../shared/resource-policy.js'
-import { decodeMotifError, decodingMotifErrors, MotifError, motifSuperseded } from '../shared/motifs/errors.js'
+import { MotifError, motifSuperseded } from '../shared/motifs/errors.js'
 import { gpuBufferBudget } from './gpuBufferBudget.js'
 import { MIB } from '../shared/performance-settings.js'
 import type { PerformanceGpuHardware } from '../shared/performance-budgets.js'
@@ -34,13 +34,13 @@ import { mediaMimeForExt } from './mediaMime.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
 import { registerMotifProtocol } from './motif/protocol.js'
 import { installPerformanceCalibration } from './performanceCalibration.js'
-import { MotifCapturer, type TexturePngReader } from './motif/capture.js'
-import type { FrameMarkerReader } from './motif/offscreenFrames.js'
-import { configureMotifCore, resolveMotifTuning } from './motif/tuning.js'
+import { MotifCapturer } from './motif/capture.js'
+import { loadMotifNative, type MotifMarkerReader, type MotifTextureReader } from './motif/native.js'
+import { resolveMotifTuning } from './motif/tuning.js'
 import { motifTuningArgument } from '../shared/motifs/tuning.js'
 import { setMotifMediaSource } from './motif/mediaProps.js'
 import { rasterizeSvg } from './svgRaster.js'
-import { MotifCaptureService, parseMotifCaptureControl, parseMotifCaptureRequest, type MotifPixelCodec, type TextureEncoder } from './motif/captureService.js'
+import { MotifCaptureService, parseMotifCaptureControl, parseMotifCaptureRequest } from './motif/captureService.js'
 import { UserMotifStore } from './motif/store.js'
 import { MotifFrameStore } from './motif/frameStore.js'
 import { createMotifConsumers } from './motif/consumers.js'
@@ -50,8 +50,7 @@ import type { MotifTextureReadRequest, MotifTextureReadResult } from '../shared/
 import { isMotifFrameAddress } from './motif/frameAddress.js'
 import { MotifBakeWorkspace, validateBakePlan } from './motif/bakeWorkspace.js'
 import { MOTIF_BAKE_READY_EVENT, type MotifBakePlan } from '../shared/motifs/baking.js'
-import { MotifGpuTransport, type MotifPool } from './motif/gpuTransport.js'
-import { assertMotifLimits, type MotifLimits } from '../shared/motifs/limits.js'
+import { MotifGpuTransport } from './motif/gpuTransport.js'
 import { spawnMotifWatcher, type MotifWatcher } from './motif/watcher.js'
 import { MotifWorkspace } from './motif/workspace.js'
 import { builtinAssetDir } from './motif/builtinAssets.js'
@@ -1413,50 +1412,31 @@ app.whenReady().then(async () => {
   const { callClipComputeTool, readMediaFrameDataUrl, readMediaDescription } = await import('./mcp/server.js')
   const { AUDIO_FX_CHANNELS, CLIP_COMPUTE_CHANNELS } = await import('./state/router.js')
 
-  assertMotifLimits((require_('@weftcut/core') as { motifLimits?(): MotifLimits }).motifLimits?.())
-  configureMotifCore(require_('@weftcut/core'), motifTuning)
+  const motifNative = loadMotifNative(motifTuning)
   const motifFrames = new MotifFrameStore(async () => JSON.parse(await backend!.invoke('workspace_dir', '{}')) as string | null)
-  const motifPoolClass = (require_('@weftcut/core') as { MotifGpuPool?: new (w: number, h: number, count: number, bgra: boolean, upload: boolean) => MotifPool }).MotifGpuPool
-  // The native Motif readers' failures cross napi as `[motif:<code>]`
-  // messages; these adapters decode them once, here.
-  const constructed = <T>(make: () => T): T => { try { return make() } catch (error) { throw decodeMotifError(error) } }
-  const decodedPool = (pool: MotifPool): MotifPool => ({
-    handles: () => pool.handles(),
-    uploadFile: (file, slot, div) => decodingMotifErrors(() => pool.uploadFile(file, slot, div)),
-    copyTexture: (handle, slot) => decodingMotifErrors(() => pool.copyTexture(handle, slot)),
-    close: () => pool.close(),
-  })
-  const decodedEncoder = (encoder: TextureEncoder): TextureEncoder => ({
-    read: (handle, height) => decodingMotifErrors(async () => {
-      const raw = await encoder.read(handle, height)
-      return { finish: () => decodingMotifErrors(() => raw.finish()), finishPng: () => decodingMotifErrors(() => raw.finishPng()) }
-    }),
-    close: () => encoder.close(),
-  })
-  const motifGpu = process.platform === 'win32' && motifPoolClass
-    ? new MotifGpuTransport((w, h, bgra, upload) => decodedPool(constructed(() => new motifPoolClass(w, h, 1, bgra, upload))), motifTuning) : null
-  const encoderClass = (require_('@weftcut/core') as { MotifTextureEncoder?: new () => TextureEncoder }).MotifTextureEncoder
-  const markerClass = (require_('@weftcut/core') as { MotifMarkerReader?: new () => { read(handle: Buffer, pixels: number): Promise<Buffer> } }).MotifMarkerReader
-  // A texture host needs both native readers; without them the host takes bitmaps.
-  let readFrameMarker: FrameMarkerReader | null = null
-  let readTexturePng: TexturePngReader | null = null
-  if (process.platform === 'win32' && markerClass && encoderClass) {
-    let markers: InstanceType<typeof markerClass> | null = null
-    let pngs: TextureEncoder | null = null
-    readFrameMarker = (handle, pixels) => decodingMotifErrors(() => (markers ??= new markerClass()).read(handle, pixels))
-    readTexturePng = (handle, height) => decodingMotifErrors(async () => (await (pngs ??= new encoderClass()).read(handle, height)).finishPng())
+  const motifGpuNative = motifNative.gpu
+  const motifGpu = motifGpuNative ? new MotifGpuTransport(spec => motifGpuNative.openPool(spec), motifTuning) : null
+  // A texture host needs both readers; without them the host takes bitmaps.
+  // Each opens a D3D11 device, so on its first read.
+  let markers: MotifMarkerReader | null = null
+  let pngs: MotifTextureReader | null = null
+  const markerReader = motifGpuNative && {
+    read: async (handle: Buffer, pixels: number) => (markers ??= motifGpuNative.openMarkerReader()).read(handle, pixels),
+  }
+  const textureReader = motifGpuNative && {
+    read: async (handle: Buffer, height: number) => (pngs ??= motifGpuNative.openTextureReader()).read(handle, height),
   }
   // The renderer registers the clock-takeover runtime once at boot
   // (`motif_register_runtime` below).
   let motifRuntime: string | null = null
-  const capturer = new MotifCapturer({ tuning: motifTuning, store: motifStore, runtimeSource: () => motifRuntime, readFrameMarker, readTexturePng })
+  const capturer = new MotifCapturer({ tuning: motifTuning, store: motifStore, runtimeSource: () => motifRuntime, markerReader, textureReader })
   if (motifCaptureClosed) capturer.shutdown()
   motifCapturer = capturer
   const motifCapture = new MotifCaptureService({
     store: motifFrames, frame: (args, consume, options) => capturer.captureFrame(args, consume, options),
     copy: motifGpu ? (owner, texture, parent) => motifGpu.copy(owner, texture, parent) : null,
-    createEncoder: process.platform === 'win32' && encoderClass ? () => decodedEncoder(constructed(() => new encoderClass())) : null,
-    pixels: require_('@weftcut/core') as MotifPixelCodec,
+    openTextureReader: motifGpuNative ? () => motifGpuNative.openTextureReader() : null,
+    convert: motifNative.convert,
     setTextureEnabled: enabled => capturer.setTextureEnabled(enabled),
     writeSlots: motifTuning.writeSlots,
   }, process.env.WEFTCUT_MOTIF_CAPTURE !== 'bitmap')

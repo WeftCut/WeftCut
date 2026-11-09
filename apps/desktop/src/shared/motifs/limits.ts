@@ -1,6 +1,6 @@
 // The fixed sizes a Motif frame, GPU texture and pool must fit
-// (docs/motifs.md#limits). Mirrors `native/src/motif_limits.rs`; main checks
-// the two agree with `assertMotifLimits` when it loads the addon.
+// (docs/motifs.md#limits). Mirrors `native/src/motif_limits.rs`;
+// `loadMotifNative` checks the two agree with `assertMotifLimits`.
 
 export interface MotifLimits {
   /** The largest width or height of a stored frame, in pixels. */

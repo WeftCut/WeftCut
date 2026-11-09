@@ -198,8 +198,8 @@ function newCapturer(deps: Partial<MotifCapturerDeps> = {}) {
     tuning: MOTIF_TUNING_DEFAULTS,
     store: emptyStore,
     runtimeSource: () => '/* clock-takeover runtime */',
-    readFrameMarker: readMarker,
-    readTexturePng: null,
+    markerReader: { read: readMarker },
+    textureReader: null,
     ...deps,
   })
 }
@@ -444,9 +444,11 @@ describe('MotifCapturer', () => {
   it('a texture host serves PNG captures from the leased texture\'s picture, and releases it', async () => {
     const reads: number[] = []
     capturer = newCapturer({
-      readTexturePng: async (_handle, height) => {
-        reads.push(height)
-        return PNG.sync.write(new PNG({ width: 32, height }))
+      textureReader: {
+        read: async (_handle, height) => {
+          reads.push(height)
+          return { finish: async to => { expect(to).toBe('png'); return PNG.sync.write(new PNG({ width: 32, height })) } }
+        },
       },
     })
     capturer.setTextureEnabled(true)

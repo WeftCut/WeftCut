@@ -1,5 +1,6 @@
 import { nativeImage } from 'electron'
-import type { FrameMarkerReader, MotifOsrFrame } from './offscreenFrames.js'
+import type { MotifOsrFrame } from './offscreenFrames.js'
+import type { MotifMarkerReader, MotifTextureReader } from './native.js'
 import { CaptureQueue, type CaptureArgs, type CaptureOptions, type CaptureRun, type Rendered } from './captureQueue.js'
 import { HostPool, type HostKey, type HostPoolLease } from './hostPool.js'
 import { CaptureHost, HostRenderError, type CapturePhase } from './captureHost.js'
@@ -16,9 +17,6 @@ import type { MotifFramePriority } from '../../shared/motifs/frameTransport.js'
 /** The tuning keys the capture hosts run on (`shared/motifs/tuning.ts`). */
 export type CaptureTuning = Pick<MotifTuning, 'captureHosts' | 'framesInFlight' | 'captureFrameRate' | 'skippedFrameRetries' | 'backgroundAgingMs' | 'hostAffinityMs' | 'stallNudgeMs'>
 
-/** The picture above the marker rows of a shared texture, as a PNG. */
-export type TexturePngReader = (handle: Buffer, height: number) => Promise<Buffer>
-
 /** What a capture reads from the Motif store. */
 export type CaptureStore = Pick<UserMotifStore, 'getMotif' | 'assertRenderable' | 'pinPackage'>
 
@@ -31,10 +29,10 @@ export interface MotifCapturerDeps {
   runtimeSource: () => string | null
   /// The native marker reader, where it exists. Without it the hosts take
   /// bitmaps, which need no native reader.
-  readFrameMarker: FrameMarkerReader | null
+  markerReader: Pick<MotifMarkerReader, 'read'> | null
   /// Beside the marker reader: PNG captures on a texture host read the leased
   /// texture.
-  readTexturePng: TexturePngReader | null
+  textureReader: Pick<MotifTextureReader, 'read'> | null
 }
 
 const newCaptureCounters = () => ({ captures: 0, completed: 0, failed: 0, pageLoads: 0, hostBuilds: 0, hostEvictions: 0, affinityPicks: 0, textureCaptures: 0, bitmapCaptures: 0, skippedFrames: 0, queueMs: 0, captureMs: 0, loadMs: 0, readyMs: 0, setupMs: 0, renderMs: 0, outputMs: 0 })
@@ -60,8 +58,8 @@ export class MotifCapturer {
   private readonly tuning: CaptureTuning
   private readonly store: CaptureStore
   private readonly runtimeSource: () => string | null
-  private readonly readFrameMarker: FrameMarkerReader | null
-  private readonly readTexturePng: TexturePngReader | null
+  private readonly markerReader: Pick<MotifMarkerReader, 'read'> | null
+  private readonly textureReader: Pick<MotifTextureReader, 'read'> | null
 
   private counters: CaptureCounters = newCaptureCounters()
   private readonly lanes = new Map<string, { motifId: string; contentHash: string; captures: number; pageLoads: number }>()
@@ -87,8 +85,8 @@ export class MotifCapturer {
     this.tuning = deps.tuning
     this.store = deps.store
     this.runtimeSource = deps.runtimeSource
-    this.readFrameMarker = deps.readFrameMarker
-    this.readTexturePng = deps.readTexturePng
+    this.markerReader = deps.markerReader
+    this.textureReader = deps.textureReader
     this.pool = new HostPool({
       capacity: deps.tuning.captureHosts,
       hostKeyOf: a => ({ motifId: a.motifId, contentHash: a.contentHash, texture: this.wantsTextureHost(a.width, a.height) }),
@@ -197,7 +195,7 @@ export class MotifCapturer {
   /// texture limit: its readback and copy must. A larger frame takes a bitmap
   /// host, which costs that size its GPU path and nothing else.
   private wantsTextureHost(width: number, height: number): boolean {
-    return this.textureEnabled && this.readFrameMarker !== null && fitsMotifTexture(width, height + FRAME_MARKER_ROWS, 'copy')
+    return this.textureEnabled && this.markerReader !== null && fitsMotifTexture(width, height + FRAME_MARKER_ROWS, 'copy')
   }
 
   private openHost(key: HostKey, a: CaptureArgs): Promise<CaptureHost> {
@@ -208,7 +206,7 @@ export class MotifCapturer {
     this.counters.pageLoads++
     this.diagnosticsLane(key.motifId, key.contentHash).pageLoads++
     return CaptureHost.open(key, { width: a.width, height: a.height }, pinned, {
-      runtime, readFrameMarker: this.readFrameMarker, tuning: this.tuning,
+      runtime, markerReader: this.markerReader, tuning: this.tuning,
       timed: (phase, run) => this.timed(phase, run),
     })
   }
@@ -281,8 +279,8 @@ export class MotifCapturer {
 
   private async texturePng(frame: Extract<MotifOsrFrame, { kind: 'texture' }>): Promise<Buffer> {
     const handle = frame.texture.textureInfo.handle.ntHandle
-    if (!this.readTexturePng || !handle) throw new MotifError('device', 'Motif texture PNG readback unavailable')
-    return this.readTexturePng(handle, frame.height)
+    if (!this.textureReader || !handle) throw new MotifError('device', 'Motif texture PNG readback unavailable')
+    return (await this.textureReader.read(handle, frame.height)).finish('png')
   }
 
   private countFrame(frame: MotifOsrFrame): void {

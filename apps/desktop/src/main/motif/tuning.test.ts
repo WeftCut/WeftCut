@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { configureMotifCore, resolveMotifTuning } from './tuning'
+import { resolveMotifTuning } from './tuning'
 import { MOTIF_TUNING_DEFAULTS, MOTIF_TUNING_SPEC, motifTuningArgument, readMotifTuningArgument } from '../../shared/motifs/tuning'
 
 const resolve = (value: string | undefined, parallelism = 16) => {
@@ -67,17 +67,5 @@ describe('MOTIF_TUNING_SPEC', () => {
     for (const { default: value, range: [min, max] } of Object.values(MOTIF_TUNING_SPEC)) {
       expect(Number.isSafeInteger(value) && min <= value && value <= max).toBe(true)
     }
-  })
-})
-
-describe('configureMotifCore', () => {
-  it('hands the native core its band threads and idle scratch bytes', () => {
-    const motifConfigure = vi.fn()
-    configureMotifCore({ motifConfigure }, { ...MOTIF_TUNING_DEFAULTS, bandThreads: 2 })
-    expect(motifConfigure).toHaveBeenCalledWith({ scratchIdleBytes: 32 * 1024 * 1024, bandThreads: 2 })
-  })
-
-  it('refuses an addon without motifConfigure', () => {
-    expect(() => configureMotifCore({}, { ...MOTIF_TUNING_DEFAULTS, bandThreads: 1 })).toThrow(/motifConfigure/)
   })
 })

@@ -7,24 +7,7 @@ import { MotifError, motifErrorCode } from '../../shared/motifs/errors'
 import { isMotifFrameAddress } from './frameAddress'
 import { MotifFrameWriteQueue, type FrameRead } from './frameWriteQueue'
 import { failsTexturePath, MotifFrameJobs, type FrameJobHandle, type FrameJobSession, type PersistSubscriber } from './frameJobs'
-
-/** Pixels read back from a texture, held natively until `finish` encodes them
- * as a stored frame or `finishPng` as a PNG. */
-export interface RawMotifFrame { finish(): Promise<Buffer>; finishPng(): Promise<Buffer> }
-/** Reads the top `height` rows of a shared texture: the picture above the
- * capture host's marker rows. */
-export interface TextureEncoder { read(handle: Buffer, height: number): Promise<RawMotifFrame>; close(): void }
-/** Native conversions of a bitmap host's paint. */
-export interface MotifPixelCodec {
-  /** The top `height` rows of premultiplied BGRA rows `width` pixels wide, as
-   * straight RGBA. */
-  motifStraightenBgra(bgra: Buffer, width: number, height: number): Promise<Buffer>
-  /** Straight RGBA as a stored frame. */
-  motifEncodeRgba(rgba: Buffer, width: number, height: number): Promise<Buffer>
-  /** The top `height` rows of premultiplied BGRA rows `width` pixels wide, as
-   * a stored frame. */
-  motifEncodeBgra(bgra: Buffer, width: number, height: number): Promise<Buffer>
-}
+import type { MotifNative, MotifRawFrame, MotifTextureReader } from './native'
 type TextureOsrFrame = Extract<MotifOsrFrame, { kind: 'texture' }>
 type BitmapOsrFrame = Extract<MotifOsrFrame, { kind: 'bitmap' }>
 export interface CaptureServiceDeps {
@@ -32,8 +15,8 @@ export interface CaptureServiceDeps {
   /** `MotifCapturer.captureFrame`. */
   frame: <T>(args: CaptureArgs, consume: (frame: MotifOsrFrame) => Promise<T>, options: CaptureOptions) => CaptureRun<T>
   copy: ((owner: WebContents, frame: TextureOsrFrame, finalizationId?: number) => Promise<MotifTextureFrame>) | null
-  createEncoder: (() => TextureEncoder) | null
-  pixels: MotifPixelCodec
+  openTextureReader: (() => MotifTextureReader) | null
+  convert: MotifNative['convert']
   setTextureEnabled: (enabled: boolean) => void
   /** `writeSlots` (`shared/motifs/tuning.ts`). */
   writeSlots: number
@@ -85,7 +68,7 @@ export function parseMotifCaptureControl(value: unknown): MotifCaptureControl | 
  * workspace store (`MotifFrameJobs`, ADR 0160). */
 export class MotifCaptureService {
   private useTexture: boolean
-  private encoder: TextureEncoder | null = null
+  private textureReader: MotifTextureReader | null = null
   private liveWriteWarned = false
   private readonly session: FrameJobSession
   private readonly workspaceJobs = new WeakMap<MotifFrameStore, MotifFrameJobs>()
@@ -93,7 +76,7 @@ export class MotifCaptureService {
   private readonly requests = new Map<string, FrameJobHandle>()
 
   constructor(private readonly deps: CaptureServiceDeps, enabled: boolean) {
-    this.useTexture = enabled && !!deps.copy && !!deps.createEncoder
+    this.useTexture = enabled && !!deps.copy && !!deps.openTextureReader
     deps.setTextureEnabled(this.useTexture)
     this.session = {
       capture: (args, consume, options) => deps.frame(args, consume, options),
@@ -114,7 +97,7 @@ export class MotifCaptureService {
     if (!this.useTexture) return
     console.warn('[weftcut/motif] Shared-texture capture failed; using bitmap capture:', reason)
     this.useTexture = false
-    this.encoder?.close(); this.encoder = null
+    this.textureReader?.close(); this.textureReader = null
     this.deps.setTextureEnabled(false)
   }
 
@@ -167,16 +150,16 @@ export class MotifCaptureService {
    * it rejects: persistence captures the frame again on it, and that capture
    * must be a bitmap or it fails here again, without end. A display still
    * shows this frame. */
-  private async readTexture(frame: TextureOsrFrame, args: CaptureArgs): Promise<RawMotifFrame> {
+  private async readTexture(frame: TextureOsrFrame, args: CaptureArgs): Promise<MotifRawFrame> {
     try {
       const { pixelFormat, handle } = frame.texture.textureInfo
       if (frame.width !== args.width || frame.height !== args.height ||
-          (pixelFormat !== 'rgba' && pixelFormat !== 'bgra') || !handle.ntHandle || !this.deps.createEncoder) throw new MotifError('device', 'Unsupported bake texture')
-      // A texture leased before the switch: an encoder opened now would outlive
+          (pixelFormat !== 'rgba' && pixelFormat !== 'bgra') || !handle.ntHandle || !this.deps.openTextureReader) throw new MotifError('device', 'Unsupported bake texture')
+      // A texture leased before the switch: a reader opened now would outlive
       // the switch's close, so the frame is captured again as a bitmap instead.
       if (!this.useTexture) throw new MotifError('device', 'Motif capture switched to bitmaps')
-      this.encoder ??= this.deps.createEncoder()
-      return await this.encoder.read(handle.ntHandle, frame.height)
+      this.textureReader ??= this.deps.openTextureReader()
+      return await this.textureReader.read(handle.ntHandle, frame.height)
     } catch (error) {
       if (failsTexturePath(error)) this.useBitmaps(error)
       throw error
@@ -184,7 +167,7 @@ export class MotifCaptureService {
   }
 
   private straighten(frame: BitmapOsrFrame): Promise<Buffer> {
-    return this.deps.pixels.motifStraightenBgra(frame.image.toBitmap(), frame.width, frame.height)
+    return this.deps.convert({ from: 'premultipliedBgra', to: 'rgba' }, frame.image.toBitmap(), frame.width, frame.height)
   }
 
   /** Only the copy happens in the lease: a paint nobody straightened yet is
@@ -192,12 +175,12 @@ export class MotifCaptureService {
   private frameRead(frame: MotifOsrFrame, args: CaptureArgs, writer: FrameWriter, rgba?: Buffer): FrameRead {
     if (frame.kind === 'texture') return async () => {
       const raw = await this.readTexture(frame, args)
-      return async () => writer.encoded(await raw.finish())
+      return async () => writer.encoded(await raw.finish('frame'))
     }
-    if (rgba) return async () => async () => writer.encoded(await this.deps.pixels.motifEncodeRgba(rgba, frame.width, frame.height))
+    if (rgba) return async () => async () => writer.encoded(await this.deps.convert({ from: 'rgba', to: 'frame' }, rgba, frame.width, frame.height))
     return async () => {
       const bgra = frame.image.toBitmap()
-      return async () => writer.encoded(await this.deps.pixels.motifEncodeBgra(bgra, frame.width, frame.height))
+      return async () => writer.encoded(await this.deps.convert({ from: 'premultipliedBgra', to: 'frame' }, bgra, frame.width, frame.height))
     }
   }
 
@@ -208,5 +191,5 @@ export class MotifCaptureService {
     console.warn('[weftcut/motif] Live capture not stored:', error)
   }
 
-  dispose(): void { this.encoder?.close(); this.encoder = null }
+  dispose(): void { this.textureReader?.close(); this.textureReader = null }
 }

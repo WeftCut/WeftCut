@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron'
-import { MotifFrameSkippedError, OffscreenFrames, type FrameMarkerReader, type MotifOsrFrame } from './offscreenFrames.js'
+import { MotifFrameSkippedError, OffscreenFrames, type MotifOsrFrame } from './offscreenFrames.js'
+import type { MotifMarkerReader } from './native.js'
 import { BITMAP_CANVAS_RUNTIME_SOURCE } from './bitmapCanvasRuntime.js'
 import { hardenWindow, markInternalWindow } from '../windows'
 import { MotifError, motifErrorCode } from '../../shared/motifs/errors.js'
@@ -15,7 +16,7 @@ export interface CaptureHostEnv {
   /// The clock-takeover runtime, injected into every document of the window.
   runtime: string
   /// Read only on a texture host.
-  readFrameMarker: FrameMarkerReader | null
+  markerReader: Pick<MotifMarkerReader, 'read'> | null
   tuning: Pick<MotifTuning, 'framesInFlight' | 'captureFrameRate' | 'stallNudgeMs'>
   timed<T>(phase: CapturePhase, run: () => Promise<T>): Promise<T>
 }
@@ -116,7 +117,7 @@ export class CaptureHost implements PooledHost {
     // closes (windows.ts → quitIfLastUserWindowClosed). Before the awaits, per its
     // same-tick contract.
     markInternalWindow(win)
-    const frames = new OffscreenFrames(win.webContents, texture ? env.readFrameMarker : null, MOTIF_DEADLINES.captureCommandMs, env.tuning.stallNudgeMs)
+    const frames = new OffscreenFrames(win.webContents, texture ? env.markerReader : null, MOTIF_DEADLINES.captureCommandMs, env.tuning.stallNudgeMs)
     // Navigation lockdown for the untrusted Motif page: deny every `window.open`
     // OUTRIGHT (allowExternalOpen:false — a Motif must not be able to pop the user's
     // browser) and block any page-initiated navigation off the app's content. The
