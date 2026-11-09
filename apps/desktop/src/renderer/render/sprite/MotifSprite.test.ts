@@ -45,7 +45,8 @@ vi.mock("../motifs/frameTransport", async (importOriginal) => ({
 function leaseOf(bitmap: ImageBitmap, frame = 0): MotifFrameLease {
   return { bitmap, frame, release: () => releaseMock(bitmap) };
 }
-const bound = (sprite: MotifSprite) => sprite.sprite.texture.source?.resource;
+/// What the sprite draws once presented, as the next composite would.
+const bound = (sprite: MotifSprite) => { sprite.present(); return sprite.sprite.texture.source?.resource; };
 
 import {
   frameTimeSec,
@@ -370,6 +371,27 @@ describe("MotifSprite.refreshMotif", () => {
         sprite.refreshMotif();
         sprite.update(view, frameUs(1), 5_000_000);
         expect(sprite.holdDeadline()).not.toBeNull();
+      });
+
+      it("leaves the presented picture alone while it holds; a presentation binds the chosen frame", async () => {
+        const shown = bitmap(), late = bitmap(), cached = bitmap();
+        let finish!: (value: ImageBitmap) => void;
+        acquireLease.mockResolvedValueOnce(leaseOf(shown))
+          .mockReturnValueOnce(new Promise(resolve => { finish = b => resolve(leaseOf(b, 1)); }));
+        sprite.update(view, 0, 5_000_000); await flush();
+        sprite.update(view, 0, 5_000_000);
+        const resource = () => sprite.sprite.texture.source?.resource;
+        expect(resource()).toBe(shown);
+        // An async completion and a cache hit, both while the scene holds.
+        sprite.demand(view, frameUs(1), 5_000_000);
+        finish(late); await flush();
+        getFrameMock.mockImplementation((_key, frame) => frame === 2 ? cached : null);
+        sprite.demand(view, frameUs(2), 5_000_000);
+        expect(resource()).toBe(shown);
+        expect(releaseMock.mock.calls).toEqual([[late]]); // replaced unseen
+        sprite.update(view, frameUs(2), 5_000_000);
+        expect(resource()).toBe(cached);
+        expect(releaseMock.mock.calls).toEqual([[late], [shown]]);
       });
 
       it("a failed capture, or a Motif the catalog lacks, holds nothing", async () => {

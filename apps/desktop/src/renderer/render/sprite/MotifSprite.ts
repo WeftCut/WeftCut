@@ -4,10 +4,12 @@
 //
 // Preview frames come from `acquireMotifFrame` / `peekMotifFrame`
 // (`motifFrameSource.ts`): L0, a stored frame, or the hidden capture host.
-// Each bound frame is a lease that pins its L0 bitmap, so eviction cannot
+// Each chosen frame is a lease that pins its L0 bitmap, so eviction cannot
 // close it under the texture; the sprite releases the previous lease after
-// binding the next. Useful late results advance forward playback. The export
-// Worker binds exact pre-baked `injectedFrames` by index instead.
+// binding the next. A chosen frame reaches the texture only when the sprite
+// presents (`update`): the scene gate moves demand while the picture on
+// screen must stay as it is. Useful late results advance forward playback.
+// The export Worker binds exact pre-baked `injectedFrames` by index instead.
 //
 // Preview reads stored frames at the Playback Resolution divisor (ADR 0154).
 // The sprite draws every preview frame at the Motif's logical (manifest) size
@@ -51,10 +53,10 @@ export interface MotifSpriteInit {
   /// with the same exact-rational math the rest of the renderer uses.
   fpsNum: number;
   fpsDen: number;
-  /// Fires after a freshly-rasterized bitmap is bound. The host uses it to
+  /// Fires after a freshly-rasterized bitmap is chosen. The host uses it to
   /// schedule a repaint when the playhead is paused (no rAF tick in flight to
-  /// pick up the new texture). NOT fired on a synchronous cache hit — that
-  /// happens inside the current paint, so a repaint would be churn.
+  /// present it). NOT fired on a synchronous cache hit — that happens inside
+  /// the current paint, so a repaint would be churn.
   onLoaded?: () => void;
   /// Preview's Playback Resolution divisor; 1 when absent.
   scaleDiv?: () => MotifReaderDiv;
@@ -87,6 +89,9 @@ export class MotifSprite implements StageableSprite {
   /// re-upload; the placeholder and export frames hold a lease that does
   /// nothing.
   private bound: BoundRaster | null = null;
+  /// The frame the cursor chose last and the sprite has not presented yet,
+  /// with the size it is drawn at.
+  private chosen: { raster: BoundRaster; size: { width: number; height: number } } | null = null;
   private onLoaded: (() => void) | null;
   private disposed = false;
   private boundOnce = false;
@@ -103,7 +108,7 @@ export class MotifSprite implements StageableSprite {
     this.onLoaded = init.onLoaded ?? null;
     this.motif = getMotif(this.motifId);
     this.playback = new MotifPlaybackCursor({
-      bind: (lease, d) => this.bindRaster(lease, { width: d.renderW, height: d.renderH }),
+      bind: (lease, d) => this.choose(lease, { width: d.renderW, height: d.renderH }),
       onLoaded: () => this.onLoaded?.(),
       scaleDiv: init.scaleDiv ?? (() => 1),
     });
@@ -204,11 +209,12 @@ export class MotifSprite implements StageableSprite {
     }
 
     this.demand(view, tInLayerUs, durationUs, playing);
+    this.present();
   }
 
-  /// The preview half of `update` without the transforms: selects the frame at
-  /// `tInLayerUs` and moves its demand. The scene gate calls it alone while the
-  /// presented picture must stay as it is.
+  /// The preview half of `update` without the transforms or the texture:
+  /// selects the frame at `tInLayerUs` and moves its demand. The scene gate
+  /// calls it alone while the presented picture must stay as it is.
   demand(view: ResolvedMotifView, tInLayerUs: number, durationUs: number, playing = false): void {
     if (this.disposed) return;
     // Only live capture needs the catalog. The export Worker has built-ins
@@ -228,7 +234,17 @@ export class MotifSprite implements StageableSprite {
       return;
     }
     this.playback.update(desc, playing);
-    if (!this.boundOnce && this.texture === null && typeof document !== "undefined") {
+  }
+
+  /// Binds the frame the cursor chose last, or the placeholder before any.
+  /// `update` presents; the scene gate's `demand` never does.
+  present(): void {
+    if (this.disposed) return;
+    const chosen = this.chosen;
+    if (chosen) {
+      this.chosen = null;
+      this.bindRaster(chosen.raster, chosen.size);
+    } else if (this.motif && !this.boundOnce && this.texture === null && typeof document !== "undefined") {
       this.bindRaster(unpinned(neutralPlaceholder()));
     }
   }
@@ -248,6 +264,13 @@ export class MotifSprite implements StageableSprite {
     if (this.disposed) return;
     this.motif = getMotif(this.motifId);
     this.playback.invalidate();
+  }
+
+  /// Takes the cursor's lease until it is presented or a later choice
+  /// replaces it, which releases it unseen.
+  private choose(raster: BoundRaster, size: { width: number; height: number }): void {
+    this.chosen?.raster.release();
+    this.chosen = { raster, size };
   }
 
   /// Takes `raster`'s lease. `size` is the local size the bitmap is drawn
@@ -310,5 +333,7 @@ export class MotifSprite implements StageableSprite {
     this.source = null;
     this.bound?.release();
     this.bound = null;
+    this.chosen?.raster.release();
+    this.chosen = null;
   }
 }

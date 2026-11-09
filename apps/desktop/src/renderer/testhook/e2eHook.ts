@@ -864,10 +864,11 @@ export function installMotifTestHooks(): void {
         sprite.update(view, tInLayerUs, durationUs);
         // The async bind path (cache MISS) leaves the texture unchanged during
         // this synchronous update() — the previous frame stays bound until the
-        // capture resolves and fires onLoaded (flipping `bindSignalled`). A
-        // SYNC cache hit, by contrast, swaps the resource in-place HERE without
-        // firing onLoaded. Wait until EITHER the async signal fired OR the
-        // bound resource changed (sync hit), with a hard deadline.
+        // capture resolves and fires onLoaded (flipping `bindSignalled`), and
+        // the sprite presents it. A SYNC cache hit, by contrast, swaps the
+        // resource in-place HERE without firing onLoaded. Wait until EITHER the
+        // async signal fired OR the bound resource changed (sync hit), with a
+        // hard deadline.
         const deadline = Date.now() + 10000;
         // eslint-disable-next-line no-await-in-loop
         while (
@@ -880,6 +881,7 @@ export function installMotifTestHooks(): void {
           // eslint-disable-next-line no-await-in-loop
           await sleep(20);
         }
+        sprite.present();
         const tex = sprite.sprite.texture;
         const bitmap = tex.source?.resource as ImageBitmap | undefined;
         if (!bitmap) throw new Error("sprite bound no bitmap resource");

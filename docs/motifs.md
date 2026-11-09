@@ -534,7 +534,9 @@ which sends a texture-lane read to the utility lane (`unavailable`, reason
 with `frameIndexInLayer` on the exact rational grid (never `round(µs·fps)`),
 clamps to the content, and binds the frame its `MotifPlaybackCursor` gets: an L0
 hit (`peekMotifFrame`), else a `current` request the cursor owns. The sprite
-holds the bound frame's lease and releases the previous one after binding. It
+holds the bound frame's lease and releases the previous one after binding. A
+frame the cursor gets binds only when the sprite presents, so a held scene
+keeps drawing the frame it showed. It
 draws a reduced bitmap at the Motif's logical size, so geometry, anchors and the
 gizmo do not change with the divisor.
 
@@ -544,8 +546,8 @@ before the target (a first visit, a jump back, new props) would show nothing
 over a black canvas, so the preview keeps its last picture instead, for up to
 `previewHoldMs` (500 ms) or until the Motif's capture fails, then presents
 without it. The scene gate is the one a video clip's first visit uses
-(`CompositionNode` §canPresentClipsAt). Export waits for every frame and never
-holds.
+(`CompositionNode` §canPresentClipsAt); it moves the Motif's demand but never
+its texture. Export waits for every frame and never holds.
 
 ## Export
 

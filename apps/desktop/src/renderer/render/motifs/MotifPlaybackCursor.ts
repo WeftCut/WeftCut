@@ -10,8 +10,8 @@ export interface MotifPlaybackSnapshot {
   /** The frame bound for the current target; a reset (seek, play or pause,
    * content refresh) clears it. */
   boundFrame: number | null;
-  /** The frame on screen. A reset keeps it: the sprite holds its bitmap until
-   * the next frame binds. */
+  /** The frame the sprite shows from its next presentation on. A reset keeps
+   * it: the sprite holds its bitmap until the next frame binds. */
   shownFrame: number | null;
   lagFrames: number | null;
   heldMs: number;
@@ -27,7 +27,8 @@ interface Request { descriptor: MotifFrameDescriptor; epoch: number; scaleDiv: M
 /** Per-instance preview demand and frame selection. Ordinary forward playback
  * coalesces BEHIND admitted work; only discontinuities abort it. Requests are
  * `current` and owned by the cursor (`acquireMotifFrame`), which deduplicates
- * across consumers. Each bound frame is a lease the sprite holds. */
+ * across consumers. Each bound frame is a lease handed to the sprite, which
+ * draws it when it next presents. */
 export class MotifPlaybackCursor {
   private target: MotifFrameDescriptor | null = null;
   /** The Playback Resolution divisor of `target`; L0 hits match it exactly. */
@@ -51,7 +52,8 @@ export class MotifPlaybackCursor {
   private discarded = 0;
 
   constructor(private readonly deps: {
-    /** Takes the lease; the sprite draws it at the descriptor's render size. */
+    /** Takes the lease; the sprite draws it at the descriptor's render size
+     * when it next presents. */
     bind: (lease: MotifFrameLease, descriptor: MotifFrameDescriptor) => void;
     onLoaded: () => void;
     /** Preview's Playback Resolution divisor, read on each update. */
@@ -102,10 +104,10 @@ export class MotifPlaybackCursor {
   dispose(): void { this.invalidate(); this.disposed = true; }
 
   /** Until when the preview should keep its last picture rather than present
-   * this instance: it shows no frame of its target's content at or before the
-   * target (a first visit, a jump back, new content), nothing has failed, and
-   * that began less than `previewHoldMs` ago. Null: present now. A frame a few
-   * behind still presents, as a late video frame does. */
+   * this instance: it has no frame of its target's content at or before the
+   * target to show (a first visit, a jump back, new content), nothing has
+   * failed, and that began less than `previewHoldMs` ago. Null: present now.
+   * A frame a few behind still presents, as a late video frame does. */
   holdDeadline(now = performance.now()): number | null {
     const d = this.target;
     const showsTarget = d !== null && this.shownKey === d.cacheKey && this.shownFrame !== null && this.shownFrame <= d.contentFrame;

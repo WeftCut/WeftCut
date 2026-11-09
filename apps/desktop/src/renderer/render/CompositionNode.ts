@@ -727,8 +727,9 @@ export class CompositionNode {
       }
       if (layer.params.kind === "Motif") {
         // Nothing of its own to show draws nothing, and the canvas below is
-        // black: hold the scene for up to `previewHoldMs`. Updating here keeps
-        // its demand moving while the scene holds.
+        // black: hold the scene for up to `previewHoldMs`. `demand` keeps its
+        // frames coming while the scene holds and leaves the texture the held
+        // scene draws alone; the frame binds when the sweep presents it.
         const motif = this.ensureMotif(layer);
         if (!motif) continue;
         const tInLayerUs = tUs - layer.t_start_us;
