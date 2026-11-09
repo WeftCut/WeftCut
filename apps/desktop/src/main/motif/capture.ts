@@ -17,7 +17,7 @@ import { backgroundResourcePause, onBackgroundResourceChange, processMemoryMiB }
 import { resourceAllocation } from '../../shared/resource-policy.js'
 
 /** The tuning keys the capture hosts run on (`shared/motifs/tuning.ts`). */
-export type CaptureTuning = Pick<MotifTuning, 'captureHosts' | 'hostMemoryMib' | 'hostResidencyMs' | 'hostAgingMs' | 'hostWarmLeadMs' | 'framesInFlight' | 'captureFrameRate' | 'skippedFrameRetries' | 'backgroundAgingMs' | 'hostAffinityMs' | 'stallNudgeMs'>
+export type CaptureTuning = Pick<MotifTuning, 'captureHosts' | 'hostMemoryMib' | 'hostMemoryPercent' | 'hostResidencyMs' | 'hostAgingMs' | 'hostWarmLeadMs' | 'framesInFlight' | 'captureFrameRate' | 'skippedFrameRetries' | 'backgroundAgingMs' | 'hostAffinityMs' | 'stallNudgeMs'>
 
 /** What a capture reads from the Motif store. */
 export type CaptureStore = Pick<UserMotifStore, 'getMotif' | 'assertRenderable' | 'pinPackage'>
@@ -293,7 +293,11 @@ export class MotifCapturer {
     if (used === null) return true
     const measured = this.pool.hosts().reduce((sum, host) => sum + (this.memoryOf(host) ?? 0), 0)
     const perHost = Math.max(this.tuning.hostMemoryMib, this.hostEstimateMiB())
-    return used - measured + (live + 1) * perHost <= resourceAllocation().memory_mib
+    const target = resourceAllocation().memory_mib
+    // The rest of the app grows after the hosts open (a project loading, the
+    // preview warming): the hosts together never take more than their share.
+    if ((live + 1) * perHost > target * this.tuning.hostMemoryPercent / 100) return false
+    return used - measured + (live + 1) * perHost <= target
   }
 
   /// Under memory pressure, the idle hosts beyond one retire.

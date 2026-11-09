@@ -947,6 +947,17 @@ describe('MotifCapturer', () => {
     expect(capturer.diagnostics()).toMatchObject({ hostBuilds: 4, hostEvictions: 2 })
   })
 
+  it('the hosts together take no more than hostMemoryPercent of the memory target', async () => {
+    const { resourceAllocation } = await import('../../shared/resource-policy')
+    const target = resourceAllocation().memory_mib
+    // Two hosts' share, with plenty of room in the process tree.
+    const hostMemoryPercent = Math.ceil(2 * MOTIF_TUNING_DEFAULTS.hostMemoryMib * 100 / target)
+    capturer = newCapturer({ tuning: { ...MOTIF_TUNING_DEFAULTS, captureHosts: 8, hostMemoryPercent } })
+    memory.processMib = 0
+    for (const motifId of ['share-a', 'share-b', 'share-c', 'share-d']) await capturer.capturePng({ ...args, motifId }, bg)
+    expect(capturer.diagnostics().hosts).toHaveLength(2)
+  })
+
   it('every open host counts at full size, however little it measures yet', async () => {
     const { resourceAllocation } = await import('../../shared/resource-policy')
     capturer = newCapturer({ tuning: { ...MOTIF_TUNING_DEFAULTS, captureHosts: 8 } })

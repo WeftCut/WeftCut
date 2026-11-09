@@ -41,9 +41,11 @@ after a seek back.
   on a transport failure or a hung setup or render, failing only its own
   frames. Another Motif gets another window: one renderer process per Motif.
 - Main keeps a **pool**: at most one host per key and `captureHosts` in all
-  (default 4, range 1–8), and a second or later host only while the app's
-  process tree has room for one more under its memory target and memory is
-  not under pressure; the first can always open. A host is resident process
+  (default 8, range 1–8), and a second or later host only while memory is
+  not under pressure, the hosts together stay within `hostMemoryPercent` of
+  the memory target, and the app's process tree without its hosts, plus
+  every host at full size, fits under the target; the first can always
+  open. A host is resident process
   memory the target already measures, so it is charged there, at its measured
   working set, and not to the admission ledger, which an export alone can
   fill. Under pressure the idle hosts retire down to one, on every memory
@@ -147,5 +149,8 @@ after a seek back.
   `hostSwaps` (version switches in a window), `hostSheds` (hosts retired for
   memory pressure), `affinityPicks` and one row per host with its role and
   its renderer's working set (`memoryMib`).
-- The hard cap went from 2 to 4 with the memory gate and the roles; the
-  residency (1 s) and the cap are not yet measured in the scenario suite.
+- Measured in the scenario suite (docs/notes/motif-elastic-pool-2026-11-10.md):
+  stacked Motifs went from 400–640 window builds a minute to 20–36 and from
+  2–4 to 12–27 fps; 7 visible Motifs on the bench need the cap of 8; the M1
+  stays near 4 hosts by the share, since the rest of the app grows after
+  the hosts open.

@@ -23,25 +23,33 @@ export const MOTIF_TUNING_SPEC = {
    * 8 GB (ADR 0161): with 2, two stacked Motifs went from 1.6–3.7 fps per lane
    * to 10–30; in simulated editing (2026-11-09) 4–5 visible Motifs rebuilt a
    * host per frame on 2 hosts and 4–9 times per 15 s on 4, and 4 hosts took
-   * the M1 to 94% of its memory target. One Motif never opens a second host.
-   * Above 4 is not measured. */
-  captureHosts: { default: 4, range: [1, 8] },
+   * the M1 to 94% of its memory target; in the elastic pool (2026-11-10) 8
+   * on the bench took 7 visible Motifs from 109 window builds a minute to 4
+   * and 22 to 25 fps, and 8 visible from 136 to 66 and 6 to 14 fps; the M1
+   * stays near 4 by `hostMemoryPercent`. One Motif never opens a second host
+   * (docs/notes/motif-elastic-pool-2026-11-10.md). */
+  captureHosts: { default: 8, range: [1, 8] },
   /** How long a host keeps the content it opened or switched to before a
    * `current` capture of another visible Motif may take it, and how long a
-   * `current` capture's use protects a host from other classes (ms). Not
-   * measured. */
+   * `current` capture's use protects a host from other classes (ms).
+   * Measured on the bench with 8 and 7 visible Motifs on 4 hosts: 0.5 s
+   * raised the `current` queue p95 to 250–530 ms, 2 s held the picture
+   * 1.5–2.2 s p95 (docs/notes/motif-elastic-pool-2026-11-10.md). */
   hostResidencyMs: { default: 1000, range: [0, 60_000] },
   /** How long an `ahead` or `background` capture (a bake, a cover, an
    * agent's MCP preview) waits before it may take a host that playback or a
    * `current` capture holds (ms): the bound on side traffic's wait while a
-   * preview plays. Not measured. */
+   * preview plays. 2 s changed nothing on the bench's side-traffic layout
+   * (docs/notes/motif-elastic-pool-2026-11-10.md). */
   hostAgingMs: { default: 5000, range: [0, 600_000] },
   /** How long before a Motif enters a playing preview its capture host is
    * built (ms), until the app has measured its own build and first-frame
    * times. Measured 2026-11-09 in simulated editing: a build took 140–190 ms
    * on an M1 8 GB and 75–90 ms on the bench, a seek's first frame up to
    * 190 ms on the M1; 9 of 27 Motifs on the M1 still had no host at their
-   * first frame when lookahead started ~170 ms ahead. */
+   * first frame when lookahead started ~170 ms ahead. The lead the app then
+   * measures was p50 129 / p95 275 ms on the bench and p50 265 / p95 411 ms
+   * on the M1 (docs/notes/motif-elastic-pool-2026-11-10.md). */
   hostWarmLeadMs: { default: 450, range: [0, 10_000] },
   /** The memory a capture host is taken to add (MiB) until its renderer
    * process is measured: a new host opens only while the app's process tree
@@ -49,6 +57,14 @@ export const MOTIF_TUNING_SPEC = {
    * simulated editing with 1080p Motifs: 127–138 MiB per host on an M1 8 GB,
    * 117–126 MiB on the bench (docs/notes/motif-host-memory-2026-11-10.md). */
   hostMemoryMib: { default: 130, range: [16, 2048] },
+  /** The share of the memory target (percent) the capture hosts may take
+   * together, each at `hostMemoryMib` or the median measured host. The rest
+   * of the app grows after the hosts open, so the room a sample shows at
+   * start does not last: an M1 with 8 allowed opened 7–8 hosts at a 1.0 GB
+   * app, then sat at 2.9–3.1 GB, pressured 27–60% of the time. 25% keeps it
+   * at about 4 hosts (as with `captureHosts` 4: 0–11% pressured) and leaves
+   * the bench at the cap (docs/notes/motif-elastic-pool-2026-11-10.md). */
+  hostMemoryPercent: { default: 25, range: [1, 100] },
   /** Frames a capture host renders while earlier ones are still on their way
    * to a paint; the bake coordinator keeps as many in the capture queue.
    * Measured: ADR 0159; 5 in flight gained about 2% on a 4K bake
@@ -105,7 +121,8 @@ export const MOTIF_TUNING_SPEC = {
   prewarmLookaheadMs: { default: 500, range: [0, 5000] },
   /** How far ahead of the playhead a preview names the next Motif to enter
    * (`motif:presence`), so main can protect and build its capture host in
-   * time (ms). At least `hostWarmLeadMs`. Not measured. */
+   * time (ms). At least the warm lead: measured at most 721 ms on the bench
+   * and 515 ms on the M1 (docs/notes/motif-elastic-pool-2026-11-10.md). */
   presenceLookaheadMs: { default: 2000, range: [0, 10_000] },
   /** Band threads per frame: one per this many hardware threads, at most
    * `maxBandThreads`. Measured: the sweep on the 16-thread bench, where more

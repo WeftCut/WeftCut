@@ -129,9 +129,10 @@ leaves the lane open.
 
 `MotifCapturer` (`capture.ts`) is the one entry point. It orders captures in a
 queue (`captureQueue.ts`) onto a pool of hosts (`hostPool.ts`): at most one
-host per Motif content version and texture kind, and `captureHosts` (default 4)
-in all; beyond the first, only while the process tree has room for another
-host under the memory target and memory is not under pressure. A host counts
+host per Motif content version and texture kind, and `captureHosts` (default 8)
+in all; beyond the first, only while memory is not under pressure, the hosts
+together stay within `hostMemoryPercent` (25%) of the memory target, and the
+process tree without its hosts plus every host at full size fits under it. A host counts
 at its renderer's measured working set (`hostMemoryMib`, 130 MiB, until
 measured). Under pressure the idle hosts retire down to one, on every memory
 sample (1 s) while it lasts. A preview's `current` frame reserves through the
