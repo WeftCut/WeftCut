@@ -1,5 +1,5 @@
 import type { NativeImage, OffscreenSharedTexture, WebContents } from 'electron'
-import { decodeFrameMarker, FRAME_MARKER_PIXELS, FRAME_MARKER_ROWS } from '../../shared/motifs/frameMarker.js'
+import { decodeFrameMarker, FRAME_MARKER_READ_PIXELS, FRAME_MARKER_ROWS, frameWitnessed } from '../../shared/motifs/frameMarker.js'
 import type { MotifMarkerReader } from './native.js'
 
 /** A leased capture and the picture size it holds above the marker rows. A
@@ -9,8 +9,9 @@ export type MotifOsrFrame =
   | { kind: 'texture'; texture: OffscreenSharedTexture; width: number; height: number }
   | { kind: 'bitmap'; image: NativeImage; width: number; height: number }
 
-/** A paint carrying a later frame's id arrived first: the compositor never
- * showed this frame and never will. Rendering it again shows it. */
+/** A paint carrying a later frame's id arrived first, or this frame's paint
+ * lacks the page's canvases: the compositor never showed this frame whole and
+ * never will. Rendering it again shows it. */
 export class MotifFrameSkippedError extends Error {
   constructor(id: number) { super(`Motif frame ${id} was skipped by the compositor`) }
 }
@@ -29,13 +30,15 @@ interface Pending {
 }
 
 /** Owns the capture host's paints. Painting stays on; a paint is leased only
- * when its marker row carries an expected frame id
- * (shared/motifs/frameMarker.ts, ADR 0078). That one check covers a new
+ * when its marker row carries an expected frame id and that id's canvas
+ * witness (shared/motifs/frameMarker.ts, ADR 0078). That one check covers a new
  * document, a new size and a GPU process restart alike: their stale or blank
- * first paints carry no id or an old one. Several frames may be expected at
- * once (ADR 0159). Paints arrive in frame order, so a paint carrying a later
- * id retires every earlier expected frame as skipped. Every other paint is
- * released at once. */
+ * first paints carry no id or an old one, and a commit missing the page's
+ * canvases carries no witness. Several frames may be expected at once (ADR
+ * 0159). Paints arrive in frame order, so a paint carrying a later id retires
+ * every earlier expected frame as skipped, and one carrying an id without its
+ * witness retires that frame too: the commit never fills in. Every other paint
+ * is released at once. */
 export class OffscreenFrames {
   private nextId = 1
   /** Expected frames, in id order. */
@@ -103,8 +106,8 @@ export class OffscreenFrames {
       texture.release()
       return
     }
-    this.markers.read(handle.ntHandle, FRAME_MARKER_PIXELS).then(row => {
-      const request = this.arrived(decodeFrameMarker(row))
+    this.markers.read(handle.ntHandle, FRAME_MARKER_READ_PIXELS).then(row => {
+      const request = this.arrived(row)
       if (!request) { texture.release(); return }
       request.resolve({ kind: 'texture', texture, width: request.width, height: request.height })
     }, (error: unknown) => {
@@ -119,24 +122,29 @@ export class OffscreenFrames {
     if (!size || !image || image.isEmpty()) return
     const { width, height } = image.getSize()
     if (width !== size.width || height !== size.height + FRAME_MARKER_ROWS) return
-    const row = image.crop({ x: 0, y: size.height, width: FRAME_MARKER_PIXELS, height: 1 }).toBitmap()
-    const request = this.arrived(decodeFrameMarker(row))
+    const row = image.crop({ x: 0, y: size.height, width: FRAME_MARKER_READ_PIXELS, height: 1 }).toBitmap()
+    const request = this.arrived(row)
     request?.resolve({ kind: 'bitmap', image, width: request.width, height: request.height })
   }
 
-  /** Retires the expected frame a paint carrying `id` shows, and every
-   * earlier one as skipped. Returns the shown frame's request, if expected. */
-  private arrived(id: number | null): Pending | null {
+  /** Retires the expected frame a paint with marker row prefix `row` shows,
+   * and every earlier one as skipped; without its canvas witness, that frame
+   * is skipped too. Returns the shown frame's request, if expected and whole. */
+  private arrived(row: Uint8Array): Pending | null {
+    const id = decodeFrameMarker(row)
     if (id === null) return null
     for (const earlier of [...this.pending.values()]) {
       if (earlier.id >= id) break
       this.settle(earlier, new MotifFrameSkippedError(earlier.id))
     }
     const request = this.pending.get(id) ?? null
-    if (request) {
-      this.settle(request, null)
-      this.lastProgress = performance.now()
+    if (!request) return null
+    this.lastProgress = performance.now()
+    if (!frameWitnessed(row, id)) {
+      this.settle(request, new MotifFrameSkippedError(id))
+      return null
     }
+    this.settle(request, null)
     return request
   }
 

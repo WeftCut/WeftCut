@@ -205,6 +205,26 @@ loads a script-free shell first, registers the runtime, then loads the Motif
 into the shell's frame, and opens a new window for each document
 (`main/motif/captureHost.ts` §open, ADR 0159).
 
+## A new capture window's first commits can omit its canvases
+
+Windows 11 RTX 3050, Electron 44, shared-texture capture host, 2026-11-09; the
+bitmap host on the same machine showed it too. A new offscreen window's first
+commit after the Motif's first frame can carry the frame-id marker row (DOM)
+and DOM content while every canvas, 2D or WebGL, the Motif's and the shell's
+own alike, is absent: fully transparent in 6/12 and 10/16 canvas-only Motifs,
+0 of 16 DOM-only ones, 0 of about 400 later frames. A canvas created on the
+host's second frame is fine, so the miss belongs to the window, not to a
+canvas's first draw. It follows a fast first render step; waiting 300 ms
+after opening removed it (0/36), so it is a readiness race inside the new
+renderer. The commit never fills in: 24 capturer restarts over 5 s re-captured
+the same blank, and only a new render showed the canvases. A frame with
+others in flight usually escapes, because a later frame's commit covers it.
+Rule: a 2D canvas in the shell paints a witness of each frame's id beside the
+marker; across 478 paints the witness and the Motif's canvases were present or
+absent together, so a paint without its witness skips the frame and it renders
+again (`shared/motifs/frameMarker.ts`; e2e
+`motif-capture-first-frame.spec.ts`).
+
 ## Platform facts from the 2026-10 full verification runs
 
 - Playwright's Electron launcher forces `--password-store=basic`, so

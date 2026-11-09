@@ -1,7 +1,7 @@
 // `electron` can't load under Vitest, so `BrowserWindow` is stubbed down to what
 // `buildHost` + `hardenWindow` touch, and the CDP `debugger` to canned replies.
 // The fake paints like an offscreen host: after each render, a paint carrying
-// the frame's id in its marker row, as a shared texture or a bitmap by the
+// the frame's id and canvas witness in its marker row, as a shared texture or a bitmap by the
 // host's kind. Like Electron's, a destroyed window paints no more and throws
 // "Object has been destroyed" from every call into it. Behavior flags let each test script the failure it needs (slow
 // render, withheld paint, wedged ready-probe); `opened`/`renderCalls` count the
@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { PNG } from 'pngjs'
-import { FRAME_MARKER_PIXELS, frameMarkerBits } from '../../shared/motifs/frameMarker'
+import { FRAME_MARKER_PIXELS, FRAME_MARKER_READ_PIXELS, frameMarkerBits, frameWitnessBits } from '../../shared/motifs/frameMarker'
 
 let opened = 0
 let lastHost: EventEmitter | null = null
@@ -37,6 +37,9 @@ let paintDelayMs = 0
 const skippedPaints = new Set<number>()
 /// Lanes whose windows never paint again: a host gone silent.
 const silentLanes = new Set<string>()
+/// Windows built while set paint their first frame without its canvases, as a
+/// new window's first commit can.
+let firstFrameWithoutCanvases = false
 /// When true, the waitReady probe (Runtime.evaluate of the __motifRender
 /// typeof check) never settles — a wedged offscreen renderer.
 let hangReadyProbe = false
@@ -57,20 +60,23 @@ function laneOf(url: string): string | null {
   return m ? `${m[1]}@${decodeURIComponent(m[2]!)}` : null
 }
 
-const markerRow = (id: number | null) => {
-  const rgba = new Uint8Array(FRAME_MARKER_PIXELS * 4)
-  if (id !== null) frameMarkerBits(id).forEach((bit, i) => rgba.set(bit ? [255, 255, 255, 255] : [0, 0, 0, 255], i * 4))
+const markerRow = (id: number | null, canvases = true) => {
+  const rgba = new Uint8Array(FRAME_MARKER_READ_PIXELS * 4)
+  const write = (bits: number[], at: number) => bits.forEach((bit, i) => rgba.set(bit ? [255, 255, 255, 255] : [0, 0, 0, 255], (at + i) * 4))
+  if (id !== null) write(frameMarkerBits(id), 0)
+  if (id !== null && canvases) write(frameWitnessBits(id), FRAME_MARKER_PIXELS)
   return rgba
 }
 
 /// The marker row the fake native reader sees for a paint's handle.
 async function readMarker(handle: Buffer): Promise<Uint8Array> {
-  return markerRow((JSON.parse(handle.toString()) as { id: number | null }).id)
+  const { id, canvases } = JSON.parse(handle.toString()) as { id: number | null; canvases: boolean }
+  return markerRow(id, canvases)
 }
 
 /// A bitmap host's paint: `surface` names the picture, the last row the id.
 /// The picture's PNG is the bytes `PNG` (`UE5H` in base64).
-function bitmap(id: number | null, surface: number, size: { width: number; height: number }) {
+function bitmap(id: number | null, surface: number, size: { width: number; height: number }, canvases = true) {
   const picture = (width: number, height: number): any => ({
     surface, size: { width, height },
     toPNG: () => Buffer.from('PNG'),
@@ -80,7 +86,7 @@ function bitmap(id: number | null, surface: number, size: { width: number; heigh
     isEmpty: () => false,
     getSize: () => ({ ...size }),
     crop: (rect: { x: number; y: number; width: number; height: number }) => rect.height === 1 && rect.y === size.height - 1
-      ? { toBitmap: () => Buffer.from(markerRow(id)) }
+      ? { toBitmap: () => Buffer.from(markerRow(id, canvases)) }
       : picture(rect.width, rect.height),
   }
 }
@@ -96,6 +102,8 @@ vi.mock('electron', () => {
     /// True from a navigation or resize until the next frame paints: the fake then
     /// paints the stale surface first, with no frame id, as a new surface can.
     fresh = true
+    /// Its first frame's paint comes without the canvases (`firstFrameWithoutCanvases`).
+    canvasless = firstFrameWithoutCanvases
     destroyed = false
     silent = false
     /// Throws as Electron does for a call into a destroyed window.
@@ -106,8 +114,10 @@ vi.mock('electron', () => {
       stopPainting: () => {},
       startPainting: () => {},
       paintFrame: (frameId: number, surface: number) => {
+        const canvases = !this.canvasless
         const paints = this.fresh ? [{ id: null, surface: -1 }, { id: frameId, surface }] : [{ id: frameId, surface }]
         this.fresh = false
+        this.canvasless = false
         const size = { ...this.size }
         const emit = () => {
           if (this.destroyed || this.silent || silentLanes.has(laneOf(this.url) ?? '')) return
@@ -115,10 +125,10 @@ vi.mock('electron', () => {
             if (p.id !== null && skippedPaints.delete(p.id)) continue
             if (p.id !== null) events.push(`paint:${p.id}`)
             if (this.texture) this.webContents.emit('paint', { texture: {
-              textureInfo: { codedSize: size, pixelFormat: 'bgra', handle: { ntHandle: Buffer.from(JSON.stringify({ id: p.id, surface: p.surface })) } },
+              textureInfo: { codedSize: size, pixelFormat: 'bgra', handle: { ntHandle: Buffer.from(JSON.stringify({ id: p.id, surface: p.surface, canvases })) } },
               surface: p.surface, release: () => { released++ },
             } }, {}, null)
-            else this.webContents.emit('paint', {}, {}, bitmap(p.id, p.surface, size))
+            else this.webContents.emit('paint', {}, {}, bitmap(p.id, p.surface, size, canvases))
           }
         }
         if (paintDelayMs) setTimeout(emit, paintDelayMs)
@@ -424,6 +434,20 @@ describe('MotifCapturer', () => {
     expect(await read('surface-a', 3)).toEqual({ kind, surface: 3, width: 32, height: 16 })
     expect(await read('surface-b', 4)).toEqual({ kind, surface: 4, width: 32, height: 16 })
     expect(await read('surface-b', 5, 48, 24)).toEqual({ kind, surface: 5, width: 48, height: 24 })
+  })
+
+  it.each([false, true])('a new host\'s first frame painted without its canvases renders again (texture host: %s)', async texture => {
+    capturer.setTextureEnabled(texture)
+    firstFrameWithoutCanvases = true
+    events.length = 0
+    try {
+      const surface = await capturer.captureFrame({ ...args, motifId: 'canvasless', tSec: 2 },
+        async frame => frame.kind === 'texture' ? (frame.texture as unknown as { surface: number }).surface : (frame.image.crop({ x: 0, y: 0, width: frame.width, height: frame.height }) as unknown as { surface: number }).surface,
+        bg).result
+      expect(surface).toBe(2)
+      expect(events.filter(e => e.startsWith('render:'))).toHaveLength(2)
+      expect(capturer.diagnostics().skippedFrames).toBe(1)
+    } finally { firstFrameWithoutCanvases = false }
   })
 
   it('a frame whose surface exceeds the texture limit gets a bitmap host; a smaller one the texture host again', async () => {

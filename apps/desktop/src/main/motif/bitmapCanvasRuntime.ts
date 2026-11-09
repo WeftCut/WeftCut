@@ -1,6 +1,5 @@
 /** Electron's bitmap OSR backend can omit an accelerated 2D canvas layer after
- * navigation while the DOM canvas reports success, and the frame id marker
- * cannot see a missing layer. Keep 2D backing stores on CPU on the bitmap
+ * navigation while the DOM canvas reports success. Keep 2D backing stores on CPU on the bitmap
  * host; the shared-texture host retains accelerated canvases. Install before
  * authored scripts create their contexts. WebGL and bitmaprenderer contexts
  * keep their original options and backend. (The macOS empty-first-frame case

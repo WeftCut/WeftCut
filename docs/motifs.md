@@ -124,7 +124,9 @@ drain, it closes, and only then does the new one open. With one host, every
 switch to another Motif replaces it.
 
 - **Output.** Every capture is the paint whose marker row carries the frame's
-  id (`OffscreenFrames`). Windows: OSR shared textures, copied into the Motif
+  id and its canvas witness (`OffscreenFrames`, `shared/motifs/frameMarker.ts`):
+  a new window's first commit can show the id without any canvas, and that
+  frame renders again. Windows: OSR shared textures, copied into the Motif
   transport pool
   ([ADR 0078](adr/0078-motifs-cache-pixels-and-transfer-persistent-textures.md)).
   Elsewhere: the paint's bitmap, straightened natively and sent as RGBA
@@ -189,8 +191,8 @@ switch to another Motif replaces it.
   still latch at once. A thrown script, a frame that never becomes ready and a
   latched lane reject with code `content`.
 - **Bitmap host canvases** are forced CPU-backed (`willReadFrequently`) by
-  `bitmapCanvasRuntime.ts` (ADR 0078): the marker cannot see a missing
-  accelerated canvas layer.
+  `bitmapCanvasRuntime.ts` (ADR 0078): Electron's bitmap backend omitted an
+  accelerated 2D layer after navigation.
 
 ## Frame cache
 

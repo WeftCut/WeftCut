@@ -1,26 +1,33 @@
 import { EventEmitter } from 'node:events'
 import type { WebContents } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
-import { FRAME_MARKER_PIXELS, frameMarkerBits } from '../../shared/motifs/frameMarker'
+import { FRAME_MARKER_PIXELS, FRAME_MARKER_READ_PIXELS, frameMarkerBits, frameWitnessBits } from '../../shared/motifs/frameMarker'
 import { MotifFrameSkippedError, OffscreenFrames } from './offscreenFrames'
 
 /// A paint whose marker row carries `id` (null: no marker, as a blank or
-/// unrelated surface). The fake handle is the id itself, for the fake reader.
-const texture = (id: number | null, w = 128, h = 65) => ({
+/// unrelated surface) and, unless `canvases` is false, the id's canvas
+/// witness. The fake handle encodes both, for the fake reader.
+const texture = (id: number | null, w = 128, h = 65, canvases = true) => ({
   release: vi.fn(),
-  textureInfo: { codedSize: { width: w, height: h }, handle: { ntHandle: Buffer.from(JSON.stringify(id)) } },
+  textureInfo: { codedSize: { width: w, height: h }, handle: { ntHandle: Buffer.from(JSON.stringify([id, canvases])) } },
 })
-const markerRow = (id: number | null) => {
-  const rgba = new Uint8Array(FRAME_MARKER_PIXELS * 4)
-  if (id !== null) frameMarkerBits(id).forEach((bit, i) => rgba.set(bit ? [255, 255, 255, 255] : [0, 0, 0, 255], i * 4))
+const markerRow = (id: number | null, canvases = true) => {
+  const rgba = new Uint8Array(FRAME_MARKER_READ_PIXELS * 4)
+  const write = (bits: number[], at: number) => bits.forEach((bit, i) => rgba.set(bit ? [255, 255, 255, 255] : [0, 0, 0, 255], (at + i) * 4))
+  if (id !== null) write(frameMarkerBits(id), 0)
+  if (id !== null && canvases) write(frameWitnessBits(id), FRAME_MARKER_PIXELS)
   return rgba
 }
-const readMarker = vi.fn(async (handle: Buffer) => markerRow(JSON.parse(handle.toString()) as number | null))
+const readMarker = vi.fn(async (handle: Buffer, pixels: number) => {
+  expect(pixels).toBe(FRAME_MARKER_READ_PIXELS)
+  const [id, canvases] = JSON.parse(handle.toString()) as [number | null, boolean]
+  return markerRow(id, canvases)
+})
 /// A bitmap host's paint: its last row carries `id`.
-const bitmap = (id: number | null, w = 128, h = 65) => ({
+const bitmap = (id: number | null, w = 128, h = 65, canvases = true) => ({
   isEmpty: () => false,
   getSize: () => ({ width: w, height: h }),
-  crop: (rect: { y: number }) => ({ toBitmap: () => Buffer.from(rect.y === h - 1 ? markerRow(id) : new Uint8Array(FRAME_MARKER_PIXELS * 4)) }),
+  crop: (rect: { y: number }) => ({ toBitmap: () => Buffer.from(rect.y === h - 1 ? markerRow(id, canvases) : new Uint8Array(FRAME_MARKER_READ_PIXELS * 4)) }),
 })
 const settled = () => new Promise(resolve => setTimeout(resolve, 0))
 
@@ -95,6 +102,22 @@ describe('OffscreenFrames', () => {
     paint(lateB) // paints arrive in frame order; a stray one is released
     await settled()
     expect(lateB.release).toHaveBeenCalledOnce()
+  })
+
+  it('skips a frame whose paint carries its id without its canvases, so it renders again', async () => {
+    const { frames, paint } = setup()
+    const [a, b] = [frames.expect(128, 64), frames.expect(128, 64)]
+    const partial = texture(a.id, 128, 65, false)
+    paint(partial)
+    await expect(a.frame).rejects.toBeInstanceOf(MotifFrameSkippedError)
+    expect(partial.release).toHaveBeenCalledOnce()
+    const whole = texture(b.id)
+    paint(whole) // the next frame's commit has them
+    expect(await b.frame).toMatchObject({ texture: whole })
+    const bitmapHost = setup(1000, null)
+    const c = bitmapHost.frames.expect(128, 64)
+    bitmapHost.paintBitmap(bitmap(c.id, 128, 65, false))
+    await expect(c.frame).rejects.toBeInstanceOf(MotifFrameSkippedError)
   })
 
   it('leases a bitmap host\'s paint by the id in its last row', async () => {

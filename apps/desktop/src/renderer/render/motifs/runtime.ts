@@ -1,4 +1,4 @@
-import { CAPTURE_HOST_FILE, FRAME_MARKER_PIXELS, FRAME_MARKER_ROWS, frameMarkerBits } from "../../../shared/motifs/frameMarker";
+import { CAPTURE_HOST_FILE, FRAME_MARKER_PIXELS, FRAME_MARKER_ROWS, FRAME_WITNESS_PIXELS, frameMarkerBits, frameWitnessBits } from "../../../shared/motifs/frameMarker";
 import { MOTIF_DEADLINES } from "../../../shared/motifs/tuning";
 
 /** Testable core: installs clock takeover onto an arbitrary global-like object. */
@@ -40,7 +40,8 @@ export function createMotifRuntime(g: any = {}) {
  * `motif_register_runtime`. It plays one of two roles:
  * - In the capture host shell (`CAPTURE_HOST_FILE`, the top frame), it forwards
  *   `__motifSetup`/`__motifRender` to the framed Motif and writes the frame id
- *   into the marker row below it (`shared/motifs/frameMarker.ts`).
+ *   and its canvas witness into the marker row below it
+ *   (`shared/motifs/frameMarker.ts`).
  * - In the Motif's own frame, it installs the clock takeover, exposes
  *   motif.define and the `__motifRender(t, props, meta)` entry point.
  *
@@ -54,8 +55,9 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
 (function () {
   if (window.top === window && window.location && window.location.pathname.endsWith(${JSON.stringify('/' + CAPTURE_HOST_FILE)})) {
     var markerBits = (${frameMarkerBits.toString()});
+    var witnessBits = (${frameWitnessBits.toString()});
     var motifWindow = function () { var f = document.querySelector('iframe'); return f && f.contentWindow; };
-    var marker = null;
+    var marker = null, witness = null;
     var mark = function (id) {
       if (!marker) {
         marker = document.createElement('div');
@@ -69,6 +71,18 @@ export const MOTIF_RUNTIME_SOURCE: string = String.raw`
       }
       var bits = markerBits(id);
       for (var j = 0; j < bits.length; j++) marker.children[j].style.background = bits[j] ? '#fff' : '#000';
+      if (!witness) {
+        var canvas = document.createElement('canvas');
+        canvas.width = ${FRAME_WITNESS_PIXELS}; canvas.height = ${FRAME_MARKER_ROWS};
+        canvas.style.cssText = 'position:fixed;left:${FRAME_MARKER_PIXELS}px;bottom:0;display:block;width:${FRAME_WITNESS_PIXELS}px;height:${FRAME_MARKER_ROWS}px;pointer-events:none';
+        document.body.appendChild(canvas);
+        witness = canvas.getContext('2d');
+      }
+      var wbits = witnessBits(id);
+      for (var w = 0; w < wbits.length; w++) {
+        witness.fillStyle = wbits[w] ? '#fff' : '#000';
+        witness.fillRect(w, 0, 1, ${FRAME_MARKER_ROWS});
+      }
     };
     window.__motifHostReady = function (motifId) {
       var w = motifWindow();

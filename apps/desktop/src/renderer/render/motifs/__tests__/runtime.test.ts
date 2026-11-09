@@ -73,7 +73,15 @@ describe('Motif setup decoder workers', () => {
 function hostRuntime(pathname = '/' + CAPTURE_HOST_FILE) {
   const motif = pageRuntime().window;
   motif.document.readyState = 'complete';
-  const el = () => ({ style: {} as Record<string, string>, children: [] as any[], appendChild(c: unknown) { this.children.push(c); } });
+  // A canvas records its fills per pixel column, for the witness.
+  const el = (tag?: string) => {
+    const node: any = { style: {} as Record<string, string>, children: [] as any[], appendChild(c: unknown) { this.children.push(c); } };
+    if (tag === 'canvas') {
+      node.columns = [] as string[];
+      node.getContext = () => ({ fillStyle: '', fillRect(x: number) { node.columns[x] = this.fillStyle; } });
+    }
+    return node;
+  };
   const body = el();
   const document = { readyState: 'complete', body, createElement: el, querySelector: () => ({ contentWindow: motif }) };
   // The host's rendering steps run when the test says so.
@@ -89,25 +97,37 @@ function hostRuntime(pathname = '/' + CAPTURE_HOST_FILE) {
     pixels.forEach((px: { style: { background: string } }, i: number) => rgba.set(px.style.background === '#fff' ? [255, 255, 255, 255] : [0, 0, 0, 255], i * 4));
     return pixels.length ? decodeFrameMarker(rgba) : null;
   };
-  return { window, motif, markerRow, renderStep };
+  /// The id's low byte as the witness canvas painted it, or null before any.
+  const witness = () => {
+    const columns: string[] | undefined = body.children[1]?.columns;
+    return columns?.length ? columns.reduce((byte, c) => (byte << 1) | (c === '#fff' ? 1 : 0), 0) : null;
+  };
+  return { window, motif, markerRow, witness, renderStep };
 }
 
 describe('capture host shell', () => {
   it('forwards a frame to the Motif and marks its id only once the frame has run', async () => {
-    const { window, motif, markerRow, renderStep } = hostRuntime();
+    const { window, motif, markerRow, witness, renderStep } = hostRuntime();
     let release!: () => void;
     const frame = vi.fn();
     motif.motif.define({ setup: () => new Promise<void>(resolve => { release = resolve; }), frame });
     const rendered = window.__motifRender(0.5, { a: 1 }, { frameId: 41 });
     await Promise.resolve();
     expect(markerRow()).toBeNull();
+    expect(witness()).toBeNull();
     release()
     await vi.waitFor(() => expect(markerRow()).toBe(41));
+    expect(witness()).toBe(41);
     expect(frame).toHaveBeenCalledWith(0.5, expect.anything());
     renderStep(); await rendered;
     const next = window.__motifRender(1, { a: 1 }, { frameId: 42 });
     await vi.waitFor(() => expect(markerRow()).toBe(42));
+    expect(witness()).toBe(42);
     renderStep(); await next;
+    const third = window.__motifRender(1, { a: 1 }, { frameId: 0x1ff });
+    await vi.waitFor(() => expect(markerRow()).toBe(0x1ff));
+    expect(witness()).toBe(0xff); // the id's low byte
+    renderStep(); await third;
   });
 
   it('returns only after the rendering step that commits the frame, or a bounded wait', async () => {

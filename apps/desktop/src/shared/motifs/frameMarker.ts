@@ -1,9 +1,11 @@
 /// The capture host's frame identity (ADR 0078). The host page is a shell that
 /// frames the Motif at the capture size and keeps one extra pixel row below it.
 /// After each frame's seek, in the same task, the shell writes the frame's id
-/// into that row; the main process takes the first shared texture whose row
-/// carries the id. A texture showing the id was drawn from that seek's commit
-/// or a later one, so no settle wait or surface fence is involved.
+/// into that row, and a canvas beside it paints the id's witness; the main
+/// process takes the first paint whose row carries both. A paint showing the id
+/// was drawn from that seek's commit or a later one, and the witness proves the
+/// commit holds the page's canvases, so no settle wait or surface fence is
+/// involved.
 
 /// Served by `motif://` beside each Motif's `index.html`, which it frames.
 export const CAPTURE_HOST_FILE = '.weftcut-capture-host.html'
@@ -14,6 +16,17 @@ export const FRAME_MARKER_ROWS = 1
 /// Pixels the id occupies at the start of the marker row: an 8-bit magic, the
 /// 32-bit id and an 8-bit check, one bit per opaque black or white pixel.
 export const FRAME_MARKER_PIXELS = 48
+
+/// Pixels after the id that a canvas in the capture host paints with the id's
+/// low byte, one bit per opaque black or white pixel. The id row is DOM; a new
+/// window's first commits can carry it while every canvas of the page, the
+/// Motif's included, is still missing, and that commit never fills in
+/// (docs/notes/electron-chromium-behavior.md#a-new-capture-windows-first-commits-can-omit-its-canvases).
+/// A commit that shows the witness for its id shows the page's canvases.
+export const FRAME_WITNESS_PIXELS = 8
+
+/// The marker row prefix main reads: the id, then the canvas witness.
+export const FRAME_MARKER_READ_PIXELS = FRAME_MARKER_PIXELS + FRAME_WITNESS_PIXELS
 
 /// The id's pixel bits, most significant first. Embedded into the page runtime
 /// by `toString()`, so it must stay self-contained: no outer names or imports.
@@ -43,4 +56,26 @@ export function decodeFrameMarker(rgba: Uint8Array): number | null {
   }
   if (bytes[0] !== 0xa5 || (0x5a ^ bytes[1]! ^ bytes[2]! ^ bytes[3]! ^ bytes[4]!) !== bytes[5]) return null
   return ((bytes[1]! << 24) | (bytes[2]! << 16) | (bytes[3]! << 8) | bytes[4]!) >>> 0
+}
+
+/// The witness's pixel bits for `id`, most significant first. Embedded into the
+/// page runtime by `toString()`, like `frameMarkerBits`.
+export function frameWitnessBits(id: number): number[] {
+  const bits: number[] = []
+  for (let bit = 7; bit >= 0; bit--) bits.push((id >> bit) & 1)
+  return bits
+}
+
+/// Whether the marker row prefix `rgba` (FRAME_MARKER_READ_PIXELS, any channel
+/// order) carries the canvas witness of `id`.
+export function frameWitnessed(rgba: Uint8Array, id: number): boolean {
+  if (rgba.length < FRAME_MARKER_READ_PIXELS * 4) return false
+  const bits = frameWitnessBits(id)
+  for (let i = 0; i < FRAME_WITNESS_PIXELS; i++) {
+    const o = (FRAME_MARKER_PIXELS + i) * 4
+    if (rgba[o + 3] !== 255) return false
+    const on = rgba[o]! > 127
+    if ((rgba[o + 1]! > 127) !== on || (rgba[o + 2]! > 127) !== on || on !== (bits[i] === 1)) return false
+  }
+  return true
 }

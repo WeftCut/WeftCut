@@ -65,8 +65,12 @@ Only pixels drawn by the page travel with the commit that drew them
   a same-origin shell that frames the Motif at the capture size and keeps one
   pixel row below it (`shared/motifs/frameMarker.ts`). The
   Motif sees only its own size. After the frame's seek, with no rendering step between, the shell
-  writes a fresh 32-bit id with a magic and a check byte into that row.
-  Painting stays on; `OffscreenFrames` reads the row of each paint (a
+  writes a fresh 32-bit id with a magic and a check byte into that row, and a
+  2D canvas beside it paints the id's low byte (the canvas witness). A new
+  window's first commits can carry the id while every canvas of the page is
+  missing, and such a commit never fills in, so a paint carrying the id
+  without its witness skips the frame and it renders again
+  (docs/notes/electron-chromium-behavior.md). Painting stays on; `OffscreenFrames` reads the row of each paint (a
   texture's on a native worker, a bitmap's in main) and leases the first paint
   carrying the id, releasing the rest.
   Copies and readbacks take the rows above it. No settle wait, no
