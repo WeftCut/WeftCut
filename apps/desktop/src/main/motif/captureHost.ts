@@ -98,6 +98,11 @@ export class CaptureHost implements PooledHost {
 
   get key(): HostKey { return this.currentKey }
 
+  /** The window's renderer process, null once it is gone. */
+  get pid(): number | null {
+    try { return this.win.webContents.getOSProcessId() || null } catch { return null }
+  }
+
   /// Builds the host of one Motif. The shell page, which runs no scripts of
   /// its own, is the window's only top-level navigation: a bitmap host paints
   /// real alpha only for a window's first document

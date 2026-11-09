@@ -14,6 +14,9 @@ const resources = vi.hoisted(() => ({
   /** Release calls, double ones included. */
   released: 0,
   refuse: false,
+  /** Floor claims taken (`reserveFloorResources`); refused while `refuseFloor`. */
+  floors: 0,
+  refuseFloor: false,
 }));
 vi.mock('../resources', async original => ({
   ...await original<typeof import('../resources')>(),
@@ -23,8 +26,18 @@ vi.mock('../resources', async original => ({
     resources.reserved.push(finalizationId);
     return () => { resources.released++; };
   },
+  // The floor admits what an ordinary claim refuses, one at a time.
+  reserveFloorResources: () => {
+    if (resources.refuseFloor) throw new Error('resource-capacity-exceeded: synthetic');
+    resources.reserved.push(undefined);
+    resources.floors++;
+    return () => { resources.released++; };
+  },
 }));
-afterEach(() => { resources.pause = undefined; resources.reserved.length = 0; resources.released = 0; resources.refuse = false; });
+afterEach(() => {
+  resources.pause = undefined; resources.reserved.length = 0; resources.released = 0; resources.refuse = false;
+  resources.floors = 0; resources.refuseFloor = false;
+});
 
 const address = { hash: 'a'.repeat(32), frame: 3 };
 const args = { motifId: 'synthetic', tSec: 0.1, propsJson: '{}', width: 2, height: 2, contentHash: 'v1' };
@@ -571,7 +584,7 @@ describe('MotifFrameJobs: failures', () => {
   });
 
   it('a capacity refusal at dispatch fails every request `capacity` and releases nothing', async () => {
-    const h = harness(); resources.refuse = true;
+    const h = harness(); resources.refuse = true; resources.refuseFloor = true;
     const display = h.display(1, { afterMiss: true }), bake = h.persist();
     await h.queued(1);
     expect(h.captures[0]!.start()).toBe(false);
@@ -580,6 +593,23 @@ describe('MotifFrameJobs: failures', () => {
     expect(h.session.capture).toHaveBeenCalledOnce();
     expect(h.session.useBitmaps).not.toHaveBeenCalled();
     expect(resources.released).toBe(0);
+  });
+
+  it('a preview\'s current frame takes the floor that a full ledger refuses others; an export\'s or a bake\'s does not', async () => {
+    const h = harness(); resources.refuse = true;
+    const current = h.display(1);
+    await h.queued(1);
+    await h.captures[0]!.lease();
+    await expect(current.result).resolves.toMatchObject({ kind: 'texture' });
+    expect(resources.floors).toBe(1);
+    const exported = h.display(2, { finalizationId: 3, at: { ...address, frame: 4 } });
+    const bake = h.persist({ priority: 'background' });
+    await h.queued(3);
+    expect(h.captures[1]!.start()).toBe(false);
+    expect(h.captures[2]!.start()).toBe(false);
+    await expect(exported.result).rejects.toMatchObject({ code: 'capacity' });
+    await expect(bake.result).rejects.toMatchObject({ code: 'capacity' });
+    expect(resources.floors).toBe(1);
   });
 
   it('reserves when the capture reaches its host, not when it is queued', async () => {

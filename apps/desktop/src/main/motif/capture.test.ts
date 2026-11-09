@@ -62,6 +62,26 @@ let released = 0
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+/// The app's memory as the capturer reads it: the process tree's last sample,
+/// pressure, and each renderer's working set by pid (KiB, as Electron reports).
+const memory = vi.hoisted(() => ({
+  processMib: null as number | null,
+  pressured: false,
+  listeners: new Set<() => void>(),
+  workingSetKib: new Map<number, number>(),
+}))
+vi.mock('../resources', async original => ({
+  ...await original<typeof import('../resources')>(),
+  backgroundResourcePause: () => memory.pressured ? 'memory' : undefined,
+  processMemoryMiB: () => memory.processMib,
+  onBackgroundResourceChange: (notify: () => void) => { memory.listeners.add(notify); return () => memory.listeners.delete(notify) },
+}))
+/// Pressure begins or ends; the capturer hears it as resourceIpc tells it.
+function setPressure(pressured: boolean): void {
+  memory.pressured = pressured
+  for (const notify of memory.listeners) notify()
+}
+
 /// `${motifId}@${contentHash}` of the Motif page loaded at `url`.
 function laneOf(url: string): string | null {
   const m = /motif:\/\/([^/]+)\/(?:\.revisions\/[0-9a-f]+\/)?index\.html\?v=(.*)$/.exec(url)
@@ -116,10 +136,12 @@ vi.mock('electron', () => {
     canvasless = firstFrameWithoutCanvases
     destroyed = false
     silent = false
+    pid = opened + 1000
     /// Throws as Electron does for a call into a destroyed window.
     alive = (): void => { if (this.destroyed) throw new TypeError('Object has been destroyed') }
     webContents = Object.assign(new EventEmitter(), {
       setZoomFactor: () => {},
+      getOSProcessId: () => this.pid,
       setFrameRate: () => { this.alive() },
       stopPainting: () => {},
       startPainting: () => {},
@@ -211,7 +233,8 @@ vi.mock('electron', () => {
     setContentSize = (width: number, height: number): void => { this.alive(); this.size = contentSize = { width, height }; this.fresh = true }
     destroy = (): void => { this.alive(); this.destroyed = true }
   }
-  return { BrowserWindow: FakeBrowserWindow, nativeImage: { createFromBuffer: () => { throw new Error('not in these tests') } }, shell: { openExternal: async () => {} } }
+  const app = { getAppMetrics: () => [...memory.workingSetKib].map(([pid, workingSetSize]) => ({ pid, memory: { workingSetSize } })) }
+  return { app, BrowserWindow: FakeBrowserWindow, nativeImage: { createFromBuffer: () => { throw new Error('not in these tests') } }, shell: { openExternal: async () => {} } }
 })
 
 const { MotifCapturer } = await import('./capture')
@@ -236,8 +259,14 @@ function newCapturer(deps: Partial<MotifCapturerDeps> = {}) {
 /** For tests whose subject is the only host being replaced. */
 const ONE_HOST = { ...MOTIF_TUNING_DEFAULTS, captureHosts: 1 }
 let capturer = newCapturer()
-beforeEach(() => { capturer = newCapturer() })
+beforeEach(() => {
+  memory.processMib = null; memory.pressured = false; memory.workingSetKib.clear()
+  capturer = newCapturer()
+})
 afterEach(() => { capturer.shutdown() })
+
+/// The renderer pid of the window built last.
+const lastWindowPid = (): number => (lastWindow as unknown as { pid: number }).pid
 
 /// The third (`meta`) argument of the recorded `__motifRender(...)` call. The
 /// expression is `window.__motifRender(<tSec>, <propsJson>, <metaJson>)` with
@@ -747,6 +776,61 @@ describe('MotifCapturer', () => {
       hangFrame = false
       vi.useRealTimers()
     }
+  })
+
+  it('a second host opens only while the process tree has room for one more under the memory target', async () => {
+    const { resourceAllocation } = await import('../../shared/resource-policy')
+    capturer = newCapturer({ tuning: { ...MOTIF_TUNING_DEFAULTS, captureHosts: 4 } })
+    const target = resourceAllocation().memory_mib
+    await capturer.capturePng({ ...args, motifId: 'room-a' }, bg)
+    // The first host is measured at 200 MiB; with it, one more of those does
+    // not fit.
+    memory.workingSetKib.set(lastWindowPid(), 200 * 1024)
+    memory.processMib = target - 150
+    await capturer.capturePng({ ...args, motifId: 'room-b' }, bg)
+    expect(capturer.diagnostics()).toMatchObject({ hostBuilds: 2, hostEvictions: 1 })
+    expect(capturer.diagnostics().hosts).toEqual([expect.objectContaining({ motifId: 'room-b' })])
+    // Room for the open host and one more, at the default size (none is
+    // measured now).
+    memory.processMib = target - 2 * MOTIF_TUNING_DEFAULTS.hostMemoryMib
+    await capturer.capturePng({ ...args, motifId: 'room-c' }, bg)
+    expect(capturer.diagnostics()).toMatchObject({ hostBuilds: 3, hostEvictions: 1 })
+    // Under pressure, none.
+    memory.processMib = 0
+    memory.pressured = true
+    await capturer.capturePng({ ...args, motifId: 'room-d' }, bg)
+    expect(capturer.diagnostics()).toMatchObject({ hostBuilds: 4, hostEvictions: 2 })
+  })
+
+  it('every open host counts at full size, however little it measures yet', async () => {
+    const { resourceAllocation } = await import('../../shared/resource-policy')
+    capturer = newCapturer({ tuning: { ...MOTIF_TUNING_DEFAULTS, captureHosts: 8 } })
+    const target = resourceAllocation().memory_mib
+    const full = MOTIF_TUNING_DEFAULTS.hostMemoryMib
+    // The app without its hosts takes all but three hosts' room; the sample
+    // never moves, and each new host reads 10 MiB, as a fresh renderer does.
+    memory.processMib = target - 3 * full
+    for (const motifId of ['burst-a', 'burst-b', 'burst-c', 'burst-d', 'burst-e']) {
+      await capturer.capturePng({ ...args, motifId }, bg)
+      memory.workingSetKib.set(lastWindowPid(), 10 * 1024)
+      memory.processMib += 10
+    }
+    expect(capturer.diagnostics().hosts).toHaveLength(3)
+  })
+
+  it('under memory pressure the idle hosts beyond one retire, and report their memory', async () => {
+    capturer = newCapturer({ tuning: { ...MOTIF_TUNING_DEFAULTS, captureHosts: 4 } })
+    for (const motifId of ['shed-a', 'shed-b', 'shed-c']) {
+      await capturer.capturePng({ ...args, motifId }, bg)
+      memory.workingSetKib.set(lastWindowPid(), 100 * 1024)
+    }
+    expect(capturer.diagnostics().hosts.map(h => h.memoryMib)).toEqual([100, 100, 100])
+    setPressure(true)
+    expect(capturer.diagnostics()).toMatchObject({ hostSheds: 2 })
+    expect(capturer.diagnostics().hosts).toEqual([expect.objectContaining({ motifId: 'shed-c' })])
+    // The one left keeps capturing.
+    await capturer.capturePng({ ...args, motifId: 'shed-c', tSec: 1 }, bg)
+    expect(capturer.diagnostics()).toMatchObject({ completed: 4, hostBuilds: 3 })
   })
 
   it('reports page reuse independently of total captures and allows diagnostics reset', async () => {

@@ -25,6 +25,10 @@ not CPU percentages.
   retention within an app allowance divided across windows.
 - Measured process-tree memory governs pressure independently of estimated
   reservations; pressure reduces retention and closes admission with hysteresis.
+  One claim at a time, the work on screen (a Motif's current preview frame),
+  may take the floor: it is never refused for budget or pressure, only when
+  the machine itself is critical, under 256 MiB available
+  (docs/notes/motif-host-memory-2026-11-10.md).
 - Leases survive until teardown/final release. Lowering a target never frees a
   live resource or cancels an export; new work waits or fails explicitly.
 - Export's renderer/WebCodecs working-memory claims retry capacity refusals for

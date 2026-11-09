@@ -5,7 +5,7 @@ import type { FrameWriter, MotifFrameStore } from './frameStore'
 import type { FrameRead, MotifFrameWriteQueue, QueuedWrite } from './frameWriteQueue'
 import type { MotifCacheAddress, MotifFramePriority, StoredMotifFrame } from '../../shared/motifs/frameTransport'
 import { asMotifCapacity, MotifError, motifErrorCode, motifSuperseded } from '../../shared/motifs/errors'
-import { backgroundResourcePause, reserveResources } from '../resources'
+import { backgroundResourcePause, reserveFloorResources, reserveResources } from '../resources'
 
 type TextureOsrFrame = Extract<MotifOsrFrame, { kind: 'texture' }>
 type BitmapOsrFrame = Extract<MotifOsrFrame, { kind: 'bitmap' }>
@@ -118,6 +118,11 @@ const storedFrame = (): StoredMotifFrame => ({ kind: 'stored', persisted: true }
 /** `reserveResources`, its refusal coded `capacity`. */
 function reserve(...args: Parameters<typeof reserveResources>): () => void {
   try { return reserveResources(...args) } catch (error) { throw asMotifCapacity(error) }
+}
+
+/** `reserveFloorResources`, its refusal coded `capacity`. */
+function reserveFloor(memoryMiB: number): () => void {
+  try { return reserveFloorResources(memoryMiB) } catch (error) { throw asMotifCapacity(error) }
 }
 
 /** Only a `device` failure, or an uncoded one, which comes from the
@@ -295,11 +300,15 @@ export class MotifFrameJobs {
   /** When the job's capture reaches its host (the queue has just asked
    * `wanted`), on every attempt: its resources are reserved, once per job,
    * borrowed from the plan of the first export in it now; an export joining
-   * later is not charged (ADR 0160). A refusal throws `capacity`. */
+   * later is not charged (ADR 0160). A preview's `current` frame may take the
+   * floor, which memory pressure and a full ledger do not refuse, so the
+   * picture on screen never waits on other work's memory. A refusal throws
+   * `capacity`. */
   private dispatched(job: Job): void {
     if (job.release) return
     const finalizationId = [...job.members].find(member => live(member) && member.display?.finalizationId !== undefined)?.display?.finalizationId
-    job.release = reserve(0, 16 + job.args.width * job.args.height * 16 / 1048576, finalizationId)
+    const mib = 16 + job.args.width * job.args.height * 16 / 1048576
+    job.release = finalizationId === undefined && this.priority(job) === 'current' ? reserveFloor(mib) : reserve(0, mib, finalizationId)
   }
 
   /** Captures until a lease takes the job. A failure of the shared-texture

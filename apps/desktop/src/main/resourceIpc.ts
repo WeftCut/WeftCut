@@ -4,7 +4,7 @@ import { tryExportPlan, waitForResourceChange, releaseResourceId, decoderResourc
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { resourceAllocation } from '../shared/resource-policy';
 import type { ResourceStatus } from '../shared/resource-policy';
-import { reserveResources, createMemoryPressure, MEMORY_SAMPLE_TTL_MS, resourceSnapshot, setResourceActivity, processTreeMemory, type ResourceMemorySample } from './resources';
+import { reserveResources, createMemoryPressure, MEMORY_SAMPLE_TTL_MS, resourceSnapshot, setResourceActivity, processTreeMemory, noteProcessMemory, type ResourceMemorySample } from './resources';
 
 const finalizationOwners = new Map<number, Map<string, number>>();
 /** Only main translates an owner-scoped token to a native reservation. */
@@ -106,6 +106,7 @@ export function installResourceIpc(onDiagnostic?: (snapshot: { status: ResourceS
   const publishMemory = (memory?: ResourceMemorySample) => {
     const constrained = pressure.update(memory?.processMib ?? null, resourceAllocation().memory_mib, memory?.availableMib);
     const readings = pressure.readings();
+    noteProcessMemory(readings.processMib);
     status = { ...resourceSnapshot(), memory_mib: readings.processMib, available_memory_mib: readings.availableMib ?? undefined,
       memory_scope: readings.processMib === null ? 'unavailable' : 'process-tree', pressure: constrained ? 'constrained' : 'normal' };
     if (Date.now() - lastDiagnostic >= 10_000) {

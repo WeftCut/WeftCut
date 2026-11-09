@@ -49,6 +49,7 @@ function newPool(capacity: number, affinityMs = 0) {
   const pool = new HostPool<FakeHost>({
     capacity,
     affinityMs,
+    mayGrow: () => memory.room,
     hostKeyOf: a => ({ motifId: a.motifId, contentHash: a.contentHash, texture: mode.texture }),
     open: async (key, a) => {
       events.push(`open:${key.motifId}`)
@@ -75,8 +76,10 @@ function newPool(capacity: number, affinityMs = 0) {
 
 /// The next swaps fail: the host's frame does not load the version.
 let swapFails = false
+/// Whether memory has room for another host.
+const memory = { room: true }
 
-beforeEach(() => { events = []; evictions = 0; swapFails = false })
+beforeEach(() => { events = []; evictions = 0; swapFails = false; memory.room = true })
 
 /// Opens and releases `a`'s host at v1.
 async function lease1(pool: HostPool<FakeHost>, key: (m: string, h?: string) => string): Promise<FakeHost> {
@@ -277,6 +280,37 @@ describe('HostPool', () => {
     expect(pool.state(key('a', 'v2'))).toBe('absent')
     expect(pool.state(key('a', 'v1'))).toBe('ready')
     expect(pool.diagnostics()).toHaveLength(1)
+  })
+
+  it('without memory for another host, the first still opens and the others replace the least recently used', async () => {
+    const { pool, opened, lease } = newPool(4)
+    memory.room = false
+    const a = await lease('a'); a.release()
+    expect(opened).toHaveLength(1)
+    expect(pool.canOpen()).toBe(true) // by replacing `a`
+    const b = await lease('b'); b.release()
+    expect(a.host.retired).toBe(true)
+    expect(evictions).toBe(1)
+    memory.room = true
+    ;(await lease('c')).release()
+    expect(b.host.retired).toBe(false)
+    expect(pool.diagnostics().map(h => h.motifId).sort()).toEqual(['b', 'c'])
+  })
+
+  it('shed retires the idle hosts without frames in flight, least recently used first, down to one', async () => {
+    const { pool, lease } = newPool(4)
+    const a = await lease('a'); a.release()
+    const b = await lease('b'); b.release()
+    const c = await lease('c'); c.release()
+    const d = await lease('d')
+    c.host.inFlight()
+    expect(pool.shed()).toBe(2) // a and b; c paints, d renders
+    expect([a, b, c, d].map(l => l.host.retired)).toEqual([true, true, false, false])
+    d.release()
+    c.host.paint()
+    expect(pool.shed()).toBe(1) // c; d, used last, stays
+    expect(pool.diagnostics().map(h => h.motifId)).toEqual(['d'])
+    expect(pool.shed()).toBe(0)
   })
 
   it('a host that retires itself leaves its slot; the other hosts and their frames stay', async () => {

@@ -17,6 +17,11 @@ vi.mock('../resources', async original => ({
     if (pressure.refuse) throw new Error('resource-capacity-exceeded: synthetic');
     return () => {};
   },
+  // `refuse` stands for host-critical memory here, which the floor refuses too.
+  reserveFloorResources: () => {
+    if (pressure.refuse) throw new Error('resource-capacity-exceeded: synthetic');
+    return () => {};
+  },
 }));
 
 const owner = { id: 12 } as WebContents;

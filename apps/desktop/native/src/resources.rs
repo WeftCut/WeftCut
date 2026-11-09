@@ -115,6 +115,8 @@ struct State {
     plans: HashMap<u32, export_plan::ExportPlanState>,
     /// What each lease is for. Pruned of released leases on every insert.
     holders: HashMap<u32, Holder>,
+    /// The lease admitted as the floor (`reserve_floor`), while it is live.
+    floor: Option<u32>,
     revision: u32,
 }
 #[derive(Default)]
@@ -155,6 +157,7 @@ impl Governor {
                 production: HashMap::new(),
                 plans: HashMap::new(),
                 holders: HashMap::new(),
+                floor: None,
                 revision: 0,
             }),
             changed: Notify::new(),
@@ -226,6 +229,23 @@ impl Governor {
             s.finalizations.get_mut(&tail).unwrap().production = Some(id);
             s.production.insert(id, tail);
         }
+        Some(id)
+    }
+    /// A claim the work on screen cannot do without (a Motif's current preview
+    /// frame): admitted as any claim is, else as the floor, one at a time,
+    /// past pressure and a full ledger, so the picture never waits on other
+    /// work's memory. Host-critical memory still refuses it: the machine, not
+    /// the app's target, is out of room.
+    fn reserve_floor(&self, claim: Claim) -> Option<u32> {
+        if let Some(id) = self.reserve(claim) {
+            return Some(id);
+        }
+        let mut s = self.state.lock().unwrap();
+        if s.critical || s.floor.is_some_and(|id| s.leases.contains_key(&id)) {
+            return None;
+        }
+        let id = Self::insert_lease(&mut s, claim, current_holder("on_demand"));
+        s.floor = Some(id);
         Some(id)
     }
     /// The rules every fresh claim shares, in the order a refusal is reported:
@@ -1115,6 +1135,29 @@ pub fn resources_reserve(
             napi::Error::from_reason("Resource capacity is busy or the memory target is too small")
         })
 }
+/// A Motif's current preview frame: `resources_reserve` without threads, or
+/// the floor (`Governor::reserve_floor`) when that refuses.
+#[cfg_attr(test, allow(dead_code))] // NAPI exports have no callers in the Rust test binary.
+#[napi]
+pub fn resources_reserve_floor(memory_mib: f64) -> napi::Result<u32> {
+    if !memory_mib.is_finite()
+        || memory_mib.fract() != 0.0
+        || !(1.0..=f64::from(u32::MAX)).contains(&memory_mib)
+    {
+        return Err(napi::Error::from_reason("Invalid resource request"));
+    }
+    HOLDER
+        .sync_scope(Holder::new("editor"), || {
+            governor().reserve_floor(Claim {
+                threads: 0,
+                mib: memory_mib as u64,
+                background: false,
+            })
+        })
+        .ok_or_else(|| {
+            napi::Error::from_reason("Resource capacity is busy or the memory target is too small")
+        })
+}
 #[cfg_attr(test, allow(dead_code))] // NAPI exports have no callers in the Rust test binary.
 #[napi]
 pub fn resources_release(id: u32) {
@@ -1202,6 +1245,38 @@ fn process_memory_refresh() -> sysinfo::ProcessRefreshKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn the_floor_admits_one_claim_past_pressure_and_a_full_ledger_but_not_host_critical_memory() {
+        let g = Governor::new();
+        g.configure(Limits {
+            work_mib: 128,
+            ..Limits::default()
+        })
+        .unwrap();
+        let frame = |mib| Claim {
+            threads: 0,
+            mib,
+            background: false,
+        };
+        // Admitted as any claim while it fits: the floor stays free.
+        let fits = g.reserve_floor(frame(64)).unwrap();
+        assert_eq!(g.state.lock().unwrap().floor, None);
+        // The ledger is full: one floor claim, not two.
+        let floor = g.reserve_floor(frame(96)).unwrap();
+        assert!(g.reserve(frame(96)).is_none());
+        assert!(g.reserve_floor(frame(96)).is_none());
+        g.release(floor);
+        g.release(fits);
+        // Pressure closes admission, but not to the floor.
+        g.state.lock().unwrap().pressured = true;
+        assert!(g.reserve(frame(32)).is_none());
+        let floor = g.reserve_floor(frame(32)).unwrap();
+        assert!(g.reserve_floor(frame(32)).is_none());
+        assert_eq!(g.snapshot().reserved_mib, 32);
+        g.release(floor);
+        g.state.lock().unwrap().critical = true;
+        assert!(g.reserve_floor(frame(32)).is_none());
+    }
     #[test]
     fn numeric_reservations_reject_wrapping_truncation_and_nonfinite_values() {
         for memory in [

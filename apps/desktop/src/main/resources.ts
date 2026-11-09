@@ -9,6 +9,7 @@ interface NativeResources {
   resourcesWaitForChange(revision: number): Promise<void>;
   resourcesExportWaiting(entered: boolean): void;
   resourcesReserve(threads: number, memoryMiB: number, finalizationId?: number): number;
+  resourcesReserveFloor(memoryMiB: number): number;
   resourcesRelease(id: number): void;
   resourcesActivity(playing: boolean, pressured: boolean, critical: boolean): void;
   resourcesSnapshot(): string;
@@ -61,6 +62,18 @@ export function reserveResources(threads: number, memoryMiB: number, finalizatio
   let live = true;
   return () => { if (live) { live = false; owner.resourcesRelease(id); } };
 }
+/** `reserveResources` for the work on screen (a Motif's current preview
+ * frame): when that refuses, the floor, one claim at a time, which pressure
+ * and a full ledger do not refuse; host-critical memory does. */
+export function reserveFloorResources(memoryMiB: number): () => void {
+  if (!native) return () => {};
+  const owner = getNative();
+  let id: number;
+  try { id = owner.resourcesReserveFloor(Math.ceil(memoryMiB)); }
+  catch (error) { throw new Error(`${RESOURCE_CAPACITY_EXCEEDED}: ${String(error)}`); }
+  let live = true;
+  return () => { if (live) { live = false; owner.resourcesRelease(id); } };
+}
 export function setResourceActivity(playing: boolean, pressured: boolean, critical = pressured): void {
   getNative().resourcesActivity(playing, pressured, critical);
   backgroundPause = pressured ? 'memory' : playing && !resourceAllocation().background_playback ? 'playback' : undefined;
@@ -77,6 +90,11 @@ export function resourceSnapshot(): Pick<ResourceStatus, 'active' | 'waiting' | 
   return JSON.parse(getNative().resourcesSnapshot());
 }
 export function processTreeMemory(): Promise<ResourceMemorySample> { return getNative().resourcesMemory(); }
+let processMemory: number | null = null;
+/** The app's process-tree memory from the last fresh sample (resourceIpc),
+ * null without one. Capture hosts are in it: each is a renderer process. */
+export function processMemoryMiB(): number | null { return processMemory; }
+export function noteProcessMemory(mib: number | null): void { processMemory = mib; }
 export function notifyResourceCacheWrite(): void {
   void native?.resourcesCacheWritten(false).catch(error => console.warn('Cache maintenance could not start', error));
 }

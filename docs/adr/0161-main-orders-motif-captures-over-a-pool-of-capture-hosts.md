@@ -41,7 +41,16 @@ after a seek back.
   on a transport failure or a hung setup or render, failing only its own
   frames. Another Motif gets another window: one renderer process per Motif.
 - Main keeps a **pool**: at most one host per key and `captureHosts` in all
-  (default 2, range 1–4). A capture whose key has no host first takes an idle
+  (default 2, range 1–4), and a second or later host only while the app's
+  process tree has room for one more under its memory target and memory is
+  not under pressure; the first can always open. A host is resident process
+  memory the target already measures, so it is charged there, at its measured
+  working set, and not to the admission ledger, which an export alone can
+  fill. Under pressure the idle hosts retire down to one, on every memory
+  sample while it lasts. A preview's `current` frame takes the governor's
+  floor (ADR 0101): it is never refused for budget or pressure, only when the
+  machine itself is critical, under 256 MiB available
+  (docs/notes/motif-host-memory-2026-11-10.md). A capture whose key has no host first takes an idle
   host of another content version of its Motif on its lane: once that host
   drains, its shell's frame loads the new version's page, and a page that
   does not load retires the host and the slot opens a new one. Else it takes
@@ -109,4 +118,6 @@ after a seek back.
   default 2; above 2 is not measured. `captureRequests=1` lowered throughput
   on both machines (M1 DECO pair 30 → 22 fps), so it stays 2.
 - Diagnostics report `rendering` (render steps in progress), `hostEvictions`,
-  `affinityPicks` and one row per host.
+  `hostSwaps` (version switches in a window), `hostSheds` (hosts retired for
+  memory pressure), `affinityPicks` and one row per host with its renderer's
+  working set (`memoryMib`).

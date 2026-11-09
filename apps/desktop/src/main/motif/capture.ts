@@ -1,4 +1,4 @@
-import { nativeImage } from 'electron'
+import { app, nativeImage } from 'electron'
 import type { MotifOsrFrame } from './offscreenFrames.js'
 import type { MotifMarkerReader, MotifTextureReader } from './native.js'
 import { CaptureQueue, type CaptureArgs, type CaptureOptions, type CaptureRun, type Rendered } from './captureQueue.js'
@@ -13,9 +13,11 @@ import { fitsMotifTexture } from '../../shared/motifs/limits.js'
 import type { MotifTuning } from '../../shared/motifs/tuning.js'
 import type { UserMotifStore } from './store.js'
 import type { MotifFramePriority } from '../../shared/motifs/frameTransport.js'
+import { backgroundResourcePause, onBackgroundResourceChange, processMemoryMiB } from '../resources.js'
+import { resourceAllocation } from '../../shared/resource-policy.js'
 
 /** The tuning keys the capture hosts run on (`shared/motifs/tuning.ts`). */
-export type CaptureTuning = Pick<MotifTuning, 'captureHosts' | 'framesInFlight' | 'captureFrameRate' | 'skippedFrameRetries' | 'backgroundAgingMs' | 'hostAffinityMs' | 'stallNudgeMs'>
+export type CaptureTuning = Pick<MotifTuning, 'captureHosts' | 'hostMemoryMib' | 'framesInFlight' | 'captureFrameRate' | 'skippedFrameRetries' | 'backgroundAgingMs' | 'hostAffinityMs' | 'stallNudgeMs'>
 
 /** What a capture reads from the Motif store. */
 export type CaptureStore = Pick<UserMotifStore, 'getMotif' | 'assertRenderable' | 'pinPackage'>
@@ -35,7 +37,7 @@ export interface MotifCapturerDeps {
   textureReader: Pick<MotifTextureReader, 'read'> | null
 }
 
-const newCaptureCounters = () => ({ captures: 0, completed: 0, failed: 0, pageLoads: 0, hostBuilds: 0, hostSwaps: 0, hostEvictions: 0, affinityPicks: 0, textureCaptures: 0, bitmapCaptures: 0, skippedFrames: 0, queueMs: 0, captureMs: 0, loadMs: 0, readyMs: 0, setupMs: 0, renderMs: 0, outputMs: 0 })
+const newCaptureCounters = () => ({ captures: 0, completed: 0, failed: 0, pageLoads: 0, hostBuilds: 0, hostSwaps: 0, hostEvictions: 0, hostSheds: 0, affinityPicks: 0, textureCaptures: 0, bitmapCaptures: 0, skippedFrames: 0, queueMs: 0, captureMs: 0, loadMs: 0, readyMs: 0, setupMs: 0, renderMs: 0, outputMs: 0 })
 type CaptureCounters = ReturnType<typeof newCaptureCounters>
 
 const DIAGNOSTIC_LANE_CAP = 128
@@ -81,6 +83,11 @@ export class MotifCapturer {
   /// a window. See there for why.
   private shuttingDown = false
 
+  /// Unsubscribes from memory pressure.
+  private readonly stopShedding: () => void
+  /// The renderer processes' working sets (MiB) by pid, and when they were read.
+  private hostMemory: { at: number; byPid: Map<number, number> } = { at: -Infinity, byPid: new Map() }
+
   constructor(deps: MotifCapturerDeps) {
     this.tuning = deps.tuning
     this.store = deps.store
@@ -90,6 +97,7 @@ export class MotifCapturer {
     this.pool = new HostPool({
       capacity: deps.tuning.captureHosts,
       affinityMs: deps.tuning.hostAffinityMs,
+      mayGrow: live => this.hostsMayGrow(live),
       hostKeyOf: a => ({ motifId: a.motifId, contentHash: a.contentHash, texture: this.wantsTextureHost(a.width, a.height) }),
       open: (key, a) => this.openHost(key, a),
       evicted: () => { this.counters.hostEvictions++ },
@@ -108,9 +116,14 @@ export class MotifCapturer {
         if (outcome === 'completed') this.counters.completed++
         else if (outcome === 'skipped') this.counters.skippedFrames++
         else this.counters.failed++
+        // A host whose frames have just settled may be the one to give back.
+        this.shedUnderPressure()
       },
       affinityPick: () => { this.counters.affinityPicks++ },
     })
+    // Told on every memory sample (1 s), not only on a change: a paused editor
+    // settles no captures, and pressure that lasts keeps shedding.
+    this.stopShedding = onBackgroundResourceChange(() => this.shedUnderPressure())
   }
 
   /** One frame leased to `consume`: a shared texture, released after `consume`
@@ -159,7 +172,7 @@ export class MotifCapturer {
       queued: this.queue.queued,
       rendering: this.queue.rendering,
       lanes: [...this.lanes.values()].map(lane => ({ ...lane })),
-      hosts: this.pool.diagnostics(),
+      hosts: this.pool.diagnostics(performance.now(), host => ({ memoryMib: this.memoryOf(host) })),
     }
   }
 
@@ -173,6 +186,7 @@ export class MotifCapturer {
   /// `will-quit` would never fire, and the process would run forever. Retiring
   /// the hosts without also refusing later captures re-opens that race.
   shutdown(): void {
+    this.stopShedding()
     this.shuttingDown = true
     this.queue.close(closedError())
     this.pool.shutdown()
@@ -213,6 +227,49 @@ export class MotifCapturer {
       runtime, markerReader: this.markerReader, tuning: this.tuning,
       timed: (phase, run) => this.timed(phase, run),
     }).catch((e: unknown) => { pin?.release(); throw e })
+  }
+
+  /// One more host fits beside the `live` ones while memory is not under
+  /// pressure and the app's process tree, without its hosts, plus every host
+  /// at full size has room under the memory target. The hosts are in that
+  /// tree, each a renderer process. A host is taken at `hostMemoryMib` or the
+  /// median measured one, whichever is more: a new host's renderer grows for
+  /// seconds after it opens, so neither the last sample nor its own early
+  /// reading shows what it will take, and an M1 opening hosts in a burst ran
+  /// past its target (docs/notes/motif-host-memory-2026-11-10.md). They are
+  /// not charged to the admission ledger, whose work they would refuse: an
+  /// export alone can fill it.
+  private hostsMayGrow(live: number): boolean {
+    if (backgroundResourcePause() === 'memory') return false
+    const used = processMemoryMiB()
+    if (used === null) return true
+    const measured = this.pool.hosts().reduce((sum, host) => sum + (this.memoryOf(host) ?? 0), 0)
+    const perHost = Math.max(this.tuning.hostMemoryMib, this.hostEstimateMiB())
+    return used - measured + (live + 1) * perHost <= resourceAllocation().memory_mib
+  }
+
+  /// Under memory pressure, the idle hosts beyond one retire.
+  private shedUnderPressure(): void {
+    if (backgroundResourcePause() === 'memory') this.counters.hostSheds += this.pool.shed()
+  }
+
+  private hostEstimateMiB(): number {
+    const measured = this.pool.hosts().flatMap(host => { const mib = this.memoryOf(host); return mib === null ? [] : [mib] }).sort((a, b) => a - b)
+    return measured.length ? measured[Math.floor(measured.length / 2)]! : this.tuning.hostMemoryMib
+  }
+
+  /// A host's renderer working set (MiB), from process metrics read again
+  /// after a second or for a process they lack; null when it is not among them.
+  private memoryOf(host: CaptureHost): number | null {
+    const pid = host.pid
+    if (pid === null) return null
+    const now = performance.now()
+    if (now - this.hostMemory.at >= 1000 || !this.hostMemory.byPid.has(pid)) {
+      const byPid = new Map<number, number>()
+      for (const metric of app.getAppMetrics()) byPid.set(metric.pid, metric.memory.workingSetSize / 1024)
+      this.hostMemory = { at: now, byPid }
+    }
+    return this.hostMemory.byPid.get(pid) ?? null
   }
 
   /// Shows another content version of `host`'s Motif in its window, from a

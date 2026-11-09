@@ -24,6 +24,12 @@ export const MOTIF_TUNING_SPEC = {
    * growth; one Motif never opens a second host. More than 2 is not
    * measured. */
   captureHosts: { default: 2, range: [1, 4] },
+  /** The memory a capture host is taken to add (MiB) until its renderer
+   * process is measured: a new host opens only while the app's process tree
+   * has that much room under its memory target. Measured 2026-11-09 in
+   * simulated editing with 1080p Motifs: 127–138 MiB per host on an M1 8 GB,
+   * 117–126 MiB on the bench (docs/notes/motif-host-memory-2026-11-10.md). */
+  hostMemoryMib: { default: 130, range: [16, 2048] },
   /** Frames a capture host renders while earlier ones are still on their way
    * to a paint; the bake coordinator keeps as many in the capture queue.
    * Measured: ADR 0159; 5 in flight gained about 2% on a 4K bake

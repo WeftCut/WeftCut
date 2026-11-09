@@ -27,6 +27,9 @@ export interface HostPoolDeps<H extends PooledHost> {
   /// A host used within this long may still be wanted for its version: another
   /// version takes it only when no slot is free (tuning `hostAffinityMs`).
   affinityMs: number
+  /// Whether memory has room for one more host beside the `live` ones. Never
+  /// asked for the first: one host can always open.
+  mayGrow(live: number): boolean
   hostKeyOf(args: CaptureArgs): HostKey
   /// Opens a host for `key`, sized to `args`.
   open(key: HostKey, args: CaptureArgs): Promise<H>
@@ -65,7 +68,9 @@ interface Slot<H> {
 
 const keyString = (key: HostKey) => `${key.motifId}\0${key.contentHash}\0${key.texture ? 'texture' : 'bitmap'}`
 
-/** The capture hosts, at most one per key and `capacity` in all. A key without
+/** The capture hosts, at most one per key and `capacity` in all, and more
+ * than one only while memory has room for another (`mayGrow`); under memory
+ * pressure the idle ones retire down to the one used last (`shed`). A key without
  * a host takes an idle host of another content version of its Motif on its
  * lane, which drains and switches its window's frame to the key's version:
  * first one unused for `affinityMs`, then a free slot, then any such host.
@@ -99,7 +104,28 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
 
   canOpen(keep: ReadonlySet<string> = new Set()): boolean {
     this.sweep()
-    return this.live() < this.deps.capacity || this.idle(keep) !== null
+    return this.free() || this.idle(keep) !== null
+  }
+
+  /** Under memory pressure: retires the hosts that render nothing and have no
+   * frames in flight, least recently used first, keeping at least one host.
+   * The number retired. */
+  shed(): number {
+    this.sweep()
+    let live = this.live()
+    let shed = 0
+    const idle = [...this.slots.values()]
+      .filter(slot => !slot.rendering && !slot.evictedBy && !slot.evicts && slot.host && !slot.host.retired && slot.host.framesInFlight === 0)
+      .sort((a, b) => a.usedAt - b.usedAt)
+    for (const slot of idle) {
+      if (live <= 1) break
+      slot.host!.retire()
+      this.remove(slot)
+      live--
+      shed++
+    }
+    if (shed) this.changed()
+    return shed
   }
 
   acquire(key: string, args: CaptureArgs, keep: ReadonlySet<string> = new Set()): HostPoolLease<H> {
@@ -141,9 +167,17 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
     this.retireAll()
   }
 
-  diagnostics(now = performance.now()) {
+  /** The open hosts. */
+  hosts(): H[] {
+    this.sweep()
+    return [...this.slots.values()].flatMap(slot => slot.host && !slot.host.retired ? [slot.host] : [])
+  }
+
+  /** Each open host's key, size and state, with what `detail` adds. */
+  diagnostics<D extends object = object>(now = performance.now(), detail?: (host: H) => D) {
     this.sweep()
     return [...this.slots.values()].flatMap(slot => slot.host ? [{
+      ...(detail ? detail(slot.host) : {} as D),
       ...slot.hostKey,
       width: slot.host.size.width, height: slot.host.size.height,
       framesInFlight: slot.host.framesInFlight,
@@ -160,7 +194,7 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
   private reserve(key: string, args: CaptureArgs, keep: ReadonlySet<string>): Slot<H> {
     const hostKey = this.deps.hostKeyOf(args)
     const sibling = this.sibling(hostKey, keep)
-    const free = this.live() < this.deps.capacity
+    const free = this.free()
     if (sibling && (!free || performance.now() - sibling.usedAt >= this.deps.affinityMs)) {
       this.slots.delete(sibling.key)
       sibling.key = key
@@ -275,6 +309,13 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
     for (const slot of [...this.slots.values()]) {
       if (!slot.rendering && !slot.evictedBy && (!slot.host || slot.host.retired)) this.remove(slot)
     }
+  }
+
+  /// Room for one more host: under `capacity`, and memory has room unless
+  /// there is none yet.
+  private free(): boolean {
+    const live = this.live()
+    return live < this.deps.capacity && (live === 0 || this.deps.mayGrow(live))
   }
 
   /// Slots counted against capacity: a slot being replaced is its successor's.
