@@ -188,7 +188,9 @@ const deadlines = {
   readerRestartMinMs: 250,
   readerRestartMaxMs: 8000,
   readerStableMs: 60_000,
-  /** A preview frame that failed retries after these delays; the last repeats. */
+  /** A preview frame that failed retries after these delays, and a lookahead
+   * frame refused `capacity` is not requested again before them; the last
+   * repeats. */
   previewRetryMs: Object.freeze([250, 1000, 4000]),
   /** A bake clip's failures before it is an error; the retry waits
    * `bakeRetryBaseMs · 2^(failures − 1)`. A `capacity` or `disk` pause

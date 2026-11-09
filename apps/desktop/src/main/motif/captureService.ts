@@ -128,7 +128,8 @@ export class MotifCaptureService {
 
   /** `motif:capture`. Registered before it returns, so a control that follows
    * the request on the same sender finds it. A withdrawn request resolves
-   * `superseded` instead of rejecting (`MotifCaptureReply`). */
+   * `superseded`, and a refused one `capacity`, instead of rejecting
+   * (`MotifCaptureReply`). */
   capture(owner: WebContents, request: MotifCaptureRequest, isCurrent: () => boolean = () => true, finalizationId?: number, store = this.deps.store): Promise<MotifCaptureReply> {
     const { requestId, priority, address, store: storeMode, afterMiss, finalizationToken: _token, ...args } = request
     const { result, handle } = this.jobsFor(store).display(address, args,
@@ -140,8 +141,9 @@ export class MotifCaptureService {
     this.requests.set(key, handle)
     const forget = () => { if (this.requests.get(key) === handle) this.requests.delete(key) }
     result.then(forget, forget)
-    return result.catch((error: unknown) => {
-      if (motifErrorCode(error) === 'superseded') return { kind: 'superseded' } as const
+    return result.catch((error: unknown): MotifCaptureReply => {
+      if (motifErrorCode(error) === 'superseded') return { kind: 'superseded' }
+      if (error instanceof MotifError && error.code === 'capacity') return { kind: 'capacity', detail: error.detail }
       throw error
     })
   }

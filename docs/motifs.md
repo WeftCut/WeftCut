@@ -325,7 +325,12 @@ address of the workspace store
   borrowed from the plan of the first export in it then; an export joining
   later is not charged. A queued job holds nothing, a refusal fails every
   request `capacity` there, and a job nobody wants by then is superseded
-  before it takes a host, without reserving.
+  before it takes a host, without reserving. While an export holds its plan,
+  editor captures are refused `capacity`, answered
+  `{ kind: 'capacity', detail }` like `superseded` and turned back into a
+  `capacity` MotifError at the preload frame port; the preview cursor and the
+  lookahead back off on `previewRetryMs`, and export frames are charged to the
+  plan.
 
 Captures without a cache address (parameter previews, the e2e hook) and PNG
 captures (MCP, covers, the Motif panel's preview, all `background`) are never

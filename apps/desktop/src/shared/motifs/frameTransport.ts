@@ -16,12 +16,14 @@ export type StoredMotifFrame = (
   | { kind: 'stored' }
 ) & { persisted?: boolean }
 
-/** `motif:capture`'s answer: a frame, or `superseded` when the request was
- * withdrawn (a cancel, a closed document, a project switch). Superseded is a
- * reply, not a throw: `ipcMain.handle` logs every rejection with its stack,
- * and a cancelled capture is routine. The renderer's transport turns
- * it back into a `superseded` MotifError; every other failure still throws. */
-export type MotifCaptureReply = StoredMotifFrame | { kind: 'superseded' }
+/** `motif:capture`'s answer: a frame; `superseded` when the request was
+ * withdrawn (a cancel, a closed document, a project switch); or `capacity`
+ * when a resource admission refused its capture, with the refusal's detail.
+ * Both are replies, not throws: `ipcMain.handle` logs every rejection with its
+ * stack, a cancelled capture is routine, and so is an editor capture refused
+ * while an export holds its plan. The renderer's transport turns each back
+ * into its MotifError; every other failure still throws. */
+export type MotifCaptureReply = StoredMotifFrame | { kind: 'superseded' } | { kind: 'capacity'; detail: string }
 
 /** `motif:read` (ADR 0154): the Windows texture lane at a Playback Resolution
  * divisor. Export and finalization reads use 1. */

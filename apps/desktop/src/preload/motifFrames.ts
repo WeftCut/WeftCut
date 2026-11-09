@@ -37,6 +37,9 @@ export function installMotifFrames(
           failed = false
           return
         }
+        // Refused by admission (`MotifCaptureReply`): the page gets the same
+        // coded failure as a thrown one.
+        if (frame?.kind === 'capacity') throw new MotifError('capacity', frame.detail)
         // Not a miss and not a failure: the reader reads it on the utility lane.
         if (frame?.kind === 'unavailable') {
           port.postMessage({ id: data.id, unavailable: frame.reason, generation: frame.generation })

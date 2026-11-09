@@ -1,10 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MotifPrewarmer, type MotifPrewarmerDeps, type PrewarmContentSpec } from "./MotifPrewarmer";
 import { MotifFrameCache, type MotifFrameDiv } from "./frameCache";
 import type { MotifFrameAcquisition, MotifFrameLease, MotifFrameRequest } from "./motifFrameSource";
 import type { MotifFramePriority } from "../../../shared/motifs/frameTransport";
 import type { MotifFrameDescriptor } from "./motifFrameDescriptor";
-import { MOTIF_TUNING_DEFAULTS } from "../../../shared/motifs/tuning";
+import { MOTIF_DEADLINES, MOTIF_TUNING_DEFAULTS } from "../../../shared/motifs/tuning";
+import { MotifError } from "../../../shared/motifs/errors";
 import type { MotifReaderDiv } from "../../../shared/motifs/readerProtocol";
 
 type Acquire = (d: MotifFrameDescriptor, request: MotifFrameRequest) => Promise<MotifFrameLease>;
@@ -52,6 +53,8 @@ function rig(acquire: Acquire, capBytes: number, cached = new Set<string>(), ove
   const frames = () => acquireSpy.mock.calls.map(([d]) => d.contentFrame);
   return { prewarmer, pending, acquire: acquireSpy, setPriority, frames };
 }
+
+afterEach(() => { vi.restoreAllMocks(); });
 
 describe("MotifPrewarmer", () => {
   it("bounds requests even when tiny long Motifs fit in the pixel budget, and aborts them on dispose", () => {
@@ -125,6 +128,35 @@ describe("MotifPrewarmer", () => {
     r.prewarmer.setTargets([spec("a", 0, 10)]);
     r.pending.shift()!();
     expect(r.frames()).toEqual([0, 1, 2]);
+    r.prewarmer.dispose();
+  });
+
+  it("a target refused `capacity` waits out the retry delays across demand updates; other failures retry on the next", async () => {
+    let now = 1000;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    const r = rig(async (d) => {
+      throw d.contentFrame === 0 ? new MotifError("capacity", "resource-capacity-exceeded: synthetic") : new MotifError("content", "synthetic");
+    }, 2);
+    const update = async () => {
+      r.prewarmer.setTargets([spec("a", 0, 2)]);
+      while (r.pending.length) r.pending.shift()!();
+      await settle();
+    };
+    await update();
+    expect(r.frames()).toEqual([0, 1]);
+    const [first, second] = MOTIF_DEADLINES.previewRetryMs as [number, number];
+    now += first - 1;
+    await update();
+    expect(r.frames()).toEqual([0, 1, 1]);
+    now += 1;
+    await update();
+    expect(r.frames()).toEqual([0, 1, 1, 0, 1]);
+    now += second - 1;
+    await update();
+    expect(r.frames().filter(frame => frame === 0)).toHaveLength(2);
+    now += 1;
+    await update();
+    expect(r.frames().filter(frame => frame === 0)).toHaveLength(3);
     r.prewarmer.dispose();
   });
 

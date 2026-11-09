@@ -4,6 +4,8 @@ import type { acquireMotifFrame, MotifFrameAcquisition, MotifFrameCoverage } fro
 import type { MotifFramePriority } from '../../../shared/motifs/frameTransport';
 import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
 import { motifTuning } from './tuning';
+import { motifErrorCode } from '../../../shared/motifs/errors';
+import { MOTIF_DEADLINES } from '../../../shared/motifs/tuning';
 
 export interface PrewarmContentSpec extends PrewarmContent {
   /// The content at the playhead; targets are other frames of it.
@@ -37,6 +39,9 @@ export class MotifPrewarmer {
   private playheads = new Map<string, number>();
   private targets: PrewarmTarget[] = [];
   private readonly requests = new Map<string, Request>();
+  /** Targets admission refused `capacity` (an export holds its plan): each
+   * waits out the preview's retry delays before it is requested again. */
+  private readonly refused = new Map<string, { until: number; count: number }>();
   private scheduled: number | null = null;
   private disposed = false;
 
@@ -59,14 +64,22 @@ export class MotifPrewarmer {
         request.controller.abort();
       }
     }
+    for (const id of this.refused.keys()) if (!wanted.has(id)) this.refused.delete(id);
     this.targets.forEach((target, index) => this.requests.get(address(target))?.handle.setPriority(this.priority(target), index));
     this.deps.coverage.prioritize(this.targets.map(target => ({ ...target, scaleDiv: this.specs.get(target.cacheKey)!.scaleDiv })));
-    if (this.scheduled === null && this.targets.some(target => !this.requests.has(address(target)) && !this.cached(target))) {
+    if (this.scheduled === null && this.targets.some(target => this.due(target))) {
       this.scheduled = this.deps.schedule(() => {
         this.scheduled = null;
         this.pump();
       });
     }
+  }
+
+  /** Neither in flight, nor in L0, nor waiting out a refusal. */
+  private due(target: PrewarmTarget): boolean {
+    const id = address(target);
+    if (this.requests.has(id) || this.cached(target)) return false;
+    return performance.now() >= (this.refused.get(id)?.until ?? 0);
   }
 
   private cached({ cacheKey, frame }: PrewarmTarget): boolean {
@@ -80,8 +93,8 @@ export class MotifPrewarmer {
   private pump(): void {
     if (this.disposed) return;
     this.targets.forEach((target, index) => {
+      if (!this.due(target)) return;
       const id = address(target);
-      if (this.requests.has(id) || this.cached(target)) return;
       const spec = this.specs.get(target.cacheKey)!;
       const controller = new AbortController();
       let handle: MotifFrameAcquisition;
@@ -104,7 +117,15 @@ export class MotifPrewarmer {
     try {
       // The frame is in L0 now; warming holds no pin.
       (await request.handle.lease).release();
-    } catch { /* Retry failures on the next demand update, never in a tight loop. */ }
+      this.refused.delete(id);
+    } catch (error) {
+      // Retry failures on the next demand update, never in a tight loop.
+      if (motifErrorCode(error) === 'capacity' && this.requests.get(id) === request) {
+        const delays = MOTIF_DEADLINES.previewRetryMs;
+        const count = this.refused.get(id)?.count ?? 0;
+        this.refused.set(id, { until: performance.now() + delays[Math.min(count, delays.length - 1)]!, count: count + 1 });
+      }
+    }
     finally {
       if (this.requests.get(id) === request) this.requests.delete(id);
       if (!this.disposed) this.deps.onProgress?.();
@@ -117,6 +138,7 @@ export class MotifPrewarmer {
     this.scheduled = null;
     for (const request of this.requests.values()) request.controller.abort();
     this.requests.clear();
+    this.refused.clear();
     this.targets = [];
     this.specs.clear();
   }

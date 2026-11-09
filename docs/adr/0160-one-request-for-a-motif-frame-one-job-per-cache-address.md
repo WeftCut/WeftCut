@@ -84,6 +84,11 @@ send the frame back to a read that missed again, without end.
   A refusal by that plan fails every request in the job `capacity`. The charge
   lasts until the job ends, even when the export has withdrawn, so that
   export's finalization can wait for one capture.
+- While an export holds its plan, the editor's own captures are refused
+  `capacity` and export frames are charged to the plan. The refusal is answered
+  `{ kind: 'capacity', detail }` like `superseded`, not thrown, and the preload
+  frame port turns it back into the same `capacity` MotifError: the preview
+  cursor and the lookahead back off on the preview retry delays.
 - A running capture is never preempted: a cancel during its render still costs
   that render, and the caller drops the result.
 - Renderer and main must speak the same wire; both ship in one app build.

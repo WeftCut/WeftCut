@@ -7,10 +7,14 @@ import type { MotifFrameStore } from './frameStore';
 import type { MotifCaptureRequest } from '../../shared/motifs/frameTransport';
 import { MotifError } from '../../shared/motifs/errors';
 
-const pressure = vi.hoisted(() => ({ pause: undefined as 'memory' | 'playback' | undefined }));
+const pressure = vi.hoisted(() => ({ pause: undefined as 'memory' | 'playback' | undefined, refuse: false }));
 vi.mock('../resources', async original => ({
   ...await original<typeof import('../resources')>(),
   backgroundResourcePause: () => pressure.pause,
+  reserveResources: () => {
+    if (pressure.refuse) throw new Error('resource-capacity-exceeded: synthetic');
+    return () => {};
+  },
 }));
 
 const owner = { id: 12 } as WebContents;
@@ -67,7 +71,7 @@ function fixture(enabled = true, texture: typeof frame = frame) {
   return { deps, writer, encoder, finish, prepareWrite, has, hasRoom, read, readTexture, failNext, holdNext, service: new MotifCaptureService(deps, enabled) };
 }
 
-afterEach(() => { pressure.pause = undefined; });
+afterEach(() => { pressure.pause = undefined; pressure.refuse = false; });
 
 describe('Motif capture and persistence', () => {
   it('does not deliver an old document capture to its replacement or disable GPU capture', async () => {
@@ -158,6 +162,7 @@ describe('Motif capture and persistence', () => {
     h.failNext(failure);
     const result = h.service.capture(owner, kept());
     if (code === 'superseded') await expect(result).resolves.toEqual({ kind: 'superseded' });
+    else if (code === 'capacity') await expect(result).resolves.toEqual({ kind: 'capacity', detail: 'synthetic' });
     else await expect(result).rejects.toBe(failure);
     expect(h.deps.setTextureEnabled).toHaveBeenCalledExactlyOnceWith(true);
     expect(await h.service.capture(owner, kept())).toMatchObject({ kind: 'texture' });
@@ -172,6 +177,16 @@ describe('Motif capture and persistence', () => {
     await expect(h.service.capture(owner, preview())).rejects.toBe(content);
     h.failNext(new MotifError('closed', 'synthetic'));
     await expect(h.service.capture(owner, preview())).rejects.toMatchObject({ code: 'closed' });
+  });
+
+  it('answers a capture refused at dispatch `capacity` with the refusal, instead of throwing it', async () => {
+    const h = fixture();
+    h.deps.frame.mockImplementationOnce((_args, consume, options) => run(Promise.resolve().then(() => {
+      options.dispatch?.();
+      return consume(bitmapFrame);
+    })));
+    pressure.refuse = true;
+    await expect(h.service.capture(owner, preview({ address: bake }))).resolves.toEqual({ kind: 'capacity', detail: 'resource-capacity-exceeded: synthetic' });
   });
 
   it.each(['transient', 'oversize', 'closed'] as const)('a %s readback costs a display its receipt, not the GPU path', async code => {
