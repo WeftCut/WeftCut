@@ -538,6 +538,15 @@ holds the bound frame's lease and releases the previous one after binding. It
 draws a reduced bitmap at the Motif's logical size, so geometry, anchors and the
 gizmo do not change with the divisor.
 
+A Motif behind its target keeps showing its latest earlier frame, as a late
+video frame does. A visible Motif with no frame of its target's content at or
+before the target (a first visit, a jump back, new props) would show nothing
+over a black canvas, so the preview keeps its last picture instead, for up to
+`previewHoldMs` (500 ms) or until the Motif's capture fails, then presents
+without it. The scene gate is the one a video clip's first visit uses
+(`CompositionNode` §canPresentClipsAt). Export waits for every frame and never
+holds.
+
 ## Export
 
 The export Worker never captures or touches filesystem IPC. `MotifFrameProducer`

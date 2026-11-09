@@ -203,6 +203,14 @@ export class MotifSprite implements StageableSprite {
       return;
     }
 
+    this.demand(view, tInLayerUs, durationUs, playing);
+  }
+
+  /// The preview half of `update` without the transforms: selects the frame at
+  /// `tInLayerUs` and moves its demand. The scene gate calls it alone while the
+  /// presented picture must stay as it is.
+  demand(view: ResolvedMotifView, tInLayerUs: number, durationUs: number, playing = false): void {
+    if (this.disposed) return;
     // Only live capture needs the catalog. The export Worker has built-ins
     // but no runtime user manifests; its injected bitmaps are already baked
     // and must render even when this Motif is unknown in the Worker.
@@ -226,6 +234,9 @@ export class MotifSprite implements StageableSprite {
   }
 
   playbackSnapshot(): MotifPlaybackSnapshot { return this.playback.snapshot(); }
+  /** See `MotifPlaybackCursor.holdDeadline`; null for a Motif the catalog
+   * lacks, which never binds. */
+  holdDeadline(now?: number): number | null { return this.motif ? this.playback.holdDeadline(now) : null; }
   invalidatePlayback(): void { this.playback.invalidate(); }
 
   /// Re-fetch this layer's Motif from the runtime catalog and reset the render

@@ -192,6 +192,10 @@ const deadlines = {
    * frame refused `capacity` is not requested again before them; the last
    * repeats. */
   previewRetryMs: Object.freeze([250, 1000, 4000]),
+  /** How long the preview keeps its last picture for a visible Motif with
+   * nothing of its own to show at the playhead, before presenting without it
+   * (`CompositionNode` §canPresentClipsAt). */
+  previewHoldMs: 500,
   /** A bake clip's failures before it is an error; the retry waits
    * `bakeRetryBaseMs · 2^(failures − 1)`. A `capacity` or `disk` pause
    * retries after `bakePauseRetryMs` and counts no failure. */

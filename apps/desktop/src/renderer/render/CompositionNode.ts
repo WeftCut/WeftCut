@@ -439,6 +439,9 @@ export class CompositionNode {
   private colors = new Map<string, ActiveColor>();
   private texts = new Map<string, ActiveText>();
   private activeMotifs = new Map<string, ActiveMotif>();
+  /// A repaint at the end of a Motif's hold: a paused preview has no tick to
+  /// present without it.
+  private motifHoldWake: ReturnType<typeof setTimeout> | null = null;
   private refs = new Map<string, ActiveRef>();
   /// In-flight no-flash source-swaps, keyed by the clip's real layerId.
   /// Preview-only; empty in export mode (export URLs are fixed per run).
@@ -630,6 +633,8 @@ export class CompositionNode {
     // visibly jump backwards. Check before mutating any part of this scene, so
     // the currently presented composition is held until the cut can be drawn.
     // Forward underruns and source swaps still keep their valid held frame.
+    // A Motif with nothing of its own to show holds the scene too, for a
+    // bounded time (canPresentClipsAt).
     if (this.host.mode === "preview" && !this.canPresentClipsAt(tUs) && this.container.children.length > 0) {
       this.host.noteLateLayer();
       this.host.noteHeldScene?.(this.lastPresentedRootUs);
@@ -720,6 +725,19 @@ export class CompositionNode {
         if (child && localUs >= 0 && localUs < child.durationUs() && !child.canPresentClipsAt(localUs)) ready = false;
         continue;
       }
+      if (layer.params.kind === "Motif") {
+        // Nothing of its own to show draws nothing, and the canvas below is
+        // black: hold the scene for up to `previewHoldMs`. Updating here keeps
+        // its demand moving while the scene holds.
+        const motif = this.ensureMotif(layer);
+        if (!motif) continue;
+        const tInLayerUs = tUs - layer.t_start_us;
+        motif.sprite.demand(withTransformOverride(layer.id, resolveMotifView(layer.params, tInLayerUs)),
+          tInLayerUs, layer.t_end_us - layer.t_start_us, this.host.playing() && !this.host.scrubbing());
+        const until = motif.sprite.holdDeadline();
+        if (until !== null) { ready = false; this.wakeAfterMotifHold(until); }
+        continue;
+      }
       if (layer.params.kind !== "VideoClip") continue;
       const srcTUs = contentAtUs(layer.params, tUs - layer.t_start_us);
       // A first visit has no held texture at all. It needs the same atomic
@@ -735,6 +753,14 @@ export class CompositionNode {
       ready = false;
     }
     return ready;
+  }
+
+  private wakeAfterMotifHold(until: number): void {
+    if (this.motifHoldWake) return;
+    this.motifHoldWake = setTimeout(() => {
+      this.motifHoldWake = null;
+      if (!this.disposed) this.host.scheduleRepaint();
+    }, Math.max(0, until - performance.now()) + 1);
   }
 
   /// Nothing to show (the Group's window runs past its composition): an
@@ -1041,6 +1067,8 @@ export class CompositionNode {
     this.texts.clear();
     for (const t of this.activeMotifs.values()) { t.sprite.dispose(); t.effects.dispose(); }
     this.activeMotifs.clear();
+    if (this.motifHoldWake) clearTimeout(this.motifHoldWake);
+    this.motifHoldWake = null;
     for (const r of this.refs.values()) { r.sprite.dispose(); r.effects.dispose(); }
     this.refs.clear();
     this.cancelAllSwaps();

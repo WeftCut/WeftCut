@@ -330,6 +330,61 @@ describe("MotifSprite.refreshMotif", () => {
       vi.useRealTimers();
     });
 
+    describe("scene hold", () => {
+      const frameUs = (n: number) => n * 33_334;
+      const now = () => performance.now();
+
+      it("holds while it has nothing of its own to show, for at most previewHoldMs", () => {
+        acquireLease.mockReturnValue(new Promise(() => {}));
+        sprite.demand(view, 0, 5_000_000);
+        const until = sprite.holdDeadline();
+        expect(until).toBe(now() + 500);
+        vi.advanceTimersByTime(499);
+        sprite.update(view, frameUs(1), 5_000_000);
+        expect(sprite.holdDeadline()).toBe(until); // one hold, however the target moves
+        vi.advanceTimersByTime(1);
+        expect(sprite.holdDeadline()).toBeNull();
+      });
+
+      it("presents its target or an earlier frame of it; a jump back or new content holds again", async () => {
+        const first = bitmap();
+        acquireLease.mockResolvedValueOnce(leaseOf(first)).mockReturnValue(new Promise(() => {}));
+        sprite.update(view, 0, 5_000_000);
+        expect(sprite.holdDeadline()).not.toBeNull();
+        await flush();
+        expect(sprite.holdDeadline()).toBeNull();
+        // Playing ahead of its captures: a frame behind still presents.
+        getFrameMock.mockImplementation((_key, frame) => frame === 3 ? bitmap() : null);
+        sprite.update(view, frameUs(5), 5_000_000, undefined, true);
+        expect(sprite.playbackSnapshot().shownFrame).toBe(3);
+        expect(sprite.holdDeadline()).toBeNull();
+        // Paused back before what it shows: holds until that frame binds.
+        sprite.update(view, frameUs(1), 5_000_000);
+        expect(sprite.holdDeadline()).not.toBeNull();
+        getFrameMock.mockImplementation((_key, frame) => frame === 1 ? bitmap() : null);
+        sprite.update(view, frameUs(1), 5_000_000);
+        expect(sprite.holdDeadline()).toBeNull();
+        // New content: its previous picture is another content's.
+        getFrameMock.mockReturnValue(null);
+        getMotifMock.mockReturnValue(motifWith("B"));
+        sprite.refreshMotif();
+        sprite.update(view, frameUs(1), 5_000_000);
+        expect(sprite.holdDeadline()).not.toBeNull();
+      });
+
+      it("a failed capture, or a Motif the catalog lacks, holds nothing", async () => {
+        acquireLease.mockRejectedValueOnce(new Error("capture unavailable"));
+        sprite.update(view, 0, 5_000_000);
+        await flush();
+        expect(sprite.holdDeadline()).toBeNull();
+        getMotifMock.mockReturnValue(null);
+        const unknown = new MotifSprite({ layerId: "unknown", motifId: "gone", fpsNum: 30, fpsDen: 1 });
+        unknown.update(view, 0, 5_000_000);
+        expect(unknown.holdDeadline()).toBeNull();
+        unknown.dispose();
+      });
+    });
+
     it("adopts a warmed frame after capture failure without moving the playhead", async () => {
       acquireLease.mockRejectedValueOnce(new Error("capture unavailable"));
       sprite.update(view, 0, 5_000_000);

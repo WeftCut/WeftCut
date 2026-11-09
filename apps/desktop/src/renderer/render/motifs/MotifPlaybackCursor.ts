@@ -34,6 +34,10 @@ export class MotifPlaybackCursor {
   private scaleDiv: MotifReaderDiv = 1;
   private boundFrame: number | null = null;
   private shownFrame: number | null = null;
+  /** The content `shownFrame` belongs to. */
+  private shownKey: string | null = null;
+  /** When the instance began having nothing of its target's to show. */
+  private holdSince: number | null = null;
   private boundAt = 0;
   private playing = false;
   private epoch = 0;
@@ -97,6 +101,20 @@ export class MotifPlaybackCursor {
 
   dispose(): void { this.invalidate(); this.disposed = true; }
 
+  /** Until when the preview should keep its last picture rather than present
+   * this instance: it shows no frame of its target's content at or before the
+   * target (a first visit, a jump back, new content), nothing has failed, and
+   * that began less than `previewHoldMs` ago. Null: present now. A frame a few
+   * behind still presents, as a late video frame does. */
+  holdDeadline(now = performance.now()): number | null {
+    const d = this.target;
+    const showsTarget = d !== null && this.shownKey === d.cacheKey && this.shownFrame !== null && this.shownFrame <= d.contentFrame;
+    if (!d || showsTarget || this.failures > 0) { this.holdSince = null; return null; }
+    this.holdSince ??= now;
+    const until = this.holdSince + MOTIF_DEADLINES.previewHoldMs;
+    return now < until ? until : null;
+  }
+
   private measureHold(): { lagFrames: number | null; heldMs: number } {
     const lagFrames = this.target && this.boundFrame !== null
       ? Math.max(0, this.target.contentFrame - this.boundFrame) : null;
@@ -112,6 +130,7 @@ export class MotifPlaybackCursor {
     this.deps.bind(lease, d);
     this.boundFrame = d.contentFrame;
     this.shownFrame = d.contentFrame;
+    this.shownKey = d.cacheKey;
     this.boundAt = performance.now();
     this.failures = 0;
     this.retryAt = 0;
