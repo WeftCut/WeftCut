@@ -24,6 +24,8 @@ mod audio;
 mod cache;
 mod commands;
 mod compute_jobs;
+#[cfg(windows)]
+mod d3d;
 mod events;
 #[cfg(windows)]
 mod gpu_hardware;

@@ -2,32 +2,20 @@
 //! the capture host's frame marker check. Each reader keeps its D3D11 device
 //! and staging texture on its own worker. `MotifTextureEncoder::read` runs
 //! under the caller's OSR lease; `finish` runs after it (ADR 0158).
+use crate::d3d::{create_device, create_texture, device, open_shared, DeviceWorker, NtHandle};
 use crate::motif_error::{coded, to_napi, MotifCode};
-use crate::motif_gpu::{acquire_sync, device};
 use crate::motif_limits::textures_fit;
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
-use std::sync::mpsc;
 
 use windows::core::Interface;
-use windows::Win32::Foundation::{HANDLE, HMODULE};
-use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
-use windows::Win32::Graphics::Dxgi::IDXGIKeyedMutex;
 
 /// For errors that are not `anyhow::Error`; those go through `to_napi`.
 fn error(e: impl std::fmt::Display) -> napi::Error {
     napi::Error::from_reason(e.to_string())
 }
-
-/// The reader's worker is gone or dropped the reply without answering.
-fn worker_lost(e: impl std::fmt::Display) -> napi::Error {
-    to_napi(device(anyhow::anyhow!("Motif reader worker lost: {e}")))
-}
-
-/// Worker replies carry `format!("{e:#}")`, which keeps a `[motif:<code>]` tag.
-type Reply = tokio::sync::oneshot::Sender<Result<Pixels, String>>;
 
 struct Pixels {
     width: u32,
@@ -95,56 +83,28 @@ fn encode_pixels(pixels: Pixels) -> anyhow::Result<Buffer> {
     Ok(crate::motif_frame::encode_premultiplied(width, height, &mut premultiplied, bgra)?.into())
 }
 
-type Job = (usize, Region, Reply);
-
 /// One D3D11 device and its staging texture on a dedicated thread.
-fn spawn_reader(name: &str) -> napi::Result<mpsc::Sender<Job>> {
-    let (tx, rx) = mpsc::channel::<Job>();
-    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
-    std::thread::Builder::new()
-        .name(name.into())
-        .spawn(move || {
-            let mut reader = match unsafe { Reader::new() } {
-                Ok(reader) => {
-                    let _ = ready_tx.send(Ok(()));
-                    reader
-                }
-                Err(e) => {
-                    let _ = ready_tx.send(Err(format!("{:#}", device(e))));
-                    return;
-                }
-            };
-            while let Ok((handle, region, reply)) = rx.recv() {
-                let result = unsafe { reader.read(handle, region) }.map_err(|e| format!("{e:#}"));
-                let _ = reply.send(result);
-            }
-        })
-        .map_err(|e| to_napi(device(e)))?;
-    ready_rx.recv().map_err(worker_lost)?.map_err(error)?;
-    Ok(tx)
+fn open_reader(thread: &str) -> napi::Result<DeviceWorker<Reader>> {
+    let (worker, ()) = DeviceWorker::open(thread, "Motif reader", || {
+        Ok((unsafe { Reader::new() }?, ()))
+    })?;
+    Ok(worker)
 }
 
 async fn request(
-    tx: Option<&mpsc::Sender<Job>>,
+    worker: &DeviceWorker<Reader>,
     handle: Buffer,
     region: Region,
 ) -> napi::Result<Pixels> {
-    let bits: [u8; 8] = handle.as_ref().try_into().map_err(error)?;
-    let (reply, rx) = tokio::sync::oneshot::channel();
-    tx.ok_or_else(|| {
-        to_napi(coded(
-            MotifCode::Closed,
-            anyhow::anyhow!("Motif reader closed"),
-        ))
-    })?
-    .send((u64::from_le_bytes(bits) as usize, region, reply))
-    .map_err(worker_lost)?;
-    rx.await.map_err(worker_lost)?.map_err(error)
+    let handle = NtHandle::from_buffer(&handle)?;
+    worker
+        .run(move |reader| unsafe { reader.read(handle, region) })
+        .await
 }
 
 #[napi]
 pub struct MotifTextureEncoder {
-    tx: Option<mpsc::Sender<Job>>,
+    worker: DeviceWorker<Reader>,
 }
 
 #[napi]
@@ -152,7 +112,7 @@ impl MotifTextureEncoder {
     #[napi(constructor)]
     pub fn new() -> napi::Result<Self> {
         Ok(Self {
-            tx: Some(spawn_reader("motif-bake")?),
+            worker: open_reader("motif-bake")?,
         })
     }
 
@@ -160,7 +120,7 @@ impl MotifTextureEncoder {
     /// marker rows.
     #[napi]
     pub async fn read(&self, handle: Buffer, height: u32) -> napi::Result<MotifRawFrame> {
-        let pixels = request(self.tx.as_ref(), handle, Region::Top(height)).await?;
+        let pixels = request(&self.worker, handle, Region::Top(height)).await?;
         Ok(MotifRawFrame {
             pixels: std::sync::Mutex::new(Some(pixels)),
         })
@@ -168,7 +128,7 @@ impl MotifTextureEncoder {
 
     #[napi]
     pub fn close(&mut self) {
-        self.tx.take();
+        self.worker.close();
     }
 }
 
@@ -176,7 +136,7 @@ impl MotifTextureEncoder {
 /// marker check never queues behind a whole-picture readback.
 #[napi]
 pub struct MotifMarkerReader {
-    tx: Option<mpsc::Sender<Job>>,
+    worker: DeviceWorker<Reader>,
 }
 
 #[napi]
@@ -184,14 +144,14 @@ impl MotifMarkerReader {
     #[napi(constructor)]
     pub fn new() -> napi::Result<Self> {
         Ok(Self {
-            tx: Some(spawn_reader("motif-marker")?),
+            worker: open_reader("motif-marker")?,
         })
     }
 
     /// The first `pixels` of the texture's last row, as RGBA.
     #[napi]
     pub async fn read(&self, handle: Buffer, pixels: u32) -> napi::Result<Buffer> {
-        let mut row = request(self.tx.as_ref(), handle, Region::LastRow(pixels)).await?;
+        let mut row = request(&self.worker, handle, Region::LastRow(pixels)).await?;
         if row.bgra {
             for px in row.premultiplied.as_chunks_mut::<4>().0 {
                 px.swap(0, 2);
@@ -202,7 +162,7 @@ impl MotifMarkerReader {
 
     #[napi]
     pub fn close(&mut self) {
-        self.tx.take();
+        self.worker.close();
     }
 }
 
@@ -218,39 +178,23 @@ enum Region {
 struct Reader {
     device: ID3D11Device1,
     context: ID3D11DeviceContext,
-    staging: Option<ID3D11Texture2D>,
-    size: (u32, u32, DXGI_FORMAT),
+    /// Kept while reads keep its size and format.
+    staging: Option<(ID3D11Texture2D, (u32, u32, DXGI_FORMAT))>,
 }
 
 impl Reader {
     unsafe fn new() -> anyhow::Result<Self> {
-        let (mut device, mut context) = (None, None);
-        D3D11CreateDevice(
-            None,
-            D3D_DRIVER_TYPE_HARDWARE,
-            HMODULE::default(),
-            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-            None,
-            D3D11_SDK_VERSION,
-            Some(&mut device),
-            None,
-            Some(&mut context),
-        )?;
+        let (device, context) = create_device()?;
         Ok(Self {
-            device: device.unwrap().cast()?,
-            context: context.unwrap(),
+            device: device.cast()?,
+            context,
             staging: None,
-            size: (0, 0, DXGI_FORMAT_UNKNOWN),
         })
     }
 
-    unsafe fn read(&mut self, handle: usize, region: Region) -> anyhow::Result<Pixels> {
-        let source: ID3D11Texture2D = self
-            .device
-            .OpenSharedResource1(HANDLE(handle as *mut _))
-            .map_err(device)?;
-        let mut desc = D3D11_TEXTURE2D_DESC::default();
-        source.GetDesc(&mut desc);
+    unsafe fn read(&mut self, handle: NtHandle, region: Region) -> anyhow::Result<Pixels> {
+        let source = open_shared(&self.device, handle)?;
+        let desc = source.desc;
         if desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM && desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM {
             return Err(device(anyhow::anyhow!("unsupported OSR format")));
         }
@@ -279,29 +223,27 @@ impl Reader {
             }
         };
         let size = (width, height, desc.Format);
-        if self.size != size {
-            let staging_desc = D3D11_TEXTURE2D_DESC {
-                Width: width,
-                Height: height,
-                Usage: D3D11_USAGE_STAGING,
-                BindFlags: 0,
-                CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
-                MiscFlags: 0,
-                ..desc
-            };
-            let mut staging = None;
-            self.device
-                .CreateTexture2D(&staging_desc, None, Some(&mut staging))
+        let staging = match &self.staging {
+            Some((staging, kept)) if *kept == size => staging.clone(),
+            _ => {
+                let staging = create_texture(
+                    &self.device,
+                    &D3D11_TEXTURE2D_DESC {
+                        Width: width,
+                        Height: height,
+                        Usage: D3D11_USAGE_STAGING,
+                        BindFlags: 0,
+                        CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+                        MiscFlags: 0,
+                        ..desc
+                    },
+                )
                 .map_err(device)?;
-            self.staging = staging;
-            self.size = size;
-        }
-        let mutex = source.cast::<IDXGIKeyedMutex>().ok();
-        if let Some(ref m) = mutex {
-            acquire_sync(m, "OSR")?;
-        }
-        let staging = self.staging.as_ref().unwrap();
-        let result = (|| -> anyhow::Result<Vec<u8>> {
+                self.staging = Some((staging.clone(), size));
+                staging
+            }
+        };
+        let premultiplied = source.with_key("OSR", |texture| {
             let area = D3D11_BOX {
                 left,
                 top,
@@ -311,10 +253,10 @@ impl Reader {
                 back: 1,
             };
             self.context
-                .CopySubresourceRegion(staging, 0, 0, 0, 0, &source, 0, Some(&area));
+                .CopySubresourceRegion(&staging, 0, 0, 0, 0, texture, 0, Some(&area));
             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
             self.context
-                .Map(staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
+                .Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
                 .map_err(device)?;
             let row = width as usize * 4;
             let mut pixels = vec![0; row * height as usize];
@@ -325,17 +267,14 @@ impl Reader {
                 );
                 pixels[y * row..(y + 1) * row].copy_from_slice(src);
             }
-            self.context.Unmap(staging, 0);
+            self.context.Unmap(&staging, 0);
             Ok(pixels)
-        })();
-        if let Some(m) = mutex {
-            m.ReleaseSync(0).map_err(device)?;
-        }
+        })?;
         Ok(Pixels {
             width,
             height,
             bgra: desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM,
-            premultiplied: result?,
+            premultiplied,
         })
     }
 }

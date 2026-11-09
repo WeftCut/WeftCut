@@ -159,8 +159,8 @@ export function readMotifTuningArgument(argv: readonly string[]): ResolvedMotifT
 
 /** Protocol deadlines and retry schedules of the Motif frame path. They bound
  * how long a failure takes to surface, not how fast frames flow, so they are
- * not overridable. The native keyed-mutex wait is `ACQUIRE_SYNC_TIMEOUT_MS` in
- * `native/src/motif_gpu.rs`. */
+ * not overridable. The native keyed-mutex and device-idle waits are
+ * `ACQUIRE_SYNC_TIMEOUT_MS` and `DEVICE_IDLE_TIMEOUT_MS` in `native/src/d3d.rs`. */
 const deadlines = {
   /** Every CDP command to the capture host, and a rendered frame's paint. */
   captureCommandMs: 5000,

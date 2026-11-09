@@ -1,13 +1,9 @@
-//! Capacity of the default D3D11 device, using the same selection path as
-//! native preview transport. Capacity is not process usage or free VRAM.
+//! Capacity of the default D3D11 device (`d3d::create_device`), the same
+//! selection path as native preview transport. Capacity is not process usage or
+//! free VRAM.
 #![cfg_attr(test, allow(dead_code))] // Only called through NAPI in production.
 use napi_derive::napi;
 use windows::core::Interface;
-use windows::Win32::Foundation::HMODULE;
-use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
-use windows::Win32::Graphics::Direct3D11::{
-    D3D11CreateDevice, ID3D11Device, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
-};
 use windows::Win32::Graphics::Dxgi::IDXGIDevice;
 
 #[napi(object)]
@@ -21,22 +17,8 @@ pub struct GpuHardwareInfo {
 #[napi]
 pub fn gpu_hardware_info() -> napi::Result<GpuHardwareInfo> {
     let read = || -> windows::core::Result<GpuHardwareInfo> {
-        let mut device: Option<ID3D11Device> = None;
         unsafe {
-            D3D11CreateDevice(
-                None,
-                D3D_DRIVER_TYPE_HARDWARE,
-                HMODULE::default(),
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                None,
-                D3D11_SDK_VERSION,
-                Some(&mut device),
-                None,
-                None,
-            )?;
-            let device = device.ok_or_else(|| {
-                windows::core::Error::from_hresult(windows::core::HRESULT(0x80004005u32 as i32))
-            })?;
+            let (device, _) = crate::d3d::create_device()?;
             let dxgi: IDXGIDevice = device.cast()?;
             let desc = dxgi.GetAdapter()?.GetDesc()?;
             let end = desc

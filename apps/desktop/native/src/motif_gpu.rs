@@ -1,67 +1,18 @@
 //! Persistent RGBA transport pool, independent of the optional FFmpeg addon.
 //! All D3D objects and operations live on ONE worker. Caller owns admission and
 //! must finish the consumer read before reusing a slot (same contract as video).
+use crate::d3d::{
+    create_device, create_texture, device, open_shared, wait_idle, with_key, DeviceWorker, NtHandle,
+};
 use crate::motif_error::{coded, to_napi, MotifCode};
 use crate::motif_limits::{textures_fit, MAX_POOL_SLOTS};
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
-use std::sync::mpsc;
 use windows::core::{Interface, PCWSTR};
-use windows::Win32::Foundation::{CloseHandle, HANDLE, HMODULE};
-use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Dxgi::{IDXGIKeyedMutex, IDXGIResource1};
-
-/// Worker replies carry `format!("{e:#}")`, which keeps a `[motif:<code>]` tag.
-type Reply = tokio::sync::oneshot::Sender<Result<(), String>>;
-type TimedReply = tokio::sync::oneshot::Sender<Result<MotifUploadTiming, String>>;
-
-/// `IDXGIKeyedMutex::AcquireSync` returns this success code when the other
-/// side still holds the key after the wait.
-const WAIT_TIMEOUT: i32 = 0x102;
-
-/// The longest a Motif GPU path waits for a keyed mutex. A protocol deadline,
-/// like those in `MOTIF_DEADLINES` (`src/shared/motifs/tuning.ts`).
-const ACQUIRE_SYNC_TIMEOUT_MS: u32 = 1000;
-
-/// Takes `mutex` with key 0, waiting at most `ACQUIRE_SYNC_TIMEOUT_MS`. A
-/// timeout is transient: the other side still holds the key.
-pub(crate) unsafe fn acquire_sync(mutex: &IDXGIKeyedMutex, what: &str) -> anyhow::Result<()> {
-    let hr = (Interface::vtable(mutex).AcquireSync)(
-        Interface::as_raw(mutex),
-        0,
-        ACQUIRE_SYNC_TIMEOUT_MS,
-    );
-    match hr.0 {
-        0 => Ok(()),
-        WAIT_TIMEOUT => Err(coded(
-            MotifCode::Transient,
-            anyhow::anyhow!("{what} mutex still held"),
-        )),
-        _ => Err(coded(
-            MotifCode::Device,
-            anyhow::anyhow!("{what} mutex unavailable: {hr:?}"),
-        )),
-    }
-}
-
-/// A D3D11 or DXGI call failed.
-pub(crate) fn device(e: impl Into<anyhow::Error>) -> anyhow::Error {
-    coded(MotifCode::Device, e)
-}
-
-fn closed() -> napi::Error {
-    to_napi(coded(
-        MotifCode::Closed,
-        anyhow::anyhow!("Motif GPU pool closed"),
-    ))
-}
-
-/// The worker is gone or dropped the reply without answering.
-fn worker_lost(e: impl std::fmt::Display) -> napi::Error {
-    to_napi(device(anyhow::anyhow!("Motif GPU worker lost: {e}")))
-}
 
 /// Stage times of one upload, in milliseconds.
 #[napi(object)]
@@ -77,15 +28,9 @@ pub struct MotifUploadTiming {
     pub gpu_ms: f64,
 }
 
-enum Command {
-    Upload(String, usize, u32, TimedReply),
-    Copy(usize, usize, Reply),
-    Stop,
-}
-
 #[napi]
 pub struct MotifGpuPool {
-    tx: Option<mpsc::Sender<Command>>,
+    worker: DeviceWorker<Pool>,
     handles: Vec<Vec<u8>>,
 }
 
@@ -111,52 +56,16 @@ impl MotifGpuPool {
                 anyhow::anyhow!("Motif GPU pool exceeds budget"),
             )));
         }
-        let (tx, rx) = mpsc::channel();
-        let (ready_tx, ready_rx) = mpsc::sync_channel(1);
-        std::thread::Builder::new()
-            .name("motif-gpu".into())
-            .spawn(move || {
-                let state =
-                    unsafe { Pool::new(width, height, count, bgra.unwrap_or(false), upload) };
-                match state {
-                    Err(e) => {
-                        let _ = ready_tx.send(Err(format!("{:#}", device(e))));
-                    }
-                    Ok(pool) => {
-                        let _live = Live::new();
-                        let handles = pool
-                            .slots
-                            .iter()
-                            .map(|s| (s.handle.0 as usize).to_le_bytes().to_vec())
-                            .collect();
-                        if ready_tx.send(Ok(handles)).is_err() {
-                            return;
-                        }
-                        while let Ok(command) = rx.recv() {
-                            let (path, slot, div, reply) = match command {
-                                Command::Upload(path, slot, div, reply) => (path, slot, div, reply),
-                                Command::Copy(handle, slot, reply) => {
-                                    let result = unsafe { pool.copy(handle, slot) };
-                                    let _ = reply.send(result.map_err(|e| format!("{e:#}")));
-                                    continue;
-                                }
-                                Command::Stop => break,
-                            };
-                            let result = unsafe { pool.upload(slot, &path, div) };
-                            let _ = reply.send(result.map_err(|e| format!("{e:#}")));
-                        }
-                    }
-                }
-            })
-            .map_err(|e| to_napi(device(e)))?;
-        let handles = ready_rx
-            .recv()
-            .map_err(worker_lost)?
-            .map_err(napi::Error::from_reason)?;
-        Ok(Self {
-            tx: Some(tx),
-            handles,
-        })
+        let (worker, handles) = DeviceWorker::open("motif-gpu", "Motif GPU pool", move || {
+            let pool = unsafe { Pool::new(width, height, count, bgra.unwrap_or(false), upload) }?;
+            let handles = pool
+                .slots
+                .iter()
+                .map(|s| (s.handle.0 as usize).to_le_bytes().to_vec())
+                .collect();
+            Ok((pool, handles))
+        })?;
+        Ok(Self { worker, handles })
     }
 
     #[napi]
@@ -174,15 +83,10 @@ impl MotifGpuPool {
         slot: u32,
         div: Option<u32>,
     ) -> napi::Result<MotifUploadTiming> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.tx
-            .as_ref()
-            .ok_or_else(closed)?
-            .send(Command::Upload(path, slot as usize, div.unwrap_or(1), tx))
-            .map_err(worker_lost)?;
-        rx.await
-            .map_err(worker_lost)?
-            .map_err(napi::Error::from_reason)
+        let div = div.unwrap_or(1);
+        self.worker
+            .run(move |pool| unsafe { pool.upload(slot as usize, &path, div) })
+            .await
     }
 
     /// Copy an OSR texture's top-left slot-sized picture into our own pool before
@@ -190,35 +94,15 @@ impl MotifGpuPool {
     /// copy, not just submission.
     #[napi]
     pub async fn copy_texture(&self, handle: Buffer, slot: u32) -> napi::Result<()> {
-        let bits: [u8; 8] = handle
-            .as_ref()
-            .try_into()
-            .map_err(|_| napi::Error::from_reason("Invalid texture handle"))?;
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.tx
-            .as_ref()
-            .ok_or_else(closed)?
-            .send(Command::Copy(
-                u64::from_le_bytes(bits) as usize,
-                slot as usize,
-                tx,
-            ))
-            .map_err(worker_lost)?;
-        rx.await
-            .map_err(worker_lost)?
-            .map_err(napi::Error::from_reason)
+        let handle = NtHandle::from_buffer(&handle)?;
+        self.worker
+            .run(move |pool| unsafe { pool.copy(handle, slot as usize) })
+            .await
     }
 
     #[napi]
     pub fn close(&mut self) {
-        if let Some(tx) = self.tx.take() {
-            let _ = tx.send(Command::Stop);
-        }
-    }
-}
-impl Drop for MotifGpuPool {
-    fn drop(&mut self) {
-        self.close();
+        self.worker.close();
     }
 }
 
@@ -263,6 +147,7 @@ struct Pool {
     /// upload pool has one.
     staging: Option<ID3D11Texture2D>,
     slots: Vec<Slot>,
+    _live: Live,
 }
 impl Pool {
     unsafe fn new(
@@ -272,20 +157,8 @@ impl Pool {
         bgra: bool,
         upload: bool,
     ) -> anyhow::Result<Self> {
-        let (mut device, mut context) = (None, None);
-        D3D11CreateDevice(
-            None,
-            D3D_DRIVER_TYPE_HARDWARE,
-            HMODULE::default(),
-            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-            None,
-            D3D11_SDK_VERSION,
-            Some(&mut device),
-            None,
-            Some(&mut context),
-        )?;
-        let device = device.ok_or_else(|| anyhow::anyhow!("No D3D11 device"))?;
-        let context = context.ok_or_else(|| anyhow::anyhow!("No D3D11 context"))?;
+        let (device, context) = create_device()?;
+        let device: ID3D11Device1 = device.cast()?;
         let desc = D3D11_TEXTURE2D_DESC {
             Width: width,
             Height: height,
@@ -308,9 +181,7 @@ impl Pool {
         };
         let mut slots = Vec::new();
         for _ in 0..count {
-            let mut texture = None;
-            device.CreateTexture2D(&desc, None, Some(&mut texture))?;
-            let texture = texture.unwrap();
+            let texture = create_texture(&device, &desc)?;
             let mutex = texture.cast()?;
             let resource: IDXGIResource1 = texture.cast()?;
             let handle = resource.CreateSharedHandle(None, 0x80000001, PCWSTR::null())?;
@@ -320,9 +191,9 @@ impl Pool {
                 handle,
             });
         }
-        let mut staging = None;
-        if upload {
-            device.CreateTexture2D(
+        let staging = if upload {
+            Some(create_texture(
+                &device,
                 &D3D11_TEXTURE2D_DESC {
                     Usage: D3D11_USAGE_STAGING,
                     BindFlags: 0,
@@ -330,10 +201,10 @@ impl Pool {
                     MiscFlags: 0,
                     ..desc
                 },
-                None,
-                Some(&mut staging),
-            )?;
-        }
+            )?)
+        } else {
+            None
+        };
         let mut query = None;
         device.CreateQuery(
             &D3D11_QUERY_DESC {
@@ -342,14 +213,16 @@ impl Pool {
             },
             Some(&mut query),
         )?;
+        let query = query.ok_or_else(|| anyhow::anyhow!("CreateQuery returned no query"))?;
         Ok(Self {
-            device: device.cast()?,
+            device,
             context,
-            query: query.unwrap(),
+            query,
             width,
             height,
             staging,
             slots,
+            _live: Live::new(),
         })
     }
 
@@ -400,30 +273,19 @@ impl Pool {
         })
     }
 
-    unsafe fn copy(&self, handle: usize, slot: usize) -> anyhow::Result<()> {
-        let source: ID3D11Texture2D = self
-            .device
-            .OpenSharedResource1(HANDLE(handle as *mut _))
-            .map_err(device)?;
+    unsafe fn copy(&self, handle: NtHandle, slot: usize) -> anyhow::Result<()> {
+        let source = open_shared(&self.device, handle)?;
         let target = self
             .slots
             .get(slot)
             .ok_or_else(|| anyhow::anyhow!("Invalid Motif GPU slot"))?;
-        let (mut src, mut dst) = (
-            D3D11_TEXTURE2D_DESC::default(),
-            D3D11_TEXTURE2D_DESC::default(),
-        );
-        source.GetDesc(&mut src);
+        let (src, mut dst) = (source.desc, D3D11_TEXTURE2D_DESC::default());
         target.texture.GetDesc(&mut dst);
         // The capture host's surface keeps marker rows below the picture.
         if src.Width != dst.Width || src.Height < dst.Height || src.Format != dst.Format {
             return Err(device(anyhow::anyhow!(
                 "OSR texture dimensions/format changed"
             )));
-        }
-        let mutex = source.cast::<IDXGIKeyedMutex>().ok();
-        if let Some(ref mutex) = mutex {
-            acquire_sync(mutex, "OSR")?;
         }
         let picture = D3D11_BOX {
             left: 0,
@@ -433,16 +295,17 @@ impl Pool {
             bottom: dst.Height,
             back: 1,
         };
-        let result = self.write(slot, |texture| {
-            self.context
-                .CopySubresourceRegion(texture, 0, 0, 0, 0, &source, 0, Some(&picture))
-        });
-        if let Some(mutex) = mutex {
-            mutex.ReleaseSync(0).map_err(device)?;
-        }
-        result.map(|_| ())
+        source.with_key("OSR", |osr| {
+            self.write(slot, |texture| {
+                self.context
+                    .CopySubresourceRegion(texture, 0, 0, 0, 0, osr, 0, Some(&picture))
+            })
+            .map(|_| ())
+        })
     }
 
+    /// Runs `write` into the slot under its keyed mutex and waits for the
+    /// device to finish it. Returns the acquire and GPU times.
     unsafe fn write(
         &self,
         slot: usize,
@@ -453,34 +316,12 @@ impl Pool {
             .get(slot)
             .ok_or_else(|| anyhow::anyhow!("Invalid Motif GPU slot"))?;
         let acquire = std::time::Instant::now();
-        acquire_sync(&slot.mutex, "Motif GPU")?;
-        let acquire_ms = acquire.elapsed().as_secs_f64() * 1000.0;
-        // Always release after acquisition, even when device completion fails.
-        let gpu = std::time::Instant::now();
-        let result = (|| -> anyhow::Result<()> {
+        with_key(&slot.mutex, "Motif GPU", || {
+            let acquire_ms = acquire.elapsed().as_secs_f64() * 1000.0;
+            let gpu = std::time::Instant::now();
             write(&slot.texture);
-            self.context.End(&self.query);
-            self.context.Flush();
-            let start = std::time::Instant::now();
-            loop {
-                let mut ready = 0u32;
-                self.context
-                    .GetData(&self.query, Some((&mut ready as *mut u32).cast()), 4, 0)
-                    .map_err(device)?;
-                if ready != 0 {
-                    break;
-                }
-                if start.elapsed().as_secs() >= 5 {
-                    return Err(device(anyhow::anyhow!("Motif GPU upload timed out")));
-                }
-                std::thread::sleep(std::time::Duration::from_micros(100));
-            }
-            Ok(())
-        })();
-        let gpu_ms = gpu.elapsed().as_secs_f64() * 1000.0;
-        let release = slot.mutex.ReleaseSync(0);
-        result?;
-        release.map_err(device)?;
-        Ok((acquire_ms, gpu_ms))
+            wait_idle(&self.context, &self.query)?;
+            Ok((acquire_ms, gpu.elapsed().as_secs_f64() * 1000.0))
+        })
     }
 }
