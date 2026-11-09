@@ -1,4 +1,4 @@
-import type { MotifCaptureControl, MotifCaptureRequest as MotifCaptureWireRequest, MotifFramePriority, MotifReadUnavailable, MotifTextureReadRequest, MotifUploadTiming } from '../../../shared/motifs/frameTransport';
+import type { MotifCaptureControl, MotifCaptureRequest as MotifCaptureWireRequest, MotifFramePriority, MotifPresence, MotifReadUnavailable, MotifTextureReadRequest, MotifUploadTiming } from '../../../shared/motifs/frameTransport';
 import { isMotifErrorCode, MotifError, motifSuperseded, type MotifErrorCode } from '../../../shared/motifs/errors';
 import { MOTIF_DEADLINES } from '../../../shared/motifs/tuning';
 
@@ -135,7 +135,31 @@ function unavailableReply({ unavailable, generation }: FramePortMessage): MotifR
   return { kind: 'unavailable', reason: unavailable, generation: typeof generation === 'number' ? generation : 0 };
 }
 
+/** Tells main which Motifs the preview shows and which enters next
+ * (`MotifPresence`), on the frame port, so it follows the captures sent
+ * before it. */
+export function declareMotifPresence(presence: MotifPresence): void {
+  framePort().postMessage({ presence });
+}
+
 function send(args: Record<string, unknown>): Promise<FrameReply> {
+  const port = framePort();
+  const id = ++nextId;
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pending.delete(id);
+      reject(new FramePortTimeout());
+    }, args.capture ? MOTIF_DEADLINES.captureTransportMs : MOTIF_DEADLINES.readTransportMs);
+    pending.set(id, {
+      resolve: frame => { clearTimeout(timeout); resolve(frame); },
+      reject: error => { clearTimeout(timeout); reject(error); },
+    });
+    port.postMessage({ id, ...args });
+  });
+}
+
+/// The page's end of the frame port, opened on first use.
+function framePort(): MessagePort {
   if (!port) {
     const channel = new MessageChannel();
     port = channel.port1;
@@ -155,16 +179,5 @@ function send(args: Record<string, unknown>): Promise<FrameReply> {
     port.start();
     window.postMessage({ type: "weftcut:motif-frame-port" }, "*", [channel.port2]);
   }
-  const id = ++nextId;
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      pending.delete(id);
-      reject(new FramePortTimeout());
-    }, args.capture ? MOTIF_DEADLINES.captureTransportMs : MOTIF_DEADLINES.readTransportMs);
-    pending.set(id, {
-      resolve: frame => { clearTimeout(timeout); resolve(frame); },
-      reject: error => { clearTimeout(timeout); reject(error); },
-    });
-    port!.postMessage({ id, ...args });
-  });
+  return port;
 }

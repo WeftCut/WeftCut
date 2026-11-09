@@ -1,5 +1,5 @@
 import { ipcRenderer, type SharedTextureImported } from 'electron'
-import type { MotifCaptureControl, MotifCaptureReply, MotifCaptureRequest, MotifReadUnavailable, MotifTextureReadRequest } from '../shared/motifs/frameTransport'
+import type { MotifCaptureControl, MotifCaptureReply, MotifCaptureRequest, MotifPresence, MotifReadUnavailable, MotifTextureReadRequest } from '../shared/motifs/frameTransport'
 import { MOTIF_READER_CONNECT, MOTIF_READER_PORT, MOTIF_READER_RESET, MOTIF_TEXTURE_LANE_RESET, type MotifReaderDiv } from '../shared/motifs/readerProtocol'
 import { decodeMotifError, MotifError } from '../shared/motifs/errors'
 
@@ -22,9 +22,10 @@ export function installMotifFrames(
     if (event.data?.type !== 'weftcut:motif-frame-port') return
     const port = event.ports[0]
     if (!port) return
-    port.onmessage = async ({ data }: MessageEvent<{ id: number; hash: string; frame: number; div: MotifReaderDiv; finalizationToken?: string; capture?: MotifCaptureRequest; control?: MotifCaptureControl }>) => {
+    port.onmessage = async ({ data }: MessageEvent<{ id: number; hash: string; frame: number; div: MotifReaderDiv; finalizationToken?: string; capture?: MotifCaptureRequest; control?: MotifCaptureControl; presence?: MotifPresence }>) => {
       // Same IPC sender as the request it follows, so main receives it after.
       if (data.control) { ipcRenderer.send('motif:capture-control', data.control); return }
+      if (data.presence) { ipcRenderer.send('motif:presence', data.presence); return }
       let frame: MotifCaptureReply | MotifReadUnavailable | null = null
       let bitmap: ImageBitmap | null = null
       let failed = true

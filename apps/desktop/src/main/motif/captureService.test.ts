@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NativeImage, OffscreenSharedTexture, WebContents } from 'electron';
 import type { MotifOsrFrame } from './offscreenFrames';
 import type { CaptureOptions, CaptureRun } from './captureQueue';
-import { MotifCaptureService, parseMotifCaptureControl, parseMotifCaptureRequest, type CaptureServiceDeps } from './captureService';
+import { MotifCaptureService, parseMotifCaptureControl, parseMotifCaptureRequest, parseMotifPresence, type CaptureServiceDeps } from './captureService';
 import type { MotifFrameStore } from './frameStore';
 import type { MotifCaptureRequest } from '../../shared/motifs/frameTransport';
 import { MotifError } from '../../shared/motifs/errors';
@@ -564,6 +564,18 @@ describe('Motif capture wire', () => {
     expect(parseMotifCaptureControl({ requestId: 2, action: 'priority', priority: 'background' })).toEqual({ requestId: 2, action: 'priority', priority: 'background' });
     for (const control of [null, { key: 'k', action: 'promote' }, { requestId: 2, action: 'priority', priority: 'high' }, { requestId: -1, action: 'cancel' }]) {
       expect(parseMotifCaptureControl(control)).toBeNull();
+    }
+  });
+
+  it('parses a presence; anything else is not one', () => {
+    const shown = { motifId: 'm', contentHash: 'h' };
+    expect(parseMotifPresence({ visible: [shown], next: { motifId: 'n', contentHash: '', inMs: 120 }, playing: true }))
+      .toEqual({ visible: [shown], next: { motifId: 'n', contentHash: '', inMs: 120 }, playing: true });
+    expect(parseMotifPresence({ visible: [], next: null, playing: false })).toEqual({ visible: [], next: null, playing: false });
+    for (const presence of [null, { visible: 'm', next: null, playing: true }, { visible: [], next: null }, { visible: [{ motifId: '' , contentHash: 'h' }], next: null },
+      { visible: [shown] }, { visible: [], next: { motifId: 'n', contentHash: 'h', inMs: -1 } },
+      { visible: Array.from({ length: 257 }, () => shown), next: null }]) {
+      expect(parseMotifPresence(presence)).toBeNull();
     }
   });
 });

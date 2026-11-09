@@ -40,7 +40,7 @@ import { resolveMotifTuning } from './motif/tuning.js'
 import { motifTuningArgument } from '../shared/motifs/tuning.js'
 import { setMotifMediaSource } from './motif/mediaProps.js'
 import { rasterizeSvg } from './svgRaster.js'
-import { MotifCaptureService, parseMotifCaptureControl, parseMotifCaptureRequest } from './motif/captureService.js'
+import { MotifCaptureService, parseMotifCaptureControl, parseMotifCaptureRequest, parseMotifPresence } from './motif/captureService.js'
 import { UserMotifStore } from './motif/store.js'
 import { MotifFrameStore } from './motif/frameStore.js'
 import { createMotifConsumers } from './motif/consumers.js'
@@ -1475,6 +1475,8 @@ app.whenReady().then(async () => {
   const trackMotifConsumer = createMotifConsumers(owner => {
     motifGpu?.close(owner)
     reader.retire(owner)
+    // The document's Motifs are no longer on screen.
+    try { capturer.setPresence(owner.id, null) } catch { /* already destroyed */ }
   })
   // Texture-only (ADR 0154): without shared textures the renderer reads
   // through the Motif reader utility, never through main.
@@ -1503,6 +1505,12 @@ app.whenReady().then(async () => {
   ipcMain.on('motif:capture-control', (event, payload: unknown) => {
     const control = parseMotifCaptureControl(payload)
     if (control) motifCapture.control(event.sender.id, control)
+  })
+  ipcMain.on('motif:presence', (event, payload: unknown) => {
+    const presence = parseMotifPresence(payload)
+    // Registers the document's retirement, which withdraws its presence.
+    trackMotifConsumer(event.sender, event.senderFrame)
+    if (presence) capturer.setPresence(event.sender.id, presence)
   })
   ipcMain.handle('motif:capture', (event, payload: unknown) => {
     const request = parseMotifCaptureRequest(payload)

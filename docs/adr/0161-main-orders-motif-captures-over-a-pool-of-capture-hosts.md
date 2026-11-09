@@ -41,7 +41,7 @@ after a seek back.
   on a transport failure or a hung setup or render, failing only its own
   frames. Another Motif gets another window: one renderer process per Motif.
 - Main keeps a **pool**: at most one host per key and `captureHosts` in all
-  (default 2, range 1–4), and a second or later host only while the app's
+  (default 4, range 1–8), and a second or later host only while the app's
   process tree has room for one more under its memory target and memory is
   not under pressure; the first can always open. A host is resident process
   memory the target already measures, so it is charged there, at its measured
@@ -54,9 +54,27 @@ after a seek back.
   host of another content version of its Motif on its lane: once that host
   drains, its shell's frame loads the new version's page, and a page that
   does not load retires the host and the slot opens a new one. Else it takes
-  a free slot, else replaces the least recently used host that is not
-  rendering, after it drains. Each host renders one frame at a time; hosts
+  a free slot, else replaces a host that is not rendering and that its class
+  may take, after it drains. Each host renders one frame at a time; hosts
   render concurrently.
+- **Presence and roles.** Each preview document tells main, when it or the
+  play state changes, which Motif content versions are visible at its
+  playhead, which enters next within the lookahead, and whether it plays
+  (`motif:presence`); a document that goes takes its presence with it. A host
+  is *held* while its content is visible in a playing preview or a `current`
+  capture (an export's included) used it within `hostResidencyMs`, *warm*
+  while its content is next in a playing preview, else *spare*. A paused
+  preview protects nothing beyond its `current` captures' residency: its
+  frame is on screen, and an agent's MCP preview or a bake must not wait on
+  an idle editor. An `ahead` or `background` capture takes only a spare host
+  until it has waited `hostAgingMs`, so side traffic (preparation, panel
+  previews, covers, MCP) does not evict what playback or an export needs, and
+  never waits for ever. A `current` capture, or aged side traffic, takes a
+  spare, then a warm, then a held host that has shown its content for
+  `hostResidencyMs`, the longest-shown first: with more visible Motifs than
+  hosts they rotate at that pace, not per frame. The queue is woken when a
+  protection ends. Under memory pressure spare hosts retire before warm ones;
+  held ones stay.
 - One queue orders captures by class (`current`, `ahead`, `background`, with
   background aging) and **dispatches at a free slot**: a capture leaves it only
   when a host can take its frame, so nothing in the queue holds a `current`
@@ -119,5 +137,7 @@ after a seek back.
   on both machines (M1 DECO pair 30 → 22 fps), so it stays 2.
 - Diagnostics report `rendering` (render steps in progress), `hostEvictions`,
   `hostSwaps` (version switches in a window), `hostSheds` (hosts retired for
-  memory pressure), `affinityPicks` and one row per host with its renderer's
-  working set (`memoryMib`).
+  memory pressure), `affinityPicks` and one row per host with its role and
+  its renderer's working set (`memoryMib`).
+- The hard cap went from 2 to 4 with the memory gate and the roles; the
+  residency (1 s) and the cap are not yet measured in the scenario suite.

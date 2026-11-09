@@ -609,7 +609,8 @@ describe('MotifCapturer', () => {
     // for in flight, so some always wait in the queue, for one second.
     const run = async (hostAffinityMs: number) => {
       capturer.shutdown()
-      capturer = newCapturer({ tuning: { ...ONE_HOST, hostAffinityMs } })
+      // Residency would pace the switches itself (tested on its own below).
+      capturer = newCapturer({ tuning: { ...ONE_HOST, hostAffinityMs, hostResidencyMs: 0 } })
       let running = true
       const done = { a: 0, b: 0 }
       const lane = async (id: 'a' | 'b') => {
@@ -640,6 +641,105 @@ describe('MotifCapturer', () => {
       paintDelayMs = 0
       vi.useRealTimers()
     }
+  })
+
+  it('more visible Motifs than hosts rotate once per residency, each still served', async () => {
+    vi.useFakeTimers()
+    paintDelayMs = 10
+    try {
+      capturer.shutdown()
+      capturer = newCapturer({ tuning: { ...ONE_HOST, hostAffinityMs: 0, hostResidencyMs: 500 } })
+      capturer.setPresence(1, { visible: [{ motifId: 'shown-a', contentHash: 'v1' }, { motifId: 'shown-b', contentHash: 'v1' }], next: null, playing: true })
+      let running = true
+      const done = { a: 0, b: 0 }
+      const lane = async (id: 'a' | 'b') => {
+        for (let t = 0; running; t++) {
+          await capturer.capturePng({ ...args, motifId: `shown-${id}`, tSec: t }, { priority: 'current' })
+          done[id]++
+        }
+      }
+      const lanes = (['a', 'b'] as const).flatMap(id => Array.from({ length: MOTIF_TUNING_DEFAULTS.framesInFlight + 1 }, () => lane(id)))
+      await vi.advanceTimersByTimeAsync(2000)
+      running = false
+      await vi.advanceTimersByTimeAsync(1000)
+      await Promise.all(lanes)
+      expect(Math.min(done.a, done.b)).toBeGreaterThan(10)
+      // One switch per 500 ms of residency, the last one draining the queue.
+      expect(capturer.diagnostics().hostBuilds).toBeLessThanOrEqual(2000 / 500 + 2)
+    } finally {
+      paintDelayMs = 0
+      vi.useRealTimers()
+    }
+  })
+
+  it('side traffic never takes a visible, warm or recently current host', async () => {
+    capturer = newCapturer({ tuning: { ...ONE_HOST, hostResidencyMs: 60_000 } })
+    await capturer.capturePng({ ...args, motifId: 'on-screen' }, bg)
+    capturer.setPresence(1, { visible: [{ motifId: 'on-screen', contentHash: 'v1' }], next: null, playing: true })
+    let side = false
+    const panel = capturer.capturePng({ ...args, motifId: 'panel-preview' }, bg).then(() => { side = true })
+    await delay(50)
+    expect(side).toBe(false)
+    expect(capturer.diagnostics().hosts).toEqual([expect.objectContaining({ motifId: 'on-screen', role: 'held' })])
+    // The Motif left the screen and is next to enter again: still kept from side traffic.
+    capturer.setPresence(1, { visible: [], next: { motifId: 'on-screen', contentHash: 'v1', inMs: 400 }, playing: true })
+    await delay(50)
+    expect(side).toBe(false)
+    // Nothing needs it now: the panel's capture takes it.
+    capturer.setPresence(1, null)
+    await panel
+    expect(capturer.diagnostics()).toMatchObject({ hostBuilds: 2, hostEvictions: 1 })
+    // A current capture (an export's too) holds its host against side traffic.
+    await capturer.capturePng({ ...args, motifId: 'exported' }, { priority: 'current' })
+    side = false
+    const cover = capturer.capturePng({ ...args, motifId: 'cover' }, bg).then(() => { side = true })
+    await delay(50)
+    expect(side).toBe(false)
+    capturer.shutdown()
+    await cover.catch(() => {})
+  })
+
+  it('a current capture takes a warm host at once', async () => {
+    capturer = newCapturer({ tuning: { ...ONE_HOST, hostResidencyMs: 60_000 } })
+    await capturer.capturePng({ ...args, motifId: 'entering' }, bg)
+    capturer.setPresence(1, { visible: [], next: { motifId: 'entering', contentHash: 'v1', inMs: 400 }, playing: true })
+    await capturer.capturePng({ ...args, motifId: 'on-screen-now' }, { priority: 'current' })
+    expect(capturer.diagnostics()).toMatchObject({ hostBuilds: 2, hostEvictions: 1 })
+  })
+
+  it('a paused preview holds its Motif\'s host only for the residency after its current frame; an agent\'s capture then takes it', async () => {
+    capturer = newCapturer({ tuning: { ...ONE_HOST, hostResidencyMs: 200 } })
+    capturer.setPresence(1, { visible: [{ motifId: 'paused-on', contentHash: 'v1' }], next: null, playing: false })
+    await capturer.capturePng({ ...args, motifId: 'paused-on' }, { priority: 'current' })
+    const started = performance.now()
+    // An MCP preview of another Motif, as `ahead` and as `background`.
+    await capturer.capturePng({ ...args, motifId: 'agent-preview' }, { priority: 'ahead' })
+    await capturer.capturePng({ ...args, motifId: 'agent-render' }, bg)
+    expect(performance.now() - started).toBeGreaterThanOrEqual(150)
+    expect(capturer.diagnostics()).toMatchObject({ hostBuilds: 3, completed: 3 })
+  })
+
+  it('playback keeps its Motif\'s host from side traffic until the side traffic has waited hostAgingMs', async () => {
+    capturer = newCapturer({ tuning: { ...ONE_HOST, hostResidencyMs: 0, hostAgingMs: 300 } })
+    await capturer.capturePng({ ...args, motifId: 'playing-on' }, bg)
+    capturer.setPresence(1, { visible: [{ motifId: 'playing-on', contentHash: 'v1' }], next: null, playing: true })
+    const started = performance.now()
+    let done = false
+    const bake = capturer.capturePng({ ...args, motifId: 'baked' }, bg).then(() => { done = true })
+    await delay(150)
+    expect(done).toBe(false)
+    expect(capturer.diagnostics().hosts).toEqual([expect.objectContaining({ motifId: 'playing-on', role: 'held' })])
+    await bake
+    expect(performance.now() - started).toBeGreaterThanOrEqual(280)
+  })
+
+  it('a document that goes withdraws its presence', async () => {
+    capturer = newCapturer({ tuning: { ...ONE_HOST, hostResidencyMs: 0 } })
+    await capturer.capturePng({ ...args, motifId: 'shown' }, bg)
+    capturer.setPresence(7, { visible: [{ motifId: 'shown', contentHash: 'v1' }], next: null, playing: true })
+    expect(capturer.diagnostics().hosts[0]).toMatchObject({ role: 'held' })
+    capturer.setPresence(7, null)
+    expect(capturer.diagnostics().hosts[0]).toMatchObject({ role: 'spare' })
   })
 
   it('a consumer\'s failure leaves the host and the other frames in flight alone', async () => {

@@ -12,12 +12,12 @@ import { frameMarkerRows } from '../../shared/motifs/frameMarker.js'
 import { fitsMotifTexture } from '../../shared/motifs/limits.js'
 import type { MotifTuning } from '../../shared/motifs/tuning.js'
 import type { UserMotifStore } from './store.js'
-import type { MotifFramePriority } from '../../shared/motifs/frameTransport.js'
+import type { MotifFramePriority, MotifPresence } from '../../shared/motifs/frameTransport.js'
 import { backgroundResourcePause, onBackgroundResourceChange, processMemoryMiB } from '../resources.js'
 import { resourceAllocation } from '../../shared/resource-policy.js'
 
 /** The tuning keys the capture hosts run on (`shared/motifs/tuning.ts`). */
-export type CaptureTuning = Pick<MotifTuning, 'captureHosts' | 'hostMemoryMib' | 'framesInFlight' | 'captureFrameRate' | 'skippedFrameRetries' | 'backgroundAgingMs' | 'hostAffinityMs' | 'stallNudgeMs'>
+export type CaptureTuning = Pick<MotifTuning, 'captureHosts' | 'hostMemoryMib' | 'hostResidencyMs' | 'hostAgingMs' | 'framesInFlight' | 'captureFrameRate' | 'skippedFrameRetries' | 'backgroundAgingMs' | 'hostAffinityMs' | 'stallNudgeMs'>
 
 /** What a capture reads from the Motif store. */
 export type CaptureStore = Pick<UserMotifStore, 'getMotif' | 'assertRenderable' | 'pinPackage'>
@@ -85,6 +85,8 @@ export class MotifCapturer {
 
   /// Unsubscribes from memory pressure.
   private readonly stopShedding: () => void
+  /// Each preview document's presence, by its id.
+  private readonly presences = new Map<number, MotifPresence>()
   /// The renderer processes' working sets (MiB) by pid, and when they were read.
   private hostMemory: { at: number; byPid: Map<number, number> } = { at: -Infinity, byPid: new Map() }
 
@@ -97,6 +99,8 @@ export class MotifCapturer {
     this.pool = new HostPool({
       capacity: deps.tuning.captureHosts,
       affinityMs: deps.tuning.hostAffinityMs,
+      residencyMs: deps.tuning.hostResidencyMs,
+      agingMs: deps.tuning.hostAgingMs,
       mayGrow: live => this.hostsMayGrow(live),
       hostKeyOf: a => ({ motifId: a.motifId, contentHash: a.contentHash, texture: this.wantsTextureHost(a.width, a.height) }),
       open: (key, a) => this.openHost(key, a),
@@ -270,6 +274,23 @@ export class MotifCapturer {
       this.hostMemory = { at: now, byPid }
     }
     return this.hostMemory.byPid.get(pid) ?? null
+  }
+
+  /** A preview document's Motif presence: the content versions visible at its
+   * playhead and the next to enter; null when the document goes. While its
+   * playback runs, the pool keeps the hosts they name from side traffic (ADR
+   * 0161); a paused preview's needs are its `current` captures, which hold a
+   * host for `hostResidencyMs` on their own. */
+  setPresence(document: number, presence: MotifPresence | null): void {
+    if (presence) this.presences.set(document, presence)
+    else if (!this.presences.delete(document)) return
+    const visible = new Set<string>(), warm = new Set<string>()
+    for (const p of this.presences.values()) {
+      if (!p.playing) continue
+      for (const v of p.visible) visible.add(`${v.motifId}\0${v.contentHash}`)
+      if (p.next) warm.add(`${p.next.motifId}\0${p.next.contentHash}`)
+    }
+    this.pool.setDemand({ visible, warm })
   }
 
   /// Shows another content version of `host`'s Motif in its window, from a

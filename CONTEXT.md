@@ -608,6 +608,13 @@ Main keeps a pool of them, at most one per content version. See
 [motifs.md](docs/motifs.md#capture-host).
 _Avoid_: capture page
 
+**Motif presence**:
+What a preview tells main about its Motifs: the content versions visible at
+the playhead, the next to enter, and whether it plays. While it plays, main
+keeps those capture hosts from side traffic. See
+[motifs.md](docs/motifs.md#capture-host).
+_Avoid_: demand (the lookahead's word), visible set
+
 **Props schema (data plane)**:
 A Motif's `props_schema`: five typed variants (string, color, number, enum,
 media). The data contract only, no presentation. See ADR 0045, ADR 0132.

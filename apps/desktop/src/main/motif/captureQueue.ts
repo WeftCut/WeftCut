@@ -44,12 +44,14 @@ export interface HostSlots<L extends HostLease> {
   /// among its frames in flight). `busy`: it cannot yet, or it is being
   /// replaced. `absent`: the key has no host.
   state(key: string): 'ready' | 'busy' | 'absent'
-  /// A key without a host could have one now: a slot is free, or a host whose
-  /// key is not in `keep` is not rendering.
-  canOpen(keep: ReadonlySet<string>): boolean
+  /// A key without a host could have one now for a capture of `priority`
+  /// queued at `queuedAt`: a slot is free, or a host whose key is not in
+  /// `keep`, not rendering, and that the capture may take.
+  canOpen(keep: ReadonlySet<string>, priority: MotifFramePriority, queuedAt: number): boolean
   /// Reserves the key's host, or a slot for it, until the lease is released;
-  /// a host it replaces is never one in `keep`.
-  acquire(key: string, args: CaptureArgs, keep: ReadonlySet<string>): L
+  /// a host it replaces is never one in `keep`, and one a capture of
+  /// `priority` may take.
+  acquire(key: string, args: CaptureArgs, keep: ReadonlySet<string>, priority: MotifFramePriority, queuedAt: number): L
   /// Called whenever a host may have become available.
   onChange(listener: () => void): void
 }
@@ -326,7 +328,7 @@ export class CaptureQueue<L extends HostLease> {
     const keep = new Set<string>()
     for (const candidate of this.ranked(performance.now(), stateOf)) {
       const state = stateOf(candidate.key)
-      if (state === 'ready' || (state === 'absent' && this.slots.canOpen(keep))) return { ...candidate, keep }
+      if (state === 'ready' || (state === 'absent' && this.slots.canOpen(keep, candidate.ticket.priority, candidate.ticket.queuedAt))) return { ...candidate, keep }
       if (state === 'busy') keep.add(candidate.key)
     }
     return null
@@ -351,7 +353,7 @@ export class CaptureQueue<L extends HostLease> {
           // Before the lease: no host is held, nor a victim marked, for a
           // ticket nobody wants.
           if (ticket.wanted && !ticket.wanted()) { ticket.fail(motifSuperseded()); continue }
-          lease = this.slots.acquire(key, ticket.args, keep)
+          lease = this.slots.acquire(key, ticket.args, keep, ticket.priority, ticket.queuedAt)
         } catch (e) { ticket.fail(e); continue }
         this.agedLast = next.aged
         if (next.affinity) this.hooks.affinityPick()

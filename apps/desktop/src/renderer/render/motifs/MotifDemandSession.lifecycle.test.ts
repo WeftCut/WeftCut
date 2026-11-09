@@ -12,6 +12,8 @@ vi.mock('../../bridge/ipc', () => ({ invoke: h.invoke }));
 vi.mock('../../bridge/events', () => ({ listen: async (name: string, callback: (event: { payload: unknown }) => void) => {
   h.listeners.set(name, callback); return () => { h.listeners.delete(name); };
 } }));
+// Main's end of the presence is out of these tests (no page, no frame port).
+vi.mock('./frameTransport', async original => ({ ...await original<typeof import('./frameTransport')>(), declareMotifPresence: vi.fn() }));
 vi.mock('./MotifPrewarmer', () => ({ MotifPrewarmer: class { setTargets = h.warm; dispose() {} } }));
 vi.mock('../../settings/appSettingsStore', () => ({ useAppSettingsStore: {
   getState: () => ({ settings: { prebake_motifs: true } }), subscribe: () => () => {},
@@ -47,7 +49,7 @@ it('keeps an in-flight acknowledgement through unrelated edits and redeclares on
     throw new Error(`Unexpected invocation: ${channel}`);
   });
   const service = new MotifDemandSession({ projectSummary: () => summary, openCompositionId: () => ROOT_ID,
-    fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0 });
+    fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0, playing: () => false });
   try {
     service.handleProjectChanged(); await tick();
     expect(plans).toHaveLength(1);

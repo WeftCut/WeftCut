@@ -6,7 +6,7 @@ import { getMotif } from './catalog';
 import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
 import type { MotifFrameDescriptor } from './motifFrameDescriptor';
 import {
-  motifLayerStatuses, planLookaheadTargets, planMotifDemand, planMotifPreparation,
+  motifLayerStatuses, planLookaheadTargets, planMotifDemand, planMotifPreparation, planMotifPresence,
   type LookaheadContent, type LookaheadInput, type LookaheadTarget, type PreparationInput,
 } from './motifDemand';
 
@@ -312,5 +312,38 @@ describe('planLookaheadTargets', () => {
       [5, 'ahead', 0], [3, 'ahead', 1], [6, 'ahead', 2], [4, 'ahead', 3], [7, 'ahead', 4], [8, 'ahead', 5],
     ]);
     expect(plan.every(t => t.content.contentFrame === 3 && t.scaleDiv === 2)).toBe(true);
+  });
+});
+
+describe('planMotifPresence', () => {
+  const as = (layer: LayerSummary, motifId: string): LayerSummary =>
+    ({ ...layer, params: { ...(layer.params as Extract<LayerSummary['params'], { kind: 'Motif' }>), motif_id: motifId, props: {} } });
+  const presence = (summary: ProjectSummary, playheadUs: number, lookaheadUs = 1_000_000) => planMotifPresence({
+    summary, openCompositionId: ROOT_ID, fpsNum: 30, fpsDen: 1, playheadUs, lookaheadUs, motif: getMotif,
+  });
+  const ids = (p: ReturnType<typeof presence>) => ({ visible: p.visible.map(v => v.motifId).sort(), next: p.next?.motifId ?? null })
+
+  it('names each content version on screen once, and the soonest other one to enter within the lookahead', () => {
+    const summary = summaryFixture({ root: { tracks: [track([
+      motif('a1', 0, 2_000_000), motif('a2', 500_000, 3_000_000),
+      as(motif('third', 1_200_000, 4_000_000), 'lower-third'),
+      as(motif('later', 1_800_000, 4_000_000), 'text-fx'),
+    ])] } });
+    expect(ids(presence(summary, 600_000))).toEqual({ visible: ['countdown'], next: 'lower-third' });
+    expect(presence(summary, 600_000).next!.inMs).toBe(600);
+    expect(presence(summary, 600_000).visible[0]!.contentHash).toBe(getMotif('countdown')!.manifest.content_hash ?? '');
+    // Beyond the lookahead, nothing is next.
+    expect(ids(presence(summary, 600_000, 500_000))).toEqual({ visible: ['countdown'], next: null });
+    // A Motif entering that is already on screen is not next; the one after it is.
+    expect(ids(presence(summary, 1_300_000))).toEqual({ visible: ['countdown', 'lower-third'], next: 'text-fx' });
+  });
+
+  it('counts a Motif inside a Group, and nothing on a disabled track', () => {
+    const summary = summaryFixture({
+      root: { tracks: [track([groupLayerFixture({ id: 'g', compositionId: 'inner', tStartUs: 0, tEndUs: 4_000_000 })]),
+        { ...track([as(motif('off', 0, 4_000_000), 'text-fx')], 'muted'), enabled: false }] },
+      groups: [compositionFixture({ id: 'inner', tracks: [track([as(motif('inner-third', 0, 4_000_000), 'lower-third')])] })],
+    });
+    expect(ids(presence(summary, 100_000))).toEqual({ visible: ['lower-third'], next: null });
   });
 });

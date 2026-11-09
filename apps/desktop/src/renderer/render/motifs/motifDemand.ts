@@ -5,7 +5,7 @@
 
 import type { ProjectSummary } from "../../ipc";
 import type { MotifBakePlan, MotifFrameRange } from "../../../shared/motifs/baking";
-import type { MotifFramePriority } from "../../../shared/motifs/frameTransport";
+import type { MotifContentRef, MotifFramePriority, MotifPresence } from "../../../shared/motifs/frameTransport";
 import type { MotifReaderDiv } from "../../../shared/motifs/readerProtocol";
 import { motifWarmPhase, type LayerBakeStatus } from "../../timeline/motifBakeStatusStore";
 import { localAt } from "../compositionClock";
@@ -116,6 +116,48 @@ export function planMotifDemand(input: LookaheadInput): LookaheadTarget[] {
   });
   return planLookaheadTargets(contents, budget.capBytes, budget.requests);
 }
+
+export interface PresenceInput {
+  summary: ProjectSummary;
+  openCompositionId: string;
+  fpsNum: number;
+  fpsDen: number;
+  playheadUs: number;
+  /** How far past the playhead the next Motif to enter counts. */
+  lookaheadUs: number;
+  motif: MotifLookup;
+}
+
+/// The Motif content versions on screen at the playhead, Groups' included,
+/// and the soonest one not on screen to enter within `lookaheadUs`, each
+/// once, for main's capture hosts (ADR 0161). A content version is its Motif
+/// and content hash: props and size do not change the host that renders it.
+export function planMotifPresence(input: PresenceInput): Omit<MotifPresence, 'playing'> {
+  const { fpsNum, fpsDen, playheadUs: tUs } = input;
+  const visible = new Map<string, MotifContentRef>();
+  const entering: { ref: MotifContentRef; atUs: number }[] = [];
+  forEachLayer(input.summary, input.openCompositionId, ({ layer, offsetUs, clock, tStartUs, tEndUs }) => {
+    if (layer.params.kind !== "Motif") return;
+    if (tEndUs <= tUs || tStartUs > tUs + input.lookaheadUs) return;
+    const motif = input.motif(layer.params.motif_id);
+    if (!motif) return;
+    const sampleUs = Math.max(tUs, tStartUs);
+    const tLocalUs = clock ? localAt(clock, sampleUs) : compositionLocalUs(sampleUs - offsetUs, fpsNum, fpsDen);
+    const desc = motifFrameDescriptor(layer.params, tLocalUs - layer.t_start_us, layer.t_end_us - layer.t_start_us, fpsNum, fpsDen, motif);
+    if (!desc) return;
+    const ref = { motifId: desc.motifId, contentHash: desc.contentHash };
+    if (tStartUs <= tUs) visible.set(contentKey(ref), ref);
+    else entering.push({ ref, atUs: tStartUs });
+  });
+  let next: { ref: MotifContentRef; atUs: number } | null = null;
+  for (const e of entering) if (!visible.has(contentKey(e.ref)) && (!next || e.atUs < next.atUs)) next = e;
+  return {
+    visible: [...visible.values()],
+    next: next ? { ...next.ref, inMs: (next.atUs - tUs) / 1000 } : null,
+  };
+}
+
+const contentKey = (ref: MotifContentRef) => `${ref.motifId}\0${ref.contentHash}`;
 
 /// Share the byte budget across content identities, then round-robin both
 /// contents and their instance windows. Repeated Group instances can need

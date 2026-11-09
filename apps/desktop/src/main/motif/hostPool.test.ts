@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { HostPool, type HostKey, type PooledHost } from './hostPool'
 import { CaptureQueue, type CaptureArgs } from './captureQueue'
+import type { MotifFramePriority } from '../../shared/motifs/frameTransport'
 
 /// Pool events in order: `open:<motif>`, `drain:<motif>`, `retire:<motif>`.
 let events: string[]
@@ -42,13 +43,15 @@ class FakeHost implements PooledHost {
 
 const argsOf = (motifId: string, contentHash = 'v1'): CaptureArgs => ({ motifId, tSec: 0, propsJson: '{}', width: 32, height: 16, contentHash })
 
-function newPool(capacity: number, affinityMs = 0) {
+function newPool(capacity: number, affinityMs = 0, residencyMs = 0, agingMs = 60_000) {
   const opened: FakeHost[] = []
   /// The capturer's texture switch.
   const mode = { texture: false }
   const pool = new HostPool<FakeHost>({
     capacity,
     affinityMs,
+    residencyMs,
+    agingMs,
     mayGrow: () => memory.room,
     hostKeyOf: a => ({ motifId: a.motifId, contentHash: a.contentHash, texture: mode.texture }),
     open: async (key, a) => {
@@ -65,10 +68,10 @@ function newPool(capacity: number, affinityMs = 0) {
       return true
     },
   })
-  /// Leases `motifId`'s host at `contentHash` and opens it.
-  const lease = async (motifId: string, contentHash = 'v1') => {
+  /// Leases `motifId`'s host at `contentHash` for a capture of `priority` and opens it.
+  const lease = async (motifId: string, contentHash = 'v1', priority: MotifFramePriority = 'background') => {
     const a = argsOf(motifId, contentHash)
-    const leased = pool.acquire(pool.keyOf(a), a)
+    const leased = pool.acquire(pool.keyOf(a), a, new Set(), priority)
     return { host: await leased.host(a), release: leased.release }
   }
   return { pool, opened, mode, lease, key: (motifId: string, contentHash = 'v1') => pool.keyOf(argsOf(motifId, contentHash)) }
@@ -311,6 +314,75 @@ describe('HostPool', () => {
     expect(pool.shed()).toBe(1) // c; d, used last, stays
     expect(pool.diagnostics().map(h => h.motifId)).toEqual(['d'])
     expect(pool.shed()).toBe(0)
+  })
+
+  describe('roles', () => {
+    const demand = (visible: string[], warm: string[] = []) => ({
+      visible: new Set(visible.map(m => `${m}\0v1`)), warm: new Set(warm.map(m => `${m}\0v1`)),
+    })
+    beforeEach(() => { vi.useFakeTimers({ toFake: ['performance', 'setTimeout', 'clearTimeout'] }) })
+    afterEach(() => { vi.useRealTimers() })
+
+    it('side traffic takes only a spare host; current takes a warm one at once and a visible one after residency', async () => {
+      const { pool, lease, key } = newPool(2, 0, 1000)
+      ;(await lease('shown')).release()
+      ;(await lease('next')).release()
+      pool.setDemand(demand(['shown'], ['next']))
+      expect(pool.canOpen(new Set(), 'background')).toBe(false)
+      expect(pool.canOpen(new Set(), 'ahead')).toBe(false)
+      // The warm host goes first, to a current capture.
+      const now = await lease('urgent', 'v1', 'current'); now.release()
+      expect(pool.state(key('next'))).toBe('absent')
+      pool.setDemand(demand(['shown', 'urgent']))
+      // Both held: a current capture waits for the longest-shown one's residency.
+      expect(pool.canOpen(new Set(), 'current')).toBe(false)
+      const woken = vi.fn()
+      pool.onChange(woken)
+      vi.advanceTimersByTime(1001)
+      expect(woken).toHaveBeenCalled()
+      expect(pool.canOpen(new Set(), 'current')).toBe(true)
+      ;(await lease('third', 'v1', 'current')).release()
+      expect(pool.diagnostics().map(h => h.motifId).sort()).toEqual(['third', 'urgent'])
+    })
+
+    it('side traffic that has waited agingMs takes a warm or held host as a current capture does', async () => {
+      const { pool, lease } = newPool(1, 0, 0, 500)
+      ;(await lease('shown')).release()
+      pool.setDemand(demand(['shown']))
+      const queuedAt = performance.now()
+      expect(pool.canOpen(new Set(), 'background', queuedAt)).toBe(false)
+      const woken = vi.fn()
+      pool.onChange(woken)
+      vi.advanceTimersByTime(501)
+      expect(woken).toHaveBeenCalled()
+      expect(pool.canOpen(new Set(), 'background', queuedAt)).toBe(true)
+      expect(pool.canOpen(new Set(), 'ahead', performance.now())).toBe(false)
+    })
+
+    it('a current capture keeps its host from side traffic for the residency', async () => {
+      const { pool, lease } = newPool(1, 0, 1000)
+      ;(await lease('exported', 'v1', 'current')).release()
+      expect(pool.canOpen(new Set(), 'background')).toBe(false)
+      vi.advanceTimersByTime(1001)
+      expect(pool.canOpen(new Set(), 'background')).toBe(true)
+    })
+
+    it('shed gives back spare hosts before warm ones and keeps the held', async () => {
+      const { pool, lease } = newPool(4)
+      for (const m of ['warm', 'spare', 'shown']) (await lease(m)).release()
+      pool.setDemand(demand(['shown'], ['warm']))
+      expect(pool.shed()).toBe(2)
+      expect(pool.diagnostics().map(h => h.motifId)).toEqual(['shown'])
+      expect(evictions).toBe(0)
+    })
+
+    it('shed keeps one host when every host is warm or spare', async () => {
+      const { pool, lease } = newPool(4)
+      for (const m of ['spare', 'warm']) (await lease(m)).release()
+      pool.setDemand(demand([], ['warm']))
+      expect(pool.shed()).toBe(1)
+      expect(pool.diagnostics().map(h => [h.motifId, h.role])).toEqual([['warm', 'warm']])
+    })
   })
 
   it('a host that retires itself leaves its slot; the other hosts and their frames stay', async () => {

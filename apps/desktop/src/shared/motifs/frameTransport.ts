@@ -83,6 +83,20 @@ export interface MotifCaptureRequest extends MotifCaptureArgs {
   finalizationToken?: string
 }
 
+/** A Motif content version as a capture host shows it. */
+export interface MotifContentRef { motifId: string; contentHash: string }
+
+/** `motif:presence`: a preview document's Motifs at its playhead, sent when
+ * they or the play state change. `visible`: every content version on screen;
+ * `next`: the soonest to enter within the lookahead, and in how long (ms);
+ * `playing`: playback is running, so the hosts it names are needed frame
+ * after frame. */
+export interface MotifPresence {
+  visible: MotifContentRef[]
+  next: (MotifContentRef & { inMs: number }) | null
+  playing: boolean
+}
+
 /** `motif:capture-control`, sent after its request on the same port. A
  * priority may go down as well as up; a cancel withdraws a queued capture. */
 export type MotifCaptureControl =

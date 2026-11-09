@@ -14,6 +14,8 @@ const { warm, bake, state } = vi.hoisted(() => ({ warm: vi.fn(), bake: vi.fn(), 
 vi.mock('./MotifPrewarmer', () => ({ MotifPrewarmer: class {
   setTargets = warm; dispose() {}
 } }));
+// Main's end of the presence is out of these tests (no page, no frame port).
+vi.mock('./frameTransport', async original => ({ ...await original<typeof import('./frameTransport')>(), declareMotifPresence: vi.fn() }));
 vi.mock('./bakeClient', () => ({ MotifBakeClient: class {
   generation = ++state.generation;
   constructor(private changed: (value: unknown) => void, private failed: (error: unknown) => void) {
@@ -50,7 +52,7 @@ describe('MotifDemandSession', () => {
     vi.stubGlobal('document', {});
     let summary = summaryFixture({ root: { tracks: [track([motif('clip', 0, 2_000_000)])] } });
     const service = new MotifDemandSession({ projectSummary: () => summary, openCompositionId: () => ROOT_ID,
-      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0 });
+      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0, playing: () => false });
     try {
       service.handleProjectChanged();
       const warmCalls = warm.mock.calls.length;
@@ -70,7 +72,7 @@ describe('MotifDemandSession', () => {
     vi.stubGlobal('document', {});
     const summary = summaryFixture({ root: { tracks: [track([motif('clip', 0, 2_000_000)])] } });
     const service = new MotifDemandSession({ projectSummary: () => summary, openCompositionId: () => ROOT_ID,
-      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0 });
+      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0, playing: () => false });
     try {
       service.handleProjectChanged(); await Promise.resolve();
       service.handleProjectChanged(); await Promise.resolve();
@@ -93,7 +95,7 @@ describe('MotifDemandSession', () => {
     ] });
     let open = ROOT_ID, fpsNum = 30, fpsDen = 1;
     const service = new MotifDemandSession({ projectSummary: () => summary, openCompositionId: () => open,
-      fpsNum: () => fpsNum, fpsDen: () => fpsDen, currentTimeUs: () => 0 });
+      fpsNum: () => fpsNum, fpsDen: () => fpsDen, currentTimeUs: () => 0, playing: () => false });
     const update = (edit: () => void) => {
       const count = bake.mock.calls.length; edit(); service.handleProjectChanged();
       expect(bake).toHaveBeenCalledTimes(count + 1);
@@ -129,7 +131,7 @@ describe('MotifDemandSession', () => {
       motif('incoming', 2_500_000, 4_000_000), motif('distant', 8_000_000, 10_000_000),
     ])] } });
     const service = new MotifDemandSession({ projectSummary: () => summary, openCompositionId: () => ROOT_ID,
-      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 2_000_000 });
+      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 2_000_000, playing: () => false });
     try {
       service.handleProjectChanged();
       await Promise.resolve();
@@ -151,7 +153,7 @@ describe('MotifDemandSession', () => {
       groups: [compositionFixture({ id: 'comp-group', duration_us: 5_000_000, tracks: [track([motif('child', 0, 5_000_000)])] })],
     });
     const service = new MotifDemandSession({ projectSummary: () => summary, openCompositionId: () => ROOT_ID,
-      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 2_000_000 });
+      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 2_000_000, playing: () => false });
     try {
       service.handleProjectChanged();
       await Promise.resolve();
@@ -166,7 +168,7 @@ describe('MotifDemandSession', () => {
     const layer = motif('manual', 0, 1_000_000);
     const summary = summaryFixture({ root: { tracks: [track([layer])] } });
     const service = new MotifDemandSession({ projectSummary: () => summary, openCompositionId: () => ROOT_ID,
-      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0 });
+      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0, playing: () => false });
     try {
       service.handleProjectChanged();
       await Promise.resolve();
@@ -199,7 +201,7 @@ describe('MotifDemandSession', () => {
     requestPrebake('early');
     let summary: ReturnType<typeof summaryFixture> | null = null;
     const service = new MotifDemandSession({ projectSummary: () => summary, openCompositionId: () => ROOT_ID,
-      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0 });
+      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0, playing: () => false });
     try {
       summary = summaryFixture({ root: { tracks: [track([motif('early', 0, 1_000_000)])] } });
       service.handleProjectChanged(); await Promise.resolve();
@@ -212,7 +214,7 @@ describe('MotifDemandSession', () => {
     const layer = motif('chosen', 0, 1_000_000);
     let summary = summaryFixture({ root: { tracks: [track([layer])] } });
     const service = new MotifDemandSession({ projectSummary: () => summary, openCompositionId: () => ROOT_ID,
-      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0 });
+      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0, playing: () => false });
     try {
       service.handleProjectChanged(); await Promise.resolve();
       requestPrebake('chosen');
@@ -236,7 +238,7 @@ describe('MotifDemandSession', () => {
     if (later.params.kind === 'Motif') later.params.src_in_us = 2_000_000;
     const summary = summaryFixture({ root: { tracks: [track([motif('early', 0, 1_000_000), later])] } });
     const service = new MotifDemandSession({ projectSummary: () => summary, openCompositionId: () => ROOT_ID,
-      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 5_500_000 });
+      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 5_500_000, playing: () => false });
     try {
       service.handleProjectChanged(); await Promise.resolve();
       const key = bake.mock.lastCall![0].contents[0].cacheKey;
@@ -260,7 +262,7 @@ describe('MotifDemandSession', () => {
         tracks: [track([late, motif('early-child', 0, 1_000_000)])] })],
     });
     const service = new MotifDemandSession({ projectSummary: () => summary, openCompositionId: () => ROOT_ID,
-      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0 });
+      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0, playing: () => false });
     try {
       service.handleProjectChanged(); await Promise.resolve();
       requestPrebake('group');
@@ -277,7 +279,7 @@ describe('MotifDemandSession', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const summary = summaryFixture({ root: { tracks: [track([motif('visible', 0, 1_000_000)])] } });
     const service = new MotifDemandSession({ projectSummary: () => summary, openCompositionId: () => ROOT_ID,
-      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0 });
+      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0, playing: () => false });
     try {
       service.handleProjectChanged();
       await sharedBakedKeyIndex.whenHydrated();

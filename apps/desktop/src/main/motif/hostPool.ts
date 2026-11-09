@@ -1,4 +1,5 @@
 import { MotifError } from '../../shared/motifs/errors.js'
+import type { MotifFramePriority } from '../../shared/motifs/frameTransport.js'
 import type { CaptureArgs, HostLease, HostSlots } from './captureQueue.js'
 
 /** What a capture host shows: one Motif content version, as shared textures
@@ -27,6 +28,13 @@ export interface HostPoolDeps<H extends PooledHost> {
   /// A host used within this long may still be wanted for its version: another
   /// version takes it only when no slot is free (tuning `hostAffinityMs`).
   affinityMs: number
+  /// How long a host keeps the content it opened or switched to before a
+  /// `current` capture of another may take it, and how long a `current`
+  /// capture's use protects it from other classes (tuning `hostResidencyMs`).
+  residencyMs: number
+  /// How long an `ahead` or `background` capture waits before it may take a
+  /// warm or held host as a `current` one does (tuning `hostAgingMs`).
+  agingMs: number
   /// Whether memory has room for one more host beside the `live` ones. Never
   /// asked for the first: one host can always open.
   mayGrow(live: number): boolean
@@ -64,13 +72,44 @@ interface Slot<H> {
   evictedBy: Slot<H> | null
   /// The content version the slot's host switches to before its next frame.
   swapTo: HostKey | null
+  /// When the host began showing its content version: opened or switched.
+  shownAt: number
+  /// When a `current` capture last leased the slot.
+  currentAt: number
 }
+
+/** The Motif content versions on screen (`visible`) and the next to enter
+ * (`warm`) in a playing preview, as `motifId\0contentHash`. */
+export interface HostDemand { visible: ReadonlySet<string>; warm: ReadonlySet<string> }
+
+/** What a host is to the pool's eviction, most expendable first: `spare` (no
+ * playing preview needs it, no `current` capture used it within
+ * `residencyMs`), `warm` (the next Motif to enter a playing preview), `held`
+ * (visible in a playing preview, or a `current` capture used it within
+ * `residencyMs`, an export's included). */
+type Role = 'spare' | 'warm' | 'held'
+const ROLE_RANK: Record<Role, number> = { spare: 0, warm: 1, held: 2 }
+
+const contentOf = (key: HostKey) => `${key.motifId}\0${key.contentHash}`
+
+/// A capture asking for a host: `current`, or side traffic that may take
+/// warm and held hosts from `agesAt` on.
+interface Claim { current: boolean; agesAt: number }
 
 const keyString = (key: HostKey) => `${key.motifId}\0${key.contentHash}\0${key.texture ? 'texture' : 'bitmap'}`
 
 /** The capture hosts, at most one per key and `capacity` in all, and more
  * than one only while memory has room for another (`mayGrow`); under memory
- * pressure the idle ones retire down to the one used last (`shed`). A key without
+ * pressure the expendable idle ones retire, keeping at least one (`shed`).
+ *
+ * Which host a key without one may take follows the host's role (`Role`) and
+ * the capture's class: an `ahead` or `background` capture takes only spare
+ * hosts until it has waited `agingMs`, so side traffic (bakes, panel previews,
+ * covers, MCP) does not evict what playback needs, and never waits for ever;
+ * a `current` capture, or aged side traffic, takes a spare, then a warm, then
+ * a held host that has shown its content for `residencyMs`, the longest-shown
+ * first, so more visible Motifs than hosts rotate at that pace instead of
+ * every frame. A key without
  * a host takes an idle host of another content version of its Motif on its
  * lane, which drains and switches its window's frame to the key's version:
  * first one unused for `affinityMs`, then a free slot, then any such host.
@@ -81,6 +120,9 @@ const keyString = (key: HostKey) => `${key.motifId}\0${key.contentHash}\0${key.t
 export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H>> {
   private readonly slots = new Map<string, Slot<H>>()
   private readonly listeners: (() => void)[] = []
+  private demand: HostDemand = { visible: new Set(), warm: new Set() }
+  /// A repaint of the queue when a host's protection ends, the earliest one.
+  private wake: { at: number; timer: ReturnType<typeof setTimeout> } | null = null
   private closed = false
   /// Retired hosts whose painted frames are still with their consumers. Those
   /// hold the host's shared textures, so no host opens until they are done,
@@ -102,21 +144,30 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
     return slot.rendering || slot.evictedBy || !slot.host?.hasRoom ? 'busy' : 'ready'
   }
 
-  canOpen(keep: ReadonlySet<string> = new Set()): boolean {
+  /** `queuedAt`: when the capture asking began to wait. */
+  canOpen(keep: ReadonlySet<string> = new Set(), priority: MotifFramePriority = 'background', queuedAt = performance.now()): boolean {
     this.sweep()
-    return this.free() || this.idle(keep) !== null
+    return this.free() || this.victim(keep, this.claimOf(priority, queuedAt)) !== null
   }
 
-  /** Under memory pressure: retires the hosts that render nothing and have no
-   * frames in flight, least recently used first, keeping at least one host.
-   * The number retired. */
+  /** The previews' demand: the hosts it names are visible or warm. */
+  setDemand(demand: HostDemand): void {
+    this.demand = demand
+    this.changed()
+  }
+
+  /** Under memory pressure: retires the spare, then the warm hosts that render
+   * nothing and have no frames in flight, least recently used first, keeping
+   * at least one host; held ones stay. The number retired. */
   shed(): number {
     this.sweep()
+    const now = performance.now()
     let live = this.live()
     let shed = 0
     const idle = [...this.slots.values()]
-      .filter(slot => !slot.rendering && !slot.evictedBy && !slot.evicts && slot.host && !slot.host.retired && slot.host.framesInFlight === 0)
-      .sort((a, b) => a.usedAt - b.usedAt)
+      .filter(slot => !slot.rendering && !slot.evictedBy && !slot.evicts && slot.host && !slot.host.retired && slot.host.framesInFlight === 0
+        && this.role(slot, now) !== 'held')
+      .sort((a, b) => ROLE_RANK[this.role(a, now)] - ROLE_RANK[this.role(b, now)] || a.usedAt - b.usedAt)
     for (const slot of idle) {
       if (live <= 1) break
       slot.host!.retire()
@@ -128,11 +179,12 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
     return shed
   }
 
-  acquire(key: string, args: CaptureArgs, keep: ReadonlySet<string> = new Set()): HostPoolLease<H> {
+  acquire(key: string, args: CaptureArgs, keep: ReadonlySet<string> = new Set(), priority: MotifFramePriority = 'background', queuedAt = performance.now()): HostPoolLease<H> {
     this.sweep()
-    const slot = this.slots.get(key) ?? this.reserve(key, args, keep)
+    const slot = this.slots.get(key) ?? this.reserve(key, args, keep, this.claimOf(priority, queuedAt))
     if (slot.rendering || slot.evictedBy) throw new Error('capture host is already leased')
     slot.rendering = true
+    if (priority === 'current') slot.currentAt = performance.now()
     const leased = slot
     let released = false
     return {
@@ -164,6 +216,8 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
   /** Retires every host and refuses to open another. */
   shutdown(): void {
     this.closed = true
+    if (this.wake) clearTimeout(this.wake.timer)
+    this.wake = null
     this.retireAll()
   }
 
@@ -184,16 +238,17 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
       rendering: slot.rendering,
       captures: slot.captures,
       idleMs: slot.rendering ? 0 : Math.max(0, now - slot.usedAt),
+      role: this.role(slot, now),
     }] : [])
   }
 
   /// A slot for a key without one: an idle host of another content version of
-  /// its Motif, which switches before its next frame, unless it was used
-  /// within `affinityMs` and a slot is free; else a free slot; else one
-  /// replacing the least recently used idle host.
-  private reserve(key: string, args: CaptureArgs, keep: ReadonlySet<string>): Slot<H> {
+  /// its Motif that the capture's class may take, which switches before its
+  /// next frame, unless it was used within `affinityMs` and a slot is free;
+  /// else a free slot; else one replacing a host the class may take.
+  private reserve(key: string, args: CaptureArgs, keep: ReadonlySet<string>, claim: Claim): Slot<H> {
     const hostKey = this.deps.hostKeyOf(args)
-    const sibling = this.sibling(hostKey, keep)
+    const sibling = this.sibling(hostKey, keep, claim)
     const free = this.free()
     if (sibling && (!free || performance.now() - sibling.usedAt >= this.deps.affinityMs)) {
       this.slots.delete(sibling.key)
@@ -202,9 +257,9 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
       this.slots.set(key, sibling)
       return sibling
     }
-    const slot: Slot<H> = { key, hostKey, host: null, rendering: false, usedAt: 0, captures: 0, evicts: null, evictedBy: null, swapTo: null }
+    const slot: Slot<H> = { key, hostKey, host: null, rendering: false, usedAt: 0, captures: 0, evicts: null, evictedBy: null, swapTo: null, shownAt: Infinity, currentAt: -Infinity }
     if (!free) {
-      const victim = this.idle(keep)
+      const victim = this.victim(keep, claim)
       if (!victim) throw new Error('no capture host slot is free')
       victim.evictedBy = slot
       slot.evicts = victim
@@ -227,6 +282,7 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
         const hostKey = this.deps.hostKeyOf(args)
         if (!this.closed && !host.retired && hostKey.texture === slot.hostKey.texture && await this.deps.swap(host, hostKey).catch(() => false)) {
           slot.hostKey = hostKey
+          slot.shownAt = performance.now()
           return host
         }
         host.retire()
@@ -262,6 +318,7 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
     host.onFrameSettled(() => this.changed())
     slot.hostKey = hostKey
     slot.host = host
+    slot.shownAt = performance.now()
     return host
   }
 
@@ -326,27 +383,72 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
   }
 
   /// An idle host showing another content version of `key`'s Motif on its
-  /// lane, the least recently used first.
-  private sibling(key: HostKey, keep: ReadonlySet<string>): Slot<H> | null {
+  /// lane that `claim` may take, the least recently used first.
+  private sibling(key: HostKey, keep: ReadonlySet<string>, claim: Claim): Slot<H> | null {
+    const now = performance.now()
     let lru: Slot<H> | null = null
     for (const slot of this.slots.values()) {
       if (slot.rendering || slot.evictedBy || keep.has(slot.key) || !slot.host || slot.host.retired) continue
       const k = slot.hostKey
       if (k.motifId !== key.motifId || k.texture !== key.texture || k.contentHash === key.contentHash) continue
+      if (!this.takes(claim, slot, now)) continue
       if (!lru || slot.usedAt < lru.usedAt) lru = slot
     }
     return lru
   }
 
-  /// The least recently used host that is not rendering, being replaced or
-  /// kept.
-  private idle(keep: ReadonlySet<string> = new Set()): Slot<H> | null {
-    let lru: Slot<H> | null = null
+  /// The host `claim` replaces: not rendering, being replaced
+  /// or kept, and one its class may take (`takes`); the most expendable role
+  /// first, then the least recently used, and among held hosts the one shown
+  /// longest.
+  private victim(keep: ReadonlySet<string>, claim: Claim): Slot<H> | null {
+    const now = performance.now()
+    let best: Slot<H> | null = null
+    let bestRole: Role = 'held'
     for (const slot of this.slots.values()) {
       if (slot.rendering || slot.evictedBy || keep.has(slot.key)) continue
-      if (!lru || slot.usedAt < lru.usedAt) lru = slot
+      if (!this.takes(claim, slot, now)) continue
+      const role = this.role(slot, now)
+      const better = !best || ROLE_RANK[role] < ROLE_RANK[bestRole]
+        || role === bestRole && (role === 'held' ? slot.shownAt < best.shownAt : slot.usedAt < best.usedAt)
+      if (better) { best = slot; bestRole = role }
     }
-    return lru
+    return best
+  }
+
+  /// What a capture may take: `current`, or side traffic waiting since
+  /// `queuedAt`, which ages into `current`'s reach after `agingMs`.
+  private claimOf(priority: MotifFramePriority, queuedAt: number): Claim {
+    return { current: priority === 'current', agesAt: priority === 'current' ? -Infinity : queuedAt + this.deps.agingMs }
+  }
+
+  /// Whether `claim` may take `slot`'s host. When the answer will change by
+  /// time alone, the queue is woken then.
+  private takes(claim: Claim, slot: Slot<H>, now: number): boolean {
+    const role = this.role(slot, now)
+    if (role === 'spare') return true
+    // Recent `current` use ends; a held host's residency ends; side traffic ages.
+    if (slot.currentAt + this.deps.residencyMs > now) this.wakeAt(slot.currentAt + this.deps.residencyMs)
+    if (!claim.current && claim.agesAt > now) { this.wakeAt(claim.agesAt); return false }
+    if (role === 'warm') return true
+    if (slot.shownAt + this.deps.residencyMs <= now) return true
+    this.wakeAt(slot.shownAt + this.deps.residencyMs)
+    return false
+  }
+
+  private role(slot: Slot<H>, now: number): Role {
+    const content = contentOf(slot.hostKey)
+    if (this.demand.visible.has(content) || now - slot.currentAt < this.deps.residencyMs) return 'held'
+    return this.demand.warm.has(content) ? 'warm' : 'spare'
+  }
+
+  private wakeAt(at: number): void {
+    if (this.closed || !Number.isFinite(at)) return
+    if (this.wake && this.wake.at <= at) return
+    if (this.wake) clearTimeout(this.wake.timer)
+    const timer = setTimeout(() => { this.wake = null; this.changed() }, Math.max(0, at - performance.now()) + 1)
+    ;(timer as { unref?: () => void }).unref?.()
+    this.wake = { at, timer }
   }
 
   private changed(): void {

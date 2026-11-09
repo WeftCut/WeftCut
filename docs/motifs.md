@@ -129,7 +129,7 @@ leaves the lane open.
 
 `MotifCapturer` (`capture.ts`) is the one entry point. It orders captures in a
 queue (`captureQueue.ts`) onto a pool of hosts (`hostPool.ts`): at most one
-host per Motif content version and texture kind, and `captureHosts` (default 2)
+host per Motif content version and texture kind, and `captureHosts` (default 4)
 in all; beyond the first, only while the process tree has room for another
 host under the memory target and memory is not under pressure. A host counts
 at its renderer's measured working set (`hostMemoryMib`, 130 MiB, until
@@ -138,10 +138,22 @@ sample (1 s) while it lasts. A preview's `current` frame reserves through the
 governor's floor: it is never refused for budget or pressure, only when the
 machine itself is critical (under 256 MiB available)
 (docs/notes/motif-host-memory-2026-11-10.md). A capture whose Motif has
-no host takes a free slot, else replaces the
-least recently used host that is not rendering: that host's frames in flight
-drain, it closes, and only then does the new one open. With one host, every
-switch to another Motif replaces it.
+no host takes a free slot, else replaces a host that is not rendering: that
+host's frames in flight drain, it closes, and only then does the new one open.
+
+Which host it may replace follows the preview's presence: the preview tells
+main, when it or the play state changes, which Motif content versions are
+visible at the playhead, which enters next, and whether it plays
+(`planMotifPresence`, `motif:presence`). A host is held while its content is
+visible in a playing preview or a `current` capture used it within
+`hostResidencyMs` (1 s), warm while its content is next in a playing preview,
+else spare; a paused preview holds nothing past that residency. Side traffic
+(`ahead` and `background`: preparation, panel previews, covers, MCP) takes
+only spare hosts until it has waited `hostAgingMs` (5 s), then what a
+`current` capture may. A `current` capture takes a spare, then a warm, then a
+held host that has shown its content for `hostResidencyMs`, so more visible
+Motifs than hosts rotate at that pace rather than every frame. With one host
+and two Motifs on screen, the host alternates once a second.
 
 - **Output.** Every capture is the paint whose marker rows carry the frame's
   id and its canvas witness (`OffscreenFrames`, `shared/motifs/frameMarker.ts`):

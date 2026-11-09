@@ -17,13 +17,25 @@ interface TuningKey {
  * default was chosen, not swept. Every machine named is the Windows bench
  * (Windows 11, i5-13400 with 16 threads, RTX 3050) unless it says otherwise. */
 export const MOTIF_TUNING_SPEC = {
-  /** Capture hosts open at once, each showing one Motif content version, at a
-   * renderer process and a capture surface each. Measured on the bench and an
-   * M1 8 GB (ADR 0161): with 2, two stacked Motifs went from 1.6–3.7 fps per
-   * lane to 10–30, and the M1 stayed at normal memory pressure without swap
-   * growth; one Motif never opens a second host. More than 2 is not
+  /** The most capture hosts open at once, each showing one Motif content
+   * version, at a renderer process and a capture surface each; within it the
+   * memory target decides (`hostMemoryMib`). Measured on the bench and an M1
+   * 8 GB (ADR 0161): with 2, two stacked Motifs went from 1.6–3.7 fps per lane
+   * to 10–30; in simulated editing (2026-11-09) 4–5 visible Motifs rebuilt a
+   * host per frame on 2 hosts and 4–9 times per 15 s on 4, and 4 hosts took
+   * the M1 to 94% of its memory target. One Motif never opens a second host.
+   * Above 4 is not measured. */
+  captureHosts: { default: 4, range: [1, 8] },
+  /** How long a host keeps the content it opened or switched to before a
+   * `current` capture of another visible Motif may take it, and how long a
+   * `current` capture's use protects a host from other classes (ms). Not
    * measured. */
-  captureHosts: { default: 2, range: [1, 4] },
+  hostResidencyMs: { default: 1000, range: [0, 60_000] },
+  /** How long an `ahead` or `background` capture (a bake, a cover, an
+   * agent's MCP preview) waits before it may take a host that playback or a
+   * `current` capture holds (ms): the bound on side traffic's wait while a
+   * preview plays. Not measured. */
+  hostAgingMs: { default: 5000, range: [0, 600_000] },
   /** The memory a capture host is taken to add (MiB) until its renderer
    * process is measured: a new host opens only while the app's process tree
    * has that much room under its memory target. Measured 2026-11-09 in

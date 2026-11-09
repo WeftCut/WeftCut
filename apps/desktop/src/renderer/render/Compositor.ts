@@ -373,6 +373,7 @@ export class Compositor {
       fpsNum: () => this.fpsNum,
       fpsDen: () => this.fpsDen,
       currentTimeUs: () => this.lastTUs,
+      playing: () => this.playing,
     });
     // THE install site for the CJK break rule, and the reason one site is
     // enough: `canBreakWords` is a class static, so it must be set in every
@@ -512,7 +513,9 @@ export class Compositor {
     // counters so the indicator reflects this run, not history.
     if (playing && !this.playing) { this.underrun.beginPlay(); this.sync.reset(); }
     if (!playing) this.sync.interrupt();
+    const changed = playing !== this.playing;
     this.playing = playing;
+    if (changed) this.motifService.notePlayState();
   }
 
   /// PlaybackEngine calls this on an in-play seek. The seek flushes the

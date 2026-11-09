@@ -2,7 +2,7 @@ import type { WebContents } from 'electron'
 import type { MotifOsrFrame } from './offscreenFrames.js'
 import type { CaptureArgs, CaptureOptions, CaptureRun } from './captureQueue'
 import type { MotifFrameStore, FrameWriter } from './frameStore'
-import type { MotifCacheAddress, MotifCaptureControl, MotifCaptureReply, MotifCaptureRequest, MotifFramePriority, MotifTextureFrame } from '../../shared/motifs/frameTransport'
+import type { MotifCacheAddress, MotifCaptureControl, MotifCaptureReply, MotifCaptureRequest, MotifContentRef, MotifFramePriority, MotifPresence, MotifTextureFrame } from '../../shared/motifs/frameTransport'
 import { MotifError, motifErrorCode } from '../../shared/motifs/errors'
 import { isMotifFrameAddress } from './frameAddress'
 import { MotifFrameWriteQueue, type FrameRead } from './frameWriteQueue'
@@ -59,6 +59,29 @@ export function parseMotifCaptureControl(value: unknown): MotifCaptureControl | 
   if (c.action === 'cancel') return { requestId, action: 'cancel' }
   if (c.action === 'priority' && isPriority(c.priority)) return { requestId, action: 'priority', priority: c.priority }
   return null
+}
+
+/// More visible Motifs than any preview shows; a message past it is refused.
+const PRESENCE_CAP = 256
+
+/** A `motif:presence` message, or null when it is not one. */
+export function parseMotifPresence(value: unknown): MotifPresence | null {
+  const p = (value ?? {}) as Record<string, unknown>
+  const ref = (v: unknown): MotifContentRef | null => {
+    const r = (v ?? {}) as Record<string, unknown>
+    return typeof r.motifId === 'string' && r.motifId !== '' && typeof r.contentHash === 'string'
+      ? { motifId: r.motifId, contentHash: r.contentHash } : null
+  }
+  if (!Array.isArray(p.visible) || p.visible.length > PRESENCE_CAP || typeof p.playing !== 'boolean') return null
+  const visible = p.visible.map(ref)
+  if (visible.some(v => v === null)) return null
+  let next: MotifPresence['next'] = null
+  if (p.next !== null) {
+    const r = ref(p.next), inMs = (p.next as Record<string, unknown> | undefined)?.inMs
+    if (!r || typeof inMs !== 'number' || !Number.isFinite(inMs) || inMs < 0) return null
+    next = { ...r, inMs }
+  }
+  return { visible: visible as MotifContentRef[], next, playing: p.playing }
 }
 
 /** The capture session: a capture reads its pixels inside the OSR lease and

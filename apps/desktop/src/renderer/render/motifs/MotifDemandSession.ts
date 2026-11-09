@@ -14,7 +14,9 @@ import {
 import { forEachLayer } from "../compositionWalk";
 import { getMotif, motifCatalogRevision, subscribeMotifCatalog } from "./catalog";
 import { motifPlanningInputs } from './planningInputs';
-import { motifLayerStatuses, planMotifDemand, planMotifPreparation } from './motifDemand';
+import { motifLayerStatuses, planMotifDemand, planMotifPresence, planMotifPreparation } from './motifDemand';
+import { declareMotifPresence } from './frameTransport';
+import type { MotifPresence } from '../../../shared/motifs/frameTransport';
 import { MotifPrewarmer } from "./MotifPrewarmer";
 import { MotifBakeClient } from './bakeClient';
 import type { MotifBakePlan, MotifBakeSession, MotifBakeSnapshot, MotifFrameRange } from '../../../shared/motifs/baking';
@@ -71,6 +73,9 @@ export interface MotifDemandSessionDeps {
   /// The last composited composition time — where prewarm/bake planning
   /// anchors on a project change.
   currentTimeUs: () => number;
+  /// Whether playback runs: main keeps a playing preview's Motif hosts from
+  /// side traffic (`motif:presence`).
+  playing: () => boolean;
 }
 
 export class MotifDemandSession {
@@ -92,6 +97,8 @@ export class MotifDemandSession {
   private preparationError: string | null = null;
   private planningSignature: string | null = null;
   private div: MotifReaderDiv = 1;
+  /** The presence main was last told, as `presenceSignature`. */
+  private presenceSent: string | null = null;
 
   constructor(private readonly deps: MotifDemandSessionDeps) {
     if (typeof document !== "undefined") this.lookaheadCapBytes = motifFrameCoverage.capacityBytes();
@@ -196,9 +203,17 @@ export class MotifDemandSession {
     this.updatePrewarmTargets(tUsSnapped);
   }
 
+  /// Playback started or stopped: main's protection of the preview's hosts
+  /// follows it.
+  notePlayState(): void {
+    this.updatePresence(this.deps.currentTimeUs());
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    // Its Motifs leave the screen with it.
+    if (this.presenceSent !== null) this.declarePresence({ visible: [], next: null, playing: false });
     this.prewarmer?.dispose();
     this.client?.dispose();
     this.intentsUnsub?.();
@@ -216,6 +231,7 @@ export class MotifDemandSession {
   /// prewarmer. Runs whether playing or paused (compositeFrame fires on
   /// seek/scrub too), so the cache warms ahead of the playhead in both states.
   private updatePrewarmTargets(tUs: number): void {
+    this.updatePresence(tUs);
     const summary = this.deps.projectSummary();
     if (!this.prewarmer || !summary || this.diskDiscoveryPending) return;
     // A rejected durable plan is not permission to launch a second background
@@ -231,6 +247,26 @@ export class MotifDemandSession {
       motif: getMotif,
       complete: (key, frames) => sharedBakedKeyIndex.isComplete(key, frames),
     }));
+  }
+
+  /// Tells main which Motifs are on screen at `tUs` and which enters next,
+  /// when that changed (`planMotifPresence`).
+  private updatePresence(tUs: number): void {
+    if (!this.prewarmer) return;
+    const summary = this.deps.projectSummary();
+    const playing = this.deps.playing();
+    this.declarePresence(summary ? { ...planMotifPresence({
+      summary, openCompositionId: this.deps.openCompositionId(),
+      fpsNum: this.deps.fpsNum(), fpsDen: this.deps.fpsDen(), playheadUs: tUs,
+      lookaheadUs: motifTuning().prewarmLookaheadMs * 1000, motif: getMotif,
+    }), playing } : { visible: [], next: null, playing });
+  }
+
+  private declarePresence(presence: MotifPresence): void {
+    const signature = presenceSignature(presence);
+    if (signature === this.presenceSent) return;
+    this.presenceSent = signature;
+    declareMotifPresence(presence);
   }
 
   private submitBakePlan(): void {
@@ -317,4 +353,10 @@ export class MotifDemandSession {
     this.lastBakeStatusSig = sig;
     setLayerBakeStatuses(byLayer);
   }
+}
+
+/// What main acts on in a presence: the content versions and the play
+/// state, not the countdown.
+function presenceSignature({ visible, next, playing }: MotifPresence): string {
+  return JSON.stringify([visible.map(v => `${v.motifId}\0${v.contentHash}`).sort(), next && `${next.motifId}\0${next.contentHash}`, playing]);
 }
