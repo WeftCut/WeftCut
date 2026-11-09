@@ -1,7 +1,8 @@
 // The deep module for the collapsed FFmpeg decode engine (see docs/preview.md
 // §Decode engine, ADR 0030): owns a `FrameRing` and a swappable `DecodeTransport`
 // (GPU or SW), and does IN-PLACE HW→SW fallback on a transport failure — the
-// ring survives the swap so playback doesn't visibly reset. `implements
+// ring survives the swap so playback doesn't visibly reset. Every transport
+// switch follows one contract (ADR 0162, `ffmpegSourceLifecycle.ts`). `implements
 // PreviewDecodeSession` so it drops into the existing pool/Compositor seam
 // (`SourceDecoderPool.ts`), which acquires it whenever the resolved engine is ffmpeg.
 import type { PreviewDecodeSession, PreviewDecodeDevice } from "./session";
@@ -12,14 +13,10 @@ import type { HandoffTimingSummary } from "./transports/handoffTimings";
 import { GpuTransport } from "./transports/GpuTransport";
 import { SwTransport } from "./transports/SwTransport";
 import { pickInitialLane, markHwUnusable } from "./ffmpegCapability";
-import { isResourceCapacityError } from '../../../shared/resource-policy';
 import { isTenBitPixFmt } from "../../../shared/hwLaneEligibility";
 import type { FfmpegLaneResolution } from "./ffmpegCapability";
 import { noteLaneOpen, noteHardwareSelection, noteHardwareFallback, hardwareDecodeEvidence } from "./ffmpegLaneTrail";
-import {
-  HW_BUDGET_EXCEEDED,
-  HW_BUDGET_RESERVATION_MISMATCH,
-} from "../../../shared/ipc";
+import { checkedMove, judgeFailure, type Attempt, type Slot } from "./ffmpegSourceLifecycle";
 import {
   resolveBudgetSpillProfile,
   type BudgetSpillCadenceDiv,
@@ -27,6 +24,8 @@ import {
 } from "./budgetSpillProfile";
 
 const IDLE_DISPOSE_MS = 5_000;
+/// How long a capacity refusal holds the source before a frame request retries.
+const CAPACITY_RETRY_MS = 1_000;
 // Both native lanes autonomously fill 500 ms after a request. Refill with
 // 150 ms still available instead of sending a round trip every display tick.
 // Ring anchors/eviction still advance every tick; seeks bypass this gate when
@@ -92,8 +91,12 @@ export class FfmpegSource implements PreviewDecodeSession {
   readonly layerId: string;
   private readonly init: FfmpegSourceInit;
   private readonly deps: FfmpegSourceDeps;
-  private transport: DecodeTransport | null = null;
-  private openedTransport: DecodeTransport | null = null;
+  /// Where the transport stands; the moves are in `ffmpegSourceLifecycle.ts`.
+  private slot: Slot = { kind: "idle" };
+  /// The switch in flight. Every move of `slot` past `idle` happens inside one;
+  /// `ensureReady` joins it.
+  private work: Promise<void> | null = null;
+  /// The lane of the newest attempt: the one opening, open, or just left.
   private lane: FfmpegLane = "software";
   /// The resolved HW lane the current hardware attempt keys its transport on
   /// (copy-back nvdec/vaapi/videotoolbox → SwTransport; Windows d3d11va →
@@ -101,33 +104,19 @@ export class FfmpegSource implements PreviewDecodeSession {
   /// forced-lane bench run leaves it null and falls to the GPU transport.
   private hwPlan: { lane: string; device: string | null } | null = null;
   private startedHardware = false;
-  private capacityError: unknown = null;
-  private capacityRetryAfter = 0;
-  private readyP: Promise<void> | null = null;
-  private ready = false;
-  private _disposed = false;
   private disposeP: Promise<void> | null = null;
   private lastUseMs = 0;
   private lastTargetUs: number | null = null;
   private requestVersion = 0;
   private requestedTargetUs: number | null = null;
-  /// Set once the current transport's `onEof` fires; the sole eof gate on
-  /// further `requestFrameAt` IPC — transports do not gate internally. Reset
-  /// on every fresh `openLane` since a new transport can produce frames again.
-  private eof = false;
   private onFirstFrameCb: (() => void) | null = null;
   private firedFirstFrame = false;
   private fatalCb: ((reason: string) => void) | null = null;
-  private fatalFired = false;
-  /// LIVE playback-resolution divisor handed to every `SwTransport` this source
-  /// opens. Seeded from `init`, replaced by `setPlaybackScaleDiv`; every
-  /// `openLane` reads it fresh, so a later lane change (the HW→SW fallback)
-  /// picks up the current value rather than the one the source was born with.
+  /// LIVE playback-resolution divisor. Seeded from `init`, replaced by
+  /// `setPlaybackScaleDiv`; every byte-shipping open reads it fresh, so a later
+  /// lane change picks up the current value rather than the one the source
+  /// was born with.
   private scaleDiv: number;
-  /// True only after main refuses this source with `HW_BUDGET_EXCEEDED`.
-  /// Dimension drift and capability failures may also fall back to software,
-  /// but must keep the ordinary software profile.
-  private budgetSpill = false;
 
   constructor(init: FfmpegSourceInit, deps: FfmpegSourceDeps = {}) {
     this.init = init;
@@ -137,18 +126,25 @@ export class FfmpegSource implements PreviewDecodeSession {
     this.scaleDiv = init.playbackScaleDiv ?? 1;
   }
 
-  get disposed(): boolean { return this._disposed; }
+  get disposed(): boolean { return this.slot.kind === "disposed"; }
   currentLane(): FfmpegLane { return this.lane; }
   currentDecodeDevice(): PreviewDecodeDevice | null {
-    if (!this.ready || this._disposed || this.fatalFired || !this.transport || this.openedTransport !== this.transport) return null;
-    return this.lane === 'software' ? { kind: 'software', backend: 'ffmpeg', device: null }
-      : { kind: 'hardware', backend: this.hwPlan?.lane ?? 'hardware', device: this.hwPlan?.device ?? null };
+    if (this.slot.kind !== "ready") return null;
+    return this.slot.attempt.lane === "software" ? { kind: "software", backend: "ffmpeg", device: null }
+      : { kind: "hardware", backend: this.hwPlan?.lane ?? "hardware", device: this.hwPlan?.device ?? null };
   }
+
+  /// The attempt holding a transport (opening or open), else null.
+  private held(): Attempt | null {
+    return this.slot.kind === "opening" || this.slot.kind === "ready" ? this.slot.attempt : null;
+  }
+  private current(attempt: Attempt): boolean { return this.held() === attempt; }
+  private move(to: Slot): void { this.slot = checkedMove(this.slot, to); }
 
   /// Diagnostics: the live transport's preload handoff timings, or null on the
   /// software lane (no preload stage) / before the first instrumented frame.
   handoffTimings(): HandoffTimingSummary | null {
-    return this.transport?.handoffTimings?.() ?? null;
+    return this.held()?.transport.handoffTimings?.() ?? null;
   }
   /// The resolved HW lane name (`nvdec`|`vaapi`|`videotoolbox`|`d3d11va`) the
   /// current hardware attempt keyed its transport on, or null on the software
@@ -163,36 +159,28 @@ export class FfmpegSource implements PreviewDecodeSession {
   /// device/capability failures remain sticky and must never be recycled by
   /// preview priority changes.
   isBudgetSpill(): boolean {
-    return this.ready && this.budgetSpill && this.lane === "software" && !this._disposed;
+    return this.slot.kind === "ready" && this.slot.attempt.spill && this.slot.attempt.lane === "software";
   }
 
   /// Capacity recovery changes the transport, never the session/ring identity.
   /// Closing a prewarmed handle here would throw away the very frames meant
   /// to bridge the cut. Only transient admission spills may retry this way.
   async retryHardwareAfterReclaim(): Promise<void> {
-    if (!this.isBudgetSpill()) return;
-    this.ready = false;
-    this.budgetSpill = false;
-    this.readyP = (async () => {
-      await this.closeTransportForFallback();
-      if (!this._disposed) await this._doEnsureReady();
-    })();
-    await this.readyP;
+    if (this.slot.kind !== "ready" || !this.isBudgetSpill()) return;
+    const { attempt } = this.slot;
+    await this.run(async () => {
+      await this.release(attempt.transport);
+      if (!this.disposed) await this.resolveAndOpen();
+    });
   }
   /// True while this source actually HOLDS a main-process admission lease — a
-  /// live transport on the shared-texture hardware lane. `currentLane()` alone
-  /// over-approximates twice: `lane` is assigned before `open` settles and
-  /// survives `closeTransportForFallback` nulling the transport (a window where
-  /// "hardware" owns nothing), and the copy-back lanes (nvdec/vaapi/
-  /// videotoolbox) ride `previewSw`: they hold global memory credits but no
-  /// shared-texture HW session slot. This reclaim only targets that HW slot.
+  /// transport on the shared-texture hardware lane. A source between
+  /// transports holds none, and the copy-back lanes (nvdec/vaapi/videotoolbox)
+  /// ride `previewSw`: they hold global memory credits but no shared-texture
+  /// HW session slot. This reclaim only targets that HW slot.
   holdsHwSessionLease(): boolean {
-    return (
-      !this._disposed
-      && this.lane === "hardware"
-      && this.transport !== null
-      && !this.usesSwTransport()
-    );
+    const attempt = this.held();
+    return attempt !== null && attempt.lane === "hardware" && !this.shipsBytes(attempt.lane);
   }
   /// Cumulative frames this source delivered, for the PerfHUD's per-clip fps
   /// column and the playback bench. Counted at the ring rather than in a
@@ -210,21 +198,37 @@ export class FfmpegSource implements PreviewDecodeSession {
 
   async ensureReady(): Promise<void> {
     this.lastUseMs = performance.now();
-    if (this.ready) return;
-    if (this.readyP) return this.readyP;
-    if (this.capacityError && performance.now() < this.capacityRetryAfter) throw this.capacityError;
-    this.readyP = this._doEnsureReady().catch(async error => {
-      if (isResourceCapacityError(error)) {
-        await this.closeTransportForFallback();
-        this.capacityError = error; this.capacityRetryAfter = performance.now() + 1000;
-        this.readyP = null;
-      }
-      throw error;
-    });
-    return this.readyP;
+    const slot = this.slot;
+    switch (slot.kind) {
+      case "ready":
+      case "disposed":
+        return;
+      case "failed":
+        throw slot.error;
+      case "blocked":
+        if (performance.now() < slot.retryAfterMs) throw slot.error;
+        break;
+      case "idle":
+        break;
+      default:
+        return this.work ?? undefined;
+    }
+    return this.run(() => this.resolveAndOpen());
   }
 
-  private async _doEnsureReady(): Promise<void> {
+  /// Run one switch. A divisor that changed while it ran is applied once it
+  /// settles, so a switch never has to stop half way.
+  private run(task: () => Promise<void>): Promise<void> {
+    const work = task().finally(() => {
+      if (this.work === work) this.work = null;
+      this.applyScaleDiv();
+    });
+    this.work = work;
+    return work;
+  }
+
+  private async resolveAndOpen(): Promise<void> {
+    this.move({ kind: "resolving" });
     const pick = this.deps.pickLane ?? pickInitialLane;
     const res: FfmpegLaneResolution = this.init.forceLane
       ? { lane: this.init.forceLane, hwLane: null, device: null }
@@ -243,139 +247,90 @@ export class FfmpegSource implements PreviewDecodeSession {
         undefined,
         this.init.sourcePath,
       );
-    if (this._disposed) return;
-    this.lane = res.lane;
+    if (this.disposed) return;
     noteHardwareSelection(this.evidenceIdentity.layerId, this.evidenceIdentity.mediaId, res.diagnostic);
     this.hwPlan = res.lane === "hardware" && res.hwLane
       ? { lane: res.hwLane, device: res.device }
       : null;
-    this.startedHardware = this.lane === "hardware";
-    try {
-      await this.openLane(this.lane);
-    } catch (err) {
-      if (this._disposed) return;
-      // Global pressure is neither hardware capability nor a request to reduce
-      // preview quality. Leave the source retryable on every platform.
-      if (isResourceCapacityError(err)) throw err;
-      // A HARDWARE open failure (budget full, device lost at open) is recoverable
-      // the same way a runtime HW error is — fall to SW in place, keeping the ring.
-      // Not for a forced lane (bench) or a software open (that IS total failure).
-      let reason = err instanceof Error ? err.message : String(err);
-      if (this.startedHardware && this.lane === "hardware" && !this.init.forceLane) {
-        // LANDMINE: only a CAPABILITY failure may be recorded. `markHwUnusable` is
-        // a sticky per-MEDIA, session-lifetime verdict, and the HW-session budget
-        // is a transient CAPACITY limit — so marking it pinned the source to
-        // software for the rest of the app session the moment it ever had more
-        // concurrent load than the budget admits, and kept it there after the
-        // extra clips were deleted. Symptom: a single 4K clip that had been fine
-        // suddenly previews through the software lane (12.4 MB NV12 per frame over
-        // IPC instead of a shared texture) and stutters, with nothing on the
-        // timeline to explain it. Fall back for THIS open only; the next open
-        // re-probes and takes hardware again once a session frees up.
-        let budgetExceeded = reason.includes(HW_BUDGET_EXCEEDED);
-        let reservationMismatch = reason.includes(HW_BUDGET_RESERVATION_MISMATCH);
-        if (budgetExceeded && this.deps.reclaimRetainedCapacity) {
-          // The rejected transport may still own partially-open native state.
-          // Tear it down before asking the pool to release lower-priority
-          // sessions, then retry the main-process reservation exactly once.
-          // Main remains the admission authority; there is deliberately no
-          // renderer-side budget pre-check.
-          await this.closeTransportForFallback();
-          let reclaimed = false;
-          try {
-            reclaimed = await this.deps.reclaimRetainedCapacity();
-          } catch (reclaimErr) {
-            // Capacity relief is opportunistic. If its ordered close fails,
-            // keep the user-visible fallback guarantee: spill to software
-            // instead of turning a temporary budget refusal into a black clip.
-            // eslint-disable-next-line no-console
-            console.warn(
-              `[weftcut/ffmpeg] capacity reclaim failed for ${this.layerId}`,
-              reclaimErr,
-            );
-          }
-          if (this._disposed) return;
-          if (reclaimed) {
-            try {
-              await this.openLane("hardware");
-              if (!this._disposed) this.ready = true;
-              return;
-            } catch (retryErr) {
-              if (this._disposed) return;
-              reason = retryErr instanceof Error ? retryErr.message : String(retryErr);
-              budgetExceeded = reason.includes(HW_BUDGET_EXCEEDED);
-              reservationMismatch = reason.includes(HW_BUDGET_RESERVATION_MISMATCH);
-            }
-          }
-        }
-        if (!budgetExceeded && !reservationMismatch) markHwUnusable(this.mediaId, reason);
-        this.budgetSpill = budgetExceeded;
-        noteHardwareFallback(this.evidenceIdentity.layerId, this.evidenceIdentity.mediaId, reason);
-        // Console too, matching onTransportError: bench harnesses read the PAGE
-        // console, so an OPEN-time fall to software must carry its CAUSE there —
-        // a LogBus lane-trail row alone lets a bench DRIFT cell name the fact
-        // but not the cause.
-        console.warn(
-          `[weftcut/decode] decoder hardware-lane error: ${reason} — falling back to software at open (media ${this.mediaId})`,
-        );
-        await this.closeTransportForFallback();
-        // A dispose that landed during that await already resolved (it saw
-        // `transport === null`), so an openLane past this point would resurrect
-        // a native session nothing can ever close — the one leak `disposeAndWait`
-        // cannot compensate for. Every other await in this recovery path
-        // re-checks; this one must too.
-        if (this._disposed) return;
-        try {
-          await this.openLane("software", { from: "hardware", reason });
-        } catch (swErr) {
-          if (this._disposed) return;
-          if (isResourceCapacityError(swErr)) throw swErr;
-          this.fireFatal(swErr instanceof Error ? swErr.message : String(swErr));
-          throw swErr;
-        }
-      } else {
-        this.fireFatal(reason);
-        throw err;
-      }
-    }
-    if (this._disposed) return;
-    this.ready = true;
+    // Sticky: a retry after a fallback re-picks software for a marked media,
+    // and the clip still fell from hardware.
+    this.startedHardware ||= res.lane === "hardware";
+    await this.openOrRecover(res.lane, false, undefined);
   }
 
-  private async closeTransportForFallback(): Promise<void> {
-    const transport = this.transport;
-    this.transport = null;
-    if (!transport) return;
-    try {
-      await transport.dispose();
-    } catch (closeErr) {
-      // A failed close must not suppress the software safety lane. Main's
-      // admission remains authoritative, so any later hardware retry still has
-      // to pass `previewGpu:open`; this path makes no capacity assumption.
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[weftcut/ffmpeg] hardware transport close failed for ${this.layerId}`,
-        closeErr,
-      );
-    }
-  }
-
-  /// Open a transport for `lane`, wiring frames into the ring and errors into
-  /// the recovery path. Used by initial ready AND the in-place fallback.
+  /// Open `lane`; if that fails, follow `judgeFailure` until a transport is
+  /// open, the source is blocked or failed, or it was disposed. Rejects with
+  /// the failure when it ends blocked or failed.
   ///
-  /// `transition` is passed only by the two in-place HW→SW fallbacks, so the
-  /// lane trail can name what was left and why — see `noteLaneOpen`'s
-  /// explicit-`from` rule for why the trail cannot infer it on its own.
-  private async openLane(
+  /// `transition` is passed only by a HW→SW fallback, so the lane trail can
+  /// name what was left and why — see `noteLaneOpen`'s explicit-`from` rule.
+  private async openOrRecover(
     lane: FfmpegLane,
-    transition?: { from: FfmpegLane; reason: string },
+    spill: boolean,
+    transition: { from: FfmpegLane; reason: string } | undefined,
+    canReclaim = this.deps.reclaimRetainedCapacity !== undefined,
   ): Promise<void> {
-    this.eof = false; // a fresh transport can produce frames again
-    const t = lane === "hardware"
+    const failure = await this.open(lane, spill, transition);
+    if (failure && !this.disposed) await this.recover(lane, failure.error, canReclaim);
+  }
+
+  /// The failed transport is already closed. `canReclaim` is false once this
+  /// switch has asked the pool.
+  private async recover(lane: FfmpegLane, error: unknown, canReclaim: boolean): Promise<void> {
+    const reason = error instanceof Error ? error.message : String(error);
+    const verdict = judgeFailure({ lane, reason, forced: this.init.forceLane !== undefined, canReclaim });
+    switch (verdict.kind) {
+      case "blocked":
+        this.move({ kind: "blocked", error, retryAfterMs: performance.now() + CAPACITY_RETRY_MS });
+        throw error;
+      case "fatal":
+        this.move({ kind: "failed", error });
+        this.fatalCb?.(reason);
+        throw error;
+      case "reclaim": {
+        // Main remains the admission authority; there is deliberately no
+        // renderer-side budget pre-check.
+        let reclaimed = false;
+        try {
+          reclaimed = await this.deps.reclaimRetainedCapacity!();
+        } catch (reclaimErr) {
+          // Capacity relief is opportunistic. If its ordered close fails, keep
+          // the fallback guarantee: spill to software rather than a black clip.
+          // eslint-disable-next-line no-console
+          console.warn(`[weftcut/ffmpeg] capacity reclaim failed for ${this.layerId}`, reclaimErr);
+        }
+        if (this.disposed) return;
+        return reclaimed
+          ? this.openOrRecover("hardware", false, undefined, false)
+          : this.recover(lane, error, false);
+      }
+      case "software":
+        if (verdict.mark) markHwUnusable(this.mediaId, reason);
+        noteHardwareFallback(this.evidenceIdentity.layerId, this.evidenceIdentity.mediaId, reason);
+        // Console too, not just the lane-trail row: bench harnesses read the
+        // PAGE console, and the fallback's CAUSE must survive into a report.
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[weftcut/decode] decoder hardware-lane error: ${reason} — falling back to software (media ${this.mediaId})`,
+        );
+        return this.openOrRecover("software", verdict.spill, { from: "hardware", reason }, false);
+    }
+  }
+
+  /// Open one transport, wiring its frames into the ring. Null once it is open
+  /// (or the source was disposed meanwhile); on failure the transport is
+  /// closed first and the failure returned.
+  private async open(
+    lane: FfmpegLane,
+    spill: boolean,
+    transition: { from: FfmpegLane; reason: string } | undefined,
+  ): Promise<{ error: unknown } | null> {
+    const transport = lane === "hardware"
       ? this.makeHardwareTransport()
-      : this.makeSoftwareTransport();
-    t.onFrame((frame, ptsUs, durUs) => {
-      if (this._disposed || this.transport !== t) { frame.close(); return; }
+      : this.makeSoftwareTransport(undefined, spill);
+    const attempt: Attempt = { lane, transport, scaleDiv: this.scaleDiv, spill, eof: false, openError: null };
+    transport.onFrame((frame, ptsUs, durUs) => {
+      if (!this.current(attempt)) { frame.close(); return; }
       this.ring.push(frame, ptsUs, durUs);
       if (!this.firedFirstFrame) {
         this.firedFirstFrame = true;
@@ -383,30 +338,77 @@ export class FfmpegSource implements PreviewDecodeSession {
         this.onFirstFrameCb = null;
       }
     });
-    t.onError((reason) => { if (this.transport === t) this.onTransportError(lane, reason); });
-    t.onEof(() => { if (this.transport === t) this.eof = true; });
-    this.transport = t;
+    transport.onError((reason) => this.transportFailed(attempt, reason));
+    transport.onEof(() => { if (this.current(attempt)) attempt.eof = true; });
+    this.move({ kind: "opening", attempt });
     this.lane = lane;
     // A fresh streamId per open so late frames from a swapped-out transport
     // (still draining on the old streamId) can never land in the ring.
     const streamId = `ffmpeg:${lane}:${this.layerId}:${nextStreamSeq++}`;
-    // Conditional spread, not `sourceColor: this.init.sourceColor` —
-    // exactOptionalPropertyTypes rejects an explicit `undefined` for the
-    // optional `sourceColor?`/`poolSize?` fields on `DecodeTransportOpen`.
-    await t.open({
-      streamId,
-      path: this.init.sourcePath,
-      ...(this.init.sourceColor !== undefined ? { sourceColor: this.init.sourceColor } : {}),
-      ...(this.init.poolSize !== undefined ? { poolSize: this.init.poolSize } : {}),
-      ...(this.init.width != null ? { codedWidth: this.init.width } : {}),
-      ...(this.init.height != null ? { codedHeight: this.init.height } : {}),
-    });
-    if (this.transport === t && !this._disposed && !this.fatalFired) this.openedTransport = t;
-    // Only a lane CHANGE emits — the success tail is reached by every open
-    // (initial, both fallbacks, and the same-lane playback-resolution re-open),
-    // so the trail, not this call site, is what keeps it once-per-transition.
+    let failure: { error: unknown } | null = null;
+    try {
+      // Conditional spread, not `sourceColor: this.init.sourceColor` —
+      // exactOptionalPropertyTypes rejects an explicit `undefined` for the
+      // optional `sourceColor?`/`poolSize?` fields on `DecodeTransportOpen`.
+      await transport.open({
+        streamId,
+        path: this.init.sourcePath,
+        ...(this.init.sourceColor !== undefined ? { sourceColor: this.init.sourceColor } : {}),
+        ...(this.init.poolSize !== undefined ? { poolSize: this.init.poolSize } : {}),
+        ...(this.init.width != null ? { codedWidth: this.init.width } : {}),
+        ...(this.init.height != null ? { codedHeight: this.init.height } : {}),
+      });
+    } catch (error) {
+      failure = { error };
+    }
+    // Only disposal moves the slot while an attempt opens: errors are held on
+    // the attempt, and every other switch starts from `ready`.
+    if (this.disposed) return null;
+    if (!failure && attempt.openError !== null) failure = { error: new Error(attempt.openError) };
+    if (failure) {
+      await this.release(transport);
+      return failure;
+    }
+    this.move({ kind: "ready", attempt });
+    // Only a lane CHANGE emits — the trail, not this call site, keeps it
+    // once-per-transition across the initial open, fallbacks and re-opens.
     noteLaneOpen({ layerId: this.layerId, mediaId: this.mediaId, lane, ...(transition ?? {}) });
-    if (this.lastTargetUs !== null) t.requestFrameAt(this.requestedTargetUs ?? this.lastTargetUs);
+    if (this.lastTargetUs !== null) transport.requestFrameAt(this.requestedTargetUs ?? this.lastTargetUs);
+    return null;
+  }
+
+  /// Close `transport` and wait for it: main frees its session, memory
+  /// credits and any GPU lease only then, and the next open may need them. A
+  /// failed close does not stop the switch; main's admission still checks
+  /// the next open.
+  private async release(transport: DecodeTransport): Promise<void> {
+    let closing: Promise<unknown>;
+    try {
+      closing = Promise.resolve(transport.dispose());
+    } catch (error) {
+      closing = Promise.reject(error);
+    }
+    const closed = closing.then(() => undefined, (closeErr: unknown) => {
+      // eslint-disable-next-line no-console
+      console.warn(`[weftcut/ffmpeg] transport close failed for ${this.layerId}`, closeErr);
+    });
+    this.move({ kind: "releasing", closed });
+    await closed;
+  }
+
+  /// An error from `attempt`'s transport. Before its open settles it belongs
+  /// to that open; once open it starts a fallback; from any other attempt it
+  /// is late and dropped.
+  private transportFailed(attempt: Attempt, reason: string): void {
+    if (this.slot.kind === "opening" && this.slot.attempt === attempt) {
+      attempt.openError ??= reason;
+      return;
+    }
+    if (this.slot.kind !== "ready" || this.slot.attempt !== attempt) return;
+    void this.run(async () => {
+      await this.release(attempt.transport);
+      if (!this.disposed) await this.recover(attempt.lane, new Error(reason), this.deps.reclaimRetainedCapacity !== undefined);
+    }).catch(() => { /* reported as blocked or fatal */ });
   }
 
   /// Pick the hardware transport by the resolved HW lane: the copy-back lanes
@@ -420,13 +422,13 @@ export class FfmpegSource implements PreviewDecodeSession {
     if (hw && isCopyBackHwLane(hw.lane)) {
       // The copy-back lanes ship the same NV12 bytes over the same IPC, so they
       // want the playback-resolution divisor just as much as software does.
-      return this.makeSoftwareTransport({ lane: hw.lane, device: hw.device });
+      return this.makeSoftwareTransport({ lane: hw.lane, device: hw.device }, false);
     }
     return this.deps.makeGpu?.() ?? new GpuTransport();
   }
 
   /// One constructor seam owns every byte-shipping profile. The formal spill
-  /// is selected only after a budget refusal; ordinary software and the
+  /// (`spill`) follows only a budget refusal; ordinary software and the
   /// copy-back lanes preserve the user's resolution and full cadence.
   ///
   /// The transport FORMAT is decided here too (issue #10): a 10-bit
@@ -435,9 +437,9 @@ export class FfmpegSource implements PreviewDecodeSession {
   /// open — plain software (including the HW→SW fallback of the same media),
   /// the Linux copy-back lanes, 8-bit sources on videotoolbox — stays NV12
   /// exactly; the software lane's 10-bit behavior is deliberately NOT widened.
-  private makeSoftwareTransport(accel?: { lane: string; device: string | null }): DecodeTransport {
+  private makeSoftwareTransport(accel: { lane: string; device: string | null } | undefined, spill: boolean): DecodeTransport {
     const profile = resolveBudgetSpillProfile({
-      budgetExceeded: this.budgetSpill,
+      budgetExceeded: spill,
       codedWidth: this.init.width,
       codedHeight: this.init.height,
       playbackScaleDiv: this.scaleDiv,
@@ -450,23 +452,20 @@ export class FfmpegSource implements PreviewDecodeSession {
     }) ?? new SwTransport(accel, profile.scaleDiv, profile.cadenceDiv, tenBit ? "I420P10" : undefined);
   }
 
-  /// True when the CURRENT lane ships frames through `SwTransport` — plain
-  /// software, or a copy-back HW lane (Linux nvdec/vaapi, macOS videotoolbox),
-  /// all of which pack NV12 bytes across IPC. Mirrors `makeHardwareTransport`'s
-  /// routing, and is the only place the playback-resolution divisor can change
-  /// anything.
-  private usesSwTransport(): boolean {
-    if (this.lane === "software") return true;
+  /// True when `lane` ships frames through `SwTransport` — plain software, or
+  /// a copy-back HW lane, all of which pack bytes across IPC. Mirrors
+  /// `makeHardwareTransport`'s routing, and is the only place the
+  /// playback-resolution divisor can change anything.
+  private shipsBytes(lane: FfmpegLane): boolean {
+    if (lane === "software") return true;
     const hw = this.hwPlan;
     return hw !== null && isCopyBackHwLane(hw.lane);
   }
 
   /// Adopt a new playback-resolution divisor on a LIVE source, without a
-  /// reload and without a lane change. The re-open reuses the HW→SW fallback's
-  /// mechanism — dispose the transport, `openLane` the SAME lane with a fresh
-  /// streamId, keep the SAME `FrameRing` — so the painter keeps drawing the
-  /// frames already cached (no black frame) and `openLane`'s tail re-requests
-  /// the last target on the new transport.
+  /// reload and without a lane change: close the transport, open the SAME lane
+  /// with a fresh streamId, keep the SAME `FrameRing` — the painter keeps
+  /// drawing the frames already cached and `open` re-requests the last target.
   ///
   /// Deliberately does NOT re-open the Windows shared-texture lane: its pixels
   /// never cross IPC, so the divisor cannot shrink anything there, and closing
@@ -477,65 +476,41 @@ export class FfmpegSource implements PreviewDecodeSession {
   setPlaybackScaleDiv(div: number): void {
     if (div === this.scaleDiv) return;
     this.scaleDiv = div;
-    if (this._disposed || !this.transport || !this.usesSwTransport()) return;
-    const dead = this.transport;
-    this.transport = null;
-    dead.dispose();
-    void this.openLane(this.lane).catch((e) => {
-      this.fireFatal(`playback-resolution reopen failed: ${e instanceof Error ? e.message : String(e)}`);
-    });
+    this.applyScaleDiv();
   }
 
-  /// Recovery. A hardware-transport failure is recoverable ONCE: swap to SW in
-  /// place, keeping the ring (frames just resume). A software failure — or a
-  /// second failure after we already fell to SW — is a total FFmpeg failure and
-  /// surfaces the single engine-level fatal.
-  private onTransportError(lane: FfmpegLane, reason: string): void {
-    if (this._disposed) return;
-    if (lane === "hardware" && this.startedHardware && this.transport) {
-      noteHardwareFallback(this.evidenceIdentity.layerId, this.evidenceIdentity.mediaId, reason);
-      // Console too, not just the LogBus lane-trail row: the trail names the
-      // transition but bench harnesses read the PAGE console, and a HW lane
-      // dying mid-run is the one event whose REASON must survive into a
-      // report ("the lane fell" vs "AcquireSync timed out under 3×4K").
-      console.warn(
-        `[weftcut/decode] decoder hardware-lane error: ${reason} — falling back to software (media ${this.mediaId})`,
-      );
-      markHwUnusable(this.mediaId, reason);
-      this.budgetSpill = false;
-      const dead = this.transport;
-      this.transport = null;
-      dead.dispose();
-      void this.openLane("software", { from: "hardware", reason })
-        .catch((e) => this.fireFatal(`${reason}; sw recovery failed: ${String(e)}`));
-      return;
-    }
-    this.fireFatal(reason);
-  }
-
-  private fireFatal(reason: string): void {
-    if (this.fatalFired || this._disposed) return;
-    this.fatalFired = true;
-    this.fatalCb?.(reason);
+  /// Re-open an open byte-shipping transport whose divisor is stale. Waits for
+  /// `ready`: a switch in flight applies it when it settles (`run`).
+  private applyScaleDiv(): void {
+    if (this.slot.kind !== "ready") return;
+    const { attempt } = this.slot;
+    if (attempt.scaleDiv === this.scaleDiv || !this.shipsBytes(attempt.lane)) return;
+    void this.run(async () => {
+      await this.release(attempt.transport);
+      if (!this.disposed) await this.openOrRecover(attempt.lane, attempt.spill, undefined);
+    }).catch(() => { /* reported as blocked or fatal */ });
   }
 
   async requestFrameAt(tUs: number): Promise<void> {
     const version = ++this.requestVersion;
     this.requestedTargetUs = tUs;
-    if (!this.ready) {
+    // A switch in flight is not waited for: the ring keeps moving below, and
+    // the switch's open requests the newest target itself.
+    if (this.slot.kind !== "ready" && this.work === null) {
       try {
         await this.ensureReady();
       } catch {
-        // Total engine failure. `_doEnsureReady` already surfaced it through
-        // fireFatal (the Compositor swaps engines on that), and `readyP` caches
-        // the rejection — so without this catch every subsequent per-tick nudge
-        // mints a fresh unhandled rejection for the same, already-reported
-        // failure, forever.
+        // Already reported: a fatal through `onFatalError` (the Compositor
+        // swaps engines on that), a capacity refusal by holding the source.
+        // Without this catch every per-tick nudge mints a fresh unhandled
+        // rejection for the same failure, forever.
         return;
       }
     }
     this.lastUseMs = performance.now();
-    if (this._disposed || version !== this.requestVersion) return;
+    if (this.disposed || version !== this.requestVersion) return;
+    // Null while a switch runs.
+    const attempt = this.slot.kind === "ready" ? this.slot.attempt : null;
     const prevTargetUs = this.lastTargetUs;
     this.lastTargetUs = tUs;
     // Backward seek past everything cached: the ring now holds ONLY future-dated
@@ -549,9 +524,11 @@ export class FfmpegSource implements PreviewDecodeSession {
       // decoding on the seek its `on_request` performs. Without clearing the
       // latch, the `return` below would swallow every later request for the rest
       // of this transport's life — the session would never produce again.
-      this.eof = false;
-      this.transport?.resetRequestDedup?.();
-    } else if (this.eof && prevTargetUs !== null && tUs < prevTargetUs) {
+      if (attempt) {
+        attempt.eof = false;
+        attempt.transport.resetRequestDedup?.();
+      }
+    } else if (attempt?.eof && prevTargetUs !== null && tUs < prevTargetUs) {
       // Backward seek with NOTHING cached: `strandedAheadOf` is false on an
       // empty ring by construction, and post-eof lookbehind eviction (the
       // `setAnchor` below keeps running while `eof` gates requests) drains the
@@ -559,12 +536,13 @@ export class FfmpegSource implements PreviewDecodeSession {
       // the transport is never re-armed and the clip stays black for the rest
       // of the session. A backward move is the same re-arm the stranded flush
       // performs; there is just nothing left to flush.
-      this.eof = false;
-      this.transport?.resetRequestDedup?.();
+      attempt.eof = false;
+      attempt.transport.resetRequestDedup?.();
     }
     this.ring.setAnchor(tUs);      // always — drives lookbehind eviction, even post-eof
-    if (this.eof) return; // eof seen on the current transport — its own IPC is done,
-    // but the anchor above must still advance so the ring keeps evicting stale frames.
+    // eof seen on the current transport — its own IPC is done, but the anchor
+    // above must still advance so the ring keeps evicting stale frames.
+    if (!attempt || attempt.eof) return;
     // Backpressure — the ring's byte ceiling bounds what the decoder PRODUCES
     // on this lane, not only what it retains. It cannot starve the lane:
     // the byte arm is floored at `MIN_LOOKAHEAD_FRAMES` ahead and the time arm
@@ -572,21 +550,23 @@ export class FfmpegSource implements PreviewDecodeSession {
     // steady playback never reaches here and the native cursor sets the pace.
     if (this.ring.isLookaheadFull()) return;
     if (this.ring.hasLookaheadAt(tUs, REFILL_LOOKAHEAD_US)) return;
-    this.transport?.requestFrameAt(tUs);
+    attempt.transport.requestFrameAt(tUs);
   }
 
   /// Pool-only ordered teardown. Unlike ordinary fire-and-forget `dispose`,
-  /// this resolves after a GPU transport's main-process close has released its
-  /// admission lease, making it safe to open a priority replacement.
+  /// this resolves after the transport — or one a switch was still closing —
+  /// has released main's session and any GPU admission lease, making it safe
+  /// to open a priority replacement.
   disposeAndWait(): Promise<void> {
     if (this.disposeP) return this.disposeP;
-    if (this._disposed) return Promise.resolve();
-    this._disposed = true;
-    const transport = this.transport;
-    this.transport = null;
+    const slot = this.slot;
+    const closing = slot.kind === "opening" || slot.kind === "ready" ? Promise.resolve(slot.attempt.transport.dispose())
+      : slot.kind === "releasing" ? slot.closed
+        : Promise.resolve();
+    this.move({ kind: "disposed" });
     this.ring.dispose();
     this.onFirstFrameCb = null;
-    this.disposeP = Promise.resolve(transport?.dispose());
+    this.disposeP = closing.then(() => undefined);
     return this.disposeP;
   }
 

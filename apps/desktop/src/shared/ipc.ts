@@ -176,7 +176,7 @@ export type PreviewGpuOpenReply = {
 /// condition, not a capability one: the same media on the same machine opens on
 /// hardware again as soon as enough reservation frees. Callers must treat it as
 /// "software for THIS open" and must NOT record it as a per-media hardware verdict
-/// (see `FfmpegSource`'s open-failure branch — doing so pinned a source to software
+/// (see `judgeFailure` in ffmpegSourceLifecycle.ts — doing so pinned a source to software
 /// for the rest of the app session the first time concurrent load exceeded
 /// admission, and kept it there after the extra clips were deleted). Shared so main
 /// and the renderer can't drift on the string.

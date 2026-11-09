@@ -455,8 +455,8 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
     // onFatalError (the resolver's downgrade-off-tier-1 on that marker is
     // unit-tested in ffmpegCapability.test.ts). This opens cap+1 real sessions with
     // the lane FORCED (`forceLane: 'hardware'`), which bypasses `FfmpegSource`'s
-    // in-place HW→SW recovery by design (`_doEnsureReady`'s catch only recovers
-    // when `!forceLane`) — the bench harness needs this hard-fatal behavior for
+    // in-place HW→SW recovery by design (`judgeFailure` only recovers an
+    // unforced lane) — the bench harness needs this hard-fatal behavior for
     // deterministic hardware-only measurement. See the REAL (unforced) fallback
     // test below for the production in-place-recovery path.
     test('ffmpeg hardware lane (forced): the over-budget concurrent session hits hw-budget-exceeded (budget → fatal)', async () => {
@@ -500,7 +500,7 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
     // exactly as production does (see decodeBench.ts's
     // `decodeBenchHwFallbackProbe` doc comment). The over-budget one's HW `open()`
     // genuinely trips `hw-budget-exceeded`; because nothing forced its lane,
-    // `FfmpegSource._doEnsureReady`'s catch engages the SAME in-place HW→SW
+    // `FfmpegSource` engages the SAME in-place HW→SW
     // recovery a runtime GPU error uses — the ring survives, `ensureReady()`
     // resolves normally (not a fatal), and `currentLane()` reads "software"
     // afterward.

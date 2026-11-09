@@ -14,7 +14,7 @@
 // (`Nv12Ingest` / `TenBitIngest`).
 //
 // preview_sw sends no eof/error to the renderer mid-stream (log-only in
-// main) — `onError` fires ONLY on `open()` failure.
+// main), so `onError` never fires; an open failure is `open()`'s rejection.
 //
 // This is the transport half only — no FrameRing, no first-frame/fatal-error
 // hooks, no idle bookkeeping. Those stay with `FfmpegSource` (the caller),
@@ -38,7 +38,6 @@ export class SwTransport implements DecodeTransport {
   private _disposed = false;
 
   private frameCb: ((frame: TransportFrame, ptsUs: number, durUs: number) => void) | null = null;
-  private errorCb: ((reason: string) => void) | null = null;
 
   /// Last target sent to `previewSw.requestFrameAt`, for cheap same-target
   /// dedup. Unlike `GpuTransport`'s coalescing pump, the transport here is a
@@ -80,7 +79,8 @@ export class SwTransport implements DecodeTransport {
 
   /// Subscribe to the frame event, then open the native session. Throws on
   /// failure (`previewSw.open` rejecting); the caller (`FfmpegSource`)
-  /// decides whether that's recoverable.
+  /// decides whether that's recoverable. The rejection is the only report of
+  /// it: an `onError` as well would hand one failure to two recovery paths.
   async open(o: DecodeTransportOpen): Promise<void> {
     this.streamId = o.streamId;
     this.sourceColor = o.sourceColor;
@@ -88,29 +88,18 @@ export class SwTransport implements DecodeTransport {
     // native decode thread is up, so a listener attached after open() could
     // miss an early frame.
     this.unsub = window.api.previewSw.onFrame((f) => this.handleFrame(f));
-    try {
-      await window.api.previewSw.open({
-        streamId: this.streamId,
-        path: o.path,
-        ...(this.accel ? { lane: this.accel.lane, device: this.accel.device } : {}),
-        ...(this.scaleDiv !== undefined && this.scaleDiv > 1 ? { scaleDiv: this.scaleDiv } : {}),
-        ...(this.cadenceDiv !== undefined && this.cadenceDiv > 1
-          ? { cadenceDiv: this.cadenceDiv }
-          : {}),
-        // Only a NON-default format rides the wire: an NV12 open must stay
-        // byte-identical to today's payload (mirrors scaleDiv/cadenceDiv).
-        ...(this.outFormat === "I420P10" ? { outFormat: this.outFormat } : {}),
-      });
-    } catch (err) {
-      // Open failure: surface it as the terminal error BEFORE rethrowing —
-      // this is the ONLY SW error signal (see file header).
-      const reason = err instanceof Error ? err.message : String(err);
-      // A late open-rejection after dispose must not fire a stale fatal into a
-      // consumer that has already moved on (mirrors `FfmpegSource.fireFatal`'s
-      // _disposed guard). Still rethrow so the caller's await settles.
-      if (!this._disposed) this.errorCb?.(reason);
-      throw err;
-    }
+    await window.api.previewSw.open({
+      streamId: this.streamId,
+      path: o.path,
+      ...(this.accel ? { lane: this.accel.lane, device: this.accel.device } : {}),
+      ...(this.scaleDiv !== undefined && this.scaleDiv > 1 ? { scaleDiv: this.scaleDiv } : {}),
+      ...(this.cadenceDiv !== undefined && this.cadenceDiv > 1
+        ? { cadenceDiv: this.cadenceDiv }
+        : {}),
+      // Only a NON-default format rides the wire: an NV12 open must stay
+      // byte-identical to today's payload (mirrors scaleDiv/cadenceDiv).
+      ...(this.outFormat === "I420P10" ? { outFormat: this.outFormat } : {}),
+    });
   }
 
   /// Wrap one frame message zero-copy — the structured-cloned IPC bytes are
@@ -183,12 +172,11 @@ export class SwTransport implements DecodeTransport {
     this.frameCb = cb;
   }
 
-  onError(cb: (reason: string) => void): void {
-    this.errorCb = cb;
+  /// No-op subscriptions: preview_sw emits neither error nor eof to the
+  /// renderer (see file header). Kept only to satisfy `DecodeTransport`.
+  onError(_cb: (reason: string) => void): void {
+    // intentionally empty
   }
-
-  /// No-op subscription: preview_sw never emits eof to the renderer (see file
-  /// header). Kept only to satisfy the `DecodeTransport` interface.
   onEof(_cb: () => void): void {
     // intentionally empty
   }

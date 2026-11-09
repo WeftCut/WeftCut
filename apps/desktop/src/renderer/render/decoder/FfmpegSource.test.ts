@@ -22,14 +22,19 @@ import {
 } from "../../../shared/ipc";
 import type { DecodeTransport } from "./transports/DecodeTransport";
 
-function fakeTransport(opts?: { openRejects?: string; disposeRejects?: string }) {
+/// `errorDuringOpen`: the transport also calls `onError` before its open settles
+/// (a GPU port error racing the open). A failed open must still be handled once.
+function fakeTransport(opts?: { openRejects?: string; disposeRejects?: string; errorDuringOpen?: boolean }) {
   let frameCb: ((b: ImageBitmap, p: number, d: number) => void) | null = null;
   let errorCb: ((r: string) => void) | null = null;
   let eofCb: (() => void) | null = null;
   return {
     t: {
       open: opts?.openRejects
-        ? vi.fn(async () => { throw new Error(opts.openRejects); })
+        ? vi.fn(async () => {
+          if (opts.errorDuringOpen) errorCb?.(opts.openRejects!);
+          throw new Error(opts.openRejects);
+        })
         : vi.fn(async () => {}),
       requestFrameAt: vi.fn(),
       onFrame: (cb) => { frameCb = cb; },
@@ -333,7 +338,7 @@ describe("FfmpegSource — HW open failure fallback", () => {
     expect(src.currentLane()).toBe("software");
     expect(sw.t.open).toHaveBeenCalledOnce();
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("hardware transport close failed"),
+      expect.stringContaining("transport close failed"),
       expect.any(Error),
     );
     expect(warn).toHaveBeenCalledWith(
@@ -995,11 +1000,10 @@ describe("FfmpegSource — backward seek", () => {
 describe("FfmpegSource — dispose racing the recovery path", () => {
   it("does not resurrect a software transport on a source disposed mid-fallback", async () => {
     // The HW→SW fallback awaits the failed transport's dispose before opening
-    // software. `disposeAndWait` landing in that window sees `transport ===
-    // null` and resolves instantly — so an openLane past it would open a
-    // native session on a disposed source that NOTHING can ever close (the
-    // dispose latch is already spent). The recovery path must re-check
-    // `_disposed` after every await, this one included.
+    // software. An open past a `disposeAndWait` landing in that window would
+    // start a native session on a disposed source that NOTHING can ever close
+    // (the dispose latch is already spent). The recovery path must re-check
+    // disposal after every await, this one included.
     let releaseDispose!: () => void;
     const disposeGate = new Promise<void>((r) => { releaseDispose = r; });
     const gpu = fakeTransport({ openRejects: HW_BUDGET_EXCEEDED });
@@ -1012,7 +1016,7 @@ describe("FfmpegSource — dispose racing the recovery path", () => {
     const ready = src.ensureReady();
     // Let the rejected hardware open reach the fallback's dispose await.
     await new Promise((r) => setTimeout(r, 0));
-    const disposed = src.disposeAndWait(); // transport already null → resolves at once
+    const disposed = src.disposeAndWait(); // waits for the transport being released
     releaseDispose();
     await ready;
     await disposed;
@@ -1058,5 +1062,266 @@ describe("FfmpegSource — dispose racing the recovery path", () => {
     // Settled on the software spill: no lease either.
     expect(src.currentLane()).toBe("software");
     expect(src.holdsHwSessionLease()).toBe(false);
+  });
+});
+
+describe("FfmpegSource — one transport switch at a time", () => {
+  beforeEach(() => resetFfmpegCapabilitySession());
+
+  const gate = () => {
+    let open!: () => void;
+    const promise = new Promise<void>((resolve) => { open = resolve; });
+    return { promise, open };
+  };
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  const init = (mediaId: string) =>
+    ({ layerId: "L", mediaId, sourcePath: "/tmp/x.mp4", codec: "h264", pixFmt: "yuv420p", componentAvailable: true });
+  const copyBack = async () => ({ lane: "hardware" as const, hwLane: "vaapi", device: "/dev/dri/renderD128" });
+  const software = async () => ({ lane: "software" as const, hwLane: null, device: null });
+  /// Whether the next open of `mediaId` would still probe hardware (an
+  /// unmarked media) or skip straight to software (a sticky capability mark).
+  const nextOpenProbes = async (mediaId: string) => {
+    let probed = false;
+    await pickInitialLane(
+      { mediaId, codec: "h264", pixFmt: "yuv420p", componentAvailable: true },
+      async () => { probed = true; return { ok: true, lane: "vaapi", device: "/dev/dri/renderD128" }; },
+      "/tmp/x.mp4",
+    );
+    return probed;
+  };
+
+  it("handles a copy-back open failure the transport also reports as an error once: software, no fatal", async () => {
+    const made = [fakeTransport({ openRejects: "vaapi init failed", errorDuringOpen: true }), fakeTransport()];
+    const makeSw = vi.fn(() => made.shift()!.t);
+    const src = new FfmpegSource(init("m-cb"), { makeSw, pickLane: copyBack });
+    const fatal = vi.fn();
+    src.onFatalError(fatal);
+
+    await expect(src.ensureReady()).resolves.toBeUndefined();
+
+    expect(fatal).not.toHaveBeenCalled();
+    expect(makeSw).toHaveBeenCalledTimes(2);
+    expect(src.currentDecodeDevice()).toEqual({ kind: "software", backend: "ffmpeg", device: null });
+    expect(src.isDowngraded()).toBe(true);
+  });
+
+  it("leaves a copy-back source retryable and unmarked when its open is refused for capacity", async () => {
+    const t = fakeTransport({ openRejects: RESOURCE_CAPACITY_EXCEEDED, errorDuringOpen: true });
+    const src = new FfmpegSource(init("m-cb-cap"), { makeSw: () => t.t, pickLane: copyBack });
+    const fatal = vi.fn();
+    src.onFatalError(fatal);
+
+    await expect(src.ensureReady()).rejects.toThrow(RESOURCE_CAPACITY_EXCEEDED);
+
+    expect(fatal).not.toHaveBeenCalled();
+    expect(t.t.open).toHaveBeenCalledOnce();
+    expect(await nextOpenProbes("m-cb-cap")).toBe(true);
+  });
+
+  it("opens the software fallback only after the failed GPU transport has closed", async () => {
+    const closed = gate();
+    const gpu = fakeTransport();
+    vi.mocked(gpu.t.dispose).mockImplementation(() => closed.promise);
+    const sw = fakeTransport();
+    const src = new FfmpegSource(init("m-rt"), {
+      makeGpu: () => gpu.t, makeSw: () => sw.t,
+      pickLane: async () => ({ lane: "hardware" as const, hwLane: "d3d11va", device: null }),
+    });
+    await src.ensureReady();
+
+    gpu.fail("device lost");
+    await tick();
+    expect(gpu.t.dispose).toHaveBeenCalledOnce();
+    expect(sw.t.open).not.toHaveBeenCalled();
+
+    closed.open();
+    await vi.waitFor(() => expect(sw.t.open).toHaveBeenCalledOnce());
+    expect(src.currentLane()).toBe("software");
+  });
+
+  it("re-opens at a new playback resolution only after the old transport has closed", async () => {
+    const closed = gate();
+    const opened: ReturnType<typeof fakeTransport>[] = [];
+    const src = new FfmpegSource(init("m-rs"), {
+      makeSw: () => { const t = fakeTransport(); opened.push(t); return t.t; },
+      pickLane: software,
+    });
+    await src.ensureReady();
+    vi.mocked(opened[0]!.t.dispose).mockImplementation(() => closed.promise);
+
+    src.setPlaybackScaleDiv(2);
+    await tick();
+    expect(opened).toHaveLength(1);
+
+    closed.open();
+    await vi.waitFor(() => expect(opened).toHaveLength(2));
+  });
+
+  it("holds a re-open refused for capacity without a fatal, and retries it on a frame request after the backoff", async () => {
+    const time = vi.spyOn(performance, "now").mockReturnValue(0);
+    const plan = [fakeTransport(), fakeTransport({ openRejects: RESOURCE_CAPACITY_EXCEEDED }), fakeTransport()];
+    const makeSw = vi.fn(() => plan.shift()!.t);
+    const src = new FfmpegSource(init("m-rs-cap"), { makeSw, pickLane: software });
+    const fatal = vi.fn();
+    src.onFatalError(fatal);
+    try {
+      await src.ensureReady();
+      src.setPlaybackScaleDiv(2);
+      await vi.waitFor(() => expect(makeSw).toHaveBeenCalledTimes(2));
+      await tick();
+      expect(fatal).not.toHaveBeenCalled();
+      expect(src.currentDecodeDevice()).toBeNull();
+
+      await src.requestFrameAt(0);
+      expect(makeSw).toHaveBeenCalledTimes(2); // still inside the backoff
+
+      time.mockReturnValue(1001);
+      await src.requestFrameAt(0);
+      expect(makeSw).toHaveBeenCalledTimes(3);
+      expect(makeSw).toHaveBeenLastCalledWith({ scaleDiv: 2, cadenceDiv: 1 });
+      expect(src.currentDecodeDevice()).toEqual({ kind: "software", backend: "ffmpeg", device: null });
+      expect(fatal).not.toHaveBeenCalled();
+    } finally { await src.disposeAndWait(); time.mockRestore(); }
+  });
+
+  it("falls a copy-back source to software when its re-open fails, instead of a fatal", async () => {
+    const plan = [fakeTransport(), fakeTransport({ openRejects: "vaapi reopen failed" }), fakeTransport()];
+    const makeSw = vi.fn((_profile?: unknown) => plan.shift()!.t);
+    const src = new FfmpegSource(init("m-cb-rs"), { makeSw, pickLane: copyBack });
+    const fatal = vi.fn();
+    src.onFatalError(fatal);
+    await src.ensureReady();
+
+    src.setPlaybackScaleDiv(2);
+    await vi.waitFor(() => expect(makeSw).toHaveBeenCalledTimes(3));
+    await tick();
+
+    expect(fatal).not.toHaveBeenCalled();
+    expect(makeSw.mock.calls[1]![0]).toMatchObject({ accel: { lane: "vaapi" }, scaleDiv: 2 });
+    expect(makeSw.mock.calls[2]![0]).toEqual({ scaleDiv: 2, cadenceDiv: 1 });
+    expect(src.currentDecodeDevice()).toEqual({ kind: "software", backend: "ffmpeg", device: null });
+  });
+
+  it("applies a playback resolution set while the first open is in flight once that open lands", async () => {
+    const landed = gate();
+    const opened: ReturnType<typeof fakeTransport>[] = [];
+    const makeSw = vi.fn((_profile?: unknown) => {
+      const t = fakeTransport();
+      if (opened.length === 0) vi.mocked(t.t.open).mockImplementation(() => landed.promise);
+      opened.push(t);
+      return t.t;
+    });
+    const src = new FfmpegSource(init("m-early"), { makeSw, pickLane: software });
+    const ready = src.ensureReady();
+    await vi.waitFor(() => expect(opened).toHaveLength(1));
+
+    src.setPlaybackScaleDiv(2);
+    landed.open();
+    await ready;
+
+    await vi.waitFor(() => expect(opened).toHaveLength(2));
+    expect(makeSw.mock.calls[1]![0]).toEqual({ scaleDiv: 2, cadenceDiv: 1 });
+    expect(opened[0]!.t.dispose).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(src.currentDecodeDevice()).not.toBeNull());
+  });
+
+  it("resolves disposeAndWait only after a transport it was releasing has closed", async () => {
+    const closed = gate();
+    const gpu = fakeTransport({ openRejects: HW_BUDGET_EXCEEDED });
+    vi.mocked(gpu.t.dispose).mockImplementation(() => closed.promise);
+    const sw = fakeTransport();
+    const src = new FfmpegSource(init("m-dw"), {
+      makeGpu: () => gpu.t, makeSw: () => sw.t,
+      pickLane: async () => ({ lane: "hardware" as const, hwLane: "d3d11va", device: null }),
+    });
+    const ready = src.ensureReady();
+    await vi.waitFor(() => expect(gpu.t.dispose).toHaveBeenCalled());
+
+    let done = false;
+    const disposed = src.disposeAndWait().then(() => { done = true; });
+    await tick();
+    expect(done).toBe(false);
+
+    closed.open();
+    await disposed;
+    await ready;
+    expect(sw.t.open).not.toHaveBeenCalled();
+  });
+
+  it("keeps a forced lane on it: a runtime failure is fatal, not a fallback", async () => {
+    const gpu = fakeTransport();
+    const sw = fakeTransport();
+    const fatal = vi.fn();
+    const src = new FfmpegSource({ ...init("m-forced"), forceLane: "hardware" }, { makeGpu: () => gpu.t, makeSw: () => sw.t });
+    src.onFatalError(fatal);
+    await src.ensureReady();
+
+    gpu.fail("device lost");
+    await vi.waitFor(() => expect(fatal).toHaveBeenCalledWith("device lost"));
+    expect(sw.t.open).not.toHaveBeenCalled();
+    expect(src.currentDecodeDevice()).toBeNull();
+  });
+
+  it("keeps moving the ring anchor while a switch waits for the old transport to close", async () => {
+    const closed = gate();
+    const gpu = fakeTransport();
+    vi.mocked(gpu.t.dispose).mockImplementation(() => closed.promise);
+    const sw = fakeTransport();
+    const src = new FfmpegSource(init("m-anchor"), {
+      makeGpu: () => gpu.t, makeSw: () => sw.t,
+      pickLane: async () => ({ lane: "hardware" as const, hwLane: "d3d11va", device: null }),
+    });
+    await src.ensureReady();
+    gpu.emitFrame(0);
+    gpu.fail("device lost");
+    await tick();
+
+    await src.requestFrameAt(2_000_000); // returns while the GPU close is pending
+    expect(src.ring.size()).toBe(0);     // lookbehind eviction still ran
+
+    closed.open();
+    await vi.waitFor(() => expect(sw.t.requestFrameAt).toHaveBeenCalledWith(2_000_000));
+  });
+
+  it("still reads as downgraded after a capacity hold and retry land it on software", async () => {
+    const time = vi.spyOn(performance, "now").mockReturnValue(0);
+    const gpu = fakeTransport();
+    const plan = [fakeTransport({ openRejects: RESOURCE_CAPACITY_EXCEEDED }), fakeTransport()];
+    let picks = 0;
+    const src = new FfmpegSource(init("m-down"), {
+      makeGpu: () => gpu.t, makeSw: () => plan.shift()!.t,
+      pickLane: async () => (picks++ === 0
+        ? { lane: "hardware" as const, hwLane: "d3d11va", device: null }
+        : { lane: "software" as const, hwLane: null, device: null }),
+    });
+    try {
+      await src.ensureReady();
+      gpu.fail("device lost");
+      await vi.waitFor(() => expect(plan).toHaveLength(1));
+      await tick();
+      time.mockReturnValue(1001);
+      await src.ensureReady();
+      expect(src.currentLane()).toBe("software");
+      expect(src.isDowngraded()).toBe(true);
+    } finally { await src.disposeAndWait(); time.mockRestore(); }
+  });
+
+  it("treats a GPU error that lands during its open as that open failing", async () => {
+    const gpu = fakeTransport();
+    vi.mocked(gpu.t.open).mockImplementation(async () => { gpu.fail("port error"); });
+    const sw = fakeTransport();
+    const fatal = vi.fn();
+    const src = new FfmpegSource(init("m-race"), {
+      makeGpu: () => gpu.t, makeSw: () => sw.t,
+      pickLane: async () => ({ lane: "hardware" as const, hwLane: "d3d11va", device: null }),
+    });
+    src.onFatalError(fatal);
+
+    await src.ensureReady();
+
+    expect(sw.t.open).toHaveBeenCalledOnce();
+    expect(gpu.t.dispose).toHaveBeenCalled();
+    expect(src.currentDecodeDevice()).toEqual({ kind: "software", backend: "ffmpeg", device: null });
+    expect(fatal).not.toHaveBeenCalled();
   });
 });

@@ -30,8 +30,9 @@ export interface DecodeTransport {
   open(o: DecodeTransportOpen): Promise<void>;
   requestFrameAt(tUs: number): void;
   onFrame(cb: (frame: TransportFrame, ptsUs: number, durUs: number) => void): void;
-  /// Terminal transport failure (GPU decode error / device loss / budget reject;
-  /// SW: open failure only). FfmpegSource decides whether this is recoverable.
+  /// Terminal transport failure (GPU decode error / device loss); SW reports
+  /// none. A failed `open` is reported by its rejection only. FfmpegSource
+  /// decides whether either is recoverable.
   onError(cb: (reason: string) => void): void;
   onEof(cb: () => void): void;
   /// Begins teardown. GPU transports resolve only after main has closed the

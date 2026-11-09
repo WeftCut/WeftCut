@@ -210,11 +210,16 @@ Export uses the same Automatic/Standard/Lite vocabulary through
   cannot interrupt a blocking FFmpeg call. Renderer reload closes the producer.
   Callers that use native code directly keep the uncredited contract.
 - **Hardware→software fallback happens inside the source.** A hardware error
-  or device loss opens `SwTransport` into the same ring with a fresh
-  `streamId` and keeps the last hardware frame on screen. The swap key does
-  not change. `currentLane()` reports the live lane. Only if software also
-  fails does `onFatalError` fire. The Compositor then re-resolves (`auto` →
-  `webcodecs`, otherwise `unsupported`).
+  or device loss, at open or later, closes the failed transport and then opens
+  `SwTransport` into the same ring with a fresh `streamId`, keeping the last
+  hardware frame on screen. Every transport switch closes the old transport
+  before the next opens, one switch at a time
+  ([ADR 0162](adr/0162-an-ffmpeg-source-switches-transports-one-at-a-time.md)).
+  The swap key does not change. `currentLane()` reports the live lane. A
+  capacity refusal holds the clip and a frame request retries after 1 s. Only
+  if software also fails, or a bench-forced lane fails, does `onFatalError`
+  fire. The Compositor then re-resolves (`auto` → `webcodecs`, otherwise
+  `unsupported`).
 
 **Hardware admission (d3d11va).** Before allocating, main reserves a session
 slot (default 5), coded pixel area (default `3 × 3840 × 2160`) and pool bytes

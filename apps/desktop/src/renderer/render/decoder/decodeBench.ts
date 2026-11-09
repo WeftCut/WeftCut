@@ -561,9 +561,9 @@ export async function decodeBenchConcurrentOrderCheck(
 // first `previewGpuOpen` beyond either currency throws
 // `hw-budget-exceeded`. This exercises the runtime seam: a real overflow
 // rejects before native allocation and reaches this probe with the budget
-// reason. Because the lane is forced to "hardware", `FfmpegSource._doEnsureReady`'s
-// catch calls `fireFatal` on any open failure, so `onFatalError` fires and
-// `fatalReason` is populated (e.g. `"hw-budget-exceeded"`). The e2e assertion
+// reason. Because the lane is forced to "hardware", `judgeFailure`
+// (ffmpegSourceLifecycle.ts) makes any open failure but a capacity refusal
+// fatal, so `onFatalError` fires and `fatalReason` is populated (e.g. `"hw-budget-exceeded"`). The e2e assertion
 // confirms both `fatalReason` and `error` carry the budget signal.
 
 export interface BudgetProbeOutcome {
@@ -629,8 +629,8 @@ export async function decodeBenchBudgetProbe(args: {
 // `decodeBenchBudgetProbe` above force-pins every session's lane
 // (`forceLane: 'hardware'`) so it can assert the FORCED-lane hard-fatal path
 // the bench harness itself relies on for deterministic hardware-only
-// measurement — but `FfmpegSource._doEnsureReady`'s catch only engages its
-// in-place HW→SW recovery when `!forceLane` (see FfmpegSource.ts). This
+// measurement — but `judgeFailure` (ffmpegSourceLifecycle.ts) only engages
+// the in-place HW→SW recovery when the lane is not forced. This
 // driver leaves the lane UNFORCED: `pickInitialLane`'s real GPU capability
 // probe decides "hardware" for an HW-eligible clip exactly as production
 // does. Opening one source past the fixture-specific live capacity makes that

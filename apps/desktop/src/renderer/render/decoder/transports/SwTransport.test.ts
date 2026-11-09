@@ -321,10 +321,9 @@ describe("SwTransport", () => {
     fullCadence.dispose();
   });
 
-  it("does not fire onError when disposed before a failing open() settles", async () => {
-    let rejectOpen!: (e: Error) => void;
+  it("reports a failed open() only through its rejection, never onError", async () => {
     const api = {
-      open: () => new Promise((_res, rej) => { rejectOpen = rej; }),
+      open: () => Promise.reject(new Error("boom")),
       requestFrameAt: () => {},
       close: () => {},
       onFrame: () => () => {},
@@ -333,10 +332,7 @@ describe("SwTransport", () => {
     const t = new SwTransport();
     const errors: string[] = [];
     t.onError((r) => errors.push(r));
-    const p = t.open({ streamId: "s1", path: "C:/x.mov" });
-    t.dispose();                       // disposed BEFORE open rejects
-    rejectOpen(new Error("boom"));
-    await expect(p).rejects.toThrow("boom");   // still rethrows
-    expect(errors).toEqual([]);                 // but no stale fatal fired
+    await expect(t.open({ streamId: "s1", path: "C:/x.mov" })).rejects.toThrow("boom");
+    expect(errors).toEqual([]);
   });
 });
