@@ -2,7 +2,7 @@
 // motif layer is unresolvable (catalog sync lost the race with project open /
 // transient list_motifs failure / draft temporarily missing) — "can't
 // resolve" is not "orphaned". Path under test: the renderer's bake plan
-// (MotifFrameService) sets `collect` false whenever `collectLiveRasterKeys`
+// (`planMotifPreparation`) sets `collect` false whenever `collectLiveRasterKeys`
 // reports an unresolved Motif; main's `MotifBakeCoordinator` removes
 // unreferenced `Cache/raster/<hash>` dirs only for a `collect` plan, after
 // discovery (`MotifFrameStore.collect`, wired in src/main/motif/bakeWorkspace.ts).

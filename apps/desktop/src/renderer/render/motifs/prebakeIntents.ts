@@ -1,5 +1,5 @@
 // The window's "Pre-bake now" choices. The timeline records a request here;
-// `MotifFrameService` resolves it against its project and declares the result
+// `MotifDemandSession` resolves it against its project and declares the result
 // to main. Plain module state with no subscriptions of its own, so the
 // requests outlive a preview remount and a DOM-less realm never listens.
 

@@ -39,7 +39,7 @@ subscribeMotifPreview(() => {
 });
 
 /// Process-wide index of which cacheKeys have frames baked on disk.
-/// MotifFrameService restores it from main's bake snapshot; a frame main
+/// MotifDemandSession restores it from main's bake snapshot; a frame main
 /// reports stored is added.
 export const sharedBakedKeyIndex = new BakedKeyIndex(() => scheduler.wake());
 

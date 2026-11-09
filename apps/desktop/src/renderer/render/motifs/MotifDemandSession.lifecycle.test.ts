@@ -1,7 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { MOTIF_BAKE_READY_EVENT, type MotifBakePlan, type MotifBakeSnapshot } from '../../../shared/motifs/baking';
 import { groupLayerFixture, ROOT_ID, summaryFixture } from '../../testing/summaryFixture';
-import { MotifFrameService } from './MotifFrameService';
+import type { LookaheadTarget } from './motifDemand';
+import { MotifDemandSession } from './MotifDemandSession';
 import { requestPrebake } from './prebakeIntents';
 
 const h = vi.hoisted(() => ({
@@ -16,6 +17,8 @@ vi.mock('../../settings/appSettingsStore', () => ({ useAppSettingsStore: {
   getState: () => ({ settings: { prebake_motifs: true } }), subscribe: () => () => {},
 } }));
 
+/** How many contents the latest lookahead plan warms. */
+const warmedContents = () => new Set((h.warm.mock.lastCall![0] as LookaheadTarget[]).map(t => t.cacheKey)).size;
 const tick = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); h.listeners.clear(); });
 
@@ -43,7 +46,7 @@ it('keeps an in-flight acknowledgement through unrelated edits and redeclares on
     }
     throw new Error(`Unexpected invocation: ${channel}`);
   });
-  const service = new MotifFrameService({ projectSummary: () => summary, openCompositionId: () => ROOT_ID,
+  const service = new MotifDemandSession({ projectSummary: () => summary, openCompositionId: () => ROOT_ID,
     fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0 });
   try {
     service.handleProjectChanged(); await tick();
@@ -53,7 +56,7 @@ it('keeps an in-flight acknowledgement through unrelated edits and redeclares on
     service.handleProjectChanged(); await tick();
     expect(h.invoke).toHaveBeenCalledTimes(calls);
     held = false; finish(snapshot()); await tick();
-    expect(h.warm.mock.lastCall![0]).toHaveLength(1);
+    expect(warmedContents()).toBe(1);
 
     // A failed workspace switch can reopen admission with the SAME generation.
     // The input guard must not swallow this recovery or the later new session.
@@ -68,6 +71,6 @@ it('keeps an in-flight acknowledgement through unrelated edits and redeclares on
     requestPrebake('motif'); await tick();
     expect(plans).toHaveLength(5);
     expect(plans.at(-1)!.retryKeys).toHaveLength(1);
-    expect(h.warm.mock.lastCall![0]).toHaveLength(1);
+    expect(warmedContents()).toBe(1);
   } finally { service.dispose(); await tick(); }
 });

@@ -1,21 +1,23 @@
-import { localAt } from '../compositionClock';
-// Preview warming is renderer-owned. Main owns durable preparation, inventory,
-// retries and resource admission; this module declares demand and projects status.
+// The preview's Motif demand session: applies the plans of `motifDemand` (the
+// lookahead window, durable preparation, layer status) and owns what they need
+// across calls — the prewarmer, the bake client, subscriptions, the planning
+// signature, disk discovery and the session generation. Preview warming is
+// renderer-owned; main owns durable preparation, inventory, retries and
+// resource admission.
 
-import type { LayerSummary, ProjectSummary } from "../../ipc";
+import type { ProjectSummary } from "../../ipc";
 import { useAppSettingsStore } from "../../settings/appSettingsStore";
 import {
   setLayerBakeStatuses,
   type LayerBakeStatus,
 } from "../../timeline/motifBakeStatusStore";
-import { compositionLocalUs, forEachLayer } from "../compositionWalk";
+import { forEachLayer } from "../compositionWalk";
 import { getMotif, motifCatalogRevision, subscribeMotifCatalog } from "./catalog";
 import { motifPlanningInputs } from './planningInputs';
-import { motifLayerStatuses, planMotifPreparation } from './motifDemand';
-import { MotifPrewarmer, type PrewarmContentSpec } from "./MotifPrewarmer";
+import { motifLayerStatuses, planMotifDemand, planMotifPreparation } from './motifDemand';
+import { MotifPrewarmer } from "./MotifPrewarmer";
 import { MotifBakeClient } from './bakeClient';
 import type { MotifBakePlan, MotifBakeSession, MotifBakeSnapshot, MotifFrameRange } from '../../../shared/motifs/baking';
-import { motifFrameDescriptor } from "./motifFrameDescriptor";
 import { motifTuning } from "./tuning";
 import {
   acquireMotifFrame,
@@ -55,10 +57,10 @@ function cancelIdle(token: number): void {
   else g.clearTimeout(token);
 }
 
-/// Everything the service reads of its owning Compositor. Getters, not values:
-/// the snapshot / composition / fps / playhead all change under the service's
+/// Everything the session reads of its owning Compositor. Getters, not values:
+/// the snapshot / composition / fps / playhead all change under the session's
 /// feet, and a captured copy would silently plan against a stale project.
-export interface MotifFrameServiceDeps {
+export interface MotifDemandSessionDeps {
   /// The current project snapshot (null before load / after close).
   projectSummary: () => ProjectSummary | null;
   /// The OPEN composition's id — the walk root for the motif-layer scan.
@@ -71,7 +73,9 @@ export interface MotifFrameServiceDeps {
   currentTimeUs: () => number;
 }
 
-export class MotifFrameService {
+export class MotifDemandSession {
+  /** The L0 budget the lookahead plans against, read when the prewarmer is built. */
+  private readonly lookaheadCapBytes: number = 0;
   private layerBakeRanges = new Map<string, MotifFrameRange[]>();
   private prewarmer: MotifPrewarmer | null;
   private client: MotifBakeClient | null;
@@ -89,11 +93,11 @@ export class MotifFrameService {
   private planningSignature: string | null = null;
   private div: MotifReaderDiv = 1;
 
-  constructor(private readonly deps: MotifFrameServiceDeps) {
+  constructor(private readonly deps: MotifDemandSessionDeps) {
+    if (typeof document !== "undefined") this.lookaheadCapBytes = motifFrameCoverage.capacityBytes();
     this.prewarmer =
       typeof document !== "undefined"
         ? new MotifPrewarmer({
-            capBytes: motifFrameCoverage.capacityBytes(),
             coverage: motifFrameCoverage,
             acquire: acquireMotifFrame,
             schedule: (cb) => scheduleIdle(cb),
@@ -120,7 +124,7 @@ export class MotifFrameService {
     });
   }
 
-  /// Brings the Pre-bake now intents up to this service's project, expanding
+  /// Brings the Pre-bake now intents up to this session's project, expanding
   /// a requested Group to the Motifs it holds now. Returns whether any request
   /// resolved.
   private resolvePrebakes(): boolean {
@@ -208,71 +212,25 @@ export class MotifFrameService {
   // private
   // ============================================================
 
-  /// Every enabled Motif layer reachable from the drawn composition, Groups'
-  /// included, with the LOCAL time `tUs` maps to inside it — the prewarm
-  /// planner's walk.
-  private forEachMotifLayer(
-    tUs: number,
-    f: (layer: LayerSummary & { params: { kind: "Motif" } }, tInLayerUs: number) => void,
-    lookaheadUs?: number,
-  ): void {
-    const summary = this.deps.projectSummary();
-    if (!summary) return;
-    const fpsNum = this.deps.fpsNum();
-    const fpsDen = this.deps.fpsDen();
-    forEachLayer(summary, this.deps.openCompositionId(), ({ layer, offsetUs, clock, tStartUs, tEndUs }) => {
-      if (layer.params.kind !== "Motif") return;
-      // Prewarm only the visible/soon-visible window. Root spans already
-      // include Group trims; sample a future layer at its actual entry time.
-      if (lookaheadUs !== undefined && (tEndUs <= tUs || tStartUs > tUs + lookaheadUs)) return;
-      const sampleUs = lookaheadUs === undefined ? tUs : Math.max(tUs, tStartUs);
-      // `compositionLocalUs`, not a bare subtraction: the descriptor's
-      // `contentFrame` becomes a cache key, and the frame the SPRITE ends up
-      // asking for is derived through the same re-snap on its way down the
-      // nodes. A µs of lattice residual between the two would warm a key
-      // nothing ever reads.
-      const tLocalUs = clock ? localAt(clock, sampleUs) : compositionLocalUs(sampleUs - offsetUs, fpsNum, fpsDen);
-      f(layer as LayerSummary & { params: { kind: "Motif" } }, tLocalUs - layer.t_start_us);
-    });
-  }
-
-  /// Map the active motif layers at composition-time `tUs` to prewarm specs
-  /// (deduped by cacheKey inside the planner) and hand them to the prewarmer.
-  /// Runs whether playing or paused (compositeFrame fires on seek/scrub too), so
-  /// the cache warms ahead of the playhead in both states.
+  /// Plan the lookahead at composition-time `tUs` and hand it to the
+  /// prewarmer. Runs whether playing or paused (compositeFrame fires on
+  /// seek/scrub too), so the cache warms ahead of the playhead in both states.
   private updatePrewarmTargets(tUs: number): void {
     const summary = this.deps.projectSummary();
     if (!this.prewarmer || !summary || this.diskDiscoveryPending) return;
     // A rejected durable plan is not permission to launch a second background
     // producer that only fills RAM. Foreground preview can still read/capture.
     if (this.preparationError) { this.prewarmer.setTargets([]); return; }
-    const specs: PrewarmContentSpec[] = [];
-    const scaleDiv = this.div;
-    this.forEachMotifLayer(tUs, (layer, tInLayerUs) => {
-      const motif = getMotif(layer.params.motif_id);
-      if (!motif) return;
-      const durationUs = layer.t_end_us - layer.t_start_us;
-      const desc = motifFrameDescriptor(layer.params, tInLayerUs, durationUs, this.deps.fpsNum(), this.deps.fpsDen(), motif);
-      if (!desc) return;
-      // Saved frames read at the divisor; holes are captured at full size.
-      // Plan only fully saved content at the smaller size, so the window
-      // never outgrows L0 with captures.
-      const div = sharedBakedKeyIndex.isComplete(desc.cacheKey, desc.contentDurationFrames) ? scaleDiv : 1;
-      specs.push({
-        cacheKey: desc.cacheKey,
-        contentFrame: desc.contentFrame,
-        contentDurationFrames: desc.contentDurationFrames,
-        historyFrames: motifTuning().recentFrames,
-        // What one warmed frame costs the byte-bounded L0 cache — the planner
-        // budget is in bytes, so a small Motif warms deeper than a 1080p one.
-        frameBytes: Math.ceil(desc.renderW / div) * Math.ceil(desc.renderH / div) * 4,
-        // The descriptor binds the plan-time fps, so a later fps change
-        // cannot drift the frames it names.
-        descriptor: desc,
-        scaleDiv,
-      });
-    }, motifTuning().prewarmLookaheadMs * 1000);
-    this.prewarmer.setTargets(specs);
+    const tuning = motifTuning();
+    this.prewarmer.setTargets(planMotifDemand({
+      summary, openCompositionId: this.deps.openCompositionId(),
+      fpsNum: this.deps.fpsNum(), fpsDen: this.deps.fpsDen(),
+      playheadUs: tUs, scaleDiv: this.div,
+      budget: { capBytes: this.lookaheadCapBytes, requests: tuning.prewarmRequests,
+        lookaheadUs: tuning.prewarmLookaheadMs * 1000, historyFrames: tuning.recentFrames },
+      motif: getMotif,
+      complete: (key, frames) => sharedBakedKeyIndex.isComplete(key, frames),
+    }));
   }
 
   private submitBakePlan(): void {

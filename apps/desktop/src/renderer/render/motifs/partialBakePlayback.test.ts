@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi, type MockInstance } from 'vitest';
-import { MotifPrewarmer, type PrewarmContentSpec } from './MotifPrewarmer';
+import { MotifPrewarmer } from './MotifPrewarmer';
+import { planLookaheadTargets, type LookaheadContent } from './motifDemand';
+import { motifTuning } from './tuning';
 import {
   acquireMotifFrame, motifFrameCoverage, resetMotifFrameRequests,
   sharedBakedKeyIndex, sharedMotifFrameCache, setMotifPreparationCoverage,
@@ -64,13 +66,15 @@ afterEach(async () => {
 function prewarmer() {
   const callbacks: (() => void)[] = [];
   const instance = new MotifPrewarmer({
-    capBytes: 40, coverage: motifFrameCoverage, acquire: acquireMotifFrame,
+    coverage: motifFrameCoverage, acquire: acquireMotifFrame,
     schedule: cb => { callbacks.push(cb); return callbacks.length; }, cancel: () => {},
   });
   cleanup.unshift(() => instance.dispose());
-  return { prewarmer: instance, callbacks };
+  /** The session's lookahead plan over `specs` within a 40-byte L0. */
+  const set = (specs: LookaheadContent[]) => instance.setTargets(planLookaheadTargets(specs, 40, motifTuning().prewarmRequests));
+  return { prewarmer: instance, set, callbacks };
 }
-const spec = (cacheKey: string, contentFrame = 0, contentDurationFrames = 1_000, historyFrames = 0): PrewarmContentSpec => ({
+const spec = (cacheKey: string, contentFrame = 0, contentDurationFrames = 1_000, historyFrames = 0): LookaheadContent => ({
   cacheKey, contentFrame, contentDurationFrames, frameBytes: 4, historyFrames,
   descriptor: desc(cacheKey, contentFrame), scaleDiv: 1,
 });
@@ -78,7 +82,7 @@ const spec = (cacheKey: string, contentFrame = 0, contentDurationFrames = 1_000,
 function warm(keys = ['long']) {
   const h = prewarmer();
   const specs = keys.map(cacheKey => spec(cacheKey));
-  h.prewarmer.setTargets(specs);
+  h.set(specs);
   h.callbacks.shift()!();
   return { ...h, specs };
 }
@@ -104,7 +108,7 @@ it('waits for main-owned preparation instead of switching its capture page for s
     // Progress updates may rebuild the prewarm plan many times while main
     // is rendering other content. Those updates must not start a second producer.
     setMotifPreparationCoverage(['long']);
-    h.prewarmer.setTargets(h.specs);
+    h.set(h.specs);
     await settle();
   }
   expect(captureMotif).not.toHaveBeenCalled();
@@ -238,7 +242,7 @@ it('captures lookahead of every content before history behind a playhead', async
   sharedBakedKeyIndex.restoreFrames('b', new Set());
   const h = prewarmer();
   // `a` plays its last frame: one frame ahead, the rest of its window behind.
-  h.prewarmer.setTargets([spec('a', 9, 10, 3), spec('b', 0, 10, 3)]);
+  h.set([spec('a', 9, 10, 3), spec('b', 0, 10, 3)]);
   h.callbacks.shift()!();
   for (let i = 0; i < 10; i++) {
     await settle();
@@ -255,14 +259,14 @@ it('captures lookahead of every content before history behind a playhead', async
 it('a playhead that passes a lookahead capture demotes it in main, and a seek back promotes it again', async () => {
   sharedBakedKeyIndex.restoreFrames('long', new Set());
   const h = prewarmer();
-  h.prewarmer.setTargets([spec('long', 0, 1_000, 2)]);
+  h.set([spec('long', 0, 1_000, 2)]);
   h.callbacks.shift()!();
   await settle();
   expect(captures.map(call => [call.request.address!.frame, call.request.priority])).toEqual([[0, 'ahead'], [1, 'ahead']]);
-  h.prewarmer.setTargets([spec('long', 1, 1_000, 2)]);
+  h.set([spec('long', 1, 1_000, 2)]);
   await settle();
   expect(vi.mocked(captures[0]!.setPriority).mock.calls).toEqual([['background']]);
-  h.prewarmer.setTargets([spec('long', 0, 1_000, 2)]);
+  h.set([spec('long', 0, 1_000, 2)]);
   await settle();
   expect(vi.mocked(captures[0]!.setPriority).mock.calls).toEqual([['background'], ['ahead']]);
   expect(captures).toHaveLength(sendWindow);
@@ -279,7 +283,7 @@ it('seek cancels queued old-window work and closes late admitted results', async
   }));
   const h = warm();
   await settle();
-  h.prewarmer.setTargets([spec('long', 100)]);
+  h.set([spec('long', 100)]);
   h.callbacks.shift()!();
   finish.slice(0, 3).forEach(fn => fn());
   await settle();
@@ -320,7 +324,7 @@ it('retiring lookahead does not cancel the current subscriber sharing its captur
   expect(captures[0]!.request.priority).toBe('ahead');
   const shown = current(0);
   await settle();
-  h.prewarmer.setTargets([]);
+  h.set([]);
   captures[0]!.answer(live());
   const lease = await shown;
   expect(captures[0]!.cancel).not.toHaveBeenCalled();

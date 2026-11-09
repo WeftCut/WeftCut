@@ -215,20 +215,21 @@ clearing. A live capture exists only at full size and serves every divisor.
 Eviction removes membership at once but closes a bitmap only when its last
 sprite releases it. L0 keeps per-content frame counts for O(1) coverage queries.
 
-**L1 — lookahead.** `MotifPrewarmer` fills L0 ahead of the playhead during
-playback and while paused. Identical contents dedupe; `planPrewarmTargets`
-splits the byte budget across contents by per-frame cost and orders
-playhead-first, then forward, then a few earlier frames; retention follows the
-same priority so the next frame to play is not evicted. It holds at most 256
-requests, round-robin across contents: `ahead` for frames at or after a
-playhead, `background` for history behind it, each ranked by its place in the
-plan. A replan aborts requests outside the latest window and re-classes and
-re-ranks the ones it keeps: a frame the playhead passed drops to `background`,
-and a seek back raises kept history to `ahead` with the plan's rank. A request
-still waiting in the renderer's send window is sent in that order; main never
-sees the rank, and moves a capture already in its queue to the back of its new
-class. For content main is preparing, lookahead only
-reads persisted frames; otherwise it may capture its window.
+**L1 — lookahead.** `planMotifDemand` (`motifDemand.ts`) plans the frames to
+fill L0 ahead of the playhead during playback and while paused, and
+`MotifPrewarmer` requests them. Identical contents dedupe; the plan splits the
+byte budget across contents by per-frame cost and orders playhead-first, then
+forward, then a few earlier frames; retention follows the same priority so the
+next frame to play is not evicted. It holds at most 256 requests, round-robin
+across contents: `ahead` for frames at or after a playhead, `background` for
+history behind it, each ranked by its place in the plan. A replan aborts
+requests outside the latest window and re-classes and re-ranks the ones it
+keeps: a frame the playhead passed drops to `background`, and a seek back
+raises kept history to `ahead` with the plan's rank. A request still waiting in
+the renderer's send window is sent in that order; main never sees the rank, and
+moves a capture already in its queue to the back of its new class. For content
+main is preparing, lookahead only reads persisted frames; otherwise it may
+capture its window.
 
 **L2 — disk.** One `.wfrm` per frame under
 `<workspace>/Cache/raster/<hash>/<frame>.wfrm`, where `<hash>` is
@@ -413,7 +414,8 @@ and Save As retire the session, and admitted writes cannot publish into the next
 one. In the renderer, `prebakeIntents` holds the window's Pre-bake now choices;
 `motifDemand` turns committed layers and those choices into the preparation plan
 and, with main's snapshots, into layer status (pure functions);
-`MotifFrameService` applies both and maps snapshots into the baked-key index;
+`MotifDemandSession` applies both, and the lookahead plan, and maps snapshots
+into the baked-key index;
 `MotifBakeClient` carries the IPC.
 
 - **One rule for what reaches the disk.** Every captured frame with a cache

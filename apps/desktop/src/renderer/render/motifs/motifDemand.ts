@@ -1,18 +1,187 @@
-// Pure Motif demand planning: what main should prepare and how each layer's
-// preparation reads on the timeline. Every input is explicit; the caller owns
-// sessions, stores and applying the result (MotifFrameService).
+// Pure Motif demand planning: which frames the preview's lookahead warms, what
+// main should prepare, and how each layer's preparation reads on the timeline.
+// Every input is explicit; the caller owns sessions, stores and applying the
+// result (MotifDemandSession).
 
 import type { ProjectSummary } from "../../ipc";
 import type { MotifBakePlan, MotifFrameRange } from "../../../shared/motifs/baking";
+import type { MotifFramePriority } from "../../../shared/motifs/frameTransport";
+import type { MotifReaderDiv } from "../../../shared/motifs/readerProtocol";
 import { motifWarmPhase, type LayerBakeStatus } from "../../timeline/motifBakeStatusStore";
 import { localAt } from "../compositionClock";
 import { compositionLocalUs, forEachLayer, type PlacedLayer } from "../compositionWalk";
 import type { Motif } from "./catalog";
 import { hashCacheKey } from "./frameCache";
 import { collectLiveRasterKeys } from "./liveRasterKeys";
-import { motifFrameDescriptor } from "./motifFrameDescriptor";
+import { motifFrameDescriptor, type MotifFrameDescriptor } from "./motifFrameDescriptor";
 
 export type MotifLookup = (id: string) => Motif | null | undefined;
+
+export interface LookaheadInput {
+  summary: ProjectSummary;
+  openCompositionId: string;
+  fpsNum: number;
+  fpsDen: number;
+  /** The composition time lookahead runs from. */
+  playheadUs: number;
+  /** The Playback Resolution divisor saved frames are read at (ADR 0154). */
+  scaleDiv: MotifReaderDiv;
+  budget: {
+    /** The L0 bytes the window may fill. */
+    capBytes: number;
+    /** Most requests at once: small authored sizes can fit thousands of
+     * frames in the pixel budget, and each costs admission work. */
+    requests: number;
+    /** How far past the playhead a layer that has not started yet counts. */
+    lookaheadUs: number;
+    /** Recently passed frames kept eligible for a late completion. */
+    historyFrames: number;
+  };
+  motif: MotifLookup;
+  /** Whether every one of `frames` frames of a cache key is saved. */
+  complete: (cacheKey: string, frames: number) => boolean;
+}
+
+/** One instance window of a content: its frame at the playhead and its cost. */
+export interface LookaheadContent {
+  cacheKey: string;
+  /// Content frame at the current playhead (0-based; clamped to the content).
+  contentFrame: number;
+  contentDurationFrames: number;
+  /// Decoded RGBA bytes per frame of this content (renderW × renderH × 4) —
+  /// what one warmed frame costs the byte-bounded L0 cache. The plan budget
+  /// is in bytes, so a 480×480 Motif warms ~9× more frames than a 1080p one
+  /// while both stay within the same memory bound.
+  frameBytes: number;
+  /// Keep recently passed frames eligible for a late prewarm completion.
+  historyFrames?: number;
+  /// The content at the playhead; targets are other frames of it. It binds
+  /// the plan-time fps, so a later fps change cannot drift the frames it names.
+  descriptor: MotifFrameDescriptor;
+  /// The divisor frames are requested at.
+  scaleDiv: MotifReaderDiv;
+}
+
+/** One frame the lookahead wants in L0. */
+export interface LookaheadTarget {
+  cacheKey: string;
+  frame: number;
+  /** The content's descriptor; `atFrame(content, frame)` names the target. */
+  content: MotifFrameDescriptor;
+  scaleDiv: MotifReaderDiv;
+  /** `ahead` at or after the content's earliest playhead, `background` for
+   * history behind it. */
+  priority: MotifFramePriority;
+  /** The target's place in the plan. */
+  order: number;
+}
+
+/// The lookahead window at `input.playheadUs`: every enabled Motif layer of
+/// the open composition, Groups' included, that is visible or starts within
+/// `lookaheadUs`. The current frame is never planned here: the preview's own
+/// read asks for it.
+export function planMotifDemand(input: LookaheadInput): LookaheadTarget[] {
+  const { fpsNum, fpsDen, playheadUs: tUs, budget } = input;
+  const contents: LookaheadContent[] = [];
+  forEachLayer(input.summary, input.openCompositionId, ({ layer, offsetUs, clock, tStartUs, tEndUs }) => {
+    if (layer.params.kind !== "Motif") return;
+    // Prewarm only the visible/soon-visible window. Root spans already
+    // include Group trims; sample a future layer at its actual entry time.
+    if (tEndUs <= tUs || tStartUs > tUs + budget.lookaheadUs) return;
+    const sampleUs = Math.max(tUs, tStartUs);
+    // `compositionLocalUs`, not a bare subtraction: the descriptor's
+    // `contentFrame` becomes a cache key, and the frame the SPRITE ends up
+    // asking for is derived through the same re-snap on its way down the
+    // nodes. A µs of lattice residual between the two would warm a key
+    // nothing ever reads.
+    const tLocalUs = clock ? localAt(clock, sampleUs) : compositionLocalUs(sampleUs - offsetUs, fpsNum, fpsDen);
+    const motif = input.motif(layer.params.motif_id);
+    if (!motif) return;
+    const durationUs = layer.t_end_us - layer.t_start_us;
+    const desc = motifFrameDescriptor(layer.params, tLocalUs - layer.t_start_us, durationUs, fpsNum, fpsDen, motif);
+    if (!desc) return;
+    // Saved frames read at the divisor; holes are captured at full size.
+    // Plan only fully saved content at the smaller size, so the window
+    // never outgrows L0 with captures.
+    const div = input.complete(desc.cacheKey, desc.contentDurationFrames) ? input.scaleDiv : 1;
+    contents.push({
+      cacheKey: desc.cacheKey,
+      contentFrame: desc.contentFrame,
+      contentDurationFrames: desc.contentDurationFrames,
+      historyFrames: budget.historyFrames,
+      frameBytes: Math.ceil(desc.renderW / div) * Math.ceil(desc.renderH / div) * 4,
+      descriptor: desc,
+      scaleDiv: input.scaleDiv,
+    });
+  });
+  return planLookaheadTargets(contents, budget.capBytes, budget.requests);
+}
+
+/// Share the byte budget across content identities, then round-robin both
+/// contents and their instance windows. Repeated Group instances can need
+/// different frames of the same content without paying twice for shared ones.
+/// Frames at or after a content's earliest playhead are `ahead`, history
+/// behind it `background`.
+export function planLookaheadTargets(
+  contents: readonly LookaheadContent[],
+  capBytes: number,
+  maxTargets = Number.POSITIVE_INFINITY,
+): LookaheadTarget[] {
+  const groups = new Map<string, LookaheadContent[]>();
+  /** Per content, the window whose descriptor and divisor its targets use. */
+  const named = new Map<string, LookaheadContent>();
+  const playheads = new Map<string, number>();
+  for (const c of contents) {
+    const windows = groups.get(c.cacheKey) ?? [];
+    if (!windows.some(w => w.contentFrame === c.contentFrame)) windows.push(c);
+    groups.set(c.cacheKey, windows);
+    named.set(c.cacheKey, c);
+    playheads.set(c.cacheKey, Math.min(playheads.get(c.cacheKey) ?? Infinity, c.contentFrame));
+  }
+  const keys = [...groups.keys()];
+  const perContent = [...groups.values()].map(windows => {
+    const frameBytes = Math.max(1, ...windows.map(c => c.frameBytes));
+    const budget = Math.min(maxTargets, Math.max(0, Math.floor(capBytes / (keys.length * frameBytes))));
+    const orders = windows.map(c => {
+      const n = c.contentDurationFrames;
+      const want = Math.min(budget, n);
+      const start = Math.max(0, Math.min(c.contentFrame, n - 1));
+      const history = Math.min(c.historyFrames ?? 0, start, Math.max(0, want - 1));
+      const order: number[] = [];
+      for (let f = start; f < n && order.length < want - history; f++) order.push(f);
+      for (let f = start - 1; f >= start - history && order.length < want; f--) order.push(f);
+      for (let f = 0; f < start && order.length < want; f++) {
+        if (f < start - history) order.push(f);
+      }
+      return order;
+    });
+    const frames = new Set<number>();
+    const depth = Math.max(0, ...orders.map(a => a.length));
+    for (let i = 0; i < depth && frames.size < budget; i++) {
+      for (const order of orders) {
+        if (i < order.length && frames.size < budget) frames.add(order[i]!);
+      }
+    }
+    return [...frames];
+  });
+
+  const out: LookaheadTarget[] = [];
+  const maxLen = perContent.reduce((m, a) => Math.max(m, a.length), 0);
+  for (let i = 0; i < maxLen && out.length < maxTargets; i++) {
+    for (let c = 0; c < keys.length && out.length < maxTargets; c++) {
+      const frames = perContent[c]!;
+      if (i >= frames.length) continue;
+      const cacheKey = keys[c]!, frame = frames[i]!;
+      const { descriptor, scaleDiv } = named.get(cacheKey)!;
+      out.push({
+        cacheKey, frame, content: descriptor, scaleDiv,
+        priority: frame >= playheads.get(cacheKey)! ? 'ahead' : 'background',
+        order: out.length,
+      });
+    }
+  }
+  return out;
+}
 
 export interface PreparationInput {
   summary: ProjectSummary;

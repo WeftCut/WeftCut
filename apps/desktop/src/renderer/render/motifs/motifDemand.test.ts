@@ -3,7 +3,12 @@ import type { AnimTrack, LayerSummary, ProjectSummary, TrackSummary } from '../.
 import type { LayerBakeStatus } from '../../timeline/motifBakeStatusStore';
 import { compositionFixture, groupLayerFixture, ROOT_ID, summaryFixture } from '../../testing/summaryFixture';
 import { getMotif } from './catalog';
-import { motifLayerStatuses, planMotifPreparation, type PreparationInput } from './motifDemand';
+import type { MotifReaderDiv } from '../../../shared/motifs/readerProtocol';
+import type { MotifFrameDescriptor } from './motifFrameDescriptor';
+import {
+  motifLayerStatuses, planLookaheadTargets, planMotifDemand, planMotifPreparation,
+  type LookaheadContent, type LookaheadInput, type LookaheadTarget, type PreparationInput,
+} from './motifDemand';
 
 const stat = (value: number): AnimTrack<number> => ({ mode: 'Static', value });
 const motif = (id: string, start: number, end: number, props: Record<string, unknown> = { seconds: 5 }): LayerSummary => ({
@@ -157,5 +162,155 @@ describe('motifLayerStatuses', () => {
     expect(statuses(summary, demand, { warm: () => 150 }).clip).toMatchObject({ phase: 'preview_ready' });
     const all = new Map([[key, new Set(Array.from({ length: 150 }, (_, i) => i))]]);
     expect(statuses(summary, demand, { saved: all }).clip).toMatchObject({ phase: 'ready', done: 30, total: 30 });
+  });
+});
+
+const lookahead = (summary: ProjectSummary, playheadUs: number, over: Partial<LookaheadInput> = {}) => planMotifDemand({
+  summary, openCompositionId: ROOT_ID, fpsNum: 30, fpsDen: 1, playheadUs, scaleDiv: 1,
+  budget: { capBytes: 512 * 1024 * 1024, requests: 256, lookaheadUs: 500_000, historyFrames: 3 },
+  motif: getMotif, complete: () => false, ...over,
+});
+const addresses = (targets: LookaheadTarget[]) => targets.map(({ cacheKey, frame }) => ({ cacheKey, frame }));
+
+describe('planMotifDemand', () => {
+  it('warms active and imminent layers from where the playhead meets each, and nothing past them', () => {
+    const summary = summaryFixture({ root: { tracks: [track([
+      motif('past', 0, 1_000_000), motif('current', 1_000_000, 3_000_000),
+      motif('incoming', 2_500_000, 4_000_000), motif('distant', 8_000_000, 10_000_000),
+    ])] } });
+    const targets = lookahead(summary, 2_000_000);
+    // One content, two instance windows: frame 30 of `current`, 0 of `incoming`.
+    expect(targets.slice(0, 4).map(t => t.frame)).toEqual([30, 0, 31, 1]);
+    expect(targets).toHaveLength(150);
+    expect(new Set(targets.map(t => t.cacheKey)).size).toBe(1);
+    expect(targets.every((t, i) => t.priority === 'ahead' && t.order === i)).toBe(true);
+    expect(lookahead(summary, 4_000_000)).toEqual([]);
+  });
+
+  it('warms a trimmed Group from each visible instance window', () => {
+    const summary = summaryFixture({
+      root: { tracks: [track([
+        groupLayerFixture({ id: 'active', tStartUs: 0, tEndUs: 3_000_000, srcInUs: 0, srcOutUs: 3_000_000 }),
+        groupLayerFixture({ id: 'incoming', tStartUs: 2_300_000, tEndUs: 4_000_000, srcInUs: 1_000_000, srcOutUs: 2_700_000 }),
+      ])] },
+      groups: [compositionFixture({ id: 'comp-group', duration_us: 5_000_000, tracks: [track([motif('child', 0, 5_000_000)])] })],
+    });
+    expect(lookahead(summary, 2_000_000).slice(0, 2).map(t => t.frame)).toEqual([60, 30]);
+  });
+
+  it('keeps recent history behind the playhead as background', () => {
+    const summary = summaryFixture({ root: { tracks: [track([motif('clip', 0, 5_000_000)])] } });
+    const targets = lookahead(summary, 1_000_000, { budget: { capBytes: 512 * 1024 * 1024, requests: 8, lookaheadUs: 500_000, historyFrames: 3 } });
+    expect(targets.map(t => [t.frame, t.priority])).toEqual([
+      [30, 'ahead'], [31, 'ahead'], [32, 'ahead'], [33, 'ahead'], [34, 'ahead'],
+      [29, 'background'], [28, 'background'], [27, 'background'],
+    ]);
+    expect(targets.every(t => t.content.contentFrame === 30 && t.scaleDiv === 1)).toBe(true);
+  });
+
+  it('sizes only fully saved content at the playback divisor', () => {
+    const summary = summaryFixture({ root: { tracks: [track([motif('clip', 0, 5_000_000)])] } });
+    const { renderW, renderH } = lookahead(summary, 0)[0]!.content;
+    const capBytes = renderW * renderH * 4 * 4;
+    const budget = { capBytes, requests: 256, lookaheadUs: 500_000, historyFrames: 0 };
+    const holes = lookahead(summary, 0, { scaleDiv: 2, budget });
+    expect(holes).toHaveLength(4);
+    expect(holes.every(t => t.scaleDiv === 2)).toBe(true);
+    expect(lookahead(summary, 0, { scaleDiv: 2, budget, complete: () => true }).length).toBeGreaterThanOrEqual(13);
+  });
+});
+
+/// Caps are BYTES (the L0 budget); `frameBytes: 1` keeps a byte cap equal to
+/// a frame count so the planning math stays readable.
+const content = (
+  cacheKey: string,
+  contentFrame: number,
+  contentDurationFrames: number,
+  frameBytes = 1,
+  scaleDiv: MotifReaderDiv = 1,
+): LookaheadContent => ({
+  cacheKey, contentFrame, contentDurationFrames, frameBytes, scaleDiv,
+  descriptor: { cacheKey, contentFrame } as MotifFrameDescriptor,
+});
+
+describe('planLookaheadTargets', () => {
+  it('warms the whole content when it fits the budget, playhead-first then forward then backfill', () => {
+    const plan = planLookaheadTargets([content('a', 2, 5)], 240);
+    expect(addresses(plan)).toEqual([
+      { cacheKey: 'a', frame: 2 },
+      { cacheKey: 'a', frame: 3 },
+      { cacheKey: 'a', frame: 4 },
+      { cacheKey: 'a', frame: 0 },
+      { cacheKey: 'a', frame: 1 },
+    ]);
+  });
+  it('windows to the per-content budget when content exceeds it (forward from current)', () => {
+    const plan = planLookaheadTargets([content('a', 10, 100)], 4);
+    expect(addresses(plan)).toEqual([
+      { cacheKey: 'a', frame: 10 },
+      { cacheKey: 'a', frame: 11 },
+      { cacheKey: 'a', frame: 12 },
+      { cacheKey: 'a', frame: 13 },
+    ]);
+  });
+  it('splits the budget across contents and round-robins (union <= cap)', () => {
+    const plan = planLookaheadTargets([content('a', 0, 100), content('b', 0, 100)], 4);
+    expect(addresses(plan)).toEqual([
+      { cacheKey: 'a', frame: 0 },
+      { cacheKey: 'b', frame: 0 },
+      { cacheKey: 'a', frame: 1 },
+      { cacheKey: 'b', frame: 1 },
+    ]);
+  });
+  it('scales the warm window by the content\'s real frame cost (bytes)', () => {
+    // 48-byte budget over 2 contents: a 4-byte frame warms 6 deep, a 12-byte
+    // frame only 2 — same memory share, different frame counts.
+    const plan = planLookaheadTargets([content('small', 0, 100, 4), content('big', 0, 100, 12)], 48);
+    expect(addresses(plan)).toEqual([
+      { cacheKey: 'small', frame: 0 },
+      { cacheKey: 'big', frame: 0 },
+      { cacheKey: 'small', frame: 1 },
+      { cacheKey: 'big', frame: 1 },
+      { cacheKey: 'small', frame: 2 },
+      { cacheKey: 'small', frame: 3 },
+      { cacheKey: 'small', frame: 4 },
+      { cacheKey: 'small', frame: 5 },
+    ]);
+  });
+  it('dedups contents by cacheKey', () => {
+    const plan = planLookaheadTargets([content('a', 0, 3), content('a', 0, 3)], 240);
+    expect(addresses(plan)).toEqual([
+      { cacheKey: 'a', frame: 0 },
+      { cacheKey: 'a', frame: 1 },
+      { cacheKey: 'a', frame: 2 },
+    ]);
+  });
+  it('returns [] for no contents', () => {
+    expect(planLookaheadTargets([], 240)).toEqual([]);
+  });
+  it('reserves a small recent window so slightly late reads remain useful', () => {
+    const plan = planLookaheadTargets([{ ...content('a', 10, 100), historyFrames: 3 }], 8);
+    expect(plan.map(p => p.frame)).toEqual([10, 11, 12, 13, 14, 9, 8, 7]);
+  });
+  it('keeps both instance windows of the same content within one byte budget', () => {
+    const plan = planLookaheadTargets([content('a', 0, 100), content('a', 50, 100)], 4);
+    expect(plan.map(p => p.frame)).toEqual([0, 50, 1, 51]);
+  });
+  it('does not exceed its byte cap even when one frame cannot fit', () => {
+    expect(planLookaheadTargets([content('a', 0, 100, 10)], 9)).toEqual([]);
+  });
+  it('bounds the plan by its request count', () => {
+    expect(planLookaheadTargets([content('a', 0, 100), content('b', 0, 100)], 240, 5)).toHaveLength(5);
+  });
+
+  it('classes frames against the earliest window of a content and names them by its last', () => {
+    const plan = planLookaheadTargets([
+      { ...content('a', 5, 10, 1, 2), historyFrames: 1 }, { ...content('a', 3, 10, 1, 2), historyFrames: 1 },
+    ], 6);
+    // Frame 4 is behind the first window's playhead but ahead of the second's.
+    expect(plan.map(t => [t.frame, t.priority, t.order])).toEqual([
+      [5, 'ahead', 0], [3, 'ahead', 1], [6, 'ahead', 2], [4, 'ahead', 3], [7, 'ahead', 4], [8, 'ahead', 5],
+    ]);
+    expect(plan.every(t => t.content.contentFrame === 3 && t.scaleDiv === 2)).toBe(true);
   });
 });

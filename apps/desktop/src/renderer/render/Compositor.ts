@@ -11,7 +11,7 @@
 // with a node of its own. What lives here is what every node shares: the
 // decoder pool, the ingest shaders, underrun and presentation
 // state. The motif raster lifecycle (prewarm/bake/hydrate/GC/status) lives in
-// the `MotifFrameService` collaborator.
+// the `MotifDemandSession` collaborator.
 //
 // Plan: docs/render.md
 
@@ -32,7 +32,7 @@ import {
   planPreviewDecodePriority,
   type PreviewDecodePriorityPlan,
 } from "./decoder/previewDecodePriority";
-import { MotifFrameService } from "./motifs/MotifFrameService";
+import { MotifDemandSession } from "./motifs/MotifDemandSession";
 import {
   currentMotifFrameReader,
   idleMotifReaderStats,
@@ -247,8 +247,8 @@ export class Compositor {
   private lastTUs = 0;
   /// The preview realm's motif raster lifecycle (L0 warm, L2 bake,
   /// baked-index hydrate/GC, bake status) — owned here as a collaborator;
-  /// see motifs/MotifFrameService.ts. Inert in the export Worker (no DOM).
-  private readonly motifService: MotifFrameService;
+  /// see motifs/MotifDemandSession.ts. Inert in the export Worker (no DOM).
+  private readonly motifService: MotifDemandSession;
   private repaintScheduled = false;
   /// Engine's playing state — written by PlaybackEngine on play /
   /// pause / seek. Decoder targeting reads this presentation state.
@@ -367,7 +367,7 @@ export class Compositor {
       });
     }
     this.root = this.buildRoot(EMPTY_COMPOSITION, null);
-    this.motifService = new MotifFrameService({
+    this.motifService = new MotifDemandSession({
       projectSummary: () => this.projectSummary,
       openCompositionId: () => this.root.composition.id,
       fpsNum: () => this.fpsNum,
