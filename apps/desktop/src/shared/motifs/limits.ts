@@ -7,18 +7,15 @@ export interface MotifLimits {
   maxDimension: number
   /** A stored frame's straight RGBA bytes: `maxDimension²` at four bytes a pixel. */
   maxFrameBytes: number
-  /** One GPU allocation: a pool's slots plus its staging texture, or an OSR
+  /** One GPU allocation: a pool's slot plus its staging texture, or an OSR
    * texture read back. A full-size 8K frame does not fit. */
   maxTextureBytes: number
-  /** Slots one GPU pool may hold. */
-  maxPoolSlots: number
 }
 
 export const MOTIF_LIMITS: Readonly<MotifLimits> = Object.freeze({
   maxDimension: 8192,
   maxFrameBytes: 256 * 1024 * 1024,
   maxTextureBytes: 128 * 1024 * 1024,
-  maxPoolSlots: 4,
 })
 
 const isSize = (n: number): boolean => Number.isSafeInteger(n) && n > 0

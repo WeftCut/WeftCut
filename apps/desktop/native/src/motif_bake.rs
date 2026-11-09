@@ -3,8 +3,10 @@
 //! and staging texture on its own worker. `MotifTextureEncoder::read` runs
 //! under the caller's OSR lease; `finish` runs after it (ADR 0158).
 use crate::d3d::{create_device, create_texture, device, open_shared, DeviceWorker, NtHandle};
-use crate::motif_error::{coded, to_napi, MotifCode};
+use crate::motif_error::{coded, MotifCode};
 use crate::motif_limits::textures_fit;
+use crate::motif_pixels::{convert, MotifPixelSource, MotifPixelTarget, Pixels};
+use crate::motif_runtime::blocking;
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 
@@ -17,13 +19,6 @@ fn error(e: impl std::fmt::Display) -> napi::Error {
     napi::Error::from_reason(e.to_string())
 }
 
-struct Pixels {
-    width: u32,
-    height: u32,
-    bgra: bool,
-    premultiplied: Vec<u8>,
-}
-
 /// One frame read back from a texture. Its pixels stay native until `finish`.
 #[napi]
 pub struct MotifRawFrame {
@@ -32,55 +27,19 @@ pub struct MotifRawFrame {
 
 #[napi]
 impl MotifRawFrame {
-    /// Straightens and encodes off the D3D11 worker, so the next `read` does not
-    /// wait for this frame.
+    /// Converts off the D3D11 worker, so the next `read` does not wait for this
+    /// frame: to a stored frame, or a PNG for captures that leave the app as
+    /// images.
     #[napi]
-    pub async fn finish(&self) -> napi::Result<Buffer> {
+    pub async fn finish(&self, to: MotifPixelTarget) -> napi::Result<Buffer> {
         let pixels = self
             .pixels
             .lock()
             .map_err(error)?
             .take()
             .ok_or_else(|| error("motif frame already finished"))?;
-        tokio::task::spawn_blocking(move || encode_pixels(pixels))
-            .await
-            .map_err(error)?
-            .map_err(to_napi)
+        blocking(move || convert(pixels, to).map(Buffer::from)).await
     }
-
-    /// The same pixels as a PNG, for captures that leave the app as images.
-    #[napi]
-    pub async fn finish_png(&self) -> napi::Result<Buffer> {
-        let pixels = self
-            .pixels
-            .lock()
-            .map_err(error)?
-            .take()
-            .ok_or_else(|| error("motif frame already finished"))?;
-        tokio::task::spawn_blocking(move || {
-            let Pixels {
-                width,
-                height,
-                bgra,
-                premultiplied: mut rgba,
-            } = pixels;
-            crate::motif_pixels::straighten(&mut rgba, bgra);
-            crate::motif_pixels::encode_png(width, height, rgba).map(Buffer::from)
-        })
-        .await
-        .map_err(error)?
-        .map_err(to_napi)
-    }
-}
-
-fn encode_pixels(pixels: Pixels) -> anyhow::Result<Buffer> {
-    let Pixels {
-        width,
-        height,
-        bgra,
-        mut premultiplied,
-    } = pixels;
-    Ok(crate::motif_frame::encode_premultiplied(width, height, &mut premultiplied, bgra)?.into())
 }
 
 /// One D3D11 device and its staging texture on a dedicated thread.
@@ -152,12 +111,12 @@ impl MotifMarkerReader {
     #[napi]
     pub async fn read(&self, handle: Buffer, pixels: u32) -> napi::Result<Buffer> {
         let mut row = request(&self.worker, handle, Region::LastRow(pixels)).await?;
-        if row.bgra {
-            for px in row.premultiplied.as_chunks_mut::<4>().0 {
+        if row.source == MotifPixelSource::PremultipliedBgra {
+            for px in row.data.as_chunks_mut::<4>().0 {
                 px.swap(0, 2);
             }
         }
-        Ok(row.premultiplied.into())
+        Ok(row.data.into())
     }
 
     #[napi]
@@ -243,7 +202,7 @@ impl Reader {
                 staging
             }
         };
-        let premultiplied = source.with_key("OSR", |texture| {
+        let data = source.with_key("OSR", |texture| {
             let area = D3D11_BOX {
                 left,
                 top,
@@ -273,8 +232,12 @@ impl Reader {
         Ok(Pixels {
             width,
             height,
-            bgra: desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM,
-            premultiplied,
+            source: if desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM {
+                MotifPixelSource::PremultipliedBgra
+            } else {
+                MotifPixelSource::PremultipliedRgba
+            },
+            data,
         })
     }
 }

@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 import { loadMotifNative } from './native'
-import { MotifError } from '../../shared/motifs/errors'
 import { MOTIF_LIMITS } from '../../shared/motifs/limits'
 
 const TUNING = { scratchIdleBytes: 8 * 1024 * 1024, bandThreads: 3 }
@@ -15,12 +14,16 @@ function thrown(call: () => unknown): unknown {
 
 /** A stand-in for `@weftcut/core`'s Motif exports; every call is recorded. */
 function fakeCore() {
-  const raw = { finish: vi.fn(async () => Buffer.from('wfrm')), finishPng: vi.fn(async () => Buffer.from('png')) }
+  const raw = { finish: vi.fn(async (to: string) => Buffer.from(to === 'png' ? 'png' : 'wfrm')) }
   const pool = {
-    handles: vi.fn(() => [Buffer.from('nt-handle')]),
-    uploadFile: vi.fn(async (_path: string, _slot: number, _div?: number) => timing),
-    copyTexture: vi.fn(async (_handle: Buffer, _slot: number) => {}),
+    handle: vi.fn(() => Buffer.from('nt-handle')),
+    upload: vi.fn(async (_path: string, _div: number) => timing),
+    copy: vi.fn(async (_handle: Buffer) => {}),
     close: vi.fn(),
+  }
+  const pools = {
+    forUpload: vi.fn((_w: number, _h: number) => pool),
+    forCopy: vi.fn((_w: number, _h: number, _bgra: boolean) => pool),
   }
   const encoder = { read: vi.fn(async (_handle: Buffer, _height: number) => raw), close: vi.fn() }
   const marker = { read: vi.fn(async (_handle: Buffer, pixels: number) => Buffer.alloc(pixels * 4, 1)), close: vi.fn() }
@@ -29,7 +32,8 @@ function fakeCore() {
     close: vi.fn(),
   }
   const classes = {
-    MotifGpuPool: vi.fn(function (_w: number, _h: number, _count: number, _bgra: boolean, _upload: boolean) { return pool }),
+    // A napi class with factories alone: `new` is not how it is made.
+    MotifGpuPool: Object.assign(function () { throw new Error('use a factory') }, pools),
     MotifTextureEncoder: vi.fn(function () { return encoder }),
     MotifMarkerReader: vi.fn(function () { return marker }),
   }
@@ -40,7 +44,7 @@ function fakeCore() {
     MotifFrameFileReader: vi.fn(function () { return frames }),
     ...classes,
   }
-  return { core, raw, pool, encoder, marker, frames, classes }
+  return { core, raw, pool, pools, encoder, marker, frames, classes }
 }
 
 const load = (core: unknown, platform: NodeJS.Platform = 'win32') => loadMotifNative(TUNING, core, platform)
@@ -132,18 +136,19 @@ describe('loadMotifNative', () => {
   })
 
   describe('gpu', () => {
-    it('opens a one-slot pool per spec and drives slot 0', async () => {
-      const { core, pool, classes } = fakeCore()
+    it('opens a pool per spec through its factory and drives it', async () => {
+      const { core, pool, pools } = fakeCore()
       const gpu = load(core).gpu!
       const upload = gpu.openPool({ use: 'upload', width: 4, height: 2 })
       gpu.openPool({ use: 'copy', width: 4, height: 2, format: 'bgra' })
       gpu.openPool({ use: 'copy', width: 4, height: 2, format: 'rgba' })
-      expect(classes.MotifGpuPool.mock.calls).toEqual([[4, 2, 1, false, true], [4, 2, 1, true, false], [4, 2, 1, false, false]])
+      expect(pools.forUpload.mock.calls).toEqual([[4, 2]])
+      expect(pools.forCopy.mock.calls).toEqual([[4, 2, true], [4, 2, false]])
       expect(String(upload.handle())).toBe('nt-handle')
       await expect(upload.upload('f.wfrm', 4)).resolves.toEqual(timing)
-      expect(pool.uploadFile).toHaveBeenCalledExactlyOnceWith('f.wfrm', 0, 4)
+      expect(pool.upload).toHaveBeenCalledExactlyOnceWith('f.wfrm', 4)
       await upload.copy(Buffer.from('osr'))
-      expect(pool.copyTexture).toHaveBeenCalledExactlyOnceWith(Buffer.from('osr'), 0)
+      expect(pool.copy).toHaveBeenCalledExactlyOnceWith(Buffer.from('osr'))
       upload.close()
       expect(pool.close).toHaveBeenCalledOnce()
     })
@@ -151,19 +156,19 @@ describe('loadMotifNative', () => {
     it('decodes a failure of every constructor and method', async () => {
       const { core, pool, encoder, marker, raw } = fakeCore()
       const gpu = load(core).gpu!
-      pool.uploadFile.mockRejectedValueOnce(tagged('miss'))
-      pool.copyTexture.mockRejectedValueOnce(tagged('transient'))
-      pool.handles.mockImplementationOnce(() => { throw tagged('closed') })
+      pool.upload.mockRejectedValueOnce(tagged('miss'))
+      pool.copy.mockRejectedValueOnce(tagged('transient'))
+      pool.handle.mockImplementationOnce(() => { throw tagged('closed') })
       pool.close.mockImplementationOnce(() => { throw tagged('device') })
       const opened = gpu.openPool({ use: 'upload', width: 1, height: 1 })
       await expect(opened.upload('f.wfrm', 1)).rejects.toEqual(expectCode('miss'))
       await expect(opened.copy(Buffer.alloc(8))).rejects.toEqual(expectCode('transient'))
-      expect(thrown(() => opened.handle())).toBeInstanceOf(MotifError)
+      expect(thrown(() => opened.handle())).toEqual(expectCode('closed'))
       expect(thrown(() => opened.close())).toEqual(expectCode('device'))
 
       encoder.read.mockRejectedValueOnce(tagged('closed'))
       raw.finish.mockRejectedValueOnce(tagged('disk'))
-      raw.finishPng.mockRejectedValueOnce(tagged('oversize'))
+      raw.finish.mockRejectedValueOnce(tagged('oversize'))
       const textures = gpu.openTextureReader()
       await expect(textures.read(Buffer.alloc(8), 1)).rejects.toEqual(expectCode('closed'))
       const frame = await textures.read(Buffer.alloc(8), 1)
@@ -178,11 +183,13 @@ describe('loadMotifNative', () => {
       marker.close.mockImplementationOnce(() => { throw tagged('device') })
       expect(thrown(() => markers.close())).toEqual(expectCode('device'))
 
-      for (const name of ['MotifGpuPool', 'MotifTextureEncoder', 'MotifMarkerReader'] as const) {
+      for (const name of ['forUpload', 'forCopy', 'MotifTextureEncoder', 'MotifMarkerReader'] as const) {
         const broken = fakeCore()
-        broken.classes[name].mockImplementationOnce(function () { throw tagged('device') })
+        if (name === 'forUpload' || name === 'forCopy') broken.pools[name].mockImplementationOnce(() => { throw tagged('device') })
+        else broken.classes[name].mockImplementationOnce(function () { throw tagged('device') })
         const brokenGpu = load(broken.core).gpu!
-        const open = { MotifGpuPool: () => brokenGpu.openPool({ use: 'copy', width: 1, height: 1, format: 'rgba' }),
+        const open = { forUpload: () => brokenGpu.openPool({ use: 'upload', width: 1, height: 1 }),
+          forCopy: () => brokenGpu.openPool({ use: 'copy', width: 1, height: 1, format: 'rgba' }),
           MotifTextureEncoder: () => brokenGpu.openTextureReader(), MotifMarkerReader: () => brokenGpu.openMarkerReader() }[name]
         expect(thrown(open), name).toEqual(expectCode('device'))
       }
@@ -193,8 +200,7 @@ describe('loadMotifNative', () => {
       const frame = await load(core).gpu!.openTextureReader().read(Buffer.alloc(8), 2)
       expect(String(await frame.finish('frame'))).toBe('wfrm')
       expect(String(await frame.finish('png'))).toBe('png')
-      expect(raw.finish).toHaveBeenCalledOnce()
-      expect(raw.finishPng).toHaveBeenCalledOnce()
+      expect(raw.finish.mock.calls).toEqual([['frame'], ['png']])
     })
   })
 
@@ -230,13 +236,15 @@ describe('loadMotifNative', () => {
 
     it('a replaced class or prototype method', async () => {
       class Encoder {
-        read(_handle: Buffer, _height: number) { return Promise.resolve({ finish: async () => Buffer.from('a'), finishPng: async () => Buffer.from('b') }) }
+        read(_handle: Buffer, _height: number) { return Promise.resolve({ finish: async () => Buffer.from('a') }) }
         close() {}
       }
       class Pool {
-        handles() { return [Buffer.alloc(8)] }
-        uploadFile(_path: string, _slot: number, _div?: number) { return Promise.resolve(timing) }
-        copyTexture() { return Promise.resolve() }
+        static forUpload() { return new Pool() }
+        static forCopy() { return new Pool() }
+        handle() { return Buffer.alloc(8) }
+        upload(_path: string, _div: number) { return Promise.resolve(timing) }
+        copy() { return Promise.resolve() }
         close() {}
       }
       const { core } = fakeCore()
@@ -245,8 +253,8 @@ describe('loadMotifNative', () => {
       const gpu = load(core).gpu!
       const pool = gpu.openPool({ use: 'upload', width: 1, height: 1 })
       const uploads: string[] = []
-      const upload = Pool.prototype.uploadFile
-      Pool.prototype.uploadFile = function (this: Pool, path: string, ...rest: [number, number?]) { uploads.push(path); return upload.call(this, path, ...rest) }
+      const upload = Pool.prototype.upload
+      Pool.prototype.upload = function (this: Pool, path: string, div: number) { uploads.push(path); return upload.call(this, path, div) }
       await pool.upload('held.wfrm', 1)
       expect(uploads).toEqual(['held.wfrm'])
       const reader = gpu.openTextureReader()

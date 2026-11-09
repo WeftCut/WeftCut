@@ -8,7 +8,6 @@ describe('Motif limits', () => {
       maxDimension: 8192,
       maxFrameBytes: 256 * 1024 * 1024,
       maxTextureBytes: 128 * 1024 * 1024,
-      maxPoolSlots: 4,
     })
   })
 
@@ -34,7 +33,7 @@ describe('Motif limits', () => {
     expect(() => assertMotifLimits({ ...MOTIF_LIMITS })).not.toThrow()
     expect(() => assertMotifLimits({ ...MOTIF_LIMITS, maxTextureBytes: 256 * 1024 * 1024 })).toThrow(/differ/)
     expect(() => assertMotifLimits({ ...MOTIF_LIMITS, extra: 1 })).toThrow(/differ/)
-    const { maxPoolSlots: _, ...missing } = MOTIF_LIMITS
+    const { maxTextureBytes: _, ...missing } = MOTIF_LIMITS
     expect(() => assertMotifLimits(missing)).toThrow(/differ/)
     expect(() => assertMotifLimits(undefined)).toThrow(/differ/)
   })

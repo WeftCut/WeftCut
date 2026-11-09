@@ -534,14 +534,14 @@ for (const lane of LANES) {
         await app.evaluate((_electron, { addon, hold }) => {
           const native = process.getBuiltinModule('module').createRequire(addon)(addon)
           const proto = native.MotifGpuPool?.prototype
-          if (typeof proto?.uploadFile !== 'function') throw new Error('MotifGpuPool.uploadFile is missing')
-          const original = proto.uploadFile
+          if (typeof proto?.upload !== 'function') throw new Error('MotifGpuPool.upload is missing')
+          const original = proto.upload
           let release!: () => void
           const gate = new Promise<void>(resolve => { release = resolve })
-          const state = { held: 0, release: () => { proto.uploadFile = original; release() } }
+          const state = { held: 0, release: () => { proto.upload = original; release() } }
           ;(globalThis as any).__readerConformanceUploads = state
           const file = new RegExp(`[\\\\/]${hold}\\.wfrm$`)
-          proto.uploadFile = async function (this: unknown, path: string, ...rest: unknown[]) {
+          proto.upload = async function (this: unknown, path: string, ...rest: unknown[]) {
             if (file.test(path)) { state.held++; await gate }
             return original.call(this, path, ...rest)
           }

@@ -7,12 +7,10 @@ use napi_derive::napi;
 pub(crate) const MAX_DIMENSION: u32 = 8192;
 /// A stored frame's straight RGBA bytes: `MAX_DIMENSION²` at four bytes a pixel.
 pub(crate) const MAX_FRAME_BYTES: u32 = 256 * 1024 * 1024;
-/// One GPU allocation: a pool's slots plus its staging texture, or an OSR
+/// One GPU allocation: a pool's slot plus its staging texture, or an OSR
 /// texture read back. Half a full-size 8K frame: such a frame takes the
 /// utility lane and the bitmap host instead.
 pub(crate) const MAX_TEXTURE_BYTES: u32 = 128 * 1024 * 1024;
-/// Slots one GPU pool may hold.
-pub(crate) const MAX_POOL_SLOTS: u32 = 4;
 
 /// Whether `textures` RGBA8 textures of `width × height` fit `MAX_TEXTURE_BYTES`.
 #[cfg_attr(not(windows), allow(dead_code))] // only the Windows GPU paths allocate textures.
@@ -29,7 +27,6 @@ pub struct MotifLimits {
     pub max_dimension: u32,
     pub max_frame_bytes: u32,
     pub max_texture_bytes: u32,
-    pub max_pool_slots: u32,
 }
 
 /// The limits this addon was built with, for main's check against its mirror.
@@ -40,7 +37,6 @@ pub fn motif_limits() -> MotifLimits {
         max_dimension: MAX_DIMENSION,
         max_frame_bytes: MAX_FRAME_BYTES,
         max_texture_bytes: MAX_TEXTURE_BYTES,
-        max_pool_slots: MAX_POOL_SLOTS,
     }
 }
 
@@ -54,7 +50,6 @@ mod tests {
         assert_eq!(MAX_DIMENSION, 8192);
         assert_eq!(MAX_FRAME_BYTES, 256 * 1024 * 1024);
         assert_eq!(MAX_TEXTURE_BYTES, 128 * 1024 * 1024);
-        assert_eq!(MAX_POOL_SLOTS, 4);
         assert_eq!(
             u64::from(MAX_DIMENSION) * u64::from(MAX_DIMENSION) * 4,
             u64::from(MAX_FRAME_BYTES)

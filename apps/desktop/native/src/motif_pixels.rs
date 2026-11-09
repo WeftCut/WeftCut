@@ -96,7 +96,6 @@ fn premultiply_into(src: &[u8], dst: &mut [u8]) {
 
 /// Straight RGBA as a PNG, fast compression: these PNGs leave the app as
 /// previews and covers, never as stored frames.
-#[cfg_attr(not(windows), allow(dead_code))] // only the texture lane reads pixels natively.
 pub(crate) fn encode_png(w: u32, h: u32, rgba: Vec<u8>) -> anyhow::Result<Vec<u8>> {
     use image::ImageEncoder;
     anyhow::ensure!(rgba.len() == byte_len(w, h)?, "invalid motif pixel length");
@@ -110,13 +109,15 @@ pub(crate) fn encode_png(w: u32, h: u32, rgba: Vec<u8>) -> anyhow::Result<Vec<u8
     Ok(png)
 }
 
-/// What a conversion reads: straight RGBA, or a bitmap host's paint.
+/// What a conversion reads: straight RGBA, a bitmap host's paint, or an
+/// RGBA-format texture read back (premultiplied, RGBA order).
 #[napi(string_enum = "camelCase")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(test, allow(dead_code))] // Host-only wire type.
 pub enum MotifPixelSource {
     Rgba,
     PremultipliedBgra,
+    PremultipliedRgba,
 }
 
 /// What a conversion makes: a stored frame, straight RGBA or a PNG.
@@ -162,30 +163,43 @@ impl Pixels {
 
 /// Converts on the band threads (ADR 0159): a paint encoded as a stored frame
 /// is straightened band by band by the thread that compresses it. Valid pairs
-/// are rgba to frame and premultipliedBgra to frame or rgba; any other is the
-/// caller's error, untagged.
+/// are rgba to frame, premultipliedBgra to frame, rgba or png, and
+/// premultipliedRgba to frame or png; any other is the caller's error,
+/// untagged.
 pub(crate) fn convert(px: Pixels, to: MotifPixelTarget) -> anyhow::Result<Vec<u8>> {
+    use MotifPixelSource::{PremultipliedBgra, PremultipliedRgba, Rgba};
     let Pixels {
         width,
         height,
         source,
         mut data,
     } = px;
+    let bgra = source == PremultipliedBgra;
     match (source, to) {
-        (MotifPixelSource::Rgba, MotifPixelTarget::Frame) => encode(width, height, &data),
-        (MotifPixelSource::PremultipliedBgra, MotifPixelTarget::Frame) => {
-            encode_premultiplied(width, height, &mut data, true)
+        (Rgba, MotifPixelTarget::Frame) => encode(width, height, &data),
+        (PremultipliedBgra | PremultipliedRgba, MotifPixelTarget::Frame) => {
+            encode_premultiplied(width, height, &mut data, bgra)
         }
-        (MotifPixelSource::PremultipliedBgra, MotifPixelTarget::Rgba) => {
-            let band = band_rows(height) as usize * width as usize * 4;
-            per_thread(data.chunks_mut(band), band_threads(), |pixels| {
-                straighten(pixels, true);
-                Ok(())
-            })?;
+        (PremultipliedBgra, MotifPixelTarget::Rgba) => {
+            straighten_bands(width, height, &mut data, bgra)?;
             Ok(data)
+        }
+        (PremultipliedBgra | PremultipliedRgba, MotifPixelTarget::Png) => {
+            straighten_bands(width, height, &mut data, bgra)?;
+            encode_png(width, height, data)
         }
         (from, to) => anyhow::bail!("motif pixels cannot convert from {from:?} to {to:?}"),
     }
+}
+
+/// `straighten` on the band threads, one band each.
+fn straighten_bands(width: u32, height: u32, data: &mut [u8], bgra: bool) -> anyhow::Result<()> {
+    let band = band_rows(height) as usize * width as usize * 4;
+    per_thread(data.chunks_mut(band), band_threads(), |pixels| {
+        straighten(pixels, bgra);
+        Ok(())
+    })?;
+    Ok(())
 }
 
 /// The top `height` rows of `pixels`, `width` pixels each, converted from
@@ -326,6 +340,25 @@ mod tests {
             convert(rgba(&straight), MotifPixelTarget::Frame).unwrap(),
             encode(w, h, &straight).unwrap()
         );
+        assert_eq!(
+            convert(bgra(&paint), MotifPixelTarget::Png).unwrap(),
+            encode_png(w, h, straight.clone()).unwrap()
+        );
+        // The same texels in RGBA order straighten to the same picture.
+        let mut paint_rgba = paint.clone();
+        for px in paint_rgba.as_chunks_mut::<4>().0 {
+            px.swap(0, 2);
+        }
+        let premultiplied_rgba = picture(MotifPixelSource::PremultipliedRgba, &paint_rgba, w, h);
+        assert_eq!(
+            convert(premultiplied_rgba, MotifPixelTarget::Frame).unwrap(),
+            encode(w, h, &straight).unwrap()
+        );
+        let premultiplied_rgba = picture(MotifPixelSource::PremultipliedRgba, &paint_rgba, w, h);
+        assert_eq!(
+            convert(premultiplied_rgba, MotifPixelTarget::Png).unwrap(),
+            encode_png(w, h, straight).unwrap()
+        );
     }
 
     #[test]
@@ -348,7 +381,7 @@ mod tests {
         for (source, to) in [
             (MotifPixelSource::Rgba, MotifPixelTarget::Rgba),
             (MotifPixelSource::Rgba, MotifPixelTarget::Png),
-            (MotifPixelSource::PremultipliedBgra, MotifPixelTarget::Png),
+            (MotifPixelSource::PremultipliedRgba, MotifPixelTarget::Rgba),
         ] {
             let error = convert(px(source), to).unwrap_err();
             assert_eq!(

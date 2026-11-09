@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module'
-import { decodeMotifError, decodingMotifErrors, MotifError } from '../../shared/motifs/errors'
+import { decodeMotifError, decodingMotifErrors } from '../../shared/motifs/errors'
 import { assertMotifLimits } from '../../shared/motifs/limits'
 import type { MotifReadPixels } from '../../shared/motifs/readerProtocol'
 import type { MotifUploadTiming } from '../../shared/motifs/frameTransport'
@@ -83,12 +83,16 @@ export interface MotifNative {
 export type MotifNativeTuning = Pick<ResolvedMotifTuning, 'scratchIdleBytes' | 'bandThreads'>
 
 interface NativePool {
-  handles(): Buffer[]
-  uploadFile(path: string, slot: number, div?: number): Promise<MotifUploadTiming>
-  copyTexture(handle: Buffer, slot: number): Promise<void>
+  handle(): Buffer
+  upload(path: string, div: number): Promise<MotifUploadTiming>
+  copy(handle: Buffer): Promise<void>
   close(): void
 }
-interface NativeRawFrame { finish(): Promise<Buffer>; finishPng(): Promise<Buffer> }
+interface NativePoolClass {
+  forUpload(width: number, height: number): NativePool
+  forCopy(width: number, height: number, bgra: boolean): NativePool
+}
+interface NativeRawFrame { finish(to: 'frame' | 'png'): Promise<Buffer> }
 interface NativeTextureEncoder { read(handle: Buffer, height: number): Promise<NativeRawFrame>; close(): void }
 interface NativeMarkerReader { read(handle: Buffer, pixels: number): Promise<Buffer>; close(): void }
 interface NativeFrameFileReader { read(path: string, div: number): Promise<MotifReadPixels>; close(): void }
@@ -100,7 +104,7 @@ interface NativeMotifCore {
   motifConfigure(config: { scratchIdleBytes: number; bandThreads: number }): void
   motifConvert(pixels: Buffer, width: number, height: number, from: MotifConversion['from'], to: MotifConversion['to']): Promise<Buffer>
   MotifFrameFileReader: new () => NativeFrameFileReader
-  MotifGpuPool?: new (width: number, height: number, count: number, bgra: boolean, upload: boolean) => NativePool
+  MotifGpuPool?: NativePoolClass
   MotifTextureEncoder?: new () => NativeTextureEncoder
   MotifMarkerReader?: new () => NativeMarkerReader
 }
@@ -138,16 +142,13 @@ export function loadMotifNative(
 
   const gpu: MotifNativeGpu | null = platform === 'win32' && GPU_CLASSES.every(name => has(core, name)) ? {
     openPool: spec => {
-      const pool = decoding(() => new native.MotifGpuPool!(spec.width, spec.height, 1,
-        spec.use === 'copy' && spec.format === 'bgra', spec.use === 'upload'))
+      const pool = decoding(() => spec.use === 'upload'
+        ? native.MotifGpuPool!.forUpload(spec.width, spec.height)
+        : native.MotifGpuPool!.forCopy(spec.width, spec.height, spec.format === 'bgra'))
       return {
-        handle: () => decoding(() => {
-          const [handle] = pool.handles()
-          if (!handle) throw new MotifError('device', 'Motif GPU pool has no slot')
-          return handle
-        }),
-        upload: (path, div) => decodingMotifErrors(() => pool.uploadFile(path, 0, div)),
-        copy: handle => decodingMotifErrors(() => pool.copyTexture(handle, 0)),
+        handle: () => decoding(() => pool.handle()),
+        upload: (path, div) => decodingMotifErrors(() => pool.upload(path, div)),
+        copy: handle => decodingMotifErrors(() => pool.copy(handle)),
         close: () => decoding(() => pool.close()),
       }
     },
@@ -156,7 +157,7 @@ export function loadMotifNative(
       return {
         read: (handle, height) => decodingMotifErrors(async () => {
           const raw = await encoder.read(handle, height)
-          return { finish: to => decodingMotifErrors(() => to === 'png' ? raw.finishPng() : raw.finish()) }
+          return { finish: to => decodingMotifErrors(() => raw.finish(to)) }
         }),
         close: () => decoding(() => encoder.close()),
       }

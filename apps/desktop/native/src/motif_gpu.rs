@@ -1,11 +1,12 @@
 //! Persistent RGBA transport pool, independent of the optional FFmpeg addon.
 //! All D3D objects and operations live on ONE worker. Caller owns admission and
-//! must finish the consumer read before reusing a slot (same contract as video).
+//! must finish the consumer read before reusing the slot (same contract as video).
 use crate::d3d::{
     create_device, create_texture, device, open_shared, wait_idle, with_key, DeviceWorker, NtHandle,
 };
 use crate::motif_error::{coded, to_napi, MotifCode};
-use crate::motif_limits::{textures_fit, MAX_POOL_SLOTS};
+use crate::motif_limits::textures_fit;
+use crate::motif_runtime::ScratchHold;
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 use windows::core::{Interface, PCWSTR};
@@ -28,64 +29,56 @@ pub struct MotifUploadTiming {
     pub gpu_ms: f64,
 }
 
+/// One shared texture, the slot, and the worker that fills it.
 #[napi]
 pub struct MotifGpuPool {
     worker: DeviceWorker<Pool>,
-    handles: Vec<Vec<u8>>,
+    handle: Vec<u8>,
 }
 
 #[napi]
 impl MotifGpuPool {
-    #[napi(constructor)]
-    /// `upload` pools read stored frames and hold a staging texture as large
-    /// as a slot; the caller's budget counts it.
-    pub fn new(
-        width: u32,
-        height: u32,
-        count: u32,
-        bgra: Option<bool>,
-        upload: Option<bool>,
-    ) -> napi::Result<Self> {
-        let upload = upload.unwrap_or(false);
-        if count == 0
-            || count > MAX_POOL_SLOTS
-            || !textures_fit(width, height, count + u32::from(upload))
-        {
+    /// An RGBA pool that reads stored frames. It holds a staging texture as
+    /// large as its slot, which the caller's budget counts.
+    #[napi(factory)]
+    pub fn for_upload(width: u32, height: u32) -> napi::Result<Self> {
+        Self::open(width, height, false, true)
+    }
+
+    /// A pool that copies shared textures of `bgra` or RGBA format.
+    #[napi(factory)]
+    pub fn for_copy(width: u32, height: u32, bgra: bool) -> napi::Result<Self> {
+        Self::open(width, height, bgra, false)
+    }
+
+    fn open(width: u32, height: u32, bgra: bool, upload: bool) -> napi::Result<Self> {
+        if !textures_fit(width, height, 1 + u32::from(upload)) {
             return Err(to_napi(coded(
                 MotifCode::Oversize,
                 anyhow::anyhow!("Motif GPU pool exceeds budget"),
             )));
         }
-        let (worker, handles) = DeviceWorker::open("motif-gpu", "Motif GPU pool", move || {
-            let pool = unsafe { Pool::new(width, height, count, bgra.unwrap_or(false), upload) }?;
-            let handles = pool
-                .slots
-                .iter()
-                .map(|s| (s.handle.0 as usize).to_le_bytes().to_vec())
-                .collect();
-            Ok((pool, handles))
+        let (worker, handle) = DeviceWorker::open("motif-gpu", "Motif GPU pool", move || {
+            let pool = unsafe { Pool::new(width, height, bgra, upload) }?;
+            let handle = (pool.slot.handle.0 as usize).to_le_bytes().to_vec();
+            Ok((pool, handle))
         })?;
-        Ok(Self { worker, handles })
+        Ok(Self { worker, handle })
     }
 
+    /// The slot's NT handle, 8 little-endian bytes.
     #[napi]
-    pub fn handles(&self) -> Vec<Buffer> {
-        self.handles.iter().cloned().map(Buffer::from).collect()
+    pub fn handle(&self) -> Buffer {
+        self.handle.clone().into()
     }
 
-    /// Reads, verifies and downscales the frame by `div` (default 1) before the
-    /// upload; the pool must be created at the scaled size. A `[motif:miss]`
-    /// error is a miss; any other error is a transport failure.
+    /// Reads, verifies and downscales the frame by `div` before the upload; the
+    /// pool must be created at the scaled size. A `[motif:miss]` error is a
+    /// miss; any other error is a transport failure.
     #[napi]
-    pub async fn upload_file(
-        &self,
-        path: String,
-        slot: u32,
-        div: Option<u32>,
-    ) -> napi::Result<MotifUploadTiming> {
-        let div = div.unwrap_or(1);
+    pub async fn upload(&self, path: String, div: u32) -> napi::Result<MotifUploadTiming> {
         self.worker
-            .run(move |pool| unsafe { pool.upload(slot as usize, &path, div) })
+            .run(move |pool| unsafe { pool.upload(&path, div) })
             .await
     }
 
@@ -93,10 +86,10 @@ impl MotifGpuPool {
     /// releasing Electron's scarce capture surface. Completion includes the GPU
     /// copy, not just submission.
     #[napi]
-    pub async fn copy_texture(&self, handle: Buffer, slot: u32) -> napi::Result<()> {
+    pub async fn copy(&self, handle: Buffer) -> napi::Result<()> {
         let handle = NtHandle::from_buffer(&handle)?;
         self.worker
-            .run(move |pool| unsafe { pool.copy(handle, slot as usize) })
+            .run(move |pool| unsafe { pool.copy(handle) })
             .await
     }
 
@@ -118,23 +111,6 @@ impl Drop for Slot {
         }
     }
 }
-/// Counts live pool workers; the last to stop frees the kept band buffers.
-struct Live;
-static LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-impl Live {
-    fn new() -> Self {
-        LIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Self
-    }
-}
-impl Drop for Live {
-    fn drop(&mut self) {
-        if LIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1 {
-            crate::motif_runtime::release_scratch();
-        }
-    }
-}
 
 struct Pool {
     device: ID3D11Device1,
@@ -146,17 +122,12 @@ struct Pool {
     /// slot's mutex covers one GPU copy instead of a CPU upload. Only an
     /// upload pool has one.
     staging: Option<ID3D11Texture2D>,
-    slots: Vec<Slot>,
-    _live: Live,
+    slot: Slot,
+    /// Only an upload pool decodes stored frames into band buffers.
+    _scratch: Option<ScratchHold>,
 }
 impl Pool {
-    unsafe fn new(
-        width: u32,
-        height: u32,
-        count: u32,
-        bgra: bool,
-        upload: bool,
-    ) -> anyhow::Result<Self> {
+    unsafe fn new(width: u32, height: u32, bgra: bool, upload: bool) -> anyhow::Result<Self> {
         let (device, context) = create_device()?;
         let device: ID3D11Device1 = device.cast()?;
         let desc = D3D11_TEXTURE2D_DESC {
@@ -179,18 +150,15 @@ impl Pool {
                 | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0) as u32,
             ..Default::default()
         };
-        let mut slots = Vec::new();
-        for _ in 0..count {
-            let texture = create_texture(&device, &desc)?;
-            let mutex = texture.cast()?;
-            let resource: IDXGIResource1 = texture.cast()?;
-            let handle = resource.CreateSharedHandle(None, 0x80000001, PCWSTR::null())?;
-            slots.push(Slot {
-                texture,
-                mutex,
-                handle,
-            });
-        }
+        let texture = create_texture(&device, &desc)?;
+        let mutex = texture.cast()?;
+        let resource: IDXGIResource1 = texture.cast()?;
+        let handle = resource.CreateSharedHandle(None, 0x80000001, PCWSTR::null())?;
+        let slot = Slot {
+            texture,
+            mutex,
+            handle,
+        };
         let staging = if upload {
             Some(create_texture(
                 &device,
@@ -221,19 +189,14 @@ impl Pool {
             width,
             height,
             staging,
-            slots,
-            _live: Live::new(),
+            slot,
+            _scratch: upload.then(ScratchHold::new),
         })
     }
 
     /// Reads `path` scaled by `div`, premultiplying each band into the staging
     /// texture as it decodes, then copies it into the slot.
-    unsafe fn upload(
-        &self,
-        slot: usize,
-        path: &str,
-        div: u32,
-    ) -> anyhow::Result<MotifUploadTiming> {
+    unsafe fn upload(&self, path: &str, div: u32) -> anyhow::Result<MotifUploadTiming> {
         let staging = self
             .staging
             .as_ref()
@@ -241,7 +204,7 @@ impl Pool {
         let row = self.width as usize * 4;
         let start = std::time::Instant::now();
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-        // The previous copy out of the staging texture completed before its
+        // The previous copy out of the staging texture completed before the
         // slot was released, so this never waits on the GPU.
         self.context
             .Map(staging, 0, D3D11_MAP_WRITE, 0, Some(&mut mapped))
@@ -264,7 +227,7 @@ impl Pool {
             (start.elapsed().as_secs_f64() * 1000.0 - read.read_ms - read.decode_ms).max(0.0);
         // Waits for the copy even though the keyed mutex would order it (ADR 0078).
         let (acquire_ms, gpu_ms) =
-            self.write(slot, |texture| self.context.CopyResource(texture, staging))?;
+            self.write(|texture| self.context.CopyResource(texture, staging))?;
         Ok(MotifUploadTiming {
             read,
             map_ms,
@@ -273,14 +236,10 @@ impl Pool {
         })
     }
 
-    unsafe fn copy(&self, handle: NtHandle, slot: usize) -> anyhow::Result<()> {
+    unsafe fn copy(&self, handle: NtHandle) -> anyhow::Result<()> {
         let source = open_shared(&self.device, handle)?;
-        let target = self
-            .slots
-            .get(slot)
-            .ok_or_else(|| anyhow::anyhow!("Invalid Motif GPU slot"))?;
         let (src, mut dst) = (source.desc, D3D11_TEXTURE2D_DESC::default());
-        target.texture.GetDesc(&mut dst);
+        self.slot.texture.GetDesc(&mut dst);
         // The capture host's surface keeps marker rows below the picture.
         if src.Width != dst.Width || src.Height < dst.Height || src.Format != dst.Format {
             return Err(device(anyhow::anyhow!(
@@ -296,7 +255,7 @@ impl Pool {
             back: 1,
         };
         source.with_key("OSR", |osr| {
-            self.write(slot, |texture| {
+            self.write(|texture| {
                 self.context
                     .CopySubresourceRegion(texture, 0, 0, 0, 0, osr, 0, Some(&picture))
             })
@@ -306,15 +265,8 @@ impl Pool {
 
     /// Runs `write` into the slot under its keyed mutex and waits for the
     /// device to finish it. Returns the acquire and GPU times.
-    unsafe fn write(
-        &self,
-        slot: usize,
-        write: impl FnOnce(&ID3D11Texture2D),
-    ) -> anyhow::Result<(f64, f64)> {
-        let slot = self
-            .slots
-            .get(slot)
-            .ok_or_else(|| anyhow::anyhow!("Invalid Motif GPU slot"))?;
+    unsafe fn write(&self, write: impl FnOnce(&ID3D11Texture2D)) -> anyhow::Result<(f64, f64)> {
+        let slot = &self.slot;
         let acquire = std::time::Instant::now();
         with_key(&slot.mutex, "Motif GPU", || {
             let acquire_ms = acquire.elapsed().as_secs_f64() * 1000.0;

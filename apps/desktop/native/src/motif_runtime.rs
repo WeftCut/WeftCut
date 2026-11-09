@@ -157,8 +157,9 @@ impl Scratch {
     }
 }
 
-/// A reader's claim on the kept band buffers: while one is held the process
-/// keeps up to `scratchIdleBytes` of them, and dropping the last frees them.
+/// A reader's claim on the kept band buffers, a frame file reader's or an
+/// upload pool's: while one is held the process keeps up to
+/// `scratchIdleBytes` of them, and dropping the last frees them.
 /// A read in flight holds one too, so buffers it returns after its reader
 /// closed are freed with it.
 pub(crate) struct ScratchHold(&'static Scratch);
@@ -175,12 +176,6 @@ impl Drop for ScratchHold {
             self.0.clear();
         }
     }
-}
-
-/// Frees the kept band buffers, for when no pool worker is left.
-#[cfg_attr(not(windows), allow(dead_code))]
-pub(crate) fn release_scratch() {
-    SCRATCH.clear();
 }
 
 /// Runs `work` on the blocking pool. A failure keeps its `[motif:<code>]`

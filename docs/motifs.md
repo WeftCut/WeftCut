@@ -383,8 +383,8 @@ rounded up). At most three reads are in flight per document.
 Decoded bands go through band buffers the readers of a process share. A process
 keeps up to `scratchIdleBytes` of them idle (32 MiB) while it has an open
 reader, and frees them when its last reader closes. The utility holds its one
-frame file reader while any document has a port to it; on Windows, main's GPU
-pools are its readers.
+frame file reader while any document has a port to it; on Windows, main's
+upload pools are its readers (a copy pool decodes nothing).
 
 A transport failure (the utility exits, a port or slot fails) is not a miss: the
 reader restarts the lane and retries once, then preview keeps its previous frame
@@ -466,10 +466,10 @@ a Motif export (`loadMotifNative`).
 - **A frame** is at most 8192 pixels on each side, 256 MiB of straight RGBA
   (`fitsMotifFrame`). Manifests, bake plans, stored headers and the native
   encoder and reader all check it.
-- **A GPU texture** is at most 128 MiB (`fitsMotifTexture`): a pool's slots
+- **A GPU texture** is at most 128 MiB (`fitsMotifTexture`): a pool's one slot
   plus, for a pool that reads stored frames, its staging texture; and the
   capture host's surface, marker row included, which the bake reads back. A
-  full-size 8K frame does not fit. Pools hold at most four slots.
+  full-size 8K frame does not fit.
 
 A frame over the texture limit never turns a lane off: its read takes the
 utility lane, and its capture gets a bitmap host (the host is rebuilt when the
