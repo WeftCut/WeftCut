@@ -6,16 +6,15 @@ import type { LayerSummary, ProjectSummary } from "../../ipc";
 import { useAppSettingsStore } from "../../settings/appSettingsStore";
 import {
   setLayerBakeStatuses,
-  motifWarmPhase,
   type LayerBakeStatus,
 } from "../../timeline/motifBakeStatusStore";
-import { compositionLocalUs, forEachLayer, type PlacedLayer } from "../compositionWalk";
+import { compositionLocalUs, forEachLayer } from "../compositionWalk";
 import { getMotif, motifCatalogRevision, subscribeMotifCatalog } from "./catalog";
 import { motifPlanningInputs } from './planningInputs';
+import { motifLayerStatuses, planMotifPreparation } from './motifDemand';
 import { MotifPrewarmer, type PrewarmContentSpec } from "./MotifPrewarmer";
 import { MotifBakeClient } from './bakeClient';
 import type { MotifBakePlan, MotifBakeSession, MotifBakeSnapshot, MotifFrameRange } from '../../../shared/motifs/baking';
-import { hashCacheKey } from './frameCache';
 import { motifFrameDescriptor } from "./motifFrameDescriptor";
 import { motifTuning } from "./tuning";
 import {
@@ -33,7 +32,6 @@ import {
   subscribePrebakeIntents,
   takePrebakePromotions,
 } from "./prebakeIntents";
-import { collectLiveRasterKeys } from "./liveRasterKeys";
 import type { MotifReaderDiv } from "../../../shared/motifs/readerProtocol";
 
 /// Schedule `cb` for an idle slice: `requestIdleCallback` when available
@@ -211,8 +209,8 @@ export class MotifFrameService {
   // ============================================================
 
   /// Every enabled Motif layer reachable from the drawn composition, Groups'
-  /// included, with the LOCAL time `tUs` maps to inside it — the motif
-  /// planners' one walk.
+  /// included, with the LOCAL time `tUs` maps to inside it — the prewarm
+  /// planner's walk.
   private forEachMotifLayer(
     tUs: number,
     f: (layer: LayerSummary & { params: { kind: "Motif" } }, tInLayerUs: number) => void,
@@ -291,81 +289,23 @@ export class MotifFrameService {
       this.bakeStatusByCacheKey.clear();
     }
     const summary = this.deps.projectSummary();
-    const plan: MotifBakePlan = { generation: session.generation, contents: [], live: [], collect: true };
-    this.layerBakeRanges.clear();
-    if (!summary) { this.liveCacheKeys = []; return plan; }
-    const explicit = explicitPrebakeLayers();
-    // Taken by this plan even if a project update supersedes its acknowledgement.
-    const promotions = takePrebakePromotions();
-    const fpsNum = this.deps.fpsNum(), fpsDen = this.deps.fpsDen();
-    const { activeKeys, unresolved } = collectLiveRasterKeys(summary, fpsNum, fpsDen);
-    this.liveCacheKeys = [...new Set(activeKeys)];
-    plan.live = this.liveCacheKeys.map(cacheKey => ({ cacheKey, hash: hashCacheKey(cacheKey) }));
-    plan.collect = unresolved.length === 0;
-    const globalOn = useAppSettingsStore.getState().settings.prebake_motifs;
-    const retryKeys = new Set<string>();
-    const priorityRanks = new Map<string, number>();
-    const contents = new Map<string, MotifBakePlan['contents'][number]>();
-    const roots = new Set([summary.root_id, this.deps.openCompositionId()]);
-    // A manually requested layer remains demanded even if its timeline closes.
-    for (const [id, comp] of Object.entries(summary.compositions)) {
-      if (comp.tracks.some(track => track.layers.some(layer => explicit.has(layer.id)))) roots.add(id);
+    if (!summary) {
+      this.layerBakeRanges.clear();
+      this.liveCacheKeys = [];
+      return { generation: session.generation, contents: [], live: [], collect: true };
     }
-    const placements: { root: string; rank: number; placed: PlacedLayer }[] = [];
-    for (const [rank, root] of [...roots].entries()) forEachLayer(summary, root, placed => placements.push({ root, rank, placed }));
-    // Stable ties retain track/layer order. The playhead does not reorder baking.
-    placements.sort((a, b) => a.rank - b.rank || a.placed.tStartUs - b.placed.tStartUs);
-    plan.sequence = [];
-    for (const { root, placed } of placements) {
-      const { layer } = placed;
-      if (layer.params.kind !== 'Motif') continue;
-      const view = layer.params;
-      const full = explicit.has(layer.id);
-      const motif = getMotif(layer.params.motif_id);
-      if (!motif) continue;
-      const durationUs = layer.t_end_us - layer.t_start_us;
-      const local = (time: number) => (placed.clock ? localAt(placed.clock, time) : compositionLocalUs(time - placed.offsetUs, fpsNum, fpsDen)) - layer.t_start_us;
-      const desc = motifFrameDescriptor(layer.params, local(placed.tStartUs), durationUs, fpsNum, fpsDen, motif);
-      if (!desc) continue;
-      const rank = promotions.findIndex(ids => ids.includes(layer.id));
-      if (rank >= 0) {
-        retryKeys.add(desc.cacheKey);
-        priorityRanks.set(desc.cacheKey, Math.min(priorityRanks.get(desc.cacheKey) ?? Infinity, rank));
-      }
-      // Sample actual root-grid anchors visible through Group trims. The full
-      // content duration remains a render input and cache identity.
-      const firstRoot = Math.ceil(placed.tStartUs * fpsNum / (1_000_000 * fpsDen) - 0.0001);
-      const lastRoot = Math.ceil(placed.tEndUs * fpsNum / (1_000_000 * fpsDen) - 0.0001) - 1;
-      if (!full && lastRoot < firstRoot) continue;
-      const frameAt = (rootFrame: number) => motifFrameDescriptor(view,
-        local(Math.round(rootFrame * 1_000_000 * fpsDen / fpsNum)), durationUs, fpsNum, fpsDen, motif)!.contentFrame;
-      const range = full ? { start: 0, end: desc.contentDurationFrames }
-        : { start: frameAt(firstRoot), end: frameAt(lastRoot) + 1 };
-      if (root === this.deps.openCompositionId()) {
-        const ranges = this.layerBakeRanges.get(layer.id) ?? [];
-        ranges.push(range); this.layerBakeRanges.set(layer.id, ranges);
-      }
-      // Display coverage describes the clip even when automatic work is off.
-      // The toggle controls demand, not whether persisted frames count as ready.
-      if ((!globalOn || (root !== summary.root_id && root !== this.deps.openCompositionId())) && !full) continue;
-      plan.sequence.push({ cacheKey: desc.cacheKey, ranges: [range] });
-      const existing = contents.get(desc.cacheKey);
-      if (existing) { existing.ranges.push(range); if (full) existing.explicit = true; continue; }
-      contents.set(desc.cacheKey, {
-        ...(full ? { explicit: true } : {}),
-        cacheKey: desc.cacheKey, hash: hashCacheKey(desc.cacheKey),
-        contentFrames: desc.contentDurationFrames, ranges: [range],
-        capture: { motifId: motif.manifest.id, contentHash: motif.manifest.content_hash ?? '',
-          propsJson: JSON.stringify(desc.canonicalProps), width: desc.renderW, height: desc.renderH,
-          fpsNum, fpsDen },
-      });
-    }
-    plan.contents = [...contents.values()];
-    if (retryKeys.size) {
-      plan.retryKeys = [...retryKeys];
-      plan.promoteKeys = [...retryKeys].sort((a, b) => priorityRanks.get(a)! - priorityRanks.get(b)!);
-    }
-    return plan;
+    const demand = planMotifPreparation({
+      summary, openCompositionId: this.deps.openCompositionId(),
+      fpsNum: this.deps.fpsNum(), fpsDen: this.deps.fpsDen(), generation: session.generation,
+      automatic: useAppSettingsStore.getState().settings.prebake_motifs,
+      explicit: explicitPrebakeLayers(),
+      // Taken by this plan even if a project update supersedes its acknowledgement.
+      promote: takePrebakePromotions(),
+      motif: getMotif,
+    });
+    this.layerBakeRanges = demand.layerRanges;
+    this.liveCacheKeys = demand.liveCacheKeys;
+    return demand.plan;
   }
 
   private acceptSnapshot(snapshot: MotifBakeSnapshot): void {
@@ -393,11 +333,9 @@ export class MotifFrameService {
     this.recomputeBakeStatuses();
   }
 
-  /// Build the per-layer bake-status map and publish it to the store. A layer
-  /// shows: its baker status if live; else "ready" if its frames are already on
-  /// disk (sharedBakedKeyIndex — e.g. baked last session, toggle off); else it
-  /// is omitted (idle → no dot). O(motif layers); called on every onStatus,
-  /// updateBakeTargets, and project change.
+  /// Publish the per-layer bake statuses (`motifLayerStatuses`) when they
+  /// change. O(motif layers); called on every snapshot, prewarm progress and
+  /// project change.
   private recomputeBakeStatuses(): void {
     if (this.disposed) return;
     const summary = this.deps.projectSummary();
@@ -405,48 +343,16 @@ export class MotifFrameService {
       if (this.lastBakeStatusSig !== "") { this.lastBakeStatusSig = ""; setLayerBakeStatuses({}); }
       return;
     }
-    const byLayer: Record<string, LayerBakeStatus> = {};
-    this.forEachMotifLayer(0, (layer) => {
-      const motif = getMotif(layer.params.motif_id);
-      if (!motif) return;
-      const durationUs = layer.t_end_us - layer.t_start_us;
-      const view = layer.params;
-      const desc = motifFrameDescriptor(
-        view, 0, durationUs, this.deps.fpsNum(), this.deps.fpsDen(), motif,
-      );
-      if (!desc) return;
-      let live = this.bakeStatusByCacheKey.get(desc.cacheKey);
-      if (this.preparationError && (useAppSettingsStore.getState().settings.prebake_motifs || explicitPrebakeLayers().has(layer.id))) {
-        live = { phase: 'error', done: 0, total: desc.contentDurationFrames, error: this.preparationError };
-      }
-      const requested = this.layerBakeRanges.get(layer.id);
-      const saved = sharedBakedKeyIndex.framesFor(desc.cacheKey);
-      if (requested && saved) {
-        const ranges: MotifFrameRange[] = [];
-        for (const r of [...requested].sort((a, b) => a.start - b.start)) {
-          const last = ranges.at(-1);
-          if (last && r.start <= last.end) last.end = Math.max(last.end, r.end);
-          else ranges.push({ ...r });
-        }
-        const total = ranges.reduce((n, r) => n + r.end - r.start, 0);
-        let done = 0;
-        for (const frame of saved) if (ranges.some(r => frame >= r.start && frame < r.end)) done++;
-        // A later occurrence of shared content cannot keep a completed clip
-        // looking unfinished. Progress belongs to this clip's requested range.
-        if (done === total) live = { phase: 'ready', done, total };
-        else if (live) live = { ...live, done, total };
-      }
-      // L0 coverage of this layer's content frames — the "is preview warm"
-      // signal that drives the green bar — the cache owns exact O(1) counts,
-      // including frames that predate this service (e.g. preview remount).
-      const covered = motifFrameCoverage.count(desc.cacheKey, this.div);
-      const status = motifWarmPhase(
-        live ?? null,
-        covered,
-        desc.contentDurationFrames,
-        sharedBakedKeyIndex.isComplete(desc.cacheKey, desc.contentDurationFrames),
-      );
-      if (status) byLayer[layer.id] = status;
+    const byLayer = motifLayerStatuses({
+      summary, openCompositionId: this.deps.openCompositionId(),
+      fpsNum: this.deps.fpsNum(), fpsDen: this.deps.fpsDen(), motif: getMotif,
+      statuses: this.bakeStatusByCacheKey, layerRanges: this.layerBakeRanges,
+      preparationError: this.preparationError,
+      automatic: useAppSettingsStore.getState().settings.prebake_motifs,
+      explicit: explicitPrebakeLayers(),
+      saved: key => sharedBakedKeyIndex.framesFor(key),
+      complete: (key, total) => sharedBakedKeyIndex.isComplete(key, total),
+      warm: key => motifFrameCoverage.count(key, this.div),
     });
     const sig = JSON.stringify(byLayer);
     if (sig === this.lastBakeStatusSig) return;

@@ -410,9 +410,10 @@ current clip are in the capture queue at once (ADR 0159); the order is decided
 again as each settles.
 Renderer reload and preview disposal do not cancel main's work; close, reopen
 and Save As retire the session, and admitted writes cannot publish into the next
-one. In the renderer, `prebakeIntents` holds the window's Pre-bake now choices,
-`MotifFrameService` projects committed layers into
-demands and maps main's snapshots into the baked-key index and layer status;
+one. In the renderer, `prebakeIntents` holds the window's Pre-bake now choices;
+`motifDemand` turns committed layers and those choices into the preparation plan
+and, with main's snapshots, into layer status (pure functions);
+`MotifFrameService` applies both and maps snapshots into the baked-key index;
 `MotifBakeClient` carries the IPC.
 
 - **One rule for what reaches the disk.** Every captured frame with a cache

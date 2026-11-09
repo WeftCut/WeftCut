@@ -122,7 +122,7 @@ describe('MotifFrameService prewarm admission', () => {
       expect(bake.mock.lastCall![0].live).toEqual([]);
     } finally { service.dispose(); }
   });
-  it('warms active and imminent layers while declaring used ranges once per project change', async () => {
+  it('warms active and imminent layers while declaring preparation once per project change', async () => {
     vi.stubGlobal('document', {});
     const summary = summaryFixture({ root: { tracks: [track([
       motif('past', 0, 1_000_000), motif('current', 1_000_000, 3_000_000),
@@ -136,15 +136,13 @@ describe('MotifFrameService prewarm admission', () => {
       expect(targets().map(s => s.contentFrame)).toEqual([30, 0]);
       expect(targets().every(s => s.historyFrames === 3)).toBe(true);
       expect(bake.mock.lastCall![0].contents).toHaveLength(1);
-      expect(bake.mock.lastCall![0].contents[0].ranges).toEqual([{ start: 0, end: 30 }, { start: 0, end: 60 }, { start: 0, end: 45 }, { start: 0, end: 60 }]);
-      expect(bake.mock.lastCall![0].contents[0].contentFrames).toBe(150);
       service.noteFrameBoundary(4_000_000);
       expect(targets()).toEqual([]);
       expect(bake).toHaveBeenCalledOnce();
     } finally { service.dispose(); }
   });
 
-  it('prewarms and prepares a trimmed Group using distinct visible instance windows', async () => {
+  it('prewarms a trimmed Group using distinct visible instance windows', async () => {
     vi.stubGlobal('document', {});
     const summary = summaryFixture({
       root: { tracks: [track([
@@ -160,8 +158,6 @@ describe('MotifFrameService prewarm admission', () => {
       await Promise.resolve();
       expect(targets().map(s => s.contentFrame)).toEqual([60, 30]);
       expect(new Set(targets().map(s => s.cacheKey)).size).toBe(1);
-      expect(bake.mock.lastCall![0].contents[0].ranges).toEqual([{ start: 0, end: 90 }, { start: 30, end: 81 }]);
-      expect(bake.mock.lastCall![0].contents[0].contentFrames).toBe(150);
     } finally { service.dispose(); }
   });
 
@@ -235,26 +231,16 @@ describe('MotifFrameService prewarm admission', () => {
     } finally { service.dispose(); }
   });
 
-  it('orders clips by timeline position across tracks and keeps shared-content windows separate', async () => {
+  it('publishes main\'s snapshots as layer statuses without replanning', async () => {
     vi.stubGlobal('document', {});
-    const early = motif('early', 0, 1_000_000);
     const later = motif('later', 5_000_000, 6_000_000);
     if (later.params.kind === 'Motif') later.params.src_in_us = 2_000_000;
-    const middle = motif('middle', 2_000_000, 3_000_000);
-    if (middle.params.kind === 'Motif') middle.params.props = { seconds: 3 };
-    const summary = summaryFixture({ root: { tracks: [track([later, middle]), { ...track([early]), id: 'track-2' }] } });
+    const summary = summaryFixture({ root: { tracks: [track([motif('early', 0, 1_000_000), later])] } });
     const service = new MotifFrameService({ projectSummary: () => summary, openCompositionId: () => ROOT_ID,
       fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 5_500_000 });
     try {
       service.handleProjectChanged(); await Promise.resolve();
-      const p = bake.mock.lastCall![0];
-      expect(p.contents).toHaveLength(2);
-      expect(p.sequence).toEqual([
-        { cacheKey: p.contents[0].cacheKey, ranges: [{ start: 0, end: 30 }] },
-        { cacheKey: p.contents[1].cacheKey, ranges: [{ start: 0, end: 30 }] },
-        { cacheKey: p.contents[0].cacheKey, ranges: [{ start: 60, end: 90 }] },
-      ]);
-      const key = p.contents[0].cacheKey;
+      const key = bake.mock.lastCall![0].contents[0].cacheKey;
       state.coverage = { [key]: Array.from({ length: 30 }, (_, i) => i) };
       state.statuses = { [key]: { phase: 'queued', done: 30, total: 60 } };
       state.publish(); await Promise.resolve();
@@ -262,10 +248,6 @@ describe('MotifFrameService prewarm admission', () => {
       expect(useMotifBakeStatusStore.getState().byLayer.later).toMatchObject({ phase: 'queued', done: 0, total: 30 });
       service.noteFrameBoundary(0);
       expect(bake).toHaveBeenCalledOnce();
-      // Turning automatic work off does not undo the first clip's saved range.
-      state.automatic = false; state.statuses = {};
-      service.handleProjectChanged(); await Promise.resolve();
-      expect(useMotifBakeStatusStore.getState().byLayer.early).toMatchObject({ phase: 'ready', done: 30, total: 30 });
     } finally { service.dispose(); }
   });
 
