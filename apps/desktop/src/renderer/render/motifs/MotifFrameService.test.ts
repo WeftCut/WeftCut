@@ -3,7 +3,7 @@ import type { AnimTrack, LayerSummary, TrackSummary } from '../../ipc';
 import { compositionFixture, groupLayerFixture, ROOT_ID, summaryFixture } from '../../testing/summaryFixture';
 import type { PrewarmContentSpec } from './MotifPrewarmer';
 import { MotifFrameService } from './MotifFrameService';
-import { requestPrebake } from './prebakeBus';
+import { requestPrebake } from './prebakeIntents';
 import { sharedBakedKeyIndex } from './motifFrameSource';
 import { useMotifBakeStatusStore } from '../../timeline/motifBakeStatusStore';
 import { syncUserMotifsFromBackend } from './syncCatalog';
@@ -209,6 +209,29 @@ describe('MotifFrameService prewarm admission', () => {
       summary = summaryFixture({ root: { tracks: [track([motif('early', 0, 1_000_000)])] } });
       service.handleProjectChanged(); await Promise.resolve();
       expect(bake.mock.lastCall![0].contents).toMatchObject([{ explicit: true, ranges: [{ start: 0, end: 150 }] }]);
+    } finally { service.dispose(); }
+  });
+
+  it('drops a deleted layer\'s full-content choice for good', async () => {
+    vi.stubGlobal('document', {}); state.automatic = false;
+    const layer = motif('chosen', 0, 1_000_000);
+    let summary = summaryFixture({ root: { tracks: [track([layer])] } });
+    const service = new MotifFrameService({ projectSummary: () => summary, openCompositionId: () => ROOT_ID,
+      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0 });
+    try {
+      service.handleProjectChanged(); await Promise.resolve();
+      requestPrebake('chosen');
+      expect(bake.mock.lastCall![0].contents).toMatchObject([{ explicit: true }]);
+      summary = summaryFixture({ root: { tracks: [track([])] } });
+      service.handleProjectChanged(); await Promise.resolve();
+      expect(bake.mock.lastCall![0].contents).toEqual([]);
+      // Same content under another id, then the deleted layer restored by undo.
+      for (const id of ['copy', 'chosen']) {
+        summary = summaryFixture({ root: { tracks: [track([{ ...structuredClone(layer), id }])] } });
+        service.handleProjectChanged(); await Promise.resolve();
+        expect(bake.mock.lastCall![0].contents).toEqual([]);
+        expect(bake.mock.lastCall![0].retryKeys).toBeUndefined();
+      }
     } finally { service.dispose(); }
   });
 

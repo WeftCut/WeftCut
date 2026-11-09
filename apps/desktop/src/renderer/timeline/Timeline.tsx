@@ -74,7 +74,7 @@ import {
   deselectAll,
   selectAllLayers,
 } from "./selectionCommands";
-import { requestPrebake } from "../render/motifs/prebakeBus";
+import { requestPrebake } from "../render/motifs/prebakeIntents";
 import {
   DROP_STRIP_SEAM_OVERLAP_PX,
   headerColumnPx,

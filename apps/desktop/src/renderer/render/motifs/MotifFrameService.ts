@@ -25,7 +25,14 @@ import {
   resetMotifFrameRequests,
   setMotifPreparationCoverage,
 } from "./motifFrameSource";
-import { onPrebakeRequest } from "./prebakeBus";
+import {
+  bindPrebakeIntents,
+  clearPrebakeIntents,
+  explicitPrebakeLayers,
+  resolvePrebakeIntents,
+  subscribePrebakeIntents,
+  takePrebakePromotions,
+} from "./prebakeIntents";
 import { collectLiveRasterKeys } from "./liveRasterKeys";
 import type { MotifReaderDiv } from "../../../shared/motifs/readerProtocol";
 
@@ -66,24 +73,14 @@ export interface MotifFrameServiceDeps {
   currentTimeUs: () => number;
 }
 
-// Explicit choices belong to the renderer's workspace session, not a Compositor.
-let manualSession: { generation: number; layers: Set<string> } | null = null;
-
 export class MotifFrameService {
   private layerBakeRanges = new Map<string, MotifFrameRange[]>();
-  private pendingPriorityGroups: string[][] = [];
   private prewarmer: MotifPrewarmer | null;
   private client: MotifBakeClient | null;
   private bakeStatusByCacheKey = new Map<string, LayerBakeStatus>();
   private lastBakeStatusSig = '';
-  private manualPrebakeLayers = new Set<string>();
-  /** "Pre-bake now" requests for layers this service's project does not show
-   * yet: the Compositor gets its project after construction, and an edit
-   * after the timeline shows it. */
-  private unresolvedPrebakes = new Set<string>();
-  private pendingRetryLayers = new Set<string>();
   private liveCacheKeys: string[] = [];
-  private prebakeUnsub: (() => void) | null = null;
+  private intentsUnsub: (() => void) | null = null;
   private settingsUnsub: (() => void) | null = null;
   private lastPrewarmFrame = -1;
   private disposed = false;
@@ -120,37 +117,26 @@ export class MotifFrameService {
     if (this.client) this.settingsUnsub = useAppSettingsStore.subscribe((next, previous) => {
       if (next.settings.prebake_motifs !== previous.settings.prebake_motifs) this.handleProjectChanged();
     });
-    if (this.client) this.prebakeUnsub = onPrebakeRequest(layerId => {
-      this.unresolvedPrebakes.add(layerId);
+    if (this.client) this.intentsUnsub = subscribePrebakeIntents(() => {
       if (this.resolvePrebakes()) this.submitBakePlan();
     });
   }
 
-  /// Marks the requested layers this service's project shows, expanding a
-  /// Group to its Motifs. Returns whether any request resolved.
+  /// Brings the Pre-bake now intents up to this service's project, expanding
+  /// a requested Group to the Motifs it holds now. Returns whether any request
+  /// resolved.
   private resolvePrebakes(): boolean {
     const summary = this.deps.projectSummary();
-    if (!summary || this.unresolvedPrebakes.size === 0) return false;
-    const layers = new Map(Object.values(summary.compositions).flatMap(c => c.tracks.flatMap(t => t.layers)).map(l => [l.id, l]));
-    let resolved = false;
-    for (const layerId of [...this.unresolvedPrebakes]) {
-      const selected = layers.get(layerId);
-      if (!selected) continue;
-      this.unresolvedPrebakes.delete(layerId);
-      resolved = true;
-      const ids = new Set<string>();
-      if (selected.params.kind === 'CompositionRef') {
-        forEachLayer(summary, selected.params.composition_id, ({ layer }) => {
-          if (layer.params.kind === 'Motif') ids.add(layer.id);
-        });
-      } else if (selected.params.kind === 'Motif') ids.add(layerId);
-      for (const id of ids) {
-        this.manualPrebakeLayers.add(id);
-        this.pendingRetryLayers.add(id);
-      }
-      this.pendingPriorityGroups.unshift([...ids]);
-    }
-    return resolved;
+    if (!summary) return false;
+    return resolvePrebakeIntents(summary, this.generation, selected => {
+      if (selected.params.kind === 'Motif') return [selected.id];
+      if (selected.params.kind !== 'CompositionRef') return [];
+      const ids: string[] = [];
+      forEachLayer(summary, selected.params.composition_id, ({ layer }) => {
+        if (layer.params.kind === 'Motif') ids.push(layer.id);
+      });
+      return ids;
+    });
   }
 
   handleProjectChanged(): void {
@@ -174,10 +160,7 @@ export class MotifFrameService {
     if (this.diskDiscoveryPending) sharedBakedKeyIndex.beginHydration();
     else {
       sharedBakedKeyIndex.clear();
-      this.unresolvedPrebakes.clear();
-      this.manualPrebakeLayers.clear();
-      this.pendingRetryLayers.clear();
-      this.pendingPriorityGroups = [];
+      clearPrebakeIntents();
       this.bakeStatusByCacheKey.clear();
       this.preparationError = null;
       setLayerBakeStatuses({});
@@ -216,7 +199,7 @@ export class MotifFrameService {
     this.disposed = true;
     this.prewarmer?.dispose();
     this.client?.dispose();
-    this.prebakeUnsub?.();
+    this.intentsUnsub?.();
     this.settingsUnsub?.();
     this.catalogUnsub?.();
     sharedBakedKeyIndex.finishHydration();
@@ -300,17 +283,7 @@ export class MotifFrameService {
 
   private buildBakePlan(session: MotifBakeSession): MotifBakePlan {
     if (this.generation !== session.generation) {
-      if (manualSession && manualSession.generation === session.generation) {
-        for (const id of this.manualPrebakeLayers) manualSession.layers.add(id);
-        this.manualPrebakeLayers = manualSession.layers;
-      } else {
-        if (this.generation !== null) {
-          this.manualPrebakeLayers.clear();
-          this.pendingRetryLayers.clear();
-          this.pendingPriorityGroups = [];
-        }
-        manualSession = { generation: session.generation, layers: this.manualPrebakeLayers };
-      }
+      bindPrebakeIntents(session.generation);
       this.generation = session.generation;
       resetMotifFrameRequests();
       sharedBakedKeyIndex.clear();
@@ -321,6 +294,9 @@ export class MotifFrameService {
     const plan: MotifBakePlan = { generation: session.generation, contents: [], live: [], collect: true };
     this.layerBakeRanges.clear();
     if (!summary) { this.liveCacheKeys = []; return plan; }
+    const explicit = explicitPrebakeLayers();
+    // Taken by this plan even if a project update supersedes its acknowledgement.
+    const promotions = takePrebakePromotions();
     const fpsNum = this.deps.fpsNum(), fpsDen = this.deps.fpsDen();
     const { activeKeys, unresolved } = collectLiveRasterKeys(summary, fpsNum, fpsDen);
     this.liveCacheKeys = [...new Set(activeKeys)];
@@ -333,7 +309,7 @@ export class MotifFrameService {
     const roots = new Set([summary.root_id, this.deps.openCompositionId()]);
     // A manually requested layer remains demanded even if its timeline closes.
     for (const [id, comp] of Object.entries(summary.compositions)) {
-      if (comp.tracks.some(track => track.layers.some(layer => this.manualPrebakeLayers.has(layer.id)))) roots.add(id);
+      if (comp.tracks.some(track => track.layers.some(layer => explicit.has(layer.id)))) roots.add(id);
     }
     const placements: { root: string; rank: number; placed: PlacedLayer }[] = [];
     for (const [rank, root] of [...roots].entries()) forEachLayer(summary, root, placed => placements.push({ root, rank, placed }));
@@ -344,16 +320,16 @@ export class MotifFrameService {
       const { layer } = placed;
       if (layer.params.kind !== 'Motif') continue;
       const view = layer.params;
-      const full = this.manualPrebakeLayers.has(layer.id);
+      const full = explicit.has(layer.id);
       const motif = getMotif(layer.params.motif_id);
       if (!motif) continue;
       const durationUs = layer.t_end_us - layer.t_start_us;
       const local = (time: number) => (placed.clock ? localAt(placed.clock, time) : compositionLocalUs(time - placed.offsetUs, fpsNum, fpsDen)) - layer.t_start_us;
       const desc = motifFrameDescriptor(layer.params, local(placed.tStartUs), durationUs, fpsNum, fpsDen, motif);
       if (!desc) continue;
-      if (this.pendingRetryLayers.has(layer.id)) {
+      const rank = promotions.findIndex(ids => ids.includes(layer.id));
+      if (rank >= 0) {
         retryKeys.add(desc.cacheKey);
-        const rank = this.pendingPriorityGroups.findIndex(ids => ids.includes(layer.id));
         priorityRanks.set(desc.cacheKey, Math.min(priorityRanks.get(desc.cacheKey) ?? Infinity, rank));
       }
       // Sample actual root-grid anchors visible through Group trims. The full
@@ -389,11 +365,6 @@ export class MotifFrameService {
       plan.retryKeys = [...retryKeys];
       plan.promoteKeys = [...retryKeys].sort((a, b) => priorityRanks.get(a)! - priorityRanks.get(b)!);
     }
-    // A user action is one retry submission, even if a project update
-    // supersedes its eventual acknowledgement. Ordinary re-plans cannot reset
-    // the main-owned finite retry budget repeatedly.
-    this.pendingRetryLayers.clear();
-    this.pendingPriorityGroups = [];
     return plan;
   }
 
@@ -445,7 +416,7 @@ export class MotifFrameService {
       );
       if (!desc) return;
       let live = this.bakeStatusByCacheKey.get(desc.cacheKey);
-      if (this.preparationError && (useAppSettingsStore.getState().settings.prebake_motifs || this.manualPrebakeLayers.has(layer.id))) {
+      if (this.preparationError && (useAppSettingsStore.getState().settings.prebake_motifs || explicitPrebakeLayers().has(layer.id))) {
         live = { phase: 'error', done: 0, total: desc.contentDurationFrames, error: this.preparationError };
       }
       const requested = this.layerBakeRanges.get(layer.id);

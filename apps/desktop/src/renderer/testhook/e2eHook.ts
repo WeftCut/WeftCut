@@ -41,7 +41,7 @@ import {
   type MotifReaderStats,
 } from "../render/motifs/MotifFrameReader";
 import { getMotif } from "../render/motifs/catalog";
-import { requestPrebake } from "../render/motifs/prebakeBus";
+import { requestPrebake } from "../render/motifs/prebakeIntents";
 import { mergeSettings, type ExportSettings } from "../render/exportSettings";
 import { getGizmoProbe } from "../preview/gizmoProbeRegistry";
 import { playheadTimeUs } from "../state/playheadStore";
@@ -265,7 +265,7 @@ export interface E2EHook {
     frameCount: number;
     samples: Array<{ tInLayerUs: number; width: number; height: number; checksum: number }>;
   }>;
-  /// Trigger a persisted pre-bake of a motif layer (via the prebakeBus) and
+  /// Trigger a persisted pre-bake of a motif layer (via Pre-bake now) and
   /// wait until main prepares its content and at least `expectedFrames` .wfrm
   /// files appear under
   /// `<workspace>/Cache/raster/<hash>/`. Returns the absolute path to the hash
@@ -964,7 +964,7 @@ export function installMotifTestHooks(): void {
     }
   };
 
-  // Trigger a full L2 pre-bake of a motif layer (via the prebakeBus) and
+  // Trigger a full L2 pre-bake of a motif layer (via Pre-bake now) and
   // wait until main prepares its content and `expectedFrames` .wfrm files
   // appear on disk. The preview's own captures store frames too, so files
   // alone do not show that the request reached main. The cacheKey is

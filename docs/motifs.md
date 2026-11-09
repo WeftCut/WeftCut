@@ -399,13 +399,19 @@ pauses, bounded retries and collection
 ([ADR 0108](adr/0108-motif-preparation-belongs-to-the-workspace-session.md)).
 Automatic demand covers used ranges when the `prebake_motifs` setting
 ("Pre-bake all motif content", default off) is on; **Pre-bake now** on a layer demands its
-full content and moves it (or a Group's Motifs) to the front. Clips finish in
+full content and moves it (or the Motifs a Group holds when the request is first
+seen) to the front. The window holds the choice for the Workspace session, across
+preview rebuilds, and drops it when its layer is deleted; undo restores the layer,
+not the choice. The choice belongs to the requested layer: deleting a Group
+requested with Pre-bake now drops the full-content demand for every Motif it
+expanded to, even one that stays in the project. Clips finish in
 timeline order (start time, then track/layer order). Up to three frames of the
 current clip are in the capture queue at once (ADR 0159); the order is decided
 again as each settles.
 Renderer reload and preview disposal do not cancel main's work; close, reopen
 and Save As retire the session, and admitted writes cannot publish into the next
-one. In the renderer, `MotifFrameService` projects committed layers into
+one. In the renderer, `prebakeIntents` holds the window's Pre-bake now choices,
+`MotifFrameService` projects committed layers into
 demands and maps main's snapshots into the baked-key index and layer status;
 `MotifBakeClient` carries the IPC.
 

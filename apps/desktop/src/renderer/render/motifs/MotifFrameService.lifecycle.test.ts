@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { MOTIF_BAKE_READY_EVENT, type MotifBakePlan, type MotifBakeSnapshot } from '../../../shared/motifs/baking';
 import { groupLayerFixture, ROOT_ID, summaryFixture } from '../../testing/summaryFixture';
 import { MotifFrameService } from './MotifFrameService';
-import { requestPrebake } from './prebakeBus';
+import { requestPrebake } from './prebakeIntents';
 
 const h = vi.hoisted(() => ({
   warm: vi.fn(), invoke: vi.fn(), listeners: new Map<string, (event: { payload: unknown }) => void>(),
