@@ -569,11 +569,12 @@ describe('Motif capture wire', () => {
 
   it('parses a presence; anything else is not one', () => {
     const shown = { motifId: 'm', contentHash: 'h' };
-    expect(parseMotifPresence({ visible: [shown], next: { motifId: 'n', contentHash: '', inMs: 120 }, playing: true }))
-      .toEqual({ visible: [shown], next: { motifId: 'n', contentHash: '', inMs: 120 }, playing: true });
+    const next = { motifId: 'n', contentHash: '', inMs: 120, width: 1920, height: 1080 };
+    expect(parseMotifPresence({ visible: [shown], next, playing: true })).toEqual({ visible: [shown], next, playing: true });
     expect(parseMotifPresence({ visible: [], next: null, playing: false })).toEqual({ visible: [], next: null, playing: false });
     for (const presence of [null, { visible: 'm', next: null, playing: true }, { visible: [], next: null }, { visible: [{ motifId: '' , contentHash: 'h' }], next: null },
-      { visible: [shown] }, { visible: [], next: { motifId: 'n', contentHash: 'h', inMs: -1 } },
+      { visible: [shown], playing: true }, { visible: [], next: { ...next, inMs: -1 }, playing: true },
+      { visible: [], next: { ...next, width: 0 }, playing: true }, { visible: [], next: { ...next, height: 1.5 }, playing: true },
       { visible: Array.from({ length: 257 }, () => shown), next: null }]) {
       expect(parseMotifPresence(presence)).toBeNull();
     }

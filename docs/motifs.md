@@ -155,6 +155,12 @@ held host that has shown its content for `hostResidencyMs`, so more visible
 Motifs than hosts rotate at that pace rather than every frame. With one host
 and two Motifs on screen, the host alternates once a second.
 
+While a preview plays, main builds the host of the next Motif to enter ahead
+of it, so its first frame does not wait for a window: the preview names that
+Motif `presenceLookaheadMs` (2 s) ahead with its capture size, and main opens
+its host the measured build plus first-step time before it enters
+(`hostWarmLeadMs`, 450 ms, until measured), as side traffic would.
+
 - **Output.** Every capture is the paint whose marker rows carry the frame's
   id and its canvas witness (`OffscreenFrames`, `shared/motifs/frameMarker.ts`):
   a new window's first commit can show the id without any canvas, and that

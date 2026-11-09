@@ -359,6 +359,26 @@ describe('HostPool', () => {
       expect(pool.canOpen(new Set(), 'ahead', performance.now())).toBe(false)
     })
 
+    it('warm builds a host as side traffic: in a free slot or for a spare one, never for a held one', async () => {
+      const { pool, opened } = newPool(1, 0, 1000)
+      expect(await pool.warm(argsOf('a'))).toBe('built')
+      expect(await pool.warm(argsOf('a'))).toBe('present')
+      expect(pool.diagnostics()).toEqual([expect.objectContaining({ motifId: 'a', captures: 0 })])
+      pool.setDemand(demand(['a']))
+      expect(await pool.warm(argsOf('b'))).toBe('refused')
+      pool.setDemand(demand([]))
+      expect(await pool.warm(argsOf('b'))).toBe('built')
+      expect(opened).toHaveLength(2)
+      expect(evictions).toBe(1)
+    })
+
+    it('warm takes no spare host a queued capture will render on', async () => {
+      const { pool, key } = newPool(1)
+      expect(await pool.warm(argsOf('a'))).toBe('built')
+      expect(await pool.warm(argsOf('b'), new Set([key('a')]))).toBe('refused')
+      expect(await pool.warm(argsOf('b'))).toBe('built')
+    })
+
     it('a current capture keeps its host from side traffic for the residency', async () => {
       const { pool, lease } = newPool(1, 0, 1000)
       ;(await lease('exported', 'v1', 'current')).release()

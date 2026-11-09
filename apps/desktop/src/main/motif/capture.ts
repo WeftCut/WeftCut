@@ -17,7 +17,7 @@ import { backgroundResourcePause, onBackgroundResourceChange, processMemoryMiB }
 import { resourceAllocation } from '../../shared/resource-policy.js'
 
 /** The tuning keys the capture hosts run on (`shared/motifs/tuning.ts`). */
-export type CaptureTuning = Pick<MotifTuning, 'captureHosts' | 'hostMemoryMib' | 'hostResidencyMs' | 'hostAgingMs' | 'framesInFlight' | 'captureFrameRate' | 'skippedFrameRetries' | 'backgroundAgingMs' | 'hostAffinityMs' | 'stallNudgeMs'>
+export type CaptureTuning = Pick<MotifTuning, 'captureHosts' | 'hostMemoryMib' | 'hostResidencyMs' | 'hostAgingMs' | 'hostWarmLeadMs' | 'framesInFlight' | 'captureFrameRate' | 'skippedFrameRetries' | 'backgroundAgingMs' | 'hostAffinityMs' | 'stallNudgeMs'>
 
 /** What a capture reads from the Motif store. */
 export type CaptureStore = Pick<UserMotifStore, 'getMotif' | 'assertRenderable' | 'pinPackage'>
@@ -37,7 +37,7 @@ export interface MotifCapturerDeps {
   textureReader: Pick<MotifTextureReader, 'read'> | null
 }
 
-const newCaptureCounters = () => ({ captures: 0, completed: 0, failed: 0, pageLoads: 0, hostBuilds: 0, hostSwaps: 0, hostEvictions: 0, hostSheds: 0, affinityPicks: 0, textureCaptures: 0, bitmapCaptures: 0, skippedFrames: 0, queueMs: 0, captureMs: 0, loadMs: 0, readyMs: 0, setupMs: 0, renderMs: 0, outputMs: 0 })
+const newCaptureCounters = () => ({ captures: 0, completed: 0, failed: 0, pageLoads: 0, hostBuilds: 0, hostSwaps: 0, hostEvictions: 0, hostSheds: 0, hostWarms: 0, warmHits: 0, affinityPicks: 0, textureCaptures: 0, bitmapCaptures: 0, skippedFrames: 0, queueMs: 0, captureMs: 0, loadMs: 0, readyMs: 0, setupMs: 0, renderMs: 0, outputMs: 0 })
 type CaptureCounters = ReturnType<typeof newCaptureCounters>
 
 const DIAGNOSTIC_LANE_CAP = 128
@@ -87,6 +87,11 @@ export class MotifCapturer {
   private readonly stopShedding: () => void
   /// Each preview document's presence, by its id.
   private readonly presences = new Map<number, MotifPresence>()
+  /// Each playing document's pending build of its next Motif's host.
+  private readonly warmings = new Map<number, ReturnType<typeof setTimeout>>()
+  /// The latest host builds and first steps (ms), for the warm lead.
+  private readonly buildMs: number[] = []
+  private readonly firstStepMs: number[] = []
   /// The renderer processes' working sets (MiB) by pid, and when they were read.
   private hostMemory: { at: number; byPid: Map<number, number> } = { at: -Infinity, byPid: new Map() }
 
@@ -106,6 +111,7 @@ export class MotifCapturer {
       open: (key, a) => this.openHost(key, a),
       evicted: () => { this.counters.hostEvictions++ },
       swap: (host, key) => this.swapHost(host, key),
+      warmUsed: () => { this.counters.warmHits++ },
     })
     this.queue = new CaptureQueue(this.pool, deps.tuning, {
       // Fast-reject a lane whose content failed while the ticket waited.
@@ -191,6 +197,8 @@ export class MotifCapturer {
   /// the hosts without also refusing later captures re-opens that race.
   shutdown(): void {
     this.stopShedding()
+    for (const timer of this.warmings.values()) clearTimeout(timer)
+    this.warmings.clear()
     this.shuttingDown = true
     this.queue.close(closedError())
     this.pool.shutdown()
@@ -227,10 +235,46 @@ export class MotifCapturer {
     this.diagnosticsLane(key.motifId, key.contentHash).pageLoads++
     // The host releases the pin when it retires; a build that throws before
     // the host exists releases it here.
+    const started = performance.now()
     return CaptureHost.open(key, { width: a.width, height: a.height }, pin, {
       runtime, markerReader: this.markerReader, tuning: this.tuning,
       timed: (phase, run) => this.timed(phase, run),
-    }).catch((e: unknown) => { pin?.release(); throw e })
+      firstStep: ms => remember(this.firstStepMs, ms),
+    }).then(host => { remember(this.buildMs, performance.now() - started); return host },
+      (e: unknown) => { pin?.release(); throw e })
+  }
+
+  /// While a document plays, the host of the next Motif to enter is built
+  /// `warmLeadMs` before it enters: the window and its page, not a frame, so
+  /// its first `current` capture finds it ready. Warming is side traffic: it
+  /// takes a free slot or a spare host no queued capture will render on,
+  /// never what playback holds. The preview plays only at normal speed, so
+  /// `inMs` is wall time; a seek, a pause or another next Motif re-sends it.
+  private scheduleWarm(document: number, presence: MotifPresence | null): void {
+    const pending = this.warmings.get(document)
+    if (pending) { clearTimeout(pending); this.warmings.delete(document) }
+    const next = presence?.playing ? presence.next : null
+    if (!next || this.shuttingDown) return
+    const timer = setTimeout(() => {
+      this.warmings.delete(document)
+      void this.warm(next)
+    }, Math.max(0, next.inMs - this.warmLeadMs()))
+    ;(timer as { unref?: () => void }).unref?.()
+    this.warmings.set(document, timer)
+  }
+
+  private async warm(next: NonNullable<MotifPresence['next']>): Promise<void> {
+    if (this.shuttingDown || this.failures.failure(next.motifId, next.contentHash)) return
+    const args = { motifId: next.motifId, contentHash: next.contentHash, tSec: 0, propsJson: '{}', width: next.width, height: next.height }
+    // A host a queued capture will render on stays for it.
+    if (await this.pool.warm(args, this.queue.queuedKeys()) === 'built') this.counters.hostWarms++
+  }
+
+  /// How long before a Motif enters its host should be built: the median
+  /// measured build plus first step, else `hostWarmLeadMs`.
+  private warmLeadMs(): number {
+    if (!this.buildMs.length || !this.firstStepMs.length) return this.tuning.hostWarmLeadMs
+    return median(this.buildMs) + median(this.firstStepMs)
   }
 
   /// One more host fits beside the `live` ones while memory is not under
@@ -284,6 +328,7 @@ export class MotifCapturer {
   setPresence(document: number, presence: MotifPresence | null): void {
     if (presence) this.presences.set(document, presence)
     else if (!this.presences.delete(document)) return
+    this.scheduleWarm(document, presence)
     const visible = new Set<string>(), warm = new Set<string>()
     for (const p of this.presences.values()) {
       if (!p.playing) continue
@@ -383,4 +428,15 @@ export class MotifCapturer {
     if (frame.kind === 'texture') this.counters.textureCaptures++
     else this.counters.bitmapCaptures++
   }
+}
+
+/// Timings the warm lead is the median of: the latest few.
+const TIMING_SAMPLES = 9
+function remember(samples: number[], ms: number): void {
+  samples.push(ms)
+  if (samples.length > TIMING_SAMPLES) samples.shift()
+}
+function median(samples: readonly number[]): number {
+  const sorted = [...samples].sort((a, b) => a - b)
+  return sorted[Math.floor(sorted.length / 2)]!
 }

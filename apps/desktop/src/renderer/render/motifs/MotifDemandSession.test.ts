@@ -8,6 +8,7 @@ import { sharedBakedKeyIndex } from './motifFrameSource';
 import { useMotifBakeStatusStore } from '../../timeline/motifBakeStatusStore';
 import { syncUserMotifsFromBackend } from './syncCatalog';
 import { setUserMotifs } from './catalog';
+import { declareMotifPresence } from './frameTransport';
 
 const { warm, bake, state } = vi.hoisted(() => ({ warm: vi.fn(), bake: vi.fn(), state: { generation: 0, automatic: true, fail: false, publish: () => {},
   coverage: {} as Record<string, number[]>, statuses: {} as Record<string, object> } }));
@@ -66,6 +67,31 @@ describe('MotifDemandSession', () => {
       expect(bake).toHaveBeenCalledOnce();
       expect(warm).toHaveBeenCalledTimes(warmCalls);
     } finally { service.dispose(); }
+  });
+
+  it('tells main its Motifs when they or the play state change, not on every frame', () => {
+    vi.stubGlobal('document', {});
+    const declared = vi.mocked(declareMotifPresence);
+    declared.mockClear();
+    const summary = summaryFixture({ root: { tracks: [track([motif('clip', 0, 2_000_000), motif('later', 1_000_000, 3_000_000)])] } });
+    let playing = false, tUs = 0;
+    const service = new MotifDemandSession({ projectSummary: () => summary, openCompositionId: () => ROOT_ID,
+      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => tUs, playing: () => playing });
+    try {
+      service.handleProjectChanged();
+      expect(declared).toHaveBeenCalledTimes(1);
+      expect(declared.mock.calls[0]![0]).toMatchObject({ playing: false, visible: [{ motifId: 'countdown' }] });
+      service.noteFrameBoundary(tUs = 100_000);
+      expect(declared).toHaveBeenCalledTimes(1);
+      playing = true;
+      service.notePlayState();
+      expect(declared).toHaveBeenCalledTimes(2);
+      expect(declared.mock.calls[1]![0]).toMatchObject({ playing: true });
+      service.notePlayState();
+      expect(declared).toHaveBeenCalledTimes(2);
+    } finally { service.dispose(); }
+    // A document that goes takes its Motifs with it.
+    expect(declared.mock.calls.at(-1)![0]).toEqual({ visible: [], next: null, playing: false });
   });
 
   it('uses the startup catalog for edits and replans when the catalog actually changes', async () => {

@@ -682,7 +682,7 @@ describe('MotifCapturer', () => {
     expect(side).toBe(false)
     expect(capturer.diagnostics().hosts).toEqual([expect.objectContaining({ motifId: 'on-screen', role: 'held' })])
     // The Motif left the screen and is next to enter again: still kept from side traffic.
-    capturer.setPresence(1, { visible: [], next: { motifId: 'on-screen', contentHash: 'v1', inMs: 400 }, playing: true })
+    capturer.setPresence(1, { visible: [], next: { motifId: 'on-screen', contentHash: 'v1', inMs: 400, width: 32, height: 16 }, playing: true })
     await delay(50)
     expect(side).toBe(false)
     // Nothing needs it now: the panel's capture takes it.
@@ -702,7 +702,7 @@ describe('MotifCapturer', () => {
   it('a current capture takes a warm host at once', async () => {
     capturer = newCapturer({ tuning: { ...ONE_HOST, hostResidencyMs: 60_000 } })
     await capturer.capturePng({ ...args, motifId: 'entering' }, bg)
-    capturer.setPresence(1, { visible: [], next: { motifId: 'entering', contentHash: 'v1', inMs: 400 }, playing: true })
+    capturer.setPresence(1, { visible: [], next: { motifId: 'entering', contentHash: 'v1', inMs: 400, width: 32, height: 16 }, playing: true })
     await capturer.capturePng({ ...args, motifId: 'on-screen-now' }, { priority: 'current' })
     expect(capturer.diagnostics()).toMatchObject({ hostBuilds: 2, hostEvictions: 1 })
   })
@@ -731,6 +731,51 @@ describe('MotifCapturer', () => {
     expect(capturer.diagnostics().hosts).toEqual([expect.objectContaining({ motifId: 'playing-on', role: 'held' })])
     await bake
     expect(performance.now() - started).toBeGreaterThanOrEqual(280)
+  })
+
+  it('a playing preview has the next Motif\'s host built the warm lead before it enters, and its first current frame finds it', async () => {
+    capturer = newCapturer({ tuning: { ...MOTIF_TUNING_DEFAULTS, captureHosts: 2, hostWarmLeadMs: 100 } })
+    const next = { motifId: 'entering-soon', contentHash: 'v1', inMs: 250, width: 32, height: 16 }
+    // Paused: nothing is built.
+    capturer.setPresence(1, { visible: [], next, playing: false })
+    await delay(300)
+    expect(capturer.diagnostics()).toMatchObject({ hostBuilds: 0, hostWarms: 0 })
+    const started = performance.now()
+    capturer.setPresence(1, { visible: [], next, playing: true })
+    await vi.waitFor(() => expect(capturer.diagnostics().hostWarms).toBe(1), { timeout: 1000 })
+    expect(performance.now() - started).toBeGreaterThanOrEqual(140)
+    expect(capturer.diagnostics().hosts).toEqual([expect.objectContaining({ motifId: 'entering-soon', role: 'warm', captures: 0 })])
+    await capturer.capturePng({ ...args, motifId: 'entering-soon' }, { priority: 'current' })
+    expect(capturer.diagnostics()).toMatchObject({ hostBuilds: 1, hostWarms: 1, warmHits: 1 })
+  })
+
+  it('warming never takes a held host, and a lead longer than the time left builds at once', async () => {
+    capturer = newCapturer({ tuning: { ...ONE_HOST, hostWarmLeadMs: 10_000 } })
+    await capturer.capturePng({ ...args, motifId: 'on-screen' }, bg)
+    capturer.setPresence(1, { visible: [{ motifId: 'on-screen', contentHash: 'v1' }],
+      next: { motifId: 'next-up', contentHash: 'v1', inMs: 500, width: 32, height: 16 }, playing: true })
+    await delay(50)
+    expect(capturer.diagnostics()).toMatchObject({ hostBuilds: 1, hostWarms: 0 })
+    // Off screen now: the host is spare, and the warm build may take it.
+    capturer.setPresence(1, { visible: [], next: { motifId: 'next-up', contentHash: 'v1', inMs: 500, width: 32, height: 16 }, playing: true })
+    await vi.waitFor(() => expect(capturer.diagnostics().hostWarms).toBe(1), { timeout: 1000 })
+    expect(capturer.diagnostics().hosts).toEqual([expect.objectContaining({ motifId: 'next-up' })])
+  })
+
+  it('warming leaves a host to the captures queued for it', async () => {
+    // One frame in flight: after each render step the host waits idle for its
+    // paint while the next frames wait queued for it.
+    capturer = newCapturer({ tuning: { ...ONE_HOST, framesInFlight: 1, hostWarmLeadMs: 10_000 } })
+    paintDelayMs = 40
+    try {
+      const frames = Array.from({ length: 4 }, (_, t) => capturer.capturePng({ ...args, motifId: 'busy', tSec: t }, bg))
+      await delay(15)
+      expect(capturer.diagnostics()).toMatchObject({ rendering: 0 })
+      expect(capturer.diagnostics().queued).toBeGreaterThan(0)
+      capturer.setPresence(1, { visible: [], next: { motifId: 'next-up', contentHash: 'v1', inMs: 100, width: 32, height: 16 }, playing: true })
+      await Promise.all(frames)
+      expect(capturer.diagnostics()).toMatchObject({ hostBuilds: 1, hostWarms: 0, completed: frames.length })
+    } finally { paintDelayMs = 0 }
   })
 
   it('a document that goes withdraws its presence', async () => {

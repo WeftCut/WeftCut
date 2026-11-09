@@ -258,7 +258,7 @@ export class MotifDemandSession {
     this.declarePresence(summary ? { ...planMotifPresence({
       summary, openCompositionId: this.deps.openCompositionId(),
       fpsNum: this.deps.fpsNum(), fpsDen: this.deps.fpsDen(), playheadUs: tUs,
-      lookaheadUs: motifTuning().prewarmLookaheadMs * 1000, motif: getMotif,
+      lookaheadUs: motifTuning().presenceLookaheadMs * 1000, motif: getMotif,
     }), playing } : { visible: [], next: null, playing });
   }
 

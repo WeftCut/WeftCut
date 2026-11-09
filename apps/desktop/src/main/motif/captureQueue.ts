@@ -163,6 +163,13 @@ export class CaptureQueue<L extends HostLease> {
   /// Tickets dispatched whose frame has not committed yet.
   get rendering(): number { return this.renderingCount }
 
+  /** The host keys queued tickets will render on. */
+  queuedKeys(): Set<string> {
+    const keys = new Set<string>()
+    for (const priority of PRIORITIES) for (const ticket of this.queues[priority]) keys.add(this.slots.keyOf(ticket.args))
+    return keys
+  }
+
   /** Queues a capture. `render` renders its frame on the leased host; a frame
    * the compositor skipped goes back to the head of its queue, as the same
    * ticket, up to `skippedFrameRetries` times. */

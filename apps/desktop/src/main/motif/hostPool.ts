@@ -47,6 +47,8 @@ export interface HostPoolDeps<H extends PooledHost> {
   /// the host's window; its frames in flight have drained. False: the host
   /// retired and the slot opens a new one.
   swap(host: H, key: HostKey): Promise<boolean>
+  /// A `current` capture found the host `warm` built for it.
+  warmUsed?(): void
 }
 
 export interface HostPoolLease<H extends PooledHost> extends HostLease {
@@ -76,6 +78,8 @@ interface Slot<H> {
   shownAt: number
   /// When a `current` capture last leased the slot.
   currentAt: number
+  /// Built by `warm`, and no `current` capture has used it yet.
+  warmed: boolean
 }
 
 /** The Motif content versions on screen (`visible`) and the next to enter
@@ -150,6 +154,26 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
     return this.free() || this.victim(keep, this.claimOf(priority, queuedAt)) !== null
   }
 
+  /** Builds the host `args` will capture on before its first frame, as side
+   * traffic does: in a free slot, or in place of a spare host that is not in
+   * `keep` (the keys queued captures will render on), never a warm or held
+   * one; another content version of its Motif switches. `present`:
+   * the key has a host already; `refused`: no slot could be had, or the build
+   * failed. */
+  async warm(args: CaptureArgs, keep: ReadonlySet<string> = new Set()): Promise<'built' | 'present' | 'refused'> {
+    this.sweep()
+    const key = this.keyOf(args)
+    if (this.slots.has(key)) return 'present'
+    if (!this.canOpen(keep, 'ahead')) return 'refused'
+    const slot = this.reserve(key, args, keep, this.claimOf('ahead', performance.now()))
+    slot.rendering = true
+    try {
+      const host = await this.hostFor(slot, args, false)
+      slot.warmed = slot.host === host
+      return 'built'
+    } catch { return 'refused' } finally { this.release(slot) }
+  }
+
   /** The previews' demand: the hosts it names are visible or warm. */
   setDemand(demand: HostDemand): void {
     this.demand = demand
@@ -184,7 +208,10 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
     const slot = this.slots.get(key) ?? this.reserve(key, args, keep, this.claimOf(priority, queuedAt))
     if (slot.rendering || slot.evictedBy) throw new Error('capture host is already leased')
     slot.rendering = true
-    if (priority === 'current') slot.currentAt = performance.now()
+    if (priority === 'current') {
+      slot.currentAt = performance.now()
+      if (slot.warmed) { slot.warmed = false; this.deps.warmUsed?.() }
+    }
     const leased = slot
     let released = false
     return {
@@ -257,7 +284,7 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
       this.slots.set(key, sibling)
       return sibling
     }
-    const slot: Slot<H> = { key, hostKey, host: null, rendering: false, usedAt: 0, captures: 0, evicts: null, evictedBy: null, swapTo: null, shownAt: Infinity, currentAt: -Infinity }
+    const slot: Slot<H> = { key, hostKey, host: null, rendering: false, usedAt: 0, captures: 0, evicts: null, evictedBy: null, swapTo: null, shownAt: Infinity, currentAt: -Infinity, warmed: false }
     if (!free) {
       const victim = this.victim(keep, claim)
       if (!victim) throw new Error('no capture host slot is free')
@@ -268,8 +295,9 @@ export class HostPool<H extends PooledHost> implements HostSlots<HostPoolLease<H
     return slot
   }
 
-  private async hostFor(slot: Slot<H>, args: CaptureArgs): Promise<H> {
-    slot.captures++
+  /// `step`: a render step leases the host (`captures`), not a warm build.
+  private async hostFor(slot: Slot<H>, args: CaptureArgs, step = true): Promise<H> {
+    if (step) slot.captures++
     const swapTo = slot.swapTo
     if (swapTo) {
       slot.swapTo = null

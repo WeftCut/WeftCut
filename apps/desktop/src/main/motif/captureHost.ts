@@ -20,6 +20,9 @@ export interface CaptureHostEnv {
   markerReader: Pick<MotifMarkerReader, 'read'> | null
   tuning: Pick<MotifTuning, 'framesInFlight' | 'captureFrameRate' | 'stallNudgeMs'>
   timed<T>(phase: CapturePhase, run: () => Promise<T>): Promise<T>
+  /// The first frame a host rendered for its content version committed `ms`
+  /// after its step began: setup and render, the readiness wait included.
+  firstStep?(ms: number): void
 }
 
 /** One frame's render step: the frame's time and size, and the props and
@@ -72,6 +75,10 @@ function motifFrameUrl(key: HostKey, pinned: boolean): string {
  * (`swap`). */
 export class CaptureHost implements PooledHost {
   private readyFor = false
+  /// When the first step for the version shown began, and whether one has
+  /// committed since it was shown.
+  private firstStepAt: number | null = null
+  private stepped = false
   private lastSize: { width: number; height: number }
   private retiredFlag = false
   /// Paints still to arrive for frames already rendered (ADR 0159). Settled
@@ -196,6 +203,7 @@ export class CaptureHost implements PooledHost {
    * touched the page: the caller renders on another host. The waits wake
    * exactly then, since a failing frame retires its host before it settles. */
   async prepare(width: number, height: number): Promise<void> {
+    if (!this.stepped) this.firstStepAt ??= performance.now()
     const resize = this.lastSize.width !== width || this.lastSize.height !== height
     // A resize replaces the surface the paints in flight come from.
     if (resize) await this.drain()
@@ -244,6 +252,10 @@ export class CaptureHost implements PooledHost {
         lease = this.frames.expect(step.width, step.height)
         const expr = `window.__motifRender(${JSON.stringify(step.tSec)}, ${JSON.stringify(props)}, ${JSON.stringify({ ...meta, frameId: lease.id })})`
         ev = await this.env.timed('renderMs', () => this.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }))
+        if (!this.stepped && !ev?.exceptionDetails && this.firstStepAt !== null) {
+          this.stepped = true
+          this.env.firstStep?.(performance.now() - this.firstStepAt)
+        }
       }
     } catch (e) {
       lease?.cancel()
@@ -319,6 +331,8 @@ export class CaptureHost implements PooledHost {
     this.pin?.release()
     this.pin = pin
     this.currentKey = key
+    this.stepped = false
+    this.firstStepAt = null
     return true
   }
 

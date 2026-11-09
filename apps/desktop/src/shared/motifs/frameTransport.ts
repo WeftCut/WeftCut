@@ -88,12 +88,13 @@ export interface MotifContentRef { motifId: string; contentHash: string }
 
 /** `motif:presence`: a preview document's Motifs at its playhead, sent when
  * they or the play state change. `visible`: every content version on screen;
- * `next`: the soonest to enter within the lookahead, and in how long (ms);
+ * `next`: the soonest to enter within `presenceLookaheadMs`, in how long (ms)
+ * and at what capture size, so main can build its host in time;
  * `playing`: playback is running, so the hosts it names are needed frame
  * after frame. */
 export interface MotifPresence {
   visible: MotifContentRef[]
-  next: (MotifContentRef & { inMs: number }) | null
+  next: (MotifContentRef & { inMs: number; width: number; height: number }) | null
   playing: boolean
 }
 

@@ -330,7 +330,7 @@ describe('planMotifPresence', () => {
       as(motif('later', 1_800_000, 4_000_000), 'text-fx'),
     ])] } });
     expect(ids(presence(summary, 600_000))).toEqual({ visible: ['countdown'], next: 'lower-third' });
-    expect(presence(summary, 600_000).next!.inMs).toBe(600);
+    expect(presence(summary, 600_000).next).toMatchObject({ inMs: 600, width: 1280, height: 320 });
     expect(presence(summary, 600_000).visible[0]!.contentHash).toBe(getMotif('countdown')!.manifest.content_hash ?? '');
     // Beyond the lookahead, nothing is next.
     expect(ids(presence(summary, 600_000, 500_000))).toEqual({ visible: ['countdown'], next: null });

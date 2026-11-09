@@ -36,6 +36,13 @@ export const MOTIF_TUNING_SPEC = {
    * `current` capture holds (ms): the bound on side traffic's wait while a
    * preview plays. Not measured. */
   hostAgingMs: { default: 5000, range: [0, 600_000] },
+  /** How long before a Motif enters a playing preview its capture host is
+   * built (ms), until the app has measured its own build and first-frame
+   * times. Measured 2026-11-09 in simulated editing: a build took 140–190 ms
+   * on an M1 8 GB and 75–90 ms on the bench, a seek's first frame up to
+   * 190 ms on the M1; 9 of 27 Motifs on the M1 still had no host at their
+   * first frame when lookahead started ~170 ms ahead. */
+  hostWarmLeadMs: { default: 450, range: [0, 10_000] },
   /** The memory a capture host is taken to add (MiB) until its renderer
    * process is measured: a new host opens only while the app's process tree
    * has that much room under its memory target. Measured 2026-11-09 in
@@ -96,6 +103,10 @@ export const MOTIF_TUNING_SPEC = {
   /** Lookahead also warms layers that become visible within this time (ms).
    * Not measured. */
   prewarmLookaheadMs: { default: 500, range: [0, 5000] },
+  /** How far ahead of the playhead a preview names the next Motif to enter
+   * (`motif:presence`), so main can protect and build its capture host in
+   * time (ms). At least `hostWarmLeadMs`. Not measured. */
+  presenceLookaheadMs: { default: 2000, range: [0, 10_000] },
   /** Band threads per frame: one per this many hardware threads, at most
    * `maxBandThreads`. Measured: the sweep on the 16-thread bench, where more
    * threads per frame made the preview tick late during 4K playback

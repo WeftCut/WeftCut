@@ -75,6 +75,14 @@ after a seek back.
   hosts they rotate at that pace, not per frame. The queue is woken when a
   protection ends. Under memory pressure spare hosts retire before warm ones;
   held ones stay.
+- **Warming.** While a preview plays, main builds the host of the next Motif
+  to enter (named `presenceLookaheadMs` ahead, with its capture size) a lead
+  before it enters: the median of the latest host builds plus first steps
+  (readiness, setup and render of a host's first frame), else
+  `hostWarmLeadMs`. It builds the window and its page, not a frame, and as
+  side traffic: in a free slot or in place of a spare host, never a held or
+  warm one. Diagnostics count `hostWarms` and `warmHits` (a `current` capture
+  that found the host warming built).
 - One queue orders captures by class (`current`, `ahead`, `background`, with
   background aging) and **dispatches at a free slot**: a capture leaves it only
   when a host can take its frame, so nothing in the queue holds a `current`

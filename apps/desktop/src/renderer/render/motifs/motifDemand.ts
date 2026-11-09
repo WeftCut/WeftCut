@@ -123,19 +123,21 @@ export interface PresenceInput {
   fpsNum: number;
   fpsDen: number;
   playheadUs: number;
-  /** How far past the playhead the next Motif to enter counts. */
+  /** How far past the playhead the next Motif to enter counts
+   * (`presenceLookaheadMs`). */
   lookaheadUs: number;
   motif: MotifLookup;
 }
 
 /// The Motif content versions on screen at the playhead, Groups' included,
-/// and the soonest one not on screen to enter within `lookaheadUs`, each
-/// once, for main's capture hosts (ADR 0161). A content version is its Motif
-/// and content hash: props and size do not change the host that renders it.
+/// and the soonest one not on screen to enter within `lookaheadUs` with the
+/// size it captures at, each once, for main's capture hosts (ADR 0161). A
+/// content version is its Motif and content hash: props do not change the
+/// host that renders it.
 export function planMotifPresence(input: PresenceInput): Omit<MotifPresence, 'playing'> {
   const { fpsNum, fpsDen, playheadUs: tUs } = input;
   const visible = new Map<string, MotifContentRef>();
-  const entering: { ref: MotifContentRef; atUs: number }[] = [];
+  const entering: { ref: MotifContentRef; atUs: number; width: number; height: number }[] = [];
   forEachLayer(input.summary, input.openCompositionId, ({ layer, offsetUs, clock, tStartUs, tEndUs }) => {
     if (layer.params.kind !== "Motif") return;
     if (tEndUs <= tUs || tStartUs > tUs + input.lookaheadUs) return;
@@ -147,13 +149,13 @@ export function planMotifPresence(input: PresenceInput): Omit<MotifPresence, 'pl
     if (!desc) return;
     const ref = { motifId: desc.motifId, contentHash: desc.contentHash };
     if (tStartUs <= tUs) visible.set(contentKey(ref), ref);
-    else entering.push({ ref, atUs: tStartUs });
+    else entering.push({ ref, atUs: tStartUs, width: desc.renderW, height: desc.renderH });
   });
-  let next: { ref: MotifContentRef; atUs: number } | null = null;
+  let next: (typeof entering)[number] | null = null;
   for (const e of entering) if (!visible.has(contentKey(e.ref)) && (!next || e.atUs < next.atUs)) next = e;
   return {
     visible: [...visible.values()],
-    next: next ? { ...next.ref, inMs: (next.atUs - tUs) / 1000 } : null,
+    next: next ? { ...next.ref, inMs: (next.atUs - tUs) / 1000, width: next.width, height: next.height } : null,
   };
 }
 

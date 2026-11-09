@@ -26,6 +26,7 @@ const PRIORITIES: readonly MotifFramePriority[] = ['current', 'ahead', 'backgrou
 const isPriority = (value: unknown): value is MotifFramePriority => PRIORITIES.includes(value as MotifFramePriority)
 const optional = (value: unknown, check: (value: unknown) => boolean) => value === undefined || check(value)
 const isCount = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+const isSize = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 1
 
 /** A `motif:capture` payload from a renderer, or a thrown error. */
 export function parseMotifCaptureRequest(value: unknown): MotifCaptureRequest {
@@ -77,9 +78,11 @@ export function parseMotifPresence(value: unknown): MotifPresence | null {
   if (visible.some(v => v === null)) return null
   let next: MotifPresence['next'] = null
   if (p.next !== null) {
-    const r = ref(p.next), inMs = (p.next as Record<string, unknown> | undefined)?.inMs
+    const n = (p.next ?? {}) as Record<string, unknown>
+    const r = ref(p.next), { inMs, width, height } = n
     if (!r || typeof inMs !== 'number' || !Number.isFinite(inMs) || inMs < 0) return null
-    next = { ...r, inMs }
+    if (!isSize(width) || !isSize(height)) return null
+    next = { ...r, inMs, width, height }
   }
   return { visible: visible as MotifContentRef[], next, playing: p.playing }
 }
