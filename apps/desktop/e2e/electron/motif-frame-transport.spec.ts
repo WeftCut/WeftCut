@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
 import { supportsMotifSharedTextures } from './helpers/motif-gpu'
 import { compareReadback } from '../lib/motif-downscale.mjs'
+import { MOTIF_TUNING_DEFAULTS } from '../../src/shared/motifs/tuning'
 
 interface ReaderStats {
   reads: { texture: number; utility: number };
@@ -36,8 +37,10 @@ test('@serial cached Motif frames survive concurrent reads and slot reuse', asyn
     }, { addon, directory: path.join(parent, 'Transport', 'Cache', 'raster', hash), colors })
     await waitForHook(page, 'readMotifFrame')
     await waitForHook(page, 'motifReaderStats')
-    const { pixels, before, after } = await page.evaluate(async hash => {
+    const { pixels, before, after, readsInFlight } = await page.evaluate(async ({ hash, defaultReadsInFlight }) => {
       const hook = (window as any).__weftcutTest
+      // The reader's own resolution (renderer/render/motifs/tuning.ts).
+      const readsInFlight: number = (window as any).api?.app?.motifTuning?.readsInFlight ?? defaultReadsInFlight
       const stats = () => hook.motifReaderStats()
       const before = stats()
       const read = async (frame: number): Promise<ImageBitmap> => {
@@ -58,8 +61,8 @@ test('@serial cached Motif frames survive concurrent reads and slot reuse', asyn
         frame.close()
         return [...ctx.getImageData(0, 0, 1, 1).data]
       })
-      return { pixels, before, after: stats() }
-    }, hash) as { pixels: number[][]; before: ReaderStats; after: ReaderStats }
+      return { pixels, before, after: stats(), readsInFlight }
+    }, { hash, defaultReadsInFlight: MOTIF_TUNING_DEFAULTS.readsInFlight }) as { pixels: number[][]; before: ReaderStats; after: ReaderStats; readsInFlight: number }
     // The reader conformance rule for the lane that answered
     // (e2e/lib/motif-downscale.mjs): a canvas read-back premultiplies once.
     const rule = sharedTextures ? 'premultiplied' : 'straight'
@@ -68,12 +71,14 @@ test('@serial cached Motif frames survive concurrent reads and slot reuse', asyn
       expect(result.mismatches, `frame ${i % 6} read back ${pixels[i]}, expected ${colors[i % 6]} (${rule})`).toBe(0)
     }
     // Shared textures take the texture lane; everything else the utility lane.
-    // Windows without shared textures asks the texture lane first and falls
-    // back on every read; other platforms never ask it.
+    // Windows without shared textures asks the texture lane, which main
+    // answers `unavailable` with reason `lane`: only the reads admitted before
+    // that first answer asked it and fall back, the rest skip it
+    // (docs/motifs.md, Windows texture lane). Other platforms never ask it.
     const delta = (pick: (stats: ReaderStats) => number) => pick(after) - pick(before)
     expect({ texture: delta(s => s.reads.texture), utility: delta(s => s.reads.utility) })
       .toEqual(sharedTextures ? { texture: 36, utility: 0 } : { texture: 0, utility: 36 })
-    expect(delta(s => s.fallbacks)).toBe(!sharedTextures && process.platform === 'win32' ? 36 : 0)
+    expect(delta(s => s.fallbacks)).toBe(!sharedTextures && process.platform === 'win32' ? readsInFlight : 0)
     expect(delta(s => s.misses)).toBe(0)
     expect(delta(s => s.transportFailures)).toBe(0)
   } finally { await app.close() }
