@@ -31,6 +31,7 @@ mod events;
 mod gpu_hardware;
 #[cfg(target_os = "linux")]
 mod linux_gpu_memory;
+mod motif_alpha;
 #[cfg(windows)]
 mod motif_bake;
 mod motif_error;

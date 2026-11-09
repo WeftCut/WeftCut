@@ -1,11 +1,14 @@
 //! Disposable straight-alpha RGBA8 frame cache (ADR 0078). Each frame is
 //! independent: seeks never decode preceding frames. A read checks the frame
-//! through zstd's content checksum and may downscale it (ADR 0154).
-use crate::motif_error::{coded, MotifCode};
+//! through zstd's content checksum and may downscale it (ADR 0154). Read
+//! through `MotifFrameFileReader`.
+use crate::motif_alpha::straighten;
+use crate::motif_error::{coded, to_napi, MotifCode};
 use crate::motif_limits::{MAX_DIMENSION, MAX_FRAME_BYTES};
-use crate::motif_pixels::straighten;
-use crate::motif_runtime::{band_threads, per_thread, SCRATCH};
+use crate::motif_runtime::{band_threads, blocking, per_thread, ScratchHold, SCRATCH};
+use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
+use std::sync::Arc;
 
 /// Moves with any layout or codec change, together with the cache key namespace
 /// (`motifFrameCacheKey`), so older files are collected instead of read.
@@ -334,6 +337,59 @@ pub(crate) fn read_scaled(
         Ok((w, h, rgba))
     })?;
     Ok((w, h, rgba, timing))
+}
+
+#[napi(object)]
+#[cfg_attr(test, allow(dead_code))] // Host-only wire type; exercised by the Electron conformance harness.
+pub struct MotifScaledPixels {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Buffer,
+    pub timing: MotifReadTiming,
+}
+
+/// Reads stored frames, holding the process's band buffers until `close`.
+#[napi]
+pub struct MotifFrameFileReader {
+    hold: Option<Arc<ScratchHold>>,
+}
+
+#[napi]
+impl MotifFrameFileReader {
+    #[napi(constructor)]
+    pub fn new() -> Self {
+        Self {
+            hold: Some(Arc::new(ScratchHold::new())),
+        }
+    }
+
+    /// Reads, verifies and downscales the frame by `div` on the blocking pool;
+    /// the caller authorizes the path. A `[motif:miss]` error is a miss.
+    #[napi]
+    pub async fn read(&self, path: String, div: u32) -> napi::Result<MotifScaledPixels> {
+        let hold = self.hold.clone().ok_or_else(|| {
+            to_napi(coded(
+                MotifCode::Closed,
+                anyhow::anyhow!("Motif frame file reader closed"),
+            ))
+        })?;
+        blocking(move || {
+            let _hold = hold;
+            let (width, height, rgba, timing) = read_scaled(&path, div)?;
+            Ok(MotifScaledPixels {
+                width,
+                height,
+                rgba: rgba.into(),
+                timing,
+            })
+        })
+        .await
+    }
+
+    #[napi]
+    pub fn close(&mut self) {
+        self.hold = None;
+    }
 }
 
 /// Reads, verifies and downscales one frame into `out`, rows `pitch` bytes
@@ -784,5 +840,30 @@ mod tests {
             "{refused:#}"
         );
         assert!(read_into(&path, 2, (16, 16), &mut out, 16 * 4, &|_, _| {}).is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_reader_holds_the_scratch_until_it_closes_and_then_refuses_reads() {
+        let holders = || SCRATCH.holders();
+        let before = holders();
+        let mut reader = MotifFrameFileReader::new();
+        assert_eq!(holders(), before + 1);
+        let dir = tempfile::tempdir().unwrap();
+        let absent = dir
+            .path()
+            .join("absent.wfrm")
+            .to_string_lossy()
+            .into_owned();
+        let miss = reader.read(absent.clone(), 1).await.err().unwrap();
+        assert!(miss.reason.starts_with("[motif:miss] "), "{}", miss.reason);
+        assert_eq!(holders(), before + 1, "a finished read lets go of its hold");
+        reader.close();
+        assert_eq!(holders(), before);
+        let closed = reader.read(absent, 1).await.err().unwrap();
+        assert!(
+            closed.reason.starts_with("[motif:closed] "),
+            "{}",
+            closed.reason
+        );
     }
 }

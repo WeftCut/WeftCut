@@ -219,7 +219,7 @@ impl Pool {
             (self.width, self.height),
             out,
             pitch,
-            &|pixels, rows| crate::motif_pixels::premultiply_rows(pixels, rows, row, pitch),
+            &|pixels, rows| crate::motif_alpha::premultiply_rows(pixels, rows, row, pitch),
         );
         self.context.Unmap(staging, 0);
         let read = read?;

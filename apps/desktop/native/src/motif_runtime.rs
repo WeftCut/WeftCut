@@ -1,13 +1,10 @@
 //! The Motif core's per-process state on every OS: the tuning main hands it
 //! (`motif_configure`), the band threads, the band buffers readers share, the
-//! blocking-pool hop of its async exports, and the frame file reader
-//! (`MotifFrameFileReader`). The stored frame format lives in `motif_frame.rs`.
-use crate::motif_error::{coded, to_napi, MotifCode};
-use crate::motif_frame::{read_scaled, MotifReadTiming};
-use napi::bindgen_prelude::Buffer;
+//! blocking-pool hop of its async exports. It depends on no other Motif
+//! module but the error codes.
+use crate::motif_error::to_napi;
 use napi_derive::napi;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 
 /// Threads one frame's bands share. Main resolves the count from the machine
 /// (`bandThreadDivisor`, `maxBandThreads` in `src/shared/motifs/tuning.ts`)
@@ -151,6 +148,11 @@ impl Scratch {
         self.kept().clear();
     }
 
+    #[cfg(test)]
+    pub(crate) fn holders(&self) -> usize {
+        self.holders.load(Ordering::SeqCst)
+    }
+
     fn hold(&'static self) -> ScratchHold {
         self.holders.fetch_add(1, Ordering::SeqCst);
         ScratchHold(self)
@@ -189,62 +191,10 @@ pub(crate) async fn blocking<T: Send + 'static>(
         .map_err(to_napi)
 }
 
-#[napi(object)]
-#[cfg_attr(test, allow(dead_code))] // Host-only wire type; exercised by the Electron conformance harness.
-pub struct MotifScaledPixels {
-    pub width: u32,
-    pub height: u32,
-    pub rgba: Buffer,
-    pub timing: MotifReadTiming,
-}
-
-/// Reads stored frames, holding the process's band buffers until `close`.
-#[napi]
-pub struct MotifFrameFileReader {
-    hold: Option<Arc<ScratchHold>>,
-}
-
-#[napi]
-impl MotifFrameFileReader {
-    #[napi(constructor)]
-    pub fn new() -> Self {
-        Self {
-            hold: Some(Arc::new(ScratchHold::new())),
-        }
-    }
-
-    /// Reads, verifies and downscales the frame by `div` on the blocking pool;
-    /// the caller authorizes the path. A `[motif:miss]` error is a miss.
-    #[napi]
-    pub async fn read(&self, path: String, div: u32) -> napi::Result<MotifScaledPixels> {
-        let hold = self.hold.clone().ok_or_else(|| {
-            to_napi(coded(
-                MotifCode::Closed,
-                anyhow::anyhow!("Motif frame file reader closed"),
-            ))
-        })?;
-        blocking(move || {
-            let _hold = hold;
-            let (width, height, rgba, timing) = read_scaled(&path, div)?;
-            Ok(MotifScaledPixels {
-                width,
-                height,
-                rgba: rgba.into(),
-                timing,
-            })
-        })
-        .await
-    }
-
-    #[napi]
-    pub fn close(&mut self) {
-        self.hold = None;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::motif_error::{coded, MotifCode};
 
     #[test]
     fn shared_threads_keep_the_items_order_and_report_the_first_failure() {
@@ -355,31 +305,6 @@ mod tests {
             !panicked.reason.starts_with("[motif:"),
             "{}",
             panicked.reason
-        );
-    }
-
-    #[tokio::test]
-    async fn a_reader_holds_the_scratch_until_it_closes_and_then_refuses_reads() {
-        let holders = || SCRATCH.holders.load(Ordering::SeqCst);
-        let before = holders();
-        let mut reader = MotifFrameFileReader::new();
-        assert_eq!(holders(), before + 1);
-        let dir = tempfile::tempdir().unwrap();
-        let absent = dir
-            .path()
-            .join("absent.wfrm")
-            .to_string_lossy()
-            .into_owned();
-        let miss = reader.read(absent.clone(), 1).await.err().unwrap();
-        assert!(miss.reason.starts_with("[motif:miss] "), "{}", miss.reason);
-        assert_eq!(holders(), before + 1, "a finished read lets go of its hold");
-        reader.close();
-        assert_eq!(holders(), before);
-        let closed = reader.read(absent, 1).await.err().unwrap();
-        assert!(
-            closed.reason.starts_with("[motif:closed] "),
-            "{}",
-            closed.reason
         );
     }
 }
