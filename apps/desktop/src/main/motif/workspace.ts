@@ -3,8 +3,9 @@ import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { type Manifest, parseManifestIsland, composeMotifHtml, validateManifest, assignUniqueId, sanitizeId, BUILTIN_IDS } from '../../shared/motifs/catalog';
 import type { MotifRebindEntry } from '../state/model';
-import { type BuiltinMotif, getMotifSource, motifSourceFiles, listMotifsInner, buildRebindUpdates, type MotifLayerRef } from './authoring';
-import { type MotifFile, motifFileSegments, readMotifDirectory } from './packageFiles';
+import { type BuiltinMotif, getMotifSource, motifRevision, motifSourceFiles, listMotifsInner, buildRebindUpdates, type MotifLayerRef } from './authoring';
+import { type MotifFile, motifFileSegments, readMotifDirectory, sameStamps, stampMotifDirectory } from './packageFiles';
+import type { PackageOutcome } from './packageRevisions';
 import { motifContentHash } from './contentHash';
 import { readMotifZip } from './archive';
 import { DRAFTS_DIR, PROPOSALS_DIR, isProposalPreviewId, proposalPreviewId, type UserMotifStore } from './store';
@@ -151,12 +152,6 @@ const sameTarget = (a: ProposalTarget, b: ProposalTarget) => JSON.stringify(a) =
 function droppedProps(props: Record<string, unknown>, manifest: Manifest): string[] {
     return Object.keys(props ?? {}).filter(k => !(k in manifest.props_schema)).sort();
 }
-export function packageRevision(files: readonly MotifFile[]): string {
-    const hash = createHash('sha256');
-    for (const file of [...files].sort((a, b) => a.path.localeCompare(b.path)))
-        hash.update(JSON.stringify([file.path, file.bytes.length])).update(file.bytes);
-    return hash.digest('hex');
-}
 function safeId(id: string): string {
     // A proposal's preview id (`<draft>--proposal`) serves the card's preview
     // player only; no tool reads, edits or deletes through it.
@@ -255,37 +250,64 @@ export class MotifWorkspace {
     private freshDraftId(name: string) { return assignUniqueId(`${name} draft`, [...this.allIds(), ...this.pendingNewIds('').keys()]); }
     private commit(id: string, files: readonly MotifFile[]) {
         const pkg = normalize(files, id);
-        const old = this.store.getDraft(id);
-        if (!old || motifContentHash(old.manifest, old.html, this.store.packageFiles(id)) !== pkg.revision)
-            replacePackage(this.draftDir(id), pkg.files);
+        this.put(id, pkg);
         return pkg;
+    }
+    private put(id: string, pkg: ReturnType<typeof normalize>) {
+        if (this.store.draftRevision(id) !== pkg.revision)
+            replacePackage(this.draftDir(id), pkg.files);
+    }
+    /** What a linked directory's files come to, committed to the draft's
+     *  app-owned package. The directory is read only when its files changed
+     *  since that was recorded, or the package no longer holds it (ADR 0164). */
+    private mirror(id: string, directory: string, mirrored: string | null): PackageOutcome {
+        const revisions = this.store.revisions;
+        try {
+            const known = revisions.lookup(directory, revisions.stamp(directory));
+            if (known && ('diagnostic' in known || known.revision === mirrored))
+                return known;
+            const { files, stamp } = revisions.read(directory);
+            if (!stamp)
+                throw new Error('Working directory changed while reading; retry after saving');
+            let pkg: ReturnType<typeof normalize>;
+            try {
+                pkg = normalize(files, id);
+            }
+            catch (error) {
+                // Only what the files themselves decide is recorded: a failed
+                // read or write of the package is tried again next time.
+                const refused = { diagnostic: String(error) };
+                revisions.record(directory, stamp, refused);
+                return refused;
+            }
+            this.put(id, pkg);
+            const outcome = { revision: pkg.revision };
+            revisions.record(directory, stamp, outcome);
+            return outcome;
+        }
+        catch (error) {
+            return { diagnostic: String(error) };
+        }
     }
     sync(id: string): boolean {
         const state = this.state(id);
         if (!state.directory)
             return false;
-        const before = this.store.getDraft(id);
-        const old = before ? motifContentHash(before.manifest, before.html, this.store.packageFiles(id)) : null;
-        try {
-            const files = readMotifDirectory(state.directory);
-            if (packageRevision(files) !== packageRevision(readMotifDirectory(state.directory)))
-                throw new Error('Working directory changed while reading; retry after saving');
-            const pkg = this.commit(id, files);
+        const before = this.store.draftRevision(id);
+        const outcome = this.mirror(id, state.directory, before);
+        if ('revision' in outcome) {
             if (state.diagnostic) {
                 delete state.diagnostic;
                 this.save(id, state);
             }
-            return old !== pkg.revision;
+            return before !== outcome.revision;
         }
-        catch (error) {
-            const message = String(error);
-            const changed = state.diagnostic !== message;
-            if (changed) {
-                state.diagnostic = message;
-                this.save(id, state);
-            }
-            return changed;
+        const changed = state.diagnostic !== outcome.diagnostic;
+        if (changed) {
+            state.diagnostic = outcome.diagnostic;
+            this.save(id, state);
         }
+        return changed;
     }
     syncLinked(): boolean { let changed = false; for (const id of this.store.listDraftIds())
         changed = this.sync(id) || changed; return changed; }
@@ -364,11 +386,12 @@ export class MotifWorkspace {
         safeId(id);
         this.sync(id);
         const source = getMotifSource(this.store, this.builtins, id);
-        const files = motifSourceFiles(this.store, this.builtins, id);
+        const stored = this.builtins.some(b => b.id === id) ? null : this.store.packageSnapshot(id);
+        const files = stored?.files ?? motifSourceFiles(this.store, this.builtins, id);
         if (!files.some(f => f.path === 'index.html'))
             files.push({ path: 'index.html', bytes: Buffer.from(source.html) });
         const state = this.state(id);
-        return { ...source, id, revision: motifContentHash(source.manifest, source.html, files),
+        return { ...source, id, revision: stored?.revision ?? motifRevision(this.store, this.builtins, id),
             status: BUILTIN_IDS.includes(id) ? 'builtin' : this.store.getDraft(id) ? 'draft' : 'installed',
             ...this.stateFields(state),
             files: files.map(f => ({ path: f.path, size: f.bytes.length, sha256: createHash('sha256').update(f.bytes).digest('hex') })) };
@@ -395,7 +418,8 @@ export class MotifWorkspace {
             throw revisionConflict(info.revision, 'read the draft again and merge');
         if (!Array.isArray(changes) || !changes.length || changes.length > 10000)
             throw new Error('Provide 1–10000 file changes');
-        const original = state.directory ? readMotifDirectory(state.directory) : this.store.packageFiles(id);
+        const linked = state.directory ? this.store.revisions.read(state.directory) : null;
+        const original = linked?.files ?? this.store.packageFiles(id);
         const files = new Map(original.map(f => [f.path, f.bytes])), touched = new Set<string>();
         let inline = 0;
         for (const change of changes) {
@@ -434,7 +458,7 @@ export class MotifWorkspace {
         if (state.directory) {
             // The renderer observes only the committed mirror. Roll back source writes
             // on filesystem failure; never replace/move the author's directory itself.
-            if (packageRevision(original) !== packageRevision(readMotifDirectory(state.directory)))
+            if (!linked?.stamp || !sameStamps(linked.stamp.files, stampMotifDirectory(state.directory)))
                 throw new Error('Working directory changed during update');
             const applied: string[] = [];
             try {
@@ -618,6 +642,7 @@ export class MotifWorkspace {
         renameSync(this.proposalDir(id), this.proposalDir(next));
         this.save(next, state);
         rmSync(this.draftDir(id), { recursive: true, force: true });
+        this.store.revisions.forget(this.draftDir(id));
         rmSync(this.stateFile(id), { force: true });
         return next;
     }
@@ -693,8 +718,12 @@ export class MotifWorkspace {
             throw new Error('Cannot delete a built-in Motif');
         if (!this.store.getMotif(id) && !this.store.getDraft(id))
             throw new Error('Unknown Motif: ' + id);
+        const { directory } = this.state(id);
         this.store.deleteUserMotif(id);
         rmSync(this.proposalDir(id), { recursive: true, force: true });
         rmSync(this.stateFile(id), { force: true });
+        this.store.revisions.forget(this.proposalDir(id));
+        if (directory)
+            this.store.revisions.forget(directory);
     }
 }

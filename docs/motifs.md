@@ -640,6 +640,14 @@ bumps the markers in one undo step. There is no global reverse index of which
 projects use a Motif. A project referencing a deleted Motif shows an error
 placeholder.
 
+A package's revision hashes every byte of it. The store keeps each one against
+the stamps of the package's files (size, times, file id), in
+`<dataRoot>/cache/motif-revisions.json`, and reads a package again only when a
+stamp differs or was taken within 2 s of the file's last change. The catalog
+listing, covers and capture pins all ask the store, so an unchanged package
+costs a stat per file; an edit in the store, by the app or by hand, costs one
+read ([ADR 0164](adr/0164-a-motif-package-revision-is-remembered-by-its-file-stamps.md)).
+
 **Import Motif** takes a `.zip`; **Export Motif ZIP** writes `<motif-id>/` with
 every companion file (private draft metadata omitted). Library cards offer
 Export, and Delete in the context menu (not for built-ins). Limits and

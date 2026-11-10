@@ -24,8 +24,7 @@ import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, Menu, nativeIm
 import { createHash } from 'node:crypto'
 import { MotifCovers } from './motif/covers.js'
 import { BITMAP_CANVAS_RUNTIME_SOURCE } from './motif/bitmapCanvasRuntime.js'
-import { builtinMotifs, getMotifSource, motifSourceFiles } from './motif/authoring.js'
-import { motifContentHash } from './motif/contentHash.js'
+import { builtinMotifs, getMotifSource, motifRevision } from './motif/authoring.js'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
 import electronUpdater from 'electron-updater'
 import { createUpdates } from './updates.js'
@@ -42,6 +41,7 @@ import { setMotifMediaSource } from './motif/mediaProps.js'
 import { rasterizeSvg } from './svgRaster.js'
 import { MotifCaptureService, parseMotifCaptureControl, parseMotifCaptureRequest, parseMotifPresence } from './motif/captureService.js'
 import { UserMotifStore } from './motif/store.js'
+import { PackageRevisions } from './motif/packageRevisions.js'
 import { MotifFrameStore } from './motif/frameStore.js'
 import { createMotifConsumers } from './motif/consumers.js'
 import { MotifReaderService } from './motif/readerService.js'
@@ -808,7 +808,8 @@ app.whenReady().then(async () => {
   // Construct the motif store + resolve the built-in dir once at boot.
   // Both are passed to the protocol handler and the capturer so neither
   // needs the backend.
-  const motifStore = new UserMotifStore(dataRoot.motifsDir)
+  const motifStore = new UserMotifStore(dataRoot.motifsDir,
+    new PackageRevisions(path.join(dataRoot.cacheDir, 'motif-revisions.json'), app.getVersion()))
   const motifBuiltinDir = builtinAssetDir()
   // `media` props resolve against the open project's pool; video frames are kept here.
   setMotifMediaSource(() => (tsHost?.actor.snapshot().media_pool ?? null) as never, path.join(dataRoot.cacheDir, 'motif-media'))
@@ -1561,8 +1562,7 @@ app.whenReady().then(async () => {
   let coverRuntimeVersion = ''
   const motifCovers = new MotifCovers(path.join(dataRoot.cacheDir, 'motif-covers'), {
     resolve: id => {
-      const source = getMotifSource(motifStore, motifBuiltins, id)
-      return { manifest: source.manifest, contentHash: motifContentHash(source.manifest, source.html, motifSourceFiles(motifStore, motifBuiltins, id)) }
+      return { manifest: getMotifSource(motifStore, motifBuiltins, id).manifest, contentHash: motifRevision(motifStore, motifBuiltins, id) }
     },
     renderVersion: () => `${process.versions.chrome}:${coverRuntimeVersion}`,
     capture: async args => Buffer.from(await capturer.capturePng(args, { priority: 'background' }), 'base64'),

@@ -4,8 +4,9 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { parseManifestIsland, type Manifest } from "../../shared/motifs/catalog";
-import { motifFileSegments, readMotifFile, readMotifDirectory, type MotifFile } from './packageFiles';
-import { motifContentHash } from './contentHash';
+import { hasMotifFile, motifFileSegments, readMotifFile, readMotifDirectory, sameStamps, stampMotifDirectory, type MotifFile } from './packageFiles';
+import { packageContentHash } from './contentHash';
+import { PackageRevisions } from './packageRevisions';
 import { MotifError } from '../../shared/motifs/errors';
 
 export const DRAFTS_DIR = "drafts";
@@ -28,17 +29,22 @@ function safeSeg(seg: string): string {
 
 type MotifSource = { manifest: Manifest; html: string };
 
-/** On-disk store of user Motifs rooted at `<userData>/motifs/`. */
+/** One package as the catalog lists it: its page, its revision and the paths
+ *  of its files. */
+export interface PackageListing { html: string; revision: string; paths: string[] }
+
 /** A capture host's hold on a pinned revision snapshot; `release` is idempotent. */
 export interface PinnedPackage { release(): void }
 
 /** Snapshots no host holds that stay for reuse; held ones never leave. */
 const UNHELD_SNAPSHOTS = 2;
 
+/** On-disk store of user Motifs rooted at `<userData>/motifs/`. */
 export class UserMotifStore {
   /** Revision snapshots by `id/revision`, oldest first, with their holders. */
   private pinned = new Map<string, { files: Map<string, Buffer>; holders: number }>();
-  constructor(private readonly _root: string) {}
+  /** `revisions` also keeps the linked directories' records (`workspace.ts`). */
+  constructor(private readonly _root: string, readonly revisions = new PackageRevisions()) {}
 
   root(): string { return this._root; }
   assertRenderable(id:string):void {
@@ -56,12 +62,60 @@ export class UserMotifStore {
     if (id === DRAFTS_DIR || motifFileSegments(id)?.length !== 1) return null;
     if (isProposalPreviewId(id)) {
       const rel = `${PROPOSALS_DIR}/${id.slice(0, -PROPOSAL_SUFFIX.length)}`;
-      return readMotifFile(this._root, `${rel}/index.html`) ? rel : null;
+      return hasMotifFile(this._root, `${rel}/index.html`) ? rel : null;
     }
     for (const rel of [id, `${DRAFTS_DIR}/${id}`]) {
-      if (readMotifFile(this._root, `${rel}/index.html`)) return rel;
+      if (hasMotifFile(this._root, `${rel}/index.html`)) return rel;
     }
     return null;
+  }
+
+  /** The selected package's files from one read, with their revision; null
+   *  when `id` has no package. */
+  packageSnapshot(id: string): { files: MotifFile[]; revision: string } | null {
+    const rel = this.packageRel(id);
+    return rel ? this.snapshot(path.join(this._root, rel)) : null;
+  }
+
+  /** The bytes are hashed only when their stamp has no record; a read that a
+   *  write crossed is hashed and not recorded. */
+  private snapshot(dir: string): { files: MotifFile[]; revision: string } {
+    const { files, stamp } = this.revisions.read(dir);
+    const known = stamp && this.revisions.lookup(dir, stamp);
+    if (known && 'revision' in known) return { files, revision: known.revision };
+    const revision = packageContentHash(files);
+    if (stamp) this.revisions.record(dir, stamp, { revision });
+    return { files, revision };
+  }
+
+  private listing(dir: string): PackageListing {
+    const stamp = this.revisions.stamp(dir);
+    const known = this.revisions.lookup(dir, stamp);
+    if (known && 'revision' in known) {
+      const html = readMotifFile(dir, 'index.html');
+      // The page is the stamped one only if nothing moved while it was read.
+      if (html && sameStamps(stamp.files, stampMotifDirectory(dir)))
+        return { html: html.toString('utf8'), revision: known.revision, paths: stamp.files.map(f => f.path) };
+    }
+    const { files, revision } = this.snapshot(dir);
+    return { html: files.find(f => f.path === 'index.html')!.bytes.toString('utf8'), revision, paths: files.map(f => f.path) };
+  }
+
+  /** The selected package of `id`, read in full only when its files changed
+   *  since its revision was recorded. Null when there is none; throws when
+   *  its directory or its manifest island is not a package's. */
+  describe(id: string): PackageListing | null {
+    const rel = this.packageRel(id);
+    return rel ? this.listing(path.join(this._root, rel)) : null;
+  }
+
+  /** The revision of the draft package itself, whatever is published under
+   *  its id; null when it has none or it does not read as a package. */
+  draftRevision(draftId: string): string | null {
+    try {
+      const dir = path.join(this.draftsRoot(), safeSeg(draftId));
+      return hasMotifFile(dir, 'index.html') ? this.listing(dir).revision : null;
+    } catch { return null; }
   }
 
   readFile(id: string, rel: string): Buffer | null {
@@ -82,11 +136,10 @@ export class UserMotifStore {
     let snapshot = this.pinned.get(key);
     if (snapshot) this.pinned.delete(key);
     else {
-      const source = this.getMotif(id);
-      if (!source) return null;
-      const files = this.packageFiles(id);
-      if (motifContentHash(source.manifest, source.html, files) !== revision) throw new Error('Motif revision changed before capture; refresh the catalog');
-      snapshot = { files: new Map(files.map(f => [f.path, f.bytes])), holders: 0 };
+      if (!this.getMotif(id)) return null;
+      const read = this.snapshot(path.join(this._root, this.packageRel(id)!));
+      if (read.revision !== revision) throw new Error('Motif revision changed before capture; refresh the catalog');
+      snapshot = { files: new Map(read.files.map(f => [f.path, f.bytes])), holders: 0 };
     }
     snapshot.holders++;
     // Most recently pinned last.
@@ -209,6 +262,8 @@ export class UserMotifStore {
     const from = path.join(this.draftsRoot(), safeSeg(draftId));
     const to = path.join(this._root, safeSeg(finalId));
     if (existsSync(to)) rmSync(to, { recursive: true, force: true });
+    this.revisions.forget(from);
+    this.revisions.forget(to);
     try {
       renameSync(from, to);
     } catch {
@@ -230,6 +285,8 @@ export class UserMotifStore {
     if (existsSync(published)) rmSync(published, { recursive: true, force: true });
     const draft = path.join(this.draftsRoot(), safeId);
     if (existsSync(draft)) rmSync(draft, { recursive: true, force: true });
+    this.revisions.forget(published);
+    this.revisions.forget(draft);
   }
 
   publishedIds(): string[] {

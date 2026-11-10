@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { coreManifestForHash, type Manifest } from "../../shared/motifs/catalog";
+import { coreManifestForHash, parseManifestIsland, type Manifest } from "../../shared/motifs/catalog";
 import type { MotifFile } from './packageFiles';
 
 /**
@@ -23,4 +23,11 @@ export function motifContentHash(manifest: Manifest, html: string, files: readon
     hasher.update(file.bytes);
   }
   return hasher.digest("hex");
+}
+
+/** The revision of a package as it is stored: its page's island is its manifest. */
+export function packageContentHash(files: readonly MotifFile[]): string {
+  const html = files.find(f => f.path === 'index.html')?.bytes.toString('utf8');
+  if (html === undefined) throw new Error('A Motif folder must contain index.html');
+  return motifContentHash(parseManifestIsland(html), html, files);
 }

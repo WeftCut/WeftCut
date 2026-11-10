@@ -51,28 +51,48 @@ export function getMotifSource(store: UserMotifStore, builtins: BuiltinMotif[], 
  *  so built-in/installed/draft emit the same shape. `html` MUST be the
  *  composed/stored FULL html (island included) — content_hash is computed over it.
  *  `hasParamsUi` is presence of the optional `params.html` companion; it rides
- *  the payload as `has_params_ui`. All companion bytes enter the hash because
- *  render scripts may read any package resource (including shared UI assets). */
+ *  the payload as `has_params_ui`. `contentHash` is the package's revision:
+ *  every companion's bytes enter it, because render scripts may read any
+ *  package resource (including shared UI assets). */
 export function motifToPayload(
   manifest: Manifest,
   html: string,
   status: string,
+  contentHash: string,
   hasParamsUi = false,
-  files: readonly MotifFile[] = [],
 ): Record<string, unknown> {
-  const content_hash = motifContentHash(manifest, html, files)
-  return { ...manifest, html, status, content_hash, has_params_ui: hasParamsUi }
+  return { ...manifest, html, status, content_hash: contentHash, has_params_ui: hasParamsUi }
 }
 
-/** One snapshot supplies HTML, resources and UI presence. A partial external
+/** Built-in assets are packaged read-only, so a loaded built-in's revision
+ *  holds for the process. */
+const builtinRevisions = new WeakMap<BuiltinMotif, string>()
+function builtinRevision(b: BuiltinMotif): string {
+  let revision = builtinRevisions.get(b)
+  if (revision === undefined) {
+    revision = motifContentHash(b.manifest, b.html, b.files ?? [])
+    builtinRevisions.set(b, revision)
+  }
+  return revision
+}
+
+/** The revision of any built-in or user Motif's package; a user package's
+ *  bytes are read only when they changed since it was recorded. */
+export function motifRevision(store: UserMotifStore, builtins: BuiltinMotif[], id: string): string {
+  const builtin = builtins.find(b => b.id === id)
+  if (builtin) return builtinRevision(builtin)
+  const pkg = store.describe(id)
+  if (!pkg) throw new Error(`unknown motif id '${id}'`)
+  return pkg.revision
+}
+
+/** One listing supplies HTML, revision and UI presence. A partial external
  * save or invalid package must not make every other Motif disappear. */
 function userMotifPayload(store: UserMotifStore, id: string, status: string): Record<string, unknown> | null {
   try {
-    const files = store.packageFiles(id)
-    const html = files.find(f => f.path === 'index.html')?.bytes.toString('utf8')
-    if (html === undefined) return null
-    return motifToPayload(parseManifestIsland(html), html, status,
-      files.some(f => f.path === PARAMS_PAGE_FILE), files)
+    const pkg = store.describe(id)
+    if (!pkg) return null
+    return motifToPayload(parseManifestIsland(pkg.html), pkg.html, status, pkg.revision, pkg.paths.includes(PARAMS_PAGE_FILE))
   } catch { return null }
 }
 
@@ -84,7 +104,7 @@ function userMotifPayload(store: UserMotifStore, id: string, status: string): Re
  *  it takes for a hand-authored `params.html` to appear or vanish. */
 export function listMotifsInner(store: UserMotifStore, builtins: BuiltinMotif[]): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = []
-  for (const b of builtins) out.push(motifToPayload(b.manifest, b.html, 'builtin', b.hasParamsUi, b.files))
+  for (const b of builtins) out.push(motifToPayload(b.manifest, b.html, 'builtin', builtinRevision(b), b.hasParamsUi))
   for (const manifest of store.listManifests()) {
     const entry = userMotifPayload(store, manifest.id, 'installed')
     if (entry) out.push(entry)

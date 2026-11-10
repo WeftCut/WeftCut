@@ -42,22 +42,19 @@ describe('getMotifSource', () => {
 })
 
 describe('motifToPayload', () => {
-  it('emits manifest fields + html + status + content_hash', () => {
+  it('emits manifest fields + html + status, with the revision as content_hash', () => {
     const man = m('Foo', 'foo')
     const html = doc(man, 'FOO')
-    const p = motifToPayload(man, html, 'installed')
+    const p = motifToPayload(man, html, 'installed', 'a-revision')
     expect(p.id).toBe('foo'); expect(p.name).toBe('Foo'); expect(p.status).toBe('installed')
     expect(p.html).toBe(html)
-    expect(p.content_hash).toBe(motifContentHash(man, html)) // FULL html (island included)
+    expect(p.content_hash).toBe('a-revision')
   })
   it('stamps has_params_ui, defaulting to false', () => {
     const man = m('Foo', 'foo')
     const html = doc(man, 'FOO')
-    expect(motifToPayload(man, html, 'installed').has_params_ui).toBe(false)
-    expect(motifToPayload(man, html, 'installed', true).has_params_ui).toBe(true)
-    // Presence is payload decoration only — it never enters the content hash.
-    expect(motifToPayload(man, html, 'installed', true).content_hash)
-      .toBe(motifToPayload(man, html, 'installed', false).content_hash)
+    expect(motifToPayload(man, html, 'installed', 'a-revision').has_params_ui).toBe(false)
+    expect(motifToPayload(man, html, 'installed', 'a-revision', true).has_params_ui).toBe(true)
   })
 })
 
@@ -65,12 +62,22 @@ describe('listMotifsInner', () => {
   it('isolates an unreadable package without dropping healthy entries', () => {
     store.writeDraft('broken', doc(m('Broken', 'broken')))
     store.writeDraft('healthy', doc(m('Healthy', 'healthy')))
-    const read = store.packageFiles.bind(store)
-    vi.spyOn(store, 'packageFiles').mockImplementation(id => {
+    const describePackage = store.describe.bind(store)
+    vi.spyOn(store, 'describe').mockImplementation(id => {
       if (id === 'broken') throw new Error('resource vanished during external save')
-      return read(id)
+      return describePackage(id)
     })
     expect(listMotifsInner(store, BUILTINS).map(e => e.id)).toEqual(['countdown', 'healthy'])
+  })
+  it("an entry's content_hash covers its page, island included, and every companion's bytes", () => {
+    const man = m('Foo', 'foo'), html = doc(man, 'FOO'), mesh = Buffer.from([0, 255, 17])
+    store.writeDraft('foo', html); store.installDraft('foo', 'foo')
+    mkdirSync(path.join(root, 'foo', 'assets'))
+    writeFileSync(path.join(root, 'foo', 'assets', 'mesh.bin'), mesh)
+    const builtin = BUILTINS[0]!
+    const list = listMotifsInner(store, BUILTINS)
+    expect(list.find(e => e.id === 'foo')!.content_hash).toBe(motifContentHash(man, html, [{ path: 'assets/mesh.bin', bytes: mesh }]))
+    expect(list.find(e => e.id === 'countdown')!.content_hash).toBe(motifContentHash(builtin.manifest, builtin.html))
   })
   it('lists builtins, then installed, then drafts (id-unique, draft shadowed by published)', () => {
     // installed "foo"

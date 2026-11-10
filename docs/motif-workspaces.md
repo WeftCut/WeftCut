@@ -24,7 +24,9 @@ inject ids into or move the source directory. Invalid changes keep the last
 valid snapshot with an explicit diagnostic; preview, publication and export
 refuse that stale content rather than approving it. read_motif refreshes before
 answering. A deleted or unavailable directory reports diagnostics and recovers
-when restored.
+when restored. The folder is read only when a file's size, times or identity
+changed since it was last copied; a read that a save crossed is refused with
+a diagnostic and tried again at the next listing (ADR 0164).
 
 Other mutually exclusive source variants:
 
