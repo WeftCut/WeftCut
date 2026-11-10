@@ -1,7 +1,8 @@
 import { spawn, spawnSync } from 'node:child_process'
 
 const FFMPEG_NAMES = new Set(['ffmpeg', 'ffprobe'])
-const FFMPEG_GRACE_MS = 2000
+/** How long an owned ffmpeg or ffprobe has to end on SIGTERM before the group kill. */
+export const FFMPEG_GRACE_MS = 2000
 const pause = new Int32Array(new SharedArrayBuffer(4))
 
 function processGroup(pid) {
@@ -65,8 +66,10 @@ function runHangCommand(mainPid) {
 }
 
 /** Capture ownership while the leader is alive. Electron is detached on POSIX;
- * its isolated group survives leader exit while children still hold pipes. */
-export function ownProcessTree(child) {
+ * its isolated group survives leader exit while children still hold pipes.
+ * `ffmpegGraceMs` is for this module's own tests, which need a grace long
+ * enough to tell from an early end. */
+export function ownProcessTree(child, { ffmpegGraceMs = FFMPEG_GRACE_MS } = {}) {
   // Keep output flowing even when no caller prints it. A full pipe can block
   // Electron/native work and then prevent the same process from quitting.
   child.stdout?.resume()
@@ -107,7 +110,7 @@ export function ownProcessTree(child) {
     for (const candidate of ffmpeg) {
       try { process.kill(candidate, 'SIGTERM') } catch { /* Already gone. */ }
     }
-    for (const deadline = Date.now() + FFMPEG_GRACE_MS; ffmpeg.length > 0 && Date.now() < deadline; ffmpeg = live()) Atomics.wait(pause, 0, 0, 50)
+    for (const deadline = Date.now() + ffmpegGraceMs; ffmpeg.length > 0 && Date.now() < deadline; ffmpeg = live()) Atomics.wait(pause, 0, 0, 50)
   }
   const killOwnedGroup = () => {
     if (!ownsGroup()) return
