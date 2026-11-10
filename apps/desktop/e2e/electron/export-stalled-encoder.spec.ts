@@ -19,16 +19,15 @@ test('a stalled encoder fails the export with its own message and the app still 
     await newProject(page, { parentFolder: tmpDir('weftcut-stalled-encoder-'), name: 'Stalled encoder', canvas: { width: 640, height: 360, fpsNum: 30, fpsDen: 1 } })
     const trackId = await invokeCmd<string>(page, 'add_track')
     await invokeCmd(page, 'add_color_layer', { trackId, color: { r: 1, g: 0, b: 0, a: 1 }, tStartUs: 0, durationUs: 1_000_000 })
-    const started = Date.now()
     const result = await driveExport(page, {
       outputAbsPath: path.join(tmpDir('weftcut-stalled-encoder-out-'), 'out.mp4'),
       settings: { encoderEngine: 'native', audio: { include: false } },
     }, { hook: 'exportTimeline', timeout: 60_000 })
-    const elapsedMs = Date.now() - started
-    await testInfo.attach('stalled-encoder', { body: JSON.stringify({ elapsedMs, ...result }), contentType: 'application/json' })
+    await testInfo.attach('stalled-encoder', { body: JSON.stringify(result), contentType: 'application/json' })
     expect(result.done.ok).toBe(false)
     expect(result.done.error).toContain('ffmpeg-stalled')
-    expect(elapsedMs).toBeLessThan(30_000)
+    // The error names the limit that fired: the injected one, not production's.
+    expect(result.done.error).toContain(`no progress for ${STALL_MS / 1000} s`)
 
     const panel = page.locator('.export-progress-panel')
     await expect(panel.locator('.export-progress-status')).toHaveText('The encoder stopped responding, so the export was stopped.')

@@ -32,8 +32,12 @@ test('preview sync reports output mapping, visible frame intervals and a stalled
     });
     await expect.poll(async () => (await sync())?.submitIntervalMs?.max ?? 0).toBeGreaterThanOrEqual(170);
     await page.evaluate(() => window.__weftcutTest!.transportPause());
-    const held = (await sync())!.samples;
-    await page.waitForTimeout(100);
-    expect((await sync())!.samples).toBe(held);
+    // A composite scheduled before the pause may still land; after it the
+    // count stands still.
+    await expect.poll(async () => {
+      const held = (await sync())!.samples;
+      await page.waitForTimeout(100);
+      return (await sync())!.samples - held;
+    }, { message: 'a paused preview kept submitting frames' }).toBe(0);
   } finally { await app.close(); }
 });

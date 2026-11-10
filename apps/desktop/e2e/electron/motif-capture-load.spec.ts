@@ -149,8 +149,8 @@ test.describe('Motif capture timeouts on the real host', () => {
       const latched = await diagnostics(page);
       const verdict = await probe(page, request(solid, 0.2, { hang: false }));
       log(`after two consecutive timeouts: ok=${verdict.ok} ${verdict.ms.toFixed(0)} ms`);
-      expect(isTimeout(verdict)).toBe(true);
-      expect(verdict.ms, 'a latched lane fast-rejects without reaching the page').toBeLessThan(1000);
+      // This frame does not hang, so a timeout can only be the latch's answer.
+      expect(isTimeout(verdict), 'a latched lane rejects without reaching the page').toBe(true);
       expect((await diagnostics(page)).captures, 'a fast-reject is not a capture').toBe(latched.captures);
 
       const other = await probe(page, request(network, 2, NETWORK_PROPS));

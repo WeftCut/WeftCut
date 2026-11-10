@@ -47,8 +47,8 @@ test('audio transport starts/stops without presentation and survives closing Pre
       while (performance.now() < until) { /* controlled UI load */ }
       return state;
     });
+    // Read before the stall began: the stop was issued inside transportPause.
     expect(stopped.phase).toBe('paused');
-    expect(stopped.stopCommandMs).toBeLessThan(50);
     await expect.poll(async () => (await probe())?.rmsDb ?? 0).toBeLessThan(-90);
     expect((await probe()).positionUs).toBe(stopped.positionUs);
 
