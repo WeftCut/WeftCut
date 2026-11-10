@@ -7,6 +7,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { ownProcessTree, closeProcessTree } from './process-cleanup.mjs'
 
+// A close that times out lists every process for its report. On Windows that
+// starts PowerShell, which process-cleanup.mjs allows 15 s: a cold start on a
+// CI runner takes about 10 s.
+const TIMED_OUT_CLOSE_MS = 30_000
+
 test('owned process output cannot block work or graceful shutdown', { timeout: 5000 }, async () => {
   const child = spawn(process.execPath, ['-e', `
     const fs = require('node:fs');
@@ -21,7 +26,7 @@ test('owned process output cannot block work or graceful shutdown', { timeout: 5
   } finally { owner.force() }
 })
 
-test('blocked graceful close kills descendants that retain the leader stdio', { timeout: 5000 }, async () => {
+test('blocked graceful close kills descendants that retain the leader stdio', { timeout: TIMED_OUT_CLOSE_MS }, async () => {
   const program = `
     const {spawn} = require('node:child_process');
     const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {stdio: ['ignore', 1, 2]});
@@ -75,7 +80,7 @@ test('POSIX cleanup still owns helpers after the detached leader exits', { timeo
   } finally { owner.force() }
 })
 
-test('a close that timed out runs the hang command against the live leader before the kill', { timeout: 10_000 }, async () => {
+test('a close that timed out runs the hang command against the live leader before the kill', { timeout: TIMED_OUT_CLOSE_MS }, async () => {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-hang-command-'))
   const seen = path.join(folder, 'seen')
   // The probe signals nothing (signal 0): it records whether the leader was still there.
@@ -100,7 +105,7 @@ test('a close that timed out runs the hang command against the live leader befor
   }
 })
 
-test('Windows names the app behind the shell Playwright starts it through', { timeout: 10_000, skip: process.platform !== 'win32' }, async () => {
+test('Windows names the app behind the shell Playwright starts it through', { timeout: TIMED_OUT_CLOSE_MS, skip: process.platform !== 'win32' }, async () => {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-hang-shell-'))
   const seen = path.join(folder, 'seen')
   const probe = path.join(folder, 'probe.cjs')
