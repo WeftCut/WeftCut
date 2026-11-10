@@ -338,7 +338,13 @@ function Root() {
       {launchReady && stage === "startup" && (
         <StartupScreen onWorkspaceReady={onWorkspaceReady} />
       )}
-      {editorMounted && <App key={projectEpoch} onCloseProject={onCloseProject} />}
+      {editorMounted && (
+        <App
+          key={projectEpoch}
+          onCloseProject={onCloseProject}
+          onWorkspaceReady={onWorkspaceReady}
+        />
+      )}
       {launchReady && !splashVisible && <PreviousSessionReport />}
       {(splashVisible || !launchReady) && (
         <SplashScreen

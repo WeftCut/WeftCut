@@ -471,6 +471,7 @@ const zhCN: Resources = {
   dev: {
     menu: "开发",
     performance_monitor: "性能监视器",
+    motif_cold_start: "Motif 冷启动（清空缓存并重开项目）",
   },
   updates: {
     title: '检查更新',

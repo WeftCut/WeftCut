@@ -2,6 +2,13 @@ import { startPreviewAudioSession } from "./render/audio/previewAudioSession";
 import { transportPlay, transportPause, transportSeek, usePlaybackStore } from "./state/playbackStore";
 import { save as saveDialog } from "@/bridge/dialog";
 import { listen } from "@/bridge/events";
+import { invoke } from "@/bridge/ipc";
+import {
+  sharedBakedKeyIndex,
+  sharedMotifFrameCache,
+  sharedMotifOverlayCache,
+} from "./render/motifs/motifFrameSource";
+import { motifColdStart } from "./app/motifColdStart";
 import { MODEL_EVENTS } from "../shared/inference-models";
 import { onDescribeViewChanged } from "./search/searchIndexStore";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -12,6 +19,7 @@ import {
   pasteLayer,
   projectRedo,
   projectClose,
+  projectOpen,
   projectSave,
   projectSaveAs,
   projectUndo,
@@ -174,9 +182,13 @@ interface AppProps {
   /// Hop the root router back to the StartupScreen — wired by `main.tsx`.
   /// Called by File → Save and Close after a successful save flush.
   onCloseProject: () => void;
+  /// Hop the root router back to the editor after a project open — wired by
+  /// `main.tsx`. Used by Dev menu › Motif cold start, whose reopen outlives
+  /// this editor.
+  onWorkspaceReady: () => void;
 }
 
-export function App({ onCloseProject }: AppProps) {
+export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
   const { t } = useTranslation();
   const summary = useProjectSummary();
   // The timeline the panels, the shortcuts and the Insert menu act on. Export
@@ -554,6 +566,30 @@ export function App({ onCloseProject }: AppProps) {
       setBusy(false);
     }
   }, [busy, onCloseProject]);
+
+  const runMotifColdStart = useCallback(() => {
+    if (busy) return;
+    void motifColdStart({
+      openFolder: async () =>
+        (await invoke<{ dir: string } | null>("project_open_state"))?.dir ?? null,
+      close: async () => {
+        await projectClose();
+        onCloseProject();
+      },
+      dropCache: (dir) => window.api.dev.motifColdStart(dir),
+      clearFrames: () => {
+        sharedMotifFrameCache.clearAll();
+        sharedMotifOverlayCache.clearAll();
+        sharedBakedKeyIndex.clear();
+      },
+      reopen: async (dir) => {
+        await projectOpen(dir);
+        onWorkspaceReady();
+      },
+    }).catch((error) => {
+      console.error("[weftcut/motif-cold-start] failed:", error);
+    });
+  }, [busy, onCloseProject, onWorkspaceReady]);
 
   const saveProject = useCallback(async () => {
     const path = await saveDialog({
@@ -1177,6 +1213,7 @@ export function App({ onCloseProject }: AppProps) {
           workspaceController={workspaceController}
           workspaceSnapshot={workspaceSnapshot}
           workspaceProfiles={viewMenuWorkspaces}
+          onMotifColdStart={runMotifColdStart}
         />
       </div>
 

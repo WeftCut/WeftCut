@@ -167,6 +167,11 @@ export class MotifCapturer {
     this.pool.retireAll()
   }
 
+  /// Retires every capture host; the next capture opens its host anew.
+  retireHosts(): void {
+    this.pool.retireAll()
+  }
+
   /** Explicit retry revokes only this package's remembered content failure.
    * Automatic retries leave the failure latch intact to prevent retry storms. */
   resetFailure(motifId: string, contentHash: string): void {

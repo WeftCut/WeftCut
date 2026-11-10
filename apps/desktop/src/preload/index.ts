@@ -15,6 +15,7 @@ import type {
   DialogSaveOpts,
   DirEntry,
   HwBarrierMode,
+  MotifColdStartResult,
   NotificationOpts,
   PreviewGpuBudgetSnapshot,
   PreviewGpuColorSpace,
@@ -176,6 +177,10 @@ const api: WeftcutApi = {
     download: (): Promise<UpdateDownloadResult> => ipcRenderer.invoke('updates:download'),
     restart: (): Promise<UpdateRestartResult> => ipcRenderer.invoke('updates:restart'),
     resume: (): Promise<UpdateResume> => ipcRenderer.invoke('updates:resume'),
+  },
+
+  dev: {
+    motifColdStart: (dir: string): Promise<MotifColdStartResult> => ipcRenderer.invoke('dev:motifColdStart', dir),
   },
 
   menu: {

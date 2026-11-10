@@ -426,6 +426,12 @@ submit p95/p99, Motif lag/hold, drop/late totals, prewarm, JS heap, process
 CPU, hardware sessions against the budget, audio meters, and a per-clip table
 (lane, ring, barrier, frame fates). Reset clears the peaks.
 
+**Motif cold start** (dev builds only: Dev menu › Motif Cold Start). It saves
+and closes the project, retires every capture host, deletes the project's
+`Cache/raster` and the renderer's in-memory Motif frames, then reopens it, so
+the host pool and preview warm as on a first open (`app/motifColdStart.ts`,
+`main/motif/coldStart.ts`).
+
 The Drop counter only reports whether the ring had a fresh frame. A loop
 stalled by a synchronous GPU drain reports zero drops yet looks jerky. A
 steady submit cadence can also hide a frozen Motif, which is why Motif lag/hold

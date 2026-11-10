@@ -49,6 +49,7 @@ import { MOTIF_READER_CONNECT, isMotifReaderDiv } from '../shared/motifs/readerP
 import type { MotifTextureReadRequest, MotifTextureReadResult } from '../shared/motifs/frameTransport.js'
 import { isMotifFrameAddress } from './motif/frameAddress.js'
 import { MotifBakeWorkspace, validateBakePlan } from './motif/bakeWorkspace.js'
+import { motifColdStart } from './motif/coldStart.js'
 import { MOTIF_BAKE_READY_EVENT, type MotifBakePlan } from '../shared/motifs/baking.js'
 import { MotifGpuTransport } from './motif/gpuTransport.js'
 import { spawnMotifWatcher, type MotifWatcher } from './motif/watcher.js'
@@ -1519,6 +1520,17 @@ app.whenReady().then(async () => {
     return motifCapture.capture(event.sender, request, () => isCurrent() && workspaceEvents.current() === generation,
       resolveExportFinalization(event.sender.id, request.finalizationToken), currentMotifStore())
   })
+  // Dev menu › Motif cold start. Only `electron-vite dev` sets the renderer URL,
+  // so release, E2E and perf launches never register the channel.
+  if (isDev) {
+    ipcMain.handle('dev:motifColdStart', (_event, dir: unknown) => motifColdStart(dir, {
+      enabled: !app.isPackaged,
+      openFolders: () => [wsCache, tsHost?.openedProject()?.dir],
+      transitioning: () => !!tsHost?.projectOperationPending?.(),
+      retireHosts: () => capturer.retireHosts(),
+      log: line => console.log(line),
+    }))
+  }
 
   let coverRuntimeVersion = ''
   const motifCovers = new MotifCovers(path.join(dataRoot.cacheDir, 'motif-covers'), {

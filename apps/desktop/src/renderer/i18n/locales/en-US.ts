@@ -487,6 +487,7 @@ const enUS = {
   dev: {
     menu: "Dev",
     performance_monitor: "Performance Monitor",
+    motif_cold_start: "Motif Cold Start (Clear Cache and Reopen Project)",
   },
   updates: {
     title: 'Check for Updates',

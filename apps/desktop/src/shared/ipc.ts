@@ -399,6 +399,9 @@ import type {
 } from './data-root'
 import type { MenuProjection } from './menu'
 
+/// What a Motif cold start deleted from the project's frame cache.
+export interface MotifColdStartResult { files: number; bytes: number }
+
 export interface WeftcutApi {
   diagnostics: import('./diagnostics').DiagnosticsApi
   resources: {
@@ -490,6 +493,13 @@ export interface WeftcutApi {
     download(): Promise<UpdateDownloadResult>
     restart(): Promise<UpdateRestartResult>
     resume(): Promise<UpdateResume>
+  }
+  /// Developer menu actions. Main registers their handlers in dev builds only;
+  /// a release build rejects every call.
+  dev: {
+    /// Drops a CLOSED project's Motif frame cache and retires every capture
+    /// host (main/motif/coldStart.ts).
+    motifColdStart(dir: string): Promise<MotifColdStartResult>
   }
   /// macOS native application menu. The renderer pushes what the CURRENT
   /// surface can run — labels resolved through i18next, accelerators from the

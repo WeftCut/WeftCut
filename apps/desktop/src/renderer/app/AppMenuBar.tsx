@@ -31,11 +31,14 @@ interface AppMenuBarProps {
   workspaceController: DockWorkspaceController | null;
   workspaceSnapshot: DockWorkspaceSnapshot;
   workspaceProfiles: ViewMenuWorkspaces | null;
+  /// Dev menu › Motif cold start (`motifColdStart.ts`); absent, the item is disabled.
+  onMotifColdStart?: () => void;
 }
 
 interface DevMenuProps {
   enabled?: boolean;
   onOpenPerformanceMonitor?: () => void;
+  onMotifColdStart?: (() => void) | undefined;
 }
 
 /// Development diagnostics live behind their own dropdown so normal editor
@@ -48,6 +51,7 @@ export function DevMenu({
       console.error("[weftcut/performance-monitor] failed to open:", error);
     });
   },
+  onMotifColdStart,
 }: DevMenuProps) {
   const { t } = useTranslation();
   if (!enabled) return null;
@@ -56,6 +60,11 @@ export function DevMenu({
       <MenuItem
         label={t("dev.performance_monitor")}
         onSelect={onOpenPerformanceMonitor}
+      />
+      <MenuItem
+        label={t("dev.motif_cold_start")}
+        onSelect={onMotifColdStart ?? (() => {})}
+        disabled={!onMotifColdStart}
       />
     </Menu>
   );
@@ -73,6 +82,7 @@ export function AppMenuBar({
   workspaceController,
   workspaceSnapshot,
   workspaceProfiles,
+  onMotifColdStart,
 }: AppMenuBarProps) {
   const { t, i18n } = useTranslation();
 
@@ -129,7 +139,7 @@ export function AppMenuBar({
 
           <HelpMenu />
 
-          <DevMenu />
+          <DevMenu onMotifColdStart={onMotifColdStart} />
         </MenuBar>
       </div>
       {/* Spotlight-style entry: a button skinned as an input box, pushed
