@@ -1,29 +1,29 @@
 {
   "$comment": "Measured e2e cost per OS, read by e2e/slices.mjs to pack the CI split. Refresh with `npm run e2e:timings -- <green run id>`; never edit by hand.",
-  "run": 40308714737,
-  "commit": "7bb06a738f8ebe2778f371536b57baf41563d175",
-  "measured": "2026-10-26",
+  "run": 42828464630,
+  "commit": "3aee772a727c2a4afe4f033a55c16f0bb3a857d2",
+  "measured": "2026-11-10",
   "seconds": {
     "parallel": {
       "agent-panel.spec.ts": {
-        "ubuntu-latest": 14,
-        "windows-latest": 17,
+        "ubuntu-latest": 19,
+        "windows-latest": 18,
         "macos-latest": 42
       },
       "app-quit.spec.ts": {
-        "macos-latest": 8,
-        "ubuntu-latest": 8,
+        "macos-latest": 30,
+        "ubuntu-latest": 2,
         "windows-latest": 4
       },
       "audio-denoise.spec.ts": {
-        "ubuntu-latest": 14,
+        "ubuntu-latest": 18,
         "windows-latest": 16,
         "macos-latest": 23
       },
       "audio-import.spec.ts": {
-        "macos-latest": 14,
-        "ubuntu-latest": 7,
-        "windows-latest": 13
+        "macos-latest": 30,
+        "ubuntu-latest": 10,
+        "windows-latest": 12
       },
       "audio-pan-preview.spec.ts": {
         "ubuntu-latest": 0,
@@ -31,59 +31,59 @@
         "macos-latest": 0
       },
       "audio-transport.spec.ts": {
-        "ubuntu-latest": 10,
-        "windows-latest": 6,
+        "ubuntu-latest": 6,
+        "windows-latest": 7,
         "macos-latest": 8
       },
       "audio-waveform-alignment.spec.ts": {
-        "ubuntu-latest": 19,
+        "ubuntu-latest": 20,
         "windows-latest": 22,
         "macos-latest": 37
       },
       "audio.spec.ts": {
-        "macos-latest": 165,
-        "ubuntu-latest": 244,
-        "windows-latest": 115
+        "macos-latest": 127,
+        "ubuntu-latest": 246,
+        "windows-latest": 137
       },
       "caption-corpus.spec.ts": {
-        "macos-latest": 15,
-        "ubuntu-latest": 15,
-        "windows-latest": 10
+        "macos-latest": 19,
+        "ubuntu-latest": 9,
+        "windows-latest": 11
       },
       "clipboard.spec.ts": {
-        "macos-latest": 7,
+        "macos-latest": 4,
         "ubuntu-latest": 1,
         "windows-latest": 2
       },
       "cloud-keys.spec.ts": {
-        "macos-latest": 3,
+        "macos-latest": 7,
         "ubuntu-latest": 1,
         "windows-latest": 2
       },
       "color-conformance.spec.ts": {
-        "macos-latest": 26,
+        "macos-latest": 20,
         "ubuntu-latest": 36,
-        "windows-latest": 20
+        "windows-latest": 22
       },
       "colorpick.spec.ts": {
-        "macos-latest": 44,
-        "ubuntu-latest": 25,
-        "windows-latest": 20
+        "macos-latest": 42,
+        "ubuntu-latest": 26,
+        "windows-latest": 22
       },
       "composition-scope.spec.ts": {
-        "ubuntu-latest": 7,
-        "windows-latest": 8,
+        "ubuntu-latest": 11,
+        "windows-latest": 6,
         "macos-latest": 7
       },
       "composition-tabs.spec.ts": {
         "ubuntu-latest": 31,
-        "windows-latest": 23,
+        "windows-latest": 25,
         "macos-latest": 34
       },
       "conformance.spec.ts": {
-        "macos-latest": 24,
-        "ubuntu-latest": 46,
-        "windows-latest": 37
+        "macos-latest": 37,
+        "ubuntu-latest": 62,
+        "windows-latest": 36
       },
       "crop.spec.ts": {
         "windows-latest": 0,
@@ -95,34 +95,39 @@
         "ubuntu-latest": 0,
         "windows-latest": 0
       },
+      "decode-probe-isolation.spec.ts": {
+        "macos-latest": 33,
+        "ubuntu-latest": 0,
+        "windows-latest": 0
+      },
       "determinism.spec.ts": {
         "windows-latest": 0,
         "ubuntu-latest": 0,
         "macos-latest": 0
       },
       "dev-splash-toggle.spec.ts": {
-        "macos-latest": 6,
+        "macos-latest": 8,
         "ubuntu-latest": 4,
         "windows-latest": 5
       },
       "diagnostic-report.spec.ts": {
-        "macos-latest": 23,
-        "ubuntu-latest": 11,
+        "macos-latest": 22,
+        "ubuntu-latest": 12,
         "windows-latest": 14
       },
       "dock-integration-acceptance.spec.ts": {
-        "ubuntu-latest": 50,
+        "ubuntu-latest": 44,
         "windows-latest": 51,
         "macos-latest": 62
       },
       "dock-tab-overflow.spec.ts": {
-        "ubuntu-latest": 5,
-        "windows-latest": 6,
+        "ubuntu-latest": 6,
+        "windows-latest": 5,
         "macos-latest": 6
       },
       "dock-workspace.spec.ts": {
-        "ubuntu-latest": 61,
-        "windows-latest": 52,
+        "ubuntu-latest": 65,
+        "windows-latest": 57,
         "macos-latest": 61
       },
       "dragdrop.spec.ts": {
@@ -141,14 +146,14 @@
         "macos-latest": 9
       },
       "effects-smoke.spec.ts": {
-        "macos-latest": 48,
-        "ubuntu-latest": 38,
-        "windows-latest": 46
+        "macos-latest": 52,
+        "ubuntu-latest": 34,
+        "windows-latest": 41
       },
       "export-finalization-retry.spec.ts": {
-        "macos-latest": 80,
-        "ubuntu-latest": 159,
-        "windows-latest": 72
+        "macos-latest": 85,
+        "ubuntu-latest": 158,
+        "windows-latest": 96
       },
       "export-native-wedges.spec.ts": {
         "macos-latest": 0,
@@ -166,9 +171,9 @@
         "windows-latest": 0
       },
       "export-range-audio.spec.ts": {
-        "macos-latest": 104,
-        "ubuntu-latest": 363,
-        "windows-latest": 188
+        "macos-latest": 113,
+        "ubuntu-latest": 175,
+        "windows-latest": 181
       },
       "export-repeat.spec.ts": {
         "ubuntu-latest": 18,
@@ -176,28 +181,38 @@
         "macos-latest": 11
       },
       "export-resource-admission.spec.ts": {
-        "macos-latest": 279,
-        "ubuntu-latest": 260,
+        "macos-latest": 261,
+        "ubuntu-latest": 211,
         "windows-latest": 259
       },
+      "export-stalled-encoder.spec.ts": {
+        "macos-latest": 15,
+        "ubuntu-latest": 9,
+        "windows-latest": 8
+      },
       "export_codecs.spec.ts": {
-        "macos-latest": 77,
-        "ubuntu-latest": 208,
-        "windows-latest": 115
+        "macos-latest": 96,
+        "ubuntu-latest": 115,
+        "windows-latest": 117
       },
       "export_eos_tail.spec.ts": {
-        "macos-latest": 32,
-        "ubuntu-latest": 104,
-        "windows-latest": 56
+        "macos-latest": 43,
+        "ubuntu-latest": 103,
+        "windows-latest": 64
       },
       "export_overlap_same_source.spec.ts": {
-        "macos-latest": 85,
-        "ubuntu-latest": 237,
-        "windows-latest": 125
+        "macos-latest": 97,
+        "ubuntu-latest": 234,
+        "windows-latest": 149
+      },
+      "ffmpeg-orphans.spec.ts": {
+        "macos-latest": 12,
+        "ubuntu-latest": 7,
+        "windows-latest": 8
       },
       "focus-regions.spec.ts": {
-        "ubuntu-latest": 13,
-        "windows-latest": 24,
+        "ubuntu-latest": 14,
+        "windows-latest": 14,
         "macos-latest": 26
       },
       "fonts.spec.ts": {
@@ -211,34 +226,39 @@
         "macos-latest": 7
       },
       "group-export-conformance.spec.ts": {
-        "ubuntu-latest": 18,
-        "windows-latest": 23,
+        "ubuntu-latest": 29,
+        "windows-latest": 25,
         "macos-latest": 29
       },
       "group-export-nested.spec.ts": {
         "ubuntu-latest": 14,
-        "windows-latest": 11,
+        "windows-latest": 10,
         "macos-latest": 13
       },
       "group-media-pool.spec.ts": {
-        "ubuntu-latest": 13,
-        "windows-latest": 22,
+        "ubuntu-latest": 16,
+        "windows-latest": 17,
         "macos-latest": 18
       },
       "group-render-nested.spec.ts": {
-        "ubuntu-latest": 6,
-        "windows-latest": 5,
+        "ubuntu-latest": 9,
+        "windows-latest": 6,
         "macos-latest": 8
       },
       "group-timeline.spec.ts": {
         "ubuntu-latest": 31,
-        "windows-latest": 44,
+        "windows-latest": 21,
         "macos-latest": 32
       },
       "hardware-diagnostics.spec.ts": {
-        "macos-latest": 13,
-        "ubuntu-latest": 12,
+        "macos-latest": 12,
+        "ubuntu-latest": 11,
         "windows-latest": 7
+      },
+      "highlights.spec.ts": {
+        "macos-latest": 12,
+        "ubuntu-latest": 9,
+        "windows-latest": 16
       },
       "history-panel.spec.ts": {
         "ubuntu-latest": 6,
@@ -252,7 +272,7 @@
       },
       "import-reopen.spec.ts": {
         "ubuntu-latest": 1,
-        "windows-latest": 2,
+        "windows-latest": 3,
         "macos-latest": 3
       },
       "ipc-handlers.spec.ts": {
@@ -261,43 +281,43 @@
         "macos-latest": 3
       },
       "keyframe-batch.spec.ts": {
-        "ubuntu-latest": 17,
+        "ubuntu-latest": 20,
         "windows-latest": 22,
         "macos-latest": 32
       },
       "keyframe-color.spec.ts": {
         "ubuntu-latest": 15,
-        "windows-latest": 8,
+        "windows-latest": 9,
         "macos-latest": 13
       },
       "keyframe-conformance.spec.ts": {
-        "ubuntu-latest": 40,
-        "windows-latest": 36,
+        "ubuntu-latest": 67,
+        "windows-latest": 37,
         "macos-latest": 58
       },
       "keyframe-effects.spec.ts": {
-        "ubuntu-latest": 15,
+        "ubuntu-latest": 19,
         "windows-latest": 16,
         "macos-latest": 22
       },
       "layout-theme.spec.ts": {
-        "ubuntu-latest": 34,
+        "ubuntu-latest": 29,
         "windows-latest": 36,
         "macos-latest": 50
       },
       "link-duplicate.spec.ts": {
-        "ubuntu-latest": 6,
+        "ubuntu-latest": 7,
         "windows-latest": 6,
         "macos-latest": 8
       },
       "link-override.spec.ts": {
-        "ubuntu-latest": 10,
+        "ubuntu-latest": 11,
         "windows-latest": 6,
         "macos-latest": 9
       },
       "link-visibility.spec.ts": {
         "ubuntu-latest": 7,
-        "windows-latest": 6,
+        "windows-latest": 7,
         "macos-latest": 11
       },
       "mcp-editing-workflow.spec.ts": {
@@ -306,18 +326,18 @@
         "macos-latest": 9
       },
       "mcp-export.spec.ts": {
-        "ubuntu-latest": 18,
-        "windows-latest": 16,
+        "ubuntu-latest": 14,
+        "windows-latest": 20,
         "macos-latest": 29
       },
       "mcp-flip.spec.ts": {
         "ubuntu-latest": 4,
-        "windows-latest": 5,
+        "windows-latest": 6,
         "macos-latest": 7
       },
       "mcp-motif.spec.ts": {
         "ubuntu-latest": 3,
-        "windows-latest": 3,
+        "windows-latest": 4,
         "macos-latest": 5
       },
       "mcp-server.spec.ts": {
@@ -326,13 +346,13 @@
         "macos-latest": 6
       },
       "media-gif-animated.spec.ts": {
-        "ubuntu-latest": 19,
-        "windows-latest": 23,
+        "ubuntu-latest": 18,
+        "windows-latest": 24,
         "macos-latest": 37
       },
       "media-image-preview.spec.ts": {
         "ubuntu-latest": 5,
-        "windows-latest": 5,
+        "windows-latest": 6,
         "macos-latest": 8
       },
       "media-import.spec.ts": {
@@ -346,12 +366,12 @@
         "macos-latest": 2
       },
       "menu.spec.ts": {
-        "macos-latest": 12,
+        "macos-latest": 11,
         "ubuntu-latest": 0,
         "windows-latest": 0
       },
       "model-settings.spec.ts": {
-        "macos-latest": 21,
+        "macos-latest": 23,
         "ubuntu-latest": 14,
         "windows-latest": 17
       },
@@ -360,25 +380,55 @@
         "ubuntu-latest": 0,
         "macos-latest": 0
       },
+      "motif-bitmap-capture.spec.ts": {
+        "macos-latest": 10,
+        "ubuntu-latest": 6,
+        "windows-latest": 8
+      },
+      "motif-capture-first-frame.spec.ts": {
+        "macos-latest": 17,
+        "ubuntu-latest": 12,
+        "windows-latest": 13
+      },
       "motif-capture-load.spec.ts": {
-        "macos-latest": 22,
+        "macos-latest": 23,
         "ubuntu-latest": 20,
-        "windows-latest": 23
+        "windows-latest": 21
+      },
+      "motif-capture-revisions.spec.ts": {
+        "macos-latest": 4,
+        "ubuntu-latest": 1,
+        "windows-latest": 4
+      },
+      "motif-capture-small.spec.ts": {
+        "macos-latest": 14,
+        "ubuntu-latest": 8,
+        "windows-latest": 12
+      },
+      "motif-capture-versions.spec.ts": {
+        "macos-latest": 10,
+        "ubuntu-latest": 5,
+        "windows-latest": 6
       },
       "motif-capture.spec.ts": {
-        "macos-latest": 3,
+        "macos-latest": 5,
         "ubuntu-latest": 1,
         "windows-latest": 2
       },
       "motif-codecs.spec.ts": {
-        "macos-latest": 23,
-        "ubuntu-latest": 15,
-        "windows-latest": 21
+        "macos-latest": 30,
+        "ubuntu-latest": 10,
+        "windows-latest": 30
       },
       "motif-export.spec.ts": {
-        "macos-latest": 24,
-        "ubuntu-latest": 24,
-        "windows-latest": 25
+        "macos-latest": 34,
+        "ubuntu-latest": 16,
+        "windows-latest": 20
+      },
+      "motif-frame-reader.spec.ts": {
+        "windows-latest": 0,
+        "ubuntu-latest": 0,
+        "macos-latest": 0
       },
       "motif-frame-transport.spec.ts": {
         "windows-latest": 0,
@@ -386,14 +436,14 @@
         "macos-latest": 0
       },
       "motif-library.spec.ts": {
-        "ubuntu-latest": 8,
-        "windows-latest": 12,
+        "ubuntu-latest": 7,
+        "windows-latest": 10,
         "macos-latest": 16
       },
       "motif-lifecycle.spec.ts": {
-        "macos-latest": 15,
-        "ubuntu-latest": 12,
-        "windows-latest": 27
+        "macos-latest": 20,
+        "ubuntu-latest": 10,
+        "windows-latest": 14
       },
       "motif-local-assets.spec.ts": {
         "windows-latest": 0,
@@ -401,8 +451,8 @@
         "macos-latest": 0
       },
       "motif-params-page.spec.ts": {
-        "ubuntu-latest": 19,
-        "windows-latest": 15,
+        "ubuntu-latest": 17,
+        "windows-latest": 29,
         "macos-latest": 22
       },
       "motif-partial-bake.spec.ts": {
@@ -410,15 +460,15 @@
         "ubuntu-latest": 0,
         "macos-latest": 0
       },
-      "motif-bitmap-capture.spec.ts": {
-        "macos-latest": 0,
-        "ubuntu-latest": 29,
-        "windows-latest": 29
+      "motif-preview-hold.spec.ts": {
+        "macos-latest": 19,
+        "ubuntu-latest": 13,
+        "windows-latest": 18
       },
       "motif-preview.spec.ts": {
-        "macos-latest": 5,
-        "ubuntu-latest": 5,
-        "windows-latest": 7
+        "macos-latest": 7,
+        "ubuntu-latest": 4,
+        "windows-latest": 5
       },
       "motif-protocol.spec.ts": {
         "ubuntu-latest": 1,
@@ -431,8 +481,8 @@
         "macos-latest": 5
       },
       "motion-path.spec.ts": {
-        "ubuntu-latest": 16,
-        "windows-latest": 22,
+        "ubuntu-latest": 19,
+        "windows-latest": 23,
         "macos-latest": 24
       },
       "move-to-composition.spec.ts": {
@@ -441,13 +491,13 @@
         "macos-latest": 7
       },
       "native-shims.spec.ts": {
-        "macos-latest": 20,
+        "macos-latest": 15,
         "ubuntu-latest": 3,
-        "windows-latest": 9
+        "windows-latest": 7
       },
       "pauses.spec.ts": {
-        "ubuntu-latest": 31,
-        "windows-latest": 64,
+        "ubuntu-latest": 27,
+        "windows-latest": 35,
         "macos-latest": 58
       },
       "perfhud.spec.ts": {
@@ -456,22 +506,22 @@
         "macos-latest": 0
       },
       "performance-settings.spec.ts": {
-        "macos-latest": 26,
+        "macos-latest": 30,
         "ubuntu-latest": 25,
-        "windows-latest": 36
+        "windows-latest": 29
       },
       "playhead-restack.spec.ts": {
-        "ubuntu-latest": 18,
-        "windows-latest": 12,
+        "ubuntu-latest": 12,
+        "windows-latest": 11,
         "macos-latest": 15
       },
       "popup-overflow.spec.ts": {
-        "macos-latest": 11,
-        "ubuntu-latest": 9,
+        "macos-latest": 15,
+        "ubuntu-latest": 10,
         "windows-latest": 11
       },
       "preview-canvas-layout.spec.ts": {
-        "ubuntu-latest": 20,
+        "ubuntu-latest": 16,
         "windows-latest": 14,
         "macos-latest": 14
       },
@@ -506,14 +556,14 @@
         "macos-latest": 0
       },
       "preview-sw-color.spec.ts": {
-        "macos-latest": 28,
-        "ubuntu-latest": 20,
-        "windows-latest": 12
+        "macos-latest": 22,
+        "ubuntu-latest": 21,
+        "windows-latest": 14
       },
       "preview-sw-conformance.spec.ts": {
-        "macos-latest": 23,
-        "ubuntu-latest": 10,
-        "windows-latest": 11
+        "macos-latest": 17,
+        "ubuntu-latest": 13,
+        "windows-latest": 12
       },
       "preview-sw-families.spec.ts": {
         "windows-latest": 0,
@@ -521,13 +571,13 @@
         "macos-latest": 0
       },
       "preview-sync.spec.ts": {
-        "macos-latest": 8,
-        "ubuntu-latest": 6,
-        "windows-latest": 6
+        "macos-latest": 11,
+        "ubuntu-latest": 5,
+        "windows-latest": 8
       },
       "property-panel.spec.ts": {
-        "ubuntu-latest": 4,
-        "windows-latest": 6,
+        "ubuntu-latest": 5,
+        "windows-latest": 5,
         "macos-latest": 7
       },
       "publication-protocol.spec.ts": {
@@ -536,32 +586,32 @@
         "macos-latest": 12
       },
       "resource-machine.spec.ts": {
-        "macos-latest": 9,
-        "ubuntu-latest": 6,
-        "windows-latest": 36
+        "macos-latest": 12,
+        "ubuntu-latest": 7,
+        "windows-latest": 14
       },
       "resource-memory.spec.ts": {
-        "macos-latest": 4,
+        "macos-latest": 3,
         "ubuntu-latest": 1,
         "windows-latest": 2
       },
       "resource-recovery.spec.ts": {
-        "macos-latest": 104,
-        "ubuntu-latest": 93,
-        "windows-latest": 116
+        "macos-latest": 125,
+        "ubuntu-latest": 111,
+        "windows-latest": 130
       },
       "resource-single-slot.spec.ts": {
-        "macos-latest": 38,
-        "ubuntu-latest": 55,
-        "windows-latest": 54
+        "macos-latest": 37,
+        "ubuntu-latest": 78,
+        "windows-latest": 47
       },
       "role-mixer-audition.spec.ts": {
-        "macos-latest": 13,
-        "ubuntu-latest": 10,
+        "macos-latest": 15,
+        "ubuntu-latest": 11,
         "windows-latest": 11
       },
       "safestorage.spec.ts": {
-        "macos-latest": 3,
+        "macos-latest": 4,
         "ubuntu-latest": 1,
         "windows-latest": 2
       },
@@ -575,44 +625,49 @@
         "windows-latest": 7,
         "macos-latest": 11
       },
+      "single-instance.spec.ts": {
+        "windows-latest": 0,
+        "ubuntu-latest": 0,
+        "macos-latest": 0
+      },
       "smoke.spec.ts": {
-        "macos-latest": 2,
+        "macos-latest": 5,
         "ubuntu-latest": 1,
-        "windows-latest": 1
+        "windows-latest": 2
       },
       "subtitle-pool-drop.spec.ts": {
-        "ubuntu-latest": 4,
+        "ubuntu-latest": 5,
         "windows-latest": 5,
         "macos-latest": 5
       },
       "text-box-cjk-export.spec.ts": {
-        "ubuntu-latest": 7,
-        "windows-latest": 7,
+        "ubuntu-latest": 6,
+        "windows-latest": 8,
         "macos-latest": 8
       },
       "text-box-gizmo.spec.ts": {
-        "ubuntu-latest": 15,
+        "ubuntu-latest": 16,
         "windows-latest": 17,
         "macos-latest": 23
       },
       "text-correction.spec.ts": {
         "ubuntu-latest": 14,
-        "windows-latest": 18,
+        "windows-latest": 17,
         "macos-latest": 24
       },
       "text-shadow.spec.ts": {
-        "ubuntu-latest": 1,
+        "ubuntu-latest": 2,
         "windows-latest": 2,
         "macos-latest": 4
       },
       "text-tool.spec.ts": {
-        "ubuntu-latest": 11,
+        "ubuntu-latest": 9,
         "windows-latest": 11,
         "macos-latest": 13
       },
       "time-remapping.spec.ts": {
-        "ubuntu-latest": 20,
-        "windows-latest": 18,
+        "ubuntu-latest": 21,
+        "windows-latest": 21,
         "macos-latest": 20
       },
       "timeline-drop-strip.spec.ts": {
@@ -626,13 +681,13 @@
         "macos-latest": 17
       },
       "timeline-markers.spec.ts": {
-        "ubuntu-latest": 18,
-        "windows-latest": 21,
+        "ubuntu-latest": 23,
+        "windows-latest": 20,
         "macos-latest": 21
       },
       "timeline-marquee.spec.ts": {
-        "ubuntu-latest": 19,
-        "windows-latest": 22,
+        "ubuntu-latest": 20,
+        "windows-latest": 21,
         "macos-latest": 22
       },
       "timeline-raise-to-strip.spec.ts": {
@@ -641,28 +696,28 @@
         "macos-latest": 5
       },
       "timeline-ripple-delete.spec.ts": {
-        "ubuntu-latest": 26,
-        "windows-latest": 23,
+        "ubuntu-latest": 25,
+        "windows-latest": 25,
         "macos-latest": 27
       },
       "timeline-selection-focus.spec.ts": {
-        "macos-latest": 13,
-        "ubuntu-latest": 7,
+        "macos-latest": 14,
+        "ubuntu-latest": 11,
         "windows-latest": 8
       },
       "timeline-split-delete-race.spec.ts": {
-        "ubuntu-latest": 8,
-        "windows-latest": 6,
+        "ubuntu-latest": 6,
+        "windows-latest": 7,
         "macos-latest": 6
       },
       "track-reorder.spec.ts": {
-        "ubuntu-latest": 16,
+        "ubuntu-latest": 12,
         "windows-latest": 14,
         "macos-latest": 14
       },
       "transitions-wysiwyg.spec.ts": {
-        "ubuntu-latest": 50,
-        "windows-latest": 30,
+        "ubuntu-latest": 28,
+        "windows-latest": 28,
         "macos-latest": 27
       },
       "ts-actor-bringup.spec.ts": {
@@ -676,7 +731,7 @@
         "macos-latest": 2
       },
       "ts-actor-motif-flip.spec.ts": {
-        "ubuntu-latest": 5,
+        "ubuntu-latest": 6,
         "windows-latest": 6,
         "macos-latest": 6
       },
@@ -686,45 +741,45 @@
         "macos-latest": 2
       },
       "vlm-settings.spec.ts": {
-        "macos-latest": 29,
-        "ubuntu-latest": 3,
+        "macos-latest": 13,
+        "ubuntu-latest": 5,
         "windows-latest": 8
       },
       "window-chrome-frameless.spec.ts": {
         "macos-latest": 0,
-        "ubuntu-latest": 5,
+        "ubuntu-latest": 7,
         "windows-latest": 5
       },
       "window-chrome.spec.ts": {
-        "macos-latest": 7,
+        "macos-latest": 11,
         "ubuntu-latest": 6,
-        "windows-latest": 8
+        "windows-latest": 7
       },
       "window-geometry.spec.ts": {
-        "macos-latest": 32,
-        "ubuntu-latest": 8,
-        "windows-latest": 10
+        "macos-latest": 18,
+        "ubuntu-latest": 9,
+        "windows-latest": 9
       },
       "window-visible.spec.ts": {
         "macos-latest": 3,
         "ubuntu-latest": 1,
-        "windows-latest": 1
+        "windows-latest": 2
       }
     },
     "serial": {
-      "macos-latest": 391,
-      "ubuntu-latest": 265,
-      "windows-latest": 306
+      "macos-latest": 505,
+      "ubuntu-latest": 322,
+      "windows-latest": 311
     },
     "package": {
-      "windows-latest": 142,
-      "macos-latest": 100,
-      "ubuntu-latest": 285
+      "macos-latest": 112,
+      "ubuntu-latest": 124,
+      "windows-latest": 144
     },
     "decodeBench": {
-      "macos-latest": 27,
-      "ubuntu-latest": 17,
-      "windows-latest": 35
+      "macos-latest": 29,
+      "windows-latest": 34,
+      "ubuntu-latest": 29
     }
   }
 }
