@@ -112,6 +112,49 @@ first, so it reads as a bug in that feature.
 So "all tests in one folder" has no clean endpoint here; the boundaries are the
 three runners.
 
+## Assert the intent, not a measurement
+
+A test states a property of the product: an order, a cause, an owner, or a bound
+the product itself enforces. A number observed on one machine (a duration, a
+memory delta, a call or frame count) is not such a property: a test built on one
+fails on a slower runner with no defect behind it, and can keep passing after the
+behaviour is gone. CI retries hide it as flaky until both attempts fail.
+
+- **Name the property.** The title or assertion message says what must hold. If
+  the only way to phrase it is "about N", find the property behind N first.
+- **Read order and cause from a record.** Log the events (a hook, an intercepted
+  call, content painted into the output) and assert positions in the log. Two
+  snapshots taken a fixed time apart race the thing they observe.
+- **Ownership is membership.** Assert that the identifier is in the set (a pid in
+  the counted tree, a key in the plan), not that a total moved by an expected
+  amount: a total carries everything else on the machine.
+- **A bound comes from the product.** Compare against the constant, plan or budget
+  the code enforces, imported or read at run time. A literal copied from it keeps
+  passing after the product's limit changes.
+- **Wait for a witness.** Wait on something that proves the step was processed
+  (an answered request, a state change), then assert. See
+  `apps/desktop/e2e/README.md` § Waiting inside a spec, including its two
+  exceptions.
+- **A timeout is a liveness bound.** It says "this never happened", so make it
+  generous; elapsed time is never the assertion. Where a duration is the product's
+  contract, derive the bound from the product's constant.
+- **Time-dependent logic runs on a fake clock.** Debounces, holds, retries and
+  deadlines are unit-tested with injected or fake time; the same test in real time
+  measures the runner.
+- **A count is exact only when the product fixes it.** Otherwise assert the
+  invariant (at least one, never above the pool size, one per input) rather than
+  the count a tuning value happened to produce.
+- **Performance numbers belong to benchmarks.** A threshold measured on one
+  machine gates nothing in the test suite; a bench records it with its machine and
+  compares runs.
+- **A seam is a product change.** When the property cannot be observed, first try
+  an existing boundary from the test side (intercept the IPC call, wrap the native
+  function). A new hook, field or exported constant in product code is named in
+  the issue or PR and agreed before it is written.
+- **Prove the test bites.** Break the behaviour the test names and see it fail on
+  the intended assertion before relying on it; say so in the PR. A test that
+  cannot fail for its reason only adds run time.
+
 ## Pixel equality
 
 GPU rasterisation of anti-aliased content is not stable: another project or launch

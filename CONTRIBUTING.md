@@ -66,8 +66,10 @@ reports follow [SECURITY.md](SECURITY.md).
 - **Vocabulary** comes from [CONTEXT.md](CONTEXT.md).
 - **Comments** follow [the comment style](docs/comment-style.md).
 - **Documentation** goes where [the domain guide](docs/agents/domain.md) puts it.
-- **Tests and fixtures** use invented content, with no real names, manuscripts
-  or machine paths.
+- **Committed content** (code, tests, fixtures, docs, commit messages) is
+  invented, with no real names, manuscripts or machine paths.
+- **Tests** assert the property they are about, not a number measured on one
+  machine; see [testing](docs/agents/testing.md#assert-the-intent-not-a-measurement).
 - **Dependencies** come with a reason and their license in the PR description,
   and `package-lock.json` resolves from `registry.npmjs.org` only.
 
