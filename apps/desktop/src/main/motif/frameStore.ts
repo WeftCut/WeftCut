@@ -9,6 +9,18 @@ import { fitsMotifFrame } from '../../shared/motifs/limits.js'
 import { MOTIF_DEADLINES } from '../../shared/motifs/tuning.js'
 import type { MotifReadUnavailable, MotifTextureFrame, MotifTextureReadResult } from '../../shared/motifs/frameTransport.js'
 
+/** Every stored frame costs a write and a rename, nothing more: its hash
+ * directory is made only when the write finds it missing, which covers a
+ * directory collected or dropped since an earlier frame. */
+async function writeTemp(temp: string, bytes: Uint8Array): Promise<void> {
+  try { await fs.writeFile(temp, bytes, { flag: 'wx' }) }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    await fs.mkdir(path.dirname(temp), { recursive: true })
+    await fs.writeFile(temp, bytes, { flag: 'wx' })
+  }
+}
+
 async function replaceFile(temp: string, destination: string): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     try { await fs.rename(temp, destination); return }
@@ -134,13 +146,14 @@ export class MotifFrameStore {
         this.admitWrite(hash, frame, bytes.byteLength)
         const temp = `${stem}.${randomUUID()}.tmp`
         try {
-          await fs.mkdir(path.dirname(stem), { recursive: true })
-          await fs.writeFile(temp, bytes, { flag: 'wx' })
+          await writeTemp(temp, bytes)
           await replaceFile(temp, `${stem}.wfrm`)
           this.changed(hash, frame, true, bytes.byteLength)
           notifyResourceCacheWrite()
-        } catch (error) { throw diskCoded(error) }
-        finally { await fs.rm(temp, { force: true }).catch(() => {}) }
+        } catch (error) {
+          await fs.rm(temp, { force: true }).catch(() => {})
+          throw diskCoded(error)
+        }
       }).finally(() => this.writing(hash, -1))
       this.writeTail = write.catch(() => {})
       return write

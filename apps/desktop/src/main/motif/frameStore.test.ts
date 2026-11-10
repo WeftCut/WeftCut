@@ -126,6 +126,34 @@ describe('MotifFrameStore', () => {
     expect(await store.has(hash, 3)).toBe(true)
   })
 
+  it('stores a frame with one write and one rename, making its directory only when it is missing', async () => {
+    const { root, store } = await fixture()
+    const mkdir = vi.spyOn(fs, 'mkdir')
+    const rm = vi.spyOn(fs, 'rm')
+    try {
+      await (await store.prepareWrite(hash, 0))!.encoded(frameHeader(2, 2))
+      expect(mkdir).toHaveBeenCalledTimes(1)
+      await (await store.prepareWrite(hash, 1))!.encoded(frameHeader(2, 2))
+      expect(mkdir).toHaveBeenCalledTimes(1)
+      expect(rm).not.toHaveBeenCalled()
+      // A directory removed since (collection, a cold start) is made again.
+      await fs.rm(path.join(root, 'Cache', 'raster', hash), { recursive: true })
+      await (await store.prepareWrite(hash, 2))!.encoded(frameHeader(2, 2))
+      expect(mkdir).toHaveBeenCalledTimes(2)
+    } finally { mkdir.mockRestore(); rm.mockRestore() }
+    expect(await fs.readdir(path.join(root, 'Cache', 'raster', hash))).toEqual(['2.wfrm'])
+  })
+
+  it('removes the temporary file when the frame cannot replace its destination', async () => {
+    const { root, store } = await fixture()
+    await (await store.prepareWrite(hash, 0))!.encoded(frameHeader(2, 2))
+    const rename = vi.spyOn(fs, 'rename').mockRejectedValueOnce(Object.assign(new Error('not a directory'), { code: 'ENOTDIR' }))
+    try {
+      await expect((await store.prepareWrite(hash, 1))!.encoded(frameHeader(2, 2))).rejects.toMatchObject({ code: 'ENOTDIR' })
+    } finally { rename.mockRestore() }
+    expect(await fs.readdir(path.join(root, 'Cache', 'raster', hash))).toEqual(['0.wfrm'])
+  })
+
   it('answers no workspace as a miss that leaves coverage alone', async () => {
     const { changed, gpu } = await fixture()
     const store = new MotifFrameStore(async () => null, changed)
