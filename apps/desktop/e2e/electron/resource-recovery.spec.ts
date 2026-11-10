@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { launchApp, newProject, driveExport, invokeCmd, tmpDir, forceCloseApp, importAndPlaceMedia } from './helpers/driver'
+import { CLOSE_LIMIT_MS } from '../lib/process-cleanup.mjs'
 
 const addon = fileURLToPath(new URL('../../native/index.js', import.meta.url))
 const media = fileURLToPath(new URL('../fixtures/media/test_1080p_30fps_6s.mp4', import.meta.url))
@@ -99,13 +100,17 @@ test('completed encoding waits for the occupied processing slot before mux', asy
 })
 
 test('test cleanup bounds a blocked graceful quit and reaps descendants', async () => {
+  // After the limit the cleanup writes its report (up to 15 s for the Windows
+  // process list) and waits up to 3 s for the tree to go.
+  const bound = CLOSE_LIMIT_MS + 30_000
+  test.setTimeout(bound + 60_000)
   const { app } = await launchApp()
   try {
     await app.evaluate(({ app }) => app.on('before-quit', (event: any) => event.preventDefault()))
     const closing = app.close()
     const outcome = await Promise.race([
       closing.then(() => 'closed', error => String(error)),
-      new Promise<string>(resolve => setTimeout(() => resolve('close remained pending'), 15_000)),
+      new Promise<string>(resolve => setTimeout(() => resolve('close remained pending'), bound)),
     ])
     expect(outcome).not.toBe('close remained pending')
     expect(outcome).toContain('graceful close timed out')

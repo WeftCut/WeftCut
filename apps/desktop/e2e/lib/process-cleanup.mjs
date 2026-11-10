@@ -179,7 +179,9 @@ export function ownProcessTree(child) {
  * LANDMINE: the limit has to stay well above 10 s. After `quit` Chromium
  * itself waits on its GPU and network-service processes, the latter for up to
  * 10 s, and several apps closing at once on one GPU take that long to leave. */
-export async function closeProcessTree(owner, gracefulClose, timeoutMs = 30_000) {
+export const CLOSE_LIMIT_MS = 30_000
+
+export async function closeProcessTree(owner, gracefulClose, timeoutMs = CLOSE_LIMIT_MS) {
   let timer
   try {
     await Promise.race([
