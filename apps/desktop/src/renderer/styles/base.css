@@ -3,8 +3,7 @@
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   /* Tailwind preflight sets `html { line-height: 1.5 }`; every legacy
    * layout in this file was sized against the UA default (`normal`,
-   * ~1.2) — e.g. .startup-recent-list's fixed 140px = exactly 3 rows.
-   * Pin the pre-Tailwind metric here (unlayered, so it beats preflight's
+   * ~1.2). Pin the pre-Tailwind metric here (unlayered, so it beats preflight's
    * @layer base). New shadcn components are unaffected: their text-*
    * utilities set their own line-height. */
   line-height: normal;
@@ -14,37 +13,17 @@
 
 * {
   box-sizing: border-box;
-  /* Keep every visible scrollbar aligned with the startup recents list. */
+  /* One scrollbar style app-wide. Chromium draws the bar itself: a thin
+   * classic bar that takes layout width on Windows and Linux, an overlay
+   * bar on macOS. Once either property is set Chromium ignores every
+   * ::-webkit-scrollbar rule, so scrollbar styling belongs here. */
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
-}
-
-*::-webkit-scrollbar {
-  width: calc(8 * var(--ui-px));
-  height: calc(8 * var(--ui-px));
-}
-
-*::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-*::-webkit-scrollbar-thumb {
-  background-color: var(--accent);
-  border-radius: var(--radius-control);
-  transition: background-color var(--transition-base);
-}
-
-*::-webkit-scrollbar-thumb:hover {
-  background-color: var(--color-gray-600);
 }
 
 /* Some canvas-like surfaces scroll without exposing browser chrome. */
 .scrollbar-hidden {
   scrollbar-width: none;
-}
-
-.scrollbar-hidden::-webkit-scrollbar {
-  display: none;
 }
 
 html, body, #root { height: 100%; margin: 0; }
