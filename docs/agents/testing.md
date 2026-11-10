@@ -155,6 +155,15 @@ behaviour is gone. CI retries hide it as flaky until both attempts fail.
   the intended assertion before relying on it; say so in the PR. A test that
   cannot fail for its reason only adds run time.
 
+One of these is checked mechanically. `npm run test:scripts` counts, per E2E spec
+and unit test, the waits written with a bare duration (`waitForTimeout(500)`,
+`setTimeout(resolve, 200)`, `sleep(300)`) against
+`apps/desktop/scripts/fixed-waits.json`, and fails when a count differs. After
+adding a pacing interval or a quiet window, or removing a wait, regenerate the
+table with `node scripts/fixed-waits.mjs --write` (from `apps/desktop`) and commit
+it, which puts the new wait in front of the reviewer. A wait named by a constant
+is not counted: the constant is where its reason is written.
+
 ## Pixel equality
 
 GPU rasterisation of anti-aliased content is not stable: another project or launch
