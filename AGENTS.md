@@ -14,6 +14,10 @@ Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening an upstream issue or PR
 - **Prefer replacing to layering.** When a change supersedes a code path, remove the old one in the same change. Keep both only where something outside the change still depends on the old one (saved projects, a published MCP contract), and say why in the PR.
 - **Committed content is invented.** Code, tests, fixtures, docs and commit messages carry no real names, project material or machine paths; use placeholders such as `/home/u` or `C:\Users\u`.
 
+## Design rules
+
+- **Know the cause before compensating for it.** When a change hides a symptom instead of removing it, first find what produces the symptom. If the cause is in this repo, fix it there; stacked compensations usually mean a design that needs changing. If it lies outside (an engine, driver or OS behaviour), keep the compensation and name the cause in a landmine comment (see `docs/comment-style.md`) and in the PR. Retries for transient failures, and fast paths or caches chosen by measurement, are design, not compensation.
+
 ## Agent skills
 
 ### Issue tracker
