@@ -107,22 +107,22 @@ test('process-tree memory includes native children and grandchildren and falls a
   const { app, page } = await launchApp()
   try {
     await expect.poll(async () => (await page.evaluate(() => window.api.resources.status())).memory_scope).toBe('process-tree')
-    const before = await app.evaluate(async (_electron, addon) => {
+    const sample = () => app.evaluate(async (_electron, addon) => {
       const native = process.getBuiltinModule('module').createRequire(addon)(addon)
-      return native.resourcesMemory()
+      return native.resourcesMemory() as Promise<{ processMib: number; availableMib?: number; pids: number[] }>
     }, addon)
+    const before = await sample()
+    // A child of the app and a child of that child, each alive until its stdin ends.
     const descendants = await app.evaluate(async () => {
       const spawn = process.getBuiltinModule('child_process').spawn
       const grandchildScript = `
-        globalThis.memory = Buffer.alloc(96 * 1048576, 1);
-        process.stdout.write(JSON.stringify({ pid: process.pid, rss: process.memoryUsage().rss }));
+        process.stdout.write(String(process.pid));
         process.stdin.resume();
         process.stdin.on('end', () => process.exit(0));
       `
       const childScript = `
-        globalThis.memory = Buffer.alloc(96 * 1048576, 1);
         const grandchild = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(grandchildScript)}], { env: process.env, stdio: ['pipe', 'pipe', 'inherit'] });
-        grandchild.stdout.once('data', data => process.stdout.write(JSON.stringify({ child: { pid: process.pid, rss: process.memoryUsage().rss }, grandchild: JSON.parse(data.toString()) })));
+        grandchild.stdout.once('data', data => process.stdout.write(JSON.stringify({ child: process.pid, grandchild: Number(data.toString()) })));
         process.stdin.resume();
         process.stdin.on('end', () => grandchild.stdin.end());
         grandchild.on('exit', () => process.exit(0));
@@ -131,33 +131,30 @@ test('process-tree memory includes native children and grandchildren and falls a
         env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['pipe', 'pipe', 'inherit'],
       })
       ;(globalThis as any).__resourceMemoryChild = child
-      return new Promise<any>((resolve, reject) => {
+      return new Promise<{ child: number; grandchild: number }>((resolve, reject) => {
         child.once('error', reject)
         child.stdout.once('data', data => resolve(JSON.parse(data.toString())))
         child.once('exit', code => reject(new Error(`Memory fixture exited before sampling: ${code}`)))
       })
     })
-    const during = await app.evaluate(async (_electron, addon) => {
-      const native = process.getBuiltinModule('module').createRequire(addon)(addon)
-      return native.resourcesMemory()
-    }, addon)
-    const descendantMiB = (descendants.child.rss + descendants.grandchild.rss) / 1048576
-    expect(during.processMib - before.processMib).toBeGreaterThan(128)
-    // Independent child RSS readings bound both missed descendants and double
-    // counting, with headroom for Chromium's concurrent startup/allocator drift.
-    expect(Math.abs(during.processMib - before.processMib - descendantMiB)).toBeLessThan(128)
+    const during = await sample()
+    // The sample names the processes it sums, so inclusion is read from it
+    // and not inferred from how much the total moved.
+    const counted = (pids: number[], pid: number) => pids.filter(p => p === pid).length
+    expect(before.pids).not.toContain(descendants.child)
+    expect(counted(during.pids, descendants.child)).toBe(1)
+    expect(counted(during.pids, descendants.grandchild)).toBe(1)
+    expect(during.processMib).toBeGreaterThan(0)
     expect(during.availableMib).toBeGreaterThan(0)
     await app.evaluate(async () => {
       const child = (globalThis as any).__resourceMemoryChild
       await new Promise<void>(resolve => { child.once('exit', () => resolve()); child.stdin.end() })
       delete (globalThis as any).__resourceMemoryChild
     })
-    const after = await app.evaluate(async (_electron, addon) => {
-      const native = process.getBuiltinModule('module').createRequire(addon)(addon)
-      return native.resourcesMemory()
-    }, addon)
-    expect(during.processMib - after.processMib).toBeGreaterThan(128)
-    await testInfo.attach('process-tree-memory', { contentType: 'application/json', body: JSON.stringify({ before, during, after, descendants, descendantMiB }, null, 2) })
+    const after = await sample()
+    expect(after.pids).not.toContain(descendants.child)
+    expect(after.pids).not.toContain(descendants.grandchild)
+    await testInfo.attach('process-tree-memory', { contentType: 'application/json', body: JSON.stringify({ before, during, after, descendants }, null, 2) })
   } finally {
     await app.evaluate(() => { (globalThis as any).__resourceMemoryChild?.stdin.end() }).catch(() => {})
     await app.close()

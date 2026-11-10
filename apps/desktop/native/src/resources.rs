@@ -1219,9 +1219,12 @@ pub async fn resources_memory() -> napi::Result<ResourceMemorySample> {
             .map(|process| process.memory())
             .sum::<u64>() as f64
             / 1048576.0;
+        let mut pids: Vec<u32> = owned.iter().map(|pid| pid.as_u32()).collect();
+        pids.sort_unstable();
         Ok(ResourceMemorySample {
             process_mib,
             available_mib: memory::available_memory(&system),
+            pids,
         })
     })
     .await
@@ -1232,6 +1235,8 @@ pub async fn resources_memory() -> napi::Result<ResourceMemorySample> {
 pub struct ResourceMemorySample {
     pub process_mib: f64,
     pub available_mib: Option<f64>,
+    /// The processes `process_mib` sums: this one and its descendants.
+    pub pids: Vec<u32>,
 }
 
 fn process_memory_refresh() -> sysinfo::ProcessRefreshKind {
@@ -1444,6 +1449,7 @@ mod tests {
         let sample = sample.unwrap();
         let rss_mib = reference.process(root).unwrap().memory() as f64 / 1048576.0;
         assert!(sample.process_mib > 0.0);
+        assert!(sample.pids.contains(&std::process::id()));
         // Allow sampling/allocator drift, but never one full RSS per thread.
         assert!(
             sample.process_mib < rss_mib * 2.0,

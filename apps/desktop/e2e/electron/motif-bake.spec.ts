@@ -28,6 +28,7 @@ test('Pre-bake now moves a clip ahead of unfinished background work @serial', as
     await invokeCmd(page, 'app_settings_set', { patch: { prebake_motifs: false } })
     const layers: { layerId: string; key: string }[] = []
     for (let i = 0; i < 3; i++) {
+      // Clip i paints rgb(50 + 50 i, 2 x frame, 100), so a frame's pixels name its clip.
       const draft = await createMotifDraft(page, { id: `ordered-${i}`, name: `Ordered ${i}`, version: 1,
         size: [64, 64], default_duration_s: 2, props_schema: {} },
         `<!doctype html><body><script>motif.define({frame(t){document.body.style.background='rgb(${50+i*50},'+Math.floor(t*60)+',100)'}})</script>`)
@@ -36,40 +37,79 @@ test('Pre-bake now moves a clip ahead of unfinished background work @serial', as
       const key = await page.evaluate(id => (window as any).__weftcutTest.cacheKeyForLayer(id), layerId)
       layers.push({ layerId, key })
     }
-    await app.evaluate((_electron, addon) => {
+    await app.evaluate(({ ipcMain }, addon) => {
       const native = process.getBuiltinModule('module').createRequire(addon)(addon)
-      // A bake encodes a bitmap's paint, a display's live write its picture.
       const original = native.motifConvert
       let release!: () => void
       const gate = new Promise<void>(resolve => { release = resolve })
-      const state = { calls: 0, held: false, release: () => { native.motifConvert = original; release() } }
+      const state = {
+        /** The clip of every frame the bake encodes, in the order the encodes begin. */
+        encodes: [] as number[],
+        /** The clip the bake reached first; its encodes wait at the gate. */
+        active: null as number | null,
+        held: false,
+        /** Cache keys of the promotions main has applied. */
+        promoted: [] as string[],
+        release,
+      }
       ;(globalThis as any).__bakeOrderGate = state
-      // The preview stores the frame under the playhead too, so up to three of
-      // these encodes are not the bake's. A clip finishes before the next starts.
-      // Every encode from the seventh on waits: the bake keeps several frames
-      // in flight, and holding one alone would not stop its clip.
+      // A bake encodes a bitmap's paint, a display's live write its picture.
       native.motifConvert = async (...args: any[]) => {
-        if (args[4] === 'frame' && ++state.calls >= 7) { state.held = true; await gate }
+        const [pixels, width, height, from, to] = args
+        if (to === 'frame') {
+          const at = (Math.floor(height / 2) * width + Math.floor(width / 2)) * 4
+          const clip = Math.round(((from === 'rgba' ? pixels[at] : pixels[at + 2]) - 50) / 50)
+          // The paused preview stores the frame under the playhead, frame 0; a
+          // later frame is the bake's.
+          if (pixels[at + 1] >= 4) {
+            state.encodes.push(clip)
+            state.active ??= clip
+            // A clip finishes before the next starts, and the bake keeps several
+            // frames in flight: holding every encode of this clip stops the bake.
+            if (clip === state.active) { state.held = true; await gate }
+          }
+        }
         return original(...args)
       }
+      for (const channel of ['backend:invoke', 'backend:invokePublished']) {
+        const handler = ipcMain._invokeHandlers.get(channel)!
+        ipcMain._invokeHandlers.set(channel, async (event: any, request: any) => {
+          const answer = await handler(event, request)
+          if (request.channel === 'motif_bake_reconcile') state.promoted.push(...(request.args?.plan?.promoteKeys ?? []))
+          return answer
+        })
+      }
     }, addon)
+    const gateState = () => app.evaluate(() => {
+      const { encodes, active, held, promoted } = (globalThis as any).__bakeOrderGate
+      return { encodes: [...encodes] as number[], active: active as number | null, held: held as boolean, promoted: [...promoted] as string[] }
+    })
     await invokeCmd(page, 'app_settings_set', { patch: { prebake_motifs: true } })
-    await expect.poll(() => app.evaluate(() => (globalThis as any).__bakeOrderGate.held), { timeout: 30_000 }).toBe(true)
+    await expect.poll(async () => (await gateState()).held, { timeout: 30_000 }).toBe(true)
     const read = () => invokeCmd<MotifBakeSnapshot>(page, 'motif_bake_snapshot')
     const before = await read()
-    const active = layers.find(l => before.statuses[l.key]?.done > 1)!
-    const target = layers.findLast(l => before.statuses[l.key]?.done <= 1)!
+    const held = await gateState()
+    const active = layers[held.active!]!
+    const targetClip = layers.findLastIndex((_, clip) => !held.encodes.includes(clip))
+    const target = layers[targetClip]!
     expect(active).toBeTruthy(); expect(target).toBeTruthy()
     await page.evaluate(id => (window as any).__weftcutTest.revealLayer({ layerId: id }), target.layerId)
     const block = page.locator(`[data-layer-id="${target.layerId}"]`)
     await block.click({ button: 'right' })
     await page.getByRole('menuitem', { name: 'Pre-bake now', exact: true }).click()
+    // The bake resumes only once main has the promotion, so what it bakes next
+    // is main's choice and not a race with the click.
+    await expect.poll(async () => (await gateState()).promoted, { timeout: 30_000 }).toContain(target.key)
     await app.evaluate(() => (globalThis as any).__bakeOrderGate.release())
     await expect.poll(async () => (await read()).statuses[target.key]?.phase, { timeout: 40_000 }).toBe('ready')
-    const promoted = await read()
-    expect(promoted.statuses[active.key]!.done).toBeLessThan(60)
-    expect(promoted.statuses[active.key]!.done).toBeGreaterThanOrEqual(before.statuses[active.key]!.done)
+    // A lower bound, so a late reading cannot fail it: the interrupted clip kept its frames.
+    expect((await read()).statuses[active.key]!.done).toBeGreaterThanOrEqual(before.statuses[active.key]!.done)
     await expect.poll(async () => Object.values((await read()).statuses).every(s => s.phase === 'ready'), { timeout: 60_000 }).toBe(true)
+    // Order is read from the encodes, not from two status readings: the promoted
+    // clip's last frame is encoded before the interrupted clip's last.
+    const { encodes } = await gateState()
+    expect(encodes).toContain(targetClip)
+    expect(encodes.lastIndexOf(targetClip)).toBeLessThan(encodes.lastIndexOf(held.active!))
   } finally {
     await app.evaluate(() => (globalThis as any).__bakeOrderGate?.release()).catch(() => {})
     await app.close()
