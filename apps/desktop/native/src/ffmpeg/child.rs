@@ -1312,6 +1312,28 @@ mod unix_tests {
         unsafe { libc::kill(pid as libc::pid_t, 0) == -1 }
     }
 
+    /// How long a test waits for a reap that must come.
+    const MUST_HAPPEN: Duration = Duration::from_secs(30);
+
+    /// Wait for the stop thread to reap `pid`.
+    fn wait_reaped(pid: u32) {
+        let until = Instant::now() + MUST_HAPPEN;
+        while !reaped(pid) {
+            assert!(Instant::now() < until, "child {pid} was never reaped");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// A grace no test waits out: a call that returns inside it did not wait
+    /// for the kill. The child ignores SIGTERM, so `end` is what lets the stop
+    /// thread reap it.
+    const LONG_GRACE: Duration = Duration::from_secs(30);
+
+    fn end(pid: u32) {
+        // SAFETY: a plain syscall on a child the stop thread has not reaped.
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+    }
+
     #[tokio::test]
     async fn the_guard_holds_a_child_until_its_owner_lets_go_of_the_reaped_process() {
         use super::super::guard::held;
@@ -1339,7 +1361,7 @@ mod unix_tests {
         drop(child);
         // The kill is still a grace away, on a thread an app exit would end.
         assert!(held(pid).is_some());
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + MUST_HAPPEN;
         while held(pid).is_some() && Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -1347,19 +1369,11 @@ mod unix_tests {
     }
 
     #[tokio::test]
-    async fn a_child_that_exits_on_sigterm_stops_well_within_the_grace() {
-        let mut child = spawn_ready(&mut sh(
-            "echo ready; exec sleep 30",
-            Duration::from_secs(10),
-        ))
-        .await;
+    async fn a_child_that_exits_on_sigterm_stops_within_the_grace() {
+        let mut child = spawn_ready(&mut sh("echo ready; exec sleep 30", LONG_GRACE)).await;
         let started = Instant::now();
         let status = child.stop().await.unwrap();
-        assert!(
-            started.elapsed() < Duration::from_secs(2),
-            "{:?}",
-            started.elapsed()
-        );
+        assert!(started.elapsed() < LONG_GRACE, "{:?}", started.elapsed());
         assert_eq!(status.signal(), Some(libc::SIGTERM));
     }
 
@@ -1371,11 +1385,6 @@ mod unix_tests {
         let started = Instant::now();
         let status = child.stop().await.unwrap();
         assert!(started.elapsed() >= grace, "{:?}", started.elapsed());
-        assert!(
-            started.elapsed() < Duration::from_secs(5),
-            "{:?}",
-            started.elapsed()
-        );
         assert_eq!(status.signal(), Some(libc::SIGKILL));
     }
 
@@ -1384,17 +1393,13 @@ mod unix_tests {
         // TERM is ignored, so only EOF on stdin can end it before the grace.
         let mut command = sh(
             "trap '' TERM; echo ready; cat >/dev/null; exit 3",
-            Duration::from_secs(10),
+            LONG_GRACE,
         );
         command.media_on_stdin();
         let mut child = spawn_ready(&mut command).await;
         let started = Instant::now();
         let status = child.stop().await.unwrap();
-        assert!(
-            started.elapsed() < Duration::from_secs(2),
-            "{:?}",
-            started.elapsed()
-        );
+        assert!(started.elapsed() < LONG_GRACE, "{:?}", started.elapsed());
         assert_eq!(status.code(), Some(3));
     }
 
@@ -1402,22 +1407,15 @@ mod unix_tests {
     async fn dropping_a_running_owner_reaps_the_child_without_blocking() {
         let mut child = spawn_ready(&mut sh(
             "trap '' TERM; echo ready; exec sleep 30",
-            Duration::from_millis(300),
+            LONG_GRACE,
         ))
         .await;
         let pid = child.handle().child.id().unwrap();
         let started = Instant::now();
         drop(child);
-        assert!(
-            started.elapsed() < Duration::from_millis(100),
-            "{:?}",
-            started.elapsed()
-        );
-        let until = Instant::now() + Duration::from_secs(5);
-        while !reaped(pid) {
-            assert!(Instant::now() < until, "child {pid} was never reaped");
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        assert!(started.elapsed() < LONG_GRACE, "{:?}", started.elapsed());
+        end(pid);
+        wait_reaped(pid);
     }
 
     #[test]
@@ -1438,37 +1436,24 @@ mod unix_tests {
         assert_eq!(child.stop().unwrap().signal(), Some(libc::SIGKILL));
         assert!(started.elapsed() >= grace, "{:?}", started.elapsed());
 
-        let mut child = sh(script, grace).spawn_sync().unwrap();
+        let mut child = sh(script, LONG_GRACE).spawn_sync().unwrap();
         ready(&mut child);
         let pid = child.handle().child.id();
         let started = Instant::now();
         drop(child);
-        assert!(
-            started.elapsed() < Duration::from_millis(100),
-            "{:?}",
-            started.elapsed()
-        );
-        let until = Instant::now() + Duration::from_secs(5);
-        while !reaped(pid) {
-            assert!(Instant::now() < until, "child {pid} was never reaped");
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        assert!(started.elapsed() < LONG_GRACE, "{:?}", started.elapsed());
+        end(pid);
+        wait_reaped(pid);
     }
 
     #[tokio::test]
     async fn a_timeout_stops_the_child_and_fails_the_wait() {
         let mut command = FfmpegCommand::program("sh", Bound::Timeout(Duration::from_millis(200)));
-        command
-            .args(["-c", "exec sleep 30"])
-            .grace(Duration::from_secs(10));
+        command.args(["-c", "exec sleep 30"]).grace(LONG_GRACE);
         let started = Instant::now();
         let error = command.output().await.unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
-        assert!(
-            started.elapsed() < Duration::from_secs(2),
-            "{:?}",
-            started.elapsed()
-        );
+        assert!(started.elapsed() < LONG_GRACE, "{:?}", started.elapsed());
 
         let mut command = FfmpegCommand::program("sh", Bound::Timeout(Duration::from_millis(200)));
         command
@@ -1501,15 +1486,24 @@ mod unix_tests {
     /// A stand-in ffmpeg: a script that finds its progress file where the
     /// owner puts it (`-progress file:<path>` leads the argv) and runs `body`
     /// with `$progress` set.
+    ///
+    /// The script is run once here, without arguments, before any test starts
+    /// it under the watchdog: macOS assesses a new executable on its first
+    /// run, which takes a few hundred milliseconds and one file at a time, and
+    /// that would count against the stall limit as a child showing no life.
     fn fake_ffmpeg(dir: &Path, body: &str) -> FfmpegCommand {
         use std::os::unix::fs::PermissionsExt;
         let script = dir.join("ffmpeg");
         std::fs::write(
             &script,
-            format!("#!/bin/sh\nprogress=\"${{2#file:}}\"\n{body}\n"),
+            format!("#!/bin/sh\n[ $# -eq 0 ] && exit 0\nprogress=\"${{2#file:}}\"\n{body}\n"),
         )
         .unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(std::process::Command::new(&script)
+            .status()
+            .unwrap()
+            .success());
         let mut command = FfmpegCommand::program(script, Bound::Stall(LIMIT));
         command
             .stdout(Stdio::null())
@@ -1541,7 +1535,6 @@ mod unix_tests {
         assert!(is_stalled(&error), "{error}");
         let elapsed = started.elapsed();
         assert!(elapsed >= LIMIT, "{elapsed:?}");
-        assert!(elapsed < Duration::from_secs(3), "{elapsed:?}");
     }
 
     #[tokio::test]

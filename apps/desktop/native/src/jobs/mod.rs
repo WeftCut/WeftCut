@@ -1551,7 +1551,9 @@ mod tests {
             .unwrap();
             enqueue_for_media(sink.clone(), LogBusSlot::new(), cache.clone(), media);
         }
-        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        // Restoring is the claim, not how fast: the limit only ends a wait for
+        // events that are not coming.
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
             loop {
                 if sink
                     .names()
@@ -1566,7 +1568,7 @@ mod tests {
             }
         })
         .await
-        .expect("cached derivatives must be restored immediately");
+        .expect("cached derivatives must be restored");
         assert!(
             !sink.names().iter().any(|name| name == EVENT_STARTED),
             "reopening already-cached media must not report generation"

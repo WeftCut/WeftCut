@@ -47,6 +47,10 @@ fn adopt(input: &mut ChildStdin, child: &Child) {
     input.write_all(adopt_line(pid, start).as_bytes()).unwrap();
 }
 
+/// How long a test waits for an exit that must come. `wait_by` returns as
+/// soon as the process is gone, so only a missing exit costs this long.
+const MUST_HAPPEN: Duration = Duration::from_secs(30);
+
 fn wait_by(child: &mut Child, limit: Duration) -> Option<ExitStatus> {
     let deadline = Instant::now() + limit;
     loop {
@@ -81,13 +85,14 @@ fn a_closed_input_stops_children_with_sigterm_then_sigkill() {
 
     let closed = Instant::now();
     drop(input);
-    let polite = wait_by(&mut polite, Duration::from_secs(1)).expect("SIGTERM ends it");
+    // The signal each one died of carries the order; the waits only have to
+    // end.
+    let polite = wait_by(&mut polite, MUST_HAPPEN).expect("SIGTERM ends it");
     assert_eq!(polite.signal(), Some(libc::SIGTERM));
-    let stubborn = wait_by(&mut stubborn, STOP_GRACE + Duration::from_secs(2))
-        .expect("SIGKILL ends what SIGTERM did not");
+    let stubborn = wait_by(&mut stubborn, MUST_HAPPEN).expect("SIGKILL ends what SIGTERM did not");
     assert_eq!(stubborn.signal(), Some(libc::SIGKILL));
     assert!(closed.elapsed() >= STOP_GRACE - Duration::from_millis(100));
-    assert!(wait_by(&mut reaper, Duration::from_secs(1)).is_some_and(|s| s.success()));
+    assert!(wait_by(&mut reaper, MUST_HAPPEN).is_some_and(|s| s.success()));
 }
 
 #[test]
@@ -106,7 +111,7 @@ fn released_and_reused_pids_are_left_alone() {
         .unwrap();
     drop(input);
 
-    assert!(wait_by(&mut reaper, Duration::from_secs(1)).is_some_and(|s| s.success()));
+    assert!(wait_by(&mut reaper, MUST_HAPPEN).is_some_and(|s| s.success()));
     assert!(released.try_wait().unwrap().is_none());
     assert!(reused.try_wait().unwrap().is_none());
     for child in [&mut released, &mut reused] {

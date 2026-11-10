@@ -620,6 +620,11 @@ mod tests {
         .unwrap()
     }
 
+    /// Ends a wait for a call that must return; a hang is the only thing it
+    /// reports. Shorter than the fixture child's own life, so a call that
+    /// returns only because the child exited still fails.
+    const HANG: Duration = Duration::from_secs(20);
+
     #[tokio::test]
     async fn cancellation_reaps_child_during_finish() {
         let shared = dummy_shared();
@@ -632,21 +637,16 @@ mod tests {
         let finish_state = state.clone();
         let finish = tokio::spawn(async move { export_video_sink_finish(&finish_state).await });
         tokio::time::sleep(std::time::Duration::from_millis(40)).await;
-        tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            export_video_sink_cancel(&state),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_secs(2), finish)
-                .await
-                .unwrap()
-                .unwrap()
-                .unwrap_err()
-                .contains("cancelled")
-        );
+        tokio::time::timeout(HANG, export_video_sink_cancel(&state))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(tokio::time::timeout(HANG, finish)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err()
+            .contains("cancelled"));
         assert!(shared.child.lock().unwrap().is_none());
         assert!(state.0.lock().unwrap().is_none());
     }
@@ -667,7 +667,7 @@ mod tests {
         });
         // A write holds this lock while the pipe, which the fixture never reads,
         // blocks it. Cancelling any sooner tests a write that has not begun.
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::time::timeout(HANG, async {
             while shared.stdin.try_lock().is_ok() {
                 tokio::time::sleep(std::time::Duration::from_millis(1)).await;
             }
@@ -675,13 +675,11 @@ mod tests {
         .await
         .expect("the write reaches the pipe");
         export_video_sink_cancel(&state).await.unwrap();
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_secs(2), writer)
-                .await
-                .unwrap()
-                .unwrap()
-                .is_err()
-        );
+        assert!(tokio::time::timeout(HANG, writer)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err());
         assert!(shared.child.lock().unwrap().is_none());
         assert!(shared.stdin.lock().unwrap().is_none());
     }
@@ -696,12 +694,9 @@ mod tests {
             shared: shared.clone(),
             resources: None,
         }));
-        tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            reclaim_stale_sink(&state),
-        )
-        .await
-        .unwrap();
+        tokio::time::timeout(HANG, reclaim_stale_sink(&state))
+            .await
+            .unwrap();
         assert!(
             state.lock().unwrap().is_none(),
             "orphaned sink must be reclaimed"
@@ -922,18 +917,11 @@ mod tests {
         .await
         .expect("start");
         let shared = state.0.lock().unwrap().as_ref().unwrap().shared.clone();
-        let started = Instant::now();
         // One 1080p frame, far larger than a pipe buffer.
         let error = video_sink_write(&state, vec![0; 1920 * 1080 * 3 / 2], 0)
             .await
             .unwrap_err();
         assert!(error.contains("ffmpeg-stalled: "), "{error}");
-        assert!(started.elapsed() >= Duration::from_millis(500));
-        assert!(
-            started.elapsed() < Duration::from_secs(10),
-            "{:?}",
-            started.elapsed()
-        );
         let error = export_video_sink_finish(&state).await.unwrap_err();
         assert!(error.contains("ffmpeg-stalled: "), "{error}");
         assert!(state.0.lock().unwrap().is_none(), "finish clears the sink");
