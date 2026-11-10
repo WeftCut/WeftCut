@@ -30,4 +30,4 @@ Production E2E build, same project: 24–28 ms refresh, 16.8 ms max rAF gap.
 
 Synthetic Vitest probes at 5,000 layers still show ~17 ms structured clone and
 ~60 ms history projection per snapshot; full-snapshot cost is tracked in
-[issue #63](https://github.com/WeftCut/WeftCut/issues/63).
+[issue #144](https://github.com/WeftCut/WeftCut/issues/144).

@@ -112,7 +112,7 @@ The broader replay uses
 These gates add output-assembly coverage to the Rust session and Vitest routing
 tests already run on every push; they do not prove physical-GPU behaviour.
 Platform evidence and the remaining host requirements are recorded in
-[`docs/platform-codecs.md`](../../../docs/platform-codecs.md) and #35.
+[`docs/platform-codecs.md`](../../../docs/platform-codecs.md).
 
 ### Run
 

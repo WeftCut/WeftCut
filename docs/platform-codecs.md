@@ -3,8 +3,7 @@
 The capability matrix per platform, the hardware evidence behind it, and the
 platform boundaries the code works around. Dated items are observations on
 named hardware, not promises about future Chromium, FFmpeg or driver versions.
-Open platform work is tracked in [#35](https://github.com/WeftCut/WeftCut/issues/35)
-and [#21](https://github.com/WeftCut/WeftCut/issues/21); see the end of this page.
+What is unmeasured or deferred is listed at the end of this page.
 
 ## Encode and decode matrix
 
@@ -23,7 +22,7 @@ and [#21](https://github.com/WeftCut/WeftCut/issues/21); see the end of this pag
   candidates, real availability probes and software fallback. Its status-log
   entry names the encoder actually selected; a listed adapter is not proof.
   QSV, AMF and VAAPI encode are unmeasured because NVENC won selection or the
-  GPU was absent (#35).
+  GPU was absent.
 - Preview eligibility lives in `shared/hwLaneEligibility.ts` (seek-validated
   per lane; it narrows the one-frame probe, never overrides a negative verdict).
   AV1, MPEG-2 and intra formats other than ProRes-on-VideoToolbox never probe
@@ -98,7 +97,7 @@ decode in software. libva then dispatches to the system driver's
 `vaMapBuffer` when the driver predates the symbol. Local VAAPI conformance:
 SSIM 0.983. Render-node numbering changes across boots; enumerate the nodes
 and use the actual Intel node for `vainfo`. Cross-distro system-libva coverage
-is #35.
+is unmeasured.
 
 ### 3. AV1 capability probes can over-promise
 
@@ -194,14 +193,17 @@ bug in `ExportFrameStore.waitForPts`, not Worker AV1 decode. On machines that
 cannot decode an admitted codec, the pre-flight probe route-corrects the source
 ([render.md](render.md#export-source-resolution)).
 
-## Where unfinished work belongs
+## Unmeasured and deferred
 
-- **#35:** macOS window restoration; P3 color-pick/readback; cross-distro
-  VAAPI; unmeasured QSV/AMF/VAAPI encoders; Windows/macOS degraded
-  auto-download and SOCKS; ProRes-engine Mac throughput/seek baseline
-  ([decode-bench.md](decode-bench.md#macos-videotoolbox-copy-back)).
-- **#21:** native hardware export decode (profiling-gated), wider 10-bit
-  hardware-preview transport/eligibility, Intel decoder-util sampling. A codec
-  is admitted only when the hardware and transfer format support it.
+- **Open defect:** macOS window restoration,
+  [#142](https://github.com/WeftCut/WeftCut/issues/142).
+- **Unmeasured, no issue:** P3 color-pick/readback; cross-distro VAAPI;
+  QSV/AMF/VAAPI encoders; Windows/macOS degraded auto-download and SOCKS;
+  ProRes-engine Mac throughput/seek baseline
+  ([decode-bench.md](decode-bench.md#macos-videotoolbox-copy-back)). Each gets
+  an issue when someone reports a problem on that setup.
+- **Deferred until needed:** native hardware export decode (profiling-gated),
+  wider 10-bit hardware-preview transport/eligibility, Intel decoder-util
+  sampling. A codec is admitted only when the hardware and transfer format
+  support it.
 - **#37:** the Windows backward-cell test budget.
-- **#11:** release acceptance, including installer install and launch.

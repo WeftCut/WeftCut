@@ -128,7 +128,7 @@ videotoolbox cell.
 
 ### macOS VideoToolbox copy-back
 
-The ProRes headline case needs an M1 Pro/Max or M2+ host (tracked in #35).
+The ProRes headline case needs an M1 Pro/Max or M2+ host and has not been run.
 From `apps/desktop/e2e`, after `npm run bench:decode:fixtures`:
 
 ```bash
