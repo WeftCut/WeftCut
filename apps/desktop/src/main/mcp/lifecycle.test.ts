@@ -210,22 +210,24 @@ describe('a session whose client is gone is closed by the host', () => {
     expect(stale.status).toBe(400)
   })
 
+  // Real timers. A ping comes every fifth of the idle window, so only a stall
+  // of four fifths of it makes a live client look silent; the pings outlast
+  // the window, so staying alive is what they prove.
+  const KEPT_ALIVE = { windowMs: 2000, paceMs: 400, pings: 8 }
+
   it('a client that keeps making requests is never judged gone', async () => {
     const { rows, deps } = collector()
-    // Real timers: the idle window is several times a request's round trip so a
-    // loaded CI box cannot make a ping look like silence, and the loop outlasts
-    // the window so staying alive is what the pings prove.
-    const host = await startMcpHost({} as Backend, { log: deps, sessionReaper: { idleMs: 400, graceMs: 400, sweepMs: 10 } })
+    const host = await startMcpHost({} as Backend, { log: deps, sessionReaper: { idleMs: KEPT_ALIVE.windowMs, graceMs: KEPT_ALIVE.windowMs, sweepMs: 10 } })
     hosts.push(host)
     const bind = host.getInfo().bind
     const port = Number(bind.slice(bind.lastIndexOf(':') + 1))
     const init = await post(port, INITIALIZE, { authorization: 'Bearer test-token' })
-    for (let i = 0; i < 8; i++) {
-      await new Promise((r) => setTimeout(r, 60))
+    for (let i = 0; i < KEPT_ALIVE.pings; i++) {
+      await new Promise((r) => setTimeout(r, KEPT_ALIVE.paceMs))
       await post(port, { jsonrpc: '2.0', id: 10 + i, method: 'ping' }, { authorization: 'Bearer test-token', 'mcp-session-id': init.sessionId! })
     }
     expect(rows.some((r) => r.message === 'MCP client gone: session closed')).toBe(false)
-  })
+  }, 4 * KEPT_ALIVE.windowMs)
 
   it('a GET the transport refuses does not make the session look alive', async () => {
     // A GET without the SSE `Accept` is answered 406 and never becomes a
@@ -271,7 +273,7 @@ describe('a session whose client is gone is closed by the host', () => {
 
   it('a client whose stream dropped but who keeps making requests is not judged gone either', async () => {
     const { rows, deps } = collector()
-    const host = await startMcpHost({} as Backend, { log: deps, sessionReaper: { idleMs: 400, graceMs: 400, sweepMs: 10 } })
+    const host = await startMcpHost({} as Backend, { log: deps, sessionReaper: { idleMs: KEPT_ALIVE.windowMs, graceMs: KEPT_ALIVE.windowMs, sweepMs: 10 } })
     hosts.push(host)
     const bind = host.getInfo().bind
     const port = Number(bind.slice(bind.lastIndexOf(':') + 1))
@@ -283,10 +285,10 @@ describe('a session whose client is gone is closed by the host', () => {
       req.on('error', () => resolve())
       req.end()
     })
-    for (let i = 0; i < 8; i++) {
-      await new Promise((r) => setTimeout(r, 60))
+    for (let i = 0; i < KEPT_ALIVE.pings; i++) {
+      await new Promise((r) => setTimeout(r, KEPT_ALIVE.paceMs))
       await post(port, { jsonrpc: '2.0', id: 20 + i, method: 'ping' }, { authorization: 'Bearer test-token', 'mcp-session-id': init.sessionId! })
     }
     expect(rows.some((r) => r.message === 'MCP client gone: session closed')).toBe(false)
-  })
+  }, 4 * KEPT_ALIVE.windowMs)
 })

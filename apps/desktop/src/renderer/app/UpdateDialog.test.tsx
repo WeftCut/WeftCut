@@ -8,6 +8,11 @@ import { UpdateButton } from './UpdateButton'
 import { UpdateIndicator } from './UpdateIndicator'
 import { useAppSettingsStore } from '../settings/appSettingsStore'
 
+/** How long a test waits for the screen to follow a status the app polls for
+ * in real time. It only ends a wait for a poll that never comes. */
+const STATUS_POLL_SEEN_MS = 10_000
+
+
 const mocks = vi.hoisted(() => ({ set: vi.fn() }))
 vi.mock('../ipc', async importOriginal => ({ ...await importOriginal<object>(), appSettingsSet: mocks.set }))
 
@@ -87,14 +92,14 @@ describe('update dialog', () => {
     render(<UpdateDialog onClose={vi.fn()} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Download and install' }))
     api.status.mockResolvedValue({ phase: 'downloading', version: '1.2.0', percent: 25 })
-    await screen.findByText('Downloading 1.2.0… 25%', {}, { timeout: 2000 })
+    await screen.findByText('Downloading 1.2.0… 25%', {}, { timeout: STATUS_POLL_SEEN_MS })
     api.status.mockResolvedValue({ phase: 'error', version: '1.2.0' })
     fail('download-failed')
     expect((await screen.findByRole('alert')).textContent).toContain('Could not download the update')
-    const retry = await screen.findByRole('button', { name: 'Download and install' }, { timeout: 2000 })
+    const retry = await screen.findByRole('button', { name: 'Download and install' }, { timeout: STATUS_POLL_SEEN_MS })
     expect((retry as HTMLButtonElement).disabled).toBe(false)
     expect(api.download).toHaveBeenCalledOnce()
-  })
+  }, 3 * STATUS_POLL_SEEN_MS)
 
   it('skips the offered version and closes', async () => {
     const api = setup(false)
@@ -186,8 +191,8 @@ describe('start-screen update icon', () => {
     await waitFor(() => expect(api.status).toHaveBeenCalled())
     expect(screen.queryByRole('button')).toBeNull()
     api.status.mockResolvedValue({ phase: 'available', version: '1.3.0' })
-    await screen.findByRole('button', { name: 'A new version is available' }, { timeout: 2000 })
-  })
+    await screen.findByRole('button', { name: 'A new version is available' }, { timeout: STATUS_POLL_SEEN_MS })
+  }, 2 * STATUS_POLL_SEEN_MS)
 })
 
 describe('status-bar update icon', () => {

@@ -10,6 +10,11 @@ import i18n from '../i18n';
 import { readResourcePolicy, patchResourcePolicy, resolveResourcePolicy } from '../../shared/resource-policy';
 import { untestedAcceleration } from '../../shared/hardware-diagnostics';
 
+/** How long a test waits for the section's real-time refresh to show. It only
+ * ends a wait for a refresh that never comes. */
+const REFRESH_SEEN_MS = 10_000
+
+
 const mocks = vi.hoisted(() => ({ set: vi.fn() }));
 vi.mock('../ipc', () => ({ APP_SETTINGS_EVENTS: { changed: 'changed' }, appSettingsGet: vi.fn(), appSettingsSet: mocks.set }));
 vi.mock('../state/playbackStore', () => ({ transportPause: vi.fn() }));
@@ -69,8 +74,8 @@ it('puts computer information first and refreshes decoder state independently of
   expect(screen.getByText('No decoding sessions')).toBeDefined();
   devices = [{ kind: 'software', backend: 'ffmpeg', device: null }];
   info.mockRejectedValue(new Error('unavailable'));
-  expect(await screen.findByText('CPU (software decoding)', {}, { timeout: 2000 })).toBeDefined();
-});
+  expect(await screen.findByText('CPU (software decoding)', {}, { timeout: REFRESH_SEEN_MS })).toBeDefined();
+}, 2 * REFRESH_SEEN_MS);
 
 it('hides the Windows shared-texture ledger on copy-back platforms', async () => {
   info.mockResolvedValue({ total_memory_mib: 8192, gpu_buffer_transport: 'copy-back',

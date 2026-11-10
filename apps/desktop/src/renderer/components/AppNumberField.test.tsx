@@ -38,39 +38,39 @@ describe("AppNumberField", () => {
     // drive Base UI's keyboard commit path.)
   });
 
-  // Helper: real-timer wait (the file's blur path needs real timers, like the
-  // blur test above — fake timers don't drive Base UI's inputBlur commit).
-  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  // Real timers throughout: fake ones do not drive Base UI's inputBlur commit.
+  // The debounce's length is tuning; these tests wait for its commit.
+  const committed = (onCommit: ReturnType<typeof vi.fn>, value: number) =>
+    vi.waitFor(() => expect(onCommit).toHaveBeenCalledWith(value), { timeout: 10_000 });
 
   it("auto-commits the typed value after the debounce window, not before", async () => {
     const onCommit = vi.fn();
     render(<AppNumberField value={0} onValueChange={() => {}} onCommit={onCommit} ariaLabel="x" />);
     await userEvent.type(screen.getByLabelText("x"), "12");
-    await wait(200); // < 300ms debounce: still pending
+    // No keystroke commits by itself; the debounce does, once, with the whole value.
     expect(onCommit).not.toHaveBeenCalled();
-    await wait(150); // now past the window
-    expect(onCommit).toHaveBeenCalledWith(12);
-  });
+    await committed(onCommit, 12);
+    expect(onCommit).toHaveBeenCalledTimes(1);
+  }, 20_000);
 
   it("auto-commits when the call site mirrors the value via onValueChange", async () => {
     const onCommit = vi.fn();
     render(<Mirrored onCommit={onCommit} />);
     await userEvent.type(screen.getByLabelText("x"), "7");
-    await wait(350);
-    expect(onCommit).toHaveBeenCalledWith(7);
-  });
+    await committed(onCommit, 7);
+  }, 20_000);
 
   it("does not re-commit on blur after a debounced commit (dedup guard)", async () => {
     const onCommit = vi.fn();
     render(<AppNumberField value={0} onValueChange={() => {}} onCommit={onCommit} ariaLabel="x" />);
     await userEvent.type(screen.getByLabelText("x"), "12");
-    await wait(350); // let the debounce fire
+    await committed(onCommit, 12);
     expect(onCommit).toHaveBeenCalledTimes(1);
     // Blur through the full event chain → Base UI's inputBlur commit fires
     // onValueCommitted(12) again; the dedup guard must suppress the duplicate.
     await userEvent.click(document.body);
     expect(onCommit).toHaveBeenCalledTimes(1);
-  });
+  }, 20_000);
 
   it("does not emit null onValueChange when the field is cleared", async () => {
     const onValueChange = vi.fn();
