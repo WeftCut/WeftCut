@@ -414,6 +414,22 @@ test('Motif background work survives renderer reload and reuses pages across mul
       const dir = path.join(raster, hashCacheKey(layer.cacheKey))
       stored += (await fs.readdir(dir).catch(() => [] as string[])).filter(name => name.endsWith('.wfrm')).length
     }
+    // The second half of every clip waits at its encode until the renderer is
+    // back, so the reload finds every bake unfinished however fast the machine.
+    // A frame's green is twice its index.
+    await app.evaluate((_electron, addon) => {
+      const native = process.getBuiltinModule('module').createRequire(addon)(addon)
+      const original = native.motifConvert
+      let release!: () => void
+      const gate = new Promise<void>(resolve => { release = resolve })
+      ;(globalThis as any).__reloadBakeGate = { release: () => { native.motifConvert = original; release() } }
+      native.motifConvert = async (...args: any[]) => {
+        const [pixels, width, height, , to] = args
+        const green = pixels[(Math.floor(height / 2) * width + Math.floor(width / 2)) * 4 + 1]
+        if (to === 'frame' && green >= 60) await gate
+        return original(...args)
+      }
+    }, addon)
     await invokeCmd(page, 'app_settings_set', { patch: { prebake_motifs: true } })
     const readSnapshot = () => invokeCmd<MotifBakeSnapshot>(page, 'motif_bake_snapshot')
     await expect.poll(async () => {
@@ -424,6 +440,7 @@ test('Motif background work survives renderer reload and reuses pages across mul
     expect(layers.some(layer => beforeReload.statuses[layer.cacheKey]?.phase !== 'ready')).toBe(true)
     await page.reload()
     await waitForHook(page, 'prebakeLayerAndWait')
+    await app.evaluate(() => (globalThis as any).__reloadBakeGate.release())
     await expect.poll(async () => {
       const snapshot = await readSnapshot()
       return layers.every(layer => snapshot.statuses[layer.cacheKey]?.phase === 'ready' && snapshot.statuses[layer.cacheKey]?.done === 60)
@@ -442,7 +459,10 @@ test('Motif background work survives renderer reload and reuses pages across mul
     await testInfo.attach('motif-background-affinity.json', {
       body: JSON.stringify({ beforeReload, completed, diagnostics: stats }), contentType: 'application/json',
     })
-  } finally { await app.close() }
+  } finally {
+    await app.evaluate(() => (globalThis as any).__reloadBakeGate?.release()).catch(() => {})
+    await app.close()
+  }
 })
 
 test('Motif background preparation resumes automatically after a failed workspace switch in the same generation @serial', async ({}, testInfo) => {

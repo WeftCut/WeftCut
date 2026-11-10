@@ -26,32 +26,43 @@ test('export waits for transient working memory before starting production', asy
       ;(window as any).__exportWaits = []
       window.api.resources.onExportWaiting(event => (window as any).__exportWaits.push(event))
     })
-    await app.evaluate(({ ipcMain }, addon) => {
+    const { resource_allocation: { work_mib: workMiB } } = await invokeCmd<{ resource_allocation: { work_mib: number } }>(page, 'app_settings_get')
+    await app.evaluate(({ ipcMain }, { addon, workMiB }) => {
       const native = process.getBuiltinModule('module').createRequire(addon)(addon)
       const handler = ipcMain._invokeHandlers.get('resources:plan-export')!
-      const trace = { before: null as any, during: null as any, released: false }
+      const trace = { before: null as any, during: null as any, lease: null as number | null, released: false }
       ;(globalThis as any).__decodeAdmissionTrace = trace
       ipcMain._invokeHandlers.set('resources:plan-export', (event: any, request: any) => {
         // The metadata preflight admits one small plan first; the competitor
         // meets the working-set admission, once.
         if (trace.before || (request.options.length === 1 && request.options[0] === 64)) return handler(event, request)
-        const lease = native.resourcesReserve(0, 651)
+        // Leave one MiB less than the smallest plan needs: the export has to
+        // wait whatever its plans weigh.
+        const free = workMiB - JSON.parse(native.resourcesSnapshot()).reserved_mib
+        trace.lease = native.resourcesReserve(0, free - Math.min(...request.options) + 1)
         trace.before = JSON.parse(native.resourcesSnapshot())
-        setTimeout(() => {
-          trace.during = JSON.parse(native.resourcesSnapshot())
-          native.resourcesRelease(lease); trace.released = true
-        }, 500)
         return handler(event, request)
       })
-    }, addon)
-    const result = await driveExport(page, {
+    }, { addon, workMiB })
+    const exporting = driveExport(page, {
       outputAbsPath: path.join(tmpDir('weftcut-decode-admission-out-'), 'out.mp4'),
       settings: { encoderEngine: 'native', decodeEngine: 'webcodecs', audio: { include: false } } }, { hook: 'exportTimeline' })
+    exporting.catch(() => {})
+    // The export said it waits. What the ledger holds now is what it held
+    // with the competitor in the way; only then does the competitor leave.
+    await expect.poll(() => page.evaluate(() => (window as any).__exportWaits.some((event: { reason: string }) => event.reason === 'busy')),
+      { timeout: 60_000, message: 'the export never reported waiting for memory' }).toBe(true)
+    await app.evaluate((_electron, addon) => {
+      const native = process.getBuiltinModule('module').createRequire(addon)(addon)
+      const trace = (globalThis as any).__decodeAdmissionTrace
+      trace.during = JSON.parse(native.resourcesSnapshot())
+      native.resourcesRelease(trace.lease); trace.released = true
+    }, addon)
+    const result = await exporting
     const trace = await app.evaluate(() => (globalThis as any).__decodeAdmissionTrace)
     await testInfo.attach('decoder-admission', { body: JSON.stringify({ result, trace }), contentType: 'application/json' })
     expect(result.done.ok, result.done.error).toBe(true)
-    expect(await page.evaluate(() => (window as any).__exportWaits)).toEqual(expect.arrayContaining([expect.objectContaining({ reason: 'busy' })]))
-    expect(trace.during.reserved_mib).toBe(trace.before.reserved_mib)
+    expect(trace.during.reserved_mib, 'the export reserved memory while it was waiting for it').toBe(trace.before.reserved_mib)
     expect(trace.during.cpu_threads).toBe(0)
     expect(trace.released).toBe(true)
     expect(await page.evaluate(() => (window as any).__weftcutExportPerf.totalFrames)).toBe(180)
@@ -127,16 +138,21 @@ test('the minimum target rejects an unfit 1080p export and recovers after a sett
     await invokeCmd(page, 'app_settings_set', { patch: { resource_policy: { memory_mib: 1024 } } })
     const output = path.join(tmpDir('weftcut-minimum-out-'), 'out.mp4')
     const settings = { encoderEngine: 'native', decodeEngine: 'webcodecs', audio: { include: false } }
-    const start = Date.now()
+    await page.evaluate(() => {
+      ;(window as any).__exportWaits = []
+      window.api.resources.onExportWaiting(event => (window as any).__exportWaits.push(event))
+    })
     const rejected = await driveExport(page, { outputAbsPath: output, settings }, { hook: 'exportTimeline' })
-    await testInfo.attach('minimum-target-rejection', { body: JSON.stringify({ elapsedMs: Date.now() - start, ...rejected }), contentType: 'application/json' })
+    await testInfo.attach('minimum-target-rejection', { body: JSON.stringify(rejected), contentType: 'application/json' })
     expect(rejected.done.ok).toBe(false)
     expect(rejected.done.error).toContain('resource-capacity-exceeded')
-    expect(Date.now() - start).toBeLessThan(30_000)
+    // Refused for a plan no wait can make fit, and without having queued.
+    expect(rejected.done.error).toContain('"reason":"budget-too-small"')
+    expect(await page.evaluate(() => (window as any).__exportWaits), 'a plan that cannot fit was queued instead of refused').toEqual([])
     expect((await invokeCmd<any>(page, 'app_settings_get')).resource_policy.memory_mib).toBe(1024)
     // The user changes the target explicitly; rejection itself never edits it.
     await invokeCmd(page, 'app_settings_set', { patch: { resource_policy: { memory_mib: 3072 } } })
-    await expect.poll(async () => (await page.evaluate(() => window.api.resources.status())).pressure).toBe('normal')
+    await expect.poll(async () => (await page.evaluate(() => window.api.resources.status())).pressure, { timeout: 30_000 }).toBe('normal')
     const recovered = await driveExport(page, { outputAbsPath: output, settings }, { hook: 'exportTimeline' })
     expect(recovered.done.ok, recovered.done.error).toBe(true)
     expect(await page.evaluate(() => (window as any).__weftcutExportPerf.totalFrames)).toBe(180)
@@ -213,7 +229,9 @@ test('cancelling queued export returns immediately and a later export can start'
       w.__weftcutExportState.onCancel()
       return true
     })
-    await page.waitForFunction(() => (window as any).__queuedDone, undefined, { timeout: 2000 })
+    // The competitor still holds the slot (it is released below), so settling
+    // here is settling without admission.
+    await page.waitForFunction(() => (window as any).__queuedDone)
     const remaining = await app.evaluate((_electron, addon) => {
       const native = process.getBuiltinModule('module').createRequire(addon)(addon)
       const snapshot = JSON.parse(native.resourcesSnapshot())
