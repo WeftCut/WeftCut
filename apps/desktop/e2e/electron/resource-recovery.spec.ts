@@ -17,11 +17,22 @@ test('export waits for transient working memory before starting production', asy
     await page.evaluate(mediaId => (window as any).__weftcutTest.waitMediaExportReady({ mediaId }), imported.mediaId)
     // Import's background work shares the CPU ledger. Drain it before testing
     // that this memory-only competitor cannot start export production early.
-    await expect.poll(() => app.evaluate((_electron, addon) => {
-      const native = process.getBuiltinModule('module').createRequire(addon)(addon)
-      const { cpu_threads, waiting } = JSON.parse(native.resourcesSnapshot())
-      return { cpu_threads, waiting }
-    }, addon), { timeout: 30_000 }).toEqual({ cpu_threads: 0, waiting: 0 })
+    try {
+      await expect.poll(() => app.evaluate((_electron, addon) => {
+        const native = process.getBuiltinModule('module').createRequire(addon)(addon)
+        const { cpu_threads, waiting } = JSON.parse(native.resourcesSnapshot())
+        return { cpu_threads, waiting }
+      }, addon), { timeout: 30_000 }).toEqual({ cpu_threads: 0, waiting: 0 })
+    } catch (error) {
+      // Keep what held the work back: memory pressure parks background work
+      // with no thread in use, and only the status says so.
+      await testInfo.attach('undrained-import-work', { contentType: 'application/json', body: JSON.stringify({
+        status: await page.evaluate(() => window.api.resources.status()),
+        ledger: await app.evaluate((_electron, addon) =>
+          JSON.parse(process.getBuiltinModule('module').createRequire(addon)(addon).resourcesSnapshot()), addon),
+      }) })
+      throw error
+    }
     await page.evaluate(() => {
       ;(window as any).__exportWaits = []
       window.api.resources.onExportWaiting(event => (window as any).__exportWaits.push(event))
