@@ -355,17 +355,12 @@ test('A live capture stores the same pixels a bake stores at its address, and co
     await newProject(page, { parentFolder: tmpDir('weftcut-live-preview-'), name: 'Live', canvas })
     const key = await page.evaluate(id => (window as any).__weftcutTest.cacheKeyForLayer(id), await stableLayer()) as string
     const liveDir = await rasterDir(key)
-    // The real preview path: the preview captures the frame under the playhead
-    // at the layer's own address. Named frames, away from the one a paused
-    // preview at the start stores in the second project too.
+    // The real preview path: playback captures the layer's own frames at its own address.
+    // A live write can be skipped, so no single frame can be waited for.
+    await page.evaluate(() => (window as any).__weftcutTest.transportPlay())
     const stored = () => fs.readdir(liveDir).then(files => files.filter(f => f.endsWith('.wfrm')), () => [] as string[])
-    // A seek goes through the preview, which mounts some time after the layer is added.
-    await previewMounted()
-    for (const frame of [8, 14, 20, 26]) {
-      await page.evaluate(us => (window as any).__weftcutTest.weftcutSeekUs(us), Math.round(frame * 1_000_000 / canvas.fpsNum))
-      await expect.poll(async () => (await stored()).includes(`${frame}.wfrm`),
-        { timeout: 30_000, message: `the preview never stored frame ${frame}` }).toBe(true)
-    }
+    await expect.poll(async () => (await stored()).length, { timeout: 15_000 }).toBeGreaterThanOrEqual(5)
+    await page.evaluate(() => (window as any).__weftcutTest.transportPause())
     const files = await stored()
     await expect.poll(async () => (await invokeCmd<MotifBakeSnapshot>(page, 'motif_bake_snapshot')).coverage[key]?.length ?? 0,
       { timeout: 15_000 }).toBeGreaterThanOrEqual(files.length)
