@@ -1,7 +1,13 @@
 import { open as openDialog } from "@/bridge/dialog";
 import { documentDir } from "@/bridge/path";
 import type { TFunction } from "i18next";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+} from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -82,11 +88,12 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [keybindings, setKeybindings] = useState<KeybindingsMap>({});
-  // Recents collapses to the most-recent COLLAPSED_RECENT_COUNT entries on
-  // mount. After Save-and-Close lands the user back here, the just-closed
-  // project is #1 in the list, so the collapsed view is almost always more
-  // useful than restoring a stale expansion. Deliberately not persisted.
-  const [recentsExpanded, setRecentsExpanded] = useState(false);
+  const [recentsExpanded, setRecentsExpanded] = useState(readRecentsExpanded);
+  const toggleRecentsExpanded = useCallback(() => {
+    const next = !recentsExpanded;
+    setRecentsExpanded(next);
+    writeRecentsExpanded(next);
+  }, [recentsExpanded]);
 
   // Settings is the only catalogued action this screen can run — there is no
   // project yet to save or export — so it is the only one it dispatches and the
@@ -306,14 +313,14 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
 
         {error && <p className="startup-error">{error}</p>}
 
-        <section className="startup-recent">
+        <section className="startup-recent" style={RECENT_BODY_STYLE}>
           <div className="startup-recent-header">
             <h2>{t("startup.recent_heading")}</h2>
             {recents !== null && recents.length > COLLAPSED_RECENT_COUNT && (
               <button
                 type="button"
                 className="startup-recent-toggle"
-                onClick={() => setRecentsExpanded((v) => !v)}
+                onClick={toggleRecentsExpanded}
                 aria-expanded={recentsExpanded}
               >
                 <span
@@ -337,7 +344,10 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
           ) : recents.length === 0 ? (
             <p className="startup-recent-empty">{t("startup.recent_empty")}</p>
           ) : (
-            <ul className="startup-recent-list">
+            <ul
+              className="startup-recent-list"
+              data-expanded={recentsExpanded || undefined}
+            >
               {(recentsExpanded
                 ? recents
                 : recents.slice(0, COLLAPSED_RECENT_COUNT)
@@ -404,6 +414,24 @@ export function StartupScreen({ onWorkspaceReady }: Props) {
 /// reveals at most 7 additional entries.
 const COLLAPSED_RECENT_COUNT = 3;
 
+/// The recents body is this many rows tall (see `.startup-recent` in
+/// startup.css), so CSS reads the count from here rather than keeping a twin.
+const RECENT_BODY_STYLE = {
+  "--startup-recent-visible-rows": COLLAPSED_RECENT_COUNT,
+} as CSSProperties;
+
+/// The recents disclosure is remembered for the window's session: it survives
+/// the hop back from the editor and a renderer reload, and a new window or app
+/// launch starts collapsed. Not an app setting.
+const RECENTS_EXPANDED_KEY = "weftcut.startup.recentsExpanded";
+
+function readRecentsExpanded(): boolean {
+  return sessionStorage.getItem(RECENTS_EXPANDED_KEY) === "1";
+}
+
+function writeRecentsExpanded(expanded: boolean): void {
+  sessionStorage.setItem(RECENTS_EXPANDED_KEY, expanded ? "1" : "0");
+}
 
 /// Join a parent folder + project name into a full path. Picks the
 /// separator from whatever the parent uses (`\` if it contains one,

@@ -3,8 +3,7 @@
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   /* Tailwind preflight sets `html { line-height: 1.5 }`; every legacy
    * layout in this file was sized against the UA default (`normal`,
-   * ~1.2) — e.g. .startup-recent-list's fixed 140px = exactly 3 rows.
-   * Pin the pre-Tailwind metric here (unlayered, so it beats preflight's
+   * ~1.2). Pin the pre-Tailwind metric here (unlayered, so it beats preflight's
    * @layer base). New shadcn components are unaffected: their text-*
    * utilities set their own line-height. */
   line-height: normal;
