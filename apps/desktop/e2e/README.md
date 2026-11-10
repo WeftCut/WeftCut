@@ -433,6 +433,16 @@ To reproduce a leg's GL stack locally, launch the suite with
 `WEFTCUT_E2E_CONSOLE=1` to stream the renderer/worker console into the test
 output (dispatch CI runs set this automatically).
 
+A close that takes longer than 30 s fails the test and is killed
+(`lib/process-cleanup.mjs`). The error says whether the app's main process was
+still running or had exited with a helper holding its stdio, and lists the
+processes left. Set `WEFTCUT_E2E_CLOSE_HANG_CMD` to a shell command to run
+before the kill, for a dump or a stack sample; it gets the main process as
+`WEFTCUT_E2E_HUNG_PID` while that process is alive, and 60 s.
+
+An uncaught exception in the main process fails the test at `close()` with
+its stack, in place of Electron's modal error box.
+
 ## Per-test timeout budgets
 
 Two different quantities bound an export gate, and conflating them is what used

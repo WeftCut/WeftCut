@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 
 const FFMPEG_NAMES = new Set(['ffmpeg', 'ffprobe'])
 const FFMPEG_GRACE_MS = 2000
@@ -19,6 +19,48 @@ function processRows() {
     if (!match) return []
     const [, pid, pgid, ppid, state, comm] = match
     return [{ pid: Number(pid), pgid: Number(pgid), ppid: Number(ppid), state, name: comm.slice(comm.lastIndexOf('/') + 1) }]
+  })
+}
+
+/** Every process as { pid, ppid, command }, the command line in full: a
+ * Chromium child is told apart only by its `--type=` switch. */
+function processCommands() {
+  if (process.platform === 'win32') {
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress'],
+    { encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024 * 1024, windowsHide: true })
+    try {
+      return [JSON.parse(result.stdout)].flat().map(row => ({ pid: row.ProcessId, ppid: row.ParentProcessId, command: row.CommandLine || row.Name || '' }))
+    } catch { return [] }
+  }
+  const result = spawnSync('ps', ['-axo', 'pid=,ppid=,args='], { encoding: 'utf8', timeout: 1000, maxBuffer: 16 * 1024 * 1024 })
+  return (result.stdout ?? '').split('\n').flatMap(line => {
+    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.*?)\s*$/)
+    return match ? [{ pid: Number(match[1]), ppid: Number(match[2]), command: match[3] }] : []
+  })
+}
+
+/** The executable's name and the switches that say which child it is. */
+function brief(command) {
+  const executable = command.match(/^"([^"]+)"|^(\S+)/)
+  const name = (executable?.[1] ?? executable?.[2] ?? '').split(/[\\/]/).pop()
+  const role = command.match(/--(?:type|utility-sub-type)=\S+/g)
+  return role ? `${name} ${role.join(' ')}` : command.length > 120 ? `${command.slice(0, 120)}…` : command
+}
+
+/** Runs `WEFTCUT_E2E_CLOSE_HANG_CMD` (a shell command) against a close that
+ * timed out, before the kill: the place to take a dump or a stack sample.
+ * `WEFTCUT_E2E_HUNG_PID` is the app's main process, set only while it lives. */
+function runHangCommand(mainPid) {
+  const command = process.env.WEFTCUT_E2E_CLOSE_HANG_CMD
+  if (!command) return Promise.resolve()
+  return new Promise(resolve => {
+    const env = { ...process.env }
+    if (mainPid) env.WEFTCUT_E2E_HUNG_PID = String(mainPid)
+    else delete env.WEFTCUT_E2E_HUNG_PID
+    const hook = spawn(command, { shell: true, stdio: 'ignore', env, timeout: 60_000, windowsHide: true })
+    hook.once('error', resolve)
+    hook.once('exit', resolve)
   })
 }
 
@@ -85,6 +127,34 @@ export function ownProcessTree(child) {
   })
   return {
     reaped,
+    /** What a close that has not finished is still waiting for, as
+     * `{ report, mainPid }`; `mainPid` is null once the main process is gone.
+     * Playwright's close needs the leader gone AND its stdio pipes shut, so a
+     * main process stuck in its own teardown and a helper keeping a dead
+     * one's pipes read the same from outside. On Windows Playwright starts
+     * Electron through a shell: the leader is cmd.exe and the main process
+     * its child. Read this before force(): afterwards all are gone. */
+    evidence() {
+      if (!pid) return { report: 'leader: never started', mainPid: null }
+      const rows = processCommands()
+      const owned = new Set(ownedPids(processRows()))
+      const family = [pid]
+      for (let i = 0; i < family.length; i++) {
+        for (const row of rows) if (row.ppid === family[i] && row.pid !== process.pid && !family.includes(row.pid)) family.push(row.pid)
+      }
+      // The leader's own exit, apart from 'close': that one also waits for the pipes.
+      const running = child.exitCode === null && child.signalCode === null
+      const state = running ? 'still running' : `exited (${child.signalCode ?? `code ${child.exitCode}`}), its stdio ${closed ? 'closed' : 'still open'}`
+      const shell = process.platform === 'win32' && /(^|[\\/"])cmd(\.exe)?(["\s]|$)/i.test(rows.find(row => row.pid === pid)?.command ?? '')
+      const main = shell ? rows.find(row => row.ppid === pid && !/\bconhost(\.exe)?\b/i.test(row.command))?.pid ?? null : pid
+      const lines = shell
+        ? [`shell ${pid}: ${state}`, main ? `main process ${main}: still running` : 'main process: gone']
+        : [`main process ${pid}: ${state}`]
+      const left = rows.filter(row => row.pid !== pid && row.pid !== main && (owned.has(row.pid) || family.includes(row.pid)))
+      for (const row of left) lines.push(`  left ${row.pid} (parent ${row.ppid}): ${brief(row.command)}`)
+      if (left.length === 0) lines.push('  left: no other process')
+      return { report: lines.join('\n'), mainPid: shell ? main : running ? pid : null }
+    },
     force() {
       if (!pid || closed) return
       if (process.platform === 'win32') {
@@ -104,8 +174,12 @@ export function ownProcessTree(child) {
 }
 
 /** A failed graceful quit must fail the test and release Playwright's stdio,
- * rather than strand worker teardown until CI kills the entire job. */
-export async function closeProcessTree(owner, gracefulClose, timeoutMs = 10_000) {
+ * rather than strand worker teardown until CI kills the entire job.
+ *
+ * LANDMINE: the limit has to stay well above 10 s. After `quit` Chromium
+ * itself waits on its GPU and network-service processes, the latter for up to
+ * 10 s, and several apps closing at once on one GPU take that long to leave. */
+export async function closeProcessTree(owner, gracefulClose, timeoutMs = 30_000) {
   let timer
   try {
     await Promise.race([
@@ -115,6 +189,12 @@ export async function closeProcessTree(owner, gracefulClose, timeoutMs = 10_000)
       }),
     ])
   } catch (error) {
+    // Evidence is a courtesy: a failure to gather it never replaces the error.
+    try {
+      const { report, mainPid } = owner.evidence()
+      if (error instanceof Error) error.message += `\n${report}`
+      await runHangCommand(mainPid)
+    } catch { /* The kill below still runs. */ }
     owner.force()
     let reapTimer
     try {

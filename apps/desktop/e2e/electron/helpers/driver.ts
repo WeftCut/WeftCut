@@ -96,6 +96,28 @@ const keepTmp = () => process.env.WEFTCUT_E2E_KEEP_TMP === '1'
 const liveApps = new Map<ElectronApplication, string | null>()
 const processTrees = new WeakMap<ElectronApplication, ReturnType<typeof ownProcessTree>>()
 const stopJournals = new WeakMap<ElectronApplication, () => Promise<void>>()
+/// Where each app's main process writes its uncaught exceptions.
+const uncaughtLogs = new WeakMap<ElectronApplication, string>()
+
+/// Electron answers an uncaught exception in the main process with a modal
+/// error box, which no test can dismiss: the app then never quits and the
+/// failure reads as a close timeout. A listener of our own suppresses the box;
+/// the stack goes to a file that close() turns into the test's failure.
+async function recordUncaughtExceptions(app: ElectronApplication): Promise<void> {
+  const file = test.info().outputPath(`main-uncaught-${app.process().pid}.log`)
+  uncaughtLogs.set(app, file)
+  await app.evaluate((_electron, file) => {
+    const { appendFileSync } = process.getBuiltinModule('node:fs')
+    process.on('uncaughtException', error => {
+      try { appendFileSync(file, `${error?.stack ?? String(error)}\n`) } catch { /* the close still reports a timeout */ }
+    })
+  }, file)
+}
+
+function uncaughtExceptions(app: ElectronApplication): string {
+  const file = uncaughtLogs.get(app)
+  try { return file ? fs.readFileSync(file, 'utf8').trim() : '' } catch { return '' }
+}
 /// Every dir minted by tmpDir(), swept at process exit.
 const mintedTmpDirs = new Set<string>()
 
@@ -229,7 +251,14 @@ function wrapClose(app: ElectronApplication): () => Promise<void> {
     closing ??= (async () => {
       try {
         await stopJournals.get(app)?.()
-        await closeProcessTree(processTrees.get(app)!, original)
+        try { await closeProcessTree(processTrees.get(app)!, original) }
+        catch (error) {
+          const uncaught = uncaughtExceptions(app)
+          if (uncaught && error instanceof Error) error.message += `\nUncaught exception in the main process:\n${uncaught}`
+          throw error
+        }
+        const uncaught = uncaughtExceptions(app)
+        if (uncaught) throw new Error(`Uncaught exception in the main process:\n${uncaught}`)
       } finally {
         // Graceful close or its forced teardown has finished; remove only the
         // user-data directory this test minted.
@@ -312,6 +341,7 @@ export async function launchApp(
   processTrees.set(app, ownProcessTree(app.process()))
   app.close = wrapClose(app)
   try {
+    await recordUncaughtExceptions(app)
     const page = await app.firstWindow({ timeout: 60_000 })
     // Opt-in renderer console tap for wedge diagnosis (local or a CI leg).
     if (process.env.WEFTCUT_E2E_CONSOLE === '1') {

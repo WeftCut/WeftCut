@@ -34,7 +34,12 @@ test('blocked graceful close kills descendants that retain the leader stdio', { 
     const [data] = await once(child.stdout, 'data')
     const descendant = Number(String(data))
     assert.ok(descendant > 0)
-    await assert.rejects(closeProcessTree(owner, () => new Promise(() => {}), 25), /graceful close timed out/)
+    await assert.rejects(closeProcessTree(owner, () => new Promise(() => {}), 25), error => {
+      assert.match(error.message, /graceful close timed out/)
+      assert.match(error.message, new RegExp(`main process ${child.pid}: still running`))
+      assert.match(error.message, new RegExp(`left ${descendant} \\(parent ${child.pid}\\)`))
+      return true
+    })
     await owner.reaped // A leader-only kill leaves this pending: child keeps pipes open.
     assert.ok(child.signalCode !== null || child.exitCode !== null)
   } finally { owner.force() }
@@ -60,9 +65,63 @@ test('POSIX cleanup still owns helpers after the detached leader exits', { timeo
   try {
     await exited
     assert.equal(child.exitCode, 0)
-    await assert.rejects(closeProcessTree(owner, () => owner.reaped, 25), /graceful close timed out/)
+    await assert.rejects(closeProcessTree(owner, () => owner.reaped, 25), error => {
+      assert.match(error.message, /graceful close timed out/)
+      // The helper holds the pipes of a leader that is already gone.
+      assert.match(error.message, new RegExp(`main process ${child.pid}: exited \\(code 0\\), its stdio still open\\n  left \\d+ `))
+      return true
+    })
     await owner.reaped
   } finally { owner.force() }
+})
+
+test('a close that timed out runs the hang command against the live leader before the kill', { timeout: 10_000 }, async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-hang-command-'))
+  const seen = path.join(folder, 'seen')
+  // The probe signals nothing (signal 0): it records whether the leader was still there.
+  const probe = path.join(folder, 'probe.cjs')
+  fs.writeFileSync(probe, `
+    const pid = Number(process.env.WEFTCUT_E2E_HUNG_PID);
+    let state = 'gone';
+    try { process.kill(pid, 0); state = 'alive'; } catch {}
+    require('node:fs').writeFileSync(${JSON.stringify(seen)}, pid + ' ' + state);
+  `)
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] })
+  const owner = ownProcessTree(child)
+  process.env.WEFTCUT_E2E_CLOSE_HANG_CMD = `"${process.execPath}" "${probe}"`
+  try {
+    await assert.rejects(closeProcessTree(owner, () => new Promise(() => {}), 25), /graceful close timed out/)
+    assert.equal(fs.readFileSync(seen, 'utf8'), `${child.pid} alive`)
+    await owner.reaped
+  } finally {
+    delete process.env.WEFTCUT_E2E_CLOSE_HANG_CMD
+    owner.force()
+    fs.rmSync(folder, { recursive: true, force: true })
+  }
+})
+
+test('Windows names the app behind the shell Playwright starts it through', { timeout: 10_000, skip: process.platform !== 'win32' }, async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-hang-shell-'))
+  const seen = path.join(folder, 'seen')
+  const probe = path.join(folder, 'probe.cjs')
+  fs.writeFileSync(probe, `require('node:fs').writeFileSync(${JSON.stringify(seen)}, String(process.env.WEFTCUT_E2E_HUNG_PID))`)
+  const child = spawn(`"${process.execPath}" -e "console.log(process.pid); setInterval(() => {}, 1000)"`, { shell: true, stdio: ['ignore', 'pipe', 'pipe'] })
+  const owner = ownProcessTree(child)
+  process.env.WEFTCUT_E2E_CLOSE_HANG_CMD = `"${process.execPath}" "${probe}"`
+  try {
+    const [data] = await once(child.stdout, 'data')
+    const main = Number(String(data))
+    await assert.rejects(closeProcessTree(owner, () => new Promise(() => {}), 25), error => {
+      assert.match(error.message, new RegExp(`shell ${child.pid}: still running\\nmain process ${main}: still running`))
+      return true
+    })
+    assert.equal(fs.readFileSync(seen, 'utf8'), String(main))
+    await owner.reaped
+  } finally {
+    delete process.env.WEFTCUT_E2E_CLOSE_HANG_CMD
+    owner.force()
+    fs.rmSync(folder, { recursive: true, force: true })
+  }
 })
 
 test('POSIX graceful close also stops native children with separate stdio', { timeout: 5000, skip: process.platform === 'win32' }, async () => {
