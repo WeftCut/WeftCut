@@ -73,6 +73,14 @@ The user store is edited by hand as well as by the app: a file saved into
 
 - On the same box and packages: the first listing 1.2 s, later ones 2–4 ms,
   six cover lookups 2 ms, and the same after a restart.
+- On a Windows 11 desktop (NTFS, real-time scanning on), twenty installed
+  packages of 42 MB and three linked ones: a listing went from 1.8 s to 27 ms,
+  and the app answered its first catalog request 1.1 s after launch against
+  1.9 s.
+- What remains is one stat per file per listing. Nine packages of 2,500 files
+  each list in 0.2 s on the Linux box and 0.8 s on the Windows one (1.7 s and
+  7.6 s before): a stat costs about 30 µs there. A package near the limits,
+  9,500 files and 236 MB, lists in 0.07 s and 0.19 s.
 - The first launch after an update, and after the cache is cleared, reads
   every package once.
 - A file whose modification time lies in the future keeps its package unsettled
