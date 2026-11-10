@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { Debouncer, spawnMotifWatcher } from './watcher'
+import { DEBOUNCE_QUIET_MS, Debouncer, spawnMotifWatcher } from './watcher'
 
 describe('Debouncer', () => {
   beforeEach(() => vi.useFakeTimers())
@@ -31,6 +31,9 @@ describe('Debouncer', () => {
   })
 })
 
+/** How long a real OS watch gets to report a write. */
+const WATCH_REPORTS_MS = 20_000
+
 // Drive the real OS watch at `root`: attach, write a file under it, wait for
 // the debounced onChange. `root` is passed through verbatim so each case below
 // controls exactly how the directory is spelled.
@@ -38,14 +41,15 @@ async function expectFiresOnWrite(root: string): Promise<void> {
   const fired = vi.fn()
   const w = spawnMotifWatcher(root, fired)
   try {
-    await new Promise((r) => setTimeout(r, 200)) // let the OS watch attach
     mkdirSync(path.join(root, 'm1'), { recursive: true })
-    writeFileSync(path.join(root, 'm1', 'index.html'), '<html>')
-    const deadline = Date.now() + 5000
-    while (fired.mock.calls.length === 0 && Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 50))
-    }
-    expect(fired.mock.calls.length).toBeGreaterThanOrEqual(1)
+    // The OS watch attaches some time after the spawn, and a write before that
+    // is never reported: write again until one is. The writes are further apart
+    // than the debounce's quiet time, or they would hold it open.
+    let writes = 0
+    await vi.waitFor(() => {
+      if (fired.mock.calls.length === 0) writeFileSync(path.join(root, 'm1', 'index.html'), `<html>${writes++}`)
+      expect(fired).toHaveBeenCalled()
+    }, { timeout: WATCH_REPORTS_MS, interval: 2 * DEBOUNCE_QUIET_MS })
   } finally {
     w.close()
   }
@@ -54,7 +58,7 @@ async function expectFiresOnWrite(root: string): Promise<void> {
 describe('spawnMotifWatcher', () => {
   it('fires onChange on a real file write under the root', async () => {
     await expectFiresOnWrite(mkdtempSync(path.join(tmpdir(), 'motifwatch-')))
-  })
+  }, 2 * WATCH_REPORTS_MS)
 
   // An 8.3 short name is how GitHub's Windows runners spell os.tmpdir()
   // (C:\Users\RUNNER~1\...), and attaching the watch under that spelling trips a
@@ -69,5 +73,5 @@ describe('spawnMotifWatcher', () => {
       windowsVerbatimArguments: true,
     }).stdout.trim()
     await expectFiresOnWrite(short)
-  })
+  }, 2 * WATCH_REPORTS_MS)
 })

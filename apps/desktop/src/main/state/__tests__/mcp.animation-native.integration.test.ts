@@ -11,6 +11,8 @@ import { seededGen } from '../ids'
 import { serializeProject } from '../serialize'
 
 const nativePath = fileURLToPath(new URL('../../../../native/index.js', import.meta.url))
+/** One probe: a cold Node start that loads the addon and initialises a backend. */
+const PROBE_MS = 20_000
 const nativeAvailable = (() => {
   try { createRequire(import.meta.url)(nativePath); return true } catch { return false }
 })()
@@ -38,7 +40,7 @@ describe.skipIf(!nativeAvailable)('MCP-authored animation crosses the native exp
         console.log(await backend.invoke('ensure_export_audio_conform', JSON.stringify({ project: JSON.parse(fs.readFileSync(0, 'utf8')) })));
         process.exit(0);
       })().catch(e => { console.error(e.message); process.exit(1); });
-    `, nativePath, work], { input: JSON.stringify(input), encoding: 'utf8', timeout: 20_000, windowsHide: true })
+    `, nativePath, work], { input: JSON.stringify(input), encoding: 'utf8', timeout: PROBE_MS, windowsHide: true })
     try {
       const good = probe(project)
       expect(good.status, good.stderr).toBe(0)
@@ -50,5 +52,5 @@ describe.skipIf(!nativeAvailable)('MCP-authored animation crosses the native exp
       expect(bad.status).toBe(1)
       expect(bad.stderr).toContain('UUID parsing failed')
     } finally { rmSync(work, { recursive: true, force: true }) }
-  })
+  }, 2 * PROBE_MS + 5_000)
 })

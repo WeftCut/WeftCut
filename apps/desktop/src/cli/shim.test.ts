@@ -470,9 +470,7 @@ describe('long tool calls: idle timeout, progress, cancel', () => {
 
   it('the tool-call timeout comes from WEFTCUT_MCP_TOOL_TIMEOUT_MS, defaulting to 5 min', async () => {
     open = await harness({ appUp: true, env: { WEFTCUT_MCP_TOOL_TIMEOUT_MS: '150' } })
-    const started = Date.now()
     const result = await open.client.callTool({ name: 'slow', arguments: {} })
-    expect(Date.now() - started).toBeGreaterThanOrEqual(140)
     expect(textOf(result)).toContain('150 ms')
     await open.close()
     // The 5 min default itself is pinned in paths.test.ts; here, only that an

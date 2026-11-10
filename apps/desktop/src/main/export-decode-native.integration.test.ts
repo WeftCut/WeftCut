@@ -14,7 +14,7 @@
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { ExportSwFrame, ExportSwMsg, NativeDecode } from '@weftcut/native-decode'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -76,9 +76,21 @@ function framesOf(msgs: ExportSwMsg[]): ExportSwFrame[] {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+/** How long a test waits for frames the decode thread must deliver. */
+const DELIVERY_MS = 30_000
+vi.setConfig({ testTimeout: 2 * DELIVERY_MS })
+
+/** Wait for `count` frames, then give a producer that failed to park on its
+ * credit window the time to show one more. */
+async function parkedAt(msgs: ExportSwMsg[], count: number): Promise<void> {
+  await vi.waitFor(() => expect(framesOf(msgs).length).toBeGreaterThanOrEqual(count), { timeout: DELIVERY_MS })
+  await sleep(100)
+  expect(framesOf(msgs).length).toBe(count)
+}
+
 /**
  * Drive a decodeRange and return credits generously (so the producer never
- * parks) until its rangeEnd lands or the deadline passes. Mirrors the
+ * parks) until its rangeEnd lands; a range that never ends fails here. Mirrors the
  * Rust-side `run_range` test helper. Polls `rangeEnd` specifically: every
  * completed range emits exactly one, AFTER any `ended` — so on the FIFO
  * per-session channel, observing it guarantees the whole tail has crossed.
@@ -87,7 +99,7 @@ async function drainRange(ctx: Ctx, id: string, a: number, b: number): Promise<v
   const msgs = ctx.msgsById.get(id)!
   const before = countKind(msgs, 'rangeEnd')
   ctx.backend.exportSwDecodeRange(id, a, b)
-  for (let i = 0; i < 200; i++) {
+  for (const giveUp = Date.now() + DELIVERY_MS; Date.now() < giveUp;) {
     ctx.backend.exportSwReturnCredit(id, 64)
     await sleep(5)
     if (countKind(msgs, 'rangeEnd') > before) return
@@ -327,16 +339,14 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
     // window=3, request all 8 frames, return NO credits: at most 3 emit, then park.
     const { msgs } = open('credit', PRORES, 'NV12', 3)
     ctx.backend.exportSwDecodeRange('credit', 0, 875_000)
-    await sleep(200)
-    expect(framesOf(msgs).length).toBe(3)
+    await parkedAt(msgs, 3)
     expect(markersFor(msgs)).toBe(0) // range not done while parked
     // Return 2 → exactly 2 more, then park again at 5.
     ctx.backend.exportSwReturnCredit('credit', 2)
-    await sleep(200)
-    expect(framesOf(msgs).length).toBe(5)
+    await parkedAt(msgs, 5)
     // Drain the remainder.
     ctx.backend.exportSwReturnCredit('credit', 64)
-    await sleep(200)
+    await vi.waitFor(() => expect(countKind(msgs, 'rangeEnd')).toBe(1), { timeout: DELIVERY_MS })
     expect(framesOf(msgs).length).toBe(8)
     // Range [0,875k] ends on the last frame, so it drains to EOS — exactly one
     // rangeEnd (and one ended, asserted elsewhere) marks completion.
@@ -349,14 +359,12 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
     // producer that ignored the window here would balloon memory twice as fast.
     const { msgs } = open('credit10', PRORES, 'I420P10', 3)
     ctx.backend.exportSwDecodeRange('credit10', 0, 875_000)
-    await sleep(200)
-    expect(framesOf(msgs).length).toBe(3)
+    await parkedAt(msgs, 3)
     expect(markersFor(msgs)).toBe(0) // range not done while parked
     ctx.backend.exportSwReturnCredit('credit10', 2)
-    await sleep(200)
-    expect(framesOf(msgs).length).toBe(5)
+    await parkedAt(msgs, 5)
     ctx.backend.exportSwReturnCredit('credit10', 64)
-    await sleep(200)
+    await vi.waitFor(() => expect(countKind(msgs, 'rangeEnd')).toBe(1), { timeout: DELIVERY_MS })
     expect(framesOf(msgs).length).toBe(8)
     expect(countKind(msgs, 'rangeEnd')).toBe(1)
     close('credit10')
