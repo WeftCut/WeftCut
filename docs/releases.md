@@ -87,12 +87,17 @@ not atomic, and shortcuts keep targeting the installed exe.
 ## Windows AppUserModelID
 
 Taskbar icon and grouping come from the AppUserModelID stamped onto the Start
-Menu and Desktop shortcuts. `src/main/appIdentity.ts` must equal
-electron-builder's `appId` (`dev.weftcut.desktop`; a unit test pins them) and
-must stay stable across releases. The stock installer re-stamps a shortcut only
-when it recreates or renames it, so an in-place update could leave a stale
-identity and a blank taskbar icon; `build/installer.nsh` re-asserts it on every
-install and update. A machine already corrupted needs uninstall + reinstall.
+Menu and Desktop shortcuts. The installed app's AUMID in
+`src/main/appIdentity.ts` must equal electron-builder's `appId`
+(`dev.weftcut.desktop`; a unit test pins them) and must stay stable across
+releases. The stock installer re-stamps a shortcut only when it recreates or
+renames it, so an in-place update could leave a stale identity and a blank
+taskbar icon; `build/installer.nsh` re-asserts it on every install and update.
+A machine already corrupted needs uninstall + reinstall.
+
+The toast activator CLSID next to it is stable too: notifications already in
+the notification center call it. The installer drops it from the Start Menu
+shortcut on every update, and the app stamps it back at launch (ADR 0163).
 
 ## Manual release check
 

@@ -60,7 +60,8 @@ import { registerScreenPick } from './screenPick.js'
 import type { SecondaryWinOpts } from './windowConfig.js'
 import { taskbarProgressArgs } from './taskbarProgress.js'
 import { shouldClearApplicationMenu } from './inputPolicy.js'
-import { WINDOWS_APP_USER_MODEL_ID } from './appIdentity.js'
+import { windowsAppIdentity } from './appIdentity.js'
+import { installWindowsNotifications } from './windowsNotifications.js'
 import { buildApplicationMenuTemplate, sanitizeMenuProjection } from './appMenu.js'
 import type { MenuProjection } from '../shared/menu.js'
 import { broadcastEvent } from './broadcast.js'
@@ -135,6 +136,18 @@ function emitToRenderer(event: string, payload: unknown): void {
   if (wc.isDestroyed()) return
   wc.send('evt:' + event, payload)
 }
+
+/// A second launch on this profile (entry.ts holds the single-instance lock)
+/// and a notification click both land here. Before the main window exists
+/// there is nothing to raise: it opens in front on its own.
+function bringMainWindowForward(): void {
+  const w = mainWindow
+  if (!w || w.isDestroyed()) return
+  if (w.isMinimized()) w.restore()
+  w.show()
+  w.focus()
+}
+app.on('second-instance', bringMainWindowForward)
 // The MCP host is started after `backend.init()`, but the closures that reach
 // it (the TS actor host's resource-list relay) are built BEFORE the host
 // exists. Hold it module-scoped and set it right after `startMcpHost` resolves.
@@ -480,16 +493,29 @@ async function warnIfElevatedWindows(win: BrowserWindow): Promise<void> {
 }
 
 app.whenReady().then(async () => {
-  // Windows taskbar identity: without an explicit AppUserModelID a run groups
-  // under generic "electron.exe" and won't adopt our window icon. The value MUST
-  // match the appId electron-builder stamps onto the Start Menu / Desktop
-  // shortcuts (WinShell::SetLnkAUMI) — otherwise Windows can't link the window to
-  // the shortcut and the taskbar falls back to a blank icon. Single source of
-  // truth in ./appIdentity, asserted equal to electron-builder.yml by its test;
-  // build/installer.nsh re-stamps the shortcut with the same value on every
-  // in-place update so a rewritten exe never orphans the identity. Dev shares the
-  // packaged identity on purpose (one taskbar grouping across dev and prod).
-  app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID)
+  // Windows taskbar identity and notification clicks (ADR 0163). Without an
+  // explicit AUMID a run groups under generic "electron.exe" and won't adopt
+  // our window icon.
+  if (process.platform === 'win32') {
+    const stamp = installWindowsNotifications({
+      setAppUserModelId: (id) => app.setAppUserModelId(id),
+      setToastActivatorCLSID: (id) => app.setToastActivatorCLSID(id),
+      shortcutExists: (lnk) => fs.existsSync(lnk),
+      readShortcutLink: (lnk) => shell.readShortcutLink(lnk),
+      updateShortcutLink: (lnk, details) => shell.writeShortcutLink(lnk, 'update', details),
+      handleActivation: (callback) => Notification.handleActivation(() => callback()),
+      registerActivator: () => { Notification.isSupported() },
+    }, {
+      identity: windowsAppIdentity(app.isPackaged),
+      // The path Electron's own toast shortcut takes, and the one NSIS writes
+      // for a per-user install: <Programs>\<productName>.lnk.
+      installerShortcut: app.isPackaged
+        ? path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', `${app.getName()}.lnk`)
+        : null,
+      onActivation: bringMainWindowForward,
+    })
+    if (stamp === 'failed') recordDiagnostic('windows-notifications', 'could not stamp the toast activator CLSID on the Start Menu shortcut')
+  }
 
   // WeftCut's UI is dark-only (base.css pins `color-scheme: dark`), so declare
   // that to the OS instead of inheriting the system appearance. macOS draws the
