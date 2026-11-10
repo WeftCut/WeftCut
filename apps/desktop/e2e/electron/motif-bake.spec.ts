@@ -344,6 +344,10 @@ test('A live capture stores the same pixels a bake stores at its address, and co
     return await page.evaluate(motifId => (window as any).__weftcutTest.addMotifLayer({ motifId, durationUs: 1_000_000 }), motifId) as string
   }
   const rasterDir = async (key: string) => path.join(await invokeCmd<string>(page, 'workspace_dir'), 'Cache', 'raster', hashCacheKey(key))
+  const previewMounted = () => expect.poll(() => page.evaluate(async () => {
+    try { await (window as any).__weftcutTest.weftcutSampleComposite(240, 240); return true }
+    catch (error) { return String(error) }
+  }), { timeout: 30_000, intervals: [25] }).toBe(true)
   try {
     const canvas = { width: 480, height: 480, fpsNum: 30, fpsDen: 1 }
     // Live first: both projects share one cache key, and memory already holding the
@@ -351,11 +355,17 @@ test('A live capture stores the same pixels a bake stores at its address, and co
     await newProject(page, { parentFolder: tmpDir('weftcut-live-preview-'), name: 'Live', canvas })
     const key = await page.evaluate(id => (window as any).__weftcutTest.cacheKeyForLayer(id), await stableLayer()) as string
     const liveDir = await rasterDir(key)
-    // The real preview path: playback captures the layer's own frames at its own address.
-    await page.evaluate(() => (window as any).__weftcutTest.transportPlay())
+    // The real preview path: the preview captures the frame under the playhead
+    // at the layer's own address. Named frames, away from the one a paused
+    // preview at the start stores in the second project too.
     const stored = () => fs.readdir(liveDir).then(files => files.filter(f => f.endsWith('.wfrm')), () => [] as string[])
-    await expect.poll(async () => (await stored()).length, { timeout: 15_000 }).toBeGreaterThanOrEqual(5)
-    await page.evaluate(() => (window as any).__weftcutTest.transportPause())
+    // A seek goes through the preview, which mounts some time after the layer is added.
+    await previewMounted()
+    for (const frame of [8, 14, 20, 26]) {
+      await page.evaluate(us => (window as any).__weftcutTest.weftcutSeekUs(us), Math.round(frame * 1_000_000 / canvas.fpsNum))
+      await expect.poll(async () => (await stored()).includes(`${frame}.wfrm`),
+        { timeout: 30_000, message: `the preview never stored frame ${frame}` }).toBe(true)
+    }
     const files = await stored()
     await expect.poll(async () => (await invokeCmd<MotifBakeSnapshot>(page, 'motif_bake_snapshot')).coverage[key]?.length ?? 0,
       { timeout: 15_000 }).toBeGreaterThanOrEqual(files.length)
@@ -365,16 +375,13 @@ test('A live capture stores the same pixels a bake stores at its address, and co
     const bakedLayer = await stableLayer()
     expect(await page.evaluate(id => (window as any).__weftcutTest.cacheKeyForLayer(id), bakedLayer)).toBe(key)
     // Preparation accepts a layer once its preview is mounted.
-    await expect.poll(() => page.evaluate(async () => {
-      try { await (window as any).__weftcutTest.weftcutSampleComposite(240, 240); return true }
-      catch (error) { return String(error) }
-    }), { timeout: 15_000, intervals: [25] }).toBe(true)
+    await previewMounted()
     // This preview warms frames too; only what the bake itself wrote is a bake.
     const bakedDir = await rasterDir(key)
     const warmed = new Set(await fs.readdir(bakedDir).catch(() => [] as string[]))
     await page.evaluate(async layerId => (window as any).__weftcutTest.prebakeLayerAndWait({ layerId, expectedFrames: 30 }), bakedLayer)
     const compared = files.filter(file => !warmed.has(file))
-    expect(compared.length).toBeGreaterThan(0)
+    expect(compared.length, 'every live frame was also stored by the second preview, so none is compared with a bake').toBeGreaterThan(0)
     for (const file of compared) expect(await differingBytes(path.join(liveDir, file), path.join(bakedDir, file)), file).toBe(0)
     // Equality would mean nothing if every frame were the same picture.
     expect(await differingBytes(path.join(bakedDir, '0.wfrm'), path.join(bakedDir, '1.wfrm'))).toBeGreaterThan(1000)

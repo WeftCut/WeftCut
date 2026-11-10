@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { analyze, analyzeGradientRow } from '../lib/analyze.mjs'
 import { launchApp, newProject, driveExport, importAndPlaceMedia, invokeCmd, tmpDir, exportSsimFloor } from './helpers/driver'
+import { exportDecoderMiB } from '../../src/shared/export-resources'
 
 const MEDIA = process.env.WEFTCUT_TEST_MEDIA || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../fixtures/media')
 
@@ -194,20 +195,14 @@ for (const { label, memory, stepUs, clips, expectedFrames } of [
     // decoders still exceed this budget; sequential clips need only one.
     await app.evaluate(({ ipcMain }) => {
       const acquire = ipcMain._invokeHandlers.get('resources:acquire')!
-      const leases = new Set<string>()
-      const stats = { peak: 0 }
-      ;(globalThis as any).__sequentialDecoders = stats
+      const log: { id: string; memoryMiB?: number; threads?: number }[] = []
+      ;(globalThis as any).__sequentialLeases = log
       ipcMain._invokeHandlers.set('resources:acquire', async (event: any, request: any) => {
         const result = await acquire(event, request)
-        // WebCodecs export reserves 381 MiB for this 1080p fixture; preview
-        // and encoder reservations are smaller.
-        if (request.threads === 0 && request.memoryMiB >= 300) {
-          leases.add(request.id)
-          stats.peak = Math.max(stats.peak, leases.size)
-        }
+        log.push({ id: request.id, memoryMiB: request.memoryMiB, threads: request.threads })
         return result
       })
-      ipcMain.on('resources:release', (_event, id: string) => leases.delete(id))
+      ipcMain.on('resources:release', (_event, id: string) => log.push({ id }))
     })
     const outputDir = tmpDir('weftcut-sequential-output-')
     const output = path.join(outputDir, 'sequence.mp4')
@@ -216,7 +211,19 @@ for (const { label, memory, stepUs, clips, expectedFrames } of [
     const perf = await page.evaluate(() => (window as any).__weftcutExportPerf)
     expect(perf.totalFrames).toBe(expectedFrames)
     expect(perf.sources).toHaveLength(clips)
-    expect(await app.evaluate(() => (globalThis as any).__sequentialDecoders.peak)).toBe(1)
+    // A decoder's lease is the one sized by the export's own formula for this
+    // source and the frame window the plan admitted. The fixture is 1920 wide;
+    // its coded height is 1080 or, padded to whole macroblocks, 1088.
+    const decoderMiB = new Set((Object.values(perf.resourcePlan.frameWindows) as number[])
+      .flatMap(frames => [1080, 1088].map(height => exportDecoderMiB(1920, height, false, frames))))
+    const live = new Set<string>()
+    let peak = 0
+    for (const entry of await app.evaluate(() => (globalThis as any).__sequentialLeases as { id: string; memoryMiB?: number; threads?: number }[])) {
+      if (entry.memoryMiB === undefined) live.delete(entry.id)
+      else if (entry.threads === 0 && decoderMiB.has(entry.memoryMiB)) live.add(entry.id)
+      peak = Math.max(peak, live.size)
+    }
+    expect(peak, 'decoder leases live at once').toBe(1)
     if (label === 'rapid cuts') {
       const reference = path.join(outputDir, 'reference.mp4')
       const repeated = spawnSync(process.env.FFMPEG || 'ffmpeg', [
@@ -240,6 +247,18 @@ test('Motif and video export reduces in-flight frames to fit the 2304 MiB memory
     const source = await importAndPlaceMedia(page, { mediaAbsPath: path.join(MEDIA, 'test_1080p_30fps_6s.mp4') })
     await invokeCmd(page, 'trim_layer', { layerId: source.layerId, edge: 'out', newTUs: 2_000_000 })
     await page.evaluate(id => (window as any).__weftcutTest.waitMediaExportReady({ mediaId: id }), source.mediaId)
+    const { resource_allocation: { work_mib: workMiB } } = await invokeCmd<{ resource_allocation: { work_mib: number } }>(page, 'app_settings_get')
+    // What main was offered and which plan it admitted, largest first.
+    await app.evaluate(({ ipcMain }) => {
+      const plan = ipcMain._invokeHandlers.get('resources:plan-export')!
+      const admissions: { options: number[]; index: number }[] = []
+      ;(globalThis as any).__motifBudgetAdmissions = admissions
+      ipcMain._invokeHandlers.set('resources:plan-export', async (event: any, request: any) => {
+        const index = await plan(event, request)
+        admissions.push({ options: request.options, index })
+        return index
+      })
+    })
     const output = path.join(tmpDir('weftcut-motif-budget-out-'), 'out.mp4')
     const result = await driveExport(page, { motifId: 'text-fx', outputAbsPath: output, durationUs: 2_000_000,
       settings: { encoderEngine: 'native', audio: { include: false } } }, { hook: 'exportMotifClip' })
@@ -247,8 +266,12 @@ test('Motif and video export reduces in-flight frames to fit the 2304 MiB memory
     const perf = await page.evaluate(() => (window as any).__weftcutExportPerf)
     await testInfo.attach('export-performance', { body: JSON.stringify(perf), contentType: 'application/json' })
     expect(perf.totalFrames).toBe(60)
-    expect(perf.resourcePlan.memoryMiB).toBeLessThanOrEqual(921)
-    expect(perf.resourcePlan.motifFrames).toBeLessThan(3)
+    const admissions = await app.evaluate(() => (globalThis as any).__motifBudgetAdmissions as { options: number[]; index: number }[])
+    await testInfo.attach('export-admissions', { body: JSON.stringify({ workMiB, admissions }), contentType: 'application/json' })
+    const working = admissions.find(admission => admission.options[admission.index] === perf.resourcePlan.memoryMiB)
+    expect(working, 'no admission matches the plan the export ran with').toBeDefined()
+    expect(working!.index, 'the full plan fitted, so nothing was reduced').toBeGreaterThan(0)
+    expect(perf.resourcePlan.memoryMiB).toBeLessThanOrEqual(workMiB)
     expect(perf.motif.framesRead).toBe(60)
     expect(perf.motif.peakBytes).toBeLessThanOrEqual(perf.resourcePlan.motifBufferBytes)
   } finally { await app.close() }
