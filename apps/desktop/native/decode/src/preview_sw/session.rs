@@ -901,7 +901,22 @@ impl PreviewSwRegistry {
 mod tests {
     use super::*;
     use crate::test_wait::wait_for;
+    use std::sync::atomic::AtomicUsize;
     use std::sync::{Arc, Mutex};
+
+    /// How long a test waits for something that must happen: a poke, a thread's
+    /// exit. A liveness bound like `wait_for`'s; reaching it means it is not
+    /// coming.
+    const MUST_HAPPEN: Duration = Duration::from_secs(30);
+
+    /// How long a test watches for a poke that must not come. Only a negative
+    /// reads after it: a slower machine makes the check weaker, never red.
+    const QUIET: Duration = Duration::from_millis(100);
+
+    /// Spacing between requests that should each be served on their own. The
+    /// session coalesces whatever is queued when it wakes, so requests sent
+    /// back to back collapse into the last one.
+    const TICK: Duration = Duration::from_millis(120);
 
     #[test]
     fn credits_bound_real_decode_delivery_and_seek_survives_pending_receipts() {
@@ -927,33 +942,33 @@ mod tests {
         reg.request_frame_at_with_id("credit", 0, Some(1)).unwrap();
         let mut receipts = Vec::new();
         for _ in 0..5 {
-            receipts.push(rx.recv_timeout(Duration::from_secs(2)).unwrap().0);
+            receipts.push(rx.recv_timeout(MUST_HAPPEN).unwrap().0);
         }
         reg.request_frame_at_with_id("credit", 500_000, Some(2))
             .unwrap();
         for _ in 0..3 {
-            receipts.push(rx.recv_timeout(Duration::from_secs(2)).unwrap().0);
+            receipts.push(rx.recv_timeout(MUST_HAPPEN).unwrap().0);
         }
         assert!(
-            rx.recv_timeout(Duration::from_millis(80)).is_err(),
+            rx.recv_timeout(QUIET).is_err(),
             "unreceived bytes must stop production"
         );
         reg.request_frame_at_with_id("credit", 0, Some(3)).unwrap();
         assert!(
-            rx.recv_timeout(Duration::from_millis(80)).is_err(),
+            rx.recv_timeout(QUIET).is_err(),
             "seek must not reset in-flight credit"
         );
         reg.consume("credit", receipts[0]);
         reg.consume("credit", receipts[0]); // duplicate is not a second credit
-        let (_, id, pts) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (_, id, pts) = rx.recv_timeout(MUST_HAPPEN).unwrap();
         assert_eq!(id, 3);
         assert_eq!(pts, 0);
-        assert!(rx.recv_timeout(Duration::from_millis(80)).is_err());
+        assert!(rx.recv_timeout(QUIET).is_err());
         // Cache invalidation at an identical target must redeliver its first
         // frame, rather than resuming beyond pixels the renderer discarded.
         reg.request_frame_at_with_id("credit", 0, Some(4)).unwrap();
         reg.consume("credit", receipts[1]);
-        let (_, id, pts) = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (_, id, pts) = rx.recv_timeout(MUST_HAPPEN).unwrap();
         assert_eq!(id, 4);
         assert_eq!(pts, 0);
         reg.close("credit").unwrap(); // close must not wait for missing receipts
@@ -977,7 +992,7 @@ mod tests {
         let info = reg.open("s1", p).expect("open");
         assert_eq!(info.width, 320);
         let _ = reg.request_frame_at("s1", 0);
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        wait_for(|| !got.lock().unwrap().is_empty());
         let _ = reg.close("s1");
         let frames = got.lock().unwrap();
         assert!(!frames.is_empty(), "expected at least one frame poke");
@@ -1016,7 +1031,7 @@ mod tests {
             .expect("open");
         assert_eq!((info.width, info.height), (320, 240));
         let _ = reg.request_frame_at("sc1", 0);
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        wait_for(|| !got.lock().unwrap().is_empty());
         let _ = reg.close("sc1");
         let frames = got.lock().unwrap();
         assert!(!frames.is_empty(), "expected at least one frame poke");
@@ -1050,7 +1065,7 @@ mod tests {
             .expect("open on videotoolbox through the registry");
         assert_eq!((info.width, info.height), (192, 144));
         let _ = reg.request_frame_at("vt1", 0);
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        wait_for(|| !got.lock().unwrap().is_empty());
         let _ = reg.close("vt1");
         let frames = got.lock().unwrap();
         assert!(!frames.is_empty(), "expected at least one frame poke");
@@ -1102,7 +1117,7 @@ mod tests {
             .expect("open HEVC Main10 on videotoolbox with I420P10 output");
         assert_eq!((info.width, info.height), (192, 144));
         let _ = reg.request_frame_at("vtp10", 0);
-        std::thread::sleep(std::time::Duration::from_millis(400));
+        wait_for(|| !got.lock().unwrap().is_empty());
         let _ = reg.close("vtp10");
         let frames = got.lock().unwrap();
         assert!(!frames.is_empty(), "expected at least one frame poke");
@@ -1131,7 +1146,7 @@ mod tests {
         let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_mpeg2.mpg");
         reg.open("m1", p).expect("open");
         let _ = reg.request_frame_at("m1", 800_000); // ~frame 24, mid-GOP
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        wait_for(|| !got.lock().unwrap().is_empty());
         let _ = reg.close("m1");
         let pts = got.lock().unwrap();
         assert!(!pts.is_empty(), "expected at least one frame poke");
@@ -1157,7 +1172,6 @@ mod tests {
         // fixes at once: `serve_request`'s `catch_unwind` turns the panic into an
         // `Error` poke, and the recovery `emit` only reaches the sink because
         // `lock_recover` recovers the poisoned lock instead of re-panicking.
-        use std::sync::atomic::{AtomicUsize, Ordering};
         let calls = Arc::new(AtomicUsize::new(0));
         let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
         let calls2 = calls.clone();
@@ -1198,38 +1212,57 @@ mod tests {
 
     #[test]
     fn close_preempts_queued_backlog() {
-        // The command channel is FIFO: served strictly in order, close() would
-        // join only after ~5000 queued long-GOP seek+decode bursts (~10 s on a
-        // fast box). Teardown must preempt them, so close() has to come back
-        // Reaped well inside the grace.
+        // A burst is in flight and requests are queued behind it when close
+        // arrives: the burst stops before its next frame and nothing queued is
+        // served. The sink holds the burst's first frame until close has raised
+        // the shutdown flag, so the frame count does not depend on which thread
+        // runs first.
+        let frames = Arc::new(AtomicUsize::new(0));
+        let f2 = frames.clone();
+        let (release, held) = mpsc::channel::<()>();
         let reg = PreviewSwRegistry::new();
-        reg.set_frame_sink(Box::new(|_| {}));
+        reg.set_frame_sink(Box::new(move |poke| {
+            if let SwFramePoke::Frame { .. } = poke {
+                f2.fetch_add(1, Ordering::SeqCst);
+                // Blocks until `release` is dropped, and never after that.
+                let _ = held.recv();
+            }
+        }));
         let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_mpeg2.mpg");
         reg.open("c1", p).expect("open");
-        for i in 0..5000 {
-            // Alternate targets so every request is a real seek + forward-decode
-            // burst (800_000 is mid-GOP: keyframe at ~500_000 + ~9 discards).
-            let target = if i % 2 == 0 { 0 } else { 800_000 };
+        reg.request_frame_at("c1", 0).expect("request");
+        assert!(
+            wait_for(|| frames.load(Ordering::SeqCst) == 1),
+            "the first burst delivered no frame"
+        );
+        for i in 0..64 {
+            // Alternate targets so each request, if served, is a seek and a
+            // forward decode that delivers frames.
+            let target = if i % 2 == 0 { 800_000 } else { 0 };
             reg.request_frame_at("c1", target).expect("request");
         }
-        let start = std::time::Instant::now();
-        // With a bounded grace, a plain Ok from close() could mean DETACHED —
-        // which would pass the timing bound even with preemption broken. Run
-        // with a grace far longer than the healthy path needs and assert
-        // Reaped, so this test still guards preemption itself (thread exited
-        // AND was joined).
-        let outcome = reg
-            .close_with_grace("c1", std::time::Duration::from_secs(2))
-            .expect("close");
-        let elapsed = start.elapsed();
-        assert_eq!(
-            outcome,
-            CloseOutcome::Reaped,
-            "close detached; the queued backlog was not preempted"
+        let shutdown = Arc::clone(
+            &reg.sessions
+                .lock_recover()
+                .get("c1")
+                .expect("session")
+                .shutdown,
         );
-        assert!(
-            elapsed < std::time::Duration::from_secs(2),
-            "close() took {elapsed:?}; the queued backlog was not preempted"
+        // With a grace this long `Reaped` would also come back after the queue
+        // had been served; the frame count is what shows it was skipped.
+        let outcome = thread::scope(|scope| {
+            let closing = scope.spawn(|| reg.close_with_grace("c1", MUST_HAPPEN));
+            let raised = wait_for(|| shutdown.load(Ordering::Acquire));
+            drop(release);
+            assert!(raised, "close never raised the shutdown flag");
+            closing.join().expect("close thread")
+        })
+        .expect("close");
+        assert_eq!(outcome, CloseOutcome::Reaped);
+        assert_eq!(
+            frames.load(Ordering::SeqCst),
+            1,
+            "close let the burst go on or served the queue behind it"
         );
     }
 
@@ -1266,21 +1299,8 @@ mod tests {
             reg.request_frame_at("lw1", 0).expect("request");
         }
         reg.request_frame_at("lw1", 800_000).expect("request");
-        // Poll (not one fixed sleep) until the final target's burst lands, so
-        // a slow box waits longer instead of flaking; the timeout only trips
-        // if the final request is never served at all.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        loop {
-            if got.lock().unwrap().iter().any(|&v| v >= 700_000) {
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "timed out waiting for the final target's burst; pokes so far: {:?}",
-                got.lock().unwrap()
-            );
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        // The wait only runs out if the final request is never served at all.
+        wait_for(|| got.lock().unwrap().iter().any(|&v| v >= 700_000));
         let _ = reg.close("lw1");
         let pts = got.lock().unwrap();
         assert!(
@@ -1323,10 +1343,15 @@ mod tests {
             // this is a playback cadence, not a scrub storm.
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        // The last request is always served (latest wins) and its horizon holds
+        // frames past its target, so delivery gets past that target. The pause
+        // is for a frame beyond the horizon to show.
+        let last_target = (TICKS - 1) * STEP_US;
+        let reached = wait_for(|| got.lock().unwrap().last().is_some_and(|&v| v > last_target));
+        std::thread::sleep(QUIET);
         let _ = reg.close("fw1");
         let pts = got.lock().unwrap();
-        assert!(!pts.is_empty(), "no frames delivered");
+        assert!(reached, "delivery never got past the last target: {pts:?}");
         let mut sorted = pts.clone();
         sorted.sort_unstable();
         sorted.dedup();
@@ -1341,7 +1366,6 @@ mod tests {
         );
         // Nothing beyond the last target's horizon: the burst is bounded by the
         // horizon, not by how fast the decoder can run.
-        let last_target = (TICKS - 1) * STEP_US;
         assert!(
             *pts.last().unwrap() <= last_target + LOOKAHEAD_HORIZON_US,
             "delivered {} us, past the {} us horizon of the last target",
@@ -1369,7 +1393,9 @@ mod tests {
         );
         reg.open("hz1", p).expect("open");
         let _ = reg.request_frame_at("hz1", 0);
-        std::thread::sleep(std::time::Duration::from_millis(400));
+        // Wait for the five, then leave time for a sixth to show.
+        wait_for(|| got.lock().unwrap().len() >= 5);
+        std::thread::sleep(QUIET);
         let _ = reg.close("hz1");
         let pts = got.lock().unwrap();
         assert_eq!(
@@ -1385,23 +1411,33 @@ mod tests {
         // last one re-seeks, and the earlier frames are delivered AGAIN (the
         // consumer's ring has evicted them by then — that is why it asked).
         let got: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(vec![]));
+        let eofs = Arc::new(AtomicUsize::new(0));
         let g2 = got.clone();
+        let e2 = eofs.clone();
         let reg = PreviewSwRegistry::new();
-        reg.set_frame_sink(Box::new(move |poke| {
-            if let SwFramePoke::Frame { frame, .. } = poke {
-                g2.lock().unwrap().push(frame.pts_us);
+        reg.set_frame_sink(Box::new(move |poke| match poke {
+            SwFramePoke::Frame { frame, .. } => g2.lock().unwrap().push(frame.pts_us),
+            SwFramePoke::Eof { .. } => {
+                e2.fetch_add(1, Ordering::SeqCst);
             }
+            SwFramePoke::Error { .. } => {}
         }));
         let p = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/tiny_prores.mov"
         );
         reg.open("bw1", p).expect("open");
+        // The horizon of 750_000 reaches past the end of the 1 s fixture, so the
+        // forward burst ends in an Eof: after it, every frame is the backward
+        // request's.
         let _ = reg.request_frame_at("bw1", 750_000);
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(
+            wait_for(|| eofs.load(Ordering::SeqCst) == 1),
+            "the forward burst never reached the end of the material"
+        );
         let after_forward = got.lock().unwrap().len();
         let _ = reg.request_frame_at("bw1", 0);
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        wait_for(|| got.lock().unwrap().len() > after_forward);
         let _ = reg.close("bw1");
         let pts = got.lock().unwrap();
         assert_eq!(
@@ -1422,14 +1458,14 @@ mod tests {
         // signal on this transport). The drained cursor absorbs those ticks —
         // one Eof, and no repeat of the last frame.
         let frames: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(vec![]));
-        let eofs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let eofs = Arc::new(AtomicUsize::new(0));
         let f2 = frames.clone();
         let e2 = eofs.clone();
         let reg = PreviewSwRegistry::new();
         reg.set_frame_sink(Box::new(move |poke| match poke {
             SwFramePoke::Frame { frame, .. } => f2.lock().unwrap().push(frame.pts_us),
             SwFramePoke::Eof { .. } => {
-                e2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                e2.fetch_add(1, Ordering::SeqCst);
             }
             SwFramePoke::Error { .. } => {}
         }));
@@ -1440,19 +1476,28 @@ mod tests {
         reg.open("eof1", p).expect("open");
         // 875_000 is the last frame of the 1 s fixture; the three ticks after it
         // are past the material.
-        for t in [875_000, 908_000, 941_000, 974_000] {
+        let _ = reg.request_frame_at("eof1", 875_000);
+        assert!(
+            wait_for(|| eofs.load(Ordering::SeqCst) == 1),
+            "the tail request never reached the end of the material"
+        );
+        for t in [908_000, 941_000, 974_000] {
             let _ = reg.request_frame_at("eof1", t);
-            std::thread::sleep(std::time::Duration::from_millis(120));
+            std::thread::sleep(TICK);
         }
+        // The channel is served in order, so a frame of this backward request
+        // means every tick before it has been taken.
+        let _ = reg.request_frame_at("eof1", 0);
+        wait_for(|| frames.lock().unwrap().contains(&0));
         let _ = reg.close("eof1");
         let pts = frames.lock().unwrap();
         assert_eq!(
-            *pts,
-            vec![875_000],
+            pts.get(..2),
+            Some(&[875_000, 0][..]),
             "the tail frame was re-delivered: {pts:?}"
         );
         assert_eq!(
-            eofs.load(std::sync::atomic::Ordering::SeqCst),
+            eofs.load(Ordering::SeqCst),
             1,
             "each post-eof tick re-discovered eof instead of short-circuiting"
         );
@@ -1465,14 +1510,14 @@ mod tests {
         // and EOF is rediscovered — once. The EOF arms advance the frontier to
         // the target, which keeps every later tick inside the continue window.
         let frames: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(vec![]));
-        let eofs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let eofs = Arc::new(AtomicUsize::new(0));
         let f2 = frames.clone();
         let e2 = eofs.clone();
         let reg = PreviewSwRegistry::new();
         reg.set_frame_sink(Box::new(move |poke| match poke {
             SwFramePoke::Frame { frame, .. } => f2.lock().unwrap().push(frame.pts_us),
             SwFramePoke::Eof { .. } => {
-                e2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                e2.fetch_add(1, Ordering::SeqCst);
             }
             SwFramePoke::Error { .. } => {}
         }));
@@ -1485,18 +1530,28 @@ mod tests {
         // the tail frame itself is past-discarded — the request yields only an
         // Eof poke. The +33 ms ticks after it stay within the continue window
         // of the advanced frontier, so the drained cursor must absorb them.
-        for t in [5_000_000, 5_033_000, 5_066_000, 5_099_000] {
+        let _ = reg.request_frame_at("feof1", 5_000_000);
+        assert!(
+            wait_for(|| eofs.load(Ordering::SeqCst) == 1),
+            "the far-past-EOF request never reported the end of the material"
+        );
+        for t in [5_033_000, 5_066_000, 5_099_000] {
             let _ = reg.request_frame_at("feof1", t);
-            std::thread::sleep(std::time::Duration::from_millis(120));
+            std::thread::sleep(TICK);
         }
+        // The channel is served in order, so a frame of this backward request
+        // means every tick before it has been taken.
+        let _ = reg.request_frame_at("feof1", 0);
+        wait_for(|| !frames.lock().unwrap().is_empty());
         let _ = reg.close("feof1");
         let pts = frames.lock().unwrap();
-        assert!(
-            pts.is_empty(),
+        assert_eq!(
+            pts.first().copied(),
+            Some(0),
             "a far-past-EOF target must deliver no frames: {pts:?}"
         );
         assert_eq!(
-            eofs.load(std::sync::atomic::Ordering::SeqCst),
+            eofs.load(Ordering::SeqCst),
             1,
             "each far-past-eof tick re-seeked and re-discovered eof instead of going quiet"
         );
@@ -1511,16 +1566,12 @@ mod tests {
         let reg = PreviewSwRegistry::new();
         reg.set_frame_sink(Box::new(|_| {}));
         reg.open_wedged_for_test("w1", std::time::Duration::from_secs(10));
-        let start = std::time::Instant::now();
+        // `Detached` is reached only from the grace running out: a close that
+        // waited for the wedged thread would see it exit and report `Reaped`.
         let outcome = reg
             .close_with_grace("w1", std::time::Duration::from_millis(250))
             .expect("close must return Ok on the detach path");
-        let elapsed = start.elapsed();
         assert_eq!(outcome, CloseOutcome::Detached);
-        assert!(
-            elapsed < std::time::Duration::from_secs(2),
-            "close() took {elapsed:?}; it must be bounded by the grace, not the wedge"
-        );
         // Reuse safety: the map entry went with close(), so the same id opens
         // fresh while the detached straggler is still sleeping.
         let p = concat!(
@@ -1534,9 +1585,10 @@ mod tests {
 
     #[test]
     fn normal_close_reaps_the_thread() {
-        // Healthy-path close must NOT detach: the done signal (sender drop in
-        // the thread's closure frame) fires within the grace, so the thread is
-        // joined and nothing lingers.
+        // Healthy-path close must NOT detach: the thread sees the teardown, its
+        // done signal fires (sender drop in the thread's closure frame), and it
+        // is joined. The grace here is a liveness bound; how fast a healthy
+        // thread exits is the machine's business.
         let reg = PreviewSwRegistry::new();
         reg.set_frame_sink(Box::new(|_| {}));
         let p = concat!(
@@ -1545,7 +1597,7 @@ mod tests {
         );
         reg.open("r1", p).expect("open");
         let _ = reg.request_frame_at("r1", 0);
-        let outcome = reg.close_with_grace("r1", CLOSE_GRACE).expect("close");
+        let outcome = reg.close_with_grace("r1", MUST_HAPPEN).expect("close");
         assert_eq!(outcome, CloseOutcome::Reaped);
     }
 }

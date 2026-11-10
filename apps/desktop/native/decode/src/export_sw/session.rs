@@ -659,6 +659,11 @@ mod tests {
         (reg, got)
     }
 
+    /// How long a test gives a producer that should be parked on credit to show
+    /// it is not. Only a negative reads after it: a slower machine makes the
+    /// check weaker, never red.
+    const PARKED: Duration = Duration::from_millis(100);
+
     /// Total control markers seen (range ends + stream ends). Read with a SINGLE
     /// lock — reading two fields off two `got.lock()` calls in one expression
     /// would hold both non-reentrant guards at once and self-deadlock.
@@ -667,18 +672,20 @@ mod tests {
         c.range_ends + c.ended
     }
 
-    /// Drive a range and return credits generously so the producer never parks,
-    /// then wait until a RangeEnd (or Ended) lands or the deadline passes.
+    /// Drive a range to its RangeEnd (or Ended), returning credits generously so
+    /// the producer never parks. A range that reaches neither fails here, so a
+    /// caller's assertions always read a finished range.
     fn run_range(reg: &ExportSwRegistry, id: &str, a: i64, b: i64, got: &Arc<Mutex<Collected>>) {
         let ends_before = markers(got);
         reg.decode_range(id, a, b).unwrap();
-        for _ in 0..200 {
+        let finished = wait_for(|| {
             reg.return_credit(id, 64).unwrap();
-            if markers(got) > ends_before {
-                break;
-            }
-            thread::sleep(Duration::from_millis(5));
-        }
+            markers(got) > ends_before
+        });
+        assert!(
+            finished,
+            "range {a}..{b} of '{id}' reached neither a RangeEnd nor an Ended"
+        );
     }
 
     #[test]
@@ -1064,7 +1071,12 @@ mod tests {
         let (reg, got) = registry_with_collector();
         reg.open("p", PRORES, "NV12", 3).unwrap();
         reg.decode_range("p", 0, 875_000).unwrap(); // all 8 frames intersect
-        thread::sleep(Duration::from_millis(150));
+        let frames = || got.lock().unwrap().pts.len();
+        // Each wait is for the frames the credit allows; the pause after it is
+        // the time a producer that failed to park would have to show a frame
+        // too many.
+        wait_for(|| frames() >= 3);
+        thread::sleep(PARKED);
         {
             let c = got.lock().unwrap();
             assert_eq!(c.pts.len(), 3, "window=3 should halt at 3 in flight");
@@ -1072,14 +1084,15 @@ mod tests {
         }
         // Resume: return 2 credits → 2 more frames, then park again at 5 total.
         reg.return_credit("p", 2).unwrap();
-        thread::sleep(Duration::from_millis(150));
-        {
-            let c = got.lock().unwrap();
-            assert_eq!(c.pts.len(), 5, "2 credits → 2 more frames");
-        }
+        wait_for(|| frames() >= 5);
+        thread::sleep(PARKED);
+        assert_eq!(frames(), 5, "2 credits → 2 more frames");
         // Drain the rest.
         reg.return_credit("p", 64).unwrap();
-        thread::sleep(Duration::from_millis(200));
+        wait_for(|| {
+            let c = got.lock().unwrap();
+            c.pts.len() >= 8 && c.range_ends >= 1
+        });
         {
             let c = got.lock().unwrap();
             assert_eq!(c.pts.len(), 8, "all frames after draining credits");
@@ -1092,11 +1105,17 @@ mod tests {
     fn close_unblocks_a_parked_producer() {
         // A session parked on an exhausted credit window must tear down promptly
         // (no deadlock): open tiny window, request a big range, don't return
-        // credits, then close — join must complete.
-        let (reg, _got) = registry_with_collector();
+        // credits, then close — join must complete. The window is 1, so the
+        // first frame is the last one before the producer parks.
+        let (reg, got) = registry_with_collector();
         reg.open("p", PRORES, "NV12", 1).unwrap();
         reg.decode_range("p", 0, 875_000).unwrap();
-        thread::sleep(Duration::from_millis(80));
+        assert!(
+            wait_for(|| got.lock().unwrap().pts.len() == 1),
+            "the producer never delivered the frame it parks behind"
+        );
+        // Time to reach the park; close has to return either way.
+        thread::sleep(PARKED);
         // If close hangs, the test harness will time out; a clean return is the
         // assertion.
         reg.close("p").unwrap();
