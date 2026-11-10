@@ -263,10 +263,11 @@ export class MotifWorkspace {
     private mirror(id: string, directory: string, mirrored: string | null): PackageOutcome {
         const revisions = this.store.revisions;
         try {
-            const known = revisions.lookup(directory, revisions.stamp(directory));
+            const taken = revisions.stamp(directory);
+            const known = revisions.lookup(directory, taken);
             if (known && ('diagnostic' in known || known.revision === mirrored))
                 return known;
-            const { files, stamp } = revisions.read(directory);
+            const { files, stamp } = revisions.read(directory, taken);
             if (!stamp)
                 throw new Error('Working directory changed while reading; retry after saving');
             let pkg: ReturnType<typeof normalize>;

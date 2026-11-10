@@ -4,15 +4,15 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { PackageRevisions, STAMP_SETTLE_MS } from './packageRevisions'
 
-// Runs once after the next whole-directory read, standing in for an editor
+// Runs once after the next read of a package's files, standing in for an editor
 // that saves while the app is reading.
 let afterRead: (() => void) | null = null
 vi.mock('./packageFiles', async importOriginal => {
   const actual = await importOriginal<typeof import('./packageFiles')>()
   return {
     ...actual,
-    readMotifDirectory: (root: string) => {
-      const files = actual.readMotifDirectory(root)
+    readStampedFiles: (root: string, stamps: readonly import('./packageFiles').FileStamp[]) => {
+      const files = actual.readStampedFiles(root, stamps)
       const run = afterRead
       afterRead = null
       run?.()

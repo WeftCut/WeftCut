@@ -5,7 +5,7 @@
 // directories).
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { type FileStamp, type MotifFile, readMotifDirectory, sameStamps, stampMotifDirectory } from './packageFiles'
+import { type FileStamp, type MotifFile, readStampedFiles, sameStamps, stampMotifDirectory } from './packageFiles'
 
 /** What a directory's files came to: the revision of the package they make,
  *  or why they make none. */
@@ -69,10 +69,10 @@ export class PackageRevisions {
   }
 
   /** The files, and the stamp they were read under: null when one changed
-   *  during the read, so the bytes belong to no stamp. */
-  read(dir: string): { files: MotifFile[]; stamp: PackageStamp | null } {
-    const stamp = this.stamp(dir)
-    const files = readMotifDirectory(dir)
+   *  during the read, so the bytes belong to no stamp. A stamp the caller
+   *  already took serves as the one before the read. */
+  read(dir: string, stamp = this.stamp(dir)): { files: MotifFile[]; stamp: PackageStamp | null } {
+    const files = readStampedFiles(dir, stamp.files)
     return { files, stamp: sameStamps(stamp.files, stampMotifDirectory(dir)) ? stamp : null }
   }
 

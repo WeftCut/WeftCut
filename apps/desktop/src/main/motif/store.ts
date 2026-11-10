@@ -4,9 +4,9 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { parseManifestIsland, type Manifest } from "../../shared/motifs/catalog";
-import { hasMotifFile, motifFileSegments, readMotifFile, readMotifDirectory, sameStamps, stampMotifDirectory, type MotifFile } from './packageFiles';
+import { hasMotifFile, motifFileSegments, readMotifFile, readMotifDirectory, sameStamp, stampMotifFile, type MotifFile } from './packageFiles';
 import { packageContentHash } from './contentHash';
-import { PackageRevisions } from './packageRevisions';
+import { PackageRevisions, type PackageStamp } from './packageRevisions';
 import { MotifError } from '../../shared/motifs/errors';
 
 export const DRAFTS_DIR = "drafts";
@@ -79,8 +79,8 @@ export class UserMotifStore {
 
   /** The bytes are hashed only when their stamp has no record; a read that a
    *  write crossed is hashed and not recorded. */
-  private snapshot(dir: string): { files: MotifFile[]; revision: string } {
-    const { files, stamp } = this.revisions.read(dir);
+  private snapshot(dir: string, taken?: PackageStamp): { files: MotifFile[]; revision: string } {
+    const { files, stamp } = this.revisions.read(dir, taken);
     const known = stamp && this.revisions.lookup(dir, stamp);
     if (known && 'revision' in known) return { files, revision: known.revision };
     const revision = packageContentHash(files);
@@ -93,11 +93,11 @@ export class UserMotifStore {
     const known = this.revisions.lookup(dir, stamp);
     if (known && 'revision' in known) {
       const html = readMotifFile(dir, 'index.html');
-      // The page is the stamped one only if nothing moved while it was read.
-      if (html && sameStamps(stamp.files, stampMotifDirectory(dir)))
+      // The page is the stamped one only if it did not move while it was read.
+      if (html && sameStamp(stamp.files.find(f => f.path === 'index.html'), stampMotifFile(dir, 'index.html')))
         return { html: html.toString('utf8'), revision: known.revision, paths: stamp.files.map(f => f.path) };
     }
-    const { files, revision } = this.snapshot(dir);
+    const { files, revision } = this.snapshot(dir, stamp);
     return { html: files.find(f => f.path === 'index.html')!.bytes.toString('utf8'), revision, paths: files.map(f => f.path) };
   }
 
