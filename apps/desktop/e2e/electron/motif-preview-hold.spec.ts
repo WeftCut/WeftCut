@@ -54,8 +54,9 @@ test('a seek onto a Motif with no frame yet keeps the last picture, then shows t
     }, { timeout: 15_000 }).toBe(true);
 
     await seek(page, 3_200_000);
-    // Inside the hold (its limit is 500 ms): the red picture or the Motif,
-    // never the empty canvas.
+    // Inside the hold, which outlasts this window many times over
+    // (`MOTIF_DEADLINES.previewHoldMs`): the red picture or the Motif, never
+    // the empty canvas.
     const seen: string[] = [];
     const started = Date.now();
     while (Date.now() - started < 300) {
@@ -84,8 +85,10 @@ test('a Motif left before its frame landed holds again when the playhead returns
       try { await seek(page, 1_000_000); return isRed(await sample(page)); } catch { return false; }
     }, { timeout: 15_000 }).toBe(true);
 
-    // A visit too short for its first frame, then back to red for longer than
-    // a hold used to last, then onto an earlier frame of the same Motif.
+    // A visit too short for its first frame, then back to red, then onto an
+    // earlier frame of the same Motif while its host is still in setup. That a
+    // hold starts again on the return is MotifSprite.test.ts's, in fake time;
+    // here the canvas is watched across the same moves.
     await seek(page, 6_500_000);
     await new Promise(resolve => setTimeout(resolve, 40));
     await seek(page, 1_000_000);

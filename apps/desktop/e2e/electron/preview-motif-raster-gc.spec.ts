@@ -114,11 +114,25 @@ test('@serial raster GC keeps frames when a motif is unresolvable, reclaims true
     seedOrphan()
     ;({ app, page } = await launchApp({ userDataDir: userData }))
     await waitForHook(page, 'motifReopenProject')
+    // Main collects only for a plan that says `collect`, after that plan's
+    // discovery, and answers the plan when both are done. So the plans main
+    // has answered are the witness: there is one, and none asked to collect.
+    await app.evaluate(({ ipcMain }) => {
+      const answered: boolean[] = []
+      ;(globalThis as any).__rasterGcPlans = answered
+      for (const channel of ['backend:invoke', 'backend:invokePublished']) {
+        const handler = ipcMain._invokeHandlers.get(channel)!
+        ipcMain._invokeHandlers.set(channel, async (event: any, request: any) => {
+          const answer = await handler(event, request)
+          if (request.channel === 'motif_bake_reconcile') answered.push(request.args.plan.collect === true)
+          return answer
+        })
+      }
+    })
+    const answeredPlans = () => app.evaluate(() => [...(globalThis as any).__rasterGcPlans] as boolean[])
     await reopen(page, projectPath)
-    // Give the fire-and-forget hydrate ample time to (not) run its GC, on a
-    // loaded runner included. Existence after a window that covers it is the
-    // assertion — there is nothing to poll toward.
-    await page.waitForTimeout(8_000)
+    await expect.poll(async () => (await answeredPlans()).length, { timeout: 30_000 }).toBeGreaterThan(0)
+    expect(await answeredPlans(), 'a plan asked main to collect while a motif layer was unresolvable').not.toContain(true)
     expect(
       existsSync(orphanDir),
       'GC deleted raster frames while a motif layer was unresolvable',

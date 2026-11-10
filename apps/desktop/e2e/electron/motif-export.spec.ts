@@ -78,7 +78,8 @@ for (const source of ['builtin', 'installed'] as const) {
       expect(report.pass).toBe(true)
 
       const perf = await page.evaluate(() => (window as any).__weftcutExportPerf)
-      expect(perf.motif.peakBytes).toBeLessThanOrEqual(128 * 1024 * 1024)
+      // The frames held at once stay inside what the export's plan admitted.
+      expect(perf.motif.peakBytes).toBeLessThanOrEqual(perf.resourcePlan.motifBufferBytes)
       expect(perf.motif.framesRead).toBe(60)
       const rasterDir = path.join(PROJECT_PARENT, projectName, 'Cache', 'raster')
       const frameDir = path.join(rasterDir, readdirSync(rasterDir)[0]!)
