@@ -1,12 +1,19 @@
 # Setup
 
 Building WeftCut needs Node 24+ (`.nvmrc` pins the CI version), the Rust
-toolchain, and per-OS native build tools for the two napi addons
+toolchain, Go, and per-OS native build tools for the two napi addons
 (`@weftcut/core`, `@weftcut/native-decode`). Electron bundles its own Chromium;
 there is no webview runtime to install.
 
 `rust-toolchain.toml` pins Rust 1.98.1 with the `wasm32-unknown-unknown`
 target (`npm run build:wasm`); `rustup` installs both on the first build.
+
+Go builds the `weftcut` binary (`apps/desktop/cli`, `npm run build:cli`), the
+stdio MCP server the app ships. `apps/desktop/cli/go.mod` names the version;
+the module uses the standard library alone, so there is nothing to download
+beyond the toolchain. `npm run dev` runs without it (the Agent panel then
+offers HTTP only); `npm run build` (so `build:e2e` and packaging too),
+`npm run check` and the unit suite need it.
 
 ```sh
 npm install         # JS dependencies only; does not build native code
@@ -33,6 +40,7 @@ Rust under `native/`; cargo builds incrementally.
 3. LLVM for the decode addon's bindgen: `winget install -e --id LLVM.LLVM`
    (expected at `C:\Program Files\LLVM\bin` unless `LIBCLANG_PATH` is set).
 4. Node: `winget install -e --id OpenJS.NodeJS.LTS`.
+5. Go: `winget install -e --id GoLang.Go`.
 
 ## macOS
 
@@ -41,6 +49,7 @@ macOS 13 or newer, Apple Silicon (the only shipped Mac build).
 1. Xcode Command Line Tools: `xcode-select --install` (also provides libclang).
 2. Rust: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`.
 3. Node: `brew install node`.
+4. Go: `brew install go`.
 
 ## Linux
 
@@ -48,6 +57,8 @@ macOS 13 or newer, Apple Silicon (the only shipped Mac build).
 2. Build tools (Debian/Ubuntu):
    `sudo apt install build-essential curl file libclang-dev`.
 3. Node 24+ via your distro or nvm.
+4. Go 1.21 or newer, from your distro or <https://go.dev/dl/>. One older
+   than `go.mod` names downloads that toolchain on first use.
 
 On x64 both addons link against napi-rs's glibc 2.17 cross toolchain, so a
 local build loads wherever a release does ([ADR 0143](adr/0143-linux-addons-link-against-an-old-glibc.md)).

@@ -3,8 +3,8 @@
 // etiquette in ten lines. Every MCP client reads `instructions` on connect,
 // with or without the shipped skill installed, so this is the one message
 // that reaches an agent before its first call. Both transports send it: the
-// app's HTTP server (`server.ts`) and the stdio shim (`src/cli/shim.ts`), which
-// bundles this file, so the text is one source at one version.
+// app's HTTP server (`server.ts`) and the `weftcut` binary on stdio, which
+// embeds the data file below, so the text is one source at one version.
 //
 // The etiquette lines head the shipped skill (`skills/weftcut/SKILL.md`, "In
 // ten lines"), pinned equal by `instructions.test.ts`, so a client that has the

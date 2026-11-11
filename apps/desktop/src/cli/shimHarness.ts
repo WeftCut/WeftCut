@@ -1,11 +1,12 @@
-// Fixtures of the black-box shim tests (`integration.test.ts`): the targets the
-// cases run against, a client that speaks JSON-RPC lines to a spawned target,
-// and apps on real Streamable HTTP that record what they were sent.
+// Fixtures of the black-box tests of `weftcut mcp` (`integration.test.ts`): the
+// binary the cases run, a client that speaks JSON-RPC lines to it once
+// spawned, and apps on real Streamable HTTP that record what they were sent.
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import http, { type Server as HttpServer } from 'node:http'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 import express from 'express'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -28,15 +29,19 @@ export const WITNESS_MS = 20_000
 /// The pause between two progress beats of the scripted app's `heartbeat`.
 export const BEAT_MS = 100
 
-/// Names the native binary a second target runs: an absolute path, started as
-/// `<bin> mcp` (`npm run build:weftcut` builds it at out/cli/weftcut). Unset,
-/// the cases run against the JS bundle alone.
-export const NATIVE_BIN_ENV = 'WEFTCUT_CLI_BIN'
+/// Names the binary the cases run, by absolute path, in place of the one
+/// `npm run build:cli` builds at out/cli/.
+export const CLI_BIN_ENV = 'WEFTCUT_CLI_BIN'
 
-/// One implementation of the stdio MCP server, as the processes a client starts.
+const BUILT_BIN = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../out/cli',
+  process.platform === 'win32' ? 'weftcut.exe' : 'weftcut',
+)
+
+/// The `weftcut` binary under test, as the processes a client starts.
 export interface Target {
-  name: string
-  native: boolean
+  bin: string
   /// The version the build was stamped with: what `initialize` reports and its
   /// instructions name.
   stamp: string
@@ -46,34 +51,20 @@ export interface Target {
   argv(...sub: string[]): string[]
 }
 
-/// The esbuild bundle of `main.ts`, run by this Node. `bundle` is read at spawn
-/// time: the file is built after the targets are listed.
-export function jsTarget(bundle: () => string, stamp: string): Target {
-  return {
-    name: 'JS bundle',
-    native: false,
-    stamp,
-    serve: () => [process.execPath, bundle()],
-    argv: (...sub) => [process.execPath, bundle(), ...sub],
+/// The binary to test, built with `stamp`. A missing one is a mistake worth
+/// stopping on, not a reason to run no cases.
+export function cliTarget(stamp: string): Target {
+  const named = process.env[CLI_BIN_ENV]
+  if (named && !path.isAbsolute(named)) throw new Error(`${CLI_BIN_ENV} must be an absolute path; got ${named}`)
+  const bin = named || BUILT_BIN
+  if (!fs.statSync(bin, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(
+      named
+        ? `${CLI_BIN_ENV} names no file: ${named}`
+        : `no weftcut binary at ${bin}: run \`npm run build:cli\` first (or name one with ${CLI_BIN_ENV})`,
+    )
   }
-}
-
-/// The binary `WEFTCUT_CLI_BIN` names, or null when the variable is unset. A
-/// path that is set but names no file is a mistake worth stopping on, not a
-/// reason to run fewer cases.
-export function nativeTarget(stamp: string): Target | null {
-  const bin = process.env[NATIVE_BIN_ENV]
-  if (!bin) return null
-  if (!path.isAbsolute(bin) || !fs.statSync(bin, { throwIfNoEntry: false })?.isFile()) {
-    throw new Error(`${NATIVE_BIN_ENV} must be the absolute path of the native binary; got ${bin}`)
-  }
-  return {
-    name: 'native binary',
-    native: true,
-    stamp,
-    serve: () => [bin, 'mcp'],
-    argv: (...sub) => [bin, ...sub],
-  }
+  return { bin, stamp, serve: () => [bin, 'mcp'], argv: (...sub) => [bin, ...sub] }
 }
 
 /// A target's environment: the profile under test, and none of the shim

@@ -1,6 +1,5 @@
 // The explicit-cancel vs disconnect rule an MCP tool call is held to (ADR
-// 0121), and the progress it sends — the same rule the shim keeps
-// (`cli/shim.ts` `explicitCancel`).
+// 0121), and the progress it sends.
 import { describe, expect, it, vi } from 'vitest'
 import { mcpComputeCaller, splitAbort } from './computeCaller'
 import type { ComputeJob } from '../../shared/compute-jobs'

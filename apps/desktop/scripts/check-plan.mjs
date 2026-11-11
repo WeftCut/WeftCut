@@ -1,6 +1,6 @@
 // What `npm run check` runs, as data, so the per-OS environment is testable from
 // any host. Commands must stay identical to electron-ci's `checks` and `rust-test`
-// jobs; check.test.mjs holds every cargo line to that.
+// jobs; check.test.mjs holds every cargo and Go line to that.
 import path from 'node:path'
 
 export const OS_DIR = { win32: 'win', linux: 'linux', darwin: 'mac' }
@@ -14,6 +14,21 @@ function npmStep(script) {
 
 function cargoStep(name, args, env = {}) {
   return { name, command: 'cargo', args, env }
+}
+
+// The `weftcut` binary's module (apps/desktop/cli). CGO off as in its build
+// (build-weftcut-cli.mjs): the gates judge the program that ships, and need no
+// C compiler.
+const GO_MODULE = 'cli'
+const GO_ENV = { CGO_ENABLED: '0' }
+
+function goSteps() {
+  return [
+    // gofmt exits 0 whatever it finds; the files it lists are the failure.
+    { name: 'gofmt', command: 'gofmt', args: ['-l', GO_MODULE], failOnOutput: true },
+    { name: 'go vet', command: 'go', args: ['-C', GO_MODULE, 'vet', './...'], env: GO_ENV },
+    { name: 'go test', command: 'go', args: ['-C', GO_MODULE, 'test', './...'], env: GO_ENV },
+  ]
 }
 
 export function checkPlan({ platform, root, env = {}, skipRust = false }) {
@@ -49,9 +64,12 @@ export function checkPlan({ platform, root, env = {}, skipRust = false }) {
     npmStep('typecheck'),
     npmStep('test:scripts'),
     npmStep('mcp:catalog:check'),
+    // The unit suite runs the binary as a client would (src/cli), and nothing
+    // else rebuilds it: a stale one is judged in place of the Go sources.
+    npmStep('build:cli'),
     { ...npmStep('test'), env: toolPath },
   ]
-  if (skipRust) return typescript
+  if (skipRust) return [...goSteps(), ...typescript]
 
   const decodeArgs = ['test', '--manifest-path', DECODE_MANIFEST, '--features', 'test-noop']
   // VideoToolbox sessions are finite: concurrent ProRes decodes fail with VT -19092.
@@ -63,6 +81,7 @@ export function checkPlan({ platform, root, env = {}, skipRust = false }) {
     // stale one makes the catalog check compare against the old tool table and pass.
     npmStep('napi:build'),
     npmStep('napi:build:decode'),
+    ...goSteps(),
     ...typescript,
     cargoStep(
       'clippy',

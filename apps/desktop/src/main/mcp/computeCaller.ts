@@ -15,7 +15,7 @@ interface HandlerExtra {
  *  cancel: a client that went away leaves its job running so a retry can join
  *  it (ADR 0121). The close clears the server's transport right after
  *  aborting, so an abort is a cancel only if the transport is still there once
- *  that has had its turn — the shim's own rule (`cli/shim.ts` `explicitCancel`). */
+ *  that has had its turn. */
 export function splitAbort(signal: AbortSignal | undefined, closed: () => boolean): { cancel: AbortSignal; disconnected: AbortSignal } {
   const cancel = new AbortController(), disconnected = new AbortController()
   const classify = (): void => {

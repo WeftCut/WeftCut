@@ -2,7 +2,7 @@
 
 WeftCut is an MCP server. External agents (Claude Code, Claude Desktop, Codex,
 Cursor, custom clients) edit the open project through a structured tool
-surface, over the **`weftcut-mcp` stdio shim** (recommended) or **HTTP-direct**.
+surface, over **stdio through the `weftcut` binary** (recommended) or **HTTP-direct**.
 Per-tool arguments, return shapes and refusals live in the advertised catalog
 (tool descriptions and schemas) — that is the contract agents read. This doc
 holds what the catalog cannot: transport, conventions, cross-tool rules, and
@@ -20,23 +20,53 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   verbatim. The advertised catalog is the union of the Rust catalog and the TS
   tables (`MCP_TOOL_DEFS`, `MOTIF_TOOL_DEFS`, the export tools), deduplicated by
   name with TS winning (`main/mcp/mcpCatalog.ts`).
-- **The stdio shim** (`src/cli/`, built by `scripts/build-cli.mjs`) runs under
-  `ELECTRON_RUN_AS_NODE` — the WeftCut binary is its Node runtime. The app
-  copies it to `<userData>/cli/weftcut-mcp.cjs` at every startup; client
-  configs point at that copy, the only path stable across upgrades on all three
-  OSes (an AppImage mounts at a random point). `<userData>` is
+- **`weftcut mcp` is the stdio server**: a Go binary (`apps/desktop/cli/`,
+  standard library only, built by `scripts/build-weftcut-cli.mjs`;
+  [ADR 0165](adr/0165-the-stdio-mcp-entry-is-a-native-weftcut-binary.md)) that
+  passes messages between a client's stdio and the endpoint above. It reads a
+  message's envelope (`id`, `method`) and forwards the rest untouched in both
+  directions, so a method the app learns to answer needs nothing from it; the
+  parity gate in `src/cli/integration.test.ts` sends every client request the
+  SDK defines both ways and compares. It opens its app session after the
+  client's `initialize`, under that client's name, version, capabilities and
+  protocol version.
+- **The app installs it into the profile.** The binary ships in
+  `resources/cli/`; at every start the app copies it to
+  `<userData>/cli/weftcut[.exe]` and writes `launch.json` beside it: what
+  starts this app again on this profile (`main/mcp/cliInstall.ts`). Client
+  configs name that copy, the only path stable across upgrades on all three
+  OSes (an AppImage mounts at a random point). The copy is replaced by rename,
+  never written in place: a session may be running it. `<userData>` is
   `<appData>/WeftCut`, named from package.json's `productName`, which must stay
   set: electron-builder's `productName` is not written into the packaged
-  package.json. The shim re-reads `mcp_auth.json` on every (re)connect, so port
-  re-picks and token rotations self-heal and its config carries no URL or token.
-- **Shim catalog = synthetic ∪ (app reachable ? real catalog : ∅).** Always
+  package.json.
+- **The binary finds the profile and the app itself.** The profile is
+  `WEFTCUT_USERDATA`, else the binary's own place under a profile's `cli/`,
+  else the platform default. It re-reads `mcp_auth.json` on every (re)connect,
+  so port re-picks and token rotations self-heal and a config carries no URL,
+  token or environment. The app to start is `WEFTCUT_APP`, else `launch.json`,
+  else the app it is packaged inside; macOS starts a bundle through
+  LaunchServices.
+- **Its catalog = synthetic ∪ (app reachable ? real catalog : ∅).** Always
   present: `weftcut_status` (endpoint state, next steps, a `Project:` line;
-  read-only) and `launch_weftcut` (detached GUI spawn, bounded wait;
-  idempotent). `tools/list_changed`
-  fires on every bridge transition, so one session upgrades when the app comes
-  up and degrades when it closes. While bridged the app's notifications are
-  forwarded verbatim. Subcommands: `info` (exit 3 when the app is down), `print-config`,
-  `list-tools`, `help`.
+  read-only) and `launch_weftcut` (detached GUI start, bounded wait;
+  idempotent). `tools/list_changed` fires whenever the app comes up or goes
+  away, so one session upgrades when the app starts and degrades when it
+  closes. While the app is up, what it sends (notifications, and requests to
+  the client) is forwarded verbatim. Subcommands beside `mcp`: `info` (exit 3
+  when the app is down), `print-config`, `list-tools`, `help`, `--version`;
+  with no argument it prints its help and serves nothing.
+- **A packaged app does not run as Node.** Electron's RunAsNode fuse is off
+  (`electron-builder.yml` `electronFuses`), so `ELECTRON_RUN_AS_NODE` is
+  ignored; `scripts/check-packaged-cli.mjs` reads the fuse back from the
+  packaged app in CI. An unpackaged run keeps Electron's defaults.
+- **A config that starts the app on `<userData>/cli/weftcut-mcp.cjs` is
+  served.** That is the shape of a config written for the JS shim of 0.7.x and
+  earlier, in files the app does not own. Started that way the app opens no
+  window, takes no profile lock and starts no MCP host: it runs `weftcut mcp`
+  on its own stdio and exits with it (`main/entry.ts`,
+  `main/mcp/legacyShim.ts`). The same CI check starts the packaged app this
+  way.
 - Port and bearer token persist in `<userData>/mcp_auth.json`; an occupied
   saved port falls back to a fresh one and rewrites the file. One server per
   running instance. Localhost only; remote access is out of scope.
@@ -44,13 +74,14 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
 ## Authentication & security
 
 - 32-byte random hex bearer, written `0600` (POSIX only; Windows maps it to
-  read-only). It cannot be encrypted because the shim is a plain Node process.
+  read-only). It cannot be encrypted: the `weftcut` binary, a separate program,
+  reads it.
 - Enforced on every `/mcp` request by main's middleware (`401` otherwise),
   constant-time compare. DNS-rebinding protection: `allowedHosts` is the
   loopback bind only; `Origin` is left unrestricted for non-browser clients.
   The bind is loopback-hardcoded.
 - The token stays hidden until the user opens **Connect agent**; *Refresh*
-  rotates it in place (same port). Shim configs carry no token. The HTTP
+  rotates it in place (same port). A stdio config carries no token. The HTTP
   snippet with the token is printed to stdout only in unpackaged dev / e2e
   runs. Cloud API keys live in the OS keyring (`safeStorage`), never in
   project files.
@@ -58,9 +89,10 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
 ## Connection UX
 
 **Settings → Agent → Connect agent**:
-- **Primary: stdio shim config**, one snippet per client (Codex TOML, Claude
-  and Cursor JSON) plus a self-configuration prompt; paths are generated from
-  `process.execPath` and `app.getPath("userData")`. The `Generic` tab prints
+- **Primary: stdio config**, one snippet per client (Codex TOML, Claude
+  and Cursor JSON) plus a self-configuration prompt. The entry is the
+  profile's copy of the binary with the one argument `mcp`, and no
+  environment. The `Generic` tab prints
   the connection facts unwrapped, because MCP standardises the protocol, not
   the config file (`mcpServers` is a Claude Desktop convention). An `mcp add`
   one-liner accompanies a snippet where the client's CLI can express the whole
@@ -69,16 +101,17 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   paths are double-quoted for Git Bash and PowerShell.
 - **Advanced: HTTP-direct** — URL, masked token, the same snippets in URL +
   header form; breaks when the app is closed and goes stale when port or
-  token change. Until the shim bundle exists (dev before `build:cli`) HTTP
-  renders as primary; "starting…" shows until the port is bound.
+  token change. Until the binary is installed (an unpackaged run before
+  `npm run build:cli`) HTTP renders as primary; "starting…" shows until the port is bound.
 - **`initialize` carries `instructions` on both transports**: the session
   etiquette in ten lines (`main/mcp/instructions.ts`). The app's server sends
-  it, and so does the shim, which answers `initialize` itself and bundles the
-  same file, so a stdio and an HTTP-direct client read identical text. The
+  it, and so does `weftcut mcp`, which answers `initialize` itself and embeds
+  the same text (`apps/desktop/cli/instructions.json`), so a stdio and an
+  HTTP-direct client read identical text. The
   etiquette is pinned equal to the head of the shipped skill; the last line
   names the app version and the served skill, so an agent whose skill copy
   carries another `metadata.version` knows to read that instead. `serverInfo`
-  is `weftcut` (`weftcut-mcp` through the shim) at the app version (a bare dev
+  is `weftcut` (`weftcut-mcp` over stdio) at the app version (a bare dev
   `electron out/main/index.js` reports Electron's).
 - **The skill**: `skills/weftcut/` staged with its required docs by
   `scripts/build-skills.mjs`, its SKILL.md stamped with the app version as
@@ -107,7 +140,7 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   tool call commits or rejects whole.
 - Every MCP call records as `Agent { client }`, `client` being the name the
   client declared in `initialize` (control chars stripped, ≤ 64 UTF-8 bytes,
-  `mcp` when absent; through the shim, the downstream client's name). UI edits
+  `mcp` when absent; over stdio it is still the client's own name). UI edits
   record as `User`. The tag shows in history, checkpoints and the status log.
 - No edit locks or per-agent state; a conflicting commit fails its invariants
   and the agent re-reads and retries.
@@ -122,7 +155,7 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
 - A work session belongs to a connection, and a connection can vanish without
   a `DELETE`. The host closes a session whose client is gone (its standalone
   SSE stream closed for 90 s, or no request for 30 min when it never opened
-  one — `REAPER_DEFAULTS` in `main/mcp/index.ts`); the shim terminates its app
+  one — `REAPER_DEFAULTS` in `main/mcp/index.ts`); `weftcut mcp` ends its app
   session when stdin closes; `begin_agent_session { force: true }` is the
   takeover (it ends the stale session and begins the caller's). `AgentSessionBusy` / `AgentSessionOwnerMismatch`
   (`invalid_request`) carry the `holder`, also visible in `project://session`.

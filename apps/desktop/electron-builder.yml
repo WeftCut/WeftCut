@@ -15,10 +15,19 @@ publish:
   repo: WeftCut
   releaseType: release
 # Pack-time gates, re-asserted from the packaged files rather than from what the
-# supply steps believed they staged: both ffmpeg lanes' licensing compliance, and
-# the presence of the agent skill bundle. Each refuses to let the build become a
+# supply steps believed they staged: both ffmpeg lanes' licensing compliance, the
+# presence of the agent skill bundle, the `weftcut` binary with its licence, the
+# ffmpeg reaper and the Linux glibc floor. Each refuses to let the build become a
 # distributable; see scripts/after-pack.mjs.
 afterPack: ./scripts/after-pack.mjs
+# ELECTRON_RUN_AS_NODE is not honoured by a packaged app: nothing it starts needs
+# the executable as a Node interpreter (every child is a utilityProcess or its
+# own binary), and left on, any local program could run it as one (ADR 0165).
+# The other fuses keep Electron's defaults. Flipped after afterPack and before
+# signing, so the gate that reads it back runs on the finished package
+# (scripts/check-packaged-cli.mjs).
+electronFuses:
+  runAsNode: false
 directories:
   output: release
   buildResources: build
@@ -58,12 +67,18 @@ asarUnpack:
   - "**/node_modules/@weftcut/native-decode/*.so.*"
   - "**/node_modules/@weftcut/native-decode/*.dylib"
 extraResources:
-  # The weftcut-mcp stdio shim (single self-contained bundle, built by
-  # scripts/build-cli.mjs). The app copies it to <userData>/cli/ at startup —
-  # THAT copy is what client configs reference (stable across upgrades, and
-  # the only stable option on AppImage); this one is just the ride-along.
+  # The `weftcut` binary (apps/desktop/cli, built by scripts/build-weftcut-cli.mjs;
+  # ADR 0165). The app copies it to <userData>/cli/ at startup — THAT copy is
+  # what client configs reference (stable across upgrades, and the only stable
+  # option on AppImage); this one is where the copy comes from. The filter names
+  # the binary: out/cli is a build folder, and nothing else found in it ships.
+  # The Go licence rides beside it: the binary links Go's runtime and standard
+  # library. afterPack (after-pack-cli.mjs) refuses a build without either.
   - from: out/cli
     to: cli
+    filter: ["weftcut", "weftcut.exe"]
+  - from: resources/licenses/Go-BSD-3-Clause.txt
+    to: cli/GO-LICENSE.txt
   # The agent skill folder (assembled by scripts/build-skills.mjs from the repo's
   # skills/ tree + the docs it points at). Refreshed into <userData>/skills/ at
   # startup; the user copies THAT into their agent's own skills directory, so this

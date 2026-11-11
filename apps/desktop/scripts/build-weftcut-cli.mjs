@@ -16,12 +16,17 @@ import { fileURLToPath } from 'node:url'
 const ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url))) // apps/desktop
 const { version } = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
 const outDir = path.join(ROOT, 'out', 'cli')
-const out = path.join(outDir, process.platform === 'win32' ? 'weftcut.exe' : 'weftcut')
+const windows = process.platform === 'win32'
+const out = path.join(outDir, windows ? 'weftcut.exe' : 'weftcut')
+// Windows: linked for the GUI subsystem, so no client's way of spawning it can
+// make Windows open a console window. The binary takes its parent's console
+// itself (cli/console_windows.go).
+const ldflags = `-s -w -X main.version=${version}${windows ? ' -H=windowsgui' : ''}`
 
 mkdirSync(outDir, { recursive: true })
 const built = spawnSync(
   'go',
-  ['build', '-trimpath', '-ldflags', `-s -w -X main.version=${version}`, '-o', out, '.'],
+  ['build', '-trimpath', '-ldflags', ldflags, '-o', out, '.'],
   { cwd: path.join(ROOT, 'cli'), env: { ...process.env, CGO_ENABLED: '0' }, stdio: 'inherit' },
 )
 if (built.error) {

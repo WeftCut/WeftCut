@@ -5,6 +5,7 @@
 // A gate belongs here when the thing it checks is staged by an earlier step and
 // carried by `files`/`extraResources` — those two links degrade silently, so the
 // supply-time check has to be re-run against what actually landed in the package.
+import cli from './after-pack-cli.mjs'
 import glibc from './after-pack-glibc.mjs'
 import licensing from './after-pack-licensing.mjs'
 import reaper from './after-pack-reaper.mjs'
@@ -13,6 +14,7 @@ import skill from './after-pack-skill.mjs'
 export default function afterPack(context) {
   licensing(context)
   skill(context)
+  cli(context)
   reaper(context)
   glibc(context)
 }

@@ -17,6 +17,7 @@ import (
 )
 
 func main() {
+	attachConsole()
 	os.Exit(run(os.Args[1:], processHost()))
 }
 

@@ -1305,22 +1305,31 @@ app.whenReady().then(async () => {
   })
   mcpHostRef = mcpHost
 
-  // Install the stdio shim copy under <userData>/cli/ (the stable path client
-  // configs reference) and extend the connect info with the stdio fields the
-  // Settings panel needs. HTTP-direct fields stay — both connection paths are
-  // supported; the shim is just the recommended one (survives the app being
-  // closed). See docs/mcp.md.
-  const { installShim, stdioConnectConfig } = await import('./mcp/shimInstall.js')
-  const shimPath = installShim({
-    resourcesShim: path.join(process.resourcesPath, 'cli', 'weftcut-mcp.cjs'),
-    devShim: path.join(import.meta.dirname, '../cli/weftcut-mcp.cjs'),
-    isPackaged: app.isPackaged,
+  // Refresh <userData>/cli/: the `weftcut` binary a client config names, and
+  // the record of how to start this app again (ADR 0165, docs/mcp.md).
+  const { cliBinaryName, installCli, launchRecord, shippedCliDir, stdioConnectConfig } = await import('./mcp/cliInstall.js')
+  const cliPath = installCli({
+    source: path.join(
+      shippedCliDir({ isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, mainDir: import.meta.dirname }),
+      cliBinaryName(process.platform),
+    ),
     userDataDir: app.getPath('userData'),
+    platform: process.platform,
+    launch: launchRecord({
+      execPath: process.execPath,
+      appImage: process.env.APPIMAGE,
+      platform: process.platform,
+      isPackaged: app.isPackaged,
+      appPath: app.getAppPath(),
+      userDataDir: app.getPath('userData'),
+      userDataSwitch: app.commandLine.hasSwitch('user-data-dir'),
+      version: app.getVersion(),
+    }),
   })
   // Refresh <userData>/skills/ from the bundle so the folder the Settings panel
-  // points the user at always matches this app version. Unlike the shim, nothing
-  // in the app reads it — it exists to be copied into an agent client's own
-  // skills directory.
+  // points the user at always matches this app version. Unlike the binary
+  // above it is not used in place: it exists to be copied into an agent
+  // client's own skills directory.
   const { installSkills } = await import('./mcp/skillsInstall.js')
   let skills = installSkills(skillsSource)
   /// Bring `startupNotices` in line with the latest install attempt: at most one
@@ -1344,29 +1353,12 @@ app.whenReady().then(async () => {
     )
   }
   syncSkillNotice()
-  const stdioInfo = () => ({
-    exe_path: process.execPath,
-    appimage: process.env.APPIMAGE ?? null,
-    user_data: app.getPath('userData'),
-    shim_path: shimPath,
-    skills,
-  })
-  if (!app.isPackaged && shimPath) {
-    console.log(
-      `[mcp] stdio connect: ${JSON.stringify({
-        mcpServers: {
-          weftcut: stdioConnectConfig({
-            execPath: process.execPath,
-            appImage: process.env.APPIMAGE,
-            shimPath,
-            userDataDir: app.getPath('userData'),
-          }),
-        },
-      })}`,
-    )
+  const connectInfo = () => ({ cli_path: cliPath, skills })
+  if (!app.isPackaged && cliPath) {
+    console.log(`[mcp] stdio connect: ${JSON.stringify({ mcpServers: { weftcut: stdioConnectConfig(cliPath) } })}`)
   }
 
-  ipcMain.handle('get_mcp_info', () => ({ ...mcpHost.getInfo(), ...stdioInfo() }))
+  ipcMain.handle('get_mcp_info', () => ({ ...mcpHost.getInfo(), ...connectInfo() }))
   ipcMain.handle('reset_mcp_token', () => mcpHost.resetToken())
   // Re-run the startup refresh on demand, from the Agent panel. Every fault
   // that can reach a packaged user is one an outside actor can clear without

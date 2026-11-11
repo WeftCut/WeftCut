@@ -21,7 +21,6 @@
   "e2e/electron/resource-recovery.spec.ts": 1,
   "e2e/electron/transitions-wysiwyg.spec.ts": 3,
   "e2e/electron/window-visible.spec.ts": 1,
-  "src/cli/shim.test.ts": 3,
   "src/main/audioFx/baker.test.ts": 1,
   "src/main/compute/jobs.test.ts": 1,
   "src/main/contentQueue.test.ts": 1,

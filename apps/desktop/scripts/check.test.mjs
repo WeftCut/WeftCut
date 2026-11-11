@@ -23,6 +23,30 @@ for (const [platform, root] of [
   })
 }
 
+for (const platform of ['linux', 'darwin', 'win32']) {
+  test(`every Go command on ${platform} is one CI runs, with cgo off as in the build`, () => {
+    const go = checkPlan({ platform, root: '/d' }).filter(({ command }) => command === 'go' || command === 'gofmt')
+    assert.deepEqual(go.map(({ name }) => name), ['gofmt', 'go vet', 'go test'])
+    for (const { command, args, env } of go) {
+      const line = `${command} ${args.join(' ')}`
+      assert.ok(workflow.includes(line), `electron-ci.yml does not run: ${line}`)
+      if (command === 'go') assert.deepEqual(env, { CGO_ENABLED: '0' })
+    }
+    assert.ok(workflow.includes("CGO_ENABLED: '0'"), 'electron-ci.yml runs the Go gates with cgo on')
+  })
+}
+
+test('gofmt fails on what it lists, since it exits 0 either way', () => {
+  assert.equal(step(checkPlan({ platform: 'linux', root: '/d' }), 'gofmt').failOnOutput, true)
+})
+
+test('the weftcut binary is rebuilt before the unit suite that runs it', () => {
+  for (const skipRust of [false, true]) {
+    const names = checkPlan({ platform: 'linux', root: '/d', skipRust }).map(({ name }) => name)
+    assert.ok(names.indexOf('build:cli') >= 0 && names.indexOf('build:cli') < names.indexOf('test'))
+  }
+})
+
 test('the decode tests get the loader path their binary has no RPATH for', () => {
   const linux = step(checkPlan({ platform: 'linux', root: '/d' }), 'rust: decode')
   assert.equal(linux.env.FFMPEG_DIR, '/d/resources/ffmpeg-lgpl/linux')
@@ -60,11 +84,11 @@ test('both addons are rebuilt before anything reads them', () => {
   assert.ok(names.indexOf('napi:build:decode') >= 0 && names.indexOf('napi:build:decode') < firstReader)
 })
 
-test('--skip-rust leaves the TypeScript gates and no cargo step', () => {
+test('--skip-rust leaves the Go and TypeScript gates and no cargo step', () => {
   const plan = checkPlan({ platform: 'linux', root: '/d', skipRust: true })
   assert.deepEqual(
     plan.map(({ name }) => name),
-    ['typecheck', 'test:scripts', 'mcp:catalog:check', 'test'],
+    ['gofmt', 'go vet', 'go test', 'typecheck', 'test:scripts', 'mcp:catalog:check', 'build:cli', 'test'],
   )
 })
 

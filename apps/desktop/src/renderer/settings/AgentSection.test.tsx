@@ -5,10 +5,10 @@
 // plus one copyable config snippet per agent client (Codex TOML / Claude /
 // Cursor JSON, and raw connection facts under Generic — MCP fixes the
 // protocol, never the config file). Codex and Claude also get a `mcp add`
-// one-liner beside the snippet. With the stdio shim installed (shim_path set)
-// the stdio config is the primary snippet — no token in it — and HTTP-direct
-// moves behind an "advanced" disclosure; without it (dev before build:cli) the
-// HTTP snippet renders as primary, token masked until revealed, copy always
+// one-liner beside the snippet. With the `weftcut` binary installed (cli_path
+// set) the stdio config is the primary snippet — no token in it — and
+// HTTP-direct moves behind an "advanced" disclosure; without it (an unpackaged
+// run before build:cli) the HTTP snippet renders as primary, token masked until revealed, copy always
 // carrying the real token. The shipped agent skill has no section of its own:
 // the setup prompt installs it, and a user doing the copy by hand gets its
 // folder path in the manual section, copyable and revealable in the OS file
@@ -35,22 +35,21 @@ vi.mock("../ipc", async (importActual) => {
 import i18n from "../i18n";
 import { AgentSection } from "./AgentSection";
 
-/// shim_path absent → the pre-shim, HTTP-primary layout (dev fallback). Its
-/// skill state matches: a dev tree before `build:skills` staged one.
+/// No binary installed → the HTTP-primary layout (an unpackaged run before
+/// `build:cli`). Its skill state matches: a dev tree before `build:skills`
+/// staged one.
 const INFO = {
   url: "http://127.0.0.1:4711/mcp",
   bearer_token: "secret-token",
+  cli_path: null,
   skills: { state: "unavailable", dir: null, fault: "not_built" },
 };
 
 const SKILLS_DIR = "C:\\ud\\skills";
 
-const INFO_SHIM = {
+const INFO_CLI = {
   ...INFO,
-  exe_path: "C:\\Program Files\\WeftCut\\WeftCut.exe",
-  appimage: null,
-  user_data: "C:\\ud",
-  shim_path: "C:\\ud\\cli\\weftcut-mcp.cjs",
+  cli_path: "C:\\Users\\u\\AppData\\Roaming\\WeftCut\\cli\\weftcut.exe",
   skills: { state: "current", dir: SKILLS_DIR },
 };
 
@@ -282,61 +281,72 @@ describe("AgentSection", () => {
   });
 });
 
-describe("AgentSection with the stdio shim installed", () => {
+describe("AgentSection with the weftcut binary installed", () => {
   beforeEach(() => {
-    ipc.getMcpInfo.mockReset().mockResolvedValue(INFO_SHIM);
+    ipc.getMcpInfo.mockReset().mockResolvedValue(INFO_CLI);
   });
 
   it("renders the stdio config as the primary snippet, with no token in it", async () => {
     render(<AgentSection />);
     const text = await snippetText();
-    expect(text).toContain("[mcp_servers.weftcut]");
-    expect(text).toContain("ELECTRON_RUN_AS_NODE");
-    expect(text).toContain("weftcut-mcp.cjs");
+    expect(text.split("\n")).toEqual([
+      "[mcp_servers.weftcut]",
+      `command = ${JSON.stringify(INFO_CLI.cli_path)}`,
+      'args = ["mcp"]',
+    ]);
     expect(text).not.toContain(INFO.url);
     expect(text).not.toContain(INFO.bearer_token);
   });
 
-  it("stdio JSON snippet carries command/args/env and the discovery override", async () => {
+  it("the JSON snippets are the binary and its mcp subcommand, with no env", async () => {
     render(<AgentSection />);
     await snippetText();
     await userEvent.click(screen.getByRole("tab", { name: "Cursor" }));
     const cursor = JSON.parse((await snippetText()).trim());
     expect(cursor.mcpServers.weftcut).toEqual({
-      command: INFO_SHIM.exe_path,
-      args: [INFO_SHIM.shim_path],
-      env: { ELECTRON_RUN_AS_NODE: "1", WEFTCUT_USERDATA: INFO_SHIM.user_data },
+      command: INFO_CLI.cli_path,
+      args: ["mcp"],
+    });
+
+    await userEvent.click(screen.getByRole("tab", { name: "Claude" }));
+    const claude = JSON.parse((await snippetText()).trim());
+    expect(claude.mcpServers.weftcut).toEqual({
+      type: "stdio",
+      command: INFO_CLI.cli_path,
+      args: ["mcp"],
     });
   });
 
-  it("the Generic tab shows the launch triple with no config wrapper", async () => {
+  it("the Generic tab shows the command and its argument with no config wrapper", async () => {
     render(<AgentSection />);
     await snippetText();
     await userEvent.click(screen.getByRole("tab", { name: "Generic" }));
     const text = await snippetText();
     expect(text).not.toContain("mcpServers");
-    expect(text).toMatch(/^transport:\s+stdio$/m);
-    expect(text).toContain(INFO_SHIM.exe_path);
-    expect(text).toContain(INFO_SHIM.shim_path);
-    expect(text).toMatch(/^env:\s+ELECTRON_RUN_AS_NODE=1$/m);
-    expect(text).toMatch(/^env:\s+WEFTCUT_USERDATA=C:\\ud$/m);
+    expect(text.split("\n").map((row) => row.split(/:\s+/))).toEqual([
+      ["transport", "stdio"],
+      ["command", INFO_CLI.cli_path],
+      ["arg", "mcp"],
+    ]);
   });
 
-  it("gives Codex and Claude an `mcp add` one-liner with the paths quoted", async () => {
+  it("gives Codex and Claude an `mcp add` one-liner with the path quoted", async () => {
     render(<AgentSection />);
     // shq quotes on whitespace *or* a backslash: unquoted, a POSIX shell would
-    // eat the Windows separators (C:\ud → C:ud) in Git Bash.
-    const launch = `"${INFO_SHIM.exe_path}" "${INFO_SHIM.shim_path}"`;
-    const userData = `"WEFTCUT_USERDATA=${INFO_SHIM.user_data}"`;
+    // eat the Windows separators (C:\Users → C:Users) in Git Bash.
+    const launch = `"${INFO_CLI.cli_path}" mcp`;
 
-    expect(await cliText()).toBe(
-      `codex mcp add weftcut --env ELECTRON_RUN_AS_NODE=1 --env ${userData} -- ${launch}`,
-    );
+    expect(await cliText()).toBe(`codex mcp add weftcut -- ${launch}`);
 
     await userEvent.click(screen.getByRole("tab", { name: "Claude" }));
-    expect(await cliText()).toBe(
-      `claude mcp add weftcut -s user -e ELECTRON_RUN_AS_NODE=1 -e ${userData} -- ${launch}`,
-    );
+    expect(await cliText()).toBe(`claude mcp add weftcut -s user -- ${launch}`);
+  });
+
+  it("leaves a path without spaces or backslashes unquoted in the one-liner", async () => {
+    const cli_path = "/home/u/.config/WeftCut/cli/weftcut";
+    ipc.getMcpInfo.mockResolvedValue({ ...INFO_CLI, cli_path });
+    render(<AgentSection />);
+    expect(await cliText()).toBe(`codex mcp add weftcut -- ${cli_path} mcp`);
   });
 
   it("copies the one-liner from its own button, not the snippet's", async () => {
@@ -357,8 +367,9 @@ describe("AgentSection with the stdio shim installed", () => {
     );
     const prompt = clipboard.writeText.mock.calls[0]?.[0] as string;
     expect(prompt).toContain("Transport: stdio");
-    expect(prompt).toContain(INFO_SHIM.exe_path);
-    expect(prompt).toContain(`WEFTCUT_USERDATA=${INFO_SHIM.user_data}`);
+    expect(prompt).toContain(`- Command: ${INFO_CLI.cli_path}\n- Args: mcp\n`);
+    // The entry is the command alone: nothing for a client to put in `env`.
+    expect(prompt).not.toMatch(/^- Env/m);
     expect(prompt).toContain(`"${SKILLS_DIR}\\weftcut"`);
     expect(prompt).toContain("~/.claude/skills/weftcut");
     // An older copy is replaced, never merged into: overwriting would keep
@@ -394,7 +405,7 @@ describe("AgentSection with the stdio shim installed", () => {
 
   it("a folder an earlier launch left behind is still offered, but flagged", async () => {
     ipc.getMcpInfo.mockResolvedValue({
-      ...INFO_SHIM,
+      ...INFO_CLI,
       skills: { state: "stale", dir: SKILLS_DIR, fault: "copy_failed" },
     });
     render(<AgentSection />);
@@ -430,7 +441,7 @@ describe("AgentSection with the stdio shim installed", () => {
     const confirmed = vi.spyOn(window, "confirm").mockReturnValue(true);
     try {
       render(<AgentSection />);
-      // The pairing IS the assertion: with the shim installed — the recommended
+      // The pairing IS the assertion: with the binary installed — the recommended
       // path — Reveal is correctly out of reach, and rotation must not be, or a
       // user whose token leaked has to find an "advanced" disclosure to
       // invalidate it.

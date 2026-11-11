@@ -68,12 +68,25 @@ with fdk-aac compiled in) are non-redistributable under **any** license and
 must never ship. GPL flags are expected here: x264/x265 power the proxy and
 export lanes.
 
+## The `weftcut` binary
+
+`resources/cli/weftcut[.exe]` is WeftCut's own Go code (MIT) linked statically
+with the Go runtime and standard library, which are BSD 3-Clause: permissive,
+with one obligation for a binary distribution, the licence text. It ships as
+`resources/cli/GO-LICENSE.txt` from the repo-tracked
+`apps/desktop/resources/licenses/Go-BSD-3-Clause.txt`. The module takes no
+third-party dependency (`go.mod` has no `require`), so there is no further
+notice to carry; adding one adds its licence here and in
+`THIRD-PARTY-NOTICES.md`.
+
 ## Pack-time enforcement
 
 `apps/desktop/scripts/after-pack-licensing.mjs` (run from the `afterPack` hook
 `after-pack.mjs`) re-reads both packaged manifests and re-asserts both banners
 plus every compliance file inside the built distributable, so a swapped
 runtime or a staging regression fails the build instead of shipping.
+`after-pack-cli.mjs`, from the same hook, refuses a package without the
+`weftcut` binary or without the Go licence beside it.
 
 ## Supply-chain rules
 

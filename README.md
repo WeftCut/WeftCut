@@ -146,16 +146,16 @@ Lower thirds, countdowns, karaoke text and animated title cards are the obvious 
 | **Native decode** | `@weftcut/native-decode` · ffmpeg-next · software + GPU lanes · `sharedTexture` (Windows) |
 | **Shared math** | `weftcut-eval` crate · native + wasm32 · snap · keyframe eval · envelope · role gate |
 | **ffmpeg** | GPL CLI sidecar (jobs, encode, mux) · LGPL shared libs (in-process decode) |
-| **Agent surface** | MCP · streamable HTTP on localhost · `@modelcontextprotocol/sdk` · bearer token · TS + Rust tool catalog |
+| **Agent surface** | MCP · streamable HTTP on localhost · stdio through the `weftcut` binary (Go, standard library only) · `@modelcontextprotocol/sdk` · bearer token · TS + Rust tool catalog |
 | **Motifs** | Offscreen BrowserWindow · Chrome DevTools Protocol · `motif:` scheme · CSP `default-src 'none'` |
 | **Speech & vision** | Cloud providers over reqwest · whisper.cpp · FunASR · on-demand model download |
-| **Tests & CI** | Vitest · cargo test · Playwright · `node --test` · Stryker · GitHub Actions (Windows / macOS / Linux) |
+| **Tests & CI** | Vitest · cargo test · go test · Playwright · `node --test` · Stryker · GitHub Actions (Windows / macOS / Linux) |
 
 Design decisions: [ADRs](docs/adr/).
 
 ## Build from source
 
-Prerequisites: **Node 24+**, **Rust** (version pinned by `rust-toolchain.toml`, installed via `rustup`), and your platform's C/C++ build tools and libclang — per-OS commands in [docs/setup.md](docs/setup.md).
+Prerequisites: **Node 24+**, **Rust** (version pinned by `rust-toolchain.toml`, installed via `rustup`), **Go** (version named by `apps/desktop/cli/go.mod`), and your platform's C/C++ build tools and libclang — per-OS commands in [docs/setup.md](docs/setup.md).
 
 ```sh
 npm install       # JS dependencies

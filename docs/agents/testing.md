@@ -7,11 +7,12 @@ not scattered by neglect.
 
 ## Before a PR
 
-`npm run check` (repo root) runs, in order, rustfmt, both addon builds, the
-typecheck, build-script tests, the MCP catalog check, unit tests, Clippy and every
+`npm run check` (repo root) runs, in order, rustfmt, both addon builds, the Go
+gates (gofmt, `go vet`, `go test`), the typecheck, build-script tests, the MCP
+catalog check, the `weftcut` binary's build, unit tests, Clippy and every
 Rust test, with the environment each one needs. It runs every step, lists the
 failures at the end, and needs a finished `npm run bootstrap`. `npm run check -- --skip-rust` runs the
-TypeScript half against the addons already built, so a stale addon fails or passes
+Go and TypeScript half against the addons already built, so a stale addon fails or passes
 it wrongly (see [below](#the-addon-is-rebuilt-by-nothing-but-napibuild)). E2E stays
 separate: run the specs your change touches.
 
@@ -22,6 +23,8 @@ separate: run the specs your change touches.
 | **Unit (TS)** | colocated next to source: `apps/desktop/src/{renderer,main,preload,shared}/**/*.{test,spec}.{ts,tsx}` | Vitest | `npm test` (repo root) · `npm run test:watch` (`apps/desktop`) |
 | **Build scripts** | colocated: `apps/desktop/scripts/*.test.mjs` and `apps/desktop/e2e/**/*.test.mjs` (the fixture generator's own suite), plus `apps/desktop/bench/**/*.test.mjs` (the bench checklist and task-file lint) | `node:test` | `npm run test:scripts` (repo root or `apps/desktop`) |
 | **Rust** | `native/**` — inline `#[cfg(test)]` + `native/tests/` | cargo | see [Rust](#rust) (repo root) |
+| **Go** | `apps/desktop/cli/*_test.go` — the `weftcut` binary's own units (wire framing, SSE, profile and app lookup) | `go test` | `go test ./...` (`apps/desktop/cli`), with `gofmt -l .` and `go vet ./...` |
+| **`weftcut mcp`, black box** | `apps/desktop/src/cli/integration.test.ts` (+ `shimHarness.ts`): the built binary on real stdio against an app on real Streamable HTTP | Vitest, part of the unit run | `npm run build:cli`, then `npm test -- src/cli` (`apps/desktop`) |
 | **E2E** | `apps/desktop/e2e/electron/*.spec.ts` | Playwright driving the **real Electron app** | `npm run e2e` (repo root or `apps/desktop`) · add `-- --full` for the `@matrix` tier |
 | **Mutation / PBT** | mutates `src/main/state/**` (config: `apps/desktop/stryker.config.mjs`) | StrykerJS (Vitest runner) | `npm run pbt:stryker` (`apps/desktop`) |
 | **Agent bench** (local, not CI, costs model spend) | `apps/desktop/bench/` (tasks in `bench/tasks/*.json`) | Playwright with its own config, driving the real app (here, or on a Windows host over ssh with `--remote <alias>`) and a headless agent client | `npm run bench -- --task <id\|glob> --model <id>[,<id>]` (`apps/desktop`) |
@@ -33,7 +36,17 @@ Stryker does not use `.gitignore` when preparing its sandbox. Its
 `ignorePatterns` exclude generated Rust build directories, app bundles, E2E
 media and reports, so mutation runs do not copy machine-local caches or race
 bundle replacement. Keep unit fixtures, native addons, shipped FFmpeg resources
-and `evalWasm.generated.ts` available: the Vitest tests consume them.
+and `evalWasm.generated.ts` available: the Vitest tests consume them. The
+`weftcut` binary sits in the excluded `out/`, so `stryker.config.mjs` names the
+built one to the suite by path.
+
+**The black-box cases run a built binary**, `out/cli/weftcut[.exe]`, which
+nothing but `npm run build:cli` (and `npm run build`, which calls it) produces.
+Without it the file fails by name; after a change under `apps/desktop/cli/`,
+rebuild first or the cases judge the old program. `WEFTCUT_CLI_BIN` names another
+binary by absolute path. What only a packaged app shows (the RunAsNode fuse, a
+config written for the JS shim still being served) is checked on the packaged app
+by `scripts/check-packaged-cli.mjs`, in CI's package step on each OS.
 
 **Build-script tests are a separate command on purpose.** `vitest.config.ts`
 pins `include` to the three `src/` roots, so `scripts/*.test.mjs` is invisible to

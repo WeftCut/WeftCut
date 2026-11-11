@@ -56,6 +56,18 @@ The application shell is [Electron](https://www.electronjs.org/) (MIT), which
 embeds Chromium and Node.js. Their license texts are included by the packager
 at the application root (`LICENSE.electron.txt`, `LICENSES.chromium.html`).
 
+## Go runtime and standard library
+
+The `weftcut` command-line binary (the stdio MCP server, shipped at
+`resources/cli/weftcut` and copied into the user-data folder) is a Go program
+that statically links the Go runtime and standard library
+(© The Go Authors, <https://go.dev>) under the **BSD 3-Clause License**. It has
+no other dependency.
+
+- License text ships in the app package at `resources/cli/GO-LICENSE.txt`
+  (from the repo-tracked `apps/desktop/resources/licenses/Go-BSD-3-Clause.txt`).
+- The Go version is named by `apps/desktop/cli/go.mod`.
+
 ## Inter font
 
 The built-in "lower-third" Motif bundles the Inter typeface

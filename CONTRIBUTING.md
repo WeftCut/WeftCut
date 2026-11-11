@@ -45,8 +45,8 @@ reports follow [SECURITY.md](SECURITY.md).
    repeats its prerequisite's diff. Send the next one after the first has merged.
 3. **Start from the latest `main`** and run `npm run check` there. It rebuilds
    the native addons and runs the local equivalent of CI's `checks` and
-   `rust-test` jobs. `npm run check -- --skip-rust` runs the TypeScript half
-   against the addons you already built, so use it only when they match your
+   `rust-test` jobs. `npm run check -- --skip-rust` runs the Go and TypeScript
+   half against the addons you already built, so use it only when they match your
    tree. Run the E2E specs your change touches as well. See
    [testing](docs/agents/testing.md) for setup and layers.
 4. **Fill in the [PR template](.github/pull_request_template.md).** The evidence

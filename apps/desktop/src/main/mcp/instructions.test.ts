@@ -3,6 +3,8 @@
 // every client over either transport, its etiquette identical to the head of
 // the shipped skill so the two cannot drift, closed by the version a skill copy
 // must match, and small enough that a session pays for it without noticing.
+// That the `weftcut` binary sends the same text over stdio is asserted on the
+// binary itself (`src/cli/integration.test.ts`, "initialize").
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -11,7 +13,6 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { MCP_INSTRUCTION_LINES, mcpInstructions } from './instructions'
 import { buildMcpServer } from './server'
-import { createShim } from '../../cli/shim'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../..')
 const RUST_CATALOG = readFileSync('fixtures/mcp/rust-catalog-snapshot.json', 'utf8')
@@ -43,29 +44,6 @@ describe('initialize instructions', () => {
     // folder would otherwise edit project.json beside the app's autosave.
     expect(sent.length).toBeLessThanOrEqual(1550)
     for (const l of sent.split('\n')) expect(l.trim()).toBe(l)
-  })
-
-  it('are identical over HTTP-direct and the stdio shim at one version', async () => {
-    const backend = { mcpCatalog: async () => RUST_CATALOG, mcpCallTool: async () => { throw new Error('unused') }, mcpReadResource: async () => '{"ok":true,"result":{"contents":[]}}' } as any
-    const app = buildMcpServer(backend, { version: '1.2.3' })
-    const shim = createShim({
-      se: { platform: 'linux', env: {}, execPath: '/opt/WeftCut/weftcut', scriptPath: '/ud/cli/weftcut-mcp.cjs', homedir: '/home/u' },
-      userDataDir: '/ud',
-      version: '1.2.3',
-      readAuth: () => null,
-    })
-    const read = async (server: typeof app): Promise<string | undefined> => {
-      const [clientT, serverT] = InMemoryTransport.createLinkedPair()
-      const client = new Client({ name: 'instructions-test', version: '0' })
-      await Promise.all([server.connect(serverT), client.connect(clientT)])
-      const got = client.getInstructions()
-      await client.close()
-      return got
-    }
-    const viaHttp = await read(app)
-    expect(viaHttp).toBe(mcpInstructions('1.2.3'))
-    expect(await read(shim.server)).toBe(viaHttp)
-    shim.bridge.markDown()
   })
 
   it('reach the client on initialize, with the server name and version', async () => {

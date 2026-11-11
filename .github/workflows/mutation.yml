@@ -45,6 +45,12 @@ jobs:
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
+      # Go for the `weftcut` binary (apps/desktop/cli) the unit suite runs.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/desktop/cli/go.mod
+          cache: false
+
       # npm ci at the workspace root: the root package-lock.json covers all
       # workspaces (there is no apps/desktop/package-lock.json). .npmrc sets
       # ignore-scripts=true, so no lifecycle script or pre/post hook runs here —
@@ -68,6 +74,12 @@ jobs:
         with:
           decode: false
           save: false
+
+      # src/cli/integration.test.ts starts the binary as a client would and fails
+      # by name without it. stryker.config.mjs points the sandboxed suite at
+      # this build.
+      - name: Build weftcut binary
+        run: npm run build:cli
 
       # WEFTCUT_PBT_RUNS=30 shrinks the property-based tests' fast-check runs for
       # the mutation pass (every mutant re-runs its covering tests; fewer runs

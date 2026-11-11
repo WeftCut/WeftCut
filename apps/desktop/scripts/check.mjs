@@ -32,14 +32,21 @@ if (missing.length > 0) {
 const failed = []
 for (const step of steps) {
   console.log(`\n=== ${step.name}`)
-  const options = { cwd: ROOT, env: { ...process.env, ...step.env }, stdio: 'inherit' }
+  const options = {
+    cwd: ROOT,
+    env: { ...process.env, ...step.env },
+    stdio: step.failOnOutput ? ['inherit', 'pipe', 'inherit'] : 'inherit',
+    encoding: 'utf8',
+  }
   // npm is a .cmd on Windows, which Node only spawns through a shell, and an args
   // array with a shell is deprecated (DEP0190). The arguments are constants.
   const result =
     isWindows && step.command === 'npm'
       ? spawnSync(`npm ${step.args.join(' ')}`, { ...options, shell: true })
       : spawnSync(step.command, step.args, options)
-  if (result.status !== 0) failed.push(step.name)
+  if (result.error?.code === 'ENOENT') console.error(`${step.command} is not on PATH (docs/setup.md lists the toolchains).`)
+  if (step.failOnOutput && result.stdout) process.stdout.write(result.stdout)
+  if (result.status !== 0 || (step.failOnOutput && result.stdout?.trim())) failed.push(step.name)
 }
 if (failed.length > 0) {
   console.error(`\ncheck failed: ${failed.join(', ')}`)

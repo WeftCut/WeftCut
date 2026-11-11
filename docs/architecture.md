@@ -26,7 +26,7 @@ Paths are under `apps/desktop/`.
 | Utility processes | `src/main/motif-reader-host.ts`, `decode-probe-host.ts` (macOS), `hardware-probe-host.ts` (Linux) | Motif frame decode off main ([ADR 0154](adr/0154-motif-frames-are-read-at-preview-scale-through-one-reader.md)); crash-isolated hardware probes. |
 | Hidden windows | `src/main/motif/captureHost.ts`, `svgRaster.ts`, `screenPick.ts` | Offscreen Motif capture over CDP ([ADR 0017](adr/0017-motifs-cdp-webcap-clock-takeover.md), [motifs.md](motifs.md#capture-host)); SVG rasterizing on import; screen color pick. |
 | Child processes | `native/src/ffmpeg/`, `speech/`, `vlm/`, `native/reaper/` | ffmpeg/ffprobe via `ffmpeg-sidecar`; local speech (whisper.cpp, FunASR) and VLM engines as sidecars; on macOS and Linux the `weftcut-reaper` that ends ffmpeg children after the app ([ADR 0155](adr/0155-an-ffmpeg-child-never-outlives-the-app.md)). |
-| `weftcut-mcp` shim | `src/cli/` | Stdio MCP server that bridges agent clients to the app's HTTP endpoint ([mcp.md](mcp.md#transport--deployment)). |
+| `weftcut` binary | `apps/desktop/cli/` (Go); black-box tests in `src/cli/` | `weftcut mcp` is the stdio MCP server an agent client starts: a passthrough to the app's HTTP endpoint that also runs while the app is closed ([mcp.md](mcp.md#transport--deployment), [ADR 0165](adr/0165-the-stdio-mcp-entry-is-a-native-weftcut-binary.md)). |
 
 `src/main/calibration-host.ts` is a Windows-only developer prototype, selected
 by `--weftcut-calibration` and built only into E2E builds.

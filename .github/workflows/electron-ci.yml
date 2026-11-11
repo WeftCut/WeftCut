@@ -168,6 +168,15 @@ jobs:
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
+      # Go for the `weftcut` binary (apps/desktop/cli, ADR 0165): `npm run build`
+      # builds it, and both the e2e build and the package step below run that.
+      # The version is the module's own `toolchain` line. No cache: the module
+      # has no dependencies, so there is no go.sum to key one on.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/desktop/cli/go.mod
+          cache: false
+
       # xvfb: the Electron app needs a display for offscreen CDP capture (no real
       # display on GitHub runners). libclang-dev: only the artifact-cache MISS
       # path needs it, where the rust-artifacts action runs native-decode's
@@ -595,6 +604,17 @@ jobs:
         if: (github.event_name != 'workflow_dispatch' || inputs.package) && (matrix.part == 'e2e-2' || matrix.part == 'all')
         run: npm run build && npx electron-builder --publish never
 
+      # What only a packaged app can show of the stdio MCP entry (ADR 0165): the
+      # RunAsNode fuse reads off, and a client config written for the JS shim of
+      # an earlier release is still served, with no window. Fuses are flipped at
+      # packaging, so every unpackaged run above still honours
+      # ELECTRON_RUN_AS_NODE. Linux needs a display for the app to boot at all.
+      - name: Verify packaged stdio MCP entry
+        if: (github.event_name != 'workflow_dispatch' || inputs.package) && (matrix.part == 'e2e-2' || matrix.part == 'all')
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a node scripts/check-packaged-cli.mjs; else node scripts/check-packaged-cli.mjs; fi
+
       - name: Verify packaged macOS decode probe
         if: runner.os == 'macOS' && (github.event_name != 'workflow_dispatch' || inputs.package) && (matrix.part == 'e2e-2' || matrix.part == 'all')
         run: node scripts/smoke-packaged-decode-probe.mjs
@@ -694,6 +714,12 @@ jobs:
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
+      # Go for the `weftcut` binary the unit suite runs (see the e2e job).
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/desktop/cli/go.mod
+          cache: false
+
       # Root lockfile, as in the e2e job. No electron:install: the vitest suite
       # never loads Electron (vitest.config.ts).
       - name: Install dependencies
@@ -728,6 +754,12 @@ jobs:
 
       - name: Typecheck (tsc -b)
         run: npm run typecheck
+
+      # src/cli/integration.test.ts starts out/cli/weftcut.exe as a client would,
+      # and fails by name when it is missing. Built here, natively, by the script
+      # that builds the shipped one.
+      - name: Build weftcut binary
+        run: npm run build:cli
 
       - name: Unit tests (vitest)
         run: npm test
@@ -782,6 +814,12 @@ jobs:
           node-version-file: .nvmrc
           cache: 'npm'
           cache-dependency-path: package-lock.json
+
+      # Go for the `weftcut` binary's own gates below (see the e2e job).
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/desktop/cli/go.mod
+          cache: false
 
       # Root lockfile, as in the e2e job. Nothing in this job imports a workspace
       # dependency — the cargo tests and both fetch scripts below use node
@@ -900,6 +938,27 @@ jobs:
           # One workspace covers every crate under test (native/Cargo.toml
           # members: eval, decode).
           workspaces: apps/desktop/native
+
+      # The `weftcut` binary's module (apps/desktop/cli): formatting, vet and its
+      # unit tests. In this job because it is the one that runs a native
+      # toolchain's own tests on all three OSes, and the module has a file per
+      # OS family. Before the cargo steps: seconds, against their minutes. cgo
+      # off as in the build (scripts/build-weftcut-cli.mjs), so what is judged is
+      # the program that ships. gofmt exits 0 whatever it finds: the files it
+      # lists are the failure.
+      - name: Go gates (gofmt, vet, test)
+        shell: bash
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          unformatted="$(gofmt -l cli)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt would rewrite:"
+            echo "$unformatted"
+            exit 1
+          fi
+          go -C cli vet ./...
+          go -C cli test ./...
 
       # Rust unit tests.  No xvfb needed (headless library tests, no display).
       # Runs on ALL three OSes. The napi addon crate's `#[napi]` exports would

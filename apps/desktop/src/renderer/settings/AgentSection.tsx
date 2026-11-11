@@ -31,27 +31,22 @@ const MASKED_TOKEN = "••••••••••••••••";
 type ClientId = "codex" | "claude" | "cursor" | "generic";
 const CLIENTS: readonly ClientId[] = ["codex", "claude", "cursor", "generic"];
 
-/// The stdio launch triple for the shim. `command` is the WeftCut binary
-/// acting as the Node runtime (ELECTRON_RUN_AS_NODE) — or the .AppImage file
-/// on Linux, where the mounted binary path dies with the session.
+/// What a stdio client runs: the `weftcut` binary in the profile and its
+/// `mcp` subcommand. No environment: the binary finds the profile from where
+/// it sits.
 interface StdioCfg {
   command: string;
   args: string[];
-  env: Record<string, string>;
 }
 
 function stdioCfgFrom(info: McpInfoView): StdioCfg | null {
-  if (!info.shim_path) return null;
-  return {
-    command: info.appimage ?? info.exe_path,
-    args: [info.shim_path],
-    env: { ELECTRON_RUN_AS_NODE: "1", WEFTCUT_USERDATA: info.user_data },
-  };
+  if (!info.cli_path) return null;
+  return { command: info.cli_path, args: ["mcp"] };
 }
 
 /// Render `key: value` rows with the values column-aligned — what the
-/// `generic` tab shows in place of a config snippet. One row per arg and per
-/// env entry, so a value containing a space stays unambiguous.
+/// `generic` tab shows in place of a config snippet. One row per arg, so a
+/// value containing a space stays unambiguous.
 function factsBlock(rows: readonly (readonly [string, string])[]): string {
   const width = Math.max(...rows.map(([k]) => k.length)) + 2;
   return rows.map(([k, v]) => `${k}:`.padEnd(width) + v).join("\n");
@@ -61,8 +56,8 @@ function factsBlock(rows: readonly (readonly [string, string])[]): string {
 /// backslash: a bare Windows path survives PowerShell but a POSIX shell eats
 /// the separators (`C:\ud` → `C:ud`), and Windows users do run these in Git
 /// Bash. Nothing needs escaping *inside* the quotes — these values are
-/// filesystem paths, a URL, and `KEY=value` pairs, none of which can carry a
-/// double quote, and a double-quoted backslash is literal in both shells.
+/// filesystem paths, a URL and a header, none of which can carry a double
+/// quote, and a double-quoted backslash is literal in both shells.
 function shq(s: string): string {
   return /[\s\\]/.test(s) ? `"${s}"` : s;
 }
@@ -76,18 +71,13 @@ function buildStdioSnippet(client: ClientId, cfg: StdioCfg): string {
       ["transport", "stdio"],
       ["command", cfg.command],
       ...cfg.args.map((a) => ["arg", a] as const),
-      ...Object.entries(cfg.env).map(([k, v]) => ["env", `${k}=${v}`] as const),
     ]);
   }
   if (client === "codex") {
-    const env = Object.entries(cfg.env)
-      .map(([k, v]) => `${JSON.stringify(k)} = ${JSON.stringify(v)}`)
-      .join(", ");
     return [
       "[mcp_servers.weftcut]",
       `command = ${JSON.stringify(cfg.command)}`,
       `args = [${cfg.args.map((a) => JSON.stringify(a)).join(", ")}]`,
-      `env = { ${env} }`,
     ].join("\n");
   }
   const server = client === "claude" ? { type: "stdio", ...cfg } : cfg;
@@ -131,15 +121,8 @@ function buildHttpSnippet(client: ClientId, url: string, token: string): string 
 /// against `codex mcp add --help` (0.152.0) and `claude mcp add --help`.
 function buildStdioCli(client: ClientId, cfg: StdioCfg): string | null {
   const launch = [cfg.command, ...cfg.args].map(shq).join(" ");
-  const env = Object.entries(cfg.env).map(([k, v]) => `${k}=${v}`);
-  if (client === "codex") {
-    const flags = env.map((e) => `--env ${shq(e)}`).join(" ");
-    return `codex mcp add weftcut ${flags} -- ${launch}`;
-  }
-  if (client === "claude") {
-    const flags = env.map((e) => `-e ${shq(e)}`).join(" ");
-    return `claude mcp add weftcut -s user ${flags} -- ${launch}`;
-  }
+  if (client === "codex") return `codex mcp add weftcut -- ${launch}`;
+  if (client === "claude") return `claude mcp add weftcut -s user -- ${launch}`;
   return null;
 }
 
@@ -165,12 +148,12 @@ function skillFolder(skillsDir: string): string {
   return `${skillsDir}${skillsDir.includes("\\") ? "\\" : "/"}weftcut`;
 }
 
-/// MCP connection info for external agents. Two connection paths: the stdio
-/// shim (primary — survives app restarts, port changes, token rotations, and
-/// the app being closed) and HTTP-direct (advanced — for clients without
-/// stdio support). Until the shim is installed (dev before build:cli,
-/// shim_path = null) the HTTP path renders as primary, which is also the
-/// pre-shim layout. The shipped agent skill rides along both routes: the setup
+/// MCP connection info for external agents. Two connection paths: stdio
+/// through the `weftcut` binary (primary — survives app restarts, port
+/// changes, token rotations, and the app being closed) and HTTP-direct
+/// (advanced — for clients without stdio support). Until the binary is
+/// installed (an unpackaged run before build:cli, cli_path = null) the HTTP
+/// path renders as primary. The shipped agent skill rides along both routes: the setup
 /// prompt asks the agent to copy it, and the manual section names the app's own
 /// copy. That copy is all the panel can see — the agent's copy lives in the
 /// client's skills directory and goes stale on upgrade — so the panel says so
@@ -289,8 +272,8 @@ export function AgentSection() {
   };
 
   /// Both halves of setup as one message. The MCP half is generic — the agent
-  /// figures out its own client config format; with the shim installed it
-  /// carries the stdio triple (no token to leak), without it the URL + token.
+  /// figures out its own client config format; with the binary installed it
+  /// carries the stdio command (no token to leak), without it the URL + token.
   /// The skill half is appended only when there is a folder to hand over, so a
   /// dev tree before `build:skills` still gets a prompt that works.
   const copySetupPrompt = async () => {
@@ -299,7 +282,6 @@ export function AgentSection() {
       ? t("connect.agent_prompt_stdio", {
           command: stdio.command,
           args: stdio.args.join(" "),
-          userData: info.user_data,
         })
       : t("connect.agent_prompt", {
           url: info.url,

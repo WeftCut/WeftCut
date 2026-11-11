@@ -1,6 +1,15 @@
 // Mutation-testing config. A .mjs file rather than the stryker.config.json it
 // replaces: Stryker parses .json with a strict JSON.parse, and `tsconfigFile`
 // below is a workaround that must not travel uncommented.
+import { fileURLToPath } from 'node:url'
+
+// The unit suite runs the `weftcut` binary from out/cli (src/cli), and the
+// sandbox leaves out/ behind (`ignorePatterns`), so the suite is told where the
+// built one is. `npm run build:cli` builds it.
+process.env.WEFTCUT_CLI_BIN ??= fileURLToPath(
+  new URL(`out/cli/weftcut${process.platform === 'win32' ? '.exe' : ''}`, import.meta.url),
+)
+
 /** @type {import('@stryker-mutator/api/core').PartialStrykerOptions} */
 export default {
   testRunner: 'vitest',
