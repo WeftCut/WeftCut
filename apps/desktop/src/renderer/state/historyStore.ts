@@ -2,7 +2,6 @@ import { create } from "zustand";
 import { listen, type UnlistenFn } from "@/bridge/events";
 
 import { projectHistoryView, type HistoryStackView } from "../ipc";
-import { LatestRequestCoordinator } from "./latestRequest";
 
 /// Renderer mirror of the FULL edit stack (`project_history_view`) — rows and
 /// checkpoints, everything the History Panel draws.
@@ -43,33 +42,74 @@ export const useHistoryStore = create<HistoryStoreState & HistoryStoreActions>(
   }),
 );
 
+/// The Panel's reads: one fetch in flight, and at most one more queued behind
+/// it however many requests arrive meanwhile. A queued fetch starts after every
+/// request it stands for, so it reads their state; the view is rebuilt in main
+/// on every read, so a multi-commit edit (an auto-paired add is three commits)
+/// costs two builds, not one per commit. Fetches run strictly one after
+/// another, so every answer is at least as new as the one before it and each is
+/// applied as it lands.
+class HistoryReads {
+  private current: Promise<void> | null = null;
+  private queued: Promise<void> | null = null;
+  private stopped = false;
+
+  /// Settles once a fetch that started after this call has applied (or
+  /// failed). Never rejects.
+  request(): Promise<void> {
+    if (this.stopped) return Promise.resolve();
+    // Checked before `current`: a queued fetch that has not started yet still
+    // reads everything up to now.
+    if (this.queued) return this.queued;
+    if (!this.current) return this.start();
+    return (this.queued = this.current.then(() => {
+      this.queued = null;
+      return this.start();
+    }));
+  }
+
+  /// Teardown: nothing pending applies and nothing new is fetched.
+  stop(): void {
+    this.stopped = true;
+  }
+
+  private start(): Promise<void> {
+    if (this.stopped) return Promise.resolve();
+    const fetch = this.fetchOnce().finally(() => {
+      if (this.current === fetch) this.current = null;
+    });
+    this.current = fetch;
+    return fetch;
+  }
+
+  /// A failure here drives NO Panel state. `project_history_view` routes to a
+  /// read that returns `actor.historyView(cap)` off a live actor and cannot
+  /// refuse, so there is no pre-workspace / no-project branch to render — a
+  /// "couldn't load" state would be one no test could ever reach.
+  ///
+  /// It is still caught, because the IPC TRANSPORT can fail even when the
+  /// handler cannot (a torn-down main process, a serialization error). Every
+  /// caller either discards the request (the event listener) or awaits it from
+  /// a click handler, so an escaping rejection would be an unhandled one. The
+  /// last-known view stays on screen instead: stale rows are recoverable — the
+  /// next `project:changed` refetches — where a thrown renderer is not.
+  private async fetchOnce(): Promise<void> {
+    try {
+      const view = await projectHistoryView();
+      if (!this.stopped) useHistoryStore.getState().apply(view);
+    } catch (err) {
+      if (!this.stopped) console.warn("[historyStore] history view fetch failed; keeping the last view", err);
+    }
+  }
+}
+
 /// Non-null only between `wireHistoryStore` and its teardown, i.e. only while
 /// the Panel is open. Every fetch path goes through it, so "closed Panel issues
 /// no IPC" is enforced in ONE place rather than at each call site.
-let requests: LatestRequestCoordinator | null = null;
+let reads: HistoryReads | null = null;
 
-/// A failure here drives NO Panel state. `project_history_view` routes to a read
-/// that returns `actor.historyView(cap)` off a live actor and cannot refuse, so
-/// there is no pre-workspace / no-project branch to render — a "couldn't load"
-/// state would be one no test could ever reach.
-///
-/// It is still caught, because the IPC TRANSPORT can fail even when the handler
-/// cannot (a torn-down main process, a serialization error). Every caller either
-/// discards this promise (`void fetchView()` in the event listener) or awaits it
-/// from a click handler, so an escaping rejection would be an unhandled one. The
-/// last-known view stays on screen instead: stale rows are recoverable — the
-/// next `project:changed` refetches — where a thrown renderer is not.
-async function fetchView(): Promise<void> {
-  const coordinator = requests;
-  if (!coordinator) return;
-  try {
-    await coordinator.run(
-      () => projectHistoryView(),
-      (view) => useHistoryStore.getState().apply(view),
-    );
-  } catch (err) {
-    console.warn("[historyStore] history view fetch failed; keeping the last view", err);
-  }
+function fetchView(): Promise<void> {
+  return reads?.request() ?? Promise.resolve();
 }
 
 /// Explicit refetch for the actions that change the view WITHOUT emitting
@@ -86,23 +126,23 @@ export async function refreshHistoryView(): Promise<void> {
 /// Subscribe BEFORE the seed fetch, for the reason `wireProjectStore`
 /// documents: an event emitted between the seed resolving and the listener
 /// registering would be lost, and the stack would sit stale until some
-/// unrelated later edit. An event landing DURING the seed just runs a second
-/// fetch, which the coordinator serializes newest-wins.
+/// unrelated later edit. An event landing DURING the seed queues one fetch
+/// behind it.
 export async function wireHistoryStore(): Promise<UnlistenFn> {
-  const coordinator = new LatestRequestCoordinator();
-  requests = coordinator;
+  const mine = new HistoryReads();
+  reads = mine;
   const unlisten = await listen("project:changed", () => {
     void fetchView();
   });
   await fetchView();
   return () => {
-    coordinator.invalidate();
+    mine.stop();
     unlisten();
     // Identity guard: a stale teardown from an old mount (StrictMode's
-    // double-invoke, HMR) must neither disarm a newer mount's coordinator nor
-    // wipe the stack it has already fetched.
-    if (requests !== coordinator) return;
-    requests = null;
+    // double-invoke, HMR) must neither disarm a newer mount's reads nor wipe
+    // the stack it has already fetched.
+    if (reads !== mine) return;
+    reads = null;
     useHistoryStore.getState().reset();
   };
 }

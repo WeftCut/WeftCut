@@ -292,11 +292,11 @@ function labelIn(p: Project, layers: Layer[], ref: EntityRef): EntityLabel | nul
  *  IDENTITY, for the span of ONE `view()` call.
  *
  *  Consecutive stack entries SHARE snapshot objects — entry i's `after` is entry
- *  i+1's `before` — so a naive resolve flattens every snapshot twice, and this is
- *  synchronous main-process work on every commit while the panel is open (a gizmo
- *  drag commits repeatedly). The Map is per-call and dropped with it, so it can
- *  never serve a stale flattening: `History` replaces snapshot objects wholesale
- *  on every patch-everywhere path rather than mutating them. */
+ *  i+1's `before` — so a naive resolve flattens every snapshot twice; this is
+ *  what a view resolving many rows at once (the panel's first read, a read
+ *  after an `*Everywhere` patch) pays. The Map is per-call and dropped with it,
+ *  so it can never serve a stale flattening: `History` replaces snapshot objects
+ *  wholesale on every patch-everywhere path rather than mutating them. */
 export function createLayerFlattener(): (p: Project) => Layer[] {
   const cache = new Map<Project, Layer[]>()
   return (p) => {
@@ -321,9 +321,11 @@ export function createLayerFlattener(): (p: Project) => Layer[] {
  *  Returns a PARALLEL array (same length, same order as `affected`) so the two
  *  cannot desync. A ref neither snapshot names falls back to its raw id.
  *
- *  `flatten` is the caller's memo — `view()` passes ONE flattener across every
- *  entry so a snapshot shared by two adjacent entries is flattened once, not
- *  twice. The default keeps a lone call self-contained. */
+ *  `flatten` is the caller's memo — `view()` passes ONE flattener across the
+ *  entries it resolves so a snapshot shared by two adjacent entries is flattened
+ *  once, not twice. The default keeps a lone call self-contained. `History`
+ *  keeps each entry's result (`labelsAt`), so this runs once per row, not once
+ *  per row per view. */
 export function resolveEntityLabels(
   after: Project, before: Project | null, affected: EntityRef[],
   flatten: (p: Project) => Layer[] = createLayerFlattener(),

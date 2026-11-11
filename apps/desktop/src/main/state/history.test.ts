@@ -268,8 +268,8 @@ describe('History', () => {
 
   /// Consecutive entries SHARE snapshot objects — entry i's `after` is entry
   /// i+1's `before` — so a naive resolve flattens every snapshot twice. This is
-  /// synchronous main-process work on every commit while the panel is open, and
-  /// a gizmo drag commits repeatedly.
+  /// synchronous main-process work whenever a view resolves many rows at once:
+  /// the panel's first read, or the first after an `*Everywhere` patch.
   it('flattens each snapshot at most ONCE per view() call', () => {
     const gen = seededGen()
     let reads = 0

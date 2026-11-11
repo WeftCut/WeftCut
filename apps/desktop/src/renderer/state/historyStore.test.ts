@@ -45,9 +45,10 @@ function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
   return { promise, resolve };
 }
 
+/// Lets every promise chain already started run to completion: a queued fetch
+/// starts only after the one ahead of it has applied, several hops later.
 async function settle(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("historyStore wiring", () => {
@@ -81,7 +82,7 @@ describe("historyStore wiring", () => {
     expect(mocks.listen).toHaveBeenCalledOnce();
     expect(mocks.onProjectChanged).not.toBeNull();
 
-    // An event during the seed runs a second fetch; newest wins.
+    // An event during the seed queues a fetch behind it; the newer answer lands last.
     mocks.projectHistoryView.mockResolvedValueOnce(view(9));
     mocks.onProjectChanged!();
     await settle();
@@ -130,6 +131,65 @@ describe("historyStore wiring", () => {
     pending.resolve(view(7));
     await settle();
     expect(useHistoryStore.getState().view).toBeNull();
+  });
+
+  // An auto-paired add commits three times in a row. Main rebuilds the whole
+  // view on every read, so the events arriving during one fetch fold into ONE
+  // fetch after it — which still starts after the last of them, so it reads
+  // their state.
+  it("folds the events that arrive during a fetch into one fetch after it", async () => {
+    mocks.projectHistoryView.mockResolvedValueOnce(view(0));
+    const unwire = await wireHistoryStore();
+    mocks.projectHistoryView.mockClear();
+
+    const first = deferred<HistoryStackView>();
+    mocks.projectHistoryView.mockReturnValueOnce(first.promise);
+    mocks.projectHistoryView.mockResolvedValueOnce(view(3));
+    mocks.onProjectChanged!();
+    mocks.onProjectChanged!();
+    mocks.onProjectChanged!();
+    await settle();
+    expect(mocks.projectHistoryView).toHaveBeenCalledTimes(1); // one in flight, the rest wait
+
+    first.resolve(view(1));
+    await settle();
+    expect(mocks.projectHistoryView).toHaveBeenCalledTimes(2);
+    expect(useHistoryStore.getState().view?.cursor).toBe(3); // the later answer is the one shown
+    unwire();
+  });
+
+  it("starts no queued fetch and applies nothing once torn down", async () => {
+    mocks.projectHistoryView.mockResolvedValueOnce(view(0));
+    const unwire = await wireHistoryStore();
+    mocks.projectHistoryView.mockClear();
+
+    const pending = deferred<HistoryStackView>();
+    mocks.projectHistoryView.mockReturnValueOnce(pending.promise);
+    mocks.projectHistoryView.mockResolvedValue(view(8));
+    mocks.onProjectChanged!();
+    mocks.onProjectChanged!(); // queued behind the pending one
+    unwire();
+    pending.resolve(view(7));
+    await settle();
+    expect(mocks.projectHistoryView).toHaveBeenCalledTimes(1);
+    expect(useHistoryStore.getState().view).toBeNull();
+  });
+
+  // A checkpoint create awaits this before the dialog closes; a fetch already
+  // in flight may have been answered before the checkpoint existed.
+  it("an explicit refresh during a fetch settles only after a fetch that started after it", async () => {
+    mocks.projectHistoryView.mockResolvedValueOnce(view(0));
+    const unwire = await wireHistoryStore();
+
+    const inFlight = deferred<HistoryStackView>();
+    mocks.projectHistoryView.mockReturnValueOnce(inFlight.promise);
+    mocks.onProjectChanged!();
+    mocks.projectHistoryView.mockResolvedValueOnce(view(5));
+    const refreshed = refreshHistoryView();
+    inFlight.resolve(view(1));
+    await refreshed;
+    expect(useHistoryStore.getState().view?.cursor).toBe(5);
+    unwire();
   });
 
   // `ready` earns its keep on the FIRST render and nowhere else: it is what

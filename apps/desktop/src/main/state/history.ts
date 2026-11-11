@@ -1,5 +1,5 @@
 // apps/desktop/src/main/state/history.ts
-import type { MediaItem, Project, ProjectSettings, RoleMixSettings, Uuid } from './model'
+import type { Layer, MediaItem, Project, ProjectSettings, RoleMixSettings, Uuid } from './model'
 import { HISTORY_SUMMARY, createLayerFlattener, resolveEntityLabels, restoredCheckpointSummary, type EntityLabel } from './history-labels'
 import { diffProjects, groupDecorations, locateChanges } from './reviewDiff'
 import { jsonEqual, touchedEntityKeys } from './reviewEntities'
@@ -138,6 +138,9 @@ function runDiff(before: Project, after: Project): Change[] {
   return changes
 }
 
+/** One row's resolved `entity_labels` and the objects they were resolved from. */
+interface ResolvedLabels { after: Project; before: Project | null; affected: EntityRef[]; labels: EntityLabel[] }
+
 /** The 'Initial' entry's summary half — shared by the constructor and reset() so
  *  the seed row is spelled once. */
 function seed(initial: Project): Pick<HistoryEntry, 'summary' | 'label_key' | 'affected' | 'snapshot'> {
@@ -154,6 +157,10 @@ export class History {
   private lockReasonStr: string | null = null
   /** Front-evicted entry count — see HistoryView.evicted. */
   private evictedCount = 0
+  /** Each row's `entity_labels` with the inputs they were resolved from — see
+   *  labelsAt. Weak on the entry, so an evicted, truncated or reset entry takes
+   *  its labels with it. */
+  private entityLabels = new WeakMap<HistoryEntry, ResolvedLabels>()
   // Runtime provenance, independent of serialized project data. Bounded IDs
   // make old, untraceable effects explicitly unknown rather than falsely undone.
   private effectLineage = new WeakMap<object, ReadonlySet<Uuid>>()
@@ -222,8 +229,29 @@ export class History {
     return {
       op_id: e.op_id, actor: e.actor, timestamp: e.timestamp, summary: e.summary, label_key: e.label_key, ...(e.label_args ? { label_args: e.label_args } : {}),
       affected: e.affected,
-      entity_labels: resolveEntityLabels(e.snapshot, this.snapshots[index - 1]?.snapshot ?? null, e.affected, createLayerFlattener()),
+      entity_labels: this.labelsAt(index, createLayerFlattener()),
     }
+  }
+
+  /** Entry `index`'s `entity_labels`, resolved again only when one of the three
+   *  things they are a function of is a different object than last time: the
+   *  entry's snapshot, its predecessor's snapshot (absent for index 0) and its
+   *  `affected`. Snapshots are immutable, so identity is the whole test, and no
+   *  operation has to remember to invalidate: an `*Everywhere` patch replaces
+   *  snapshot objects, eviction changes the first entry's predecessor to none,
+   *  and a recorded entry — a checkpoint restore reusing a stored snapshot
+   *  included — is a new key. A record keeps its inputs alive until its next
+   *  miss: at most one superseded snapshot pair per stored entry. */
+  private labelsAt(index: number, flatten: (p: Project) => Layer[]): EntityLabel[] {
+    const e = this.snapshots[index]
+    const before = this.snapshots[index - 1]?.snapshot ?? null
+    const hit = this.entityLabels.get(e)
+    if (hit && hit.after === e.snapshot && hit.before === before && hit.affected === e.affected) return hit.labels
+    // Frozen: every later view hands out this same array, so a caller that
+    // edited it would edit those rows too.
+    const labels = Object.freeze(resolveEntityLabels(e.snapshot, before, e.affected, flatten)) as EntityLabel[]
+    this.entityLabels.set(e, { after: e.snapshot, before, affected: e.affected, labels })
+    return labels
   }
 
   undo(): Project | null {
@@ -450,7 +478,7 @@ export class History {
    *  exists — in whichever composition holds it (a track id lives in exactly
    *  one); skip snapshots that lack it; cursor unchanged; never recorded
    *  (project_settings_patch_convention). Rebuilt by spread, never mutated in
-   *  place: `createLayerFlattener` memoizes on snapshot identity. */
+   *  place: `labelsAt` and `createLayerFlattener` key on snapshot identity. */
   replaceTrackFlagsEverywhere(trackId: Uuid, patch: TrackFlagsPatch): void {
     const patchTrack = (p: Project): Project => {
       for (const [cid, c] of Object.entries(p.compositions)) {
@@ -536,15 +564,16 @@ export class History {
     // AFTER its own op, so a delete is nameable only from its PREDECESSOR; the
     // index is absolute because that predecessor may sit outside this window
     // (history-labels.ts owns the fallback chain).
-    // One flattener for the WHOLE call: adjacent entries share snapshot objects
-    // (entry i's `after` is entry i+1's `before`), so without the memo every
-    // snapshot is flattened twice — synchronous main work on every commit while
-    // the panel is open.
+    // Rows already resolved come from labelsAt's record, so a view after one
+    // commit resolves the new row only. One flattener for the rows that do
+    // resolve: adjacent entries share snapshot objects (entry i's `after` is
+    // entry i+1's `before`), so without it a cold view flattens every snapshot
+    // twice.
     const flatten = createLayerFlattener()
     const ops = this.snapshots.slice(start).map((e, i) => ({
       op_id: e.op_id, actor: e.actor, timestamp: e.timestamp, summary: e.summary, label_key: e.label_key,
       label_args: e.label_args, affected: e.affected,
-      entity_labels: resolveEntityLabels(e.snapshot, this.snapshots[start + i - 1]?.snapshot ?? null, e.affected, flatten),
+      entity_labels: this.labelsAt(start + i, flatten),
     }))
     const checkpoints = this.listCheckpoints().map((c) => ({ id: c.id, label: c.label, actor: c.actor, created_at: c.created_at }))
     const v: HistoryView = { ops, cursor: this.cursor, len: total, window_start: start, checkpoints, evicted: this.evictedCount }
