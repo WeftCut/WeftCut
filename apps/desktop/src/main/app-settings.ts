@@ -10,6 +10,7 @@ import { changeExportPresets, readExportPresets, exportPresetLibrary, DEFAULT_EX
 // all-defaults so a hand-edit mishap can't brick the editor.
 
 import { changePausePresets, readPausePresets } from '../shared/pause-presets'
+import { readPreviewGridSettings } from '../shared/preview-grid'
 import { isLayoutTheme, readLayoutTheme } from '../shared/layout-theme'
 import { readResourcePolicy, patchResourcePolicy, resolveResourcePolicy, DEFAULT_RESOURCE_POLICY } from '../shared/resource-policy'
 import { patchPerformanceSettings, readPerformanceSettings } from '../shared/performance-settings'
@@ -116,6 +117,7 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
       // the boolean as a gate.
       preview_snap_enabled: typeof parsed.preview_snap_enabled === 'boolean' ? parsed.preview_snap_enabled : d.preview_snap_enabled,
       preview_snap_strength_px: typeof parsed.preview_snap_strength_px === 'number' ? parsed.preview_snap_strength_px : d.preview_snap_strength_px,
+      preview_grid: readPreviewGridSettings(parsed.preview_grid),
       prebake_motifs: typeof parsed.prebake_motifs === 'boolean' ? parsed.prebake_motifs : d.prebake_motifs,
       preview_effects_enabled: typeof parsed.preview_effects_enabled === 'boolean' ? parsed.preview_effects_enabled : d.preview_effects_enabled,
       // 'native' was the persisted value's old name (pre-rename); migrate it
@@ -311,6 +313,7 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
       if (patch.tail_snap_strength_px !== undefined) current.tail_snap_strength_px = clamp(patch.tail_snap_strength_px, TAIL_SNAP_STRENGTH_MIN_PX, TAIL_SNAP_STRENGTH_MAX_PX)
       if (patch.preview_snap_enabled !== undefined) current.preview_snap_enabled = patch.preview_snap_enabled
       if (patch.preview_snap_strength_px !== undefined) current.preview_snap_strength_px = clamp(patch.preview_snap_strength_px, PREVIEW_SNAP_STRENGTH_MIN_PX, PREVIEW_SNAP_STRENGTH_MAX_PX)
+      if (patch.preview_grid !== undefined) current.preview_grid = readPreviewGridSettings({ ...current.preview_grid, ...patch.preview_grid })
       if (patch.prebake_motifs !== undefined) current.prebake_motifs = patch.prebake_motifs
       if (patch.preview_effects_enabled !== undefined) current.preview_effects_enabled = patch.preview_effects_enabled
       if (patch.decode_engine !== undefined) current.decode_engine = patch.decode_engine

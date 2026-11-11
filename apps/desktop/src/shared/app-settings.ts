@@ -4,6 +4,7 @@
 // snake_case to match the file written historically by the Rust addon, so
 // existing users' app_settings.json keeps working after the move to TS.
 
+import { DEFAULT_PREVIEW_GRID, type PreviewGridSettings } from "./preview-grid";
 import type { PausePreset, PausePresetChange } from "./pause-presets";
 import { DEFAULT_LAYOUT_THEME, type LayoutTheme } from './layout-theme';
 import { DEFAULT_RESOURCE_POLICY, resolveResourcePolicy } from './resource-policy';
@@ -77,6 +78,7 @@ export interface AppSettings {
   /// pixels would feel different on a 1080p and a 4K composition and would
   /// drift as the panel is resized. Clamped on write.
   preview_snap_strength_px: number;
+  preview_grid: PreviewGridSettings;
   /// When true, the frames Motif layers use on the timeline are baked to disk
   /// in the background (L2), including ones nothing has played yet. Frames a
   /// preview or export captures are stored either way. Default false. See
@@ -177,6 +179,7 @@ export interface AppSettingsPatch {
   tail_snap_strength_px?: number;
   preview_snap_enabled?: boolean;
   preview_snap_strength_px?: number;
+  preview_grid?: Partial<PreviewGridSettings>;
   prebake_motifs?: boolean;
   preview_effects_enabled?: boolean;
   decode_engine?: "auto" | "ffmpeg" | "webcodecs";
@@ -222,6 +225,7 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   // learn. On by default, like the timeline's.
   preview_snap_enabled: true,
   preview_snap_strength_px: 12,
+  preview_grid: DEFAULT_PREVIEW_GRID,
   prebake_motifs: false,
   preview_effects_enabled: true,
   decode_engine: "auto",

@@ -101,6 +101,7 @@ import {
   type SnapGuides,
   type SnapTargets,
 } from "./previewSnap";
+import { previewGrid } from "./gridGeometry";
 
 /// Affordance sizes — rotation knob, anchor target, resize handles — are
 /// `UI_METRICS.gizmo`: client pixels, so they are identical on a 4K composition
@@ -1139,18 +1140,18 @@ function TransformGizmo({
   /// mid-drag, the guides do not follow the animated layers.
   const grabSnap = (): SnapContext | null => {
     const settings = useAppSettingsStore.getState().settings;
-    if (!settings.preview_snap_enabled) return null;
+    const alignment = settings.preview_snap_enabled;
+    const gridSettings = settings.preview_grid;
+    if (!alignment && !gridSettings.snap) return null;
     const probe = getGizmoProbe();
     if (!probe) return null;
     const comp = compRef.current;
-    const others = otherLayerBoxes(
-      compositionRef.current,
-      layerRef.current.id,
-      focusedPlayheadUs(),
-      probe,
-    );
+    const others = alignment
+      ? otherLayerBoxes(compositionRef.current, layerRef.current.id, focusedPlayheadUs(), probe)
+      : [];
+    const grid = gridSettings.snap ? previewGrid(comp.width, comp.height, gridSettings) : undefined;
     return {
-      targets: snapTargets(comp.width, comp.height, others),
+      targets: snapTargets(comp.width, comp.height, others, { alignment, grid }),
       strengthPx: settings.preview_snap_strength_px,
     };
   };

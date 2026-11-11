@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useEffect,
   useRef,
   useState,
@@ -45,6 +46,7 @@ import {
   type QuickActionState,
 } from "./quickActions";
 import { AppIcon } from "@/components/AppIcon";
+import { SnappingPopover } from "./SnappingPopover";
 
 /// Which way the strip runs. Single row or single column, never wrapped —
 /// overflow scrolls instead.
@@ -157,7 +159,7 @@ function useRovingFocus(
 
   const onKeyDown = (event: React.KeyboardEvent) => {
     const container = ref.current;
-    if (!container) return;
+    if (!container?.contains(event.target as Node)) return;
     const buttons = Array.from(
       container.querySelectorAll<HTMLButtonElement>("button[data-quick-action]"),
     );
@@ -387,18 +389,26 @@ export function QuickActionsPanel({
           aria-label={t(`quick_actions.${section.id}`)}
         >
           {section.resolved.map(({ item, command }) => {
-            index += 1;
-            const own = index;
+            const own = ++index;
+            const popupIndex = item.id === "toggleTailSnap" ? ++index : null;
             return (
-              <QuickActionButton
-                key={item.id}
-                item={item}
-                command={command}
-                state={state}
-                mode={section.mode}
-                tabbable={own === focusIndex}
-                onFocus={() => setFocusIndex(own)}
-              />
+              <Fragment key={item.id}>
+                <QuickActionButton
+                  item={item}
+                  command={command}
+                  state={state}
+                  mode={section.mode}
+                  tabbable={own === focusIndex}
+                  onFocus={() => setFocusIndex(own)}
+                />
+                {popupIndex !== null && (
+                  <SnappingPopover
+                    orientation={orientation}
+                    tabbable={popupIndex === focusIndex}
+                    onFocus={() => setFocusIndex(popupIndex)}
+                  />
+                )}
+              </Fragment>
             );
           })}
         </div>

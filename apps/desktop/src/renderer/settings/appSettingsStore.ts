@@ -89,6 +89,8 @@ export const usePreviewSnapEnabled = (): boolean =>
   useAppSettingsStore((s) => s.settings.preview_snap_enabled);
 export const usePreviewSnapStrengthPx = (): number =>
   useAppSettingsStore((s) => s.settings.preview_snap_strength_px);
+export const usePreviewGrid = () =>
+  useAppSettingsStore((s) => s.settings.preview_grid);
 export const usePrebakeMotifsEnabled = (): boolean =>
   useAppSettingsStore((s) => s.settings.prebake_motifs);
 export const useDecodeEngine = (): AppSettings["decode_engine"] =>

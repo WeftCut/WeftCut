@@ -459,6 +459,52 @@
   outline-offset: -1px;
 }
 
+.quick-snapping-popup {
+  width: min(calc(288 * var(--ui-px)), var(--available-width));
+  padding: calc(10 * var(--ui-px)) calc(12 * var(--ui-px));
+}
+
+.quick-snapping-title {
+  font-size: var(--font-size-body);
+  font-weight: 600;
+}
+
+.quick-snapping-popup section {
+  border-top: 1px solid var(--border);
+  margin-top: calc(7 * var(--ui-px));
+  padding-top: calc(6 * var(--ui-px));
+}
+
+.quick-snapping-popup h3 {
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  margin-bottom: calc(2 * var(--ui-px));
+}
+
+.quick-snapping-popup .settings-toggle-row,
+.quick-snapping-popup .settings-slider-row {
+  align-items: center;
+  min-height: calc(26 * var(--ui-px));
+  padding: calc(2 * var(--ui-px)) 0;
+  gap: calc(6 * var(--ui-px));
+}
+
+.quick-snapping-popup .settings-toggle-row {
+  flex-direction: row-reverse;
+  justify-content: space-between;
+}
+
+.quick-snapping-popup .settings-slider-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.quick-snapping-popup .app-select {
+  min-width: 0;
+  max-width: 66%;
+}
+
 .weft-dock-tab {
   height: 100%;
   min-width: 0;
