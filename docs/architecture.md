@@ -106,8 +106,9 @@ runs the same stop once the app's pipe to it closes, or by a kill-on-close job
      Command promises resolve after their receipt is applied
      ([ADR 0114](adr/0114-project-view-publication.md),
      [ADR 0157](adr/0157-a-publication-crosses-as-a-difference.md)).
-   - **Autosave**: a debounced write of `project.json` plus periodic
-     `Backups/` copies (`src/main/state/autosave.ts`).
+   - **Autosave**: a debounced, atomically replaced write of `project.json`,
+     bounded by the project's autosave interval under continuous edits, plus
+     periodic `Backups/` copies (`src/main/state/autosave.ts`).
 
 ## Process boundaries
 

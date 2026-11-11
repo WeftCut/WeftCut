@@ -1,10 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { createAutosave, BACKUPS_DIR, type AutosaveFs, type AutosaveDeps } from '../autosave'
-import { createActor, type ActorHandle } from '../actor'
+import {
+  createAutosave, autosaveMaxWaitMs, BACKUPS_DIR, AUTOSAVE_INTERVAL_DEFAULT_SECS, AUTOSAVE_INTERVAL_MAX_SECS,
+  AUTOSAVE_INTERVAL_MIN_SECS, type AutosaveFs, type AutosaveDeps,
+} from '../autosave'
+import { createActor, type ActorHandle, type ChangeEvent } from '../actor'
 import { serializeProjectToJson, PROJECT_FILE } from '../persistence'
-import { blankProject } from '../model'
+import { blankProject, type Project } from '../model'
 import { seededGen } from '../ids'
 import { EDIT_TRACE_PREFIX, runEditTrace } from '../../../shared/editTrace'
+import { ATOMIC_TEMP_SUFFIX, writeFileAtomic } from '../../atomicWrite'
+import { errno, memAtomicIo, type MemAtomicIo } from './fixtures/memAtomicIo'
 
 /** In-memory fs: files map + dirs set, with copyFile/readdir for Backups. */
 function memFs(): AutosaveFs & { files: Map<string, string>; dirs: Set<string> } {
@@ -128,5 +133,184 @@ describe('Backups gc + snapshot interval', () => {
     actor.dispatch('add_track', {}); await vi.advanceTimersByTimeAsync(500)
     expect([...fs.files.keys()].some((k) => k.startsWith(`/ws/${BACKUPS_DIR}/`))).toBe(true)
     ctl.stop()
+  })
+})
+
+/** AutosaveFs whose writeFile is the production atomic write over an in-memory
+ *  io, so a test can fail one step of it. */
+function atomicMemFs(io: MemAtomicIo): AutosaveFs {
+  const { files } = io
+  return {
+    writeFile: (p, t) => writeFileAtomic(io, p, t),
+    exists: (p) => files.has(p),
+    copyFile: (s, d) => { const t = files.get(s); if (t === undefined) throw new Error(`ENOENT ${s}`); files.set(d, t) },
+    mkdirp: () => {},
+    readdir: (d) => [...files.keys()].filter((k) => k.startsWith(d + '/')).map((k) => k.slice(d.length + 1)),
+    rm: (p) => { files.delete(p) },
+  }
+}
+
+describe('autosave write failures', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  const target = `/ws/${PROJECT_FILE}`
+  const GOOD = '{"previous":"good"}'
+  const debounceMs = 500
+
+  it.each(['open', 'write', 'fsync', 'close', 'rename'] as const)(
+    'a write failing at %s keeps the last good project.json and saves the edit on a later cycle',
+    async (step) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const io = memAtomicIo(new Map([[target, GOOD]]))
+      const { actor, ctl } = setup({ fs: atomicMemFs(io), debounceMs })
+      ctl.start()
+      try {
+        io.fail(step, errno('ENOSPC'), 1)
+        actor.dispatch('add_track', {})
+        // A throw out of the timer callback would surface here.
+        await vi.advanceTimersByTimeAsync(debounceMs)
+        expect(io.files.get(target)).toBe(GOOD)
+        expect(io.files.has(target + ATOMIC_TEMP_SUFFIX)).toBe(false)
+        expect(warn).toHaveBeenCalled()
+        // No further edit: the retry comes from autosave itself, within the interval.
+        await vi.advanceTimersByTimeAsync(autosaveMaxWaitMs(actor.snapshot().settings))
+        expect(io.files.get(target)).toBe(serializeProjectToJson(actor.snapshot()))
+        expect(io.files.has(target + ATOMIC_TEMP_SUFFIX)).toBe(false)
+      } finally { ctl.stop(); warn.mockRestore() }
+    },
+  )
+
+  it('an explicit save that fails rejects to its caller, keeps project.json, and the edit is saved later', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const io = memAtomicIo(new Map([[target, GOOD]]))
+    const { actor, ctl } = setup({ fs: atomicMemFs(io) })
+    ctl.start()
+    try {
+      actor.dispatch('add_track', {})
+      const failure = errno('EACCES')
+      io.fail('rename', failure)
+      await expect(ctl.forceFlush()).rejects.toBe(failure)
+      expect(io.files.get(target)).toBe(GOOD)
+      expect(io.files.has(target + ATOMIC_TEMP_SUFFIX)).toBe(false)
+      io.heal()
+      await vi.advanceTimersByTimeAsync(autosaveMaxWaitMs(actor.snapshot().settings))
+      expect(io.files.get(target)).toBe(serializeProjectToJson(actor.snapshot()))
+    } finally { ctl.stop(); warn.mockRestore() }
+  })
+})
+
+/** An actor stand-in whose edits cost nothing, so a test can stream thousands. */
+function streamingActor(autosaveIntervalSecs: unknown) {
+  const base = blankProject(seededGen(), 'stream')
+  const project: Project = { ...base, settings: { ...base.settings, autosave_interval_secs: autosaveIntervalSecs as number | null } }
+  let listener: ((e: ChangeEvent) => void) | null = null
+  let revision = 0
+  const edits: number[] = []
+  return {
+    edits,
+    revision: () => revision,
+    actor: {
+      subscribe: (cb: (e: ChangeEvent) => void) => { listener = cb; return () => { listener = null } },
+      snapshot: () => project,
+    },
+    edit: () => { revision += 1; edits.push(Date.now()); listener?.({} as ChangeEvent) },
+  }
+}
+
+function streamingSetup(autosaveIntervalSecs: unknown) {
+  const stream = streamingActor(autosaveIntervalSecs)
+  const writes: { at: number; revision: number }[] = []
+  const debounceMs = 500
+  const ctl = createAutosave({
+    actor: stream.actor,
+    fs: { ...memFs(), writeFile: () => { writes.push({ at: Date.now(), revision: stream.revision() }) } },
+    workspaceDir: () => '/ws', join: posixJoin, serialize: () => '{}', debounceMs,
+  })
+  const maxWaitMs = autosaveMaxWaitMs(stream.actor.snapshot().settings)
+  // Faster than the quiet window, so only the interval can force a write.
+  const editEveryMs = debounceMs / 5
+  const editFor = async (ms: number) => {
+    for (let t = 0; t < ms; t += editEveryMs) { stream.edit(); await vi.advanceTimersByTimeAsync(editEveryMs) }
+  }
+  return { ...stream, ctl, writes, debounceMs, maxWaitMs, editEveryMs, editFor }
+}
+
+describe('autosave under continuous edits', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('writes within the interval of the first unsaved edit, and again within each interval after', async () => {
+    const s = streamingSetup(AUTOSAVE_INTERVAL_MIN_SECS)
+    s.ctl.start()
+    try {
+      await s.editFor(s.maxWaitMs * 3.5)
+      expect(s.writes.length).toBeGreaterThanOrEqual(3)
+      let windowOpenedAt = s.edits[0]
+      for (const write of s.writes) {
+        expect(write.at, 'write later than the interval allows').toBeLessThanOrEqual(windowOpenedAt + s.maxWaitMs)
+        // The next window opens at the first edit the write did not include.
+        windowOpenedAt = s.edits[write.revision]
+      }
+    } finally { s.ctl.stop() }
+  })
+
+  it('still writes after the quiet window once the edits stop', async () => {
+    const s = streamingSetup(AUTOSAVE_INTERVAL_MIN_SECS)
+    s.ctl.start()
+    try {
+      await s.editFor(s.maxWaitMs / 2)
+      const lastEdit = s.edits.at(-1)!
+      await vi.advanceTimersByTimeAsync(s.debounceMs)
+      expect(s.writes).toEqual([{ at: lastEdit + s.debounceMs, revision: s.revision() }])
+    } finally { s.ctl.stop() }
+  })
+
+  it('an explicit save opens a new interval instead of keeping the old deadline', async () => {
+    const s = streamingSetup(AUTOSAVE_INTERVAL_MIN_SECS)
+    s.ctl.start()
+    try {
+      await s.editFor(s.maxWaitMs / 2)
+      await s.ctl.forceFlush()
+      const flushed = s.writes.length
+      await s.editFor(s.maxWaitMs * 1.5)
+      const firstEditAfter = s.edits[s.writes[flushed - 1].revision]
+      const timerWrites = s.writes.slice(flushed)
+      expect(timerWrites.length).toBeGreaterThan(0)
+      expect(timerWrites[0].at, 'the pre-flush deadline still fired').toBeGreaterThanOrEqual(firstEditAfter + s.maxWaitMs)
+      expect(timerWrites[0].at).toBeLessThanOrEqual(firstEditAfter + s.maxWaitMs)
+    } finally { s.ctl.stop() }
+  })
+
+  it.each([AUTOSAVE_INTERVAL_MIN_SECS, AUTOSAVE_INTERVAL_MIN_SECS * 2, null])(
+    'honours autosave_interval_secs = %s as the bound, not a shorter one',
+    async (secs) => {
+      const s = streamingSetup(secs)
+      s.ctl.start()
+      try {
+        await s.editFor(s.maxWaitMs + s.editEveryMs * 2)
+        expect(s.writes.length).toBeGreaterThan(0)
+        expect(s.writes[0].at).toBeGreaterThanOrEqual(s.edits[0] + s.maxWaitMs)
+        expect(s.writes[0].at).toBeLessThanOrEqual(s.edits[0] + s.maxWaitMs)
+      } finally { s.ctl.stop() }
+    },
+  )
+})
+
+describe('autosaveMaxWaitMs', () => {
+  const ms = (secs: unknown) => autosaveMaxWaitMs({ autosave_interval_secs: secs as number | null })
+
+  it('takes an in-range interval as written', () => {
+    const inRange = Math.round((AUTOSAVE_INTERVAL_MIN_SECS + AUTOSAVE_INTERVAL_MAX_SECS) / 2)
+    expect(ms(inRange)).toBe(inRange * 1000)
+  })
+
+  it.each([null, undefined, NaN, Infinity, -Infinity, 0, -30, '30', {}])('falls back to the default for %s', (value) => {
+    expect(ms(value)).toBe(AUTOSAVE_INTERVAL_DEFAULT_SECS * 1000)
+  })
+
+  it('clamps an interval outside the allowed range', () => {
+    expect(ms(AUTOSAVE_INTERVAL_MIN_SECS / 10)).toBe(AUTOSAVE_INTERVAL_MIN_SECS * 1000)
+    expect(ms(AUTOSAVE_INTERVAL_MAX_SECS * 10)).toBe(AUTOSAVE_INTERVAL_MAX_SECS * 1000)
   })
 })

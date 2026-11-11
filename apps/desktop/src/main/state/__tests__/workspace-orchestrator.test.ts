@@ -10,6 +10,8 @@ import { blankProject, SCHEMA_VERSION } from '../model'
 import type { MediaItem } from '../model'
 import { seededGen } from '../ids'
 import { root } from './fixtures/project'
+import { errno, memAtomicIo, type MemAtomicIo } from './fixtures/memAtomicIo'
+import { ATOMIC_TEMP_SUFFIX, writeFileAtomic } from '../../atomicWrite'
 
 const posixJoin = (...p: string[]) => p.join('/')
 
@@ -267,6 +269,61 @@ describe('newWorkspace', () => {
     expect(root(written)).toMatchObject({ width: 1280, height: 720, fps: { num: 24, den: 1 } })
     expect(d.calls).toEqual(['commit:/parent/Fresh', 'replaceState', 'recent:/parent/Fresh:Fresh', 'parent:/parent'])
   })
+})
+
+/** OrchestratorFs whose writeFile is the production atomic write over an
+ *  in-memory io, so a test can fail one step of it. */
+function atomicMemFs(io: MemAtomicIo): OrchestratorFs & { files: Map<string, string>; dirs: Set<string> } {
+  const fs = memFs()
+  const { files } = io
+  return {
+    ...fs, files,
+    exists: (p) => files.has(p) || fs.dirs.has(p),
+    readFile: (p) => { const t = files.get(p); if (t === undefined) throw new Error(`ENOENT ${p}`); return t },
+    writeFile: (p, t) => writeFileAtomic(io, p, t),
+    rm: (p) => { files.delete(p) },
+  }
+}
+
+describe('project.json writes go through the atomic replacement', () => {
+  const args = { parentFolder: '/parent', name: 'Fresh', width: 1280, height: 720, fpsNum: 24, fpsDen: 1 }
+  const GOOD = '{"previous":"good"}'
+
+  it.each(['write', 'fsync', 'rename'] as const)(
+    'save-as over an existing project failing at %s keeps its project.json and commits nothing',
+    async (step) => {
+      const io = memAtomicIo(new Map([[`/out/${PROJECT_FILE}`, GOOD]]))
+      const d = deps({ fs: atomicMemFs(io) })
+      const failure = errno('ENOSPC')
+      io.fail(step, failure)
+      await expect(saveProjectAs(d, '/out')).rejects.toBe(failure)
+      expect(io.files.get(`/out/${PROJECT_FILE}`)).toBe(GOOD)
+      expect(io.files.has(`/out/${PROJECT_FILE}${ATOMIC_TEMP_SUFFIX}`)).toBe(false)
+      expect(d.calls).toEqual([])
+    },
+  )
+
+  it('save-as replaces an existing project.json whole', async () => {
+    const io = memAtomicIo(new Map([[`/out/${PROJECT_FILE}`, GOOD]]))
+    const d = deps({ fs: atomicMemFs(io) })
+    await saveProjectAs(d, '/out')
+    expect(JSON.parse(io.files.get(`/out/${PROJECT_FILE}`)!).metadata.name).toBe('snap')
+    expect(io.log).toContain('rename')
+    expect(io.files.has(`/out/${PROJECT_FILE}${ATOMIC_TEMP_SUFFIX}`)).toBe(false)
+  })
+
+  it.each(['write', 'fsync', 'rename'] as const)(
+    'a new project failing at %s leaves no project file and swaps nothing',
+    async (step) => {
+      const io = memAtomicIo()
+      const d = deps({ fs: atomicMemFs(io) })
+      const failure = errno('ENOSPC')
+      io.fail(step, failure)
+      await expect(newWorkspace(d, args)).rejects.toBe(failure)
+      expect([...io.files.keys()]).toEqual([])
+      expect(d.calls).toEqual([])
+    },
+  )
 })
 
 describe('makeEnqueueDerivatives', () => {

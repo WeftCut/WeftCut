@@ -30,6 +30,7 @@ import electronUpdater from 'electron-updater'
 import { createUpdates } from './updates.js'
 import { createUpdateResume } from './updateResume.js'
 import { mediaMimeForExt } from './mediaMime.js'
+import { nodeAtomicWriteIo, writeFileAtomic } from './atomicWrite.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
 import { registerMotifProtocol } from './motif/protocol.js'
 import { installPerformanceCalibration } from './performanceCalibration.js'
@@ -829,11 +830,12 @@ app.whenReady().then(async () => {
   // (snap.ts contract).
   await initEval()
 
-  // Node fs adapter — satisfies both OrchestratorFs and AutosaveFs.
+  // Node fs adapter — satisfies both OrchestratorFs and AutosaveFs. Their
+  // `writeFile` replaces project.json whole, so it is the atomic write.
   const nodeFs = {
     exists: (p: string) => fs.existsSync(p),
     readFile: (p: string) => fs.readFileSync(p, 'utf8'),
-    writeFile: (p: string, t: string) => fs.writeFileSync(p, t, 'utf8'),
+    writeFile: (p: string, t: string) => writeFileAtomic(nodeAtomicWriteIo, p, t),
     mkdirp: (d: string) => { fs.mkdirSync(d, { recursive: true }) },
     copyFile: (s: string, d: string) => fs.copyFileSync(s, d),
     readdir: (d: string) => fs.readdirSync(d) as string[],
@@ -2957,9 +2959,9 @@ app.whenReady().then(async () => {
 // WeftCut is never a state to leave running.
 app.on('window-all-closed', () => app.quit())
 
-// Flush the TS actor's debounced autosave before the process exits — an edit made
-// inside the 500ms autosave debounce window would otherwise be lost on quit
-// (autosave.stop() drops the pending timer rather than firing it). `shutdown`
+// Flush the TS actor's debounced autosave before the process exits — an edit the
+// autosave timers have not written yet would otherwise be lost on quit
+// (autosave.stop() drops the pending timers rather than firing them). `shutdown`
 // shuts the MCP project gate, then autosave.forceFlush()es, a no-op when no
 // workspace is set (blank-boot). Async-quit pattern: preventDefault once, flush, then re-quit; the
 // quitFlushed guard breaks the re-entrant before-quit that app.quit() raises.

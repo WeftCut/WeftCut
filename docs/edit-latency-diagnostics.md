@@ -55,7 +55,7 @@ IDs are emitted. At most four observation windows run concurrently.
 | `renderer.refresh / store_apply` | Synchronous store/index/selection work, before React render |
 | `store_apply_to_two_raf` | Two rAF opportunities after applying; does not prove pixels were presented |
 | `main.autosave / serialize`, `write_file`, `backup_and_gc` | Actual save costs |
-| `main.autosave / timerLateMs` | Lateness of the 500 ms debounce callback — event-loop contention, not write time |
+| `main.autosave / timerLateMs` | Lateness of the autosave timer (500 ms debounce, or the interval deadline under continuous edits) — event-loop contention, not write time |
 | `renderer.frames` | 2 s window from invocation: max rAF gap and offset, gaps > 50 ms, long tasks, visibility |
 
 Durations use each process's monotonic clock; `startedAt` is wall-clock for

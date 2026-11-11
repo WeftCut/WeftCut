@@ -136,9 +136,11 @@ unsoloed) via `Project::role_mix`. The mixing model is in
 
 `settings` (`ProjectSettings`): `shot_review` / `pause_review` are `null` for
 "detector defaults" so no threshold literal lives in TS; `2 · pad_us <
-min_pause_us` holds by validation. `preview_width/height`,
-`autosave_interval_secs` and `history_capacity` are wire-only: nothing reads
-them.
+min_pause_us` holds by validation. `autosave_interval_secs` is the longest
+autosave lets edits stay unsaved while they keep coming (default 60 s; a
+missing or invalid value means the default, others are clamped to 5–300 s); it
+is internal, set by no UI or MCP tool. `preview_width/height` and
+`history_capacity` are wire-only: nothing reads them.
 
 ## Composition
 
@@ -652,7 +654,7 @@ The workspace folder **is** the project; originals are copied in on import.
 
 ```
 <workspace>/
-├── project.json        canonical state; autosave 500 ms after the last commit
+├── project.json        canonical state; autosaved, replaced atomically (see Saving)
 ├── project.pre-v{n}.json  pre-upgrade bytes (see Versioning)
 ├── view.json           UI view state for this project
 ├── Media/              imported originals (workspace owns the bytes)
@@ -665,8 +667,21 @@ The workspace folder **is** the project; originals are copied in on import.
 └── Renders/            default export destination
 ```
 
-There is no explicit Save: autosave (`state/autosave.ts`) writes every commit;
-`project_save` only forces the flush.
+### Saving
+
+There is no explicit Save: autosave (`state/autosave.ts`) writes every commit,
+500 ms after the last one, and no later than `autosave_interval_secs` after the
+first unsaved one while edits keep arriving (a long agent run).
+`project_save`, switching or closing the project, and quitting force the write
+at once.
+
+Every write of `project.json` (autosave, Save As, New, the pre-upgrade copy)
+writes `project.json.tmp` beside it, flushes it to disk and renames it over the
+target (`main/atomicWrite.ts`), so an interrupted or failed write leaves the
+previous file whole. A failed autosave keeps the edits unsaved and retries
+within the interval; an explicit save reports the failure to its caller. A
+leftover `project.json.tmp` from a crash is harmless and is replaced by the next
+write.
 
 ### `view.json`: how this project was last looked at
 

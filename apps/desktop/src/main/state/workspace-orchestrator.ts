@@ -41,6 +41,8 @@ export interface OrchestratorFs {
   exists(path: string): boolean
   /** Throws if the file is missing — only called after `exists`. */
   readFile(path: string): string
+  /** Replaces the file whole: on failure it throws and the previous file stays
+   *  (atomicWrite.ts in production). */
   writeFile(path: string, text: string): void
   /** create_dir_all equivalent. */
   mkdirp(dir: string): void
