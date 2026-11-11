@@ -1,10 +1,11 @@
 // rememberGeometry's capture discipline, driven through a stub BrowserWindow.
-// The maximized/fullscreen arm exists for macOS: a window zoomed from birth
-// has no pre-zoom rect, so getNormalBounds() reports the zoomed frame as
-// "normal" bounds — persisting that overwrites a good restore-down size and
-// made the stored rect differ between the first and later launches (the
-// window-geometry drift e2e failure on the mac CI leg).
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+// Both arms exist for macOS. A window zoomed from birth has no pre-zoom rect,
+// so getNormalBounds() reports the zoomed frame as "normal" bounds — persisting
+// that overwrites a good restore-down size and made the stored rect differ
+// between the first and later launches. And a zoom emits `resize` for every
+// frame of its animation while the window still reads as not maximized, so the
+// window is read a turn after its events rather than inside them.
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserWindow } from 'electron'
 import { markInternalWindow, quitIfLastUserWindowClosed, rememberGeometry, userFacingWindows } from './windows'
 import type { Rect, WindowGeometry, WindowGeometryStore } from './windowGeometry'
@@ -43,36 +44,50 @@ function fakeWin(initial: Rect) {
 
 function fakeStore() {
   let current: WindowGeometry | null = null
+  let flushed: WindowGeometry | null = null
   const store: WindowGeometryStore = {
     get: () => current,
     remember: (_label: string, geom: WindowGeometry) => void (current = geom),
-    flush: () => {},
+    flush: () => void (flushed = current),
   }
-  return { store, last: () => current }
+  return { store, last: () => current, flushed: () => flushed }
 }
+
+/** Let the queued read run: the turn after the events that asked for it. */
+const nextTurn = (): void => void vi.runAllTimers()
 
 const NORMAL: Rect = { x: 100, y: 80, width: 1280, height: 800 }
 const ZOOMED: Rect = { x: 0, y: -33, width: 1440, height: 900 }
 
 describe('rememberGeometry — maximized capture', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setImmediate', 'clearImmediate'] })
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('keeps the stored rect while maximized and refreshes only the flags', () => {
     const { win, state, fire } = fakeWin(NORMAL)
     const { store, last } = fakeStore()
     rememberGeometry(win, 'main', store)
 
     fire('move')
+    nextTurn()
     expect(last()).toEqual({ bounds: NORMAL, maximized: false, fullScreen: false })
 
     // macOS zoom: getNormalBounds now reads the zoomed frame.
     state.maximized = true
     state.normalBounds = ZOOMED
     fire('maximize')
+    nextTurn()
     expect(last()).toEqual({ bounds: NORMAL, maximized: true, fullScreen: false })
 
     // Un-maximize returns to truthful normal bounds — captured verbatim again.
     state.maximized = false
     state.normalBounds = { ...NORMAL, x: 120 }
     fire('unmaximize')
+    nextTurn()
     expect(last()).toEqual({ bounds: { ...NORMAL, x: 120 }, maximized: false, fullScreen: false })
   })
 
@@ -84,12 +99,54 @@ describe('rememberGeometry — maximized capture', () => {
 
     // Nothing stored yet — the measurement is all there is.
     fire('maximize')
+    nextTurn()
     expect(last()).toEqual({ bounds: ZOOMED, maximized: true, fullScreen: false })
 
     // Later maximized readbacks (however the frame settles) must not move it.
     state.normalBounds = { x: 0, y: 0, width: 1024, height: 677 }
     fire('move')
+    nextTurn()
     expect(last()).toEqual({ bounds: ZOOMED, maximized: true, fullScreen: false })
+  })
+
+  it('never takes a frame of the zoom animation for the restore-down rect', () => {
+    const { win, state, fire } = fakeWin(NORMAL)
+    const { store, last } = fakeStore()
+    rememberGeometry(win, 'main', store)
+    fire('move')
+    nextTurn()
+
+    // The animation as macOS delivers it: every frame arrives inside one
+    // blocking call, each reading as a normal window of that frame's size.
+    for (const grow of [0.25, 0.5, 0.75, 0.99]) {
+      state.normalBounds = {
+        x: Math.round(NORMAL.x * (1 - grow)),
+        y: Math.round(NORMAL.y * (1 - grow)),
+        width: Math.round(NORMAL.width + (ZOOMED.width - NORMAL.width) * grow),
+        height: Math.round(NORMAL.height + (ZOOMED.height - NORMAL.height) * grow),
+      }
+      fire('resize')
+    }
+    state.maximized = true
+    state.normalBounds = ZOOMED
+    fire('resize')
+    fire('maximize')
+    nextTurn()
+
+    expect(last()).toEqual({ bounds: NORMAL, maximized: true, fullScreen: false })
+  })
+
+  it('saves a move at close even when its queued read has not run', () => {
+    const { win, state, fire } = fakeWin(NORMAL)
+    const { store, flushed } = fakeStore()
+    rememberGeometry(win, 'main', store)
+
+    const moved = { ...NORMAL, x: 340 }
+    state.normalBounds = moved
+    fire('move')
+    fire('close')
+
+    expect(flushed()).toEqual({ bounds: moved, maximized: false, fullScreen: false })
   })
 })
 

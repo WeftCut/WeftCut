@@ -1308,9 +1308,12 @@ It is app state: never dirties the project or enters undo.
   resize. `e2e/electron/window-geometry.spec.ts` asserts three untouched launches
   leave byte-identical geometry.
 - Persist `getNormalBounds()`, not `getBounds()` (maximized rect would make
-  restore-down a no-op). Minimized windows are skipped. Fullscreen is restored
-  only on macOS (on Windows/Linux F11 is dev-gated, so a restored fullscreen
-  would be inescapable).
+  restore-down a no-op). The window is read one event-loop turn after its
+  move/resize events, not inside them: a macOS zoom emits `resize` for every
+  animation frame while still reading as a normal window, and a frame read
+  there becomes the restore-down rect. Minimized windows are skipped. Fullscreen
+  is restored only on macOS (on Windows/Linux F11 is dev-gated, so a restored
+  fullscreen would be inescapable).
 - **Never pass `fullscreen: false` (or `undefined`) to the constructor**: Electron
   then disables fullscreen capability (`isFullScreenable()` false, the green
   button degrades to zoom, `setFullScreen(true)` no-ops). The key is spread in

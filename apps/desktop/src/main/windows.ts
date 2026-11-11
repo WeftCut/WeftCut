@@ -173,8 +173,8 @@ export function rememberGeometry(
     // the flags. macOS reports the zoomed/fullscreen frame as "normal" bounds
     // for a window that was never in normal state (zoomed from birth has no
     // pre-zoom rect), which would overwrite a good restore-down size; the true
-    // pre-maximize rect was already captured by the move/resize events that
-    // preceded the state flip.
+    // pre-maximize rect is the one read while the window last rested in normal
+    // state, which is what `captureSoon` guarantees the store holds.
     const held =
       win.isMaximized() || win.isFullScreen() ? store.get(label)?.bounds : undefined
     store.remember(label, {
@@ -183,19 +183,39 @@ export function rememberGeometry(
       fullScreen: win.isFullScreen(),
     })
   }
+  // Read on the next turn of the event loop, once per burst of events.
+  //
+  // LANDMINE (macOS): AppKit runs a zoom animation inside one blocking call and
+  // Electron emits `resize` for every frame of it, with isMaximized() still
+  // false and getNormalBounds() returning the frame in flight. Reading inside
+  // the handler stores the last of those frames as the restore-down rect, so
+  // the next launch un-maximizes to an almost full-screen window. A turn later
+  // the call has returned and the window reports its settled state. It has to
+  // be setImmediate: microtasks and nextTick drain after each emitted event,
+  // still inside the animation.
+  let captureQueued = false
+  const captureSoon = (): void => {
+    if (captureQueued) return
+    captureQueued = true
+    setImmediate(() => {
+      captureQueued = false
+      capture()
+    })
+  }
   // `resize`/`move` fire continuously through a drag — the store debounces them.
-  win.on('resize', capture)
-  win.on('move', capture)
+  win.on('resize', captureSoon)
+  win.on('move', captureSoon)
   // Discrete state flips: capture so the flag is recorded even when the drag
   // handlers never run (Win+Up, double-click drag region, macOS green button).
-  win.on('maximize', capture)
-  win.on('unmaximize', capture)
-  win.on('enter-full-screen', capture)
-  win.on('leave-full-screen', capture)
+  win.on('maximize', captureSoon)
+  win.on('unmaximize', captureSoon)
+  win.on('enter-full-screen', captureSoon)
+  win.on('leave-full-screen', captureSoon)
   // `close` fires while the window is still alive, so bounds are readable here.
-  // Flush synchronously: a move inside the debounce window would otherwise die
-  // with the window. This also covers macOS ⌘W, which closes without quitting
-  // and so never reaches the before-quit flush in index.ts.
+  // Read and flush synchronously: a move inside the debounce window, or one
+  // whose queued read has not run yet, would otherwise die with the window.
+  // This also covers macOS ⌘W, which closes without quitting and so never
+  // reaches the before-quit flush in index.ts.
   win.on('close', () => {
     capture()
     store.flush()

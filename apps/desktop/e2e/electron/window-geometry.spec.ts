@@ -55,13 +55,13 @@ function readGeometry(userDataDir: string): Rect & { maximized: boolean; full_sc
   return doc.windows['main']!
 }
 
-/** The window came back where it was left, allowing for the DPI readback slop
- *  that no accessor pair avoids. */
-function expectWithinDeadband(measured: Rect, saved: Rect): void {
+/** Two readings of one rect agree, allowing for the DPI readback slop that no
+ *  accessor pair avoids. `pair` names them for the failure message. */
+function expectWithinDeadband(actual: Rect, expected: Rect, pair: readonly [string, string] = ['restored', 'saved']): void {
   for (const key of ['x', 'y', 'width', 'height'] as const) {
     expect(
-      Math.abs(measured[key] - saved[key]),
-      `${key}: restored ${measured[key]} vs saved ${saved[key]}`,
+      Math.abs(actual[key] - expected[key]),
+      `${key}: ${pair[0]} ${actual[key]} vs ${pair[1]} ${expected[key]}`,
     ).toBeLessThanOrEqual(DEADBAND_PX)
   }
 }
@@ -141,15 +141,18 @@ test('a maximized window reopens maximized and keeps its restore-down size', asy
   const userDataDir = tmpDir('wc-window-geometry-max-')
 
   const first = await launchApp({ userDataDir })
-  let workArea: Rect
+  let beforeMaximize: Rect
   try {
-    workArea = await primaryWorkArea(first.app)
+    const workArea = await primaryWorkArea(first.app)
     skipUnlessRoomy(workArea)
-    await first.app.evaluate(async ({ BrowserWindow }, rect) => {
+    // Two round trips, as a user does it: the window rests at its new rect,
+    // then it is maximized.
+    beforeMaximize = await first.app.evaluate(async ({ BrowserWindow }, rect) => {
       const win = BrowserWindow.getAllWindows()[0]!
       win.setBounds(rect)
-      win.maximize()
+      return win.getNormalBounds()
     }, targetRect(workArea))
+    await first.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.maximize())
     // Maximize is a window-manager operation: bare xvfb runs without a WM, so
     // the request can be a no-op there. Skip rather than assert a state the
     // platform never entered.
@@ -161,10 +164,12 @@ test('a maximized window reopens maximized and keeps its restore-down size', asy
 
   const saved = readGeometry(userDataDir)
   expect(saved.maximized).toBe(true)
-  // THE LANDMINE THIS ASSERTION GUARDS: getBounds() would have reported the
-  // MAXIMIZED rect here. Persisting that makes "restore down" a no-op on the
-  // next launch, because the normal size would equal the maximized size.
-  expect(saved.width).toBeLessThan(workArea.width)
+  // THE LANDMINE THIS ASSERTION GUARDS: what is stored beside `maximized` has to
+  // be the rect the window had BEFORE it was maximized. getBounds() would have
+  // reported the maximized rect, and on macOS the zoom animation offers a run of
+  // in-between frames that each read as a normal window; persisting either makes
+  // "restore down" on the next launch a no-op or nearly one.
+  expectWithinDeadband(saved, beforeMaximize, ['saved', 'before maximize'])
 
   const second = await launchApp({ userDataDir })
   try {
