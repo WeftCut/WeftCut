@@ -231,7 +231,7 @@ export async function callClipComputeTool(
     if (merged.fps == null && vlm.fps != null) merged.fps = vlm.fps
     if (merged.focus == null && vlm.focus) merged.focus = vlm.focus
   }
-  if (merged.media && tsHost.sourceFiles) {
+  if (merged.media) {
     const unheld = await refuseUnheldSources(tsHost, name, [merged.media])
     if (unheld) return unheld
   }
@@ -377,11 +377,10 @@ function readOnlyTools(backend: Backend): Promise<Set<string>> {
  *  holds them: the answer would be cached under the bytes the item records
  *  (ADR 0153). Null when every source is there and holds them. An item still
  *  importing, or none at all, is left to the tool. */
-export async function refuseUnheldSources(tsHost: Pick<TsActorHost, 'sourceFiles'>, name: string, sources: unknown[]): Promise<ServerResult | null> {
-  if (!tsHost.sourceFiles) return null
+export async function refuseUnheldSources(tsHost: Pick<TsActorHost, 'poolFiles'>, name: string, sources: unknown[]): Promise<ServerResult | null> {
   for (const media of sources as (MediaItem | null | undefined)[]) {
     if (!media) continue
-    const state = await tsHost.sourceFiles.settle(media)
+    const state = await tsHost.poolFiles.settle(media)
     if (state === 'missing') return toolErrorResult({ code: 'invalid_request', message: `${name}: the source file ${media.path_abs} is missing — import the original file again to restore it`, data: { error: 'SourceMissing', media_id: media.id } })
     if (state === 'changed') return toolErrorResult({ code: 'invalid_request', message: `${name}: ${media.path_abs} was changed outside WeftCut and no longer holds this media — import the original file again to restore it, or import the new file as new media`, data: { error: 'SourceChanged', media_id: media.id } })
   }

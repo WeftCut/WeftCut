@@ -184,6 +184,17 @@ join(workspace, path_rel)`, so a moved workspace keeps its references. Items wit
 their stored `path_abs`. A missing file shows as unavailable; the project still
 loads.
 
+What the disk holds for each item is read by `state/poolFiles.ts`: the source's
+state (present, missing or changed; ADR 0153) and whether each derivative slot
+(`quick_proxy`, `full_proxy`, `conform_path`) names a file that is there. The
+summary shows a slot whose file is gone as empty ("not ready"). An item's files
+are read when it is first seen and again whenever the model replaces it (a job's
+write-back, an import, a relink), so an edit that leaves the pool alone reads
+none. Changes made outside the app are read on window focus, off the main
+thread, and after a failed derivative job; the summary an export starts from
+reads every file again. Opening, creating or saving as a project forgets what
+was read.
+
 `file_hash_blake3` is the content identity (relink, cache keys). Import shows the
 clip at once from a stat-only probe with a provisional hash; a standalone BLAKE3
 pass sets the real hash before any derivative job is enqueued, so jobs are always

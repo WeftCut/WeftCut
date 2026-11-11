@@ -1,11 +1,16 @@
 // apps/desktop/src/main/state/__tests__/summary.projection.test.ts
 //
 // Focused unit tests for buildProjectSummary — the pure projection from
-// Project + HistoryStatus + fileExists into the renderer's ProjectSummary view.
+// Project + HistoryStatus + the pool's file facts into the renderer's
+// ProjectSummary view.
 import { describe, it, expect } from 'vitest'
 import { buildProjectSummary, type ProjectSummary } from '../summary'
 import { freshActor, aRollId, bRollId } from './pbt/harness'
 import { mediaItemTemplate } from '../mutations/media'
+import type { MediaFiles } from '../poolFiles'
+
+const NONE_THERE = (): MediaFiles => ({ source: 'missing', quick_proxy: false, full_proxy: false, conform: false })
+const ALL_THERE = (): MediaFiles => ({ source: 'present', quick_proxy: true, full_proxy: true, conform: true })
 
 /// The root entry — what a one-composition project's whole timeline is.
 const root = (s: ProjectSummary) => s.compositions[s.root_id]!
@@ -13,7 +18,7 @@ const root = (s: ProjectSummary) => s.compositions[s.root_id]!
 describe('ProjectSummary projection', () => {
   it('projects an empty project with the two reserved tracks and zero layers', () => {
     const a = freshActor()
-    const s = buildProjectSummary(a.snapshot(), a.historyStatus(), () => false)
+    const s = buildProjectSummary(a.snapshot(), a.historyStatus(), NONE_THERE)
     const r = root(s)
 
     // Top-level counts
@@ -47,7 +52,7 @@ describe('ProjectSummary projection', () => {
   it('reflects one added color layer in layer_count, duration_us, and tracks', () => {
     const a = freshActor()
     a.dispatch('add_layer', { track: aRollId(a), kind: 'color', t_start_us: 0, t_end_us: 5_000_000 })
-    const s = buildProjectSummary(a.snapshot(), a.historyStatus(), () => false)
+    const s = buildProjectSummary(a.snapshot(), a.historyStatus(), NONE_THERE)
 
     expect(s.layer_count).toBe(1)
     // duration_us autofits to the layer end when not pinned
@@ -68,7 +73,7 @@ describe('ProjectSummary projection', () => {
     const a = freshActor()
     a.dispatch('add_layer', { track: aRollId(a), kind: 'color', t_start_us: 0, t_end_us: 3_000_000 })
     a.dispatch('add_layer', { track: bRollId(a), kind: 'color', t_start_us: 1_000_000, t_end_us: 4_000_000 })
-    const s = buildProjectSummary(a.snapshot(), a.historyStatus(), () => false)
+    const s = buildProjectSummary(a.snapshot(), a.historyStatus(), NONE_THERE)
 
     expect(s.layer_count).toBe(2)
     // duration_us is max of all layer ends
@@ -85,14 +90,13 @@ describe('ProjectSummary projection', () => {
     expect(bRoll.layers[0].t_end_us).toBe(4_000_000)
   })
 
-  it('flags a media item as unavailable when fileExists returns false for its path', () => {
+  it('flags a media item as unavailable when its source is missing', () => {
     const a = freshActor()
     // Import a media item into the pool with a known path
     const mediaId = 'aaaaaaaa-0000-0000-0000-000000000001'
     a.dispatch('add_media_item', { media: mediaItemTemplate(mediaId, 'Video', 10_000_000) })
 
-    // fileExists always returns false → media.available should be false
-    const s = buildProjectSummary(a.snapshot(), a.historyStatus(), () => false)
+    const s = buildProjectSummary(a.snapshot(), a.historyStatus(), NONE_THERE)
 
     expect(s.media).toHaveLength(1)
     const m = s.media[0]
@@ -102,13 +106,12 @@ describe('ProjectSummary projection', () => {
     expect(m.decode_route).toEqual({ route: 'bypass' })
   })
 
-  it('marks a media item available and returns the label when fileExists returns true', () => {
+  it('marks a media item available and returns the label when its source is present', () => {
     const a = freshActor()
     const mediaId = 'bbbbbbbb-0000-0000-0000-000000000002'
     a.dispatch('add_media_item', { media: mediaItemTemplate(mediaId, 'Video', 8_000_000) })
 
-    // fileExists always returns true → available is true
-    const s = buildProjectSummary(a.snapshot(), a.historyStatus(), () => true)
+    const s = buildProjectSummary(a.snapshot(), a.historyStatus(), ALL_THERE)
 
     expect(s.media).toHaveLength(1)
     const m = s.media[0]
@@ -122,14 +125,14 @@ describe('ProjectSummary projection', () => {
     const a = freshActor()
 
     // Fresh actor: nothing to undo, nothing to redo
-    const before = buildProjectSummary(a.snapshot(), a.historyStatus(), () => false)
+    const before = buildProjectSummary(a.snapshot(), a.historyStatus(), NONE_THERE)
     expect(before.history.can_undo).toBe(false)
     expect(before.history.can_redo).toBe(false)
     expect(before.history.cursor).toBe(0)
 
     // After a mutation: can undo, cannot redo; cursor advanced off Initial
     a.dispatch('add_layer', { track: aRollId(a), kind: 'color', t_start_us: 0, t_end_us: 2_000_000 })
-    const after = buildProjectSummary(a.snapshot(), a.historyStatus(), () => false)
+    const after = buildProjectSummary(a.snapshot(), a.historyStatus(), NONE_THERE)
     expect(after.history.can_undo).toBe(true)
     expect(after.history.can_redo).toBe(false)
     expect(after.history.len).toBeGreaterThan(before.history.len)
@@ -137,7 +140,7 @@ describe('ProjectSummary projection', () => {
 
     // After undo: cursor returns to the Initial entry (0); can_redo becomes true
     a.dispatch('undo', {})
-    const undone = buildProjectSummary(a.snapshot(), a.historyStatus(), () => false)
+    const undone = buildProjectSummary(a.snapshot(), a.historyStatus(), NONE_THERE)
     expect(undone.history.can_undo).toBe(false)
     expect(undone.history.can_redo).toBe(true)
     expect(undone.history.cursor).toBe(0)
@@ -155,16 +158,16 @@ describe('ProjectSummary projection', () => {
       format_version: 7,
     }
 
-    const buildWith = (fileExists: (p: string) => boolean) => {
+    const buildWith = (files: () => MediaFiles) => {
       const a = freshActor()
       const item = mediaItemTemplate(mediaId, 'Video', 6_000_000)
       item.decode_route = { ...proxiedRoute }
       a.dispatch('add_media_item', { media: item })
-      return buildProjectSummary(a.snapshot(), a.historyStatus(), fileExists)
+      return buildProjectSummary(a.snapshot(), a.historyStatus(), files)
     }
 
     // Missing media → both readiness slots nullified; format_version preserved.
-    const missing = buildWith(() => false)
+    const missing = buildWith(NONE_THERE)
     expect(missing.media[0].decode_route).toEqual({
       route: 'proxied',
       quick_proxy: null,
@@ -173,12 +176,28 @@ describe('ProjectSummary projection', () => {
     })
 
     // Present media → both readiness paths survive intact.
-    const present = buildWith(() => true)
+    const present = buildWith(ALL_THERE)
     expect(present.media[0].decode_route).toEqual({
       route: 'proxied',
       quick_proxy: 'workspace/quick.mp4',
       full_proxy: 'workspace/full.mp4',
       format_version: 7,
+    })
+  })
+
+  it('gates each derivative slot by its own file, independent of the source', () => {
+    const a = freshActor()
+    const mediaId = 'cccccccc-0000-0000-0000-000000000004'
+    const item = mediaItemTemplate(mediaId, 'Video', 6_000_000)
+    item.decode_route = { route: 'proxied', quick_proxy: 'workspace/quick.mp4', full_proxy: 'workspace/full.mp4', format_version: 7 }
+    item.conform_path = 'workspace/a.conform'
+    a.dispatch('add_media_item', { media: item })
+    const s = buildProjectSummary(a.snapshot(), a.historyStatus(),
+      () => ({ source: 'missing', quick_proxy: true, full_proxy: false, conform: true }))
+    expect(s.media[0]).toMatchObject({
+      available: false,
+      decode_route: { route: 'proxied', quick_proxy: 'workspace/quick.mp4', full_proxy: null, format_version: 7 },
+      conform_path: 'workspace/a.conform',
     })
   })
 
@@ -198,7 +217,7 @@ describe('ProjectSummary projection', () => {
     const itemWithoutAudio = mediaItemTemplate(mediaWithoutAudioId, 'Video', 4_000_000, false)
     a.dispatch('add_media_item', { media: itemWithoutAudio })
 
-    const s = buildProjectSummary(a.snapshot(), a.historyStatus(), () => true)
+    const s = buildProjectSummary(a.snapshot(), a.historyStatus(), ALL_THERE)
 
     // Sort to ensure stable ordering by id.
     const mediaByLabel = s.media.sort((x, y) => x.id.localeCompare(y.id))

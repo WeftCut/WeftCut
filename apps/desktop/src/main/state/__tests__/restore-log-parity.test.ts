@@ -30,7 +30,10 @@ function makeInMemoryDeps() {
   }
   const deps = {
     send: (_event: string, _payload: unknown) => {},
-    fileExists: (p: string) => memFs.exists(p),
+    poolFs: {
+      stat: (p: string) => (memFs.exists(p) ? { size: 0, mtimeSecs: 0 } : null),
+      statAsync: async (p: string) => (memFs.exists(p) ? { size: 0, mtimeSecs: 0 } : null),
+    },
     fs: memFs,
     join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/'),
     napi: memNapi,

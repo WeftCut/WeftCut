@@ -57,7 +57,10 @@ function host(recents: { parent?: string | null } = {}) {
   const workspaceDir = vi.fn((): string | null => null)
   const ts = createTsActorHost({
     send: (event: string, payload: unknown) => { sent.push([event, payload]) },
-    fileExists: (p: string) => fs.exists(p),
+    poolFs: {
+      stat: (p: string) => (fs.exists(p) ? { size: 0, mtimeSecs: 0 } : null),
+      statAsync: async (p: string) => (fs.exists(p) ? { size: 0, mtimeSecs: 0 } : null),
+    },
     fs,
     join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/'),
     napi: { commitWorkspace: async () => {}, pushRecent: () => {}, setLastNewProjectParent: () => {}, enqueueJobsForMedia: async () => {} },

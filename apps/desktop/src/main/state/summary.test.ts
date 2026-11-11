@@ -9,6 +9,7 @@ import { blankProject } from './model'
 import { createActor } from './actor'
 import { mkProject, root, withGroup, groupedProject } from './__tests__/fixtures/project'
 import { applyAddLayer, colorParams } from './mutations/add'
+import type { MediaFiles } from './poolFiles'
 
 const stat = <T>(value: T) => ({ mode: 'Static' as const, value })
 const xf = () => ({ position: { mode: 'XY' as const, x: stat(0), y: stat(0) },  scale_x: stat(1), scale_y: stat(1), rotation_deg: stat(0), anchor_x: stat(0.5), anchor_y: stat(0.5), scale_linked: true })
@@ -235,7 +236,8 @@ describe('layerParamsView carries the transform anchor on every visual kind', ()
   }
 })
 
-const NEVER = () => false // gate/test fileExists predicate
+// No pool file is there.
+const NEVER = (): MediaFiles => ({ source: 'missing', quick_proxy: false, full_proxy: false, conform: false })
 
 describe('buildProjectSummary (mirror commands/mod.rs:322 build_project_summary)', () => {
   it('blank project: counts, composition, canonical roles, history', () => {
@@ -287,8 +289,8 @@ describe('buildProjectSummary (mirror commands/mod.rs:322 build_project_summary)
     expect(s.media[0]).toMatchObject({ label: 'clip.bin', kind: 'Audio', available: false, decode_route: { route: 'bypass' } })
     expect(s.media[0].changed).toBeUndefined()
     // A file that is there but holds other bytes is unavailable, and says why.
-    const changed = buildProjectSummary(actor.snapshot(), actor.historyStatus(), () => true,
-      (m) => (m.id.endsWith('bb') ? 'changed' : 'present'))
+    const changed = buildProjectSummary(actor.snapshot(), actor.historyStatus(),
+      (m) => ({ ...NEVER(), source: m.id.endsWith('bb') ? 'changed' : 'present' }))
     expect(changed.media.map((m) => [m.available, m.changed ?? false])).toEqual([[false, true], [true, false]])
     const t0 = s.compositions[s.root_id]!.tracks[0]!
     expect(t0.kind).toBe('Video')

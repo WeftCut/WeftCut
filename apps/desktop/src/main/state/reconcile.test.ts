@@ -388,7 +388,7 @@ describe('reconcile-on-commit: anchored markers follow their clip', () => {
     const { actor, clip, ids } = anchoredFixture([{ srcUs: 2_500_000, endTUs: 2_500_000 }])
     const shownEnd = (): number | null => {
       const p = actor.snapshot()
-      const summary = buildProjectSummary(p, actor.historyStatus(), () => true)
+      const summary = buildProjectSummary(p, actor.historyStatus(), () => ({ source: 'present', quick_proxy: true, full_proxy: true, conform: true }))
       return summary.compositions[p.root_id].markers.find((m) => m.id === ids[0])!.end_t_us
     }
     expect(actor.dispatch('trim_layer', { layer: clip, edge: 'out', new_t_us: 2_000_000 }).ok).toBe(true)

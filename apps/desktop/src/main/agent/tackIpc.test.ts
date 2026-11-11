@@ -9,7 +9,7 @@ function makeHost() {
   const send = vi.fn()
   const noopFs = { exists: () => false, readFile: () => '', writeFile: () => {}, mkdirp: () => {}, copyFile: () => {}, readdir: () => [], rm: () => {} }
   const host = createTsActorHost({
-    send, fileExists: () => false,
+    send, poolFs: { stat: () => null, statAsync: async () => null },
     fs: noopFs as any, join: (...p: string[]) => p.join('/'),
     napi: { commitWorkspace: async () => {}, pushRecent: () => {}, setLastNewProjectParent: () => {}, enqueueJobsForMedia: () => {} } as any,
     compute: { probeMedia: async () => '{}', hashMediaSource: async () => 'h', parseSubtitles: async () => '{}', synthesizeSpeechCompute: async () => '{}' },

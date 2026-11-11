@@ -29,7 +29,9 @@ function tsHostStub() {
     statPath: () => ({ kind: 'file' as const, readable: true }),
     snapshotComposition: () => root(actor.snapshot()),
   }
-  return { actor, mcpCall: (name: string, argsJson: string) => actor.mcpCall(name, argsJson), hybridDeps, mediaImporter: createMediaImporter(hybridDeps), handleInvoke: async () => null, start: () => {}, stop: () => {}, beginAgentSessionSlot: () => {} } as any
+  return { actor, mcpCall: (name: string, argsJson: string) => actor.mcpCall(name, argsJson), hybridDeps, mediaImporter: createMediaImporter(hybridDeps), handleInvoke: async () => null, start: () => {}, stop: () => {}, beginAgentSessionSlot: () => {},
+    // Every source holds its bytes unless a test says otherwise.
+    poolFiles: { settle: vi.fn(async () => 'present') } } as any
 }
 // The catalog a fake advertises is what the host judges "known tool" by, so it
 // is the committed Rust snapshot and not an empty list.
@@ -298,7 +300,7 @@ describe('a source whose file no longer holds its bytes', () => {
   const host = (state: 'present' | 'missing' | 'changed') => {
     const ts = tsHostStub()
     ts.actor.dispatch('add_media', { id: MID, kind: 'Audio', duration_us: 90_000_000 })
-    ts.sourceFiles = { state: () => state, settle: vi.fn(async () => state) }
+    ts.poolFiles = { settle: vi.fn(async () => state) }
     return ts
   }
 
@@ -316,6 +318,6 @@ describe('a source whose file no longer holds its bytes', () => {
     const spy = vi.fn(async (_name: string, _args: string) => '{"ok":true,"result":{"content":[]}}')
     await handleCallTool(fakeBackend(spy), () => ts, 'analyze_audio', { media_id: MID })
     expect(spy).toHaveBeenCalledOnce()
-    expect(ts.sourceFiles.settle).toHaveBeenCalledOnce()
+    expect(ts.poolFiles.settle).toHaveBeenCalledOnce()
   })
 })

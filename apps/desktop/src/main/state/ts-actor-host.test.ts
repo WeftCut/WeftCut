@@ -77,7 +77,10 @@ describe('createTsActorHost — persistence-route integration', () => {
 
     const deps = {
       send: (event: string, payload: unknown) => { sent.push({ event, payload }) },
-      fileExists: (p: string) => memFs.exists(p),
+      poolFs: {
+        stat: (p: string) => (memFs.exists(p) ? { size: 0, mtimeSecs: 0 } : null),
+        statAsync: async (p: string) => (memFs.exists(p) ? { size: 0, mtimeSecs: 0 } : null),
+      },
       fs: memFs,
       join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/'),
       napi: memNapi,
@@ -311,10 +314,12 @@ describe('createTsActorHost — persistence-route integration', () => {
     const beforeJob = host.publication().version
     expect(applyDerivativesEvent(host.actor, { media_id: mediaId, patch: { conform_path: '/conform.wav' } }).ok).toBe(true)
     expect(host.publication().version).toEqual({ ...beforeJob, revision: beforeJob.revision + 1 })
-    deps.fileExists = vi.fn(() => { throw new Error('projection failed') })
+    deps.poolFs.stat = vi.fn(() => { throw new Error('projection failed') })
+    // The item changes again, so the next projection reads its files.
+    expect(applyDerivativesEvent(host.actor, { media_id: mediaId, patch: { conform_path: '/conform-2.wav' } }).ok).toBe(true)
     const result = await host.published(() => host.handleInvoke('add_marker', { tUs: 1_000_000 }))
     expect(result.publication).not.toBeNull()
-    expect(deps.fileExists).not.toHaveBeenCalled()
+    expect(deps.poolFs.stat).not.toHaveBeenCalled()
     await expect(host.handleInvoke('project_publication', {})).rejects.toThrow('projection failed')
     expect(host.openedProject()).not.toBeNull()
     host.stop()

@@ -24,7 +24,7 @@ import { REVIEW_CHANGED_EVENT, type ReviewActivityArgs, type ReviewActivityView,
 import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
 import { recoverInterruptedImports } from './importRecovery'
 import { captureImportSession, createMediaImporter, type MediaImporter } from './mediaImport'
-import { createSourceFiles, type SourceFiles } from './sourceFiles'
+import { createPoolFiles, type PoolFiles, type PoolFilesFs } from './poolFiles'
 import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
 import type { UserMotifStore } from '../motif/store'
 import { runMotifTool, type MotifToolDeps } from '../motif/motifTools'
@@ -59,8 +59,8 @@ export interface TsActorHostDeps {
    *  files or their names changed, and with them the `media://{id}` list; or a
    *  Motif publication was proposed, approved or rejected (`motifs://current`). */
   mcpResourcesChanged?: () => void
-  /** fs.existsSync, for buildProjectSummary's media-availability checks. */
-  fileExists: (absPath: string) => boolean
+  /** Stats of the pool's files (poolFiles.ts) — node:fs in production. */
+  poolFs: PoolFilesFs
   /** Combined OrchestratorFs & AutosaveFs adapter — node:fs in production, in-memory in tests. */
   fs: OrchestratorFs & AutosaveFs
   /** Directory-scan/stat/rename shell for the open-time media relink self-heal
@@ -204,11 +204,10 @@ export interface TsActorHost {
   /** The host's one importer: the renderer's and every agent's imports of the
    *  same file join through it (server.ts passes the agent as `by`). */
   mediaImporter: MediaImporter
-  /** Whether a pool item's file still holds its bytes; null without a stat
-   *  shell. Readers of a source's bytes settle it first (ADR 0153). */
-  sourceFiles?: SourceFiles | null
-  /** Republish if a pool file's state changed since the last summary. */
-  refreshSources?: () => void
+  /** What the disk holds for each pool item, as the summary shows it.
+   *  Readers of a source's bytes settle it first (ADR 0153); a change found
+   *  by a refresh, recheck or settle republishes. */
+  poolFiles: PoolFiles
   /** Host-level Motif tool dispatch (catalog read + authoring + install). Both
    *  the renderer `handleInvoke('motif')` and the MCP `route==='motif'` path use it. */
   motifTool: (name: string, args: Record<string, unknown>) => unknown
@@ -299,18 +298,18 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   let workspaceTransitions = 0
   // An item whose bytes must be read first is enqueued after the read, and
   // only into the project it was read for.
-  const enqueuePreparedDerivatives = makeEnqueueDerivatives(deps.napi, deps.relinkFs ? async (item) => {
+  const enqueuePreparedDerivatives = makeEnqueueDerivatives(deps.napi, async (item) => {
     const assertCurrent = captureImportSession(hybridDeps)
-    const holds = (await sourceFiles!.settle(item)) === 'present'
+    const holds = (await poolFiles.settle(item)) === 'present'
     assertCurrent()
     return holds ? actor.snapshot().media_pool[item.id] ?? null : null
-  } : undefined)
+  })
   const enqueueDerivatives = (project: import('./model').Project): void => {
     enqueuePreparedDerivatives(project)
     void recoverInterruptedImports(hybridDeps, (mediaId, error) => {
       deps.emitLog?.({ level: 'error', category: { kind: 'Import' }, source: { kind: 'System' },
         message: `Import recovery failed: ${String(error)}`, details: { media_id: mediaId } })
-    }, sourceFiles ? async (item) => (await sourceFiles.settle(item)) === 'present' : undefined).catch(error => { console.warn('[media] import recovery stopped', error) })
+    }, async (item) => (await poolFiles.settle(item)) === 'present').catch(error => { console.warn('[media] import recovery stopped', error) })
   }
   // Open-time relink self-heal: content identity comes from the same BLAKE3
   // napi the import hash pass uses; the report lands as a status-log row.
@@ -399,10 +398,11 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   }
   const mediaImporter = createMediaImporter(hybridDeps)
 
-  // Whether each pool item's file still holds its bytes (ADR 0153). Without a
-  // stat shell (tests), the summary asks existence alone.
-  const sourceFiles: SourceFiles | null = deps.relinkFs ? createSourceFiles({
-    stat: (p) => deps.relinkFs!.statFile(p),
+  // What the disk holds for each pool item (ADR 0153), read once per item
+  // object and cached; see poolFiles.ts for what reads it again.
+  const poolFiles: PoolFiles = createPoolFiles({
+    stat: (p) => deps.poolFs.stat(p),
+    statAsync: (p) => deps.poolFs.statAsync(p),
     hash: (p) => deps.compute.hashMediaSource(p),
     confirmed: (item, mtimeSecs) => {
       const now = actor.snapshot().media_pool[item.id]
@@ -410,29 +410,15 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       actor.dispatch('set_media_workspace_paths', { media: item.id, paths: {
         path_abs: now.path_abs, path_rel: now.path_rel, file_hash_blake3: now.file_hash_blake3, file_size: now.file_size, file_mtime: mtimeSecs } })
     },
-    settled: () => refreshSources(),
-  }) : null
-  // What the last summary said of each pool file, to republish only on a change.
-  let summarizedSources = ''
-  function summaryOf(project: import('./model').Project, history: import('./history').HistoryStatus) {
-    if (!sourceFiles) return buildProjectSummary(project, history, deps.fileExists)
-    const seen: string[] = []
-    const summary = buildProjectSummary(project, history, deps.fileExists, (m) => {
-      const state = sourceFiles.state(m)
-      seen.push(`${m.id}:${state}`)
-      return state
-    })
-    summarizedSources = seen.join(',')
-    return summary
-  }
-  /** Republish when a pool file is no longer what the last summary said: a
-   *  background read settled it, or the window came back after the user was
-   *  elsewhere (index.ts). Nothing in the project changed, so this is a
-   *  publication alone. */
-  function refreshSources(): void {
-    if (!sourceFiles || replacing || publishedProject === null) return
-    const now = Object.values(publishedProject.media_pool).map((m) => `${m.id}:${sourceFiles.state(m)}`).join(',')
-    if (now !== summarizedSources) publishChange()
+    // A pool file is no longer what a summary said. Nothing in the project
+    // changed, so this is a publication alone. Mid-replacement it is dropped:
+    // the replacement clears the cache, so the next summary reads it anew.
+    changed: () => { if (!replacing && publishedProject !== null) publishChange() },
+  })
+  /** `fresh` re-reads every pool file first: the view is about to be acted
+   *  on (export start), not only shown. */
+  function summaryOf(project: import('./model').Project, history: import('./history').HistoryStatus, fresh = false) {
+    return buildProjectSummary(project, history, poolFiles.read(project.media_pool, fresh))
   }
 
   // Serialize all cache-root/session changes, including Save As and Close.
@@ -476,6 +462,9 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       }
       finally {
         replacing = false
+        // Another folder's files, or the same files under another Cache/:
+        // nothing read before the replacement is known to hold.
+        poolFiles.clear()
         const pending = deferredChange as { event: ChangeEvent; traceId?: string } | null
         if (replacementOccurred || pending || (succeeded && (!closing || publishedProject !== null))) {
           publishChange(pending?.event, pending?.traceId,
@@ -824,7 +813,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       }
       case 'summary':
         return runEditTrace(editTraceId(args[EDIT_TRACE_ARG]), 'main.summary',
-          () => summaryOf(actor.snapshot(), actor.historyStatus()))
+          () => summaryOf(actor.snapshot(), actor.historyStatus(), true))
       case 'historyView':
         // The panel wants the WHOLE stack, so the limit is the cap itself — asked
         // of the actor rather than restated here. MCP's `project://history`
@@ -999,8 +988,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     mcpCall,
     hybridDeps,
     mediaImporter,
-    sourceFiles,
-    refreshSources,
+    poolFiles,
     motifTool: runMotif,
     refreshMotifCatalog,
     start() {

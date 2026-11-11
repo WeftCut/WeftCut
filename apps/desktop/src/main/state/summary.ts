@@ -8,7 +8,7 @@ import { mediaPictureKey, parseMediaRef } from '../../shared/motifs/mediaProp'
 // apps/desktop/src/main/state/summary.ts
 import type { Animated, Composition, Effect, Link, Layer, LayerParams, Marker, MarkerAnchor, MediaItem, Outline, Project, Rational, Rgba, RoleMixSettings, Shadow, TextAlign, TextAnimPreset, Track, TransitionKind, Uuid, VAlign } from './model'
 import type { HistoryStatus } from './history'
-import type { SourceState } from './sourceFiles'
+import type { MediaFiles } from './poolFiles'
 import { hasSourceWindow } from './mutations/helpers'
 import { snapFrameRound } from './snap'
 import type { DecodeRoute } from '../../shared/decode-route'
@@ -434,9 +434,8 @@ export const TRACK_ROLE_WIRE: Record<string, string> = { ARoll: 'a-roll', BRoll:
 const ROLE_ORDER = ['dialogue', 'music', 'sfx', 'voiceover'] as const
 const DEFAULT_ROLE: RoleMixSettings = { gain_db: 0, muted: false, solo: false }
 
-/** The read-only IPC view the renderer pulls on project:changed. Pure;
- *  `fileExists` is injected (filesystem fields), and `sourceState` (a pool
- *  item's file: sourceFiles.ts), else existence alone.
+/** The read-only IPC view the renderer pulls on project:changed. Pure: what
+ *  the disk holds for each pool item comes from `files` (poolFiles.ts).
  *
  *  Every composition is projected, keyed by id; the renderer opens one of them
  *  and export reads the root. The projection of a composition is a pure
@@ -444,35 +443,35 @@ const DEFAULT_ROLE: RoleMixSettings = { gain_db: 0, muted: false, solo: false }
  *  its Group references), so a one-composition project's root entry is exactly
  *  the timeline the flat summary used to carry. */
 export function buildProjectSummary(
-  p: Project, history: HistoryStatus, fileExists: (absPath: string) => boolean,
-  sourceState: (item: MediaItem) => SourceState = (m) => (fileExists(m.path_abs) ? 'present' : 'missing'),
+  p: Project, history: HistoryStatus, files: (item: MediaItem) => MediaFiles,
 ): ProjectSummary {
   const all = Object.values(p.compositions)
   const track_count = all.reduce((n, c) => n + c.tracks.length, 0)
   const layer_count = all.reduce((n, c) => n + c.tracks.reduce((m, t) => m + t.layers.length, 0), 0)
 
-  const fileOrNull = (path: string | null | undefined): string | null => (path && fileExists(path) ? path : null)
-  // The decode route's readiness paths are existence-gated the same way the
-  // flat proxy fields were: a serialized-but-deleted proxy must read as "not
-  // ready" (null), never as a stale path. Gate each variant's slots in place.
-  const routeForSummary = (r: DecodeRoute): DecodeRoute => {
+  const there = (path: string | null, held: boolean): string | null => (path && held ? path : null)
+  // The decode route's readiness paths are existence-gated: a
+  // serialized-but-deleted proxy must read as "not ready" (null), never as a
+  // stale path. Gate each variant's slots in place.
+  const routeForSummary = (r: DecodeRoute, f: MediaFiles): DecodeRoute => {
     switch (r.route) {
       case 'bypass': return r
-      case 'direct-export': return { route: 'direct-export', quick_proxy: fileOrNull(r.quick_proxy) }
+      case 'direct-export': return { route: 'direct-export', quick_proxy: there(r.quick_proxy, f.quick_proxy) }
       case 'proxied': return {
-        route: 'proxied', quick_proxy: fileOrNull(r.quick_proxy),
-        full_proxy: fileOrNull(r.full_proxy), format_version: r.format_version,
+        route: 'proxied', quick_proxy: there(r.quick_proxy, f.quick_proxy),
+        full_proxy: there(r.full_proxy, f.full_proxy), format_version: r.format_version,
       }
       case 'native-sw': return {
-        route: 'native-sw', quick_proxy: fileOrNull(r.quick_proxy),
-        full_proxy: fileOrNull(r.full_proxy), format_version: r.format_version,
+        route: 'native-sw', quick_proxy: there(r.quick_proxy, f.quick_proxy),
+        full_proxy: there(r.full_proxy, f.full_proxy), format_version: r.format_version,
       }
     }
   }
   const media: MediaSummary[] = Object.values(p.media_pool).map((m: MediaItem) => {
     const video = m.metadata.video as Record<string, unknown> | null | undefined
     const audio = m.metadata.audio as Record<string, unknown> | null | undefined
-    const source = sourceState(m)
+    const f = files(m)
+    const source = f.source
     return {
       id: m.id, label: mediaLabel(m), path: m.path_abs, kind: m.kind, duration_us: m.metadata.duration_us,
       start_pts_us: m.metadata.start_pts_us ?? null,
@@ -480,13 +479,13 @@ export function buildProjectSummary(
       width: (video?.width as number | undefined) ?? null, height: (video?.height as number | undefined) ?? null,
       size_bytes: m.file_size, available: source === 'present', ...(source === 'changed' ? { changed: true } : {}),
       content_hash: /^[a-f0-9]{64}$/i.test(m.file_hash_blake3) ? m.file_hash_blake3 : null,
-      decode_route: routeForSummary(m.decode_route),
+      decode_route: routeForSummary(m.decode_route, f),
       codec: (video?.codec as string | undefined) ?? null, pix_fmt: (video?.pix_fmt as string | undefined) ?? null,
       color_matrix: (video?.color_matrix as string | undefined) ?? null, color_range: (video?.color_range as string | undefined) ?? null,
       color_primaries: (video?.color_primaries as string | undefined) ?? null, color_transfer: (video?.color_transfer as string | undefined) ?? null,
       video_start_pts_us: (video?.start_pts_us as number | undefined) ?? null,
       audio_start_pts_us: (audio?.start_pts_us as number | undefined) ?? null,
-      conform_path: fileOrNull(m.conform_path),
+      conform_path: there(m.conform_path, f.conform),
       audio_channels: (audio?.channels as number | undefined) ?? null,
     }
   })

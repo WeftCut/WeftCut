@@ -3,8 +3,11 @@ import fc from 'fast-check'
 import { freshActor, wireSnapshot, canonicalSnapshot, aRollId, bRollId, PBT_SEED, PBT_RUNS, wireRoot } from './harness'
 import { checkAllInvariants } from './invariants'
 import { buildProjectSummary } from '../../summary'
+import type { MediaFiles } from '../../poolFiles'
 import { createPublicationAnswers } from '../../publicationAnswers'
 import { applySnapshotPatches } from '../../../../shared/snapshotPatch'
+
+const ALL_THERE = (): MediaFiles => ({ source: 'present', quick_proxy: true, full_proxy: true, conform: true })
 
 // ── Seeded media ──────────────────────────────────────────────────────────────
 // Finite durations make video/audio layers — and add/update_transition's
@@ -252,7 +255,7 @@ describe('publication differences', () => {
   it('rebuild the full projection after every op, undo and redo included', () => {
     fc.assert(fc.property(fc.array(opArb, { maxLength: 40, size: 'max' }), (ops) => {
       const actor = seedTimeline(seededActor())
-      const project = () => buildProjectSummary(actor.snapshot(), actor.historyStatus(), () => true)
+      const project = () => buildProjectSummary(actor.snapshot(), actor.historyStatus(), ALL_THERE)
       const answer = createPublicationAnswers<ReturnType<typeof project>>()
       let revision = 0
       let held = project()
@@ -270,7 +273,7 @@ describe('publication differences', () => {
 
   it('stop at unchanged layers: a commit touching one layer sends only that layer', () => {
     const actor = seedTimeline(seededActor())
-    const project = () => buildProjectSummary(actor.snapshot(), actor.historyStatus(), () => true)
+    const project = () => buildProjectSummary(actor.snapshot(), actor.historyStatus(), ALL_THERE)
     const answer = createPublicationAnswers<ReturnType<typeof project>>()
     const before = project()
     const base = answer({ version: { session: 1, revision: 0 }, summary: before }, null).viewId

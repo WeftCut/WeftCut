@@ -54,11 +54,12 @@ Pool files changed outside the app:
 - **A copy is the item's file only if it holds the recorded bytes.** The
   workspace-copy write-back compares hashes; a mismatched copy is deleted and
   the item keeps its source path.
-- **One stat screens every pool file** (`state/sourceFiles.ts`) against the
+- **One stat screens every pool file** (`state/poolFiles.ts`) against the
   item's `file_size`/`file_mtime`; no field is added to `project.json`. Missing:
   missing. Different size: `changed`. Different mtime only: bytes are hashed
   once in the background, one file at a time; a match records the new mtime.
-  The summary rebuilds on every publication and on window focus.
+  The stat is cached per item object and taken again when the item changes,
+  on window focus and after a failed job (issue #144).
 - **`changed` is unavailable, like missing.** The pool shows a Changed badge;
   nothing is deleted. Importing the original again relinks by bytes; importing
   the new file makes a new item. Swapping media behind placed clips is a

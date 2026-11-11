@@ -45,6 +45,7 @@ async function setup() {
     actor, agent, computeJobs,
     mcpCall: (name: string, argsJson: string) => actor.mcpCall(name, argsJson),
     motifTool: () => [], handleInvoke: async () => null, start: () => {}, stop: () => {},
+    poolFiles: { settle: async () => 'present' },
   } as never
   const server = buildMcpServer(backend as never, { getTsHost: () => ts })
   const [clientT, serverT] = InMemoryTransport.createLinkedPair()

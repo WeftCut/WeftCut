@@ -420,9 +420,9 @@ async function createWindow(): Promise<BrowserWindow> {
   // quits. Wrapped rather than passed by reference so no emitter argument can
   // ever reach the gate.
   win.on('closed', () => quitIfLastUserWindowClosed())
-  // Back from elsewhere, where the user may have changed a pool file: the
-  // summary says so if it did (ADR 0153).
-  win.on('focus', () => tsHost?.refreshSources?.())
+  // Back from elsewhere, where the user may have changed a pool file or a
+  // derivative: the summary says so if they did (ADR 0153).
+  win.on('focus', () => { void tsHost?.poolFiles.refresh() })
 
   // Forward the fullscreen state so the renderer can drop its self-drawn window
   // edge (base.css .app-window-fullscreen) while the window owns the screen.
@@ -724,6 +724,10 @@ app.whenReady().then(async () => {
       // What an agent reads of the derivative jobs (media cards, refusals):
       // the job events reach no MCP session themselves.
       if (event === 'media:job_started' || event === 'media:job_complete' || event === 'media:job_error') recordDerivativeJob(event, payload)
+      // A failed job may have removed the file its item's slot names, with no
+      // write-back to say so: a stale conform is deleted before it is made
+      // again, an output made from changed bytes is discarded (jobs/mod.rs).
+      if (event === 'media:job_error' && typeof payload?.media_id === 'string') tsHost?.poolFiles.recheck(payload.media_id)
       if (event === 'log:entry') recordProjectDiagnostic(payload)
       // A clip-compute job's phase: the registry owns it and publishes its own
       // `compute_jobs:changed` to the renderer, so the raw event goes no further.
@@ -842,16 +846,23 @@ app.whenReady().then(async () => {
     rm: (p: string) => { fs.rmSync(p, { force: true }) },
   }
 
+  // A regular file's size and whole-second mtime, null when none is there.
+  // No-throw for a missing path: cheaper than a thrown ENOENT everywhere, and
+  // than existsSync on Windows.
+  const fileStat = (s: fs.Stats | undefined) => (s?.isFile() ? { size: s.size, mtimeSecs: Math.floor(s.mtimeMs / 1000) } : null)
+  const statFile = (p: string) => { try { return fileStat(fs.statSync(p, { throwIfNoEntry: false })) } catch { return null } }
+  const poolFs = {
+    stat: statFile,
+    // The callback form: fs.promises.stat costs the main thread several times
+    // as much per call, which a focus refresh pays once per pool path.
+    statAsync: (p: string) => new Promise<ReturnType<typeof fileStat>>((resolve) => fs.stat(p, (error, s) => resolve(error ? null : fileStat(s)))),
+  }
+
   // Directory-scan/stat/rename shell for the open-time media relink self-heal.
   const relinkFs = {
     exists: (p: string) => fs.existsSync(p),
     listDir: (d: string) => { try { return fs.readdirSync(d) as string[] } catch { return [] } },
-    statFile: (p: string) => {
-      try {
-        const s = fs.statSync(p)
-        return s.isFile() ? { size: s.size, mtimeSecs: Math.floor(s.mtimeMs / 1000) } : null
-      } catch { return null }
-    },
+    statFile,
     rename: (from: string, to: string) => { fs.renameSync(from, to) },
   }
 
@@ -867,7 +878,7 @@ app.whenReady().then(async () => {
   // Workspace dir cache — seeded once at boot; refreshed after each persistence call
   // (the orchestrator calls commitWorkspace itself before replaceState, so by the time
   // open/saveAs/newWorkspace resolves wsCache must reflect the NEW workspace so that
-  // buildProjectSummary's fileExists + autosave see the right dir).
+  // autosave sees the right dir).
   let wsCache: string | null = null
   // The Motif reader utility follows the same generation and root as
   // `currentMotifStore()`; it is created with the Motif services below.
@@ -1094,7 +1105,7 @@ app.whenReady().then(async () => {
     },
     send: (event, payload) => emitToRenderer(event, payload),
     mcpResourcesChanged: () => mcpHostRef?.notifyResourceListChanged(),
-    fileExists: (p) => fs.existsSync(p),
+    poolFs,
     fs: nodeFs,
     relinkFs,
     join: path.join,
