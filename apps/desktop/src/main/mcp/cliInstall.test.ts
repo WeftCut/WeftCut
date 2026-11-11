@@ -41,7 +41,10 @@ describe.each(['linux', 'darwin', 'win32'] as const)('installCli on %s', (platfo
     expect(fs.readdirSync(cli).sort()).toEqual([cliBinaryName(platform), 'launch.json'].sort())
   })
 
-  it('replaces the copy by rename: a file a session still holds keeps its bytes', () => {
+  // The host's own platform only: what a held file allows is the real OS's
+  // rule, and another platform's steps run against it prove nothing (a rename
+  // onto a held file is what Windows refuses and the win32 steps avoid).
+  it.runIf(platform === process.platform)('replaces the copy by rename: a file a session still holds keeps its bytes', () => {
     const { opts, source, dest } = fixture(platform)
     installCli(opts)
     // What a running session has: the file it started, whatever its name is now.
