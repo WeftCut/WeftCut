@@ -500,6 +500,11 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     // Pending from here, however it ends: no import or export starts. A gate
     // only, undone when the transition settles.
     workspaceTransitions++
+    // A close shuts the agents' gate at the request, not at the flush: an
+    // agent write racing it is refused (NoProjectOpen) rather than saved into
+    // the project the user is closing. A failed flush opens it again.
+    const openAtRequest = opened
+    if (closing) opened = null
     const next = persistenceTail.then(async () => {
       // LANDMINE: from `replacing = true` to onWorkspaceChanging nothing may
       // await. The flush then holds every edit made before it, none can land
@@ -508,7 +513,11 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       replacing = true
       try { autosave.forceFlush() }
       catch (error) {
-        if (!flushMayFail(error, keepsEdits)) { replacing = false; throw error }
+        if (!flushMayFail(error, keepsEdits)) {
+          replacing = false
+          if (closing && opened === null) opened = openAtRequest
+          throw error
+        }
       }
       importGeneration++
       deps.onWorkspaceChanging?.()
