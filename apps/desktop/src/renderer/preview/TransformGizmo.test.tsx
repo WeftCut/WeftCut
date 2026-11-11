@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { DEFAULT_PREVIEW_GRID, type PreviewGridSettings } from "../../shared/preview-grid";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { initEval } from '../eval';
 import { translatePath, type PathPosition } from '../../shared/position';
@@ -162,9 +163,14 @@ const probe: GizmoProbe = {
 /// tests below assert exact deltas and would be measuring the snap instead of
 /// the gesture. Same reason `Timeline.interaction.test.tsx` turns
 /// `tail_snap_enabled` off for its drag assertions.
-function setSnap(enabled: boolean, strengthPx = 12): void {
+function setSnap(enabled: boolean, strengthPx = 12, grid: Partial<PreviewGridSettings> = {}): void {
   useAppSettingsStore.setState((s) => ({
-    settings: { ...s.settings, preview_snap_enabled: enabled, preview_snap_strength_px: strengthPx },
+    settings: {
+      ...s.settings,
+      preview_snap_enabled: enabled,
+      preview_snap_strength_px: strengthPx,
+      preview_grid: { ...DEFAULT_PREVIEW_GRID, ...grid },
+    },
   }));
 }
 
@@ -416,8 +422,29 @@ describe("snapping", () => {
     expect(transformOverrideFor("l1")).toEqual({ dx: 320, dy: 0 });
   });
 
-  it("does not snap at all when the preference is off", async () => {
-    setSnap(false);
+  it("snaps to a hidden grid, honors Ctrl, and commits only the final position", async () => {
+    setSnap(false, 12, { snap: true, mode: "pixels", column_gap_px: 100, rows: false });
+    render(<TransformGizmoHost />);
+    const el = await box();
+    fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(el, { clientX: 28, clientY: 9 });
+    expect(transformOverrideFor("l1")).toEqual({ dx: 60, dy: 18 });
+    await waitFor(() => expect(guide("x").style.display).not.toBe("none"));
+    expect(guideLine("x").getAttribute("x1")).toBe("350");
+    expect(guide("y").style.display).toBe("none");
+
+    fireEvent.pointerMove(el, { clientX: 28, clientY: 9, ctrlKey: true });
+    expect(transformOverrideFor("l1")).toEqual({ dx: 56, dy: 18 });
+    await waitFor(() => expect(guide("x").style.display).toBe("none"));
+    fireEvent.pointerMove(el, { clientX: 28, clientY: 9 });
+    expect(commit).not.toHaveBeenCalled();
+    fireEvent.pointerUp(el, { clientX: 28, clientY: 9 });
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(committedStatics()).toEqual([["x", 380], ["y", 198]]);
+  });
+
+  it("does not snap when only the grid overlay is on", async () => {
+    setSnap(false, 12, { visible: true });
     render(<TransformGizmoHost />);
     const el = await box();
     fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
