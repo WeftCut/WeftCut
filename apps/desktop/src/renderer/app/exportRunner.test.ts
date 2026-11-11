@@ -225,10 +225,11 @@ describe("exportRunner", () => {
     act(() => { useProjectStore.getState().apply(project); });
     bridge.answers.set("project_summary", () => project);
     let suspended = false;
+    const suspendedBy: string[] = [];
     const restore = vi.fn(() => { suspended = false; });
     const previewRef = createRef<PreviewSurfaceHandle>();
     previewRef.current = {
-      suspendForExport: () => { suspended = true; return restore; },
+      suspendForExport: (by: string) => { suspended = true; suspendedBy.push(by); return restore; },
       runPixiExport: async () => {
         expect(suspended).toBe(true);
         if (outcome === 'worker failure') throw new Error('worker failed');
@@ -260,6 +261,8 @@ describe("exportRunner", () => {
     expect(bridge.log).toContain('invoke export_video_sink_start');
     expect(result.current.exportState?.kind).toBe(outcome === 'success' ? 'complete' : 'error');
     expect(restore).toHaveBeenCalledOnce();
+    // The surface names who holds the preview; an export says so.
+    expect(suspendedBy).toEqual(["export"]);
     expect(suspended).toBe(false);
   });
 
@@ -616,6 +619,19 @@ describe("exportRunner", () => {
       expect((err as Error).message).toContain("layer-dark");
       expect((err as Error).message).toContain('without: ["effects"]');
       expect(rendered).toEqual([]);
+    });
+
+    it("render_frames holds the preview as the agent until it answers, rendered or refused", async () => {
+      await load(summary([track("track-v", "Video", [COLOR_LAYER, DARK])]));
+      // A plain frame, then one this renderer refuses.
+      for (const times_us of [[500_000], [1_500_000]]) {
+        const held: string[] = [];
+        const previewRef = stillsPreview([]);
+        previewRef.current!.suspendForExport = (by) => { held.push(by); return () => { held.push("restored"); }; };
+        const { result } = mount(previewRef, CANVAS);
+        await result.current.runner.runStills({ times_us, width: 640, settings: DEFAULT_EXPORT_SETTINGS }, new AbortController().signal).catch(() => { });
+        expect(held).toEqual(["agent", "restored"]);
+      }
     });
 
     it("render_frames without effects draws with effects off and marks the frames that held one", async () => {

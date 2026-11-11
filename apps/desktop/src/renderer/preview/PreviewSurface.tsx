@@ -23,6 +23,7 @@ import { SafeAreaGuidesHost } from "./SafeAreaGuides";
 import { TextToolOverlayHost } from "./TextToolOverlay";
 import { TransformGizmoHost } from "./TransformGizmo";
 import { PreviewHandTool } from "./PreviewHandTool";
+import { PreviewSuspendedNotice, type PreviewSuspendedBy } from "./PreviewSuspendedNotice";
 import { usePreviewViewGestures } from "./previewViewGestures";
 
 interface Props {
@@ -46,7 +47,9 @@ export interface PreviewSurfaceHandle {
   /// Re-resolve every clip's preview source against the live decodability
   /// bridge and re-composite. Delegates to the underlying PixiPreview.
   refreshSources(): void;
-  suspendForExport(): () => void;
+  /// Yield the preview's decoders to the export pipeline until the returned
+  /// restore runs; `by` is who the surface says is using them meanwhile.
+  suspendForExport(by: PreviewSuspendedBy): () => void;
   /// Run the Pixi export pipeline. Resolves with the encoded MP4
   /// bytes; rejects on failure. App.tsx owns the save dialog + file
   /// write so the existing ExportPanel can drive the pipeline.
@@ -87,7 +90,7 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
     const composition = useProjectStore((s) => compositionOrRoot(s.summary, null));
 
     const pixiRef = useRef<PixiPreviewHandle | null>(null);
-    const [exportSuspended, setExportSuspended] = useState(false);
+    const [suspendedBy, setSuspendedBy] = useState<PreviewSuspendedBy | null>(null);
     // The wheel/middle-button view gestures bind HERE rather than inside
     // PixiPreview: this element is the one that contains the canvas AND every
     // overlay stacked on it, and the overlays are siblings of the Pixi host.
@@ -118,10 +121,10 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
         refreshSources() {
           pixiRef.current?.refreshSources();
         },
-        suspendForExport() {
-          setExportSuspended(true);
+        suspendForExport(by) {
+          setSuspendedBy(by);
           const restore = pixiRef.current?.suspendForExport();
-          return () => { restore?.(); setExportSuspended(false); };
+          return () => { restore?.(); setSuspendedBy(null); };
         },
         async runPixiExport(opts) {
           const handle = pixiRef.current;
@@ -164,12 +167,13 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
       >
         <PixiErrorBoundary>
           <PixiPreview
-            exportSuspended={exportSuspended}
+            exportSuspended={suspendedBy !== null}
             ref={pixiRef}
             previewDecodableOf={previewDecodableOf}
             visible={visible}
           />
         </PixiErrorBoundary>
+        {suspendedBy && <PreviewSuspendedNotice by={suspendedBy} />}
         {/* After the canvas so they stack above it; screen-space by design —
             see TransformGizmo.tsx. Skipped while the dock tab is hidden — an
             overlay would otherwise track a canvas nobody can see.

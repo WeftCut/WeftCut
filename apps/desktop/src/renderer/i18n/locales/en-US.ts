@@ -1221,6 +1221,10 @@ const enUS = {
     edit_text: "Edit text",
     empty_hint: "Add a clip to start the preview",
     preparing: "Preparing preview…",
+    // Shown over the preview while the export pipeline holds its decoders:
+    // an export, or an agent's `render_frames`.
+    suspended_export: "Exporting",
+    suspended_agent: "An agent is viewing",
     // What the preview renders. The list names the timeline and every Group;
     // the default follows whichever timeline holds the keyboard.
     target_label: "What the preview shows",

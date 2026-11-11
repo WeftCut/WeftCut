@@ -939,7 +939,10 @@ Export jobs are application-session jobs shared with the UI (ADR 0111).
   (same decode, Motif frames and compositor), at timeline `t_us` (1–24) or sampled
   over `layer_ids` (settled, middle, exit, after each cut and shot change;
   ≤ 24); a labelled contact sheet by default. Refused while an export runs or
-  before the editor has announced the project.
+  before the editor has announced the project. The preview yields its decoders
+  for the call, as it does for an export, and says who holds them in place of
+  its picture ("An agent is viewing" / "Exporting"); playback pauses and
+  resumes after.
 - Renderer capability (`renderer/render/rendererCapability.ts`, one query for
   preview, stills and export). Without WebGPU and WebGL2 Pixi falls back to its
   canvas renderer, which draws no clip effects, crops or transitions. A

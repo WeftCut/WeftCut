@@ -289,7 +289,7 @@ export function createExportRunner(deps: {
   ): Promise<Array<{ t_us: number; width: number; height: number; jpeg: ArrayBuffer; omitted?: OmittableFeature[] }>> {
     if (runningRef.current || pendingFinalization.current) throw new Error("an export is running; render frames after it finishes");
     runningRef.current = true;
-    const restorePreview = previewRef.current?.suspendForExport();
+    const restorePreview = previewRef.current?.suspendForExport("agent");
     try {
       const summary = await projectSummary().catch(() => useProjectStore.getState().summary);
       if (!summary) throw new Error("No project loaded.");
@@ -374,7 +374,7 @@ export function createExportRunner(deps: {
     // admission, and stay suspended through finish, cancellation and mux.
     let restorePreview: (() => void) | undefined;
     try {
-      restorePreview = previewRef.current?.suspendForExport();
+      restorePreview = previewRef.current?.suspendForExport("export");
       const cap = await capability();
       // ---- No-material guard -----------------------------------------------
       // A video export with nothing visible to render would emit pure black —

@@ -1074,6 +1074,8 @@ const zhCN: Resources = {
     edit_text: "编辑文字",
     empty_hint: "添加片段后预览将自动启动",
     preparing: "正在准备预览…",
+    suspended_export: "正在导出",
+    suspended_agent: "Agent 正在查看",
     target_label: "预览内容",
     target_follow_focus: "跟随焦点",
     zoom_label: "预览缩放",
