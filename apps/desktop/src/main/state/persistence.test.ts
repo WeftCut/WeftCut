@@ -5,7 +5,7 @@ import { blankProject, SCHEMA_VERSION } from './model'
 import type { MediaItem, Project } from './model'
 import { canonicalString } from './canonical'
 import { serializeProject } from './serialize'
-import { serializeProjectToJson, schemaGate, parseProjectJson, reconcileMediaPaths, loadProjectFromJson, fileHoldsProject } from './persistence'
+import { serializeProjectToJson, schemaGate, parseProjectJson, reconcileMediaPaths, loadProjectFromJson } from './persistence'
 import { root, withGroup } from './__tests__/fixtures/project'
 
 const MARKER_BLUE = { r: 0, g: 128, b: 255, a: 255 }
@@ -159,22 +159,5 @@ describe('loadProjectFromJson', () => {
     const m = project.media_pool['00000000-0000-0000-0000-0000000000aa']
     expect(m.path_abs).toBe('/moved.vproj/Media/clip.mp4')
     expect(m.decode_route).toEqual({ route: 'direct-export', quick_proxy: '/old/clip.quick.mp4' })
-  })
-})
-
-// What opening decides "nothing to save" by (workspace-orchestrator.ts).
-describe('fileHoldsProject', () => {
-  it('a file this build wrote holds the project it loads to, whatever its layout', () => {
-    const p = withMedia([mediaItem({ path_rel: 'Media/clip.mp4', path_abs: '/ws/Media/clip.mp4' })])
-    const written = serializeProjectToJson(p)
-    for (const text of [written, JSON.stringify(JSON.parse(written))]) {
-      const { project } = loadProjectFromJson(text, { dir: '/ws', join: posixJoin })
-      expect(fileHoldsProject(text, project)).toBe(true)
-    }
-  })
-  it('a load that moved a value does not: here, media paths rebased onto a moved folder', () => {
-    const text = serializeProjectToJson(withMedia([mediaItem({ path_rel: 'Media/clip.mp4', path_abs: '/old/Media/clip.mp4' })]))
-    const { project } = loadProjectFromJson(text, { dir: '/moved', join: posixJoin })
-    expect(fileHoldsProject(text, project)).toBe(false)
   })
 })

@@ -552,25 +552,29 @@ describe('createTsActorHost — persistence-route integration', () => {
       } finally { t.done() }
     })
 
-    it('an open whose load changed the project counts as unsaved until autosave writes it', async () => {
+    it('an open whose load repaired the project is not an edit: the repair is written with the next edit', async () => {
       const t = recordingHost()
       try {
         const dir = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
         const marker = await t.host.handleInvoke('add_marker', { tUs: 1_000_000 }) as string
         await t.host.handleInvoke('project_new_workspace', { ...publicationProject, name: 'Elsewhere' })
         // Off the frame grid, as an older build may have left it: the load
-        // repairs it, so the project opened is not the file.
+        // repairs it in memory.
         const file = `${dir}/project.json`
         const onDisk = JSON.parse(t.vfs[file]!)
         onDisk.compositions[onDisk.root_id].markers[0].t_us = 1_000_001
         t.vfs[file] = JSON.stringify(onDisk)
 
         await t.host.handleInvoke('project_open', { path: dir })
-        expect(t.host.hasUnsavedEdits()).toBe(true)
+        expect(t.host.hasUnsavedEdits()).toBe(false)
         const before = t.writes.length
         await t.settle()
+        expect(t.writes.slice(before)).toEqual([])
+
+        await t.host.handleInvoke('add_track', {})
+        expect(t.host.hasUnsavedEdits()).toBe(true)
+        await t.settle()
         expect(t.writes.slice(before)).toEqual([file])
-        expect(t.host.hasUnsavedEdits()).toBe(false)
         const saved = JSON.parse(t.vfs[file]!)
         expect(saved.compositions[saved.root_id].markers).toEqual([expect.objectContaining({ id: marker, t_us: 1_000_000 })])
       } finally { t.done() }

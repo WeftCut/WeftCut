@@ -10,7 +10,7 @@
 // injected `AutosaveFs.writeFile` (atomicWrite.ts in production). Pure +
 // injected (fs / clock / timer / workspace-dir) so the cadence and gc are
 // deterministic in tests. Wired by ts-actor-host: subscribed at backend
-// bring-up; project_save → forceFlush; the workspace lifecycle → markSaved.
+// bring-up; project_save → forceFlush.
 import type { ActorHandle, ChangeEvent } from './actor'
 import type { Project, ProjectSettings } from './model'
 import { PROJECT_FILE } from './persistence'
@@ -69,12 +69,6 @@ export interface AutosaveController {
   forceFlush(): void
   /** Edits not on disk yet. */
   unsaved(): boolean
-  /** project.json already holds the actor's current state: the workspace
-   *  lifecycle has just read it from there (an open that changed nothing) or
-   *  written it (New, Save As). Called in the same tick as that read or
-   *  write, so no edit can fall between them; nothing is unsaved until the
-   *  next edit. */
-  markSaved(): void
   /** The workspace now holds another project (or none): its unsaved age and
    *  last save start over, and a failing state reported for the previous one is
    *  withdrawn. */
@@ -220,7 +214,12 @@ export function createAutosave(deps: AutosaveDeps): AutosaveController {
     }
   }
 
-  function onChange(_e: ChangeEvent): void {
+  function onChange(e: ChangeEvent): void {
+    // A workspace replacement (Open, New) swaps in a project read from or just
+    // written to disk; it is not an edit. What autosave owes the disk, and what
+    // the save status reports, is the user's edits only. A load-time repair
+    // (upgrade, grid, relink) is written with the next edit.
+    if (e.replaced) return
     if (!dirty) dirtySince = now()
     dirty = true
     if (quiet !== null) clearTimer(quiet)
@@ -258,12 +257,6 @@ export function createAutosave(deps: AutosaveDeps): AutosaveController {
       }
     },
     unsaved: () => dirty,
-    markSaved() {
-      clearTimers()
-      pendingTraceId = undefined
-      dirty = false
-      dirtySince = null
-    },
     beginProject() {
       dirtySince = dirty ? now() : null
       lastSavedAt = null

@@ -686,11 +686,10 @@ first unsaved one while edits keep arriving (a long agent run).
 `project_save`, switching or closing the project, and quitting force the write
 at once.
 
-Only edits count as unsaved. Opening a project whose `project.json` already
-holds it as this build would write it, creating one, and Save As leave nothing
-to save, so nothing is written. An open that changed the project (a schema
-upgrade, a grid repair, a relink, media paths rebased onto a moved folder)
-counts as unsaved until autosave writes it.
+Only edits count as unsaved, and only a write of them that does not complete is
+a save failure. Opening or creating a project is not an edit, so nothing is
+written for it; a load-time repair (a schema upgrade, a grid repair, a relink)
+lives in memory and is written with the next edit.
 
 Switching, closing and quitting flush first and change nothing before the flush
 has succeeded: a failed flush aborts with the project, its imports, jobs and

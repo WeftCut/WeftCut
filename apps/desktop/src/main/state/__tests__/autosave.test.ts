@@ -105,14 +105,12 @@ describe('autosave debounce', () => {
     ctl.stop()
   })
 
-  it('a state the workspace lifecycle read or wrote is not unsaved: no write follows it, the next edit does', async () => {
+  it('a workspace replacement is not an edit: no write follows it, the next edit does', async () => {
     const { fs, actor, ctl } = setup()
     ctl.start()
     try {
-      // The swap broadcasts like an edit; the lifecycle says in the same tick
-      // that project.json already holds it.
+      // What Open and New broadcast: a swap, not an edit.
       actor.replaceState(blankProject(seededGen(), 'opened'))
-      ctl.markSaved()
       expect(ctl.unsaved()).toBe(false)
       await vi.advanceTimersByTimeAsync(autosaveMaxWaitMs(actor.snapshot().settings) * 2)
       expect(fs.files.size).toBe(0)

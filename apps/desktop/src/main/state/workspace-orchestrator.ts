@@ -14,7 +14,7 @@ import { validate } from './validate'
 import type { IdGen } from './ids'
 import type { MediaItem, Project } from './model'
 import { blankProject, rootComposition } from './model'
-import { fileHoldsProject, loadProjectFromJson, serializeProjectToJson, PROJECT_FILE, preUpgradeBackupFile } from './persistence'
+import { loadProjectFromJson, serializeProjectToJson, PROJECT_FILE, preUpgradeBackupFile } from './persistence'
 import { relinkMissingMedia, type RelinkDeps, type RelinkReport } from './relink'
 import { serializeProject, type GridRepair } from './serialize'
 import type { MigrationContext, PositionBakeReport } from './migrate'
@@ -77,12 +77,6 @@ export interface OrchestratorDeps {
    *  version — the one on-open event that changes what the next save will write.
    *  Same timing constraint as the two reports above. */
   onSchemaUpgrade?: (report: SchemaUpgradeReport) => void
-  /** The actor now holds exactly what the workspace's project.json holds: it
-   *  was just read from there unchanged, or written there. Called in the same
-   *  tick as the swap or write that made it so (autosave's `markSaved`); not
-   *  called when the open changed the project, which then stays unsaved
-   *  until written. */
-  onDisk?: () => void
 }
 
 export interface SchemaUpgradeReport {
@@ -98,9 +92,9 @@ export interface SchemaUpgradeReport {
 /** project_open. Pre-checks → load (schema gate + migration chain) →
  *  preserve pre-upgrade bytes → relink heal →
  *  commit_workspace (pre-broadcast) → onGridRepair + onSchemaUpgrade reports →
- *  replace_state (+ onDisk when the load changed nothing) → onRelink report →
- *  push_recent → (deferred) derivative re-fan-out. All three reports sit after
- *  commit_workspace because it rotates the per-workspace LogBus. */
+ *  replace_state → onRelink report → push_recent → (deferred) derivative
+ *  re-fan-out. All three reports sit after commit_workspace because it rotates
+ *  the per-workspace LogBus. */
 export async function openProject(deps: OrchestratorDeps, dir: string): Promise<void> {
   const { actor, napi, fs, join } = deps
   // Every refusal on this path is a WorkspaceError, never prose: the launch
@@ -133,7 +127,7 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   let project = loaded.project
 
   // A schema upgrade happened in memory only; project.json still holds the old
-  // bytes until the autosave after the swap overwrites it. Preserve them NOW —
+  // bytes until the first edit's autosave overwrites it. Preserve them NOW —
   // this is the last moment they exist, and if a migration step is wrong they are
   // the only way back. Written straight from `text` rather than re-serializing:
   // a re-serialization would already be the upgraded shape.
@@ -181,10 +175,6 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
     } catch { /* keep the un-healed project */ }
   }
 
-  // An upgrade, a grid repair, a relink or media paths rebased onto a moved
-  // folder make the project differ from the file: it then counts as unsaved,
-  // and autosave writes it.
-  const onDisk = fileHoldsProject(text, project)
   // Emitted BEFORE replace_state deliberately: the repair is what lets an older
   // project satisfy the backstop at all, so if the swap STILL fails validation this
   // row is the diagnostic that says what load already had to move.
@@ -205,7 +195,6 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
       detail: isCommandFailure(e) ? JSON.stringify(e.err) : String(e),
     })
   }
-  if (onDisk) deps.onDisk?.()
   // After commitWorkspace — see OrchestratorDeps.onRelink.
   if (relinkReport) { try { deps.onRelink?.(relinkReport) } catch { /* best-effort, never blocks the open */ } }
   await napi.pushRecent(dir, project.metadata.name)
@@ -215,14 +204,13 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   deps.enqueueDerivatives?.(project)
 }
 
-/** project_save_as. snapshot → write project.json (+ onDisk) →
+/** project_save_as. snapshot → write project.json →
  *  commit_workspace → push_recent. Never swaps state (the actor already holds it). */
 export async function saveProjectAs(deps: OrchestratorDeps, dir: string): Promise<void> {
   const { actor, napi, fs, join } = deps
   const snap = actor.snapshot()
   fs.mkdirp(dir)                                              // save_to_dir's create_dir_all
   fs.writeFile(join(dir, PROJECT_FILE), serializeProjectToJson(snap))
-  deps.onDisk?.()
   await napi.commitWorkspace(dir)
   await napi.pushRecent(dir, snap.metadata.name)
   deps.enqueueDerivatives?.(snap)
@@ -266,7 +254,7 @@ export function makeEnqueueDerivatives(
 }
 
 /** project_new_workspace. Validate → blank project with
- *  the canvas preset → write → commit_workspace → replace_state (+ onDisk) → push_recent +
+ *  the canvas preset → write → commit_workspace → replace_state → push_recent +
  *  set_last_new_project_parent. Returns the created workspace path. */
 export async function newWorkspace(deps: OrchestratorDeps, args: NewWorkspaceArgs): Promise<string> {
   const { actor, napi, fs, join, idGen } = deps
@@ -291,7 +279,6 @@ export async function newWorkspace(deps: OrchestratorDeps, args: NewWorkspaceArg
   fs.writeFile(join(target, PROJECT_FILE), serializeProjectToJson(project))
   await napi.commitWorkspace(target)
   actor.replaceState(project)
-  deps.onDisk?.()
   await napi.pushRecent(target, project.metadata.name)
   await napi.setLastNewProjectParent(args.parentFolder)
   return target
