@@ -21,6 +21,7 @@
     "dev": "npm run build:wasm && electron-vite dev",
     "build": "npm run mcp:catalog:check && npm run build:wasm && electron-vite build && npm run build:cli && npm run build:skills",
     "build:cli": "node scripts/build-cli.mjs",
+    "build:weftcut": "node scripts/build-weftcut-cli.mjs",
     "build:skills": "node scripts/build-skills.mjs",
     "motif:three": "node scripts/build-three-motif.mjs",
     "build:e2e": "npm run mcp:catalog:check && node scripts/build-e2e.mjs",

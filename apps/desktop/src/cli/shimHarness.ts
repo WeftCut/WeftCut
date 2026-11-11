@@ -29,7 +29,8 @@ export const WITNESS_MS = 20_000
 export const BEAT_MS = 100
 
 /// Names the native binary a second target runs: an absolute path, started as
-/// `<bin> mcp`. Unset, the cases run against the JS bundle alone.
+/// `<bin> mcp` (`npm run build:weftcut` builds it at out/cli/weftcut). Unset,
+/// the cases run against the JS bundle alone.
 export const NATIVE_BIN_ENV = 'WEFTCUT_CLI_BIN'
 
 /// One implementation of the stdio MCP server, as the processes a client starts.
@@ -162,6 +163,8 @@ export const CLIENT_INFO = { name: 'itest-client', version: '4.5.6' }
 /// would also start in.
 export class StdioClient {
   readonly received = new Witness<Message>()
+  /// The same messages as the target wrote them, a line each.
+  readonly lines: string[] = []
   /// The exit code, once the process is gone.
   readonly exited: Promise<number | null>
   private readonly child: ChildProcessWithoutNullStreams
@@ -171,15 +174,20 @@ export class StdioClient {
   constructor(target: Target, env: Record<string, string>) {
     const [command, ...args] = target.serve()
     this.child = spawn(command!, args, { env, stdio: ['pipe', 'pipe', 'pipe'] })
-    let buffered = ''
+    // The pieces of the line still arriving. Only the new chunk is searched for
+    // a line end: a message of megabytes arrives in hundreds of chunks.
+    let partial: string[] = []
     this.child.stdout.setEncoding('utf8')
     this.child.stdout.on('data', (chunk: string) => {
-      buffered += chunk
-      for (let end = buffered.indexOf('\n'); end >= 0; end = buffered.indexOf('\n')) {
-        const line = buffered.slice(0, end).trim()
-        buffered = buffered.slice(end + 1)
-        if (line) this.received.push(JSON.parse(line) as Message)
+      const pieces = chunk.split('\n')
+      for (const piece of pieces.slice(0, -1)) {
+        const line = [...partial, piece].join('').trim()
+        partial = []
+        if (!line) continue
+        this.lines.push(line)
+        this.received.push(JSON.parse(line) as Message)
       }
+      partial.push(pieces.at(-1)!)
     })
     this.child.stderr.resume()
     // A write after the process ended reports here; the case fails on what it
@@ -238,6 +246,16 @@ export class StdioClient {
     this.child.stdin.end()
   }
 
+  /// Stops reading the target's output, as a client that went away without
+  /// closing the target's input does. Resolves once the pipe is closed, so the
+  /// target's next write is one into a pipe nobody reads.
+  stopReading(): Promise<void> {
+    return new Promise((resolve) => {
+      this.child.stdout.once('close', () => resolve())
+      this.child.stdout.destroy()
+    })
+  }
+
   signal(signal: NodeJS.Signals): void {
     this.child.kill(signal)
   }
@@ -281,7 +299,7 @@ export async function hostApp(makeServer: (session: AppSession) => Server, seen 
   const transports = new Map<string, { transport: StreamableHTTPServerTransport; session: AppSession }>()
   let frozen = false
   const app = express()
-  app.use(express.json({ limit: '5mb' }))
+  app.use(express.json({ limit: '50mb' }))
   app.use('/mcp', (req, res, next) => {
     if (frozen) return
     if (req.headers.authorization !== `Bearer ${TOKEN}`) {
@@ -380,6 +398,15 @@ export interface ScriptedApp extends AppHost {
   release(): void
 }
 
+/// The one tool a scripted app lists. Its definition holds what a careless
+/// re-encoding would rewrite: markup characters, and a number JSON writes in
+/// exponent form.
+export const ADD_MARKER = {
+  name: 'add_marker',
+  description: 'Add a marker.\nSecond line, with <b>markup</b> & more.',
+  inputSchema: { type: 'object' as const, properties: { t_us: { type: 'number', maximum: 1e21 } } },
+}
+
 /// What a scripted app's `read_project { view: "session" }` reports as open.
 export const OPEN_PROJECT = { name: 'Demo', dir: '/p/Demo' }
 
@@ -389,17 +416,16 @@ export const OPEN_PROJECT = { name: 'Demo', dir: '/p/Demo' }
 ///    given, else until released, then answers;
 ///  - `ask_roots` asks the client for its roots and answers with them;
 ///  - `read_project` answers the session view;
+///  - `echo` answers its `text` argument;
 ///  - any other name answers `called:<name>`.
-/// Only `add_marker` is listed.
-export async function startScriptedApp(): Promise<ScriptedApp> {
+/// Only `add_marker` is listed. `version` is what the app reports as its own.
+export async function startScriptedApp(version = '0.0.0'): Promise<ScriptedApp> {
   const seen = new Witness<string>()
   const calls: AppCall[] = []
   const hanging = new Set<() => void>()
   const makeServer = (session: AppSession): Server => {
-    const server = new Server({ name: 'weftcut', version: '0.0.0' }, { capabilities: { tools: {} } })
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [{ name: 'add_marker', description: 'Add a marker.\nSecond line.', inputSchema: { type: 'object' as const } }],
-    }))
+    const server = new Server({ name: 'weftcut', version }, { capabilities: { tools: {} } })
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [ADD_MARKER] }))
     server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
       const { name } = req.params
       const progressToken = req.params._meta?.progressToken
@@ -438,6 +464,7 @@ export async function startScriptedApp(): Promise<ScriptedApp> {
         const { roots } = await extra.sendRequest({ method: 'roots/list' }, ListRootsResultSchema)
         return text(JSON.stringify(roots))
       }
+      if (name === 'echo') return text(String((req.params.arguments as { text?: unknown } | undefined)?.text))
       if (name === 'read_project') {
         const view = { project: OPEN_PROJECT }
         return { ...text(JSON.stringify(view)), structuredContent: view }

@@ -21,6 +21,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js'
+import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from '@modelcontextprotocol/sdk/shared/stdio.js'
 import {
   ClientRequestSchema,
   ErrorCode,
@@ -35,6 +36,7 @@ import { createActor } from '../main/state/actor.js'
 import { uuidV7Gen } from '../main/state/ids.js'
 import { blankProject } from '../main/state/model.js'
 import {
+  ADD_MARKER,
   BEAT_MS,
   CLIENT_INFO,
   OPEN_PROJECT,
@@ -122,8 +124,8 @@ function profile(port: number | null): string {
   return dir
 }
 
-async function scriptedApp(): Promise<ScriptedApp> {
-  const app = await startScriptedApp()
+async function scriptedApp(version?: string): Promise<ScriptedApp> {
+  const app = await startScriptedApp(version)
   cleanups.push(() => app.kill())
   return app
 }
@@ -149,6 +151,17 @@ const textOf = (answer: Message): string => (answer.result as { content: { text:
 
 const callTool = (client: StdioClient, name: string, args: Record<string, unknown> = {}): Promise<Message> =>
   client.request('tools/call', { name, arguments: args })
+
+/// Sends `bytes` of text (at least) through the app's `echo` tool and expects
+/// it back whole. The text holds what an encoder might rewrite; the comparison
+/// avoids `toBe`, so a failure does not print megabytes.
+async function expectEchoed(client: StdioClient, bytes: number): Promise<void> {
+  const unit = 'frame<&>é '
+  const text = unit.repeat(Math.ceil(bytes / Buffer.byteLength(unit)))
+  const echoed = textOf(await callTool(client, 'echo', { text }))
+  expect(echoed.length).toBe(text.length)
+  expect(echoed === text, 'the echoed text equals what was sent').toBe(true)
+}
 
 async function toolNames(client: StdioClient): Promise<string[]> {
   const listed = await client.request('tools/list', {})
@@ -208,6 +221,28 @@ describe.each(TARGETS)('$name over real stdio + HTTP', (target) => {
       expect(tools.tools.map((t) => t.name)).toEqual([...SYNTHETIC, 'add_marker'])
       const result = await client.callTool({ name: 'add_marker', arguments: {} })
       expect(JSON.stringify(result.content)).toContain('called:add_marker')
+    })
+
+    it("lists the app's tools as the app wrote them: no character escaped, no number rewritten", async () => {
+      const app = await scriptedApp()
+      const client = open(target, profile(app.port))
+      await client.initialize()
+      const listing = client.start('tools/list', {})
+      const listed = await listing.answer()
+      expect((listed.result as { tools: unknown[] }).tools.at(-1)).toEqual(ADD_MARKER)
+      // The line itself, where an equal value may still be spelled differently.
+      const line = client.lines.find((l) => (JSON.parse(l) as Message).id === listing.id)!
+      expect(line).toContain(JSON.stringify(ADD_MARKER))
+    })
+
+    it('carries a message of many megabytes whole, in both directions', async () => {
+      const app = await scriptedApp()
+      const client = open(target, profile(app.port))
+      await client.initialize()
+      // A tool result with image frames. Half of what the SDK's stdio reader
+      // accepts in one message, which is the JS shim's ceiling (and that of
+      // any client built on that SDK).
+      await expectEchoed(client, STDIO_DEFAULT_MAX_BUFFER_SIZE / 2)
     })
 
     it('annotates the synthetic tools: status reads, launch is safe to repeat', async () => {
@@ -727,8 +762,10 @@ describe.skipIf(!NATIVE)('native binary only', () => {
       const [bare, help] = await Promise.all([run(target, [], env), run(target, ['help'], env)])
       expect(bare.status).toBe(0)
       expect(bare.stdout).toContain('usage:')
-      // The stdio server is a subcommand of its own.
-      expect(bare.stdout).toMatch(/\bmcp\b/)
+      // The stdio server is a subcommand of its own, listed with the others.
+      for (const sub of ['mcp', 'info', 'print-config', 'list-tools', 'help']) {
+        expect(bare.stdout, `the usage text lists weftcut ${sub}`).toMatch(new RegExp(`^  weftcut ${sub}\\s`, 'm'))
+      }
       expect(bare).toEqual(help)
     })
 
@@ -736,7 +773,7 @@ describe.skipIf(!NATIVE)('native binary only', () => {
       const env = shimEnv(profile(null))
       const [long, short] = await Promise.all([run(target, ['--version'], env), run(target, ['-V'], env)])
       expect(long.status).toBe(0)
-      expect(long.stdout).toContain(target.stamp)
+      expect(long.stdout.trim()).toBe(`weftcut ${target.stamp}`)
       expect(short).toEqual(long)
     })
 
@@ -810,12 +847,21 @@ describe.skipIf(!NATIVE)('native binary only', () => {
       const client = open(target, userData)
       await client.initialize()
       expect(await toolNames(client)).toEqual(SYNTHETIC)
-      const status = textOf(await callTool(client, 'weftcut_status'))
-      expect(status).toMatch(/open WeftCut once/i)
-      expect(status).not.toContain('The full tool catalog is available')
+      const said =
+        `WeftCut is running at http://127.0.0.1:${foreign.port}/mcp, but it answered MCP protocol 1999-01-01 ` +
+        `where this session uses ${LATEST_PROTOCOL_VERSION}: the app and this weftcut CLI come from different versions. ` +
+        'Ask the user to open WeftCut once so it refreshes the CLI, then restart this MCP server.'
+      expect(textOf(await callTool(client, 'weftcut_status'))).toBe(said)
+      // A request that needs the app says the same, not that the app is not running.
+      expect((await callTool(client, 'add_marker')).error).toEqual({ code: ErrorCode.InternalError, message: said })
       const info = await run(target, ['info'], shimEnv(userData))
       expect(info.status).toBe(3)
-      expect(info.stdout).toMatch(/open WeftCut once/i)
+      expect(info.stdout).toMatch(
+        new RegExp(`^running:   yes, but it answered MCP protocol 1999-01-01 where this CLI asked for ${LATEST_PROTOCOL_VERSION}; open WeftCut once to refresh the CLI$`, 'm'),
+      )
+      const listed = await run(target, ['list-tools'], shimEnv(userData))
+      expect(listed.status).toBe(3)
+      expect(listed.stderr).toContain('Open WeftCut once to refresh the CLI.')
     })
   })
 
@@ -849,7 +895,107 @@ describe.skipIf(!NATIVE)('native binary only', () => {
       await client.initialize()
       const answer = await callTool(client, 'launch_weftcut')
       expect(answer.result.isError).toBe(true)
-      expect(textOf(answer)).toMatch(/open(ed)? WeftCut once|WeftCut (must be )?opened once/i)
+      expect(textOf(answer)).toBe(
+        'This weftcut CLI does not know where the WeftCut app is installed. ' +
+          'Ask the user to open WeftCut once (the app records how to start it), ' +
+          'or set the WEFTCUT_APP environment variable to a launchable WeftCut executable.',
+      )
+    })
+
+    // The JS shim starts the app once per call.
+    it.skipIf(process.platform === 'win32')('a call during a launch that is waiting joins that wait and starts nothing', async () => {
+      const userData = profile(await unusedPort())
+      const marker = path.join(userData, 'launched')
+      const script = path.join(userData, 'fake-app.sh')
+      fs.writeFileSync(script, `#!/bin/sh\necho started >> '${marker}'\n`, { mode: 0o755 })
+      const client = open(target, userData, { WEFTCUT_APP: script })
+      await client.initialize()
+      const first = client.start('tools/call', { name: 'launch_weftcut', arguments: {} })
+      await fileAppears(marker)
+      const second = client.start('tools/call', { name: 'launch_weftcut', arguments: {} })
+      // Lines are taken in order: the second call was read before this answer.
+      await client.request('ping')
+      const app = await scriptedApp()
+      writeAuth(userData, app.port)
+      for (const call of [first, second]) {
+        const answer = await call.answer()
+        expect(answer.result.isError).toBeUndefined()
+        expect(textOf(answer)).toContain('launched and its MCP endpoint is up')
+      }
+      expect(fs.readFileSync(marker, 'utf8')).toBe('started\n')
+    })
+  })
+
+  describe('in its own voice', () => {
+    // The JS shim's SDK server answers whatever arrives first.
+    it('answers only initialize and ping before the client has initialized', async () => {
+      const app = await scriptedApp()
+      const client = open(target, profile(app.port))
+      const early = await client.request('tools/list', {})
+      expect(early.error?.code).toBe(ErrorCode.InvalidRequest)
+      expect(app.sessions).toHaveLength(0)
+    })
+
+    // The JS shim's SDK puts "MCP error <code>: " in front, and a client then
+    // adds its own.
+    it('sends an error message without a code prefix of its own', async () => {
+      const port = await unusedPort()
+      const client = open(target, profile(port))
+      await client.initialize()
+      expect((await callTool(client, 'add_marker')).error).toEqual({
+        code: ErrorCode.InternalError,
+        message:
+          `WeftCut is not running (nothing answering at http://127.0.0.1:${port}/mcp). ` +
+          'Call the launch_weftcut tool to start it, or ask the user to open WeftCut; ' +
+          'the full tool catalog appears in this session automatically once the app is up.',
+      })
+    })
+
+    // The JS shim reads stdin through the SDK's buffer, which drops a message
+    // past its limit unanswered.
+    it('has no ceiling of its own on the size of a message', async () => {
+      const app = await scriptedApp()
+      const client = open(target, profile(app.port))
+      await client.initialize()
+      await expectEchoed(client, STDIO_DEFAULT_MAX_BUFFER_SIZE + 1)
+    })
+
+    // The JS shim's status names one version: the app's.
+    it('weftcut_status names the CLI version only when the app answering is another one', async () => {
+      const other = await scriptedApp('0.0.1-other')
+      const beside = open(target, profile(other.port))
+      await beside.initialize()
+      expect(textOf(await callTool(beside, 'weftcut_status')).split('\n')).toEqual([
+        'WeftCut is running (weftcut 0.0.1-other).',
+        `Endpoint: http://127.0.0.1:${other.port}/mcp`,
+        `This weftcut CLI is version ${target.stamp}, not the running app's 0.0.1-other.`,
+        `Project: ${OPEN_PROJECT.name} (${OPEN_PROJECT.dir})`,
+        'The full tool catalog is available in this session.',
+      ])
+      const same = await scriptedApp(target.stamp)
+      const matching = open(target, profile(same.port))
+      await matching.initialize()
+      expect(textOf(await callTool(matching, 'weftcut_status')).split('\n')).toEqual([
+        `WeftCut is running (weftcut ${target.stamp}).`,
+        `Endpoint: http://127.0.0.1:${same.port}/mcp`,
+        `Project: ${OPEN_PROJECT.name} (${OPEN_PROJECT.dir})`,
+        'The full tool catalog is available in this session.',
+      ])
+    })
+
+    // The JS shim dies on the failed write and leaves the session to the app's reaper.
+    it.skipIf(process.platform === 'win32')('a client that stops reading is a client gone: the session is deleted, exit 0', async () => {
+      const app = await scriptedApp()
+      const client = open(target, profile(app.port))
+      await client.initialize()
+      await callTool(client, 'add_marker')
+      const { session } = app.calls.at(-1)!
+      await app.seen.when("the session's standalone stream is open", () => session.streaming)
+      await client.stopReading()
+      // Something to write: the write is how the shim learns nobody reads.
+      await session.server.notification({ method: 'notifications/example/unread' })
+      expect(await client.exited).toBe(0)
+      await app.seen.when('the session was deleted', () => session.deleted)
     })
   })
 })

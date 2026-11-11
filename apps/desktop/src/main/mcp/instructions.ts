@@ -16,10 +16,11 @@
 // the tool descriptions; the long form stays in the skill and docs/mcp.md.
 // Kept under a size a session pays without noticing — the test caps it.
 
-import text from './instructions.json'
+import text from '../../../cli/instructions.json'
 
-/// The etiquette lines, from `instructions.json`: the text is data, so a build
-/// that is not TypeScript embeds the same file instead of keeping a copy.
+/// The etiquette lines. The text is data in the `weftcut` binary's module
+/// (`apps/desktop/cli/`), which embeds the same file instead of keeping a copy;
+/// LANDMINE: it must stay in that directory, the only place `go:embed` reads.
 export const MCP_INSTRUCTION_LINES: ReadonlyArray<string> = text.etiquette
 
 /// The `initialize` instructions of a server at `version`: the etiquette, then
