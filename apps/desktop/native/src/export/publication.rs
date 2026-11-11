@@ -101,6 +101,61 @@ pub struct PublishArgs {
     pub policy: String,
 }
 
+/// A staged export may carry macOS UF_HIDDEN. Hard-linking or renaming the
+/// staging file preserves its flags, even under a user-visible final filename.
+/// Clear only UF_HIDDEN before publication so Finder shows completed exports.
+/// If clearing fails, do not publish a file that Finder would hide.
+#[cfg(target_os = "macos")]
+fn hidden_flag_error_hint(errno: Option<i32>) -> &'static str {
+    match errno {
+        Some(code) if code == libc::ENOTSUP || code == libc::EOPNOTSUPP => {
+            "This filesystem does not support changing macOS file flags; try a local macOS-formatted volume"
+        }
+        Some(code) if code == libc::EPERM || code == libc::EACCES => {
+            "macOS denied permission to change file flags; check output-folder ownership and permissions"
+        }
+        Some(libc::EROFS) => {
+            "The destination volume is read-only; choose a writable output location"
+        }
+        _ => {
+            "Check the destination volume's permissions and support for macOS file flags"
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn hidden_flag_error(path: &Path, source: io::Error) -> anyhow::Error {
+    anyhow::anyhow!(
+        "Cannot clear macOS UF_HIDDEN on staged export {}: {}. {}. The export was not published.",
+        path.display(),
+        source,
+        hidden_flag_error_hint(source.raw_os_error())
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn clear_staging_hidden_flag(path: &Path) -> Result<()> {
+    use std::os::{fd::AsRawFd, macos::fs::MetadataExt};
+
+    let file = std::fs::File::open(path).with_context(|| {
+        format!(
+            "open staged export {} to inspect macOS file flags",
+            path.display()
+        )
+    })?;
+    let flags = file
+        .metadata()
+        .with_context(|| format!("read macOS file flags of staged export {}", path.display()))?
+        .st_flags();
+    if flags & libc::UF_HIDDEN != 0 {
+        let result = unsafe { libc::fchflags(file.as_raw_fd(), flags & !libc::UF_HIDDEN) };
+        if result != 0 {
+            return Err(hidden_flag_error(path, io::Error::last_os_error()));
+        }
+    }
+    Ok(())
+}
+
 pub fn publish(args: PublishArgs) -> Result<String> {
     if args.staging.parent() != args.output.parent() {
         anyhow::bail!("publication must stay in the destination directory");
@@ -109,6 +164,9 @@ pub fn publish(args: PublishArgs) -> Result<String> {
     {
         anyhow::bail!("export produced no output");
     }
+    #[cfg(target_os = "macos")]
+    clear_staging_hidden_flag(&args.staging)
+        .context("make staged export visible before publication")?;
     if args.policy == "overwrite" {
         #[cfg(unix)]
         std::fs::rename(&args.staging, &args.output)?;
@@ -176,6 +234,96 @@ pub fn publish(args: PublishArgs) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn hidden_flag_errors_identify_volume_and_permission_failures() {
+        let path = Path::new("/Volumes/External/.weftcut-export-test.mp4");
+        for (errno, expected) in [
+            (libc::ENOTSUP, "does not support changing macOS file flags"),
+            (libc::EPERM, "denied permission"),
+            (libc::EACCES, "denied permission"),
+            (libc::EROFS, "read-only"),
+            (libc::EINVAL, "Check the destination volume"),
+        ] {
+            let source = io::Error::from_raw_os_error(errno);
+            // The N-API boundary renders anyhow's full chain with {e:#}.
+            let error = hidden_flag_error(path, source)
+                .context("make staged export visible before publication");
+            let message = format!("{error:#}");
+            assert!(
+                message.contains("make staged export visible before publication"),
+                "{message}"
+            );
+            assert!(message.contains(&path.display().to_string()), "{message}");
+            assert!(message.contains(expected), "{message}");
+            assert!(message.contains("UF_HIDDEN"), "{message}");
+            assert!(
+                message.contains("The export was not published"),
+                "{message}"
+            );
+            assert!(message.contains(&format!("os error {errno}")), "{message}");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn publishing_clears_only_hidden_flag_and_preserves_existing_files() {
+        use std::os::{fd::AsRawFd, macos::fs::MetadataExt};
+
+        let dir = tempfile::tempdir().unwrap();
+        // Test both hidden and visible staging files through every publishing
+        // policy. UF_NODUMP is an unrelated user flag that must survive.
+        for (index, (policy, hidden, collision)) in [
+            ("fail", true, false),
+            ("overwrite", true, true),
+            ("rename", true, true),
+            ("fail", false, false),
+            ("overwrite", false, true),
+            ("rename", false, true),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let output = dir.path().join(format!("clip-{index}.mp4"));
+            if collision {
+                std::fs::write(&output, b"previous output").unwrap();
+            }
+            let staging = PathBuf::from(prepare(&output).unwrap());
+            std::fs::write(&staging, b"completed video").unwrap();
+            let file = std::fs::File::open(&staging).unwrap();
+            let initial_flags = file.metadata().unwrap().st_flags();
+            let staged_flags = (initial_flags | libc::UF_NODUMP) & !libc::UF_HIDDEN
+                | if hidden { libc::UF_HIDDEN } else { 0 };
+            assert_eq!(unsafe { libc::fchflags(file.as_raw_fd(), staged_flags) }, 0);
+            assert_eq!(file.metadata().unwrap().st_flags(), staged_flags);
+            drop(file);
+
+            let published = PathBuf::from(
+                publish(PublishArgs {
+                    staging,
+                    output: output.clone(),
+                    policy: policy.into(),
+                })
+                .unwrap(),
+            );
+            let expected = if policy == "rename" {
+                dir.path().join(format!("clip-{index} (1).mp4"))
+            } else {
+                output.clone()
+            };
+            assert_eq!(published, expected);
+            assert_eq!(std::fs::read(&published).unwrap(), b"completed video");
+            assert_eq!(
+                std::fs::metadata(&published).unwrap().st_flags(),
+                staged_flags & !libc::UF_HIDDEN
+            );
+            if policy == "rename" {
+                assert_eq!(std::fs::read(&output).unwrap(), b"previous output");
+            }
+        }
+    }
+
     #[test]
     fn native_rename_fallback_refuses_collisions_and_moves_complete_files() {
         let d = tempfile::tempdir().unwrap();
