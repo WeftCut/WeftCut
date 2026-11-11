@@ -45,10 +45,12 @@ function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
   return { promise, resolve };
 }
 
-/// Lets every promise chain already started run to completion: a queued fetch
-/// starts only after the one ahead of it has applied, several hops later.
-async function settle(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 0));
+/// Runs every promise chain already started to completion: the IPC mocks
+/// answer as already-resolved promises, so nothing waits on time, only on
+/// microtask turns. A queued fetch starts only after the one ahead of it has
+/// applied, several hops later; the turn count covers that chain with room.
+async function settle(turns = 20): Promise<void> {
+  for (let i = 0; i < turns; i++) await Promise.resolve();
 }
 
 describe("historyStore wiring", () => {
