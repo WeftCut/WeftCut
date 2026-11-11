@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import {
-  createAutosave, autosaveMaxWaitMs, BACKUPS_DIR, AUTOSAVE_INTERVAL_DEFAULT_SECS, AUTOSAVE_INTERVAL_MAX_SECS,
-  AUTOSAVE_INTERVAL_MIN_SECS, type AutosaveFs, type AutosaveDeps,
-} from '../autosave'
+import { createAutosave, autosaveMaxWaitMs, BACKUPS_DIR, type AutosaveFs, type AutosaveDeps, type AutosaveSaveState } from '../autosave'
+import { AUTOSAVE_INTERVAL_DEFAULT_SECS, AUTOSAVE_INTERVAL_MAX_SECS, AUTOSAVE_INTERVAL_MIN_SECS } from '../../../shared/save-status'
 import { createActor, type ActorHandle, type ChangeEvent } from '../actor'
 import { serializeProjectToJson, PROJECT_FILE } from '../persistence'
 import { blankProject, type Project } from '../model'
@@ -312,5 +310,149 @@ describe('autosaveMaxWaitMs', () => {
   it('clamps an interval outside the allowed range', () => {
     expect(ms(AUTOSAVE_INTERVAL_MIN_SECS / 10)).toBe(AUTOSAVE_INTERVAL_MIN_SECS * 1000)
     expect(ms(AUTOSAVE_INTERVAL_MAX_SECS * 10)).toBe(AUTOSAVE_INTERVAL_MAX_SECS * 1000)
+  })
+})
+
+describe('autosave save state', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  /** Every write fails with `code` until `heal`; the clock is the fake one, so
+   *  report and attempt times share it. */
+  function failingSetup(code = 'ENOSPC') {
+    const fs = memFs()
+    const write = fs.writeFile
+    let failure: string | null = code
+    const attempts: { at: number; ok: boolean }[] = []
+    fs.writeFile = (p, t) => {
+      attempts.push({ at: Date.now(), ok: failure === null })
+      if (failure !== null) throw errno(failure)
+      write(p, t)
+    }
+    const reports: { at: number; state: AutosaveSaveState }[] = []
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const s = setup({ fs, now: () => new Date(), onSaveState: (state) => reports.push({ at: Date.now(), state }) })
+    const maxWaitMs = autosaveMaxWaitMs(s.actor.snapshot().settings)
+    return {
+      ...s, attempts, reports, maxWaitMs,
+      fail: (next: string) => { failure = next },
+      heal: () => { failure = null },
+      done: () => { s.ctl.stop(); warn.mockRestore() },
+    }
+  }
+
+  it('reports failing at the first failed attempt once the edits have waited the interval, and only once', async () => {
+    const s = failingSetup()
+    s.ctl.start()
+    try {
+      const editAt = Date.now()
+      s.actor.dispatch('add_track', {})
+      await vi.advanceTimersByTimeAsync(s.maxWaitMs * 3)
+      const failedEarly = s.attempts.filter((a) => a.at - editAt < s.maxWaitMs)
+      const overdue = s.attempts.filter((a) => a.at - editAt >= s.maxWaitMs)
+      expect(failedEarly.length, 'an attempt inside the interval failed too').toBeGreaterThan(0)
+      expect(overdue.length, 'autosave kept retrying past the interval').toBeGreaterThan(1)
+      expect(s.reports).toHaveLength(1)
+      expect(s.reports[0].at).toBe(overdue[0].at)
+      expect(s.reports[0].state).toEqual({
+        kind: 'failing', since: new Date(editAt), lastSavedAt: null, code: 'ENOSPC', path: `/ws/${PROJECT_FILE}`, dir: '/ws',
+      })
+    } finally { s.done() }
+  })
+
+  it('says nothing about a failure that a later cycle fixes', async () => {
+    const s = failingSetup()
+    s.ctl.start()
+    try {
+      s.actor.dispatch('add_track', {})
+      await vi.advanceTimersByTimeAsync(s.maxWaitMs / 2)
+      expect(s.attempts.some((a) => !a.ok)).toBe(true)
+      s.heal()
+      s.actor.dispatch('add_track', {})
+      await vi.advanceTimersByTimeAsync(s.maxWaitMs * 2)
+      expect(s.attempts.at(-1)?.ok).toBe(true)
+      expect(s.reports).toEqual([])
+    } finally { s.done() }
+  })
+
+  it('a failure fixed at the interval itself says nothing either', async () => {
+    const s = failingSetup()
+    s.ctl.start()
+    try {
+      s.actor.dispatch('add_track', {})
+      await vi.advanceTimersByTimeAsync(s.maxWaitMs / 2)
+      s.heal()
+      await vi.advanceTimersByTimeAsync(s.maxWaitMs)
+      expect(s.attempts.at(-1)).toMatchObject({ ok: true })
+      expect(s.reports).toEqual([])
+    } finally { s.done() }
+  })
+
+  it('carries the last successful write, and reports a changed reason', async () => {
+    const s = failingSetup()
+    s.heal()
+    s.ctl.start()
+    try {
+      s.actor.dispatch('add_track', {})
+      await vi.advanceTimersByTimeAsync(s.maxWaitMs / 10)
+      const savedAt = s.attempts.at(-1)!
+      expect(savedAt.ok).toBe(true)
+      s.fail('EACCES')
+      s.actor.dispatch('add_track', {})
+      await vi.advanceTimersByTimeAsync(s.maxWaitMs * 2)
+      expect(s.reports.map((r) => r.state)).toEqual([expect.objectContaining({ kind: 'failing', code: 'EACCES', lastSavedAt: new Date(savedAt.at) })])
+      s.fail('EROFS')
+      await expect(s.ctl.forceFlush()).rejects.toMatchObject({ code: 'EROFS' })
+      expect(s.reports.map((r) => r.state)).toEqual([
+        expect.objectContaining({ code: 'EACCES' }),
+        expect.objectContaining({ kind: 'failing', code: 'EROFS', lastSavedAt: new Date(savedAt.at) }),
+      ])
+    } finally { s.done() }
+  })
+
+  it('recovers with the next successful write, timer or explicit', async () => {
+    for (const recover of ['timer', 'explicit'] as const) {
+      const s = failingSetup()
+      s.ctl.start()
+      try {
+        s.actor.dispatch('add_track', {})
+        await vi.advanceTimersByTimeAsync(s.maxWaitMs * 2)
+        expect(s.reports.map((r) => r.state.kind)).toEqual(['failing'])
+        s.heal()
+        if (recover === 'timer') await vi.advanceTimersByTimeAsync(s.maxWaitMs)
+        else await s.ctl.forceFlush()
+        expect(s.reports.map((r) => r.state), recover).toEqual([expect.objectContaining({ kind: 'failing' }), { kind: 'ok', cause: 'saved' }])
+        expect(s.ctl.unsaved()).toBe(false)
+      } finally { s.done() }
+    }
+  })
+
+  it('a new project withdraws the failing state and starts its own interval', async () => {
+    const s = failingSetup()
+    s.ctl.start()
+    try {
+      s.actor.dispatch('add_track', {})
+      await vi.advanceTimersByTimeAsync(s.maxWaitMs * 2)
+      expect(s.reports.map((r) => r.state.kind)).toEqual(['failing'])
+      const switchedAt = Date.now()
+      s.ctl.beginProject()
+      expect(s.reports.at(-1)!.state).toEqual({ kind: 'ok', cause: 'reset' })
+      // Still failing in the new folder: told again, but only after its own interval.
+      await vi.advanceTimersByTimeAsync(s.maxWaitMs * 2)
+      const again = s.reports.slice(2)
+      expect(again.map((r) => r.state)).toEqual([expect.objectContaining({ kind: 'failing', since: new Date(switchedAt), lastSavedAt: null })])
+      expect(again[0].at - switchedAt).toBeGreaterThanOrEqual(s.maxWaitMs)
+    } finally { s.done() }
+  })
+
+  it('nothing unsaved is nothing to report, even when an explicit save fails', async () => {
+    const s = failingSetup()
+    s.ctl.start()
+    try {
+      await vi.advanceTimersByTimeAsync(s.maxWaitMs * 2)
+      await expect(s.ctl.forceFlush()).rejects.toMatchObject({ code: 'ENOSPC' })
+      expect(s.ctl.unsaved()).toBe(false)
+      expect(s.reports).toEqual([])
+    } finally { s.done() }
   })
 })

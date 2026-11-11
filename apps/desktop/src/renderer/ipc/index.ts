@@ -94,6 +94,8 @@ import type { RecentEntry } from "../../shared/recents";
 export type { RecentEntry } from "../../shared/recents";
 import type { ReviewActivityView, ReviewActionArgs, ReviewActionResult, ReviewView, ReviewViewArgs, ReviewViewUnchanged } from "../../shared/review";
 export { REVIEW_CHANGED_EVENT } from "../../shared/review";
+import { SAVE_STATUS_CHANNEL, type SaveStatus } from "../../shared/save-status";
+export { SAVE_STATUS_EVENT, type SaveStatus } from "../../shared/save-status";
 export type {
   Change as ReviewChange,
   ChangeAspect as ReviewChangeAspect,
@@ -890,6 +892,9 @@ export async function projectRedo(): Promise<void> {
 export async function projectSave(): Promise<void> {
   return invoke<void>("project_save");
 }
+
+/// Whether project.json is reaching disk — the seed `saveStatusStore` mirrors.
+export const projectSaveStatus = (): Promise<SaveStatus> => invoke<SaveStatus>(SAVE_STATUS_CHANNEL);
 
 export async function projectSaveAs(path: string): Promise<void> {
   return invoke<void>("project_save_as", { path });

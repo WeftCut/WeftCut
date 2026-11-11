@@ -83,6 +83,9 @@ import { tenBitExportCapable } from "./render/exportSettings";
 import { MotifStaleDialog } from "./panels/MotifStaleDialog";
 import { useAppNotices } from "./components/useAppNotices";
 import { SystemStatusPanel } from "./components/SystemStatusPanel";
+import type { SaveFailureActions } from "./components/SaveFailureCard";
+import { useSaveFailure } from "./state/saveStatusStore";
+import { open as shellOpen } from "@/bridge/shell";
 import {
   systemNoticeLogMessage,
   type SystemSettingsTarget,
@@ -604,6 +607,14 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
     }
   }, [run, t]);
 
+  // The save-failure card's actions. Retry is the explicit save itself, not
+  // `run`: the card shows its outcome in place.
+  const saveFailureActions = useMemo<SaveFailureActions>(() => ({
+    retry: projectSave,
+    saveAs: () => void saveProject(),
+    openFolder: shellOpen,
+  }), [saveProject]);
+
   // E2E-only: expose `window.__weftcutTest.exportClip`, wired to the real
   // export path. Stripped from prod (static `VITE_WEFTCUT_E2E` check).
   useEffect(() => {
@@ -787,6 +798,19 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
     setLogConsoleOpen(false);
     setSystemStatusOpen((open) => !open);
   }, []);
+
+  const openSystemStatus = useCallback(() => {
+    setLogConsoleOpen(false);
+    setSystemStatusOpen(true);
+  }, []);
+
+  // The panel holds the notices and the save-failure card; with both gone it
+  // has nothing left to show, and stays closed until asked again.
+  const saveFailure = useSaveFailure();
+  const systemStatusEmpty = systemNotices.length === 0 && saveFailure === null;
+  useEffect(() => {
+    if (systemStatusEmpty) setSystemStatusOpen(false);
+  }, [systemStatusEmpty]);
 
   const openSystemSettings = useCallback(
     (category: SystemSettingsTarget) => {
@@ -1197,6 +1221,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
           ref={previewRef}
           summary={summary}
           onExit={exitAgentMode}
+          onOpenSaveStatus={() => { void exitAgentMode(); openSystemStatus(); }}
         />
         <ComputeJobNotice />
       </ShortcutBindingsProvider>
@@ -1360,12 +1385,14 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
           notices={systemNotices}
           onClose={() => setSystemStatusOpen(false)}
           onOpenSettings={openSystemSettings}
+          saveActions={saveFailureActions}
         />
       )}
       {paletteOpen && <SearchPalette onClose={() => setPaletteOpen(false)} />}
       <StatusBar
         notices={systemNotices}
         onOpenSystemStatus={toggleSystemStatus}
+        onOpenSaveStatus={openSystemStatus}
         onToggleLogs={toggleLogConsole}
       />
       <ComputeJobNotice />

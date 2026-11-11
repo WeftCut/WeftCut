@@ -28,7 +28,7 @@ const ALL_CHANNELS: readonly string[] = [
   'restyle_captions', 'add_motif',
   // router special-cases (summary / history read / settings / persistence seam / agent-session)
   'project_summary', 'project_publication', 'project_history_view', 'get_project_settings', 'project_open', 'project_save_as',
-  'project_new_workspace', 'project_save', 'agent_session_end', 'agent_session_begin',
+  'project_new_workspace', 'project_save', 'project_save_status', 'agent_session_end', 'agent_session_begin',
   'review_view', 'review_activity_view', 'review_approve_all', 'review_revert_all',
   'agent_tacks_set_status', 'agent_tacks_delete',
   // motif route (TS authoring + read + install + staleness)
@@ -108,7 +108,7 @@ describe('router partition gate', () => {
     // check here will catch it before the partition gate silently hides the duplicate.
     const SPECIAL: ReadonlySet<string> = new Set([
       'project_open', 'project_save', 'project_save_as', 'project_new_workspace',
-      'project_summary', 'project_history_view', 'get_project_settings',
+      'project_summary', 'project_history_view', 'get_project_settings', 'project_save_status',
       'agent_session_end', 'agent_session_begin',
       'review_view', 'review_activity_view', 'review_approve_all', 'review_revert_all',
       'agent_tacks_set_status', 'agent_tacks_delete',

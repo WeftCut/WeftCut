@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangleIcon, Hourglass, InfoIcon, OctagonAlertIcon } from "lucide-react";
 import type { TFunction } from "i18next";
@@ -13,6 +13,9 @@ import { MEDIA_JOB_EVENTS, type MediaJobEvent, type LogEntry, type LogLevel } fr
 import type { AppNotice } from "../../shared/ipc";
 import { AppIcon } from "@/components/AppIcon";
 import { UpdateIndicator } from "../app/UpdateIndicator";
+import { SaveStatusBadge } from "../components/SaveStatusBadge";
+import { saveFailureReason } from "../components/saveFailure";
+import { useSaveFailure } from "../state/saveStatusStore";
 import { useComputeJobsStore } from "../compute/computeJobsStore";
 import {
   computePhaseText,
@@ -36,6 +39,8 @@ import type { ComputeJob, LayerSummary } from "../ipc";
 interface StatusBarProps {
   notices?: AppNotice[];
   onOpenSystemStatus?: () => void;
+  /// Opens (never toggles) the System panel, whose card the badge points at.
+  onOpenSaveStatus?: () => void;
   onToggleLogs?: () => void;
 }
 
@@ -44,6 +49,7 @@ const EMPTY_NOTICES: AppNotice[] = [];
 export function StatusBar({
   notices = EMPTY_NOTICES,
   onOpenSystemStatus,
+  onOpenSaveStatus,
   onToggleLogs,
 }: StatusBarProps) {
   const { t } = useTranslation();
@@ -89,6 +95,17 @@ export function StatusBar({
       );
     }
   }, [latest, t]);
+
+  // Its log row is a Warn, which the effect above does not announce: the turn
+  // to failing is announced here, once per turn — a new reason is not a turn.
+  const saveFailure = useSaveFailure();
+  const saveFailureAnnounced = useRef(false);
+  useEffect(() => {
+    if (saveFailure && !saveFailureAnnounced.current) {
+      setAnnounce(t("save_status.announce", { reason: saveFailureReason(t, saveFailure.code) }));
+    }
+    saveFailureAnnounced.current = saveFailure !== null;
+  }, [saveFailure, t]);
 
   useEffect(() => {
     const unlisteners: UnlistenFn[] = [];
@@ -222,6 +239,7 @@ export function StatusBar({
             {runningCount}
           </button>
         )}
+        <SaveStatusBadge onOpen={onOpenSaveStatus} />
         {notices.length > 0 && onOpenSystemStatus && (
           <button
             type="button"

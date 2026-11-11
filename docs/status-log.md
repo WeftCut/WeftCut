@@ -99,7 +99,9 @@ or per chunk — the ring is 1000 entries.
 - **Project** rows: deliberately no row per successful mutation — the history
   panel is that feed. What lands: refusals, load-time repairs (relink `Info`/`Warn`
   `details.kind = "Relink"`; grid repair `Warn` `"GridRepair"`, emitted after the
-  workspace commit), schema upgrade, checkpoint create/delete/restore,
+  workspace commit), schema upgrade, saving failing (`Warn` `"SaveFailing"`) and
+  recovering (`Info` `"SaveRecovered"`) — one row per turn, never per failed
+  attempt — checkpoint create/delete/restore,
   `TransitionPlacementBounce` and `MarkerReconcileDrop` (actor), motif staleness,
   and the cross-composition Alt-drag refusal
   (`renderer/timeline/crossCompositionRefusal.ts`).
@@ -152,15 +154,24 @@ next splash ("did not exit normally"). Storage failures never block startup.
 ### Bar
 
 ```
-[●] 14:32  Added 3 layers to track v1 · agent  [N to review] [⚠2] [↻1] [System N] [Update] [Logs ▾]
+[●] 14:32  Added 3 layers to track v1 · agent  [N to review] [⚠2] [↻1] [⚠ Not saved] [System N] [Update] [Logs ▾]
 ```
 
 - Latest `Info+` message with time and source; an `Error` sticks 10 s
   (`ERROR_STICKY_MS`); the error badge pulses once (1.5 s) on increment.
 - Badges: unreviewed agent changes (ADR 0115; opens the agent panel's Changes
-  tab), errors, running ops, running clip-compute jobs, system notices (opens the
-  status panel with recovery cards), update offer (`docs/releases.md`).
-- A visually hidden `aria-live="polite"` region announces errors only.
+  tab), errors, running ops, running clip-compute jobs, project not saved,
+  system notices (opens the status panel with recovery cards), update offer
+  (`docs/releases.md`).
+- **Not saved** (`SaveStatusBadge`, amber): present only while main reports the
+  project failing to save (`shared/save-status.ts`, [data-model.md §
+  Saving](data-model.md#saving)). Its tooltip gives the reason and the last
+  successful save; a click opens the status panel, where a save-failure card
+  leads the notices with Retry now, Save As… and Open folder. The same badge
+  sits in agent mode's titlebar, which has no status bar; there its click returns
+  to the editor with the panel open.
+- A visually hidden `aria-live="polite"` region announces errors, and the turn
+  to not saved (once per turn; its log row is a `Warn`).
 
 ### Console
 

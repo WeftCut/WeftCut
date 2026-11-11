@@ -6,6 +6,7 @@
 // DIRECT_NAPI_READS allowlist is read-only / config-store / pure-native). An
 // unclassified channel routes to {kind:'reject'} so the gate fails loud.
 import { PRODUCTION_OPS } from './commands'
+import { SAVE_STATUS_CHANNEL } from '../../shared/save-status'
 
 export type Route =
   | { kind: 'exportJob' }
@@ -15,6 +16,7 @@ export type Route =
   | { kind: 'review' }        // Review baseline reads, approve all, revert all (ADR 0115)
   | { kind: 'tacks' }         // the user's tack actions from the agent panel (ADR 0115) — never a project write
   | { kind: 'projectSettings' } // actor.snapshot().settings
+  | { kind: 'saveStatus' }    // whether project.json is reaching disk (shared/save-status.ts) — READ-only
   | { kind: 'open' } | { kind: 'saveAs' } | { kind: 'newWorkspace' } | { kind: 'save' } | { kind: 'close' }
   | { kind: 'agentSessionEnd' } // end work locally; release only its owned lock
   | { kind: 'agentSessionBegin' } // legacy local channel: request agent view only
@@ -172,6 +174,7 @@ export function routeChannel(channel: string): Route {
     // every edit whether the panel is open or not (spec decision 5).
     case 'project_history_view': return { kind: 'historyView' }
     case 'get_project_settings': return { kind: 'projectSettings' }
+    case SAVE_STATUS_CHANNEL: return { kind: 'saveStatus' }
     // Review: two reads (the baseline view; what one activity's ops did),
     // approve all and revert all, both checked against the view the user
     // acted on. Approval folds the current state into the Review baseline; it

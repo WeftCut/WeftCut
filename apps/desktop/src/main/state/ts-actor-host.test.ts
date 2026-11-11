@@ -18,6 +18,10 @@ import { EDIT_TRACE_ARG, EDIT_TRACE_PREFIX } from '../../shared/editTrace'
 import { applyDerivativesEvent } from './jobs-writeback'
 import { mediaItemTemplate } from './mutations/media'
 import { ExportJobs } from '../exportJobs'
+import { autosaveMaxWaitMs } from './autosave'
+import { rootComposition } from './model'
+import { errno } from './__tests__/fixtures/memAtomicIo'
+import { SAVE_STATUS_CHANNEL, SAVE_STATUS_EVENT, type SaveStatus } from '../../shared/save-status'
 
 describe('mapChangeEvent', () => {
   it('maps a User ChangeEvent to the project:changed payload shape, refs included', () => {
@@ -785,6 +789,89 @@ describe('createTsActorHost — persistence-route integration', () => {
     // Out of range surfaces as a structured refusal on the IPC rejection.
     await expect(host.handleInvoke('project_jump_to', { index: 99 })).rejects.toThrow(/InvalidArgument/)
     host.stop()
+  })
+
+  describe('save status', () => {
+    /** A host whose writes of `failing` dirs' project.json fail with ENOSPC. */
+    function failingHost() {
+      vi.useFakeTimers()
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const fixture = makeInMemoryDeps()
+      const write = fixture.deps.fs.writeFile
+      const failing = new Set<string>()
+      fixture.deps.fs.writeFile = (p: string, t: string) => {
+        if (failing.has(p)) throw errno('ENOSPC')
+        write(p, t)
+      }
+      const logs: Array<{ level: string; i18n_key?: string; details?: Record<string, unknown> }> = []
+      const host = createTsActorHost({ ...fixture.deps, emitLog: (entry) => { logs.push(entry) } })
+      host.start()
+      const pushes = () => fixture.sent.filter((e) => e.event === SAVE_STATUS_EVENT).map((e) => e.payload as SaveStatus)
+      const saveRows = () => logs.filter((e) => e.details?.kind === 'SaveFailing' || e.details?.kind === 'SaveRecovered')
+      const maxWaitMs = () => autosaveMaxWaitMs(host.actor.snapshot().settings)
+      const done = () => { host.stop(); vi.useRealTimers(); vi.restoreAllMocks() }
+      return { ...fixture, host, failing, pushes, saveRows, maxWaitMs, done }
+    }
+
+    it('pushes each change, serves the same state on pull, and logs only the two transitions', async () => {
+      const t = failingHost()
+      try {
+        const dir = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
+        expect(await t.host.handleInvoke(SAVE_STATUS_CHANNEL, {})).toEqual({ state: 'ok', revision: 0 })
+        t.failing.add(`${dir}/project.json`)
+        await t.host.handleInvoke('add_track', { kind: 'Video', name: 'Unsaved' })
+        await vi.advanceTimersByTimeAsync(t.maxWaitMs() * 3)
+        expect(t.pushes()).toEqual([expect.objectContaining({ state: 'failing', code: 'ENOSPC', path: `${dir}/project.json`, dir, last_saved_at: null })])
+        expect(await t.host.handleInvoke(SAVE_STATUS_CHANNEL, {})).toEqual(t.pushes().at(-1))
+        expect(t.saveRows()).toEqual([expect.objectContaining({ level: 'warn', i18n_key: 'log.save_failing' })])
+
+        t.failing.clear()
+        await vi.advanceTimersByTimeAsync(t.maxWaitMs())
+        expect(t.pushes().map((p) => p.state)).toEqual(['failing', 'ok'])
+        expect(await t.host.handleInvoke(SAVE_STATUS_CHANNEL, {})).toEqual(t.pushes().at(-1))
+        expect(t.pushes().map((p) => p.revision)).toEqual([1, 2])
+        expect(t.saveRows().map((r) => [r.level, r.i18n_key])).toEqual([['warn', 'log.save_failing'], ['info', 'log.save_recovered']])
+      } finally { t.done() }
+    })
+
+    it('Save As out of a failing folder keeps the edits, withdraws the state and logs no recovery', async () => {
+      const t = failingHost()
+      try {
+        const dir = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
+        t.failing.add(`${dir}/project.json`)
+        await t.host.handleInvoke('add_track', { kind: 'Video', name: 'Unsaved' })
+        await vi.advanceTimersByTimeAsync(t.maxWaitMs() * 2)
+        expect(t.pushes().map((p) => p.state)).toEqual(['failing'])
+        const tracks = rootComposition(t.host.actor.snapshot()).tracks.length
+
+        await t.host.handleInvoke('project_save_as', { path: '/projects/Rescue' })
+        const saved = JSON.parse(t.vfs['/projects/Rescue/project.json']!)
+        expect(saved.compositions[saved.root_id].tracks).toHaveLength(tracks)
+        expect(t.pushes().map((p) => p.state)).toEqual(['failing', 'ok'])
+        expect(t.saveRows().map((r) => r.level)).toEqual(['warn'])
+      } finally { t.done() }
+    })
+
+    it('a quit whose save fails leaves the project open; abandoning it then shuts the gate', async () => {
+      const t = failingHost()
+      try {
+        const dir = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
+        t.failing.add(`${dir}/project.json`)
+        await t.host.handleInvoke('add_track', { kind: 'Video', name: 'Unsaved' })
+        await expect(t.host.shutdown()).rejects.toMatchObject({ code: 'ENOSPC' })
+        expect(t.host.openedProject()).toEqual({ dir })
+        expect(t.host.projects.shuttingDown()).toBe(false)
+        expect(t.host.hasUnsavedEdits()).toBe(true)
+
+        t.host.abandon()
+        expect(t.host.openedProject()).toBeNull()
+        expect(t.host.projects.shuttingDown()).toBe(true)
+        // Nothing more is written: no timer survives to retry.
+        t.failing.clear()
+        await vi.advanceTimersByTimeAsync(t.maxWaitMs() * 2)
+        expect(t.host.hasUnsavedEdits()).toBe(true)
+      } finally { t.done() }
+    })
   })
 
   it('project_save with no workspace is a no-op (workspaceDir returns null)', async () => {

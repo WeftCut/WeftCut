@@ -56,7 +56,8 @@ import { MotifGpuTransport } from './motif/gpuTransport.js'
 import { spawnMotifWatcher, type MotifWatcher } from './motif/watcher.js'
 import { MotifWorkspace } from './motif/workspace.js'
 import { builtinAssetDir } from './motif/builtinAssets.js'
-import { createSecondary, actOnSecondary, secondaryExists, hardenWindow, restoreGeometry, rememberGeometry, quitIfLastUserWindowClosed } from './windows.js'
+import { createSecondary, actOnSecondary, secondaryExists, hardenWindow, restoreGeometry, rememberGeometry, quitIfLastUserWindowClosed, userFacingWindows } from './windows.js'
+import { QUIT_SAVE_CHOICES, quitSaveDialog, settleQuitSave } from './quitSave.js'
 import { registerScreenPick } from './screenPick.js'
 import type { SecondaryWinOpts } from './windowConfig.js'
 import { taskbarProgressArgs } from './taskbarProgress.js'
@@ -2949,9 +2950,17 @@ app.whenReady().then(async () => {
   const win = await createWindow()
   win.webContents.on('render-process-gone', () => { void exportJobs.rendererGone().catch(console.error); });
   win.on('close', event => {
-    if (!quitNeedsConfirm()) return;
+    if (quitNeedsConfirm()) {
+      event.preventDefault();
+      void confirmQuit().then(confirmed => { if (confirmed && !win.isDestroyed()) win.close(); }).catch(console.error);
+      return;
+    }
+    // Closing the last window quits (quitIfLastUserWindowClosed). Its final save
+    // runs here, while the window can still host the question and survive a
+    // Cancel; by before-quit it would already be gone.
+    if (quitFlushed || !tsHost || userFacingWindows().some(w => w !== win)) return;
     event.preventDefault();
-    void confirmQuit().then(confirmed => { if (confirmed && !win.isDestroyed()) win.close(); }).catch(console.error);
+    void finishQuitSave().then(quit => { if (quit && !win.isDestroyed()) win.close(); });
   });
 
   win.once('ready-to-show', () => win.show())
@@ -2972,17 +2981,27 @@ app.on('window-all-closed', () => app.quit())
 
 // Flush the TS actor's debounced autosave before the process exits — an edit the
 // autosave timers have not written yet would otherwise be lost on quit
-// (autosave.stop() drops the pending timers rather than firing them). `shutdown`
-// shuts the MCP project gate, then autosave.forceFlush()es, a no-op when no
-// workspace is set (blank-boot). Async-quit pattern: preventDefault once, flush, then re-quit; the
-// quitFlushed guard breaks the re-entrant before-quit that app.quit() raises.
-// A null tsHost early-returns: nothing to flush before whenReady constructs the host.
+// (autosave.stop() drops the pending timers rather than firing them). Async-quit
+// pattern: preventDefault, settle the save (finishQuitSave), then re-quit; the
+// quitFlushed guard lets the re-entrant before-quit that app.quit() raises
+// through to the teardown. A null tsHost skips the save: nothing to flush before
+// whenReady constructs the host.
+//
+// LANDMINE: the save runs BEFORE the teardown below. A failed save can end in
+// Cancel, and the app then keeps running: the capturer, baker and watchers must
+// still be alive. `shutdown`'s failure path already reopens the project (the
+// update restart relies on the same).
 let quitFlushed = false
 app.on('before-quit', (event) => {
   if (quitNeedsConfirm()) {
     event.preventDefault();
     void confirmQuit().then(confirmed => { if (confirmed) app.quit(); }).catch(console.error);
     return;
+  }
+  if (!quitFlushed && tsHost) {
+    event.preventDefault()
+    void finishQuitSave().then(quit => { if (quit) app.quit() })
+    return
   }
   motifWatcher?.close(); motifWatcher = null
   // Abort an in-flight content download so its file handle closes at a chunk
@@ -3003,17 +3022,34 @@ app.on('before-quit', (event) => {
   // (covering macOS ⌘W, which never quits); this covers quitting via the app
   // menu / Cmd+Q, where before-quit precedes the window close.
   windowGeometryStore?.flush()
-  if (quitFlushed || !tsHost) return
-  event.preventDefault()
-  quitFlushed = true
-  // `shutdown`, not a plain save: it also shuts the MCP gate first, so an
-  // agent write racing the quit is refused rather than answered as success and
-  // then lost with the dropped autosave timer.
-  void tsHost
-    .shutdown()
-    .catch((e) => console.warn('[main] autosave quit-flush failed', e))
-    .finally(() => app.quit())
 })
+
+/** The quit's final save, asked once however many quit paths race to it:
+ *  true to go on quitting. `shutdown`, not a plain save: it also shuts the MCP
+ *  gate first, so an agent write racing the quit is refused rather than
+ *  answered as success and then lost with the dropped autosave timer. On
+ *  Cancel `shutdown` has already reopened the gate, and quitFlushed stays
+ *  false so the next quit saves again. */
+let quitSave: Promise<boolean> | undefined
+function finishQuitSave(): Promise<boolean> {
+  const host = tsHost
+  if (!host) return Promise.resolve(true)
+  quitSave ??= settleQuitSave({
+    save: () => host.shutdown(),
+    unsaved: () => host.hasUnsavedEdits(),
+    ask: async (error) => {
+      const options = quitSaveDialog(app.getLocale().toLowerCase().startsWith('zh'), error)
+      const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+      const { response } = await (win ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options))
+      return QUIT_SAVE_CHOICES[response] ?? 'cancel'
+    },
+    discard: () => host.abandon(),
+  })
+    .catch((error) => { console.warn('[main] quit save failed', error); return true })
+    .then((quit) => { quitFlushed = quit; return quit })
+    .finally(() => { quitSave = undefined })
+  return quitSave
+}
 
 /** Something quitting would end without asking: an export (running, or
  *  waiting to retry its save) or a transcription / description job. */

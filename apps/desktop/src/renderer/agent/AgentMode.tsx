@@ -25,6 +25,7 @@ import { selectChange, selectTack, useReviewFocus, type ReviewTarget } from "./r
 import { useChangeMarkLabel, useCompositionChangeRanges, useReviewConsumer } from "./reviewStore";
 import { Button } from "@/components/ui/button";
 import { WindowControls } from "../components/WindowControls";
+import { SaveStatusBadge } from "../components/SaveStatusBadge";
 import { useUiScale } from '../settings/layoutTheme';
 import { UI_METRICS } from '../settings/uiMetrics';
 
@@ -36,11 +37,15 @@ import { UI_METRICS } from '../settings/uiMetrics';
 /// styles/agent.css. The right pane is the shared AgentPanel component, the
 /// same surface the editor dock's "Agent" panel renders. See docs/mcp.md.
 /// Both the menu bar and editor-mode status bar are hidden — in
-/// agent mode the record panel IS the surface for activity.
+/// agent mode the record panel IS the surface for activity. The one status
+/// bar item that cannot wait for the editor, the not-saved badge, rides the
+/// titlebar instead.
 interface AgentModeProps {
   summary: ProjectSummary | null;
   /// Switch the renderer layout back to the editor.
   onExit: () => void;
+  /// The badge's click: back to the editor, with the System panel open.
+  onOpenSaveStatus: () => void;
 }
 
 /// Record-panel width bounds, in baseline units (UI_METRICS.agent).
@@ -66,6 +71,7 @@ export const AgentMode = forwardRef(function AgentMode(
   {
     summary,
     onExit,
+    onOpenSaveStatus,
   }: AgentModeProps,
   previewRef: ForwardedRef<PreviewSurfaceHandle>,
 ) {
@@ -141,6 +147,7 @@ export const AgentMode = forwardRef(function AgentMode(
           button lives here too — top-right, ahead of the caption
           buttons. */}
       <div className="agent-titlebar" data-drag-region>
+        <SaveStatusBadge onOpen={onOpenSaveStatus} />
         <Button
           className="agent-exit-button"
           onClick={onExit}

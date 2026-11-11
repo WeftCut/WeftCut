@@ -19,6 +19,7 @@ import { wireSearchIndex } from "../search/searchIndexStore";
 import { bootAudioFxStore } from "../state/audioFxStore";
 import { useProjectStore, wireProjectStore } from "../state/projectStore";
 import { wireProxyPrefStore } from "../state/proxyPreferenceStore";
+import { wireSaveStatus } from "../state/saveStatusStore";
 import { wireDecodeComponent } from "../settings/decodeComponentStore";
 
 /// Owns the App-root backend wiring: the pong healthcheck, keybindings +
@@ -85,6 +86,16 @@ export function useAppWiring(): {
     // The completion notice watches the same mirror (`computeJobNotices.ts`).
     const stopNotices = wireComputeJobNotices();
     return () => { cancelled = true; stop?.(); stopNotices(); };
+  }, []);
+
+  // Whether the project is reaching disk (shared/save-status.ts).
+  useEffect(() => {
+    let cancelled = false;
+    let stop: (() => void) | undefined;
+    void wireSaveStatus().then(unlisten => {
+      if (cancelled) unlisten(); else stop = unlisten;
+    });
+    return () => { cancelled = true; stop?.(); };
   }, []);
 
   const exitAgentMode = useCallback(async () => { useAgentActivity.setState({ mode: "editor" }); }, []);

@@ -7,7 +7,7 @@ import { blankProject, eachLayer, rootComposition } from './model'
 import { buildProjectSummary } from './summary'
 import { routeChannel } from './router'
 import { CommandFailure } from './errors'
-import { createAutosave, type AutosaveController, type AutosaveFs } from './autosave'
+import { createAutosave, type AutosaveController, type AutosaveFs, type AutosaveSaveState } from './autosave'
 import { openProject, saveProjectAs, newWorkspace, makeEnqueueDerivatives, type WorkspaceNapi, type OrchestratorFs, type SchemaUpgradeReport } from './workspace-orchestrator'
 import type { RelinkFs, RelinkReport } from './relink'
 import { serializeProjectToJson } from './persistence'
@@ -18,6 +18,7 @@ import { runTackIpc } from '../agent/tackIpc'
 import { mcpActor } from './mcp-actor'
 import { AGENT_VIEW_EVENT } from '../../shared/agent-activity'
 import { PROJECT_OPENED_EVENT, type ProjectOpenedPayload } from '../../shared/project-events'
+import { SAVE_STATUS_EVENT, type SaveStatus } from '../../shared/save-status'
 import { PUBLICATION_BASE_ARG, type ProjectVersion, type ProjectPublication, type PublishedResult } from '../../shared/projectPublication'
 import { createPublicationAnswers } from './publicationAnswers'
 import { REVIEW_CHANGED_EVENT, type ReviewActivityArgs, type ReviewActivityView, type ReviewActionArgs, type ReviewActionResult, type ReviewChangedPayload, type ReviewVersion, type ReviewView, type ReviewViewArgs, type ReviewViewUnchanged } from '../../shared/review'
@@ -94,6 +95,8 @@ export interface TsActorHostDeps {
     category: { kind: 'Project' | 'Mcp' | 'System' | string; name?: string }
     source: { kind: 'User' } | { kind: 'Agent'; client: string } | { kind: 'System' }
     message: string
+    i18n_key?: string
+    i18n_args?: Record<string, unknown>
     details?: Record<string, unknown>
   }) => void
   /** list_motifs JSON from the backend — used to hydrate the actor's motif catalog
@@ -217,8 +220,14 @@ export interface TsActorHost {
   refreshMotifCatalog: () => void
   /** The quit path's close: the gate shuts at once (so a write racing the
    *  quit is refused instead of answered and then lost), the project is
-   *  flushed, and nothing can be opened afterwards. */
+   *  flushed, and nothing can be opened afterwards. A failed flush reopens the
+   *  gate and rejects, leaving the project usable. */
   shutdown: () => Promise<void>
+  /** The quit path's "Quit without saving", after `shutdown` failed: the gate
+   *  shuts as in `shutdown` and nothing more is written. */
+  abandon: () => void
+  /** Edits not on disk yet. */
+  hasUnsavedEdits: () => boolean
   start: () => void
   stop: () => void
 }
@@ -286,12 +295,44 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   let deferredChange: { event: ChangeEvent; traceId?: string } | null = null
   const agent = new AgentActivityService(actor, deps.send)
 
+  let saveStatus: SaveStatus = { state: 'ok', revision: 0 }
+  /** Publishes autosave's state, and logs the transitions a user would look
+   *  for in the log: failing once, and recovered once. A reset is a different
+   *  project, not a recovery, and lands in that project's log, so it logs nothing. */
+  const onSaveState = (state: AutosaveSaveState): void => {
+    const wasFailing = saveStatus.state === 'failing'
+    const revision = saveStatus.revision + 1
+    saveStatus = state.kind === 'ok' ? { state: 'ok', revision } : {
+      state: 'failing', revision, since: state.since.toISOString(), last_saved_at: state.lastSavedAt?.toISOString() ?? null,
+      code: state.code, path: state.path, dir: state.dir,
+    }
+    if (emitting) {
+      try { deps.send(SAVE_STATUS_EVENT, saveStatus) }
+      catch (error) { console.warn('[ts-actor-host] save status notification failed', error) }
+    }
+    try {
+      if (state.kind === 'failing' && !wasFailing) {
+        deps.emitLog?.({
+          level: 'warn', category: { kind: 'Project' }, source: { kind: 'System' },
+          message: 'Project not saved: project.json cannot be written', i18n_key: 'log.save_failing',
+          details: { kind: 'SaveFailing', code: state.code, path: state.path, since: state.since.toISOString(),
+            last_saved_at: state.lastSavedAt?.toISOString() ?? null },
+        })
+      } else if (state.kind === 'ok' && state.cause === 'saved' && wasFailing) {
+        deps.emitLog?.({
+          level: 'info', category: { kind: 'Project' }, source: { kind: 'System' },
+          message: 'Project saved again', i18n_key: 'log.save_recovered', details: { kind: 'SaveRecovered' },
+        })
+      }
+    } catch (err) { console.warn('[ts-actor-host] emitLog failed (save status)', err) }
+  }
   const autosave: AutosaveController = createAutosave({
     actor,
     fs: deps.fs,
     workspaceDir: deps.workspaceDir,
     join: deps.join,
     serialize: serializeProjectToJson,
+    onSaveState,
   })
 
   let importGeneration = 0
@@ -423,7 +464,10 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
 
   // Serialize all cache-root/session changes, including Save As and Close.
   let persistenceTail: Promise<unknown> = Promise.resolve()
-  const replaceWorkspace = <T>(replace: () => Promise<T>, closing = false): Promise<T> => {
+  /** `keepsEdits`: the replacement writes the whole current state elsewhere
+   *  (Save As), so the old folder's flush may fail without losing an edit —
+   *  which is when Save As is the way out (the save-failure card offers it). */
+  const replaceWorkspace = <T>(replace: () => Promise<T>, closing = false, keepsEdits = false): Promise<T> => {
     deps.exportJobs?.assertWritable()
     // Invalidate immediately, before a flush or another lifecycle call yields.
     importGeneration++
@@ -444,8 +488,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
           // New/Open/Save As/Close. Other save failures must still abort switching;
           // explicit Save continues to report the missing directory as well.
           const dir = deps.workspaceDir()
-          if (!(error instanceof Error) || (error as NodeJS.ErrnoException).code !== 'ENOENT'
-            || dir === null || deps.fs.exists(dir)) throw error
+          if (!keepsEdits && (!(error instanceof Error) || (error as NodeJS.ErrnoException).code !== 'ENOENT'
+            || dir === null || deps.fs.exists(dir))) throw error
         }
         const value = await replace()
         succeeded = true
@@ -465,6 +509,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         // Another folder's files, or the same files under another Cache/:
         // nothing read before the replacement is known to hold.
         poolFiles.clear()
+        // Another project (or none) now: what was unsaved belonged to the old one.
+        if (succeeded || replacementOccurred) autosave.beginProject()
         const pending = deferredChange as { event: ChangeEvent; traceId?: string } | null
         if (replacementOccurred || pending || (succeeded && (!closing || publishedProject !== null))) {
           publishChange(pending?.event, pending?.traceId,
@@ -503,7 +549,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         }
       }
       opens(dir)
-    }),
+    }, false, true),
     newWorkspace: (a) => replaceWorkspace(async () => { const dir = await newWorkspace(orchestratorDeps, a); opens(dir); return dir }),
     save: () => autosave.forceFlush(),
     // The record clears BEFORE the flush: the flush is async, and a write the
@@ -821,6 +867,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         return actor.historyView(actor.historyCapacity())
       case 'projectSettings':
         return actor.snapshot().settings
+      case 'saveStatus':
+        return saveStatus
       case 'review': {
         if (channel === 'review_activity_view') return reviewActivityView((args as Partial<ReviewActivityArgs>).history_ids)
         const includeUser = (args as ReviewViewArgs).include_user === true
@@ -974,6 +1022,12 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         throw error
       }
     },
+    abandon: () => {
+      quitting = true
+      opened = null
+      autosave.stop()
+    },
+    hasUnsavedEdits: () => autosave.unsaved(),
     ...(deps.styleDirs ? { taste: () => tasteView(deps.styleDirs!, opened?.dir ?? null, { motif: (id) => motifCatalog.get(id) ?? null, fonts: deps.installedFonts?.() ?? null }) } : {}),
     audits: new AuditStore((id) => motifCatalog.get(id) ?? null),
     projectStatus: () => ({

@@ -75,7 +75,8 @@
    NOT a pixel-exact centring: the window edge (base.css) paints over the
    bar's first row, so the visible band is a row shorter than the box and
    the pill lands up to half a device pixel high. Deliberately left there. */
-.agent-titlebar .agent-exit-button {
+.agent-titlebar .agent-exit-button,
+.agent-titlebar .status-bar-badge {
   align-self: center;
   height: calc(22 * var(--ui-px));
   padding-block: 0;

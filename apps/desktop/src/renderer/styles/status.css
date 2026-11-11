@@ -146,6 +146,14 @@
   animation: status-bar-error-pulse 1.5s ease-in-out 1;
 }
 
+/* The project is not being saved (SaveStatusBadge). The warn notices' amber,
+   on the error badge's pattern: it needs attention but counts nothing. */
+.status-bar-badge-warn {
+  background: rgba(251, 191, 36, 0.12);
+  border-color: rgba(251, 191, 36, 0.32);
+  color: var(--color-amber-300);
+}
+
 .status-bar-badge-running {
   background: rgba(59, 130, 246, 0.12);
   border-color: rgba(59, 130, 246, 0.3);
@@ -436,4 +444,36 @@
 .system-status-item-content button {
   margin-left: calc(-8 * var(--ui-px));
   color: var(--color-blue-300);
+}
+
+/* SaveFailureCard: the failing file, the last save, and three actions in a row. */
+.save-failure-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: calc(2 * var(--ui-px)) calc(8 * var(--ui-px));
+  margin: 0 0 calc(6 * var(--ui-px));
+  font-size: var(--font-size-caption);
+}
+
+.save-failure-facts dt {
+  color: var(--muted-foreground);
+}
+
+.save-failure-facts dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.save-failure-path {
+  overflow-wrap: anywhere;
+}
+
+.save-failure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  margin-left: calc(-8 * var(--ui-px));
+}
+
+.save-failure-actions button {
+  margin-left: 0;
 }

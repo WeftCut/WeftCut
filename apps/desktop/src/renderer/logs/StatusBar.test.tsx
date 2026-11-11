@@ -127,3 +127,44 @@ describe("clip-compute pill", () => {
     unregister();
   });
 });
+
+describe("not-saved badge", () => {
+  let revision = 0;
+  const failing = (code: string | null, last_saved_at: string | null = null) => ({
+    state: "failing" as const, revision: ++revision, since: "2026-01-02T03:04:05.000Z", last_saved_at,
+    code, path: "/home/u/Demo/project.json", dir: "/home/u/Demo",
+  });
+  afterEach(async () => {
+    const { useSaveStatusStore } = await import("../state/saveStatusStore");
+    useSaveStatusStore.setState({ status: { state: "ok", revision: 0 } });
+    revision = 0;
+  });
+
+  it("shows only while saving fails, says why in its tooltip, opens the System panel, and is announced once", async () => {
+    const { receiveSaveStatus } = await import("../state/saveStatusStore");
+    const onOpenSaveStatus = vi.fn();
+    const { container } = render(<StatusBar onOpenSaveStatus={onOpenSaveStatus} />);
+    await act(async () => {});
+    const badge = () => container.querySelector<HTMLElement>('[data-testid="save-status-badge"]');
+    const announced = () => container.querySelector('[aria-live="polite"]')!.textContent;
+    expect(badge()).toBeNull();
+
+    act(() => receiveSaveStatus(failing("ENOSPC")));
+    expect(badge()!.textContent).toBe("Not saved");
+    expect(badge()!.closest(".status-bar-right")).not.toBeNull();
+    expect(badge()!.title).toBe("The disk is full.\nNot saved since the project was opened");
+    expect(announced()).toBe("Project not saved: The disk is full.");
+    act(() => badge()!.click());
+    expect(onOpenSaveStatus).toHaveBeenCalledTimes(1);
+
+    // A new reason updates the tooltip but is not a second announcement.
+    act(() => receiveSaveStatus(failing("EROFS", "2026-01-02T03:00:00.000Z")));
+    expect(badge()!.title).toMatch(/^The project folder is on a read-only drive\.\nLast saved at /);
+    expect(announced()).toBe("Project not saved: The disk is full.");
+
+    act(() => receiveSaveStatus({ state: "ok", revision: ++revision }));
+    expect(badge()).toBeNull();
+    act(() => receiveSaveStatus(failing("EACCES")));
+    expect(announced()).toBe("Project not saved: WeftCut is not allowed to write to the project folder.");
+  });
+});

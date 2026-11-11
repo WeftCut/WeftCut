@@ -3,7 +3,9 @@
 // Auto-save subscriber + periodic Backups/ snapshots. Per docs/data-model.md the
 // workspace is the truth: every actor commit lands on disk as project.json, no
 // explicit Save. This module decides *when* to write: after a quiet window, and
-// no later than the project's autosave interval under a steady stream of edits.
+// no later than the project's autosave interval under a steady stream of edits,
+// and when a failing write has gone on long enough to tell the user
+// (`onSaveState`; shared/save-status.ts).
 // Serialization belongs to persistence.ts, the crash-safe replacement to the
 // injected `AutosaveFs.writeFile` (atomicWrite.ts in production). Pure +
 // injected (fs / clock / timer / workspace-dir) so the cadence and gc are
@@ -13,17 +15,10 @@ import type { ActorHandle, ChangeEvent } from './actor'
 import type { Project, ProjectSettings } from './model'
 import { PROJECT_FILE } from './persistence'
 import { currentEditTrace, measureEditStage, runEditTrace } from '../../shared/editTrace'
+import { AUTOSAVE_INTERVAL_DEFAULT_SECS, AUTOSAVE_INTERVAL_MAX_SECS, AUTOSAVE_INTERVAL_MIN_SECS } from '../../shared/save-status'
 
 /** Quiet window before a write — a 10-event drag coalesces into one. */
 const DEBOUNCE_MS = 500
-/** `settings.autosave_interval_secs` bounds how long edits may stay unsaved while
- *  they keep arriving faster than the quiet window (a long agent run). Internal:
- *  not exposed in the UI or MCP. A missing or invalid value falls back to the
- *  default; the clamp keeps a hand-edited project.json from disabling the bound
- *  or turning every edit into a write. */
-export const AUTOSAVE_INTERVAL_DEFAULT_SECS = 60
-export const AUTOSAVE_INTERVAL_MIN_SECS = 5
-export const AUTOSAVE_INTERVAL_MAX_SECS = 300
 /** Snapshot cadence: a copy to Backups/ once either threshold trips. */
 const SNAPSHOT_EVERY_COMMITS = 50
 const SNAPSHOT_EVERY_MS = 5 * 60 * 1000
@@ -54,11 +49,26 @@ export interface AutosaveDeps {
   debounceMs?: number
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (h: ReturnType<typeof setTimeout>) => void
+  /** Called when the save state changes, never twice with the same state. */
+  onSaveState?: (state: AutosaveSaveState) => void
 }
+
+/** `failing`: edits have been unsaved for at least the autosave interval and the
+ *  latest write failed. `ok` follows a failing state only: `saved` when a write
+ *  of this project succeeded, `reset` when `beginProject` withdrew it. */
+export type AutosaveSaveState =
+  | { kind: 'ok'; cause: 'saved' | 'reset' }
+  | { kind: 'failing'; since: Date; lastSavedAt: Date | null; code: string | null; path: string; dir: string }
 
 export interface AutosaveController {
   start(): void
   forceFlush(): Promise<void>
+  /** Edits not on disk yet. */
+  unsaved(): boolean
+  /** The workspace now holds another project (or none): its unsaved age and
+   *  last save start over, and a failing state reported for the previous one is
+   *  withdrawn. */
+  beginProject(): void
   stop(): void
 }
 
@@ -83,6 +93,10 @@ export function createAutosave(deps: AutosaveDeps): AutosaveController {
   let deadline: ReturnType<typeof setTimeout> | null = null
   /** Edits not yet on disk. A failed write leaves it set. */
   let dirty = false
+  /** When `dirty` was last set from clean: the age the failing state is judged by. */
+  let dirtySince: Date | null = null
+  let lastSavedAt: Date | null = null
+  let reported: AutosaveSaveState = { kind: 'ok', cause: 'saved' }
   let commitsSinceSnapshot = 0
   let lastSnapshotAtMs = now().getTime()
   let pendingTraceId: string | undefined
@@ -98,6 +112,36 @@ export function createAutosave(deps: AutosaveDeps): AutosaveController {
     currentEditTrace()?.fact('jsonChars', json.length)
     measureEditStage('write_file', () => deps.fs.writeFile(deps.join(ws, PROJECT_FILE), json))
     dirty = false
+    dirtySince = null
+    lastSavedAt = now()
+    if (reported.kind === 'failing') report({ kind: 'ok', cause: 'saved' })
+  }
+
+  function report(state: AutosaveSaveState): void {
+    reported = state
+    deps.onSaveState?.(state)
+  }
+
+  /** A write of project.json failed. It is reported only once the edits have
+   *  waited the autosave interval: a failure a later cycle fixes in time says
+   *  nothing. The deadline always attempts a write at the interval, so judging
+   *  at each failed attempt is enough. `atDeadline`: this attempt IS that
+   *  deadline, which was armed no earlier than `dirtySince` — trusted over the
+   *  wall clock, which may read a millisecond short of the timer. */
+  function writeFailed(error: unknown, atDeadline: boolean): void {
+    const ws = deps.workspaceDir()
+    if (ws === null || !dirty || dirtySince === null) return
+    const overdue = atDeadline
+      || now().getTime() - dirtySince.getTime() >= autosaveMaxWaitMs(deps.actor.snapshot().settings)
+    if (!overdue) return
+    const code = (error as NodeJS.ErrnoException | null)?.code
+    const next: AutosaveSaveState = {
+      kind: 'failing', since: dirtySince, lastSavedAt, code: typeof code === 'string' ? code : null,
+      path: deps.join(ws, PROJECT_FILE), dir: ws,
+    }
+    if (reported.kind === 'failing' && reported.code === next.code && reported.path === next.path
+      && reported.since === next.since && reported.lastSavedAt === next.lastSavedAt) return
+    report(next)
   }
 
   function takeSnapshot(ws: string): void {
@@ -129,11 +173,11 @@ export function createAutosave(deps: AutosaveDeps): AutosaveController {
   function armDeadline(): void {
     const ms = autosaveMaxWaitMs(deps.actor.snapshot().settings)
     const dueAt = performance.now() + ms
-    deadline = setTimer(() => flushOnTimer(dueAt), ms)
+    deadline = setTimer(() => flushOnTimer(dueAt, true), ms)
   }
 
   /** Timer write: persist, then snapshot if the commit/time threshold passed. */
-  function flushOnTimer(dueAt: number): void {
+  function flushOnTimer(dueAt: number, atDeadline: boolean): void {
     clearTimers()
     const traceId = pendingTraceId
     pendingTraceId = undefined
@@ -147,6 +191,7 @@ export function createAutosave(deps: AutosaveDeps): AutosaveController {
       // main (a modal error box on Windows). The edits stay dirty; the next edit
       // or the re-armed deadline retries.
       console.warn('[autosave] project.json was not written; will retry', error)
+      writeFailed(error, atDeadline)
       if (dirty && unsubscribe !== null) armDeadline()
     }
   }
@@ -166,13 +211,14 @@ export function createAutosave(deps: AutosaveDeps): AutosaveController {
   }
 
   function onChange(_e: ChangeEvent): void {
+    if (!dirty) dirtySince = now()
     dirty = true
     if (quiet !== null) clearTimer(quiet)
     // A coalesced save belongs to its latest edit; never attribute a later,
     // untraced edit to the previous drag. IDs are session-only, never persisted.
     pendingTraceId = currentEditTrace()?.id
     const dueAt = performance.now() + debounceMs
-    quiet = setTimer(() => flushOnTimer(dueAt), debounceMs)
+    quiet = setTimer(() => flushOnTimer(dueAt, false), debounceMs)
     if (deadline === null) armDeadline()
   }
 
@@ -199,9 +245,19 @@ export function createAutosave(deps: AutosaveDeps): AutosaveController {
           lastSnapshotAtMs = now().getTime()
         })
       } catch (error) {
+        writeFailed(error, false)
         if (dirty && unsubscribe !== null) armDeadline()
         throw error
       }
+    },
+    unsaved: () => dirty,
+    beginProject() {
+      dirtySince = dirty ? now() : null
+      lastSavedAt = null
+      // `writeFailed` trusts a deadline to have been armed no earlier than
+      // `dirtySince`; one armed for the previous project would not be.
+      if (deadline !== null) { clearTimer(deadline); deadline = null; armDeadline() }
+      if (reported.kind === 'failing') report({ kind: 'ok', cause: 'reset' })
     },
     stop() {
       pendingTraceId = undefined
