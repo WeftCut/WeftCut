@@ -11,6 +11,8 @@ import {
   ListPromptsResultSchema,
   ListResourcesRequestSchema,
   ListResourcesResultSchema,
+  ListResourceTemplatesRequestSchema,
+  ListResourceTemplatesResultSchema,
   ListToolsRequestSchema,
   ListToolsResultSchema,
   McpError,
@@ -374,6 +376,17 @@ export function createShim(opts: ShimOptions): Shim {
       return await bridge.forward('resources/list', req.params, ListResourcesResultSchema, upstream(req, extra, closed))
     } catch (e) {
       if (e instanceof BridgeDownError) return { resources: [] }
+      throw mapError(e)
+    }
+  })
+
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, async (req, extra) => {
+    await bridge.ensureUp()
+    if (!bridge.isUp()) return { resourceTemplates: [] }
+    try {
+      return await bridge.forward('resources/templates/list', req.params, ListResourceTemplatesResultSchema, upstream(req, extra, closed))
+    } catch (e) {
+      if (e instanceof BridgeDownError) return { resourceTemplates: [] }
       throw mapError(e)
     }
   })
