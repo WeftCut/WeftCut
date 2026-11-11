@@ -114,8 +114,12 @@ Rejected:
   old config, as before. That process boots as the app on the default
   profile, without the single-instance lock and without opening anything. It
   ends when those configs are replaced.
-- A Windows terminal does not wait for a GUI-subsystem program: `weftcut
-  info` typed at a prompt prints after the prompt has returned. The JS shim
-  behaved the same.
+- A Windows terminal does not wait for a GUI-subsystem program. Typed at a
+  cmd or PowerShell prompt, `weftcut info` prints after the prompt has
+  returned and leaves no exit code; PowerShell loses the output outright when
+  it is assigned or redirected (`$o = & weftcut …`, `> file`). A batch file,
+  `cmd /c`, `| Out-String` and Git Bash wait and capture. The JS shim, on the
+  app's GUI executable, behaved the same. A console twin of the binary would
+  lift this; nothing needs one while the binary is not on `PATH`.
 - The fuse is flipped at packaging, so an unpackaged run still honours
   `ELECTRON_RUN_AS_NODE`; only checks on the packaged app can see it off.
