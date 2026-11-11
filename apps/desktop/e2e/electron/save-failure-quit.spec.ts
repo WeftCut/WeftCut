@@ -117,8 +117,11 @@ function pressCloseButton(page: Page): void {
  *  Cancel stub, or to the real dialog no test can answer, would hold the quit:
  *  every question is answered Quit Without Saving first. */
 async function closeApp(app: ElectronApplication): Promise<void> {
-  const proc = app.process()
-  if (proc.exitCode !== null || proc.signalCode !== null) {
+  // Once the app has exited, Playwright has dropped the process handle and
+  // `process()` throws rather than answering.
+  let proc: ReturnType<ElectronApplication['process']> | null = null
+  try { proc = app.process() } catch { /* exited */ }
+  if (proc === null || proc.exitCode !== null || proc.signalCode !== null) {
     await app.close().catch(() => { /* already exited; the wrapper still reaps the temp dir */ })
     return
   }
