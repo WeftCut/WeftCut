@@ -5,6 +5,7 @@
 // the workspace/cache/LogBus/recents/jobs orchestration live in
 // workspace-orchestrator.ts (injected fs). Filesystem/platform impurities are
 // injected (`join` for path reconcile).
+import { isDeepStrictEqual } from 'node:util'
 import { WorkspaceFailure } from '../../shared/workspaceErrors'
 import { SCHEMA_VERSION, type MediaItem, type Project } from './model'
 import { migrationEvaluation } from './migrationEvaluation'
@@ -30,6 +31,12 @@ export function preUpgradeBackupFile(fromVersion: number): string {
  *  byte-identical key order, is the contract. */
 export function serializeProjectToJson(p: Project): string {
   return JSON.stringify(serializeProject(p), null, 2)
+}
+
+/** Whether the project.json `text` already holds `p`: the same values as
+ *  this build would write, whatever their key order or layout. */
+export function fileHoldsProject(text: string, p: Project): boolean {
+  return isDeepStrictEqual(JSON.parse(text), JSON.parse(JSON.stringify(serializeProject(p))))
 }
 
 /** The schema-version gate: refuse what this build cannot read, and report the

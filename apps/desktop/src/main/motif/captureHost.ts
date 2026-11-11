@@ -146,9 +146,8 @@ export class CaptureHost implements PooledHost {
       },
     })
     // `offscreen: true` is a paint target, not a lifecycle class: unmarked, this
-    // window votes in the quit decision and the app stops quitting when the editor
-    // closes (windows.ts → quitIfLastUserWindowClosed). Before the awaits, per its
-    // same-tick contract.
+    // window counts as one of the user's own (windows.ts → userFacingWindows).
+    // Before the awaits, per its same-tick contract.
     markInternalWindow(win)
     const frames = new OffscreenFrames(win.webContents, texture ? env.markerReader : null, MOTIF_DEADLINES.captureCommandMs, env.tuning.stallNudgeMs)
     // Navigation lockdown for the untrusted Motif page: deny every `window.open`

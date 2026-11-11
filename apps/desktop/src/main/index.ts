@@ -56,7 +56,7 @@ import { MotifGpuTransport } from './motif/gpuTransport.js'
 import { spawnMotifWatcher, type MotifWatcher } from './motif/watcher.js'
 import { MotifWorkspace } from './motif/workspace.js'
 import { builtinAssetDir } from './motif/builtinAssets.js'
-import { createSecondary, actOnSecondary, secondaryExists, hardenWindow, restoreGeometry, rememberGeometry, quitIfLastUserWindowClosed, userFacingWindows } from './windows.js'
+import { createSecondary, actOnSecondary, secondaryExists, hardenWindow, restoreGeometry, rememberGeometry, quitWithEditor } from './windows.js'
 import { QUIT_SAVE_CHOICES, quitSaveDialog, settleQuitSave } from './quitSave.js'
 import { registerScreenPick } from './screenPick.js'
 import type { SecondaryWinOpts } from './windowConfig.js'
@@ -418,9 +418,8 @@ async function createWindow(): Promise<BrowserWindow> {
 
   // The titlebar ✕ (window:close IPC), Alt+F4, the macOS red button and the
   // taskbar all land here, and this — not `window-all-closed` below — is what
-  // quits. Wrapped rather than passed by reference so no emitter argument can
-  // ever reach the gate.
-  win.on('closed', () => quitIfLastUserWindowClosed())
+  // quits.
+  quitWithEditor(win)
   // Back from elsewhere, where the user may have changed a pool file or a
   // derivative: the summary says so if they did (ADR 0153).
   win.on('focus', () => { void tsHost?.poolFiles.refresh() })
@@ -2955,10 +2954,11 @@ app.whenReady().then(async () => {
       void confirmQuit().then(confirmed => { if (confirmed && !win.isDestroyed()) win.close(); }).catch(console.error);
       return;
     }
-    // Closing the last window quits (quitIfLastUserWindowClosed). Its final save
-    // runs here, while the window can still host the question and survive a
-    // Cancel; by before-quit it would already be gone.
-    if (quitFlushed || !tsHost || userFacingWindows().some(w => w !== win)) return;
+    // Closing the editor quits (quitWithEditor), whatever other window is
+    // open: none of them can host the editing a Cancel returns to. Its final
+    // save runs here, while the editor can still host the question and survive
+    // a Cancel; by before-quit it would already be gone.
+    if (quitFlushed || !tsHost) return;
     event.preventDefault();
     void finishQuitSave().then(quit => { if (quit && !win.isDestroyed()) win.close(); });
   });
@@ -2973,8 +2973,8 @@ app.whenReady().then(async () => {
 })
 
 // Backstop for a window opened outside createWindow/createSecondary. The real
-// quit decision is quitIfLastUserWindowClosed (windows.ts), which explains why
-// this event cannot be trusted; a double quit is absorbed by quitFlushed below.
+// quit decision is quitWithEditor (windows.ts), which explains why this event
+// cannot be trusted; a double quit is absorbed by quitFlushed below.
 // No platform test, for the same reason the gate carries none — a windowless
 // WeftCut is never a state to leave running.
 app.on('window-all-closed', () => app.quit())
@@ -2989,8 +2989,8 @@ app.on('window-all-closed', () => app.quit())
 //
 // LANDMINE: the save runs BEFORE the teardown below. A failed save can end in
 // Cancel, and the app then keeps running: the capturer, baker and watchers must
-// still be alive. `shutdown`'s failure path already reopens the project (the
-// update restart relies on the same).
+// still be alive. A failed `shutdown` leaves the project and its services as
+// they were (the update restart relies on the same).
 let quitFlushed = false
 app.on('before-quit', (event) => {
   if (quitNeedsConfirm()) {

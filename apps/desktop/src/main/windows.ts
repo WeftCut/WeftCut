@@ -19,12 +19,12 @@ const wins = new Map<string, BrowserWindow>()
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
 
 /// Windows serving another window's workflow: the offscreen Motif capture host
-/// and desktop-pick overlays. Neither should keep a closed editor running.
+/// and desktop-pick overlays. Neither may start a screen pick (screenPick.ts).
 const internalWindows = new WeakSet<BrowserWindow>()
 
-/// Hide `win` from the quit decision. Must run in the SAME tick as the
-/// constructor: a user window closing during the internal window's async setup
-/// would otherwise see it as one of their own.
+/// Hide `win` from `userFacingWindows`. Must run in the SAME tick as the
+/// constructor, before the window has loaded anything that could ask main for
+/// something as one of the user's own.
 export function markInternalWindow(win: BrowserWindow): void {
   internalWindows.add(win)
 }
@@ -34,8 +34,11 @@ export function userFacingWindows(): BrowserWindow[] {
   return BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed() && !internalWindows.has(w))
 }
 
-/// Quit once the last window the USER can see has closed — wired to the `closed`
-/// event of every user-facing window, on every platform.
+/// The editor's window is the app: once it has closed, WeftCut quits, whatever
+/// other window is still open. Every other window serves the editor (a player,
+/// a monitor), and none can host the editing a Cancel of the quit's save
+/// question returns to, so that question is asked as the editor closes
+/// (index.ts) and never by another window.
 ///
 /// LANDMINE: `window-all-closed` cannot carry this decision. The offscreen capture
 /// host is a listed BrowserWindow, so once a Motif has been rendered that event
@@ -48,12 +51,8 @@ export function userFacingWindows(): BrowserWindow[] {
 /// would hold decode sessions and ffmpeg children alive behind nothing the user
 /// can see or close — the Electron quick-start's `platform !== 'darwin'` guard
 /// does not belong here. Rationale: docs/notes/electron-chromium-behavior.md.
-///
-/// The closing window is already out of getAllWindows() when its own `closed`
-/// fires, so an empty list here means it was the last one.
-export function quitIfLastUserWindowClosed(): void {
-  if (userFacingWindows().length > 0) return
-  app.quit()
+export function quitWithEditor(editor: BrowserWindow): void {
+  editor.on('closed', () => app.quit())
 }
 
 // Lock down navigation + window creation on a window. The renderer only ever
@@ -254,9 +253,6 @@ export function createSecondary(label: string, opts: SecondaryWinOpts | undefine
   win.on('closed', () => {
     wins.delete(label)
     broadcastEvent(BrowserWindow.getAllWindows(), WIN_CLOSED_EVENT, { label })
-    // This may be the last window the user had — e.g. the Performance Monitor
-    // outliving the editor.
-    quitIfLastUserWindowClosed()
   })
   // Pass the caller's renderer-relative url straight through (e.g. '/?perfHud=1').
   const rel = opts?.url ?? '/'

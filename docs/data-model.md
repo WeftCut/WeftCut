@@ -686,6 +686,18 @@ first unsaved one while edits keep arriving (a long agent run).
 `project_save`, switching or closing the project, and quitting force the write
 at once.
 
+Only edits count as unsaved. Opening a project whose `project.json` already
+holds it as this build would write it, creating one, and Save As leave nothing
+to save, so nothing is written. An open that changed the project (a schema
+upgrade, a grid repair, a relink, media paths rebased onto a moved folder)
+counts as unsaved until autosave writes it.
+
+Switching, closing and quitting flush first and change nothing before the flush
+has succeeded: a failed flush aborts with the project, its imports, jobs and
+bakes as they were. Edits made before the flush are in it; from the flush to the
+end of the switch every write is refused (`ProjectBusy`), since one landing then
+would be dropped by the swap.
+
 Every write of `project.json` (autosave, Save As, New, the pre-upgrade copy)
 writes `project.json.tmp` beside it, flushes it to disk and renames it over the
 target (`main/atomicWrite.ts`), so an interrupted or failed write leaves the
@@ -714,8 +726,9 @@ Quitting runs the final save before anything shuts down. If it fails with edits
 unsaved, a native dialog asks: **Retry** (default) saves again, **Quit Without
 Saving** quits with the gate shut and nothing more written, **Cancel** (also
 Escape) keeps the app running with the project open and the MCP gate reopened;
-a later quit saves and asks again. Closing the last window asks the same
-question before the window goes, so a Cancel keeps it. The dialog follows the OS
+a later quit saves and asks again. Closing the editor window quits, whatever
+other window (Render & Play, a monitor) is open, and asks the same question
+before the window goes, so a Cancel keeps it. The dialog follows the OS
 language, like main's other native dialogs.
 
 ### `view.json`: how this project was last looked at

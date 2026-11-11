@@ -153,17 +153,20 @@ major; `e2e/electron/menu.spec.ts` covers the rest.
 `webPreferences: { offscreen: true }` selects a paint target, not a lifecycle
 class: `getAllWindows()` includes it and closing the visible window does not
 emit `window-all-closed`. With quit driven by `window-all-closed`, the Motif
-capture host kept the process alive with no window. Quit follows the
-user-facing window count (`main/windows.ts`), gated by
+capture host kept the process alive with no window. Quit follows the editor
+window's `closed` (`main/windows.ts` → `quitWithEditor`), gated by
 `e2e/electron/app-quit.spec.ts`. Declare an internal window in the same tick as
-its constructor, before the first `await`.
+its constructor, before the first `await`, so it is never taken for one of the
+user's (`userFacingWindows`).
 
-## Closing the last window quits, macOS included
+## Closing the editor quits, macOS included
 
 WeftCut is a single-window app (no File > New Window), and a windowless process
 would hold decode sessions, GPU textures and ffmpeg children with nothing to
-close; the MCP stdio shim already serves agents with the app closed. So
-`quitIfLastUserWindowClosed` has no platform branch. Restoring the quick-start
+close; the MCP stdio shim already serves agents with the app closed. A secondary
+window (Render & Play, the Performance Monitor) does not keep the app running
+either: it cannot host editing, nor the quit's save question a Cancel would
+return to. So `quitWithEditor` has no platform branch. Restoring the quick-start
 `process.platform !== 'darwin'` guard fails `app-quit.spec.ts` on macOS and
 would bring back an `activate` handler that can resurrect the window during the
 `before-quit` flush.

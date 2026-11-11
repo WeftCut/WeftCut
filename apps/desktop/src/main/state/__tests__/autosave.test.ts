@@ -26,6 +26,12 @@ function memFs(): AutosaveFs & { files: Map<string, string>; dirs: Set<string> }
 
 const posixJoin = (...p: string[]) => p.join('/')
 
+/** What `fn` threw; fails the test when it returned. */
+function thrown(fn: () => void): unknown {
+  try { fn() } catch (error) { return error }
+  throw new Error('expected a throw')
+}
+
 function setup(over: Partial<AutosaveDeps> = {}) {
   const fs = (over.fs as ReturnType<typeof memFs>) ?? memFs()
   const idGen = seededGen()
@@ -41,7 +47,7 @@ describe('autosave forceFlush', () => {
   it('writes project.json and a Backups snapshot', async () => {
     const { fs, ctl } = setup()
     ctl.start()
-    await ctl.forceFlush()
+    ctl.forceFlush()
     ctl.stop()
     expect(fs.files.has(`/ws/${PROJECT_FILE}`)).toBe(true)
     // a snapshot landed in Backups/ with the colon-free timestamp form.
@@ -52,7 +58,7 @@ describe('autosave forceFlush', () => {
 
   it('is a no-op when no workspace is set', async () => {
     const { fs, ctl } = setup({ workspaceDir: () => null })
-    ctl.start(); await ctl.forceFlush(); ctl.stop()
+    ctl.start(); ctl.forceFlush(); ctl.stop()
     expect(fs.files.size).toBe(0)
   })
 })
@@ -98,6 +104,25 @@ describe('autosave debounce', () => {
     expect(fs.files.has(`/ws/${PROJECT_FILE}`)).toBe(true)        // exactly one write after quiet
     ctl.stop()
   })
+
+  it('a state the workspace lifecycle read or wrote is not unsaved: no write follows it, the next edit does', async () => {
+    const { fs, actor, ctl } = setup()
+    ctl.start()
+    try {
+      // The swap broadcasts like an edit; the lifecycle says in the same tick
+      // that project.json already holds it.
+      actor.replaceState(blankProject(seededGen(), 'opened'))
+      ctl.markSaved()
+      expect(ctl.unsaved()).toBe(false)
+      await vi.advanceTimersByTimeAsync(autosaveMaxWaitMs(actor.snapshot().settings) * 2)
+      expect(fs.files.size).toBe(0)
+
+      actor.dispatch('add_track', {})
+      expect(ctl.unsaved()).toBe(true)
+      await vi.advanceTimersByTimeAsync(500)
+      expect(fs.files.get(`/ws/${PROJECT_FILE}`)).toBe(serializeProjectToJson(actor.snapshot()))
+    } finally { ctl.stop() }
+  })
 })
 
 describe('Backups gc + snapshot interval', () => {
@@ -113,7 +138,7 @@ describe('Backups gc + snapshot interval', () => {
     let t = Date.parse('2026-06-23T12:00:00.000Z')
     const { ctl } = setup({ fs, now: () => new Date((t += 1000)) })
     // 25 pre-seeded + 1 minted by forceFlush = 26 total → gc keeps the newest 20.
-    ctl.start(); await ctl.forceFlush(); ctl.stop()
+    ctl.start(); ctl.forceFlush(); ctl.stop()
     const remaining = [...fs.files.keys()].filter((k) => k.startsWith(`/ws/${BACKUPS_DIR}/`) && k.endsWith('.json'))
     expect(remaining).toHaveLength(20)
   })
@@ -179,7 +204,7 @@ describe('autosave write failures', () => {
     },
   )
 
-  it('an explicit save that fails rejects to its caller, keeps project.json, and the edit is saved later', async () => {
+  it('an explicit save that fails throws to its caller, keeps project.json, and the edit is saved later', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const io = memAtomicIo(new Map([[target, GOOD]]))
     const { actor, ctl } = setup({ fs: atomicMemFs(io) })
@@ -188,7 +213,7 @@ describe('autosave write failures', () => {
       actor.dispatch('add_track', {})
       const failure = errno('EACCES')
       io.fail('rename', failure)
-      await expect(ctl.forceFlush()).rejects.toBe(failure)
+      expect(thrown(() => ctl.forceFlush())).toBe(failure)
       expect(io.files.get(target)).toBe(GOOD)
       expect(io.files.has(target + ATOMIC_TEMP_SUFFIX)).toBe(false)
       io.heal()
@@ -269,7 +294,7 @@ describe('autosave under continuous edits', () => {
     s.ctl.start()
     try {
       await s.editFor(s.maxWaitMs / 2)
-      await s.ctl.forceFlush()
+      s.ctl.forceFlush()
       const flushed = s.writes.length
       await s.editFor(s.maxWaitMs * 1.5)
       const firstEditAfter = s.edits[s.writes[flushed - 1].revision]
@@ -402,7 +427,7 @@ describe('autosave save state', () => {
       await vi.advanceTimersByTimeAsync(s.maxWaitMs * 2)
       expect(s.reports.map((r) => r.state)).toEqual([expect.objectContaining({ kind: 'failing', code: 'EACCES', lastSavedAt: new Date(savedAt.at) })])
       s.fail('EROFS')
-      await expect(s.ctl.forceFlush()).rejects.toMatchObject({ code: 'EROFS' })
+      expect(thrown(() => s.ctl.forceFlush())).toMatchObject({ code: 'EROFS' })
       expect(s.reports.map((r) => r.state)).toEqual([
         expect.objectContaining({ code: 'EACCES' }),
         expect.objectContaining({ kind: 'failing', code: 'EROFS', lastSavedAt: new Date(savedAt.at) }),
@@ -420,7 +445,7 @@ describe('autosave save state', () => {
         expect(s.reports.map((r) => r.state.kind)).toEqual(['failing'])
         s.heal()
         if (recover === 'timer') await vi.advanceTimersByTimeAsync(s.maxWaitMs)
-        else await s.ctl.forceFlush()
+        else s.ctl.forceFlush()
         expect(s.reports.map((r) => r.state), recover).toEqual([expect.objectContaining({ kind: 'failing' }), { kind: 'ok', cause: 'saved' }])
         expect(s.ctl.unsaved()).toBe(false)
       } finally { s.done() }
@@ -450,7 +475,7 @@ describe('autosave save state', () => {
     s.ctl.start()
     try {
       await vi.advanceTimersByTimeAsync(s.maxWaitMs * 2)
-      await expect(s.ctl.forceFlush()).rejects.toMatchObject({ code: 'ENOSPC' })
+      expect(thrown(() => s.ctl.forceFlush())).toMatchObject({ code: 'ENOSPC' })
       expect(s.ctl.unsaved()).toBe(false)
       expect(s.reports).toEqual([])
     } finally { s.done() }

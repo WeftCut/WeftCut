@@ -41,6 +41,7 @@ import type { RecentsStore } from '../recents'
 import { tasteView } from '../taste/view'
 import { AuditStore } from '../lint/audits'
 import type { WorkspaceStore } from '../workspace'
+import { ExportJobError } from '../exportJobs'
 
 export interface TsActorHostDeps {
   exportJobs?: import("../exportJobs").ExportJobs
@@ -218,10 +219,10 @@ export interface TsActorHost {
    *  watcher can refresh the actor catalog when a Motif appears on disk with no
    *  store-mutating tool call (otherwise add_motif rejects it). */
   refreshMotifCatalog: () => void
-  /** The quit path's close: the gate shuts at once (so a write racing the
-   *  quit is refused instead of answered and then lost), the project is
-   *  flushed, and nothing can be opened afterwards. A failed flush reopens the
-   *  gate and rejects, leaving the project usable. */
+  /** The quit path's close: nothing can be opened from the call on, the
+   *  project is flushed, and a write after the flush is refused instead of
+   *  answered and then lost. A failed flush rejects with the project, and
+   *  every service working for it, as they were. */
   shutdown: () => Promise<void>
   /** The quit path's "Quit without saving", after `shutdown` failed: the gate
    *  shuts as in `shutdown` and nothing more is written. */
@@ -273,7 +274,10 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   const store = deps.motifStore
   const motifCatalog = new MotifCatalog(store ? (id) => store.getMotif(id)?.manifest ?? null : undefined)
   const actor = createActor({
-    assertWritable: () => deps.exportJobs?.assertWritable(),
+    assertWritable: () => {
+      deps.exportJobs?.assertWritable()
+      if (replacing && !swapping) throw new ExportJobError('project_busy', 'Wait for the project operation to finish')
+    },
     initial: blankProject(idGen, 'untitled'), idGen, clock: () => new Date().toISOString(), motifCatalog,
     autoDeleteEmptyTracks: () => deps.appSettings?.get().auto_delete_empty_tracks ?? true,
     defaultTextFont: () => deps.appSettings?.get().default_text_font,
@@ -290,7 +294,13 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   let publishedProject: ReturnType<ActorHandle['snapshot']> | null = null
   let publishedHistory = actor.historyStatus()
   let publishedDir: string | null = null
+  /** A workspace replacement is under way, from the flush that saved the
+   *  outgoing project to the end of the swap. Every write is refused then
+   *  (`assertWritable`): one landing after the flush would be dropped by the
+   *  swap, or written into a project already closed. */
   let replacing = false
+  /** The swap itself: the one write `replacing` admits. */
+  let swapping = false
   let replacementOccurred = false
   let deferredChange: { event: ChangeEvent; traceId?: string } | null = null
   const agent = new AgentActivityService(actor, deps.send)
@@ -416,7 +426,15 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     const manifest = motifCatalog.get(id)
     return manifest?.version === version ? manifest.size : null
   } }
-  const orchestratorDeps = { actor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink, onGridRepair, onSchemaUpgrade, migration }
+  const swapActor: Pick<ActorHandle, 'replaceState' | 'snapshot'> = {
+    snapshot: () => actor.snapshot(),
+    replaceState: (next) => {
+      swapping = true
+      try { actor.replaceState(next) } finally { swapping = false }
+    },
+  }
+  const orchestratorDeps = { actor: swapActor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink, onGridRepair, onSchemaUpgrade, migration,
+    onDisk: () => autosave.markSaved() }
 
   // Hybrid orchestrator deps (native-compute → TS-write). enqueueDerivatives here
   // takes the inserted ITEMS (vs the orchestrator's whole-Project variant) and
@@ -464,33 +482,40 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
 
   // Serialize all cache-root/session changes, including Save As and Close.
   let persistenceTail: Promise<unknown> = Promise.resolve()
-  /** `keepsEdits`: the replacement writes the whole current state elsewhere
-   *  (Save As), so the old folder's flush may fail without losing an edit —
-   *  which is when Save As is the way out (the save-failure card offers it). */
+  /** The outgoing project's flush may fail without blocking the replacement:
+   *  `keepsEdits` (Save As writes the whole current state elsewhere, which is
+   *  the way out the save-failure card offers), or its folder is gone (a
+   *  deleted project must not block New/Open/Save As/Close; an explicit Save
+   *  still reports it). */
+  const flushMayFail = (error: unknown, keepsEdits: boolean): boolean => {
+    if (keepsEdits) return true
+    const dir = deps.workspaceDir()
+    return error instanceof Error && (error as NodeJS.ErrnoException).code === 'ENOENT' && dir !== null && !deps.fs.exists(dir)
+  }
+  /** Flush, then replace. A flush that fails aborts before anything is
+   *  invalidated: no service hears of a change that did not happen, and every
+   *  import, job and bake of the open project goes on. */
   const replaceWorkspace = <T>(replace: () => Promise<T>, closing = false, keepsEdits = false): Promise<T> => {
     deps.exportJobs?.assertWritable()
-    // Invalidate immediately, before a flush or another lifecycle call yields.
-    importGeneration++
+    // Pending from here, however it ends: no import or export starts. A gate
+    // only, undone when the transition settles.
     workspaceTransitions++
-    deps.onWorkspaceChanging?.()
     const next = persistenceTail.then(async () => {
+      // LANDMINE: from `replacing = true` to onWorkspaceChanging nothing may
+      // await. The flush then holds every edit made before it, none can land
+      // between it and the swap, and a failed one is undone by clearing one
+      // flag before anything else has run.
+      replacing = true
+      try { autosave.forceFlush() }
+      catch (error) {
+        if (!flushMayFail(error, keepsEdits)) { replacing = false; throw error }
+      }
       importGeneration++
       deps.onWorkspaceChanging?.()
-      replacing = true
       replacementOccurred = false
       deferredChange = null
       let succeeded = false
       try {
-        try { await autosave.forceFlush() }
-        catch (error) {
-          // External deletion can leave the workspace slot pointing at a missing
-          // directory. Do not let that stale save block
-          // New/Open/Save As/Close. Other save failures must still abort switching;
-          // explicit Save continues to report the missing directory as well.
-          const dir = deps.workspaceDir()
-          if (!keepsEdits && (!(error instanceof Error) || (error as NodeJS.ErrnoException).code !== 'ENOENT'
-            || dir === null || deps.fs.exists(dir))) throw error
-        }
         const value = await replace()
         succeeded = true
         return value
@@ -498,7 +523,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       catch (error) {
         // A recent-list or other post-swap failure cannot roll back the actor.
         // Publish that actual replacement; failures before the swap retain the
-        // old settled project, including a Close whose flush failed.
+        // old settled project.
         const dir = replacementOccurred ? deps.workspaceDir() : publishedDir
         opened = dir === null ? null : { dir }
         if (opened !== null) deps.onWorkspaceOpened?.()
@@ -551,18 +576,12 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       opens(dir)
     }, false, true),
     newWorkspace: (a) => replaceWorkspace(async () => { const dir = await newWorkspace(orchestratorDeps, a); opens(dir); return dir }),
-    save: () => autosave.forceFlush(),
-    // The record clears BEFORE the flush: the flush is async, and a write the
-    // gate still let through during it would reach the closed project's
-    // project.json on the next debounce (or, on quit, be answered as success
-    // and then dropped with the pending timer). The actor keeps the closed
-    // project until the next Open / New replaces it, and the workspace slot
-    // keeps its folder; what stops an agent writing into it is the MCP gate.
-    close: async () => {
-      deps.exportJobs?.assertWritable()
-      opened = null
-      await replaceWorkspace(async () => { opened = null; await deps.napi.endWorkspace?.() }, true)
-    },
+    save: async () => autosave.forceFlush(),
+    // A write before the flush is in it; one after is refused until the close
+    // settles (`replacing`). The actor keeps the closed project until the next
+    // Open / New replaces it, and the workspace slot keeps its folder; what
+    // stops an agent writing into it afterwards is the MCP gate (`opened`).
+    close: () => replaceWorkspace(async () => { opened = null; await deps.napi.endWorkspace?.() }, true),
   }
 
   /** Two spellings of one folder: resolved (`.`/`..`, trailing separators),
@@ -1011,16 +1030,11 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     openedProject: () => opened,
     projects: agentProjects,
     shutdown: async () => {
-      const previous = opened
       quitting = true
+      // A failed close leaves the project open (replaceWorkspace); the quit's
+      // Cancel and a failed update restart rely on it.
       try { await persistence.close() }
-      catch (error) {
-        // An explicit update must leave the project usable if saving fails.
-        opened = previous
-        quitting = false
-        if (opened) deps.onWorkspaceOpened?.()
-        throw error
-      }
+      catch (error) { quitting = false; throw error }
     },
     abandon: () => {
       quitting = true

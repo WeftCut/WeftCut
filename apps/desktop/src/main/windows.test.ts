@@ -7,10 +7,10 @@
 // window is read a turn after its events rather than inside them.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserWindow } from 'electron'
-import { markInternalWindow, quitIfLastUserWindowClosed, rememberGeometry, userFacingWindows } from './windows'
+import { markInternalWindow, quitWithEditor, rememberGeometry, userFacingWindows } from './windows'
 import type { Rect, WindowGeometry, WindowGeometryStore } from './windowGeometry'
 
-// The window list and app.quit() are all the quit gate touches. vi.hoisted
+// The window list and app.quit() are all the quit decision touches. vi.hoisted
 // because the factory runs during the import phase, ahead of a plain `const`.
 const { listed, quits } = vi.hoisted(() => ({
   listed: [] as unknown[],
@@ -150,47 +150,47 @@ describe('rememberGeometry — maximized capture', () => {
   })
 })
 
-// The offscreen Motif capture host is a listed BrowserWindow, so a quit decision
-// made on the raw window count leaves the app running with nothing on screen.
-describe('quitIfLastUserWindowClosed', () => {
+describe('userFacingWindows', () => {
   const win = (): BrowserWindow => ({ isDestroyed: () => false }) as unknown as BrowserWindow
+
+  beforeEach(() => { listed.length = 0 })
+
+  it('leaves out an internal window and a destroyed one still in the list', () => {
+    const editor = win()
+    const captureHost = win()
+    markInternalWindow(captureHost)
+    listed.push(editor, captureHost, { isDestroyed: () => true })
+
+    expect(userFacingWindows()).toEqual([editor])
+  })
+})
+
+// The editor is the app: a window that outlived it could neither host the
+// quit's save question nor the editing a Cancel of it returns to. And the
+// offscreen Motif capture host is a listed BrowserWindow, so a quit decided on
+// the window count would leave the app running with nothing on screen.
+describe('quitWithEditor', () => {
+  function editorWindow() {
+    const handlers = new Map<string, () => void>()
+    const editor = { on: (ev: string, cb: () => void) => void handlers.set(ev, cb) } as unknown as BrowserWindow
+    return { editor, emit: (ev: string) => handlers.get(ev)?.() }
+  }
 
   beforeEach(() => {
     listed.length = 0
     quits.length = 0
   })
 
-  it('ignores an internal window when deciding who is left', () => {
-    const editor = win()
-    const captureHost = win()
+  it('quits once the editor has closed, though another user-facing window is still open', () => {
+    const { editor, emit } = editorWindow()
+    quitWithEditor(editor)
+    const player = { isDestroyed: () => false }
+    const captureHost = { isDestroyed: () => false } as unknown as BrowserWindow
     markInternalWindow(captureHost)
-    listed.push(editor, captureHost)
+    listed.push(player, captureHost) // the editor's `closed` already removed it from the list
 
-    expect(userFacingWindows()).toEqual([editor])
-  })
-
-  it('quits when only the offscreen capture host is still listed', () => {
-    const captureHost = win()
-    markInternalWindow(captureHost)
-    listed.push(captureHost) // the editor's `closed` already removed it from the list
-
-    quitIfLastUserWindowClosed()
-    expect(quits).toHaveLength(1)
-  })
-
-  it('stays alive while any user-facing window remains', () => {
-    const captureHost = win()
-    markInternalWindow(captureHost)
-    listed.push(win(), captureHost) // e.g. the Performance Monitor outliving the editor
-
-    quitIfLastUserWindowClosed()
     expect(quits).toHaveLength(0)
-  })
-
-  it('skips a destroyed window still in the list', () => {
-    listed.push({ isDestroyed: () => true } as unknown as BrowserWindow)
-
-    quitIfLastUserWindowClosed()
+    emit('closed')
     expect(quits).toHaveLength(1)
   })
 })

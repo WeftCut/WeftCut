@@ -2,15 +2,17 @@ import { test, expect, type ElectronApplication, type Page } from '@playwright/t
 import fs from 'node:fs'
 import path from 'node:path'
 import { invokeCmd, launchApp, newProject, summary, tmpDir } from './helpers/driver'
-import { AUTOSAVE_INTERVAL_MIN_SECS } from '../../src/shared/save-status'
+import { AUTOSAVE_INTERVAL_MIN_SECS, SAVE_STATUS_CHANNEL, type SaveStatus } from '../../src/shared/save-status'
+import { MOTIF_BAKE_READY_EVENT } from '../../src/shared/motifs/baking'
 import { ATOMIC_TEMP_SUFFIX } from '../../src/main/atomicWrite'
 import { QUIT_SAVE_CHOICES, quitSaveDialog, type QuitSaveChoice } from '../../src/main/quitSave'
 import enUS from '../../src/renderer/i18n/locales/en-US'
 
 // Quitting a project that cannot be saved (docs/data-model.md § Saving): the
-// question the quit asks, what each answer leaves on disk, and the save-failure
-// card's Open folder. Saves fail as in save-failure-status.spec.ts: a directory
-// where atomicWrite puts its temp file.
+// question the quit asks, and on which window, what each answer leaves on disk
+// and running, that opening alone is not unsaved, and the save-failure card's
+// Open folder. Saves fail as in save-failure-status.spec.ts: a directory where
+// atomicWrite puts its temp file.
 //
 // The native dialog and the file manager are replaced in main: a test can
 // answer neither, and a real opener on a headless runner wedges the quit.
@@ -25,6 +27,11 @@ const ASKED_WITHIN_MS = 30_000
 const EXITED_WITHIN_MS = 60_000
 /** The dialog as main builds it in en-US, with an empty reason. */
 const QUIT_DIALOG = quitSaveDialog(false, '')
+/** Quiet window for a state that must NOT turn: were an untouched open
+ *  counted as unsaved, its failing writes would turn Not saved at the
+ *  interval's deadline, armed at the latest by the first write half a second
+ *  after the open. Two intervals cover both. */
+const NOT_SAVED_QUIET_MS = AUTOSAVE_INTERVAL_MIN_SECS * 1000 * 2
 
 interface DialogCall {
   /** Asked with a parent window, so the question is attached to the editor. */
@@ -37,10 +44,16 @@ function layerIds(projectFile: string): string[] {
   return Object.values(p.compositions).flatMap((c) => c.tracks.flatMap((t) => t.layers.map((l) => l.id)))
 }
 
+interface FastAutosaveProject {
+  dir: string
+  projectFile: string
+  /** Made a directory, it makes every write of `projectFile` fail. */
+  blocker: string
+}
+
 /** A project with the shortest autosave interval, so the Not saved state turns
- *  within seconds, saved with nothing pending; `blocker` makes every later
- *  write of its project.json fail. */
-async function openFastAutosaveProject(page: Page): Promise<{ dir: string; projectFile: string; blocker: string }> {
+ *  within seconds; not opened yet. */
+async function writeFastAutosaveProject(page: Page): Promise<FastAutosaveProject> {
   const parent = tmpDir('weftcut-save-failure-quit-')
   await newProject(page, { parentFolder: parent, name: 'seed', canvas: CANVAS })
   await invokeCmd(page, 'project_save')
@@ -50,12 +63,20 @@ async function openFastAutosaveProject(page: Page): Promise<{ dir: string; proje
   const projectFile = path.join(dir, 'project.json')
   fs.mkdirSync(dir)
   fs.writeFileSync(projectFile, JSON.stringify(seed))
+  return { dir, projectFile, blocker: projectFile + ATOMIC_TEMP_SUFFIX }
+}
+
+async function openProject(page: Page, dir: string): Promise<void> {
   await invokeCmd(page, 'project_open', { path: dir })
   await expect(page.locator('.splash-screen')).toHaveCount(0, { timeout: 15_000 })
-  // Opening counts as unsaved until its own write lands; this save is that
-  // write, so the test's edits are the only unsaved ones.
-  await invokeCmd(page, 'project_save')
-  return { dir, projectFile, blocker: projectFile + ATOMIC_TEMP_SUFFIX }
+}
+
+/** The fast-autosave project, open with nothing unsaved: the file holds what
+ *  the load made of it, so opening leaves nothing to write. */
+async function openFastAutosaveProject(page: Page): Promise<FastAutosaveProject> {
+  const project = await writeFastAutosaveProject(page)
+  await openProject(page, project.dir)
+  return project
 }
 
 const addLayer = (page: Page): Promise<string> => invokeCmd<string>(page, 'add_color_layer', {
@@ -90,6 +111,30 @@ function expectQuitSaveQuestion(call: DialogCall | undefined): void {
   expect(call?.options.detail.startsWith(detail)).toBe(true)
   expect(call!.options.detail.length).toBeGreaterThan(detail.length)
 }
+
+/** What main sends the editor as a project switch begins
+ *  (onWorkspaceChanging, which also resets main's derivative jobs, Motif bakes
+ *  and audio-effect baker; the editor drops its queued imports and export
+ *  handshake on it) and as one ends (onWorkspaceOpened). */
+const WORKSPACE_SIGNALS = ['evt:project:workspace-changing', `evt:${MOTIF_BAKE_READY_EVENT}`]
+
+/** Records, in main, every workspace signal sent to the editor from now on. */
+async function recordWorkspaceSignals(app: ElectronApplication, page: Page): Promise<void> {
+  const editor = await app.browserWindow(page)
+  await editor.evaluate((w, channels) => {
+    const sent: string[] = []
+    ;(globalThis as { __workspaceSignals?: string[] }).__workspaceSignals = sent
+    const wc = w.webContents
+    const send = wc.send.bind(wc)
+    wc.send = ((channel: string, ...args: unknown[]) => {
+      if (channels.includes(channel)) sent.push(channel)
+      send(channel, ...args)
+    }) as typeof wc.send
+  }, WORKSPACE_SIGNALS)
+}
+
+const workspaceSignals = (app: ElectronApplication): Promise<string[]> =>
+  app.evaluate(() => (globalThis as { __workspaceSignals?: string[] }).__workspaceSignals ?? [])
 
 /** Quit as the app menu and Cmd+Q do. */
 async function quit(app: ElectronApplication): Promise<void> {
@@ -149,6 +194,7 @@ test('a quit that cannot save asks first: Cancel keeps the app editing, Retry on
     await expect(badge).toBeVisible({ timeout: BADGE_WITHIN_MS })
 
     await answerQuitDialog(app, record, 'cancel')
+    await recordWorkspaceSignals(app, page)
     await quit(app)
     await expect.poll(() => dialogCalls(record).length, { timeout: ASKED_WITHIN_MS }).toBe(1)
     // Closing the last window saves before the window goes (main's 'close'
@@ -166,6 +212,9 @@ test('a quit that cannot save asks first: Cancel keeps the app editing, Retry on
     expect(live).toEqual(expect.arrayContaining([first, second]))
     await expect(badge).toBeVisible()
     expect(layerIds(projectFile)).not.toContain(first)
+    // The failed saves aborted the close before it began: nothing working for
+    // the project was told it was changing, or reset.
+    expect(await workspaceSignals(app)).toEqual([])
 
     await answerQuitDialog(app, record, 'retry', blocker)
     await quitToExit(app)
@@ -217,6 +266,89 @@ test('a quit with nothing unsaved asks nothing, even when the save fails', async
     await answerQuitDialog(app, record, 'discard')
     await quitToExit(app)
     expect(dialogCalls(record)).toEqual([])
+  } finally {
+    await closeApp(app)
+  }
+})
+
+// Opening is not an edit: a project whose file already holds it has nothing
+// to save, so a folder no save can land in says nothing until the user edits.
+test('a project opened where no save can land, and not edited, is not Not saved and quits without asking', async () => {
+  test.setTimeout(120_000 + NOT_SAVED_QUIET_MS)
+  const { app, page } = await launchApp()
+  const record = test.info().outputPath('quit-dialog.jsonl')
+  try {
+    const { dir, blocker } = await writeFastAutosaveProject(page)
+    fs.mkdirSync(blocker)
+    await openProject(page, dir)
+
+    // A quiet window (e2e/README.md § Waiting inside a spec): what must not
+    // happen cannot be polled for. The quit below does not depend on it.
+    await page.waitForTimeout(NOT_SAVED_QUIET_MS)
+    expect(await invokeCmd<SaveStatus>(page, SAVE_STATUS_CHANNEL)).toMatchObject({ state: 'ok' })
+    await expect(page.getByTestId('save-status-badge')).toHaveCount(0)
+
+    // The quit's save fails here too; with nothing unsaved it asks nothing.
+    await answerQuitDialog(app, record, 'discard')
+    await quitToExit(app)
+    expect(dialogCalls(record)).toEqual([])
+  } finally {
+    await closeApp(app)
+  }
+})
+
+/** A Render & Play window, opened as the export dialog opens one
+ *  (SecondaryWindow → `win:create`). */
+const PLAYER = 'render-play-quit'
+
+const playerOpen = (app: ElectronApplication): Promise<boolean> =>
+  app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()
+    .some((w) => !w.isDestroyed() && w.webContents.getURL().includes('render-play.html')))
+
+test('closing the editor asks even with another window open; Cancel keeps both, and closing the other one neither asks nor quits', async () => {
+  test.setTimeout(120_000)
+  const { app, page } = await launchApp()
+  const record = test.info().outputPath('quit-dialog.jsonl')
+  try {
+    const { blocker } = await openFastAutosaveProject(page)
+    fs.mkdirSync(blocker)
+    const unsaved = await addLayer(page)
+    await answerQuitDialog(app, record, 'cancel')
+    await page.evaluate((label) => (window as unknown as { api: { win: { create(l: string, o: unknown): Promise<void> } } })
+      .api.win.create(label, { url: '/render-play.html', title: 'Render & Play', width: 480, height: 320, resizable: true }), PLAYER)
+    await expect.poll(() => playerOpen(app)).toBe(true)
+    // Every app.quit() from here on, counted in main.
+    await app.evaluate(({ app: electronApp }) => {
+      const g = globalThis as { __quits?: number }
+      g.__quits = 0
+      const quitApp = electronApp.quit.bind(electronApp)
+      electronApp.quit = () => { g.__quits! += 1; quitApp() }
+    })
+
+    // Asked on the editor, the one window that can host the question and the
+    // editing a Cancel returns to.
+    pressCloseButton(page)
+    await expect.poll(() => dialogCalls(record).length, { timeout: ASKED_WITHIN_MS }).toBe(1)
+    expectQuitSaveQuestion(dialogCalls(record)[0])
+    const after = await addLayer(page)
+    const editor = await app.browserWindow(page)
+    expect(await editor.evaluate((w) => !w.isDestroyed() && w.isVisible())).toBe(true)
+    expect(await playerOpen(app)).toBe(true)
+
+    // The player's own `closed` handlers run before this one, registered
+    // after them: once it has run, theirs have.
+    await app.evaluate(({ BrowserWindow }) => {
+      const player = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes('render-play.html'))!
+      player.once('closed', () => { (globalThis as { __playerClosed?: boolean }).__playerClosed = true })
+    })
+    await page.evaluate((label) => (window as unknown as { api: { win: { act(l: string, a: string): Promise<void> } } })
+      .api.win.act(label, 'close'), PLAYER)
+    await expect.poll(() => app.evaluate(() => (globalThis as { __playerClosed?: boolean }).__playerClosed === true)).toBe(true)
+    expect(await app.evaluate(() => (globalThis as { __quits?: number }).__quits)).toBe(0)
+    expect(dialogCalls(record)).toHaveLength(1)
+    expect(await editor.evaluate((w) => !w.isDestroyed() && w.isVisible())).toBe(true)
+    const live = (await summary(page)).tracks.flatMap((t) => t.layers.map((l) => l.id))
+    expect(live).toEqual(expect.arrayContaining([unsaved, after]))
   } finally {
     await closeApp(app)
   }

@@ -10,7 +10,7 @@
 // injected `AutosaveFs.writeFile` (atomicWrite.ts in production). Pure +
 // injected (fs / clock / timer / workspace-dir) so the cadence and gc are
 // deterministic in tests. Wired by ts-actor-host: subscribed at backend
-// bring-up; project_save → forceFlush.
+// bring-up; project_save → forceFlush; the workspace lifecycle → markSaved.
 import type { ActorHandle, ChangeEvent } from './actor'
 import type { Project, ProjectSettings } from './model'
 import { PROJECT_FILE } from './persistence'
@@ -62,9 +62,19 @@ export type AutosaveSaveState =
 
 export interface AutosaveController {
   start(): void
-  forceFlush(): Promise<void>
+  /** Writes now, skipping both timers (Cmd-S / project switch / quit gate).
+   *  Synchronous, so a caller can shut its write gate in the same tick as the
+   *  write and no edit falls between them. A failed write throws and leaves
+   *  the edits dirty for a later cycle. */
+  forceFlush(): void
   /** Edits not on disk yet. */
   unsaved(): boolean
+  /** project.json already holds the actor's current state: the workspace
+   *  lifecycle has just read it from there (an open that changed nothing) or
+   *  written it (New, Save As). Called in the same tick as that read or
+   *  write, so no edit can fall between them; nothing is unsaved until the
+   *  next edit. */
+  markSaved(): void
   /** The workspace now holds another project (or none): its unsaved age and
    *  last save start over, and a failing state reported for the previous one is
    *  withdrawn. */
@@ -227,11 +237,8 @@ export function createAutosave(deps: AutosaveDeps): AutosaveController {
       if (unsubscribe) return
       unsubscribe = deps.actor.subscribe(onChange)
     },
-    /** Flush + snapshot right now, skipping both timers (Cmd-S / project switch /
-     *  quit gate). The force path always snapshots and resets the counters. A
-     *  failed write rejects to the caller and leaves the edits dirty for a later
-     *  cycle. */
-    async forceFlush(): Promise<void> {
+    /** The force path always snapshots and resets the counters. */
+    forceFlush(): void {
       clearTimers()
       const traceId = pendingTraceId
       pendingTraceId = undefined
@@ -251,6 +258,12 @@ export function createAutosave(deps: AutosaveDeps): AutosaveController {
       }
     },
     unsaved: () => dirty,
+    markSaved() {
+      clearTimers()
+      pendingTraceId = undefined
+      dirty = false
+      dirtySince = null
+    },
     beginProject() {
       dirtySince = dirty ? now() : null
       lastSavedAt = null

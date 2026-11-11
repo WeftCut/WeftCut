@@ -1,8 +1,8 @@
-// e2e gate: closing the last window ends the process — including after a Motif has
-// been rendered, when the offscreen capture host is still a listed BrowserWindow
-// and `window-all-closed` will never fire again (main/windows.ts →
-// quitIfLastUserWindowClosed). Both tests press the same `window:close` IPC the
-// titlebar ✕ invokes.
+// e2e gate: closing the editor window ends the process — including after a Motif
+// has been rendered, when the offscreen capture host is still a listed
+// BrowserWindow and `window-all-closed` will never fire again (main/windows.ts →
+// quitWithEditor). Both tests press the same `window:close` IPC the titlebar ✕
+// invokes.
 
 import { test, expect } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'

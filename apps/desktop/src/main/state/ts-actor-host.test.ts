@@ -517,6 +517,155 @@ describe('createTsActorHost — persistence-route integration', () => {
     } finally { host.stop() }
   })
 
+  describe('what a replacement leaves unsaved', () => {
+    /** A started host on fake timers that records every project.json write. */
+    function recordingHost() {
+      vi.useFakeTimers()
+      const fixture = makeInMemoryDeps()
+      const write = fixture.deps.fs.writeFile
+      const writes: string[] = []
+      fixture.deps.fs.writeFile = (p: string, t: string) => { if (p.endsWith('/project.json')) writes.push(p); write(p, t) }
+      const host = createTsActorHost(fixture.deps)
+      host.start()
+      /** Long enough for every autosave timer an unsaved state arms to fire. */
+      const settle = () => vi.advanceTimersByTimeAsync(autosaveMaxWaitMs(host.actor.snapshot().settings) * 2)
+      const done = () => { host.stop(); vi.useRealTimers() }
+      return { ...fixture, host, writes, settle, done }
+    }
+
+    it('opening, creating and Save As with no edit leave nothing unsaved and write nothing more', async () => {
+      const t = recordingHost()
+      try {
+        const first = await t.host.handleInvoke('project_new_workspace', { ...publicationProject, name: 'First' }) as string
+        await t.host.handleInvoke('project_new_workspace', { ...publicationProject, name: 'Second' })
+        expect(t.host.hasUnsavedEdits()).toBe(false)
+        await t.host.handleInvoke('project_open', { path: first })
+        expect(t.host.hasUnsavedEdits()).toBe(false)
+        await t.host.handleInvoke('project_save_as', { path: '/projects/Copy' })
+        expect(t.host.hasUnsavedEdits()).toBe(false)
+        // Each lifecycle step wrote only its own files: New its project, a
+        // switch the outgoing one's flush, Save As the copy.
+        const lifecycle = [...t.writes]
+        await t.settle()
+        expect(t.writes).toEqual(lifecycle)
+        expect(t.host.hasUnsavedEdits()).toBe(false)
+      } finally { t.done() }
+    })
+
+    it('an open whose load changed the project counts as unsaved until autosave writes it', async () => {
+      const t = recordingHost()
+      try {
+        const dir = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
+        const marker = await t.host.handleInvoke('add_marker', { tUs: 1_000_000 }) as string
+        await t.host.handleInvoke('project_new_workspace', { ...publicationProject, name: 'Elsewhere' })
+        // Off the frame grid, as an older build may have left it: the load
+        // repairs it, so the project opened is not the file.
+        const file = `${dir}/project.json`
+        const onDisk = JSON.parse(t.vfs[file]!)
+        onDisk.compositions[onDisk.root_id].markers[0].t_us = 1_000_001
+        t.vfs[file] = JSON.stringify(onDisk)
+
+        await t.host.handleInvoke('project_open', { path: dir })
+        expect(t.host.hasUnsavedEdits()).toBe(true)
+        const before = t.writes.length
+        await t.settle()
+        expect(t.writes.slice(before)).toEqual([file])
+        expect(t.host.hasUnsavedEdits()).toBe(false)
+        const saved = JSON.parse(t.vfs[file]!)
+        expect(saved.compositions[saved.root_id].markers).toEqual([expect.objectContaining({ id: marker, t_us: 1_000_000 })])
+      } finally { t.done() }
+    })
+  })
+
+  describe('a flush that fails aborts the replacement before anything changes', () => {
+    /** A started host on fake timers, so autosave writes only when a test
+     *  says; writes of `failing` paths fail with EACCES. */
+    function signalledHost() {
+      vi.useFakeTimers()
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const fixture = makeInMemoryDeps()
+      const signals: string[] = []
+      const host = createTsActorHost({ ...fixture.deps,
+        onWorkspaceChanging: () => { signals.push('changing') },
+        onWorkspaceOpened: () => { signals.push('opened') },
+      })
+      const write = fixture.deps.fs.writeFile
+      const failing = new Set<string>()
+      fixture.deps.fs.writeFile = (p: string, text: string) => {
+        if (failing.has(p)) throw errno('EACCES')
+        write(p, text)
+      }
+      host.start()
+      const done = () => { host.stop(); vi.useRealTimers(); vi.restoreAllMocks() }
+      return { ...fixture, host, signals, failing, done }
+    }
+
+    /** The ids of the root composition's markers in `dir`'s project.json. */
+    const savedMarkers = (vfs: Record<string, string>, dir: string): string[] => {
+      const saved = JSON.parse(vfs[`${dir}/project.json`]!)
+      return saved.compositions[saved.root_id].markers.map((m: { id: string }) => m.id)
+    }
+
+    it.each(['close', 'switch', 'quit'] as const)('%s: no service hears of it, and the project stays open and editable', async (how) => {
+      const t = signalledHost()
+      try {
+        const dir = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
+        const unsaved = await t.host.handleInvoke('add_marker', { tUs: 1_000_000 })
+        t.signals.length = 0
+        const generation = t.host.hybridDeps.importGeneration!()
+        t.failing.add(`${dir}/project.json`)
+        const attempt = how === 'close' ? t.host.handleInvoke('project_close', {})
+          : how === 'switch' ? t.host.handleInvoke('project_new_workspace', { ...publicationProject, name: 'Next' })
+          : t.host.shutdown()
+        await expect(attempt).rejects.toMatchObject({ code: 'EACCES' })
+        expect(t.signals).toEqual([])
+        // An import started before the attempt still lands, and new ones start.
+        expect(t.host.hybridDeps.importGeneration!()).toBe(generation)
+        expect(t.host.hybridDeps.canImport!()).toBe(true)
+        expect(t.host.openedProject()).toEqual({ dir })
+        expect(t.host.projects.shuttingDown()).toBe(false)
+        expect(t.host.hasUnsavedEdits()).toBe(true)
+        const after = await t.host.handleInvoke('add_marker', { tUs: 2_000_000 })
+
+        t.failing.clear()
+        await t.host.handleInvoke('project_close', {})
+        expect(t.signals).toEqual(['changing'])
+        expect(savedMarkers(t.vfs, dir)).toEqual(expect.arrayContaining([unsaved, after]))
+      } finally { t.done() }
+    })
+
+    it('a flush that succeeds signals the change, then the opening', async () => {
+      const t = signalledHost()
+      try {
+        const first = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
+        await t.host.handleInvoke('project_new_workspace', { ...publicationProject, name: 'Next' })
+        t.signals.length = 0
+        await t.host.handleInvoke('project_open', { path: first })
+        expect(t.signals).toEqual(['changing', 'opened'])
+      } finally { t.done() }
+    })
+
+    it('an edit made before the switch flushes is in the flush; one made after is refused until the switch settles', async () => {
+      const t = signalledHost()
+      let release: (() => void) | undefined
+      const commit = t.deps.napi.commitWorkspace
+      try {
+        const first = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
+        t.deps.napi.commitWorkspace = async (p) => { await new Promise<void>((r) => { release = r }); await commit(p) }
+        const opening = t.host.handleInvoke('project_new_workspace', { ...publicationProject, name: 'Next' })
+        // The switch has not run yet: this lands in the outgoing project.
+        const before = await t.host.handleInvoke('add_marker', { tUs: 1_000_000 })
+        await vi.waitFor(() => expect(release).toBeDefined())
+        // Flushed, with the swap still to come: refused, not answered and then dropped.
+        await expect(t.host.handleInvoke('add_marker', { tUs: 2_000_000 })).rejects.toMatchObject({ code: 'project_busy' })
+        release!()
+        await opening
+        expect(savedMarkers(t.vfs, first)).toEqual([before])
+        await expect(t.host.handleInvoke('add_marker', { tUs: 2_000_000 })).resolves.toEqual(expect.any(String))
+      } finally { t.done() }
+    })
+  })
+
   it('project_new_workspace flushes pending edits to the current workspace before replacing it', async () => {
     vi.useFakeTimers()
     const { deps, vfs } = makeInMemoryDeps()
