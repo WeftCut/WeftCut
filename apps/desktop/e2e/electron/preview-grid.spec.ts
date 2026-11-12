@@ -77,9 +77,26 @@ test('Quick Actions edits independent grid preferences, and the grid follows fit
     await toggle('Show grid').click()
     await expect(overlay(page)).toBeVisible()
     await expect(overlay(page)).toHaveCSS('pointer-events', 'none')
-    await expectGridSpacing(page, 1 / DEFAULT_PREVIEW_GRID.column_divisions, 1 / DEFAULT_PREVIEW_GRID.row_divisions)
+    const layoutMode = popup.getByRole('combobox', { name: 'Grid layout' })
+    await expect(layoutMode).toHaveText('Equal divisions')
+    await expect(number('Divisions per axis')).toHaveValue('3')
+    await expect(number('Columns')).toHaveCount(0)
+    await expectGridSpacing(page, 1 / DEFAULT_PREVIEW_GRID.divisions, 1 / DEFAULT_PREVIEW_GRID.divisions)
+    await fill('Divisions per axis', 4)
+    await expectGridSpacing(page, 1 / 4, 1 / 4)
+    await layoutMode.click()
+    await page.getByRole('option', { name: 'Independent divisions' }).click()
+    await expect(number('Divisions per axis')).toHaveCount(0)
     await fill('Columns', 12)
     await fill('Rows', 5)
+    await expectGridSpacing(page, 1 / 12, 1 / 5)
+    await layoutMode.click()
+    await page.getByRole('option', { name: 'Equal divisions' }).click()
+    await expectGridSpacing(page, 1 / 4, 1 / 4)
+    await layoutMode.click()
+    await page.getByRole('option', { name: 'Independent divisions' }).click()
+    await expect(number('Columns')).toHaveValue('12')
+    await expect(number('Rows')).toHaveValue('5')
     await expectGridSpacing(page, 1 / 12, 1 / 5)
     await toggle('Horizontal grid lines').click()
     await expect(number('Rows')).toBeDisabled()
@@ -117,7 +134,7 @@ test('Quick Actions edits independent grid preferences, and the grid follows fit
 
     expect(await invokeCmd(page, 'project_summary')).toEqual(beforeProject)
     expect((await settings(page)).preview_grid).toMatchObject({
-      visible: true, snap: false, column_divisions: 12, row_divisions: 5,
+      visible: true, snap: false, mode: 'independent', divisions: 4, column_divisions: 12, row_divisions: 5,
     })
   } finally {
     await app.close()
@@ -145,7 +162,7 @@ test('the portrait grid follows the canvas and leaves exported frame pixels unch
     const baseline = await exportFrameHash('hidden')
     expect(baseline).toMatch(/^SHA256=[\da-f]{64}$/)
     await invokeCmd(page, 'app_settings_set', { patch: {
-      preview_grid: { visible: true, column_divisions: 12, row_divisions: 5 },
+      preview_grid: { visible: true, mode: 'independent', column_divisions: 12, row_divisions: 5 },
     } })
     await expect(overlay(page)).toBeVisible()
     await expectGridSpacing(page, 1 / 12, 1 / 5)

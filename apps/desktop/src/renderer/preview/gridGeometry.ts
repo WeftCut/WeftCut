@@ -19,6 +19,12 @@ export function previewGrid(width: number, height: number, settings: PreviewGrid
     return enabled && step > 0 && last > 0 ? { step, last } : null;
   };
 
+  if (settings.mode === "equal") {
+    return {
+      x: axis(width, settings.divisions, true),
+      y: axis(height, settings.divisions, true),
+    };
+  }
   return {
     x: axis(width, settings.column_divisions, settings.columns),
     y: axis(height, settings.row_divisions, settings.rows),
