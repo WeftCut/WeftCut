@@ -110,6 +110,16 @@ test('probe: preview driven during export', async () => {
             }
             seeks.push({ target, bound: msA !== null && msB !== null, msA, msB, ms: Date.now() - s0, kindA: pa?.sourceKind, ringA: pa?.ringSize, kindB: pb?.sourceKind, ringB: pb?.ringSize })
             i++
+          } else if (mode === 'seeklight') {
+            // A user-paced scrub: one seek per 400 ms, one probe read 300 ms later.
+            const target = Math.round(((i * 7919) % (SECONDS * 30 - 15)) * 1_000_000 / 30)
+            await hook('transportSeekUs', target)
+            await page.waitForTimeout(300)
+            const pa = await hook<any>('activeClipProbe', A.layerId), pb = await hook<any>('activeClipProbe', B.layerId)
+            const boundOf = (probe: any) => !!probe && probe.ringFirstPtsUs != null && probe.ringFirstPtsUs <= target + 34_000 && (probe.ringLastPtsUs ?? -1) >= target - 34_000
+            seeks.push({ target, bound: boundOf(pa) && boundOf(pb), msA: boundOf(pa) ? 300 : null, msB: boundOf(pb) ? 300 : null, ms: 300, kindA: pa?.sourceKind, kindB: pb?.sourceKind })
+            i++
+            await page.waitForTimeout(100)
           } else if (mode === 'play') {
             const rp = await hook<any>('previewResourceProbe')
             if (!rp?.playing) { if ((rp?.positionUs ?? 0) > (SECONDS - 1) * 1_000_000) await hook('transportSeekUs', 0); await hook('transportPlay') }
