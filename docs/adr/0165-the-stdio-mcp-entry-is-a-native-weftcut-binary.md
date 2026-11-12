@@ -112,8 +112,10 @@ Rejected:
   `open -b` may start a different copy than the one last used.
 - The legacy hand-over keeps one Electron process alive per session of an
   old config, as before. That process boots as the app on the default
-  profile, without the single-instance lock and without opening anything. It
-  ends when those configs are replaced.
+  profile, without the single-instance lock and without opening anything. On
+  macOS it is a foreground app until Electron runs the code that hides its
+  Dock icon: measured, about a tenth of a second. It ends when those configs
+  are replaced.
 - A Windows terminal does not wait for a GUI-subsystem program. Typed at a
   cmd or PowerShell prompt, `weftcut info` prints after the prompt has
   returned and leaves no exit code; PowerShell loses the output outright when
