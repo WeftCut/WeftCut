@@ -55,13 +55,14 @@ test('probe: preview driven during export', async () => {
   const { a4k, b1080 } = media()
   const { app, page } = await launchApp()
   await installResourceDiagnostics(app, page)
+  if (process.env.PROBE_MEMORY_MIB) await invokeCmd(page, 'app_settings_set', { patch: { resource_policy: { memory_mib: Number(process.env.PROBE_MEMORY_MIB) } } })
   const ledger = () => app.evaluate((_e, addon) => {
     const native = process.getBuiltinModule('module').createRequire(addon)(addon)
     return JSON.parse(native.resourcesSnapshot())
   }, addon).catch(e => String(e))
   const consoleLines: string[] = []
   page.on('console', m => { const t = m.text(); if (/capacity|wedge|stall|superseded|error|fail/i.test(t)) consoleLines.push(`[${m.type()}] ${t.slice(0, 300)}`) })
-  const report: Record<string, unknown> = { platform: process.platform, seconds: SECONDS, withMotif: WITH_MOTIF, hwEncode: HW_ENCODE, runs: {} }
+  const report: Record<string, unknown> = { platform: process.platform, seconds: SECONDS, withMotif: WITH_MOTIF, hwEncode: HW_ENCODE, memoryMiB: process.env.PROBE_MEMORY_MIB ?? 'default', runs: {} }
   const outputs: Record<string, string> = {}
   const hook = <T>(fn: string, ...args: unknown[]) => page.evaluate(({ fn, args }) => (window as any).__weftcutTest[fn](...args), { fn, args }) as Promise<T>
   try {
