@@ -14,6 +14,7 @@ import {
   type PreviewGridSettings,
 } from "../../shared/preview-grid";
 import { AppNumberField } from "../components/AppNumberField";
+import { AppSelect } from "../components/AppSelect";
 import { AppSlider } from "../components/AppSlider";
 import { AppSwitch } from "../components/AppSwitch";
 import {
@@ -185,32 +186,56 @@ export function PreviewGridControls({ onError }: { onError: ReportError }) {
         checked={grid.snap}
         onChange={(snap) => void saveGrid({ snap })}
       />
-      <SnapToggle
-        label={t("quick_actions.grid_columns")}
-        checked={grid.columns}
-        onChange={(columns) => void saveGrid({ columns })}
-      />
-      <SnapNumber
-        label={t("quick_actions.grid_column_divisions")}
-        value={grid.column_divisions}
-        min={GRID_DIVISIONS_MIN}
-        max={GRID_DIVISIONS_MAX}
-        disabled={!grid.columns}
-        onSave={(column_divisions) => saveGrid({ column_divisions })}
-      />
-      <SnapToggle
-        label={t("quick_actions.grid_rows")}
-        checked={grid.rows}
-        onChange={(rows) => void saveGrid({ rows })}
-      />
-      <SnapNumber
-        label={t("quick_actions.grid_row_divisions")}
-        value={grid.row_divisions}
-        min={GRID_DIVISIONS_MIN}
-        max={GRID_DIVISIONS_MAX}
-        disabled={!grid.rows}
-        onSave={(row_divisions) => saveGrid({ row_divisions })}
-      />
+      <div className="settings-slider-row">
+        <span className="settings-slider-label">{t("quick_actions.grid_spacing")}</span>
+        <AppSelect
+          ariaLabel={t("quick_actions.grid_spacing")}
+          value={grid.mode}
+          options={[
+            { value: "equal", label: t("quick_actions.grid_equal") },
+            { value: "independent", label: t("quick_actions.grid_independent") },
+          ]}
+          onValueChange={(mode) => void saveGrid({ mode: mode === "independent" ? "independent" : "equal" })}
+        />
+      </div>
+      {grid.mode === "equal" ? (
+        <SnapNumber
+          label={t("quick_actions.grid_divisions")}
+          value={grid.divisions}
+          min={GRID_DIVISIONS_MIN}
+          max={GRID_DIVISIONS_MAX}
+          onSave={(divisions) => saveGrid({ divisions })}
+        />
+      ) : (
+        <>
+          <SnapToggle
+            label={t("quick_actions.grid_columns")}
+            checked={grid.columns}
+            onChange={(columns) => void saveGrid({ columns })}
+          />
+          <SnapNumber
+            label={t("quick_actions.grid_column_divisions")}
+            value={grid.column_divisions}
+            min={GRID_DIVISIONS_MIN}
+            max={GRID_DIVISIONS_MAX}
+            disabled={!grid.columns}
+            onSave={(column_divisions) => saveGrid({ column_divisions })}
+          />
+          <SnapToggle
+            label={t("quick_actions.grid_rows")}
+            checked={grid.rows}
+            onChange={(rows) => void saveGrid({ rows })}
+          />
+          <SnapNumber
+            label={t("quick_actions.grid_row_divisions")}
+            value={grid.row_divisions}
+            min={GRID_DIVISIONS_MIN}
+            max={GRID_DIVISIONS_MAX}
+            disabled={!grid.rows}
+            onSave={(row_divisions) => saveGrid({ row_divisions })}
+          />
+        </>
+      )}
     </>
   );
 }

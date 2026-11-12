@@ -423,7 +423,7 @@ describe("snapping", () => {
   });
 
   it("snaps to hidden grid subdivisions, honors Ctrl, and commits only the final position", async () => {
-    setSnap(false, 12, { snap: true, column_divisions: 16, rows: false });
+    setSnap(false, 12, { snap: true, mode: "independent", column_divisions: 16, rows: false });
     render(<TransformGizmoHost />);
     const el = await box();
     fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });

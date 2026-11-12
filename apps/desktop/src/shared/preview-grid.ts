@@ -1,10 +1,13 @@
 export interface PreviewGridSettings {
   visible: boolean;
   snap: boolean;
-  /** Format-relative subdivisions, independent for each axis. */
+  mode: "equal" | "independent";
+  /** Same format-relative count on both axes in equal mode. */
+  divisions: number;
+  /** Per-axis counts retained while switching back to equal mode. */
   column_divisions: number;
   row_divisions: number;
-  /** Whether to show/snap to each axis's interior lines. */
+  /** Independent-mode switches; equal mode always draws both axes. */
   columns: boolean;
   rows: boolean;
 }
@@ -15,29 +18,36 @@ export const GRID_DIVISIONS_MAX = 32;
 export const DEFAULT_PREVIEW_GRID: PreviewGridSettings = {
   visible: false,
   snap: false,
-  column_divisions: 8,
-  row_divisions: 8,
+  mode: "equal",
+  divisions: 3,
+  column_divisions: 3,
+  row_divisions: 3,
   columns: true,
   rows: true,
 };
 
 export function readPreviewGridSettings(raw: unknown): PreviewGridSettings {
   if (!raw || typeof raw !== "object") return { ...DEFAULT_PREVIEW_GRID };
-  // Legacy builds saved one shared divisions value for both axes, or
-  // resolution-dependent pixel gaps. Preserve shared subdivisions when present;
-  // pixel gaps cannot be translated without a project format (this is app state).
-  const grid = raw as Partial<PreviewGridSettings> & { divisions?: number };
+  // Old prototypes stored either a shared divisions count, independent counts
+  // without a mode, or pixel gaps. Preserve their resolution-independent
+  // counts; pixel distances cannot be converted without a composition format.
+  const grid = raw as Partial<PreviewGridSettings>;
   const d = DEFAULT_PREVIEW_GRID;
   const boundedInt = (value: number | undefined, fallback: number) =>
     typeof value === "number" && Number.isFinite(value)
       ? Math.round(Math.min(GRID_DIVISIONS_MAX, Math.max(GRID_DIVISIONS_MIN, value)))
       : fallback;
+  const columnDivisions = boundedInt(grid.column_divisions ?? grid.divisions, d.column_divisions);
+  const rowDivisions = boundedInt(grid.row_divisions ?? grid.divisions, d.row_divisions);
+  const inferredMode = columnDivisions !== rowDivisions ? "independent" : "equal";
 
   return {
     visible: typeof grid.visible === "boolean" ? grid.visible : d.visible,
     snap: typeof grid.snap === "boolean" ? grid.snap : d.snap,
-    column_divisions: boundedInt(grid.column_divisions ?? grid.divisions, d.column_divisions),
-    row_divisions: boundedInt(grid.row_divisions ?? grid.divisions, d.row_divisions),
+    mode: grid.mode === "equal" || grid.mode === "independent" ? grid.mode : inferredMode,
+    divisions: boundedInt(grid.divisions ?? grid.column_divisions ?? grid.row_divisions, d.divisions),
+    column_divisions: columnDivisions,
+    row_divisions: rowDivisions,
     columns: typeof grid.columns === "boolean" ? grid.columns : d.columns,
     rows: typeof grid.rows === "boolean" ? grid.rows : d.rows,
   };
