@@ -156,6 +156,15 @@ async function toolNames(client: StdioClient): Promise<string[]> {
 const catalogChanged = (client: StdioClient, from: number): Promise<Message[]> =>
   Promise.all(CATALOG_CHANGED.map((method) => client.received.find(`${method} after message ${from}`, (m) => m.method === method, from)))
 
+/// A mark for `catalogChanged`/`methodsSince` past the session-up
+/// announcement. The shim writes that announcement before it forwards the
+/// first call, but the app can see the call before the client has read the
+/// line: a mark taken then counts the announcement as a later change.
+const markAfterSessionUp = async (client: StdioClient): Promise<number> => {
+  await catalogChanged(client, 0)
+  return client.received.items.length
+}
+
 const methodsSince = (client: StdioClient, from: number): (string | undefined)[] =>
   client.received.items.slice(from).map((m) => m.method)
 
@@ -549,7 +558,7 @@ describe('weftcut mcp over real stdio + HTTP', () => {
       await client.initialize()
       const slow = client.start('tools/call', { name: 'slow', arguments: {} })
       await app.seen.when('the app received the call', () => app.calls.some((c) => c.name === 'slow'))
-      const mark = client.received.items.length
+      const mark = await markAfterSessionUp(client)
       app.freeze() // every later request, the liveness ping included, goes unanswered
       const answer = await slow.answer()
       expect(answer.error?.code).toBe(ErrorCode.InternalError)
@@ -588,7 +597,7 @@ describe('weftcut mcp over real stdio + HTTP', () => {
       await client.initialize()
       const slow = client.start('tools/call', { name: 'slow', arguments: {} })
       const job = await app.seen.when('the app received the call', () => app.calls.find((c) => c.name === 'slow'))
-      const mark = client.received.items.length
+      const mark = await markAfterSessionUp(client)
       client.notify('notifications/cancelled', { requestId: slow.id, reason: 'user pressed stop' })
       await app.seen.when("the app's job was cancelled", () => job.signal.aborted)
       expect(textOf(await callTool(client, 'add_marker'))).toBe('called:add_marker')
