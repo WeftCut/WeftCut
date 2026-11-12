@@ -216,19 +216,38 @@ test("the Quick Actions grip drags the strip, which takes its axis from where it
     // Scoped by class, not by role: the preview transport is a toolbar too.
     const toolbar = page.locator(".weft-quick-actions");
     const magnet = toolbar.locator('[data-quick-action="toggleTailSnap"]');
-    const grid = toolbar.getByRole("button", { name: "Canvas snapping and grid" });
-    const popup = page.getByRole("dialog", { name: "Canvas snapping and grid" });
+    const grid = toolbar.getByRole("button", { name: "Grid", exact: true });
+    const popup = page.getByRole("dialog", { name: "Grid", exact: true });
+    const checkGridPopupPlacement = async (placement: "above" | "below") => {
+      await grid.hover();
+      await expect(popup).toBeVisible();
+      const buttonRect = await grid.boundingBox();
+      const popupRect = await popup.boundingBox();
+      if (!buttonRect || !popupRect) throw new Error("grid popup has no layout box");
+      if (placement === "above") {
+        expect(popupRect.y + popupRect.height).toBeLessThanOrEqual(buttonRect.y - 1);
+      } else {
+        expect(popupRect.y).toBeGreaterThanOrEqual(buttonRect.y + buttonRect.height + 1);
+      }
+      // Move fully outside the trigger and popup.
+      const corner = await page.evaluate(() => ({ x: innerWidth - 30, y: innerHeight - 30 }));
+      await page.mouse.move(corner.x, corner.y);
+      await expect(popup).toBeHidden({ timeout: 2000 });
+    };
     const checkSnappingControls = async (arrow: "ArrowDown" | "ArrowRight") => {
       await magnet.focus();
       await magnet.press(arrow);
       await expect(grid).toBeFocused();
       await grid.press("Enter");
       await expect(popup).toBeInViewport();
-      await expect(popup.getByLabel("Timeline snap strength", { exact: true })).toHaveCount(0);
-      await expect(popup.getByLabel("Canvas snap strength", { exact: true })).toBeVisible();
+      await expect(popup.locator("input.app-number-input")).toHaveCount(2);
+      await expect(popup.getByRole("switch")).toHaveCount(0);
+      await expect(popup.getByRole("button", { name: /Show grid|Hide grid/ })).toBeVisible();
       await page.keyboard.press("Escape");
       await expect(popup).toBeHidden();
       await expect(grid).toBeFocused();
+
+      // Hover/leave stress coverage is in preview-grid.spec.ts.
     };
 
     // Baseline: a full-height left edge bar, so the strip runs as a column.
@@ -262,6 +281,8 @@ test("the Quick Actions grip drags the strip, which takes its axis from where it
       .poll(async () => (await strip.boundingBox())?.height ?? Infinity)
       .toBeLessThan(80);
     await checkSnappingControls("ArrowRight");
+    // Horizontal away from the workspace top must put the menu ABOVE.
+    await checkGridPopupPlacement("above");
 
     // Beside the Timeline instead of under it. The cell a side-by-side drop
     // yields is far wider than it is tall, and reading THAT as a row is the
@@ -282,6 +303,20 @@ test("the Quick Actions grip drags the strip, which takes its axis from where it
     // The Timeline keeps its row: a cap aimed at the bar's long axis would have
     // shrink-wrapped the whole row to the bar's thickness instead.
     expect(timeline.height).toBeGreaterThan(80);
+
+    // Move the strip to the top edge of the workspace. The old custom
+    // positioner incorrectly opened ABOVE here whenever the window's title
+    // and app toolbar left enough room for the popup.
+    await dragDockTab(page, gripTab, dockPanel(page, "media"), "top");
+    await expect(toolbar).toHaveAttribute("aria-orientation", "horizontal");
+    await expect
+      .poll(async () => {
+        const group = await strip.boundingBox();
+        const workspace = await page.locator(".dock-workspace").boundingBox();
+        return group && workspace ? Math.abs(group.y - workspace.y) : Infinity;
+      })
+      .toBeLessThanOrEqual(24);
+    await checkGridPopupPlacement("below");
   } finally {
     await app.close();
   }

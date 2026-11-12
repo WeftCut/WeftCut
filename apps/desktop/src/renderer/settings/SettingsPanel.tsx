@@ -33,7 +33,7 @@ import { PreviewSection } from "./PreviewSection";
 import { PerformanceSection } from "./PerformanceSection";
 import { ModelSection } from "./ModelSection";
 import { VlmSection } from "./VlmSection";
-import { CanvasSnapSettings, TimelineSnapSettings } from "./SnapSettings";
+import { CanvasSnapSettings, PreviewGridControls, TimelineSnapSettings } from "./SnapSettings";
 import {
   setAppSettings,
   usePrebakeMotifsEnabled,
@@ -298,6 +298,8 @@ export function SettingsPanel({
               <PreviewSection onError={setError} />
               <PrebakeSection onError={setError} />
               <CanvasSnapSettings onError={setError} />
+              <h4 className="settings-grid-heading">{t("quick_actions.snapping_grid")}</h4>
+              <PreviewGridControls onError={setError} />
             </section>
           </div>
 

@@ -422,8 +422,8 @@ describe("snapping", () => {
     expect(transformOverrideFor("l1")).toEqual({ dx: 320, dy: 0 });
   });
 
-  it("snaps to hidden grid subdivisions, honors Ctrl, and commits only the final position", async () => {
-    setSnap(false, 12, { snap: true, mode: "independent", column_divisions: 16, rows: false });
+  it("snaps to visible grid subdivisions, honors Ctrl, and commits only the final position", async () => {
+    setSnap(false, 12, { visible: true, snap: true, column_divisions: 16, row_divisions: 1 });
     render(<TransformGizmoHost />);
     const el = await box();
     fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
@@ -442,6 +442,16 @@ describe("snapping", () => {
     fireEvent.pointerUp(el, { clientX: 38, clientY: 9 });
     expect(commit).toHaveBeenCalledTimes(1);
     expect(committedStatics()).toEqual([["x", 400], ["y", 198]]);
+  });
+
+  it("keeps hidden grid snapping active and shows the snap guide when enabled", async () => {
+    setSnap(false, 12, { visible: false, snap: true, column_divisions: 16, row_divisions: 1 });
+    render(<TransformGizmoHost />);
+    const el = await box();
+    fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(el, { clientX: 38, clientY: 9 });
+    expect(transformOverrideFor("l1")).toEqual({ dx: 80, dy: 18 });
+    await waitFor(() => expect(guide("x").style.display).not.toBe("none"));
   });
 
   it("does not snap when only the grid overlay is on", async () => {
