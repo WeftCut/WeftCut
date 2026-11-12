@@ -101,59 +101,25 @@ pub struct PublishArgs {
     pub policy: String,
 }
 
-/// A staged export may carry macOS UF_HIDDEN. Hard-linking or renaming the
-/// staging file preserves its flags, even under a user-visible final filename.
-/// Clear only UF_HIDDEN before publication so Finder shows completed exports.
-/// If clearing fails, do not publish a file that Finder would hide.
+/// A dot-prefixed staging file can carry UF_HIDDEN, which publication may
+/// preserve. Correct only the committed output and never fail a completed export.
 #[cfg(target_os = "macos")]
-fn hidden_flag_error_hint(errno: Option<i32>) -> &'static str {
-    match errno {
-        Some(code) if code == libc::ENOTSUP || code == libc::EOPNOTSUPP => {
-            "This filesystem does not support changing macOS file flags; try a local macOS-formatted volume"
-        }
-        Some(code) if code == libc::EPERM || code == libc::EACCES => {
-            "macOS denied permission to change file flags; check output-folder ownership and permissions"
-        }
-        Some(libc::EROFS) => {
-            "The destination volume is read-only; choose a writable output location"
-        }
-        _ => {
-            "Check the destination volume's permissions and support for macOS file flags"
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn hidden_flag_error(path: &Path, source: io::Error) -> anyhow::Error {
-    anyhow::anyhow!(
-        "Cannot clear macOS UF_HIDDEN on staged export {}: {}. {}. The export was not published.",
-        path.display(),
-        source,
-        hidden_flag_error_hint(source.raw_os_error())
-    )
-}
-
-#[cfg(target_os = "macos")]
-fn clear_staging_hidden_flag(path: &Path) -> Result<()> {
+fn clear_published_hidden_flag(path: &Path) {
     use std::os::{fd::AsRawFd, macos::fs::MetadataExt};
 
-    let file = std::fs::File::open(path).with_context(|| {
-        format!(
-            "open staged export {} to inspect macOS file flags",
-            path.display()
-        )
-    })?;
-    let flags = file
-        .metadata()
-        .with_context(|| format!("read macOS file flags of staged export {}", path.display()))?
-        .st_flags();
-    if flags & libc::UF_HIDDEN != 0 {
-        let result = unsafe { libc::fchflags(file.as_raw_fd(), flags & !libc::UF_HIDDEN) };
-        if result != 0 {
-            return Err(hidden_flag_error(path, io::Error::last_os_error()));
+    let result = (|| -> io::Result<()> {
+        let file = std::fs::File::open(path)?;
+        let flags = file.metadata()?.st_flags();
+        if flags & libc::UF_HIDDEN != 0
+            && unsafe { libc::fchflags(file.as_raw_fd(), flags & !libc::UF_HIDDEN) } != 0
+        {
+            return Err(io::Error::last_os_error());
         }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        tracing::warn!(path = %path.display(), %error, "could not clear UF_HIDDEN on published export");
     }
-    Ok(())
 }
 
 pub fn publish(args: PublishArgs) -> Result<String> {
@@ -164,9 +130,6 @@ pub fn publish(args: PublishArgs) -> Result<String> {
     {
         anyhow::bail!("export produced no output");
     }
-    #[cfg(target_os = "macos")]
-    clear_staging_hidden_flag(&args.staging)
-        .context("make staged export visible before publication")?;
     if args.policy == "overwrite" {
         #[cfg(unix)]
         std::fs::rename(&args.staging, &args.output)?;
@@ -198,6 +161,9 @@ pub fn publish(args: PublishArgs) -> Result<String> {
             }
             .map_err(|_| io::Error::last_os_error())?;
         }
+        // Rename may preserve staging UF_HIDDEN; inspect the published path.
+        #[cfg(target_os = "macos")]
+        clear_published_hidden_flag(&args.output);
         return Ok(args.output.to_string_lossy().into_owned());
     }
     if args.policy != "rename" && args.policy != "fail" {
@@ -221,7 +187,12 @@ pub fn publish(args: PublishArgs) -> Result<String> {
                 .with_file_name(format!("{stem} ({number}).{ext}"))
         };
         match publish_noreplace(&args.staging, &target) {
-            Ok(()) => return Ok(target.to_string_lossy().into_owned()),
+            Ok(()) => {
+                // Hard-link or rename may preserve staging UF_HIDDEN after publication.
+                #[cfg(target_os = "macos")]
+                clear_published_hidden_flag(&target);
+                return Ok(target.to_string_lossy().into_owned());
+            }
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists && args.policy == "rename" => {
                 continue
             }
@@ -234,37 +205,6 @@ pub fn publish(args: PublishArgs) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn hidden_flag_errors_identify_volume_and_permission_failures() {
-        let path = Path::new("/Volumes/External/.weftcut-export-test.mp4");
-        for (errno, expected) in [
-            (libc::ENOTSUP, "does not support changing macOS file flags"),
-            (libc::EPERM, "denied permission"),
-            (libc::EACCES, "denied permission"),
-            (libc::EROFS, "read-only"),
-            (libc::EINVAL, "Check the destination volume"),
-        ] {
-            let source = io::Error::from_raw_os_error(errno);
-            // The N-API boundary renders anyhow's full chain with {e:#}.
-            let error = hidden_flag_error(path, source)
-                .context("make staged export visible before publication");
-            let message = format!("{error:#}");
-            assert!(
-                message.contains("make staged export visible before publication"),
-                "{message}"
-            );
-            assert!(message.contains(&path.display().to_string()), "{message}");
-            assert!(message.contains(expected), "{message}");
-            assert!(message.contains("UF_HIDDEN"), "{message}");
-            assert!(
-                message.contains("The export was not published"),
-                "{message}"
-            );
-            assert!(message.contains(&format!("os error {errno}")), "{message}");
-        }
-    }
 
     #[cfg(target_os = "macos")]
     #[test]
