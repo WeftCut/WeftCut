@@ -99,14 +99,16 @@ test('probe: preview driven during export', async () => {
             const target = Math.round(((i * 7919) % (SECONDS * 30 - 15)) * 1_000_000 / 30)
             const s0 = Date.now()
             await hook('transportSeekUs', target)
-            let bound = false
-            let probe: any = null
-            while (Date.now() - s0 < 4000) {
-              probe = await hook<any>('activeClipProbe', A.layerId)
-              if (probe && probe.ringFirstPtsUs != null && probe.ringFirstPtsUs <= target + 34_000 && (probe.ringLastPtsUs ?? -1) >= target - 34_000) { bound = true; break }
+            const boundOf = (probe: any) => !!probe && probe.ringFirstPtsUs != null && probe.ringFirstPtsUs <= target + 34_000 && (probe.ringLastPtsUs ?? -1) >= target - 34_000
+            let msA: number | null = null, msB: number | null = null
+            let pa: any = null, pb: any = null
+            while (Date.now() - s0 < 4000 && (msA === null || msB === null)) {
+              pa = await hook<any>('activeClipProbe', A.layerId); pb = await hook<any>('activeClipProbe', B.layerId)
+              if (msA === null && boundOf(pa)) msA = Date.now() - s0
+              if (msB === null && boundOf(pb)) msB = Date.now() - s0
               await page.waitForTimeout(25)
             }
-            seeks.push({ target, bound, ms: Date.now() - s0, kind: probe?.sourceKind, ring: probe?.ringSize, disposed: probe?.sourceDisposed })
+            seeks.push({ target, bound: msA !== null && msB !== null, msA, msB, ms: Date.now() - s0, kindA: pa?.sourceKind, ringA: pa?.ringSize, kindB: pb?.sourceKind, ringB: pb?.ringSize })
             i++
           } else if (mode === 'play') {
             const rp = await hook<any>('previewResourceProbe')
@@ -140,7 +142,7 @@ test('probe: preview driven during export', async () => {
       const after = await hook<any>('activeClipProbe', A.layerId).catch(e => String(e))
       const refusals = await app.evaluate(() => ((globalThis as any).__e2eResourceFailures ?? []).map((f: any) => ({ at: f.at, channel: f.channel, request: f.request, error: String(f.error).slice(0, 200) })))
       const run: Record<string, unknown> = { refusals, state: job.state, error: (job as any).error ?? null, setupMs, exportMs, resumedAtMs, remounted, samples, seeks, after,
-        seekSummary: seeks.length ? { n: seeks.length, bound: seeks.filter(s => s.bound).length, medianMs: [...seeks.map(s => s.ms as number)].sort((a, b) => a - b)[seeks.length >> 1], maxMs: Math.max(...seeks.map(s => s.ms as number)) } : null }
+        seekSummary: seeks.length ? { n: seeks.length, bound: seeks.filter(s => s.bound).length, boundA: seeks.filter(s => s.msA != null).length, boundB: seeks.filter(s => s.msB != null).length, medianMs: [...seeks.map(s => s.ms as number)].sort((a, b) => a - b)[seeks.length >> 1], maxMs: Math.max(...seeks.map(s => s.ms as number)) } : null }
       if (job.state === 'completed') {
         outputs[mode] = output
         const ref = outputs.base
