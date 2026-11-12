@@ -215,6 +215,21 @@ test("the Quick Actions grip drags the strip, which takes its axis from where it
     const strip = dockPanel(page, "quick-actions");
     // Scoped by class, not by role: the preview transport is a toolbar too.
     const toolbar = page.locator(".weft-quick-actions");
+    const magnet = toolbar.locator('[data-quick-action="toggleTailSnap"]');
+    const grid = toolbar.getByRole("button", { name: "Canvas snapping and grid" });
+    const popup = page.getByRole("dialog", { name: "Canvas snapping and grid" });
+    const checkSnappingControls = async (arrow: "ArrowDown" | "ArrowRight") => {
+      await magnet.focus();
+      await magnet.press(arrow);
+      await expect(grid).toBeFocused();
+      await grid.press("Enter");
+      await expect(popup).toBeInViewport();
+      await expect(popup.getByLabel("Timeline snap strength", { exact: true })).toHaveCount(0);
+      await expect(popup.getByLabel("Canvas snap strength", { exact: true })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(popup).toBeHidden();
+      await expect(grid).toBeFocused();
+    };
 
     // Baseline: a full-height left edge bar, so the strip runs as a column.
     await expect(grip).toBeVisible();
@@ -222,6 +237,7 @@ test("the Quick Actions grip drags the strip, which takes its axis from where it
     const before = await strip.boundingBox();
     if (!before) throw new Error("strip has no layout box");
     expect(before.height).toBeGreaterThan(before.width);
+    await checkSnappingControls("ArrowDown");
 
     // Drop below the Timeline: the strip becomes a wide, short row.
     await dragDockTab(page, gripTab, dockPanel(page, "timeline"), "bottom");
@@ -245,6 +261,7 @@ test("the Quick Actions grip drags the strip, which takes its axis from where it
     await expect
       .poll(async () => (await strip.boundingBox())?.height ?? Infinity)
       .toBeLessThan(80);
+    await checkSnappingControls("ArrowRight");
 
     // Beside the Timeline instead of under it. The cell a side-by-side drop
     // yields is far wider than it is tall, and reading THAT as a row is the

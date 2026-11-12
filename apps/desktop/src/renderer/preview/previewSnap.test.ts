@@ -106,6 +106,47 @@ describe("snapTargets", () => {
   });
 });
 
+describe("grid snapping", () => {
+  const grid = { x: { step: 100, last: 19 }, y: { step: 120, last: 8 } };
+  const drives = { x: true, y: true };
+
+  it("pulls move edges and centers to the nearest grid lines", () => {
+    const targets = snapTargets(1920, 1080, [], { alignment: false, grid });
+    expect(snapMove({ left: 94, top: 103, right: 145, bottom: 132 }, targets, 12)).toEqual({
+      dx: 6, dy: 2.5, guides: { x: 100, y: 120 },
+    });
+  });
+
+  it("prefers frame and layer targets at equal distance and allows a closer grid line", () => {
+    const targets = snapTargets(1920, 1080, [
+      { left: 480, top: 410, right: 550, bottom: 620 },
+    ], { grid });
+    expect(snapScaleTarget({ x: 490, y: 510 }, drives, targets, 40).guides.x).toBe(480);
+    const frame = snapTargets(1920, 1080, [], { grid });
+    expect(snapScaleTarget({ x: 490, y: 510 }, drives, frame, 40).guides.y).toBe(540);
+    expect(snapScaleTarget({ x: 493, y: 614 }, drives, targets, 40).guides).toEqual({ x: 500, y: 620 });
+  });
+
+  it("honors the zoom-adjusted radius and only snaps along driven, enabled axes", () => {
+    const targets = snapTargets(1920, 1080, [], { alignment: false, grid: { ...grid, y: null } });
+    const point = { x: 107, y: 119 };
+    expect(snapScaleTarget(point, drives, targets, snapThresholdComp(12, 2))).toEqual({
+      target: point, guides: { x: null, y: null },
+    });
+    expect(snapScaleTarget(point, drives, targets, snapThresholdComp(12, 0.5))).toEqual({
+      target: { x: 100, y: 119 }, guides: { x: 100, y: null },
+    });
+    expect(snapScaleTarget(point, { x: false, y: true }, targets, 12).target).toEqual(point);
+  });
+
+  it("snaps uniform resize along its ray, rejecting a near-parallel grid line", () => {
+    const targets = snapTargets(1920, 1080, [], { alignment: false, grid });
+    const hit = snapUniformScale({ x: 98, y: 0 }, { x: 1, y: 119 }, 1, drives, targets, 5);
+    expect(hit.guides).toEqual({ x: null, y: 120 });
+    expect(hit.t * 119).toBeCloseTo(120, 9);
+  });
+});
+
 describe("snapThresholdComp", () => {
   it("converts screen pixels to composition pixels through the contain fit", () => {
     // A 4K source in a panel showing it at half size: 12 screen px is 24 comp px.

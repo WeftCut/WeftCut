@@ -595,8 +595,22 @@ const enUS = {
     markers_hidden_hint: "Timeline markers hidden. Click to show.",
     // Same two-state shape for the three toggles that joined the section: the
     // pressed border says which state, the hint says what a click does.
-    snap_on_hint: "Clip snapping on. Click to disable.",
-    snap_off_hint: "Clip snapping off. Click to enable.",
+    snap_on_hint: "Timeline snapping on. Click to disable.",
+    snap_off_hint: "Timeline snapping off. Click to enable.",
+    snapping_options: "Canvas snapping and grid",
+    snapping_canvas: "Canvas",
+    snapping_grid: "Grid",
+    canvas_snap_override: "Hold Ctrl while dragging to bypass canvas snapping.",
+    show_grid: "Show grid",
+    snap_to_grid: "Snap to grid",
+    grid_spacing: "Grid layout",
+    grid_equal: "Equal divisions",
+    grid_independent: "Independent divisions",
+    grid_divisions: "Divisions per axis",
+    grid_columns: "Vertical grid lines",
+    grid_rows: "Horizontal grid lines",
+    grid_column_divisions: "Columns",
+    grid_row_divisions: "Rows",
     review_overlay_on_hint: "Review overlay on: tacks and unreviewed agent changes show on the timeline. Click to hide.",
     review_overlay_off_hint: "Review overlay off. Click to show tacks and unreviewed agent changes on the timeline.",
     follow_on_hint: "Timeline auto-scroll on. Click to disable.",
@@ -2309,7 +2323,7 @@ const enUS = {
     tail_snap_enabled: "Clip snapping",
     tail_snap_enabled_hint:
       "Snap clips to nearby clip edges or the playhead while dragging or trimming.",
-    tail_snap_strength: "Snap strength",
+    tail_snap_strength: "Timeline snap strength",
     tail_snap_strength_hint:
       "Measured in screen pixels.",
     playback_heading: "Playback",
@@ -2365,12 +2379,12 @@ const enUS = {
     prebake_motifs_hint:
       "Bake every motif frame the timeline uses in the background.",
     preview_heading: "Preview",
-    preview_snap_enabled: "Canvas snapping",
+    preview_snap_enabled: "Snap to frame and layers",
     preview_snap_enabled_hint:
       "Align clips to the frame's edges and centre lines, and to other clips, while moving or resizing them on the preview. Hold Ctrl to override.",
-    preview_snap_strength: "Snap strength",
+    preview_snap_strength: "Canvas snap strength",
     preview_snap_strength_hint:
-      "Measured in screen pixels.",
+      "Measured in screen pixels. Also applies to grid snapping.",
     decode_engine: "Decode engine",
     decode_engine_auto: "Automatic",
     decode_engine_auto_desc: "Picks the best engine for each clip",

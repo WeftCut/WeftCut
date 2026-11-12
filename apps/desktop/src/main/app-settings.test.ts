@@ -3,6 +3,7 @@ import { mergeSettings } from '../shared/exportSettings';
 import { describe, it, expect, vi } from 'vitest'
 import { createAppSettingsStore, type AppSettingsFs } from './app-settings'
 import { APP_SETTINGS_DEFAULTS } from '../shared/app-settings'
+import { DEFAULT_PREVIEW_GRID, GRID_DIVISIONS_MAX, GRID_DIVISIONS_MIN } from '../shared/preview-grid'
 import { LAYOUT_THEME_IDS } from '../shared/layout-theme'
 import { PERFORMANCE_DEFAULTS } from '../shared/performance-settings'
 import { playbackCalibrationRecommendation, PLAYBACK_CALIBRATION } from '../shared/playback-calibration'
@@ -47,6 +48,54 @@ function memFs(seed: Record<string, string> = {}) {
 const store = (seed?: Record<string, string>) => createAppSettingsStore({ ...memFs(seed), path: PATH, dir: DIR })
 
 describe('app-settings store', () => {
+  it('defaults to an equal 3×3 grid, clamps counts, and migrates earlier prototype settings', () => {
+    expect(DEFAULT_PREVIEW_GRID).toMatchObject({ mode: 'equal', divisions: 3 })
+    expect(store({ [PATH]: '{ "display_mode": "AllTracks" }' }).get().preview_grid).toEqual(DEFAULT_PREVIEW_GRID)
+    const invalid = store({ [PATH]: JSON.stringify({
+      preview_grid: { visible: 'on', column_divisions: 500, row_divisions: 0, rows: false },
+    }) })
+    expect(invalid.get().preview_grid).toEqual({
+      ...DEFAULT_PREVIEW_GRID, mode: 'independent', divisions: GRID_DIVISIONS_MAX,
+      column_divisions: GRID_DIVISIONS_MAX, row_divisions: GRID_DIVISIONS_MIN, rows: false,
+    })
+    const legacy = store({ [PATH]: JSON.stringify({
+      preview_grid: { visible: true, snap: true, mode: 'pixels', divisions: 5, column_gap_px: 83, row_gap_px: 57 },
+    }) })
+    expect(legacy.get().preview_grid).toEqual({
+      ...DEFAULT_PREVIEW_GRID, visible: true, snap: true,
+      mode: 'equal', divisions: 5, column_divisions: 5, row_divisions: 5,
+    })
+    const independent = store({ [PATH]: JSON.stringify({
+      preview_grid: { column_divisions: 12, row_divisions: 5 },
+    }) })
+    expect(independent.get().preview_grid).toMatchObject({
+      mode: 'independent', column_divisions: 12, row_divisions: 5,
+    })
+  })
+
+  it('restores equal and independent counts separately when switching modes', () => {
+    const { fs } = memFs()
+    const deps = { fs, path: PATH, dir: DIR }
+    const initial = createAppSettingsStore(deps)
+    initial.apply({ preview_grid: { visible: true, divisions: 4 } })
+    expect(createAppSettingsStore(deps).get().preview_grid).toMatchObject({
+      visible: true, mode: 'equal', divisions: 4,
+    })
+    initial.apply({ preview_grid: { mode: 'independent', column_divisions: 12, row_divisions: 5, rows: false, snap: true } })
+    expect(createAppSettingsStore(deps).get().preview_grid).toMatchObject({
+      mode: 'independent', divisions: 4, column_divisions: 12, row_divisions: 5, rows: false,
+    })
+    initial.apply({ preview_grid: { mode: 'equal' } })
+    expect(createAppSettingsStore(deps).get().preview_grid).toMatchObject({
+      mode: 'equal', divisions: 4, column_divisions: 12, row_divisions: 5,
+    })
+    initial.apply({ preview_grid: { mode: 'independent', visible: false } })
+    expect(createAppSettingsStore(deps).get().preview_grid).toEqual({
+      ...DEFAULT_PREVIEW_GRID, visible: false, snap: true,
+      mode: 'independent', divisions: 4, column_divisions: 12, row_divisions: 5, rows: false,
+    })
+  })
+
   it.each([undefined, null, 'true', 1, false])('defaults export overwrite off for absent or invalid saved value %s', value => {
     expect(store({ [PATH]: JSON.stringify({ export_auto_overwrite: value }) }).get().export_auto_overwrite).toBe(false);
   });
