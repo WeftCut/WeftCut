@@ -47,7 +47,6 @@ export interface PreviewSurfaceHandle {
   /// Re-resolve every clip's preview source against the live decodability
   /// bridge and re-composite. Delegates to the underlying PixiPreview.
   refreshSources(): void;
-
 }
 
 export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(

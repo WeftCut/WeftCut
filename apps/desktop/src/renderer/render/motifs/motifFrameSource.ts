@@ -99,7 +99,6 @@ export interface MotifFrameAcquisition {
 type Lane = 'committed' | 'overlay' | 'export';
 
 interface Subscriber {
-  lane: Lane;
   priority: MotifFramePriority;
   order: number;
   owner: object | undefined;
@@ -191,7 +190,7 @@ export function acquireMotifFrame(d: MotifFrameDescriptor, request: MotifFrameRe
   let subscriber!: Subscriber;
   const lease = new Promise<MotifFrameLease>((resolve, rejectRequest) => {
     subscriber = {
-      lane, priority, order: request.order ?? Infinity, owner, job: null, settled: false,
+      priority, order: request.order ?? Infinity, owner, job: null, settled: false,
       resolve, reject: rejectRequest, detach: () => {},
     };
   });

@@ -49,6 +49,7 @@ import {
 import { useShortcuts, type OverrideMap } from "../shortcuts/useShortcuts";
 import { ACTION_DEFS } from "../shortcuts/defs";
 import { useCommandProvider } from "../commands/registry";
+import { exportReviewCommands, exportReviewShortcuts } from "../commands/exportReview";
 import {
   NUDGE_MS,
   NUDGE_SAMPLE,
@@ -759,20 +760,18 @@ export const Timeline = memo(function Timeline({
   useShortcuts({
     disabled: !isFocusedTimeline,
     overrides: shortcutOverrides,
-    handlers: {
+    handlers: exportReviewShortcuts({
       selectAll: handleSelectAll,
       deselectAll,
-      ...(!editingLocked && {
-        toggleLinkSelected: handleToggleLinkSelected,
-        nudgeBack: handleNudgeBack,
-        nudgeForward: handleNudgeForward,
-        nudgeLargeBack: handleNudgeLargeBack,
-        nudgeLargeForward: handleNudgeLargeForward,
-        resyncAudioToVideo: handleResyncAudioToVideo,
-      }),
+      toggleLinkSelected: handleToggleLinkSelected,
+      nudgeBack: handleNudgeBack,
+      nudgeForward: handleNudgeForward,
+      nudgeLargeBack: handleNudgeLargeBack,
+      nudgeLargeForward: handleNudgeLargeForward,
+      resyncAudioToVideo: handleResyncAudioToVideo,
       zoomTimelineIn: handleZoomTimelineIn,
       zoomTimelineOut: handleZoomTimelineOut,
-    },
+    }, editingLocked),
   });
 
   // Gated on the same predicate as the shortcuts above, for the ADR 0053 reason
@@ -782,7 +781,7 @@ export const Timeline = memo(function Timeline({
   // necessarily the one holding the keyboard — so ungated, the palette's
   // Select All and Ctrl+A would act on DIFFERENT timelines, and every lookup
   // would log the collision (25 of them per Quick Actions strip render).
-  useCommandProvider(() => [
+  useCommandProvider(() => exportReviewCommands([
     // Timeline's provider rather than App's catalogue, which is also why neither
     // appears in the Edit menu: a menu-bar row backed by this provider would
     // vanish whenever the Timeline Panel is closed
@@ -812,42 +811,37 @@ export const Timeline = memo(function Timeline({
       // the row (the Quick Actions strip, the palette, a context menu), and a
       // value captured when Timeline last rendered would freeze. Same rule
       // `appCommands.ts` states for `clearRange`.
-      enabled: () => !editingLocked && canToggleLinkSelection(),
+      enabled: canToggleLinkSelection,
       run: handleToggleLinkSelected,
     },
     {
       id: "nudgeBack",
       actionId: "nudgeBack",
       labelKey: ACTION_DEFS.nudgeBack.labelKey,
-      enabled: () => !editingLocked,
       run: handleNudgeBack,
     },
     {
       id: "nudgeForward",
       actionId: "nudgeForward",
       labelKey: ACTION_DEFS.nudgeForward.labelKey,
-      enabled: () => !editingLocked,
       run: handleNudgeForward,
     },
     {
       id: "nudgeLargeBack",
       actionId: "nudgeLargeBack",
       labelKey: ACTION_DEFS.nudgeLargeBack.labelKey,
-      enabled: () => !editingLocked,
       run: handleNudgeLargeBack,
     },
     {
       id: "nudgeLargeForward",
       actionId: "nudgeLargeForward",
       labelKey: ACTION_DEFS.nudgeLargeForward.labelKey,
-      enabled: () => !editingLocked,
       run: handleNudgeLargeForward,
     },
     {
       id: "resyncAudioToVideo",
       actionId: "resyncAudioToVideo",
       labelKey: ACTION_DEFS.resyncAudioToVideo.labelKey,
-      enabled: () => !editingLocked,
       run: handleResyncAudioToVideo,
     },
     {
@@ -862,7 +856,7 @@ export const Timeline = memo(function Timeline({
       labelKey: ACTION_DEFS.zoomTimelineOut.labelKey,
       run: handleZoomTimelineOut,
     },
-  ], { enabled: isFocusedTimeline });
+  ], editingLocked), { enabled: isFocusedTimeline });
 
   // Live lane-element registry. The drag hit-test measures these nodes rather
   // than recomputing row offsets from track heights — a row's on-screen extent

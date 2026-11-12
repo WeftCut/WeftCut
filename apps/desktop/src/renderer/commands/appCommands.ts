@@ -210,7 +210,7 @@ const SELF_CONTAINED_COMMAND_IDS = [
   "previewZoomOut",
 ] as const;
 
-type SelfContainedCommandId = (typeof SELF_CONTAINED_COMMAND_IDS)[number];
+export type SelfContainedCommandId = (typeof SELF_CONTAINED_COMMAND_IDS)[number];
 
 const SELF_CONTAINED_LABEL_KEYS: Record<SelfContainedCommandId, string> = {
   fitLayerToFrame: 'layer_scale.fit',

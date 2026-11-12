@@ -556,9 +556,8 @@ export class Compositor {
   /// `setSuspended(false)` re-acquires fresh handles via the normal
   /// `ensureClip` path.
   ///
-  /// Used by export: the export Worker's decoder otherwise wedges
-  /// when the preview's decoder is still holding a hardware video-
-  /// decode slot for the same source.
+  /// Used by export preparation: idle preview decoders hold resource
+  /// leases the encoder's admission needs (`exportPreviewSuspension.ts`).
   setSuspended(s: boolean): void {
     if (this.suspended === s) return;
     this.suspended = s;

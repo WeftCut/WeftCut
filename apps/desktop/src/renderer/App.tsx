@@ -114,6 +114,7 @@ import { LogConsole, type LogConsoleHandle } from "./logs/LogConsole";
 import { useLogStore } from "./logs/store";
 import { notifyCommandRegistry, useCommandProvider } from "./commands/registry";
 import { buildAppCommands } from "./commands/appCommands";
+import { exportReviewCommands, exportReviewShortcuts } from "./commands/exportReview";
 import { splitAtPlayhead } from "./commands/splitAtPlayhead";
 import { applyTransitionAtPlayhead } from "./timeline/applyTransition";
 import {
@@ -192,15 +193,6 @@ interface AppProps {
   /// this editor.
   onWorkspaceReady: () => void;
 }
-
-const EXPORT_REVIEW_COMMANDS = new Set([
-  "togglePlay", "seekFrameBack", "seekFrameForward", "seekSecondBack", "seekSecondForward",
-  "seekPrevEdit", "seekNextEdit", "seekPrevMarker", "seekNextMarker", "seekStart", "seekEnd",
-  "previewZoomFit", "previewZoomIn", "previewZoomOut", "selectHandTool", "selectTool",
-  "toggleFollowPlayhead", "toggleDisplayMode", "toggleSafeAreaGuides", "toggleMarkersVisible",
-  "focusNextPanel", "focusPreviousPanel", "toggleMaximizePanel", "restoreMaximizedPanel",
-  "openSettings", "openSearchPalette", "toggleLog", "focusLogSearch",
-]);
 
 export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
   const { t } = useTranslation();
@@ -1084,9 +1076,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
   // through a ref so the window listener never reattaches just because handler
   // identities changed. It only reattaches when the resolved binding entries
   // change (i.e. when user overrides land).
-  const availableShortcuts: HandlerMap = exportEditLocked
-    ? Object.fromEntries(Object.entries(shortcutHandlers).filter(([id]) => EXPORT_REVIEW_COMMANDS.has(id)))
-    : shortcutHandlers;
+  const availableShortcuts = exportReviewShortcuts(shortcutHandlers, exportEditLocked);
   useShortcuts({
     handlers: availableShortcuts,
     overrides: shortcutOverrides,
@@ -1146,7 +1136,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
     [enterAgentMode, t],
   );
 
-  useCommandProvider(() =>
+  useCommandProvider(() => exportReviewCommands(
     buildAppCommands(
       shortcutHandlers,
       {
@@ -1179,10 +1169,9 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
         canRedo: !!summary?.history.can_redo,
         exportLocked: busy || exportEditLocked,
       },
-    ).map(command => exportEditLocked && !EXPORT_REVIEW_COMMANDS.has(command.id)
-      ? { ...command, enabled: () => false }
-      : command),
-  );
+    ),
+    exportEditLocked,
+  ));
 
   const dockPanelContracts = useMemo<DockPanelContracts>(
     () => ({
