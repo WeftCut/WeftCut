@@ -9,28 +9,27 @@ import {
 
 const canvas = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 };
 
-test("the timeline magnet stays a one-click toggle and its chevron owns settings", async () => {
+test("the single timeline magnet opens its settings, which toggle snapping", async () => {
   const { app, page } = await launchApp();
   try {
     await newProject(page, { parentFolder: tmpDir("weftcut-timeline-magnet-"), name: "magnet", canvas });
     await expect(page.locator(".splash-screen")).toHaveCount(0, { timeout: 15_000 });
-    const magnet = page.locator('button[data-quick-action="toggleTailSnap"]');
-    const options = page.locator('button[data-quick-action="timelineSnapOptions"]');
+    const magnet = page.locator('button[data-quick-action="timelineSnapOptions"]');
     await expect(magnet).toBeVisible();
-    await expect(options).toBeVisible();
-    await expect(magnet).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator('button[data-quick-action="toggleTailSnap"]')).toHaveCount(0);
+    await expect(magnet).toHaveAttribute("data-active", "true");
     await magnet.click();
-    await expect(magnet).toHaveAttribute("aria-pressed", "false");
-    // The chevron opens a different interaction; it does not toggle magnetism.
-    await options.click();
-    await expect(magnet).toHaveAttribute("aria-pressed", "false");
+    // Opening the popup does not change the snap setting.
+    await expect(magnet).toHaveAttribute("data-active", "true");
     const dialog = page.getByRole("dialog", { name: "Timeline snapping options" });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText("Hold Ctrl during a drag", { exact: false })).toBeVisible();
     const enabled = dialog.getByRole("switch", { name: "Clip snapping" });
-    await expect(enabled).toHaveAttribute("aria-checked", "false");
+    await expect(enabled).toHaveAttribute("aria-checked", "true");
     await enabled.click();
-    await expect(magnet).toHaveAttribute("aria-pressed", "true");
+    await expect(magnet).toHaveAttribute("data-active", "false");
+    await enabled.click();
+    await expect(magnet).toHaveAttribute("data-active", "true");
     const strength = dialog.getByLabel("Snap strength", { exact: true });
     await strength.fill("28");
     await strength.press("Enter");

@@ -1,5 +1,4 @@
 import {
-  Fragment,
   useEffect,
   useRef,
   useState,
@@ -391,28 +390,26 @@ export function QuickActionsPanel({
           {section.resolved.map(({ item, command }) => {
             index += 1;
             const own = index;
-            // The magnet has a separate options chevron. It participates in
-            // the same roving keyboard order, but never changes the magnet's
-            // one-click toggle contract.
-            const optionsIndex = item.id === "toggleTailSnap" ? ++index : null;
-            return (
-              <Fragment key={item.id}>
-                <QuickActionButton
-                  item={item}
-                  command={command}
-                  state={state}
-                  mode={section.mode}
-                  tabbable={own === focusIndex}
-                  onFocus={() => setFocusIndex(own)}
-                />
-                {optionsIndex !== null && (
-                  <TimelineSnapPopover
-                    orientation={orientation}
-                    tabbable={optionsIndex === focusIndex}
-                    onFocus={() => setFocusIndex(optionsIndex)}
-                  />
-                )}
-              </Fragment>
+            // Snap options get one magnet slot, matching the grid popup.
+            // The existing toggleTailSnap command stays registered for the
+            // keyboard/search palette, but the strip's magnet opens settings.
+            return item.id === "toggleTailSnap" ? (
+              <TimelineSnapPopover
+                key={item.id}
+                orientation={orientation}
+                tabbable={own === focusIndex}
+                onFocus={() => setFocusIndex(own)}
+              />
+            ) : (
+              <QuickActionButton
+                key={item.id}
+                item={item}
+                command={command}
+                state={state}
+                mode={section.mode}
+                tabbable={own === focusIndex}
+                onFocus={() => setFocusIndex(own)}
+              />
             );
           })}
         </div>

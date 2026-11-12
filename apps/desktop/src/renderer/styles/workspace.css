@@ -689,19 +689,13 @@
   background: var(--hover-neutral-strong);
 }
 
-/* Split timeline magnet: its chevron opens preferences without changing the
-   magnet's single-click toggle or the Quick Actions strip's roving order. */
-.weft-quick-action.timeline-snap-options-trigger {
-  width: calc(16 * var(--ui-px));
-  margin-left: calc(-4 * var(--ui-px));
-}
-
+/* One magnet button, one compact popover: same interaction as the grid. */
 .app-menu-list.timeline-snap-popup {
-  width: calc(270 * var(--ui-px));
-  padding: calc(12 * var(--ui-px));
+  width: calc(240 * var(--ui-px));
+  padding: calc(10 * var(--ui-px));
   display: flex;
   flex-direction: column;
-  gap: calc(10 * var(--ui-px));
+  gap: calc(8 * var(--ui-px));
 }
 
 .timeline-snap-popup-title {

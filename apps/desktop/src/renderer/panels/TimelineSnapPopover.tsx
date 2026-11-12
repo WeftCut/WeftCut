@@ -1,5 +1,5 @@
 import { Popover } from "@base-ui/react/popover";
-import { ChevronDown } from "lucide-react";
+import { Magnet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -17,8 +17,8 @@ import {
 } from "../settings/appSettingsStore";
 import type { StripOrientation } from "./QuickActionsPanel";
 
-/** Split magnet: the magnet itself stays a one-click toggle; its adjacent
- * chevron reveals the existing timeline snap preferences, not canvas settings. */
+/** One magnet button opens the timeline settings, like the canvas grid's
+ * single-trigger popover. The command palette still exposes the snap toggle. */
 export function TimelineSnapPopover({
   orientation, tabbable, onFocus,
 }: {
@@ -47,14 +47,15 @@ export function TimelineSnapPopover({
   return (
     <Popover.Root onOpenChange={() => setError("")}>
       <Popover.Trigger
-        className="weft-quick-action timeline-snap-options-trigger"
+        className="weft-quick-action"
         data-quick-action="timelineSnapOptions"
+        data-active={enabled ? "true" : "false"}
         aria-label={label}
         title={label}
         tabIndex={tabbable ? 0 : -1}
         onFocus={onFocus}
       >
-        <AppIcon icon={ChevronDown} size="body" aria-hidden="true" />
+        <AppIcon icon={Magnet} size="heading" aria-hidden="true" />
       </Popover.Trigger>
       <Popover.Portal>
         <AppPopoverPositioner
