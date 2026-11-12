@@ -25,7 +25,7 @@ import {
   acquireMotifFrame,
   motifFrameCoverage,
   sharedBakedKeyIndex,
-  resetMotifFrameRequests,
+  bindMotifFrameWorkspace,
   setMotifPreparationCoverage,
 } from "./motifFrameSource";
 import {
@@ -277,9 +277,10 @@ export class MotifDemandSession {
     if (this.generation !== session.generation) {
       bindPrebakeIntents(session.generation);
       this.generation = session.generation;
-      resetMotifFrameRequests();
-      sharedBakedKeyIndex.clear();
-      if (this.diskDiscoveryPending) sharedBakedKeyIndex.beginHydration();
+      if (bindMotifFrameWorkspace(session.generation)) {
+        sharedBakedKeyIndex.clear();
+        if (this.diskDiscoveryPending) sharedBakedKeyIndex.beginHydration();
+      }
       this.bakeStatusByCacheKey.clear();
     }
     const summary = this.deps.projectSummary();

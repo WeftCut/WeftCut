@@ -2,9 +2,10 @@ import { test, expect } from '@playwright/test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { readFileSync, writeFileSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launchApp, importAndPlaceMedia, invokeCmd, newProject, tmpDir, waitForHook } from './helpers/driver';
+import { launchApp, dockPanel, importAndPlaceMedia, invokeCmd, newProject, tmpDir, waitForHook } from './helpers/driver';
 import { mergeSettings } from '../../src/shared/exportSettings';
 import { exportTerminal, type ExportJob } from '../../src/shared/exportJob';
 
@@ -192,7 +193,8 @@ test('MCP export reconnects, reports the actual renamed file, and retries public
   }
 });
 
-test('the editor can scrub and play during export while project edits stay locked', async ({}, testInfo) => {
+test('background export keeps review available and preserves output across Preview remounts', async ({}, testInfo) => {
+  test.setTimeout(120_000);
   const { app, page } = await launchApp();
   let jobId: string | undefined;
   try {
@@ -200,39 +202,76 @@ test('the editor can scrub and play during export while project edits stay locke
       parentFolder: tmpDir('weftcut-background-export-project-'), name: 'Background export',
       canvas: { width: 640, height: 360, fpsNum: 30, fpsDen: 1 },
     });
+    await invokeCmd(page, 'app_settings_set', { patch: { decode_engine: 'webcodecs' } });
     const mediaDir = process.env.WEFTCUT_TEST_MEDIA ?? fileURLToPath(new URL('../fixtures/media/', import.meta.url));
-    await importAndPlaceMedia(page, { mediaAbsPath: path.join(mediaDir, 'test_1080p_30fps_6s.mp4') });
-    await waitForHook(page, 'audioTransportSnapshot');
+    const { mediaId } = await importAndPlaceMedia(page, { mediaAbsPath: path.join(mediaDir, 'test_1080p_30fps_6s.mp4') });
+    await waitForHook(page, 'addMotifLayer');
+    await page.evaluate(id => window.__weftcutTest!.waitMediaExportReady({ mediaId: id }), mediaId);
+    await page.evaluate(() => window.__weftcutTest!.addMotifLayer({
+      motifId: 'countdown', durationUs: 2_000_000, props: { seconds: 2 },
+    }));
 
-    // Stop the worker at its first native frame acknowledgment so the assertions
-    // exercise the encoding phase even when the fixture renders very quickly.
+    // A real native encode waits for its first frame acknowledgment. Inject a
+    // capacity refusal for editor decoder opens while leaving export leases
+    // attached to their admitted plan.
     await app.evaluate(({ ipcMain }) => {
-      const handler = ipcMain._invokeHandlers.get('export:videosink_write')!;
-      let release!: () => void;
-      const barrier = new Promise<void>(resolve => { release = resolve; });
-      Object.assign(globalThis, { releaseExportFrames: release, exportFrameHeld: false });
+      const write = ipcMain._invokeHandlers.get('export:videosink_write')!;
+      const acquire = ipcMain._invokeHandlers.get('resources:acquire')!;
+      let barrier: Promise<void> | undefined;
+      let release: (() => void) | undefined;
+      let frameHeld = false;
+      let refusePreview = false;
+      Object.assign(globalThis, {
+        holdExportFrames: () => { frameHeld = false; barrier = new Promise<void>(resolve => { release = resolve; }); },
+        releaseExportFrames: () => { release?.(); barrier = undefined; },
+        exportFrameHeld: () => frameHeld,
+        refusePreviewResources: () => { refusePreview = true; },
+        allowPreviewResources: () => { refusePreview = false; },
+      });
       ipcMain._invokeHandlers.set('export:videosink_write', async (event, frame) => {
-        Object.assign(globalThis, { exportFrameHeld: true });
-        await barrier;
-        return handler(event, frame);
+        if (barrier) { frameHeld = true; await barrier; }
+        return write(event, frame);
+      });
+      ipcMain._invokeHandlers.set('resources:acquire', (event, request) => {
+        if (refusePreview && !request.finalizationToken) throw new Error('resource-capacity-exceeded: synthetic preview refusal');
+        return acquire(event, request);
       });
     });
-    const output = path.join(tmpDir('weftcut-background-export-output-'), 'review.mp4');
-    const { job_id } = await invokeCmd<ExportJob>(page, 'export_job_start', {
-      output_path: output, on_conflict: 'fail',
-      settings: mergeSettings({ encoderEngine: 'native', hwAccel: 'software', includeAudio: false }),
-    });
-    jobId = job_id;
-    const status = () => invokeCmd<ExportJob>(page, 'export_job_status', { job_id });
-    await expect.poll(async () => {
-      const job = await status();
-      if (job.error) throw new Error(job.error.message);
-      return app.evaluate(() => Reflect.get(globalThis, 'exportFrameHeld'));
-    }, { timeout: 30_000 }).toBe(true);
 
+    const outDir = tmpDir('weftcut-background-export-output-');
+    const baseline = path.join(outDir, 'foreground.mp4');
+    const output = path.join(outDir, 'background.mp4');
+    const status = () => invokeCmd<ExportJob>(page, 'export_job_status', { job_id: jobId });
+    const startHeld = async (output_path: string) => {
+      await app.evaluate(() => Reflect.get(globalThis, 'holdExportFrames')());
+      const job = await invokeCmd<ExportJob>(page, 'export_job_start', {
+        output_path, on_conflict: 'fail',
+        settings: mergeSettings({ encoderEngine: 'native', hwAccel: 'software', includeAudio: false }),
+      });
+      jobId = job.job_id;
+      await expect.poll(async () => {
+        const active = await status();
+        if (active.error) throw new Error(active.error.message);
+        return app.evaluate(() => Reflect.get(globalThis, 'exportFrameHeld')());
+      }, { timeout: 30_000 }).toBe(true);
+    };
+    const finish = async (file: string) => {
+      await app.evaluate(() => Reflect.get(globalThis, 'releaseExportFrames')());
+      await expect.poll(async () => (await status()).state, { timeout: 30_000 }).toBe('completed');
+      expect(statSync(file).size).toBeGreaterThan(100);
+      await expect(page.getByRole('dialog')).toContainText(path.basename(file));
+      await page.getByRole('button', { name: 'Dismiss' }).click();
+    };
+
+    await startHeld(baseline);
+    await expect(page.getByRole('dialog').locator('.export-progress-status')).toContainText('Encoding');
+    await expect(page.getByTestId('preview-suspended')).toHaveText('Exporting');
+    await finish(baseline);
+
+    await invokeCmd(page, 'app_settings_set', { patch: { resource_policy: { preview_during_export: true } } });
+    await startHeld(output);
     await expect(page.getByText('Timeline read-only')).toBeVisible();
     await expect(page.getByRole('dialog')).toHaveCount(0);
-    await testInfo.attach('background-export', { body: await page.screenshot(), contentType: 'image/png' });
     const lane = page.getByTestId('track-lane').first();
     const laneIsInert = () => lane.evaluate(el => !!el.closest('[inert]'));
     await expect.poll(laneIsInert).toBe(true);
@@ -250,15 +289,36 @@ test('the editor can scrub and play during export while project edits stay locke
       window.__weftcutTest!.compositorPerfSnapshot()?.sync.videoLateMs ?? null)).not.toBeNull();
     await play.click();
     await expect.poll(async () => (await transport())?.phase).toBe('paused');
-    expect((await status()).state).toBe('rendering');
+    const capture = () => page.screenshot({
+      mask: [page.locator('.status-bar-message')], maskColor: '#101418', scale: 'css',
+    });
+    await testInfo.attach('background-export', { body: await capture(), contentType: 'image/png' });
 
-    await app.evaluate(() => Reflect.get(globalThis, 'releaseExportFrames')());
-    await expect.poll(async () => (await status()).state, { timeout: 30_000 }).toBe('completed');
-    expect(statSync(output).size).toBeGreaterThan(100);
-    await expect(page.getByRole('dialog')).toContainText('review.mp4');
-    await page.getByRole('button', { name: 'Dismiss' }).click();
+    const view = page.getByText('View', { exact: true });
+    const openPreview = async () => {
+      await view.click();
+      await page.getByRole('menuitem', { name: 'Preview', exact: true }).click();
+    };
+    await openPreview();
+    await view.click();
+    await page.getByRole('menuitem', { name: 'Close Active Panel', exact: true }).click();
+    await expect(dockPanel(page, 'preview')).toHaveCount(0);
+    await app.evaluate(() => Reflect.get(globalThis, 'refusePreviewResources')());
+    await openPreview();
+    await expect(dockPanel(page, 'preview')).toBeVisible();
+    const resourceNotice = page.getByText('Preview is waiting for resources while the export runs.');
+    await expect(resourceNotice).toBeVisible();
+    await testInfo.attach('preview-capacity', { body: await capture(), contentType: 'image/png' });
+    expect((await status()).state).toBe('rendering');
+    await app.evaluate(() => Reflect.get(globalThis, 'allowPreviewResources')());
+    await expect(resourceNotice).toHaveCount(0);
+    await finish(output);
     await expect.poll(laneIsInert).toBe(false);
     expect(await invokeCmd(page, 'add_track', {})).toBeTruthy();
+
+    const frameHashes = (file: string) => execFileSync('ffmpeg',
+      ['-v', 'error', '-i', file, '-map', '0:v:0', '-f', 'framemd5', '-'], { encoding: 'utf8' });
+    expect(frameHashes(output)).toBe(frameHashes(baseline));
   } finally {
     try {
       await app.evaluate(() => Reflect.get(globalThis, 'releaseExportFrames')?.());

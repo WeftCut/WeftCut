@@ -50,7 +50,6 @@ const terminalStates = [
 
 function setup() {
   const deps: Parameters<typeof useExportFlow>[0] = {
-    previewRef: { current: null },
     proxyStateRef: { current: new Map() },
     decodeProbeMemo: { current: new Map() },
   }

@@ -289,6 +289,7 @@ export interface CompositionNodeHost {
   noteUnsupported(mediaId: string): void;
   /// A visible VideoClip painted a stale or missing frame this sweep.
   noteLateLayer(): void;
+  noteCapacityBlocked?(): void;
   noteFrameTiming?(startUs: number | null, endUs: number | null): void;
   noteHeldScene?(rootUs: number | null): void;
   noteImportFrame?(mediaId: string, engine: string): void;
@@ -754,6 +755,7 @@ export class CompositionNode {
       if (cached?.boundFrameTargetUs != null && srcTUs >= cached.boundFrameTargetUs) continue;
       const clip = this.ensureClip(layer);
       if (!clip || clip.source.ring.frameAt(srcTUs)) continue;
+      if (clip.source.isCapacityBlocked?.()) this.host.noteCapacityBlocked?.();
       // Keep driving every blocked clip, including freshly revived handles
       // that anchor() could not nudge before this visual pass acquired them.
       void clip.source.requestFrameAt(srcTUs);
@@ -1459,6 +1461,7 @@ export class CompositionNode {
     const selected = clip.source.ring.selectFrame(srcTUs);
     stageAdd(STAGE.RingLookup, tRing);
     const frame = selected?.frame ?? null;
+    if (!frame && clip.source.isCapacityBlocked?.()) this.host.noteCapacityBlocked?.();
 
     // Underrun accounting: while the master clock runs, a stale or
     // missing frame here is a dropped frame the free-running playhead

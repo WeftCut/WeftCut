@@ -139,7 +139,13 @@ export class FfmpegSource implements PreviewDecodeSession {
     return this.slot.kind === "opening" || this.slot.kind === "ready" ? this.slot.attempt : null;
   }
   private current(attempt: Attempt): boolean { return this.held() === attempt; }
-  private move(to: Slot): void { this.slot = checkedMove(this.slot, to); }
+  private capacityBlocked = false;
+  isCapacityBlocked(): boolean { return this.capacityBlocked; }
+  private move(to: Slot): void {
+    this.slot = checkedMove(this.slot, to);
+    if (to.kind === "blocked") this.capacityBlocked = true;
+    if (to.kind === "ready" || to.kind === "failed" || to.kind === "disposed") this.capacityBlocked = false;
+  }
 
   /// Diagnostics: the live transport's preload handoff timings, or null on the
   /// software lane (no preload stage) / before the first instrumented frame.

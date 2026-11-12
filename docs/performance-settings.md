@@ -92,10 +92,12 @@ floor does not guarantee 1080p export: it projects to 409 MiB of work, while a
 Refusal reports recovery options; it never lowers output quality.
 
 Export preparation pauses preview and releases its idle decoder leases so
-the encoder can acquire resources. After admission, the editor shows progress
-above the workspace and allows scrubbing and playback while the timeline stays
-read-only. Preview uses the remaining resource budget. Editing becomes available
-again when the job completes, fails, or is cancelled.
+the encoder can acquire resources. With **Preview during export (beta)** enabled
+in Performance settings, progress appears above the workspace and the preview
+resumes after admission. You can scrub and play the read-only timeline while
+encoding. When preview cannot acquire resources, it shows a notice and retries
+as capacity becomes available. The setting is off by default and applies to the
+next export.
 
 ## Memory telemetry and pressure
 

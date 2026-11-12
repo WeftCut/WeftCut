@@ -7,12 +7,12 @@ import { useTranslation } from "react-i18next";
 /// Who the preview yielded to: an export, or an agent's `render_frames`.
 export type PreviewSuspendedBy = "export" | "agent";
 
-export function PreviewSuspendedNotice({ by }: { by: PreviewSuspendedBy }) {
+export function PreviewSuspendedNotice({ by, preparing = false }: { by: PreviewSuspendedBy; preparing?: boolean }) {
   const { t } = useTranslation();
   return (
     <div className="preview-suspended" role="status" data-testid="preview-suspended" data-by={by}>
       <span className="preview-spinner" aria-hidden="true" />
-      <span className="placeholder">{t(by === "agent" ? "preview.suspended_agent" : "preview.suspended_export")}</span>
+      <span className="placeholder">{t(by === "agent" ? "preview.suspended_agent" : preparing ? "preview.suspended_export_preparing" : "preview.suspended_export")}</span>
     </div>
   );
 }

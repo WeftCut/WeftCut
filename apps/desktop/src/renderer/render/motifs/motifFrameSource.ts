@@ -99,6 +99,7 @@ export interface MotifFrameAcquisition {
 type Lane = 'committed' | 'overlay' | 'export';
 
 interface Subscriber {
+  lane: Lane;
   priority: MotifFramePriority;
   order: number;
   owner: object | undefined;
@@ -121,6 +122,19 @@ interface Job {
 const jobs = new Map<string, Job>();
 const unsettled = new Set<Subscriber>();
 const owners = new WeakMap<object, Subscriber>();
+let workspaceGeneration: number | null = null;
+
+/** Demand sessions follow the Preview panel. Frame requests belong to the
+ * workspace, so remounting Preview must not supersede export captures. */
+export function bindMotifFrameWorkspace(generation: number): boolean {
+  if (workspaceGeneration === generation) return false;
+  workspaceGeneration = generation;
+  mainPreparedKeys.clear();
+  for (const subscriber of [...unsettled]) {
+    if (subscriber.lane !== 'export') reject(subscriber, motifSuperseded());
+  }
+  return true;
+}
 
 /** A new workspace may reuse pixels, but must not inherit another workspace's
  * work: every pending request is superseded, and admitted work's results are
@@ -186,7 +200,7 @@ export function acquireMotifFrame(d: MotifFrameDescriptor, request: MotifFrameRe
   let subscriber!: Subscriber;
   const lease = new Promise<MotifFrameLease>((resolve, rejectRequest) => {
     subscriber = {
-      priority, order: request.order ?? Infinity, owner, job: null, settled: false,
+      lane, priority, order: request.order ?? Infinity, owner, job: null, settled: false,
       resolve, reject: rejectRequest, detach: () => {},
     };
   });

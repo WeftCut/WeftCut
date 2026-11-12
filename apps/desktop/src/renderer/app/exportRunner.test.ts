@@ -11,7 +11,8 @@ import enUS from "../i18n/locales/en-US";
 import { DEFAULT_EXPORT_SETTINGS } from "../render/exportSettings";
 import { ROOT_ID, summaryFixture } from "../testing/summaryFixture";
 import type { LayerSummary, TrackSummary } from "../ipc";
-import type { PreviewSurfaceHandle } from "../preview/PreviewSurface";
+import type { RunExportInit, RunExportResult } from "../render/worker/runExport";
+import type { PreviewSuspendedBy } from "../preview/PreviewSuspendedNotice";
 
 // The export's audio-effect gate, at both of the two sites that run it: the
 // audio-only path and the full pipeline. Everything the hook reaches is driven
@@ -184,20 +185,26 @@ function summary(tracks: TrackSummary[]) {
   });
 }
 
-function mount(previewRef = createRef<PreviewSurfaceHandle>(), cap: RendererCapability = GPU) {
+type ExportHarness = {
+  suspendForExport(by: PreviewSuspendedBy): () => void;
+  runPixiExport(opts: RunExportInit): Promise<RunExportResult>;
+};
+function mount(previewRef = createRef<ExportHarness>(), cap: RendererCapability = GPU, background = true) {
   let output = '';
   const controller = new AbortController();
   return renderHook(() => {
     const [exportState, setState] = useState<ExportState | null>(null);
     const runner = useMemo(() => createExportRunner({
-previewRef, proxyStateRef: { current: new Map() }, decodeProbeMemo: { current: new Map() },
+      render: init => previewRef.current!.runPixiExport(init),
+      suspendPreview: by => previewRef.current?.suspendForExport(by) ?? (() => {}),
+      proxyStateRef: { current: new Map() }, decodeProbeMemo: { current: new Map() },
       t: translate as TFunction, onState: setState, cancel: () => controller.abort(), publish: async () => output,
       capability: async () => cap,
 }), []);
     return {
 exportState, runner, runExportWithSettings: async (settings: ExportSettings, path: string, range?: { startUs: number; endUs: number }) => {
         output = path;
-        await runner.run({ job_id: 'test', state: 'preparing', filename: 'out.mp4', renderer_token: 'test', agent: false, settings, range: range ?? { startUs: 0, endUs: 2_000_000 }, output_path: path, staging_path: path, encoded_video_path: '/tmp/video.mp4', encoded_audio_path: '/tmp/audio.m4a' }, controller);
+        await runner.run({ job_id: 'test', state: 'preparing', filename: 'out.mp4', renderer_token: 'test', agent: false, settings, range: range ?? { startUs: 0, endUs: 2_000_000 }, output_path: path, staging_path: path, encoded_video_path: '/tmp/video.mp4', encoded_audio_path: '/tmp/audio.m4a' }, controller, background);
       }
 };
   });
@@ -219,7 +226,10 @@ describe("exportRunner", () => {
     bridge.answers.set("audio_fx_snapshot", () => ({}));
   });
 
-  it.each(['success', 'sink failure', 'worker failure', 'finish failure', 'mux failure'])("yields preview for sink admission and restores it for encoding: %s", async outcome => {
+  it.each([
+    ['success', true], ['success', false], ['sink failure', true],
+    ['worker failure', true], ['finish failure', true], ['mux failure', true],
+  ] as const)("yields for encoder admission and keeps the foreground hold through encoding: %s (beta: %s)", async (outcome, background) => {
     const project = summary([track("track-v", "Video", [COLOR_LAYER])]);
     const { useProjectStore } = await import("../state/projectStore");
     act(() => { useProjectStore.getState().apply(project); });
@@ -227,15 +237,15 @@ describe("exportRunner", () => {
     let suspended = false;
     const suspendedBy: string[] = [];
     const restore = vi.fn(() => { suspended = false; });
-    const previewRef = createRef<PreviewSurfaceHandle>();
+    const previewRef = createRef<ExportHarness>();
     previewRef.current = {
       suspendForExport: (by: string) => { suspended = true; suspendedBy.push(by); return restore; },
       runPixiExport: async () => {
-        expect(suspended).toBe(false);
+        expect(suspended).toBe(!background);
         if (outcome === 'worker failure') throw new Error('worker failed');
         return { framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 };
       },
-    } as unknown as PreviewSurfaceHandle;
+    } as unknown as ExportHarness;
     bridge.answers.set("export_video_sink_start", () => {
       // Reproduce the CI ledger: 4 retained preview decoders reserve 764 of
       // 921 MiB. The encoder cannot acquire its 192 MiB until preview yields.
@@ -243,15 +253,15 @@ describe("exportRunner", () => {
       if (outcome === 'sink failure') throw new Error('encoder failed');
     });
     bridge.answers.set("export_video_sink_finish", () => {
-      expect(suspended).toBe(false);
+      expect(suspended).toBe(!background);
       if (outcome === 'finish failure') throw new Error('finish failed');
     });
     bridge.answers.set("export_video_sink_cancel", () => { expect(suspended).toBe(outcome === "sink failure"); });
     bridge.answers.set("mux_export", () => {
-      expect(suspended).toBe(false);
+      expect(suspended).toBe(!background);
       if (outcome === 'mux failure') throw new Error('mux failed');
     });
-    const { result } = mount(previewRef);
+    const { result } = mount(previewRef, GPU, background);
     await act(async () => {
       await result.current.runExportWithSettings({
         ...DEFAULT_EXPORT_SETTINGS, encoderEngine: 'native', includeVideo: true,
@@ -271,8 +281,8 @@ describe("exportRunner", () => {
     const { useProjectStore } = await import("../state/projectStore");
     act(() => useProjectStore.getState().apply(project));
     bridge.answers.set("project_summary", () => project);
-    const previewRef = createRef<PreviewSurfaceHandle>();
-    previewRef.current = { suspendForExport: () => () => { }, runPixiExport: async () => ({ framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 }) } as unknown as PreviewSurfaceHandle;
+    const previewRef = createRef<ExportHarness>();
+    previewRef.current = { suspendForExport: () => () => { }, runPixiExport: async () => ({ framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 }) } as unknown as ExportHarness;
     const { result } = mount(previewRef);
     const wait = (payload: unknown) => act(async () => { for (const handler of bridge.handlers.get("export:mux_wait") ?? []) handler({ payload }); });
     const holders = [{ kind: "proxy", media_id: "m-1", mib: 900, threads: 2 }];
@@ -304,8 +314,8 @@ describe("exportRunner", () => {
     act(() => useProjectStore.getState().apply(project));
     bridge.answers.set("project_summary", () => project);
     const encode = vi.fn(async () => ({ framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 }));
-    const previewRef = createRef<PreviewSurfaceHandle>();
-    previewRef.current = { suspendForExport: () => () => { }, runPixiExport: encode } as unknown as PreviewSurfaceHandle;
+    const previewRef = createRef<ExportHarness>();
+    previewRef.current = { suspendForExport: () => () => { }, runPixiExport: encode } as unknown as ExportHarness;
     const mux = vi.fn().mockRejectedValueOnce(new Error("Resources are busy")).mockResolvedValue(undefined);
     bridge.answers.set("mux_export", mux);
     const { result } = mount(previewRef);
@@ -342,8 +352,8 @@ describe("exportRunner", () => {
     });
     const mux = vi.fn().mockRejectedValue(new Error("disk full"));
     bridge.answers.set("mux_export", mux);
-    const previewRef = createRef<PreviewSurfaceHandle>();
-    previewRef.current = { suspendForExport: () => () => { }, runPixiExport: encode } as unknown as PreviewSurfaceHandle;
+    const previewRef = createRef<ExportHarness>();
+    previewRef.current = { suspendForExport: () => () => { }, runPixiExport: encode } as unknown as ExportHarness;
     const { result } = mount(previewRef);
     const settings = {
       ...DEFAULT_EXPORT_SETTINGS, encoderEngine: "native" as const, includeVideo: true,
@@ -494,8 +504,8 @@ describe("exportRunner", () => {
       const audio = vi.fn((_args: unknown) => true);
       bridge.answers.set("export_project_audio_only", audio);
       const { plans } = recordPlans();
-      const previewRef = createRef<PreviewSurfaceHandle>();
-      previewRef.current = { suspendForExport: () => () => { }, runPixiExport: async () => ({ framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 }) } as unknown as PreviewSurfaceHandle;
+      const previewRef = createRef<ExportHarness>();
+      previewRef.current = { suspendForExport: () => () => { }, runPixiExport: async () => ({ framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 }) } as unknown as ExportHarness;
       const { result } = mount(previewRef);
       await act(async () => result.current.runExportWithSettings({
         ...DEFAULT_EXPORT_SETTINGS, encoderEngine: "native", includeVideo: true,
@@ -585,18 +595,18 @@ describe("exportRunner", () => {
   describe("on the canvas renderer", () => {
     const DARK: LayerSummary = { ...COLOR_LAYER, id: "layer-dark", t_start_us: 1_000_000, effects: [{ id: "fx-1", kind: "brightness", enabled: true, params: {} }] };
     const CROPPED: LayerSummary = { ...COLOR_LAYER, id: "layer-crop", kind: "VideoClip", t_start_us: 1_000_000, params: { kind: "VideoClip", crop: { x: 0.1, y: 0, w: 0.9, h: 1 } } as never };
-    type RunOpts = { startUs: number; encoderConfig: VideoEncoderConfig; nativeSinkPixFmt?: string; stills?: { width: number; effects?: boolean }; onStill?: (s: { width: number; height: number; jpeg: ArrayBuffer }) => void };
+    type RunOpts = RunExportInit;
     function stillsPreview(rendered: number[], runs: RunOpts[] = []) {
-      const previewRef = createRef<PreviewSurfaceHandle>();
+      const previewRef = createRef<ExportHarness>();
       previewRef.current = {
         suspendForExport: () => () => { },
         runPixiExport: async (opts: RunOpts) => {
-          rendered.push(opts.startUs);
+          rendered.push(opts.startUs!);
           runs.push(opts);
-          opts.onStill?.({ width: 640, height: 360, jpeg: new ArrayBuffer(4) });
+          opts.onStill?.({ index: 0, tUs: opts.startUs!, width: 640, height: 360, jpeg: new ArrayBuffer(4) });
           return { framesEncoded: 1, totalFrames: 1, fpsNum: 30, fpsDen: 1 };
         },
-      } as unknown as PreviewSurfaceHandle;
+      } as unknown as ExportHarness;
       return previewRef;
     }
     async function load(project: ReturnType<typeof summary>) {
@@ -701,7 +711,7 @@ describe("exportRunner", () => {
       expect(bridge.log).not.toContain("invoke export_video_sink_start");
       expect(runs).toHaveLength(1);
       expect(runs[0]!.nativeSinkPixFmt).toBeUndefined();
-      expect(runs[0]!.encoderConfig.codec).toMatch(/^avc1\./);
+      expect(runs[0]!.encoderConfig?.codec).toMatch(/^avc1\./);
       await waitFor(() => expect(result.current.exportState?.kind).toBe("complete"));
     });
 

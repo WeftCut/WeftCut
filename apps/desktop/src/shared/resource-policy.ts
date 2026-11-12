@@ -10,9 +10,10 @@ export interface ResourcePolicy {
   /** null follows the size of the Workspace's disk (ADR 0150). */
   disk_cache_mib: number | null;
   background_playback: boolean;
+  preview_during_export: boolean;
 }
 export const DEFAULT_RESOURCE_POLICY: Readonly<ResourcePolicy> = Object.freeze({
-  version: 2, memory_mib: null, processing: 'balanced', disk_cache_mib: null, background_playback: false,
+  version: 2, memory_mib: null, processing: 'balanced', disk_cache_mib: null, background_playback: false, preview_during_export: false,
 });
 export type ResourcePolicyPatch = Partial<Omit<ResourcePolicy, 'version'>>;
 export const RESOURCE_MEMORY_RANGE = { min: 1024, max: 262144 } as const;
@@ -30,7 +31,8 @@ export function readResourcePolicy(value: unknown): ResourcePolicy {
     memory_mib: integer(p.memory_mib, RESOURCE_MEMORY_RANGE.min, RESOURCE_MEMORY_RANGE.max) ? p.memory_mib : null,
     processing: p.processing === 'low' || p.processing === 'high' ? p.processing : 'balanced',
     disk_cache_mib: p.version !== 2 && disk === LEGACY_DISK_DEFAULT_MIB ? null : disk,
-    background_playback: typeof p.background_playback === 'boolean' ? p.background_playback : false,
+    background_playback: p.background_playback === true,
+    preview_during_export: p.preview_during_export === true,
   };
 }
 export function patchResourcePolicy(current: ResourcePolicy, patch: unknown): ResourcePolicy {
@@ -41,7 +43,7 @@ export function patchResourcePolicy(current: ResourcePolicy, patch: unknown): Re
     const valid = key === 'memory_mib' ? value === null || integer(value, RESOURCE_MEMORY_RANGE.min, RESOURCE_MEMORY_RANGE.max)
       : key === 'disk_cache_mib' ? value === null || integer(value, RESOURCE_DISK_RANGE.min, RESOURCE_DISK_RANGE.max)
       : key === 'processing' ? typeof value === 'string' && ['low', 'balanced', 'high'].includes(value)
-      : key === 'background_playback' && typeof value === 'boolean';
+      : (key === 'background_playback' || key === 'preview_during_export') && typeof value === 'boolean';
     if (!valid) throw new Error(`Invalid resource setting: ${key}`);
   }
   return readResourcePolicy({ ...current, ...p, version: 2 });

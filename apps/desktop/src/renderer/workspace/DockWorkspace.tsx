@@ -127,6 +127,7 @@ export interface DockPanelContracts {
   onSeek: (timeUs: number) => void;
   onTogglePlay: () => void;
   editingLocked?: boolean;
+  backgroundExportActive?: boolean;
   previewDecodableOf: (mediaId: string) => boolean;
   revealedTrackId: string | null;
   keybindings: KeybindingsMap;
@@ -253,6 +254,7 @@ function PreviewDockPanel() {
       summary={contracts.summary}
       onTogglePlay={contracts.onTogglePlay}
       editingLocked={contracts.editingLocked ?? false}
+      backgroundExportActive={contracts.backgroundExportActive ?? false}
       previewDecodableOf={contracts.previewDecodableOf}
       visible={runtime.isVisible}
     />
@@ -535,6 +537,10 @@ const PANEL_COMPONENTS: Readonly<Record<PanelKind, () => ReactElement>> = {
   shots: ShotsDockPanel,
 };
 
+const PROJECT_EDIT_PANELS = new Set<PanelKind>([
+  "attribute", "effect", "caption", "role-mixer", "transitions", "history",
+]);
+
 export function WeftCutPanelRenderer({
   api,
   containerApi,
@@ -542,6 +548,7 @@ export function WeftCutPanelRenderer({
 }: IDockviewPanelProps<DockPanelParams>) {
   if (!isPanelKind(params.kind)) return null;
   const Component = PANEL_COMPONENTS[params.kind];
+  const { editingLocked } = useContracts();
   const chrome = useWorkspaceChrome();
   const isVisible = useDockviewPanelVisibility(api);
   const instance = params.instance;
@@ -560,6 +567,7 @@ export function WeftCutPanelRenderer({
     <DockPanelRuntimeContext.Provider value={runtime}>
       <div
         className="weft-dock-panel"
+        inert={editingLocked === true && PROJECT_EDIT_PANELS.has(params.kind)}
         data-panel-kind={params.kind}
         // The Panel IS the focus region (ADR 0041). `tabIndex={-1}` makes it a
         // programmatic focus target and never a Tab stop: `useFocusRegions`

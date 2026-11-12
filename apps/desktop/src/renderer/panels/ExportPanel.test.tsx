@@ -92,7 +92,7 @@ describe("ExportPanel complete state", () => {
       <>
         <button onClick={onPlay}>Play timeline</button>
         <ExportPanel
-          state={{ kind: "progress", progress: { progress: 0.5, currentTimeUs: 0, frame: 90, fps: 30, speed: 1 }, onCancel }}
+          state={{ kind: "progress", background: true, progress: { progress: 0.5, currentTimeUs: 0, frame: 90, fps: 30, speed: 1 }, onCancel }}
           onClose={vi.fn()}
         />
       </>,
@@ -166,6 +166,11 @@ it("shows cancellation while cleanup drains, with no retry or repeated cancel ac
   expect(screen.getByRole("status").textContent).toBe("Cancelling export…");
   expect(screen.queryByRole("button")).toBeNull();
   expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBeNull();
+});
+
+it("keeps an active export modal by default", () => {
+  render(<ExportPanel state={{ kind: "starting" }} onClose={vi.fn()} />);
+  expect(screen.getByRole("dialog")).toBeTruthy();
 });
 
 describe("ExportPanel stalled encoder", () => {

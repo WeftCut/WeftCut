@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock, type MockInstance } from 'vitest';
 import {
-  acquireMotifFrame, peekMotifFrame, resetMotifFrameRequests, sharedBakedKeyIndex,
+  acquireMotifFrame, bindMotifFrameWorkspace, peekMotifFrame, resetMotifFrameRequests, sharedBakedKeyIndex,
   sharedMotifFrameCache, sharedMotifOverlayCache, type MotifFrameRequest,
 } from './motifFrameSource';
 import { captureMotif, MotifTransportError, type MotifCaptureReply, type MotifCaptureRequest } from './frameTransport';
@@ -461,6 +461,22 @@ describe('admission', () => {
 });
 
 describe('project reset', () => {
+  it('a Preview panel binding does not cancel a pending export capture', async () => {
+    const render = acquire(desc(0), { purpose: 'export', finalizationToken: 'export-plan' });
+    const preview = acquire(desc(1));
+    await settle();
+
+    expect(bindMotifFrameWorkspace(1)).toBe(true);
+    expect(bindMotifFrameWorkspace(1)).toBe(false);
+    await expect(preview.lease).rejects.toMatchObject(superseded);
+    const exportCapture = calls.find(call => call.request.finalizationToken === 'export-plan')!;
+    expect(exportCapture.cancel).not.toHaveBeenCalled();
+    exportCapture.answer(pixels());
+    const lease = await render.lease;
+    expect(lease.frame).toBe(0);
+    lease.release();
+  });
+
   it('closes a read that lands after the reset, unpublished', async () => {
     sharedBakedKeyIndex.restoreFrames('k', new Set([0]));
     let land!: (bitmap: ImageBitmap) => void;

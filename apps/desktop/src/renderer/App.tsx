@@ -550,7 +550,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
     runExportWithSettings,
     openRenderPlayPopup,
     revealExportedFile,
-  } = useExportFlow({ previewRef, proxyStateRef, decodeProbeMemo });
+  } = useExportFlow({ proxyStateRef, decodeProbeMemo });
   const exportInProgress = !!exportState && (
     exportState.job?.phase === "cancelling" ||
     exportState.kind !== "complete" && exportState.kind !== "error"
@@ -558,6 +558,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
   const exportEditLocked = exportState?.job
     ? !exportTerminal(exportState.job.state)
     : exportInProgress || exportState?.kind === "error" && !!exportState.onRetry;
+  const backgroundExportActive = exportInProgress && exportState?.background === true;
   useEffect(notifyCommandRegistry, [exportEditLocked]);
 
   // ---- Menu-bar action handlers ----
@@ -1189,6 +1190,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
       onSeek: seekTo,
       onTogglePlay: togglePlay,
       editingLocked: exportEditLocked,
+      backgroundExportActive,
       previewDecodableOf,
       revealedTrackId,
       keybindings,
@@ -1207,6 +1209,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
       seekTo,
       togglePlay,
       exportEditLocked,
+      backgroundExportActive,
       previewDecodableOf,
       revealedTrackId,
       keybindings,
@@ -1272,7 +1275,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
           workspaceProfiles={viewMenuWorkspaces}
           onMotifColdStart={runMotifColdStart}
         />
-        {exportInProgress && exportPanel}
+        {backgroundExportActive && exportPanel}
       </div>
 
       <main className="app-main">
@@ -1332,7 +1335,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
           }}
         />
       )}
-      {!exportInProgress && !settingsOpen && exportPanel}
+      {!backgroundExportActive && !settingsOpen && exportPanel}
       {staleMotifs.length > 0 && (
         <MotifStaleDialog
           entries={staleMotifs}

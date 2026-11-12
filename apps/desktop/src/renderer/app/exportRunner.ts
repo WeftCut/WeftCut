@@ -24,7 +24,8 @@ import {
 } from "../ipc";
 import { type ExportState } from "../panels/ExportPanel";
 import { type ProxyState } from "../panels/mediaReadiness";
-import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
+import { suspendExportPreview } from "../render/exportPreviewSuspension";
+import { runExport, type RunExportResult } from "../render/worker/runExport";
 import { hasVisibleContent, referencedVideoMediaIds } from "../render/activeVideoLayers";
 import { classifyWebcodecsDecodability } from "../render/decoder/probeSourceDecodable";
 import { resolveDecode } from "../render/decodeRoute";
@@ -132,7 +133,8 @@ export function queuedMuxMessage(t: TFunction, holders: ExportResourceBlock["hol
 }
 
 export function createExportRunner(deps: {
-  previewRef: React.RefObject<PreviewSurfaceHandle | null>;
+  render?: typeof runExport;
+  suspendPreview?: typeof suspendExportPreview;
   proxyStateRef: React.MutableRefObject<Map<string, ProxyState>>;
   decodeProbeMemo: React.MutableRefObject<Map<string, ProbeState>>;
   t: TFunction;
@@ -142,7 +144,9 @@ export function createExportRunner(deps: {
   /// The host renderer's capability; the shared query unless a test injects one.
   capability?: () => Promise<RendererCapability>;
 }) {
-  const { previewRef, proxyStateRef, decodeProbeMemo, t } = deps;
+  const { proxyStateRef, decodeProbeMemo, t } = deps;
+  const render = deps.render ?? runExport;
+  const suspendPreview = deps.suspendPreview ?? suspendExportPreview;
   const capability = deps.capability ?? rendererCapability;
   /// The UI sentence for a refusal: renderer and the features, in the UI's words.
   const cannotDrawDetail = (r: RendererCannotDraw) => t("export.renderer_cannot_draw", {
@@ -289,7 +293,7 @@ export function createExportRunner(deps: {
   ): Promise<Array<{ t_us: number; width: number; height: number; jpeg: ArrayBuffer; omitted?: OmittableFeature[] }>> {
     if (runningRef.current || pendingFinalization.current) throw new Error("an export is running; render frames after it finishes");
     runningRef.current = true;
-    const restorePreview = previewRef.current?.suspendForExport("agent");
+    const restorePreview = suspendPreview("agent");
     try {
       const summary = await projectSummary().catch(() => useProjectStore.getState().summary);
       if (!summary) throw new Error("No project loaded.");
@@ -322,7 +326,8 @@ export function createExportRunner(deps: {
         const reservation = await admitExportResources(plans, false, signal, () => { });
         try {
           let got: { width: number; height: number; jpeg: ArrayBuffer } | null = null;
-          await previewRef.current?.runPixiExport({
+          await render({
+            summary, mediaById: useProjectStore.getState().mediaById,
             finalizationToken: reservation.token,
             resourcePlan: reservation.plan,
             encoderConfig: { codec: "", width: comp.width, height: comp.height, bitrate: 1, framerate: comp.fps_num / comp.fps_den },
@@ -348,7 +353,7 @@ export function createExportRunner(deps: {
     }
   }
 
-  async function run(request: ExportRun, controller: AbortController) {
+  async function run(request: ExportRun, controller: AbortController, background = false) {
     const { settings, range, agent, staging_path: path } = request;
     // A double click or stale command cannot replace an unfinished export.
     if (runningRef.current || pendingFinalization.current) return;
@@ -379,7 +384,7 @@ export function createExportRunner(deps: {
       restore?.();
     };
     try {
-      restorePreview = previewRef.current?.suspendForExport("export");
+      restorePreview = suspendPreview("export");
       const cap = await capability();
       // ---- No-material guard -----------------------------------------------
       // A video export with nothing visible to render would emit pure black —
@@ -478,7 +483,7 @@ export function createExportRunner(deps: {
         try {
           audioPlan = await admitExportResources([{ memoryMiB: EXPORT_AUDIO_MIX_MIB, workerMiB: 0, motifBufferBytes: 0, frameWindows: {} }],
             false, exportController.signal, onQueued);
-          resumePreview();
+          if (background) resumePreview();
           setExportState({ kind: "starting" });
           const produced = await exportProjectAudioOnly(
             path,
@@ -829,11 +834,12 @@ export function createExportRunner(deps: {
           await writeFile(tempVideoPath, new Uint8Array(data), { append: true });
         };
 
-      resumePreview();
+      if (background) resumePreview();
       onProgress(0, 1);
-      let result;
+      let result: RunExportResult;
       try {
-        result = await previewRef.current?.runPixiExport({
+        result = await render({
+          summary, mediaById: useProjectStore.getState().mediaById,
           finalizationToken: finalizationReservation.token,
           resourcePlan: finalizationReservation.plan,
           onProgress,
@@ -859,14 +865,6 @@ export function createExportRunner(deps: {
         setExportState({ kind: "error", detail: msg });
         return;
       }
-      if (!result) {
-        if (nativeSink) await exportVideoSinkCancel().catch(() => { });
-        setExportState({
-          kind: "error",
-          detail: "Preview not initialized.",
-        });
-        return;
-      }
 
       // On the native-sink path, signal the sink that all frames have been
       // sent. The sink flushes its encoder + muxer and writes the final
@@ -883,7 +881,7 @@ export function createExportRunner(deps: {
         }
       }
 
-      const durationUs = Math.round((result.totalFrames * 1_000_000 * result.fpsDen) / result.fpsNum);
+      const durationUs = Math.round((result.totalFrames * 1_000_000 * fpsDen) / fpsNum);
       retained = true;
       await finalize(() => muxExport(tempVideoPath, tempAudioPath, path, { token: finalizationReservation.token, audioRequired: audioProduced, stagingOutput: true }), cleanup, durationUs);
     } catch (error) {

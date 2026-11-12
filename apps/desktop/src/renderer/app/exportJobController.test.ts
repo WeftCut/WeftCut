@@ -29,7 +29,7 @@ beforeEach(() => {
   mock.runner.run = async () => { }; mock.runner.retry = async () => { };
 });
 const controller = () => createExportJobController({
-  previewRef: { current: null }, proxyStateRef: { current: new Map() }, decodeProbeMemo: { current: new Map() },
+  proxyStateRef: { current: new Map() }, decodeProbeMemo: { current: new Map() },
   t: vi.fn() as unknown as TFunction, onState: vi.fn(), onBegin: vi.fn(),
 });
 

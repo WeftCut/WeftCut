@@ -17,13 +17,14 @@ import {
   useState,
 } from "react";
 import { convertFileSrc } from "@/bridge/ipc";
+import { useTranslation } from "react-i18next";
 import { Application as PixiApplication } from "@pixi/react";
 import { installPreviewPresentation } from "./installPreviewPresentation";
 import { GlobalResourceRegistry, Rectangle, type Application } from "pixi.js";
 import type { PlaybackResolution } from "../../shared/app-settings";
 
 import { previewAudioEngine } from "./audio/previewAudioSession";
-import { compositionOrRoot, rootCompositionOf, useProjectStore } from "../state/projectStore";
+import { compositionOrRoot, useProjectStore } from "../state/projectStore";
 import {
   previewRenderTargetId,
   usePreviewRenderTargetId,
@@ -76,12 +77,11 @@ import { subscribeMotifCatalog } from "./motifs/catalog";
 import { subscribeMotifPreview } from "./motifs/previewOverlay";
 import { Compositor, type ResolvedRendererSource } from "./Compositor";
 import { ffprobeColorToWebCodecs } from "./decoder/ffprobeColorSpace";
-import type { ExportDecodeRouting } from "./exportDecodeRouting";
 import { PerfTelemetryBridge } from "./PerfHUD";
 import { PlaybackEngine } from "./PlaybackEngine";
 import { UnsupportedClipCard } from "./UnsupportedClipCard";
-import type { PixiExportResult, PixiPreviewHandle } from "./pixiPreviewFlag";
-import { runExport } from "./worker/runExport";
+import type { PixiPreviewHandle } from "./pixiPreviewFlag";
+import { useExportPreviewSuspension } from "./exportPreviewSuspension";
 import { webgpuDeviceOf } from "./webgpuDevice";
 import {
   setPixiPresentationVisible,
@@ -95,7 +95,7 @@ interface Props {
   // via `previewDecodableOf?.(…) ?? false`.
   previewDecodableOf?: ((mediaId: string) => boolean) | undefined;
   visible?: boolean;
-  exportSuspended?: boolean;
+  backgroundExportActive?: boolean;
 }
 
 const LOG = "[weftcut/pixi]";
@@ -184,9 +184,12 @@ function sameHostBox(a: HostBox, b: HostBox): boolean {
 }
 
 export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPreview(
-  { previewDecodableOf, visible = true, exportSuspended = false },
+  { previewDecodableOf, visible = true, backgroundExportActive = false },
   ref,
 ) {
+  const { t } = useTranslation();
+  const suspended = useExportPreviewSuspension(s => s.by !== null);
+  const [capacityBlocked, setCapacityBlocked] = useState(false);
   const compositorRef = useRef<Compositor | null>(null);
   const engineRef = useRef<PlaybackEngine | null>(null);
   const applicationRef = useRef<Application | null>(null);
@@ -197,14 +200,11 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
-  // `handleInit` must not change identity when an always-rendered dock tab
-  // flips visibility. Read the current value through a ref at initialization;
-  // the visibility effect owns every subsequent transition.
-  const exportSuspendedRef = useRef(exportSuspended);
-  useLayoutEffect(() => {
-    exportSuspendedRef.current = exportSuspended;
-    compositorRef.current?.setSuspended(exportSuspended);
-  }, [exportSuspended]);
+  // Yield synchronously so preparation cannot race a React render to decoder
+  // admission. Async onInit reads the same hold before starting its ticker.
+  useLayoutEffect(() => useExportPreviewSuspension.subscribe(({ by }) => {
+    compositorRef.current?.setSuspended(by !== null);
+  }), []);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const samplerRef = useRef<PreviewSampler | null>(null);
@@ -270,12 +270,6 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         );
         compositor.setAnchorTime(t);
         compositor.compositeFrame(t);
-      },
-      suspendForExport() {
-        return suspendPreviewForExport(compositorRef.current, engineRef.current);
-      },
-      runExport(opts) {
-        return handlePixiExport(opts);
       },
     }),
     [],
@@ -456,6 +450,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         // diff/fire around its layer sweep) — safe to feed straight into
         // React state.
         onUnsupported: setUnsupportedIds,
+        onCapacityBlocked: setCapacityBlocked,
         // Edge-triggered + throttled (UnderrunTracker) — feeds the
         // transport bar's DroppedFramesIndicator via the module store.
         onUnderrun: setUnderrunState,
@@ -473,7 +468,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
         playbackScaleDiv(useAppSettingsStore.getState().settings.playback_resolution),
       );
       // Export can start while PIXI Application is still initializing.
-      compositor.setSuspended(exportSuspendedRef.current);
+      compositor.setSuspended(useExportPreviewSuspension.getState().by !== null);
       compositor.setPresentationVisible(visibleRef.current);
       // Shared initialization above installs the timed present even when this
       // visibility call early-returns for the already-visible initial state.
@@ -992,95 +987,12 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       {(import.meta.env.DEV || import.meta.env.VITE_WEFTCUT_E2E === "1") && (
         <PerfTelemetryBridge compositorRef={compositorRef} engineRef={engineRef} />
       )}
+      {visible && backgroundExportActive && !suspended && capacityBlocked && (
+        <div className="preview-export-capacity" role="status">{t("preview.export_capacity")}</div>
+      )}
       {unsupportedMediaId !== undefined && (
         <UnsupportedClipCard mediaId={unsupportedMediaId} />
       )}
     </div>
   );
 });
-
-/// Field semantics for `opts`: `PixiPreviewHandle.runExport` in
-/// pixiPreviewFlag.ts, which most of them are threaded straight into.
-async function handlePixiExport(
-  opts: {
-    resourcePlan: import("../../shared/export-resources").ExportResourcePlan;
-    finalizationToken: string;
-    onProgress?: (encoded: number, total: number) => void;
-    encoderConfig?: VideoEncoderConfig;
-    outputFps?: { num: number; den: number };
-    startUs?: number;
-    endUs?: number;
-    keyframeIntervalSec?: number;
-    writeChunk: (data: ArrayBuffer) => Promise<void>;
-    signal?: AbortSignal;
-    bitDepth?: 8 | 10;
-    nativeSinkPixFmt?: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le";
-    /// Stills mode (`render_frames`): no encoder; each frame comes back as a JPEG.
-    stills?: import("./worker/runExport").RunExportInit["stills"];
-    onStill?: import("./worker/runExport").RunExportInit["onStill"];
-    decodeRouting?: ExportDecodeRouting;
-  },
-): Promise<PixiExportResult> {
-  const store = useProjectStore.getState();
-  const summary = store.summary;
-  if (!summary) {
-    throw new Error("No project loaded");
-  }
-  const result = await runExport({
-    summary,
-    mediaById: store.mediaById,
-    writeChunk: opts.writeChunk,
-    finalizationToken: opts.finalizationToken,
-    resourcePlan: opts.resourcePlan,
-    // Conditional spreads: under exactOptionalPropertyTypes an optional
-    // field may be absent but not explicitly `undefined`.
-    ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),
-    ...(opts.encoderConfig ? { encoderConfig: opts.encoderConfig } : {}),
-    ...(opts.outputFps ? { outputFps: opts.outputFps } : {}),
-    ...(opts.startUs != null ? { startUs: opts.startUs } : {}),
-    ...(opts.endUs != null ? { endUs: opts.endUs } : {}),
-    ...(opts.keyframeIntervalSec != null
-      ? { keyframeIntervalSec: opts.keyframeIntervalSec }
-      : {}),
-    ...(opts.signal ? { signal: opts.signal } : {}),
-    ...(opts.bitDepth != null ? { bitDepth: opts.bitDepth } : {}),
-    ...(opts.nativeSinkPixFmt != null
-      ? { nativeSinkPixFmt: opts.nativeSinkPixFmt }
-      : {}),
-    ...(opts.decodeRouting ? { decodeRouting: opts.decodeRouting } : {}),
-    ...(opts.stills ? { stills: opts.stills } : {}),
-    ...(opts.onStill ? { onStill: opts.onStill } : {}),
-  });
-  const outFpsNum = opts.outputFps?.num ?? rootCompositionOf(summary).fps_num;
-  const outFpsDen = opts.outputFps?.den ?? rootCompositionOf(summary).fps_den;
-  return {
-    framesEncoded: result.framesEncoded,
-    totalFrames: result.totalFrames,
-    fpsNum: outFpsNum,
-    fpsDen: outFpsDen,
-  };
-}
-
-function suspendPreviewForExport(compositor: Compositor | null, engine: PlaybackEngine | null): () => void {
-  // Yield decoder leases before preparation and native encoder admission.
-  // Pause first so rAF cannot create more decoders before suspension.
-  const restorePlayback = previewAudioEngine().suspendPlayback();
-  compositor?.setSuspended(true);
-  let restored = false;
-  return () => {
-    if (restored) return;
-    restored = true;
-    compositor?.setSuspended(false);
-    // Force re-init: the engine's rAF loop will re-acquire decoders
-    // via ensureClip on its next tick, but kick the compositor once
-    // here so the canvas isn't blank for a frame.
-    const t = engine?.positionUs() ?? 0;
-    compositor?.setProject(
-      useProjectStore.getState().summary,
-      previewRenderTargetId(),
-    );
-    compositor?.setAnchorTime(t);
-    compositor?.compositeFrame(t);
-    restorePlayback();
-  };
-}

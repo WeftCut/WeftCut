@@ -13,6 +13,8 @@ const enUS = {
     disk_hint: 'Space for replaceable thumbnails, animation frames, waveforms and audio-effect caches. Original media, models and project files are kept. By default, 10% of the total size of the workspace\'s disk (4–64 GiB).',
     background: 'Continue background processing during playback',
     background_hint: 'When off, new background media tasks wait until playback stops. Tasks already running finish normally.',
+    preview_during_export: 'Preview during export (beta)',
+    preview_during_export_hint: 'Play and scrub the read-only timeline while encoding. Preview may be limited by available resources.',
     constrained: 'Memory is under pressure. New processing waits while existing work finishes.',
     normal: 'Resources available.', usage: 'App memory: about {{used}} GiB.', waiting: '{{count}} tasks waiting.',
   },
@@ -1223,7 +1225,9 @@ const enUS = {
     preparing: "Preparing preview…",
     // Shown over the preview while the export pipeline holds its decoders:
     // an export, or an agent's `render_frames`.
-    suspended_export: "Preparing export",
+    suspended_export: "Exporting",
+    suspended_export_preparing: "Preparing export",
+    export_capacity: "Preview is waiting for resources while the export runs.",
     suspended_agent: "An agent is viewing",
     // What the preview renders. The list names the timeline and every Group;
     // the default follows whichever timeline holds the keyboard.

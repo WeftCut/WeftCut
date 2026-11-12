@@ -24,7 +24,7 @@ export interface ExportComplete {
   durationUs: number;
 }
 
-export type ExportState = ExportPhase & { job?: import('../../shared/exportJob').ExportJob; onCancel?: () => void };
+export type ExportState = ExportPhase & { background?: boolean; job?: import('../../shared/exportJob').ExportJob; onCancel?: () => void };
 type ExportPhase =
   // Readiness waits and frame export provide their own cancellation handler.
   | { kind: "starting" }
@@ -120,27 +120,38 @@ export function ExportPanel({
   };
 
   if (!dismissable) {
-    return (
-      <section className="export-progress-panel export-background-progress" aria-label={t("export.title")}>
-        <div className="export-background-state">
-          <span className="export-progress-status" role="status">
-            {percent === undefined && (
-              <span role="progressbar" aria-label={phase}>
-                <AppIcon icon={LoaderCircle} size="body" className="export-spinner" aria-hidden />
-              </span>
-            )}
-            {phase}
-          </span>
-          {percent !== undefined && (
-            <progress value={percent} max={100} aria-label={phase}>{percent}%</progress>
+    const status = (
+      <div className="export-background-state">
+        <span className="export-progress-status" role="status">
+          {percent === undefined && (
+            <span role="progressbar" aria-label={phase}>
+              <AppIcon icon={LoaderCircle} size="body" className="export-spinner" aria-hidden />
+            </span>
           )}
-          {percent !== undefined && <span className="export-percent">{percent}%</span>}
-          <span className="export-timeline-locked">{t("export.timeline_locked")}</span>
-        </div>
-        {!cancelling && state.onCancel && (
-          <Button variant="secondary" size="sm" onClick={state.onCancel}>{t("export.preparing_cancel")}</Button>
+          {phase}
+        </span>
+        {percent !== undefined && (
+          <progress value={percent} max={100} aria-label={phase}>{percent}%</progress>
         )}
+        {percent !== undefined && <span className="export-percent">{percent}%</span>}
+        <span className="export-timeline-locked">{t("export.timeline_locked")}</span>
+      </div>
+    );
+    const cancel = !cancelling && state.onCancel && (
+      <Button variant="secondary" size={state.background ? "sm" : "lg"} onClick={state.onCancel}>
+        {t("export.preparing_cancel")}
+      </Button>
+    );
+    return state.background ? (
+      <section className="export-progress-panel export-background-progress" aria-label={t("export.title")}>
+        {status}
+        {cancel}
       </section>
+    ) : (
+      <AppDialog title={title} panelClassName="settings-panel export-progress-panel">
+        <div className="export-progress-body">{status}</div>
+        {cancel && <div className="export-actions export-progress-footer">{cancel}</div>}
+      </AppDialog>
     );
   }
 

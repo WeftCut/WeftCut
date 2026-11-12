@@ -4,19 +4,6 @@
 //
 // Devtools hooks read the `window.__weftcut*` globals directly.
 
-/// Result of a successful Pixi export. The output bytes are streamed to disk
-/// via the caller's `writeChunk` during the run (not returned here) so the
-/// whole MP4 is never held in one ArrayBuffer.
-export interface PixiExportResult {
-  framesEncoded: number;
-  totalFrames: number;
-  /// Output frame rate (fps_num / fps_den) — caller needs this to
-  /// translate frame counts into ExportProgress.currentTimeUs and
-  /// ExportComplete.durationUs.
-  fpsNum: number;
-  fpsDen: number;
-}
-
 /// Transport interface exposed by `<PixiPreview ref={...}>`. Mirrors
 /// `PreviewSurfaceHandle` so the parent's imperative handle forwards
 /// play/pause/seek straight through to the underlying PIXI `PlaybackEngine`.
@@ -31,38 +18,4 @@ export interface PixiPreviewHandle {
   /// Used to nudge a paused clip to pick up its original the moment a
   /// mid-session probe verdict flips to "ok".
   refreshSources(): void;
-  /// Release preview decoders before export admission. The caller restores them.
-  suspendForExport(): () => void;
-  /// Run the PixiJS-backed export in a separate renderer. Resolves with
-  /// frame counters after video chunks have streamed through `writeChunk`;
-  /// rejects on failure.
-  ///
-  /// `useExportFlow` owns the save dialog, temp file, audio export, and
-  /// final mux/transcode so the ExportPanel progress UI can drive the full
-  /// pipeline.
-  runExport(opts: {
-    resourcePlan: import("../../shared/export-resources").ExportResourcePlan;
-    finalizationToken: string;
-    onProgress?: (encoded: number, total: number) => void;
-    /// Full encoder config (codec/dims/bitrate/bitrateMode/framerate). When
-    /// omitted, the worker falls back to its 1080p H.264 default.
-    encoderConfig?: VideoEncoderConfig;
-    /// Output fps rational (overrides composition fps). Omit ⇒ comp fps.
-    outputFps?: { num: number; den: number };
-    /// Sink for each sequential output-file slice (append-only). Must resolve
-    /// once durably written; the worker backpressures on it.
-    writeChunk: (data: ArrayBuffer) => Promise<void>;
-    /// Cancels export, including pending Motif reads and captures.
-    signal?: AbortSignal;
-    /// Output bit depth (8 = existing pipeline; 10 = f16/WebGL2 + native-encode).
-    bitDepth?: 8 | 10;
-    /// Present ⇒ the worker packs frames to this format and streams them to
-    /// the native ffmpeg sink instead of WebCodecs-encoding.
-    nativeSinkPixFmt?: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le";
-    /// Stills mode (`render_frames`): no encoder; each frame comes back as a JPEG.
-    stills?: import("./worker/runExport").RunExportInit["stills"];
-    onStill?: import("./worker/runExport").RunExportInit["onStill"];
-    /// Per-media decode routing table (see exportDecodeRouting.ts).
-    decodeRouting?: import("./exportDecodeRouting").ExportDecodeRouting;
-  }): Promise<PixiExportResult>;
 }

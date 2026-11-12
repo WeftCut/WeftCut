@@ -137,6 +137,7 @@ export interface DecodeSession {
   readonly ring: FrameStore;
   readonly disposed: boolean;
   currentDecodeDevice?(): PreviewDecodeDevice | null;
+  isCapacityBlocked?(): boolean;
   ensureReady(): Promise<void>;
   dispose(): void;
   /// Preview nudges the decoder's lookahead each tick; export no-ops (frames
