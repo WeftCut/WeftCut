@@ -1223,7 +1223,7 @@ const enUS = {
     preparing: "Preparing preview…",
     // Shown over the preview while the export pipeline holds its decoders:
     // an export, or an agent's `render_frames`.
-    suspended_export: "Exporting",
+    suspended_export: "Preparing export",
     suspended_agent: "An agent is viewing",
     // What the preview renders. The list names the timeline and every Group;
     // the default follows whichever timeline holds the keyboard.
@@ -1889,6 +1889,7 @@ const enUS = {
 
     title: "Export",
     phase_encode: "Encoding",
+    timeline_locked: "Timeline read-only",
     starting: "Starting export…",
     preparing:
       "Preparing optimized media for {{labels}} — export will start automatically.",

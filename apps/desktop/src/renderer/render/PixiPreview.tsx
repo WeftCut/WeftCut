@@ -1064,8 +1064,7 @@ async function handlePixiExport(
 function suspendPreviewForExport(compositor: Compositor | null, engine: PlaybackEngine | null): () => void {
   // Yield decoder leases before preparation and native encoder admission.
   // Pause first so rAF cannot create more decoders before suspension.
-  const wasPlaying = engine?.isPlayRequested() ?? false;
-  engine?.pause();
+  const restorePlayback = previewAudioEngine().suspendPlayback();
   compositor?.setSuspended(true);
   let restored = false;
   return () => {
@@ -1082,6 +1081,6 @@ function suspendPreviewForExport(compositor: Compositor | null, engine: Playback
     );
     compositor?.setAnchorTime(t);
     compositor?.compositeFrame(t);
-    if (wasPlaying) engine?.play();
+    restorePlayback();
   };
 }

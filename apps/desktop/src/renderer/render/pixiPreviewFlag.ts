@@ -31,9 +31,9 @@ export interface PixiPreviewHandle {
   /// Used to nudge a paused clip to pick up its original the moment a
   /// mid-session probe verdict flips to "ok".
   refreshSources(): void;
-  /// Release preview decoders before export admission; restore in finally.
+  /// Release preview decoders before export admission. The caller restores them.
   suspendForExport(): () => void;
-  /// Run the PixiJS-backed export within suspendForExport's lifetime. Resolves with
+  /// Run the PixiJS-backed export in a separate renderer. Resolves with
   /// frame counters after video chunks have streamed through `writeChunk`;
   /// rejects on failure.
   ///

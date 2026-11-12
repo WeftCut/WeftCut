@@ -91,9 +91,11 @@ floor does not guarantee 1080p export: it projects to 409 MiB of work, while a
 1080p/8-bit window (381 MiB) plus the composition worker (128 MiB) needs 509 MiB.
 Refusal reports recovery options; it never lowers output quality.
 
-Export suspends preview and releases its idle decoder leases before
-preparation; preview resumes after sink finish/cancel and finalization.
-Waiting for the worker to start instead can deadlock encoder admission.
+Export preparation pauses preview and releases its idle decoder leases so
+the encoder can acquire resources. After admission, the editor shows progress
+above the workspace and allows scrubbing and playback while the timeline stays
+read-only. Preview uses the remaining resource budget. Editing becomes available
+again when the job completes, fails, or is cancelled.
 
 ## Memory telemetry and pressure
 

@@ -3,8 +3,10 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { readFileSync, writeFileSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { launchApp, invokeCmd, tmpDir, waitForHook } from './helpers/driver';
+import { fileURLToPath } from 'node:url';
+import { launchApp, importAndPlaceMedia, invokeCmd, newProject, tmpDir, waitForHook } from './helpers/driver';
 import { mergeSettings } from '../../src/shared/exportSettings';
+import { exportTerminal, type ExportJob } from '../../src/shared/exportJob';
 
 test('MCP manages the shared preset library and exports by preset ID with per-job precedence', async () => {
   test.setTimeout(120_000);
@@ -187,5 +189,86 @@ test('MCP export reconnects, reports the actual renamed file, and retries public
       await client.close();
     }
     await app.close();
+  }
+});
+
+test('the editor can scrub and play during export while project edits stay locked', async ({}, testInfo) => {
+  const { app, page } = await launchApp();
+  let jobId: string | undefined;
+  try {
+    await newProject(page, {
+      parentFolder: tmpDir('weftcut-background-export-project-'), name: 'Background export',
+      canvas: { width: 640, height: 360, fpsNum: 30, fpsDen: 1 },
+    });
+    const mediaDir = process.env.WEFTCUT_TEST_MEDIA ?? fileURLToPath(new URL('../fixtures/media/', import.meta.url));
+    await importAndPlaceMedia(page, { mediaAbsPath: path.join(mediaDir, 'test_1080p_30fps_6s.mp4') });
+    await waitForHook(page, 'audioTransportSnapshot');
+
+    // Stop the worker at its first native frame acknowledgment so the assertions
+    // exercise the encoding phase even when the fixture renders very quickly.
+    await app.evaluate(({ ipcMain }) => {
+      const handler = ipcMain._invokeHandlers.get('export:videosink_write')!;
+      let release!: () => void;
+      const barrier = new Promise<void>(resolve => { release = resolve; });
+      Object.assign(globalThis, { releaseExportFrames: release, exportFrameHeld: false });
+      ipcMain._invokeHandlers.set('export:videosink_write', async (event, frame) => {
+        Object.assign(globalThis, { exportFrameHeld: true });
+        await barrier;
+        return handler(event, frame);
+      });
+    });
+    const output = path.join(tmpDir('weftcut-background-export-output-'), 'review.mp4');
+    const { job_id } = await invokeCmd<ExportJob>(page, 'export_job_start', {
+      output_path: output, on_conflict: 'fail',
+      settings: mergeSettings({ encoderEngine: 'native', hwAccel: 'software', includeAudio: false }),
+    });
+    jobId = job_id;
+    const status = () => invokeCmd<ExportJob>(page, 'export_job_status', { job_id });
+    await expect.poll(async () => {
+      const job = await status();
+      if (job.error) throw new Error(job.error.message);
+      return app.evaluate(() => Reflect.get(globalThis, 'exportFrameHeld'));
+    }, { timeout: 30_000 }).toBe(true);
+
+    await expect(page.getByText('Timeline read-only')).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await testInfo.attach('background-export', { body: await page.screenshot(), contentType: 'image/png' });
+    const lane = page.getByTestId('track-lane').first();
+    const laneIsInert = () => lane.evaluate(el => !!el.closest('[inert]'));
+    await expect.poll(laneIsInert).toBe(true);
+    await expect(invokeCmd(page, 'add_track', {})).rejects.toThrow(/export is active/i);
+
+    const transport = () => page.evaluate(() => window.__weftcutTest!.audioTransportSnapshot());
+    await page.getByTestId('timeline-ruler').click({ position: { x: 40, y: 10 } });
+    const scrubbed = (await transport())!.positionUs;
+    expect(scrubbed).toBeGreaterThan(0);
+    const play = page.getByRole('button', { name: 'Play / pause', exact: true });
+    await play.click();
+    await expect.poll(async () => (await transport())?.phase).toBe('playing');
+    await expect.poll(async () => (await transport())?.positionUs).toBeGreaterThan(scrubbed);
+    await expect.poll(() => page.evaluate(() =>
+      window.__weftcutTest!.compositorPerfSnapshot()?.sync.videoLateMs ?? null)).not.toBeNull();
+    await play.click();
+    await expect.poll(async () => (await transport())?.phase).toBe('paused');
+    expect((await status()).state).toBe('rendering');
+
+    await app.evaluate(() => Reflect.get(globalThis, 'releaseExportFrames')());
+    await expect.poll(async () => (await status()).state, { timeout: 30_000 }).toBe('completed');
+    expect(statSync(output).size).toBeGreaterThan(100);
+    await expect(page.getByRole('dialog')).toContainText('review.mp4');
+    await page.getByRole('button', { name: 'Dismiss' }).click();
+    await expect.poll(laneIsInert).toBe(false);
+    expect(await invokeCmd(page, 'add_track', {})).toBeTruthy();
+  } finally {
+    try {
+      await app.evaluate(() => Reflect.get(globalThis, 'releaseExportFrames')?.());
+      if (jobId) {
+        const args = { job_id: jobId };
+        await invokeCmd(page, 'export_job_cancel', args);
+        await expect.poll(async () => exportTerminal((await invokeCmd<ExportJob>(page, 'export_job_status', args)).state)).toBe(true);
+      }
+    } finally {
+      await app.close();
+    }
   }
 });

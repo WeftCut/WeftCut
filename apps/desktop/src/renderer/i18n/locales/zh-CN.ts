@@ -1074,7 +1074,7 @@ const zhCN: Resources = {
     edit_text: "编辑文字",
     empty_hint: "添加片段后预览将自动启动",
     preparing: "正在准备预览…",
-    suspended_export: "正在导出",
+    suspended_export: "正在准备导出",
     suspended_agent: "Agent 正在查看",
     target_label: "预览内容",
     target_follow_focus: "跟随焦点",
@@ -1679,6 +1679,7 @@ const zhCN: Resources = {
 
     title: "导出",
     phase_encode: "编码中",
+    timeline_locked: "时间轴只读",
     starting: "正在启动导出…",
     preparing: "正在为 {{labels}} 准备优化媒体 —— 准备好后将自动开始导出。",
     preparing_cancel: "取消",

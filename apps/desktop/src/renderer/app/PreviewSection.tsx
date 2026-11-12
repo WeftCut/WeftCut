@@ -59,6 +59,7 @@ interface PreviewSectionProps {
   onTogglePlay: () => void;
   previewDecodableOf: (id: string) => boolean;
   visible: boolean;
+  editingLocked?: boolean;
 }
 
 /// The preview quadrant: the render-target control, `PreviewSurface`, and the
@@ -72,6 +73,7 @@ export function PreviewSection({
   onTogglePlay,
   previewDecodableOf,
   visible,
+  editingLocked = false,
 }: PreviewSectionProps) {
   const { t } = useTranslation();
   const phase = usePlaybackStore((s) => s.phase);
@@ -109,6 +111,7 @@ export function PreviewSection({
           hasContent={(summary?.layer_count ?? 0) > 0}
           previewDecodableOf={previewDecodableOf}
           visible={visible}
+          editingLocked={editingLocked}
         />
       </div>
       <div className="preview-transport" role="toolbar" aria-label="Preview transport">

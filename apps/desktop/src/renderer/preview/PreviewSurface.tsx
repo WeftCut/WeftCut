@@ -36,6 +36,7 @@ interface Props {
   previewDecodableOf?: (mediaId: string) => boolean;
   /** Dock visibility gates presentation work, never playback ownership. */
   visible?: boolean;
+  editingLocked?: boolean;
 }
 
 export interface PreviewSurfaceHandle {
@@ -80,7 +81,7 @@ export interface PreviewSurfaceHandle {
 
 export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
   function PreviewSurface(
-    { hasContent, previewDecodableOf, visible = true },
+    { hasContent, previewDecodableOf, visible = true, editingLocked = false },
     forwardedRef,
   ) {
     const { t } = useTranslation();
@@ -154,7 +155,7 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
         ref={setSurface}
         className="preview-video"
         onContextMenu={e => {
-          if (!canEditCrop() && !canScaleLayer()) return;
+          if (editingLocked || !canEditCrop() && !canScaleLayer()) return;
           e.preventDefault();
           setContextMenu({ x: e.clientX, y: e.clientY });
         }}
@@ -181,12 +182,12 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
             host so an open inline editor stays clickable (TextToolOverlay.tsx).
             Then safe areas: chrome about the frame, so they paint under the
             selection's box and handles. */}
-        {visible && <TextToolOverlayHost />}
+        {visible && !editingLocked && <TextToolOverlayHost />}
         {visible && <SafeAreaGuidesHost />}
-        {visible && <TransformGizmoHost />}
-        {visible && <CropOverlayHost />}
+        {visible && !editingLocked && <TransformGizmoHost />}
+        {visible && !editingLocked && <CropOverlayHost />}
         {visible && <PreviewHandTool />}
-        {visible && contextMenu && <PreviewContextMenu {...contextMenu} onClose={() => setContextMenu(null)} />}
+        {visible && !editingLocked && contextMenu && <PreviewContextMenu {...contextMenu} onClose={() => setContextMenu(null)} />}
       </div>
     );
   },

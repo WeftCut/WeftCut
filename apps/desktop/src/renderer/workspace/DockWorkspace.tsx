@@ -126,6 +126,7 @@ export interface DockPanelContracts {
   previewRef: RefObject<PreviewSurfaceHandle | null>;
   onSeek: (timeUs: number) => void;
   onTogglePlay: () => void;
+  editingLocked?: boolean;
   previewDecodableOf: (mediaId: string) => boolean;
   revealedTrackId: string | null;
   keybindings: KeybindingsMap;
@@ -251,6 +252,7 @@ function PreviewDockPanel() {
       previewRef={contracts.previewRef}
       summary={contracts.summary}
       onTogglePlay={contracts.onTogglePlay}
+      editingLocked={contracts.editingLocked ?? false}
       previewDecodableOf={contracts.previewDecodableOf}
       visible={runtime.isVisible}
     />
@@ -286,7 +288,8 @@ function TimelineDockPanel() {
         keybindings={contracts.keybindings}
         fpsNum={comp?.fps_num ?? 30}
         fpsDen={comp?.fps_den ?? 1}
-        bladeMode={bladeMode}
+        bladeMode={bladeMode && !contracts.editingLocked}
+        editingLocked={contracts.editingLocked ?? false}
         media={summary?.media ?? []}
         readinessOf={contracts.readinessOf}
         visible={runtime.isVisible}

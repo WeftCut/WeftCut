@@ -370,9 +370,14 @@ export function createExportRunner(deps: {
     };
     // Name the run for the log mirror before any state can transition.
 
-    // Idle preview decoders retain leases. Yield before preparation/encoder
-    // admission, and stay suspended through finish, cancellation and mux.
+    // Preparation can wait for proxy or conform work that yields to playback.
+    // Release preview leases until the export has its own admitted working set.
     let restorePreview: (() => void) | undefined;
+    const resumePreview = () => {
+      const restore = restorePreview;
+      restorePreview = undefined;
+      restore?.();
+    };
     try {
       restorePreview = previewRef.current?.suspendForExport("export");
       const cap = await capability();
@@ -473,6 +478,7 @@ export function createExportRunner(deps: {
         try {
           audioPlan = await admitExportResources([{ memoryMiB: EXPORT_AUDIO_MIX_MIB, workerMiB: 0, motifBufferBytes: 0, frameWindows: {} }],
             false, exportController.signal, onQueued);
+          resumePreview();
           setExportState({ kind: "starting" });
           const produced = await exportProjectAudioOnly(
             path,
@@ -823,6 +829,7 @@ export function createExportRunner(deps: {
           await writeFile(tempVideoPath, new Uint8Array(data), { append: true });
         };
 
+      resumePreview();
       onProgress(0, 1);
       let result;
       try {
@@ -883,7 +890,7 @@ export function createExportRunner(deps: {
       setExportState(exportController.signal.aborted ? null : { kind: "error", detail: error instanceof Error ? error.message : String(error) });
     } finally {
       if (!retained) await cleanup?.();
-      restorePreview?.();
+      resumePreview();
       runningRef.current = false;
     }
 

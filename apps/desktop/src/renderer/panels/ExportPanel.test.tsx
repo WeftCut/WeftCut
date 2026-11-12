@@ -85,18 +85,26 @@ describe("ExportPanel complete state", () => {
     expect(actions().queryByRole("button", { name: "Play" })).toBeNull();
   });
 
-  it("shows no action row at all while the export is still encoding", () => {
+  it("shows encoding progress and cancel without trapping the editor controls", async () => {
+    const onPlay = vi.fn();
+    const onCancel = vi.fn();
     render(
-      <ExportPanel
-        state={{ kind: "progress", progress: { progress: 0.5, currentTimeUs: 0, frame: 90, fps: 30, speed: 1 } }}
-        onClose={vi.fn()}
-        onPlay={vi.fn()}
-        onReveal={vi.fn()}
-      />,
+      <>
+        <button onClick={onPlay}>Play timeline</button>
+        <ExportPanel
+          state={{ kind: "progress", progress: { progress: 0.5, currentTimeUs: 0, frame: 90, fps: 30, speed: 1 }, onCancel }}
+          onClose={vi.fn()}
+        />
+      </>,
     );
 
-    expect(document.querySelector(".export-actions")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Play" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByText("Timeline read-only")).toBeTruthy();
+    expect(screen.getByRole("progressbar").getAttribute("value")).toBe("50");
+    await userEvent.click(screen.getByRole("button", { name: "Play timeline" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onPlay).toHaveBeenCalledOnce();
+    expect(onCancel).toHaveBeenCalledOnce();
   });
 });
 

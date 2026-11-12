@@ -250,6 +250,7 @@ interface TimelineProps {
   /// Same capability verdict as the media pool; independent of copy progress.
   readinessOf: (id: string) => MediaReadiness;
   visible?: boolean;
+  editingLocked?: boolean;
   onExitBlade: () => void;
   /// Park the film at this ROOT moment. A Panel scrubs on its own clock, so it
   /// projects up before calling (`state/playheadProjection.ts`); a composition
@@ -282,6 +283,7 @@ export const Timeline = memo(function Timeline({
   media,
   readinessOf,
   visible = true,
+  editingLocked = false,
   onExitBlade,
   onSeek,
   onMutated,
@@ -760,12 +762,14 @@ export const Timeline = memo(function Timeline({
     handlers: {
       selectAll: handleSelectAll,
       deselectAll,
-      toggleLinkSelected: handleToggleLinkSelected,
-      nudgeBack: handleNudgeBack,
-      nudgeForward: handleNudgeForward,
-      nudgeLargeBack: handleNudgeLargeBack,
-      nudgeLargeForward: handleNudgeLargeForward,
-      resyncAudioToVideo: handleResyncAudioToVideo,
+      ...(!editingLocked && {
+        toggleLinkSelected: handleToggleLinkSelected,
+        nudgeBack: handleNudgeBack,
+        nudgeForward: handleNudgeForward,
+        nudgeLargeBack: handleNudgeLargeBack,
+        nudgeLargeForward: handleNudgeLargeForward,
+        resyncAudioToVideo: handleResyncAudioToVideo,
+      }),
       zoomTimelineIn: handleZoomTimelineIn,
       zoomTimelineOut: handleZoomTimelineOut,
     },
@@ -808,37 +812,42 @@ export const Timeline = memo(function Timeline({
       // the row (the Quick Actions strip, the palette, a context menu), and a
       // value captured when Timeline last rendered would freeze. Same rule
       // `appCommands.ts` states for `clearRange`.
-      enabled: canToggleLinkSelection,
+      enabled: () => !editingLocked && canToggleLinkSelection(),
       run: handleToggleLinkSelected,
     },
     {
       id: "nudgeBack",
       actionId: "nudgeBack",
       labelKey: ACTION_DEFS.nudgeBack.labelKey,
+      enabled: () => !editingLocked,
       run: handleNudgeBack,
     },
     {
       id: "nudgeForward",
       actionId: "nudgeForward",
       labelKey: ACTION_DEFS.nudgeForward.labelKey,
+      enabled: () => !editingLocked,
       run: handleNudgeForward,
     },
     {
       id: "nudgeLargeBack",
       actionId: "nudgeLargeBack",
       labelKey: ACTION_DEFS.nudgeLargeBack.labelKey,
+      enabled: () => !editingLocked,
       run: handleNudgeLargeBack,
     },
     {
       id: "nudgeLargeForward",
       actionId: "nudgeLargeForward",
       labelKey: ACTION_DEFS.nudgeLargeForward.labelKey,
+      enabled: () => !editingLocked,
       run: handleNudgeLargeForward,
     },
     {
       id: "resyncAudioToVideo",
       actionId: "resyncAudioToVideo",
       labelKey: ACTION_DEFS.resyncAudioToVideo.labelKey,
+      enabled: () => !editingLocked,
       run: handleResyncAudioToVideo,
     },
     {
@@ -1828,7 +1837,7 @@ export const Timeline = memo(function Timeline({
               fpsNum={fpsNum} fpsDen={fpsDen} onScrub={beginRulerScrub}
             />
           </TimelineFixedRow>
-          <TimelineFixedRow compositionId={compositionId} widthPx={widthPx} header={<MarkerLaneHeader />}>
+          <TimelineFixedRow compositionId={compositionId} widthPx={widthPx} inert={editingLocked} header={<MarkerLaneHeader />}>
             <MarkerLane compositionId={compositionId} pxPerSec={pxPerSec} widthPx={widthPx}
               viewportWidthPx={viewportWidthPx} fpsNum={fpsNum} fpsDen={fpsDen} />
           </TimelineFixedRow>
@@ -1838,7 +1847,7 @@ export const Timeline = memo(function Timeline({
             <ReviewLane compositionId={compositionId} pxPerSec={pxPerSec} widthPx={widthPx}
               viewportWidthPx={viewportWidthPx} fpsNum={fpsNum} fpsDen={fpsDen} />
           </TimelineFixedRow>
-          <TimelineFixedRow compositionId={compositionId} widthPx={widthPx} header={<DropStripHeader />}>
+          <TimelineFixedRow compositionId={compositionId} widthPx={widthPx} inert={editingLocked} header={<DropStripHeader />}>
             <DropStrip elRef={dropStripElRef} compositionId={compositionId} pxPerSec={pxPerSec}
               fpsNum={fpsNum} fpsDen={fpsDen} mediaDropSnap={mediaDropSnap}
               pendingPlacements={pendingPlacements} pendingLayerById={pendingLayerById} onMediaDrop={onMediaDrop} />
@@ -1866,7 +1875,7 @@ export const Timeline = memo(function Timeline({
                 }
             }
           >
-            <div ref={(el) => { trackReorder.containerRef.current = el; }} className="relative flex min-h-full flex-col" style={{ width: headerColPx + widthPx }}>
+            <div inert={editingLocked} ref={(el) => { trackReorder.containerRef.current = el; }} className="relative flex min-h-full flex-col" style={{ width: headerColPx + widthPx }}>
               <DropStripSeam intoLanePx={dropSeamIntoLanePx} />
               {/* Reserve the first lane's upward link badge inside the viewport.
                   Carry the sticky header through this gap so scrolled badges

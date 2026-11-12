@@ -219,7 +219,7 @@ describe("exportRunner", () => {
     bridge.answers.set("audio_fx_snapshot", () => ({}));
   });
 
-  it.each(['success', 'sink failure', 'worker failure', 'finish failure', 'mux failure'])("keeps preview suspended from sink admission through cleanup: %s", async outcome => {
+  it.each(['success', 'sink failure', 'worker failure', 'finish failure', 'mux failure'])("yields preview for sink admission and restores it for encoding: %s", async outcome => {
     const project = summary([track("track-v", "Video", [COLOR_LAYER])]);
     const { useProjectStore } = await import("../state/projectStore");
     act(() => { useProjectStore.getState().apply(project); });
@@ -231,7 +231,7 @@ describe("exportRunner", () => {
     previewRef.current = {
       suspendForExport: (by: string) => { suspended = true; suspendedBy.push(by); return restore; },
       runPixiExport: async () => {
-        expect(suspended).toBe(true);
+        expect(suspended).toBe(false);
         if (outcome === 'worker failure') throw new Error('worker failed');
         return { framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 };
       },
@@ -243,12 +243,12 @@ describe("exportRunner", () => {
       if (outcome === 'sink failure') throw new Error('encoder failed');
     });
     bridge.answers.set("export_video_sink_finish", () => {
-      expect(suspended).toBe(true);
+      expect(suspended).toBe(false);
       if (outcome === 'finish failure') throw new Error('finish failed');
     });
-    bridge.answers.set("export_video_sink_cancel", () => { expect(suspended).toBe(true); });
+    bridge.answers.set("export_video_sink_cancel", () => { expect(suspended).toBe(outcome === "sink failure"); });
     bridge.answers.set("mux_export", () => {
-      expect(suspended).toBe(true);
+      expect(suspended).toBe(false);
       if (outcome === 'mux failure') throw new Error('mux failed');
     });
     const { result } = mount(previewRef);

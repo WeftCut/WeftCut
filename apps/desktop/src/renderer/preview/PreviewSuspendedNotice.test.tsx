@@ -64,7 +64,7 @@ afterEach(cleanup);
 describe("a suspended preview says who is using it", () => {
   it.each([
     ["agent", "An agent is viewing"],
-    ["export", "Exporting"],
+    ["export", "Preparing export"],
   ] as const)("names the %s for as long as it holds the decoders, and nothing after", (by, text) => {
     const surface = mount();
     expect(screen.queryByRole("status")).toBeNull();
