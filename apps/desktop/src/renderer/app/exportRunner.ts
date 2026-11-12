@@ -823,6 +823,14 @@ export function createExportRunner(deps: {
           await writeFile(tempVideoPath, new Uint8Array(data), { append: true });
         };
 
+      // PROBE (never merge): resume the preview once the plan is admitted and
+      // the sink has started, so e2e can drive it while encoding runs.
+      if ((globalThis as { __probeResumeAfterAdmission?: boolean }).__probeResumeAfterAdmission) {
+        const restore = restorePreview;
+        restorePreview = undefined;
+        restore?.();
+        (globalThis as { __probeResumedAt?: number }).__probeResumedAt = performance.now();
+      }
       onProgress(0, 1);
       let result;
       try {

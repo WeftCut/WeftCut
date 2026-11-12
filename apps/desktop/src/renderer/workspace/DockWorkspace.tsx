@@ -1493,6 +1493,8 @@ export function DockWorkspace({
       adapter = new DockWorkspaceAdapter(api, sectionRef.current ?? undefined);
       adapterRef.current = adapter;
     }
+    // PROBE (never merge): lets e2e remount the Preview panel behind a modal.
+    (globalThis as { __probeDock?: DockWorkspaceAdapter }).__probeDock = adapter;
     // Which compositions have a Panel is a fact only the Dock holds, and the
     // anchor store is what has to act on it — a tab dragged out, closed or
     // never restored leaves an anchor with nothing to anchor. Re-subscribed
