@@ -586,6 +586,8 @@ describe('weftcut mcp over real stdio + HTTP', () => {
       const app = await scriptedApp()
       const client = open(target, profile(app.port))
       await client.initialize()
+      // The app can receive a call before the client reads the startup announcement.
+      await catalogChanged(client, 0)
       const slow = client.start('tools/call', { name: 'slow', arguments: {} })
       const job = await app.seen.when('the app received the call', () => app.calls.find((c) => c.name === 'slow'))
       const mark = client.received.items.length
