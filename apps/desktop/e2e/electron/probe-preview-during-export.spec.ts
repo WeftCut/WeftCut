@@ -27,7 +27,7 @@ function media(): { a4k: string; b1080: string } {
   const make = (name: string, size: string, src: string) => {
     const file = path.join(dir, name)
     if (fs.existsSync(file)) return file
-    const r = spawnSync(ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', `${src}=size=${size}:rate=30:duration=${SECONDS}`,
+    const r = spawnSync(ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', `${src}=size=${size}:rate=30`, '-t', String(SECONDS),
       '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-g', '30', file], { encoding: 'utf8' })
     if (r.status !== 0) throw new Error(`fixture ${name}: ${r.stderr}`)
     return file
