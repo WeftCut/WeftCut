@@ -1,3 +1,4 @@
+import { modKeyHeld } from "@/platform";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { moveMarker, type LinkSummary, type TrackSummary } from "../../ipc";
 import { snapFrameRound } from "../../frames";
@@ -67,7 +68,7 @@ export function markerDragSnap(
   ctx: MarkerDragContext,
   deltaUs: number,
   currentTimeUs: number,
-  ctrlKey = false,
+  snapSuspended = false,
 ): { timeUs: number; boundaryUs: number | null } {
   const desiredUs = snapFrameRound(
     Math.max(0, ctx.originalTUs + deltaUs),
@@ -76,7 +77,7 @@ export function markerDragSnap(
   );
   const result = resolveTimelineTimeSnap({
     ...ctx.snap,
-    enabled: ctx.snap.enabled && !ctrlKey,
+    enabled: ctx.snap.enabled && !snapSuspended,
     timeUs: desiredUs,
     currentTimeUs,
     fpsNum: ctx.fpsNum,
@@ -86,14 +87,6 @@ export function markerDragSnap(
       clampMarkerTimeUs(boundaryUs, ctx.bounds) === boundaryUs,
   });
   return { timeUs: clampMarkerTimeUs(result.timeUs, ctx.bounds), boundaryUs: result.boundaryUs };
-}
-
-export function markerDragTimeUs(
-  ctx: MarkerDragContext,
-  deltaUs: number,
-  currentTimeUs: number,
-): number {
-  return markerDragSnap(ctx, deltaUs, currentTimeUs).timeUs;
 }
 
 /// The marker whose id is `markerId`, frozen with the snap targets and the
@@ -172,6 +165,13 @@ export function useMarkerDrag(opts: {
   const [active, setActive] = useState(false);
   const [preview, setPreview] = useState<MarkerDragPreview | null>(null);
 
+  // Every marker-gesture exit (release, cancel, teardown) passes through
+  // this cleanup. Its guide cannot survive a cancelled gesture.
+  const finishMarkerGesture = useCallback(() => {
+    contextRef.current = null;
+    setTimelineSnapGuide(compositionId, "marker", null);
+  }, [compositionId]);
+
   const beginMarkerDrag = useCallback(
     (markerId: string) => (e: React.PointerEvent) => {
       if (e.button !== 0) return;
@@ -191,34 +191,32 @@ export function useMarkerDrag(opts: {
   // A Panel torn down mid-gesture leaves no drag behind.
   useEffect(() => {
     return () => {
-      contextRef.current = null;
-      setTimelineSnapGuide(compositionId, "marker", null);
+      finishMarkerGesture();
     };
-  }, [compositionId]);
+  }, [finishMarkerGesture]);
 
   useEffect(() => {
     if (!active) return;
-    const landing = (clientX: number, ctrlKey: boolean) => {
+    const landing = (clientX: number, snapSuspended: boolean) => {
       const ctx = contextRef.current;
       if (ctx === null) return null;
       const deltaUs =
         ((clientX - ctx.startClientX) / ctx.pxPerSec) * US_PER_SEC;
       // Event-time read: the playhead is a snap TARGET, and playback moves it
       // while the pointer is down.
-      return markerDragSnap(ctx, deltaUs, playheadClockUs(compositionId), ctrlKey);
+      return markerDragSnap(ctx, deltaUs, playheadClockUs(compositionId), snapSuspended);
     };
     const onMove = (e: PointerEvent) => {
-      const result = landing(e.clientX, e.ctrlKey);
+      const result = landing(e.clientX, modKeyHeld(e));
       if (result === null) return;
       setTimelineSnapGuide(compositionId, "marker", result.boundaryUs);
       setPreview((p) => (p === null || p.tUs === result.timeUs ? p : { ...p, tUs: result.timeUs }));
     };
     const onUp = (e: PointerEvent) => {
       const ctx = contextRef.current;
-      const result = landing(e.clientX, e.ctrlKey);
+      const result = landing(e.clientX, modKeyHeld(e));
       const tUs = result?.timeUs ?? null;
-      setTimelineSnapGuide(compositionId, "marker", null);
-      contextRef.current = null;
+      finishMarkerGesture();
       setActive(false);
       if (ctx === null || tUs === null) {
         setPreview(null);
@@ -252,10 +250,9 @@ export function useMarkerDrag(opts: {
       );
     };
     const onCancel = () => {
-      contextRef.current = null;
+      finishMarkerGesture();
       setActive(false);
       setPreview(null);
-      setTimelineSnapGuide(compositionId, "marker", null);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -265,7 +262,7 @@ export function useMarkerDrag(opts: {
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onCancel);
     };
-  }, [active, compositionId]);
+  }, [active, compositionId, finishMarkerGesture]);
 
   return { preview, beginMarkerDrag };
 }

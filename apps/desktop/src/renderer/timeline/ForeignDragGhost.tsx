@@ -28,7 +28,7 @@
 
 import { createPortal } from "react-dom";
 import { timelineDestination } from "./timelineDestination";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   moveLayersToComposition,
   type LinkSummary,
@@ -220,7 +220,7 @@ async function commitForeignDrop(drop: ResolvedDrop): Promise<void> {
 function resolveForeignDrop(
   opts: ForeignDragGhostProps,
   drag: DragState,
-  pointer: { clientX: number; clientY: number; ctrlKey: boolean },
+  pointer: { clientX: number; clientY: number; snapSuspended: boolean },
 ): ForeignLanding | null {
   const { compositionId, pxPerSec, fpsNum, fpsDen } = opts;
   if (compositionId === null || pxPerSec <= 0) return null;
@@ -291,7 +291,7 @@ function resolveForeignDrop(
     fpsNum,
     fpsDen,
     pxPerSec,
-    enabled: opts.tailSnapEnabled && !pointer.ctrlKey,
+    enabled: opts.tailSnapEnabled && !pointer.snapSuspended,
     strengthPx: opts.tailSnapStrengthPx,
   });
   const snappedDeltaUs = snapResult.deltaUs;
@@ -467,10 +467,16 @@ export function ForeignDragGhost(props: ForeignDragGhostProps): React.ReactNode 
   }, [compositionId]);
 
   const snapBoundaryUs = landing?.snapBoundaryUs ?? null;
+  const clearForeignFeedback = useCallback(
+    () => setTimelineSnapGuide(compositionId, "foreign", null),
+    [compositionId],
+  );
   useEffect(() => {
     setTimelineSnapGuide(compositionId, "foreign", snapBoundaryUs);
-    return () => setTimelineSnapGuide(compositionId, "foreign", null);
   }, [compositionId, snapBoundaryUs]);
+  // The same cleanup covers release and unmount, without clearing/re-adding
+  // on every boundary change (which caused a flicker during a drag).
+  useEffect(() => () => clearForeignFeedback(), [clearForeignFeedback]);
 
   const drop = landing?.drop ?? null;
   // LANDMINE: the release below reads THIS ref and never the store.
@@ -497,7 +503,7 @@ export function ForeignDragGhost(props: ForeignDragGhostProps): React.ReactNode 
     const release = (e: PointerEvent): void => {
       // Clear synchronously on release, before the destination commit awaits
       // anything. The store's unmount effect also covers cancellation.
-      setTimelineSnapGuide(compositionId, "foreign", null);
+      clearForeignFeedback();
       const pending = dropRef.current;
       if (pending === null) return;
       // Re-asked from the RELEASE's own coordinates, not the last pointermove's.
@@ -516,7 +522,7 @@ export function ForeignDragGhost(props: ForeignDragGhostProps): React.ReactNode 
     };
     window.addEventListener("pointerup", release);
     return () => window.removeEventListener("pointerup", release);
-  }, []);
+  }, [clearForeignFeedback]);
 
   // One condition spelled twice: `resolveForeignDrop` returns a null band and a
   // null row together — over no row there is nothing to draw and nothing to draw

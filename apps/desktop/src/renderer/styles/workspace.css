@@ -688,22 +688,3 @@
   color: var(--foreground);
   background: var(--hover-neutral-strong);
 }
-
-/* One magnet button, one compact popover: same interaction as the grid. */
-.app-menu-list.timeline-snap-popup {
-  width: calc(240 * var(--ui-px));
-  padding: calc(10 * var(--ui-px));
-  display: flex;
-  flex-direction: column;
-  gap: calc(8 * var(--ui-px));
-}
-
-.timeline-snap-popup-title {
-  font-size: var(--font-size-body);
-  font-weight: 600;
-}
-
-.timeline-snap-popup .settings-slider-row,
-.timeline-snap-popup .settings-toggle-row {
-  margin: 0;
-}

@@ -1471,7 +1471,7 @@ export const Timeline = memo(function Timeline({
   );
 
   const bladeCutTimeFromClientX = useCallback(
-    (layer: LayerSummary, clientX: number, ctrlKey = false): { atUs: number; boundaryUs: number | null } | null => {
+    (layer: LayerSummary, clientX: number, snapSuspended = false): { atUs: number; boundaryUs: number | null } | null => {
       if (!canvasRef.current) return null;
       const rect = canvasRef.current.getBoundingClientRect();
       const x = clientX - rect.left;
@@ -1494,7 +1494,7 @@ export const Timeline = memo(function Timeline({
         fpsNum,
         fpsDen,
         pxPerSec,
-        enabled: tailSnapEnabled && !ctrlKey,
+        enabled: tailSnapEnabled && !snapSuspended,
         strengthPx: tailSnapStrengthPx,
         isValidSnap: (boundaryUs) =>
           boundaryUs > layer.t_start_us && boundaryUs < layer.t_end_us,
@@ -1516,27 +1516,31 @@ export const Timeline = memo(function Timeline({
     ],
   );
 
+  // All blade exits (leave, tool mode, split, teardown) clear feedback here.
+  const clearBladeFeedback = useCallback((resetPreview = true) => {
+    if (resetPreview) setBladePreview(null);
+    setTimelineSnapGuide(compositionId, "blade", null);
+  }, [compositionId]);
+
   const updateBladePreview = useCallback(
-    (layer: LayerSummary | null, clientX?: number, ctrlKey = false) => {
+    (layer: LayerSummary | null, clientX?: number, snapSuspended = false) => {
       if (!bladeMode || !layer || clientX === undefined) {
-        setBladePreview(null);
-        setTimelineSnapGuide(compositionId, "blade", null);
+        clearBladeFeedback();
         return;
       }
-      const snapResult = bladeCutTimeFromClientX(layer, clientX, ctrlKey);
+      const snapResult = bladeCutTimeFromClientX(layer, clientX, snapSuspended);
       setTimelineSnapGuide(compositionId, "blade", snapResult?.boundaryUs ?? null);
       setBladePreview(snapResult === null ? null : { layerId: layer.id, atUs: snapResult.atUs });
     },
-    [bladeCutTimeFromClientX, bladeMode, compositionId],
+    [bladeCutTimeFromClientX, bladeMode, clearBladeFeedback, compositionId],
   );
 
   useEffect(() => {
     if (!bladeMode) {
-      setBladePreview(null);
-      setTimelineSnapGuide(compositionId, "blade", null);
+      clearBladeFeedback();
     }
-    return () => setTimelineSnapGuide(compositionId, "blade", null);
-  }, [bladeMode, compositionId]);
+    return () => clearBladeFeedback(false);
+  }, [bladeMode, clearBladeFeedback]);
 
   // Blade-tool click handler: convert clientX → frame-snapped composition
   // timestamp and ask the actor to split the layer at that point. Reject
@@ -1545,12 +1549,11 @@ export const Timeline = memo(function Timeline({
   // frame-precise cuts. After a split the user stays in blade mode
   // (NLE convention); press `C` or `Esc` to exit.
   const splitFromClientX = useCallback(
-    async (layer: LayerSummary, clientX: number, ctrlKey = false) => {
-      const snapResult = bladeCutTimeFromClientX(layer, clientX, ctrlKey);
+    async (layer: LayerSummary, clientX: number, snapSuspended = false) => {
+      const snapResult = bladeCutTimeFromClientX(layer, clientX, snapSuspended);
       if (snapResult === null) return;
       const atUs = snapResult.atUs;
-      setBladePreview(null);
-      setTimelineSnapGuide(compositionId, "blade", null);
+      clearBladeFeedback();
       try {
         // Link-aware, as `splitAtPlayhead` sends it; escaped only under the
         // link override.
@@ -1560,7 +1563,7 @@ export const Timeline = memo(function Timeline({
         logMutationFailure(err, "Blade split");
       }
     },
-    [bladeCutTimeFromClientX, compositionId, onMutated],
+    [bladeCutTimeFromClientX, clearBladeFeedback, onMutated],
   );
 
   // Esc disarms the sample-region one-shot. Its own effect rather than a branch

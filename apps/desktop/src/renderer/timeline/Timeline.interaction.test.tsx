@@ -853,6 +853,59 @@ describe("Timeline seek/selection coupling", () => {
     expect(ipcMocks.moveLayersToNewTrack).not.toHaveBeenCalled();
   });
 
+  it("shows the snap guide on a vertical-only cross-track move when clip edges already align", () => {
+    vi.useFakeTimers();
+    // Keep the playhead away from either edge: the target is the adjacent
+    // clip boundary, not the playhead at composition zero.
+    setPlayheadTimeUs(4_000_000);
+    const neighbour: LayerSummary = {
+      ...layer,
+      id: "neighbour",
+      label: "Neighbour",
+      t_start_us: 2_000_000,
+      t_end_us: 3_000_000,
+    };
+    const { container, getByText, queryByTestId } = renderTimeline({
+      tracks: [rowBottom, { ...rowMid, layers: [neighbour] }, rowTop],
+      selectedLayerId: draggedLayer.id,
+    });
+    stubLaneLayout(container);
+    const block = getByText("Dragged").closest(".timeline-layer") as HTMLElement;
+
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 212 });
+    fireEvent.pointerMove(window, { clientX: 80, clientY: 80 });
+    expect(queryByTestId("timeline-snap-guide")?.getAttribute("data-snap-boundary-us"))
+      .toBe("2000000");
+    fireEvent.pointerUp(window, { clientX: 80, clientY: 80 });
+
+    expect(queryByTestId("timeline-snap-guide")).toBeNull();
+    expect(ipcMocks.moveLayer).toHaveBeenCalledWith(
+      draggedLayer.id, rowMid.id, 0, false,
+    );
+  });
+
+  it("does not invent a guide for a purely vertical move with no matching edge", () => {
+    vi.useFakeTimers();
+    setPlayheadTimeUs(4_000_000);
+    const neighbour: LayerSummary = {
+      ...layer,
+      id: "neighbour",
+      label: "Neighbour",
+      t_start_us: 2_100_000,
+      t_end_us: 3_100_000,
+    };
+    const { container, getByText, queryByTestId } = renderTimeline({
+      tracks: [rowBottom, { ...rowMid, layers: [neighbour] }, rowTop],
+      selectedLayerId: draggedLayer.id,
+    });
+    stubLaneLayout(container);
+    const block = getByText("Dragged").closest(".timeline-layer") as HTMLElement;
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 212 });
+    fireEvent.pointerMove(window, { clientX: 80, clientY: 80 });
+    expect(queryByTestId("timeline-snap-guide")).toBeNull();
+    fireEvent.pointerUp(window, { clientX: 80, clientY: 80 });
+  });
+
   it("hands an expanded track's sub-lane band to the track that owns it", () => {
     vi.useFakeTimers();
     const { container, getByText } = renderTimeline({

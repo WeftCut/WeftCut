@@ -196,13 +196,6 @@ export function resolveTimelineDragSnap(
   return { deltaUs: bestDeltaUs ?? opts.frameDeltaUs, boundaryUs: bestBoundaryUs };
 }
 
-/** Compatibility for callers which only need the placement, not its guide. */
-export function snapDragDeltaToTimelineBoundary(
-  opts: Parameters<typeof resolveTimelineDragSnap>[0],
-): number {
-  return resolveTimelineDragSnap(opts).deltaUs;
-}
-
 export function resolveTimelineTimeSnap(
   opts: TimelineSnapBoundaryOptions & { timeUs: number },
 ): TimelineTimeSnapResult {
@@ -230,11 +223,4 @@ export function resolveTimelineTimeSnap(
   }
 
   return { timeUs: bestBoundaryUs ?? opts.timeUs, boundaryUs: bestBoundaryUs };
-}
-
-/** Compatibility for callers which only need the placement, not its guide. */
-export function snapTimeToTimelineBoundary(
-  opts: Parameters<typeof resolveTimelineTimeSnap>[0],
-): number {
-  return resolveTimelineTimeSnap(opts).timeUs;
 }

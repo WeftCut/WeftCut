@@ -1,3 +1,4 @@
+import { modKeyHeld } from "@/platform";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LayerBlock, type PendingLayerPlacement } from "./LayerBlock";
@@ -109,8 +110,8 @@ export function TrackLane({
   pendingLayerById: ReadonlyMap<string, LayerSummary>;
   dragLayerById: ReadonlyMap<string, LayerSummary>;
   bladeMode: boolean;
-  onBladeSplit: (layer: LayerSummary, clientX: number, ctrlKey?: boolean) => void;
-  onBladePreview: (layer: LayerSummary | null, clientX?: number, ctrlKey?: boolean) => void;
+  onBladeSplit: (layer: LayerSummary, clientX: number, snapSuspended?: boolean) => void;
+  onBladePreview: (layer: LayerSummary | null, clientX?: number, snapSuspended?: boolean) => void;
   /// Pass-through to `LayerBlock`, whose prop docstring owns the contract:
   /// applies the click's selection semantics, returns whether the clicked layer
   /// is selected afterwards.
@@ -185,10 +186,6 @@ export function TrackLane({
 
   const visibleDropPreview =
     dropTargetTrackId === track.id ? dropPreview : null;
-
-  useEffect(() => {
-    if (activeMediaDrag === null) setTimelineSnapGuide(compositionId, "media", null);
-  }, [activeMediaDrag, compositionId]);
 
   const dragPreviewTrackId = useCallback(
     (subject: DragSubject): string => {
@@ -329,7 +326,7 @@ export function TrackLane({
         pxPerSec,
         fpsNum,
         fpsDen,
-        snap: { ...mediaDropSnap, suspended: e.ctrlKey, currentTimeUs: playheadClockUs(compositionId) },
+        snap: { ...mediaDropSnap, enabled: mediaDropSnap.enabled && !modKeyHeld(e), currentTimeUs: playheadClockUs(compositionId) },
       });
       setTimelineSnapGuide(compositionId, "media",
         plan.validity === "valid" ? plan.snapBoundaryUs ?? null : null);
@@ -406,12 +403,14 @@ export function TrackLane({
             pxPerSec,
             fpsNum,
             fpsDen,
-            snap: { ...mediaDropSnap, suspended: e.ctrlKey, currentTimeUs: playheadClockUs(compositionId) },
+            snap: { ...mediaDropSnap, enabled: mediaDropSnap.enabled && !modKeyHeld(e), currentTimeUs: playheadClockUs(compositionId) },
           })
         : null;
       setDropPreview(null);
-      setTimelineSnapGuide(compositionId, "media", null);
-      if (!payload) return;
+      if (!payload) {
+        setTimelineSnapGuide(compositionId, "media", null);
+        return;
+      }
       e.preventDefault();
       endMediaDrag();
       // `=== "valid"`, deliberately not `!placementRefuses(...)`: a lane drop

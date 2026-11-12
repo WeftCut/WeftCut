@@ -597,8 +597,6 @@ const enUS = {
     // pressed border says which state, the hint says what a click does.
     snap_on_hint: "Clip snapping on. Click to disable.",
     snap_off_hint: "Clip snapping off. Click to enable.",
-    timeline_snap_options: "Timeline snapping options",
-    timeline_snap_ctrl_hint: "Hold Ctrl during a drag to suspend magnetic snapping. Frame and sample grids remain active.",
     review_overlay_on_hint: "Review overlay on: tacks and unreviewed agent changes show on the timeline. Click to hide.",
     review_overlay_off_hint: "Review overlay off. Click to show tacks and unreviewed agent changes on the timeline.",
     follow_on_hint: "Timeline auto-scroll on. Click to disable.",

@@ -1,3 +1,4 @@
+import { modKeyHeld } from "@/platform";
 import { sourceIn, sourceOut, layerRateNumber } from '../layerTiming';
 import { approximateTime } from '../timeMapping';
 import { readLayerParamTrack } from "../keyframe/channels";
@@ -341,8 +342,8 @@ export function LayerBlock({
   /// of selecting/dragging. Cursor is set by the `timeline-root-blade`
   /// class (styles.css) via the `timeline-layer` hook class below.
   bladeMode: boolean;
-  onBladeSplit: (layer: LayerSummary, clientX: number, ctrlKey?: boolean) => void;
-  onBladePreview: (layer: LayerSummary | null, clientX?: number, ctrlKey?: boolean) => void;
+  onBladeSplit: (layer: LayerSummary, clientX: number, snapSuspended?: boolean) => void;
+  onBladePreview: (layer: LayerSummary | null, clientX?: number, snapSuspended?: boolean) => void;
   /// Applies the click's selection semantics and answers whether THIS layer is
   /// selected afterwards — `false` only for an additive click that removed it.
   onSelectFromClick: (
@@ -567,7 +568,7 @@ export function LayerBlock({
       if (layer.locked || trackLocked || isDragging) {
         onBladePreview(null);
       } else {
-        onBladePreview(layer, e.clientX, e.ctrlKey);
+        onBladePreview(layer, e.clientX, modKeyHeld(e));
       }
       if (edgeHover !== null) setEdgeHover(null);
       return;
@@ -598,7 +599,7 @@ export function LayerBlock({
     // Blade-tool mode hijacks every pointerdown on the layer surface:
     // the click is a cut request, not a select/drag.
     if (bladeMode) {
-      if (!locked) onBladeSplit(layer, e.clientX, e.ctrlKey);
+      if (!locked) onBladeSplit(layer, e.clientX, modKeyHeld(e));
       return;
     }
     const blockRect = e.currentTarget.getBoundingClientRect();

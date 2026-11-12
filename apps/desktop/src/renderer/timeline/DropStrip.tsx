@@ -1,3 +1,4 @@
+import { modKeyHeld } from "@/platform";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BetweenHorizontalStart } from "lucide-react";
@@ -217,10 +218,6 @@ export function DropStrip({
   const visibleDropPreview =
     dropTargetTrackId === SPAWN_TRACK_ID ? dropPreview : null;
 
-  useEffect(() => {
-    if (activeMediaDrag === null) setTimelineSnapGuide(compositionId, "media", null);
-  }, [activeMediaDrag, compositionId]);
-
   // The raise's landing, through the SAME call the move projection makes — the
   // strip promises what the commit sends, or it is not a preview of it. Every
   // subject, because a raise takes the whole set onto the one new lane.
@@ -270,7 +267,7 @@ export function DropStrip({
   }, [pendingLayerById, pendingPlacements, stripDrag, stripLanding]);
 
   const planFor = useCallback(
-    (media: MediaDragPayload, pointerXPx: number, ctrlKey = false) =>
+    (media: MediaDragPayload, pointerXPx: number, snapSuspended = false) =>
       planMediaDrop({
         compositionId,
         track: null,
@@ -279,7 +276,7 @@ export function DropStrip({
         pxPerSec,
         fpsNum,
         fpsDen,
-        snap: { ...mediaDropSnap, suspended: ctrlKey, currentTimeUs: playheadClockUs(compositionId) },
+        snap: { ...mediaDropSnap, enabled: mediaDropSnap.enabled && !snapSuspended, currentTimeUs: playheadClockUs(compositionId) },
       }),
     [compositionId, fpsDen, fpsNum, mediaDropSnap, pxPerSec],
   );
@@ -290,7 +287,7 @@ export function DropStrip({
       e.preventDefault();
       if (activeMediaDrag === null) return;
       const rect = e.currentTarget.getBoundingClientRect();
-      const plan = planFor(activeMediaDrag, e.clientX - rect.left, e.ctrlKey);
+      const plan = planFor(activeMediaDrag, e.clientX - rect.left, modKeyHeld(e));
       setTimelineSnapGuide(compositionId, "media",
         !mediaDropInvalid(plan.validity) ? plan.snapBoundaryUs ?? null : null);
       e.dataTransfer.dropEffect = mediaDropInvalid(plan.validity) ? "none" : "copy";
@@ -344,12 +341,14 @@ export function DropStrip({
     (e: React.DragEvent<HTMLDivElement>) => {
       const payload = parseMediaDrag(e);
       setDropPreview(null);
-      setTimelineSnapGuide(compositionId, "media", null);
-      if (!payload) return;
+      if (!payload) {
+        setTimelineSnapGuide(compositionId, "media", null);
+        return;
+      }
       e.preventDefault();
       endMediaDrag();
       const rect = e.currentTarget.getBoundingClientRect();
-      const plan = planFor(payload, e.clientX - rect.left, e.ctrlKey);
+      const plan = planFor(payload, e.clientX - rect.left, modKeyHeld(e));
       if (mediaDropInvalid(plan.validity)) return;
       onMediaDrop(null, payload, plan);
     },

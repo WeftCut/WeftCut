@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LinkSummary, LayerSummary, TrackSummary } from "../ipc";
 import {
-  snapDragDeltaToTimelineBoundary,
-  snapTimeToTimelineBoundary,
   resolveTimelineDragSnap,
   resolveTimelineTimeSnap,
 } from "./snapping";
@@ -67,16 +65,16 @@ function baseOpts(overrides: {
 
 describe("timeline snapping", () => {
   it("does not snap a selection to the original edge of another moving member", () => {
-    const delta = snapDragDeltaToTimelineBoundary({
+    const delta = resolveTimelineDragSnap({
       ...baseOpts({ visibleTracks: [track([layer("other", 2_000_000, 3_000_000)])], currentTimeUs: 10_000_000 }),
       state: { kind: "move", layerId: "anchor", originalTStart: 0, originalTEnd: 1_000_000,
         escapeLink: true, subjects: [{ layerId: "anchor" }, { layerId: "other" }] },
       frameDeltaUs: 950_000,
-    });
+    }).deltaUs;
     expect(delta).toBe(950_000);
   });
   it("keeps move snapping by aligning a moved edge to the playhead", () => {
-    const deltaUs = snapDragDeltaToTimelineBoundary({
+    const deltaUs = resolveTimelineDragSnap({
       ...baseOpts(),
       state: {
         kind: "move",
@@ -86,13 +84,13 @@ describe("timeline snapping", () => {
         escapeLink: false,
       },
       frameDeltaUs: 950_000,
-    });
+    }).deltaUs;
 
     expect(deltaUs).toBe(1_000_000);
   });
 
   it("snaps an out-trim edge to the playhead", () => {
-    const deltaUs = snapDragDeltaToTimelineBoundary({
+    const deltaUs = resolveTimelineDragSnap({
       ...baseOpts(),
       state: {
         kind: "trim-end",
@@ -102,13 +100,13 @@ describe("timeline snapping", () => {
         escapeLink: false,
       },
       frameDeltaUs: 950_000,
-    });
+    }).deltaUs;
 
     expect(deltaUs).toBe(1_000_000);
   });
 
   it("allows an out-trim snap that leaves exactly one frame", () => {
-    const deltaUs = snapDragDeltaToTimelineBoundary({
+    const deltaUs = resolveTimelineDragSnap({
       ...baseOpts({ currentTimeUs: 33_333 }),
       state: {
         kind: "trim-end",
@@ -118,13 +116,13 @@ describe("timeline snapping", () => {
         escapeLink: false,
       },
       frameDeltaUs: -1_950_000,
-    });
+    }).deltaUs;
 
     expect(deltaUs).toBe(-1_966_667);
   });
 
   it("snaps an in-trim edge to the playhead", () => {
-    const deltaUs = snapDragDeltaToTimelineBoundary({
+    const deltaUs = resolveTimelineDragSnap({
       ...baseOpts({ currentTimeUs: 1_000_000 }),
       state: {
         kind: "trim-start",
@@ -134,13 +132,13 @@ describe("timeline snapping", () => {
         escapeLink: false,
       },
       frameDeltaUs: -950_000,
-    });
+    }).deltaUs;
 
     expect(deltaUs).toBe(-1_000_000);
   });
 
   it("allows an in-trim snap that leaves exactly one frame", () => {
-    const deltaUs = snapDragDeltaToTimelineBoundary({
+    const deltaUs = resolveTimelineDragSnap({
       ...baseOpts({ currentTimeUs: 1_966_667 }),
       state: {
         kind: "trim-start",
@@ -150,13 +148,13 @@ describe("timeline snapping", () => {
         escapeLink: false,
       },
       frameDeltaUs: 1_950_000,
-    });
+    }).deltaUs;
 
     expect(deltaUs).toBe(1_966_667);
   });
 
   it("does not snap drag operations when disabled", () => {
-    const deltaUs = snapDragDeltaToTimelineBoundary({
+    const deltaUs = resolveTimelineDragSnap({
       ...baseOpts({ enabled: false }),
       state: {
         kind: "trim-end",
@@ -166,25 +164,25 @@ describe("timeline snapping", () => {
         escapeLink: false,
       },
       frameDeltaUs: 950_000,
-    });
+    }).deltaUs;
 
     expect(deltaUs).toBe(950_000);
   });
 
   it("snaps a blade cut point to the playhead", () => {
-    const snappedUs = snapTimeToTimelineBoundary({
+    const snappedUs = resolveTimelineTimeSnap({
       ...baseOpts(),
       timeUs: 2_950_000,
       layerId: "layer-1",
       isValidSnap: (boundaryUs) =>
         boundaryUs > 1_000_000 && boundaryUs < 4_000_000,
-    });
+    }).timeUs;
 
     expect(snappedUs).toBe(3_000_000);
   });
 
   it("snaps a blade cut point to visible layer boundaries", () => {
-    const snappedUs = snapTimeToTimelineBoundary({
+    const snappedUs = resolveTimelineTimeSnap({
       ...baseOpts({
         visibleTracks: [
           track([
@@ -198,7 +196,7 @@ describe("timeline snapping", () => {
       layerId: "layer-1",
       isValidSnap: (boundaryUs) =>
         boundaryUs > 1_000_000 && boundaryUs < 4_000_000,
-    });
+    }).timeUs;
 
     expect(snappedUs).toBe(3_000_000);
   });
@@ -216,7 +214,7 @@ describe("magnetic feedback contract (#156)", () => {
     })).toEqual({ deltaUs: 1_000_000, boundaryUs: 3_000_000 });
   });
 
-  it("has no magnetic target under Ctrl, even though the frame delta is preserved", () => {
+  it("has no magnetic target under Mod, even though the frame delta is preserved", () => {
     expect(resolveTimelineDragSnap({
       ...baseOpts({ enabled: false }), state, frameDeltaUs: 966_667,
     })).toEqual({ deltaUs: 966_667, boundaryUs: null });

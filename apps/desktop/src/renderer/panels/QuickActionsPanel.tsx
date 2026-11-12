@@ -45,7 +45,6 @@ import {
   type QuickActionState,
 } from "./quickActions";
 import { AppIcon } from "@/components/AppIcon";
-import { TimelineSnapPopover } from "./TimelineSnapPopover";
 
 /// Which way the strip runs. Single row or single column, never wrapped —
 /// overflow scrolls instead.
@@ -390,17 +389,7 @@ export function QuickActionsPanel({
           {section.resolved.map(({ item, command }) => {
             index += 1;
             const own = index;
-            // Snap options get one magnet slot, matching the grid popup.
-            // The existing toggleTailSnap command stays registered for the
-            // keyboard/search palette, but the strip's magnet opens settings.
-            return item.id === "toggleTailSnap" ? (
-              <TimelineSnapPopover
-                key={item.id}
-                orientation={orientation}
-                tabbable={own === focusIndex}
-                onFocus={() => setFocusIndex(own)}
-              />
-            ) : (
+            return (
               <QuickActionButton
                 key={item.id}
                 item={item}

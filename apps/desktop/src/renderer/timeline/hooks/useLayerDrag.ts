@@ -1,3 +1,4 @@
+import { modKeyHeld } from "@/platform";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   moveLayer,
@@ -86,7 +87,7 @@ interface LayerDragGesture {
   armAtMs: number;
   lastClientX: number;
   lastClientY: number;
-  lastCtrlKey: boolean;
+  lastSnapSuspended: boolean;
 }
 
 /// Where the dragged edge / clip-start actually lands, after the constraints the
@@ -383,6 +384,16 @@ export function useLayerDrag(opts: {
     [linkByLayerId, links, layerEntryById],
   );
 
+  // One exit for the source gesture: release, Esc/cancel, pointercancel and
+  // Panel teardown all go through the same store + guide cleanup.
+  const finishLayerGesture = useCallback((updateUI = true) => {
+    if (gestureRef.current === null) return;
+    gestureRef.current = null;
+    if (updateUI) setGestureActive(false);
+    useLayerDragStore.getState().end();
+    setTimelineSnapGuide(compositionId, "layer", null);
+  }, [compositionId]);
+
   const setDrag = useCallback(
     (seed: DragSeed | null) => {
       announcedForeignRef.current = null;
@@ -390,11 +401,7 @@ export function useLayerDrag(opts: {
         // Guarded on this Panel's OWN gesture: `end()` clears the one store
         // every Panel shares, so abandoning a gesture this Panel never had
         // would abandon the neighbour's instead.
-        if (gestureRef.current === null) return;
-        gestureRef.current = null;
-        setGestureActive(false);
-        useLayerDragStore.getState().end();
-        setTimelineSnapGuide(compositionId, "layer", null);
+        finishLayerGesture();
         return;
       }
       // The link override reaches this whole gesture through the seed's own
@@ -436,11 +443,11 @@ export function useLayerDrag(opts: {
         armAtMs: Date.now() + armDelayMs,
         lastClientX: seed.startX,
         lastClientY: seed.startY,
-        lastCtrlKey: false,
+        lastSnapSuspended: false,
       };
       setGestureActive(true);
     },
-    [buildDragSubjects, compositionId, orderedTracks],
+    [buildDragSubjects, compositionId, finishLayerGesture, orderedTracks],
   );
 
   // Module state outlives this Panel. A Panel torn down mid-gesture would
@@ -448,12 +455,9 @@ export function useLayerDrag(opts: {
   // is what keeps a SECOND Panel's unmount from ending the first one's drag.
   useEffect(
     () => () => {
-      if (gestureRef.current === null) return;
-      gestureRef.current = null;
-      useLayerDragStore.getState().end();
-      setTimelineSnapGuide(compositionId, "layer", null);
+      finishLayerGesture(false);
     },
-    [compositionId],
+    [finishLayerGesture],
   );
 
   // -------- Layer drag (move / trim) --------
@@ -489,7 +493,7 @@ export function useLayerDrag(opts: {
     (
       state: DragState,
       frameDeltaUs: number,
-      ctrlKey: boolean,
+      snapSuspended: boolean,
     ): TimelineDragSnapResult => {
       return resolveTimelineDragSnap({
         // The helper ignores the seed and, unless escaped, its link members —
@@ -507,7 +511,7 @@ export function useLayerDrag(opts: {
         fpsNum,
         fpsDen,
         pxPerSec,
-        enabled: tailSnapEnabled && !ctrlKey,
+        enabled: tailSnapEnabled && !snapSuspended,
         strengthPx: tailSnapStrengthPx,
       });
     },
@@ -628,7 +632,7 @@ export function useLayerDrag(opts: {
       state: DragState,
       clientX: number,
       clientY: number,
-      ctrlKey: boolean,
+      snapSuspended: boolean,
     ): PointerDragEvaluation => {
       const deltaPx = clientX - state.startX;
       const rawDeltaUs = Math.round((deltaPx / pxPerSec) * 1_000_000);
@@ -692,22 +696,33 @@ export function useLayerDrag(opts: {
         constrainedAnchorUs(state, frameDeltaUs, fpsNum, fpsDen) !== anchor;
 
       const hasEditIntent = timeChanged || trackChanged;
-      // A purely vertical move preserves time. In particular, do not let its
-      // zero horizontal delta be attracted to the playhead.
+      // Purely vertical moves must preserve time: never magnetically *shift*
+      // them towards the playhead or another clip. They can nevertheless be
+      // ALREADY aligned with a visible clip edge. Previously skipping the
+      // solver altogether hid the indicator on these legitimate alignments
+      // (especially when lifting a clip directly up or down one track).
       //
-      // The drop strip is NOT one of these cases: it takes a landing like any
-      // other destination, so the clip stays under the hand that carried it
-      // there rather than snapping back to where it started.
+      // Probe the same solver with a zero delta, but use its guide only when
+      // it also selected a zero delta. A nearby-but-not-aligned edge must
+      // never show the line, because we did not move the clip to that edge.
+      // Ordinary horizontal drags still get the solver's magnetic adjustment.
       //
-      // Over another Panel the ghost freezes where the clip already is: this
-      // Panel has no reading of a pointer outside it, and the DESTINATION draws
-      // the preview that does (`ForeignDragGhost.tsx`). Dragging back into this
-      // Panel picks the delta up again — the whole gesture is recomputed from
-      // the pointer each event.
-      const snapped =
-        timeChanged && foreignCompositionId === null
-          ? snapDeltaToTimelineBoundary(state, frameDeltaUs, ctrlKey)
-          : { deltaUs: 0, boundaryUs: null };
+      // Over another Panel the destination owns snapping in its own clock.
+      const magnetic =
+        foreignCompositionId === null && (timeChanged || trackChanged)
+          ? snapDeltaToTimelineBoundary(
+              state, timeChanged ? frameDeltaUs : 0, snapSuspended,
+            )
+          : null;
+      const snapped: TimelineDragSnapResult = timeChanged
+        ? magnetic ?? { deltaUs: 0, boundaryUs: null }
+        : {
+            deltaUs: 0,
+            boundaryUs:
+              trackChanged && magnetic?.deltaUs === 0
+                ? magnetic.boundaryUs
+                : null,
+          };
       const deltaUs = snapped.deltaUs;
       const moveProjection =
         state.kind === "move"
@@ -769,13 +784,22 @@ export function useLayerDrag(opts: {
     [compositionId],
   );
 
+  const showLayerSnapGuide = useCallback((evaluation: PointerDragEvaluation) => {
+    setTimelineSnapGuide(compositionId, "layer",
+      evaluation.hasEditIntent &&
+      evaluation.hasCommitChange &&
+      evaluation.foreignCompositionId === null
+        ? evaluation.snapBoundaryUs : null);
+  }, [compositionId]);
+
   const handlePointerMove = useCallback(
     (e: PointerEvent) => {
       const current = gestureRef.current;
       if (!current) return;
       const clientX = e.clientX;
       const clientY = e.clientY;
-      const evaluation = evaluatePointer(current.state, clientX, clientY, e.ctrlKey);
+      const snapSuspended = modKeyHeld(e);
+      const evaluation = evaluatePointer(current.state, clientX, clientY, snapSuspended);
       announceForeignComposition(
         evaluation.foreignCompositionId,
         current.state.duplicate,
@@ -784,7 +808,7 @@ export function useLayerDrag(opts: {
         ...current,
         lastClientX: clientX,
         lastClientY: clientY,
-        lastCtrlKey: e.ctrlKey,
+        lastSnapSuspended: snapSuspended,
       };
       const store = useLayerDragStore.getState();
       if (current.phase === "pending") {
@@ -797,20 +821,16 @@ export function useLayerDrag(opts: {
           phase: "dragging",
           state: evaluation.state,
         };
-        store.begin(evaluation.state, clientX, clientY, e.ctrlKey);
-        setTimelineSnapGuide(compositionId, "layer",
-          evaluation.hasCommitChange && evaluation.foreignCompositionId === null
-            ? evaluation.snapBoundaryUs : null);
+        store.begin(evaluation.state, clientX, clientY, snapSuspended);
+        showLayerSnapGuide(evaluation);
         return;
       }
       gestureRef.current = { ...next, state: evaluation.state };
       store.publish(evaluation.state);
-      store.moveVisual(clientX, clientY, e.ctrlKey);
-      setTimelineSnapGuide(compositionId, "layer",
-        evaluation.hasEditIntent && evaluation.hasCommitChange &&
-        evaluation.foreignCompositionId === null ? evaluation.snapBoundaryUs : null);
+      store.moveVisual(clientX, clientY, snapSuspended);
+      showLayerSnapGuide(evaluation);
     },
-    [announceForeignComposition, compositionId, evaluatePointer],
+    [announceForeignComposition, evaluatePointer, showLayerSnapGuide],
   );
 
   const handlePointerUp = useCallback(
@@ -821,14 +841,11 @@ export function useLayerDrag(opts: {
         current.state,
         e.clientX,
         e.clientY,
-        e.ctrlKey,
+        modKeyHeld(e),
       );
       const temporalArmReached =
         current.phase === "dragging" || Date.now() >= current.armAtMs;
-      gestureRef.current = null;
-      setGestureActive(false);
-      useLayerDragStore.getState().end();
-      setTimelineSnapGuide(compositionId, "layer", null);
+      finishLayerGesture();
       // Released over another timeline: this Panel sends nothing. The
       // DESTINATION commits the move, off its own claim and its own axis
       // (`ForeignDragGhost.tsx`) — the only party that can, since the landing is
@@ -1007,6 +1024,7 @@ export function useLayerDrag(opts: {
     [
       announceForeignComposition,
       evaluatePointer,
+      finishLayerGesture,
       // The trim commits read the grid directly. `evaluatePointer` happens to
       // change with them too, but leaning on that would make this handler's
       // freshness someone else's dependency list.
@@ -1039,7 +1057,7 @@ export function useLayerDrag(opts: {
         current.state,
         current.lastClientX,
         current.lastClientY,
-        current.lastCtrlKey,
+        current.lastSnapSuspended,
       );
       if (!evaluation.hasEditIntent) return;
       gestureRef.current = {
@@ -1049,20 +1067,21 @@ export function useLayerDrag(opts: {
       };
       useLayerDragStore
         .getState()
-        .begin(evaluation.state, current.lastClientX, current.lastClientY, current.lastCtrlKey);
-      setTimelineSnapGuide(compositionId, "layer",
-        evaluation.hasCommitChange && evaluation.foreignCompositionId === null
-          ? evaluation.snapBoundaryUs : null);
+        .begin(evaluation.state, current.lastClientX, current.lastClientY, current.lastSnapSuspended);
+      showLayerSnapGuide(evaluation);
     };
     timer = window.setTimeout(
       fire,
       Math.max(0, (gestureRef.current?.armAtMs ?? 0) - Date.now()),
     );
     return () => window.clearTimeout(timer);
-  }, [compositionId, evaluatePointer, gestureActive]);
+  }, [evaluatePointer, gestureActive, showLayerSnapGuide]);
 
   useEffect(() => {
     if (!gestureActive) return;
+    // A lost/cancelled pointer must use the same exit as release and Escape;
+    // otherwise the shared drag state and magnetic guide can remain stranded.
+    // This is intentionally covered by the pointercancel Electron regression.
     const cancel = () => setDrag(null);
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp);

@@ -4,6 +4,7 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import { TimelineSnapGuide } from "./TimelineSnapGuide";
 import {
   setTimelineSnapGuide,
+  clearTimelineSnapGuidesByOwner,
   useTimelineSnapFeedback,
 } from "./timelineSnapFeedbackStore";
 
@@ -26,6 +27,8 @@ describe("timeline snap feedback", () => {
     expect(guide.style.left).toBe("300px");
     expect(guide.getAttribute("aria-hidden")).toBe("true");
     expect(guide.className).toContain("pointer-events-none");
+    expect(guide.children).toHaveLength(1); // no diamond or other marker
+    expect(guide.firstElementChild?.className).toContain("border-[#B5D987]/90");
     rerender(<TimelineSnapGuide compositionId={null} pxPerSec={250} />);
     expect(screen.getByTestId("timeline-snap-guide").style.left).toBe("750px");
     update(null, "layer", null);
@@ -50,5 +53,23 @@ describe("timeline snap feedback", () => {
     expect(screen.getAllByTestId("timeline-snap-guide")).toHaveLength(1);
     update("b", "foreign", null);
     expect(screen.queryByTestId("timeline-snap-guide")).toBeNull();
+  });
+
+  it("clears all media-drag guides at gesture end without erasing other owners", () => {
+    render(
+      <>
+        <TimelineSnapGuide compositionId="a" pxPerSec={100} />
+        <TimelineSnapGuide compositionId="b" pxPerSec={100} />
+        <TimelineSnapGuide compositionId="c" pxPerSec={100} />
+      </>,
+    );
+    update("a", "media", 1_000_000);
+    update("b", "blade", 2_000_000);
+    update("c", "media", 3_000_000);
+    act(() => clearTimelineSnapGuidesByOwner("media"));
+    const guides = screen.getAllByTestId("timeline-snap-guide");
+    expect(guides).toHaveLength(1);
+    expect(guides[0]?.dataset.snapBoundaryUs).toBe("2000000");
+    update("b", "blade", null);
   });
 });

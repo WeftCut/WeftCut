@@ -15,6 +15,7 @@ import {
   type PlacementValidity,
 } from "./placement";
 import { resolveTimelineDragSnap } from "./snapping";
+import { clearTimelineSnapGuidesByOwner } from "./timelineSnapFeedbackStore";
 
 export const MEDIA_DRAG_TYPE = "application/x-weftcut-media";
 
@@ -101,8 +102,6 @@ export interface MediaDropSnapOptions {
   currentTimeUs: number;
   enabled: boolean;
   strengthPx: number;
-  /** Ctrl suspends only magnetic targets, not the composition frame grid. */
-  suspended?: boolean;
 }
 
 interface MediaDragState {
@@ -125,13 +124,15 @@ export const useMediaDragStore = create<MediaDragState>((set) => ({
   dropTargetTrackId: null,
   visual: null,
   absorptionTarget: null,
-  begin: (active, visual) =>
+  begin: (active, visual) => {
+    clearTimelineSnapGuidesByOwner("media");
     set({
       active,
       dropTargetTrackId: null,
       visual: visual ?? null,
       absorptionTarget: null,
-    }),
+    });
+  },
   moveVisual: (clientX, clientY) =>
     set((state) =>
       state.active === null || state.visual === null
@@ -154,13 +155,15 @@ export const useMediaDragStore = create<MediaDragState>((set) => ({
         ? { dropTargetTrackId: null, absorptionTarget: null }
         : state,
     ),
-  end: () =>
+  end: () => {
     set({
       active: null,
       dropTargetTrackId: null,
       visual: null,
       absorptionTarget: null,
-    }),
+    });
+    clearTimelineSnapGuidesByOwner("media");
+  },
 }));
 
 /// Cap on the floating drag preview's width, so a wide pool card does not
@@ -332,7 +335,7 @@ export function planMediaDrop({
         fpsNum,
         fpsDen,
         pxPerSec,
-        enabled: snap.enabled && !snap.suspended,
+        enabled: snap.enabled,
         strengthPx: snap.strengthPx,
       })
     : { deltaUs: 0, boundaryUs: null };

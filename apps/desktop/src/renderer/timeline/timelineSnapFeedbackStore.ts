@@ -32,6 +32,22 @@ export function setTimelineSnapGuide(
   });
 }
 
+/** Media drag is a singleton across all lanes in this renderer. Its end()
+ * clears the owner across every composition, so no lane needs a second
+ * drag-end listener just to remove its own transient visual feedback. */
+export function clearTimelineSnapGuidesByOwner(owner: TimelineSnapOwner): void {
+  useTimelineSnapFeedback.setState((state) => {
+    const next = { ...state.byComposition };
+    let changed = false;
+    for (const [composition, guide] of Object.entries(next)) {
+      if (guide?.owner !== owner) continue;
+      delete next[composition];
+      changed = true;
+    }
+    return changed ? { byComposition: next } : state;
+  });
+}
+
 export function useTimelineSnapBoundary(compositionId: string | null): number | null {
   return useTimelineSnapFeedback((s) => s.byComposition[keyOf(compositionId)]?.boundaryUs ?? null);
 }

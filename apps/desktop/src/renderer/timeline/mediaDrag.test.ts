@@ -494,7 +494,7 @@ describe("composition drag placement", () => {
   });
 });
 
-describe("media drop snap guide and Ctrl override", () => {
+describe("media drop snap guide and Mod override", () => {
   it("reports the exact clip-edge target and suspends only magnetic snapping", () => {
     const target = track([visualLayer("previous", 0, 2_000_000)]);
     const input = {
@@ -510,7 +510,7 @@ describe("media drop snap guide and Ctrl override", () => {
     const magnetic = planMediaDrop(input);
     expect(magnetic.snapBoundaryUs).toBe(2_000_000);
     expect(magnetic.tStartUs).toBe(2_000_000);
-    const bypass = planMediaDrop({ ...input, snap: { ...input.snap, suspended: true } });
+    const bypass = planMediaDrop({ ...input, snap: { ...input.snap, enabled: false } });
     expect(bypass.snapBoundaryUs).toBeNull();
     expect(bypass.tStartUs).toBe(1_900_000);
     expect(bypass.tStartUs).toBe(snapFrameRound(bypass.tStartUs, 30, 1));

@@ -569,8 +569,6 @@ const zhCN: Resources = {
     markers_shown_hint: "当前显示时间线标记。点击隐藏。",
     markers_hidden_hint: "已隐藏时间线标记。点击显示。",
     // 新加入本区的三个开关沿用同样的两态写法：按下态说明是哪一种状态，提示说明点击会做什么。
-    timeline_snap_options: "时间轴吸附选项",
-    timeline_snap_ctrl_hint: "拖动时按住 Ctrl 可暂时禁用磁性吸附，帧网格和音频采样网格仍生效。",
     snap_on_hint: "片段吸附已开启。点击关闭。",
     snap_off_hint: "片段吸附已关闭。点击开启。",
     review_overlay_on_hint: "审阅叠加层已开启：时间线上显示批注和代理尚未审阅的变更。点击隐藏。",

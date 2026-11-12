@@ -208,7 +208,7 @@ interface LayerDragStore {
   /// rather than inside it because it is the one value expressed in NO
   /// composition's axis: a Panel that did not start the drag can still turn it
   /// into a time on its own grid.
-  pointer: { clientX: number; clientY: number; ctrlKey: boolean } | null;
+  pointer: { clientX: number; clientY: number; snapSuspended: boolean } | null;
   /// The destination Panel's resolved landing, while the pointer is over one.
   /// Written by `ForeignDragGhost.tsx` — the only party that can resolve it —
   /// and read by the destination's own drop strip, which arms on it because a
@@ -218,9 +218,9 @@ interface LayerDragStore {
   /// the destination's `pointerup` listener runs (see the ref in
   /// `ForeignDragGhost.tsx`), so anything read here at release time is gone.
   claim: ForeignDropClaim | null;
-  begin: (state: DragState, clientX: number, clientY: number, ctrlKey?: boolean) => void;
+  begin: (state: DragState, clientX: number, clientY: number, snapSuspended?: boolean) => void;
   publish: (state: DragState) => void;
-  moveVisual: (clientX: number, clientY: number, ctrlKey?: boolean) => void;
+  moveVisual: (clientX: number, clientY: number, snapSuspended?: boolean) => void;
   claimDropTarget: (claim: ForeignDropClaim) => void;
   releaseDropTarget: (compositionId: string) => void;
   end: () => void;
@@ -260,19 +260,19 @@ export const useLayerDragStore = create<LayerDragStore>((set) => ({
   pointer: null,
   claim: null,
   /// The gesture arms: this is the first frame anything is drawn for it.
-  begin: (drag, clientX, clientY, ctrlKey = false) => set({ drag, pointer: { clientX, clientY, ctrlKey } }),
+  begin: (drag, clientX, clientY, snapSuspended = false) => set({ drag, pointer: { clientX, clientY, snapSuspended } }),
   /// Every subsequent pointermove. Guarded on VALUE, not identity, the way
   /// `setMarqueeBox` is: `useLayerDrag` rebuilds the state object per event, so
   /// a pointer that wiggled inside one frame would otherwise wake every
   /// subscriber with nothing to show them.
   publish: (drag) =>
     set((s) => (s.drag !== null && sameDragValue(s.drag, drag) ? s : { drag })),
-  moveVisual: (clientX, clientY, ctrlKey = false) =>
+  moveVisual: (clientX, clientY, snapSuspended = false) =>
     set((s) =>
       s.drag === null ||
-      (s.pointer?.clientX === clientX && s.pointer.clientY === clientY && s.pointer.ctrlKey === ctrlKey)
+      (s.pointer?.clientX === clientX && s.pointer.clientY === clientY && s.pointer.snapSuspended === snapSuspended)
         ? s
-        : { pointer: { clientX, clientY, ctrlKey } },
+        : { pointer: { clientX, clientY, snapSuspended } },
     ),
   /// Value-guarded like `publish`: the claimant re-resolves the landing on
   /// every pointermove, and a pointer that wiggled inside one frame lands on
