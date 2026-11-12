@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { timeUsAtFrame } from "../frames";
 import type { LinkSummary, LayerSummary, TrackSummary } from "../ipc";
 import {
   resolveTimelineDragSnap,
@@ -211,23 +212,93 @@ describe("magnetic feedback contract (#156)", () => {
   it("returns the exact winning boundary alongside the quantised move delta", () => {
     expect(resolveTimelineDragSnap({
       ...baseOpts(), state, frameDeltaUs: 950_000,
-    })).toEqual({ deltaUs: 1_000_000, boundaryUs: 3_000_000 });
+    })).toMatchObject({ deltaUs: 1_000_000, boundaryUs: 3_000_000 });
   });
 
   it("has no magnetic target under Mod, even though the frame delta is preserved", () => {
     expect(resolveTimelineDragSnap({
       ...baseOpts({ enabled: false }), state, frameDeltaUs: 966_667,
-    })).toEqual({ deltaUs: 966_667, boundaryUs: null });
+    })).toMatchObject({ deltaUs: 966_667, boundaryUs: null });
   });
 
   it("reports trim targets and suppresses feedback when outside snap strength", () => {
     const trim = { ...state, kind: "trim-end" as const };
     expect(resolveTimelineDragSnap({
       ...baseOpts(), state: trim, frameDeltaUs: 966_667,
-    })).toEqual({ deltaUs: 1_000_000, boundaryUs: 3_000_000 });
+    })).toMatchObject({ deltaUs: 1_000_000, boundaryUs: 3_000_000 });
     expect(resolveTimelineDragSnap({
       ...baseOpts({ currentTimeUs: 10_000_000 }), state: trim, frameDeltaUs: 966_667,
-    })).toEqual({ deltaUs: 966_667, boundaryUs: null });
+    })).toMatchObject({ deltaUs: 966_667, boundaryUs: null });
+  });
+
+  it.each([1, 1001])("keeps a fixed move at the same time on the %i-denominator grid", (fpsDen) => {
+    const fpsNum = fpsDen === 1 ? 30 : 30_000;
+    const boundaryUs = timeUsAtFrame(61, fpsNum, fpsDen);
+    const opts = {
+      ...baseOpts({
+        visibleTracks: [track([layer("target", boundaryUs, boundaryUs + 1_000_000)])],
+        currentTimeUs: 10_000_000,
+      }),
+      fpsNum, fpsDen, frameDeltaUs: 0, preserveTime: true,
+    };
+    for (const driftUs of [-1, 0, 1]) {
+      expect(resolveTimelineDragSnap({
+        ...opts, state: { ...state, originalTStart: 0, originalTEnd: boundaryUs + driftUs },
+      })).toMatchObject({ deltaUs: 0, boundaryUs });
+    }
+    expect(resolveTimelineDragSnap({
+      ...opts,
+      state: { ...state, originalTStart: 0, originalTEnd: timeUsAtFrame(60, fpsNum, fpsDen) },
+    })).toMatchObject({ deltaUs: 0, boundaryUs: null });
+  });
+
+  it("keeps a track-only guide off when a one-microsecond difference crosses the frame rounding boundary", () => {
+    const result = resolveTimelineDragSnap({
+      ...baseOpts({
+        visibleTracks: [track([layer("target", 16_667, 1_000_000)])],
+        currentTimeUs: 10_000_000,
+      }),
+      state: { ...state, originalTStart: 0, originalTEnd: 16_666 },
+      frameDeltaUs: 0,
+      preserveTime: true,
+    });
+    expect(result).toMatchObject({ deltaUs: 0, boundaryUs: null });
+  });
+
+  it.each([
+    { zoom: 100, strength: 4, snaps: true },
+    { zoom: 200, strength: 4, snaps: false },
+    { zoom: 200, strength: 7, snaps: true },
+  ])("applies snap strength in screen pixels (%j)", ({ zoom, strength, snaps }) => {
+    const result = resolveTimelineDragSnap({
+      ...baseOpts(), state, frameDeltaUs: 966_667, pxPerSec: zoom, strengthPx: strength,
+    });
+    expect(result).toMatchObject({
+      deltaUs: snaps ? 1_000_000 : 966_667,
+      boundaryUs: snaps ? 3_000_000 : null,
+    });
+  });
+
+  it("uses the nearest target the projected edge can actually land on", () => {
+    const result = resolveTimelineDragSnap({
+      ...baseOpts({
+        visibleTracks: [track([layer("target", 1_866_667, 1_933_333)])],
+        currentTimeUs: 10_000_000,
+      }),
+      state, frameDeltaUs: -133_333,
+      projectMove: (deltaUs) => {
+        // Another selected member reaches zero before the nearest snap.
+        const shift = Math.max(-100_000, deltaUs);
+        return {
+          anchor: { tStartUs: state.originalTStart + shift, tEndUs: state.originalTEnd + shift },
+          validity: "valid" as const,
+        };
+      },
+    });
+    expect(result).toEqual({
+      deltaUs: -66_667, boundaryUs: 1_933_333,
+      placement: { anchor: { tStartUs: 933_333, tEndUs: 1_933_333 }, validity: "valid" },
+    });
   });
 
   it("a blade/cut reports the target independently of its resulting time", () => {

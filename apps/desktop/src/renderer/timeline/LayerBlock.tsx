@@ -82,7 +82,7 @@ import {
   useKeyframeSelectionStore,
 } from "../keyframe/selectionStore";
 import { timelineLayerTheme } from "./layerTheme";
-import { placementRefuses, previewTrackId } from "./placement";
+import { placementRefuses } from "./placement";
 import { useLayerDragFor, type DragKind, type DragSeed } from "./layerDragStore";
 import { AppIcon } from "@/components/AppIcon";
 
@@ -387,6 +387,7 @@ export function LayerBlock({
   const dragSubject =
     dragState?.subjects.find((subject) => subject.layerId === layer.id) ??
     null;
+  const movePlacement = dragState?.movePlacements?.get(layer.id);
   const isDragging = dragSubject !== null;
   const isDragAnchor = dragState?.layerId === layer.id;
   const isPendingPlacement = pendingPlacement?.layerId === layer.id;
@@ -489,10 +490,8 @@ export function LayerBlock({
     const dx = dragState.deltaUs;
     switch (dragState.kind) {
       case "move": {
-        const moveDeltaUs = Math.max(dx, -dragState.originalTStart);
-        const durationUs = dragSubject.originalTEnd - dragSubject.originalTStart;
-        liveStart = Math.max(0, dragSubject.originalTStart + moveDeltaUs);
-        liveEnd = liveStart + durationUs;
+        liveStart = movePlacement?.tStartUs ?? liveStart;
+        liveEnd = movePlacement?.tEndUs ?? liveEnd;
         break;
       }
       case "trim-start":
@@ -532,14 +531,7 @@ export function LayerBlock({
   // Source copies are normally filtered out for cross-track drag/pending
   // states. If one still renders during a transitional frame, keep it
   // non-interactive and visually secondary.
-  const dragPreviewTrackId =
-    dragSubject && dragState?.kind === "move"
-      ? dragState.destinationByLayerId?.has(dragSubject.layerId)
-        ? previewTrackId(dragState.destinationByLayerId.get(dragSubject.layerId)!, dragSubject.trackId)
-        : isDragAnchor
-        ? previewTrackId(dragState.overTrackId, dragSubject.trackId)
-        : dragSubject.trackId
-      : null;
+  const dragPreviewTrackId = movePlacement?.trackId ?? null;
   const movedAcrossTracks =
     (dragPreviewTrackId !== null && dragPreviewTrackId !== trackId) ||
     (isPendingPlacement && pendingPlacement.trackId !== trackId);

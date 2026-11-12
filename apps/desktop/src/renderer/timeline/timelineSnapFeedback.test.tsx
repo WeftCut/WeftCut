@@ -2,9 +2,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { TimelineSnapGuide } from "./TimelineSnapGuide";
+import { useMediaDragStore } from "./mediaDrag";
+import { SPAWN_TRACK_ID } from "./placement";
 import {
   setTimelineSnapGuide,
-  clearTimelineSnapGuidesByOwner,
   useTimelineSnapFeedback,
 } from "./timelineSnapFeedbackStore";
 
@@ -14,6 +15,7 @@ const update = (...args: Parameters<typeof setTimelineSnapGuide>) => {
 
 afterEach(() => {
   cleanup();
+  useMediaDragStore.getState().end();
   useTimelineSnapFeedback.setState({ byComposition: {} });
 });
 
@@ -55,7 +57,7 @@ describe("timeline snap feedback", () => {
     expect(screen.queryByTestId("timeline-snap-guide")).toBeNull();
   });
 
-  it("clears all media-drag guides at gesture end without erasing other owners", () => {
+  it("follows the current media drop claim across compositions and clears at gesture end", () => {
     render(
       <>
         <TimelineSnapGuide compositionId="a" pxPerSec={100} />
@@ -63,13 +65,26 @@ describe("timeline snap feedback", () => {
         <TimelineSnapGuide compositionId="c" pxPerSec={100} />
       </>,
     );
-    update("a", "media", 1_000_000);
+    const drag = useMediaDragStore.getState();
+    const claim = (compositionId: string, snapBoundaryUs: number) => act(() => {
+      drag.claimDropTarget({
+        compositionId, trackId: SPAWN_TRACK_ID, absorptionTarget: null, snapBoundaryUs,
+      });
+    });
+    const boundaries = () => screen.getAllByTestId("timeline-snap-guide")
+      .map((guide) => guide.dataset.snapBoundaryUs).sort();
+
+    act(() => drag.begin({
+      source: "media", mediaId: "media", kind: "Video", label: "Source", durationUs: 1_000_000,
+    }));
     update("b", "blade", 2_000_000);
-    update("c", "media", 3_000_000);
-    act(() => clearTimelineSnapGuidesByOwner("media"));
-    const guides = screen.getAllByTestId("timeline-snap-guide");
-    expect(guides).toHaveLength(1);
-    expect(guides[0]?.dataset.snapBoundaryUs).toBe("2000000");
-    update("b", "blade", null);
+    claim("a", 1_000_000);
+    expect(boundaries()).toEqual(["1000000", "2000000"]);
+    claim("c", 3_000_000);
+    act(() => drag.releaseDropTarget("a", SPAWN_TRACK_ID));
+    expect(boundaries()).toEqual(["2000000", "3000000"]);
+
+    act(() => drag.end());
+    expect(boundaries()).toEqual(["2000000"]);
   });
 });

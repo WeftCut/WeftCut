@@ -3,13 +3,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LayerBlock, type PendingLayerPlacement } from "./LayerBlock";
 import {
-  moveLandings,
-  shiftMembersOf,
   useLayerDragForTrack,
   type DragSeed,
   type DragSubject,
 } from "./layerDragStore";
-import { shiftOnGrids } from "../grid";
 import {
   computeLayerSlices,
   layerSliceRect,
@@ -37,13 +34,12 @@ import {
   mediaDropInvalid,
   parseMediaDrag,
   planMediaDrop,
+  useIsMediaDropTarget,
   useMediaDragStore,
   type MediaDragPayload,
   type MediaDropPlan,
   type MediaDropSnapOptions,
 } from "./mediaDrag";
-import { previewTrackId } from "./placement";
-import { setTimelineSnapGuide } from "./timelineSnapFeedbackStore";
 import { ReviewCuts, ReviewFocusWash, ReviewGhosts, ReviewWasFrames } from "./ReviewMarks";
 
 export function TrackLane({
@@ -169,7 +165,7 @@ export function TrackLane({
   // (`layerDragStore.ts`).
   const dragState = useLayerDragForTrack(track.id);
   const activeMediaDrag = useMediaDragStore((s) => s.active);
-  const dropTargetTrackId = useMediaDragStore((s) => s.dropTargetTrackId);
+  const isDropTarget = useIsMediaDropTarget(compositionId, track.id);
   const claimDropTarget = useMediaDragStore((s) => s.claimDropTarget);
   const releaseDropTarget = useMediaDragStore((s) => s.releaseDropTarget);
   const endMediaDrag = useMediaDragStore((s) => s.end);
@@ -179,22 +175,17 @@ export function TrackLane({
   } | null>(null);
 
   useEffect(() => {
-    if (activeMediaDrag === null || dropTargetTrackId !== track.id) {
+    if (activeMediaDrag === null || !isDropTarget) {
       setDropPreview(null);
     }
-  }, [activeMediaDrag, dropTargetTrackId, track.id]);
+  }, [activeMediaDrag, isDropTarget]);
 
   const visibleDropPreview =
-    dropTargetTrackId === track.id ? dropPreview : null;
+    isDropTarget ? dropPreview : null;
 
   const dragPreviewTrackId = useCallback(
-    (subject: DragSubject): string => {
-      if (dragState?.kind !== "move") return subject.trackId;
-      const destination = dragState.destinationByLayerId?.get(subject.layerId);
-      if (destination !== undefined) return previewTrackId(destination, subject.trackId);
-      if (subject.layerId !== dragState.layerId) return subject.trackId;
-      return previewTrackId(dragState.overTrackId, subject.trackId);
-    },
+    (subject: DragSubject): string =>
+      dragState?.movePlacements?.get(subject.layerId)?.trackId ?? subject.trackId,
     [dragState],
   );
 
@@ -255,9 +246,7 @@ export function TrackLane({
   // A transition travels with its participants, including the pending commit
   // bridge. Use the same landings as the clip bodies; playback never drives it.
   const transitionChips = useMemo(() => {
-    const landings = dragState?.kind === "move" && !dragState.duplicate
-      ? moveLandings(dragState, dragState.deltaUs, { num: fpsNum, den: fpsDen }).byLayerId
-      : null;
+    const landings = dragState?.duplicate ? null : dragState?.movePlacements;
     const layers = renderedLayers.map((layer) => {
       const landing = landings?.get(layer.id);
       return landing ? { ...layer, t_start_us: landing.tStartUs, t_end_us: landing.tEndUs } : layer;
@@ -266,7 +255,7 @@ export function TrackLane({
       Math.min(chip.fromLayer.t_end_us, chip.toLayer.t_end_us) -
         Math.max(chip.fromLayer.t_start_us, chip.toLayer.t_start_us) === chip.transition.duration_us,
     );
-  }, [track, transitions, renderedLayers, dragState, fpsNum, fpsDen]);
+  }, [track, transitions, renderedLayers, dragState]);
 
   // One in-flight clone ghost per duplicate subject landing on THIS lane: the
   // dragged seed follows the pointer's lane, every other member stays on its
@@ -277,28 +266,8 @@ export function TrackLane({
     for (const subject of dragState.subjects) {
       const layer = dragLayerById.get(subject.layerId);
       if (!layer) continue;
-      const previewTrackId =
-        subject.layerId === dragState.layerId
-          ? (dragState.overTrackId ?? subject.trackId)
-          : subject.trackId;
-      if (previewTrackId !== track.id) continue;
-      // Per member, and clamped per member: a duplicate's members are placed one
-      // at a time (`pasteLayerInterval` resolves one layer), so unlike a move
-      // there is no set for the zero boundary to stop as one body.
-      //
-      // The endpoints themselves are the shared arithmetic (`renderer/grid.ts`),
-      // which is what `pasteLayerInterval` computes on the other side of the
-      // commit: both endpoints take the same delta and snap on this member's own
-      // lattice.
-      const clampedStartUs = Math.max(
-        0,
-        subject.originalTStart + dragState.deltaUs,
-      );
-      const landed = shiftOnGrids(
-        shiftMembersOf([subject]),
-        clampedStartUs - subject.originalTStart,
-        { num: fpsNum, den: fpsDen },
-      ).get(subject.layerId)!;
+      const landed = dragState.movePlacements?.get(subject.layerId);
+      if (landed?.trackId !== track.id) continue;
       out.push({
         layer,
         sliceLayer: {
@@ -310,7 +279,7 @@ export function TrackLane({
       });
     }
     return out;
-  }, [dragLayerById, dragState, fpsDen, fpsNum, track.id]);
+  }, [dragLayerById, dragState, track.id]);
 
   const onDragOver = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
@@ -328,8 +297,6 @@ export function TrackLane({
         fpsDen,
         snap: { ...mediaDropSnap, enabled: mediaDropSnap.enabled && !modKeyHeld(e), currentTimeUs: playheadClockUs(compositionId) },
       });
-      setTimelineSnapGuide(compositionId, "media",
-        plan.validity === "valid" ? plan.snapBoundaryUs ?? null : null);
       e.dataTransfer.dropEffect = plan.validity === "valid" ? "copy" : "none";
       const slot = mediaDropGhostSlot(height, plan);
       const ghostLeft =
@@ -343,11 +310,16 @@ export function TrackLane({
       const targetWidth = Math.min(36, Math.max(14, ghostWidth));
       const targetHeight = Math.min(20, Math.max(10, slot.height * 0.45));
       const anchorX = ghostLeft + Math.min(MEDIA_DRAG_CURSOR_OFFSET_PX, ghostWidth / 2);
-      claimDropTarget(track.id, {
-        left: anchorX - targetWidth / 2,
-        top: rect.top + slot.top + (slot.height - targetHeight) / 2,
-        width: targetWidth,
-        height: targetHeight,
+      claimDropTarget({
+        compositionId,
+        trackId: track.id,
+        snapBoundaryUs: plan.validity === "valid" ? plan.snapBoundaryUs ?? null : null,
+        absorptionTarget: {
+          left: anchorX - targetWidth / 2,
+          top: rect.top + slot.top + (slot.height - targetHeight) / 2,
+          width: targetWidth,
+          height: targetHeight,
+        },
       });
       setDropPreview({ media: activeMediaDrag, plan });
     },
@@ -385,9 +357,8 @@ export function TrackLane({
     ) {
       return;
     }
-    releaseDropTarget(track.id);
+    releaseDropTarget(compositionId, track.id);
     setDropPreview(null);
-    setTimelineSnapGuide(compositionId, "media", null);
   }, [compositionId, releaseDropTarget, track.id]);
 
   const onDrop = useCallback(
@@ -408,7 +379,7 @@ export function TrackLane({
         : null;
       setDropPreview(null);
       if (!payload) {
-        setTimelineSnapGuide(compositionId, "media", null);
+        releaseDropTarget(compositionId, track.id);
         return;
       }
       e.preventDefault();
@@ -428,6 +399,7 @@ export function TrackLane({
       mediaDropSnap,
       onMediaDrop,
       pxPerSec,
+      releaseDropTarget,
       track,
     ],
   );

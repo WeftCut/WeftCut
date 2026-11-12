@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { create } from "zustand";
 
 import { snapFrameRound } from "../frames";
@@ -15,7 +16,6 @@ import {
   type PlacementValidity,
 } from "./placement";
 import { resolveTimelineDragSnap } from "./snapping";
-import { clearTimelineSnapGuidesByOwner } from "./timelineSnapFeedbackStore";
 
 export const MEDIA_DRAG_TYPE = "application/x-weftcut-media";
 
@@ -104,67 +104,60 @@ export interface MediaDropSnapOptions {
   strengthPx: number;
 }
 
+interface MediaDropTarget {
+  compositionId: string | null;
+  trackId: string;
+  absorptionTarget: MediaDragAbsorptionTarget | null;
+  snapBoundaryUs: number | null;
+}
+
 interface MediaDragState {
   active: MediaDragPayload | null;
-  dropTargetTrackId: string | null;
   visual: MediaDragVisual | null;
-  absorptionTarget: MediaDragAbsorptionTarget | null;
+  dropTarget: MediaDropTarget | null;
   begin: (payload: MediaDragPayload, visual?: MediaDragVisual) => void;
   moveVisual: (clientX: number, clientY: number) => void;
-  claimDropTarget: (
-    trackId: string,
-    absorptionTarget?: MediaDragAbsorptionTarget,
-  ) => void;
-  releaseDropTarget: (trackId: string) => void;
+  claimDropTarget: (target: MediaDropTarget) => void;
+  releaseDropTarget: (compositionId: string | null, trackId: string) => void;
   end: () => void;
+}
+
+function ownsDropTarget(
+  target: MediaDropTarget | null,
+  compositionId: string | null,
+  trackId: string,
+): boolean {
+  return target !== null && target.compositionId === compositionId && target.trackId === trackId;
 }
 
 export const useMediaDragStore = create<MediaDragState>((set) => ({
   active: null,
-  dropTargetTrackId: null,
   visual: null,
-  absorptionTarget: null,
-  begin: (active, visual) => {
-    clearTimelineSnapGuidesByOwner("media");
-    set({
-      active,
-      dropTargetTrackId: null,
-      visual: visual ?? null,
-      absorptionTarget: null,
-    });
-  },
+  dropTarget: null,
+  begin: (active, visual) => set({ active, visual: visual ?? null, dropTarget: null }),
   moveVisual: (clientX, clientY) =>
     set((state) =>
       state.active === null || state.visual === null
         ? state
         : { visual: { ...state.visual, clientX, clientY } },
     ),
-  claimDropTarget: (trackId, absorptionTarget) =>
+  claimDropTarget: (dropTarget) =>
+    set((state) => state.active === null ? state : { dropTarget }),
+  releaseDropTarget: (compositionId, trackId) =>
     set((state) =>
-      state.dropTargetTrackId === trackId &&
-      state.absorptionTarget === absorptionTarget
-        ? state
-        : {
-            dropTargetTrackId: trackId,
-            absorptionTarget: absorptionTarget ?? null,
-          },
-    ),
-  releaseDropTarget: (trackId) =>
-    set((state) =>
-      state.dropTargetTrackId === trackId
-        ? { dropTargetTrackId: null, absorptionTarget: null }
+      ownsDropTarget(state.dropTarget, compositionId, trackId)
+        ? { dropTarget: null }
         : state,
     ),
-  end: () => {
-    set({
-      active: null,
-      dropTargetTrackId: null,
-      visual: null,
-      absorptionTarget: null,
-    });
-    clearTimelineSnapGuidesByOwner("media");
-  },
+  end: () => set({ active: null, visual: null, dropTarget: null }),
 }));
+
+export function useIsMediaDropTarget(compositionId: string | null, trackId: string): boolean {
+  useEffect(() => () => {
+    useMediaDragStore.getState().releaseDropTarget(compositionId, trackId);
+  }, [compositionId, trackId]);
+  return useMediaDragStore((s) => ownsDropTarget(s.dropTarget, compositionId, trackId));
+}
 
 /// Cap on the floating drag preview's width, so a wide pool card does not
 /// follow the pointer at full size.

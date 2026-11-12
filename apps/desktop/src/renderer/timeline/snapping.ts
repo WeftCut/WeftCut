@@ -1,15 +1,14 @@
 import type { LinkSummary, TrackSummary } from "../ipc";
 import { adjacentFrameBoundaryUs, snapFrameRound } from "../frames";
+import { placementRefuses, type PlacementValidity } from "./placement";
 
 const US_PER_SEC = 1_000_000;
 
 export type TimelineDragSnapKind = "move" | "trim-start" | "trim-end";
 
-/** The actual magnetic target is returned separately from the frame-quantised
- * landing. No target means the drag landed on its normal frame grid only. */
-export interface TimelineDragSnapResult {
-  deltaUs: number;
-  boundaryUs: number | null;
+interface MoveSnapPlacement {
+  anchor: { tStartUs: number; tEndUs: number };
+  validity: PlacementValidity;
 }
 
 export interface TimelineTimeSnapResult {
@@ -88,112 +87,95 @@ function timelineBoundaries(
   return boundaries;
 }
 
-function dragAnchors(
-  state: TimelineDragSnapState,
-  frameDeltaUs: number,
-): { originalUs: number; desiredUs: number }[] {
-  switch (state.kind) {
-    case "move":
-      return [
-        {
-          originalUs: state.originalTStart,
-          desiredUs: Math.max(0, state.originalTStart + frameDeltaUs),
-        },
-        {
-          originalUs: state.originalTEnd,
-          desiredUs: Math.max(0, state.originalTEnd + frameDeltaUs),
-        },
-      ];
-    case "trim-start":
-      return [
-        {
-          originalUs: state.originalTStart,
-          desiredUs: state.originalTStart + frameDeltaUs,
-        },
-      ];
-    case "trim-end":
-      return [
-        {
-          originalUs: state.originalTEnd,
-          desiredUs: state.originalTEnd + frameDeltaUs,
-        },
-      ];
-  }
-}
-
-function validDragDelta(
+/// Where the dragged edge / clip-start actually lands, after the constraints the
+/// kind imposes: a move never starts before zero, and a trim never crosses its
+/// own opposite edge (one frame of clip always survives).
+export function constrainedAnchorUs(
   state: TimelineDragSnapState,
   deltaUs: number,
   fpsNum: number,
   fpsDen: number,
-): boolean {
+): number {
   switch (state.kind) {
     case "move":
-      return state.originalTStart + deltaUs >= 0;
-    case "trim-start": {
-      const newStart = state.originalTStart + deltaUs;
-      return (
-        newStart >= 0 &&
-        newStart <=
-          adjacentFrameBoundaryUs(
-            state.originalTEnd,
-            -1,
-            fpsNum,
-            fpsDen,
-          )
+      return Math.max(0, state.originalTStart + deltaUs);
+    case "trim-start":
+      return Math.max(
+        0,
+        Math.min(
+          state.originalTStart + deltaUs,
+          adjacentFrameBoundaryUs(state.originalTEnd, -1, fpsNum, fpsDen),
+        ),
       );
-    }
     case "trim-end":
-      return (
-        state.originalTEnd + deltaUs >=
-        adjacentFrameBoundaryUs(
-          state.originalTStart,
-          1,
-          fpsNum,
-          fpsDen,
-        )
+      return Math.max(
+        adjacentFrameBoundaryUs(state.originalTStart, 1, fpsNum, fpsDen),
+        state.originalTEnd + deltaUs,
       );
   }
 }
 
-export function resolveTimelineDragSnap(
+export function resolveTimelineDragSnap<Placement extends MoveSnapPlacement>(
   opts: TimelineSnapOptions & {
     state: TimelineDragSnapState;
     frameDeltaUs: number;
+    preserveTime?: boolean;
+    projectMove?: ((deltaUs: number) => Placement) | undefined;
   },
-): TimelineDragSnapResult {
-  if (!opts.enabled) return { deltaUs: opts.frameDeltaUs, boundaryUs: null };
+): { deltaUs: number; boundaryUs: number | null; placement: Placement | undefined } {
+  const { state, fpsNum, fpsDen, preserveTime, projectMove } = opts;
+  const deltaUs = preserveTime ? 0 : opts.frameDeltaUs;
+  const fallback = () => ({ deltaUs, boundaryUs: null, placement: projectMove?.(deltaUs) });
   const maxDistanceUs = thresholdUs(opts.strengthPx, opts.pxPerSec);
-  if (maxDistanceUs <= 0) return { deltaUs: opts.frameDeltaUs, boundaryUs: null };
+  if (!opts.enabled || maxDistanceUs <= 0) return fallback();
 
-  const ignored = ignoredLayerIds(
-    opts.state.layerId,
-    opts.state.escapeLink,
-    opts.links,
-    opts.linkByLayerId,
-  );
-  for (const subject of opts.state.subjects ?? []) ignored.add(subject.layerId);
-  const boundaries = timelineBoundaries(opts, ignored);
-  const anchors = dragAnchors(opts.state, opts.frameDeltaUs);
+  const ignored = ignoredLayerIds(state.layerId, state.escapeLink, opts.links, opts.linkByLayerId);
+  for (const subject of state.subjects ?? []) ignored.add(subject.layerId);
 
-  let bestDeltaUs: number | null = null;
-  let bestBoundaryUs: number | null = null;
-  let bestDistanceUs = Number.POSITIVE_INFINITY;
-  for (const boundaryUs of boundaries) {
+  // A track-only move has one possible placement. Test that landing's edges
+  // on the composition grid before ranking targets by distance.
+  const fixed = preserveTime ? fallback() : null;
+  const edges: ("tStartUs" | "tEndUs")[] =
+    state.kind === "move" ? ["tStartUs", "tEndUs"] :
+      state.kind === "trim-start" ? ["tStartUs"] : ["tEndUs"];
+  const frameTime = (timeUs: number) => snapFrameRound(timeUs, fpsNum, fpsDen);
+  const anchors = edges.map((edge) => {
+    const originalUs = edge === "tStartUs" ? state.originalTStart : state.originalTEnd;
+    const requestedUs = originalUs + deltaUs;
+    const desiredUs = fixed?.placement?.anchor[edge] ??
+      (state.kind === "move" ? Math.max(0, requestedUs) : requestedUs);
+    return { edge, originalUs, desiredUs, frameUs: frameTime(desiredUs) };
+  });
+  const candidates: { deltaUs: number; boundaryUs: number; distanceUs: number; edge: typeof edges[number] }[] = [];
+  for (const boundaryUs of new Set(timelineBoundaries(opts, ignored))) {
     for (const anchor of anchors) {
       const distanceUs = Math.abs(boundaryUs - anchor.desiredUs);
-      if (distanceUs > maxDistanceUs || distanceUs >= bestDistanceUs) {
-        continue;
-      }
-      const deltaUs = boundaryUs - anchor.originalUs;
-      if (!validDragDelta(opts.state, deltaUs, opts.fpsNum, opts.fpsDen)) continue;
-      bestDistanceUs = distanceUs;
-      bestDeltaUs = deltaUs;
-      bestBoundaryUs = boundaryUs;
+      if (preserveTime ? boundaryUs !== anchor.frameUs : distanceUs > maxDistanceUs) continue;
+      candidates.push({
+        deltaUs: preserveTime ? 0 : boundaryUs - anchor.originalUs,
+        boundaryUs,
+        distanceUs,
+        edge: anchor.edge,
+      });
     }
   }
 
-  return { deltaUs: bestDeltaUs ?? opts.frameDeltaUs, boundaryUs: bestBoundaryUs };
+  candidates.sort((a, b) => a.distanceUs - b.distanceUs);
+  for (const candidate of candidates) {
+    const { deltaUs, boundaryUs, edge } = candidate;
+    const placement = fixed ? fixed.placement : projectMove?.(deltaUs);
+    if (placement) {
+      if (placementRefuses(placement.validity)) continue;
+      if (frameTime(placement.anchor[edge]) !== boundaryUs) continue;
+    } else if (!preserveTime) {
+      const originalUs = edge === "tStartUs" ? state.originalTStart : state.originalTEnd;
+      const landedUs = constrainedAnchorUs(state, deltaUs, fpsNum, fpsDen);
+      if (state.kind === "move" ? state.originalTStart + deltaUs < 0 : landedUs !== originalUs + deltaUs) continue;
+    }
+    return { deltaUs, boundaryUs, placement };
+  }
+
+  return fixed ?? fallback();
 }
 
 export function resolveTimelineTimeSnap(

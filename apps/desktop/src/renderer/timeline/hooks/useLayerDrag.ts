@@ -16,7 +16,7 @@ import { linkFanoutActive } from "../linkEligibility";
 import i18n from "../../i18n";
 import { layerDisplayName } from "../../lib/layerName";
 import { currentGroupOrdinals } from "../../state/projectStore";
-import { adjacentFrameBoundaryUs, snapFrameRound } from "../../frames";
+import { snapFrameRound } from "../../frames";
 import { logMutationFailure } from "../../errors/tryMutate";
 import {
   layerOverlapClass,
@@ -31,33 +31,26 @@ import {
   type DragState,
   type DragSubject,
 } from "../layerDragStore";
-import { resolveTimelineDragSnap, type TimelineDragSnapResult } from "../snapping";
+import { constrainedAnchorUs, resolveTimelineDragSnap } from "../snapping";
 import { setTimelineSnapGuide } from "../timelineSnapFeedbackStore";
 import { refuseCrossCompositionCopy } from "../crossCompositionRefusal";
 import { timelineDestination } from "../timelineDestination";
 import { foreignCompositionAtPoint } from "../timelineSurfaces";
 import { playheadClockUs } from "../../state/playheadProjection";
+import { useToolStore } from "../../state/toolStore";
 import {
   evaluateTimelinePlacements,
+  previewTrackId,
   SPAWN_TRACK_ID,
   type PlacementValidity,
   type TimelinePlacement,
 } from "../placement";
 
-/// Tracks are kind-agnostic: any layer can land on any track. This
-/// reject hook always accepts; routing is by LayerParams, not track
-/// kind. See docs/data-model.md (kind-agnostic tracks) / ADR 0023.
-///
-/// Takes the destination's ID rather than its summary because one destination
-/// has no summary: the drop strip names a lane that does not exist yet.
-function trackAcceptsForLayer(_targetTrackId: string, _drag: DragState): boolean {
-  return true;
-}
-
 interface LayerMoveProjection {
   placements: PendingLayerPlacement[];
   destinationTrackId: string;
-  anchorStartUs: number;
+  anchor: { tStartUs: number; tEndUs: number };
+  hasTimeChange: boolean;
   validity: PlacementValidity;
   conflictingLayerIds: string[];
 }
@@ -88,34 +81,6 @@ interface LayerDragGesture {
   lastClientX: number;
   lastClientY: number;
   lastSnapSuspended: boolean;
-}
-
-/// Where the dragged edge / clip-start actually lands, after the constraints the
-/// kind imposes: a move never starts before zero, and a trim never crosses its
-/// own opposite edge (one frame of clip always survives).
-export function constrainedAnchorUs(
-  state: DragState,
-  deltaUs: number,
-  fpsNum: number,
-  fpsDen: number,
-): number {
-  switch (state.kind) {
-    case "move":
-      return Math.max(0, state.originalTStart + deltaUs);
-    case "trim-start":
-      return Math.max(
-        0,
-        Math.min(
-          state.originalTStart + deltaUs,
-          adjacentFrameBoundaryUs(state.originalTEnd, -1, fpsNum, fpsDen),
-        ),
-      );
-    case "trim-end":
-      return Math.max(
-        adjacentFrameBoundaryUs(state.originalTStart, 1, fpsNum, fpsDen),
-        state.originalTEnd + deltaUs,
-      );
-  }
 }
 
 interface PointerDragEvaluation {
@@ -475,59 +440,6 @@ export function useLayerDrag(opts: {
     [dropStripEl, laneEls, orderedTracks, trackViewportRef],
   );
 
-  /// Snap a raw drag delta so the dragged edge / clip-start lands on
-  /// a composition-frame boundary. Snapping the DESTINATION (not the
-  /// delta itself) handles the case where the source value was
-  /// already off-grid: we always end up on grid regardless of the
-  /// pre-state. Returns the adjusted deltaUs.
-  const snapDragDelta = useCallback(
-    (kind: DragState["kind"], originalTStart: number, originalTEnd: number, rawDeltaUs: number): number => {
-      const anchor = kind === "trim-end" ? originalTEnd : originalTStart;
-      const snappedDest = snapFrameRound(anchor + rawDeltaUs, fpsNum, fpsDen);
-      return snappedDest - anchor;
-    },
-    [fpsNum, fpsDen],
-  );
-
-  const snapDeltaToTimelineBoundary = useCallback(
-    (
-      state: DragState,
-      frameDeltaUs: number,
-      snapSuspended: boolean,
-    ): TimelineDragSnapResult => {
-      return resolveTimelineDragSnap({
-        // The helper ignores the seed and, unless escaped, its link members —
-        // which is the subject set for a move and for a duplicate alike, so a
-        // copy never snaps to the sources it is leaving in place.
-        state,
-        frameDeltaUs,
-        visibleTracks: visibleSnapTracks,
-        links,
-        linkByLayerId,
-        // Event-time read (drag pointermove): the playhead is a snap target;
-        // its value at the event is what snapping should use. Projected, because
-        // it is offered alongside layer boundaries on this Panel's own axis.
-        currentTimeUs: playheadClockUs(compositionId),
-        fpsNum,
-        fpsDen,
-        pxPerSec,
-        enabled: tailSnapEnabled && !snapSuspended,
-        strengthPx: tailSnapStrengthPx,
-      });
-    },
-    [
-      compositionId,
-      fpsNum,
-      fpsDen,
-      linkByLayerId,
-      links,
-      pxPerSec,
-      tailSnapEnabled,
-      tailSnapStrengthPx,
-      visibleSnapTracks,
-    ],
-  );
-
   const buildMoveProjection = useCallback(
     (
       state: DragState,
@@ -547,12 +459,8 @@ export function useLayerDrag(opts: {
       // promising surface shares, so a promise cannot be computed by an
       // arithmetic the command does not use. The drop strip's ghost makes the
       // same call for the same reason (`DropStrip.tsx`).
-      const { byLayerId: landings, anchorTStartUs: anchorStartUs } =
-        moveLandings(state, deltaUs, fps);
-      const destinationTrackId =
-        overTrackId !== null && trackAcceptsForLayer(overTrackId, state)
-          ? overTrackId
-          : state.trackId;
+      const { byLayerId: landings } = moveLandings(state, deltaUs, fps);
+      const destinationTrackId = previewTrackId(overTrackId, state.trackId);
       // A raise takes the WHOLE subject set onto the one new lane, where a
       // landing move re-lanes the anchor alone. Projecting them all onto
       // `SPAWN_TRACK_ID` is exactly the question "could one empty lane hold
@@ -567,12 +475,15 @@ export function useLayerDrag(opts: {
       const laneIds = orderedTracks.map(({ track }) => track.id);
       const laneDelta = laneIds.indexOf(destinationTrackId) - laneIds.indexOf(state.trackId);
       let outsideLanes = false;
+      let hasTimeChange = false;
 
       for (const subject of state.subjects) {
         const entry = layerEntryById.get(subject.layerId);
         if (!entry) continue;
         const isAnchor = subject.layerId === state.layerId;
         const landed = landings.get(subject.layerId)!;
+        hasTimeChange ||= landed.tStartUs !== subject.originalTStart ||
+          landed.tEndUs !== subject.originalTEnd;
         let targetTrackId = spawning || isAnchor ? destinationTrackId : subject.trackId;
         if (state.selectionMove && !spawning && laneDelta !== 0) {
           const index = laneIds.indexOf(subject.trackId);
@@ -619,7 +530,8 @@ export function useLayerDrag(opts: {
           tEndUs: placement.tEndUs,
         })),
         destinationTrackId,
-        anchorStartUs,
+        anchor: landings.get(state.layerId)!,
+        hasTimeChange,
         validity: outsideLanes ? "collision" : evaluation.validity,
         conflictingLayerIds: evaluation.conflictingLayerIds,
       };
@@ -641,15 +553,9 @@ export function useLayerDrag(opts: {
       // Compare grid destinations before calculating a drag delta. This is the
       // causality gate: snapping may refine a requested edit, but a stationary
       // pointer (including an off-grid audio anchor) cannot create one.
-      const requestedFrameChange =
-        snapFrameRound(anchor + rawDeltaUs, fpsNum, fpsDen) !==
-        snapFrameRound(anchor, fpsNum, fpsDen);
-      const frameDeltaUs = snapDragDelta(
-        state.kind,
-        state.originalTStart,
-        state.originalTEnd,
-        rawDeltaUs,
-      );
+      const requestedAnchor = snapFrameRound(anchor + rawDeltaUs, fpsNum, fpsDen);
+      const requestedFrameChange = requestedAnchor !== snapFrameRound(anchor, fpsNum, fpsDen);
+      const frameDeltaUs = requestedAnchor - anchor;
       // Vertical causality gate, mirroring the frame gate above: a track
       // change must be CAUSED by vertical travel. Without it any hit-test
       // disagreement at rest reads as edit intent, and a motionless click on
@@ -684,70 +590,51 @@ export function useLayerDrag(opts: {
       // visible ghost says what is.
       const overTrackId =
         hitTrackId === SPAWN_TRACK_ID && state.duplicate ? null : hitTrackId;
-      const destinationTrackId =
-        overTrackId !== null && trackAcceptsForLayer(overTrackId, state)
-          ? overTrackId
-          : state.trackId;
-      const trackChanged =
-        state.kind === "move" && destinationTrackId !== state.trackId;
+      const trackChanged = overTrackId !== null && overTrackId !== state.trackId;
 
       const timeChanged =
         requestedFrameChange &&
         constrainedAnchorUs(state, frameDeltaUs, fpsNum, fpsDen) !== anchor;
 
       const hasEditIntent = timeChanged || trackChanged;
-      // Purely vertical moves must preserve time: never magnetically *shift*
-      // them towards the playhead or another clip. They can nevertheless be
-      // ALREADY aligned with a visible clip edge. Previously skipping the
-      // solver altogether hid the indicator on these legitimate alignments
-      // (especially when lifting a clip directly up or down one track).
-      //
-      // Probe the same solver with a zero delta, but use its guide only when
-      // it also selected a zero delta. A nearby-but-not-aligned edge must
-      // never show the line, because we did not move the clip to that edge.
-      // Ordinary horizontal drags still get the solver's magnetic adjustment.
-      //
-      // Over another Panel the destination owns snapping in its own clock.
-      const magnetic =
-        foreignCompositionId === null && (timeChanged || trackChanged)
-          ? snapDeltaToTimelineBoundary(
-              state, timeChanged ? frameDeltaUs : 0, snapSuspended,
-            )
-          : null;
-      const snapped: TimelineDragSnapResult = timeChanged
-        ? magnetic ?? { deltaUs: 0, boundaryUs: null }
-        : {
-            deltaUs: 0,
-            boundaryUs:
-              trackChanged && magnetic?.deltaUs === 0
-                ? magnetic.boundaryUs
-                : null,
-          };
-      const deltaUs = snapped.deltaUs;
-      const moveProjection =
-        state.kind === "move"
-          ? buildMoveProjection(state, deltaUs, overTrackId)
-          : null;
+      const { deltaUs, boundaryUs, placement: moveProjection } = resolveTimelineDragSnap({
+        state,
+        frameDeltaUs: timeChanged && foreignCompositionId === null ? frameDeltaUs : 0,
+        preserveTime: trackChanged && !timeChanged,
+        projectMove: state.kind === "move"
+          ? (deltaUs) => buildMoveProjection(state, deltaUs, overTrackId)
+          : undefined,
+        visibleTracks: visibleSnapTracks,
+        links,
+        linkByLayerId,
+        currentTimeUs: playheadClockUs(compositionId),
+        fpsNum,
+        fpsDen,
+        pxPerSec,
+        enabled: tailSnapEnabled && !snapSuspended && hasEditIntent && foreignCompositionId === null,
+        strengthPx: tailSnapStrengthPx,
+      });
       const nextState: DragState = {
         ...state,
         deltaUs,
         overTrackId,
         validity: moveProjection?.validity ?? "valid",
         conflictingLayerIds: moveProjection?.conflictingLayerIds ?? [],
-        destinationByLayerId: moveProjection
-          ? new Map(moveProjection.placements.map((p) => [p.layerId, p.trackId]))
+        movePlacements: moveProjection
+          ? new Map(moveProjection.placements.map((p) => [p.layerId, p]))
           : new Map(),
       };
 
-      const hasCommitChange =
-        constrainedAnchorUs(state, deltaUs, fpsNum, fpsDen) !== anchor || trackChanged;
+      const hasCommitChange = trackChanged || (moveProjection
+        ? moveProjection.hasTimeChange
+        : constrainedAnchorUs(state, deltaUs, fpsNum, fpsDen) !== anchor);
 
       return {
         state: nextState,
         hasEditIntent,
         hasCommitChange,
-        moveProjection,
-        snapBoundaryUs: snapped.boundaryUs,
+        moveProjection: moveProjection ?? null,
+        snapBoundaryUs: boundaryUs,
         foreignCompositionId,
       };
     },
@@ -757,9 +644,12 @@ export function useLayerDrag(opts: {
       fpsDen,
       fpsNum,
       pxPerSec,
-      snapDragDelta,
-      snapDeltaToTimelineBoundary,
       destinationUnderPointer,
+      linkByLayerId,
+      links,
+      tailSnapEnabled,
+      tailSnapStrengthPx,
+      visibleSnapTracks,
     ],
   );
 
@@ -785,11 +675,7 @@ export function useLayerDrag(opts: {
   );
 
   const showLayerSnapGuide = useCallback((evaluation: PointerDragEvaluation) => {
-    setTimelineSnapGuide(compositionId, "layer",
-      evaluation.hasEditIntent &&
-      evaluation.hasCommitChange &&
-      evaluation.foreignCompositionId === null
-        ? evaluation.snapBoundaryUs : null);
+    setTimelineSnapGuide(compositionId, "layer", evaluation.snapBoundaryUs);
   }, [compositionId]);
 
   const handlePointerMove = useCallback(
@@ -822,12 +708,11 @@ export function useLayerDrag(opts: {
           state: evaluation.state,
         };
         store.begin(evaluation.state, clientX, clientY, snapSuspended);
-        showLayerSnapGuide(evaluation);
-        return;
+      } else {
+        gestureRef.current = { ...next, state: evaluation.state };
+        store.publish(evaluation.state);
+        store.moveVisual(clientX, clientY, snapSuspended);
       }
-      gestureRef.current = { ...next, state: evaluation.state };
-      store.publish(evaluation.state);
-      store.moveVisual(clientX, clientY, snapSuspended);
       showLayerSnapGuide(evaluation);
     },
     [announceForeignComposition, evaluatePointer, showLayerSnapGuide],
@@ -895,6 +780,10 @@ export function useLayerDrag(opts: {
               setPendingCommit(null);
               return;
             }
+            // The actor applies the same grid and whole-set zero floor as the
+            // projection. Passing a rounded landing back as input can move
+            // members on different grids by a different amount.
+            const requestedStartUs = Math.max(0, committed.originalTStart + deltaUs);
             if (spawning) {
               // ONE history entry, from ONE operation: the lane appears, every
               // subject moves onto it, and every lane the raise emptied goes with
@@ -915,16 +804,11 @@ export function useLayerDrag(opts: {
                 placements: moveProjection.placements,
                 verified: false,
               });
-              // The anchor's LANDED head, not `originalTStart + deltaUs`: the
-              // projection re-snapped it on the anchor's own lattice, and that is
-              // the number every ghost above was drawn against. Sending the
-              // unsnapped one would hand the command a different offset and land
-              // the set off its own preview.
               const spawnedTrackId = await moveLayersToNewTrack(
                 committed.subjects.map((subject) => subject.layerId),
                 {
                   layerId: committed.layerId,
-                  tStartUs: moveProjection.anchorStartUs,
+                  tStartUs: requestedStartUs,
                 },
               );
               onLaneSpawned(spawnedTrackId);
@@ -960,7 +844,7 @@ export function useLayerDrag(opts: {
               });
               const { clones } = await pasteLayers(
                 seedFirst,
-                moveProjection.anchorStartUs,
+                moveProjection.anchor.tStartUs,
                 moveProjection.destinationTrackId,
               );
               const cloneBySource = new Map(
@@ -985,12 +869,12 @@ export function useLayerDrag(opts: {
               await moveLayers(
                 moveProjection.placements.map(({ layerId, trackId }) => ({ layerId, trackId })),
                 committed.layerId,
-                moveProjection.anchorStartUs,
+                requestedStartUs,
               );
             } else await moveLayer(
               committed.layerId,
               moveProjection.destinationTrackId,
-              moveProjection.anchorStartUs,
+              requestedStartUs,
               escape,
             );
             break;
@@ -1083,10 +967,17 @@ export function useLayerDrag(opts: {
     // otherwise the shared drag state and magnetic guide can remain stranded.
     // This is intentionally covered by the pointercancel Electron regression.
     const cancel = () => setDrag(null);
+    const cancelOnEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") cancel();
+    };
+    window.addEventListener("keydown", cancelOnEscape);
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp);
     window.addEventListener("pointercancel", cancel);
+    const unsubscribeTool = useToolStore.subscribe(cancel);
     return () => {
+      unsubscribeTool();
+      window.removeEventListener("keydown", cancelOnEscape);
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", cancel);

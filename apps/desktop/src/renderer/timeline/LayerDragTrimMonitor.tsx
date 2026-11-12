@@ -1,13 +1,12 @@
 // The monitor's half of a trim drag. Owns no gesture and no rule: it reads the
 // published drag (`layerDragStore.ts`), decides which frame the boundary keeps,
-// and drives the transport. Everything about how that boundary is computed —
-// snapping, the causality gates, the commit — stays in `hooks/useLayerDrag.ts`.
+// and drives the transport. It reads the trim bounds from `snapping.ts`.
 
 import { useEffect } from "react";
 import { boundaryDisplayFrameUs } from "../frames";
 import { useEditPreview } from "../state/useEditPreview";
 import { useLayerDragStore } from "./layerDragStore";
-import { constrainedAnchorUs } from "./hooks/useLayerDrag";
+import { constrainedAnchorUs } from "./snapping";
 
 /// Drives the monitor while a trim drag in `compositionId`'s own Panel is live.
 /// Renders nothing: it exists to be a LEAF subscriber of the drag store, so the

@@ -23,6 +23,7 @@ import {
 } from "../state/selectionStore";
 import { compositionFixture, summaryFixture } from "../testing/summaryFixture";
 import { ForeignDragGhost } from "./ForeignDragGhost";
+import { TimelineSnapGuide } from "./TimelineSnapGuide";
 import {
   useLayerDragFor,
   useLayerDragForTrack,
@@ -240,6 +241,7 @@ function mountGhost(
         tailSnapEnabled={opts.tailSnap ?? false}
         tailSnapStrengthPx={8}
       />
+      <TimelineSnapGuide compositionId={DEST} pxPerSec={DEST_PX_PER_SEC} />
       {opts.probe}
     </>,
     { container: canvas },
@@ -454,6 +456,10 @@ describe("ForeignDragGhost", () => {
     });
 
     expect(view.only().dataset.startUs).toBe("1280000");
+    const guide = () => document.querySelector('[data-testid="timeline-snap-guide"]');
+    expect(guide()?.getAttribute("data-snap-boundary-us")).toBe("1280000");
+    view.move(OVER_SOURCE);
+    expect(guide()).toBeNull();
     // Proof it is the boundary and not the grid: the grid alone answers a frame
     // later.
     expect(LANDING_AT_25FPS).toBe(1_320_000);

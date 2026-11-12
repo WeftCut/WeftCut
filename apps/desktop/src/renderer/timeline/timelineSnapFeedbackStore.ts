@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 // One transient guide per timeline composition. Keep event-rate updates out of
 // Timeline's root React state: only the guide leaf subscribes to this store.
-export type TimelineSnapOwner = "layer" | "foreign" | "media" | "marker" | "blade";
+export type TimelineSnapOwner = "layer" | "foreign" | "marker" | "blade";
 interface Guide { owner: TimelineSnapOwner; boundaryUs: number }
 interface TimelineSnapFeedbackState {
   byComposition: Record<string, Guide | undefined>;
@@ -29,22 +29,6 @@ export function setTimelineSnapGuide(
     }
     if (current?.owner === owner && current.boundaryUs === boundaryUs) return state;
     return { byComposition: { ...state.byComposition, [key]: { owner, boundaryUs } } };
-  });
-}
-
-/** Media drag is a singleton across all lanes in this renderer. Its end()
- * clears the owner across every composition, so no lane needs a second
- * drag-end listener just to remove its own transient visual feedback. */
-export function clearTimelineSnapGuidesByOwner(owner: TimelineSnapOwner): void {
-  useTimelineSnapFeedback.setState((state) => {
-    const next = { ...state.byComposition };
-    let changed = false;
-    for (const [composition, guide] of Object.entries(next)) {
-      if (guide?.owner !== owner) continue;
-      delete next[composition];
-      changed = true;
-    }
-    return changed ? { byComposition: next } : state;
   });
 }
 

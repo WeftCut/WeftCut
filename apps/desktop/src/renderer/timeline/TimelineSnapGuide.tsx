@@ -1,3 +1,4 @@
+import { useMediaDragStore } from "./mediaDrag";
 import { useTimelineSnapBoundary } from "./timelineSnapFeedbackStore";
 
 /** A magnetic target, not a playhead or transition chip. The transient soft
@@ -8,7 +9,11 @@ export function TimelineSnapGuide({
   compositionId: string | null;
   pxPerSec: number;
 }) {
-  const boundaryUs = useTimelineSnapBoundary(compositionId);
+  const gestureBoundaryUs = useTimelineSnapBoundary(compositionId);
+  const mediaBoundaryUs = useMediaDragStore(({ dropTarget }) =>
+    dropTarget?.compositionId === compositionId ? dropTarget.snapBoundaryUs : null,
+  );
+  const boundaryUs = mediaBoundaryUs ?? gestureBoundaryUs;
   if (boundaryUs === null) return null;
   return (
     <div

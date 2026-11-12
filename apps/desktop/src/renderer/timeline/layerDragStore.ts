@@ -159,7 +159,7 @@ export interface DragSeed {
 export interface DragState extends DragSeed {
   /// An explicit multi-selection moves across lanes as one arrangement.
   selectionMove?: boolean;
-  destinationByLayerId?: ReadonlyMap<string, string>;
+  movePlacements?: ReadonlyMap<string, { trackId: string; tStartUs: number; tEndUs: number }>;
   /// The composition of the Panel the gesture started in, stamped by
   /// `useLayerDrag` from its own axis rather than carried on the seed — the
   /// block that mints a seed has no reason to know.
@@ -227,7 +227,7 @@ interface LayerDragStore {
 }
 
 /// Whether a pointermove produced any change worth re-rendering for. Only these
-/// four fields move within a gesture — everything else in `DragState` comes
+/// pointer-dependent fields move within a gesture — the rest of `DragState` comes
 /// from the seed or from `buildDragSubjects` and is fixed once — and `subjects`
 /// identity stands in for all of it, being minted once per gesture.
 function sameDragValue(a: DragState, b: DragState): boolean {
@@ -242,6 +242,12 @@ function sameDragValue(a: DragState, b: DragState): boolean {
   }
   for (let i = 0; i < a.conflictingLayerIds.length; i += 1) {
     if (a.conflictingLayerIds[i] !== b.conflictingLayerIds[i]) return false;
+  }
+  if (a.movePlacements?.size !== b.movePlacements?.size) return false;
+  for (const [id, placement] of a.movePlacements ?? []) {
+    const next = b.movePlacements?.get(id);
+    if (!next || placement.trackId !== next.trackId ||
+      placement.tStartUs !== next.tStartUs || placement.tEndUs !== next.tEndUs) return false;
   }
   return true;
 }
@@ -327,7 +333,9 @@ export const useLayerDragStore = create<LayerDragStore>((set) => ({
 /// per-event render set to "changed lanes" rather than "all lanes".
 function laneParticipates(drag: DragState, trackId: string): boolean {
   if (drag.overTrackId === trackId) return true;
-  if (drag.destinationByLayerId && [...drag.destinationByLayerId.values()].includes(trackId)) return true;
+  for (const placement of drag.movePlacements?.values() ?? []) {
+    if (placement.trackId === trackId) return true;
+  }
   return drag.subjects.some((subject) => subject.trackId === trackId);
 }
 
@@ -430,11 +438,9 @@ export const useForeignDropStripValidity = (
 /// otherwise, which is also the strip's answer to "is a clip drag over me".
 /// Gated so a drag that never reaches the strip does not re-render it.
 ///
-/// The whole state rather than a head, because the strip DRAWS this drop: a
-/// raise's preview belongs to the strip and to no lane (`previewTrackId`), so
-/// the row needs every subject's landing and the verdict on them, and it puts
-/// them through `moveLandings` — the projection's own arithmetic — rather than
-/// being handed a number computed some other way.
+/// The strip reads every subject's resolved placement because a raise moves
+/// the entire set onto one new lane.
+///
 ///
 /// The composition gate is what makes those landings this composition's µs: they
 /// are on the DRAG's axis, and only the Panel the drag started in shares it. A
