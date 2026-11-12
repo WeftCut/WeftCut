@@ -101,8 +101,11 @@ pub struct PublishArgs {
     pub policy: String,
 }
 
-/// A dot-prefixed staging file can carry UF_HIDDEN, which publication may
-/// preserve. Correct only the committed output and never fail a completed export.
+/// Clears UF_HIDDEN on a published export and keeps every other flag. Hard link
+/// and rename keep the inode's flags, so a hidden staging file would publish as
+/// a hidden export. Hidden staging files have been seen on APFS, which never
+/// hides dot-files itself; what sets the flag is unknown. Publication is the
+/// commit point, so a failure here only warns.
 #[cfg(target_os = "macos")]
 fn clear_published_hidden_flag(path: &Path) {
     use std::os::{fd::AsRawFd, macos::fs::MetadataExt};
@@ -161,7 +164,6 @@ pub fn publish(args: PublishArgs) -> Result<String> {
             }
             .map_err(|_| io::Error::last_os_error())?;
         }
-        // Rename may preserve staging UF_HIDDEN; inspect the published path.
         #[cfg(target_os = "macos")]
         clear_published_hidden_flag(&args.output);
         return Ok(args.output.to_string_lossy().into_owned());
@@ -188,7 +190,6 @@ pub fn publish(args: PublishArgs) -> Result<String> {
         };
         match publish_noreplace(&args.staging, &target) {
             Ok(()) => {
-                // Hard-link or rename may preserve staging UF_HIDDEN after publication.
                 #[cfg(target_os = "macos")]
                 clear_published_hidden_flag(&target);
                 return Ok(target.to_string_lossy().into_owned());

@@ -122,6 +122,9 @@ otherwise it hard-links, falling back to the platform's atomic no-replace
 rename (`renameat2(RENAME_NOREPLACE)`, `renamex_np(RENAME_EXCL)`, `MoveFileExW`
 without replace). There is no copy fallback; `export_prepare_output` proves the
 operation works in that directory before rendering.
+On macOS publication then clears `UF_HIDDEN` on the published file and keeps
+its other flags, since hard link and rename carry the staging file's flags.
+Failing to clear it only logs a warning.
 
 If mux or publication fails after encoding, the job becomes `awaiting_retry`
 and the panel offers **Retry finishing export** (stream-copy only; never
