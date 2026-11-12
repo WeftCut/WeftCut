@@ -48,7 +48,7 @@ export type FinalizeStep = "sink" | "audio" | "mux";
 
 /// Spelled out rather than built as `export.finalize_${step}` so adding a step
 /// to the union is a compile error here, not a missing-key string at runtime.
-const FINALIZE_STEP_KEY: Record<FinalizeStep, string> = {
+export const FINALIZE_STEP_KEY: Record<FinalizeStep, string> = {
   sink: "export.finalize_sink",
   audio: "export.finalize_audio",
   mux: "export.finalize_mux",
@@ -119,47 +119,28 @@ export function ExportPanel({
     finally { setPendingAction(false); }
   };
 
-  if (!dismissable) {
-    const status = (
-      <div className="export-background-state">
-        <span className="export-progress-status" role="status">
-          {percent === undefined && (
-            <span role="progressbar" aria-label={phase}>
-              <AppIcon icon={LoaderCircle} size="body" className="export-spinner" aria-hidden />
-            </span>
-          )}
-          {phase}
-        </span>
-        {percent !== undefined && (
-          <progress value={percent} max={100} aria-label={phase}>{percent}%</progress>
-        )}
-        {percent !== undefined && <span className="export-percent">{percent}%</span>}
-        <span className="export-timeline-locked">{t("export.timeline_locked")}</span>
-      </div>
-    );
-    const cancel = !cancelling && state.onCancel && (
-      <Button variant="secondary" size={state.background ? "sm" : "lg"} onClick={state.onCancel}>
-        {t("export.preparing_cancel")}
-      </Button>
-    );
-    return state.background ? (
-      <section className="export-progress-panel export-background-progress" aria-label={t("export.title")}>
-        {status}
-        {cancel}
-      </section>
-    ) : (
-      <AppDialog title={title} panelClassName="settings-panel export-progress-panel">
-        <div className="export-progress-body">{status}</div>
-        {cancel && <div className="export-actions export-progress-footer">{cancel}</div>}
-      </AppDialog>
-    );
-  }
-
   return (
-    <AppDialog title={title} onClose={retryable ? undefined : onClose}
+    <AppDialog title={title} onClose={dismissable && !retryable ? onClose : undefined}
       panelClassName="settings-panel export-progress-panel">
       <div className="export-progress-body">
-        {state.kind === "error" && (
+        {!dismissable && (
+          <section className="export-work" aria-label={phase}>
+            <div className="export-phase-row">
+              <p className="export-progress-status" role="status">
+                {percent === undefined && <span className="export-wait" role="progressbar" aria-label={phase}>
+                  <AppIcon icon={LoaderCircle} size="body" className="export-spinner" aria-hidden />
+                </span>}
+                {phase}
+              </p>
+              {percent !== undefined && <span className="export-percent">{percent}%</span>}
+            </div>
+            {percent !== undefined && <div className="progress-track"
+              role="progressbar" aria-label={phase} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
+              <div className="progress-fill" style={percent === undefined ? undefined : { width: `${percent}%` }} />
+            </div>}
+          </section>
+        )}
+        {!cancelling && state.kind === "error" && (
           <div className="export-failure" role="alert">
             <p className="export-progress-status">{resourceError ? t(resourceMessage) : stalled ? t("export.encoder_stalled")
               : t(retryable ? "export.retry_hint" : "export.failure_hint")}</p>
@@ -187,38 +168,43 @@ export function ExportPanel({
             )}
           </div>
         )}
-        {state.kind === "error" && (
+        {!cancelling && state.kind === "error" && (
           <details className="export-error-details">
             <summary>{t("export.technical_details")}</summary>
             <pre>{actionError || state.detail}</pre>
           </details>
         )}
-        {actionError && <p className="export-action-error" role="alert">{t("export.action_failed")}</p>}
+        {!cancelling && actionError && <p className="export-action-error" role="alert">{t("export.action_failed")}</p>}
       </div>
-      <div className="export-actions export-progress-footer">
-        {state.kind === "error" && state.onDiscard && (
-          <Button variant="ghost" size="lg" disabled={pendingAction} onClick={() => { void runAction(() => state.onDiscard!()); }}>{t("export.discard_pending")}</Button>
-        )}
-        {!retryable && (
-          <Button variant={state.kind === "complete" && !onReveal && !onPlay || state.kind === "error" && !(resourceError && onOpenSettings) ? "default" : "secondary"}
-            size="lg" onClick={onClose}>{t("export.dismiss")}</Button>
-        )}
-        {state.kind === "complete" && onPlay && (
-          <Button variant={onReveal ? "secondary" : "default"} size="lg"
-            onClick={() => onPlay(state.payload.outputPath)} title={t("export.play_hint")}>{t("export.play")}</Button>
-        )}
-        {state.kind === "complete" && onReveal && (
-          <Button variant="default" size="lg" onClick={() => onReveal(state.payload.outputPath)}
-            title={t("export.reveal_hint")}>{t(REVEAL_KEY[rendererOS])}</Button>
-        )}
-        {resourceError && onOpenSettings && (
-          <Button variant={retryable ? "secondary" : "default"} size="lg" disabled={pendingAction} onClick={onOpenSettings}>{t("export.open_settings")}</Button>
-        )}
-        {state.kind === "error" && state.onRetry && (
-          <Button variant="default" size="lg" disabled={pendingAction || renaming && !retryFilename.trim()}
-            onClick={() => { void runAction(() => state.onRetry!(renaming ? retryFilename.trim() : undefined)); }}>{t("export.retry_finalize")}</Button>
-        )}
-      </div>
+      {!cancelling && (state.onCancel || dismissable) && (
+        <div className="export-actions export-progress-footer">
+          {state.kind === "error" && state.onDiscard && (
+            <Button variant="ghost" size="lg" disabled={pendingAction} onClick={() => { void runAction(() => state.onDiscard!()); }}>{t("export.discard_pending")}</Button>
+          )}
+          {!dismissable && state.onCancel && (
+            <Button variant="secondary" size="lg" onClick={state.onCancel}>{t("export.preparing_cancel")}</Button>
+          )}
+          {dismissable && !retryable && (
+            <Button variant={state.kind === "complete" && !onReveal && !onPlay || state.kind === "error" && !(resourceError && onOpenSettings) ? "default" : "secondary"}
+              size="lg" onClick={onClose}>{t("export.dismiss")}</Button>
+          )}
+          {state.kind === "complete" && onPlay && (
+            <Button variant={onReveal ? "secondary" : "default"} size="lg"
+              onClick={() => onPlay(state.payload.outputPath)} title={t("export.play_hint")}>{t("export.play")}</Button>
+          )}
+          {state.kind === "complete" && onReveal && (
+            <Button variant="default" size="lg" onClick={() => onReveal(state.payload.outputPath)}
+              title={t("export.reveal_hint")}>{t(REVEAL_KEY[rendererOS])}</Button>
+          )}
+          {resourceError && onOpenSettings && (
+            <Button variant={retryable ? "secondary" : "default"} size="lg" disabled={pendingAction} onClick={onOpenSettings}>{t("export.open_settings")}</Button>
+          )}
+          {state.kind === "error" && state.onRetry && (
+            <Button variant="default" size="lg" disabled={pendingAction || renaming && !retryFilename.trim()}
+              onClick={() => { void runAction(() => state.onRetry!(renaming ? retryFilename.trim() : undefined)); }}>{t("export.retry_finalize")}</Button>
+          )}
+        </div>
+      )}
     </AppDialog>
   );
 }

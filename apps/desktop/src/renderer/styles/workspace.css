@@ -128,6 +128,24 @@
   content: none;
 }
 
+.weft-dock-panel-frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.weft-dock-panel-lock {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--card) 82%, transparent);
+  color: var(--foreground);
+  font-size: var(--font-size-label);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
 .weft-dock-panel {
   width: 100%;
   height: 100%;

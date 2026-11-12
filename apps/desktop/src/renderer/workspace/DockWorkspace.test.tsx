@@ -560,6 +560,25 @@ describe("DockWorkspace React integration", () => {
     expect(previewHarness.unmounts).toBe(previewHarness.mounts);
   });
 
+  it.each([
+    ["media", true], ["playhead", true], ["preview", false], ["timeline", false],
+  ])("applies the export lock to the %s panel according to its role", (kind, locked) => {
+    dockHarness.api = strictModeApi().api;
+    dockHarness.contentApi = visibilityApi(true).api;
+    dockHarness.contentKind = kind;
+    const view = render(<DockWorkspace contracts={{ ...contracts, editingLocked: true }} />);
+    const panel = document.querySelector(`.weft-dock-panel[data-panel-kind="${kind}"]`)!;
+
+    expect(panel.hasAttribute("inert")).toBe(locked);
+    const notice = screen.queryByText("Read-only");
+    expect(!!notice).toBe(locked);
+    expect(notice?.closest("[inert]") ?? null).toBeNull();
+
+    view.rerender(<DockWorkspace contracts={contracts} />);
+    expect(panel.hasAttribute("inert")).toBe(false);
+    expect(screen.queryByText("Read-only")).toBeNull();
+  });
+
   it("maximizes from the tab chrome", () => {
     const dock = strictModeApi();
     dockHarness.api = dock.api;

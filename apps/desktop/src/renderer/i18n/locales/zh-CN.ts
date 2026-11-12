@@ -298,7 +298,7 @@ const zhCN: Resources = {
       evaluation_runtime: "预览计算引擎",
       motif_capture_runtime: "动效捕获运行时",
       motif_catalog: "动效目录",
-      motif_catalog_listener: "动效变更监听",
+      motif_catalog_listener: "动效监听",
     },
   },
   keyframe: {
@@ -652,6 +652,7 @@ const zhCN: Resources = {
     describe_already_running: "已经有一次描述在执行——等它结束再来",
   },
   dock_workspace: {
+    export_locked: "只读",
     editing_label: "编辑工作区",
     empty_label: "空工作区",
     all_closed: "所有面板均已关闭。",

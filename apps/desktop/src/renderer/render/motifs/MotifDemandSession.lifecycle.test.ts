@@ -3,17 +3,25 @@ import { MOTIF_BAKE_READY_EVENT, type MotifBakePlan, type MotifBakeSnapshot } fr
 import { groupLayerFixture, ROOT_ID, summaryFixture } from '../../testing/summaryFixture';
 import type { LookaheadTarget } from './motifDemand';
 import { MotifDemandSession } from './MotifDemandSession';
+import { captureMotif, type MotifCaptureReply } from './frameTransport';
+import { acquireMotifFrame, bindMotifFrameWorkspace } from './motifFrameSource';
+import { installMotifFrameWorkspaceListener } from './motifFrameWorkspace';
 import { requestPrebake } from './prebakeIntents';
 
 const h = vi.hoisted(() => ({
-  warm: vi.fn(), invoke: vi.fn(), listeners: new Map<string, (event: { payload: unknown }) => void>(),
+  warm: vi.fn(), invoke: vi.fn(), listeners: new Map<string, Set<(event: { payload: unknown }) => void>>(),
 }));
 vi.mock('../../bridge/ipc', () => ({ invoke: h.invoke }));
 vi.mock('../../bridge/events', () => ({ listen: async (name: string, callback: (event: { payload: unknown }) => void) => {
-  h.listeners.set(name, callback); return () => { h.listeners.delete(name); };
+  const listeners = h.listeners.get(name) ?? new Set();
+  h.listeners.set(name, listeners);
+  listeners.add(callback);
+  return () => { listeners.delete(callback); };
 } }));
 // Main's end of the presence is out of these tests (no page, no frame port).
-vi.mock('./frameTransport', async original => ({ ...await original<typeof import('./frameTransport')>(), declareMotifPresence: vi.fn() }));
+vi.mock('./frameTransport', async original => ({
+  ...await original<typeof import('./frameTransport')>(), declareMotifPresence: vi.fn(), captureMotif: vi.fn(),
+}));
 vi.mock('./MotifPrewarmer', () => ({ MotifPrewarmer: class { setTargets = h.warm; dispose() {} } }));
 vi.mock('../../settings/appSettingsStore', () => ({ useAppSettingsStore: {
   getState: () => ({ settings: { prebake_motifs: true } }), subscribe: () => () => {},
@@ -22,7 +30,10 @@ vi.mock('../../settings/appSettingsStore', () => ({ useAppSettingsStore: {
 /** How many contents the latest lookahead plan warms. */
 const warmedContents = () => new Set((h.warm.mock.lastCall![0] as LookaheadTarget[]).map(t => t.cacheKey)).size;
 const tick = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
-afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); h.listeners.clear(); });
+const ready = (generation: number, projectId: string) => {
+  for (const listener of h.listeners.get(MOTIF_BAKE_READY_EVENT) ?? []) listener({ payload: { generation, projectId } });
+};
+afterEach(() => { bindMotifFrameWorkspace(null); vi.unstubAllGlobals(); vi.clearAllMocks(); h.listeners.clear(); });
 
 it('keeps an in-flight acknowledgement through unrelated edits and redeclares on session readiness', async () => {
   vi.stubGlobal('document', {});
@@ -62,10 +73,10 @@ it('keeps an in-flight acknowledgement through unrelated edits and redeclares on
 
     // A failed workspace switch can reopen admission with the SAME generation.
     // The input guard must not swallow this recovery or the later new session.
-    h.listeners.get(MOTIF_BAKE_READY_EVENT)!({ payload: { generation, projectId: summary.project_id } });
+    ready(generation, summary.project_id);
     await tick(); expect(plans).toHaveLength(2);
     generation++;
-    h.listeners.get(MOTIF_BAKE_READY_EVENT)!({ payload: { generation, projectId: summary.project_id } });
+    ready(generation, summary.project_id);
     await tick(); expect(plans).toHaveLength(3);
     expect(plans.at(-1)!.generation).toBe(generation);
 
@@ -75,4 +86,63 @@ it('keeps an in-flight acknowledgement through unrelated edits and redeclares on
     expect(plans.at(-1)!.retryKeys).toHaveLength(1);
     expect(warmedContents()).toBe(1);
   } finally { service.dispose(); await tick(); }
+});
+
+it.each(['first open', 'remount'])('keeps the export capture through Preview %s in the same workspace', async (opening) => {
+  vi.stubGlobal('document', {});
+  const summary = summaryFixture();
+  const generation = 1;
+  const plans = vi.fn();
+  h.invoke.mockImplementation(async (channel: string, args?: { plan: MotifBakePlan }) => {
+    if (channel === 'motif_bake_session') return { generation, projectId: summary.project_id };
+    if (channel === 'motif_bake_reconcile') {
+      plans(args!.plan);
+      return { generation, statuses: {}, coverage: {} } satisfies MotifBakeSnapshot;
+    }
+    throw new Error(`Unexpected invocation: ${channel}`);
+  });
+  const stopWorkspace = await installMotifFrameWorkspaceListener();
+  const openPreview = () => {
+    const preview = new MotifDemandSession({ projectSummary: () => summary, openCompositionId: () => ROOT_ID,
+      fpsNum: () => 30, fpsDen: () => 1, currentTimeUs: () => 0, playing: () => false });
+    preview.handleProjectChanged();
+    return preview;
+  };
+  let preview: MotifDemandSession | undefined;
+  const abort = new AbortController();
+  try {
+    if (opening === 'remount') {
+      preview = openPreview();
+      await vi.waitFor(() => expect(plans).toHaveBeenCalledTimes(1));
+      plans.mockClear();
+    }
+    let finish!: (reply: MotifCaptureReply) => void;
+    const cancel = vi.fn();
+    vi.mocked(captureMotif).mockImplementation(() => ({
+      reply: new Promise(resolve => { finish = resolve; }), setPriority: vi.fn(), cancel,
+    }));
+    const { lease } = acquireMotifFrame({
+      cacheKey: 'export-frame', motifId: 'countdown', contentHash: 'content', fpsNum: 30, fpsDen: 1,
+      contentFrame: 0, contentDurationFrames: 30, contentDurationUs: 1_000_000, srcInUs: 0,
+      renderW: 4, renderH: 4, canonicalProps: { seconds: 1 }, tSec: 0, overlayActive: false,
+    }, { purpose: 'export', finalizationToken: 'export-plan', scaleDiv: 1, priority: 'current', signal: abort.signal });
+    void lease.catch(() => {});
+    await vi.waitFor(() => expect(captureMotif).toHaveBeenCalledOnce());
+
+    preview?.dispose();
+    ready(generation, summary.project_id);
+    preview = openPreview();
+    await vi.waitFor(() => expect(plans).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ generation })));
+    expect(cancel).not.toHaveBeenCalled();
+
+    const bitmap = { width: 4, height: 4, close: vi.fn() } as unknown as ImageBitmap;
+    finish({ kind: 'pixels', bitmap, persisted: false });
+    const frame = await lease;
+    expect(frame.bitmap).toBe(bitmap);
+    frame.release();
+  } finally {
+    preview?.dispose();
+    abort.abort();
+    stopWorkspace();
+  }
 });

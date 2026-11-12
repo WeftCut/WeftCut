@@ -20,6 +20,7 @@ recentsMostRecent
 } from "./ipc";
 import { isMac } from "./platform";
 import { PerformanceMonitorWindow } from "./render/PerfHUD";
+import { bindMotifFrameWorkspace } from "./render/motifs/motifFrameSource";
 import { wireAppSettingsStream } from './settings/appSettingsStore';
 import { applyLayoutTheme } from './settings/layoutTheme';
 import { SplashScreen } from "./startup/SplashScreen";
@@ -288,7 +289,10 @@ function Root() {
   }, []);
 
   const onWorkspaceReady = useCallback(() => setStage("editor"), []);
-  const onCloseProject = useCallback(() => setStage("startup"), []);
+  const onCloseProject = useCallback(() => {
+    bindMotifFrameWorkspace(null);
+    setStage("startup");
+  }, []);
   const onSplashIntroComplete = useCallback(() => setSplashIntroDone(true), []);
   const onSplashComplete = useCallback(() => {
     setSplashVisible(false);

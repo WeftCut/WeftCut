@@ -207,32 +207,11 @@
   line-height: 1.5;
 }
 
-.export-background-progress {
+.export-phase-row {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
-  gap: calc(12 * var(--ui-px));
-  padding: calc(4 * var(--ui-px)) calc(12 * var(--ui-px));
-  border-bottom: 1px solid var(--border);
-  background: var(--card);
-}
-
-.export-background-state {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: calc(8 * var(--ui-px));
-  min-width: 0;
-  font-size: var(--font-size-label);
-}
-
-.export-background-state progress {
-  width: calc(100 * var(--ui-px));
-  accent-color: var(--primary);
-}
-
-.export-timeline-locked {
-  color: var(--muted-foreground);
+  gap: calc(16 * var(--ui-px));
 }
 
 .export-progress-status {
@@ -241,7 +220,7 @@
   overflow-wrap: anywhere;
 }
 
-.export-background-state .export-progress-status {
+.export-work .export-progress-status {
   display: flex;
   align-items: center;
   gap: calc(8 * var(--ui-px));
@@ -250,6 +229,7 @@
 }
 
 .export-percent {
+  font-size: var(--font-size-title);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -345,6 +325,24 @@
   overflow-wrap: anywhere;
 }
 
+.export-progress-panel .progress-track {
+  height: calc(6 * var(--ui-px));
+  margin-top: calc(10 * var(--ui-px));
+  border-radius: var(--radius-control);
+  overflow: hidden;
+}
+
+.export-progress-panel .progress-fill {
+  height: 100%;
+  border-radius: inherit;
+}
+
+.export-wait {
+  display: inline-flex;
+  flex: none;
+  color: var(--muted-foreground);
+}
+
 .export-spinner {
   animation: export-wait-spin 1s linear infinite;
 }
@@ -385,3 +383,43 @@
 .export-preset-default { flex-shrink: 0; margin-left: calc(8 * var(--ui-px)); font-size: var(--font-size-caption); color: var(--muted-foreground); }
 .export-preset-empty { padding: calc(6 * var(--ui-px)) calc(12 * var(--ui-px)); color: var(--muted-foreground); font-size: var(--font-size-caption); }
 .export-preset-delete { color: var(--destructive); }
+
+.export-background-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(12 * var(--ui-px));
+  padding: calc(4 * var(--ui-px)) calc(12 * var(--ui-px));
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+
+.export-background-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(8 * var(--ui-px));
+  min-width: 0;
+  font-size: var(--font-size-label);
+}
+
+.export-background-state progress {
+  width: calc(100 * var(--ui-px));
+  accent-color: var(--primary);
+}
+
+.export-timeline-locked {
+  color: var(--muted-foreground);
+}
+
+.export-background-state .export-progress-status {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--ui-px));
+  font-size: var(--font-size-label);
+  font-weight: 500;
+}
+
+.export-background-state .export-percent {
+  font-size: inherit;
+}

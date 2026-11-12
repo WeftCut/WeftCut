@@ -34,6 +34,7 @@ export interface PanelDefinition {
   minimumWidth: number;
   minimumHeight: number;
   initiallyOpen: boolean;
+  duringExport: "review" | "locked";
 }
 
 const TOOL_MINIMUM = { minimumWidth: 240, minimumHeight: 160 } as const;
@@ -81,6 +82,7 @@ export const PANEL_REGISTRY: Readonly<Record<PanelKind, PanelDefinition>> = {
     minimumWidth: 240,
     minimumHeight: 160,
     initiallyOpen: true,
+    duringExport: "locked",
   },
   // Open by default and tabbed with the Media Pool (see createEditingLayout):
   // the panel EXISTS to be stumbled over (#16 — transition authoring was
@@ -91,6 +93,7 @@ export const PANEL_REGISTRY: Readonly<Record<PanelKind, PanelDefinition>> = {
     titleKey: "dock_workspace.panels.transitions",
     ...TOOL_MINIMUM,
     initiallyOpen: true,
+    duringExport: "locked",
   },
   preview: {
     kind: "preview",
@@ -98,6 +101,7 @@ export const PANEL_REGISTRY: Readonly<Record<PanelKind, PanelDefinition>> = {
     minimumWidth: 320,
     minimumHeight: 180,
     initiallyOpen: true,
+    duringExport: "review",
   },
   timeline: {
     kind: "timeline",
@@ -105,24 +109,28 @@ export const PANEL_REGISTRY: Readonly<Record<PanelKind, PanelDefinition>> = {
     minimumWidth: 420,
     minimumHeight: 180,
     initiallyOpen: true,
+    duringExport: "review",
   },
   "quick-actions": {
     kind: "quick-actions",
     titleKey: "dock_workspace.panels.quick-actions",
     ...STRIP_MINIMUM,
     initiallyOpen: true,
+    duringExport: "locked",
   },
   attribute: {
     kind: "attribute",
     titleKey: "dock_workspace.panels.attribute",
     ...TOOL_MINIMUM,
     initiallyOpen: true,
+    duringExport: "locked",
   },
   caption: {
     kind: "caption",
     titleKey: "dock_workspace.panels.caption",
     ...TOOL_MINIMUM,
     initiallyOpen: false,
+    duringExport: "locked",
   },
   // Closed by default, and the one Panel whose absence LOSES something: a
   // hibernating marker is painted on no lane, so this is the only surface that
@@ -134,30 +142,35 @@ export const PANEL_REGISTRY: Readonly<Record<PanelKind, PanelDefinition>> = {
     titleKey: "dock_workspace.panels.marker",
     ...TOOL_MINIMUM,
     initiallyOpen: false,
+    duringExport: "locked",
   },
   "role-mixer": {
     kind: "role-mixer",
     titleKey: "dock_workspace.panels.role-mixer",
     ...TOOL_MINIMUM,
     initiallyOpen: false,
+    duringExport: "locked",
   },
   effect: {
     kind: "effect",
     titleKey: "dock_workspace.panels.effect",
     ...TOOL_MINIMUM,
     initiallyOpen: true,
+    duringExport: "locked",
   },
   playhead: {
     kind: "playhead",
     titleKey: "dock_workspace.panels.playhead",
     ...TOOL_MINIMUM,
     initiallyOpen: true,
+    duringExport: "locked",
   },
   agent: {
     kind: "agent",
     titleKey: "dock_workspace.panels.agent",
     ...TOOL_MINIMUM,
     initiallyOpen: false,
+    duringExport: "locked",
   },
   // Closed by default like the other on-demand tool Panels: the edit stack is
   // pulled over its own IPC channel (`project_history_view`), so a closed
@@ -167,6 +180,7 @@ export const PANEL_REGISTRY: Readonly<Record<PanelKind, PanelDefinition>> = {
     titleKey: "dock_workspace.panels.history",
     ...TOOL_MINIMUM,
     initiallyOpen: false,
+    duringExport: "locked",
   },
   // Closed by default for History's reason and one of its own: the Panel pulls
   // its rows over the shot channels rather than off the project summary, and it
@@ -177,6 +191,7 @@ export const PANEL_REGISTRY: Readonly<Record<PanelKind, PanelDefinition>> = {
     titleKey: "dock_workspace.panels.shots",
     ...TOOL_MINIMUM,
     initiallyOpen: false,
+    duringExport: "locked",
   },
 };
 

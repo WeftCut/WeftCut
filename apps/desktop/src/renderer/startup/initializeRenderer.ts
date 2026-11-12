@@ -1,6 +1,7 @@
 import { invoke } from "@/bridge/ipc";
 import { initEval } from "../eval";
 import { MOTIF_RUNTIME_SOURCE } from "../render/motifs/runtime";
+import { installMotifFrameWorkspaceListener } from "../render/motifs/motifFrameWorkspace";
 import {
   installMotifsChangedListener,
   syncUserMotifsFromBackend,
@@ -61,8 +62,8 @@ const STARTUP_TASKS: readonly StartupTask[] = [
   },
   {
     id: "motif_catalog_listener",
-    name: "Motif catalog listener",
-    run: installMotifsChangedListener,
+    name: "Motif listeners",
+    run: () => Promise.all([installMotifsChangedListener(), installMotifFrameWorkspaceListener()]),
   },
 ];
 

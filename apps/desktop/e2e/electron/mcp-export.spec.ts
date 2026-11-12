@@ -264,7 +264,9 @@ test('background export keeps review available and preserves output across Previ
     };
 
     await startHeld(baseline);
-    await expect(page.getByRole('dialog').locator('.export-progress-status')).toContainText('Encoding');
+    const foreground = page.getByRole('dialog');
+    await expect(foreground.locator('.export-progress-status')).toContainText('Encoding');
+    await expect(foreground.getByText('Timeline read-only')).toHaveCount(0);
     await expect(page.getByTestId('preview-suspended')).toHaveText('Exporting');
     await finish(baseline);
 
@@ -275,6 +277,16 @@ test('background export keeps review available and preserves output across Previ
     const lane = page.getByTestId('track-lane').first();
     const laneIsInert = () => lane.evaluate(el => !!el.closest('[inert]'));
     await expect.poll(laneIsInert).toBe(true);
+    const view = page.getByText('View', { exact: true });
+    const openPanel = async (name: string) => {
+      await view.click();
+      await page.getByRole('menuitem', { name, exact: true }).click();
+    };
+    await openPanel('Media Pool');
+    const media = dockPanel(page, 'media');
+    await expect(media).toHaveAttribute('inert', '');
+    const mediaNotice = page.locator('.weft-dock-panel-frame').filter({ has: media }).getByText('Read-only', { exact: true });
+    await expect(mediaNotice).toBeVisible();
     await expect(invokeCmd(page, 'add_track', {})).rejects.toThrow(/export is active/i);
 
     const transport = () => page.evaluate(() => window.__weftcutTest!.audioTransportSnapshot());
@@ -294,17 +306,12 @@ test('background export keeps review available and preserves output across Previ
     });
     await testInfo.attach('background-export', { body: await capture(), contentType: 'image/png' });
 
-    const view = page.getByText('View', { exact: true });
-    const openPreview = async () => {
-      await view.click();
-      await page.getByRole('menuitem', { name: 'Preview', exact: true }).click();
-    };
-    await openPreview();
+    await openPanel('Preview');
     await view.click();
     await page.getByRole('menuitem', { name: 'Close Active Panel', exact: true }).click();
     await expect(dockPanel(page, 'preview')).toHaveCount(0);
     await app.evaluate(() => Reflect.get(globalThis, 'refusePreviewResources')());
-    await openPreview();
+    await openPanel('Preview');
     await expect(dockPanel(page, 'preview')).toBeVisible();
     const resourceNotice = page.getByText('Preview is waiting for resources while the export runs.');
     await expect(resourceNotice).toBeVisible();
@@ -314,6 +321,8 @@ test('background export keeps review available and preserves output across Previ
     await expect(resourceNotice).toHaveCount(0);
     await finish(output);
     await expect.poll(laneIsInert).toBe(false);
+    await expect(media).not.toHaveAttribute('inert', '');
+    await expect(mediaNotice).toHaveCount(0);
     expect(await invokeCmd(page, 'add_track', {})).toBeTruthy();
 
     const frameHashes = (file: string) => execFileSync('ffmpeg',

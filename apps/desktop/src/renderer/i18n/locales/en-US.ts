@@ -306,7 +306,7 @@ const enUS = {
       evaluation_runtime: "evaluation engine",
       motif_capture_runtime: "Motif capture runtime",
       motif_catalog: "Motif catalog",
-      motif_catalog_listener: "Motif change listener",
+      motif_catalog_listener: "Motif listeners",
     },
   },
   keyframe: {
@@ -708,6 +708,7 @@ const enUS = {
       "A description is already running — wait for it to finish",
   },
   dock_workspace: {
+    export_locked: "Read-only",
     editing_label: "Editing workspace",
     empty_label: "Empty workspace",
     all_closed: "All panels are closed.",
