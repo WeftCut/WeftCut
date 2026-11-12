@@ -2119,7 +2119,7 @@ const zhCN: Resources = {
     preview_heading: "预览",
     preview_snap_enabled: "启用画面吸附",
     preview_snap_enabled_hint:
-      "在预览中移动或缩放片段时，自动对齐到画面边缘、中线以及其它片段。按住 Ctrl 可临时关闭。",
+      "在预览中移动或缩放片段时，自动对齐到画面边缘、中线以及其它片段。按住 {{mod}} 可临时关闭。",
     preview_snap_strength: "吸附强度",
     preview_snap_strength_hint:
       "以屏幕像素为单位。",

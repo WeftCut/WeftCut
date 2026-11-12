@@ -2367,7 +2367,7 @@ const enUS = {
     preview_heading: "Preview",
     preview_snap_enabled: "Canvas snapping",
     preview_snap_enabled_hint:
-      "Align clips to the frame's edges and centre lines, and to other clips, while moving or resizing them on the preview. Hold Ctrl to override.",
+      "Align clips to the frame's edges and centre lines, and to other clips, while moving or resizing them on the preview. Hold {{mod}} to override.",
     preview_snap_strength: "Snap strength",
     preview_snap_strength_hint:
       "Measured in screen pixels.",

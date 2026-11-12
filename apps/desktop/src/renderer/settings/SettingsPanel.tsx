@@ -27,6 +27,7 @@ import { AppSelect } from "../components/AppSelect";
 import { AppSlider } from "../components/AppSlider";
 import { AppSwitch } from "../components/AppSwitch";
 import { Button } from "@/components/ui/button";
+import { modKeyLabel } from "@/platform";
 import { KeybindingPanel } from "./KeybindingPanel";
 import { LayoutThemeControl } from "./LayoutThemeControl";
 import { AgentSection } from "./AgentSection";
@@ -623,7 +624,7 @@ function PreviewSnapSection({
             {t("settings.preview_snap_enabled")}
           </span>
           <span className="settings-toggle-hint">
-            {t("settings.preview_snap_enabled_hint")}
+            {t("settings.preview_snap_enabled_hint", { mod: modKeyLabel() })}
           </span>
         </span>
       </label>

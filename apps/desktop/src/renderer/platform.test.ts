@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyOS } from "./platform";
+import { classifyOS, modKeyHeld, modKeyLabel } from "./platform";
 
 // Real (platform, userAgent) pairs Electron's Chromium reports per OS. The
 // classifier feeds platform-gated policies (export HW-decode allowlist), so a
@@ -34,5 +34,21 @@ describe("classifyOS", () => {
   it("falls back to linux (the conservative verdict) for unrecognized signals", () => {
     expect(classifyOS("", "")).toBe("linux");
     expect(classifyOS("FreeBSD amd64", "Mozilla/5.0 (X11; FreeBSD)")).toBe("linux");
+  });
+});
+
+// Mod is the bypass key for gestures as well as the shortcut modifier. On macOS
+// a Ctrl+press is the system's context-menu click, so only ⌘ may count there.
+describe("modKeyHeld", () => {
+  it("reads ⌘ on macOS and leaves a bare Ctrl to the context menu", () => {
+    expect(modKeyHeld({ ctrlKey: false, metaKey: true }, true)).toBe(true);
+    expect(modKeyHeld({ ctrlKey: true, metaKey: false }, true)).toBe(false);
+    expect(modKeyLabel(true)).toBe("⌘");
+  });
+
+  it("reads Ctrl elsewhere", () => {
+    expect(modKeyHeld({ ctrlKey: true, metaKey: false }, false)).toBe(true);
+    expect(modKeyHeld({ ctrlKey: false, metaKey: true }, false)).toBe(false);
+    expect(modKeyLabel(false)).toBe("Ctrl");
   });
 });

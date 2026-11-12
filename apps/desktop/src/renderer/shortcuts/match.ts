@@ -14,7 +14,7 @@
 // Comma, Backquote) deliberately use `event.code`: Shift changes their
 // `event.key`, while those names explicitly describe a physical key.
 
-import { isMac } from "@/platform";
+import { isMac, modKeyHeld } from "@/platform";
 import { chordModifier } from "../../shared/chords";
 
 export interface ParsedBinding {
@@ -212,7 +212,7 @@ export function eventToBinding(e: KeyboardEvent): string | null {
   if (e.ctrlKey && e.metaKey) {
     // Both Ctrl and Meta — extremely rare, encode literally.
     parts.push("Ctrl", "Cmd");
-  } else if (isMac ? e.metaKey : e.ctrlKey) {
+  } else if (modKeyHeld(e)) {
     parts.push("Mod");
   } else if (e.ctrlKey) {
     parts.push("Ctrl");

@@ -1152,10 +1152,11 @@ changing geometry or progress.
   lines and every other staged layer's bounds, **each axis independently**; ties
   go to composition lines. Radius is in screen px (`preview_snap_strength_px`,
   default 12; `preview_snap_enabled`), its own app setting, separate from the
-  timeline's. Holding Ctrl suppresses snapping (not Alt, which opens the Windows
-  menu bar). Guides are magenta, one per axis at most. A uniform resize solves
-  the snap by ray/line intersection, ranked by displacement. Targets are frozen
-  at pointer-down. Solver: `preview/previewSnap.ts`, run before the override is
+  timeline's. Holding Mod (Ctrl; ⌘ on macOS) suppresses snapping. Not Alt, which
+  opens the Windows menu bar; not a bare Ctrl on macOS, where Chromium turns a
+  Ctrl+press into a context-menu click. Guides are magenta, one per axis at
+  most. A uniform resize solves the snap by ray/line intersection, ranked by
+  displacement. Targets are frozen at pointer-down. Solver: `preview/previewSnap.ts`, run before the override is
   written.
 
 **Implementation invariants** (each one looks fixable and is not):

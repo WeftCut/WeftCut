@@ -402,7 +402,7 @@ describe("snapping", () => {
     expect(guide("y").style.display).toBe("none");
   });
 
-  it("suppresses the snap while Ctrl is held, and re-arms when it is let go", async () => {
+  it("suppresses the snap while Mod (Ctrl off macOS) is held, and re-arms when it is let go", async () => {
     setSnap(true);
     render(<TransformGizmoHost />);
     const el = await box();
@@ -411,7 +411,7 @@ describe("snapping", () => {
     // The raw 310, not the snapped 320.
     expect(transformOverrideFor("l1")).toEqual({ dx: 310, dy: 0 });
     await waitFor(() => expect(guide("x").style.display).toBe("none"));
-    // Ctrl is read per move, so there is no gesture state to reset.
+    // Mod is read per move, so there is no gesture state to reset.
     fireEvent.pointerMove(el, { clientX: 155, clientY: 0 });
     expect(transformOverrideFor("l1")).toEqual({ dx: 320, dy: 0 });
   });
@@ -463,7 +463,7 @@ describe("snapping", () => {
     expect(byKey.has("y")).toBe(false);
   });
 
-  it("leaves a linked resize alone under Ctrl", async () => {
+  it("leaves a linked resize alone under Mod (Ctrl off macOS)", async () => {
     setSnap(true);
     render(<TransformGizmoHost />);
     await box();
