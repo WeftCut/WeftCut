@@ -5,28 +5,28 @@ import { nearestGridLine, previewGrid } from "./gridGeometry";
 
 describe("previewGrid", () => {
   it.each([[1920, 1080], [1080, 1920], [640, 360], [801, 603]])(
-    "subdivides the %i × %i composition on both axes",
+    "divides %i × %i into 12 columns and 5 rows without rounding fractional positions",
     (width, height) => {
-      const grid = previewGrid(width, height, { ...DEFAULT_PREVIEW_GRID, divisions: 3 });
-      expect(grid).toEqual({
-        x: { step: width / 3, last: 2 },
-        y: { step: height / 3, last: 2 },
+      const grid = previewGrid(width, height, {
+        ...DEFAULT_PREVIEW_GRID, column_divisions: 12, row_divisions: 5,
       });
+      expect(grid).toEqual({
+        x: { step: width / 12, last: 11 },
+        y: { step: height / 5, last: 4 },
+      });
+      // Each line uses a composition-relative fraction, regardless of format.
+      expect(grid.x!.step / width).toBeCloseTo(1 / 12);
+      expect(grid.y!.step / height).toBeCloseTo(1 / 5);
     },
   );
 
-  it("preserves independent pixel gaps from the origin and skips frame edges", () => {
-    const grid = previewGrid(800, 500, {
-      ...DEFAULT_PREVIEW_GRID, mode: "pixels", column_gap_px: 100, row_gap_px: 120,
-    });
-    expect(grid.x).toEqual({ step: 100, last: 7 });
-    expect(grid.y).toEqual({ step: 120, last: 4 });
-  });
-
-  it("omits a disabled axis and an axis with no interior lines", () => {
+  it("omits disabled axes and axes with only one field", () => {
     expect(previewGrid(800, 500, {
-      ...DEFAULT_PREVIEW_GRID, columns: false, mode: "pixels", row_gap_px: 500,
+      ...DEFAULT_PREVIEW_GRID, columns: false, row_divisions: 1,
     })).toEqual({ x: null, y: null });
+    expect(previewGrid(800, 500, {
+      ...DEFAULT_PREVIEW_GRID, column_divisions: 1, row_divisions: 5,
+    })).toEqual({ x: null, y: { step: 100, last: 4 } });
   });
 
   it("resolves midpoints toward the lower line and clamps to the interior", () => {

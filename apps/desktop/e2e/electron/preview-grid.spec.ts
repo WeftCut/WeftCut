@@ -44,8 +44,8 @@ test('Quick Actions edits independent grid preferences, and the grid follows fit
     const width = 1600, height = 900
     await startPreview(page, width, height)
     const beforeProject = await invokeCmd(page, 'project_summary')
-    const trigger = page.getByRole('button', { name: 'Snapping and grid', exact: true })
-    const popup = page.getByRole('dialog', { name: 'Snapping and grid' })
+    const trigger = page.getByRole('button', { name: 'Canvas snapping and grid', exact: true })
+    const popup = page.getByRole('dialog', { name: 'Canvas snapping and grid' })
     const toggle = (name: string) => popup.getByRole('switch', { name, exact: true })
     const number = (name: string) => popup.getByLabel(name, { exact: true })
     const fill = async (name: string, value: number) => {
@@ -63,13 +63,9 @@ test('Quick Actions edits independent grid preferences, and the grid follows fit
     })
     expect(horizontalPadding.left).toBeCloseTo(horizontalPadding.intended)
     expect(horizontalPadding.right).toBeCloseTo(horizontalPadding.intended)
-    await expect(popup.getByRole('combobox', { name: 'Spacing mode' })).toHaveText('Equal subdivisions')
-    await fill('Timeline snap strength', 18)
+    await expect(popup.getByLabel('Timeline snap strength', { exact: true })).toHaveCount(0)
     await fill('Canvas snap strength', 23)
-    await expect.poll(async () => {
-      const s = await settings(page)
-      return [s.tail_snap_strength_px, s.preview_snap_strength_px]
-    }).toEqual([18, 23])
+    await expect.poll(async () => (await settings(page)).preview_snap_strength_px).toBe(23)
 
     await toggle('Snap to frame and layers').click()
     await expect(toggle('Snap to frame and layers')).toHaveAttribute('aria-checked', 'false')
@@ -81,26 +77,21 @@ test('Quick Actions edits independent grid preferences, and the grid follows fit
     await toggle('Show grid').click()
     await expect(overlay(page)).toBeVisible()
     await expect(overlay(page)).toHaveCSS('pointer-events', 'none')
-    await expectGridSpacing(page, 1 / DEFAULT_PREVIEW_GRID.divisions, 1 / DEFAULT_PREVIEW_GRID.divisions)
-    await fill('Divisions per axis', 5)
-    await expectGridSpacing(page, 1 / 5, 1 / 5)
-
-    await popup.getByRole('combobox', { name: 'Spacing mode' }).click()
-    await page.getByRole('option', { name: 'Custom pixel gaps' }).click()
-    await fill('Column gap', 170)
-    await fill('Row gap', 110)
-    await expectGridSpacing(page, 170 / width, 110 / height)
+    await expectGridSpacing(page, 1 / DEFAULT_PREVIEW_GRID.column_divisions, 1 / DEFAULT_PREVIEW_GRID.row_divisions)
+    await fill('Columns', 12)
+    await fill('Rows', 5)
+    await expectGridSpacing(page, 1 / 12, 1 / 5)
     await toggle('Horizontal grid lines').click()
-    await expect(number('Row gap')).toBeDisabled()
+    await expect(number('Rows')).toBeDisabled()
     await expect(overlay(page).locator('.preview-grid-line')).toHaveCount(1)
     await toggle('Vertical grid lines').click()
-    await expect(number('Column gap')).toBeDisabled()
+    await expect(number('Columns')).toBeDisabled()
     await expect(overlay(page)).toHaveCount(0)
     await toggle('Vertical grid lines').click()
     await toggle('Horizontal grid lines').click()
     await toggle('Snap to grid').click()
     await expect(toggle('Snap to grid')).toHaveAttribute('aria-checked', 'false')
-    await expectGridSpacing(page, 170 / width, 110 / height)
+    await expectGridSpacing(page, 1 / 12, 1 / 5)
     await page.keyboard.press('Escape')
     await expect(popup).toBeHidden()
 
@@ -113,20 +104,20 @@ test('Quick Actions edits independent grid preferences, and the grid follows fit
     await page.mouse.move(x, y)
     await page.mouse.wheel(0, -360)
     await expect.poll(async () => (await canvas(page).boundingBox())!.width).toBeGreaterThan(fit.width)
-    await expectGridSpacing(page, 170 / width, 110 / height)
+    await expectGridSpacing(page, 1 / 12, 1 / 5)
     const beforePan = (await canvas(page).boundingBox())!
     await page.mouse.down({ button: 'middle' })
     await page.mouse.move(x + 30, y + 20, { steps: 5 })
     await page.mouse.up({ button: 'middle' })
     await expect.poll(async () => (await canvas(page).boundingBox())!.x).toBeGreaterThan(beforePan.x)
-    await expectGridSpacing(page, 170 / width, 110 / height)
+    await expectGridSpacing(page, 1 / 12, 1 / 5)
     await page.keyboard.press('Z')
     await expect(zoom).toContainText('Fit')
-    await expectGridSpacing(page, 170 / width, 110 / height)
+    await expectGridSpacing(page, 1 / 12, 1 / 5)
 
     expect(await invokeCmd(page, 'project_summary')).toEqual(beforeProject)
     expect((await settings(page)).preview_grid).toMatchObject({
-      visible: true, snap: false, mode: 'pixels', divisions: 5, column_gap_px: 170, row_gap_px: 110,
+      visible: true, snap: false, column_divisions: 12, row_divisions: 5,
     })
   } finally {
     await app.close()
@@ -153,9 +144,11 @@ test('the portrait grid follows the canvas and leaves exported frame pixels unch
 
     const baseline = await exportFrameHash('hidden')
     expect(baseline).toMatch(/^SHA256=[\da-f]{64}$/)
-    await invokeCmd(page, 'app_settings_set', { patch: { preview_grid: { visible: true, divisions: 3 } } })
+    await invokeCmd(page, 'app_settings_set', { patch: {
+      preview_grid: { visible: true, column_divisions: 12, row_divisions: 5 },
+    } })
     await expect(overlay(page)).toBeVisible()
-    await expectGridSpacing(page, 1 / 3, 1 / 3)
+    await expectGridSpacing(page, 1 / 12, 1 / 5)
     expect(await exportFrameHash('visible')).toBe(baseline)
   } finally {
     await app.close()

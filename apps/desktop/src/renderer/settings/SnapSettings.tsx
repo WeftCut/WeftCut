@@ -11,12 +11,9 @@ import {
 import {
   GRID_DIVISIONS_MAX,
   GRID_DIVISIONS_MIN,
-  GRID_GAP_MAX_PX,
-  GRID_GAP_MIN_PX,
   type PreviewGridSettings,
 } from "../../shared/preview-grid";
 import { AppNumberField } from "../components/AppNumberField";
-import { AppSelect } from "../components/AppSelect";
 import { AppSlider } from "../components/AppSlider";
 import { AppSwitch } from "../components/AppSwitch";
 import {
@@ -175,7 +172,6 @@ export function PreviewGridControls({ onError }: { onError: ReportError }) {
   const { t } = useTranslation();
   const grid = usePreviewGrid();
   const saveGrid = (patch: Partial<PreviewGridSettings>) => save({ preview_grid: patch }, onError);
-  const modeLabel = t("quick_actions.grid_spacing");
 
   return (
     <>
@@ -189,59 +185,32 @@ export function PreviewGridControls({ onError }: { onError: ReportError }) {
         checked={grid.snap}
         onChange={(snap) => void saveGrid({ snap })}
       />
-      <div className="settings-slider-row">
-        <span className="settings-slider-label">{modeLabel}</span>
-        <AppSelect
-          ariaLabel={modeLabel}
-          value={grid.mode}
-          options={[
-            { value: "equal", label: t("quick_actions.grid_equal") },
-            { value: "pixels", label: t("quick_actions.grid_pixels") },
-          ]}
-          onValueChange={(mode) => void saveGrid({ mode: mode === "pixels" ? "pixels" : "equal" })}
-        />
-      </div>
-      {grid.mode === "equal" && (
-        <SnapNumber
-          label={t("quick_actions.grid_divisions")}
-          value={grid.divisions}
-          min={GRID_DIVISIONS_MIN}
-          max={GRID_DIVISIONS_MAX}
-          onSave={(divisions) => saveGrid({ divisions })}
-        />
-      )}
       <SnapToggle
         label={t("quick_actions.grid_columns")}
         checked={grid.columns}
         onChange={(columns) => void saveGrid({ columns })}
       />
-      {grid.mode === "pixels" && (
-        <SnapNumber
-          label={t("quick_actions.grid_column_gap")}
-          value={grid.column_gap_px}
-          min={GRID_GAP_MIN_PX}
-          max={GRID_GAP_MAX_PX}
-          unit="px"
-          disabled={!grid.columns}
-          onSave={(column_gap_px) => saveGrid({ column_gap_px })}
-        />
-      )}
+      <SnapNumber
+        label={t("quick_actions.grid_column_divisions")}
+        value={grid.column_divisions}
+        min={GRID_DIVISIONS_MIN}
+        max={GRID_DIVISIONS_MAX}
+        disabled={!grid.columns}
+        onSave={(column_divisions) => saveGrid({ column_divisions })}
+      />
       <SnapToggle
         label={t("quick_actions.grid_rows")}
         checked={grid.rows}
         onChange={(rows) => void saveGrid({ rows })}
       />
-      {grid.mode === "pixels" && (
-        <SnapNumber
-          label={t("quick_actions.grid_row_gap")}
-          value={grid.row_gap_px}
-          min={GRID_GAP_MIN_PX}
-          max={GRID_GAP_MAX_PX}
-          unit="px"
-          disabled={!grid.rows}
-          onSave={(row_gap_px) => saveGrid({ row_gap_px })}
-        />
-      )}
+      <SnapNumber
+        label={t("quick_actions.grid_row_divisions")}
+        value={grid.row_divisions}
+        min={GRID_DIVISIONS_MIN}
+        max={GRID_DIVISIONS_MAX}
+        disabled={!grid.rows}
+        onSave={(row_divisions) => saveGrid({ row_divisions })}
+      />
     </>
   );
 }

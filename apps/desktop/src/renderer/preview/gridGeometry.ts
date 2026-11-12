@@ -13,16 +13,15 @@ export interface PreviewGrid {
 // Frame edges already have their own snap target. Both modes place interior
 // lines from the composition origin, so panning cannot change the lattice.
 export function previewGrid(width: number, height: number, settings: PreviewGridSettings): PreviewGrid {
-  const axis = (size: number, gap: number, enabled: boolean): GridAxis | null => {
-    const equal = settings.mode === "equal";
-    const step = equal ? size / settings.divisions : gap;
-    const last = equal ? settings.divisions - 1 : Math.ceil(size / step) - 1;
+  const axis = (size: number, divisions: number, enabled: boolean): GridAxis | null => {
+    const step = size / divisions;
+    const last = divisions - 1;
     return enabled && step > 0 && last > 0 ? { step, last } : null;
   };
 
   return {
-    x: axis(width, settings.column_gap_px, settings.columns),
-    y: axis(height, settings.row_gap_px, settings.rows),
+    x: axis(width, settings.column_divisions, settings.columns),
+    y: axis(height, settings.row_divisions, settings.rows),
   };
 }
 

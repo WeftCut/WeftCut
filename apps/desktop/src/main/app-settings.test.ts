@@ -3,7 +3,7 @@ import { mergeSettings } from '../shared/exportSettings';
 import { describe, it, expect, vi } from 'vitest'
 import { createAppSettingsStore, type AppSettingsFs } from './app-settings'
 import { APP_SETTINGS_DEFAULTS } from '../shared/app-settings'
-import { DEFAULT_PREVIEW_GRID, GRID_DIVISIONS_MAX, GRID_GAP_MIN_PX } from '../shared/preview-grid'
+import { DEFAULT_PREVIEW_GRID, GRID_DIVISIONS_MAX, GRID_DIVISIONS_MIN } from '../shared/preview-grid'
 import { LAYOUT_THEME_IDS } from '../shared/layout-theme'
 import { PERFORMANCE_DEFAULTS } from '../shared/performance-settings'
 import { playbackCalibrationRecommendation, PLAYBACK_CALIBRATION } from '../shared/playback-calibration'
@@ -48,27 +48,36 @@ function memFs(seed: Record<string, string> = {}) {
 const store = (seed?: Record<string, string>) => createAppSettingsStore({ ...memFs(seed), path: PATH, dir: DIR })
 
 describe('app-settings store', () => {
-  it('defaults the preview grid in legacy files and validates saved spacing', () => {
+  it('defaults grid settings, clamps independent subdivisions, and migrates shared divisions', () => {
     expect(store({ [PATH]: '{ "display_mode": "AllTracks" }' }).get().preview_grid).toEqual(DEFAULT_PREVIEW_GRID)
     const invalid = store({ [PATH]: JSON.stringify({
-      preview_grid: { visible: 'on', mode: 'unknown', divisions: 500, row_gap_px: 0, column_gap_px: '5' },
+      preview_grid: { visible: 'on', column_divisions: 500, row_divisions: 0, rows: false },
     }) })
     expect(invalid.get().preview_grid).toEqual({
-      ...DEFAULT_PREVIEW_GRID, divisions: GRID_DIVISIONS_MAX, row_gap_px: GRID_GAP_MIN_PX,
+      ...DEFAULT_PREVIEW_GRID, column_divisions: GRID_DIVISIONS_MAX,
+      row_divisions: GRID_DIVISIONS_MIN, rows: false,
+    })
+    const legacy = store({ [PATH]: JSON.stringify({
+      preview_grid: { visible: true, snap: true, mode: 'pixels', divisions: 5, column_gap_px: 83, row_gap_px: 57 },
+    }) })
+    expect(legacy.get().preview_grid).toEqual({
+      ...DEFAULT_PREVIEW_GRID, visible: true, snap: true, column_divisions: 5, row_divisions: 5,
     })
   })
 
-  it('merges grid changes and restores display, snapping, axis and gap preferences on restart', () => {
+  it('merges grid changes and restores independent column and row counts on restart', () => {
     const { fs } = memFs()
     const deps = { fs, path: PATH, dir: DIR }
     const initial = createAppSettingsStore(deps)
-    initial.apply({ preview_grid: { visible: true, divisions: 5 } })
-    expect(createAppSettingsStore(deps).get().preview_grid).toMatchObject({ visible: true, snap: false, divisions: 5 })
-    initial.apply({ preview_grid: { snap: true, mode: 'pixels', column_gap_px: 83.5, row_gap_px: 57, rows: false } })
+    initial.apply({ preview_grid: { visible: true, column_divisions: 12 } })
+    expect(createAppSettingsStore(deps).get().preview_grid).toMatchObject({
+      visible: true, snap: false, column_divisions: 12, row_divisions: 8,
+    })
+    initial.apply({ preview_grid: { snap: true, row_divisions: 5, rows: false } })
     initial.apply({ preview_grid: { visible: false } })
     expect(createAppSettingsStore(deps).get().preview_grid).toEqual({
-      ...DEFAULT_PREVIEW_GRID, visible: false, snap: true, mode: 'pixels',
-      divisions: 5, column_gap_px: 84, row_gap_px: 57, rows: false,
+      ...DEFAULT_PREVIEW_GRID, visible: false, snap: true,
+      column_divisions: 12, row_divisions: 5, rows: false,
     })
   })
 

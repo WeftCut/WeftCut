@@ -216,15 +216,15 @@ test("the Quick Actions grip drags the strip, which takes its axis from where it
     // Scoped by class, not by role: the preview transport is a toolbar too.
     const toolbar = page.locator(".weft-quick-actions");
     const magnet = toolbar.locator('[data-quick-action="toggleTailSnap"]');
-    const grid = toolbar.getByRole("button", { name: "Snapping and grid" });
-    const popup = page.getByRole("dialog", { name: "Snapping and grid" });
+    const grid = toolbar.getByRole("button", { name: "Canvas snapping and grid" });
+    const popup = page.getByRole("dialog", { name: "Canvas snapping and grid" });
     const checkSnappingControls = async (arrow: "ArrowDown" | "ArrowRight") => {
       await magnet.focus();
       await magnet.press(arrow);
       await expect(grid).toBeFocused();
       await grid.press("Enter");
       await expect(popup).toBeInViewport();
-      await expect(popup.getByLabel("Timeline snap strength", { exact: true })).toBeVisible();
+      await expect(popup.getByLabel("Timeline snap strength", { exact: true })).toHaveCount(0);
       await expect(popup.getByLabel("Canvas snap strength", { exact: true })).toBeVisible();
       await page.keyboard.press("Escape");
       await expect(popup).toBeHidden();
