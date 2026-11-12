@@ -101,6 +101,27 @@ pub struct PublishArgs {
     pub policy: String,
 }
 
+/// A dot-prefixed staging file can carry UF_HIDDEN, which publication may
+/// preserve. Correct only the committed output and never fail a completed export.
+#[cfg(target_os = "macos")]
+fn clear_published_hidden_flag(path: &Path) {
+    use std::os::{fd::AsRawFd, macos::fs::MetadataExt};
+
+    let result = (|| -> io::Result<()> {
+        let file = std::fs::File::open(path)?;
+        let flags = file.metadata()?.st_flags();
+        if flags & libc::UF_HIDDEN != 0
+            && unsafe { libc::fchflags(file.as_raw_fd(), flags & !libc::UF_HIDDEN) } != 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        tracing::warn!(path = %path.display(), %error, "could not clear UF_HIDDEN on published export");
+    }
+}
+
 pub fn publish(args: PublishArgs) -> Result<String> {
     if args.staging.parent() != args.output.parent() {
         anyhow::bail!("publication must stay in the destination directory");
@@ -140,6 +161,9 @@ pub fn publish(args: PublishArgs) -> Result<String> {
             }
             .map_err(|_| io::Error::last_os_error())?;
         }
+        // Rename may preserve staging UF_HIDDEN; inspect the published path.
+        #[cfg(target_os = "macos")]
+        clear_published_hidden_flag(&args.output);
         return Ok(args.output.to_string_lossy().into_owned());
     }
     if args.policy != "rename" && args.policy != "fail" {
@@ -163,7 +187,12 @@ pub fn publish(args: PublishArgs) -> Result<String> {
                 .with_file_name(format!("{stem} ({number}).{ext}"))
         };
         match publish_noreplace(&args.staging, &target) {
-            Ok(()) => return Ok(target.to_string_lossy().into_owned()),
+            Ok(()) => {
+                // Hard-link or rename may preserve staging UF_HIDDEN after publication.
+                #[cfg(target_os = "macos")]
+                clear_published_hidden_flag(&target);
+                return Ok(target.to_string_lossy().into_owned());
+            }
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists && args.policy == "rename" => {
                 continue
             }
@@ -176,6 +205,65 @@ pub fn publish(args: PublishArgs) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn publishing_clears_only_hidden_flag_and_preserves_existing_files() {
+        use std::os::{fd::AsRawFd, macos::fs::MetadataExt};
+
+        let dir = tempfile::tempdir().unwrap();
+        // Test both hidden and visible staging files through every publishing
+        // policy. UF_NODUMP is an unrelated user flag that must survive.
+        for (index, (policy, hidden, collision)) in [
+            ("fail", true, false),
+            ("overwrite", true, true),
+            ("rename", true, true),
+            ("fail", false, false),
+            ("overwrite", false, true),
+            ("rename", false, true),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let output = dir.path().join(format!("clip-{index}.mp4"));
+            if collision {
+                std::fs::write(&output, b"previous output").unwrap();
+            }
+            let staging = PathBuf::from(prepare(&output).unwrap());
+            std::fs::write(&staging, b"completed video").unwrap();
+            let file = std::fs::File::open(&staging).unwrap();
+            let initial_flags = file.metadata().unwrap().st_flags();
+            let staged_flags = (initial_flags | libc::UF_NODUMP) & !libc::UF_HIDDEN
+                | if hidden { libc::UF_HIDDEN } else { 0 };
+            assert_eq!(unsafe { libc::fchflags(file.as_raw_fd(), staged_flags) }, 0);
+            assert_eq!(file.metadata().unwrap().st_flags(), staged_flags);
+            drop(file);
+
+            let published = PathBuf::from(
+                publish(PublishArgs {
+                    staging,
+                    output: output.clone(),
+                    policy: policy.into(),
+                })
+                .unwrap(),
+            );
+            let expected = if policy == "rename" {
+                dir.path().join(format!("clip-{index} (1).mp4"))
+            } else {
+                output.clone()
+            };
+            assert_eq!(published, expected);
+            assert_eq!(std::fs::read(&published).unwrap(), b"completed video");
+            assert_eq!(
+                std::fs::metadata(&published).unwrap().st_flags(),
+                staged_flags & !libc::UF_HIDDEN
+            );
+            if policy == "rename" {
+                assert_eq!(std::fs::read(&output).unwrap(), b"previous output");
+            }
+        }
+    }
+
     #[test]
     fn native_rename_fallback_refuses_collisions_and_moves_complete_files() {
         let d = tempfile::tempdir().unwrap();
