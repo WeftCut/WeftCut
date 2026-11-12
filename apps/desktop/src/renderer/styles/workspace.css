@@ -459,7 +459,7 @@
   outline-offset: -1px;
 }
 
-.quick-snapping-popup {
+.app-menu-list.quick-snapping-popup {
   width: min(calc(288 * var(--ui-px)), var(--available-width));
   padding: calc(10 * var(--ui-px)) calc(12 * var(--ui-px));
 }
