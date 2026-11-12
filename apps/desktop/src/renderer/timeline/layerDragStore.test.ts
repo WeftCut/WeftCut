@@ -82,6 +82,7 @@ describe("layerDragStore", () => {
     expect(useLayerDragStore.getState().pointer).toEqual({
       clientX: 120,
       clientY: 60,
+      ctrlKey: false,
     });
   });
 
@@ -119,6 +120,21 @@ describe("layerDragStore", () => {
     const afterMove = useLayerDragStore.getState();
     useLayerDragStore.getState().moveVisual(121, 61);
     expect(useLayerDragStore.getState()).toBe(afterMove);
+  });
+
+  it("publishes Ctrl changes at a stationary pointer for cross-panel snap suspension", () => {
+    useLayerDragStore.getState().begin(stateAt(0), 120, 60);
+    const initial = useLayerDragStore.getState();
+    useLayerDragStore.getState().moveVisual(120, 60, true);
+    expect(useLayerDragStore.getState().pointer).toEqual({
+      clientX: 120, clientY: 60, ctrlKey: true,
+    });
+    expect(useLayerDragStore.getState()).not.toBe(initial);
+    const suspended = useLayerDragStore.getState();
+    useLayerDragStore.getState().moveVisual(120, 60, true);
+    expect(useLayerDragStore.getState()).toBe(suspended);
+    useLayerDragStore.getState().moveVisual(120, 60, false);
+    expect(useLayerDragStore.getState().pointer?.ctrlKey).toBe(false);
   });
 
   it("keeps one subjects reference across a whole gesture while the delta moves", () => {

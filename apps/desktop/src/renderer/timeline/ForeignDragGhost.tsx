@@ -57,7 +57,8 @@ import {
   type PlacementValidity,
   type TimelinePlacement,
 } from "./placement";
-import { snapDragDeltaToTimelineBoundary } from "./snapping";
+import { resolveTimelineDragSnap } from "./snapping";
+import { setTimelineSnapGuide } from "./timelineSnapFeedbackStore";
 import { foreignCompositionAtPoint } from "./timelineSurfaces";
 
 export interface ForeignDragGhostProps {
@@ -136,6 +137,7 @@ interface ForeignLanding {
   trackId: string | null;
   anchorTStartUs: number;
   validity: PlacementValidity;
+  snapBoundaryUs: number | null;
   /// The row's chip band, in `timeline-canvas` coordinates. Null when the
   /// pointer is inside this Panel but over no row, which is also when `blocks`
   /// is empty — there is no lane to draw in.
@@ -218,7 +220,7 @@ async function commitForeignDrop(drop: ResolvedDrop): Promise<void> {
 function resolveForeignDrop(
   opts: ForeignDragGhostProps,
   drag: DragState,
-  pointer: { clientX: number; clientY: number },
+  pointer: { clientX: number; clientY: number; ctrlKey: boolean },
 ): ForeignLanding | null {
   const { compositionId, pxPerSec, fpsNum, fpsDen } = opts;
   if (compositionId === null || pxPerSec <= 0) return null;
@@ -268,7 +270,7 @@ function resolveForeignDrop(
   // added straight back, so it cancels and every surviving number is this
   // composition's. What the subject genuinely contributes is the set's phase and
   // each clip's duration, which are the same in any composition.
-  const snappedDeltaUs = snapDragDeltaToTimelineBoundary({
+  const snapResult = resolveTimelineDragSnap({
     state: {
       kind: "move",
       layerId: anchor.layerId,
@@ -289,9 +291,10 @@ function resolveForeignDrop(
     fpsNum,
     fpsDen,
     pxPerSec,
-    enabled: opts.tailSnapEnabled,
+    enabled: opts.tailSnapEnabled && !pointer.ctrlKey,
     strengthPx: opts.tailSnapStrengthPx,
   });
+  const snappedDeltaUs = snapResult.deltaUs;
   // Composition time has no negative half, and the set stops as ONE body when
   // it reaches zero: the delta is floored at whatever would put the EARLIEST
   // member on zero, rather than each member being clamped where it lands.
@@ -339,6 +342,7 @@ function resolveForeignDrop(
       trackId: null,
       anchorTStartUs,
       validity: "collision",
+      snapBoundaryUs: null,
       band: null,
       blocks: [],
       drop: null,
@@ -393,6 +397,7 @@ function resolveForeignDrop(
     trackId,
     anchorTStartUs,
     validity: evaluation.validity,
+    snapBoundaryUs: phaseDeltaUs === snappedDeltaUs ? snapResult.boundaryUs : null,
     band,
     blocks,
     drop: committableDrop(
@@ -461,6 +466,12 @@ export function ForeignDragGhost(props: ForeignDragGhostProps): React.ReactNode 
     return () => useLayerDragStore.getState().releaseDropTarget(compositionId);
   }, [compositionId]);
 
+  const snapBoundaryUs = landing?.snapBoundaryUs ?? null;
+  useEffect(() => {
+    setTimelineSnapGuide(compositionId, "foreign", snapBoundaryUs);
+    return () => setTimelineSnapGuide(compositionId, "foreign", null);
+  }, [compositionId, snapBoundaryUs]);
+
   const drop = landing?.drop ?? null;
   // LANDMINE: the release below reads THIS ref and never the store.
   //
@@ -484,6 +495,9 @@ export function ForeignDragGhost(props: ForeignDragGhostProps): React.ReactNode 
   // "a refused preview sends nothing" stays structural either way.
   useEffect(() => {
     const release = (e: PointerEvent): void => {
+      // Clear synchronously on release, before the destination commit awaits
+      // anything. The store's unmount effect also covers cancellation.
+      setTimelineSnapGuide(compositionId, "foreign", null);
       const pending = dropRef.current;
       if (pending === null) return;
       // Re-asked from the RELEASE's own coordinates, not the last pointermove's.

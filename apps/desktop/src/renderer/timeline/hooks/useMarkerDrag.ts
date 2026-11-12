@@ -11,7 +11,8 @@ import {
   markerDragBoundsUs,
   type MarkerDragBoundsUs,
 } from "../markerAtFrame";
-import { snapTimeToTimelineBoundary } from "../snapping";
+import { resolveTimelineTimeSnap } from "../snapping";
+import { setTimelineSnapGuide } from "../timelineSnapFeedbackStore";
 
 const US_PER_SEC = 1_000_000;
 
@@ -62,18 +63,20 @@ export interface MarkerDragPreview {
 /// land, or a target one frame past a clip's end would pull the glyph off its
 /// own clip for the clamp to drag back. Then the clamp, which is what a raw drag
 /// past an edge runs into.
-export function markerDragTimeUs(
+export function markerDragSnap(
   ctx: MarkerDragContext,
   deltaUs: number,
   currentTimeUs: number,
-): number {
+  ctrlKey = false,
+): { timeUs: number; boundaryUs: number | null } {
   const desiredUs = snapFrameRound(
     Math.max(0, ctx.originalTUs + deltaUs),
     ctx.fpsNum,
     ctx.fpsDen,
   );
-  const snappedUs = snapTimeToTimelineBoundary({
+  const result = resolveTimelineTimeSnap({
     ...ctx.snap,
+    enabled: ctx.snap.enabled && !ctrlKey,
     timeUs: desiredUs,
     currentTimeUs,
     fpsNum: ctx.fpsNum,
@@ -82,7 +85,15 @@ export function markerDragTimeUs(
     isValidSnap: (boundaryUs) =>
       clampMarkerTimeUs(boundaryUs, ctx.bounds) === boundaryUs,
   });
-  return clampMarkerTimeUs(snappedUs, ctx.bounds);
+  return { timeUs: clampMarkerTimeUs(result.timeUs, ctx.bounds), boundaryUs: result.boundaryUs };
+}
+
+export function markerDragTimeUs(
+  ctx: MarkerDragContext,
+  deltaUs: number,
+  currentTimeUs: number,
+): number {
+  return markerDragSnap(ctx, deltaUs, currentTimeUs).timeUs;
 }
 
 /// The marker whose id is `markerId`, frozen with the snap targets and the
@@ -181,28 +192,32 @@ export function useMarkerDrag(opts: {
   useEffect(() => {
     return () => {
       contextRef.current = null;
+      setTimelineSnapGuide(compositionId, "marker", null);
     };
-  }, []);
+  }, [compositionId]);
 
   useEffect(() => {
     if (!active) return;
-    const landingUs = (clientX: number): number | null => {
+    const landing = (clientX: number, ctrlKey: boolean) => {
       const ctx = contextRef.current;
       if (ctx === null) return null;
       const deltaUs =
         ((clientX - ctx.startClientX) / ctx.pxPerSec) * US_PER_SEC;
       // Event-time read: the playhead is a snap TARGET, and playback moves it
       // while the pointer is down.
-      return markerDragTimeUs(ctx, deltaUs, playheadClockUs(compositionId));
+      return markerDragSnap(ctx, deltaUs, playheadClockUs(compositionId), ctrlKey);
     };
     const onMove = (e: PointerEvent) => {
-      const tUs = landingUs(e.clientX);
-      if (tUs === null) return;
-      setPreview((p) => (p === null || p.tUs === tUs ? p : { ...p, tUs }));
+      const result = landing(e.clientX, e.ctrlKey);
+      if (result === null) return;
+      setTimelineSnapGuide(compositionId, "marker", result.boundaryUs);
+      setPreview((p) => (p === null || p.tUs === result.timeUs ? p : { ...p, tUs: result.timeUs }));
     };
     const onUp = (e: PointerEvent) => {
       const ctx = contextRef.current;
-      const tUs = landingUs(e.clientX);
+      const result = landing(e.clientX, e.ctrlKey);
+      const tUs = result?.timeUs ?? null;
+      setTimelineSnapGuide(compositionId, "marker", null);
       contextRef.current = null;
       setActive(false);
       if (ctx === null || tUs === null) {
@@ -236,11 +251,19 @@ export function useMarkerDrag(opts: {
         setPreview((p) => (contextRef.current === null ? null : p)),
       );
     };
+    const onCancel = () => {
+      contextRef.current = null;
+      setActive(false);
+      setPreview(null);
+      setTimelineSnapGuide(compositionId, "marker", null);
+    };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
     return () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
     };
   }, [active, compositionId]);
 

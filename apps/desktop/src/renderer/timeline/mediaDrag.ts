@@ -14,7 +14,7 @@ import {
   SPAWN_TRACK_ID,
   type PlacementValidity,
 } from "./placement";
-import { snapDragDeltaToTimelineBoundary } from "./snapping";
+import { resolveTimelineDragSnap } from "./snapping";
 
 export const MEDIA_DRAG_TYPE = "application/x-weftcut-media";
 
@@ -90,6 +90,8 @@ export interface MediaDropPlan {
   /// When true, the ghost occupies the same half-height slot that the final
   /// layer will use beside an opposite-class layer.
   sharesLane: boolean;
+  /** Magnetic boundary chosen, if any; null for frame-grid-only placement. */
+  snapBoundaryUs?: number | null;
 }
 
 export interface MediaDropSnapOptions {
@@ -99,6 +101,8 @@ export interface MediaDropSnapOptions {
   currentTimeUs: number;
   enabled: boolean;
   strengthPx: number;
+  /** Ctrl suspends only magnetic targets, not the composition frame grid. */
+  suspended?: boolean;
 }
 
 interface MediaDragState {
@@ -309,8 +313,8 @@ export function planMediaDrop({
     fpsNum,
     fpsDen,
   );
-  const boundaryDeltaUs = snap
-    ? snapDragDeltaToTimelineBoundary({
+  const snapResult = snap
+    ? resolveTimelineDragSnap({
         state: {
           kind: "move",
           // The incoming layer has no project id yet. This sentinel cannot
@@ -328,10 +332,11 @@ export function planMediaDrop({
         fpsNum,
         fpsDen,
         pxPerSec,
-        enabled: snap.enabled,
+        enabled: snap.enabled && !snap.suspended,
         strengthPx: snap.strengthPx,
       })
-    : 0;
+    : { deltaUs: 0, boundaryUs: null };
+  const boundaryDeltaUs = snapResult.deltaUs;
   // Apply the chosen boundary delta to the actor input, then recompute both
   // snapped edges. The ghost and collision interval therefore match the
   // committed layer even at fractional frame rates.
@@ -356,6 +361,7 @@ export function planMediaDrop({
       conflictingLayerIds: [],
       overlapClass,
       sharesLane: false,
+      snapBoundaryUs: null,
     };
   }
   // The cycle gate out-ranks the lane: a composition that would contain itself
@@ -372,6 +378,7 @@ export function planMediaDrop({
       conflictingLayerIds: [],
       overlapClass,
       sharesLane: false,
+      snapBoundaryUs: null,
     };
   }
   const evaluation = evaluateTimelinePlacements({
@@ -397,5 +404,6 @@ export function planMediaDrop({
     conflictingLayerIds: evaluation.conflictingLayerIds,
     overlapClass,
     sharesLane: evaluation.sharesLane,
+    snapBoundaryUs: snapResult.boundaryUs,
   };
 }

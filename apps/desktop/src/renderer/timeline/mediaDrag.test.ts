@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { LayerSummary, MediaSummary, TrackSummary } from "../ipc";
+import { snapFrameRound } from "../frames";
 import { useCompositionAnchorStore } from "../state/compositionAnchorStore";
 import {
   MEDIA_DRAG_CURSOR_OFFSET_PX,
@@ -490,5 +491,28 @@ describe("composition drag placement", () => {
       dataTransfer: { getData: () => JSON.stringify(mediaDragPayload(media())) },
     } as unknown as React.DragEvent);
     expect(mediaParsed).toMatchObject({ source: "media", mediaId: "media-1" });
+  });
+});
+
+describe("media drop snap guide and Ctrl override", () => {
+  it("reports the exact clip-edge target and suspends only magnetic snapping", () => {
+    const target = track([visualLayer("previous", 0, 2_000_000)]);
+    const input = {
+      compositionId: null, track: target, media: mediaDragPayload(media()),
+      pointerXPx: MEDIA_DRAG_CURSOR_OFFSET_PX + 190,
+      pxPerSec: 100, fpsNum: 30, fpsDen: 1,
+      snap: {
+        visibleTracks: [target], links: [],
+        linkByLayerId: new Map<string, string>(),
+        currentTimeUs: 10_000_000, enabled: true, strengthPx: 20,
+      },
+    };
+    const magnetic = planMediaDrop(input);
+    expect(magnetic.snapBoundaryUs).toBe(2_000_000);
+    expect(magnetic.tStartUs).toBe(2_000_000);
+    const bypass = planMediaDrop({ ...input, snap: { ...input.snap, suspended: true } });
+    expect(bypass.snapBoundaryUs).toBeNull();
+    expect(bypass.tStartUs).toBe(1_900_000);
+    expect(bypass.tStartUs).toBe(snapFrameRound(bypass.tStartUs, 30, 1));
   });
 });

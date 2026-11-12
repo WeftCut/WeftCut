@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AnimTrack, LayerSummary, TrackSummary } from "../../ipc";
-import { markerDragTimeUs, type MarkerDragContext } from "./useMarkerDrag";
+import { markerDragTimeUs, markerDragSnap, type MarkerDragContext } from "./useMarkerDrag";
 
 const staticNum = (value: number): AnimTrack<number> => ({
   mode: "Static",
@@ -151,5 +151,20 @@ describe("markerDragTimeUs", () => {
     // upper bound, which is where the clamp would have parked a snapped-past-it
     // preview.
     expect(markerDragTimeUs(ctx, 900_000, PLAYHEAD_US)).toBe(2_900_000);
+  });
+});
+
+describe("marker magnetic guide and Ctrl suspension", () => {
+  it("snaps to a clip edge with a guide, but Ctrl returns a frame-grid position", () => {
+    const ctx = zoomedOut(true);
+    expect(markerDragSnap(ctx, 900_000, PLAYHEAD_US)).toEqual({
+      timeUs: 3_000_000, boundaryUs: 3_000_000,
+    });
+    expect(markerDragSnap(ctx, 900_000, PLAYHEAD_US, true)).toEqual({
+      timeUs: 2_900_000, boundaryUs: null,
+    });
+    expect(markerDragSnap(ctx, 900_000, PLAYHEAD_US)).toEqual({
+      timeUs: 3_000_000, boundaryUs: 3_000_000,
+    });
   });
 });

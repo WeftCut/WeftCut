@@ -3,6 +3,8 @@ import type { LinkSummary, LayerSummary, TrackSummary } from "../ipc";
 import {
   snapDragDeltaToTimelineBoundary,
   snapTimeToTimelineBoundary,
+  resolveTimelineDragSnap,
+  resolveTimelineTimeSnap,
 } from "./snapping";
 
 function layer(id: string, startUs: number, endUs: number): LayerSummary {
@@ -199,5 +201,43 @@ describe("timeline snapping", () => {
     });
 
     expect(snappedUs).toBe(3_000_000);
+  });
+});
+
+describe("magnetic feedback contract (#156)", () => {
+  const state = {
+    kind: "move" as const, layerId: "moving", originalTStart: 1_000_000,
+    originalTEnd: 2_000_000, escapeLink: false,
+  };
+
+  it("returns the exact winning boundary alongside the quantised move delta", () => {
+    expect(resolveTimelineDragSnap({
+      ...baseOpts(), state, frameDeltaUs: 950_000,
+    })).toEqual({ deltaUs: 1_000_000, boundaryUs: 3_000_000 });
+  });
+
+  it("has no magnetic target under Ctrl, even though the frame delta is preserved", () => {
+    expect(resolveTimelineDragSnap({
+      ...baseOpts({ enabled: false }), state, frameDeltaUs: 966_667,
+    })).toEqual({ deltaUs: 966_667, boundaryUs: null });
+  });
+
+  it("reports trim targets and suppresses feedback when outside snap strength", () => {
+    const trim = { ...state, kind: "trim-end" as const };
+    expect(resolveTimelineDragSnap({
+      ...baseOpts(), state: trim, frameDeltaUs: 966_667,
+    })).toEqual({ deltaUs: 1_000_000, boundaryUs: 3_000_000 });
+    expect(resolveTimelineDragSnap({
+      ...baseOpts({ currentTimeUs: 10_000_000 }), state: trim, frameDeltaUs: 966_667,
+    })).toEqual({ deltaUs: 966_667, boundaryUs: null });
+  });
+
+  it("a blade/cut reports the target independently of its resulting time", () => {
+    expect(resolveTimelineTimeSnap({
+      ...baseOpts(), timeUs: 2_966_667,
+    })).toEqual({ timeUs: 3_000_000, boundaryUs: 3_000_000 });
+    expect(resolveTimelineTimeSnap({
+      ...baseOpts({ enabled: false }), timeUs: 2_966_667,
+    })).toEqual({ timeUs: 2_966_667, boundaryUs: null });
   });
 });

@@ -30,7 +30,8 @@ import {
   type DragState,
   type DragSubject,
 } from "../layerDragStore";
-import { snapDragDeltaToTimelineBoundary } from "../snapping";
+import { resolveTimelineDragSnap, type TimelineDragSnapResult } from "../snapping";
+import { setTimelineSnapGuide } from "../timelineSnapFeedbackStore";
 import { refuseCrossCompositionCopy } from "../crossCompositionRefusal";
 import { timelineDestination } from "../timelineDestination";
 import { foreignCompositionAtPoint } from "../timelineSurfaces";
@@ -85,6 +86,7 @@ interface LayerDragGesture {
   armAtMs: number;
   lastClientX: number;
   lastClientY: number;
+  lastCtrlKey: boolean;
 }
 
 /// Where the dragged edge / clip-start actually lands, after the constraints the
@@ -120,6 +122,7 @@ interface PointerDragEvaluation {
   hasEditIntent: boolean;
   hasCommitChange: boolean;
   moveProjection: LayerMoveProjection | null;
+  snapBoundaryUs: number | null;
   /// The composition of the timeline Panel under the pointer when that Panel is
   /// not this one, else null. Every destination is withheld while it is set and
   /// THIS Panel's release commits nothing — the crossing is the destination
@@ -391,6 +394,7 @@ export function useLayerDrag(opts: {
         gestureRef.current = null;
         setGestureActive(false);
         useLayerDragStore.getState().end();
+        setTimelineSnapGuide(compositionId, "layer", null);
         return;
       }
       // The link override reaches this whole gesture through the seed's own
@@ -432,6 +436,7 @@ export function useLayerDrag(opts: {
         armAtMs: Date.now() + armDelayMs,
         lastClientX: seed.startX,
         lastClientY: seed.startY,
+        lastCtrlKey: false,
       };
       setGestureActive(true);
     },
@@ -446,8 +451,9 @@ export function useLayerDrag(opts: {
       if (gestureRef.current === null) return;
       gestureRef.current = null;
       useLayerDragStore.getState().end();
+      setTimelineSnapGuide(compositionId, "layer", null);
     },
-    [],
+    [compositionId],
   );
 
   // -------- Layer drag (move / trim) --------
@@ -483,8 +489,9 @@ export function useLayerDrag(opts: {
     (
       state: DragState,
       frameDeltaUs: number,
-    ): number => {
-      return snapDragDeltaToTimelineBoundary({
+      ctrlKey: boolean,
+    ): TimelineDragSnapResult => {
+      return resolveTimelineDragSnap({
         // The helper ignores the seed and, unless escaped, its link members —
         // which is the subject set for a move and for a duplicate alike, so a
         // copy never snaps to the sources it is leaving in place.
@@ -500,7 +507,7 @@ export function useLayerDrag(opts: {
         fpsNum,
         fpsDen,
         pxPerSec,
-        enabled: tailSnapEnabled,
+        enabled: tailSnapEnabled && !ctrlKey,
         strengthPx: tailSnapStrengthPx,
       });
     },
@@ -621,6 +628,7 @@ export function useLayerDrag(opts: {
       state: DragState,
       clientX: number,
       clientY: number,
+      ctrlKey: boolean,
     ): PointerDragEvaluation => {
       const deltaPx = clientX - state.startX;
       const rawDeltaUs = Math.round((deltaPx / pxPerSec) * 1_000_000);
@@ -696,10 +704,11 @@ export function useLayerDrag(opts: {
       // the preview that does (`ForeignDragGhost.tsx`). Dragging back into this
       // Panel picks the delta up again — the whole gesture is recomputed from
       // the pointer each event.
-      const deltaUs =
+      const snapped =
         timeChanged && foreignCompositionId === null
-          ? snapDeltaToTimelineBoundary(state, frameDeltaUs)
-          : 0;
+          ? snapDeltaToTimelineBoundary(state, frameDeltaUs, ctrlKey)
+          : { deltaUs: 0, boundaryUs: null };
+      const deltaUs = snapped.deltaUs;
       const moveProjection =
         state.kind === "move"
           ? buildMoveProjection(state, deltaUs, overTrackId)
@@ -723,6 +732,7 @@ export function useLayerDrag(opts: {
         hasEditIntent,
         hasCommitChange,
         moveProjection,
+        snapBoundaryUs: snapped.boundaryUs,
         foreignCompositionId,
       };
     },
@@ -765,7 +775,7 @@ export function useLayerDrag(opts: {
       if (!current) return;
       const clientX = e.clientX;
       const clientY = e.clientY;
-      const evaluation = evaluatePointer(current.state, clientX, clientY);
+      const evaluation = evaluatePointer(current.state, clientX, clientY, e.ctrlKey);
       announceForeignComposition(
         evaluation.foreignCompositionId,
         current.state.duplicate,
@@ -774,6 +784,7 @@ export function useLayerDrag(opts: {
         ...current,
         lastClientX: clientX,
         lastClientY: clientY,
+        lastCtrlKey: e.ctrlKey,
       };
       const store = useLayerDragStore.getState();
       if (current.phase === "pending") {
@@ -786,14 +797,20 @@ export function useLayerDrag(opts: {
           phase: "dragging",
           state: evaluation.state,
         };
-        store.begin(evaluation.state, clientX, clientY);
+        store.begin(evaluation.state, clientX, clientY, e.ctrlKey);
+        setTimelineSnapGuide(compositionId, "layer",
+          evaluation.hasCommitChange && evaluation.foreignCompositionId === null
+            ? evaluation.snapBoundaryUs : null);
         return;
       }
       gestureRef.current = { ...next, state: evaluation.state };
       store.publish(evaluation.state);
-      store.moveVisual(clientX, clientY);
+      store.moveVisual(clientX, clientY, e.ctrlKey);
+      setTimelineSnapGuide(compositionId, "layer",
+        evaluation.hasEditIntent && evaluation.hasCommitChange &&
+        evaluation.foreignCompositionId === null ? evaluation.snapBoundaryUs : null);
     },
-    [announceForeignComposition, evaluatePointer],
+    [announceForeignComposition, compositionId, evaluatePointer],
   );
 
   const handlePointerUp = useCallback(
@@ -804,12 +821,14 @@ export function useLayerDrag(opts: {
         current.state,
         e.clientX,
         e.clientY,
+        e.ctrlKey,
       );
       const temporalArmReached =
         current.phase === "dragging" || Date.now() >= current.armAtMs;
       gestureRef.current = null;
       setGestureActive(false);
       useLayerDragStore.getState().end();
+      setTimelineSnapGuide(compositionId, "layer", null);
       // Released over another timeline: this Panel sends nothing. The
       // DESTINATION commits the move, off its own claim and its own axis
       // (`ForeignDragGhost.tsx`) — the only party that can, since the landing is
@@ -1020,6 +1039,7 @@ export function useLayerDrag(opts: {
         current.state,
         current.lastClientX,
         current.lastClientY,
+        current.lastCtrlKey,
       );
       if (!evaluation.hasEditIntent) return;
       gestureRef.current = {
@@ -1029,24 +1049,30 @@ export function useLayerDrag(opts: {
       };
       useLayerDragStore
         .getState()
-        .begin(evaluation.state, current.lastClientX, current.lastClientY);
+        .begin(evaluation.state, current.lastClientX, current.lastClientY, current.lastCtrlKey);
+      setTimelineSnapGuide(compositionId, "layer",
+        evaluation.hasCommitChange && evaluation.foreignCompositionId === null
+          ? evaluation.snapBoundaryUs : null);
     };
     timer = window.setTimeout(
       fire,
       Math.max(0, (gestureRef.current?.armAtMs ?? 0) - Date.now()),
     );
     return () => window.clearTimeout(timer);
-  }, [evaluatePointer, gestureActive]);
+  }, [compositionId, evaluatePointer, gestureActive]);
 
   useEffect(() => {
     if (!gestureActive) return;
+    const cancel = () => setDrag(null);
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", cancel);
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", cancel);
     };
-  }, [gestureActive, handlePointerMove, handlePointerUp]);
+  }, [gestureActive, handlePointerMove, handlePointerUp, setDrag]);
 
   return { setDrag, pendingPlacements, pendingLayerById, dragLayerById };
 }

@@ -5,6 +5,18 @@ const US_PER_SEC = 1_000_000;
 
 export type TimelineDragSnapKind = "move" | "trim-start" | "trim-end";
 
+/** The actual magnetic target is returned separately from the frame-quantised
+ * landing. No target means the drag landed on its normal frame grid only. */
+export interface TimelineDragSnapResult {
+  deltaUs: number;
+  boundaryUs: number | null;
+}
+
+export interface TimelineTimeSnapResult {
+  timeUs: number;
+  boundaryUs: number | null;
+}
+
 export interface TimelineDragSnapState {
   kind: TimelineDragSnapKind;
   layerId: string;
@@ -144,15 +156,15 @@ function validDragDelta(
   }
 }
 
-export function snapDragDeltaToTimelineBoundary(
+export function resolveTimelineDragSnap(
   opts: TimelineSnapOptions & {
     state: TimelineDragSnapState;
     frameDeltaUs: number;
   },
-): number {
-  if (!opts.enabled) return opts.frameDeltaUs;
+): TimelineDragSnapResult {
+  if (!opts.enabled) return { deltaUs: opts.frameDeltaUs, boundaryUs: null };
   const maxDistanceUs = thresholdUs(opts.strengthPx, opts.pxPerSec);
-  if (maxDistanceUs <= 0) return opts.frameDeltaUs;
+  if (maxDistanceUs <= 0) return { deltaUs: opts.frameDeltaUs, boundaryUs: null };
 
   const ignored = ignoredLayerIds(
     opts.state.layerId,
@@ -165,6 +177,7 @@ export function snapDragDeltaToTimelineBoundary(
   const anchors = dragAnchors(opts.state, opts.frameDeltaUs);
 
   let bestDeltaUs: number | null = null;
+  let bestBoundaryUs: number | null = null;
   let bestDistanceUs = Number.POSITIVE_INFINITY;
   for (const boundaryUs of boundaries) {
     for (const anchor of anchors) {
@@ -176,18 +189,26 @@ export function snapDragDeltaToTimelineBoundary(
       if (!validDragDelta(opts.state, deltaUs, opts.fpsNum, opts.fpsDen)) continue;
       bestDistanceUs = distanceUs;
       bestDeltaUs = deltaUs;
+      bestBoundaryUs = boundaryUs;
     }
   }
 
-  return bestDeltaUs ?? opts.frameDeltaUs;
+  return { deltaUs: bestDeltaUs ?? opts.frameDeltaUs, boundaryUs: bestBoundaryUs };
 }
 
-export function snapTimeToTimelineBoundary(
-  opts: TimelineSnapBoundaryOptions & { timeUs: number },
+/** Compatibility for callers which only need the placement, not its guide. */
+export function snapDragDeltaToTimelineBoundary(
+  opts: Parameters<typeof resolveTimelineDragSnap>[0],
 ): number {
-  if (!opts.enabled) return opts.timeUs;
+  return resolveTimelineDragSnap(opts).deltaUs;
+}
+
+export function resolveTimelineTimeSnap(
+  opts: TimelineSnapBoundaryOptions & { timeUs: number },
+): TimelineTimeSnapResult {
+  if (!opts.enabled) return { timeUs: opts.timeUs, boundaryUs: null };
   const maxDistanceUs = thresholdUs(opts.strengthPx, opts.pxPerSec);
-  if (maxDistanceUs <= 0) return opts.timeUs;
+  if (maxDistanceUs <= 0) return { timeUs: opts.timeUs, boundaryUs: null };
 
   const ignored = ignoredLayerIds(
     opts.layerId,
@@ -208,5 +229,12 @@ export function snapTimeToTimelineBoundary(
     }
   }
 
-  return bestBoundaryUs ?? opts.timeUs;
+  return { timeUs: bestBoundaryUs ?? opts.timeUs, boundaryUs: bestBoundaryUs };
+}
+
+/** Compatibility for callers which only need the placement, not its guide. */
+export function snapTimeToTimelineBoundary(
+  opts: Parameters<typeof resolveTimelineTimeSnap>[0],
+): number {
+  return resolveTimelineTimeSnap(opts).timeUs;
 }

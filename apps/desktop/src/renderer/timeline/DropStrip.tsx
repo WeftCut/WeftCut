@@ -33,6 +33,7 @@ import {
   useLayerDragForStrip,
 } from "./layerDragStore";
 import { AppIcon } from "@/components/AppIcon";
+import { setTimelineSnapGuide } from "./timelineSnapFeedbackStore";
 
 /// One ghost the strip draws for a clip whose destination is the lane this row
 /// spawns. Minted from the LIVE gesture while the pointer is here, and from the
@@ -216,6 +217,10 @@ export function DropStrip({
   const visibleDropPreview =
     dropTargetTrackId === SPAWN_TRACK_ID ? dropPreview : null;
 
+  useEffect(() => {
+    if (activeMediaDrag === null) setTimelineSnapGuide(compositionId, "media", null);
+  }, [activeMediaDrag, compositionId]);
+
   // The raise's landing, through the SAME call the move projection makes — the
   // strip promises what the commit sends, or it is not a preview of it. Every
   // subject, because a raise takes the whole set onto the one new lane.
@@ -265,7 +270,7 @@ export function DropStrip({
   }, [pendingLayerById, pendingPlacements, stripDrag, stripLanding]);
 
   const planFor = useCallback(
-    (media: MediaDragPayload, pointerXPx: number) =>
+    (media: MediaDragPayload, pointerXPx: number, ctrlKey = false) =>
       planMediaDrop({
         compositionId,
         track: null,
@@ -274,7 +279,7 @@ export function DropStrip({
         pxPerSec,
         fpsNum,
         fpsDen,
-        snap: { ...mediaDropSnap, currentTimeUs: playheadClockUs(compositionId) },
+        snap: { ...mediaDropSnap, suspended: ctrlKey, currentTimeUs: playheadClockUs(compositionId) },
       }),
     [compositionId, fpsDen, fpsNum, mediaDropSnap, pxPerSec],
   );
@@ -285,7 +290,9 @@ export function DropStrip({
       e.preventDefault();
       if (activeMediaDrag === null) return;
       const rect = e.currentTarget.getBoundingClientRect();
-      const plan = planFor(activeMediaDrag, e.clientX - rect.left);
+      const plan = planFor(activeMediaDrag, e.clientX - rect.left, e.ctrlKey);
+      setTimelineSnapGuide(compositionId, "media",
+        !mediaDropInvalid(plan.validity) ? plan.snapBoundaryUs ?? null : null);
       e.dataTransfer.dropEffect = mediaDropInvalid(plan.validity) ? "none" : "copy";
       // Collapse the floating media card into a chip inside the strip, the same
       // way a lane absorbs it. Not cosmetic here: at full size the card covers
@@ -309,7 +316,7 @@ export function DropStrip({
       });
       setDropPreview({ media: activeMediaDrag, plan });
     },
-    [activeMediaDrag, claimDropTarget, planFor, pxPerSec],
+    [activeMediaDrag, claimDropTarget, compositionId, planFor, pxPerSec],
   );
 
   const onDragLeave = useCallback(
@@ -328,19 +335,21 @@ export function DropStrip({
       if (pointerStillInside) return;
       releaseDropTarget(SPAWN_TRACK_ID);
       setDropPreview(null);
+      setTimelineSnapGuide(compositionId, "media", null);
     },
-    [releaseDropTarget],
+    [compositionId, releaseDropTarget],
   );
 
   const onDrop = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
       const payload = parseMediaDrag(e);
       setDropPreview(null);
+      setTimelineSnapGuide(compositionId, "media", null);
       if (!payload) return;
       e.preventDefault();
       endMediaDrag();
       const rect = e.currentTarget.getBoundingClientRect();
-      const plan = planFor(payload, e.clientX - rect.left);
+      const plan = planFor(payload, e.clientX - rect.left, e.ctrlKey);
       if (mediaDropInvalid(plan.validity)) return;
       onMediaDrop(null, payload, plan);
     },

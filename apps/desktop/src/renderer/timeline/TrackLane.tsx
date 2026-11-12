@@ -42,6 +42,7 @@ import {
   type MediaDropSnapOptions,
 } from "./mediaDrag";
 import { previewTrackId } from "./placement";
+import { setTimelineSnapGuide } from "./timelineSnapFeedbackStore";
 import { ReviewCuts, ReviewFocusWash, ReviewGhosts, ReviewWasFrames } from "./ReviewMarks";
 
 export function TrackLane({
@@ -108,8 +109,8 @@ export function TrackLane({
   pendingLayerById: ReadonlyMap<string, LayerSummary>;
   dragLayerById: ReadonlyMap<string, LayerSummary>;
   bladeMode: boolean;
-  onBladeSplit: (layer: LayerSummary, clientX: number) => void;
-  onBladePreview: (layer: LayerSummary | null, clientX?: number) => void;
+  onBladeSplit: (layer: LayerSummary, clientX: number, ctrlKey?: boolean) => void;
+  onBladePreview: (layer: LayerSummary | null, clientX?: number, ctrlKey?: boolean) => void;
   /// Pass-through to `LayerBlock`, whose prop docstring owns the contract:
   /// applies the click's selection semantics, returns whether the clicked layer
   /// is selected afterwards.
@@ -184,6 +185,10 @@ export function TrackLane({
 
   const visibleDropPreview =
     dropTargetTrackId === track.id ? dropPreview : null;
+
+  useEffect(() => {
+    if (activeMediaDrag === null) setTimelineSnapGuide(compositionId, "media", null);
+  }, [activeMediaDrag, compositionId]);
 
   const dragPreviewTrackId = useCallback(
     (subject: DragSubject): string => {
@@ -324,8 +329,10 @@ export function TrackLane({
         pxPerSec,
         fpsNum,
         fpsDen,
-        snap: { ...mediaDropSnap, currentTimeUs: playheadClockUs(compositionId) },
+        snap: { ...mediaDropSnap, suspended: e.ctrlKey, currentTimeUs: playheadClockUs(compositionId) },
       });
+      setTimelineSnapGuide(compositionId, "media",
+        plan.validity === "valid" ? plan.snapBoundaryUs ?? null : null);
       e.dataTransfer.dropEffect = plan.validity === "valid" ? "copy" : "none";
       const slot = mediaDropGhostSlot(height, plan);
       const ghostLeft =
@@ -383,7 +390,8 @@ export function TrackLane({
     }
     releaseDropTarget(track.id);
     setDropPreview(null);
-  }, [releaseDropTarget, track.id]);
+    setTimelineSnapGuide(compositionId, "media", null);
+  }, [compositionId, releaseDropTarget, track.id]);
 
   const onDrop = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
@@ -398,10 +406,11 @@ export function TrackLane({
             pxPerSec,
             fpsNum,
             fpsDen,
-            snap: { ...mediaDropSnap, currentTimeUs: playheadClockUs(compositionId) },
+            snap: { ...mediaDropSnap, suspended: e.ctrlKey, currentTimeUs: playheadClockUs(compositionId) },
           })
         : null;
       setDropPreview(null);
+      setTimelineSnapGuide(compositionId, "media", null);
       if (!payload) return;
       e.preventDefault();
       endMediaDrag();

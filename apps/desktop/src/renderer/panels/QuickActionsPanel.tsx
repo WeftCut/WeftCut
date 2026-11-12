@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useEffect,
   useRef,
   useState,
@@ -45,6 +46,7 @@ import {
   type QuickActionState,
 } from "./quickActions";
 import { AppIcon } from "@/components/AppIcon";
+import { TimelineSnapPopover } from "./TimelineSnapPopover";
 
 /// Which way the strip runs. Single row or single column, never wrapped —
 /// overflow scrolls instead.
@@ -389,16 +391,28 @@ export function QuickActionsPanel({
           {section.resolved.map(({ item, command }) => {
             index += 1;
             const own = index;
+            // The magnet has a separate options chevron. It participates in
+            // the same roving keyboard order, but never changes the magnet's
+            // one-click toggle contract.
+            const optionsIndex = item.id === "toggleTailSnap" ? ++index : null;
             return (
-              <QuickActionButton
-                key={item.id}
-                item={item}
-                command={command}
-                state={state}
-                mode={section.mode}
-                tabbable={own === focusIndex}
-                onFocus={() => setFocusIndex(own)}
-              />
+              <Fragment key={item.id}>
+                <QuickActionButton
+                  item={item}
+                  command={command}
+                  state={state}
+                  mode={section.mode}
+                  tabbable={own === focusIndex}
+                  onFocus={() => setFocusIndex(own)}
+                />
+                {optionsIndex !== null && (
+                  <TimelineSnapPopover
+                    orientation={orientation}
+                    tabbable={optionsIndex === focusIndex}
+                    onFocus={() => setFocusIndex(optionsIndex)}
+                  />
+                )}
+              </Fragment>
             );
           })}
         </div>
