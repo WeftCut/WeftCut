@@ -581,6 +581,108 @@ describe('createTsActorHost — persistence-route integration', () => {
     })
   })
 
+  describe('saveNow, the save of a session the OS is ending', () => {
+    /** A started host on fake timers, so autosave writes only when a test
+     *  says. `writes` lists every project.json write attempted; those of
+     *  `failing` paths fail with ENOSPC. `hooks.changing` runs while a
+     *  replacement is in flight. */
+    function sessionHost() {
+      vi.useFakeTimers()
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const fixture = makeInMemoryDeps()
+      const write = fixture.deps.fs.writeFile
+      const writes: string[] = []
+      const failing = new Set<string>()
+      fixture.deps.fs.writeFile = (p: string, text: string) => {
+        if (p.endsWith('/project.json')) writes.push(p)
+        if (failing.has(p)) throw errno('ENOSPC')
+        write(p, text)
+      }
+      const hooks = { changing: () => {} }
+      const host = createTsActorHost({ ...fixture.deps, onWorkspaceChanging: () => hooks.changing() })
+      host.start()
+      const savedMarkers = (dir: string): string[] => {
+        const saved = JSON.parse(fixture.vfs[`${dir}/project.json`]!)
+        return saved.compositions[saved.root_id].markers.map((m: { id: string }) => m.id)
+      }
+      const done = () => { host.stop(); vi.useRealTimers(); vi.restoreAllMocks() }
+      return { ...fixture, host, writes, failing, hooks, savedMarkers, done }
+    }
+
+    it('writes an edit the autosave timers have not written yet, before returning', async () => {
+      const t = sessionHost()
+      try {
+        const dir = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
+        const marker = await t.host.handleInvoke('add_marker', { tUs: 1_000_000 }) as string
+        expect(t.savedMarkers(dir)).toEqual([])
+        t.writes.length = 0
+        t.host.saveNow()
+        expect(t.writes).toEqual([`${dir}/project.json`])
+        expect(t.savedMarkers(dir)).toEqual([marker])
+        expect(t.host.hasUnsavedEdits()).toBe(false)
+      } finally { t.done() }
+    })
+
+    it('writes nothing when every edit is on disk', async () => {
+      const t = sessionHost()
+      try {
+        await t.host.handleInvoke('project_new_workspace', publicationProject)
+        await t.host.handleInvoke('add_marker', { tUs: 1_000_000 })
+        await vi.advanceTimersByTimeAsync(autosaveMaxWaitMs(t.host.actor.snapshot().settings) * 2)
+        expect(t.host.hasUnsavedEdits()).toBe(false)
+        t.writes.length = 0
+        t.host.saveNow()
+        expect(t.writes).toEqual([])
+      } finally { t.done() }
+    })
+
+    it('a failed write throws and leaves the edits unsaved', async () => {
+      const t = sessionHost()
+      try {
+        const dir = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
+        await t.host.handleInvoke('add_marker', { tUs: 1_000_000 })
+        t.failing.add(`${dir}/project.json`)
+        expect(() => t.host.saveNow()).toThrow(expect.objectContaining({ code: 'ENOSPC' }))
+        expect(t.host.hasUnsavedEdits()).toBe(true)
+      } finally { t.done() }
+    })
+
+    it('writes nothing after Quit Without Saving', async () => {
+      const t = sessionHost()
+      try {
+        const dir = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
+        await t.host.handleInvoke('add_marker', { tUs: 1_000_000 })
+        t.failing.add(`${dir}/project.json`)
+        await expect(t.host.shutdown()).rejects.toMatchObject({ code: 'ENOSPC' })
+        t.host.abandon()
+        t.failing.clear()
+        t.writes.length = 0
+        t.host.saveNow()
+        expect(t.writes).toEqual([])
+        expect(t.savedMarkers(dir)).toEqual([])
+      } finally { t.done() }
+    })
+
+    it('writes nothing while a replacement is in flight', async () => {
+      const t = sessionHost()
+      try {
+        const dir = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
+        await t.host.handleInvoke('add_marker', { tUs: 1_000_000 })
+        // Save As goes on past a failed flush of the outgoing folder, so the
+        // edit is still unsaved while the replacement runs.
+        t.failing.add(`${dir}/project.json`)
+        let inFlight: { unsaved: boolean; writes: string[] } | null = null
+        t.hooks.changing = () => {
+          t.writes.length = 0
+          t.host.saveNow()
+          inFlight = { unsaved: t.host.hasUnsavedEdits(), writes: [...t.writes] }
+        }
+        await t.host.handleInvoke('project_save_as', { path: '/projects/Copy' })
+        expect(inFlight).toEqual({ unsaved: true, writes: [] })
+      } finally { t.done() }
+    })
+  })
+
   describe('a flush that fails aborts the replacement before anything changes', () => {
     /** A started host on fake timers, so autosave writes only when a test
      *  says; writes of `failing` paths fail with EACCES. */

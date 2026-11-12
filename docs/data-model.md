@@ -730,6 +730,11 @@ other window (Render & Play, a monitor) is open, and asks the same question
 before the window goes, so a Cancel keeps it. The dialog follows the OS
 language, like main's other native dialogs.
 
+A Windows shutdown, restart or sign-out is not a quit: the process is terminated
+as the session ends, with no time for a question. Unsaved edits are written
+synchronously at that moment (`main/sessionEnd.ts`); a write that fails there is
+recorded, and the next start offers to report it.
+
 ### `view.json`: how this project was last looked at
 
 Kept out of `project.json` so zooming never dirties the document, pushes undo or

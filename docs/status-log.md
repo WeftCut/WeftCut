@@ -143,7 +143,10 @@ Report an Issue (startup screen, Help menu) exports a local ZIP (current session
 latest abnormal one + environment + README) and opens a prefilled GitHub issue
 draft; the user attaches the ZIP. Nothing is uploaded automatically. Only the
 `quit` event (after autosave) marks a session closed — `before-quit` can be
-cancelled. An unfinished session or recorded process failure prompts after the
+cancelled. A Windows shutdown, restart or sign-out raises no `quit`: the editor
+window's `session-end` saves and marks the session closed before the process is
+terminated (`main/sessionEnd.ts`), and only a save that failed there marks it
+for a report. An unfinished session or recorded process failure prompts after the
 next splash ("did not exit normally"). Storage failures never block startup.
 
 ## Frontend

@@ -15,6 +15,10 @@ let environment: Record<string, unknown> = {}
 
 export function diagnosticOwner(id: number): void { ownerId = id }
 export function recordDiagnostic(kind: string, message: string): void { store?.record(kind, message) }
+/** A failure seen outside this module: the next start reports the session. */
+export function recordDiagnosticFailure(kind: string, message: string): void { store?.failure(kind, message) }
+/** The session ended in order without reaching `quit` (sessionEnd.ts). */
+export function closeDiagnostics(): void { store?.close(true) }
 
 /** Structured project events contribute only their message and classification;
  * tool arguments, project snapshots, details and i18n arguments are excluded,
@@ -68,7 +72,8 @@ export function startDiagnostics(): void {
     }))
   })
   // before-quit/will-quit can be cancelled while autosave is still in progress.
-  // Only an actual successful quit clears the unfinished-session marker.
+  // Only an actual successful quit clears the unfinished-session marker. An OS
+  // session end never gets here and clears it through closeDiagnostics.
   app.on('quit', (_event, code) => store?.close(code === 0))
   process.on('exit', () => store?.flush())
   void app.whenReady().then(async () => {
