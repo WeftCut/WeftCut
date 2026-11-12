@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { test, expect } from '@playwright/test'
@@ -29,6 +30,44 @@ test('diagnostic export works before opening a project and normal quit does not 
     const summary = await second.page.evaluate(() => window.api.diagnostics.summary())
     expect(summary.previousSession).toBeNull()
     await expect(second.page.getByRole('button', { name: 'Report an Issue…' })).toBeVisible()
+    await expect(second.page.getByRole('dialog')).toHaveCount(0)
+  } finally { await second.app.close() }
+})
+
+/** Sends WM_ENDSESSION with wParam TRUE to `hwnd`, as Windows does to every
+ *  window when the session ends. The receiver ends inside the call. */
+function sendEndSession(hwnd: string): void {
+  const script = [
+    `$user32 = Add-Type -Namespace WeftCutE2E -Name User32 -PassThru -MemberDefinition '[DllImport("user32.dll")] public static extern IntPtr SendMessageTimeoutW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeoutMs, out IntPtr result);'`,
+    `$result = [IntPtr]::Zero`,
+    `[void]$user32::SendMessageTimeoutW([IntPtr]${hwnd}, 0x0016, [IntPtr]1, [IntPtr]::Zero, 0x0002, 30000, [ref]$result)`,
+  ].join('\n')
+  // Encoded: the quotes of the C# signature do not survive a -Command argument.
+  execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand',
+    Buffer.from(script, 'utf16le').toString('base64')], { stdio: 'ignore', windowsHide: true })
+}
+
+test('a Windows session end is an orderly exit: the app ends itself and the next start does not prompt', async () => {
+  test.skip(process.platform !== 'win32', 'WM_ENDSESSION is a Windows message')
+  test.setTimeout(90_000)
+  const userDataDir = tmpDir('weftcut-report-session-end-')
+  const first = await launchApp({ userDataDir })
+  const closed = first.app.waitForEvent('close')
+  const editor = await first.app.browserWindow(first.page)
+  sendEndSession(await editor.evaluate(win => win.getNativeWindowHandle().readBigUInt64LE(0).toString()))
+  // No kill from the test: Electron terminates the process once the window's
+  // `session-end` listeners return.
+  await closed
+  await first.app.close().catch(() => {})
+  const sessionsDir = path.join(userDataDir, 'diagnostics-dev')
+  const [session] = fs.readdirSync(sessionsDir)
+  expect(JSON.parse(fs.readFileSync(path.join(sessionsDir, session!, 'session.json'), 'utf8')))
+    .toMatchObject({ closed: true, failed: false })
+  expect(fs.readFileSync(path.join(sessionsDir, session!, 'events.jsonl'), 'utf8')).toContain('"kind":"session-end"')
+
+  const second = await launchApp({ userDataDir })
+  try {
+    expect((await second.page.evaluate(() => window.api.diagnostics.summary())).previousSession).toBeNull()
     await expect(second.page.getByRole('dialog')).toHaveCount(0)
   } finally { await second.app.close() }
 })

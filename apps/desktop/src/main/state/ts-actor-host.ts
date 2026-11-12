@@ -229,6 +229,12 @@ export interface TsActorHost {
   abandon: () => void
   /** Edits not on disk yet. */
   hasUnsavedEdits: () => boolean
+  /** Writes the open project's unsaved edits before returning, for the one
+   *  caller that cannot await (sessionEnd.ts). A failed write throws. Writes
+   *  nothing with no project open, and nothing while a replacement is in
+   *  flight: its own flush has run, and until it settles the folder and the
+   *  project in memory need not be the same project. */
+  saveNow: () => void
   start: () => void
   stop: () => void
 }
@@ -1050,6 +1056,10 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       autosave.stop()
     },
     hasUnsavedEdits: () => autosave.unsaved(),
+    saveNow: () => {
+      if (opened === null || replacing || !autosave.unsaved()) return
+      autosave.forceFlush()
+    },
     ...(deps.styleDirs ? { taste: () => tasteView(deps.styleDirs!, opened?.dir ?? null, { motif: (id) => motifCatalog.get(id) ?? null, fonts: deps.installedFonts?.() ?? null }) } : {}),
     audits: new AuditStore((id) => motifCatalog.get(id) ?? null),
     projectStatus: () => ({

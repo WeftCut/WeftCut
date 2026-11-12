@@ -1,6 +1,7 @@
 import { ExportJobs, exportPathExists, suggestExportName } from "./exportJobs";
 import path from 'node:path'
-import { diagnosticOwner, recordDiagnostic, recordProjectDiagnostic } from './diagnostics'
+import { closeDiagnostics, diagnosticOwner, recordDiagnostic, recordDiagnosticFailure, recordProjectDiagnostic } from './diagnostics'
+import { endSession } from './sessionEnd'
 import { sourceSignature } from './state/mutations/textCorrection.js'
 import { resolvePauseSubject } from './state/pauseSubject.js'
 import fs from 'node:fs'
@@ -2954,6 +2955,13 @@ app.whenReady().then(async () => {
     event.preventDefault();
     void finishQuitSave().then(quit => { if (quit && !win.isDestroyed()) win.close(); });
   });
+  // A Windows shutdown, restart or sign-out reaches neither the handler above
+  // nor `before-quit`: this is all the quit that session gets (sessionEnd.ts).
+  win.on('session-end', event => endSession(event.reasons, {
+    save: () => tsHost?.saveNow(),
+    flush: [() => workspaceStore?.flush(), () => windowGeometryStore?.flush()],
+    diagnostics: { record: recordDiagnostic, failure: recordDiagnosticFailure, close: closeDiagnostics },
+  }));
 
   win.once('ready-to-show', () => win.show())
   updates.start()

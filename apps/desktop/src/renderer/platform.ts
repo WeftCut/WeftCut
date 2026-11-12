@@ -30,3 +30,18 @@ export const rendererOS: RendererOS =
         (navigator as Navigator).platform || "",
         (navigator as Navigator).userAgent || "",
       );
+
+/// Whether the platform's primary modifier is held: ⌘ on macOS, Ctrl elsewhere.
+/// The same mapping `Mod` has in shortcut specs (`shortcuts/match.ts`), for
+/// pointer gestures as well as keys.
+export function modKeyHeld(
+  e: { ctrlKey: boolean; metaKey: boolean },
+  mac: boolean = isMac,
+): boolean {
+  return mac ? e.metaKey : e.ctrlKey;
+}
+
+/// The primary modifier's name as a hint prints it.
+export function modKeyLabel(mac: boolean = isMac): string {
+  return mac ? "⌘" : "Ctrl";
+}

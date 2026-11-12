@@ -171,6 +171,27 @@ return to. So `quitWithEditor` has no platform branch. Restoring the quick-start
 would bring back an `activate` handler that can resurrect the window during the
 `before-quit` flush.
 
+## A Windows session end skips every quit event
+
+On a shutdown, restart or sign-out Windows sends each top-level window
+`WM_QUERYENDSESSION`, then `WM_ENDSESSION`. Electron raises `query-session-end`
+and `session-end` on every `BrowserWindow` and, once the `session-end` listeners
+return, terminates its own process: `before-quit`, `will-quit`, `quit` and
+Node's `exit` never run, and nothing awaited in a listener completes. A Restart
+Manager request (an installer replacing files) arrives the same way, with reason
+`close-app`.
+
+So the editor window's `session-end` does synchronously what the quit would
+have: the project save, the debounced layout and geometry writes, and the
+diagnostics marker (`main/sessionEnd.ts`). Without it every shutdown with the
+app open read as "did not exit normally" on the next start, and an edit inside
+the autosave debounce was lost. Gated on Windows by
+`e2e/electron/diagnostic-report.spec.ts`, which sends the window the real
+`WM_ENDSESSION`; the termination after the listeners is read from Electron
+44.9.3 `shell/browser/native_window_views_win.cc`, and a real OS shutdown has
+not been run against it. `query-session-end` can hold the shutdown back
+(`preventDefault`); nothing uses it, so a running export ends with the session.
+
 ## macOS offscreen bitmap host drops the first commit when window and emulation sizes differ
 
 GitHub macOS runner (3 cores, GPU compositing, no physical GPU), 2026-10-26/27.

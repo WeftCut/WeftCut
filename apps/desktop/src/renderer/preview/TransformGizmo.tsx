@@ -21,6 +21,7 @@
 
 import { useCropEditingStore } from '../state/cropEditingStore';
 import { useEffect, useRef } from "react";
+import { modKeyHeld } from "@/platform";
 import { RotateCcwIcon } from "lucide-react";
 
 import { logMutationFailure } from "../errors/tryMutate";
@@ -631,16 +632,20 @@ function isNoDelta(d: TransformDelta): boolean {
 const NO_GUIDES: SnapGuides = { x: null, y: null };
 
 /// The snap radius in composition pixels for this move, or 0 — which is how both
-/// "the preference is off" and "Ctrl is held" reach the solvers, since they all
-/// short-circuit on a non-positive threshold. Ctrl is read per move, so tapping
-/// it releases the layer from a guide and letting go re-arms it, with no gesture
-/// state to carry.
+/// "the preference is off" and "the bypass key is held" reach the solvers, since
+/// they all short-circuit on a non-positive threshold. The key is read per move,
+/// so tapping it releases the layer from a guide and letting go re-arms it, with
+/// no gesture state to carry.
+///
+/// LANDMINE: the bypass key is Mod (⌘ on macOS), never a bare Ctrl. On macOS,
+/// Chromium turns a Ctrl+press into a context-menu click, so a drag started with
+/// Ctrl held also opens the canvas menu (`PreviewSurface.tsx`).
 function thresholdFor(
   snap: SnapContext | null,
   fit: ContainFit,
-  suppressed: boolean,
+  e: { ctrlKey: boolean; metaKey: boolean },
 ): number {
-  if (!snap || suppressed) return 0;
+  if (!snap || modKeyHeld(e)) return 0;
   return snapThresholdComp(snap.strengthPx, fit.scale);
 }
 
@@ -1197,7 +1202,7 @@ function TransformGizmo({
       : null;
     const hit =
       drag.snap && rawBox
-        ? snapMove(rawBox, drag.snap.targets, thresholdFor(drag.snap, fit, e.ctrlKey))
+        ? snapMove(rawBox, drag.snap.targets, thresholdFor(drag.snap, fit, e))
         : null;
     drag.dxComp = raw.x + (hit?.dx ?? 0);
     drag.dyComp = raw.y + (hit?.dy ?? 0);
@@ -1409,7 +1414,7 @@ function TransformGizmo({
     // 0049), so neither `scale_linked` — whose remaining job is the inspector's
     // one Scale lane vs two — nor Shift has anything left to say about it.
     const uniform = drag.box ? isCornerHandle(drag.id) : drag.linked || e.shiftKey;
-    const threshold = thresholdFor(drag.snap, fit, e.ctrlKey);
+    const threshold = thresholdFor(drag.snap, fit, e);
     // Straight off HANDLE_DIR, never re-derived: an axis this handle does not
     // drive is one `solveScale` would leave alone, so snapping there would draw
     // a guide for a change that then gets discarded.
