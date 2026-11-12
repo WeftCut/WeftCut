@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { AppIcon } from "../components/AppIcon";
 import { AppPopoverPositioner } from "../components/PopupPositioner";
 import { usePreviewGrid } from "../settings/appSettingsStore";
-import { CanvasSnapSettings, PreviewGridControls, TimelineSnapSettings } from "../settings/SnapSettings";
+import { CanvasSnapSettings, PreviewGridControls } from "../settings/SnapSettings";
 import type { StripOrientation } from "./QuickActionsPanel";
 
 export function SnappingPopover({ orientation, tabbable, onFocus }: {
@@ -41,10 +41,6 @@ export function SnappingPopover({ orientation, tabbable, onFocus }: {
         >
           <Popover.Popup className="app-menu-list quick-snapping-popup">
             <Popover.Title className="quick-snapping-title">{label}</Popover.Title>
-            <section>
-              <h3>{t("settings.timeline_heading")}</h3>
-              <TimelineSnapSettings compact onError={setError} />
-            </section>
             <section>
               <h3>{t("quick_actions.snapping_canvas")}</h3>
               <CanvasSnapSettings compact onError={setError} />
