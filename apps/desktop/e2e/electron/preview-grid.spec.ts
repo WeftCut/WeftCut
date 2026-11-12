@@ -56,6 +56,13 @@ test('Quick Actions edits independent grid preferences, and the grid follows fit
     await expect(overlay(page)).toHaveCount(0)
     await trigger.click()
     await expect(popup).toBeVisible()
+    const horizontalPadding = await popup.evaluate((element) => {
+      const style = getComputedStyle(element)
+      const intended = 12 * Number(style.getPropertyValue('--layout-font-scale'))
+      return { left: parseFloat(style.paddingLeft), right: parseFloat(style.paddingRight), intended }
+    })
+    expect(horizontalPadding.left).toBeCloseTo(horizontalPadding.intended)
+    expect(horizontalPadding.right).toBeCloseTo(horizontalPadding.intended)
     await expect(popup.getByRole('combobox', { name: 'Spacing mode' })).toHaveText('Equal subdivisions')
     await fill('Timeline snap strength', 18)
     await fill('Canvas snap strength', 23)
