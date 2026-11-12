@@ -186,17 +186,17 @@ function summary(tracks: TrackSummary[]) {
 }
 
 type ExportHarness = {
-  suspendForExport(by: PreviewSuspendedBy): () => void;
-  runPixiExport(opts: RunExportInit): Promise<RunExportResult>;
+  suspendPreview(by: PreviewSuspendedBy): () => void;
+  render(opts: RunExportInit): Promise<RunExportResult>;
 };
-function mount(previewRef = createRef<ExportHarness>(), cap: RendererCapability = GPU, background = true) {
+function mount(pipeline = createRef<ExportHarness>(), cap: RendererCapability = GPU, background = true) {
   let output = '';
   const controller = new AbortController();
   return renderHook(() => {
     const [exportState, setState] = useState<ExportState | null>(null);
     const runner = useMemo(() => createExportRunner({
-      render: init => previewRef.current!.runPixiExport(init),
-      suspendPreview: by => previewRef.current?.suspendForExport(by) ?? (() => {}),
+      render: init => pipeline.current!.render(init),
+      suspendPreview: by => pipeline.current?.suspendPreview(by) ?? (() => {}),
       proxyStateRef: { current: new Map() }, decodeProbeMemo: { current: new Map() },
       t: translate as TFunction, onState: setState, cancel: () => controller.abort(), publish: async () => output,
       capability: async () => cap,
@@ -237,10 +237,10 @@ describe("exportRunner", () => {
     let suspended = false;
     const suspendedBy: string[] = [];
     const restore = vi.fn(() => { suspended = false; });
-    const previewRef = createRef<ExportHarness>();
-    previewRef.current = {
-      suspendForExport: (by: string) => { suspended = true; suspendedBy.push(by); return restore; },
-      runPixiExport: async () => {
+    const pipeline = createRef<ExportHarness>();
+    pipeline.current = {
+      suspendPreview: (by: string) => { suspended = true; suspendedBy.push(by); return restore; },
+      render: async () => {
         expect(suspended).toBe(!background);
         if (outcome === 'worker failure') throw new Error('worker failed');
         return { framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 };
@@ -261,7 +261,7 @@ describe("exportRunner", () => {
       expect(suspended).toBe(!background);
       if (outcome === 'mux failure') throw new Error('mux failed');
     });
-    const { result } = mount(previewRef, GPU, background);
+    const { result } = mount(pipeline, GPU, background);
     await act(async () => {
       await result.current.runExportWithSettings({
         ...DEFAULT_EXPORT_SETTINGS, encoderEngine: 'native', includeVideo: true,
@@ -281,9 +281,9 @@ describe("exportRunner", () => {
     const { useProjectStore } = await import("../state/projectStore");
     act(() => useProjectStore.getState().apply(project));
     bridge.answers.set("project_summary", () => project);
-    const previewRef = createRef<ExportHarness>();
-    previewRef.current = { suspendForExport: () => () => { }, runPixiExport: async () => ({ framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 }) } as unknown as ExportHarness;
-    const { result } = mount(previewRef);
+    const pipeline = createRef<ExportHarness>();
+    pipeline.current = { suspendPreview: () => () => { }, render: async () => ({ framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 }) } as unknown as ExportHarness;
+    const { result } = mount(pipeline);
     const wait = (payload: unknown) => act(async () => { for (const handler of bridge.handlers.get("export:mux_wait") ?? []) handler({ payload }); });
     const holders = [{ kind: "proxy", media_id: "m-1", mib: 900, threads: 2 }];
     let finishMux: (() => void) | undefined;
@@ -314,11 +314,11 @@ describe("exportRunner", () => {
     act(() => useProjectStore.getState().apply(project));
     bridge.answers.set("project_summary", () => project);
     const encode = vi.fn(async () => ({ framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 }));
-    const previewRef = createRef<ExportHarness>();
-    previewRef.current = { suspendForExport: () => () => { }, runPixiExport: encode } as unknown as ExportHarness;
+    const pipeline = createRef<ExportHarness>();
+    pipeline.current = { suspendPreview: () => () => { }, render: encode } as unknown as ExportHarness;
     const mux = vi.fn().mockRejectedValueOnce(new Error("Resources are busy")).mockResolvedValue(undefined);
     bridge.answers.set("mux_export", mux);
-    const { result } = mount(previewRef);
+    const { result } = mount(pipeline);
     await act(async () => result.current.runExportWithSettings({
       ...DEFAULT_EXPORT_SETTINGS, encoderEngine: "native", includeVideo: true,
       audio: { ...DEFAULT_EXPORT_SETTINGS.audio, include: false },
@@ -352,9 +352,9 @@ describe("exportRunner", () => {
     });
     const mux = vi.fn().mockRejectedValue(new Error("disk full"));
     bridge.answers.set("mux_export", mux);
-    const previewRef = createRef<ExportHarness>();
-    previewRef.current = { suspendForExport: () => () => { }, runPixiExport: encode } as unknown as ExportHarness;
-    const { result } = mount(previewRef);
+    const pipeline = createRef<ExportHarness>();
+    pipeline.current = { suspendPreview: () => () => { }, render: encode } as unknown as ExportHarness;
+    const { result } = mount(pipeline);
     const settings = {
       ...DEFAULT_EXPORT_SETTINGS, encoderEngine: "native" as const, includeVideo: true,
       audio: { ...DEFAULT_EXPORT_SETTINGS.audio, include: true }
@@ -504,9 +504,9 @@ describe("exportRunner", () => {
       const audio = vi.fn((_args: unknown) => true);
       bridge.answers.set("export_project_audio_only", audio);
       const { plans } = recordPlans();
-      const previewRef = createRef<ExportHarness>();
-      previewRef.current = { suspendForExport: () => () => { }, runPixiExport: async () => ({ framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 }) } as unknown as ExportHarness;
-      const { result } = mount(previewRef);
+      const pipeline = createRef<ExportHarness>();
+      pipeline.current = { suspendPreview: () => () => { }, render: async () => ({ framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 }) } as unknown as ExportHarness;
+      const { result } = mount(pipeline);
       await act(async () => result.current.runExportWithSettings({
         ...DEFAULT_EXPORT_SETTINGS, encoderEngine: "native", includeVideo: true,
         audio: { ...DEFAULT_EXPORT_SETTINGS.audio, include: true },
@@ -597,17 +597,17 @@ describe("exportRunner", () => {
     const CROPPED: LayerSummary = { ...COLOR_LAYER, id: "layer-crop", kind: "VideoClip", t_start_us: 1_000_000, params: { kind: "VideoClip", crop: { x: 0.1, y: 0, w: 0.9, h: 1 } } as never };
     type RunOpts = RunExportInit;
     function stillsPreview(rendered: number[], runs: RunOpts[] = []) {
-      const previewRef = createRef<ExportHarness>();
-      previewRef.current = {
-        suspendForExport: () => () => { },
-        runPixiExport: async (opts: RunOpts) => {
+      const pipeline = createRef<ExportHarness>();
+      pipeline.current = {
+        suspendPreview: () => () => { },
+        render: async (opts: RunOpts) => {
           rendered.push(opts.startUs!);
           runs.push(opts);
           opts.onStill?.({ index: 0, tUs: opts.startUs!, width: 640, height: 360, jpeg: new ArrayBuffer(4) });
           return { framesEncoded: 1, totalFrames: 1, fpsNum: 30, fpsDen: 1 };
         },
       } as unknown as ExportHarness;
-      return previewRef;
+      return pipeline;
     }
     async function load(project: ReturnType<typeof summary>) {
       const { useProjectStore } = await import("../state/projectStore");
@@ -636,9 +636,9 @@ describe("exportRunner", () => {
       // A plain frame, then one this renderer refuses.
       for (const times_us of [[500_000], [1_500_000]]) {
         const held: string[] = [];
-        const previewRef = stillsPreview([]);
-        previewRef.current!.suspendForExport = (by) => { held.push(by); return () => { held.push("restored"); }; };
-        const { result } = mount(previewRef, CANVAS);
+        const pipeline = stillsPreview([]);
+        pipeline.current!.suspendPreview = (by) => { held.push(by); return () => { held.push("restored"); }; };
+        const { result } = mount(pipeline, CANVAS);
         await result.current.runner.runStills({ times_us, width: 640, settings: DEFAULT_EXPORT_SETTINGS }, new AbortController().signal).catch(() => { });
         expect(held).toEqual(["agent", "restored"]);
       }
