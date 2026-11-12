@@ -12,8 +12,7 @@ import { observeClientRect } from "./layoutRectCache";
 export function PreviewGridOverlayHost() {
   const settings = usePreviewGrid();
   const composition = useComposition(usePreviewRenderTargetId());
-  if (!settings.visible || !composition ||
-    (settings.mode === "independent" && !settings.columns && !settings.rows)) return null;
+  if (!settings.visible || !composition) return null;
   return <PreviewGridOverlay width={composition.width} height={composition.height} settings={settings} />;
 }
 

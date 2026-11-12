@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Eye, EyeOff } from "lucide-react";
+import { AppIcon } from "../components/AppIcon";
 
 import {
   PREVIEW_SNAP_STRENGTH_MAX_PX,
@@ -14,7 +16,6 @@ import {
   type PreviewGridSettings,
 } from "../../shared/preview-grid";
 import { AppNumberField } from "../components/AppNumberField";
-import { AppSelect } from "../components/AppSelect";
 import { AppSlider } from "../components/AppSlider";
 import { AppSwitch } from "../components/AppSwitch";
 import {
@@ -162,80 +163,88 @@ export function CanvasSnapSettings({ compact, onError }: SnapSettingsProps) {
         slider={!compact}
         onSave={(next) => save({ preview_snap_strength_px: next }, onError)}
       />
-      <p className="settings-toggle-hint">
-        {t(compact ? "quick_actions.canvas_snap_override" : "settings.preview_snap_strength_hint")}
-      </p>
     </>
+  );
+}
+
+/** The popover contains exactly two format-relative counts and a visibility
+ * icon. Settings reuses the same controls and exposes snapping separately. */
+export function PreviewGridDimensions({ onError }: { onError: ReportError }) {
+  const { t } = useTranslation();
+  const grid = usePreviewGrid();
+  const saveGrid = (patch: Partial<PreviewGridSettings>) => save({ preview_grid: patch }, onError);
+
+  return (
+    <div className="preview-grid-dimensions" role="group" aria-label={t("quick_actions.snapping_grid")}>
+      <GridCount
+        label={t("quick_actions.grid_column_divisions")}
+        value={grid.column_divisions}
+        onSave={(column_divisions) => saveGrid({ column_divisions })}
+      />
+      <span className="preview-grid-colon" aria-hidden="true">:</span>
+      <GridCount
+        label={t("quick_actions.grid_row_divisions")}
+        value={grid.row_divisions}
+        onSave={(row_divisions) => saveGrid({ row_divisions })}
+      />
+      <button
+        type="button"
+        className="preview-grid-eye"
+        data-testid="preview-grid-visibility"
+        aria-label={t(grid.visible ? "quick_actions.hide_grid" : "quick_actions.show_grid")}
+        aria-pressed={grid.visible}
+        title={t(grid.visible ? "quick_actions.hide_grid" : "quick_actions.show_grid")}
+        onClick={() => void saveGrid({ visible: !grid.visible })}
+      >
+        <AppIcon icon={grid.visible ? Eye : EyeOff} size="body" aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+function GridCount({ label, value, onSave }: {
+  label: string;
+  value: number;
+  onSave: (value: number) => Promise<boolean>;
+}) {
+  const [draft, setDraft] = useState(value);
+  const editing = useRef(false);
+  // Async app-settings snapshots can arrive while the user is typing. Do
+  // not overwrite the in-progress draft with a late value from the store.
+  useEffect(() => {
+    if (!editing.current) setDraft(value);
+  }, [value]);
+  return (
+    <AppNumberField
+      value={draft}
+      onFocus={() => { editing.current = true; }}
+      onBlur={() => { editing.current = false; }}
+      min={GRID_DIVISIONS_MIN}
+      max={GRID_DIVISIONS_MAX}
+      align="center"
+      className="preview-grid-number"
+      ariaLabel={label}
+      onValueChange={setDraft}
+      onCommit={(next) => {
+        const bounded = Math.round(Math.min(GRID_DIVISIONS_MAX, Math.max(GRID_DIVISIONS_MIN, next)));
+        setDraft(bounded);
+        if (bounded !== value) void onSave(bounded).then((ok) => { if (!ok) setDraft(value); });
+      }}
+    />
   );
 }
 
 export function PreviewGridControls({ onError }: { onError: ReportError }) {
   const { t } = useTranslation();
   const grid = usePreviewGrid();
-  const saveGrid = (patch: Partial<PreviewGridSettings>) => save({ preview_grid: patch }, onError);
-
   return (
     <>
-      <SnapToggle
-        label={t("quick_actions.show_grid")}
-        checked={grid.visible}
-        onChange={(visible) => void saveGrid({ visible })}
-      />
+      <PreviewGridDimensions onError={onError} />
       <SnapToggle
         label={t("quick_actions.snap_to_grid")}
         checked={grid.snap}
-        onChange={(snap) => void saveGrid({ snap })}
+        onChange={(snap) => void save({ preview_grid: { snap } }, onError)}
       />
-      <div className="settings-slider-row">
-        <span className="settings-slider-label">{t("quick_actions.grid_spacing")}</span>
-        <AppSelect
-          ariaLabel={t("quick_actions.grid_spacing")}
-          value={grid.mode}
-          options={[
-            { value: "equal", label: t("quick_actions.grid_equal") },
-            { value: "independent", label: t("quick_actions.grid_independent") },
-          ]}
-          onValueChange={(mode) => void saveGrid({ mode: mode === "independent" ? "independent" : "equal" })}
-        />
-      </div>
-      {grid.mode === "equal" ? (
-        <SnapNumber
-          label={t("quick_actions.grid_divisions")}
-          value={grid.divisions}
-          min={GRID_DIVISIONS_MIN}
-          max={GRID_DIVISIONS_MAX}
-          onSave={(divisions) => saveGrid({ divisions })}
-        />
-      ) : (
-        <>
-          <SnapToggle
-            label={t("quick_actions.grid_columns")}
-            checked={grid.columns}
-            onChange={(columns) => void saveGrid({ columns })}
-          />
-          <SnapNumber
-            label={t("quick_actions.grid_column_divisions")}
-            value={grid.column_divisions}
-            min={GRID_DIVISIONS_MIN}
-            max={GRID_DIVISIONS_MAX}
-            disabled={!grid.columns}
-            onSave={(column_divisions) => saveGrid({ column_divisions })}
-          />
-          <SnapToggle
-            label={t("quick_actions.grid_rows")}
-            checked={grid.rows}
-            onChange={(rows) => void saveGrid({ rows })}
-          />
-          <SnapNumber
-            label={t("quick_actions.grid_row_divisions")}
-            value={grid.row_divisions}
-            min={GRID_DIVISIONS_MIN}
-            max={GRID_DIVISIONS_MAX}
-            disabled={!grid.rows}
-            onSave={(row_divisions) => saveGrid({ row_divisions })}
-          />
-        </>
-      )}
     </>
   );
 }

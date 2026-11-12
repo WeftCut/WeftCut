@@ -18,7 +18,7 @@ describe("previewGrid", () => {
     "divides %i × %i into 12 columns and 5 rows without rounding fractional positions",
     (width, height) => {
       const grid = previewGrid(width, height, {
-        ...DEFAULT_PREVIEW_GRID, mode: "independent", column_divisions: 12, row_divisions: 5,
+        ...DEFAULT_PREVIEW_GRID, column_divisions: 12, row_divisions: 5,
       });
       expect(grid).toEqual({
         x: { step: width / 12, last: 11 },
@@ -29,20 +29,16 @@ describe("previewGrid", () => {
     },
   );
 
-  it("omits disabled axes and axes with only one field in independent mode", () => {
+  it("uses one subdivision per axis to omit its interior lines", () => {
     expect(previewGrid(800, 500, {
-      ...DEFAULT_PREVIEW_GRID, mode: "independent", columns: false, row_divisions: 1,
+      ...DEFAULT_PREVIEW_GRID, column_divisions: 1, row_divisions: 1,
     })).toEqual({ x: null, y: null });
     expect(previewGrid(800, 500, {
-      ...DEFAULT_PREVIEW_GRID, mode: "independent", column_divisions: 1, row_divisions: 5,
+      ...DEFAULT_PREVIEW_GRID, column_divisions: 1, row_divisions: 5,
     })).toEqual({ x: null, y: { step: 100, last: 4 } });
-  });
-
-  it("ignores independent axis switches and counts in equal mode", () => {
     expect(previewGrid(800, 500, {
-      ...DEFAULT_PREVIEW_GRID, mode: "equal", divisions: 4,
-      column_divisions: 12, row_divisions: 5, columns: false, rows: false,
-    })).toEqual({ x: { step: 200, last: 3 }, y: { step: 125, last: 3 } });
+      ...DEFAULT_PREVIEW_GRID, column_divisions: 4, row_divisions: 1,
+    })).toEqual({ x: { step: 200, last: 3 }, y: null });
   });
 
   it("resolves midpoints toward the lower line and clamps to the interior", () => {

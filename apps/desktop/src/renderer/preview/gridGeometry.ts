@@ -10,24 +10,20 @@ export interface PreviewGrid {
   y: GridAxis | null;
 }
 
-// Frame edges already have their own snap target. Both modes place interior
+// Frame edges already have their own snap target. Grid lines use interior
 // lines from the composition origin, so panning cannot change the lattice.
 export function previewGrid(width: number, height: number, settings: PreviewGridSettings): PreviewGrid {
-  const axis = (size: number, divisions: number, enabled: boolean): GridAxis | null => {
+  const axis = (size: number, divisions: number): GridAxis | null => {
+    // One subdivision has no interior grid lines.
+    if (divisions < 2) return null;
     const step = size / divisions;
     const last = divisions - 1;
-    return enabled && step > 0 && last > 0 ? { step, last } : null;
+    return step > 0 && last > 0 ? { step, last } : null;
   };
 
-  if (settings.mode === "equal") {
-    return {
-      x: axis(width, settings.divisions, true),
-      y: axis(height, settings.divisions, true),
-    };
-  }
   return {
-    x: axis(width, settings.column_divisions, settings.columns),
-    y: axis(height, settings.row_divisions, settings.rows),
+    x: axis(width, settings.column_divisions),
+    y: axis(height, settings.row_divisions),
   };
 }
 
