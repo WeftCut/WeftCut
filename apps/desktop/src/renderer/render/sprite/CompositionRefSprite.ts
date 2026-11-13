@@ -130,18 +130,13 @@ export class CompositionRefSprite implements StageableSprite {
     this.sprite.destroy({ children: true });
   }
 
-  /// WebGPU LANDMINE, shared with TransitionNodes: Pixi's WebGPU pipelines
-  /// hard-code bgra8unorm color targets, so an rgba8unorm RT trips Dawn's
-  /// attachment validation and every render into it is silently dropped.
-  /// WebGL keeps rgba8unorm. An 8-bit target means the 10-bit export lane
-  /// quantizes through a Group — the same v1 trade the transition node makes.
+  /// An 8-bit target means the 10-bit export lane quantizes through a Group —
+  /// the same v1 trade the transition node makes.
   private createTexture(width: number, height: number): RenderTexture {
-    const format =
-      this.renderer && "gl" in this.renderer ? ("rgba8unorm" as const) : ("bgra8unorm" as const);
     return RenderTexture.create({
       width: Math.max(1, width),
       height: Math.max(1, height),
-      format,
+      format: "rgba8unorm",
     });
   }
 }

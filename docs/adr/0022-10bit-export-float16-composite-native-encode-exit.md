@@ -12,16 +12,15 @@ The 8-bit pipeline composites in RGBA8 and snapshots through a 2D canvas, so
 10-bit precision dies before encode. WebCodecs encodes 8-bit only and tags by
 resolution (ADR 0014). Probes (2026-06-12) found:
 
-- PixiJS's WebGPU backend hardcodes a `bgra8unorm` pipeline target and would
-  need an upstream patch; its WebGL2 backend renders `rgba16float` render
-  textures stock. The export Worker owns its renderer and can choose a backend.
+- PixiJS's WebGL2 backend renders `rgba16float` render textures stock. The
+  export Worker owns its renderer and can choose a backend.
 - Chromium/Electron has no hardware Hi10P decode. Software-decoded I420P10
   frames can `VideoFrame.copyTo`; opaque hardware frames (HEVC Main10) cannot.
   AV1 10-bit decodes to copyable I420P10 only under prefer-software (dav1d);
   the hardware path "succeeds" with `format=null` frames.
 - HDR preview is blocked: WebGL cannot present extended range
   (`drawingBufferToneMapping` is unshipped); only a WebGPU canvas with
-  `toneMapping: 'extended'` can, which needs the Pixi per-format work above.
+  `toneMapping: 'extended'` can.
 - Packed `yuv420p10le` at 1080p30 needs 186 MB/s; 4K needs ~750 MB/s. GPU
   readback is not the bottleneck; the webview→Rust transport is
   ([`export-ipc-transport.md`](../export-ipc-transport.md)).

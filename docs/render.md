@@ -100,7 +100,7 @@ the root and every Group share one shape, so there is one drawing path
   into a `RenderTexture` of the composition's size and stages it through the
   same `stageVisual` as every other kind, so transform, opacity, blend,
   effects and transitions apply to one flat image. The target is 8-bit
-  (`bgra8unorm` on WebGPU), so the 10-bit lane quantizes through a Group.
+  (`rgba8unorm`), so the 10-bit lane quantizes through a Group.
 - **Time.** Child `t = parent t − t_start + src_in`, re-snapped to the shared
   lattice (`compositionLocalUs`) — without the re-snap a child layer starting
   on an anchor difference reads one frame late. Past the composition's

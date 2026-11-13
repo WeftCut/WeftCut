@@ -140,9 +140,7 @@ function planeSource(
 
 export class Nv12Ingest {
   private states = new Map<string, ClipState>();
-  private readonly isGl: boolean;
   constructor(private renderer: Renderer) {
-    this.isGl = "gl" in renderer;
     // Plane rows are `w` bytes (Y and interleaved CbCr alike) — not 4-aligned
     // for w%4==2 sources (854/1918-wide). Pixi never touches UNPACK_ALIGNMENT;
     // default 4 would skew those uploads. WebGL-only: the WebGPU upload path
@@ -187,13 +185,7 @@ export class Nv12Ingest {
     const uv = planeSource(
       f.data.subarray(f.uvOffset, f.uvOffset + w * (h >> 1)), w >> 1, h >> 1, "rg8unorm",
     );
-    // LANDMINE: Pixi's WebGPU pipelines hard-code bgra8unorm color targets
-    // (GpuStateSystem.getColorTargets), so an rgba8unorm RT trips Dawn's
-    // attachment-state validation — every ingest render is silently dropped
-    // and the RT stays black. Channel order is a store-time swizzle; the
-    // shader output is unaffected. WebGL keeps rgba8unorm.
-    const rtFormat = this.isGl ? ("rgba8unorm" as const) : ("bgra8unorm" as const);
-    const rt = RenderTexture.create({ width: w, height: h, format: rtFormat });
+    const rt = RenderTexture.create({ width: w, height: h, format: "rgba8unorm" });
     const geometry = new MeshGeometry({
       positions: new Float32Array([0, 0, w, 0, w, h, 0, h]),
       uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),

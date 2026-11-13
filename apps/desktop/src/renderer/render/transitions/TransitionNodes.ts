@@ -59,16 +59,11 @@ export class TransitionNodeManager {
     private width: number,
     private height: number,
   ) {
-    // WebGPU LANDMINE: Pixi's WebGPU pipelines hard-code bgra8unorm color
-    // targets, so an rgba8unorm RT trips Dawn's attachment validation and
-    // every render into it is silently dropped (same wall Nv12Ingest hit).
-    // WebGL keeps rgba8unorm. 8-bit sides mean the 10-bit export lane
-    // quantizes through a transition window — accepted for v1 (float RTs
-    // would need EXT_color_buffer_float, which preview's WebGL fallback
-    // can't assume).
-    const format = "gl" in renderer ? ("rgba8unorm" as const) : ("bgra8unorm" as const);
+    // 8-bit sides mean the 10-bit export lane quantizes through a transition
+    // window — accepted for v1 (float RTs would need EXT_color_buffer_float,
+    // which preview's WebGL fallback can't assume).
     this.pool = new TransitionRtPool<RenderTexture>(width, height, {
-      create: (w, h) => RenderTexture.create({ width: w, height: h, format }),
+      create: (w, h) => RenderTexture.create({ width: w, height: h, format: "rgba8unorm" }),
       destroy: (rt) => rt.destroy(true),
     });
   }

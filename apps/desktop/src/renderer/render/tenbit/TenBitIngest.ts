@@ -147,9 +147,7 @@ function planeSource(data: Uint8Array, w: number, h: number): BufferImageSource 
 
 export class TenBitIngest {
   private states = new Map<string, ClipState>();
-  private readonly isGl: boolean;
   constructor(private renderer: Renderer) {
-    this.isGl = "gl" in renderer;
     // Chroma plane rows are (w/2)*2 = w bytes — not 4-aligned for w%4==2
     // sources (854/1918-wide). Pixi never touches UNPACK_ALIGNMENT; default 4
     // would skew those uploads. WebGL-only: the WebGPU upload path
@@ -160,7 +158,7 @@ export class TenBitIngest {
   }
 
   /// Convert `tb` (if not already current) and return the clip's converted RGB
-  /// texture (rgba16float on WebGL, bgra8unorm on WebGPU). Keyed by layerId;
+  /// texture (rgba16float). Keyed by layerId;
   /// textures are ingest-owned (callers must not destroy them).
   textureFor(key: string, tb: TenBitFrame): Texture {
     let s = this.states.get(key);
@@ -195,13 +193,8 @@ export class TenBitIngest {
     const y = planeSource(tb.data.subarray(tb.yOffset, tb.yOffset + w * h * 2), w, h);
     const u = planeSource(tb.data.subarray(tb.uOffset, tb.uOffset + cw * ch * 2), cw, ch);
     const v = planeSource(tb.data.subarray(tb.vOffset, tb.vOffset + cw * ch * 2), cw, ch);
-    // WebGL keeps rgba16float — the 10-bit export's f16 compositing depends
-    // on it (ADR 0022). WebGPU stores 8-bit: Pixi's WebGPU pipelines hard-code
-    // bgra8unorm color targets (Nv12Ingest's LANDMINE — any other RT format
-    // trips Dawn's attachment validation and the pass silently draws
-    // nothing), and only the 8-bit preview canvas consumes this path there.
-    const rtFormat = this.isGl ? ("rgba16float" as const) : ("bgra8unorm" as const);
-    const rt = RenderTexture.create({ width: w, height: h, format: rtFormat });
+    // rgba16float: the 10-bit export's f16 compositing depends on it (ADR 0022).
+    const rt = RenderTexture.create({ width: w, height: h, format: "rgba16float" });
     const geometry = new MeshGeometry({
       positions: new Float32Array([0, 0, w, 0, w, h, 0, h]),
       uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),

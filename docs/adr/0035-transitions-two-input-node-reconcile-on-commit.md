@@ -49,9 +49,8 @@ Placement of the overlap is ADR 0048's.
 ## Consequences
 
 - Adding a kind is an enum variant plus a shader.
-- Side RTs are 8-bit (`rgba8unorm` on WebGL, `bgra8unorm` on WebGPU, whose
-  Pixi pipelines hard-code bgra8 targets), so the 10-bit export lane
-  quantizes inside a transition window. Float RTs would need
+- Side RTs are 8-bit (`rgba8unorm`), so the 10-bit export lane quantizes
+  inside a transition window. Float RTs would need
   `EXT_color_buffer_float`, which preview's WebGL fallback cannot assume.
 - A split inside the overlap leaves it covered by a non-participant; after the
   drop, validate's `LayerOverlap` rejects the whole commit. That is
