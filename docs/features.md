@@ -1165,8 +1165,9 @@ palette. When Grid is on, the preview's top bar shows independently editable
 A small eye icon beside the counts mutes/unmutes grid drawing without
 disabling snapping and restores the last nonzero opacity. There is no
 configuration popover, count preset, or equal/independent mode. The preview
-header has the same height when Grid is toggled; narrow dock panels reserve
-a second row for grid controls even while the grid is hidden.
+header has the same height when Grid is toggled: all preview toolbar
+controls are 24 UI-scaled pixels tall, and narrow dock panels reserve a
+second row for grid controls even while the grid is hidden.
 Grid lines are a non-exported preview overlay; Settings → General → Preview
 contains a 5–100% grid-visibility slider (default 70%). The 0% state is
 reserved for the preview eye button; if currently hidden, Settings shows

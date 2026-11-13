@@ -59,6 +59,8 @@
 /* The render-target control sits over the picture it names. A toolbar row, not
    a header bar: the Panel's title is its dock tab. */
 .preview-target-bar {
+  /* One shared dimension keeps selects, fields and icon toggles aligned. */
+  --preview-control-height: calc(24 * var(--ui-px));
   display: flex;
   align-items: center;
   gap: calc(8 * var(--ui-px));
@@ -69,9 +71,8 @@
 }
 
 .preview-target-bar .app-select {
-  /* Match the numeric grid fields' height even while Grid is hidden.
-     A little extra horizontal padding gives the menu labels room too. */
-  padding: calc(5 * var(--ui-px)) calc(8 * var(--ui-px));
+  height: var(--preview-control-height);
+  padding: 0 calc(8 * var(--ui-px));
   font-size: var(--font-size-caption);
 }
 
@@ -111,11 +112,14 @@
 }
 .preview-grid-axis { display: inline-flex; align-items: center; gap: calc(2 * var(--ui-px)); }
 .preview-grid-toolbar .preview-grid-count { width: calc(52 * var(--ui-px)); min-width: 0; }
-.preview-grid-toolbar .preview-grid-count .app-input { padding-inline: calc(4 * var(--ui-px)); }
+.preview-grid-toolbar .preview-grid-count .app-input {
+  height: var(--preview-control-height);
+  padding: 0 calc(4 * var(--ui-px));
+}
 .preview-grid-times { color: var(--muted-foreground); font-size: var(--font-size-caption); }
 .preview-grid-axis-toggle {
-  width: calc(25 * var(--ui-px));
-  height: calc(25 * var(--ui-px));
+  width: var(--preview-control-height);
+  height: var(--preview-control-height);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -138,7 +142,7 @@
   .preview-target-bar {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-rows: calc(25 * var(--ui-px)) calc(25 * var(--ui-px));
+    grid-template-rows: var(--preview-control-height) var(--preview-control-height);
     row-gap: calc(4 * var(--ui-px));
   }
   .preview-target-select {
