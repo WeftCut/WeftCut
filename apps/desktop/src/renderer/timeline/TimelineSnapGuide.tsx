@@ -1,8 +1,14 @@
+import { RULER_HEIGHT_PX, TIME_MARK_WIDTH_PX, timeMarkLeftPx } from "./geometry";
 import { useMediaDragStore } from "./mediaDrag";
 import { useTimelineSnapBoundary } from "./timelineSnapFeedbackStore";
 
-/** A magnetic target, not a playhead or transition chip. The transient soft
- * pistachio dashed rule follows composition time and scrolls with clip lanes. */
+/// The colour of a magnetic target. The blade mark takes it while its cut is
+/// snapped, in place of a separate guide.
+export const SNAP_TARGET_COLOR = "#B5D987";
+
+/** A magnetic target, not a playhead or transition chip: a transient soft
+ * pistachio dashed Time mark in `TimeMarkOverlay`, from the ruler's bottom edge
+ * down, so it reaches the marker lane as well as the clip lanes. */
 export function TimelineSnapGuide({
   compositionId, pxPerSec,
 }: {
@@ -20,10 +26,14 @@ export function TimelineSnapGuide({
       data-testid="timeline-snap-guide"
       data-snap-boundary-us={boundaryUs}
       aria-hidden="true"
-      className="pointer-events-none absolute inset-y-0 z-30"
-      style={{ left: (boundaryUs / 1_000_000) * pxPerSec }}
-    >
-      <div className="absolute inset-y-0 border-l-2 border-dashed border-[#B5D987]/90" />
-    </div>
+      className="absolute bottom-0 border-dashed opacity-90"
+      style={{
+        top: RULER_HEIGHT_PX,
+        left: timeMarkLeftPx(boundaryUs, pxPerSec),
+        width: TIME_MARK_WIDTH_PX,
+        borderLeftWidth: TIME_MARK_WIDTH_PX,
+        borderColor: SNAP_TARGET_COLOR,
+      }}
+    />
   );
 }

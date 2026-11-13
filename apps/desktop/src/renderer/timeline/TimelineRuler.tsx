@@ -10,6 +10,7 @@ import {
   useTimelineScrollStore,
 } from "../state/timelineScrollStore";
 import { RULER_SCROLL_QUANTUM_PX, computeRulerModel } from "./rulerModel";
+import { RULER_HEIGHT_PX } from "./geometry";
 
 /// Time ruler at the top of the scrollable timeline root. Width matches the
 /// canvas so horizontal scroll keeps ticks aligned with the layers below.
@@ -188,7 +189,7 @@ export function TimelineRuler({
   return (
     <>
     {/* Sizing notes:
-       - `h-5` (20 px) accommodates a 10 px label in the upper half and
+       - `RULER_HEIGHT_PX` (20 px) accommodates a 10 px label in the upper half and
          4–8 px tick marks at the bottom; the playhead's `top: 2px` knob
          (Timeline.tsx renders it `top-0.5`) still lands inside this
          strip — keep the two coupled.
@@ -202,8 +203,8 @@ export function TimelineRuler({
          overflow clip is what actually clips it. */}
     <div
       data-testid="timeline-ruler"
-      className="sticky top-0 z-[3] h-5 flex-none cursor-ew-resize select-none overflow-hidden border-b border-border-soft bg-card text-[length:var(--font-size-micro)] text-muted-foreground"
-      style={{ width: widthPx }}
+      className="sticky top-0 z-[3] flex-none cursor-ew-resize select-none overflow-hidden border-b border-border-soft bg-card text-[length:var(--font-size-micro)] text-muted-foreground"
+      style={{ width: widthPx, height: RULER_HEIGHT_PX }}
       onPointerDown={(e) => {
         // This fixed row owns scrubbing. Track selection is mounted in the
         // sibling track viewport, outside this event's ancestor chain.

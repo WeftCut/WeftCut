@@ -332,6 +332,23 @@ export function trackIdAtClientY(
   return null;
 }
 
+/// Height of the ruler row, border included. Time marks other than the
+/// playhead start at its bottom edge: the ruler carries ticks only at its own
+/// spacing, so a line through it reads as one more tick, at no tick's time.
+export const RULER_HEIGHT_PX = 20;
+
+/// Width of every Time mark (CONTEXT.md). A mark covers `timeMarkLeftPx(t)`
+/// to that plus this width, i.e. it draws into the frame that begins at t, so
+/// two marks at one time cover the same pixels.
+export const TIME_MARK_WIDTH_PX = 2;
+
+/// Left edge of a Time mark at `tUs`, on the time-mark overlay's axis. Marks
+/// apply it as `left` and never shift themselves with a transform: `left` and
+/// `translate` round a fractional x differently, and the marks part by a pixel.
+export function timeMarkLeftPx(tUs: number, pxPerSec: number): number {
+  return (tUs / 1_000_000) * pxPerSec;
+}
+
 // Below this on-screen frame width the shadow reads as line jitter, not an
 // area — hide it and let the playhead line stand alone.
 const PLAYHEAD_FRAME_SHADOW_MIN_PX = 5;

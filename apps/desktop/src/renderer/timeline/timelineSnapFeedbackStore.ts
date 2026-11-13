@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 // One transient guide per timeline composition. Keep event-rate updates out of
 // Timeline's root React state: only the guide leaf subscribes to this store.
-export type TimelineSnapOwner = "layer" | "foreign" | "marker" | "blade";
+export type TimelineSnapOwner = "layer" | "foreign" | "marker";
 interface Guide { owner: TimelineSnapOwner; boundaryUs: number }
 interface TimelineSnapFeedbackState {
   byComposition: Record<string, Guide | undefined>;

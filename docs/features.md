@@ -714,15 +714,22 @@ radius is a Settings field in screen px (`tail_snap_enabled`,
 marker drags and blade cuts snap to the frame-rounded edges of other visible
 clips and to the playhead; the dragged clips, and their link members unless the
 link override is on, are never targets. While a drag is snapped, one dashed line
-through the lanes marks the boundary it snapped to, and every way out of the
-gesture clears it. Holding Mod (Ctrl; ⌘ on macOS) suspends the magnet for that
-event, including when held before the press; the frame and audio sample grids
-still apply. The chosen target never depends on the lane under the pointer: a
+from the ruler's bottom edge down marks the boundary it snapped to, and every
+way out of the gesture clears it. The Blade draws no separate line: its own mark
+turns the guide's colour while the cut is snapped. That mark runs from the
+ruler's bottom edge down, faint except over the clips the click would split (the
+hovered clip and, unless the link override is on, the link members spanning the
+cut); in the ruler it hangs the cut's timecode on a flag, in the label band and
+clear of the ticks. The playhead, the guide and the blade mark share one
+geometry and one overlay (Time mark in [CONTEXT.md](../CONTEXT.md)). Holding
+Mod (Ctrl; ⌘ on macOS) suspends the magnet for that event, including when held
+before the press; the frame and audio sample grids still apply. The chosen target never depends on the lane under the pointer: a
 vertical-only move keeps its time, and a landing that does not fit shows as a
 collision at the aligned position. Escape, pointer cancel or a tool change
 abandons a clip drag; Escape or pointer cancel abandons a marker drag. Solver:
 `renderer/timeline/snapping.ts`; guide: `TimelineSnapGuide.tsx`,
-`timelineSnapFeedbackStore.ts`.
+`timelineSnapFeedbackStore.ts`; marks: `TimeMarkOverlay.tsx`,
+`TimelineBladeMark.tsx`.
 
 ## Preview zoom and pan
 

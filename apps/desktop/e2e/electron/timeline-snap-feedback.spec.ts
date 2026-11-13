@@ -6,6 +6,7 @@ import {
   newProject,
   rootSummary,
   tmpDir,
+  waitForHook,
 } from "./helpers/driver";
 
 const canvas = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 };
@@ -88,7 +89,7 @@ for (const direction of ["right", "left"] as const) {
   });
 }
 
-test("blade hover shows a magnetic cut target and Mod keeps the frame-grid cut free", async () => {
+test("the blade mark carries its snap, sits on the time it cuts at and is solid over the cut clip only", async () => {
   const { app, page } = await launchApp();
   try {
     await newProject(page, { parentFolder: tmpDir("weftcut-timeline-blade-guide-"), name: "blade-guide", canvas });
@@ -112,20 +113,46 @@ test("blade hover shows a magnetic cut target and Mod keeps the frame-grid cut f
     const lb = await long.boundingBox();
     const bb = await boundary.boundingBox();
     if (!lb || !bb) throw new Error("missing blade fixture geometry");
-    const guide = page.getByTestId("timeline-snap-guide");
+    const mark = page.getByTestId("timeline-blade-mark");
     const hoverY = lb.y + lb.height / 2;
     const hoverX = bb.x - 5;
     await long.hover({ position: { x: hoverX - lb.x, y: lb.height / 2 } });
-    await expect(guide).toHaveAttribute("data-snap-boundary-us", "3000000");
+    await expect(mark).toHaveAttribute("data-snapped", "true");
+    await expect(mark).toHaveAttribute("data-at-us", "3000000");
+    // Blade mode draws no separate guide: the mark itself shows the snap.
+    await expect(page.getByTestId("timeline-snap-guide")).toHaveCount(0);
+    // One Time mark geometry: the cut's left edge is where the target clip
+    // begins, and the line starts at the ruler's bottom edge.
+    const snappedBox = await mark.boundingBox();
+    const ruler = await page.getByTestId("timeline-ruler").boundingBox();
+    if (!snappedBox || !ruler) throw new Error("missing blade mark geometry");
+    expect(Math.abs(snappedBox.x - bb.x)).toBeLessThan(0.01);
+    expect(Math.abs(snappedBox.y - (ruler.y + ruler.height))).toBeLessThan(0.01);
+    const cut = page.getByTestId("timeline-blade-cut");
+    await expect(cut).toHaveCount(1);
+    await expect(cut).toHaveAttribute("data-layer-id", longId);
+
     await page.keyboard.down(MOD);
     await page.mouse.move(hoverX + 1, hoverY);
-    await expect(guide).toHaveCount(0);
+    await expect(mark).toHaveAttribute("data-snapped", "false");
     await page.keyboard.up(MOD);
     await page.mouse.move(hoverX, hoverY);
-    await expect(guide).toHaveAttribute("data-snap-boundary-us", "3000000");
-    // A cut's preview is not a persistent timeline guide.
+    await expect(mark).toHaveAttribute("data-snapped", "true");
+
+    // A cut snapped to the playhead covers the playhead's pixels.
+    await waitForHook(page, "transportSeekUs");
+    await page.evaluate(() => (window as any).__weftcutTest.transportSeekUs(1_500_000));
+    const playhead = await page.getByTestId("timeline-playhead").boundingBox();
+    if (!playhead) throw new Error("missing playhead geometry");
+    await page.mouse.move(playhead.x + 4, hoverY);
+    await expect(mark).toHaveAttribute("data-at-us", "1500000");
+    const atPlayhead = await mark.boundingBox();
+    if (!atPlayhead) throw new Error("missing blade mark geometry");
+    expect(Math.abs(atPlayhead.x - playhead.x)).toBeLessThan(0.01);
+    expect(atPlayhead.width).toBe(playhead.width);
+
     await page.mouse.move(lb.x + lb.width + 30, hoverY);
-    await expect(guide).toHaveCount(0);
+    await expect(mark).toHaveCount(0);
   } finally {
     await app.close();
   }
@@ -157,6 +184,11 @@ test("marker drag shares the same feedback and Mod suspension as clip drags", as
     await page.mouse.down();
     await page.mouse.move(toX, y, { steps: 5 });
     await expect(guide).toHaveAttribute("data-snap-boundary-us", "3000000");
+    // The guide reaches the marker it aligns, not only the clip lanes.
+    const guideBox = await guide.boundingBox();
+    if (!guideBox) throw new Error("missing guide geometry");
+    expect(guideBox.y).toBeLessThanOrEqual(mb.y);
+    expect(guideBox.y + guideBox.height).toBeGreaterThanOrEqual(cb.y + cb.height);
     await page.keyboard.down(MOD);
     await page.mouse.move(toX + 1, y);
     await expect(guide).toHaveCount(0);
@@ -245,14 +277,14 @@ test("a blade click with Mod held before press cuts on the frame grid and opens 
     await page.locator('button[data-quick-action="toggleBladeMode"]').click();
     const x = bb.x - 5;
     const y = lb.y + lb.height / 2;
-    const guide = page.getByTestId("timeline-snap-guide");
+    const mark = page.getByTestId("timeline-blade-mark");
     await page.mouse.move(x, y);
-    await expect(guide).toHaveAttribute("data-snap-boundary-us", "3000000");
+    await expect(mark).toHaveAttribute("data-snapped", "true");
     await page.mouse.move(x - 40, y);
     await page.keyboard.down(MOD);
     try {
       await page.mouse.move(x, y);
-      await expect(guide).toHaveCount(0);
+      await expect(mark).toHaveAttribute("data-snapped", "false");
       await page.mouse.down();
       await page.mouse.up();
       await expect(page.getByRole("menu")).toHaveCount(0);

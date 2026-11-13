@@ -1692,19 +1692,74 @@ describe("Timeline seek/selection coupling", () => {
     expect(container.querySelector('[data-testid="timeline-visual-preview"]')).toBeNull();
   });
 
-  it("shows a blade cut preview at the hovered cut point", () => {
+  it("draws the blade mark in the time-mark overlay at the hovered cut point", () => {
     const { container } = renderTimeline({ bladeMode: true });
     const block = container.querySelector(".timeline-layer")!;
     fireEvent.pointerMove(block, { clientX: 80, buttons: 0 });
 
-    const marker = container.querySelector(
-      '[data-testid="timeline-blade-preview"]',
-    ) as HTMLElement | null;
-    expect(marker).not.toBeNull();
-    expect(marker?.style.left).toBe("80px");
+    const mark = container.querySelector<HTMLElement>('[data-testid="timeline-blade-mark"]');
+    expect(mark?.style.left).toBe("80px");
+    // Same layer as the playhead, so it reaches the ruler and cannot sit a
+    // pixel off it.
+    expect(mark?.closest('[data-testid="timeline-time-mark-overlay"]')).not.toBeNull();
+    expect(mark?.closest('[data-testid="timeline-track-viewport"]')).toBeNull();
+    expect(container.querySelector('[data-testid="timeline-snap-guide"]')).toBeNull();
 
     fireEvent.pointerLeave(block);
-    expect(container.querySelector('[data-testid="timeline-blade-preview"]')).toBeNull();
+    expect(container.querySelector('[data-testid="timeline-blade-mark"]')).toBeNull();
+  });
+
+  it("draws the blade mark solid over exactly the clips the click would cut", () => {
+    // Hovered clip, a linked sibling that spans the cut, a linked sibling that
+    // ends before it, and an unlinked clip that spans it.
+    const sibling = { ...layer, id: "sibling", label: "Sibling" };
+    const missed = { ...layer, id: "missed", label: "Missed", t_start_us: 0, t_end_us: 500_000 };
+    const other = { ...layer, id: "other", label: "Other" };
+    const tracks = [
+      { ...track, id: "t1", layers: [layer] },
+      { ...track, id: "t2", layers: [sibling] },
+      { ...track, id: "t3", layers: [missed, { ...other, t_start_us: 600_000 }] },
+    ];
+    const links = [{ id: "link", layer_ids: [layer.id, sibling.id, missed.id] }];
+    const { container } = renderTimeline({ bladeMode: true, tracks, links });
+    const rows = new Map([[layer.id, 0], [sibling.id, 1], [missed.id, 2], [other.id, 2]]);
+    for (const [id, row] of rows) {
+      const block = container.querySelector<HTMLElement>(`.timeline-layer[data-layer-id="${id}"]`)!;
+      vi.spyOn(block, "getBoundingClientRect").mockReturnValue({
+        left: 0, right: 160, top: 40 + row * 60, bottom: 88 + row * 60,
+        width: 160, height: 48, x: 0, y: 40 + row * 60, toJSON: () => ({}),
+      });
+    }
+    const hovered = container.querySelector(`.timeline-layer[data-layer-id="${layer.id}"]`)!;
+    const cuts = () => Object.fromEntries(
+      [...container.querySelectorAll<HTMLElement>('[data-testid="timeline-blade-cut"]')]
+        .map((el) => [el.dataset.layerId, [el.style.top, el.style.height]]),
+    );
+
+    fireEvent.pointerMove(hovered, { clientX: 80, buttons: 0 });
+    expect(cuts()).toEqual({ [layer.id]: ["40px", "48px"], [sibling.id]: ["100px", "48px"] });
+
+    // The click would cut the hovered clip alone, and the mark says so at once.
+    act(() => setLinkOverride(true));
+    expect(cuts()).toEqual({ [layer.id]: ["40px", "48px"] });
+  });
+
+  it("marks a snapped blade cut on the mark itself", () => {
+    const target = { ...layer, id: "target", label: "Target", t_start_us: 1_500_000, t_end_us: 3_000_000 };
+    const { container } = renderTimeline({
+      bladeMode: true, tracks: [track, { ...track, id: "t2", layers: [target] }],
+    });
+    const block = container.querySelector(`.timeline-layer[data-layer-id="${layer.id}"]`)!;
+    const mark = () => container.querySelector<HTMLElement>('[data-testid="timeline-blade-mark"]');
+
+    fireEvent.pointerMove(block, { clientX: 118, buttons: 0 });
+    expect(mark()?.dataset.atUs).toBe("1500000");
+    expect(mark()?.dataset.snapped).toBe("true");
+    expect(container.querySelector('[data-testid="timeline-snap-guide"]')).toBeNull();
+
+    fireEvent.pointerMove(block, { clientX: 118, buttons: 0, ctrlKey: true, metaKey: true });
+    expect(mark()?.dataset.snapped).toBe("false");
+    expect(mark()?.dataset.atUs).not.toBe("1500000");
   });
 
   it.each(["cancel", "blur", "escape", "unmount"])("does not leave ruler seeking armed after %s", (ending) => {
@@ -1754,7 +1809,7 @@ describe("Timeline seek/selection coupling", () => {
     expect(ruler.className).toContain("top-0");
     expect(rulerCorner.closest('[data-testid="timeline-track-viewport"]')).toBeNull();
     expect(playheadHead.closest('[data-testid="timeline-track-viewport"]')).toBeNull();
-    expect(playheadHead.closest('[data-testid="timeline-playhead-overlay"]')).not.toBeNull();
+    expect(playheadHead.closest('[data-testid="timeline-time-mark-overlay"]')).not.toBeNull();
     expect(playheadHead.classList.contains("top-0")).toBe(true);
     expect(playheadHeadShape.classList.contains("top-0.5")).toBe(true);
   });

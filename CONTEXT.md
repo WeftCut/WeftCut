@@ -282,6 +282,14 @@ The reserved row above the top lane that turns a drag into a new track. Its
 space is held even when idle.
 _Avoid_: add-track row, ghost lane, phantom track
 
+**Time mark**:
+A vertical line that marks a time on the timeline: the playhead, the snap guide,
+the blade mark. Its left edge is at the time's x and it draws into the frame
+that begins there, so marks at one time coincide. All draw in one overlay
+(`TimeMarkOverlay.tsx`, `timeMarkLeftPx`); only the playhead, the ruler's
+scrub handle, crosses the ruler, the others start at its bottom edge.
+_Avoid_: cursor line, indicator
+
 **Marquee**:
 A box dragged from blank timeline space. The surface it starts on decides what
 it selects (clips or keyframes), never its extent or a modifier. See

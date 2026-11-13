@@ -69,6 +69,7 @@ import {
   linkFanoutActive,
   linkToggleState,
 } from "./linkEligibility";
+import { useLinkOverride } from "../state/linkOverrideStore";
 import {
   canDeselectAll,
   canSelectAll,
@@ -79,6 +80,7 @@ import { requestPrebake } from "../render/motifs/prebakeIntents";
 import {
   DROP_STRIP_SEAM_OVERLAP_PX,
   headerColumnPx,
+  RULER_HEIGHT_PX,
   trackHeightPx,
   computeTimelineExtent,
   indexLinks,
@@ -138,8 +140,10 @@ import { LayerDragTrimMonitor } from "./LayerDragTrimMonitor";
 import { useIsLayerDragging } from "./layerDragStore";
 import { layerIsReadOnly } from "../state/layerEditability";
 import { resolveTimelineTimeSnap } from "./snapping";
-import { setTimelineSnapGuide } from "./timelineSnapFeedbackStore";
 import { TimelineSnapGuide } from "./TimelineSnapGuide";
+import { TimeMarkOverlay } from "./TimeMarkOverlay";
+import { TimelineBladeMark } from "./TimelineBladeMark";
+import { bladeCutLayerIds } from "./bladeCut";
 import {
   localClockUsOf,
   playheadClockUs,
@@ -330,6 +334,7 @@ export const Timeline = memo(function Timeline({
   const [bladePreview, setBladePreview] = useState<{
     layerId: string;
     atUs: number;
+    snapped: boolean;
   } | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -1519,31 +1524,29 @@ export const Timeline = memo(function Timeline({
     ],
   );
 
-  // All blade exits (leave, tool mode, split, teardown) clear feedback here.
-  const clearBladeFeedback = useCallback((resetPreview = true) => {
-    if (resetPreview) setBladePreview(null);
-    setTimelineSnapGuide(compositionId, "blade", null);
-  }, [compositionId]);
-
   const updateBladePreview = useCallback(
     (layer: LayerSummary | null, clientX?: number, snapSuspended = false) => {
-      if (!bladeMode || !layer || clientX === undefined) {
-        clearBladeFeedback();
-        return;
-      }
-      const snapResult = bladeCutTimeFromClientX(layer, clientX, snapSuspended);
-      setTimelineSnapGuide(compositionId, "blade", snapResult?.boundaryUs ?? null);
-      setBladePreview(snapResult === null ? null : { layerId: layer.id, atUs: snapResult.atUs });
+      const snapResult = bladeMode && layer && clientX !== undefined
+        ? bladeCutTimeFromClientX(layer, clientX, snapSuspended) : null;
+      setBladePreview(snapResult === null || !layer ? null : {
+        layerId: layer.id, atUs: snapResult.atUs, snapped: snapResult.boundaryUs !== null,
+      });
     },
-    [bladeCutTimeFromClientX, bladeMode, clearBladeFeedback, compositionId],
+    [bladeCutTimeFromClientX, bladeMode],
   );
 
   useEffect(() => {
-    if (!bladeMode) {
-      clearBladeFeedback();
-    }
-    return () => clearBladeFeedback(false);
-  }, [bladeMode, clearBladeFeedback]);
+    if (!bladeMode) setBladePreview(null);
+  }, [bladeMode]);
+
+  // Subscribed, not read at event time: flipping the override while hovering
+  // changes what the click would cut, and the blade mark must say so.
+  const linkOverride = useLinkOverride();
+  const bladeCutIds = useMemo(
+    () => bladePreview === null ? [] :
+      bladeCutLayerIds(bladePreview.layerId, bladePreview.atUs, tracks, links, !linkOverride),
+    [bladePreview, links, linkOverride, tracks],
+  );
 
   // Blade-tool click handler: convert clientX → frame-snapped composition
   // timestamp and ask the actor to split the layer at that point. Reject
@@ -1556,7 +1559,7 @@ export const Timeline = memo(function Timeline({
       const snapResult = bladeCutTimeFromClientX(layer, clientX, snapSuspended);
       if (snapResult === null) return;
       const atUs = snapResult.atUs;
-      clearBladeFeedback();
+      setBladePreview(null);
       try {
         // Link-aware, as `splitAtPlayhead` sends it; escaped only under the
         // link override.
@@ -1566,7 +1569,7 @@ export const Timeline = memo(function Timeline({
         logMutationFailure(err, "Blade split");
       }
     },
-    [bladeCutTimeFromClientX, clearBladeFeedback, onMutated],
+    [bladeCutTimeFromClientX, onMutated],
   );
 
   // Esc disarms the sample-region one-shot. Its own effect rather than a branch
@@ -1839,7 +1842,8 @@ export const Timeline = memo(function Timeline({
             fpsDen={fpsDen}
           />
           <TimelineFixedRow compositionId={compositionId} widthPx={widthPx}
-            header={<div data-testid="timeline-ruler-corner" className="h-5 border-b border-border-soft bg-card" />}>
+            header={<div data-testid="timeline-ruler-corner" className="border-b border-border-soft bg-card"
+              style={{ height: RULER_HEIGHT_PX }} />}>
             <TimelineRuler
               compositionId={compositionId} pxPerSec={pxPerSec} totalSec={totalSec}
               widthPx={widthPx} viewportWidthPx={viewportWidthPx}
@@ -1998,14 +2002,6 @@ export const Timeline = memo(function Timeline({
               </div>
               <div ref={canvasRef} data-testid="timeline-canvas" className="pointer-events-none absolute inset-y-0"
                 style={{ left: headerColPx, width: widthPx }}>
-                <TimelineSnapGuide compositionId={compositionId} pxPerSec={pxPerSec} />
-                {bladePreview && (
-                  <BladeCutPreview
-                    x={(bladePreview.atUs / 1_000_000) * pxPerSec}
-                    label={formatTimecode(bladePreview.atUs, fpsNum, fpsDen)}
-                    width={widthPx}
-                  />
-                )}
                 <OutOfRangeDim pxPerSec={pxPerSec} />
                 {/* Draws only while a clip from ANOTHER Panel is over this one.
                 A leaf, so following the pointer costs this Panel one render
@@ -2031,8 +2027,23 @@ export const Timeline = memo(function Timeline({
               </div>
             </div>
           </div>
-          <TimelinePlayhead compositionId={compositionId} anchorFrame={anchorFrame}
-            pxPerSec={pxPerSec} fpsNum={fpsNum} fpsDen={fpsDen} visible={visible} />
+          {/* Paint order: the transient marks over the playhead they may sit on. */}
+          <TimeMarkOverlay compositionId={compositionId} visible={visible}>
+            <TimelinePlayhead compositionId={compositionId} anchorFrame={anchorFrame}
+              pxPerSec={pxPerSec} fpsNum={fpsNum} fpsDen={fpsDen} visible={visible} />
+            <TimelineSnapGuide compositionId={compositionId} pxPerSec={pxPerSec} />
+            {bladePreview && (
+              <TimelineBladeMark
+                atUs={bladePreview.atUs}
+                snapped={bladePreview.snapped}
+                cutLayerIds={bladeCutIds}
+                label={formatTimecode(bladePreview.atUs, fpsNum, fpsDen)}
+                pxPerSec={pxPerSec}
+                widthPx={widthPx}
+                trackViewportRef={rootRef}
+              />
+            )}
+          </TimeMarkOverlay>
         </div>
         {contextMenu && (
           <LayerContextMenu
@@ -2084,8 +2095,8 @@ export const Timeline = memo(function Timeline({
  * lives elsewhere — see `RangeCap` in TimelineRuler.tsx for the permanent-mark
  * vs transient-wash split.
  *
- * `z-[4]` clears every LayerBlock (max `z-[3]`) while staying under the blade
- * preview (`z-[5]`) and the playhead, which must never read as out-of-range.
+ * `z-[4]` clears every LayerBlock (max `z-[3]`). The Time marks draw in their
+ * own overlay above the track viewport, so none of them reads as out-of-range.
  * The node stays mounted at zero opacity so the fade is a CSS transition
  * rather than a pop; `pointer-events-none` keeps it inert either way.
  */
@@ -2127,40 +2138,6 @@ function OutOfRangeDim({ pxPerSec }: { pxPerSec: number }) {
     </div>
   );
 }
-
-function BladeCutPreview({
-  x,
-  label,
-  width,
-}: {
-  x: number;
-  label: string;
-  width: number;
-}) {
-  const labelX = Math.min(Math.max(x, 44), Math.max(44, width - 44));
-  return (
-    <>
-      <div
-        data-testid="timeline-blade-preview"
-        className="pointer-events-none absolute bottom-0 top-0 z-[5]"
-        style={{ left: x }}
-        aria-hidden="true"
-      >
-        <div className="absolute bottom-0 top-0 w-px -translate-x-1/2 bg-amber-300 shadow-[0_0_0_0.5px_rgba(0,0,0,0.65),0_0_8px_rgba(251,191,36,0.55)]" />
-        <div className="absolute -left-1.5 top-0 h-3 w-3 bg-amber-300 shadow-[0_1px_2px_rgba(0,0,0,0.55)] [clip-path:polygon(50%_100%,0_0,100%_0)]" />
-      </div>
-      <div
-        className="pointer-events-none absolute top-1 z-[6] -translate-x-1/2 whitespace-nowrap rounded-sm border border-amber-200/50 bg-black/80 px-1.5 py-0.5 font-mono text-[length:var(--font-size-micro)] font-medium leading-none text-amber-100 shadow-[0_1px_5px_rgba(0,0,0,0.45)]"
-        style={{ left: labelX }}
-        aria-hidden="true"
-      >
-        {label}
-      </div>
-    </>
-  );
-}
-
-
 
 function EmptyHint({ mode }: { mode?: "AbRoll" | "AllTracks" }) {
   const { t } = useTranslation();

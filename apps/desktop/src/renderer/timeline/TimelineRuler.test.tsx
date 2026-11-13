@@ -31,6 +31,7 @@ import {
 import { hasMarkedRange, useRangeStore } from "../state/rangeStore";
 import { registerCommandProvider } from "../commands/registry";
 import { RULER_SCROLL_QUANTUM_PX } from "./rulerModel";
+import { RULER_HEIGHT_PX } from "./geometry";
 import { TimelineRuler } from "./TimelineRuler";
 
 afterEach(cleanup);
@@ -127,8 +128,9 @@ describe("<TimelineRuler>", () => {
     )!;
     expect(ruler.style.width).toBe("6000px");
     expect(ruler.className).toContain("overflow-hidden");
-    // `h-5` is coupled to the playhead knob's top offset (see the sizing note).
-    expect(ruler.className).toContain("h-5");
+    // One height for the ruler and the Time marks that start at its bottom
+    // edge (see the sizing note).
+    expect(ruler.style.height).toBe(`${RULER_HEIGHT_PX}px`);
   });
 
   it("paints a viewport-sized node set for a one-hour 60 fps row", () => {

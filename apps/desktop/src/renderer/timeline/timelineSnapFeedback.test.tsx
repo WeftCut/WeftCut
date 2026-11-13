@@ -28,9 +28,7 @@ describe("timeline snap feedback", () => {
     expect(guide.getAttribute("data-snap-boundary-us")).toBe("3000000");
     expect(guide.style.left).toBe("300px");
     expect(guide.getAttribute("aria-hidden")).toBe("true");
-    expect(guide.className).toContain("pointer-events-none");
-    expect(guide.children).toHaveLength(1); // no diamond or other marker
-    expect(guide.firstElementChild?.className).toContain("border-[#B5D987]/90");
+    expect(guide.children).toHaveLength(0); // a bare rule: no diamond or other marker
     rerender(<TimelineSnapGuide compositionId={null} pxPerSec={250} />);
     expect(screen.getByTestId("timeline-snap-guide").style.left).toBe("750px");
     update(null, "layer", null);
@@ -77,7 +75,7 @@ describe("timeline snap feedback", () => {
     act(() => drag.begin({
       source: "media", mediaId: "media", kind: "Video", label: "Source", durationUs: 1_000_000,
     }));
-    update("b", "blade", 2_000_000);
+    update("b", "marker", 2_000_000);
     claim("a", 1_000_000);
     expect(boundaries()).toEqual(["1000000", "2000000"]);
     claim("c", 3_000_000);
