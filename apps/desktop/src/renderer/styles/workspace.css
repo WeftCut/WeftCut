@@ -139,13 +139,8 @@
   inset: 0;
   display: grid;
   place-items: center;
-  background: color-mix(in srgb, var(--card) 55%, transparent);
+  background: color-mix(in srgb, var(--card) 72%, transparent);
   color: var(--muted-foreground);
-}
-
-.weft-dock-panel-lock > svg {
-  width: var(--icon-size-display);
-  height: var(--icon-size-display);
 }
 
 .weft-dock-panel {

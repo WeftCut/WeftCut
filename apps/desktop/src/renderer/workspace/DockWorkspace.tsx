@@ -588,7 +588,7 @@ export function WeftCutPanelRenderer({
         >
           <Component />
         </div>
-        {locked && <div className="weft-dock-panel-lock" aria-hidden="true"><LockIcon /></div>}
+        {locked && <div className="weft-dock-panel-lock" aria-hidden="true"><AppIcon icon={LockIcon} size="display" /></div>}
       </div>
     </DockPanelRuntimeContext.Provider>
   );
