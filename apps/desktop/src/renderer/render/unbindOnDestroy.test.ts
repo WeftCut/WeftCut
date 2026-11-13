@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { BindGroup, DOMAdapter, getTextureBatchBindGroup, type Renderer, type TextureSource } from "pixi.js";
+import { BindGroup, DOMAdapter, getTextureBatchBindGroup, Texture, type Renderer, type TextureSource } from "pixi.js";
 import { VideoClipSprite } from "./sprite/VideoClipSprite";
 import { ImageOverlaySprite } from "./sprite/ImageOverlaySprite";
 import { CompositionRefSprite } from "./sprite/CompositionRefSprite";
@@ -255,5 +255,24 @@ it("a transition's side textures are destroyed only after the shader that sample
   transitions.beginFrame([crossfade("u", 0.5)]);
   transitions.reset();
   transitions.dispose();
+  expect(destroyedWhileBound).toEqual([]);
+});
+
+it("the empty texture that stands in for a destroyed one gains no listeners", () => {
+  const empty = Texture.EMPTY.source;
+  const before = [empty.listenerCount("change"), empty.style.listenerCount("change")];
+  const group = new CompositionRefSprite({ layerId: "g", node: fakeNode(320, 180), renderer: undefined });
+  cleanups.push(() => group.dispose());
+  const source = group.sprite.texture.source;
+  const style = source.style;
+  const batches = [batch(source), batch(source), batch(source)];
+
+  group.dispose();
+  for (const b of batches) {
+    expect(holds(b, source, style)).toBe(false);
+    expect(holds(b, empty)).toBe(true);
+  }
+  expect([empty.listenerCount("change"), empty.style.listenerCount("change")]).toEqual(before);
+  expect(source.listenerCount("change") + style.listenerCount("change")).toBe(0);
   expect(destroyedWhileBound).toEqual([]);
 });

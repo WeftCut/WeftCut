@@ -13,19 +13,34 @@ import {
 } from "pixi.js";
 
 type OnArgs = Parameters<TextureSource["on"]>;
+type OffArgs = Parameters<TextureSource["off"]>;
+/** The `change` listener a group subscribed with; it serves the sampler slot too. */
+type GroupListener = (...args: unknown[]) => void;
 
-function bindGroupOf([event, , context]: readonly unknown[]): BindGroup | null {
-  return event === "change" && context instanceof BindGroup ? context : null;
+function groupSubscription([event, fn, context]: readonly unknown[]): [BindGroup, GroupListener] | null {
+  return event === "change" && context instanceof BindGroup && typeof fn === "function"
+    ? [context, fn as GroupListener]
+    : null;
 }
 
 /** Re-points `source`'s slots (and its sampler's) in every group to the empty
- *  texture. Only its own slots: a batch also holds siblings. */
-function unbind(source: TextureSource, bindings: Set<BindGroup>): void {
-  // setResource unsubscribes, which edits `bindings`: iterate a snapshot.
-  for (const group of [...bindings]) {
-    for (const [index, resource] of Object.entries(group.resources)) {
-      if (resource === source) group.setResource(Texture.EMPTY.source, Number(index));
-      else if (resource === source.style) group.setResource(Texture.EMPTY.source.style, Number(index));
+ *  texture. Only its own slots: a batch also holds siblings. The empty texture
+ *  never changes, so the groups do not subscribe to it: subscribing would add a
+ *  listener per cached group to it for the rest of the session. */
+function unbind(source: TextureSource, bindings: Map<BindGroup, GroupListener>): void {
+  const style = source.style;
+  // Unsubscribing edits `bindings`: iterate a snapshot.
+  for (const [group, listener] of [...bindings]) {
+    const resources = group.resources;
+    for (const key in resources) {
+      const resource = resources[key];
+      if (resource === source) {
+        source.off("change", listener, group);
+        group.setResourceUnwatched(Texture.EMPTY.source, Number(key));
+      } else if (resource === style) {
+        style.off("change", listener, group);
+        group.setResourceUnwatched(Texture.EMPTY.source.style, Number(key));
+      }
     }
   }
   bindings.clear();
@@ -33,17 +48,17 @@ function unbind(source: TextureSource, bindings: Set<BindGroup>): void {
 
 /** A bitmap or canvas source. Destroying it never closes the resource it wraps. */
 export class UnbindingImageSource extends ImageSource {
-  readonly #bindings = new Set<BindGroup>();
+  readonly #bindings = new Map<BindGroup, GroupListener>();
 
   override on(...args: OnArgs): this {
-    const group = bindGroupOf(args);
-    if (group) this.#bindings.add(group);
+    const subscription = groupSubscription(args);
+    if (subscription) this.#bindings.set(...subscription);
     return super.on(...args);
   }
 
-  override off(...args: Parameters<TextureSource["off"]>): this {
-    const group = bindGroupOf(args);
-    if (group) this.#bindings.delete(group);
+  override off(...args: OffArgs): this {
+    const subscription = groupSubscription(args);
+    if (subscription) this.#bindings.delete(subscription[0]);
     return super.off(...args);
   }
 
@@ -58,17 +73,17 @@ export class UnbindingImageSource extends ImageSource {
  *  ImageSource and TextureSource upload differently, so neither can stand in
  *  for the other. */
 class UnbindingTextureSource extends TextureSource {
-  readonly #bindings = new Set<BindGroup>();
+  readonly #bindings = new Map<BindGroup, GroupListener>();
 
   override on(...args: OnArgs): this {
-    const group = bindGroupOf(args);
-    if (group) this.#bindings.add(group);
+    const subscription = groupSubscription(args);
+    if (subscription) this.#bindings.set(...subscription);
     return super.on(...args);
   }
 
-  override off(...args: Parameters<TextureSource["off"]>): this {
-    const group = bindGroupOf(args);
-    if (group) this.#bindings.delete(group);
+  override off(...args: OffArgs): this {
+    const subscription = groupSubscription(args);
+    if (subscription) this.#bindings.delete(subscription[0]);
     return super.off(...args);
   }
 
