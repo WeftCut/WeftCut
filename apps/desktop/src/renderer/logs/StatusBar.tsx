@@ -251,7 +251,7 @@ export function StatusBar({
           {t("status_bar.toggle_label")}
           {errorCount > 0 && (
             <span className="status-bar-logs-errors" data-testid="status-bar-errors" aria-hidden="true">
-              <AppIcon icon={AlertTriangleIcon} size="label" aria-hidden />
+              <AppIcon icon={OctagonAlertIcon} size="label" aria-hidden />
               {errorCount}
             </span>
           )}
