@@ -104,7 +104,7 @@ function NotSavedDetails({ failure, reason, actions, onLeave }: {
         </p>
       )}
       <div className="not-saved-actions">
-        <Button size="xs" onClick={() => void retry()} disabled={result?.kind === "retrying"}>
+        <Button variant="default" size="xs" onClick={() => void retry()} disabled={result?.kind === "retrying"}>
           {t("save_status.retry")}
         </Button>
         <Button variant="secondary" size="xs" onClick={() => { onLeave(); actions.saveAs(); }}>
