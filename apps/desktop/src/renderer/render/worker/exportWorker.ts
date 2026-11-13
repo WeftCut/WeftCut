@@ -196,7 +196,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
       // a pre-existing error doesn't false-positive as a probe failure.
       while (renderer.gl.getError() !== renderer.gl.NO_ERROR) { /* drain stale errors */ }
       renderer.render({ container: new Container(), target: probe });
-      renderer.renderTarget.bind(probe, false);
+      renderer.renderTarget.bind({ target: probe, clear: false });
       const px = new Float32Array(4);
       renderer.gl.readPixels(0, 0, 1, 1, renderer.gl.RGBA, renderer.gl.FLOAT, px);
       const err = renderer.gl.getError();

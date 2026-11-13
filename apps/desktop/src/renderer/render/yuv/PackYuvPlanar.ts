@@ -168,7 +168,7 @@ export class PackYuvPlanar {
       this.renderer.gl,
       passes.map((p) => ({ w: p.plane.passW, h: p.plane.passH, dstRowBytes: p.plane.rowBytes })),
     );
-    this.reader.submit((i) => this.renderer.renderTarget.bind(passes[i]!.rt, false));
+    this.reader.submit((i) => this.renderer.renderTarget.bind({ target: passes[i]!.rt, clear: false }));
   }
 
   /// Frames submitted but not yet retrieved.

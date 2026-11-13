@@ -132,7 +132,7 @@ export class PackYuv420p10 {
       this.renderer.gl,
       passes.map((p) => ({ w: p.w, h: p.h, dstRowBytes: p.w * 4, flipRows: PACK_ROW_FLIP })),
     );
-    this.reader.submit((i) => this.renderer.renderTarget.bind(passes[i]!.rt, false));
+    this.reader.submit((i) => this.renderer.renderTarget.bind({ target: passes[i]!.rt, clear: false }));
   }
 
   /// Frames submitted but not yet retrieved.
