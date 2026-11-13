@@ -570,13 +570,13 @@ describe("DockWorkspace React integration", () => {
     const panel = document.querySelector(`.weft-dock-panel[data-panel-kind="${kind}"]`)!;
 
     expect(panel.hasAttribute("inert")).toBe(locked);
-    const notice = screen.queryByText("Read-only");
-    expect(!!notice).toBe(locked);
-    expect(notice?.closest("[inert]") ?? null).toBeNull();
+    const lock = document.querySelector(".weft-dock-panel-lock");
+    expect(!!lock).toBe(locked);
+    expect(lock?.closest("[inert]") ?? null).toBeNull();
 
     view.rerender(<DockWorkspace contracts={contracts} />);
     expect(panel.hasAttribute("inert")).toBe(false);
-    expect(screen.queryByText("Read-only")).toBeNull();
+    expect(document.querySelector(".weft-dock-panel-lock")).toBeNull();
   });
 
   it("maximizes from the tab chrome", () => {

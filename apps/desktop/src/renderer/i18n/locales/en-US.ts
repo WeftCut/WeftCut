@@ -708,7 +708,6 @@ const enUS = {
       "A description is already running — wait for it to finish",
   },
   dock_workspace: {
-    export_locked: "Read-only",
     editing_label: "Editing workspace",
     empty_label: "Empty workspace",
     all_closed: "All panels are closed.",

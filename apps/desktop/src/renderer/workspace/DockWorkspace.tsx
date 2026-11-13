@@ -31,6 +31,7 @@ import {
   ChevronUpIcon,
   GripHorizontalIcon,
   GripVerticalIcon,
+  LockIcon,
   TextAlignStartIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -545,7 +546,6 @@ export function WeftCutPanelRenderer({
   if (!isPanelKind(params.kind)) return null;
   const Component = PANEL_COMPONENTS[params.kind];
   const { editingLocked } = useContracts();
-  const { t } = useTranslation();
   const locked = editingLocked === true && PANEL_REGISTRY[params.kind].duringExport === "locked";
   const chrome = useWorkspaceChrome();
   const isVisible = useDockviewPanelVisibility(api);
@@ -588,7 +588,7 @@ export function WeftCutPanelRenderer({
         >
           <Component />
         </div>
-        {locked && <div className="weft-dock-panel-lock" role="status">{t("dock_workspace.export_locked")}</div>}
+        {locked && <div className="weft-dock-panel-lock" aria-hidden="true"><LockIcon /></div>}
       </div>
     </DockPanelRuntimeContext.Provider>
   );

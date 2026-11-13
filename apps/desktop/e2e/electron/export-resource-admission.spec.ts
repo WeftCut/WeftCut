@@ -371,8 +371,8 @@ test('background export keeps review available and preserves output across Previ
     await openPanel('Media Pool')
     const media = dockPanel(page, 'media')
     await expect(media).toHaveAttribute('inert', '')
-    const mediaNotice = page.locator('.weft-dock-panel-frame').filter({ has: media }).getByText('Read-only', { exact: true })
-    await expect(mediaNotice).toBeVisible()
+    const mediaLock = page.locator('.weft-dock-panel-frame').filter({ has: media }).locator('.weft-dock-panel-lock')
+    await expect(mediaLock).toBeVisible()
     await expect(invokeCmd(page, 'add_track', {})).rejects.toThrow(/export is active/i)
 
     const transport = () => page.evaluate(() => window.__weftcutTest!.audioTransportSnapshot())
@@ -413,7 +413,7 @@ test('background export keeps review available and preserves output across Previ
     expect(await page.evaluate(() => window.__weftcutTest!.previewResourceProbe()!.generation)).toBe(remounted)
     await expect.poll(laneIsInert).toBe(false)
     await expect(media).not.toHaveAttribute('inert', '')
-    await expect(mediaNotice).toHaveCount(0)
+    await expect(mediaLock).toHaveCount(0)
     expect(await invokeCmd(page, 'add_track', {})).toBeTruthy()
 
     const frameHashes = (file: string) => execFileSync('ffmpeg',

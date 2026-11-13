@@ -652,7 +652,6 @@ const zhCN: Resources = {
     describe_already_running: "已经有一次描述在执行——等它结束再来",
   },
   dock_workspace: {
-    export_locked: "只读",
     editing_label: "编辑工作区",
     empty_label: "空工作区",
     all_closed: "所有面板均已关闭。",
