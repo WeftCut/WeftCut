@@ -6,8 +6,8 @@ import { LOG_EVENTS, logList, type LogEntry } from "../ipc";
 /// match the Rust ring. Seeded on mount via `log_list`; live-updated via
 /// the `log:entry` backend event.
 ///
-/// Consumers: the status bar reads `latest` / `errorCount` / `runningOps`
-/// (deriving its own running count); the console filters `entries` itself.
+/// Consumers: the status bar reads `latest` / `errorCount`; the console
+/// filters `entries` itself.
 ///
 /// Pre-workspace: backend bus is `None`, so `log_list` returns `[]` and
 /// no `log:entry` events fire. The store sits idle until the user opens
@@ -23,9 +23,6 @@ export const ERROR_STICKY_MS = 10_000;
 export interface LogStoreState {
   entries: LogEntry[];
   errorCount: number;
-  /// op_id → latest OpState. A non-terminal entry (`Started`/`Progress`)
-  /// adds; `Ok`/`Err` removes. Used by the bar's running-count badge.
-  runningOps: Record<string, "Started" | "Progress">;
   /// The last entry shown in the bar's "latest" slot. May lag `entries[0]`
   /// when an error is sticky.
   latest: LogEntry | null;
@@ -47,7 +44,6 @@ export const useLogStore = create<LogStoreState & LogStoreActions>(
   (set, get) => ({
     entries: [],
     errorCount: 0,
-    runningOps: {},
     latest: null,
     latestStickyUntil: 0,
     ready: false,
@@ -56,16 +52,6 @@ export const useLogStore = create<LogStoreState & LogStoreActions>(
       set((s) => {
         const next = [e, ...s.entries];
         if (next.length > RING_CAP) next.length = RING_CAP;
-
-        const runningOps = { ...s.runningOps };
-        if (e.op_id && e.op_state) {
-          const key = e.op_id;
-          if (e.op_state.state === "Started" || e.op_state.state === "Progress") {
-            runningOps[key] = e.op_state.state;
-          } else if (e.op_state.state === "Ok" || e.op_state.state === "Err") {
-            delete runningOps[key];
-          }
-        }
 
         const now = Date.now();
         const errorIncoming = e.level === "error";
@@ -84,7 +70,7 @@ export const useLogStore = create<LogStoreState & LogStoreActions>(
           latest = e;
         }
 
-        return { entries: next, errorCount, runningOps, latest, latestStickyUntil };
+        return { entries: next, errorCount, latest, latestStickyUntil };
       }),
 
     seed: (initial) => {
@@ -92,27 +78,16 @@ export const useLogStore = create<LogStoreState & LogStoreActions>(
       // entries[0] is newest, matching `append`'s prepend pattern.
       const reversed = [...initial].reverse();
       const errorCount = reversed.filter((e) => e.level === "error").length;
-      const runningOps: Record<string, "Started" | "Progress"> = {};
-      for (const e of reversed) {
-        if (!e.op_id || !e.op_state) continue;
-        const opState = e.op_state.state;
-        if (opState === "Started" || opState === "Progress") {
-          runningOps[e.op_id] = opState;
-        } else {
-          delete runningOps[e.op_id];
-        }
-      }
       const latest = reversed.find(
         (e) => e.level !== "trace" && e.level !== "debug",
       ) ?? null;
-      set({ entries: reversed, errorCount, runningOps, latest, ready: true });
+      set({ entries: reversed, errorCount, latest, ready: true });
     },
 
     clear: () =>
       set({
         entries: [],
         errorCount: 0,
-        runningOps: {},
         latest: null,
         latestStickyUntil: 0,
       }),

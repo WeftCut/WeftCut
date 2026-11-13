@@ -385,12 +385,7 @@
 .export-preset-delete { color: var(--destructive); }
 
 /* Background export in the status bar (ExportProgressPill): a ring with the
-   percent; the details open above it on the System status panel's surface. */
-.export-pill {
-  position: relative;
-  display: inline-flex;
-}
-
+   percent; the details open above it in a status popover (status.css). */
 .export-pill-trigger {
   gap: calc(6 * var(--ui-px));
   background: color-mix(in srgb, var(--primary) 12%, transparent);
@@ -442,23 +437,6 @@
   .export-pill-ring.is-indeterminate svg {
     animation: none;
   }
-}
-
-.export-pill-details {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + calc(8 * var(--ui-px)));
-  width: min(calc(300 * var(--ui-px)), calc(100vw - calc(24 * var(--ui-px))));
-  display: flex;
-  flex-direction: column;
-  gap: calc(8 * var(--ui-px));
-  padding: calc(14 * var(--ui-px));
-  background: var(--popover);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-popover);
-  z-index: var(--layer-status-panel);
-  user-select: text;
 }
 
 .export-pill-details .export-progress-status {

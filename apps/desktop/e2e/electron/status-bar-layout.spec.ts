@@ -14,26 +14,23 @@ import zhCN from '../../src/renderer/i18n/locales/zh-CN'
 // truncates. Whether they fit the bar's width is recorded, not asserted (see
 // the assertions). Then agent mode, whose titlebar carries the same Not saved
 // badge beside the exit button and the caption buttons: one row, inside the
-// bar, no overlaps. Layout properties only, never pixels; screenshots of both
-// bars are attached for a human to look at.
+// bar, no overlaps. The work pill's popover, open, stays inside the window.
+// Layout properties only, never pixels; screenshots of both bars and the
+// popover are attached for a human to look at.
 //
 // Each item is raised through the boundary that raises it in the product: an
-// agent's edit for the review count, log rows for the error count and running
-// badge, main's own events for the pushed
-// state (jobs, agent activity, notices, save status), and main's update-status
-// handler for the update offer.
+// agent's edit for the review count, a log row for the error count, main's own
+// events for the pushed state (jobs, agent activity, notices, save status),
+// and main's update-status handler for the update offer.
 
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 }
 const LOCALES = { 'en-US': enUS, 'zh-CN': zhCN } as const
 
 /** The right side's items, by the selector each renders with. */
 const RIGHT_ITEMS = {
-  derivatives: '.derivatives-pill',
-  compute: '[data-testid="status-bar-compute"]',
-  agentRunning: '.agent-running-pill',
+  work: '[data-testid="status-bar-work"]',
   review: '[data-testid="status-bar-review"]',
   errors: '[data-testid="status-bar-errors"]',
-  running: '.status-bar-badge-running',
   notSaved: '[data-testid="save-status-badge"]',
   system: '.system-status-trigger',
   update: '.status-bar-update',
@@ -76,10 +73,6 @@ for (const locale of Object.keys(LOCALES) as Array<keyof typeof LOCALES>) {
       await page.locator('.agent-exit-button').click()
       await expect(page.locator('.agent-mode-shell')).toHaveCount(0)
       await expect(page.locator(RIGHT_ITEMS.review)).toBeVisible()
-
-      // A running op.
-      await invokeCmd(page, 'log_emit', { input: { level: 'info', category: { kind: 'Job' }, source: { kind: 'System' },
-        message: 'Layout probe op', op_id: randomUUID(), op_state: { state: 'Started' } } })
 
       // State main pushes: a clip job, a derivative job, a running agent call,
       // a system notice, and a project that is not being saved. Revisions far
@@ -159,6 +152,23 @@ for (const locale of Object.keys(LOCALES) as Array<keyof typeof LOCALES>) {
       }, RIGHT_ITEMS)
       await testInfo.attach(`status-bar-${locale}-layout`, { body: JSON.stringify({ size, ...layout }, null, 2), contentType: 'application/json' })
 
+      // The work pill's popover at the same size: the clip job, the agent call
+      // and the derivative job each under their own group, the whole popover
+      // inside the window. Captured here, asserted below with the bar.
+      await page.locator(RIGHT_ITEMS.work).click()
+      const popover = page.locator('.work-pill-details')
+      await expect(popover).toBeVisible()
+      await expect(popover.locator('.work-group')).toHaveCount(3)
+      const popoverShot = testInfo.outputPath(`work-popover-${locale}.png`)
+      await page.screenshot({ path: popoverShot })
+      await testInfo.attach(`work-popover-${locale}`, { path: popoverShot, contentType: 'image/png' })
+      const popoverBox = await popover.evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, viewWidth: window.innerWidth, viewHeight: window.innerHeight }
+      })
+      await page.keyboard.press('Escape')
+      await expect(popover).toHaveCount(0)
+
       // Agent mode at the same size: its titlebar holds every item it can show
       // at once (the badge, the exit button, the caption buttons off macOS).
       // Captured before any assertion, so both screenshots survive a failure.
@@ -208,6 +218,11 @@ for (const locale of Object.keys(LOCALES) as Array<keyof typeof LOCALES>) {
       }
       expect(layout.message.textOverflow).toBe('ellipsis')
       expect(layout.message.scrollWidth, 'the left message truncates rather than pushing items out').toBeGreaterThan(layout.message.clientWidth)
+      const popoverNumbers = JSON.stringify(popoverBox)
+      expect(popoverBox.left, `the work popover starts inside the window: ${popoverNumbers}`).toBeGreaterThanOrEqual(0)
+      expect(popoverBox.right, `the work popover ends inside the window: ${popoverNumbers}`).toBeLessThanOrEqual(popoverBox.viewWidth)
+      expect(popoverBox.top, `the work popover opens below the window's top: ${popoverNumbers}`).toBeGreaterThanOrEqual(0)
+      expect(popoverBox.bottom, `the work popover sits above the bar: ${popoverNumbers}`).toBeLessThanOrEqual(layout.bar.top + 0.5)
 
       // The titlebar has no text meant to truncate: its free space (the drag
       // strip on the left) is what gives way, so every item keeps its full

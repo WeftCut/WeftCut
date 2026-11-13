@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertTriangleIcon, Hourglass, InfoIcon, OctagonAlertIcon } from "lucide-react";
-import type { TFunction } from "i18next";
-import { listen, type UnlistenFn } from "@/bridge/events";
+import { AlertTriangleIcon, InfoIcon, OctagonAlertIcon } from "lucide-react";
 import { renderLogMessage } from "./renderMessage";
+import { WorkPill } from "./WorkPill";
 import { useAgentActivity } from "../agent/activityStore";
 import { useUnreviewedCount } from "../agent/reviewStore";
 import { getCommand } from "../commands/registry";
 import { useLogStore } from "./store";
-import { MEDIA_JOB_EVENTS, type MediaJobEvent, type LogEntry, type LogLevel } from "../ipc";
+import type { LogEntry, LogLevel } from "../ipc";
 import type { AppNotice } from "../../shared/ipc";
 import { AppIcon } from "@/components/AppIcon";
 import { UpdateIndicator } from "../app/UpdateIndicator";
@@ -17,19 +16,7 @@ import type { ExportState } from "../panels/ExportPanel";
 import { SaveStatusBadge } from "../components/SaveStatusBadge";
 import { saveFailureReason } from "../components/saveFailure";
 import { useSaveFailure } from "../state/saveStatusStore";
-import { useComputeJobsStore } from "../compute/computeJobsStore";
-import {
-  computePhaseText,
-  computeToolLabel,
-  formatComputeDuration,
-  isWaiting,
-  phaseAgeMs,
-  stalledForMs,
-} from "../compute/computeJobView";
-import { useNow } from "../hooks/useNow";
-import { useProjectStore } from "../state/projectStore";
-import { layerDisplayName } from "../lib/layerName";
-import type { ComputeJob, LayerSummary } from "../ipc";
+import { useDerivativeJobsStore } from "../state/derivativeJobsStore";
 
 /// Persistent status bar pinned to the bottom of the editor view.
 /// Shows a severity dot + time + truncated message + source pill on the
@@ -64,30 +51,16 @@ export function StatusBar({
   // stable under the default Object.is equality.
   const latest = useLogStore((s) => s.latest);
   const errorCount = useLogStore((s) => s.errorCount);
-  const runningCount = useLogStore((s) =>
-    Object.keys(s.runningOps).length,
-  );
-  // Activity liveness survives diagnostic log clearing and eviction.
-  const agentRunningCount = useAgentActivity(s =>
-    s.snapshot?.activities.filter(a => a.state === "running").length ?? 0,
-  );
   // Unreviewed agent changes (ADR 0115). The status bar is a review surface
   // of its own: it keeps the Review view fresh while the editor shows.
   const unreviewedCount = useUnreviewedCount();
-  // Track identities: adopting a cached file emits completion without starting
-  // processing, and must not decrement another media item's running job.
-  const [derivativeJobs, setDerivativeJobs] = useState<ReadonlySet<string>>(() => new Set());
-  const pendingDerivatives = derivativeJobs.size;
   // The visually-hidden live region is only updated on errors. Tracked
   // separately from `latest` so a flurry of low-severity entries
   // doesn't spam the screen reader.
   const [announce, setAnnounce] = useState("");
-  // A clip job queued on the processing budget is usually waiting for the
-  // derivatives this bar counts; their pill says so
-  // (docs/performance-settings.md#admission-lanes).
-  const budgetBlocked = useComputeJobsStore((s) =>
-    Object.values(s.jobs).some((j) => j.phase.kind === "queued" && j.phase.reason === "budget"),
-  );
+  // Bench scripts read the derivative queue here, not from the work pill:
+  // the pill holds work back for its show delay.
+  const derivativeJobs = useDerivativeJobsStore((s) => Object.keys(s.jobs).length);
 
   useEffect(() => {
     if (latest && latest.level === "error") {
@@ -108,45 +81,6 @@ export function StatusBar({
     saveFailureAnnounced.current = saveFailure !== null;
   }, [saveFailure, t]);
 
-  useEffect(() => {
-    const unlisteners: UnlistenFn[] = [];
-    let cancelled = false;
-    const updateJob = (job: MediaJobEvent, started: boolean) => {
-      const key = `${job.media_id}:${job.kind}`;
-      setDerivativeJobs((jobs) => {
-        if (jobs.has(key) === started) return jobs;
-        const next = new Set(jobs);
-        if (started) next.add(key);
-        else next.delete(key);
-        return next;
-      });
-    };
-    (async () => {
-      const [onStarted, onComplete, onError] = await Promise.all([
-        listen<MediaJobEvent>(MEDIA_JOB_EVENTS.started, (e) => {
-          updateJob(e.payload, true);
-        }),
-        listen<MediaJobEvent>(MEDIA_JOB_EVENTS.complete, (e) => {
-          updateJob(e.payload, false);
-        }),
-        listen<MediaJobEvent>(MEDIA_JOB_EVENTS.error, (e) => {
-          updateJob(e.payload, false);
-        }),
-      ]);
-      if (cancelled) {
-        onStarted();
-        onComplete();
-        onError();
-        return;
-      }
-      unlisteners.push(onStarted, onComplete, onError);
-    })();
-    return () => {
-      cancelled = true;
-      for (const u of unlisteners) u();
-    };
-  }, []);
-
   const logsHint = errorCount > 0
     ? t("status_bar.toggle_hint_errors", { count: errorCount })
     : t("status_bar.toggle_hint");
@@ -154,6 +88,7 @@ export function StatusBar({
   return (
     <footer
       className="status-bar"
+      data-derivative-jobs={derivativeJobs}
       role="status"
       aria-label={t("status_bar.label")}
     >
@@ -176,27 +111,7 @@ export function StatusBar({
       </div>
       <div className="status-bar-right">
         {backgroundExport && <ExportProgressPill state={backgroundExport} />}
-        {pendingDerivatives > 0 && (
-          <span
-            className="derivatives-pill"
-            title={budgetBlocked
-              ? `${t("project.derivatives_pending_hint")}\n${t("compute.ui.derivatives_blocking")}`
-              : t("project.derivatives_pending_hint")}
-          >
-            <span className="derivatives-pill-spinner" aria-hidden="true" />
-            {t("project.derivatives_pending", { count: pendingDerivatives })}
-          </span>
-        )}
-        <ComputeJobsPill onOpenLogs={onToggleLogs} />
-        {agentRunningCount > 0 && (
-          <span
-            className="agent-running-pill"
-            title={t("agent_mode.running_pill_hint")}
-          >
-            <span className="agent-running-spinner" aria-hidden="true" />
-            {t("agent_mode.running_pill", { count: agentRunningCount })}
-          </span>
-        )}
+        <WorkPill />
         {unreviewedCount > 0 && (
           <button
             type="button"
@@ -210,18 +125,6 @@ export function StatusBar({
             aria-label={t("changes.status_hint", { count: unreviewedCount })}
           >
             {t("changes.status", { count: unreviewedCount })}
-          </button>
-        )}
-        {runningCount > 0 && (
-          <button
-            type="button"
-            className="status-bar-badge status-bar-badge-running"
-            onClick={onToggleLogs}
-            title={t("status_bar.running_badge_hint", { count: runningCount })}
-            aria-label={t("status_bar.running_badge_hint", { count: runningCount })}
-          >
-            <span className="status-bar-spinner" aria-hidden="true" />
-            {runningCount}
           </button>
         )}
         <SaveStatusBadge onOpen={onOpenSaveStatus} />
@@ -267,71 +170,6 @@ export function StatusBar({
       </div>
     </footer>
   );
-}
-
-/// Running clip-compute jobs, human and agent (ADR 0121). Waiting is not
-/// working: when every job is queued for admission the pill shows an
-/// hourglass instead of the spinner. The title lists each job's clip and
-/// phase; a click opens the agent panel when an agent's job is among them
-/// (its Activity row has Cancel), else the log, where a person's run is.
-function ComputeJobsPill({ onOpenLogs }: { onOpenLogs?: (() => void) | undefined }) {
-  const jobsById = useComputeJobsStore((s) => s.jobs);
-  const jobs = Object.values(jobsById);
-  // The clock only runs while a job does.
-  return jobs.length === 0 ? null : <ComputeJobsPillBody jobs={jobs} onOpenLogs={onOpenLogs} />;
-}
-
-function ComputeJobsPillBody({ jobs: unordered, onOpenLogs }: { jobs: ComputeJob[]; onOpenLogs?: (() => void) | undefined }) {
-  const { t } = useTranslation();
-  const layers = useProjectStore((s) => s.layerById);
-  const now = useNow();
-  const jobs = [...unordered].sort((a, b) => a.started_at.localeCompare(b.started_at));
-  const waiting = jobs.every((j) => isWaiting(j.phase));
-  const [only] = jobs;
-  const text = waiting
-    ? t("compute.ui.pill_waiting", { count: jobs.length })
-    : jobs.length === 1 && only
-      ? t(only.tool === "transcribe_clip" ? "compute.ui.pill_transcribing" : "compute.ui.pill_describing")
-      : t("compute.ui.pill_many", { count: jobs.length });
-  const lines = jobs.map((job) => jobLine(t, job, layers.get(job.layer_id), now));
-  const agent = jobs.some((j) => j.origin.kind === "agent");
-  const title = [...lines, t("compute.ui.pill_hint")].join("\n");
-  return (
-    <button
-      type="button"
-      className={`status-bar-badge compute-jobs-pill${waiting ? " is-waiting" : ""}`}
-      data-testid="status-bar-compute"
-      data-state={waiting ? "waiting" : "working"}
-      title={title}
-      aria-label={[text, ...lines].join(". ")}
-      onClick={() => {
-        if (agent) {
-          useAgentActivity.setState({ tab: "activity" });
-          void getCommand("openAgentPanel")?.run();
-        } else onOpenLogs?.();
-      }}
-    >
-      {waiting
-        ? <AppIcon icon={Hourglass} size="label" aria-hidden />
-        : <span className="status-bar-spinner" aria-hidden="true" />}
-      {text}
-    </button>
-  );
-}
-
-/// One job in the pill's title: the tool, the clip, and what it is doing.
-function jobLine(t: TFunction, job: ComputeJob, layer: LayerSummary | undefined, now: number): string {
-  const tool = computeToolLabel(t, job.tool);
-  const parts = [computePhaseText(t, job.tool, job.phase, { detail: true })];
-  const age = phaseAgeMs(job, now);
-  if (isWaiting(job.phase) && age >= 1000) parts.push(t("compute.ui.waited", { duration: formatComputeDuration(t, age) }));
-  const stalled = stalledForMs(job, now);
-  if (stalled !== null) parts.push(t("compute.ui.stalled", { duration: formatComputeDuration(t, stalled) }));
-  if (job.caller_disconnected) parts.push(t("compute.ui.caller_disconnected"));
-  const phase = parts.join(" · ");
-  return layer
-    ? t("compute.ui.pill_line", { tool, clip: layerDisplayName(layer, t), phase })
-    : t("compute.ui.pill_line_unnamed", { tool, phase });
 }
 
 function highestNoticeLevel(notices: AppNotice[]): AppNotice["level"] {

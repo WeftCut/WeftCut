@@ -473,11 +473,6 @@ const enUS = {
     fps_simple: "{{fps}}fps",
     fps_rational: "{{fps}}fps",
     duration: "{{value}}",
-    derivatives_pending_one: "Generating {{count}} derivative…",
-    derivatives_pending_other: "Generating {{count}} derivatives…",
-    derivatives_pending: "Generating {{count}} derivatives…",
-    derivatives_pending_hint:
-      "Background proxy / thumbnail / waveform jobs for imported media. Editor stays fully usable while they run.",
   },
   menu: {
     file: "File",
@@ -1784,8 +1779,6 @@ const enUS = {
     exit_hint: "Return to the full editor. The work session and undo lock remain unchanged.",
     restore: "Restore",
     restore_hint: "Revert the project to this checkpoint — the restore is undoable.",
-    running_pill: "Agent: {{count}} running",
-    running_pill_hint: "Agent operations are still finishing in the background.",
     resize_record_panel: "Resize record panel",
   },
   errors: {
@@ -2794,24 +2787,8 @@ const enUS = {
       cancelling: "Cancelling…",
       cancelled: "Cancelled",
       cancel_failed: "Could not cancel: {{reason}}",
-      // The status bar pill: one job is named by what it does, several are
-      // counted. Its title lists every job, one per line.
-      pill_transcribing: "Transcribing",
-      pill_describing: "Describing",
-      pill_many_one: "{{count}} clip job",
-      pill_many_other: "{{count}} clip jobs",
-      pill_many: "{{count}} clip jobs",
-      pill_waiting_one: "{{count}} clip job waiting",
-      pill_waiting_other: "{{count}} clip jobs waiting",
-      pill_waiting: "{{count}} clip jobs waiting",
-      pill_line: "{{tool}} “{{clip}}”: {{phase}}",
-      pill_line_unnamed: "{{tool}}: {{phase}}",
-      pill_hint: "Click to open the agent panel or the log",
       tool_transcribe: "Transcribe",
       tool_describe: "Describe",
-      // Appended to the derivatives pill's title while a clip job waits on
-      // the processing budget those jobs hold.
-      derivatives_blocking: "A transcription or description is waiting for these to finish.",
       // Durations, coarsest unit first, no leading zeros.
       duration_seconds: "{{s}}s",
       duration_minutes: "{{m}}m {{s}}s",
@@ -2919,8 +2896,29 @@ const enUS = {
     source_user: "User",
     source_agent: "Agent · {{client}}",
     source_system: "System",
-    running_badge_hint: "{{count}} running operation(s) — click to view",
     announce_error_prefix: "Error",
+    // Background work in one pill (logs/WorkPill.tsx): one piece of work is
+    // named by what it does, several are counted.
+    work: {
+      title: "Background work",
+      many: "{{count}} in progress",
+      waiting: "{{count}} waiting",
+      transcribing: "Transcribing",
+      describing: "Describing",
+      derivatives: "Generating derivatives",
+      agent: "Agent working",
+      group_compute: "Clip jobs",
+      group_agent: "Agent",
+      group_derivatives: "Derivatives",
+      open_agent_panel: "Open in Agent panel",
+      job_name: "{{tool}} · {{clip}}",
+      media_unnamed: "Media item",
+      kind_proxy: "Proxy",
+      kind_thumbnails: "Thumbnails",
+      kind_waveform: "Waveform",
+      kind_conform: "Audio conform",
+      kind_audio_fx: "Audio effects",
+    },
   },
   system_status: {
     trigger_hint: "{{count}} system status item(s) need attention",

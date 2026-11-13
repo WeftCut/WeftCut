@@ -1,46 +1,17 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import "../i18n";
-import { MEDIA_JOB_EVENTS, type ComputeJob, type ComputeOrigin, type ComputePhase, type MediaJobEvent } from "../ipc";
+import type { ComputeJob, ComputeOrigin, ComputePhase } from "../ipc";
+import type { AgentActivity } from "../../shared/agent-activity";
 import { StatusBar } from "./StatusBar";
 import type { Change } from "../../shared/review";
 
-const handlers = vi.hoisted(() => new Map<string, (event: { payload: MediaJobEvent }) => void>());
-vi.mock("@/bridge/events", () => ({
-  listen: vi.fn(async (name, handler) => {
-    handlers.set(name, handler);
-    return () => handlers.delete(name);
-  }),
-}));
+vi.mock("@/bridge/events", () => ({ listen: vi.fn(async () => () => {}) }));
 // No backend under jsdom: IPC answers nothing (the review fetch keeps its last
 // view; a command's log row goes nowhere).
 vi.mock("@/bridge/ipc", () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
-afterEach(() => { cleanup(); handlers.clear(); });
-
-it("cached completions do not hide another media item's running generation", async () => {
-  const { container } = render(<StatusBar />);
-  await act(async () => {});
-  const emit = (name: string, payload: MediaJobEvent) => act(() => handlers.get(name)!({ payload }));
-  const active = { media_id: "generating-audio", kind: "waveform" };
-  emit(MEDIA_JOB_EVENTS.started, active);
-  emit(MEDIA_JOB_EVENTS.complete, { media_id: "cached-audio", kind: "conform" });
-  expect(container.querySelector(".derivatives-pill")?.textContent).toContain("1");
-  emit(MEDIA_JOB_EVENTS.complete, active);
-  expect(container.querySelector(".derivatives-pill")).toBeNull();
-});
-
-it("duplicate starts and terminal events cannot leave a phantom derivative", async () => {
-  const { container } = render(<StatusBar />);
-  await act(async () => {});
-  const payload = { media_id: "source", kind: "thumbnails" };
-  act(() => {
-    handlers.get(MEDIA_JOB_EVENTS.started)!({ payload });
-    handlers.get(MEDIA_JOB_EVENTS.started)!({ payload });
-    handlers.get(MEDIA_JOB_EVENTS.error)!({ payload });
-  });
-  expect(container.querySelector(".derivatives-pill")).toBeNull();
-});
+afterEach(() => { cleanup(); });
 
 it("shows the unreviewed change count while there is one; a click opens the agent panel's Changes tab", async () => {
   const { useReview, resetReviewForTests } = await import("../agent/reviewStore");
@@ -66,51 +37,100 @@ it("shows the unreviewed change count while there is one; a click opens the agen
   resetReviewForTests();
 });
 
-describe("clip-compute pill", () => {
+describe("work pill", () => {
   let revision = 2_000_000;
+  const LONG_AGO = new Date(Date.now() - 70_000).toISOString();
   const jobFixture = (id: string, phase: ComputePhase, origin: ComputeOrigin = { kind: "user" }): ComputeJob => ({
     job_id: id, tool: "transcribe_clip", layer_id: `layer-${id}`, media_id: "m", window: { t_start_us: 0, t_end_us: 1 },
-    phase, phase_since: new Date(Date.now() - 70_000).toISOString(), started_at: `2026-10-18T00:00:0${id.length}Z`,
-    origin, callers: 1, caller_disconnected: false, request_ids: [],
+    phase, phase_since: LONG_AGO, started_at: LONG_AGO, origin, callers: 1, caller_disconnected: false, request_ids: [],
+  });
+  const agentCall = (id: string, jobId?: string): AgentActivity => ({
+    id, session_id: null, connection_id: null, client: "Claude", tool: "split_layers", kind: "operation",
+    started_at: LONG_AGO, ended_at: null, state: "running", duration_ms: null, message: "split_layers",
+    affected: [], entity_labels: [], history_ids: [], effect: null, args: {}, error: null,
+    ...(jobId ? { compute: { job_id: jobId, phase: { kind: "loading_model" as const }, phase_since: LONG_AGO } } : {}),
   });
   const publish = async (jobs: ComputeJob[]) => {
     const { receiveComputeJobs } = await import("../compute/computeJobsStore");
     act(() => receiveComputeJobs({ revision: ++revision, jobs }));
   };
-  afterEach(async () => { await publish([]); });
+  const setCalls = async (activities: AgentActivity[]) => {
+    const { useAgentActivity } = await import("../agent/activityStore");
+    act(() => useAgentActivity.setState({ snapshot: { activities } as never }));
+  };
+  const startDerivative = async (media_id: string, kind: string) => {
+    const { derivativeJobStarted } = await import("../state/derivativeJobsStore");
+    act(() => derivativeJobStarted({ media_id, kind }, Date.now() - 70_000));
+  };
+  const pill = (container: HTMLElement) => container.querySelector<HTMLElement>('[data-testid="status-bar-work"]');
+  afterEach(async () => {
+    await publish([]);
+    await setCalls([]);
+    const { resetDerivativeJobsForTests } = await import("../state/derivativeJobsStore");
+    resetDerivativeJobsForTests();
+  });
 
-  it("shows an hourglass while every job waits, lists each job's reason, and links a budget wait to the derivatives pill", async () => {
+  it("is absent with nothing running, names one piece of work, and counts several", async () => {
     const { container } = render(<StatusBar />);
     await act(async () => {});
-    expect(container.querySelector('[data-testid="status-bar-compute"]')).toBeNull();
-    act(() => handlers.get(MEDIA_JOB_EVENTS.started)!({ payload: { media_id: "long", kind: "proxy" } }));
-    expect(container.querySelector<HTMLElement>(".derivatives-pill")!.title).not.toContain("waiting for these");
-    await publish([jobFixture("a", { kind: "queued", reason: "budget" }), jobFixture("bb", { kind: "queued", reason: "memory" })]);
-    const pill = container.querySelector<HTMLElement>('[data-testid="status-bar-compute"]')!;
-    expect(pill.dataset.state).toBe("waiting");
-    expect(pill.textContent).toBe("2 clip jobs waiting");
-    expect(pill.querySelector(".lucide-hourglass")).not.toBeNull();
-    expect(pill.querySelector(".status-bar-spinner")).toBeNull();
-    expect(pill.title).toContain("Transcribe: Waiting for processing capacity — background work such as proxy generation is using it · waiting 1m 10s");
-    expect(pill.title).toContain("Transcribe: Waiting for memory to free up");
-    expect(container.querySelector<HTMLElement>(".derivatives-pill")!.title).toContain("A transcription or description is waiting for these to finish.");
-  });
-
-  it("spins once any job works, names a single job by what it does, and opens the log for a person's job", async () => {
-    const onToggleLogs = vi.fn();
-    const { container } = render(<StatusBar onToggleLogs={onToggleLogs} />);
-    await act(async () => {});
+    expect(pill(container)).toBeNull();
     await publish([jobFixture("a", { kind: "inferring", done: 30, total: 100 })]);
-    const pill = container.querySelector<HTMLElement>('[data-testid="status-bar-compute"]')!;
-    expect(pill.dataset.state).toBe("working");
-    expect(pill.textContent).toBe("Transcribing");
-    expect(pill.querySelector(".status-bar-spinner")).not.toBeNull();
-    expect(pill.title).toContain("Transcribe: Transcribing 30%");
-    act(() => pill.click());
-    expect(onToggleLogs).toHaveBeenCalledTimes(1);
+    expect(pill(container)!.textContent).toBe("Transcribing");
+    expect(pill(container)!.dataset.state).toBe("working");
+    expect(pill(container)!.querySelector(".status-bar-spinner")).not.toBeNull();
+    await startDerivative("media-1", "proxy");
+    await setCalls([agentCall("call-1")]);
+    expect(pill(container)!.textContent).toBe("3 in progress");
   });
 
-  it("opens the agent panel's Activity tab when an agent's job is running", async () => {
+  it("shows an hourglass, not the spinner, while every piece of work waits", async () => {
+    const { container } = render(<StatusBar />);
+    await act(async () => {});
+    await publish([jobFixture("a", { kind: "queued", reason: "budget" }), jobFixture("bb", { kind: "queued", reason: "memory" })]);
+    expect(pill(container)!.dataset.state).toBe("waiting");
+    expect(pill(container)!.textContent).toBe("2 waiting");
+    expect(pill(container)!.querySelector(".lucide-hourglass")).not.toBeNull();
+    expect(pill(container)!.querySelector(".status-bar-spinner")).toBeNull();
+  });
+
+  it("counts an agent call running a clip job once, as that job tagged with the agent", async () => {
+    const { container } = render(<StatusBar />);
+    await act(async () => {});
+    await publish([jobFixture("j1", { kind: "loading_model" }, { kind: "agent", client: "Claude" })]);
+    await setCalls([agentCall("call-1", "j1")]);
+    expect(pill(container)!.textContent).toBe("Transcribing");
+    act(() => pill(container)!.click());
+    const details = container.querySelector<HTMLElement>(".work-pill-details")!;
+    expect(details.querySelectorAll('[data-work="compute"]')).toHaveLength(1);
+    expect(details.querySelectorAll('[data-work="agent"]')).toHaveLength(0);
+    expect(details.querySelector(".work-row-client")!.textContent).toBe("Claude");
+  });
+
+  it("opens its details grouped by owner, with Cancel on a clip job; Escape closes them", async () => {
+    const { container } = render(<StatusBar />);
+    await act(async () => {});
+    await publish([jobFixture("a", { kind: "inferring", done: 1, total: 2 })]);
+    await setCalls([agentCall("call-1")]);
+    await startDerivative("media-1", "proxy");
+    await startDerivative("media-1", "quick_proxy");
+    await startDerivative("media-1", "waveform");
+    const trigger = pill(container)!;
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    act(() => trigger.click());
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    const details = container.querySelector<HTMLElement>(".work-pill-details")!;
+    expect([...details.querySelectorAll(".work-group-header > span:first-child")].map((h) => h.textContent))
+      .toEqual(["Clip jobs", "Agent", "Derivatives"]);
+    expect(details.querySelector('[data-work="compute"] .compute-job-cancel')).not.toBeNull();
+    expect(details.querySelector('[data-work="agent"] .work-row-name')!.textContent).toBe("Claude · split_layers");
+    // Both proxy variants read as one kind.
+    expect(details.querySelector('[data-work="derivatives"] .work-row-detail')!.textContent).toBe("Proxy · Waveform");
+    act(() => { fireEvent.keyDown(window, { key: "Escape" }); });
+    expect(container.querySelector(".work-pill-details")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("opens the agent panel's Activity tab from the agent group, closing the details", async () => {
     const { useAgentActivity } = await import("../agent/activityStore");
     const { registerCommandProvider } = await import("../commands/registry");
     const open = vi.fn();
@@ -118,13 +138,34 @@ describe("clip-compute pill", () => {
     useAgentActivity.setState({ tab: "changes" });
     const { container } = render(<StatusBar />);
     await act(async () => {});
-    await publish([jobFixture("a", { kind: "queued", reason: null }), jobFixture("bb", { kind: "loading_model" }, { kind: "agent", client: "claude" })]);
-    const pill = container.querySelector<HTMLElement>('[data-testid="status-bar-compute"]')!;
-    expect(pill.textContent).toBe("2 clip jobs");
-    act(() => pill.click());
+    await setCalls([agentCall("call-1")]);
+    act(() => pill(container)!.click());
+    act(() => container.querySelector<HTMLElement>(".work-group-link")!.click());
     expect(useAgentActivity.getState().tab).toBe("activity");
     expect(open).toHaveBeenCalledTimes(1);
+    expect(container.querySelector(".work-pill-details")).toBeNull();
     unregister();
+  });
+
+  it("closes its details with the last piece of work", async () => {
+    const { container } = render(<StatusBar />);
+    await act(async () => {});
+    await publish([jobFixture("a", { kind: "inferring", done: 1, total: 2 })]);
+    act(() => pill(container)!.click());
+    expect(container.querySelector(".work-pill-details")).not.toBeNull();
+    await publish([]);
+    expect(pill(container)).toBeNull();
+    await publish([jobFixture("b", { kind: "inferring", done: 1, total: 2 })]);
+    expect(container.querySelector(".work-pill-details")).toBeNull();
+  });
+
+  it("carries the derivative count on the bar at once, ahead of the pill's show delay", async () => {
+    const { derivativeJobStarted } = await import("../state/derivativeJobsStore");
+    const { container } = render(<StatusBar />);
+    await act(async () => {});
+    act(() => derivativeJobStarted({ media_id: "fresh", kind: "thumbnails" }));
+    expect(container.querySelector(".status-bar")!.getAttribute("data-derivative-jobs")).toBe("1");
+    expect(pill(container)).toBeNull();
   });
 });
 

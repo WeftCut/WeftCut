@@ -3,11 +3,12 @@
 A status strip pinned to the bottom of the editor plus an expandable console
 overlay that lifts over the editor (drag-resizable, does not push it up). It
 records command results, long operations, MCP activity and errors. The agent
-panel's activity stream is separate (see the last section). The
-`derivatives-pill` in the strip is the liveness signal for background derivative
-jobs; `ExportPanel` and `QueuePanel` own export progress, except a background
-export (Preview during export): its `ExportProgressPill` in the strip shows a
-progress ring and percent, and opens its details and Cancel on click.
+panel's activity stream is separate (see the last section). The work pill
+(`WorkPill`) in the strip is the liveness signal for background work —
+derivative jobs, clip-compute jobs and agent calls; `ExportPanel` and
+`QueuePanel` own export progress, except a background export (Preview during
+export): its `ExportProgressPill` in the strip shows a progress ring and
+percent, and opens its details and Cancel on click.
 
 ## Backend
 
@@ -46,8 +47,8 @@ stamped by the bus; `level` (trace…error); `category` (`Shortcut`, `Mcp`, `Job
   keep secrets out of `message`. Over 4 KB serialized, `details` is replaced by
   `{ truncated, original_bytes, preview }`.
 - A long op emits one entry per state change under one `op_id`; the console
-  collapses them. **Every exit path owes a terminal row**, or the running badge
-  never clears.
+  collapses them under the first row, which shows the op's state. **Every exit
+  path owes a terminal row**, or the console shows the op as still running.
 
 ## Producers
 
@@ -82,7 +83,7 @@ or per chunk — the ring is 1000 entries.
   `System` row with the resolved encoder plan (`Warn` when the ffmpeg shadow
   refused).
 - **Derivative jobs** (`Job`, `Error` only): one row per failed job
-  (`jobs::emit_job_error`); no Started/Ok rows — the pill owns liveness.
+  (`jobs::emit_job_error`); no Started/Ok rows — the work pill owns liveness.
 - **MCP tool calls** (`Mcp`): one `withLog` decorator (`main/mcp/withLog.ts`) on
   every request handler, so new tools log automatically. Level from
   `routeMcpTool`: mutations `Info`, quick reads `Debug`, failures `Error`; any op
@@ -159,15 +160,31 @@ next splash ("did not exit normally"). Storage failures never block startup.
 ### Bar
 
 ```
-[●] 14:32  Added 3 layers to track v1 · agent  [N to review] [↻1] [⚠ Not saved] [ⓘ N] [Update] [Logs ⚠2]
+[●] 14:32  Added 3 layers to track v1 · agent  [Export 42%] [↻ 3 in progress] [N to review] [⚠ Not saved] [ⓘ N] [Update] [Logs ⚠2]
 ```
 
 - Latest `Info+` message with time and source; an `Error` sticks 10 s
   (`ERROR_STICKY_MS`).
-- Badges: unreviewed agent changes (ADR 0115; opens the agent panel's Changes
-  tab), running ops, running clip-compute jobs, project not saved, system
-  notices (the highest level's icon and a count, the text in its tooltip; opens
-  the status panel with recovery cards), update offer (`docs/releases.md`).
+- Badges: background export, background work (below), unreviewed agent
+  changes (ADR 0115; opens the agent panel's Changes tab), project not saved,
+  system notices (the highest level's icon and a count, the text in its tooltip;
+  opens the status panel with recovery cards), update offer
+  (`docs/releases.md`).
+- **Background work** (`WorkPill`, model in `logs/workView.ts`): one pill for
+  clip-compute jobs (ADR 0121), agent calls and derivative jobs. One piece of
+  work is one row: an agent call running a clip-compute job is that job's row,
+  tagged with the agent. Work shows once it has run 250 ms, so an agent's quick
+  reads never flash. One row names what it does (Transcribing, Generating
+  derivatives…); several are counted; when every row is queued for admission
+  the spinner becomes an hourglass. A click opens a popover grouped by owner:
+  clip jobs with their status and Cancel (`ComputeJobStatus`), agent calls with
+  a link to the Activity tab, derivatives one row per media item with the kinds
+  in progress. Log ops are not counted: the work a Started row stands for shows
+  where it was started (the import row, the Shots panel, the Pauses buttons, the
+  voiceover dialog), and the console shows the op. Derivative jobs are tracked
+  app-wide (`state/derivativeJobsStore.ts`), since agent mode unmounts the bar;
+  the bar's `data-derivative-jobs` carries their count, undelayed, for bench
+  scripts.
 - The error count rides on the Logs toggle, which is where it leads; it counts
   until the log is cleared and pulses once (1.5 s) when the first error lands.
 - Modes are not badges: a switch the user is in shows on its own control (the

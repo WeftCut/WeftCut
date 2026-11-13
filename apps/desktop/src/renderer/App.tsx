@@ -85,6 +85,7 @@ import { useAppNotices } from "./components/useAppNotices";
 import { SystemStatusPanel } from "./components/SystemStatusPanel";
 import type { SaveFailureActions } from "./components/SaveFailureCard";
 import { useSaveFailure } from "./state/saveStatusStore";
+import { useDerivativeJobEvents } from "./state/derivativeJobsStore";
 import { open as shellOpen } from "@/bridge/shell";
 import {
   systemNoticeLogMessage,
@@ -244,6 +245,8 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
   const logConsoleRef = useRef<LogConsoleHandle | null>(null);
   const [motifPickerOpen, setMotifPickerOpen] = useState(false);
   const systemNotices = useAppNotices();
+  // Here rather than in the status bar, which agent mode unmounts.
+  useDerivativeJobEvents();
   const logReady = useLogStore((state) => state.ready);
   const loggedSystemNoticeCodes = useRef(new Set<string>());
   // The preview ref owns visual/export operations. Playback belongs to the

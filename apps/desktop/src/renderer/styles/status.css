@@ -139,6 +139,30 @@
   background: rgba(148, 163, 184, 0.12);
 }
 
+/* A pill's details (useStatusPopover): above the pill, right-aligned, on the
+   System status panel's surface. */
+.status-popover-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.status-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + calc(8 * var(--ui-px)));
+  width: min(calc(300 * var(--ui-px)), calc(100vw - calc(24 * var(--ui-px))));
+  display: flex;
+  flex-direction: column;
+  gap: calc(8 * var(--ui-px));
+  padding: calc(14 * var(--ui-px));
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-popover);
+  z-index: var(--layer-status-panel);
+  user-select: text;
+}
+
 /* The project is not being saved (SaveStatusBadge). The warn notices' amber
    as a tinted badge: it needs attention but counts nothing. */
 .status-bar-badge-warn {
@@ -147,25 +171,138 @@
   color: var(--color-amber-300);
 }
 
-.status-bar-badge-running {
-  background: rgba(59, 130, 246, 0.12);
-  border-color: rgba(59, 130, 246, 0.3);
-  color: var(--color-blue-300);
-}
-
-/* Running clip-compute jobs (transcribe / describe). Working shares the
-   running badge's hue; waiting for admission is muted, with an hourglass in
-   place of the spinner, so a queued job never reads as busy. */
-.compute-jobs-pill {
+/* Background work (WorkPill): clip jobs, agent calls and derivatives in one
+   pill. Waiting for admission is muted, with an hourglass in place of the
+   spinner, so queued work never reads as busy. */
+.work-pill-trigger {
+  gap: calc(6 * var(--ui-px));
   background: color-mix(in srgb, var(--primary) 12%, transparent);
   border-color: color-mix(in srgb, var(--primary) 30%, transparent);
   white-space: nowrap;
 }
 
-.compute-jobs-pill.is-waiting {
+.work-pill-trigger[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--primary) 22%, transparent);
+}
+
+.work-pill-trigger.is-waiting {
   background: var(--surface-tint);
   border-color: var(--border);
   color: var(--muted-foreground);
+}
+
+.work-pill-trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.work-pill-details {
+  width: min(calc(340 * var(--ui-px)), calc(100vw - calc(24 * var(--ui-px))));
+  gap: calc(10 * var(--ui-px));
+  padding: calc(12 * var(--ui-px)) calc(14 * var(--ui-px)) calc(14 * var(--ui-px));
+  max-height: min(calc(420 * var(--ui-px)), 60vh);
+  overflow-y: auto;
+}
+
+.work-group {
+  display: flex;
+  flex-direction: column;
+  gap: calc(8 * var(--ui-px));
+}
+
+.work-group + .work-group {
+  border-top: 1px solid var(--border-soft);
+  padding-top: calc(10 * var(--ui-px));
+}
+
+.work-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+  font-weight: 400;
+}
+
+.work-group-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-blue-300);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.work-group-link:hover {
+  text-decoration: underline;
+}
+
+.work-rows {
+  display: flex;
+  flex-direction: column;
+  gap: calc(8 * var(--ui-px));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.work-row {
+  display: flex;
+  flex-direction: column;
+  gap: calc(2 * var(--ui-px));
+  min-width: 0;
+  font-size: var(--font-size-body);
+}
+
+.work-row-line {
+  display: flex;
+  align-items: center;
+  gap: calc(6 * var(--ui-px));
+  min-width: 0;
+}
+
+.work-row-icon {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+
+.work-row-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-row-client {
+  flex-shrink: 0;
+  padding: 0 calc(5 * var(--ui-px));
+  border-radius: 999px;
+  background: var(--secondary);
+  color: var(--muted-foreground);
+  font-size: var(--font-size-micro);
+}
+
+.work-row-elapsed {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.work-row-detail {
+  padding-left: calc(18 * var(--ui-px));
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+}
+
+.work-row .compute-job-status {
+  padding-left: calc(18 * var(--ui-px));
+}
+
+.work-row .compute-job-cancel {
+  margin-left: auto;
 }
 
 /* Unreviewed agent changes: opens the agent panel's Changes tab. */

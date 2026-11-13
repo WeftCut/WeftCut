@@ -1,6 +1,7 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { useStatusPopover } from "@/components/useStatusPopover";
 import { formatComputeDuration } from "../compute/computeJobView";
 import { useNow } from "../hooks/useNow";
 import { exportPhaseView, type ExportState } from "./ExportPanel";
@@ -10,47 +11,23 @@ import { exportPhaseView, type ExportState } from "./ExportPanel";
 /// with Cancel. The editor stays usable, so nothing here is modal.
 export function ExportProgressPill({ state }: { state: ExportState }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const detailsId = useId();
+  const { open, rootRef, detailsId, triggerProps } = useStatusPopover();
   const [startedAt] = useState(() => Date.now());
   const { phase, percent } = exportPhaseView(state, t);
 
-  useEffect(() => {
-    if (!open) return;
-    const closeOutside = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setOpen(false);
-      buttonRef.current?.focus();
-    };
-    document.addEventListener("pointerdown", closeOutside);
-    window.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOutside);
-      window.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [open]);
-
   return (
-    <div className="export-pill" ref={rootRef}>
+    <div className="status-popover-anchor export-pill" ref={rootRef}>
       <button
-        ref={buttonRef}
+        {...triggerProps}
         type="button"
         className="status-bar-badge export-pill-trigger"
-        aria-expanded={open}
-        aria-controls={open ? detailsId : undefined}
         title={phase}
-        onClick={() => setOpen(!open)}
       >
         <ProgressRing phase={phase} percent={percent} />
         {percent === undefined ? t("export.title") : t("export.pill", { percent })}
       </button>
       {open && (
-        <section id={detailsId} className="export-pill-details" aria-label={t("export.title")}>
+        <section id={detailsId} className="status-popover export-pill-details" aria-label={t("export.title")}>
           <ExportPillDetails state={state} phase={phase} percent={percent} startedAt={startedAt} />
         </section>
       )}

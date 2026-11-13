@@ -158,34 +158,6 @@
   outline: none;
 }
 
-/* Project-bar pill surfaced while the user is back in editor mode
-   but agent-attributed ops are still running in the background.
-   Reuses the derivatives-pill pattern with an amber palette to
-   distinguish "agent is doing things" from "we're generating
-   derivatives". */
-
-.agent-running-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: calc(6 * var(--ui-px));
-  padding: calc(2 * var(--ui-px)) calc(10 * var(--ui-px));
-  border-radius: 999px;
-  background: rgba(251, 191, 36, 0.12);
-  border: 1px solid rgba(251, 191, 36, 0.32);
-  color: var(--color-amber-200);
-  font-size: var(--font-size-caption);
-  white-space: nowrap;
-}
-
-.agent-running-spinner {
-  width: calc(10 * var(--ui-px));
-  height: calc(10 * var(--ui-px));
-  border-radius: 50%;
-  border: 2px solid rgba(253, 230, 138, 0.25);
-  border-top-color: var(--color-amber-400);
-  animation: preview-spin 0.9s linear infinite;
-}
-
 /* WebCodecs smoke harness. Dev-mode only; not user-facing. */
 .realtime-preview-smoke {
   display: flex;
