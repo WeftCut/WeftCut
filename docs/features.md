@@ -1158,6 +1158,23 @@ changing geometry or progress.
   at pointer-down. Solver: `preview/previewSnap.ts`, run before the override is
   written.
 
+**Preview alignment grid:** Quick Actions has separate one-click Grid and
+Canvas Snap toggles, backed by the same commands in the View menu and search
+palette. When Grid is on, the preview's top bar shows independently editable
+`columns × rows` counts (default 3 × 3, 1–32) and per-axis line toggles.
+A small eye icon beside the counts mutes/unmutes grid drawing without
+disabling snapping and restores the last nonzero opacity. There is no
+configuration popover, count preset, or equal/independent mode.
+Grid lines are a non-exported preview overlay; Settings → General → Preview
+contains only the 0–100% grid-visibility slider (default 70%). Visibility
+controls painting only: at 0% the grid can still snap while Grid and Canvas
+Snap are on. Disabled grid axes contribute no subdivision targets; the separate frame and
+layer targets still work when Canvas Snap is on. Ctrl bypasses snapping during
+a drag.
+When safe-area guides are visible, subdivisions occupy the title-safe rectangle
+and its visible outer edges become snap targets; without guides they occupy the
+full composition. The grid preference is app-level, not project data.
+
 **Implementation invariants** (each one looks fixable and is not):
 
 - The box is an **SVG overlay, not Pixi children**: `app.stage` is read back by the

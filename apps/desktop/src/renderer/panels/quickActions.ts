@@ -20,6 +20,8 @@ import {
   FoldHorizontal,
   FoldVertical,
   Group,
+  Grid3x3,
+  ScanLine,
   Hand,
   Link,
   Link2Off,
@@ -92,6 +94,8 @@ export interface QuickActionState {
   reviewOverlay: boolean;
   /// Clip snapping — the magnet (`tail_snap_enabled`).
   snapEnabled: boolean;
+  previewSnapEnabled: boolean;
+  gridVisible: boolean;
   /// Whether the timeline pages itself to keep the playhead on screen.
   followPlayhead: boolean;
   /// Whether the preview draws the title-safe / action-safe rectangles.
@@ -301,6 +305,22 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
           s.snapEnabled
             ? "quick_actions.snap_on_hint"
             : "quick_actions.snap_off_hint",
+      },
+      {
+        id: "togglePreviewSnap",
+        icon: ScanLine,
+        active: (s) => s.previewSnapEnabled,
+        hint: (s) => s.previewSnapEnabled
+          ? "quick_actions.canvas_snap_on_hint"
+          : "quick_actions.canvas_snap_off_hint",
+      },
+      {
+        id: "togglePreviewGrid",
+        icon: Grid3x3,
+        active: (s) => s.gridVisible,
+        hint: (s) => s.gridVisible
+          ? "quick_actions.grid_on_hint"
+          : "quick_actions.grid_off_hint",
       },
       {
         // Auto-scroll. A lane with the playhead standing in it, drawn in

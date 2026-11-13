@@ -1,5 +1,4 @@
 import {
-  Fragment,
   useEffect,
   useRef,
   useState,
@@ -25,6 +24,8 @@ import {
   useFollowPlayheadEnabled,
   useMarkersVisible,
   usePlaybackResolution,
+  usePreviewGrid,
+  usePreviewSnapEnabled,
   useSafeAreaGuidesVisible,
   useTailSnapEnabled,
 } from "../settings/appSettingsStore";
@@ -46,7 +47,6 @@ import {
   type QuickActionState,
 } from "./quickActions";
 import { AppIcon } from "@/components/AppIcon";
-import { SnappingPopover } from "./SnappingPopover";
 
 /// Which way the strip runs. Single row or single column, never wrapped —
 /// overflow scrolls instead.
@@ -291,6 +291,8 @@ export function QuickActionsPanel({
   // each — never a composite one
   // (`feedback_zustand_composite_selector`).
   const snapEnabled = useTailSnapEnabled();
+  const previewSnapEnabled = usePreviewSnapEnabled();
+  const gridVisible = usePreviewGrid().visible;
   const followPlayhead = useFollowPlayheadEnabled();
   const safeAreaGuides = useSafeAreaGuidesVisible();
   const playbackResolution = usePlaybackResolution();
@@ -344,6 +346,8 @@ export function QuickActionsPanel({
     markersVisible,
     reviewOverlay,
     snapEnabled,
+    previewSnapEnabled,
+    gridVisible,
     followPlayhead,
     safeAreaGuides,
     playbackResolution,
@@ -390,25 +394,16 @@ export function QuickActionsPanel({
         >
           {section.resolved.map(({ item, command }) => {
             const own = ++index;
-            const popupIndex = item.id === "toggleTailSnap" ? ++index : null;
             return (
-              <Fragment key={item.id}>
-                <QuickActionButton
-                  item={item}
-                  command={command}
-                  state={state}
-                  mode={section.mode}
-                  tabbable={own === focusIndex}
-                  onFocus={() => setFocusIndex(own)}
-                />
-                {popupIndex !== null && (
-                  <SnappingPopover
-                    orientation={orientation}
-                    tabbable={popupIndex === focusIndex}
-                    onFocus={() => setFocusIndex(popupIndex)}
-                  />
-                )}
-              </Fragment>
+              <QuickActionButton
+                key={item.id}
+                item={item}
+                command={command}
+                state={state}
+                mode={section.mode}
+                tabbable={own === focusIndex}
+                onFocus={() => setFocusIndex(own)}
+              />
             );
           })}
         </div>

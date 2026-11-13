@@ -8,6 +8,7 @@ import {
   useFollowPlayheadEnabled,
   useMarkersVisible,
   useSafeAreaGuidesVisible,
+  usePreviewGrid,
 } from "../settings/appSettingsStore";
 import {
   PANEL_KINDS,
@@ -67,6 +68,7 @@ export function ViewMenu({
   const followPlayhead = useFollowPlayheadEnabled();
   const markersVisible = useMarkersVisible();
   const safeAreaGuides = useSafeAreaGuidesVisible();
+  const gridVisible = usePreviewGrid().visible;
   const reviewOverlay = useAgentActivity((s) => s.reviewOverlay);
   // Reset is a Workspace op (restore the active profile's saved baseline) when
   // profiles are wired; before they load it falls back to the adapter's built-in
@@ -201,6 +203,11 @@ export function ViewMenu({
         label={t("view.show_safe_areas", { defaultValue: "Show safe areas" })}
         checked={safeAreaGuides}
         onSelect={() => void getCommand("toggleSafeAreaGuides")?.run()}
+      />
+      <MenuItem
+        label={t("quick_actions.show_grid")}
+        checked={gridVisible}
+        onSelect={() => void getCommand("togglePreviewGrid")?.run()}
       />
       {/* The Review overlay (ADR 0115): agent review material painted on the
           timeline — the Review lane of tack chips, unreviewed changes on the

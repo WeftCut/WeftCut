@@ -1,7 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Eye, EyeOff } from "lucide-react";
-import { AppIcon } from "../components/AppIcon";
 
 import {
   PREVIEW_SNAP_STRENGTH_MAX_PX,
@@ -10,11 +8,6 @@ import {
   TAIL_SNAP_STRENGTH_MIN_PX,
   type AppSettingsPatch,
 } from "../../shared/app-settings";
-import {
-  GRID_DIVISIONS_MAX,
-  GRID_DIVISIONS_MIN,
-  type PreviewGridSettings,
-} from "../../shared/preview-grid";
 import { AppNumberField } from "../components/AppNumberField";
 import { AppSlider } from "../components/AppSlider";
 import { AppSwitch } from "../components/AppSwitch";
@@ -143,8 +136,6 @@ export function CanvasSnapSettings({ compact, onError }: SnapSettingsProps) {
   const { t } = useTranslation();
   const enabled = usePreviewSnapEnabled();
   const strength = usePreviewSnapStrengthPx();
-  const grid = usePreviewGrid();
-
   return (
     <>
       <SnapToggle
@@ -159,7 +150,7 @@ export function CanvasSnapSettings({ compact, onError }: SnapSettingsProps) {
         min={PREVIEW_SNAP_STRENGTH_MIN_PX}
         max={PREVIEW_SNAP_STRENGTH_MAX_PX}
         unit="px"
-        disabled={!enabled && !grid.snap}
+        disabled={!enabled}
         slider={!compact}
         onSave={(next) => save({ preview_snap_strength_px: next }, onError)}
       />
@@ -167,84 +158,18 @@ export function CanvasSnapSettings({ compact, onError }: SnapSettingsProps) {
   );
 }
 
-/** The popover contains exactly two format-relative counts and a visibility
- * icon. Settings reuses the same controls and exposes snapping separately. */
-export function PreviewGridDimensions({ onError }: { onError: ReportError }) {
+export function GridOpacitySettings({ onError }: { onError: ReportError }) {
   const { t } = useTranslation();
-  const grid = usePreviewGrid();
-  const saveGrid = (patch: Partial<PreviewGridSettings>) => save({ preview_grid: patch }, onError);
-
+  const opacity = usePreviewGrid().opacity;
   return (
-    <div className="preview-grid-dimensions" role="group" aria-label={t("quick_actions.snapping_grid")}>
-      <GridCount
-        label={t("quick_actions.grid_column_divisions")}
-        value={grid.column_divisions}
-        onSave={(column_divisions) => saveGrid({ column_divisions })}
-      />
-      <span className="preview-grid-colon" aria-hidden="true">:</span>
-      <GridCount
-        label={t("quick_actions.grid_row_divisions")}
-        value={grid.row_divisions}
-        onSave={(row_divisions) => saveGrid({ row_divisions })}
-      />
-      <button
-        type="button"
-        className="preview-grid-eye"
-        data-testid="preview-grid-visibility"
-        aria-label={t(grid.visible ? "quick_actions.hide_grid" : "quick_actions.show_grid")}
-        aria-pressed={grid.visible}
-        title={t(grid.visible ? "quick_actions.hide_grid" : "quick_actions.show_grid")}
-        onClick={() => void saveGrid({ visible: !grid.visible })}
-      >
-        <AppIcon icon={grid.visible ? Eye : EyeOff} size="body" aria-hidden="true" />
-      </button>
-    </div>
-  );
-}
-
-function GridCount({ label, value, onSave }: {
-  label: string;
-  value: number;
-  onSave: (value: number) => Promise<boolean>;
-}) {
-  const [draft, setDraft] = useState(value);
-  const editing = useRef(false);
-  // Async app-settings snapshots can arrive while the user is typing. Do
-  // not overwrite the in-progress draft with a late value from the store.
-  useEffect(() => {
-    if (!editing.current) setDraft(value);
-  }, [value]);
-  return (
-    <AppNumberField
-      value={draft}
-      onFocus={() => { editing.current = true; }}
-      onBlur={() => { editing.current = false; }}
-      min={GRID_DIVISIONS_MIN}
-      max={GRID_DIVISIONS_MAX}
-      align="center"
-      className="preview-grid-number"
-      ariaLabel={label}
-      onValueChange={setDraft}
-      onCommit={(next) => {
-        const bounded = Math.round(Math.min(GRID_DIVISIONS_MAX, Math.max(GRID_DIVISIONS_MIN, next)));
-        setDraft(bounded);
-        if (bounded !== value) void onSave(bounded).then((ok) => { if (!ok) setDraft(value); });
-      }}
+    <SnapNumber
+      label={t("quick_actions.grid_opacity")}
+      value={opacity}
+      min={0}
+      max={100}
+      unit="%"
+      slider
+      onSave={(next) => save({ preview_grid: { opacity: next } }, onError)}
     />
-  );
-}
-
-export function PreviewGridControls({ onError }: { onError: ReportError }) {
-  const { t } = useTranslation();
-  const grid = usePreviewGrid();
-  return (
-    <>
-      <PreviewGridDimensions onError={onError} />
-      <SnapToggle
-        label={t("quick_actions.snap_to_grid")}
-        checked={grid.snap}
-        onChange={(snap) => void save({ preview_grid: { snap } }, onError)}
-      />
-    </>
   );
 }

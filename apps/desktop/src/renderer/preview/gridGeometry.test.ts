@@ -29,16 +29,29 @@ describe("previewGrid", () => {
     },
   );
 
-  it("uses one subdivision per axis to omit its interior lines", () => {
+  it("omits disabled axes and axes with only one field in independent mode", () => {
     expect(previewGrid(800, 500, {
-      ...DEFAULT_PREVIEW_GRID, column_divisions: 1, row_divisions: 1,
+      ...DEFAULT_PREVIEW_GRID, columns: false, row_divisions: 1,
     })).toEqual({ x: null, y: null });
     expect(previewGrid(800, 500, {
       ...DEFAULT_PREVIEW_GRID, column_divisions: 1, row_divisions: 5,
     })).toEqual({ x: null, y: { step: 100, last: 4 } });
-    expect(previewGrid(800, 500, {
-      ...DEFAULT_PREVIEW_GRID, column_divisions: 4, row_divisions: 1,
-    })).toEqual({ x: { step: 200, last: 3 }, y: null });
+  });
+
+  it("uses the visible title-safe bounds and snaps to the outer lines when guides are on", () => {
+    const grid = previewGrid(1000, 500, { ...DEFAULT_PREVIEW_GRID, column_divisions: 2, row_divisions: 4 }, true);
+    expect(grid.bounds).toEqual({ x: 50, y: 25, w: 900, h: 450 });
+    expect(grid.x).toEqual({ origin: 50, step: 450, last: 1, includeBounds: true });
+    expect(grid.y).toEqual({ origin: 25, step: 112.5, last: 3, includeBounds: true });
+    expect(nearestGridLine(44, grid.x!)).toBe(50);
+    expect(nearestGridLine(954, grid.x!)).toBe(950);
+  });
+
+  it("does not remove title-safe outer targets when a count is one", () => {
+    const grid = previewGrid(1000, 500, { ...DEFAULT_PREVIEW_GRID, column_divisions: 1, row_divisions: 1 }, true);
+    expect(grid.x).toMatchObject({ step: 900, last: 0, includeBounds: true });
+    expect(nearestGridLine(45, grid.x!)).toBe(50);
+    expect(nearestGridLine(955, grid.x!)).toBe(950);
   });
 
   it("resolves midpoints toward the lower line and clamps to the interior", () => {

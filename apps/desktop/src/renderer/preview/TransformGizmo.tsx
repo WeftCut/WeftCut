@@ -1142,14 +1142,14 @@ function TransformGizmo({
     const settings = useAppSettingsStore.getState().settings;
     const alignment = settings.preview_snap_enabled;
     const gridSettings = settings.preview_grid;
-    if (!alignment && !gridSettings.snap) return null;
+    if (!alignment) return null;
     const probe = getGizmoProbe();
     if (!probe) return null;
     const comp = compRef.current;
     const others = alignment
       ? otherLayerBoxes(compositionRef.current, layerRef.current.id, focusedPlayheadUs(), probe)
       : [];
-    const grid = gridSettings.snap ? previewGrid(comp.width, comp.height, gridSettings) : undefined;
+    const grid = gridSettings.visible ? previewGrid(comp.width, comp.height, gridSettings, settings.safe_area_guides_visible) : undefined;
     return {
       targets: snapTargets(comp.width, comp.height, others, { alignment, grid }),
       strengthPx: settings.preview_snap_strength_px,

@@ -52,6 +52,7 @@ import {
   usePreviewViewStore,
 } from "../state/previewViewStore";
 import { AppIcon } from "@/components/AppIcon";
+import { PreviewGridToolbar } from "./PreviewGridToolbar";
 
 interface PreviewSectionProps {
   previewRef: React.RefObject<PreviewSurfaceHandle | null>;
@@ -101,6 +102,7 @@ export function PreviewSection({
       {/* A toolbar row, not a header bar — the Panel's title is its dock tab. */}
       <div className="preview-target-bar">
         <RenderTargetControl />
+        <PreviewGridToolbar />
         <PreviewZoomControl />
       </div>
       <div id="video-surface" className="video-surface">

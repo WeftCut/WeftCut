@@ -168,6 +168,22 @@ export async function toggleMarkersVisible(): Promise<AppSettings> {
   return setAppSettings({ markers_visible: !current });
 }
 
+export function previewGridVisible(): boolean {
+  return useAppSettingsStore.getState().settings.preview_grid.visible;
+}
+
+export function previewSnapEnabled(): boolean {
+  return useAppSettingsStore.getState().settings.preview_snap_enabled;
+}
+
+export async function togglePreviewGrid(): Promise<AppSettings> {
+  return setAppSettings({ preview_grid: { visible: !previewGridVisible() } });
+}
+
+export async function togglePreviewSnap(): Promise<AppSettings> {
+  return setAppSettings({ preview_snap_enabled: !previewSnapEnabled() });
+}
+
 export async function toggleSafeAreaGuides(): Promise<AppSettings> {
   const current = useAppSettingsStore.getState().settings.safe_area_guides_visible;
   return setAppSettings({ safe_area_guides_visible: !current });

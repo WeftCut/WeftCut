@@ -459,66 +459,6 @@
   outline-offset: -1px;
 }
 
-/* Just [columns] : [rows] [eye]. All precision snapping settings
- * remain in General → Preview, not the Quick Actions strip. */
-.app-menu-list.quick-snapping-popup {
-  width: max-content;
-  min-width: 0;
-  padding: calc(5 * var(--ui-px));
-}
-
-.preview-grid-dimensions {
-  display: inline-flex;
-  align-items: center;
-  width: max-content;
-  gap: calc(5 * var(--ui-px));
-}
-
-.preview-grid-dimensions .preview-grid-number {
-  width: calc(52 * var(--ui-px));
-  flex: 0 0 auto;
-}
-
-.preview-grid-dimensions .app-number-input {
-  padding-inline: calc(3 * var(--ui-px));
-}
-
-.preview-grid-colon {
-  color: var(--muted-foreground);
-  font-size: var(--font-size-body);
-}
-
-.preview-grid-eye {
-  width: calc(28 * var(--ui-px));
-  height: calc(28 * var(--ui-px));
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  color: var(--muted-foreground);
-  border-radius: var(--radius-sm);
-}
-
-.preview-grid-eye:hover {
-  background: var(--hover-neutral);
-  color: var(--foreground);
-}
-
-.preview-grid-eye:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: -2px;
-}
-
-.preview-grid-eye[aria-pressed="true"] {
-  color: var(--foreground);
-}
-
-.settings-grid-heading {
-  margin-block: calc(10 * var(--ui-px)) calc(6 * var(--ui-px));
-  font-size: var(--font-size-body);
-  font-weight: 600;
-}
-
 .weft-dock-tab {
   height: 100%;
   min-width: 0;
