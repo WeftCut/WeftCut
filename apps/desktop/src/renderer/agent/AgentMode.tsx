@@ -25,7 +25,10 @@ import { selectChange, selectTack, useReviewFocus, type ReviewTarget } from "./r
 import { useChangeMarkLabel, useCompositionChangeRanges, useReviewConsumer } from "./reviewStore";
 import { Button } from "@/components/ui/button";
 import { WindowControls } from "../components/WindowControls";
-import { SaveStatusBadge } from "../components/SaveStatusBadge";
+import { NotSavedPill, type SaveFailureActions } from "../components/NotSavedPill";
+import type { SystemSettingsTarget } from "../components/systemStatus";
+import { NotificationBell } from "../notifications/NotificationBell";
+import type { AppNotice } from "../../shared/ipc";
 import { useUiScale } from '../settings/layoutTheme';
 import { UI_METRICS } from '../settings/uiMetrics';
 
@@ -37,15 +40,17 @@ import { UI_METRICS } from '../settings/uiMetrics';
 /// styles/agent.css. The right pane is the shared AgentPanel component, the
 /// same surface the editor dock's "Agent" panel renders. See docs/mcp.md.
 /// Both the menu bar and editor-mode status bar are hidden — in
-/// agent mode the record panel IS the surface for activity. The one status
-/// bar item that cannot wait for the editor, the not-saved badge, rides the
-/// titlebar instead.
+/// agent mode the record panel IS the surface for activity. The two status
+/// bar entries that cannot wait for the editor ride the titlebar instead:
+/// Not saved and the bell, their popovers dropping down in place.
 interface AgentModeProps {
   summary: ProjectSummary | null;
   /// Switch the renderer layout back to the editor.
   onExit: () => void;
-  /// The badge's click: back to the editor, with the System panel open.
-  onOpenSaveStatus: () => void;
+  notices: readonly AppNotice[];
+  saveActions: SaveFailureActions;
+  /// A notice's settings link; settings are an editor surface.
+  onOpenSettings: (target: SystemSettingsTarget) => void;
 }
 
 /// Record-panel width bounds, in baseline units (UI_METRICS.agent).
@@ -71,7 +76,9 @@ export const AgentMode = forwardRef(function AgentMode(
   {
     summary,
     onExit,
-    onOpenSaveStatus,
+    notices,
+    saveActions,
+    onOpenSettings,
   }: AgentModeProps,
   previewRef: ForwardedRef<PreviewSurfaceHandle>,
 ) {
@@ -147,7 +154,7 @@ export const AgentMode = forwardRef(function AgentMode(
           button lives here too — top-right, ahead of the caption
           buttons. */}
       <div className="agent-titlebar" data-drag-region>
-        <SaveStatusBadge onOpen={onOpenSaveStatus} />
+        <NotSavedPill actions={saveActions} placement="down" />
         <Button
           className="agent-exit-button"
           onClick={onExit}
@@ -155,6 +162,7 @@ export const AgentMode = forwardRef(function AgentMode(
         >
           {t("agent_mode.exit")}
         </Button>
+        <NotificationBell notices={notices} onOpenSettings={onOpenSettings} placement="down" />
         <WindowControls />
       </div>
       <section className="agent-preview">

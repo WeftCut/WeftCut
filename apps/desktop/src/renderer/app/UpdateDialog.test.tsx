@@ -5,7 +5,6 @@ import type { AppSettingsPatch } from '../../shared/app-settings'
 import '../i18n'
 import { UpdateDialog } from './UpdateDialog'
 import { UpdateButton } from './UpdateButton'
-import { UpdateIndicator } from './UpdateIndicator'
 import { useAppSettingsStore } from '../settings/appSettingsStore'
 
 /** How long a test waits for the screen to follow a status the app polls for
@@ -193,41 +192,4 @@ describe('start-screen update icon', () => {
     api.status.mockResolvedValue({ phase: 'available', version: '1.3.0' })
     await screen.findByRole('button', { name: 'A new version is available' }, { timeout: STATUS_POLL_SEEN_MS })
   }, 2 * STATUS_POLL_SEEN_MS)
-})
-
-describe('status-bar update icon', () => {
-  it('stays out of the bar without an offered update', async () => {
-    const api = setup()
-    api.status.mockResolvedValue({ phase: 'current' })
-    render(<UpdateIndicator />)
-    await waitFor(() => expect(api.status).toHaveBeenCalled())
-    expect(screen.queryByRole('button')).toBeNull()
-  })
-
-  it.each([
-    [{ phase: 'available', version: '1.2.0' }, '1.2.0 is available'],
-    [{ phase: 'downloading', version: '1.2.0', percent: 42 }, 'Downloading 1.2.0… 42%'],
-    [{ phase: 'ready', version: '1.2.0' }, '1.2.0 is ready to install'],
-    [{ phase: 'error', version: '1.2.0' }, 'Could not download 1.2.0'],
-  ])('keeps a fixed label and is named for the %o phase', async (status, name) => {
-    const api = setup()
-    api.status.mockResolvedValue(status)
-    render(<UpdateIndicator />)
-    const button = await screen.findByRole('button', { name })
-    expect(button.textContent).toBe('Update available')
-    expect(button.getAttribute('title')).toBe(name)
-    expect(!!button.querySelector('.status-bar-update-ring')).toBe(status.phase === 'downloading')
-    expect(api.check).not.toHaveBeenCalled()
-  })
-
-  it('opens the update dialog and hides once the version is skipped there', async () => {
-    const api = setup(false)
-    api.status.mockResolvedValue({ phase: 'available', version: '1.2.0' })
-    api.check.mockResolvedValue({ phase: 'available', version: '1.2.0' })
-    render(<UpdateIndicator />)
-    fireEvent.click(await screen.findByRole('button', { name: '1.2.0 is available' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Skip this version' }))
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    await waitFor(() => expect(screen.queryByRole('button', { name: '1.2.0 is available' })).toBeNull())
-  })
 })

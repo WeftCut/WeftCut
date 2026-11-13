@@ -38,7 +38,6 @@
   --dialog-width-standard: calc(560px * var(--layout-width-scale));
   --dialog-width-model: calc(620px * var(--layout-width-scale));
   --dialog-width-text: calc(640px * var(--layout-width-scale));
-  --dialog-width-status: calc(680px * var(--layout-width-scale));
   --dialog-width-settings: calc(720px * var(--layout-width-scale));
   --dialog-width-picker: calc(1040px * var(--layout-width-scale));
   --dialog-height-settings: 80vh;

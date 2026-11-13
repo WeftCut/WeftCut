@@ -72,6 +72,15 @@ export const useAutoInstallUpdatesOnQuit = () =>
   useAppSettingsStore((s) => s.settings.auto_install_updates_on_quit !== false);
 export const useSkippedUpdateVersion = () =>
   useAppSettingsStore((s) => s.settings.skipped_update_version);
+export const useDismissedUpdateVersion = (): string | undefined =>
+  useAppSettingsStore((s) => s.settings.dismissed_update_version);
+// One shared empty list: a fresh `[]` per call is a new reference every render,
+// the same loop the composite-selector note above describes.
+const NO_DISMISSED_NOTICES: readonly string[] = [];
+/// Codes of the environment notices the user dismissed while they stand. Main
+/// forgets a code once its notice is gone, so membership alone decides.
+export const useDismissedNotices = (): readonly string[] =>
+  useAppSettingsStore((s) => s.settings.dismissed_notices ?? NO_DISMISSED_NOTICES);
 export const useDisplayMode = (): DisplayMode =>
   useAppSettingsStore((s) => s.settings.display_mode);
 export const useDeltaWindowUs = (): number =>

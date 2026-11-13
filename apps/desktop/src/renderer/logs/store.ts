@@ -6,8 +6,8 @@ import { LOG_EVENTS, logList, type LogEntry } from "../ipc";
 /// match the Rust ring. Seeded on mount via `log_list`; live-updated via
 /// the `log:entry` backend event.
 ///
-/// Consumers: the status bar reads `latest` / `errorCount`; the console
-/// filters `entries` itself.
+/// Consumers: the status bar reads `latest` / `unseenErrors`; the console
+/// filters `entries` itself and reports its own open state (`setConsoleOpen`).
 ///
 /// Pre-workspace: backend bus is `None`, so `log_list` returns `[]` and
 /// no `log:entry` events fire. The store sits idle until the user opens
@@ -22,7 +22,10 @@ export const ERROR_STICKY_MS = 10_000;
 
 export interface LogStoreState {
   entries: LogEntry[];
-  errorCount: number;
+  /// Errors that arrived while the console was closed, since it was last
+  /// opened. The console being open is seeing them, so none count then.
+  unseenErrors: number;
+  consoleOpen: boolean;
   /// The last entry shown in the bar's "latest" slot. May lag `entries[0]`
   /// when an error is sticky.
   latest: LogEntry | null;
@@ -37,13 +40,16 @@ interface LogStoreActions {
   append: (e: LogEntry) => void;
   seed: (initial: LogEntry[]) => void;
   clear: () => void;
-  acknowledgeErrorSticky: () => void;
+  /// The console mounts and unmounts through this; opening it sees every error
+  /// so far and ends the sticky window.
+  setConsoleOpen: (open: boolean) => void;
 }
 
 export const useLogStore = create<LogStoreState & LogStoreActions>(
   (set, get) => ({
     entries: [],
-    errorCount: 0,
+    unseenErrors: 0,
+    consoleOpen: false,
     latest: null,
     latestStickyUntil: 0,
     ready: false,
@@ -55,7 +61,7 @@ export const useLogStore = create<LogStoreState & LogStoreActions>(
 
         const now = Date.now();
         const errorIncoming = e.level === "error";
-        const errorCount = s.errorCount + (errorIncoming ? 1 : 0);
+        const unseenErrors = s.unseenErrors + (errorIncoming && !s.consoleOpen ? 1 : 0);
 
         // Latest-slot policy: errors always win; otherwise yield only when
         // the prior sticky window has expired. Trace/debug never replace a
@@ -70,34 +76,31 @@ export const useLogStore = create<LogStoreState & LogStoreActions>(
           latest = e;
         }
 
-        return { entries: next, errorCount, latest, latestStickyUntil };
+        return { entries: next, unseenErrors, latest, latestStickyUntil };
       }),
 
     seed: (initial) => {
       // initial is in backend order (oldest first in the ring). Reverse so
       // entries[0] is newest, matching `append`'s prepend pattern.
       const reversed = [...initial].reverse();
-      const errorCount = reversed.filter((e) => e.level === "error").length;
+      // The console has never shown these in this window.
+      const unseenErrors = get().consoleOpen ? 0 : reversed.filter((e) => e.level === "error").length;
       const latest = reversed.find(
         (e) => e.level !== "trace" && e.level !== "debug",
       ) ?? null;
-      set({ entries: reversed, errorCount, latest, ready: true });
+      set({ entries: reversed, unseenErrors, latest, ready: true });
     },
 
     clear: () =>
       set({
         entries: [],
-        errorCount: 0,
+        unseenErrors: 0,
         latest: null,
         latestStickyUntil: 0,
       }),
 
-    acknowledgeErrorSticky: () => {
-      const s = get();
-      if (s.latestStickyUntil > 0) {
-        set({ latestStickyUntil: 0 });
-      }
-    },
+    setConsoleOpen: (open) =>
+      set(open ? { consoleOpen: true, unseenErrors: 0, latestStickyUntil: 0 } : { consoleOpen: false }),
   }),
 );
 

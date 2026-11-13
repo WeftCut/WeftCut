@@ -488,7 +488,6 @@ const enUS = {
   },
   updates: {
     title: 'Check for Updates',
-    button: 'Update available',
     available_manual: '{{version}} is available. It will only download when you choose Download and install, then save your work and restart to install.',
     download_install: 'Download and install',
     downloading_action: 'Downloading…',
@@ -499,7 +498,7 @@ const enUS = {
     later: 'Later',
     restarting: 'Saving and restarting…',
     ready_auto: 'Choose Later to keep working. The update will install when you close the app, without reopening it.',
-    ready_manual: 'Choose Later to keep working. You can return to the update from the Help menu, or the update icon on the start screen or in the editor’s status bar.',
+    ready_manual: 'Choose Later to keep working. You can return to the update from the Help menu, the update icon on the start screen, or the bell in the editor’s status bar.',
     'not-ready': 'The update is not ready yet. Please wait for the download to finish.',
     'save-failed': 'Could not save your work state. The app has not restarted. Check disk space and project permissions, then try again.',
     disabled: 'Automatic updates are unavailable in this build. Download releases from the project page.',
@@ -1771,8 +1770,6 @@ const enUS = {
     marker_ghost_label_activity: "Removed marker “{{label}}”, position before this call {{at}}",
     // A clip tooltip's line for its review mark: the class, then what it did.
     clip_title: "{{cls}}: {{what}}",
-    status: "{{count}} to review",
-    status_hint: "{{count}} unreviewed agent change(s) — click to open the Changes tab",
   },
   agent_mode: {
     exit: "Exit to editor",
@@ -2090,22 +2087,18 @@ const enUS = {
     keyring_unavailable: {
       title: "Cloud API keys aren't encrypted",
       body: "No OS keyring is available, so cloud API keys are saved to disk without encryption (cloud_keys.json). Install a keyring (e.g. GNOME Keyring / KWallet), or protect your user-data folder.",
-      action: "Open API key settings",
     },
     native_decode_unavailable: {
       title: "Native decode engine unavailable",
       body: "The native decode component (@weftcut/native-decode) failed to load, so previews use the WebCodecs engine only. Reinstall the app to restore it.",
-      action: "Open decode settings",
     },
     agent_skill_unavailable: {
       title: "Agent Skill missing",
       body: "The Skill that teaches a connected agent how to drive WeftCut did not install, so there is nothing to hand to your agent. Reinstall the app to restore it.",
-      action: "Open agent settings",
     },
     agent_skill_stale: {
       title: "Agent Skill not up to date",
       body: "WeftCut could not refresh its agent Skill, so the copy on offer is one an earlier version left behind. An agent using it may call tools this version no longer has.",
-      action: "Open agent settings",
     },
   },
   // Codec-named optimization reasons, shown in Media Pool badge tooltips.
@@ -2890,12 +2883,13 @@ const enUS = {
   status_bar: {
     label: "Activity log",
     empty: "No activity yet",
-    toggle_label: "Logs",
-    toggle_hint: "Show / hide activity log",
-    toggle_hint_errors: "Show / hide activity log — {{count}} error(s)",
     source_user: "User",
     source_agent: "Agent · {{client}}",
     source_system: "System",
+    open_log: "Open the log",
+    close_log: "Close the log",
+    unseen_errors_one: "{{count}} new error",
+    unseen_errors_other: "{{count}} new errors",
     announce_error_prefix: "Error",
     // Background work in one pill (logs/WorkPill.tsx): one piece of work is
     // named by what it does, several are counted.
@@ -2918,23 +2912,18 @@ const enUS = {
       kind_waveform: "Waveform",
       kind_conform: "Audio conform",
       kind_audio_fx: "Audio effects",
+      group_export: "Export",
+      // The export leads the pill; the rest of the work is counted after it.
+      with_more: "{{label}} · +{{count}}",
     },
-  },
-  system_status: {
-    trigger: "System {{count}}",
-    trigger_hint: "{{count}} system status item(s) need attention",
-    title: "System status",
-    summary: "{{count}} item(s) need attention",
   },
   save_status: {
     badge: "Not saved",
     announce: "Project not saved: {{reason}}",
     last_saved: "Last saved at {{time}}",
     never_saved: "Not saved since the project was opened",
-    card_title: "Project not saved",
     card_body: "Recent edits are not on disk yet. WeftCut keeps trying to save them.",
-    file_label: "File",
-    saved_label: "Last save",
+    folder: "Project folder: {{dir}}",
     retry: "Retry now",
     retrying: "Saving…",
     retry_failed: "Still not saved.",
@@ -2950,6 +2939,27 @@ const enUS = {
       other: "The project file could not be written ({{code}}).",
       unknown: "The project file could not be written.",
     },
+  },
+  // The bell and its notification center (notifications/NotificationBell.tsx).
+  notifications: {
+    title: "Needs attention",
+    empty: "Nothing needs attention",
+    bell: "Needs attention: {{level}}",
+    bell_clear: "Nothing needs attention",
+    level_info: "info",
+    level_warn: "warning",
+    level_error: "error",
+    dismissed_one: "{{count}} dismissed",
+    dismissed_other: "{{count}} dismissed",
+    open_settings: "Open settings",
+    review_title_one: "{{count}} agent change to review",
+    review_title_other: "{{count}} agent changes to review",
+    review_body: "Approve or revert them in the Agent panel’s Changes tab.",
+    review_action: "Open review",
+    update_action: "View",
+    update_body_available: "Download it, then restart to update.",
+    update_body_ready: "Restart the app to install it.",
+    update_body_error: "Open the update to try again.",
   },
   log: {
     save_failing: "Project not saved: project.json cannot be written",

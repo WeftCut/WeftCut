@@ -40,6 +40,13 @@ export interface AppSettings {
   /** A release the user chose to skip: no passive notice, automatic download or
    *  install-on-exit for exactly this version. Help → Check for Updates still offers it. */
   skipped_update_version?: string;
+  /** An offered update the user put off with "Later" in the notification
+   *  center; only this version stays quiet there, a different one shows again. */
+  dismissed_update_version?: string;
+  /** Codes of environment notices (AppNotice) the user dismissed. A dismissal
+   *  lasts while its notice stands: main drops a code once its notice is absent
+   *  (`pruneDismissedNotices`), so a later return shows it again. */
+  dismissed_notices?: string[];
   /** One app-wide typography and dialog sizing preset; absent in old files. */
   layout_theme?: LayoutTheme;
   resource_policy?: import('./resource-policy').ResourcePolicy;
@@ -159,6 +166,10 @@ export interface AppSettingsPatch {
   auto_install_updates_on_quit?: boolean;
   /** Empty string un-skips. */
   skipped_update_version?: string;
+  /** Empty string clears. */
+  dismissed_update_version?: string;
+  /** Adds one notice code to `dismissed_notices`; repeating it changes nothing. */
+  dismiss_notice?: string;
   layout_theme?: LayoutTheme;
   resource_policy?: import('./resource-policy').ResourcePolicyPatch | null;
   /** Merge individual budgets; null restores all performance defaults. */

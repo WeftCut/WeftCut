@@ -84,6 +84,90 @@ describe('app-settings store', () => {
     expect(() => createAppSettingsStore(deps).apply({ skipped_update_version: 6 as never })).toThrow()
     expect(files.get(PATH)).toBe(before)
   })
+  it('persists a dismissed update version, clears it with an empty string and refuses a non-string', () => {
+    const { fs, files } = memFs()
+    const deps = { fs, path: PATH, dir: DIR }
+    expect(createAppSettingsStore(deps).get().dismissed_update_version).toBeUndefined()
+    createAppSettingsStore(deps).apply({ dismissed_update_version: '0.8.0' })
+    expect(createAppSettingsStore(deps).get().dismissed_update_version).toBe('0.8.0')
+    createAppSettingsStore(deps).apply({ dismissed_update_version: '' })
+    expect(createAppSettingsStore(deps).get().dismissed_update_version).toBeUndefined()
+    expect(JSON.parse(files.get(PATH)!)).not.toHaveProperty('dismissed_update_version')
+    const before = files.get(PATH)
+    expect(() => createAppSettingsStore(deps).apply({ dismissed_update_version: 8 as never })).toThrow()
+    expect(files.get(PATH)).toBe(before)
+  })
+  it.each([42, null, '', ['a']])('ignores an unreadable dismissed update version %s', value => {
+    expect(store({ [PATH]: JSON.stringify({ dismissed_update_version: value }) }).get().dismissed_update_version).toBeUndefined()
+  })
+
+  describe('dismissed notices', () => {
+    it('keeps no dismissal list on disk until a notice is dismissed', () => {
+      const { fs, files } = memFs()
+      createAppSettingsStore({ fs, path: PATH, dir: DIR }).apply({ language: 'zh-CN' })
+      expect(JSON.parse(files.get(PATH)!)).not.toHaveProperty('dismissed_notices')
+    })
+    it('remembers a dismissal across restart, and dismissing it again changes nothing', () => {
+      const { fs } = memFs()
+      const deps = { fs, path: PATH, dir: DIR }
+      createAppSettingsStore(deps).apply({ dismiss_notice: 'keyring_unavailable' })
+      createAppSettingsStore(deps).apply({ dismiss_notice: 'keyring_unavailable' })
+      createAppSettingsStore(deps).apply({ dismiss_notice: 'agent_skill_stale' })
+      expect(createAppSettingsStore(deps).get().dismissed_notices).toEqual(['keyring_unavailable', 'agent_skill_stale'])
+    })
+    it.each([7, '', null, ['keyring_unavailable']])('refuses notice code %s without writing', code => {
+      const { fs, files } = memFs()
+      const deps = { fs, path: PATH, dir: DIR }
+      createAppSettingsStore(deps).apply({ dismiss_notice: 'keyring_unavailable' })
+      const before = files.get(PATH)
+      expect(() => createAppSettingsStore(deps).apply({ dismiss_notice: code as never })).toThrow()
+      expect(files.get(PATH)).toBe(before)
+    })
+    it('reads only distinct string codes from a hand-edited file', () => {
+      const s = store({ [PATH]: JSON.stringify({ dismissed_notices: ['a', 3, 'a', null, '', 'b'] }) })
+      expect(s.get().dismissed_notices).toEqual(['a', 'b'])
+    })
+    it.each([[[]], ['a'], [{ a: 1 }], [[1, null]]])('treats dismissed_notices %j as none', value => {
+      expect(store({ [PATH]: JSON.stringify({ dismissed_notices: value }) }).get().dismissed_notices).toBeUndefined()
+    })
+    it('forgets dismissals whose notice is absent and keeps those still standing', () => {
+      const { fs } = memFs()
+      const deps = { fs, path: PATH, dir: DIR }
+      const s = createAppSettingsStore(deps)
+      s.apply({ dismiss_notice: 'keyring_unavailable' })
+      s.apply({ dismiss_notice: 'native_decode_unavailable' })
+      const pruned = s.pruneDismissedNotices(['keyring_unavailable', 'agent_skill_stale'])
+      expect(pruned?.dismissed_notices).toEqual(['keyring_unavailable'])
+      expect(createAppSettingsStore(deps).get().dismissed_notices).toEqual(['keyring_unavailable'])
+    })
+    it('a notice that returns after being absent is no longer dismissed', () => {
+      const { fs, files } = memFs()
+      const s = createAppSettingsStore({ fs, path: PATH, dir: DIR })
+      s.apply({ dismiss_notice: 'keyring_unavailable' })
+      s.pruneDismissedNotices([])
+      expect(s.get().dismissed_notices).toBeUndefined()
+      expect(JSON.parse(files.get(PATH)!)).not.toHaveProperty('dismissed_notices')
+    })
+    it('reports no change and neither writes nor commits when every dismissal still stands', () => {
+      const { fs, files } = memFs()
+      const committed: unknown[] = []
+      const s = createAppSettingsStore({ fs, path: PATH, dir: DIR, onCommitted: settings => committed.push(settings) })
+      s.apply({ dismiss_notice: 'keyring_unavailable' })
+      const before = files.get(PATH)
+      committed.length = 0
+      expect(s.pruneDismissedNotices(['keyring_unavailable'])).toBeNull()
+      expect(files.get(PATH)).toBe(before)
+      expect(committed).toEqual([])
+    })
+    it('a prune that drops a code commits the new settings like any other change', () => {
+      const committed: { dismissed_notices?: string[] }[] = []
+      const s = createAppSettingsStore({ ...memFs(), path: PATH, dir: DIR, onCommitted: settings => committed.push(settings) })
+      s.apply({ dismiss_notice: 'keyring_unavailable' })
+      s.pruneDismissedNotices([])
+      expect(committed.at(-1)?.dismissed_notices).toBeUndefined()
+      expect(committed).toHaveLength(2)
+    })
+  })
   it('re-measures the disk size for automatic temporary cache space on every read', () => {
     const { fs } = memFs();
     let disk: number | undefined = 100 * 1024;

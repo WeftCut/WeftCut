@@ -9,16 +9,17 @@ import type { RendererOS } from '../../src/renderer/platform'
 import enUS from '../../src/renderer/i18n/locales/en-US'
 
 // A project whose saves fail end to end: the real autosave, the real atomic
-// write, main's state, the status-bar badge, the System panel's card, and the
-// recovery through Retry now (docs/data-model.md § Saving).
+// write, main's state, the Not saved pill and its popover in the status bar
+// and in agent mode's titlebar, and the recovery through Retry now
+// (docs/data-model.md § Saving).
 //
 // The failure is a DIRECTORY named like atomicWrite's temp file: opening it for
 // writing fails on every OS, so every write of project.json fails until it goes.
 
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 }
-/** The badge appears at the first failed write once the edit has waited the
+/** The pill appears at the first failed write once the edit has waited the
  *  interval — a liveness bound, generous for a loaded runner. */
-const BADGE_WITHIN_MS = AUTOSAVE_INTERVAL_MIN_SECS * 1000 * 6
+const PILL_WITHIN_MS = AUTOSAVE_INTERVAL_MIN_SECS * 1000 * 6
 
 const OS: RendererOS = process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'mac' : 'linux'
 
@@ -34,7 +35,7 @@ function layerIds(projectFile: string): string[] {
 }
 
 test('a project that cannot be saved shows Not saved, offers recovery, and clears on the next good save', async () => {
-  test.setTimeout(120_000 + BADGE_WITHIN_MS)
+  test.setTimeout(120_000 + PILL_WITHIN_MS)
   const { app, page } = await launchApp()
   try {
     // A project with the shortest autosave interval, so the state turns within seconds.
@@ -50,7 +51,7 @@ test('a project that cannot be saved shows Not saved, offers recovery, and clear
     await invokeCmd(page, 'project_open', { path: dir })
     await expect(page.locator('.splash-screen')).toHaveCount(0, { timeout: 15_000 })
 
-    const badge = page.getByTestId('save-status-badge')
+    const pill = page.locator('.status-bar').getByTestId('not-saved-pill')
     expect(await invokeCmd<SaveStatus>(page, SAVE_STATUS_CHANNEL)).toMatchObject({ state: 'ok' })
     const blocker = projectFile + ATOMIC_TEMP_SUFFIX
     fs.mkdirSync(blocker)
@@ -58,36 +59,58 @@ test('a project that cannot be saved shows Not saved, offers recovery, and clear
       tStartUs: 0, durationUs: 1_000_000, color: { r: 200, g: 40, b: 40, a: 255 },
     })
 
-    await expect(badge).toBeVisible({ timeout: BADGE_WITHIN_MS })
-    await expect(badge).toHaveText(enUS.save_status.badge)
+    await expect(pill).toBeVisible({ timeout: PILL_WITHIN_MS })
+    await expect(pill).toHaveText(enUS.save_status.badge)
     const status = await invokeCmd<SaveStatus>(page, SAVE_STATUS_CHANNEL)
-    if (status.state !== 'failing') throw new Error(`the pull disagrees with the badge: ${JSON.stringify(status)}`)
+    if (status.state !== 'failing') throw new Error(`the pull disagrees with the pill: ${JSON.stringify(status)}`)
     expect(fs.realpathSync(status.path)).toBe(fs.realpathSync(projectFile))
-    const title = await badge.getAttribute('title')
-    expect(title?.split('\n')[0]).toBe(reasonText(status.code))
+    await expect(pill).toHaveAccessibleName(`${enUS.save_status.badge}: ${reasonText(status.code)}`)
     expect(layerIds(projectFile)).not.toContain(layerId)
 
-    // Agent mode has no status bar: the badge rides its titlebar, and leads
-    // back to the editor's System panel.
+    // The pill's popover is the recovery: the reason first, the folder, and
+    // the three ways out. Escape closes it and hands focus back.
+    const details = page.getByTestId('not-saved-details')
+    await pill.click()
+    await expect(details).toBeVisible()
+    await expect(details.locator('.not-saved-reason')).toHaveText(reasonText(status.code))
+    await expect(details).toContainText(status.dir)
+    for (const name of [enUS.save_status.retry, enUS.save_status.save_as, enUS.save_status.open_folder]) {
+      await expect(details.getByRole('button', { name, exact: true })).toBeVisible()
+    }
+    await page.keyboard.press('Escape')
+    await expect(details).toHaveCount(0)
+    await expect(pill).toBeFocused()
+
+    // Agent mode has no status bar: the pill rides its titlebar, and its
+    // popover opens in place, below it, without leaving agent mode.
     await page.locator('.menu-trigger').nth(2).click()
     await page.locator('.app-menu-item').filter({ hasText: /^Enter Agent Mode$/ }).click()
-    await expect(page.locator('.agent-mode-shell')).toBeVisible()
-    await page.locator('.agent-titlebar').getByTestId('save-status-badge').click()
-    await expect(page.locator('.agent-mode-shell')).toHaveCount(0)
+    const shell = page.locator('.agent-mode-shell')
+    await expect(shell).toBeVisible()
+    const agentPill = page.locator('.agent-titlebar').getByTestId('not-saved-pill')
+    await agentPill.click()
+    await expect(details).toBeVisible()
+    await expect(shell).toBeVisible()
+    await expect(details).toContainText(reasonText(status.code))
+    const below = await page.evaluate(() => {
+      const bar = document.querySelector('.agent-titlebar')!.getBoundingClientRect()
+      const box = document.querySelector('[data-testid="not-saved-details"]')!.getBoundingClientRect()
+      return { barBottom: bar.bottom, top: box.top }
+    })
+    expect(below.top, `the popover drops below the titlebar: ${JSON.stringify(below)}`).toBeGreaterThanOrEqual(below.barBottom - 0.5)
 
-    const card = page.getByTestId('save-failure-card')
-    await expect(card).toBeVisible()
-    await expect(card).toContainText(enUS.save_status.card_title)
-    await expect(card).toContainText(reasonText(status.code))
-    await expect(card).toContainText(status.path)
-
-    // The cause goes; Retry now saves, and the state clears with it.
+    // The cause goes; Retry now saves, and the state clears with it, still in agent mode.
     fs.rmSync(blocker, { recursive: true })
-    await card.getByRole('button', { name: enUS.save_status.retry }).click()
-    await expect(badge).toHaveCount(0, { timeout: 15_000 })
-    await expect(card).toHaveCount(0)
+    await details.getByRole('button', { name: enUS.save_status.retry, exact: true }).click()
+    await expect(agentPill).toHaveCount(0, { timeout: 15_000 })
+    await expect(details).toHaveCount(0)
+    await expect(shell).toBeVisible()
     expect(layerIds(projectFile)).toContain(layerId)
     expect(await invokeCmd<SaveStatus>(page, SAVE_STATUS_CHANNEL)).toMatchObject({ state: 'ok' })
+    await page.locator('.agent-exit-button').click()
+    await expect(shell).toHaveCount(0)
+    await expect(page.locator('.status-bar')).toBeVisible()
+    await expect(pill).toHaveCount(0)
   } finally {
     await app.close()
   }

@@ -352,19 +352,25 @@ test('background export keeps review available and preserves output across Previ
     await startHeld(baseline)
     const foreground = page.getByRole('dialog')
     await expect(foreground.locator('.export-progress-status')).toContainText('Encoding')
-    await expect(page.locator('.export-pill')).toHaveCount(0)
+    // A foreground export shows its own dialog, never the work pill's ring.
+    const pill = page.locator('.status-bar').getByTestId('status-bar-work')
+    await expect(pill.locator('[role="progressbar"]')).toHaveCount(0)
     await expect(page.getByTestId('preview-suspended')).toHaveText('Exporting')
     await finish(baseline)
 
     await invokeCmd(page, 'app_settings_set', { patch: { resource_policy: { preview_during_export: true } } })
     await startHeld(output)
-    const pill = page.locator('.status-bar .export-pill-trigger')
-    await expect(pill).toBeVisible()
+    // A background export leads the work pill (its ring and label) and its
+    // popover's first group, with Cancel in the export's row.
+    await expect(pill.locator('[role="progressbar"]')).toBeVisible()
+    await expect(pill).toHaveText(/^Export/)
     await expect(page.getByRole('dialog')).toHaveCount(0)
     await pill.click()
-    const details = page.getByRole('region', { name: 'Export', exact: true })
-    await expect(details).toContainText(path.basename(output))
-    await expect(details.getByRole('button', { name: 'Cancel export', exact: true })).toBeVisible()
+    const details = page.locator('.work-pill-details')
+    await expect(details.locator('.work-group').first()).toHaveAttribute('aria-label', 'Export')
+    const exportRow = details.getByRole('group', { name: 'Export', exact: true }).locator('[data-work="export"]')
+    await expect(exportRow).toContainText(path.basename(output))
+    await expect(exportRow.getByRole('button', { name: 'Cancel export', exact: true })).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(details).toHaveCount(0)
     const lane = page.getByTestId('track-lane').first()
@@ -416,7 +422,7 @@ test('background export keeps review available and preserves output across Previ
     // memory target (a 7 GiB runner's does not), so its recovery is checked
     // after the export ends: the same Preview decodes again by retrying.
     await finish(output)
-    await expect(pill).toHaveCount(0)
+    await expect(pill.locator('[role="progressbar"]')).toHaveCount(0)
     await expect.poll(() => page.evaluate(() => window.__weftcutTest!.activeClipProbe()?.ringSize ?? 0)).toBeGreaterThan(0)
     expect(await page.evaluate(() => window.__weftcutTest!.previewResourceProbe()!.generation)).toBe(remounted)
     await expect.poll(laneIsInert).toBe(false)

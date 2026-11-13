@@ -82,9 +82,7 @@ import { MotifPicker } from "./motifs/MotifPicker";
 import { tenBitExportCapable } from "./render/exportSettings";
 import { MotifStaleDialog } from "./panels/MotifStaleDialog";
 import { useAppNotices } from "./components/useAppNotices";
-import { SystemStatusPanel } from "./components/SystemStatusPanel";
-import type { SaveFailureActions } from "./components/SaveFailureCard";
-import { useSaveFailure } from "./state/saveStatusStore";
+import type { SaveFailureActions } from "./components/NotSavedPill";
 import { useDerivativeJobEvents } from "./state/derivativeJobsStore";
 import { open as shellOpen } from "@/bridge/shell";
 import {
@@ -234,14 +232,13 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
     });
     return () => { disposed = true; stop?.(); };
   }, []);
-  // The full tab union, not just the system-status subset: the describe
+  // The full tab union, not just the notices' subset: the describe
   // dialog's remedy button deep-links to Video understanding, which no
   // capability notice names.
   const [settingsCategory, setSettingsCategory] =
     useState<SettingsCategory>("general");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [logConsoleOpen, setLogConsoleOpen] = useState(false);
-  const [systemStatusOpen, setSystemStatusOpen] = useState(false);
   const logConsoleRef = useRef<LogConsoleHandle | null>(null);
   const [motifPickerOpen, setMotifPickerOpen] = useState(false);
   const systemNotices = useAppNotices();
@@ -621,8 +618,8 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
     }
   }, [run, t]);
 
-  // The save-failure card's actions. Retry is the explicit save itself, not
-  // `run`: the card shows its outcome in place.
+  // Not saved's actions. Retry is the explicit save itself, not `run`: the
+  // popover shows its outcome in place.
   const saveFailureActions = useMemo<SaveFailureActions>(() => ({
     retry: projectSave,
     saveAs: () => void saveProject(),
@@ -794,13 +791,10 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
   }, [settle]);
 
   const toggleLogConsole = useCallback(() => {
-    setSystemStatusOpen(false);
     setLogConsoleOpen((open) => !open);
-    useLogStore.getState().acknowledgeErrorSticky();
   }, []);
 
   const focusLogSearch = useCallback(() => {
-    setSystemStatusOpen(false);
     setLogConsoleOpen(true);
     // Defer focus to after the console mounts.
     setTimeout(() => {
@@ -808,28 +802,9 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
     }, 0);
   }, []);
 
-  const toggleSystemStatus = useCallback(() => {
-    setLogConsoleOpen(false);
-    setSystemStatusOpen((open) => !open);
-  }, []);
-
-  const openSystemStatus = useCallback(() => {
-    setLogConsoleOpen(false);
-    setSystemStatusOpen(true);
-  }, []);
-
-  // The panel holds the notices and the save-failure card; with both gone it
-  // has nothing left to show, and stays closed until asked again.
-  const saveFailure = useSaveFailure();
-  const systemStatusEmpty = systemNotices.length === 0 && saveFailure === null;
-  useEffect(() => {
-    if (systemStatusEmpty) setSystemStatusOpen(false);
-  }, [systemStatusEmpty]);
-
   const openSystemSettings = useCallback(
     (category: SystemSettingsTarget) => {
       setLogConsoleOpen(false);
-      setSystemStatusOpen(false);
       openSettings(category);
     },
     [openSettings],
@@ -1230,7 +1205,10 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
           ref={previewRef}
           summary={summary}
           onExit={exitAgentMode}
-          onOpenSaveStatus={() => { void exitAgentMode(); openSystemStatus(); }}
+          notices={systemNotices}
+          saveActions={saveFailureActions}
+          // Settings are an editor surface: the way there leaves agent mode.
+          onOpenSettings={(target) => { void exitAgentMode(); openSystemSettings(target); }}
         />
         <ComputeJobNotice />
       </ShortcutBindingsProvider>
@@ -1386,21 +1364,14 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
           onClose={() => setLogConsoleOpen(false)}
         />
       )}
-      {systemStatusOpen && (
-        <SystemStatusPanel
-          notices={systemNotices}
-          onClose={() => setSystemStatusOpen(false)}
-          onOpenSettings={openSystemSettings}
-          saveActions={saveFailureActions}
-        />
-      )}
       {paletteOpen && <SearchPalette onClose={() => setPaletteOpen(false)} />}
       <StatusBar
         notices={systemNotices}
         backgroundExport={backgroundExportActive && exportState ? exportState : undefined}
-        onOpenSystemStatus={toggleSystemStatus}
-        onOpenSaveStatus={openSystemStatus}
         onToggleLogs={toggleLogConsole}
+        logsOpen={logConsoleOpen}
+        onOpenSettings={openSystemSettings}
+        saveActions={saveFailureActions}
       />
       <ComputeJobNotice />
     </div>

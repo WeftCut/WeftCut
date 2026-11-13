@@ -1,4 +1,4 @@
-import { useEffect, useReducer, type ReactNode } from "react";
+import { useEffect, useReducer, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { Hourglass } from "lucide-react";
@@ -15,12 +15,18 @@ import { useDerivativeJobsStore } from "../state/derivativeJobsStore";
 import { useProjectStore } from "../state/projectStore";
 import type { AgentActivity } from "../../shared/agent-activity";
 import type { ComputeJob } from "../../shared/compute-jobs";
+import { exportPhaseView, type ExportState } from "../panels/ExportPanel";
 import { workView, type MediaWork, type WorkView } from "./workView";
 
-/// Background work in the status bar: clip-compute jobs, agent calls and
-/// derivative jobs as one pill, its details in a popover grouped by owner. The
-/// export keeps its own pill. Layout and behaviour: `docs/status-log.md`.
-export function WorkPill() {
+/// What is running, as one pill: a background export (preview during export),
+/// clip-compute jobs, agent calls and derivative jobs, its details in a popover
+/// grouped by owner, the export first. Layout and behaviour:
+/// `docs/status-log.md` § Work pill.
+export function WorkPill({ backgroundExport }: {
+  /// A running export that leaves the editor usable; a foreground export
+  /// shows its own dialog instead.
+  backgroundExport?: ExportState | undefined;
+}) {
   const { t } = useTranslation();
   const jobsById = useComputeJobsStore((s) => s.jobs);
   const activities = useAgentActivity((s) => s.snapshot?.activities);
@@ -40,36 +46,71 @@ export function WorkPill() {
     return () => clearTimeout(timer);
   }, [view.nextDueAt]);
 
+  // The export is the user's own and shows at once: no show delay.
+  const exportStartedAt = useExportStartedAt(backgroundExport);
+  const exportView = backgroundExport ? exportPhaseView(backgroundExport, t) : null;
+  const total = view.count + (backgroundExport ? 1 : 0);
+
   const { open, close, rootRef, detailsId, triggerProps } = useStatusPopover();
   // The popover goes with the last piece of work, and does not come back open.
   useEffect(() => {
-    if (view.count === 0) close();
-  }, [view.count, close]);
-  if (view.count === 0) return null;
+    if (total === 0) close();
+  }, [total, close]);
+  if (total === 0) return null;
 
-  const label = pillLabel(t, view);
+  const waiting = !backgroundExport && view.waiting;
+  const label = exportView
+    ? exportLabel(t, exportView.percent, view.count)
+    : pillLabel(t, view);
   return (
     <div className="status-popover-anchor" ref={rootRef}>
       <button
         {...triggerProps}
         type="button"
-        className={`status-bar-badge work-pill-trigger${view.waiting ? " is-waiting" : ""}`}
+        className={`status-bar-slot work-pill-trigger${waiting ? " is-waiting" : ""}`}
         data-testid="status-bar-work"
-        data-state={view.waiting ? "waiting" : "working"}
+        data-state={waiting ? "waiting" : "working"}
         title={label}
+        aria-label={label}
       >
-        {view.waiting
-          ? <AppIcon icon={Hourglass} size="label" aria-hidden />
-          : <span className="status-bar-spinner" aria-hidden="true" />}
+        {exportView
+          ? <ProgressRing phase={exportView.phase} percent={exportView.percent} />
+          : waiting
+            ? <AppIcon icon={Hourglass} size="label" aria-hidden />
+            : <span className="status-bar-spinner" aria-hidden="true" />}
         {label}
       </button>
       {open && (
         <section id={detailsId} className="status-popover work-pill-details" aria-label={t("status_bar.work.title")}>
+          {backgroundExport && exportView && exportStartedAt !== null && (
+            <WorkGroup title={t("status_bar.work.group_export")}>
+              <ExportRow state={backgroundExport} phase={exportView.phase} percent={exportView.percent} startedAt={exportStartedAt} />
+            </WorkGroup>
+          )}
           <WorkDetails view={view} onLeave={close} />
         </section>
       )}
     </div>
   );
+}
+
+/// When this export started showing here, per job: the job record carries no
+/// start time, and the elapsed time must not restart when the popover opens.
+function useExportStartedAt(state: ExportState | undefined): number | null {
+  const key = state ? state.job?.job_id ?? "" : null;
+  const [started, setStarted] = useState<{ key: string; at: number } | null>(null);
+  if ((started?.key ?? null) !== key) {
+    const next = key === null ? null : { key, at: Date.now() };
+    setStarted(next);
+    return next?.at ?? null;
+  }
+  return started?.at ?? null;
+}
+
+/// The export leads: "Export 42%", and "+3" for the rest.
+function exportLabel(t: TFunction, percent: number | undefined, others: number): string {
+  const own = percent === undefined ? t("export.title") : t("export.pill", { percent });
+  return others > 0 ? t("status_bar.work.with_more", { label: own, count: others }) : own;
 }
 
 /// One piece of work is named by what it does; several are counted.
@@ -79,6 +120,69 @@ function pillLabel(t: TFunction, view: WorkView): string {
   const [job] = view.compute;
   if (job) return t(job.tool === "transcribe_clip" ? "status_bar.work.transcribing" : "status_bar.work.describing");
   return t(view.agent.length > 0 ? "status_bar.work.agent" : "status_bar.work.derivatives");
+}
+
+/// The ring owns the accessible progress value; without a percent it spins.
+function ProgressRing({ phase, percent }: { phase: string; percent: number | undefined }) {
+  const radius = 6;
+  const circumference = 2 * Math.PI * radius;
+  // The indeterminate arc: a short segment that the spin animation turns.
+  const shown = percent ?? 30;
+  return (
+    <span role="progressbar" aria-label={phase} aria-valuemin={0} aria-valuemax={100}
+      {...(percent === undefined ? {} : { "aria-valuenow": percent })}
+      className={percent === undefined ? "work-pill-ring is-indeterminate" : "work-pill-ring"}>
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <circle className="work-pill-ring-track" cx="8" cy="8" r={radius} />
+        <circle className="work-pill-ring-fill" cx="8" cy="8" r={radius} transform="rotate(-90 8 8)"
+          strokeDasharray={circumference} strokeDashoffset={circumference * (1 - shown / 100)} />
+      </svg>
+    </span>
+  );
+}
+
+/// The file, percent and elapsed time, the bar, then the measured rate with
+/// Cancel. No remaining-time estimate: by product decision an export shows
+/// percent and elapsed time, never a prediction.
+function ExportRow({ state, phase, percent, startedAt }: {
+  state: ExportState;
+  phase: string;
+  percent: number | undefined;
+  startedAt: number;
+}) {
+  const { t } = useTranslation();
+  const now = useNow();
+  const cancelling = state.job?.phase === "cancelling";
+  const progress = state.kind === "progress" ? state.progress : undefined;
+  const elapsed = t("export.pill_elapsed", { time: formatComputeDuration(t, Math.max(0, now - startedAt)) });
+  return (
+    <li className="work-row" data-work="export">
+      <div className="work-row-line">
+        <span className="work-row-name">{state.job?.filename ?? t("export.title")}</span>
+        <span className="work-row-elapsed">{percent === undefined ? elapsed : `${percent}% · ${elapsed}`}</span>
+      </div>
+      {percent !== undefined && (
+        <div className="progress-track work-row-progress" aria-hidden="true">
+          <div className="progress-fill" style={{ width: `${percent}%` }} />
+        </div>
+      )}
+      <div className="work-row-detail">
+        <span role="status">
+          {progress && !cancelling ? t("export.pill_rate", { fps: Math.round(progress.fps), speed: progress.speed.toFixed(1) }) : phase}
+        </span>
+        {!cancelling && state.onCancel && (
+          <button
+            type="button"
+            className="compute-job-cancel"
+            onClick={state.onCancel}
+            aria-label={t("export.cancel_export")}
+          >
+            {t("compute.ui.cancel")}
+          </button>
+        )}
+      </div>
+    </li>
+  );
 }
 
 /// Split out so the one-second clock only runs while the popover is open.

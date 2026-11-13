@@ -30,6 +30,10 @@ interface MenuProps {
   label: string;
   /// Tooltip on the trigger.
   hint?: string;
+  /// A dot on the trigger, and this text for assistive technology: one of its
+  /// rows has something new (Help with an offered update). The row carries
+  /// `marked` too.
+  marked?: string | undefined;
   /// `MenuItem` / `MenuSeparator` / `MenuHeading` children.
   children: ReactNode;
 }
@@ -38,12 +42,13 @@ interface MenuProps {
 /// Escape close, ArrowDown/Up item navigation, and typeahead. The
 /// .menu-* classes carry the visual identity; placement is via the
 /// Positioner (align start, 4px below the trigger).
-export function Menu({ label, hint, children }: MenuProps) {
+export function Menu({ label, hint, marked, children }: MenuProps) {
   const inMenuBar = useContext(MenuBarContext);
   return (
     <MenuPrimitive.Root>
       <MenuPrimitive.Trigger className="menu-trigger" title={hint}>
-        <span className="menu-trigger-label">{label}</span>
+        <span className={marked ? "menu-trigger-label is-marked" : "menu-trigger-label"}>{label}</span>
+        {marked && <span className="sr-only">{`, ${marked}`}</span>}
         <span className="menu-chevron" aria-hidden="true">
           <AppIcon icon={ChevronDownIcon} size="caption" />
         </span>
@@ -92,6 +97,9 @@ interface MenuItemProps {
   onArmedChange?: (armed: boolean) => void;
   /// `data-testid` on the row.
   testId?: string;
+  /// A dot after the label, and this text for assistive technology: what its
+  /// menu's `marked` points at.
+  marked?: string | undefined;
 }
 
 export function MenuItem({
@@ -105,6 +113,7 @@ export function MenuItem({
   closeOnClick,
   onArmedChange,
   testId,
+  marked,
 }: MenuItemProps) {
   // Show only the *first* effective binding for the action. The menu
   // has no room for multi-binding lists; the Settings → Keyboard panel
@@ -133,7 +142,8 @@ export function MenuItem({
       <span className="app-menu-item-check" aria-hidden="true">
         {checked ? <AppIcon icon={CheckIcon} size="body" /> : null}
       </span>
-      <span className="app-menu-item-label">{label}</span>
+      <span className={marked ? "app-menu-item-label is-marked" : "app-menu-item-label"}>{label}</span>
+      {marked && <span className="sr-only">{`, ${marked}`}</span>}
       {accelerator && (
         <span className="app-menu-item-accelerator" aria-hidden="true">
           {accelerator}

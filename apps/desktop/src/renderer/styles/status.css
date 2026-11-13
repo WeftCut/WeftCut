@@ -20,17 +20,17 @@
 /* ===================================================================
    Status bar (see docs/status-log.md).
 
-   Persistent ~28px strip pinned to the bottom of the editor view.
-   The persistent bar; an expandable console overlay can lift above it.
+   Three questions, one element each: the log line (what just happened),
+   the work pill (what is running), the bell (what needs me). Not saved is
+   the one problem with a place of its own. Colour carries severity only.
    =================================================================== */
 
 .status-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: calc(12 * var(--ui-px));
+  gap: calc(8 * var(--ui-px));
   height: calc(28 * var(--ui-px));
-  padding: 0 calc(12 * var(--ui-px));
+  padding: 0 calc(6 * var(--ui-px)) 0 calc(4 * var(--ui-px));
   background: var(--card);
   border-top: 1px solid var(--border-soft);
   color: var(--foreground);
@@ -40,18 +40,44 @@
   flex-shrink: 0;
 }
 
-.status-bar-left {
+/* The whole left side: one button that opens the log. It gives way first
+   when the right side needs room. */
+.status-bar-log {
   display: flex;
   align-items: center;
   gap: calc(8 * var(--ui-px));
-  min-width: 0;
   flex: 1;
+  min-width: 0;
+  height: calc(22 * var(--ui-px));
+  padding: 0 calc(8 * var(--ui-px));
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.status-bar-log:hover,
+.status-bar-log[aria-expanded="true"] {
+  background: var(--hover-neutral);
+}
+
+.status-bar-log:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.status-bar-log-chevron {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
 }
 
 .status-bar-right {
   display: flex;
   align-items: center;
-  gap: calc(8 * var(--ui-px));
+  gap: calc(6 * var(--ui-px));
   flex-shrink: 0;
 }
 
@@ -122,25 +148,176 @@
   background: var(--destructive);
 }
 
-.status-bar-badge {
+/* Errors since the log was last opened, in the level dot's place. It pulses
+   once when it appears. */
+.status-bar-errors {
   display: inline-flex;
   align-items: center;
-  gap: calc(4 * var(--ui-px));
-  padding: calc(2 * var(--ui-px)) calc(8 * var(--ui-px));
+  justify-content: center;
+  flex-shrink: 0;
+  min-width: calc(16 * var(--ui-px));
+  height: calc(16 * var(--ui-px));
+  padding: 0 calc(4 * var(--ui-px));
   border-radius: 999px;
-  font-size: var(--font-size-caption);
+  background: var(--color-red-300);
+  color: var(--card);
+  font-size: var(--font-size-micro);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  animation: status-bar-error-pulse 1.5s ease-in-out 1;
+}
+
+@keyframes status-bar-error-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0); }
+  50% { box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.35); }
+}
+
+/* A trigger on the right: the work pill and the bell. */
+.status-bar-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6 * var(--ui-px));
+  height: calc(22 * var(--ui-px));
+  padding: 0 calc(9 * var(--ui-px));
   border: 1px solid transparent;
+  border-radius: var(--radius-control);
   background: transparent;
-  cursor: pointer;
   color: inherit;
+  font-size: var(--font-size-caption);
+  white-space: nowrap;
+  cursor: pointer;
 }
 
-.status-bar-badge:hover {
-  background: rgba(148, 163, 184, 0.12);
+.status-bar-slot:hover,
+.status-bar-slot[aria-expanded="true"] {
+  background: var(--hover-neutral);
 }
 
-/* A pill's details (useStatusPopover): above the pill, right-aligned, on the
-   System status panel's surface. */
+.status-bar-slot:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.status-bar-divider {
+  width: 1px;
+  height: calc(14 * var(--ui-px));
+  background: var(--border-soft);
+}
+
+/* Work pill (WorkPill): waiting for admission is muted, with an hourglass in
+   place of the spinner, so queued work never reads as busy. */
+.work-pill-trigger {
+  font-variant-numeric: tabular-nums;
+}
+
+.work-pill-trigger.is-waiting {
+  color: var(--muted-foreground);
+}
+
+.status-bar-spinner {
+  display: inline-block;
+  width: calc(10 * var(--ui-px));
+  height: calc(10 * var(--ui-px));
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: status-bar-spin 0.9s linear infinite;
+}
+
+@keyframes status-bar-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* A background export's progress, as a ring with the percent beside it. */
+.work-pill-ring {
+  display: inline-flex;
+  width: calc(14 * var(--ui-px));
+  height: calc(14 * var(--ui-px));
+}
+
+.work-pill-ring svg {
+  width: 100%;
+  height: 100%;
+}
+
+.work-pill-ring circle {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.work-pill-ring-track {
+  stroke: color-mix(in srgb, var(--primary) 25%, transparent);
+}
+
+.work-pill-ring-fill {
+  stroke: var(--primary);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 200ms linear;
+}
+
+.work-pill-ring.is-indeterminate svg {
+  animation: status-bar-spin 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .work-pill-ring.is-indeterminate svg,
+  .status-bar-spinner {
+    animation: none;
+  }
+}
+
+/* Not saved (NotSavedPill): the warn notices' amber as a tinted pill. */
+.not-saved-pill {
+  border-color: color-mix(in srgb, var(--color-amber-300) 32%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-amber-300) 12%, transparent);
+  color: var(--color-amber-300);
+}
+
+.not-saved-pill:hover,
+.not-saved-pill[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--color-amber-300) 22%, transparent);
+}
+
+/* The bell (NotificationBell): a dot in the most severe active item's colour,
+   the System panel's levels. No number. */
+.status-bell {
+  padding: 0 calc(7 * var(--ui-px));
+}
+
+.status-bell-icon {
+  position: relative;
+  display: inline-flex;
+}
+
+.status-bell-dot {
+  position: absolute;
+  top: calc(-2 * var(--ui-px));
+  right: calc(-3 * var(--ui-px));
+  width: calc(7 * var(--ui-px));
+  height: calc(7 * var(--ui-px));
+  border-radius: 50%;
+  box-shadow: 0 0 0 calc(2 * var(--ui-px)) var(--card);
+}
+
+.status-bell-dot.level-info,
+.attention-row.level-info .attention-dot {
+  background: var(--color-blue-300);
+}
+
+.status-bell-dot.level-warn,
+.attention-row.level-warn .attention-dot {
+  background: var(--color-amber-300);
+}
+
+.status-bell-dot.level-error,
+.attention-row.level-error .attention-dot {
+  background: var(--destructive);
+}
+
+/* ---- Popovers (useStatusPopover) ----------------------------------------
+   One container, rows separated by dividers, no cards inside. Above the
+   trigger, right-aligned; `is-below` drops down from the agent titlebar. */
 .status-popover-anchor {
   position: relative;
   display: inline-flex;
@@ -150,69 +327,43 @@
   position: absolute;
   right: 0;
   bottom: calc(100% + calc(8 * var(--ui-px)));
-  width: min(calc(300 * var(--ui-px)), calc(100vw - calc(24 * var(--ui-px))));
+  width: min(calc(380 * var(--ui-px)), calc(100vw - calc(24 * var(--ui-px))));
+  max-height: min(calc(480 * var(--ui-px)), calc(100vh - calc(72 * var(--ui-px))));
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: calc(8 * var(--ui-px));
-  padding: calc(14 * var(--ui-px));
   background: var(--popover);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-popover);
+  color: var(--foreground);
+  font-size: var(--font-size-body);
+  text-align: left;
+  white-space: normal;
   z-index: var(--layer-status-panel);
   user-select: text;
+  cursor: auto;
 }
 
-/* The project is not being saved (SaveStatusBadge). The warn notices' amber
-   as a tinted badge: it needs attention but counts nothing. */
-.status-bar-badge-warn {
-  background: rgba(251, 191, 36, 0.12);
-  border-color: rgba(251, 191, 36, 0.32);
-  color: var(--color-amber-300);
+.status-popover.is-below {
+  top: calc(100% + calc(8 * var(--ui-px)));
+  bottom: auto;
 }
 
-/* Background work (WorkPill): clip jobs, agent calls and derivatives in one
-   pill. Waiting for admission is muted, with an hourglass in place of the
-   spinner, so queued work never reads as busy. */
-.work-pill-trigger {
-  gap: calc(6 * var(--ui-px));
-  background: color-mix(in srgb, var(--primary) 12%, transparent);
-  border-color: color-mix(in srgb, var(--primary) 30%, transparent);
-  white-space: nowrap;
-}
-
-.work-pill-trigger[aria-expanded="true"] {
-  background: color-mix(in srgb, var(--primary) 22%, transparent);
-}
-
-.work-pill-trigger.is-waiting {
-  background: var(--surface-tint);
-  border-color: var(--border);
-  color: var(--muted-foreground);
-}
-
-.work-pill-trigger:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
+/* Work popover: the export, clip jobs, agent calls, derivatives. */
 .work-pill-details {
   width: min(calc(340 * var(--ui-px)), calc(100vw - calc(24 * var(--ui-px))));
-  gap: calc(10 * var(--ui-px));
-  padding: calc(12 * var(--ui-px)) calc(14 * var(--ui-px)) calc(14 * var(--ui-px));
-  max-height: min(calc(420 * var(--ui-px)), 60vh);
-  overflow-y: auto;
 }
 
 .work-group {
   display: flex;
   flex-direction: column;
-  gap: calc(8 * var(--ui-px));
+  gap: calc(7 * var(--ui-px));
+  padding: calc(9 * var(--ui-px)) calc(14 * var(--ui-px));
 }
 
 .work-group + .work-group {
   border-top: 1px solid var(--border-soft);
-  padding-top: calc(10 * var(--ui-px));
 }
 
 .work-group-header {
@@ -225,17 +376,27 @@
   font-weight: 400;
 }
 
-.work-group-link {
+.work-group-link,
+.attention-link {
   padding: 0;
   border: none;
   background: none;
   color: var(--color-blue-300);
   font-size: var(--font-size-caption);
+  white-space: nowrap;
   cursor: pointer;
 }
 
-.work-group-link:hover {
+.work-group-link:hover,
+.attention-link:hover {
   text-decoration: underline;
+}
+
+.work-group-link:focus-visible,
+.attention-link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-control);
 }
 
 .work-rows {
@@ -287,314 +448,160 @@
 }
 
 .work-row-detail {
+  display: flex;
+  align-items: center;
+  gap: calc(6 * var(--ui-px));
   color: var(--muted-foreground);
   font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.work-row-progress {
+  height: calc(3 * var(--ui-px));
+  margin: calc(3 * var(--ui-px)) 0 calc(1 * var(--ui-px));
+  border-radius: var(--radius-control);
+  overflow: hidden;
 }
 
 .work-row .compute-job-cancel {
   margin-left: auto;
 }
 
-/* Unreviewed agent changes: opens the agent panel's Changes tab. */
-.status-bar-badge-review {
-  background: color-mix(in srgb, var(--review-modified) 12%, transparent);
-  border-color: color-mix(in srgb, var(--review-modified) 36%, transparent);
-  color: var(--review-modified);
-}
-
-@keyframes status-bar-error-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0); }
-  50% { box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.35); }
-}
-
-.status-bar-spinner {
-  display: inline-block;
-  width: calc(10 * var(--ui-px));
-  height: calc(10 * var(--ui-px));
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: status-bar-spin 0.9s linear infinite;
-}
-
-@keyframes status-bar-spin {
-  to { transform: rotate(360deg); }
-}
-
-.status-bar-logs-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: calc(6 * var(--ui-px));
-  white-space: nowrap;
-  padding: calc(2 * var(--ui-px)) calc(8 * var(--ui-px));
-  border-radius: var(--radius-control);
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--foreground);
-  cursor: pointer;
-  font-size: var(--font-size-caption);
-}
-
-.status-bar-logs-toggle:hover:not(:disabled) {
-  background: rgba(148, 163, 184, 0.1);
-}
-
-.status-bar-logs-toggle:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* The error count on the Logs toggle; it pulses once when the first error
-   arrives. */
-.status-bar-logs-errors {
-  display: inline-flex;
-  align-items: center;
-  gap: calc(3 * var(--ui-px));
-  margin-right: calc(-4 * var(--ui-px));
-  padding: 0 calc(5 * var(--ui-px));
-  border-radius: 999px;
-  background: rgba(248, 113, 113, 0.16);
-  color: var(--color-red-300);
-  font-variant-numeric: tabular-nums;
-  animation: status-bar-error-pulse 1.5s ease-in-out 1;
-}
-
-/* An offered update: the bar's one solid pill, since it is the only entry
-   that asks for a decision rather than reporting work. A download draws a
-   ring around the icon; the label stays fixed. */
-.status-bar-update {
-  display: inline-flex;
-  align-items: center;
+/* Not saved's popover: the reason first, then the facts and the actions. */
+.not-saved-details {
+  width: min(calc(320 * var(--ui-px)), calc(100vw - calc(24 * var(--ui-px))));
   gap: calc(4 * var(--ui-px));
-  padding: calc(2 * var(--ui-px)) calc(8 * var(--ui-px)) calc(2 * var(--ui-px)) calc(5 * var(--ui-px));
-  border-radius: 999px;
-  border: 1px solid var(--primary);
-  background: var(--primary);
-  color: white;
-  font-size: var(--font-size-caption);
-  white-space: nowrap;
-  cursor: pointer;
+  padding: calc(12 * var(--ui-px)) calc(14 * var(--ui-px));
 }
 
-.status-bar-update:hover {
-  border-color: var(--color-blue-700);
-  background: var(--color-blue-700);
-}
-
-.status-bar-update-icon {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: calc(16 * var(--ui-px));
-  height: calc(16 * var(--ui-px));
-}
-
-.status-bar-update-ring {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  transform: rotate(-90deg);
-  fill: none;
-  stroke: white;
-  stroke-width: 2;
-  pointer-events: none;
-}
-
-.status-bar-update-ring .status-bar-update-track {
-  stroke: rgba(255, 255, 255, 0.3);
-}
-
-/* Non-blocking environment/capability notices open their own status panel. */
-.system-status-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: calc(4 * var(--ui-px));
-  padding: calc(2 * var(--ui-px)) calc(8 * var(--ui-px));
-  border: 1px solid transparent;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--muted-foreground);
-  font-size: var(--font-size-caption);
-  cursor: pointer;
-}
-
-.system-status-trigger:hover {
-  background: var(--hover-neutral);
-  color: var(--foreground);
-}
-
-.system-status-trigger:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.system-status-trigger.system-status-warn {
-  color: var(--color-amber-300);
-}
-
-.system-status-trigger.system-status-error {
-  color: var(--destructive);
-}
-
-.current-system-status {
-  flex: 0 0 auto;
-  background: var(--card);
-  border-bottom: 1px solid var(--border);
-}
-
-.system-status-panel {
-  position: fixed;
-  right: calc(12 * var(--ui-px));
-  bottom: calc(36 * var(--ui-px));
-  width: min(var(--dialog-width-status), calc(100vw - calc(24 * var(--ui-px))));
-  max-height: min(calc(520 * var(--ui-px)), calc(100vh - calc(72 * var(--ui-px))));
-  overflow: auto;
-  background: var(--popover);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-popover);
-  z-index: var(--layer-status-panel);
-}
-
-.system-status-panel .current-system-status {
-  background: transparent;
-  border-bottom: 0;
-}
-
-.system-status-panel .system-status-header {
-  padding-right: calc(42 * var(--ui-px));
-}
-
-.system-status-close {
-  position: absolute;
-  top: calc(7 * var(--ui-px));
-  right: calc(8 * var(--ui-px));
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: calc(26 * var(--ui-px));
-  height: calc(26 * var(--ui-px));
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--muted-foreground);
-  cursor: pointer;
-  z-index: 1;
-}
-
-.system-status-close:hover {
-  background: var(--hover-neutral);
-  color: var(--foreground);
-}
-
-.system-status-close:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.system-status-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: calc(12 * var(--ui-px));
-  padding: calc(10 * var(--ui-px)) calc(12 * var(--ui-px));
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.system-status-title {
+.not-saved-details p {
   margin: 0;
-  font-size: var(--font-size-label);
-  font-weight: 600;
 }
 
-.system-status-count {
-  color: var(--muted-foreground);
-  font-size: var(--font-size-caption);
+.not-saved-reason {
+  font-weight: 500;
 }
 
-.system-status-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(calc(300 * var(--ui-px)), 1fr));
-}
-
-.system-status-item {
-  display: grid;
-  grid-template-columns: calc(18 * var(--ui-px)) minmax(0, 1fr);
-  gap: calc(8 * var(--ui-px));
-  padding: calc(9 * var(--ui-px)) calc(12 * var(--ui-px));
-}
-
-.system-status-item + .system-status-item {
-  border-left: 1px solid var(--border-soft);
-}
-
-.system-status-item-icon {
-  display: inline-flex;
-  padding-top: calc(1 * var(--ui-px));
-  color: var(--color-blue-300);
-}
-
-.system-status-item-warn .system-status-item-icon {
-  color: var(--color-amber-300);
-}
-
-.system-status-item-error .system-status-item-icon {
-  color: var(--destructive);
-}
-
-.system-status-item-content {
-  min-width: 0;
-}
-
-.system-status-item-content strong {
-  display: block;
-  font-size: var(--font-size-body);
-  font-weight: 600;
-}
-
-.system-status-item-content p {
-  margin: calc(3 * var(--ui-px)) 0 calc(6 * var(--ui-px));
+.not-saved-body,
+.not-saved-folder,
+.not-saved-result {
   color: var(--muted-foreground);
   font-size: var(--font-size-caption);
   line-height: var(--line-height-body);
 }
 
-.system-status-item-content button {
-  margin-left: calc(-8 * var(--ui-px));
-  color: var(--color-blue-300);
-}
-
-/* SaveFailureCard: the failing file, the last save, and three actions in a row. */
-.save-failure-facts {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: calc(2 * var(--ui-px)) calc(8 * var(--ui-px));
-  margin: 0 0 calc(6 * var(--ui-px));
-  font-size: var(--font-size-caption);
-}
-
-.save-failure-facts dt {
-  color: var(--muted-foreground);
-}
-
-.save-failure-facts dd {
-  margin: 0;
-  min-width: 0;
-}
-
-.save-failure-path {
+.not-saved-folder {
   overflow-wrap: anywhere;
 }
 
-.save-failure-actions {
-  display: flex;
-  flex-wrap: wrap;
-  margin-left: calc(-8 * var(--ui-px));
+.not-saved-result {
+  color: var(--foreground);
 }
 
-.save-failure-actions button {
-  margin-left: 0;
+.not-saved-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(8 * var(--ui-px));
+  margin-top: calc(6 * var(--ui-px));
+}
+
+/* The notification center: titled, since the bell carries no text. */
+.attention-title {
+  margin: 0;
+  padding: calc(10 * var(--ui-px)) calc(14 * var(--ui-px)) calc(8 * var(--ui-px));
+  font-size: var(--font-size-label);
+  font-weight: 600;
+}
+
+.attention-empty {
+  margin: 0;
+  padding: calc(18 * var(--ui-px)) calc(14 * var(--ui-px));
+  border-top: 1px solid var(--border-soft);
+  color: var(--muted-foreground);
+  text-align: center;
+}
+
+.attention-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.attention-row {
+  display: grid;
+  grid-template-columns: calc(10 * var(--ui-px)) minmax(0, 1fr) auto;
+  column-gap: calc(10 * var(--ui-px));
+  padding: calc(9 * var(--ui-px)) calc(14 * var(--ui-px));
+  border-top: 1px solid var(--border-soft);
+}
+
+.attention-row:hover {
+  background: var(--surface-tint);
+}
+
+.attention-dot {
+  width: calc(7 * var(--ui-px));
+  height: calc(7 * var(--ui-px));
+  margin-top: calc(5 * var(--ui-px));
+  border-radius: 50%;
+}
+
+.attention-row-title {
+  font-weight: 500;
+}
+
+.attention-row-body {
+  margin-top: calc(1 * var(--ui-px));
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+  line-height: var(--line-height-body);
+}
+
+.attention-row-more {
+  display: flex;
+  gap: calc(12 * var(--ui-px));
+  margin-top: calc(4 * var(--ui-px));
+}
+
+.attention-link.is-quiet {
+  color: var(--muted-foreground);
+}
+
+.attention-primary {
+  align-self: start;
+  padding-top: calc(1 * var(--ui-px));
+}
+
+/* Dismissed rows fold at the bottom; the bell ignores them. */
+.attention-fold {
+  border-top: 1px solid var(--border-soft);
+  padding: calc(8 * var(--ui-px)) calc(14 * var(--ui-px)) calc(10 * var(--ui-px));
+}
+
+.attention-fold-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(4 * var(--ui-px));
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted-foreground);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.attention-fold-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-control);
+}
+
+.attention-list.is-dismissed .attention-row {
+  padding: calc(6 * var(--ui-px)) 0 0;
+  border-top: 0;
+  opacity: 0.75;
+}
+
+.attention-list.is-dismissed .attention-row:hover {
+  background: none;
 }

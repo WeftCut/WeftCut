@@ -61,7 +61,7 @@ export type SystemStats = {
   logical_cores: number
 }
 
-/// An app-level capability notice surfaced through the system-status entry.
+/// An app-level capability notice, listed in the bell's notification center.
 /// `code` keys the i18n strings; main collects these at startup
 /// (e.g. keyring-unavailable → plaintext cloud keys) and the renderer PULLS them
 /// on mount via `app.notices()` — a pull model so a notice can't be lost to the

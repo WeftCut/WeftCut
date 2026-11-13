@@ -1,47 +1,43 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertTriangleIcon, InfoIcon, OctagonAlertIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { renderLogMessage } from "./renderMessage";
 import { WorkPill } from "./WorkPill";
-import { useAgentActivity } from "../agent/activityStore";
-import { useUnreviewedCount } from "../agent/reviewStore";
-import { getCommand } from "../commands/registry";
 import { useLogStore } from "./store";
 import type { LogEntry, LogLevel } from "../ipc";
 import type { AppNotice } from "../../shared/ipc";
 import { AppIcon } from "@/components/AppIcon";
-import { UpdateIndicator } from "../app/UpdateIndicator";
-import { ExportProgressPill } from "../panels/ExportProgressPill";
 import type { ExportState } from "../panels/ExportPanel";
-import { SaveStatusBadge } from "../components/SaveStatusBadge";
+import { NotSavedPill, type SaveFailureActions } from "../components/NotSavedPill";
 import { saveFailureReason } from "../components/saveFailure";
+import type { SystemSettingsTarget } from "../components/systemStatus";
+import { NotificationBell } from "../notifications/NotificationBell";
 import { useSaveFailure } from "../state/saveStatusStore";
 import { useDerivativeJobsStore } from "../state/derivativeJobsStore";
 
-/// Persistent status bar pinned to the bottom of the editor view.
-/// Shows a severity dot + time + truncated message + source pill on the
-/// left; work and attention badges + the Logs toggle on the right. The
-/// toggle opens the expanded console overlay and carries the error count.
+/// Persistent status bar pinned to the bottom of the editor view. It answers
+/// three questions, one element each: what just happened (the log line, which
+/// opens the console), what is running (the work pill), what needs me (the
+/// bell). Not saved is the one problem with a place of its own.
 ///
 /// Layout and behaviour: `docs/status-log.md`.
 interface StatusBarProps {
-  notices?: AppNotice[];
-  onOpenSystemStatus?: () => void;
-  /// Opens (never toggles) the System panel, whose card the badge points at.
-  onOpenSaveStatus?: () => void;
-  onToggleLogs?: () => void;
+  notices: readonly AppNotice[];
+  onToggleLogs: () => void;
+  logsOpen: boolean;
+  onOpenSettings: (target: SystemSettingsTarget) => void;
+  saveActions: SaveFailureActions;
   /// A running export that leaves the editor usable (preview during export);
   /// a foreground export shows its own dialog instead.
   backgroundExport?: ExportState | undefined;
 }
 
-const EMPTY_NOTICES: AppNotice[] = [];
-
 export function StatusBar({
-  notices = EMPTY_NOTICES,
-  onOpenSystemStatus,
-  onOpenSaveStatus,
+  notices,
   onToggleLogs,
+  logsOpen,
+  onOpenSettings,
+  saveActions,
   backgroundExport,
 }: StatusBarProps) {
   const { t } = useTranslation();
@@ -50,10 +46,7 @@ export function StatusBar({
   // call yields a new reference. Primitive/store-owned references compare
   // stable under the default Object.is equality.
   const latest = useLogStore((s) => s.latest);
-  const errorCount = useLogStore((s) => s.errorCount);
-  // Unreviewed agent changes (ADR 0115). The status bar is a review surface
-  // of its own: it keeps the Review view fresh while the editor shows.
-  const unreviewedCount = useUnreviewedCount();
+  const unseenErrors = useLogStore((s) => s.unseenErrors);
   // The visually-hidden live region is only updated on errors. Tracked
   // separately from `latest` so a flurry of low-severity entries
   // doesn't spam the screen reader.
@@ -62,11 +55,13 @@ export function StatusBar({
   // the pill holds work back for its show delay.
   const derivativeJobs = useDerivativeJobsStore((s) => Object.keys(s.jobs).length);
 
+  // The unseen count rises with each error; the announcement names the error
+  // and the count the log line now shows.
   useEffect(() => {
     if (latest && latest.level === "error") {
-      setAnnounce(
-        `${t("status_bar.announce_error_prefix")}: ${renderLogMessage(latest, t)}`,
-      );
+      const { unseenErrors: count } = useLogStore.getState();
+      const message = `${t("status_bar.announce_error_prefix")}: ${renderLogMessage(latest, t)}`;
+      setAnnounce(count > 0 ? `${message}. ${t("status_bar.unseen_errors", { count })}` : message);
     }
   }, [latest, t]);
 
@@ -81,86 +76,58 @@ export function StatusBar({
     saveFailureAnnounced.current = saveFailure !== null;
   }, [saveFailure, t]);
 
-  const logsHint = errorCount > 0
-    ? t("status_bar.toggle_hint_errors", { count: errorCount })
-    : t("status_bar.toggle_hint");
+  const message = latest ? renderLogMessage(latest, t) : t("status_bar.empty");
+  const logLabel = [
+    unseenErrors > 0 ? t("status_bar.unseen_errors", { count: unseenErrors }) : null,
+    message,
+    t(logsOpen ? "status_bar.close_log" : "status_bar.open_log"),
+  ].filter(Boolean).join(" — ");
 
   return (
     <footer
       className="status-bar"
       data-derivative-jobs={derivativeJobs}
-      role="status"
       aria-label={t("status_bar.label")}
     >
-      <div className="status-bar-left">
+      {/* The whole left side is one button: the latest line opens the log. */}
+      <button
+        type="button"
+        className="status-bar-log"
+        data-testid="status-bar-log"
+        onClick={onToggleLogs}
+        aria-expanded={logsOpen}
+        aria-label={logLabel}
+        title={message}
+      >
+        {unseenErrors > 0 ? (
+          <span className="status-bar-errors" data-testid="status-bar-errors" aria-hidden="true">
+            {unseenErrors}
+          </span>
+        ) : latest ? (
+          <LevelDot level={latest.level} />
+        ) : null}
         {latest ? (
           <>
-            <LevelDot level={latest.level} />
             <span className="status-bar-time">{formatTime(latest.ts)}</span>
-            {/* Before the message, as the console row has it: after it, the
-                message's flex pushed the pill against the right-side badges. */}
+            {/* Before the message, as the console row has it. */}
             <SourcePill entry={latest} />
-            <span
-              className="status-bar-message"
-              title={renderLogMessage(latest, t)}
-            >
-              {renderLogMessage(latest, t)}
-            </span>
+            <span className="status-bar-message">{message}</span>
           </>
         ) : (
-          <span className="status-bar-empty">{t("status_bar.empty")}</span>
+          <span className="status-bar-message status-bar-empty">{message}</span>
         )}
-      </div>
+        <AppIcon
+          icon={logsOpen ? ChevronDownIcon : ChevronUpIcon}
+          size="caption"
+          className="status-bar-log-chevron"
+          aria-hidden
+        />
+      </button>
       <div className="status-bar-right">
-        {backgroundExport && <ExportProgressPill state={backgroundExport} />}
-        <WorkPill />
-        {unreviewedCount > 0 && (
-          <button
-            type="button"
-            className="status-bar-badge status-bar-badge-review"
-            data-testid="status-bar-review"
-            onClick={() => {
-              useAgentActivity.setState({ tab: "changes" });
-              void getCommand("openAgentPanel")?.run();
-            }}
-            title={t("changes.status_hint", { count: unreviewedCount })}
-            aria-label={t("changes.status_hint", { count: unreviewedCount })}
-          >
-            {t("changes.status", { count: unreviewedCount })}
-          </button>
-        )}
-        <SaveStatusBadge onOpen={onOpenSaveStatus} />
-        {notices.length > 0 && onOpenSystemStatus && (
-          <button
-            type="button"
-            className={`system-status-trigger system-status-${highestNoticeLevel(notices)}`}
-            onClick={onOpenSystemStatus}
-            title={t("system_status.trigger_hint", { count: notices.length })}
-            aria-label={t("system_status.trigger_hint", { count: notices.length })}
-          >
-            <SystemNoticeIcon level={highestNoticeLevel(notices)} />
-            {t("system_status.trigger", { count: notices.length })}
-          </button>
-        )}
-        <UpdateIndicator />
-        {/* Errors open the log, so their count rides on its toggle rather
-            than a badge of its own; it stays until the log is cleared. */}
-        <button
-          type="button"
-          className="status-bar-logs-toggle"
-          onClick={onToggleLogs}
-          title={logsHint}
-          aria-label={logsHint}
-          disabled={!onToggleLogs}
-        >
-          {t("status_bar.toggle_label")}
-          {errorCount > 0 && (
-            <span className="status-bar-logs-errors" data-testid="status-bar-errors" aria-hidden="true">
-              <AppIcon icon={OctagonAlertIcon} size="label" aria-hidden />
-              {errorCount}
-            </span>
-          )}
-        </button>
+        <WorkPill backgroundExport={backgroundExport} />
+        <NotSavedPill actions={saveActions} />
+        <span className="status-bar-divider" aria-hidden="true" />
+        <NotificationBell notices={notices} onOpenSettings={onOpenSettings} />
       </div>
       <div
         className="sr-only"
@@ -174,24 +141,11 @@ export function StatusBar({
   );
 }
 
-function highestNoticeLevel(notices: AppNotice[]): AppNotice["level"] {
-  if (notices.some((notice) => notice.level === "error")) return "error";
-  if (notices.some((notice) => notice.level === "warn")) return "warn";
-  return "info";
-}
-
-function SystemNoticeIcon({ level }: { level: AppNotice["level"] }) {
-  if (level === "error") return <AppIcon icon={OctagonAlertIcon} size="label" aria-hidden />;
-  if (level === "warn") return <AppIcon icon={AlertTriangleIcon} size="label" aria-hidden />;
-  return <AppIcon icon={InfoIcon} size="label" aria-hidden />;
-}
-
 function LevelDot({ level }: { level: LogLevel }) {
   return (
     <span
       className={`status-bar-level-dot level-${level}`}
       aria-hidden="true"
-      title={level}
     />
   );
 }

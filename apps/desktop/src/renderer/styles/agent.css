@@ -76,10 +76,15 @@
    bar's first row, so the visible band is a row shorter than the box and
    the pill lands up to half a device pixel high. Deliberately left there. */
 .agent-titlebar .agent-exit-button,
-.agent-titlebar .status-bar-badge {
+.agent-titlebar .status-bar-slot {
   align-self: center;
   height: calc(22 * var(--ui-px));
   padding-block: 0;
+}
+
+/* The bell's dot is ringed in the surface it sits on. */
+.agent-titlebar .status-bell-dot {
+  box-shadow: 0 0 0 calc(2 * var(--ui-px)) var(--background);
 }
 
 /* This row has no padding for the negative margins to cancel — but keep the

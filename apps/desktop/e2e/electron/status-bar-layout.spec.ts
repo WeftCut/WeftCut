@@ -1,44 +1,50 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Locator, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver'
 import type { AgentActivity, AgentActivitySnapshot, AgentActivityUpdate } from '../../src/shared/agent-activity'
 import { COMPUTE_JOBS_EVENT, type ComputeJobsUpdate } from '../../src/shared/compute-jobs'
+import { LAYOUT_THEME_IDS } from '../../src/shared/layout-theme'
 import { SAVE_STATUS_EVENT, type SaveStatus } from '../../src/shared/save-status'
 import enUS from '../../src/renderer/i18n/locales/en-US'
 import zhCN from '../../src/renderer/i18n/locales/zh-CN'
 
-// Every right-side status-bar item at once, at the main window's minimum size,
-// in both UI languages: the bar keeps them on its one row, and the left message
-// truncates. Whether they fit the bar's width is recorded, not asserted (see
-// the assertions). Then agent mode, whose titlebar carries the same Not saved
-// badge beside the exit button and the caption buttons: one row, inside the
-// bar, no overlaps. The work pill's popover, open, stays inside the window.
-// Layout properties only, never pixels; screenshots of both bars and the
-// popover are attached for a human to look at.
+// Every status-bar item at once, at each layout theme's minimum window size,
+// in both UI languages: the log line on the left (with its unseen-error count)
+// gives way and truncates, and the right group (the work pill, Not saved, the
+// bell) keeps its one row inside the bar, each item whole, none overlapping.
+// Each popover (work, Not saved, the bell's notification center), open, stays
+// inside the window above the bar, and opening one closes the other. Then agent
+// mode, whose titlebar carries the same Not saved pill and bell beside the exit
+// button and the caption buttons: one row, inside the bar, no overlaps, and
+// both popovers drop down inside the window. Layout properties only, never
+// pixels; screenshots and boxes are attached for a human to look at.
+//
+// A theme's minimum is capped by the display's work area (layout-theme.spec.ts),
+// so the large themes on a small runner display are the tightest case: the
+// largest text in the narrowest window.
 //
 // Each item is raised through the boundary that raises it in the product: an
-// agent's edit for the review count, a log row for the error count, main's own
+// agent's edit for the review row, a log row for the error count, main's own
 // events for the pushed state (jobs, agent activity, notices, save status),
-// and main's update-status handler for the update offer.
+// and main's update-status handler for the update row.
 
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 }
 const LOCALES = { 'en-US': enUS, 'zh-CN': zhCN } as const
 
-/** The right side's items, by the selector each renders with. */
+/** The right group's items, by the selector each renders with. */
 const RIGHT_ITEMS = {
   work: '[data-testid="status-bar-work"]',
-  review: '[data-testid="status-bar-review"]',
-  errors: '[data-testid="status-bar-errors"]',
-  notSaved: '[data-testid="save-status-badge"]',
-  system: '.system-status-trigger',
-  update: '.status-bar-update',
-  logs: '.status-bar-logs-toggle',
+  notSaved: '[data-testid="not-saved-pill"]',
+  bell: '[data-testid="status-bar-bell"]',
 } as const
 
-/** Long enough to overflow the left side at any window size. */
+/** Long enough to overflow the log line at any window size. */
 const LONG_MESSAGE = 'Layout probe: ' + 'a status message far longer than the bar can show '.repeat(8)
+
+/** The one notice raised here; at warn it is the most severe item the bell lists. */
+const NOTICE = { level: 'warn', code: 'keyring_unavailable' } as const
 
 async function sendToRenderer(app: Awaited<ReturnType<typeof launchApp>>['app'], events: Array<[string, unknown]>) {
   await app.evaluate(({ BrowserWindow }, list) => {
@@ -53,10 +59,38 @@ async function connectAgent(page: Page): Promise<Client> {
   return client
 }
 
+interface PopoverBox {
+  left: number; right: number; top: number; bottom: number
+  viewWidth: number; viewHeight: number
+  /** Content wider than the popover: a row that does not wrap is cut off. */
+  overflowsX: boolean
+}
+
+function popoverBox(popover: Locator): Promise<PopoverBox> {
+  return popover.evaluate((el) => {
+    const r = el.getBoundingClientRect()
+    return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, viewWidth: window.innerWidth, viewHeight: window.innerHeight,
+      overflowsX: el.scrollWidth > el.clientWidth + 1 }
+  })
+}
+
+/** Inside the window, on the side of `edge` it opens toward, its content whole. */
+function expectPopoverPlaced(name: string, box: PopoverBox, edge: { above: number } | { below: number }) {
+  const numbers = JSON.stringify({ ...box, ...edge })
+  expect(box.left, `${name} starts inside the window: ${numbers}`).toBeGreaterThanOrEqual(-0.5)
+  expect(box.right, `${name} ends inside the window: ${numbers}`).toBeLessThanOrEqual(box.viewWidth + 0.5)
+  expect(box.top, `${name} opens below the window's top: ${numbers}`).toBeGreaterThanOrEqual(-0.5)
+  expect(box.bottom, `${name} ends above the window's bottom: ${numbers}`).toBeLessThanOrEqual(box.viewHeight + 0.5)
+  if ('above' in edge) expect(box.bottom, `${name} sits above the status bar: ${numbers}`).toBeLessThanOrEqual(edge.above + 0.5)
+  else expect(box.top, `${name} drops below the titlebar: ${numbers}`).toBeGreaterThanOrEqual(edge.below - 0.5)
+  expect(box.overflowsX, `${name} shows its rows whole, with no sideways scroll: ${numbers}`).toBe(false)
+}
+
 for (const locale of Object.keys(LOCALES) as Array<keyof typeof LOCALES>) {
-  test(`every right-side status bar item keeps one row at the minimum window (${locale})`, async ({}, testInfo) => {
-    test.setTimeout(150_000)
+  test(`the status bar and its popovers fit every layout theme's minimum window (${locale})`, async ({}, testInfo) => {
+    test.setTimeout(150_000 + LAYOUT_THEME_IDS.length * 45_000)
     const { app, page } = await launchApp({ locale })
+    const strings = LOCALES[locale]
     let client: Client | null = null
     try {
       await newProject(page, { parentFolder: tmpDir('weftcut-status-layout-'), name: 'status-layout', canvas: CANVAS })
@@ -72,7 +106,6 @@ for (const locale of Object.keys(LOCALES) as Array<keyof typeof LOCALES>) {
       await expect(page.locator('.agent-mode-shell')).toBeVisible()
       await page.locator('.agent-exit-button').click()
       await expect(page.locator('.agent-mode-shell')).toHaveCount(0)
-      await expect(page.locator(RIGHT_ITEMS.review)).toBeVisible()
 
       // State main pushes: a clip job, a derivative job, a running agent call,
       // a system notice, and a project that is not being saved. Revisions far
@@ -96,151 +129,208 @@ for (const locale of Object.keys(LOCALES) as Array<keyof typeof LOCALES>) {
         [COMPUTE_JOBS_EVENT, jobs],
         ['media:job_started', { media_id: 'layout-probe', kind: 'proxy' }],
         ['agent_activity:changed', activity],
-        ['app:notices', [{ level: 'warn', code: 'keyring_unavailable' }]],
+        ['app:notices', [NOTICE]],
         [SAVE_STATUS_EVENT, notSaved],
       ])
-      // An update on offer: main's own status handler answers it; the indicator polls.
+      // An update on offer: main's own status handler answers it; the bell polls.
       await app.evaluate(({ ipcMain }) => {
         ipcMain.removeHandler('updates:status')
         ipcMain.handle('updates:status', () => ({ phase: 'available', version: '99.0.0' }))
       })
 
-      // The minimum size main enforces for this window (mainWindowGeometryDefaults
-      // for the active layout preset — the default one in a fresh profile).
+      const bar = page.locator('.status-bar')
+      const workPopover = page.locator('.work-pill-details')
+      const notSavedPopover = page.getByTestId('not-saved-details')
+      const attention = page.getByTestId('attention-center')
       const win = await app.browserWindow(page)
-      const [minWidth, minHeight] = await win.evaluate((w) => {
-        if (w.isFullScreen()) w.setFullScreen(false)
-        if (w.isMaximized()) w.unmaximize()
-        const min = w.getMinimumSize()
-        w.setSize(min[0]!, min[1]!)
-        return min as [number, number]
-      })
-      await expect.poll(() => win.evaluate((w) => w.getSize().join('x'))).toBe(`${minWidth}x${minHeight}`)
-      const [contentWidth, contentHeight] = await win.evaluate((w) => w.getContentSize() as [number, number])
-      const size = { minWidth, minHeight, contentWidth, contentHeight }
-      await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(contentWidth)
 
-      // The error last, so the bar's latest message is the long one (errors stick).
-      await invokeCmd(page, 'log_emit', { input: { level: 'error', category: { kind: 'System' }, source: { kind: 'System' }, message: LONG_MESSAGE } })
-      for (const selector of Object.values(RIGHT_ITEMS)) await expect(page.locator(`.status-bar ${selector}`)).toBeVisible()
-      await expect(page.locator('.status-bar-message')).toHaveText(LONG_MESSAGE)
+      for (const theme of LAYOUT_THEME_IDS) {
+        const tag = `${locale}-${theme}`
+        await invokeCmd(page, 'app_settings_set', { patch: { layout_theme: theme } })
+        await expect(page.locator('html')).toHaveAttribute('data-layout-theme', theme)
 
-      const shot = testInfo.outputPath(`status-bar-${locale}.png`)
-      await page.locator('.status-bar').screenshot({ path: shot })
-      await testInfo.attach(`status-bar-${locale}`, { path: shot, contentType: 'image/png' })
+        // The minimum size main enforces for this window under this theme
+        // (mainWindowGeometryDefaults, capped by the display's work area).
+        const [minWidth, minHeight] = await win.evaluate((w) => {
+          if (w.isFullScreen()) w.setFullScreen(false)
+          if (w.isMaximized()) w.unmaximize()
+          const min = w.getMinimumSize()
+          w.setSize(min[0]!, min[1]!)
+          return min as [number, number]
+        })
+        await expect.poll(() => win.evaluate((w) => w.getSize().join('x'))).toBe(`${minWidth}x${minHeight}`)
+        const [contentWidth, contentHeight] = await win.evaluate((w) => w.getContentSize() as [number, number])
+        const size = { theme, minWidth, minHeight, contentWidth, contentHeight }
+        await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(contentWidth)
 
-      const layout = await page.evaluate((items) => {
-        const rect = (el: Element) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom } }
-        const bar = document.querySelector('.status-bar')!
-        const message = document.querySelector<HTMLElement>('.status-bar-message')!
-        return {
-          bar: rect(bar),
-          left: rect(bar.querySelector('.status-bar-left')!),
-          right: rect(bar.querySelector('.status-bar-right')!),
-          items: Object.fromEntries(Object.entries(items).map(([name, selector]) => {
-            const el = bar.querySelector(selector)!
-            // Every line box the item's content lays out on: wrapped content
-            // has one starting below another's bottom.
-            const range = document.createRange()
-            range.selectNodeContents(el)
-            const lines = [...range.getClientRects()].filter((r) => r.width > 0 && r.height > 0)
-            const wraps = lines.length > 1 && Math.max(...lines.map((r) => r.top)) >= Math.min(...lines.map((r) => r.bottom))
-            return [name, { ...rect(el), wraps }]
-          })),
-          message: { scrollWidth: message.scrollWidth, clientWidth: message.clientWidth, textOverflow: getComputedStyle(message).textOverflow },
+        // The error last, so the log line shows the long message.
+        await invokeCmd(page, 'log_emit', { input: { level: 'error', category: { kind: 'System' }, source: { kind: 'System' }, message: LONG_MESSAGE } })
+        for (const selector of Object.values(RIGHT_ITEMS)) await expect(bar.locator(selector)).toBeVisible()
+        await expect(bar.getByTestId('status-bar-log').getByTestId('status-bar-errors')).toBeVisible()
+        await expect(bar.locator('.status-bar-message')).toHaveText(LONG_MESSAGE)
+        // The bell's dot is the most severe item it lists: the warn notice.
+        await expect(bar.getByTestId('status-bar-bell')).toHaveAttribute('data-level', NOTICE.level)
+
+        const shot = testInfo.outputPath(`status-bar-${tag}.png`)
+        await bar.screenshot({ path: shot })
+        await testInfo.attach(`status-bar-${tag}`, { path: shot, contentType: 'image/png' })
+
+        const layout = await page.evaluate((items) => {
+          const rect = (el: Element) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom } }
+          const footer = document.querySelector('.status-bar')!
+          const message = footer.querySelector<HTMLElement>('.status-bar-message')!
+          return {
+            bar: rect(footer),
+            log: rect(footer.querySelector('[data-testid="status-bar-log"]')!),
+            right: rect(footer.querySelector('.status-bar-right')!),
+            items: Object.fromEntries(Object.entries(items).map(([name, selector]) => {
+              const el = footer.querySelector<HTMLElement>(selector)!
+              // Every line box the item's content lays out on: wrapped content
+              // has one starting below another's bottom.
+              const range = document.createRange()
+              range.selectNodeContents(el)
+              const lines = [...range.getClientRects()].filter((r) => r.width > 0 && r.height > 0)
+              const wraps = lines.length > 1 && Math.max(...lines.map((r) => r.top)) >= Math.min(...lines.map((r) => r.bottom))
+              return [name, { ...rect(el), wraps, clipped: el.scrollWidth > el.clientWidth + 1 }]
+            })),
+            message: { scrollWidth: message.scrollWidth, clientWidth: message.clientWidth, textOverflow: getComputedStyle(message).textOverflow },
+          }
+        }, RIGHT_ITEMS)
+        await testInfo.attach(`status-bar-${tag}-layout`, { body: JSON.stringify({ size, ...layout }, null, 2), contentType: 'application/json' })
+
+        // The three popovers in turn, each captured before any assertion so
+        // the screenshots survive a failure. Opening one closes the other;
+        // Escape and a second click on the trigger close too.
+        const capture = async (name: string) => {
+          const path = testInfo.outputPath(`${name}-${tag}.png`)
+          await page.screenshot({ path, scale: 'css' })
+          await testInfo.attach(`${name}-${tag}`, { path, contentType: 'image/png' })
         }
-      }, RIGHT_ITEMS)
-      await testInfo.attach(`status-bar-${locale}-layout`, { body: JSON.stringify({ size, ...layout }, null, 2), contentType: 'application/json' })
 
-      // The work pill's popover at the same size: the clip job, the agent call
-      // and the derivative job each under their own group, the whole popover
-      // inside the window. Captured here, asserted below with the bar.
-      await page.locator(RIGHT_ITEMS.work).click()
-      const popover = page.locator('.work-pill-details')
-      await expect(popover).toBeVisible()
-      await expect(popover.locator('.work-group')).toHaveCount(3)
-      const popoverShot = testInfo.outputPath(`work-popover-${locale}.png`)
-      await page.screenshot({ path: popoverShot })
-      await testInfo.attach(`work-popover-${locale}`, { path: popoverShot, contentType: 'image/png' })
-      const popoverBox = await popover.evaluate((el) => {
-        const r = el.getBoundingClientRect()
-        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, viewWidth: window.innerWidth, viewHeight: window.innerHeight }
-      })
-      await page.keyboard.press('Escape')
-      await expect(popover).toHaveCount(0)
+        // Work: the clip job, the agent call and the derivative job, each under its own group.
+        await bar.locator(RIGHT_ITEMS.work).click()
+        await expect(workPopover).toBeVisible()
+        await expect(workPopover.locator('.work-group')).toHaveCount(3)
+        await capture('work-popover')
+        const workBox = await popoverBox(workPopover)
+        await page.keyboard.press('Escape')
+        await expect(workPopover).toHaveCount(0)
 
-      // Agent mode at the same size: its titlebar holds every item it can show
-      // at once (the badge, the exit button, the caption buttons off macOS).
-      // Captured before any assertion, so both screenshots survive a failure.
-      await page.locator('.menu-trigger').nth(2).click()
-      await page.locator('.app-menu-item').filter({ hasText: new RegExp(`^${LOCALES[locale].view.enter_agent_mode}$`) }).click()
-      const titlebar = page.locator('.agent-titlebar')
-      await expect(titlebar.getByTestId('save-status-badge')).toBeVisible()
-      await expect(titlebar.locator('.agent-exit-button')).toBeVisible()
-      if (process.platform !== 'darwin') await expect(titlebar.locator('.window-controls')).toBeVisible()
-      const titlebarShot = testInfo.outputPath(`agent-titlebar-${locale}.png`)
-      await titlebar.screenshot({ path: titlebarShot })
-      await testInfo.attach(`agent-titlebar-${locale}`, { path: titlebarShot, contentType: 'image/png' })
-      const agentBar = await page.evaluate(() => {
-        const bar = document.querySelector('.agent-titlebar')!
-        const r = bar.getBoundingClientRect()
-        return {
-          bar: { left: r.left, right: r.right, top: r.top, bottom: r.bottom },
-          items: [...bar.children].map((el) => {
-            const box = el.getBoundingClientRect()
-            const range = document.createRange()
-            range.selectNodeContents(el)
-            const lines = [...range.getClientRects()].filter((l) => l.width > 0 && l.height > 0)
-            const wraps = lines.length > 1 && Math.max(...lines.map((l) => l.top)) >= Math.min(...lines.map((l) => l.bottom))
-            const html = el as HTMLElement
-            return { name: html.dataset.testid ?? html.className, left: box.left, right: box.right, top: box.top, bottom: box.bottom,
-              width: box.width, wraps, clipped: html.scrollWidth > html.clientWidth + 1 }
-          }).filter((item) => item.width > 0),
+        // Not saved: the reason and the three ways out.
+        await bar.locator(RIGHT_ITEMS.notSaved).click()
+        await expect(notSavedPopover).toBeVisible()
+        await expect(notSavedPopover.getByRole('button')).toHaveCount(3)
+        await capture('not-saved-popover')
+        const notSavedBox = await popoverBox(notSavedPopover)
+
+        // The bell, opened over Not saved: the review, the update and the notice.
+        await bar.locator(RIGHT_ITEMS.bell).click()
+        await expect(notSavedPopover).toHaveCount(0)
+        await expect(attention).toBeVisible()
+        for (const key of ['review', 'update', `notice:${NOTICE.code}`]) await expect(attention.locator(`[data-attention="${key}"]`)).toBeVisible()
+        await capture('attention-popover')
+        const attentionBox = await popoverBox(attention)
+        await bar.locator(RIGHT_ITEMS.bell).click()
+        await expect(attention).toHaveCount(0)
+
+        // Agent mode at the same size: its titlebar holds every item it can show
+        // at once (Not saved, the exit button, the bell, the caption buttons off
+        // macOS). Captured before any assertion, so the screenshots survive a failure.
+        await page.locator('.menu-trigger').nth(2).click()
+        await page.locator('.app-menu-item').filter({ hasText: new RegExp(`^${strings.view.enter_agent_mode}$`) }).click()
+        const titlebar = page.locator('.agent-titlebar')
+        await expect(titlebar.getByTestId('not-saved-pill')).toBeVisible()
+        await expect(titlebar.getByTestId('status-bar-bell')).toBeVisible()
+        await expect(titlebar.locator('.agent-exit-button')).toBeVisible()
+        if (process.platform !== 'darwin') await expect(titlebar.locator('.window-controls')).toBeVisible()
+        const titlebarShot = testInfo.outputPath(`agent-titlebar-${tag}.png`)
+        await titlebar.screenshot({ path: titlebarShot })
+        await testInfo.attach(`agent-titlebar-${tag}`, { path: titlebarShot, contentType: 'image/png' })
+        const agentBar = await page.evaluate(() => {
+          const bar = document.querySelector('.agent-titlebar')!
+          const r = bar.getBoundingClientRect()
+          return {
+            bar: { left: r.left, right: r.right, top: r.top, bottom: r.bottom },
+            items: [...bar.children].map((el) => {
+              const box = el.getBoundingClientRect()
+              const range = document.createRange()
+              range.selectNodeContents(el)
+              const lines = [...range.getClientRects()].filter((l) => l.width > 0 && l.height > 0)
+              const wraps = lines.length > 1 && Math.max(...lines.map((l) => l.top)) >= Math.min(...lines.map((l) => l.bottom))
+              const html = el as HTMLElement
+              // A popover anchor is named by the trigger inside it.
+              const name = html.dataset.testid ?? html.querySelector<HTMLElement>('[data-testid]')?.dataset.testid ?? html.className
+              return { name, left: box.left, right: box.right, top: box.top, bottom: box.bottom,
+                width: box.width, wraps, clipped: html.scrollWidth > html.clientWidth + 1 }
+            }).filter((item) => item.width > 0),
+          }
+        })
+        await testInfo.attach(`agent-titlebar-${tag}-layout`, { body: JSON.stringify({ size, ...agentBar }, null, 2), contentType: 'application/json' })
+
+        // Both titlebar popovers drop down, in place: agent mode stays.
+        await titlebar.getByTestId('not-saved-pill').click()
+        await expect(notSavedPopover).toBeVisible()
+        await capture('agent-not-saved-popover')
+        const agentNotSavedBox = await popoverBox(notSavedPopover)
+        await titlebar.getByTestId('status-bar-bell').click()
+        await expect(notSavedPopover).toHaveCount(0)
+        await expect(attention).toBeVisible()
+        await capture('agent-attention-popover')
+        const agentAttentionBox = await popoverBox(attention)
+        await page.keyboard.press('Escape')
+        await expect(attention).toHaveCount(0)
+        await expect(page.locator('.agent-mode-shell')).toBeVisible()
+        await page.locator('.agent-exit-button').click()
+        await expect(page.locator('.agent-mode-shell')).toHaveCount(0)
+
+        // The status bar: one row, the right group whole and inside the bar,
+        // the log line giving way by truncating its message.
+        const numbers = JSON.stringify({ size, bar: layout.bar, log: layout.log, right: layout.right })
+        const centre = (r: { top: number; bottom: number }) => (r.top + r.bottom) / 2
+        const rowCentre = centre(layout.items.bell)
+        expect(layout.right.left, `[${tag}] the right group starts inside the bar: ${numbers}`).toBeGreaterThanOrEqual(layout.bar.left - 0.5)
+        expect(layout.right.right, `[${tag}] the right group ends inside the bar: ${numbers}`).toBeLessThanOrEqual(layout.bar.right + 0.5)
+        expect(layout.log.right, `[${tag}] the log line ends before the right group: ${numbers}`).toBeLessThanOrEqual(layout.right.left + 0.5)
+        for (const [name, item] of Object.entries(layout.items)) {
+          expect(item.top, `[${tag}] ${name} inside the bar's height: ${numbers}`).toBeGreaterThanOrEqual(layout.bar.top - 0.5)
+          expect(item.bottom, `[${tag}] ${name} inside the bar's height: ${numbers}`).toBeLessThanOrEqual(layout.bar.bottom + 0.5)
+          expect(Math.abs(centre(item) - rowCentre), `[${tag}] ${name} shares the bar's one row`).toBeLessThanOrEqual(1)
+          expect(item.wraps, `[${tag}] ${name} keeps its content on one line`).toBe(false)
+          expect(item.clipped, `[${tag}] ${name} shows its whole content: ${numbers}`).toBe(false)
         }
-      })
-      await testInfo.attach(`agent-titlebar-${locale}-layout`, { body: JSON.stringify({ size, ...agentBar }, null, 2), contentType: 'application/json' })
+        const rightOrdered = Object.entries(layout.items).sort(([, a], [, b]) => a.left - b.left)
+        for (let i = 1; i < rightOrdered.length; i++) {
+          const [prevName, prev] = rightOrdered[i - 1]!
+          const [name, item] = rightOrdered[i]!
+          expect(item.left, `[${tag}] ${prevName} overlaps ${name}: ${numbers}`).toBeGreaterThanOrEqual(prev.right - 0.5)
+        }
+        expect(layout.message.textOverflow).toBe('ellipsis')
+        expect(layout.message.scrollWidth, `[${tag}] the log message truncates rather than pushing items out`).toBeGreaterThan(layout.message.clientWidth)
 
-      const numbers = JSON.stringify({ size, bar: layout.bar, left: layout.left, right: layout.right })
-      const centre = (r: { top: number; bottom: number }) => (r.top + r.bottom) / 2
-      const rowCentre = centre(layout.items.logs)
-      // Not asserted: that the right group fits the bar's width. With every
-      // item at once it does not at the minimum size, with or without the
-      // Not saved badge; the status bar's layout is due a redesign, and the
-      // attached screenshot and boxes record how far it overflows.
-      if (layout.right.right > layout.bar.right + 0.5) {
-        testInfo.annotations.push({ type: 'known overflow', description: `right group ends at ${layout.right.right}, bar at ${layout.bar.right}` })
-      }
-      for (const [name, item] of Object.entries(layout.items)) {
-        expect(item.top, `${name} inside the bar's height: ${numbers}`).toBeGreaterThanOrEqual(layout.bar.top - 0.5)
-        expect(item.bottom, `${name} inside the bar's height: ${numbers}`).toBeLessThanOrEqual(layout.bar.bottom + 0.5)
-        expect(Math.abs(centre(item) - rowCentre), `${name} shares the bar's one row`).toBeLessThanOrEqual(1)
-        expect(item.wraps, `${name} keeps its content on one line`).toBe(false)
-      }
-      expect(layout.message.textOverflow).toBe('ellipsis')
-      expect(layout.message.scrollWidth, 'the left message truncates rather than pushing items out').toBeGreaterThan(layout.message.clientWidth)
-      const popoverNumbers = JSON.stringify(popoverBox)
-      expect(popoverBox.left, `the work popover starts inside the window: ${popoverNumbers}`).toBeGreaterThanOrEqual(0)
-      expect(popoverBox.right, `the work popover ends inside the window: ${popoverNumbers}`).toBeLessThanOrEqual(popoverBox.viewWidth)
-      expect(popoverBox.top, `the work popover opens below the window's top: ${popoverNumbers}`).toBeGreaterThanOrEqual(0)
-      expect(popoverBox.bottom, `the work popover sits above the bar: ${popoverNumbers}`).toBeLessThanOrEqual(layout.bar.top + 0.5)
+        expectPopoverPlaced(`[${tag}] the work popover`, workBox, { above: layout.bar.top })
+        expectPopoverPlaced(`[${tag}] the Not saved popover`, notSavedBox, { above: layout.bar.top })
+        expectPopoverPlaced(`[${tag}] the notification center`, attentionBox, { above: layout.bar.top })
 
-      // The titlebar has no text meant to truncate: its free space (the drag
-      // strip on the left) is what gives way, so every item keeps its full
-      // content, inside the bar, on one row, overlapping none of the others.
-      const agentNumbers = JSON.stringify({ size, ...agentBar })
-      const agentRow = (agentBar.bar.top + agentBar.bar.bottom) / 2
-      for (const item of agentBar.items) {
-        expect(item.left, `${item.name} starts inside the titlebar: ${agentNumbers}`).toBeGreaterThanOrEqual(agentBar.bar.left - 0.5)
-        expect(item.right, `${item.name} ends inside the titlebar: ${agentNumbers}`).toBeLessThanOrEqual(agentBar.bar.right + 0.5)
-        expect(item.top, `${item.name} inside the titlebar's height`).toBeGreaterThanOrEqual(agentBar.bar.top - 0.5)
-        expect(item.bottom, `${item.name} inside the titlebar's height`).toBeLessThanOrEqual(agentBar.bar.bottom + 0.5)
-        expect(Math.abs(centre(item) - agentRow), `${item.name} shares the titlebar's one row: ${agentNumbers}`).toBeLessThanOrEqual(1)
-        expect(item.wraps, `${item.name} keeps its content on one line`).toBe(false)
-        expect(item.clipped, `${item.name} shows its whole content: ${agentNumbers}`).toBe(false)
-      }
-      const ordered = [...agentBar.items].sort((a, b) => a.left - b.left)
-      for (let i = 1; i < ordered.length; i++) {
-        expect(ordered[i]!.left, `${ordered[i - 1]!.name} overlaps ${ordered[i]!.name}: ${agentNumbers}`).toBeGreaterThanOrEqual(ordered[i - 1]!.right - 0.5)
+        // The titlebar has no text meant to truncate: its free space (the drag
+        // strip on the left) is what gives way, so every item keeps its full
+        // content, inside the bar, on one row, overlapping none of the others.
+        const agentNumbers = JSON.stringify({ size, ...agentBar })
+        const agentRow = (agentBar.bar.top + agentBar.bar.bottom) / 2
+        for (const item of agentBar.items) {
+          expect(item.left, `[${tag}] ${item.name} starts inside the titlebar: ${agentNumbers}`).toBeGreaterThanOrEqual(agentBar.bar.left - 0.5)
+          expect(item.right, `[${tag}] ${item.name} ends inside the titlebar: ${agentNumbers}`).toBeLessThanOrEqual(agentBar.bar.right + 0.5)
+          expect(item.top, `[${tag}] ${item.name} inside the titlebar's height`).toBeGreaterThanOrEqual(agentBar.bar.top - 0.5)
+          expect(item.bottom, `[${tag}] ${item.name} inside the titlebar's height`).toBeLessThanOrEqual(agentBar.bar.bottom + 0.5)
+          expect(Math.abs(centre(item) - agentRow), `[${tag}] ${item.name} shares the titlebar's one row: ${agentNumbers}`).toBeLessThanOrEqual(1)
+          expect(item.wraps, `[${tag}] ${item.name} keeps its content on one line`).toBe(false)
+          expect(item.clipped, `[${tag}] ${item.name} shows its whole content: ${agentNumbers}`).toBe(false)
+        }
+        const ordered = [...agentBar.items].sort((a, b) => a.left - b.left)
+        for (let i = 1; i < ordered.length; i++) {
+          expect(ordered[i]!.left, `[${tag}] ${ordered[i - 1]!.name} overlaps ${ordered[i]!.name}: ${agentNumbers}`).toBeGreaterThanOrEqual(ordered[i - 1]!.right - 0.5)
+        }
+        expectPopoverPlaced(`[${tag}] agent mode's Not saved popover`, agentNotSavedBox, { below: agentBar.bar.bottom })
+        expectPopoverPlaced(`[${tag}] agent mode's notification center`, agentAttentionBox, { below: agentBar.bar.bottom })
       }
     } finally {
       await client?.close().catch(() => {})

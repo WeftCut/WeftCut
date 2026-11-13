@@ -796,7 +796,7 @@ app.whenReady().then(async () => {
   const { encryptionAvailable } = await import('./keys.js')
   if (!encryptionAvailable()) {
     console.warn('[main] OS keyring unavailable — cloud API keys persist in PLAINTEXT (cloud_keys.json). Secure your userData dir or install a keyring (libsecret/kwallet).')
-    // Surfaced through the renderer's system-status entry (pulled via app:notices).
+    // Listed in the renderer's notification center (pulled via app:notices).
     startupNotices.push({ level: 'warn', code: 'keyring_unavailable' })
   }
 
@@ -1354,6 +1354,21 @@ app.whenReady().then(async () => {
     )
   }
   syncSkillNotice()
+  /// Forget dismissals whose notice no longer stands, so a notice that comes
+  /// back later shows again. Runs wherever the notice set settles: here at
+  /// startup, before the first window exists, and after each skill reinstall.
+  /// The startup call must stay below every `startupNotices.push`: a notice
+  /// pushed after it would lose its dismissal on every launch.
+  const pruneDismissedNotices = () => {
+    try {
+      const pruned = appSettings.pruneDismissedNotices(startupNotices.map((n) => n.code))
+      if (pruned) emitToRenderer('app_settings:changed', pruned)
+    } catch (error) {
+      // A failed write only keeps a stale dismissal; it must not stop startup.
+      console.warn('[app-settings] prune dismissed notices:', error)
+    }
+  }
+  pruneDismissedNotices()
   const connectInfo = () => ({ cli_path: cliPath, skills })
   if (!app.isPackaged && cliPath) {
     console.log(`[mcp] stdio connect: ${JSON.stringify({ mcpServers: { weftcut: stdioConnectConfig(cliPath) } })}`)
@@ -1369,8 +1384,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('reinstall_skills', () => {
     skills = installSkills(skillsSource)
     syncSkillNotice()
+    pruneDismissedNotices()
     // The renderer pulled its notice list once, on mount. Without this it would
-    // keep showing the System-status card for a fault that no longer exists.
+    // keep listing a fault that no longer exists in its notification center.
     emitToRenderer('app:notices', startupNotices)
     return skills
   })

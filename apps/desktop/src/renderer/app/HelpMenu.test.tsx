@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Real i18n (same side-effect import AppMenuBar pulls in): the assertions
 // below run against the en-US strings, so a missing help.* key fails here.
 import "../i18n";
 import { HelpMenu } from "./HelpMenu";
+import { useAppSettingsStore } from "../settings/appSettingsStore";
+import { APP_SETTINGS_DEFAULTS } from "../../shared/app-settings";
 import {
   ISSUES_URL,
   LICENSE_URL,
@@ -38,7 +40,10 @@ function stubApi() {
   return { open, versions, check };
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  useAppSettingsStore.setState({ settings: APP_SETTINGS_DEFAULTS });
+});
 
 describe("HelpMenu", () => {
   it("checks updates inside the app and offers the release page", async () => {
@@ -114,5 +119,49 @@ describe("HelpMenu", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Project Page" }));
     expect(open).toHaveBeenCalledWith(REPO_URL);
+  });
+
+  describe("an offered update", () => {
+    const offer = (status: { phase: string; version?: string }) => {
+      stubApi();
+      const read = vi.fn().mockResolvedValue(status);
+      (window as unknown as { api: { updates: Record<string, unknown> } }).api.updates.status = read;
+      return read;
+    };
+    /** Past the first status read and the render it causes. */
+    const statusSeen = async (read: ReturnType<typeof vi.fn>) => {
+      await waitFor(() => expect(read).toHaveBeenCalled());
+      await act(async () => {});
+    };
+    const helpLabel = () => screen.getByRole("button", { name: /Help/ }).querySelector(".menu-trigger-label")!;
+
+    it("marks the menu and its Check for Updates row", async () => {
+      offer({ phase: "available", version: "1.2.4" });
+      render(<HelpMenu />);
+      await waitFor(() => expect(helpLabel().classList).toContain("is-marked"));
+      // The dot is visual; assistive technology hears the same news.
+      const help = screen.getByRole("button", { name: "Help, A new version is available" });
+      fireEvent.click(help);
+      const label = await screen.findByText("Check for Updates…");
+      expect(label.classList).toContain("is-marked");
+      expect(screen.getByRole("menuitem", { name: "Check for Updates…, A new version is available" })).toBeTruthy();
+    });
+
+    it("leaves the menu unmarked with nothing offered", async () => {
+      const read = offer({ phase: "current" });
+      render(<HelpMenu />);
+      await statusSeen(read);
+      expect(helpLabel().classList).not.toContain("is-marked");
+    });
+
+    it("leaves the menu unmarked for a skipped version, whose row stays one click away", async () => {
+      useAppSettingsStore.setState((s) => ({ settings: { ...s.settings, skipped_update_version: "1.2.4" } }));
+      const read = offer({ phase: "available", version: "1.2.4" });
+      render(<HelpMenu />);
+      await statusSeen(read);
+      expect(helpLabel().classList).not.toContain("is-marked");
+      fireEvent.click(screen.getByRole("button", { name: /Help/ }));
+      expect((await screen.findByText("Check for Updates…")).classList).not.toContain("is-marked");
+    });
   });
 });
