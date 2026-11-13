@@ -111,7 +111,9 @@
   font-variant-numeric: tabular-nums;
 }
 .preview-grid-axis { display: inline-flex; align-items: center; gap: calc(2 * var(--ui-px)); }
-.preview-grid-toolbar .preview-grid-count { width: calc(52 * var(--ui-px)); min-width: 0; }
+/* Two centred digits need room beside the 16px hover steppers and 2px inset.
+   56 UI pixels leaves a small gap without shifting the number off centre. */
+.preview-grid-toolbar .preview-grid-count { width: calc(56 * var(--ui-px)); min-width: 0; }
 .preview-grid-toolbar .preview-grid-count .app-input {
   height: var(--preview-control-height);
   padding: 0 calc(4 * var(--ui-px));

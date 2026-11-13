@@ -10,8 +10,10 @@ export interface PreviewGridSettings {
   rows: boolean;
 }
 
+export const GRID_OPACITY_MIN_VISIBLE = 10;
+
 export const GRID_DIVISIONS_MIN = 1;
-export const GRID_DIVISIONS_MAX = 32;
+export const GRID_DIVISIONS_MAX = 64;
 
 export const DEFAULT_PREVIEW_GRID: PreviewGridSettings = {
   visible: false,
@@ -30,9 +32,12 @@ export function readPreviewGridSettings(raw: unknown): PreviewGridSettings {
     typeof value === "number" && Number.isFinite(value)
       ? Math.round(Math.min(max, Math.max(min, value)))
       : fallback;
+  const opacity = clamp(grid.opacity, 0, 100, d.opacity);
   return {
     visible: typeof grid.visible === "boolean" ? grid.visible : d.visible,
-    opacity: clamp(grid.opacity, 0, 100, d.opacity),
+    // Preserve the eye's deliberate hidden state. Any positive opacity must
+    // be legible, including values restored from previously saved settings.
+    opacity: opacity === 0 ? 0 : Math.max(GRID_OPACITY_MIN_VISIBLE, opacity),
     column_divisions: clamp(grid.column_divisions, GRID_DIVISIONS_MIN, GRID_DIVISIONS_MAX, d.column_divisions),
     row_divisions: clamp(grid.row_divisions, GRID_DIVISIONS_MIN, GRID_DIVISIONS_MAX, d.row_divisions),
     columns: typeof grid.columns === "boolean" ? grid.columns : d.columns,

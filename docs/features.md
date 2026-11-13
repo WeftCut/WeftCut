@@ -1161,7 +1161,7 @@ changing geometry or progress.
 **Preview alignment grid:** Quick Actions has separate one-click Grid and
 Canvas Snap toggles, backed by the same commands in the View menu and search
 palette. When Grid is on, the preview's top bar shows independently editable
-`columns × rows` counts (default 3 × 3, 1–32) and per-axis line toggles.
+`columns × rows` counts (default 3 × 3, 1–64) and per-axis line toggles.
 A small eye icon beside the counts mutes/unmutes grid drawing without
 disabling snapping and restores the last nonzero opacity. There is no
 configuration popover, count preset, or equal/independent mode. The preview
@@ -1169,9 +1169,9 @@ header has the same height when Grid is toggled: all preview toolbar
 controls are 24 UI-scaled pixels tall, and narrow dock panels reserve a
 second row for grid controls even while the grid is hidden.
 Grid lines are a non-exported preview overlay; Settings → General → Preview
-contains a 5–100% grid-visibility slider (default 70%). The 0% state is
+contains a 10–100% grid-visibility slider (default 70%). The 0% state is
 reserved for the preview eye button; if currently hidden, Settings shows
-that state and any adjustment restores at least 5% opacity. Visibility
+that state and any adjustment restores at least 10% opacity. Visibility
 controls painting only: at 0% the grid can still snap while Grid and Canvas
 Snap are on. Disabled grid axes contribute no subdivision targets; the separate frame and
 layer targets still work when Canvas Snap is on. Ctrl bypasses snapping during

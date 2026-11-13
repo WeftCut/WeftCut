@@ -8,6 +8,7 @@ import {
   TAIL_SNAP_STRENGTH_MIN_PX,
   type AppSettingsPatch,
 } from "../../shared/app-settings";
+import { GRID_OPACITY_MIN_VISIBLE } from "../../shared/preview-grid";
 import { AppNumberField } from "../components/AppNumberField";
 import { AppSlider } from "../components/AppSlider";
 import { AppSwitch } from "../components/AppSwitch";
@@ -163,7 +164,7 @@ export function GridOpacitySettings({ onError }: { onError: ReportError }) {
   const opacity = usePreviewGrid().opacity;
   // The slider never reaches 0% from a visible grid; the toolbar's eye is
   // the deliberate hide action. Its 0% state remains representable here.
-  const minimum = opacity === 0 ? 0 : 5;
+  const minimum = opacity === 0 ? 0 : GRID_OPACITY_MIN_VISIBLE;
   return (
     <SnapNumber
       label={t("quick_actions.grid_opacity")}
@@ -172,7 +173,7 @@ export function GridOpacitySettings({ onError }: { onError: ReportError }) {
       max={100}
       unit="%"
       slider
-      onSave={(next) => save({ preview_grid: { opacity: Math.max(5, next) } }, onError)}
+      onSave={(next) => save({ preview_grid: { opacity: Math.max(GRID_OPACITY_MIN_VISIBLE, next) } }, onError)}
     />
   );
 }

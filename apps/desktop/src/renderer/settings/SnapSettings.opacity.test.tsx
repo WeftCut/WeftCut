@@ -18,11 +18,11 @@ describe("Grid visibility in Settings", () => {
   beforeEach(() => { state.opacity = 70; save.mockClear(); });
   afterEach(cleanup);
 
-  it("limits visible grid opacity to 5–100%, including the numeric control", () => {
+  it("limits visible grid opacity to 10–100%, including the numeric control", () => {
     render(<GridOpacitySettings onError={vi.fn()} />);
-    expect(screen.getByRole("slider").getAttribute("min")).toBe("5");
+    expect(screen.getByRole("slider").getAttribute("min")).toBe("10");
     expect(screen.getByRole("slider").getAttribute("max")).toBe("100");
-    expect(document.querySelector("input[type=number]")?.getAttribute("min")).toBe("5");
+    expect(document.querySelector("input[type=number]")?.getAttribute("min")).toBe("10");
   });
 
   it("represents the deliberate 0% eye state without losing the minimum on restoration", () => {
@@ -32,17 +32,17 @@ describe("Grid visibility in Settings", () => {
     expect(screen.getByRole("slider").getAttribute("value")).toBe("0");
     state.opacity = 47;
     view.rerender(<GridOpacitySettings onError={vi.fn()} />);
-    expect(screen.getByRole("slider").getAttribute("min")).toBe("5");
+    expect(screen.getByRole("slider").getAttribute("min")).toBe("10");
     expect(screen.getByRole("slider").getAttribute("value")).toBe("47");
   });
 
-  it("clamps typed zero to 5% rather than hiding a visible grid", async () => {
+  it("clamps typed zero to 10% rather than hiding a visible grid", async () => {
     render(<GridOpacitySettings onError={vi.fn()} />);
     const input = screen.getByRole("textbox");
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: "0" } });
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.blur(input);
-    await vi.waitFor(() => expect(save).toHaveBeenCalledWith({ preview_grid: { opacity: 5 } }));
+    await vi.waitFor(() => expect(save).toHaveBeenCalledWith({ preview_grid: { opacity: 10 } }));
   });
 });

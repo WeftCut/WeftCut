@@ -146,6 +146,76 @@ test('Quick Actions toggles the grid; preview toolbar edits columns, rows and ax
   }
 })
 
+test('Enter and Escape both return focus from the grid editor to the canvas', async () => {
+  const { app, page } = await launchApp()
+  try {
+    await startPreview(page, 1280, 720)
+    await page.locator('[data-quick-action="togglePreviewGrid"]').click()
+    const count = page.getByTestId('preview-grid-toolbar').getByLabel('Columns', { exact: true })
+    await count.fill('12')
+    await count.press('Enter')
+    await expect.poll(async () => (await settings(page)).preview_grid.column_divisions).toBe(12)
+    await expect(page.locator('.preview-video')).toBeFocused()
+    // Escape leaves the field and returns to canvas. Whether a preceding edit
+    // has already auto-committed depends on the number field's debounce.
+    await count.focus()
+    await count.press('Escape')
+    await expect(page.locator('.preview-video')).toBeFocused()
+    expect((await settings(page)).preview_grid.column_divisions).toBe(12)
+  } finally {
+    await app.close()
+  }
+})
+
+test('64 subdivisions fit inside compact two-digit grid inputs', async () => {
+  const { app, page } = await launchApp()
+  try {
+    await startPreview(page, 853, 480)
+    await page.locator('[data-quick-action="togglePreviewGrid"]').click()
+    const toolbar = page.getByTestId('preview-grid-toolbar')
+    const columns = toolbar.getByLabel('Columns', { exact: true })
+    const rows = toolbar.getByLabel('Rows', { exact: true })
+    for (const field of [columns, rows]) {
+      const box = await field.boundingBox()
+      expect(box?.width).toBe(56)
+      expect(box?.height).toBe(24)
+      await field.fill('64')
+    }
+    await expect.poll(async () => (await settings(page)).preview_grid.column_divisions).toBe(64)
+    await expect.poll(async () => (await settings(page)).preview_grid.row_divisions).toBe(64)
+    await expect(columns).toHaveValue('64')
+    await expect(rows).toHaveValue('64')
+    // The text stays centred even on hover; the chevrons must not cover either digit.
+    for (const field of [columns, rows]) {
+      await field.hover()
+      const clearance = await field.evaluate((input) => {
+        const fieldBounds = input.getBoundingClientRect()
+        const stepper = input.closest('.app-number-field')?.querySelector('.app-number-steppers')
+        if (!stepper) throw new Error('missing number-field chevrons')
+        const stepperBounds = stepper.getBoundingClientRect()
+        if (stepperBounds.width === 0) throw new Error('number-field chevrons are not visible on hover')
+        const style = getComputedStyle(input)
+        if (style.textAlign !== 'center') throw new Error('grid count is no longer centred')
+        const canvas = document.createElement('canvas')
+        const context = canvas.getContext('2d')!
+        context.font = style.font
+        const textWidth = context.measureText((input as HTMLInputElement).value).width
+        const textRight = fieldBounds.left + (fieldBounds.width + textWidth) / 2
+        return stepperBounds.left - textRight
+      })
+      expect(clearance, 'chevrons must clear a centred two-digit number').toBeGreaterThanOrEqual(2)
+    }
+    await expectGridSpacing(page, 1 / 64, 1 / 64)
+    // The visible editor cannot exceed the new 64-division limit.
+    await columns.fill('99')
+    await columns.press('Tab')
+    await expect(columns).toHaveValue('64')
+    expect((await settings(page)).preview_grid.column_divisions).toBe(64)
+  } finally {
+    await app.close()
+  }
+})
+
 test('the portrait grid follows the canvas and leaves exported frame pixels unchanged', async () => {
   test.setTimeout(120_000)
   const { app, page } = await launchApp()
