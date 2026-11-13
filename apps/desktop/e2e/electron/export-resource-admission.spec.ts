@@ -403,9 +403,14 @@ test('background export keeps review available and preserves output across Previ
     await expect(resourceNotice).toBeVisible()
     await testInfo.attach('preview-capacity', { body: await capture(), contentType: 'image/png' })
     expect((await status()).state).toBe('rendering')
+    const remounted = await page.evaluate(() => window.__weftcutTest!.previewResourceProbe()!.generation)
     await app.evaluate(() => Reflect.get(globalThis, 'allowPreviewResources')())
-    await expect(resourceNotice).toHaveCount(0)
+    // Whether the preview fits beside the held export depends on the host's
+    // memory target (a 7 GiB runner's does not), so its recovery is checked
+    // after the export ends: the same Preview decodes again by retrying.
     await finish(output)
+    await expect.poll(() => page.evaluate(() => window.__weftcutTest!.activeClipProbe()?.ringSize ?? 0)).toBeGreaterThan(0)
+    expect(await page.evaluate(() => window.__weftcutTest!.previewResourceProbe()!.generation)).toBe(remounted)
     await expect.poll(laneIsInert).toBe(false)
     await expect(media).not.toHaveAttribute('inert', '')
     await expect(mediaNotice).toHaveCount(0)
