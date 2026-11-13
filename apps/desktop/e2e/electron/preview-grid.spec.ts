@@ -38,67 +38,62 @@ async function expectGridSpacing(page: Page, xFraction: number, yFraction: numbe
   }, { x: xFraction, y: yFraction })).toBeLessThanOrEqual(1)
 }
 
-test('Quick Actions edits independent grid preferences, and the grid follows fit, zoom and pan', async () => {
+test('Quick Actions toggles the grid; preview toolbar edits columns, rows and axes without a popover', async () => {
   const { app, page } = await launchApp()
   try {
     const width = 1600, height = 900
     await startPreview(page, width, height)
     const beforeProject = await invokeCmd(page, 'project_summary')
-    const trigger = page.getByRole('button', { name: 'Grid', exact: true })
-    const popup = page.getByRole('dialog', { name: 'Grid', exact: true })
-    const number = (name: string) => popup.getByLabel(name, { exact: true })
-    const fill = async (name: string, value: number) => {
-      await number(name).fill(String(value))
-      await number(name).press('Enter')
-      // The number fields write through async IPC. Observe the committed
-      // setting before editing the next axis to avoid racing their updates.
-      const key = name === 'Columns' ? 'column_divisions' : 'row_divisions'
-      await expect.poll(async () => (await settings(page)).preview_grid[key]).toBe(value)
-    }
+    const gridButton = page.locator('[data-quick-action="togglePreviewGrid"]')
+    const snapButton = page.locator('[data-quick-action="togglePreviewSnap"]')
+    const toolbar = page.getByTestId('preview-grid-toolbar')
+    await expect(gridButton).toHaveAttribute('aria-pressed', 'false')
+    await expect(toolbar).toHaveCount(0)
     await expect(overlay(page)).toHaveCount(0)
-    await trigger.hover()
-    await expect(popup).toBeVisible()
-    await expect(trigger).toHaveAttribute('data-active', 'false')
-    // Clicking the icon toggles snapping, not grid visibility.
-    await trigger.click()
-    await expect(trigger).toHaveAttribute('data-active', 'true')
-    await expect(overlay(page)).toHaveCount(0)
-    await expect(popup).toBeVisible()
-    // The hover surface includes the portal menu, even across its positioner gap.
-    await number('Columns').hover()
-    await page.waitForTimeout(450)
-    await expect(popup).toBeVisible()
-    await expect(popup.locator('input.app-number-input')).toHaveCount(2)
-    await expect(popup.getByRole('switch')).toHaveCount(0)
-    await expect(popup.getByRole('combobox')).toHaveCount(0)
-    await expect(popup.locator('.preview-grid-colon')).toHaveText(':')
-    await expect(popup.getByTestId('preview-grid-visibility')).toHaveCount(1)
-    await expect.poll(async () => (await popup.boundingBox())?.width ?? Infinity).toBeLessThan(220)
-    await expect(number('Columns')).toHaveValue('3')
-    await expect(number('Rows')).toHaveValue('3')
-    await expect(popup.getByRole('button', { name: 'Show grid' })).toBeVisible()
-    await popup.getByRole('button', { name: 'Show grid' }).click()
-    await expect(overlay(page)).toBeVisible()
-    await expect(overlay(page)).toHaveCSS('pointer-events', 'none')
-    await expectGridSpacing(page, 1 / DEFAULT_PREVIEW_GRID.column_divisions, 1 / DEFAULT_PREVIEW_GRID.row_divisions)
-    await fill('Columns', 12)
-    await fill('Rows', 5)
+    await gridButton.click()
+    await expect(gridButton).toHaveAttribute('aria-pressed', 'true')
+    await expect(toolbar).toBeVisible()
+    await expect(toolbar.getByLabel('Columns', { exact: true })).toHaveValue('3')
+    await expect(toolbar.getByLabel('Rows', { exact: true })).toHaveValue('3')
+    await expectGridSpacing(page, 1 / 3, 1 / 3)
+    expect(await page.getByRole('dialog', { name: 'Canvas snapping and grid' }).count()).toBe(0)
+
+    const columns = toolbar.getByLabel('Columns', { exact: true })
+    const rows = toolbar.getByLabel('Rows', { exact: true })
+    await columns.fill('12')
+    await expect.poll(async () => (await settings(page)).preview_grid.column_divisions).toBe(12)
+    await rows.fill('5')
+    await expect.poll(async () => (await settings(page)).preview_grid.row_divisions).toBe(5)
     await expectGridSpacing(page, 1 / 12, 1 / 5)
-    await fill('Rows', 1)
+
+    await toolbar.getByTestId('grid-rows-visible').click()
+    await expect(toolbar.getByTestId('grid-rows-visible')).toHaveAttribute('aria-pressed', 'false')
     await expect(overlay(page).locator('.preview-grid-line')).toHaveCount(1)
-    await fill('Columns', 1)
-    await expect(overlay(page).locator('.preview-grid-line')).toHaveCount(0)
-    await fill('Columns', 12)
-    await fill('Rows', 5)
-    await expectGridSpacing(page, 1 / 12, 1 / 5)
-    await popup.getByRole('button', { name: 'Hide grid' }).click()
+    await expect(rows).toHaveValue('5')
+    await toolbar.getByTestId('grid-columns-visible').click()
     await expect(overlay(page)).toHaveCount(0)
-    await expect(trigger).toHaveAttribute('data-active', 'true')
-    await expect(popup).toBeVisible()
-    await popup.getByRole('button', { name: 'Show grid' }).click()
+    await toolbar.getByTestId('grid-columns-visible').click()
+    await toolbar.getByTestId('grid-rows-visible').click()
     await expectGridSpacing(page, 1 / 12, 1 / 5)
-    await page.keyboard.press('Escape')
-    await expect(popup).toBeHidden()
+
+    await snapButton.click()
+    await expect(snapButton).toHaveAttribute('aria-pressed', 'false')
+    await snapButton.click()
+    await expect(snapButton).toHaveAttribute('aria-pressed', 'true')
+    const eye = toolbar.getByTestId('grid-opacity-eye')
+    await invokeCmd(page, 'app_settings_set', { patch: { preview_grid: { opacity: 47 } } })
+    await expect(eye).toHaveAttribute('aria-pressed', 'true')
+    await eye.click()
+    await expect.poll(async () => (await settings(page)).preview_grid.opacity).toBe(0)
+    await expect(eye).toHaveAttribute('aria-pressed', 'false')
+    await expect(overlay(page).locator('g[opacity="0"]')).toHaveCount(2)
+    await expect(gridButton).toHaveAttribute('aria-pressed', 'true')
+    await expect(snapButton).toHaveAttribute('aria-pressed', 'true')
+    await expect(toolbar).toBeVisible()
+    await eye.click()
+    await expect.poll(async () => (await settings(page)).preview_grid.opacity).toBe(47)
+    await expect(eye).toHaveAttribute('aria-pressed', 'true')
+    await expectGridSpacing(page, 1 / 12, 1 / 5)
 
     const zoom = page.locator('.preview-zoom-select')
     await expect(zoom).toContainText('Fit')
@@ -122,58 +117,8 @@ test('Quick Actions edits independent grid preferences, and the grid follows fit
 
     expect(await invokeCmd(page, 'project_summary')).toEqual(beforeProject)
     expect((await settings(page)).preview_grid).toMatchObject({
-      visible: true, snap: true, column_divisions: 12, row_divisions: 5,
+      visible: true, opacity: 47, column_divisions: 12, row_divisions: 5,
     })
-  } finally {
-    await app.close()
-  }
-})
-
-test('the grid hover popup never sticks after repeated snap-icon clicks', async () => {
-  const { app, page } = await launchApp()
-  try {
-    await startPreview(page, 1280, 720)
-    const trigger = page.getByRole('button', { name: 'Grid', exact: true })
-    const popup = page.getByRole('dialog', { name: 'Grid', exact: true })
-    // Use a clear corner of the workspace, not the video surface: depending
-    // on docking, the popup can cover the surface's hover point.
-    const leaveMenu = async () => {
-      const size = await page.evaluate(() => ({ x: innerWidth - 30, y: innerHeight - 30 }))
-      await page.mouse.move(size.x, size.y)
-    }
-    // Start outside the trigger to guarantee a real pointer-enter even when
-    // the test window was created with the cursor already over Quick Actions.
-    await leaveMenu()
-    for (let n = 0; n < 12; n++) {
-      await trigger.hover()
-      await expect(popup, 'grid popup must open in cycle ' + n).toBeVisible()
-      await trigger.click()
-      await expect(trigger).toHaveAttribute('data-active', n % 2 === 0 ? 'true' : 'false')
-      await leaveMenu()
-      await expect(popup).toBeHidden({ timeout: 2000 })
-    }
-    await trigger.hover()
-    await expect(popup).toBeVisible()
-    await popup.getByLabel('Columns', { exact: true }).hover()
-    await page.waitForTimeout(450)
-    await expect(popup).toBeVisible()
-    await leaveMenu()
-    await expect(popup).toBeHidden({ timeout: 2000 })
-
-    // Interacting with the menu must not permanently pin it either.
-    await trigger.hover()
-    await expect(popup).toBeVisible()
-    await popup.getByRole('button', { name: 'Show grid' }).click()
-    await expect(popup).toBeVisible()
-    await leaveMenu()
-    await expect(popup).toBeHidden({ timeout: 2000 })
-
-    await trigger.hover()
-    await expect(popup).toBeVisible()
-    await popup.getByLabel('Columns', { exact: true }).click()
-    await expect(popup).toBeVisible()
-    await leaveMenu()
-    await expect(popup).toBeHidden({ timeout: 2000 })
   } finally {
     await app.close()
   }

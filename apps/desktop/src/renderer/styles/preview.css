@@ -95,6 +95,42 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Grid controls are visible only while the one-click Grid action is on.
+   No popover, no duplicate controls in Settings, and zoom stays at the edge. */
+.preview-grid-toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(5 * var(--ui-px));
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+.preview-grid-axis { display: inline-flex; align-items: center; gap: calc(2 * var(--ui-px)); }
+.preview-grid-toolbar .preview-grid-count { width: calc(52 * var(--ui-px)); min-width: 0; }
+.preview-grid-toolbar .preview-grid-count .app-input { padding-inline: calc(4 * var(--ui-px)); }
+.preview-grid-times { color: var(--muted-foreground); font-size: var(--font-size-caption); }
+.preview-grid-axis-toggle {
+  width: calc(25 * var(--ui-px));
+  height: calc(25 * var(--ui-px));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+}
+.preview-grid-axis-toggle[aria-pressed="true"] {
+  color: var(--foreground);
+  background: var(--accent);
+  border-color: var(--border-soft);
+}
+.preview-grid-eye-toggle { margin-inline-start: calc(3 * var(--ui-px)); }
+.preview-grid-axis-toggle:hover { background: var(--accent); }
+.preview-grid-axis-toggle:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+@media (max-width: 560px) {
+  .preview-target-bar { flex-wrap: wrap; }
+  .preview-grid-toolbar { order: 3; }
+}
+
 .video-surface {
   flex: 1;
   position: relative;

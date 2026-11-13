@@ -59,6 +59,8 @@ function state(over: Partial<QuickActionState> = {}): QuickActionState {
     markersVisible: true,
     reviewOverlay: true,
     snapEnabled: true,
+    previewSnapEnabled: true,
+    gridVisible: false,
     followPlayhead: true,
     safeAreaGuides: false,
     playbackResolution: "full",
@@ -296,6 +298,8 @@ describe("quickActions catalogue", () => {
 
     it.each([
       ["toggleTailSnap", "snapEnabled"],
+      ["togglePreviewSnap", "previewSnapEnabled"],
+      ["togglePreviewGrid", "gridVisible"],
       ["toggleFollowPlayhead", "followPlayhead"],
       ["toggleSafeAreaGuides", "safeAreaGuides"],
       ["toggleLinkOverride", "linkOverride"],
@@ -313,6 +317,8 @@ describe("quickActions catalogue", () => {
     // each answers only for itself, so `aria-pressed` is the honest attribute.
     it.each([
       "toggleTailSnap",
+      "togglePreviewSnap",
+      "togglePreviewGrid",
       "toggleFollowPlayhead",
       "toggleSafeAreaGuides",
       "toggleLinkOverride",

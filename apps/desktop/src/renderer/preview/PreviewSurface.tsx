@@ -113,6 +113,7 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
       <div
         ref={setSurface}
         className="preview-video"
+        tabIndex={-1}
         onContextMenu={e => {
           if (editingLocked || !canEditCrop() && !canScaleLayer()) return;
           e.preventDefault();

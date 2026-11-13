@@ -25,6 +25,10 @@ import {
   markersVisible,
   playbackResolution,
   safeAreaGuidesVisible,
+  previewGridVisible,
+  previewSnapEnabled,
+  togglePreviewGrid,
+  togglePreviewSnap,
   setPlaybackResolution,
   tailSnapEnabled,
   toggleSafeAreaGuides,
@@ -175,6 +179,8 @@ const SELF_CONTAINED_COMMAND_IDS = [
   'editCrop',
   'resetCrop',
   "toggleSafeAreaGuides",
+  "togglePreviewGrid",
+  "togglePreviewSnap",
   "centerHorizontally",
   "centerVertically",
   // Clip snapping. No binding for the key-budget reason above — and because
@@ -219,6 +225,8 @@ const SELF_CONTAINED_LABEL_KEYS: Record<SelfContainedCommandId, string> = {
   editCrop: 'crop.edit',
   resetCrop: 'crop.reset',
   toggleSafeAreaGuides: "actions.toggle_safe_area_guides",
+  togglePreviewGrid: "actions.toggle_preview_grid",
+  togglePreviewSnap: "actions.toggle_preview_snap",
   centerHorizontally: "actions.center_horizontally",
   centerVertically: "actions.center_vertically",
   toggleTailSnap: "actions.toggle_tail_snap",
@@ -542,6 +550,14 @@ export function buildAppCommands(
     previewZoomOut: {
       run: () => stepPreviewZoom(-1),
       enabled: () => projectHasLayers() && canStepPreviewZoom(-1),
+    },
+    togglePreviewGrid: {
+      run: () => void togglePreviewGrid(),
+      checked: () => previewGridVisible(),
+    },
+    togglePreviewSnap: {
+      run: () => void togglePreviewSnap(),
+      checked: () => previewSnapEnabled(),
     },
     toggleSafeAreaGuides: {
       run: () => void toggleSafeAreaGuides(),

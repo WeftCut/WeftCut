@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { PreviewGridSettings } from "../../shared/preview-grid";
 
-import { usePreviewGrid } from "../settings/appSettingsStore";
+import { useSafeAreaGuidesVisible, usePreviewGrid } from "../settings/appSettingsStore";
 import { usePreviewRenderTargetId } from "../state/compositionAnchorStore";
 import { useComposition } from "../state/projectStore";
 import { containFit } from "./gizmoGeometry";
@@ -11,30 +11,32 @@ import { observeClientRect } from "./layoutRectCache";
 
 export function PreviewGridOverlayHost() {
   const settings = usePreviewGrid();
+  const safeArea = useSafeAreaGuidesVisible();
   const composition = useComposition(usePreviewRenderTargetId());
-  if (!settings.visible || !composition) return null;
-  return <PreviewGridOverlay width={composition.width} height={composition.height} settings={settings} />;
+  if (!settings.visible || !composition || (!settings.columns && !settings.rows)) return null;
+  return <PreviewGridOverlay width={composition.width} height={composition.height} settings={settings} safeArea={safeArea} />;
 }
 
 function gridPath(axis: GridAxis | null, line: (at: number) => string): string {
   if (!axis) return "";
-  return Array.from({ length: axis.last }, (_, i) => line((i + 1) * axis.step)).join(" ");
+  return Array.from({ length: axis.last }, (_, i) => line((axis.origin ?? 0) + (i + 1) * axis.step)).join(" ");
 }
 
-function PreviewGridOverlay({ width, height, settings }: {
+function PreviewGridOverlay({ width, height, settings, safeArea }: {
   width: number;
   height: number;
   settings: PreviewGridSettings;
+  safeArea: boolean;
 }) {
   const overlayRef = useRef<SVGSVGElement>(null);
   const frameRef = useRef<SVGSVGElement>(null);
   const columnsRef = useRef<SVGGElement>(null);
   const rowsRef = useRef<SVGGElement>(null);
   const grid = useMemo(
-    () => previewGrid(width, height, settings), [width, height, settings],
+    () => previewGrid(width, height, settings, safeArea), [width, height, settings, safeArea],
   );
-  const columns = useMemo(() => gridPath(grid.x, (x) => "M " + x + " 0 V " + height), [grid.x, height]);
-  const rows = useMemo(() => gridPath(grid.y, (y) => "M 0 " + y + " H " + width), [grid.y, width]);
+  const columns = useMemo(() => gridPath(grid.x, (x) => "M " + x + " " + (grid.bounds?.y ?? 0) + " v " + (grid.bounds?.h ?? height)), [grid.x, grid.bounds, height]);
+  const rows = useMemo(() => gridPath(grid.y, (y) => "M " + (grid.bounds?.x ?? 0) + " " + y + " h " + (grid.bounds?.w ?? width)), [grid.y, grid.bounds, width]);
 
   useEffect(() => {
     const overlay = overlayRef.current;
@@ -62,15 +64,15 @@ function PreviewGridOverlay({ width, height, settings }: {
       frame.setAttribute("height", String(height * fit.scale));
       frame.setAttribute("visibility", "visible");
       // Fade each axis as its lines approach screen-pixel density.
-      if (grid.x) columnsRef.current?.setAttribute("opacity", String(Math.min(1, grid.x.step * fit.scale / 6)));
-      if (grid.y) rowsRef.current?.setAttribute("opacity", String(Math.min(1, grid.y.step * fit.scale / 6)));
+      if (grid.x) columnsRef.current?.setAttribute("opacity", String(settings.opacity / 100 * Math.min(1, grid.x.step * fit.scale / 6)));
+      if (grid.y) rowsRef.current?.setAttribute("opacity", String(settings.opacity / 100 * Math.min(1, grid.y.step * fit.scale / 6)));
     };
     draw();
     return () => {
       cancelAnimationFrame(raf);
       ownRect.dispose();
     };
-  }, [width, height, grid]);
+  }, [width, height, grid, settings.opacity]);
 
   return (
     <svg ref={overlayRef} className="preview-grid-overlay" data-testid="preview-grid" aria-hidden="true" focusable="false">

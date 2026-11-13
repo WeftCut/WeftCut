@@ -7,6 +7,8 @@ const settings = vi.hoisted(() => ({
   displayMode: "AbRoll" as "AbRoll" | "AllTracks",
   markersVisible: true,
   tailSnapEnabled: true,
+  previewSnapEnabled: true,
+  previewGridVisible: false,
   followPlayhead: true,
   safeAreaGuides: false,
   playbackResolution: "full" as "full" | "half" | "quarter",
@@ -19,6 +21,8 @@ vi.mock("../settings/appSettingsStore", () => ({
   useDisplayMode: () => settings.displayMode,
   useMarkersVisible: () => settings.markersVisible,
   useTailSnapEnabled: () => settings.tailSnapEnabled,
+  usePreviewSnapEnabled: () => settings.previewSnapEnabled,
+  usePreviewGrid: () => ({ visible: settings.previewGridVisible }),
   useFollowPlayheadEnabled: () => settings.followPlayhead,
   useSafeAreaGuidesVisible: () => settings.safeAreaGuides,
   usePlaybackResolution: () => settings.playbackResolution,
@@ -108,6 +112,8 @@ beforeEach(() => {
   settings.displayMode = "AbRoll";
   settings.markersVisible = true;
   settings.tailSnapEnabled = true;
+  settings.previewSnapEnabled = true;
+  settings.previewGridVisible = false;
   settings.followPlayhead = true;
   settings.safeAreaGuides = false;
   settings.playbackResolution = "full";
