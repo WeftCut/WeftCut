@@ -139,15 +139,8 @@
   background: rgba(148, 163, 184, 0.12);
 }
 
-.status-bar-badge-error {
-  background: rgba(248, 113, 113, 0.16);
-  border-color: rgba(248, 113, 113, 0.4);
-  color: var(--color-red-300);
-  animation: status-bar-error-pulse 1.5s ease-in-out 1;
-}
-
-/* The project is not being saved (SaveStatusBadge). The warn notices' amber,
-   on the error badge's pattern: it needs attention but counts nothing. */
+/* The project is not being saved (SaveStatusBadge). The warn notices' amber
+   as a tinted badge: it needs attention but counts nothing. */
 .status-bar-badge-warn {
   background: rgba(251, 191, 36, 0.12);
   border-color: rgba(251, 191, 36, 0.32);
@@ -182,24 +175,6 @@
   color: var(--review-modified);
 }
 
-/* A standing mode chip, not a button: the badges above open the log, this one
-   only says which state the timeline is in. */
-.status-bar-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: calc(2 * var(--ui-px)) calc(8 * var(--ui-px));
-  border-radius: 999px;
-  border: 1px solid transparent;
-  font-size: var(--font-size-caption);
-  white-space: nowrap;
-}
-
-.status-bar-chip-links-off {
-  background: rgba(251, 191, 36, 0.12);
-  border-color: rgba(251, 191, 36, 0.32);
-  color: var(--color-amber-200);
-}
-
 @keyframes status-bar-error-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0); }
   50% { box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.35); }
@@ -220,6 +195,10 @@
 }
 
 .status-bar-logs-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6 * var(--ui-px));
+  white-space: nowrap;
   padding: calc(2 * var(--ui-px)) calc(8 * var(--ui-px));
   border-radius: var(--radius-control);
   border: 1px solid var(--border);
@@ -236,6 +215,21 @@
 .status-bar-logs-toggle:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* The error count on the Logs toggle; it pulses once when the first error
+   arrives. */
+.status-bar-logs-errors {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(3 * var(--ui-px));
+  margin-right: calc(-4 * var(--ui-px));
+  padding: 0 calc(5 * var(--ui-px));
+  border-radius: 999px;
+  background: rgba(248, 113, 113, 0.16);
+  color: var(--color-red-300);
+  font-variant-numeric: tabular-nums;
+  animation: status-bar-error-pulse 1.5s ease-in-out 1;
 }
 
 /* An offered update: the bar's one solid pill, since it is the only entry

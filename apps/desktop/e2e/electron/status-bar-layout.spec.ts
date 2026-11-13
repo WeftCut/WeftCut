@@ -18,8 +18,8 @@ import zhCN from '../../src/renderer/i18n/locales/zh-CN'
 // bars are attached for a human to look at.
 //
 // Each item is raised through the boundary that raises it in the product: an
-// agent's edit for the review count, the toolbar switch for the link override,
-// log rows for the error and running badges, main's own events for the pushed
+// agent's edit for the review count, log rows for the error count and running
+// badge, main's own events for the pushed
 // state (jobs, agent activity, notices, save status), and main's update-status
 // handler for the update offer.
 
@@ -28,12 +28,11 @@ const LOCALES = { 'en-US': enUS, 'zh-CN': zhCN } as const
 
 /** The right side's items, by the selector each renders with. */
 const RIGHT_ITEMS = {
-  linksOff: '[data-testid="link-override-chip"]',
   derivatives: '.derivatives-pill',
   compute: '[data-testid="status-bar-compute"]',
   agentRunning: '.agent-running-pill',
   review: '[data-testid="status-bar-review"]',
-  errors: '.status-bar-badge-error',
+  errors: '[data-testid="status-bar-errors"]',
   running: '.status-bar-badge-running',
   notSaved: '[data-testid="save-status-badge"]',
   system: '.system-status-trigger',
@@ -77,11 +76,6 @@ for (const locale of Object.keys(LOCALES) as Array<keyof typeof LOCALES>) {
       await page.locator('.agent-exit-button').click()
       await expect(page.locator('.agent-mode-shell')).toHaveCount(0)
       await expect(page.locator(RIGHT_ITEMS.review)).toBeVisible()
-
-      // The link override, by its toolbar switch: the same toggle as the
-      // Alt+Shift+G chord, without the chord's timeline-focus precondition.
-      await page.getByRole('button', { name: LOCALES[locale].quick_actions.link_override_off_hint }).click()
-      await expect(page.locator(RIGHT_ITEMS.linksOff)).toBeVisible()
 
       // A running op.
       await invokeCmd(page, 'log_emit', { input: { level: 'info', category: { kind: 'Job' }, source: { kind: 'System' },

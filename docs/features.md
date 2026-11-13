@@ -285,7 +285,7 @@ Quick Actions `edit` section.
 row) is a session switch standing in for a held `Alt`: every site that consults
 links treats them as absent — click selects one member, drag moves or
 duplicates one, blade and `Mod+B` split one, marquee takes what it touched. The
-status bar shows `Links off` and link accents dim to 40 %. Nothing is written:
+Quick Actions toggle shows pressed and link accents dim to 40 %. Nothing is written:
 memberships stay, no history entry, not persisted. MCP is unaffected (agents
 pass `escape_link`).
 

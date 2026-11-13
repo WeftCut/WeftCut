@@ -8,7 +8,6 @@ import { useAgentActivity } from "../agent/activityStore";
 import { useUnreviewedCount } from "../agent/reviewStore";
 import { getCommand } from "../commands/registry";
 import { useLogStore } from "./store";
-import { useLinkOverride } from "../state/linkOverrideStore";
 import { MEDIA_JOB_EVENTS, type MediaJobEvent, type LogEntry, type LogLevel } from "../ipc";
 import type { AppNotice } from "../../shared/ipc";
 import { AppIcon } from "@/components/AppIcon";
@@ -34,8 +33,8 @@ import type { ComputeJob, LayerSummary } from "../ipc";
 
 /// Persistent status bar pinned to the bottom of the editor view.
 /// Shows a severity dot + time + truncated message + source pill on the
-/// left; error badge + running badge + Logs toggle on the right. The
-/// toggle opens the expanded console overlay.
+/// left; work and attention badges + the Logs toggle on the right. The
+/// toggle opens the expanded console overlay and carries the error count.
 ///
 /// Layout and behaviour: `docs/status-log.md`.
 interface StatusBarProps {
@@ -83,10 +82,6 @@ export function StatusBar({
   // separately from `latest` so a flurry of low-severity entries
   // doesn't spam the screen reader.
   const [announce, setAnnounce] = useState("");
-  // Link override chip. State, not an event: it shows for as long as the
-  // switch is on and never enters the log, because a mode the user is IN is
-  // not something that happened.
-  const linksOff = useLinkOverride();
   // A clip job queued on the processing budget is usually waiting for the
   // derivatives this bar counts; their pill says so
   // (docs/performance-settings.md#admission-lanes).
@@ -152,6 +147,10 @@ export function StatusBar({
     };
   }, []);
 
+  const logsHint = errorCount > 0
+    ? t("status_bar.toggle_hint_errors", { count: errorCount })
+    : t("status_bar.toggle_hint");
+
   return (
     <footer
       className="status-bar"
@@ -177,15 +176,6 @@ export function StatusBar({
       </div>
       <div className="status-bar-right">
         {backgroundExport && <ExportProgressPill state={backgroundExport} />}
-        {linksOff && (
-          <span
-            className="status-bar-chip status-bar-chip-links-off"
-            data-testid="link-override-chip"
-            title={t("status_bar.links_off_hint")}
-          >
-            {t("status_bar.links_off")}
-          </span>
-        )}
         {pendingDerivatives > 0 && (
           <span
             className="derivatives-pill"
@@ -222,18 +212,6 @@ export function StatusBar({
             {t("changes.status", { count: unreviewedCount })}
           </button>
         )}
-        {errorCount > 0 && (
-          <button
-            type="button"
-            className="status-bar-badge status-bar-badge-error"
-            onClick={onToggleLogs}
-            title={t("status_bar.error_badge_hint", { count: errorCount })}
-            aria-label={t("status_bar.error_badge_hint", { count: errorCount })}
-          >
-            <span aria-hidden="true">⚠</span>
-            {errorCount}
-          </button>
-        )}
         {runningCount > 0 && (
           <button
             type="button"
@@ -256,19 +234,27 @@ export function StatusBar({
             aria-label={t("system_status.trigger_hint", { count: notices.length })}
           >
             <SystemNoticeIcon level={highestNoticeLevel(notices)} />
-            {t("system_status.trigger", { count: notices.length })}
+            {notices.length}
           </button>
         )}
         <UpdateIndicator />
+        {/* Errors open the log, so their count rides on its toggle rather
+            than a badge of its own; it stays until the log is cleared. */}
         <button
           type="button"
           className="status-bar-logs-toggle"
           onClick={onToggleLogs}
-          title={t("status_bar.toggle_hint")}
-          aria-label={t("status_bar.toggle_hint")}
+          title={logsHint}
+          aria-label={logsHint}
           disabled={!onToggleLogs}
         >
           {t("status_bar.toggle_label")}
+          {errorCount > 0 && (
+            <span className="status-bar-logs-errors" data-testid="status-bar-errors" aria-hidden="true">
+              <AppIcon icon={AlertTriangleIcon} size="label" aria-hidden />
+              {errorCount}
+            </span>
+          )}
         </button>
       </div>
       <div

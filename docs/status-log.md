@@ -159,15 +159,19 @@ next splash ("did not exit normally"). Storage failures never block startup.
 ### Bar
 
 ```
-[●] 14:32  Added 3 layers to track v1 · agent  [N to review] [⚠2] [↻1] [⚠ Not saved] [System N] [Update] [Logs ▾]
+[●] 14:32  Added 3 layers to track v1 · agent  [N to review] [↻1] [⚠ Not saved] [ⓘ N] [Update] [Logs ⚠2]
 ```
 
 - Latest `Info+` message with time and source; an `Error` sticks 10 s
-  (`ERROR_STICKY_MS`); the error badge pulses once (1.5 s) on increment.
+  (`ERROR_STICKY_MS`).
 - Badges: unreviewed agent changes (ADR 0115; opens the agent panel's Changes
-  tab), errors, running ops, running clip-compute jobs, project not saved,
-  system notices (opens the status panel with recovery cards), update offer
-  (`docs/releases.md`).
+  tab), running ops, running clip-compute jobs, project not saved, system
+  notices (the highest level's icon and a count, the text in its tooltip; opens
+  the status panel with recovery cards), update offer (`docs/releases.md`).
+- The error count rides on the Logs toggle, which is where it leads; it counts
+  until the log is cleared and pulses once (1.5 s) when the first error lands.
+- Modes are not badges: a switch the user is in shows on its own control (the
+  link override on its Quick Actions toggle and the dimmed link accents).
 - **Not saved** (`SaveStatusBadge`, amber): present only while main reports the
   project failing to save (`shared/save-status.ts`, [data-model.md §
   Saving](data-model.md#saving)). Its tooltip gives the reason and the last

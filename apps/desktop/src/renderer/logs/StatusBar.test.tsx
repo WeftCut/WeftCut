@@ -168,3 +168,48 @@ describe("not-saved badge", () => {
     expect(announced()).toBe("Project not saved: WeftCut is not allowed to write to the project folder.");
   });
 });
+
+describe("attention counts", () => {
+  afterEach(async () => {
+    const { useLogStore } = await import("./store");
+    useLogStore.setState({ errorCount: 0 });
+  });
+
+  it("carries the error count on the Logs toggle, which opens the log, and drops it when the log has none", async () => {
+    const { useLogStore } = await import("./store");
+    const onToggleLogs = vi.fn();
+    const { container } = render(<StatusBar onToggleLogs={onToggleLogs} />);
+    await act(async () => {});
+    const toggle = container.querySelector<HTMLElement>(".status-bar-logs-toggle")!;
+    expect(container.querySelector('[data-testid="status-bar-errors"]')).toBeNull();
+    expect(toggle.getAttribute("aria-label")).toBe("Show / hide activity log");
+
+    act(() => useLogStore.setState({ errorCount: 3 }));
+    const errors = container.querySelector<HTMLElement>('[data-testid="status-bar-errors"]')!;
+    expect(errors.closest(".status-bar-logs-toggle")).toBe(toggle);
+    expect(errors.textContent).toBe("3");
+    expect(toggle.getAttribute("aria-label")).toBe("Show / hide activity log — 3 error(s)");
+    act(() => toggle.click());
+    expect(onToggleLogs).toHaveBeenCalledTimes(1);
+
+    act(() => useLogStore.setState({ errorCount: 0 }));
+    expect(container.querySelector('[data-testid="status-bar-errors"]')).toBeNull();
+  });
+
+  it("shows system notices as the highest level's icon and a count, with the words in its name", async () => {
+    const onOpenSystemStatus = vi.fn();
+    const { container } = render(
+      <StatusBar
+        notices={[{ level: "info", code: "native_decode_unavailable" }, { level: "warn", code: "keyring_unavailable" }]}
+        onOpenSystemStatus={onOpenSystemStatus}
+      />,
+    );
+    await act(async () => {});
+    const trigger = container.querySelector<HTMLElement>(".system-status-trigger")!;
+    expect(trigger.classList).toContain("system-status-warn");
+    expect(trigger.textContent).toBe("2");
+    expect(trigger.getAttribute("aria-label")).toBe("2 system status item(s) need attention");
+    act(() => trigger.click());
+    expect(onOpenSystemStatus).toHaveBeenCalledTimes(1);
+  });
+});

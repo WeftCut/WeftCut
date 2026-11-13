@@ -47,8 +47,8 @@ test.describe("link override", () => {
     `AV fixture not found at ${FIXTURE} (run: cd apps/desktop/e2e && npm run fixtures)`,
   );
 
-  // The switch stands in for a held Alt. The status chip is the state probe —
-  // it is the one place the mode is stated rather than implied — and the two
+  // The switch stands in for a held Alt. Its Quick Actions toggle is the state
+  // probe — its pressed state is where the mode is stated — and the two
   // gestures a linked pair changes most (click, drag) are exercised on each
   // side of the toggle so "restored" is asserted, not assumed.
   test("toggling it makes a plain click select one member and a drag move one; toggling back restores the link", async () => {
@@ -83,7 +83,7 @@ test.describe("link override", () => {
       expect(link, "video and audio halves should share one link").toBeTruthy();
       const pair = [videoLayerId, audioLayerId!].sort();
 
-      const chip = page.locator('[data-testid="link-override-chip"]');
+      const toggle = page.locator('[data-quick-action="toggleLinkOverride"]');
       // `.first()` is the video: the pair's first layer on the lane, drawn as
       // the top slice.
       const videoClip = page.locator(`.timeline-layer[data-link-id="${link!.id}"]`).first();
@@ -91,14 +91,13 @@ test.describe("link override", () => {
 
       // Links in force: a plain click takes the whole pair, and the click also
       // lands focus on the timeline, which the timeline-scoped chord needs.
-      await expect(chip).toHaveCount(0);
+      await expect(toggle).toHaveAttribute("aria-pressed", "false");
       await clickCentre(page, videoClip);
       expect(await selectedLayerIds(page)).toEqual(pair);
       const accentOn = await videoClip.evaluate((el) => getComputedStyle(el).borderLeftColor);
 
       await page.keyboard.press("Alt+Shift+G");
-      await expect(chip).toBeVisible();
-      await expect(chip).toHaveText("Links off");
+      await expect(toggle).toHaveAttribute("aria-pressed", "true");
       // The canvas says so too: the accent dims (its colour changes) while on.
       await expect
         .poll(() => videoClip.evaluate((el) => getComputedStyle(el).borderLeftColor))
@@ -132,13 +131,13 @@ test.describe("link override", () => {
       // The link itself is untouched — the override escapes, it never dissolves.
       expect([...s2.links.find((l) => l.id === link!.id)!.layer_ids].sort()).toEqual(pair);
 
-      // Off again: chip gone, and a plain click on the moved video takes its
+      // Off again: toggle released, and a plain click on the moved video takes its
       // audio partner with it once more.
       const movedClip = bLane.locator(`.timeline-layer[data-link-id="${link!.id}"]`);
       await expect(movedClip).toHaveCount(1);
       await clickCentre(page, movedClip);
       await page.keyboard.press("Alt+Shift+G");
-      await expect(chip).toHaveCount(0);
+      await expect(toggle).toHaveAttribute("aria-pressed", "false");
       await clickCentre(page, movedClip);
       expect(await selectedLayerIds(page)).toEqual(pair);
     } finally {
