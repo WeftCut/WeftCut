@@ -1,3 +1,4 @@
+import { modKeyHeld } from "@/platform";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BetweenHorizontalStart } from "lucide-react";
@@ -19,13 +20,13 @@ import {
   mediaDropInvalid,
   parseMediaDrag,
   planMediaDrop,
+  useIsMediaDropTarget,
   useMediaDragStore,
   type MediaDragPayload,
   type MediaDropPlan,
   type MediaDropSnapOptions,
 } from "./mediaDrag";
 import {
-  moveLandings,
   useForeignDropStripAnchorUs,
   useForeignDropStripValidity,
   useIsForeignDropClaimed,
@@ -198,7 +199,7 @@ export function DropStrip({
   const foreignStripAnchorUs = useForeignDropStripAnchorUs(compositionId);
   const foreignStripValidity = useForeignDropStripValidity(compositionId);
   const activeMediaDrag = useMediaDragStore((s) => s.active);
-  const dropTargetTrackId = useMediaDragStore((s) => s.dropTargetTrackId);
+  const isDropTarget = useIsMediaDropTarget(compositionId, SPAWN_TRACK_ID);
   const claimDropTarget = useMediaDragStore((s) => s.claimDropTarget);
   const releaseDropTarget = useMediaDragStore((s) => s.releaseDropTarget);
   const endMediaDrag = useMediaDragStore((s) => s.end);
@@ -208,39 +209,24 @@ export function DropStrip({
   } | null>(null);
 
   useEffect(() => {
-    if (activeMediaDrag === null || dropTargetTrackId !== SPAWN_TRACK_ID) {
+    if (activeMediaDrag === null || !isDropTarget) {
       setDropPreview(null);
     }
-  }, [activeMediaDrag, dropTargetTrackId]);
+  }, [activeMediaDrag, isDropTarget]);
 
   const visibleDropPreview =
-    dropTargetTrackId === SPAWN_TRACK_ID ? dropPreview : null;
-
-  // The raise's landing, through the SAME call the move projection makes — the
-  // strip promises what the commit sends, or it is not a preview of it. Every
-  // subject, because a raise takes the whole set onto the one new lane.
-  const stripLanding = useMemo(
-    () =>
-      stripDrag === null
-        ? null
-        : moveLandings(stripDrag, stripDrag.deltaUs, {
-            num: fpsNum,
-            den: fpsDen,
-          }),
-    [fpsDen, fpsNum, stripDrag],
-  );
+    isDropTarget ? dropPreview : null;
 
   const clipGhosts = useMemo((): StripClipGhost[] => {
-    if (stripDrag !== null && stripLanding !== null) {
+    if (stripDrag !== null) {
       return stripDrag.subjects.map((subject) => {
-        const landed = stripLanding.byLayerId.get(subject.layerId);
+        // The floor is already in the placement (`floorShiftAtZero`), so the
+        // set's phase survives the zero boundary and no bar needs a clamp.
+        const landed = stripDrag.movePlacements?.get(subject.layerId);
         return {
           layerId: subject.layerId,
           name: subject.name,
           kind: subject.kind,
-          // The floor is already in the landing (`floorShiftAtZero`), so the
-          // set's phase survives the zero boundary intact and no bar needs a
-          // clamp of its own.
           tStartUs: landed?.tStartUs ?? subject.originalTStart,
           tEndUs: landed?.tEndUs ?? subject.originalTEnd,
         };
@@ -262,10 +248,10 @@ export function DropStrip({
       });
     }
     return ghosts;
-  }, [pendingLayerById, pendingPlacements, stripDrag, stripLanding]);
+  }, [pendingLayerById, pendingPlacements, stripDrag]);
 
   const planFor = useCallback(
-    (media: MediaDragPayload, pointerXPx: number) =>
+    (media: MediaDragPayload, pointerXPx: number, snapSuspended = false) =>
       planMediaDrop({
         compositionId,
         track: null,
@@ -274,7 +260,7 @@ export function DropStrip({
         pxPerSec,
         fpsNum,
         fpsDen,
-        snap: { ...mediaDropSnap, currentTimeUs: playheadClockUs(compositionId) },
+        snap: { ...mediaDropSnap, enabled: mediaDropSnap.enabled && !snapSuspended, currentTimeUs: playheadClockUs(compositionId) },
       }),
     [compositionId, fpsDen, fpsNum, mediaDropSnap, pxPerSec],
   );
@@ -285,7 +271,7 @@ export function DropStrip({
       e.preventDefault();
       if (activeMediaDrag === null) return;
       const rect = e.currentTarget.getBoundingClientRect();
-      const plan = planFor(activeMediaDrag, e.clientX - rect.left);
+      const plan = planFor(activeMediaDrag, e.clientX - rect.left, modKeyHeld(e));
       e.dataTransfer.dropEffect = mediaDropInvalid(plan.validity) ? "none" : "copy";
       // Collapse the floating media card into a chip inside the strip, the same
       // way a lane absorbs it. Not cosmetic here: at full size the card covers
@@ -298,18 +284,23 @@ export function DropStrip({
       );
       const width = Math.min(36, Math.max(14, ghostWidth));
       const height = Math.max(8, DROP_STRIP_HEIGHT_PX - 4);
-      claimDropTarget(SPAWN_TRACK_ID, {
-        left:
-          ghostLeft +
-          Math.min(MEDIA_DRAG_CURSOR_OFFSET_PX, ghostWidth / 2) -
-          width / 2,
-        top: rect.top + (DROP_STRIP_HEIGHT_PX - height) / 2,
-        width,
-        height,
+      claimDropTarget({
+        compositionId,
+        trackId: SPAWN_TRACK_ID,
+        snapBoundaryUs: !mediaDropInvalid(plan.validity) ? plan.snapBoundaryUs ?? null : null,
+        absorptionTarget: {
+          left:
+            ghostLeft +
+            Math.min(MEDIA_DRAG_CURSOR_OFFSET_PX, ghostWidth / 2) -
+            width / 2,
+          top: rect.top + (DROP_STRIP_HEIGHT_PX - height) / 2,
+          width,
+          height,
+        },
       });
       setDropPreview({ media: activeMediaDrag, plan });
     },
-    [activeMediaDrag, claimDropTarget, planFor, pxPerSec],
+    [activeMediaDrag, claimDropTarget, compositionId, planFor, pxPerSec],
   );
 
   const onDragLeave = useCallback(
@@ -326,32 +317,36 @@ export function DropStrip({
         e.clientY >= rect.top &&
         e.clientY <= rect.bottom;
       if (pointerStillInside) return;
-      releaseDropTarget(SPAWN_TRACK_ID);
+      releaseDropTarget(compositionId, SPAWN_TRACK_ID);
       setDropPreview(null);
     },
-    [releaseDropTarget],
+    [compositionId, releaseDropTarget],
   );
 
   const onDrop = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
       const payload = parseMediaDrag(e);
       setDropPreview(null);
-      if (!payload) return;
+      if (!payload) {
+        releaseDropTarget(compositionId, SPAWN_TRACK_ID);
+        return;
+      }
       e.preventDefault();
       endMediaDrag();
       const rect = e.currentTarget.getBoundingClientRect();
-      const plan = planFor(payload, e.clientX - rect.left);
+      const plan = planFor(payload, e.clientX - rect.left, modKeyHeld(e));
       if (mediaDropInvalid(plan.validity)) return;
       onMediaDrop(null, payload, plan);
     },
-    [endMediaDrag, onMediaDrop, planFor],
+    [compositionId, endMediaDrag, onMediaDrop, planFor, releaseDropTarget],
   );
 
   // A clip drag names this strip from either side of the gesture: this Panel's
   // own, or a neighbour's whose claim landed here. Both are this composition's
   // µs — the local one by its composition gate, the foreign one because the
   // claim was resolved on this Panel's axis in the first place.
-  const clipDragAnchorUs = stripLanding?.anchorTStartUs ?? foreignStripAnchorUs;
+  const clipDragAnchorUs = stripDrag?.movePlacements?.get(stripDrag.layerId)?.tStartUs ??
+    foreignStripAnchorUs;
   // And its verdict, from whichever side. One value, so the row cannot light
   // blue and promise a track under a ghost that is already red — which is what
   // it did for a refused drop carried in from next door, the claim's validity

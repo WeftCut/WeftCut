@@ -1,3 +1,4 @@
+import { modKeyHeld } from "@/platform";
 import { sourceIn, sourceOut, layerRateNumber } from '../layerTiming';
 import { approximateTime } from '../timeMapping';
 import { readLayerParamTrack } from "../keyframe/channels";
@@ -81,7 +82,7 @@ import {
   useKeyframeSelectionStore,
 } from "../keyframe/selectionStore";
 import { timelineLayerTheme } from "./layerTheme";
-import { placementRefuses, previewTrackId } from "./placement";
+import { placementRefuses } from "./placement";
 import { useLayerDragFor, type DragKind, type DragSeed } from "./layerDragStore";
 import { AppIcon } from "@/components/AppIcon";
 
@@ -341,8 +342,8 @@ export function LayerBlock({
   /// of selecting/dragging. Cursor is set by the `timeline-root-blade`
   /// class (styles.css) via the `timeline-layer` hook class below.
   bladeMode: boolean;
-  onBladeSplit: (layer: LayerSummary, clientX: number) => void;
-  onBladePreview: (layer: LayerSummary | null, clientX?: number) => void;
+  onBladeSplit: (layer: LayerSummary, clientX: number, snapSuspended?: boolean) => void;
+  onBladePreview: (layer: LayerSummary | null, clientX?: number, snapSuspended?: boolean) => void;
   /// Applies the click's selection semantics and answers whether THIS layer is
   /// selected afterwards — `false` only for an additive click that removed it.
   onSelectFromClick: (
@@ -386,6 +387,7 @@ export function LayerBlock({
   const dragSubject =
     dragState?.subjects.find((subject) => subject.layerId === layer.id) ??
     null;
+  const movePlacement = dragState?.movePlacements?.get(layer.id);
   const isDragging = dragSubject !== null;
   const isDragAnchor = dragState?.layerId === layer.id;
   const isPendingPlacement = pendingPlacement?.layerId === layer.id;
@@ -488,10 +490,8 @@ export function LayerBlock({
     const dx = dragState.deltaUs;
     switch (dragState.kind) {
       case "move": {
-        const moveDeltaUs = Math.max(dx, -dragState.originalTStart);
-        const durationUs = dragSubject.originalTEnd - dragSubject.originalTStart;
-        liveStart = Math.max(0, dragSubject.originalTStart + moveDeltaUs);
-        liveEnd = liveStart + durationUs;
+        liveStart = movePlacement?.tStartUs ?? liveStart;
+        liveEnd = movePlacement?.tEndUs ?? liveEnd;
         break;
       }
       case "trim-start":
@@ -531,14 +531,7 @@ export function LayerBlock({
   // Source copies are normally filtered out for cross-track drag/pending
   // states. If one still renders during a transitional frame, keep it
   // non-interactive and visually secondary.
-  const dragPreviewTrackId =
-    dragSubject && dragState?.kind === "move"
-      ? dragState.destinationByLayerId?.has(dragSubject.layerId)
-        ? previewTrackId(dragState.destinationByLayerId.get(dragSubject.layerId)!, dragSubject.trackId)
-        : isDragAnchor
-        ? previewTrackId(dragState.overTrackId, dragSubject.trackId)
-        : dragSubject.trackId
-      : null;
+  const dragPreviewTrackId = movePlacement?.trackId ?? null;
   const movedAcrossTracks =
     (dragPreviewTrackId !== null && dragPreviewTrackId !== trackId) ||
     (isPendingPlacement && pendingPlacement.trackId !== trackId);
@@ -567,7 +560,7 @@ export function LayerBlock({
       if (layer.locked || trackLocked || isDragging) {
         onBladePreview(null);
       } else {
-        onBladePreview(layer, e.clientX);
+        onBladePreview(layer, e.clientX, modKeyHeld(e));
       }
       if (edgeHover !== null) setEdgeHover(null);
       return;
@@ -598,7 +591,7 @@ export function LayerBlock({
     // Blade-tool mode hijacks every pointerdown on the layer surface:
     // the click is a cut request, not a select/drag.
     if (bladeMode) {
-      if (!locked) onBladeSplit(layer, e.clientX);
+      if (!locked) onBladeSplit(layer, e.clientX, modKeyHeld(e));
       return;
     }
     const blockRect = e.currentTarget.getBoundingClientRect();

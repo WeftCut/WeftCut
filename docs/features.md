@@ -706,6 +706,24 @@ Chromium page zoom, so a chorded binding would never reach the renderer. Both ar
 commands, **unscoped** (they zoom the timeline whatever has focus) and inert in
 text fields.
 
+## Timeline snapping
+
+The magnet (`toggleTailSnap`) turns clip snapping on or off with one click; the
+radius is a Settings field in screen px (`tail_snap_enabled`,
+`tail_snap_strength_px`). Clip moves and trims, media drops, cross-Panel drags,
+marker drags and blade cuts snap to the frame-rounded edges of other visible
+clips and to the playhead; the dragged clips, and their link members unless the
+link override is on, are never targets. While a drag is snapped, one dashed line
+through the lanes marks the boundary it snapped to, and every way out of the
+gesture clears it. Holding Mod (Ctrl; ⌘ on macOS) suspends the magnet for that
+event, including when held before the press; the frame and audio sample grids
+still apply. The chosen target never depends on the lane under the pointer: a
+vertical-only move keeps its time, and a landing that does not fit shows as a
+collision at the aligned position. Escape, pointer cancel or a tool change
+abandons a clip drag; Escape or pointer cancel abandons a marker drag. Solver:
+`renderer/timeline/snapping.ts`; guide: `TimelineSnapGuide.tsx`,
+`timelineSnapFeedbackStore.ts`.
+
 ## Preview zoom and pan
 
 The wheel or a trackpad pinch over the preview zooms about the pointer;

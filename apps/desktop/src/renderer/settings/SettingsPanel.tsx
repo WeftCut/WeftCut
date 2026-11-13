@@ -545,7 +545,7 @@ function TimelineSnapSection({
             {t("settings.tail_snap_enabled")}
           </span>
           <span className="settings-toggle-hint">
-            {t("settings.tail_snap_enabled_hint")}
+            {t("settings.tail_snap_enabled_hint", { mod: modKeyLabel() })}
           </span>
         </span>
       </label>

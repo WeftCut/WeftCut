@@ -137,7 +137,9 @@ import { useLayerDrag } from "./hooks/useLayerDrag";
 import { LayerDragTrimMonitor } from "./LayerDragTrimMonitor";
 import { useIsLayerDragging } from "./layerDragStore";
 import { layerIsReadOnly } from "../state/layerEditability";
-import { snapTimeToTimelineBoundary } from "./snapping";
+import { resolveTimelineTimeSnap } from "./snapping";
+import { setTimelineSnapGuide } from "./timelineSnapFeedbackStore";
+import { TimelineSnapGuide } from "./TimelineSnapGuide";
 import {
   localClockUsOf,
   playheadClockUs,
@@ -1472,13 +1474,13 @@ export const Timeline = memo(function Timeline({
   );
 
   const bladeCutTimeFromClientX = useCallback(
-    (layer: LayerSummary, clientX: number): number | null => {
+    (layer: LayerSummary, clientX: number, snapSuspended = false): { atUs: number; boundaryUs: number | null } | null => {
       if (!canvasRef.current) return null;
       const rect = canvasRef.current.getBoundingClientRect();
       const x = clientX - rect.left;
       const rawUs = Math.max(0, Math.round((x / pxPerSec) * 1_000_000));
       const frameUs = snapFrameRound(rawUs, fpsNum, fpsDen);
-      const atUs = snapTimeToTimelineBoundary({
+      const snapResult = resolveTimelineTimeSnap({
         timeUs: frameUs,
         layerId: layer.id,
         // Escaped under the link override: the split then cuts this layer
@@ -1495,12 +1497,14 @@ export const Timeline = memo(function Timeline({
         fpsNum,
         fpsDen,
         pxPerSec,
-        enabled: tailSnapEnabled,
+        enabled: tailSnapEnabled && !snapSuspended,
         strengthPx: tailSnapStrengthPx,
         isValidSnap: (boundaryUs) =>
           boundaryUs > layer.t_start_us && boundaryUs < layer.t_end_us,
       });
-      return atUs > layer.t_start_us && atUs < layer.t_end_us ? atUs : null;
+      const atUs = snapResult.timeUs;
+      return atUs > layer.t_start_us && atUs < layer.t_end_us
+        ? { atUs, boundaryUs: snapResult.boundaryUs } : null;
     },
     [
       compositionId,
@@ -1515,21 +1519,31 @@ export const Timeline = memo(function Timeline({
     ],
   );
 
+  // All blade exits (leave, tool mode, split, teardown) clear feedback here.
+  const clearBladeFeedback = useCallback((resetPreview = true) => {
+    if (resetPreview) setBladePreview(null);
+    setTimelineSnapGuide(compositionId, "blade", null);
+  }, [compositionId]);
+
   const updateBladePreview = useCallback(
-    (layer: LayerSummary | null, clientX?: number) => {
+    (layer: LayerSummary | null, clientX?: number, snapSuspended = false) => {
       if (!bladeMode || !layer || clientX === undefined) {
-        setBladePreview(null);
+        clearBladeFeedback();
         return;
       }
-      const atUs = bladeCutTimeFromClientX(layer, clientX);
-      setBladePreview(atUs === null ? null : { layerId: layer.id, atUs });
+      const snapResult = bladeCutTimeFromClientX(layer, clientX, snapSuspended);
+      setTimelineSnapGuide(compositionId, "blade", snapResult?.boundaryUs ?? null);
+      setBladePreview(snapResult === null ? null : { layerId: layer.id, atUs: snapResult.atUs });
     },
-    [bladeCutTimeFromClientX, bladeMode],
+    [bladeCutTimeFromClientX, bladeMode, clearBladeFeedback, compositionId],
   );
 
   useEffect(() => {
-    if (!bladeMode) setBladePreview(null);
-  }, [bladeMode]);
+    if (!bladeMode) {
+      clearBladeFeedback();
+    }
+    return () => clearBladeFeedback(false);
+  }, [bladeMode, clearBladeFeedback]);
 
   // Blade-tool click handler: convert clientX → frame-snapped composition
   // timestamp and ask the actor to split the layer at that point. Reject
@@ -1538,10 +1552,11 @@ export const Timeline = memo(function Timeline({
   // frame-precise cuts. After a split the user stays in blade mode
   // (NLE convention); press `C` or `Esc` to exit.
   const splitFromClientX = useCallback(
-    async (layer: LayerSummary, clientX: number) => {
-      const atUs = bladeCutTimeFromClientX(layer, clientX);
-      if (atUs === null) return;
-      setBladePreview(null);
+    async (layer: LayerSummary, clientX: number, snapSuspended = false) => {
+      const snapResult = bladeCutTimeFromClientX(layer, clientX, snapSuspended);
+      if (snapResult === null) return;
+      const atUs = snapResult.atUs;
+      clearBladeFeedback();
       try {
         // Link-aware, as `splitAtPlayhead` sends it; escaped only under the
         // link override.
@@ -1551,7 +1566,7 @@ export const Timeline = memo(function Timeline({
         logMutationFailure(err, "Blade split");
       }
     },
-    [bladeCutTimeFromClientX, onMutated],
+    [bladeCutTimeFromClientX, clearBladeFeedback, onMutated],
   );
 
   // Esc disarms the sample-region one-shot. Its own effect rather than a branch
@@ -1983,6 +1998,7 @@ export const Timeline = memo(function Timeline({
               </div>
               <div ref={canvasRef} data-testid="timeline-canvas" className="pointer-events-none absolute inset-y-0"
                 style={{ left: headerColPx, width: widthPx }}>
+                <TimelineSnapGuide compositionId={compositionId} pxPerSec={pxPerSec} />
                 {bladePreview && (
                   <BladeCutPreview
                     x={(bladePreview.atUs / 1_000_000) * pxPerSec}

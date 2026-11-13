@@ -2313,7 +2313,7 @@ const enUS = {
       "Remove a track when its last clip is moved or deleted. Turn off to keep empty tracks; reserved and locked tracks always stay. Applies to all projects.",
     tail_snap_enabled: "Clip snapping",
     tail_snap_enabled_hint:
-      "Snap clips to nearby clip edges or the playhead while dragging or trimming.",
+      "Snap clips to nearby clip edges or the playhead while dragging or trimming. Hold {{mod}} to override.",
     tail_snap_strength: "Snap strength",
     tail_snap_strength_hint:
       "Measured in screen pixels.",

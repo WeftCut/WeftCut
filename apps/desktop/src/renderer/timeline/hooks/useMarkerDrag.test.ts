@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AnimTrack, LayerSummary, TrackSummary } from "../../ipc";
-import { markerDragTimeUs, type MarkerDragContext } from "./useMarkerDrag";
+import { markerDragSnap, type MarkerDragContext } from "./useMarkerDrag";
 
 const staticNum = (value: number): AnimTrack<number> => ({
   mode: "Static",
@@ -92,13 +92,13 @@ const zoomedOut = (snapping: boolean): MarkerDragContext => {
 /// about it.
 const PLAYHEAD_US = 90_000_000;
 
-describe("markerDragTimeUs", () => {
+describe("markerDragSnap", () => {
   it("lands every preview on the composition frame grid", () => {
     // Half a frame of travel is still a whole frame of movement, because a
     // preview sitting between frames is a landing the commit cannot make.
     const ctx = context();
-    expect(markerDragTimeUs(ctx, 20_000, PLAYHEAD_US)).toBe(2_033_333);
-    expect(markerDragTimeUs(ctx, 10_000, PLAYHEAD_US)).toBe(2_000_000);
+    expect(markerDragSnap(ctx, 20_000, PLAYHEAD_US).timeUs).toBe(2_033_333);
+    expect(markerDragSnap(ctx, 10_000, PLAYHEAD_US).timeUs).toBe(2_000_000);
   });
 
   // Measured from the press, never accumulated per move: after a clamp has held
@@ -106,18 +106,18 @@ describe("markerDragTimeUs", () => {
   // it rather than resuming from where it was pinned.
   it("reads the pointer's total travel, so a return trip lands where it started", () => {
     const ctx = context({ anchored: true, bounds: { minUs: 1_000_000, maxUs: 2_966_667 } });
-    expect(markerDragTimeUs(ctx, 5_000_000, PLAYHEAD_US)).toBe(2_966_667);
-    expect(markerDragTimeUs(ctx, 0, PLAYHEAD_US)).toBe(2_000_000);
+    expect(markerDragSnap(ctx, 5_000_000, PLAYHEAD_US).timeUs).toBe(2_966_667);
+    expect(markerDragSnap(ctx, 0, PLAYHEAD_US).timeUs).toBe(2_000_000);
   });
 
   it("stops an anchored marker at its clip's edges instead of running past them", () => {
     const ctx = context({ anchored: true, bounds: { minUs: 1_000_000, maxUs: 2_966_667 } });
-    expect(markerDragTimeUs(ctx, 9_000_000, PLAYHEAD_US)).toBe(2_966_667);
-    expect(markerDragTimeUs(ctx, -9_000_000, PLAYHEAD_US)).toBe(1_000_000);
+    expect(markerDragSnap(ctx, 9_000_000, PLAYHEAD_US).timeUs).toBe(2_966_667);
+    expect(markerDragSnap(ctx, -9_000_000, PLAYHEAD_US).timeUs).toBe(1_000_000);
   });
 
   it("never lets a free marker cross zero", () => {
-    expect(markerDragTimeUs(context(), -9_000_000, PLAYHEAD_US)).toBe(0);
+    expect(markerDragSnap(context(), -9_000_000, PLAYHEAD_US).timeUs).toBe(0);
   });
 
   // Clip edges and the playhead, which is what Premiere and Resolve snap a
@@ -128,13 +128,13 @@ describe("markerDragTimeUs", () => {
   // only zoom band where snapping does anything a marker's own frame grid does
   // not already do.
   it("snaps a free marker to a clip edge within the strength, and not without it", () => {
-    expect(markerDragTimeUs(zoomedOut(true), 900_000, PLAYHEAD_US)).toBe(3_000_000);
-    expect(markerDragTimeUs(zoomedOut(false), 900_000, PLAYHEAD_US)).toBe(2_900_000);
+    expect(markerDragSnap(zoomedOut(true), 900_000, PLAYHEAD_US).timeUs).toBe(3_000_000);
+    expect(markerDragSnap(zoomedOut(false), 900_000, PLAYHEAD_US).timeUs).toBe(2_900_000);
   });
 
   it("snaps to the playhead", () => {
-    expect(markerDragTimeUs(zoomedOut(true), 1_400_000, 3_500_000)).toBe(3_500_000);
-    expect(markerDragTimeUs(zoomedOut(false), 1_400_000, 3_500_000)).toBe(3_400_000);
+    expect(markerDragSnap(zoomedOut(true), 1_400_000, 3_500_000).timeUs).toBe(3_500_000);
+    expect(markerDragSnap(zoomedOut(false), 1_400_000, 3_500_000).timeUs).toBe(3_400_000);
   });
 
   // A boundary the marker may not land on is not offered at all. Offering it and
@@ -150,6 +150,21 @@ describe("markerDragTimeUs", () => {
     // the drag keeps the frame the pointer is on — and does NOT arrive at the
     // upper bound, which is where the clamp would have parked a snapped-past-it
     // preview.
-    expect(markerDragTimeUs(ctx, 900_000, PLAYHEAD_US)).toBe(2_900_000);
+    expect(markerDragSnap(ctx, 900_000, PLAYHEAD_US).timeUs).toBe(2_900_000);
+  });
+});
+
+describe("marker magnetic guide and Mod suspension", () => {
+  it("snaps to a clip edge with a guide, but Mod returns a frame-grid position", () => {
+    const ctx = zoomedOut(true);
+    expect(markerDragSnap(ctx, 900_000, PLAYHEAD_US)).toEqual({
+      timeUs: 3_000_000, boundaryUs: 3_000_000,
+    });
+    expect(markerDragSnap(ctx, 900_000, PLAYHEAD_US, true)).toEqual({
+      timeUs: 2_900_000, boundaryUs: null,
+    });
+    expect(markerDragSnap(ctx, 900_000, PLAYHEAD_US)).toEqual({
+      timeUs: 3_000_000, boundaryUs: 3_000_000,
+    });
   });
 });

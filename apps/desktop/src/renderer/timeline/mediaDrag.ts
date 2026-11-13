@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { create } from "zustand";
 
 import { snapFrameRound } from "../frames";
@@ -14,7 +15,7 @@ import {
   SPAWN_TRACK_ID,
   type PlacementValidity,
 } from "./placement";
-import { snapDragDeltaToTimelineBoundary } from "./snapping";
+import { resolveTimelineDragSnap } from "./snapping";
 
 export const MEDIA_DRAG_TYPE = "application/x-weftcut-media";
 
@@ -90,6 +91,8 @@ export interface MediaDropPlan {
   /// When true, the ghost occupies the same half-height slot that the final
   /// layer will use beside an opposite-class layer.
   sharesLane: boolean;
+  /** Magnetic boundary chosen, if any; null for frame-grid-only placement. */
+  snapBoundaryUs?: number | null;
 }
 
 export interface MediaDropSnapOptions {
@@ -101,63 +104,60 @@ export interface MediaDropSnapOptions {
   strengthPx: number;
 }
 
+interface MediaDropTarget {
+  compositionId: string | null;
+  trackId: string;
+  absorptionTarget: MediaDragAbsorptionTarget | null;
+  snapBoundaryUs: number | null;
+}
+
 interface MediaDragState {
   active: MediaDragPayload | null;
-  dropTargetTrackId: string | null;
   visual: MediaDragVisual | null;
-  absorptionTarget: MediaDragAbsorptionTarget | null;
+  dropTarget: MediaDropTarget | null;
   begin: (payload: MediaDragPayload, visual?: MediaDragVisual) => void;
   moveVisual: (clientX: number, clientY: number) => void;
-  claimDropTarget: (
-    trackId: string,
-    absorptionTarget?: MediaDragAbsorptionTarget,
-  ) => void;
-  releaseDropTarget: (trackId: string) => void;
+  claimDropTarget: (target: MediaDropTarget) => void;
+  releaseDropTarget: (compositionId: string | null, trackId: string) => void;
   end: () => void;
+}
+
+function ownsDropTarget(
+  target: MediaDropTarget | null,
+  compositionId: string | null,
+  trackId: string,
+): boolean {
+  return target !== null && target.compositionId === compositionId && target.trackId === trackId;
 }
 
 export const useMediaDragStore = create<MediaDragState>((set) => ({
   active: null,
-  dropTargetTrackId: null,
   visual: null,
-  absorptionTarget: null,
-  begin: (active, visual) =>
-    set({
-      active,
-      dropTargetTrackId: null,
-      visual: visual ?? null,
-      absorptionTarget: null,
-    }),
+  dropTarget: null,
+  begin: (active, visual) => set({ active, visual: visual ?? null, dropTarget: null }),
   moveVisual: (clientX, clientY) =>
     set((state) =>
       state.active === null || state.visual === null
         ? state
         : { visual: { ...state.visual, clientX, clientY } },
     ),
-  claimDropTarget: (trackId, absorptionTarget) =>
+  claimDropTarget: (dropTarget) =>
+    set((state) => state.active === null ? state : { dropTarget }),
+  releaseDropTarget: (compositionId, trackId) =>
     set((state) =>
-      state.dropTargetTrackId === trackId &&
-      state.absorptionTarget === absorptionTarget
-        ? state
-        : {
-            dropTargetTrackId: trackId,
-            absorptionTarget: absorptionTarget ?? null,
-          },
-    ),
-  releaseDropTarget: (trackId) =>
-    set((state) =>
-      state.dropTargetTrackId === trackId
-        ? { dropTargetTrackId: null, absorptionTarget: null }
+      ownsDropTarget(state.dropTarget, compositionId, trackId)
+        ? { dropTarget: null }
         : state,
     ),
-  end: () =>
-    set({
-      active: null,
-      dropTargetTrackId: null,
-      visual: null,
-      absorptionTarget: null,
-    }),
+  end: () => set({ active: null, visual: null, dropTarget: null }),
 }));
+
+export function useIsMediaDropTarget(compositionId: string | null, trackId: string): boolean {
+  useEffect(() => () => {
+    useMediaDragStore.getState().releaseDropTarget(compositionId, trackId);
+  }, [compositionId, trackId]);
+  return useMediaDragStore((s) => ownsDropTarget(s.dropTarget, compositionId, trackId));
+}
 
 /// Cap on the floating drag preview's width, so a wide pool card does not
 /// follow the pointer at full size.
@@ -309,8 +309,8 @@ export function planMediaDrop({
     fpsNum,
     fpsDen,
   );
-  const boundaryDeltaUs = snap
-    ? snapDragDeltaToTimelineBoundary({
+  const snapResult = snap
+    ? resolveTimelineDragSnap({
         state: {
           kind: "move",
           // The incoming layer has no project id yet. This sentinel cannot
@@ -331,7 +331,8 @@ export function planMediaDrop({
         enabled: snap.enabled,
         strengthPx: snap.strengthPx,
       })
-    : 0;
+    : { deltaUs: 0, boundaryUs: null };
+  const boundaryDeltaUs = snapResult.deltaUs;
   // Apply the chosen boundary delta to the actor input, then recompute both
   // snapped edges. The ghost and collision interval therefore match the
   // committed layer even at fractional frame rates.
@@ -356,6 +357,7 @@ export function planMediaDrop({
       conflictingLayerIds: [],
       overlapClass,
       sharesLane: false,
+      snapBoundaryUs: null,
     };
   }
   // The cycle gate out-ranks the lane: a composition that would contain itself
@@ -372,6 +374,7 @@ export function planMediaDrop({
       conflictingLayerIds: [],
       overlapClass,
       sharesLane: false,
+      snapBoundaryUs: null,
     };
   }
   const evaluation = evaluateTimelinePlacements({
@@ -397,5 +400,6 @@ export function planMediaDrop({
     conflictingLayerIds: evaluation.conflictingLayerIds,
     overlapClass,
     sharesLane: evaluation.sharesLane,
+    snapBoundaryUs: snapResult.boundaryUs,
   };
 }

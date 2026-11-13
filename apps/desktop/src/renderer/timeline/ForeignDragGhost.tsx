@@ -28,7 +28,7 @@
 
 import { createPortal } from "react-dom";
 import { timelineDestination } from "./timelineDestination";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   moveLayersToComposition,
   type LinkSummary,
@@ -55,9 +55,9 @@ import {
   evaluateTimelinePlacements,
   SPAWN_TRACK_ID,
   type PlacementValidity,
-  type TimelinePlacement,
 } from "./placement";
-import { snapDragDeltaToTimelineBoundary } from "./snapping";
+import { resolveTimelineDragSnap } from "./snapping";
+import { setTimelineSnapGuide } from "./timelineSnapFeedbackStore";
 import { foreignCompositionAtPoint } from "./timelineSurfaces";
 
 export interface ForeignDragGhostProps {
@@ -136,6 +136,7 @@ interface ForeignLanding {
   trackId: string | null;
   anchorTStartUs: number;
   validity: PlacementValidity;
+  snapBoundaryUs: number | null;
   /// The row's chip band, in `timeline-canvas` coordinates. Null when the
   /// pointer is inside this Panel but over no row, which is also when `blocks`
   /// is empty — there is no lane to draw in.
@@ -218,7 +219,7 @@ async function commitForeignDrop(drop: ResolvedDrop): Promise<void> {
 function resolveForeignDrop(
   opts: ForeignDragGhostProps,
   drag: DragState,
-  pointer: { clientX: number; clientY: number },
+  pointer: { clientX: number; clientY: number; snapSuspended: boolean },
 ): ForeignLanding | null {
   const { compositionId, pxPerSec, fpsNum, fpsDen } = opts;
   if (compositionId === null || pxPerSec <= 0) return null;
@@ -263,64 +264,13 @@ function resolveForeignDrop(
   // lattice, `applyMoveLayersToComposition` re-snaps it on the other side of the
   // commit, and the clip lands a frame from where the ghost drew it.
   const griddedUs = snapFrameRound(pointerUs - grabOffsetUs, fpsNum, fpsDen);
-  // The subject's own `originalTStart` is a SOURCE-composition time, and it is
-  // used as an algebraic pivot only: the helper's delta is measured from it and
-  // added straight back, so it cancels and every surviving number is this
-  // composition's. What the subject genuinely contributes is the set's phase and
-  // each clip's duration, which are the same in any composition.
-  const snappedDeltaUs = snapDragDeltaToTimelineBoundary({
-    state: {
-      kind: "move",
-      layerId: anchor.layerId,
-      originalTStart: anchor.originalTStart,
-      originalTEnd: anchor.originalTEnd,
-      // Nothing here to exclude either way: the ignore set removes the dragged
-      // clip and its link members from the target list, and none of them is in
-      // this composition to be offered as a target in the first place.
-      escapeLink: true,
-    },
-    frameDeltaUs: griddedUs - anchor.originalTStart,
-    visibleTracks: opts.snapTracks,
-    links: opts.links,
-    linkByLayerId: opts.linkByLayerId,
-    // This Panel's own playhead: the same root moment projected onto this
-    // composition's clock (ADR 0053 decision 2), which is where its line is drawn.
-    currentTimeUs: playheadClockUs(compositionId),
-    fpsNum,
-    fpsDen,
-    pxPerSec,
-    enabled: opts.tailSnapEnabled,
-    strengthPx: opts.tailSnapStrengthPx,
-  });
-  // Composition time has no negative half, and the set stops as ONE body when
-  // it reaches zero: the delta is floored at whatever would put the EARLIEST
-  // member on zero, rather than each member being clamped where it lands.
-  //
-  // Clamping per member would flatten the set's phase against the boundary, and
-  // worse, it would draw a landing the commit refuses — `applyMoveLayers-
-  // ToComposition` refuses a member before zero outright and never clamps, on
-  // the grounds that sliding a set off the picture it was placed against is not
-  // a repair. Flooring here keeps that refusal unreachable by this gesture, the
-  // way naming the earliest member as anchor keeps it unreachable from the menu.
-  const movers = shiftMembersOf(drag.subjects);
-  const phaseDeltaUs = floorShiftAtZero(movers, snappedDeltaUs);
-  // Every block THIS Panel draws, on this composition's rate — the same
-  // arithmetic `applyMoveLayersToComposition` runs on the other side of the
-  // commit (`renderer/grid.ts`), which is what makes the ghost a promise rather
-  // than an approximation of one.
-  const landings = shiftOnGrids(movers, phaseDeltaUs, { num: fpsNum, den: fpsDen });
-  // The command derives its own offset as `anchorTStartUs - anchor.t_start_us`,
-  // so the number sent is the RAW shifted head, not the snapped one: sending the
-  // snapped head would hand the command a different offset from the one every
-  // block above was drawn with, and the set's phase would land off its preview.
-  const anchorTStartUs = anchor.originalTStart + phaseDeltaUs;
-
   const destination = timelineDestination({
     viewport: opts.trackViewportRef.current, strip: opts.dropStripEl.current,
     lanes: opts.laneEls.current, orderedTracks: opts.orderedTracks,
   }, pointer.clientX, pointer.clientY);
   const trackId = destination?.trackId ?? null;
-
+  const movers = shiftMembersOf(drag.subjects);
+  const fps = { num: fpsNum, den: fpsDen };
   if (trackId === null) {
     // Inside the Panel, over no row — its ruler, or the band under the last
     // lane. There is no geometry to draw in and no lane to validate against,
@@ -337,44 +287,94 @@ function resolveForeignDrop(
     // no band to draw.
     return {
       trackId: null,
-      anchorTStartUs,
+      anchorTStartUs: anchor.originalTStart + floorShiftAtZero(movers, griddedUs - anchor.originalTStart),
       validity: "collision",
+      snapBoundaryUs: null,
       band: null,
       blocks: [],
       drop: null,
     };
   }
 
-  // Every subject lands on the ONE hit lane: `applyMoveLayersToComposition` with
-  // a named destination puts every source block there, whatever lane it came
-  // from (`main/state/mutations/moveToComposition.ts`). A ghost that scattered
-  // them across rows would promise a landing the command cannot make.
-  const blocks: GhostBlock[] = drag.subjects.map((subject) => {
-    // No clamp: the floor above already guarantees every member is at or past
-    // zero, so the set's mutual geometry survives the boundary intact.
-    const landed = landings.get(subject.layerId)!;
-    return { subject, tStartUs: landed.tStartUs, tEndUs: landed.tEndUs };
+  const { boundaryUs, placement } = resolveTimelineDragSnap({
+    state: {
+      kind: "move",
+      layerId: anchor.layerId,
+      originalTStart: anchor.originalTStart,
+      originalTEnd: anchor.originalTEnd,
+      // Nothing here to exclude either way: the ignore set removes the dragged
+      // clip and its link members from the target list, and none of them is in
+      // this composition to be offered as a target in the first place.
+      escapeLink: true,
+    },
+    // The subject's own `originalTStart` is a SOURCE-composition time, used as
+    // an algebraic pivot only: the delta is measured from it and added straight
+    // back, so it cancels and every surviving number is this composition's. What
+    // the subject genuinely contributes is the set's phase and each clip's
+    // duration, which are the same in any composition.
+    frameDeltaUs: griddedUs - anchor.originalTStart,
+    visibleTracks: opts.snapTracks,
+    links: opts.links,
+    linkByLayerId: opts.linkByLayerId,
+    // This Panel's own playhead: the same root moment projected onto this
+    // composition's clock (ADR 0053 decision 2), which is where its line is drawn.
+    currentTimeUs: playheadClockUs(compositionId),
+    fpsNum,
+    fpsDen,
+    pxPerSec,
+    enabled: opts.tailSnapEnabled && !pointer.snapSuspended,
+    strengthPx: opts.tailSnapStrengthPx,
+    projectMove: (deltaUs) => {
+      // Composition time has no negative half, and the set stops as ONE body
+      // when it reaches zero: the delta is floored at whatever puts the EARLIEST
+      // member on zero, rather than each member being clamped where it lands.
+      // Clamping per member would flatten the set's phase against the boundary
+      // and draw a landing the commit refuses — `applyMoveLayersToComposition`
+      // refuses a member before zero outright and never clamps.
+      const phaseDeltaUs = floorShiftAtZero(movers, deltaUs);
+      // The same arithmetic `applyMoveLayersToComposition` runs on the other
+      // side of the commit (`renderer/grid.ts`), which is what makes the ghost
+      // a promise rather than an approximation of one.
+      const landings = shiftOnGrids(movers, phaseDeltaUs, fps);
+      // Every subject lands on the ONE hit lane: the command with a named
+      // destination puts every source block there, whatever lane it came from
+      // (`main/state/mutations/moveToComposition.ts`). A ghost that scattered
+      // them across rows would promise a landing the command cannot make.
+      const blocks = drag.subjects.map((subject) => ({
+        subject, ...landings.get(subject.layerId)!,
+      }));
+      const { validity } = evaluateTimelinePlacements({
+        tracks: opts.tracks,
+        placements: blocks.map(({ subject, tStartUs, tEndUs }) => ({
+          layerId: subject.layerId,
+          trackId,
+          tStartUs,
+          tEndUs,
+          overlapClass: overlapClassForKind(subject.kind),
+          // Both locks refuse, as in the in-composition projection: the
+          // destination lane's, read off this composition's own tracks, and the
+          // subject's own, which travelled on the subject because this Panel
+          // holds no summary to find it in.
+          locked: subject.locked,
+        })),
+        // EMPTY, unlike the in-composition move: the subjects do not live here,
+        // so none of this composition's intervals is vacated by the drop.
+        // Listing them would only be a way to silence a real collision.
+        replacedLayerIds: new Set(),
+      });
+      // The command derives its offset as `anchorTStartUs - anchor.t_start_us`,
+      // so the number sent is the RAW shifted head, not the snapped one: the
+      // snapped head would hand it a different offset from the one every block
+      // above was drawn with, and the set's phase would land off its preview.
+      return {
+        anchor: landings.get(anchor.layerId)!,
+        anchorTStartUs: anchor.originalTStart + phaseDeltaUs,
+        blocks,
+        validity,
+      };
+    },
   });
-  const placements: TimelinePlacement[] = blocks.map((block) => ({
-    layerId: block.subject.layerId,
-    trackId,
-    tStartUs: block.tStartUs,
-    tEndUs: block.tEndUs,
-    overlapClass: overlapClassForKind(block.subject.kind),
-    // Both locks refuse, exactly as the in-composition projection has them do:
-    // the destination lane's, which `evaluateTimelinePlacements` reads off this
-    // composition's own tracks, and the subject's own, which travelled on the
-    // subject because this Panel holds no summary to find it in.
-    locked: block.subject.locked,
-  }));
-  const evaluation = evaluateTimelinePlacements({
-    tracks: opts.tracks,
-    placements,
-    // EMPTY, unlike the in-composition move: the subjects do not live here, so
-    // none of this composition's intervals is being vacated by the drop. Listing
-    // them would only be a way to silence a real collision.
-    replacedLayerIds: new Set(),
-  });
+  const { anchorTStartUs, blocks, validity } = placement!;
 
   // The ROW decides the band, not this file and not which Panel the gesture came
   // from — `dragGhostBand` is the rule, and the raise's own ghost reads it too,
@@ -392,7 +392,8 @@ function resolveForeignDrop(
   return {
     trackId,
     anchorTStartUs,
-    validity: evaluation.validity,
+    validity,
+    snapBoundaryUs: boundaryUs,
     band,
     blocks,
     drop: committableDrop(
@@ -401,7 +402,7 @@ function resolveForeignDrop(
       compositionId,
       trackId,
       anchorTStartUs,
-      evaluation.validity,
+      validity,
     ),
   };
 }
@@ -461,6 +462,18 @@ export function ForeignDragGhost(props: ForeignDragGhostProps): React.ReactNode 
     return () => useLayerDragStore.getState().releaseDropTarget(compositionId);
   }, [compositionId]);
 
+  const snapBoundaryUs = landing?.snapBoundaryUs ?? null;
+  const clearForeignFeedback = useCallback(
+    () => setTimelineSnapGuide(compositionId, "foreign", null),
+    [compositionId],
+  );
+  useEffect(() => {
+    setTimelineSnapGuide(compositionId, "foreign", snapBoundaryUs);
+  }, [compositionId, snapBoundaryUs]);
+  // The same cleanup covers release and unmount, without clearing/re-adding
+  // on every boundary change (which caused a flicker during a drag).
+  useEffect(() => () => clearForeignFeedback(), [clearForeignFeedback]);
+
   const drop = landing?.drop ?? null;
   // LANDMINE: the release below reads THIS ref and never the store.
   //
@@ -484,6 +497,9 @@ export function ForeignDragGhost(props: ForeignDragGhostProps): React.ReactNode 
   // "a refused preview sends nothing" stays structural either way.
   useEffect(() => {
     const release = (e: PointerEvent): void => {
+      // Clear synchronously on release, before the destination commit awaits
+      // anything. The store's unmount effect also covers cancellation.
+      clearForeignFeedback();
       const pending = dropRef.current;
       if (pending === null) return;
       // Re-asked from the RELEASE's own coordinates, not the last pointermove's.
@@ -502,7 +518,7 @@ export function ForeignDragGhost(props: ForeignDragGhostProps): React.ReactNode 
     };
     window.addEventListener("pointerup", release);
     return () => window.removeEventListener("pointerup", release);
-  }, []);
+  }, [clearForeignFeedback]);
 
   // One condition spelled twice: `resolveForeignDrop` returns a null band and a
   // null row together — over no row there is nothing to draw and nothing to draw

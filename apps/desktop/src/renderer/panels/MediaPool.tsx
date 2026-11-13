@@ -127,7 +127,7 @@ function parseMediaInUseLayerIds(error: unknown): string[] | null {
 function MediaDragPreview() {
   const active = useMediaDragStore((s) => s.active);
   const visual = useMediaDragStore((s) => s.visual);
-  const absorptionTarget = useMediaDragStore((s) => s.absorptionTarget);
+  const absorptionTarget = useMediaDragStore((s) => s.dropTarget?.absorptionTarget ?? null);
   const moveVisual = useMediaDragStore((s) => s.moveVisual);
 
   useEffect(() => {

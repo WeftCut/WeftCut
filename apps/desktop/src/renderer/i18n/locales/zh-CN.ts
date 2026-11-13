@@ -2069,7 +2069,7 @@ const zhCN: Resources = {
       "移走或删除轨道中的最后一个片段时，自动删除该轨道。关闭后保留空轨道；预留轨道和锁定轨道始终保留。适用于所有项目。",
     tail_snap_enabled: "启用片段吸附",
     tail_snap_enabled_hint:
-      "拖拽或修剪片段时，自动对齐到附近的片段边界或播放头。",
+      "拖拽或修剪片段时，自动对齐到附近的片段边界或播放头。按住 {{mod}} 可临时关闭。",
     tail_snap_strength: "吸附强度",
     tail_snap_strength_hint:
       "以屏幕像素为单位。",

@@ -874,6 +874,24 @@ describe("dragging a marker", () => {
     );
   });
 
+  // Abandoned the same ways a clip drag is: the mark goes back where it was and
+  // the release that follows commits nothing.
+  it.each(["Escape", "pointercancel"])("abandons the drag on %s", (ending) => {
+    seed([point({ t_us: 1_000_000 })]);
+    const { container } = renderLane();
+    fireEvent.pointerDown(markById(container, "point-1"), {
+      button: 0,
+      clientX: 0,
+    });
+    fireEvent.pointerMove(window, { clientX: 1000 });
+    if (ending === "Escape") fireEvent.keyDown(window, { key: "Escape" });
+    else fireEvent.pointerCancel(window);
+    expect(markById(container, "point-1").style.left).toBe("2000px");
+    expect(markById(container, "point-1").dataset.dragging).toBeUndefined();
+    fireEvent.pointerUp(window, { clientX: 1000 });
+    expect(ipcMocks.moveMarker).not.toHaveBeenCalled();
+  });
+
   // The gesture the whole lane exists to make possible, and the one the ruler
   // could never host: the scrub surface is elsewhere and this press never
   // reaches it.
