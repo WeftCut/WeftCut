@@ -1,7 +1,7 @@
 import { useEffect, useReducer, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { Bot, FileIcon, Hourglass } from "lucide-react";
+import { Hourglass } from "lucide-react";
 import { AppIcon } from "@/components/AppIcon";
 import { useStatusPopover } from "@/components/useStatusPopover";
 import { useAgentActivity } from "../agent/activityStore";
@@ -113,6 +113,8 @@ function WorkDetails({ view, onLeave }: { view: WorkView; onLeave: () => void })
   );
 }
 
+/// The header names the kind of work, so rows carry no icon of their own; the
+/// one icon in a row is a clip job's state (working or waiting).
 function WorkGroup({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
   return (
     <div className="work-group" role="group" aria-label={title}>
@@ -147,7 +149,6 @@ function AgentRow({ activity }: { activity: AgentActivity }) {
   return (
     <li className="work-row" data-work="agent">
       <div className="work-row-line">
-        <AppIcon icon={Bot} size="label" className="work-row-icon" aria-hidden />
         <span className="work-row-name">{`${activity.client} · ${activity.tool}`}</span>
         {!Number.isNaN(started) && (
           <span className="work-row-elapsed">{formatComputeDuration(t, Math.max(0, now - started))}</span>
@@ -164,7 +165,6 @@ function MediaRow({ media }: { media: MediaWork }) {
   return (
     <li className="work-row" data-work="derivatives">
       <div className="work-row-line">
-        <AppIcon icon={FileIcon} size="label" className="work-row-icon" aria-hidden />
         <span className="work-row-name">{item?.label ?? t("status_bar.work.media_unnamed")}</span>
       </div>
       <div className="work-row-detail">{kinds}</div>

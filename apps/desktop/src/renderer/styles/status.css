@@ -262,11 +262,6 @@
   min-width: 0;
 }
 
-.work-row-icon {
-  flex-shrink: 0;
-  color: var(--muted-foreground);
-}
-
 .work-row-name {
   min-width: 0;
   overflow: hidden;
@@ -292,13 +287,8 @@
 }
 
 .work-row-detail {
-  padding-left: calc(18 * var(--ui-px));
   color: var(--muted-foreground);
   font-size: var(--font-size-caption);
-}
-
-.work-row .compute-job-status {
-  padding-left: calc(18 * var(--ui-px));
 }
 
 .work-row .compute-job-cancel {
