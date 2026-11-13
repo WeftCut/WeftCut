@@ -267,9 +267,9 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
       api.onDidMaximizedGroupChange(() => this.emitChange()),
     );
     if (stripDragHost) this.trackStripDrag(stripDragHost);
-    // A StrictMode-ready replay may hand a fresh adapter an API whose Panels
-    // were already registered by the first pass. Seed recovery metadata from
-    // that live tree instead of waiting for another layout mutation.
+    // StrictMode's effect replay binds a fresh adapter to the same live API,
+    // whose Panels the first pass already registered. Seed recovery metadata
+    // from that tree instead of waiting for another layout mutation.
     this.syncPreviewGroupChrome();
     this.captureOpenPlacements();
   }
@@ -300,10 +300,6 @@ export class DockWorkspaceAdapter implements DockWorkspaceController {
         end();
       },
     });
-  }
-
-  belongsTo(api: DockviewApi): boolean {
-    return this.api === api;
   }
 
   /**
