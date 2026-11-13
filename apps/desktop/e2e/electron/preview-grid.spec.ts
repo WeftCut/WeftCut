@@ -55,6 +55,25 @@ test('Quick Actions toggles the grid; preview toolbar edits columns, rows and ax
     await gridButton.click()
     await expect(gridButton).toHaveAttribute('aria-pressed', 'true')
     await expect(toolbar).toBeVisible()
+    const heights = await page.evaluate(() => {
+      const names = {
+        target: '.preview-target-select',
+        zoom: '.preview-zoom-select',
+        number: '.preview-grid-count .app-input',
+        columnIcon: '[data-testid="grid-columns-visible"]',
+        rowIcon: '[data-testid="grid-rows-visible"]',
+        eyeIcon: '[data-testid="grid-opacity-eye"]',
+      };
+      return Object.fromEntries(Object.entries(names).map(([name, selector]) => {
+        const rect = document.querySelector(selector)?.getBoundingClientRect();
+        if (!rect) throw new Error(`Missing toolbar control: ${selector}`);
+        return [name, { height: rect.height, centerY: rect.top + rect.height / 2 }];
+      }));
+    }) as Record<string, { height: number; centerY: number }>;
+    for (const [name, rect] of Object.entries(heights)) {
+      expect(rect.height, `${name} control height`).toBe(24);
+      expect(rect.centerY, `${name} center alignment`).toBe(heights.target!.centerY);
+    }
     await expect.poll(async () => (await bar.boundingBox())!.height).toBe(baselineHeight)
     await expect(toolbar.getByLabel('Columns', { exact: true })).toHaveValue('3')
     await expect(toolbar.getByLabel('Rows', { exact: true })).toHaveValue('3')
