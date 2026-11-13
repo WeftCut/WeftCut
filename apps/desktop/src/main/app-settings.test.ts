@@ -60,15 +60,17 @@ describe('app-settings store', () => {
     });
   });
 
-  it('reserves zero for the eye and normalises low positive opacity to 10%', () => {
-    const settings = store({ [PATH]: JSON.stringify({ preview_grid: { opacity: 5 } }) });
+  it('clamps saved and requested opacity to 10–100%, with no invisible-grid state', () => {
+    const settings = store({ [PATH]: JSON.stringify({ preview_grid: { visible: true, opacity: 0 } }) });
     expect(settings.get().preview_grid.opacity).toBe(10);
     settings.apply({ preview_grid: { opacity: 1 } });
     expect(settings.get().preview_grid.opacity).toBe(10);
-    settings.apply({ preview_grid: { opacity: 0 } });
-    expect(settings.get().preview_grid.opacity).toBe(0);
-    settings.apply({ preview_grid: { opacity: 10 } });
+    settings.apply({ preview_grid: { opacity: 5 } });
     expect(settings.get().preview_grid.opacity).toBe(10);
+    settings.apply({ preview_grid: { opacity: 100 } });
+    expect(settings.get().preview_grid.opacity).toBe(100);
+    settings.apply({ preview_grid: { opacity: 101 } });
+    expect(settings.get().preview_grid.opacity).toBe(100);
   });
 
   it('accepts 64 subdivisions on either axis and clamps 65 to 64', () => {
@@ -79,13 +81,13 @@ describe('app-settings store', () => {
     expect(settings.row_divisions).toBe(64);
   });
 
-  it('persists grid counts, axis visibility and zero opacity independently', () => {
+  it('persists grid counts, axis visibility and opacity independently', () => {
     const { fs } = memFs();
     const deps = { fs, path: PATH, dir: DIR };
     const initial = createAppSettingsStore(deps);
-    initial.apply({ preview_grid: { visible: true, column_divisions: 12, row_divisions: 5, rows: false, opacity: 0 } });
+    initial.apply({ preview_grid: { visible: true, column_divisions: 12, row_divisions: 5, rows: false, opacity: 10 } });
     expect(createAppSettingsStore(deps).get().preview_grid).toEqual({
-      ...DEFAULT_PREVIEW_GRID, visible: true, column_divisions: 12, row_divisions: 5, rows: false, opacity: 0,
+      ...DEFAULT_PREVIEW_GRID, visible: true, column_divisions: 12, row_divisions: 5, rows: false, opacity: 10,
     });
     initial.apply({ preview_grid: { rows: true, opacity: 47 } });
     expect(createAppSettingsStore(deps).get().preview_grid).toMatchObject({

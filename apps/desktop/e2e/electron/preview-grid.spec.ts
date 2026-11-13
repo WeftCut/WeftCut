@@ -62,7 +62,6 @@ test('Quick Actions toggles the grid; preview toolbar edits columns, rows and ax
         number: '.preview-grid-count .app-input',
         columnIcon: '[data-testid="grid-columns-visible"]',
         rowIcon: '[data-testid="grid-rows-visible"]',
-        eyeIcon: '[data-testid="grid-opacity-eye"]',
       };
       return Object.fromEntries(Object.entries(names).map(([name, selector]) => {
         const rect = document.querySelector(selector)?.getBoundingClientRect();
@@ -102,19 +101,26 @@ test('Quick Actions toggles the grid; preview toolbar edits columns, rows and ax
     await expect(snapButton).toHaveAttribute('aria-pressed', 'false')
     await snapButton.click()
     await expect(snapButton).toHaveAttribute('aria-pressed', 'true')
-    const eye = toolbar.getByTestId('grid-opacity-eye')
+    await expect(toolbar.getByTestId('grid-opacity-eye')).toHaveCount(0)
     await invokeCmd(page, 'app_settings_set', { patch: { preview_grid: { opacity: 47 } } })
-    await expect(eye).toHaveAttribute('aria-pressed', 'true')
-    await eye.click()
-    await expect.poll(async () => (await settings(page)).preview_grid.opacity).toBe(0)
-    await expect(eye).toHaveAttribute('aria-pressed', 'false')
-    await expect(overlay(page).locator('g[opacity="0"]')).toHaveCount(2)
-    await expect(gridButton).toHaveAttribute('aria-pressed', 'true')
-    await expect(snapButton).toHaveAttribute('aria-pressed', 'true')
-    await expect(toolbar).toBeVisible()
-    await eye.click()
     await expect.poll(async () => (await settings(page)).preview_grid.opacity).toBe(47)
-    await expect(eye).toHaveAttribute('aria-pressed', 'true')
+    // Even a direct request for 0% must not create an invisible, snapping grid.
+    await invokeCmd(page, 'app_settings_set', { patch: { preview_grid: { opacity: 0 } } })
+    await expect.poll(async () => (await settings(page)).preview_grid.opacity).toBe(10)
+    await expect(overlay(page)).toBeVisible()
+    await expectGridSpacing(page, 1 / 12, 1 / 5)
+    await invokeCmd(page, 'app_settings_set', { patch: { preview_grid: { opacity: 47 } } })
+    await gridButton.click()
+    await expect(gridButton).toHaveAttribute('aria-pressed', 'false')
+    await expect(toolbar).toHaveCount(0)
+    await expect(overlay(page)).toHaveCount(0)
+    await expect(snapButton).toHaveAttribute('aria-pressed', 'true')
+    expect((await settings(page)).preview_grid).toMatchObject({
+      visible: false, opacity: 47, column_divisions: 12, row_divisions: 5,
+    })
+    await gridButton.click()
+    await expect(gridButton).toHaveAttribute('aria-pressed', 'true')
+    await expect(toolbar).toBeVisible()
     await expectGridSpacing(page, 1 / 12, 1 / 5)
 
     const zoom = page.locator('.preview-zoom-select')
