@@ -1166,7 +1166,9 @@ A small eye icon beside the counts mutes/unmutes grid drawing without
 disabling snapping and restores the last nonzero opacity. There is no
 configuration popover, count preset, or equal/independent mode.
 Grid lines are a non-exported preview overlay; Settings → General → Preview
-contains only the 0–100% grid-visibility slider (default 70%). Visibility
+contains a 5–100% grid-visibility slider (default 70%). The 0% state is
+reserved for the preview eye button; if currently hidden, Settings shows
+that state and any adjustment restores at least 5% opacity. Visibility
 controls painting only: at 0% the grid can still snap while Grid and Canvas
 Snap are on. Disabled grid axes contribute no subdivision targets; the separate frame and
 layer targets still work when Canvas Snap is on. Ctrl bypasses snapping during
