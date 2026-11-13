@@ -20,7 +20,7 @@ import { convertFileSrc } from "@/bridge/ipc";
 import { useTranslation } from "react-i18next";
 import { Application as PixiApplication } from "@pixi/react";
 import { installPreviewPresentation } from "./installPreviewPresentation";
-import { GlobalResourceRegistry, Rectangle, type Application } from "pixi.js";
+import { AccessibilitySystem, GlobalResourceRegistry, Rectangle, type Application } from "pixi.js";
 import type { PlaybackResolution } from "../../shared/app-settings";
 
 import { previewAudioEngine } from "./audio/previewAudioSession";
@@ -99,6 +99,13 @@ interface Props {
 }
 
 const LOG = "[weftcut/pixi]";
+
+// Pixi's accessibility layer turns on at the first Tab press anywhere in the
+// window and lays focusable divs over the canvas; Tab belongs to the editor's
+// own controls. Set as the default rather than an <Application> prop: @pixi/react
+// types its props from a frozen key list that lacks `accessibilityOptions`.
+AccessibilitySystem.defaultOptions.activateOnTab = false;
+
 let previewResourceSequence = 0;
 
 /// The render-target half of Playback Resolution, with the display fit folded

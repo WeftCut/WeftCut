@@ -51,7 +51,8 @@ async function run(): Promise<void> {
     decode_engine: 'ffmpeg', playback_resolution: 'full' });
   const app = new Application();
   await app.init({ width: protocol.width, height: protocol.height, resolution: protocol.outputWidth / protocol.width,
-    background: 0x000000, antialias: true, preference: 'webgpu' });
+    background: 0x000000, antialias: true, preference: 'webgpu',
+    accessibilityOptions: { activateOnTab: false } });
   document.getElementById('surface')!.appendChild(app.canvas);
   installPreviewPresentation(app);
   report.renderer = app.renderer.type;
