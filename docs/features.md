@@ -1162,17 +1162,18 @@ changing geometry or progress.
 Canvas Snap toggles, backed by the same commands in the View menu and search
 palette. When Grid is on, the preview's top bar shows independently editable
 `columns × rows` counts (default 3 × 3, 1–64) and per-axis line toggles.
-The Grid toggle hides all grid lines and grid snap targets while preserving
-counts and opacity for when Grid is enabled again. There is no separate eye,
+A small eye icon beside the counts mutes/unmutes grid drawing without
+disabling snapping and restores the last nonzero opacity. There is no
 configuration popover, count preset, or equal/independent mode. The preview
 header has the same height when Grid is toggled: all preview toolbar
 controls are 24 UI-scaled pixels tall, and narrow dock panels reserve a
 second row for grid controls even while the grid is hidden.
 Grid lines are a non-exported preview overlay; Settings → General → Preview
-contains a 10–100% grid-visibility slider (default 70%), so the grid cannot
-be invisibly enabled through opacity. Grid subdivisions snap only while Grid
-and Canvas Snap are both enabled. Disabled grid axes contribute no subdivision
-targets; the separate frame and
+contains a 10–100% grid-visibility slider (default 70%). The 0% state is
+reserved for the preview eye button; if currently hidden, Settings shows
+that state and any adjustment restores at least 10% opacity. Visibility
+controls painting only: at 0% the grid can still snap while Grid and Canvas
+Snap are on. Disabled grid axes contribute no subdivision targets; the separate frame and
 layer targets still work when Canvas Snap is on. Ctrl bypasses snapping during
 a drag.
 When safe-area guides are visible, subdivisions occupy the title-safe rectangle

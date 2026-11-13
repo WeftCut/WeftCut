@@ -25,11 +25,11 @@ describe("Grid visibility in Settings", () => {
     expect(document.querySelector("input[type=number]")?.getAttribute("min")).toBe("10");
   });
 
-  it("keeps the 10% minimum when changing between valid visible opacity values", () => {
-    state.opacity = 10;
+  it("represents the deliberate 0% eye state without losing the minimum on restoration", () => {
+    state.opacity = 0;
     const view = render(<GridOpacitySettings onError={vi.fn()} />);
-    expect(screen.getByRole("slider").getAttribute("min")).toBe("10");
-    expect(screen.getByRole("slider").getAttribute("value")).toBe("10");
+    expect(screen.getByRole("slider").getAttribute("min")).toBe("0");
+    expect(screen.getByRole("slider").getAttribute("value")).toBe("0");
     state.opacity = 47;
     view.rerender(<GridOpacitySettings onError={vi.fn()} />);
     expect(screen.getByRole("slider").getAttribute("min")).toBe("10");

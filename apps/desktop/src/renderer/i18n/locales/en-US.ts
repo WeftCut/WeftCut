@@ -602,6 +602,8 @@ const enUS = {
     grid_on_hint: "Grid enabled. Click to disable.",
     grid_off_hint: "Grid disabled. Click to enable.",
     grid_opacity: "Grid visibility",
+    grid_mute: "Hide grid lines without disabling snapping",
+    grid_unmute: "Restore grid line visibility",
     snapping_grid: "Grid",
     show_grid: "Grid",
     grid_columns: "Vertical grid lines",
