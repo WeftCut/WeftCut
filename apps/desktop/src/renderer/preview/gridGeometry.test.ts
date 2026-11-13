@@ -29,6 +29,16 @@ describe("previewGrid", () => {
     },
   );
 
+  it('preserves fractional 64-division geometry on portrait and landscape frames', () => {
+    for (const [width, height] of [[1920, 1080], [1080, 1920], [853, 480]] as const) {
+      const grid = previewGrid(width, height, {
+        ...DEFAULT_PREVIEW_GRID, column_divisions: 64, row_divisions: 64,
+      });
+      expect(grid.x).toEqual({ step: width / 64, last: 63 });
+      expect(grid.y).toEqual({ step: height / 64, last: 63 });
+    }
+  });
+
   it("omits disabled axes and axes with only one field in independent mode", () => {
     expect(previewGrid(800, 500, {
       ...DEFAULT_PREVIEW_GRID, columns: false, row_divisions: 1,

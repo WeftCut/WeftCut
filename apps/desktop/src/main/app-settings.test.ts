@@ -60,6 +60,25 @@ describe('app-settings store', () => {
     });
   });
 
+  it('reserves zero for the eye and normalises low positive opacity to 10%', () => {
+    const settings = store({ [PATH]: JSON.stringify({ preview_grid: { opacity: 5 } }) });
+    expect(settings.get().preview_grid.opacity).toBe(10);
+    settings.apply({ preview_grid: { opacity: 1 } });
+    expect(settings.get().preview_grid.opacity).toBe(10);
+    settings.apply({ preview_grid: { opacity: 0 } });
+    expect(settings.get().preview_grid.opacity).toBe(0);
+    settings.apply({ preview_grid: { opacity: 10 } });
+    expect(settings.get().preview_grid.opacity).toBe(10);
+  });
+
+  it('accepts 64 subdivisions on either axis and clamps 65 to 64', () => {
+    const settings = store({ [PATH]: JSON.stringify({
+      preview_grid: { column_divisions: 64, row_divisions: 65 },
+    }) }).get().preview_grid;
+    expect(settings.column_divisions).toBe(64);
+    expect(settings.row_divisions).toBe(64);
+  });
+
   it('persists grid counts, axis visibility and zero opacity independently', () => {
     const { fs } = memFs();
     const deps = { fs, path: PATH, dir: DIR };

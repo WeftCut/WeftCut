@@ -63,9 +63,17 @@ export function PreviewGridToolbar() {
       aria-label={t("quick_actions.snapping_grid")}
       data-testid="preview-grid-toolbar"
       onKeyDown={(event) => {
-        // Only typed numeric edits intercept editor shortcuts. In particular,
-        // clicking a toggle must not make Z (Fit) stop working.
+        // The number field owns Enter and Escape's commit/cancel logic.
+        // Stop transport shortcuts, but let the field finish processing before
+        // moving focus (blurring during keydown can commit the uncancelled text).
         if (event.target instanceof HTMLInputElement) event.stopPropagation();
+      }}
+      onKeyUp={(event) => {
+        if (!(event.target instanceof HTMLInputElement)) return;
+        event.stopPropagation();
+        if (event.key === "Enter" || event.key === "Escape") {
+          event.currentTarget.closest(".preview")?.querySelector<HTMLElement>(".preview-video")?.focus();
+        }
       }}
     >
       <div className="preview-grid-axis">
