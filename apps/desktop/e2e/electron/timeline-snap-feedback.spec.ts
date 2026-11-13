@@ -443,8 +443,10 @@ for (const { fpsNum, fpsDen } of [canvas, { fpsNum: 30_000, fpsDen: 1001 }]) {
           await page.mouse.move(x, toY, { steps: 6 });
           await expect(lane(to).locator(moving)).toBeVisible();
           await assertFeedback();
+          // Back over its own lane the clip is home with its time unchanged: its
+          // edges sit on the same target as over the other lane, or on none.
           await page.mouse.move(x, fromY, { steps: 6 });
-          await expect(guide).toHaveCount(0);
+          await assertFeedback();
           await page.mouse.move(x, toY, { steps: 6 });
           await assertFeedback();
           await page.mouse.up();
