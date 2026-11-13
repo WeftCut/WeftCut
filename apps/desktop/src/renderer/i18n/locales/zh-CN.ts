@@ -576,8 +576,6 @@ const zhCN: Resources = {
     grid_on_hint: "网格已启用。点击停用。",
     grid_off_hint: "网格已停用。点击启用。",
     grid_opacity: "网格可见度",
-    grid_mute: "隐藏网格线但保留吸附",
-    grid_unmute: "恢复网格线显示",
     snapping_grid: "网格",
     show_grid: "网格",
     grid_columns: "垂直网格线",

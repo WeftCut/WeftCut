@@ -162,14 +162,11 @@ export function CanvasSnapSettings({ compact, onError }: SnapSettingsProps) {
 export function GridOpacitySettings({ onError }: { onError: ReportError }) {
   const { t } = useTranslation();
   const opacity = usePreviewGrid().opacity;
-  // The slider never reaches 0% from a visible grid; the toolbar's eye is
-  // the deliberate hide action. Its 0% state remains representable here.
-  const minimum = opacity === 0 ? 0 : GRID_OPACITY_MIN_VISIBLE;
   return (
     <SnapNumber
       label={t("quick_actions.grid_opacity")}
       value={opacity}
-      min={minimum}
+      min={GRID_OPACITY_MIN_VISIBLE}
       max={100}
       unit="%"
       slider
