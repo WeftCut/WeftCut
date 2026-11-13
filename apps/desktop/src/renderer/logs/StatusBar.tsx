@@ -13,6 +13,8 @@ import { MEDIA_JOB_EVENTS, type MediaJobEvent, type LogEntry, type LogLevel } fr
 import type { AppNotice } from "../../shared/ipc";
 import { AppIcon } from "@/components/AppIcon";
 import { UpdateIndicator } from "../app/UpdateIndicator";
+import { ExportProgressPill } from "../panels/ExportProgressPill";
+import type { ExportState } from "../panels/ExportPanel";
 import { SaveStatusBadge } from "../components/SaveStatusBadge";
 import { saveFailureReason } from "../components/saveFailure";
 import { useSaveFailure } from "../state/saveStatusStore";
@@ -42,6 +44,9 @@ interface StatusBarProps {
   /// Opens (never toggles) the System panel, whose card the badge points at.
   onOpenSaveStatus?: () => void;
   onToggleLogs?: () => void;
+  /// A running export that leaves the editor usable (preview during export);
+  /// a foreground export shows its own dialog instead.
+  backgroundExport?: ExportState | undefined;
 }
 
 const EMPTY_NOTICES: AppNotice[] = [];
@@ -51,6 +56,7 @@ export function StatusBar({
   onOpenSystemStatus,
   onOpenSaveStatus,
   onToggleLogs,
+  backgroundExport,
 }: StatusBarProps) {
   const { t } = useTranslation();
   // Atomic selectors — returning a composite object literal from one
@@ -170,6 +176,7 @@ export function StatusBar({
         )}
       </div>
       <div className="status-bar-right">
+        {backgroundExport && <ExportProgressPill state={backgroundExport} />}
         {linksOff && (
           <span
             className="status-bar-chip status-bar-chip-links-off"

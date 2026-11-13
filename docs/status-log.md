@@ -5,7 +5,9 @@ overlay that lifts over the editor (drag-resizable, does not push it up). It
 records command results, long operations, MCP activity and errors. The agent
 panel's activity stream is separate (see the last section). The
 `derivatives-pill` in the strip is the liveness signal for background derivative
-jobs; `ExportPanel` and `QueuePanel` own export progress.
+jobs; `ExportPanel` and `QueuePanel` own export progress, except a background
+export (Preview during export): its `ExportProgressPill` in the strip shows a
+progress ring and percent, and opens its details and Cancel on click.
 
 ## Backend
 

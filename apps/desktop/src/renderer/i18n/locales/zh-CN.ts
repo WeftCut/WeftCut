@@ -1683,7 +1683,10 @@ const zhCN: Resources = {
 
     title: "导出",
     phase_encode: "编码中",
-    timeline_locked: "时间轴只读",
+    pill: "导出 {{percent}}%",
+    pill_rate: "{{fps}} fps · {{speed}}×",
+    pill_elapsed: "已用 {{time}}",
+    cancel_export: "取消导出",
     starting: "正在启动导出…",
     preparing: "正在为 {{labels}} 准备优化媒体 —— 准备好后将自动开始导出。",
     preparing_cancel: "取消",

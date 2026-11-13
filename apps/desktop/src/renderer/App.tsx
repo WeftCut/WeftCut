@@ -100,7 +100,6 @@ import { useAppWiring, useWindowTitle } from "./app/useAppWiring";
 import { useExportFlow } from "./app/useExportFlow";
 import { useImportReadiness } from "./app/useImportReadiness";
 import { ExportPanel } from "./panels/ExportPanel";
-import { BackgroundExportProgress } from "./panels/BackgroundExportProgress";
 import { exportTerminal } from "../shared/exportJob";
 import { ShortcutBindingsProvider } from "./shortcuts/bindings-context";
 import {
@@ -1265,7 +1264,6 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
           workspaceProfiles={viewMenuWorkspaces}
           onMotifColdStart={runMotifColdStart}
         />
-        {backgroundExportActive && <BackgroundExportProgress state={exportState} />}
       </div>
 
       <main className="app-main">
@@ -1396,6 +1394,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
       {paletteOpen && <SearchPalette onClose={() => setPaletteOpen(false)} />}
       <StatusBar
         notices={systemNotices}
+        backgroundExport={backgroundExportActive && exportState ? exportState : undefined}
         onOpenSystemStatus={toggleSystemStatus}
         onOpenSaveStatus={openSystemStatus}
         onToggleLogs={toggleLogConsole}

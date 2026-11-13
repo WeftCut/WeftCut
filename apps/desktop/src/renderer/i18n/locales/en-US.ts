@@ -1893,7 +1893,10 @@ const enUS = {
 
     title: "Export",
     phase_encode: "Encoding",
-    timeline_locked: "Timeline read-only",
+    pill: "Export {{percent}}%",
+    pill_rate: "{{fps}} fps · {{speed}}×",
+    pill_elapsed: "Elapsed {{time}}",
+    cancel_export: "Cancel export",
     starting: "Starting export…",
     preparing:
       "Preparing optimized media for {{labels}} — export will start automatically.",
