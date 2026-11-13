@@ -2921,6 +2921,7 @@ const enUS = {
     },
   },
   system_status: {
+    trigger: "System {{count}}",
     trigger_hint: "{{count}} system status item(s) need attention",
     title: "System status",
     summary: "{{count}} item(s) need attention",

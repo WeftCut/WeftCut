@@ -237,7 +237,7 @@ describe("attention counts", () => {
     expect(container.querySelector('[data-testid="status-bar-errors"]')).toBeNull();
   });
 
-  it("shows system notices as the highest level's icon and a count, with the words in its name", async () => {
+  it("names system notices with the highest level's icon and their count", async () => {
     const onOpenSystemStatus = vi.fn();
     const { container } = render(
       <StatusBar
@@ -248,7 +248,7 @@ describe("attention counts", () => {
     await act(async () => {});
     const trigger = container.querySelector<HTMLElement>(".system-status-trigger")!;
     expect(trigger.classList).toContain("system-status-warn");
-    expect(trigger.textContent).toBe("2");
+    expect(trigger.textContent).toBe("System 2");
     expect(trigger.getAttribute("aria-label")).toBe("2 system status item(s) need attention");
     act(() => trigger.click());
     expect(onOpenSystemStatus).toHaveBeenCalledTimes(1);

@@ -2649,6 +2649,7 @@ const zhCN: Resources = {
     },
   },
   system_status: {
+    trigger: "系统 {{count}}",
     trigger_hint: "{{count}} 项系统状态需要关注",
     title: "系统状态",
     summary: "{{count}} 项需要关注",

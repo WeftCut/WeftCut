@@ -160,15 +160,15 @@ next splash ("did not exit normally"). Storage failures never block startup.
 ### Bar
 
 ```
-[●] 14:32  Added 3 layers to track v1 · agent  [Export 42%] [↻ 3 in progress] [N to review] [⚠ Not saved] [ⓘ N] [Update] [Logs ⚠2]
+[●] 14:32 [Agent · Claude] Added 3 layers to track v1  [Export 42%] [↻ 3 in progress] [N to review] [⚠ Not saved] [ⓘ System N] [Update] [Logs ⚠2]
 ```
 
-- Latest `Info+` message with time and source; an `Error` sticks 10 s
-  (`ERROR_STICKY_MS`).
+- Latest `Info+` message: time, source, message, in the console row's order;
+  an `Error` sticks 10 s (`ERROR_STICKY_MS`).
 - Badges: background export, background work (below), unreviewed agent
   changes (ADR 0115; opens the agent panel's Changes tab), project not saved,
-  system notices (the highest level's icon and a count, the text in its tooltip;
-  opens the status panel with recovery cards), update offer
+  system notices (the highest level's icon and "System N"; opens the status
+  panel with recovery cards), update offer
   (`docs/releases.md`).
 - **Background work** (`WorkPill`, model in `logs/workView.ts`): one pill for
   clip-compute jobs (ADR 0121), agent calls and derivative jobs. One piece of

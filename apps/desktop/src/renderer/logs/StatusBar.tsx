@@ -97,13 +97,15 @@ export function StatusBar({
           <>
             <LevelDot level={latest.level} />
             <span className="status-bar-time">{formatTime(latest.ts)}</span>
+            {/* Before the message, as the console row has it: after it, the
+                message's flex pushed the pill against the right-side badges. */}
+            <SourcePill entry={latest} />
             <span
               className="status-bar-message"
               title={renderLogMessage(latest, t)}
             >
               {renderLogMessage(latest, t)}
             </span>
-            <SourcePill entry={latest} />
           </>
         ) : (
           <span className="status-bar-empty">{t("status_bar.empty")}</span>
@@ -137,7 +139,7 @@ export function StatusBar({
             aria-label={t("system_status.trigger_hint", { count: notices.length })}
           >
             <SystemNoticeIcon level={highestNoticeLevel(notices)} />
-            {notices.length}
+            {t("system_status.trigger", { count: notices.length })}
           </button>
         )}
         <UpdateIndicator />
