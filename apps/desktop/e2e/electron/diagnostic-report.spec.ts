@@ -90,7 +90,7 @@ test('forced termination prompts on restart, exports the previous session and di
   const second = await launchApp({ userDataDir })
   const output = path.join(userDataDir, 'abrupt.zip')
   try {
-    await expect(second.page.getByRole('dialog', { name: 'The previous session did not exit normally' })).toBeVisible()
+    await expect(second.page.getByRole('dialog', { name: 'WeftCut did not close normally last time' })).toBeVisible()
     await second.page.screenshot({ path: testInfo.outputPath('restart-report.png') })
     await second.app.evaluate(({ dialog, shell }, output) => {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath: output })
