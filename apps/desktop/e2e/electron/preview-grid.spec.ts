@@ -44,6 +44,8 @@ test('Quick Actions toggles the grid; preview toolbar edits columns, rows and ax
     const width = 1600, height = 900
     await startPreview(page, width, height)
     const beforeProject = await invokeCmd(page, 'project_summary')
+    const bar = page.locator('.preview-target-bar')
+    const baselineHeight = (await bar.boundingBox())!.height
     const gridButton = page.locator('[data-quick-action="togglePreviewGrid"]')
     const snapButton = page.locator('[data-quick-action="togglePreviewSnap"]')
     const toolbar = page.getByTestId('preview-grid-toolbar')
@@ -53,6 +55,7 @@ test('Quick Actions toggles the grid; preview toolbar edits columns, rows and ax
     await gridButton.click()
     await expect(gridButton).toHaveAttribute('aria-pressed', 'true')
     await expect(toolbar).toBeVisible()
+    await expect.poll(async () => (await bar.boundingBox())!.height).toBe(baselineHeight)
     await expect(toolbar.getByLabel('Columns', { exact: true })).toHaveValue('3')
     await expect(toolbar.getByLabel('Rows', { exact: true })).toHaveValue('3')
     await expectGridSpacing(page, 1 / 3, 1 / 3)
@@ -150,6 +153,29 @@ test('the portrait grid follows the canvas and leaves exported frame pixels unch
     await expect(overlay(page)).toBeVisible()
     await expectGridSpacing(page, 1 / 12, 1 / 5)
     expect(await exportFrameHash('visible')).toBe(baseline)
+  } finally {
+    await app.close()
+  }
+})
+
+test('preview bar stays fixed-height at both wide and narrow dock layouts', async () => {
+  const { app, page } = await launchApp()
+  try {
+    await startPreview(page, 1280, 720)
+    const bar = page.locator('.preview-target-bar')
+    const target = page.locator('.preview-target-select')
+    const grid = page.getByTestId('preview-grid-toolbar')
+    for (const width of [1100, 850, 650, 500]) {
+      await page.setViewportSize({ width, height: 840 })
+      await invokeCmd(page, 'app_settings_set', { patch: { preview_grid: { visible: false } } })
+      await expect(grid).toHaveCount(0)
+      const before = (await bar.boundingBox())!.height
+      await invokeCmd(page, 'app_settings_set', { patch: { preview_grid: { visible: true } } })
+      await expect(grid).toBeVisible()
+      await expect.poll(async () => (await bar.boundingBox())!.height).toBe(before)
+      // The target dropdown must not collapse into a narrow, wrapped sliver.
+      expect((await target.boundingBox())!.width).toBeGreaterThan(80)
+    }
   } finally {
     await app.close()
   }

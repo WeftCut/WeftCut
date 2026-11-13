@@ -45,6 +45,9 @@
 .preview {
   display: flex;
   flex-direction: column;
+  /* Dock panels can be narrow even in a wide window. Use pane width,
+     not viewport width, for the preview toolbar's responsive layout. */
+  container: preview / inline-size;
   align-items: stretch;
   justify-content: stretch;
   /* Unified with every other Panel on --card; still light enough that the
@@ -66,7 +69,9 @@
 }
 
 .preview-target-bar .app-select {
-  padding: calc(2 * var(--ui-px)) calc(6 * var(--ui-px));
+  /* Match the numeric grid fields' height even while Grid is hidden.
+     A little extra horizontal padding gives the menu labels room too. */
+  padding: calc(5 * var(--ui-px)) calc(8 * var(--ui-px));
   font-size: var(--font-size-caption);
 }
 
@@ -126,9 +131,31 @@
 .preview-grid-eye-toggle { margin-inline-start: calc(3 * var(--ui-px)); }
 .preview-grid-axis-toggle:hover { background: var(--accent); }
 .preview-grid-axis-toggle:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
-@media (max-width: 560px) {
-  .preview-target-bar { flex-wrap: wrap; }
-  .preview-grid-toolbar { order: 3; }
+/* At small dock widths, reserve the grid's second row even when hidden.
+   A toggle therefore never changes the preview's height or squeezes the
+   Follow focus label; the unused row can host later preview controls. */
+@container preview (max-width: 450px) {
+  .preview-target-bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: calc(25 * var(--ui-px)) calc(25 * var(--ui-px));
+    row-gap: calc(4 * var(--ui-px));
+  }
+  .preview-target-select {
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: start;
+    max-width: 100%;
+  }
+  .preview-target-bar .preview-zoom-select {
+    grid-column: 2;
+    grid-row: 1;
+    margin-left: 0;
+  }
+  .preview-grid-toolbar {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
 }
 
 .video-surface {
