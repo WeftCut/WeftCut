@@ -13,11 +13,12 @@
 // upsampled nearest, matching the 10-bit lane.
 
 import {
-  BufferImageSource, Mesh, MeshGeometry, RenderTexture, Shader, Texture,
+  BufferImageSource, Mesh, MeshGeometry, Shader, type RenderTexture, type Texture,
 } from "pixi.js";
 import type { Renderer } from "pixi.js";
 import type { NativeNv12Frame } from "../decoder/nv12Frame";
 import { BT709, coefForMatrix, inverseCoef } from "../tenbit/yuv10";
+import { unbindingRenderTexture } from "../unbindOnDestroy";
 
 const VERT = `#version 300 es
 precision highp float;
@@ -185,7 +186,7 @@ export class Nv12Ingest {
     const uv = planeSource(
       f.data.subarray(f.uvOffset, f.uvOffset + w * (h >> 1)), w >> 1, h >> 1, "rg8unorm",
     );
-    const rt = RenderTexture.create({ width: w, height: h, format: "rgba8unorm" });
+    const rt = unbindingRenderTexture({ width: w, height: h, format: "rgba8unorm" });
     const geometry = new MeshGeometry({
       positions: new Float32Array([0, 0, w, 0, w, h, 0, h]),
       uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),

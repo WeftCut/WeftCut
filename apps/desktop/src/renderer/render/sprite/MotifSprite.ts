@@ -26,7 +26,7 @@ import { MotifPlaybackCursor, type MotifPlaybackSnapshot } from "../motifs/Motif
 import { motifFrameDescriptor } from "../motifs/motifFrameDescriptor";
 import { motifDurationFrames } from "../motifs/motifFrames";
 import type { StageableSprite } from "./StageableSprite";
-import { MotifTextureSource } from "./MotifTextureSource";
+import { UnbindingImageSource } from "../unbindOnDestroy";
 import type { InjectedMotifFrames } from "../worker/motifStream";
 import type { MotifReaderDiv } from "../../../shared/motifs/readerProtocol";
 
@@ -78,7 +78,7 @@ export class MotifSprite implements StageableSprite {
   /// repeated index (output fps < comp fps, or a held frame) skip the rebind +
   /// per-tick GPU texture churn. -1 = nothing bound yet.
   private injectedFrame = -1;
-  private source: MotifTextureSource | null = null;
+  private source: UnbindingImageSource | null = null;
   private texture: Texture | null = null;
   /// The texture's local size (`Texture.orig`): the Motif's logical size for
   /// preview frames, the bitmap's own for the placeholder and export frames.
@@ -302,7 +302,7 @@ export class MotifSprite implements StageableSprite {
         this.source.update(); // uploads new pixels; also resizes when needed
         if (resized) this.texture!.update();
       } else {
-        this.source = new MotifTextureSource({
+        this.source = new UnbindingImageSource({
           resource: bitmap,
           width: bitmap.width,
           height: bitmap.height,

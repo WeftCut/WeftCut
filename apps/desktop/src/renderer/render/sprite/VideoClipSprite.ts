@@ -9,11 +9,12 @@
 //
 // See docs/render.md (video-clip layers).
 
-import { type Container, ImageSource, Sprite, Texture } from "pixi.js";
+import { type Container, Sprite, Texture } from "pixi.js";
 
 import { type BrowserConvertibleFrame, decodedDims } from "../decoder/decodedFrame";
 import { STAGE, stageAdd, stageNow } from "../perf/stageTimers";
 import type { StageableSprite } from "./StageableSprite";
+import { UnbindingImageSource } from "../unbindOnDestroy";
 
 export interface VideoClipSpriteInit {
   layerId: string;
@@ -25,7 +26,7 @@ export class VideoClipSprite implements StageableSprite {
   readonly layerId: string;
   readonly mediaId: string;
   /// Persistent ImageSource, lazily allocated on first updateFrame.
-  private source: ImageSource | null = null;
+  private source: UnbindingImageSource | null = null;
   private texture: Texture | null = null;
   /// Sprite-owned canvas every decoded frame is drawn into each tick
   /// (both preview `ImageBitmap`s and export `VideoFrame`s — see
@@ -171,7 +172,7 @@ export class VideoClipSprite implements StageableSprite {
     height: number,
   ): void {
     const oldTexture = this.texture;
-    this.source = new ImageSource({ resource, width, height });
+    this.source = new UnbindingImageSource({ resource, width, height });
     this.texture = new Texture({ source: this.source });
     this.sprite.texture = this.texture;
     if (oldTexture) {

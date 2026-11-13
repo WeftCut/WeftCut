@@ -12,11 +12,12 @@
 // gate (see apps/desktop/e2e) — keep both copies in sync.
 
 import {
-  BufferImageSource, Mesh, MeshGeometry, RenderTexture, Shader, Texture,
+  BufferImageSource, Mesh, MeshGeometry, Shader, type RenderTexture, type Texture,
 } from "pixi.js";
 import type { Renderer } from "pixi.js";
 import type { TenBitFrame } from "../decoder/tenBitFrame";
 import { BT709, coefForMatrix, inverseCoef } from "./yuv10";
+import { unbindingRenderTexture } from "../unbindOnDestroy";
 
 const VERT = `#version 300 es
 precision highp float;
@@ -194,7 +195,7 @@ export class TenBitIngest {
     const u = planeSource(tb.data.subarray(tb.uOffset, tb.uOffset + cw * ch * 2), cw, ch);
     const v = planeSource(tb.data.subarray(tb.vOffset, tb.vOffset + cw * ch * 2), cw, ch);
     // rgba16float: the 10-bit export's f16 compositing depends on it (ADR 0022).
-    const rt = RenderTexture.create({ width: w, height: h, format: "rgba16float" });
+    const rt = unbindingRenderTexture({ width: w, height: h, format: "rgba16float" });
     const geometry = new MeshGeometry({
       positions: new Float32Array([0, 0, w, 0, w, h, 0, h]),
       uvs: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),

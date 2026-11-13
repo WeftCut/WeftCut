@@ -15,13 +15,14 @@ import { contentAtUs } from '../../layerTiming';
 // nothing and the texture clears to transparent — overhang is tolerated in
 // state and rendered as nothing (ADR 0052 §6).
 
-import { RenderTexture, Sprite } from "pixi.js";
+import { Sprite, type RenderTexture } from "pixi.js";
 import type { Container, Renderer } from "pixi.js";
 
 import type { CompositionSummary, ProjectSummary } from "../../ipc";
 import { anchorPivot } from "../anchorPivot";
 import type { CompositionNode, EffectOpts } from "../CompositionNode";
 import type { ResolvedCompositionRefView } from "../resolveView";
+import { unbindingRenderTexture } from "../unbindOnDestroy";
 import type { StageableSprite } from "./StageableSprite";
 
 /// The texture clears to transparent each frame — the composition's own
@@ -133,7 +134,7 @@ export class CompositionRefSprite implements StageableSprite {
   /// An 8-bit target means the 10-bit export lane quantizes through a Group —
   /// the same v1 trade the transition node makes.
   private createTexture(width: number, height: number): RenderTexture {
-    return RenderTexture.create({
+    return unbindingRenderTexture({
       width: Math.max(1, width),
       height: Math.max(1, height),
       format: "rgba8unorm",

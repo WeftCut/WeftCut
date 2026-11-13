@@ -9,10 +9,11 @@ import { contentAtUs } from '../../layerTiming';
 // path. The cache owns animated bitmaps; this sprite only wraps them in its own
 // Texture (mirrors MotifSprite ownership). See docs/render.md.
 
-import { type Container, ImageSource, Sprite, Texture } from "pixi.js";
+import { type Container, Sprite, Texture } from "pixi.js";
 
 import { anchorPivot, textureExtent } from "../anchorPivot";
 import type { ResolvedImageOverlayView } from "../resolveView";
+import { UnbindingImageSource } from "../unbindOnDestroy";
 import { gifFrameIndexAt } from "./gifTiming";
 import type { StageableSprite } from "./StageableSprite";
 import {
@@ -36,6 +37,7 @@ export class ImageOverlaySprite implements StageableSprite {
   readonly mediaId: string;
   private readonly maxWidth: number;
   private readonly maxHeight: number;
+  private source: UnbindingImageSource | null = null;
   private texture: Texture | null = null;
   /// Decoded animation (1+ frames) from the shared cache, or null when the
   /// static fallback path is used. Cache-owned: never closed here.
@@ -155,20 +157,21 @@ export class ImageOverlaySprite implements StageableSprite {
     }
   }
 
-  /// Wrap `bitmap` in this sprite's OWN ImageSource/Texture, destroying the
-  /// previous wrapper (frees this sprite's GPU texture; does NOT close the
-  /// bitmap — the static path's bitmap is GC'd; the animated path's bitmaps are
-  /// cache-owned). Mirrors MotifSprite.bindBitmap.
+  /// Show `bitmap` through this sprite's OWN source/texture, created on the
+  /// first bind and re-pointed after: a WebGPU batch caches its group by
+  /// source identity, so a source per animated frame would leave a dead group
+  /// per frame. Never closes the bitmap (the static path's is GC'd, the
+  /// animated path's are cache-owned). Mirrors MotifSprite.bindRaster.
   private bindBitmap(bitmap: ImageBitmap): void {
-    if (this.texture && this.texture !== Texture.EMPTY) {
-      try {
-        this.texture.destroy(true);
-      } catch {
-        // ignore
-      }
+    // An animation's frames share one size; a different size gets a new source.
+    if (this.source && this.source.width === bitmap.width && this.source.height === bitmap.height) {
+      this.source.resource = bitmap;
+      this.source.update(); // uploads the new pixels
+      return;
     }
-    const source = new ImageSource({ resource: bitmap, width: bitmap.width, height: bitmap.height });
-    this.texture = new Texture({ source });
+    this.texture?.destroy(true);
+    this.source = new UnbindingImageSource({ resource: bitmap, width: bitmap.width, height: bitmap.height });
+    this.texture = new Texture({ source: this.source });
     this.sprite.texture = this.texture;
   }
 
@@ -185,6 +188,7 @@ export class ImageOverlaySprite implements StageableSprite {
       }
     }
     this.texture = null;
+    this.source = null;
     this.anim = null;
     if (this.animKey) {
       sharedAnimatedImageCache.release(this.animKey);
