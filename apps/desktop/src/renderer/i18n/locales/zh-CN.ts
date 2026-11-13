@@ -505,8 +505,10 @@ const zhCN: Resources = {
   },
   diagnostics: {
     title: '报告问题',
-    previous_title: '上次运行未正常退出',
-    previous_description: 'WeftCut 检测到上次运行未完成退出，或有进程发生故障。强制结束或断电也可能导致这种情况。你可以通过 GitHub 报告问题，帮助我们排查。',
+    unclean_exit_title: '上次未正常关闭',
+    unclean_exit_body: 'WeftCut 检测到上次运行未正常关闭。如果不是你手动结束的，请报告此问题。',
+    process_failure_title: '上次运行时有进程出错',
+    process_failure_body: 'WeftCut 检测到上次运行时有进程崩溃或报错。报告此问题可以帮助我们修复。',
     description: '导出诊断 ZIP，检查内容后将它作为附件上传到 GitHub issue。打开 GitHub 只会准备草稿，由你决定是否提交。',
     privacy: '包含应用和系统版本、CPU / 内存 / GPU 信息、近期资源采样和脱敏日志，不包含项目文件或媒体。错误文字中仍可能存在私人信息。GitHub issue 及附件是公开的，应用不会自动上传。',
     export: '导出诊断包…',

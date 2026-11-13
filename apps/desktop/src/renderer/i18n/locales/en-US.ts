@@ -521,8 +521,10 @@ const enUS = {
   },
   diagnostics: {
     title: 'Report an Issue',
-    previous_title: 'The previous session did not exit normally',
-    previous_description: 'WeftCut found an unfinished session or a process failure. This can also happen after a forced quit or power loss. You can help us investigate by reporting it on GitHub.',
+    unclean_exit_title: 'WeftCut did not close normally last time',
+    unclean_exit_body: "WeftCut detected that the last session did not close normally. If you didn't end it yourself, please report it.",
+    process_failure_title: 'A WeftCut process failed last time',
+    process_failure_body: 'WeftCut detected that a process crashed or failed in the last session. Reporting it helps us fix it.',
     description: 'Export a diagnostic ZIP, review its contents, then attach it to a GitHub issue. Opening GitHub prepares a draft; you choose when to submit it.',
     privacy: 'Includes app and system versions, CPU / memory / GPU information, recent resource samples and redacted logs. No project files or media are included. Error text may still contain private information. GitHub issues and attachments are public; nothing is uploaded automatically.',
     export: 'Export Diagnostic Bundle…',

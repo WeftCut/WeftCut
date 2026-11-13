@@ -23,7 +23,7 @@ afterEach(cleanup)
 it('shows the previous-session notice under StrictMode without acknowledging on read', async () => {
   const api = stub()
   render(<React.StrictMode><PreviousSessionReport /></React.StrictMode>)
-  expect(await screen.findByText('The previous session did not exit normally')).toBeTruthy()
+  expect(await screen.findByText('WeftCut did not close normally last time')).toBeTruthy()
   expect(api.diagnostics.dismissPrevious).not.toHaveBeenCalled()
   expect(api.shell.open).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: 'Not Now' }))
@@ -84,4 +84,15 @@ it('prefills previous and current versions but never places attachments or local
   expect(url.searchParams.get('version')).toContain('WeftCut 1.2.3')
   expect(url.searchParams.get('what')).toContain('unclean-exit')
   expect(url.href).not.toContain('/tmp/')
+})
+
+it('names a process failure as such, not as an unclean exit, in the notice and the issue', async () => {
+  const failed: DiagnosticSummary = { ...summary, previousSession: { ...summary.previousSession!, reason: 'process-failure' } }
+  stub(failed)
+  render(<PreviousSessionReport />)
+  expect(await screen.findByText('A WeftCut process failed last time')).toBeTruthy()
+  expect(screen.queryByText(/did not close normally/)).toBeNull()
+  const url = new URL(diagnosticIssueUrl(failed))
+  expect(url.searchParams.get('title')).toBe('[Bug] A process failed')
+  expect(new URL(diagnosticIssueUrl(summary)).searchParams.get('title')).toBe('[Bug] App did not close normally')
 })

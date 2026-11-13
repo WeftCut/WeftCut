@@ -1,9 +1,23 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { DiagnosticSummary } from '../../shared/diagnostics'
+import type { DiagnosticIncident, DiagnosticSummary } from '../../shared/diagnostics'
 import { AppDialog } from '../components/AppDialog'
 import { Button } from '@/components/ui/button'
 import { ISSUES_URL } from './links'
+
+// Per reason: the notice's copy and what the prefilled issue asks the reporter.
+const NOTICE = {
+  'unclean-exit': {
+    title: 'diagnostics.unclean_exit_title', body: 'diagnostics.unclean_exit_body',
+    issueTitle: '[Bug] App did not close normally',
+    question: 'How did it end: crashed, froze, force-quit, or shutdown / restart / power loss? / 上次是怎么结束的：崩溃、卡住、强制结束，还是关机 / 重启 / 断电？',
+  },
+  'process-failure': {
+    title: 'diagnostics.process_failure_title', body: 'diagnostics.process_failure_body',
+    issueTitle: '[Bug] A process failed',
+    question: 'What were you doing when it happened? / 出错时你在做什么？',
+  },
+} as const satisfies Record<DiagnosticIncident['reason'], unknown>
 
 export function diagnosticIssueUrl(summary: DiagnosticSummary): string {
   const previous = summary.previousSession
@@ -11,9 +25,9 @@ export function diagnosticIssueUrl(summary: DiagnosticSummary): string {
   // field IDs instead of a body= URL that bypasses the template chooser.
   return `${ISSUES_URL}/new?${new URLSearchParams({
     template: 'bug_report.yml',
-    title: previous ? '[Bug] App did not exit normally' : '[Bug] ',
+    title: previous ? NOTICE[previous.reason].issueTitle : '[Bug] ',
     version: summary.environment,
-    ...(previous ? { what: `Previous session / 上次运行: ${previous.startedAt}, WeftCut ${previous.version}, ${previous.reason}\n\nPlease describe what you were doing. / 请补充当时的操作。` } : {}),
+    ...(previous ? { what: `Previous session / 上次运行: ${previous.startedAt}, WeftCut ${previous.version}, ${previous.reason}\n\n${NOTICE[previous.reason].question}` } : {}),
     logs: '<!-- Review the exported ZIP, then drag it here to attach. This issue is public. / 检查导出的 ZIP 后拖到此处上传；此 issue 为公开内容。 -->',
   })}`
 }
@@ -40,6 +54,7 @@ export function DiagnosticReport({ onClose, initialSummary }: {
     try { await action() } catch { setError(true) }
     finally { setBusy(false) }
   }
+  const notice = summary?.previousSession ? NOTICE[summary.previousSession.reason] : null
   const close = () => {
     void run(async () => {
       if (summary?.previousSession) await window.api.diagnostics.dismissPrevious()
@@ -47,11 +62,11 @@ export function DiagnosticReport({ onClose, initialSummary }: {
     })
   }
   return (
-    <AppDialog title={t(summary?.previousSession ? 'diagnostics.previous_title' : 'diagnostics.title')}
+    <AppDialog title={t(notice ? notice.title : 'diagnostics.title')}
       onClose={busy ? undefined : close} panelClassName="settings-panel">
       <div className="settings-body">
         <div className="settings-card">
-          {summary?.previousSession && <p className="settings-warn">{t('diagnostics.previous_description')}</p>}
+          {notice && <p className="settings-warn">{t(notice.body)}</p>}
           <p className="settings-blurb">{t('diagnostics.description')}</p>
           <p className="settings-blurb">{t('diagnostics.privacy')}</p>
           {summary && <p className="settings-blurb" style={{ overflowWrap: 'anywhere' }}>{summary.environment}</p>}
