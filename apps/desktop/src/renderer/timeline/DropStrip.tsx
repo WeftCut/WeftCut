@@ -220,6 +220,8 @@ export function DropStrip({
   const clipGhosts = useMemo((): StripClipGhost[] => {
     if (stripDrag !== null) {
       return stripDrag.subjects.map((subject) => {
+        // The floor is already in the placement (`floorShiftAtZero`), so the
+        // set's phase survives the zero boundary and no bar needs a clamp.
         const landed = stripDrag.movePlacements?.get(subject.layerId);
         return {
           layerId: subject.layerId,

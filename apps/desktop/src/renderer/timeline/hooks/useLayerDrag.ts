@@ -555,6 +555,8 @@ export function useLayerDrag(opts: {
       // pointer (including an off-grid audio anchor) cannot create one.
       const requestedAnchor = snapFrameRound(anchor + rawDeltaUs, fpsNum, fpsDen);
       const requestedFrameChange = requestedAnchor !== snapFrameRound(anchor, fpsNum, fpsDen);
+      // Measured from the snapped DESTINATION, not by snapping the delta: an
+      // anchor that was already off-grid still lands on the grid.
       const frameDeltaUs = requestedAnchor - anchor;
       // Vertical causality gate, mirroring the frame gate above: a track
       // change must be CAUSED by vertical travel. Without it any hit-test
@@ -598,8 +600,21 @@ export function useLayerDrag(opts: {
 
       const hasEditIntent = timeChanged || trackChanged;
       const { deltaUs, boundaryUs, placement: moveProjection } = resolveTimelineDragSnap({
+        // The solver ignores the seed and, unless escaped, its link members —
+        // which is the subject set for a move and for a duplicate alike, so a
+        // copy never snaps to the sources it is leaving in place.
         state,
+        // Over another Panel the ghost freezes where the clip already is: this
+        // Panel has no reading of a pointer outside it, and the DESTINATION draws
+        // the preview that does (`ForeignDragGhost.tsx`). Dragging back into this
+        // Panel picks the delta up again — the whole gesture is recomputed from
+        // the pointer each event.
         frameDeltaUs: timeChanged && foreignCompositionId === null ? frameDeltaUs : 0,
+        // A purely vertical move preserves time: its zero horizontal delta must
+        // not be attracted to the playhead or an edge; it only reports a target
+        // its unchanged edges already sit on. The drop strip is NOT one of these
+        // cases: it takes a landing like any other destination, so the clip
+        // stays under the hand that carried it there.
         preserveTime: trackChanged && !timeChanged,
         projectMove: state.kind === "move"
           ? (deltaUs) => buildMoveProjection(state, deltaUs, overTrackId)
@@ -607,6 +622,9 @@ export function useLayerDrag(opts: {
         visibleTracks: visibleSnapTracks,
         links,
         linkByLayerId,
+        // Event-time read (drag pointermove): the playhead is a snap target;
+        // its value at the event is what snapping should use. Projected, because
+        // it is offered alongside layer boundaries on this Panel's own axis.
         currentTimeUs: playheadClockUs(compositionId),
         fpsNum,
         fpsDen,

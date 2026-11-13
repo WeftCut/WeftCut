@@ -438,9 +438,10 @@ export const useForeignDropStripValidity = (
 /// otherwise, which is also the strip's answer to "is a clip drag over me".
 /// Gated so a drag that never reaches the strip does not re-render it.
 ///
-/// The strip reads every subject's resolved placement because a raise moves
-/// the entire set onto one new lane.
-///
+/// The whole state rather than a head, because the strip DRAWS this drop: a
+/// raise moves the entire set onto one new lane that belongs to no row, so the
+/// strip reads every subject's resolved placement (`movePlacements`, the same
+/// projection the lanes draw) and the verdict on them.
 ///
 /// The composition gate is what makes those landings this composition's µs: they
 /// are on the DRAG's axis, and only the Panel the drag started in shares it. A

@@ -272,6 +272,19 @@ function resolveForeignDrop(
   const movers = shiftMembersOf(drag.subjects);
   const fps = { num: fpsNum, den: fpsDen };
   if (trackId === null) {
+    // Inside the Panel, over no row — its ruler, or the band under the last
+    // lane. There is no geometry to draw in and no lane to validate against,
+    // but the time is resolved and real, so the claim still carries it and the
+    // drop strip stays armed while the pointer wanders across the Panel.
+    //
+    // A REFUSAL rather than `"valid"`, and so a release here sends nothing:
+    // the ghost drew nothing at this point, and "a refused preview sends
+    // nothing" is the same rule as "no preview, no commit". The command's
+    // lane-less policy BOUNCES onto a free lane, which is honest for the menu
+    // that has no ghost and a lie for a gesture that showed the user nothing.
+    // `PlacementValidity` has no word for "no row at all", so this takes the
+    // one that means a release places nothing; no chrome reads it, there being
+    // no band to draw.
     return {
       trackId: null,
       anchorTStartUs: anchor.originalTStart + floorShiftAtZero(movers, griddedUs - anchor.originalTStart),
@@ -289,12 +302,22 @@ function resolveForeignDrop(
       layerId: anchor.layerId,
       originalTStart: anchor.originalTStart,
       originalTEnd: anchor.originalTEnd,
+      // Nothing here to exclude either way: the ignore set removes the dragged
+      // clip and its link members from the target list, and none of them is in
+      // this composition to be offered as a target in the first place.
       escapeLink: true,
     },
+    // The subject's own `originalTStart` is a SOURCE-composition time, used as
+    // an algebraic pivot only: the delta is measured from it and added straight
+    // back, so it cancels and every surviving number is this composition's. What
+    // the subject genuinely contributes is the set's phase and each clip's
+    // duration, which are the same in any composition.
     frameDeltaUs: griddedUs - anchor.originalTStart,
     visibleTracks: opts.snapTracks,
     links: opts.links,
     linkByLayerId: opts.linkByLayerId,
+    // This Panel's own playhead: the same root moment projected onto this
+    // composition's clock (ADR 0053 decision 2), which is where its line is drawn.
     currentTimeUs: playheadClockUs(compositionId),
     fpsNum,
     fpsDen,
@@ -302,8 +325,21 @@ function resolveForeignDrop(
     enabled: opts.tailSnapEnabled && !pointer.snapSuspended,
     strengthPx: opts.tailSnapStrengthPx,
     projectMove: (deltaUs) => {
+      // Composition time has no negative half, and the set stops as ONE body
+      // when it reaches zero: the delta is floored at whatever puts the EARLIEST
+      // member on zero, rather than each member being clamped where it lands.
+      // Clamping per member would flatten the set's phase against the boundary
+      // and draw a landing the commit refuses — `applyMoveLayersToComposition`
+      // refuses a member before zero outright and never clamps.
       const phaseDeltaUs = floorShiftAtZero(movers, deltaUs);
+      // The same arithmetic `applyMoveLayersToComposition` runs on the other
+      // side of the commit (`renderer/grid.ts`), which is what makes the ghost
+      // a promise rather than an approximation of one.
       const landings = shiftOnGrids(movers, phaseDeltaUs, fps);
+      // Every subject lands on the ONE hit lane: the command with a named
+      // destination puts every source block there, whatever lane it came from
+      // (`main/state/mutations/moveToComposition.ts`). A ghost that scattered
+      // them across rows would promise a landing the command cannot make.
       const blocks = drag.subjects.map((subject) => ({
         subject, ...landings.get(subject.layerId)!,
       }));
@@ -315,12 +351,21 @@ function resolveForeignDrop(
           tStartUs,
           tEndUs,
           overlapClass: overlapClassForKind(subject.kind),
+          // Both locks refuse, as in the in-composition projection: the
+          // destination lane's, read off this composition's own tracks, and the
+          // subject's own, which travelled on the subject because this Panel
+          // holds no summary to find it in.
           locked: subject.locked,
         })),
+        // EMPTY, unlike the in-composition move: the subjects do not live here,
+        // so none of this composition's intervals is vacated by the drop.
+        // Listing them would only be a way to silence a real collision.
         replacedLayerIds: new Set(),
       });
-      // The receiving actor derives the set's shift from this raw head.
-      // Rounding it would change the phase of members on other grids.
+      // The command derives its offset as `anchorTStartUs - anchor.t_start_us`,
+      // so the number sent is the RAW shifted head, not the snapped one: the
+      // snapped head would hand it a different offset from the one every block
+      // above was drawn with, and the set's phase would land off its preview.
       return {
         anchor: landings.get(anchor.layerId)!,
         anchorTStartUs: anchor.originalTStart + phaseDeltaUs,

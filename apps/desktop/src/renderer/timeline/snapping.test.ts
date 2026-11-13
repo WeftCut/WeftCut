@@ -301,6 +301,22 @@ describe("magnetic feedback contract (#156)", () => {
     });
   });
 
+  it("picks the same target whether the lane under the pointer fits the clip or not", () => {
+    const resolveOver = (validity: "valid" | "collision") => resolveTimelineDragSnap({
+      ...baseOpts(), state, frameDeltaUs: 950_000,
+      projectMove: (deltaUs) => ({
+        anchor: { tStartUs: state.originalTStart + deltaUs, tEndUs: state.originalTEnd + deltaUs },
+        validity,
+      }),
+    });
+    const fits = resolveOver("valid");
+    const blocked = resolveOver("collision");
+    expect(fits.boundaryUs).not.toBeNull();
+    expect({ deltaUs: blocked.deltaUs, boundaryUs: blocked.boundaryUs })
+      .toEqual({ deltaUs: fits.deltaUs, boundaryUs: fits.boundaryUs });
+    expect(blocked.placement?.validity).toBe("collision");
+  });
+
   it("a blade/cut reports the target independently of its resulting time", () => {
     expect(resolveTimelineTimeSnap({
       ...baseOpts(), timeUs: 2_966_667,

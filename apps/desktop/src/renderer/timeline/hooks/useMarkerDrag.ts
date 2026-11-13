@@ -249,18 +249,25 @@ export function useMarkerDrag(opts: {
         setPreview((p) => (contextRef.current === null ? null : p)),
       );
     };
+    // Abandoned the same ways a clip drag is (`useLayerDrag`): a lost pointer
+    // or Escape puts the mark back and the release that follows sends nothing.
     const onCancel = () => {
       finishMarkerGesture();
       setActive(false);
       setPreview(null);
     };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onCancel);
+    window.addEventListener("keydown", onKeyDown);
     return () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onCancel);
+      window.removeEventListener("keydown", onKeyDown);
     };
   }, [active, compositionId, finishMarkerGesture]);
 

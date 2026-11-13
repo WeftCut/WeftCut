@@ -1,6 +1,5 @@
 import type { LinkSummary, TrackSummary } from "../ipc";
 import { adjacentFrameBoundaryUs, snapFrameRound } from "../frames";
-import { placementRefuses, type PlacementValidity } from "./placement";
 
 const US_PER_SEC = 1_000_000;
 
@@ -8,7 +7,6 @@ export type TimelineDragSnapKind = "move" | "trim-start" | "trim-end";
 
 interface MoveSnapPlacement {
   anchor: { tStartUs: number; tEndUs: number };
-  validity: PlacementValidity;
 }
 
 export interface TimelineTimeSnapResult {
@@ -164,8 +162,11 @@ export function resolveTimelineDragSnap<Placement extends MoveSnapPlacement>(
   for (const candidate of candidates) {
     const { deltaUs, boundaryUs, edge } = candidate;
     const placement = fixed ? fixed.placement : projectMove?.(deltaUs);
+    // Reachability only, never the placement's validity: the lane under the
+    // pointer must not choose the target, or a straight vertical move would
+    // change the clip's time. A blocked landing shows as a collision at the
+    // aligned position instead.
     if (placement) {
-      if (placementRefuses(placement.validity)) continue;
       if (frameTime(placement.anchor[edge]) !== boundaryUs) continue;
     } else if (!preserveTime) {
       const originalUs = edge === "tStartUs" ? state.originalTStart : state.originalTEnd;
