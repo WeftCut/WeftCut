@@ -160,6 +160,7 @@ export interface CompositorInit {
   /// (feedback_playhead_gate_and_tiers). See `compositeFrame`'s
   /// reset/diff/fire around its layer sweep.
   onUnsupported?: (unsupported: ReadonlySet<string>) => void;
+  onCapacityBlocked?: (blocked: boolean) => void;
   /// Preview-only: playback underrun (dropped + late-tick) state changes for
   /// the transport-bar indicator. Edge-triggered + throttled by
   /// `UnderrunTracker` (never per-frame — feedback_playhead_gate_and_tiers);
@@ -302,6 +303,9 @@ export class Compositor {
   /// sweep. Reset before the layer loop, read after it — same
   /// reset/accumulate/fire ownership split as `unsupportedMedia`.
   private sweepLateLayers = 0;
+  private sweepCapacityBlocked = false;
+  private capacityBlocked = false;
+  private readonly onCapacityBlocked: CompositorInit['onCapacityBlocked'];
 
   constructor(init: CompositorInit) {
     this.app = init.app;
@@ -312,6 +316,7 @@ export class Compositor {
     this.proxyAssetUrl = init.proxyAssetUrl ?? ((): string | null => null);
     this.resolveSource = init.resolveSource ?? ((): ResolvedRendererSource | null => null);
     this.onUnsupported = init.onUnsupported;
+    this.onCapacityBlocked = init.onCapacityBlocked;
     this.originalAssetUrl = init.originalAssetUrl;
     this.sourceColor = init.sourceColor;
     this.mediaById = init.mediaById;
@@ -346,6 +351,7 @@ export class Compositor {
       noteUnsupported: (mediaId) => {
         this.unsupportedMedia.add(mediaId);
       },
+      noteCapacityBlocked: () => { this.sweepCapacityBlocked = true; },
       noteLateLayer: () => {
         this.sweepLateLayers += 1;
       },
@@ -550,9 +556,8 @@ export class Compositor {
   /// `setSuspended(false)` re-acquires fresh handles via the normal
   /// `ensureClip` path.
   ///
-  /// Used by export: the export Worker's decoder otherwise wedges
-  /// when the preview's decoder is still holding a hardware video-
-  /// decode slot for the same source.
+  /// Used by export preparation: idle preview decoders hold resource
+  /// leases the encoder's admission needs (`exportPreviewSuspension.ts`).
   setSuspended(s: boolean): void {
     if (this.suspended === s) return;
     this.suspended = s;
@@ -687,6 +692,7 @@ export class Compositor {
     this.unsupportedMedia = new Set<string>();
     // Same reset half for the underrun sweep; `updateClip` only ADDS.
     this.sweepLateLayers = 0;
+    this.sweepCapacityBlocked = false;
     this.sync.begin(tUsSnapped);
 
     this.root.compositeVisual(tUsSnapped, effectInput ? { previewEffectsEnabled, effectInput } : { previewEffectsEnabled });
@@ -707,6 +713,10 @@ export class Compositor {
     if (unsupportedChanged) {
       this.publishedUnsupportedMedia = new Set(this.unsupportedMedia);
       this.onUnsupported?.(new Set(this.unsupportedMedia));
+    }
+    if (this.capacityBlocked !== this.sweepCapacityBlocked) {
+      this.capacityBlocked = this.sweepCapacityBlocked;
+      this.onCapacityBlocked?.(this.capacityBlocked);
     }
     // Underrun verdict for this sweep. Judged only while the master
     // clock is running and not scrubbing (a scrub deliberately paints

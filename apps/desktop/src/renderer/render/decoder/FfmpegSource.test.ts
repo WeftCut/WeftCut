@@ -1171,6 +1171,7 @@ describe("FfmpegSource — one transport switch at a time", () => {
       await tick();
       expect(fatal).not.toHaveBeenCalled();
       expect(src.currentDecodeDevice()).toBeNull();
+      expect(src.isCapacityBlocked()).toBe(true);
 
       await src.requestFrameAt(0);
       expect(makeSw).toHaveBeenCalledTimes(2); // still inside the backoff
@@ -1178,6 +1179,7 @@ describe("FfmpegSource — one transport switch at a time", () => {
       time.mockReturnValue(1001);
       await src.requestFrameAt(0);
       expect(makeSw).toHaveBeenCalledTimes(3);
+      expect(src.isCapacityBlocked()).toBe(false);
       expect(makeSw).toHaveBeenLastCalledWith({ scaleDiv: 2, cadenceDiv: 1 });
       expect(src.currentDecodeDevice()).toEqual({ kind: "software", backend: "ffmpeg", device: null });
       expect(fatal).not.toHaveBeenCalled();

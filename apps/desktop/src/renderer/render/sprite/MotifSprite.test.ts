@@ -58,7 +58,7 @@ import type { MotifManifest, Motif } from "../motifs/catalog";
 import type { ResolvedMotifView } from "../resolveView";
 import { MotifSprite } from "./MotifSprite";
 import {
-  resetMotifFrameRequests, sharedMotifFrameCache, sharedMotifOverlayCache, type MotifFrameLease, type MotifFrameRequest,
+  bindMotifFrameWorkspace, sharedMotifFrameCache, sharedMotifOverlayCache, type MotifFrameLease, type MotifFrameRequest,
 } from "../motifs/motifFrameSource";
 import type { MotifFrameDescriptor } from "../motifs/motifFrameDescriptor";
 import type { MotifReaderDiv } from "../../../shared/motifs/readerProtocol";
@@ -756,6 +756,7 @@ describe("MotifSprite overlay gesture lane", () => {
 
   let sprite: MotifSprite | null = null;
   beforeEach(async () => {
+    bindMotifFrameWorkspace(1);
     getMotifMock.mockReset();
     getMotifMock.mockReturnValue(motifWith("A"));
     getFrameMock.mockReset().mockReturnValue(null);
@@ -771,7 +772,7 @@ describe("MotifSprite overlay gesture lane", () => {
   });
   afterEach(() => {
     sprite?.dispose();
-    resetMotifFrameRequests();
+    bindMotifFrameWorkspace(null);
     resetMotifPreview();
     sharedMotifOverlayCache.clearAll();
   });

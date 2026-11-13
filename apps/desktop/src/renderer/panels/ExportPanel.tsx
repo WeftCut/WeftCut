@@ -24,7 +24,7 @@ export interface ExportComplete {
   durationUs: number;
 }
 
-export type ExportState = ExportPhase & { job?: import('../../shared/exportJob').ExportJob; onCancel?: () => void };
+export type ExportState = ExportPhase & { background?: boolean; job?: import('../../shared/exportJob').ExportJob; onCancel?: () => void };
 type ExportPhase =
   // Readiness waits and frame export provide their own cancellation handler.
   | { kind: "starting" }
@@ -48,7 +48,7 @@ export type FinalizeStep = "sink" | "audio" | "mux";
 
 /// Spelled out rather than built as `export.finalize_${step}` so adding a step
 /// to the union is a compile error here, not a missing-key string at runtime.
-const FINALIZE_STEP_KEY: Record<FinalizeStep, string> = {
+export const FINALIZE_STEP_KEY: Record<FinalizeStep, string> = {
   sink: "export.finalize_sink",
   audio: "export.finalize_audio",
   mux: "export.finalize_mux",

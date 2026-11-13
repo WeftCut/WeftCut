@@ -121,15 +121,19 @@ interface Job {
 const jobs = new Map<string, Job>();
 const unsettled = new Set<Subscriber>();
 const owners = new WeakMap<object, Subscriber>();
+let workspaceGeneration: number | null = null;
 
 /** A new workspace may reuse pixels, but must not inherit another workspace's
  * work: every pending request is superseded, and admitted work's results are
  * closed when they arrive. Leases already handed out stay valid. */
-export function resetMotifFrameRequests(): void {
+export function bindMotifFrameWorkspace(generation: number | null): void {
+  if (workspaceGeneration === generation) return;
+  workspaceGeneration = generation;
   mainPreparedKeys.clear();
   scheduler.reset();
   for (const subscriber of [...unsettled]) reject(subscriber, motifSuperseded());
   jobs.clear();
+  sharedBakedKeyIndex.clear();
 }
 
 /** Coverage of L0's committed lane, for warming and status. */

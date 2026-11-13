@@ -61,6 +61,7 @@ export class PreviewAudioEngine {
   private stemError: unknown = null;
   private requestAbort = new AbortController();
   private disposed = false;
+  private playbackSuspended = false;
   private timer: ReturnType<typeof setInterval> | null = null;
   private deadline: ReturnType<typeof setTimeout> | null = null;
   private previewUs: number | null = null;
@@ -220,7 +221,7 @@ export class PreviewAudioEngine {
   }
 
   play(): void {
-    if (this.disposed || this.state.requestedPlaying || !this.summary) return;
+    if (this.disposed || this.playbackSuspended || this.state.requestedPlaying || !this.summary) return;
     this.previewUs = null;
     const end = this.endUs();
     const comp = compositionOrRoot(this.summary, this.targetId)!;
@@ -230,6 +231,18 @@ export class PreviewAudioEngine {
       this.emitSeek();
     }
     this.beginPlay();
+  }
+
+  /// Yield playback during export preparation so a Play command cannot pause
+  /// derivatives or reclaim the encoder's resources while it is waiting.
+  suspendPlayback(): () => void {
+    const wasPlaying = this.isPlayRequested();
+    this.playbackSuspended = true;
+    this.pause();
+    return () => {
+      this.playbackSuspended = false;
+      if (wasPlaying) this.play();
+    };
   }
 
   pause(): void {

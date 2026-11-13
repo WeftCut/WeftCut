@@ -12,7 +12,6 @@ import { isResourceCapacityError } from "../../shared/resource-policy";
 import { isFfmpegStallError } from "../../shared/ffmpeg-stall";
 import { type ExportState } from "../panels/ExportPanel";
 import { type ProxyState } from "../panels/mediaReadiness";
-import { type PreviewSurfaceHandle } from "../preview/PreviewSurface";
 import {
   type ProbeState
 } from "../render/exportReadiness";
@@ -26,7 +25,6 @@ import { createExportLogMirror } from "./exportLog";
 /// progress, notifications and export logs. Main owns exit protection; the
 /// controller owns renderer readiness and delegates work to exportRunner.
 export function useExportFlow(deps: {
-  previewRef: React.RefObject<PreviewSurfaceHandle | null>;
   proxyStateRef: React.MutableRefObject<Map<string, ProxyState>>;
   decodeProbeMemo: React.MutableRefObject<Map<string, ProbeState>>;
 }): {
@@ -157,7 +155,7 @@ export function useExportFlow(deps: {
     controllerRef.current = controller;
     void controller.mount().catch(error => setExportState({ kind: 'error', detail: String(error) }));
     return () => { controllerRef.current = null; void controller.dispose(); };
-  }, [deps.previewRef, deps.proxyStateRef, deps.decodeProbeMemo, exportLog]);
+  }, [deps.proxyStateRef, deps.decodeProbeMemo, exportLog]);
   const runExportWithSettings = useCallback(async (settings: ExportSettings, path: string, range?: { startUs: number; endUs: number }, overwrite = false) => {
     try {
       const job = await invoke<import('../../shared/exportJob').ExportJob>('export_job_start', { settings, output_path: path, ...(range ? { range } : {}), on_conflict: overwrite ? 'overwrite' : 'fail' });

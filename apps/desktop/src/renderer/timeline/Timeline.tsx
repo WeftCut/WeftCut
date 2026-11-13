@@ -49,6 +49,7 @@ import {
 import { useShortcuts, type OverrideMap } from "../shortcuts/useShortcuts";
 import { ACTION_DEFS } from "../shortcuts/defs";
 import { useCommandProvider } from "../commands/registry";
+import { exportReviewCommands, exportReviewShortcuts } from "../commands/exportReview";
 import {
   NUDGE_MS,
   NUDGE_SAMPLE,
@@ -250,6 +251,7 @@ interface TimelineProps {
   /// Same capability verdict as the media pool; independent of copy progress.
   readinessOf: (id: string) => MediaReadiness;
   visible?: boolean;
+  editingLocked?: boolean;
   onExitBlade: () => void;
   /// Park the film at this ROOT moment. A Panel scrubs on its own clock, so it
   /// projects up before calling (`state/playheadProjection.ts`); a composition
@@ -282,6 +284,7 @@ export const Timeline = memo(function Timeline({
   media,
   readinessOf,
   visible = true,
+  editingLocked = false,
   onExitBlade,
   onSeek,
   onMutated,
@@ -757,7 +760,7 @@ export const Timeline = memo(function Timeline({
   useShortcuts({
     disabled: !isFocusedTimeline,
     overrides: shortcutOverrides,
-    handlers: {
+    handlers: exportReviewShortcuts({
       selectAll: handleSelectAll,
       deselectAll,
       toggleLinkSelected: handleToggleLinkSelected,
@@ -768,7 +771,7 @@ export const Timeline = memo(function Timeline({
       resyncAudioToVideo: handleResyncAudioToVideo,
       zoomTimelineIn: handleZoomTimelineIn,
       zoomTimelineOut: handleZoomTimelineOut,
-    },
+    }, editingLocked),
   });
 
   // Gated on the same predicate as the shortcuts above, for the ADR 0053 reason
@@ -778,7 +781,7 @@ export const Timeline = memo(function Timeline({
   // necessarily the one holding the keyboard — so ungated, the palette's
   // Select All and Ctrl+A would act on DIFFERENT timelines, and every lookup
   // would log the collision (25 of them per Quick Actions strip render).
-  useCommandProvider(() => [
+  useCommandProvider(() => exportReviewCommands([
     // Timeline's provider rather than App's catalogue, which is also why neither
     // appears in the Edit menu: a menu-bar row backed by this provider would
     // vanish whenever the Timeline Panel is closed
@@ -853,7 +856,7 @@ export const Timeline = memo(function Timeline({
       labelKey: ACTION_DEFS.zoomTimelineOut.labelKey,
       run: handleZoomTimelineOut,
     },
-  ], { enabled: isFocusedTimeline });
+  ], editingLocked), { enabled: isFocusedTimeline });
 
   // Live lane-element registry. The drag hit-test measures these nodes rather
   // than recomputing row offsets from track heights — a row's on-screen extent
@@ -1828,7 +1831,7 @@ export const Timeline = memo(function Timeline({
               fpsNum={fpsNum} fpsDen={fpsDen} onScrub={beginRulerScrub}
             />
           </TimelineFixedRow>
-          <TimelineFixedRow compositionId={compositionId} widthPx={widthPx} header={<MarkerLaneHeader />}>
+          <TimelineFixedRow compositionId={compositionId} widthPx={widthPx} inert={editingLocked} header={<MarkerLaneHeader />}>
             <MarkerLane compositionId={compositionId} pxPerSec={pxPerSec} widthPx={widthPx}
               viewportWidthPx={viewportWidthPx} fpsNum={fpsNum} fpsDen={fpsDen} />
           </TimelineFixedRow>
@@ -1838,7 +1841,7 @@ export const Timeline = memo(function Timeline({
             <ReviewLane compositionId={compositionId} pxPerSec={pxPerSec} widthPx={widthPx}
               viewportWidthPx={viewportWidthPx} fpsNum={fpsNum} fpsDen={fpsDen} />
           </TimelineFixedRow>
-          <TimelineFixedRow compositionId={compositionId} widthPx={widthPx} header={<DropStripHeader />}>
+          <TimelineFixedRow compositionId={compositionId} widthPx={widthPx} inert={editingLocked} header={<DropStripHeader />}>
             <DropStrip elRef={dropStripElRef} compositionId={compositionId} pxPerSec={pxPerSec}
               fpsNum={fpsNum} fpsDen={fpsDen} mediaDropSnap={mediaDropSnap}
               pendingPlacements={pendingPlacements} pendingLayerById={pendingLayerById} onMediaDrop={onMediaDrop} />
@@ -1866,7 +1869,7 @@ export const Timeline = memo(function Timeline({
                 }
             }
           >
-            <div ref={(el) => { trackReorder.containerRef.current = el; }} className="relative flex min-h-full flex-col" style={{ width: headerColPx + widthPx }}>
+            <div inert={editingLocked} ref={(el) => { trackReorder.containerRef.current = el; }} className="relative flex min-h-full flex-col" style={{ width: headerColPx + widthPx }}>
               <DropStripSeam intoLanePx={dropSeamIntoLanePx} />
               {/* Reserve the first lane's upward link badge inside the viewport.
                   Carry the sticky header through this gap so scrolled badges

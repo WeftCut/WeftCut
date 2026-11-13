@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock, type MockInstance } from 'vitest';
 import {
-  acquireMotifFrame, peekMotifFrame, resetMotifFrameRequests, sharedBakedKeyIndex,
+  acquireMotifFrame, bindMotifFrameWorkspace, peekMotifFrame, sharedBakedKeyIndex,
   sharedMotifFrameCache, sharedMotifOverlayCache, type MotifFrameRequest,
 } from './motifFrameSource';
 import { captureMotif, MotifTransportError, type MotifCaptureReply, type MotifCaptureRequest } from './frameTransport';
@@ -48,6 +48,7 @@ const sentFrames = () => calls.map(call => call.request.address!.frame);
 const superseded = { code: 'superseded' };
 
 beforeEach(() => {
+  bindMotifFrameWorkspace(1);
   calls = [];
   vi.mocked(captureMotif).mockClear().mockImplementation(request => {
     let answer!: FakeCall['answer'], fail!: FakeCall['fail'];
@@ -66,7 +67,7 @@ beforeEach(() => {
   overlayPins = () => overlayRetain.mock.calls.length - overlayRelease.mock.calls.length;
 });
 afterEach(async () => {
-  resetMotifFrameRequests();
+  bindMotifFrameWorkspace(null);
   for (const call of calls) call.fail(new Error('test over'));
   await settle();
   sharedBakedKeyIndex.clear();
@@ -448,7 +449,7 @@ describe('admission', () => {
     const queued = acquire(desc(1));
     sharedBakedKeyIndex.beginHydration();
     const waiting = acquire(desc(2));
-    resetMotifFrameRequests();
+    bindMotifFrameWorkspace(2);
     sharedBakedKeyIndex.finishHydration();
     for (const { lease } of [running, queued, waiting]) await expect(lease).rejects.toMatchObject(superseded);
     const late = bitmap();
@@ -461,13 +462,30 @@ describe('admission', () => {
 });
 
 describe('project reset', () => {
+  it('supersedes both preview and export captures when the workspace changes', async () => {
+    const render = acquire(desc(0), { purpose: 'export', finalizationToken: 'export-plan' });
+    const preview = acquire(desc(1));
+    await settle();
+
+    bindMotifFrameWorkspace(2);
+    await expect(render.lease).rejects.toMatchObject(superseded);
+    await expect(preview.lease).rejects.toMatchObject(superseded);
+    for (const capture of calls) expect(capture.cancel).toHaveBeenCalledOnce();
+
+    const late = bitmap();
+    calls.find(call => call.request.finalizationToken === 'export-plan')!.answer({ kind: 'pixels', bitmap: late, persisted: true });
+    await settle();
+    expect(late.close).toHaveBeenCalledOnce();
+    expect(sharedBakedKeyIndex.hasFrame('k', 0)).toBe(false);
+  });
+
   it('closes a read that lands after the reset, unpublished', async () => {
     sharedBakedKeyIndex.restoreFrames('k', new Set([0]));
     let land!: (bitmap: ImageBitmap) => void;
     read.mockReturnValueOnce(new Promise(resolve => { land = resolve; }));
     const { lease } = acquire(desc());
     await settle();
-    resetMotifFrameRequests();
+    bindMotifFrameWorkspace(2);
     await expect(lease).rejects.toMatchObject(superseded);
     const late = bitmap();
     land(late);
@@ -481,7 +499,7 @@ describe('project reset', () => {
     sharedBakedKeyIndex.restoreFrames('k', new Set());
     const { lease } = acquire(desc());
     await settle();
-    resetMotifFrameRequests();
+    bindMotifFrameWorkspace(2);
     await expect(lease).rejects.toMatchObject(superseded);
     calls[0]!.answer({ kind: 'stored' });
     await settle();

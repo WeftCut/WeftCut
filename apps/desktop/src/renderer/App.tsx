@@ -100,6 +100,8 @@ import { useAppWiring, useWindowTitle } from "./app/useAppWiring";
 import { useExportFlow } from "./app/useExportFlow";
 import { useImportReadiness } from "./app/useImportReadiness";
 import { ExportPanel } from "./panels/ExportPanel";
+import { BackgroundExportProgress } from "./panels/BackgroundExportProgress";
+import { exportTerminal } from "../shared/exportJob";
 import { ShortcutBindingsProvider } from "./shortcuts/bindings-context";
 import {
   useShortcuts,
@@ -110,8 +112,9 @@ import { useNativeMenu } from "./menu/nativeMenu";
 import { StatusBar } from "./logs/StatusBar";
 import { LogConsole, type LogConsoleHandle } from "./logs/LogConsole";
 import { useLogStore } from "./logs/store";
-import { useCommandProvider } from "./commands/registry";
+import { notifyCommandRegistry, useCommandProvider } from "./commands/registry";
 import { buildAppCommands } from "./commands/appCommands";
+import { exportReviewCommands, exportReviewShortcuts } from "./commands/exportReview";
 import { splitAtPlayhead } from "./commands/splitAtPlayhead";
 import { applyTransitionAtPlayhead } from "./timeline/applyTransition";
 import {
@@ -540,7 +543,16 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
     runExportWithSettings,
     openRenderPlayPopup,
     revealExportedFile,
-  } = useExportFlow({ previewRef, proxyStateRef, decodeProbeMemo });
+  } = useExportFlow({ proxyStateRef, decodeProbeMemo });
+  const exportInProgress = !!exportState && (
+    exportState.job?.phase === "cancelling" ||
+    exportState.kind !== "complete" && exportState.kind !== "error"
+  );
+  const exportEditLocked = exportState?.job
+    ? !exportTerminal(exportState.job.state)
+    : exportInProgress || exportState?.kind === "error" && !!exportState.onRetry;
+  const backgroundExportActive = exportInProgress && exportState?.background === true;
+  useEffect(notifyCommandRegistry, [exportEditLocked]);
 
   // ---- Menu-bar action handlers ----
 
@@ -1064,13 +1076,14 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
   // through a ref so the window listener never reattaches just because handler
   // identities changed. It only reattaches when the resolved binding entries
   // change (i.e. when user overrides land).
+  const availableShortcuts = exportReviewShortcuts(shortcutHandlers, exportEditLocked);
   useShortcuts({
-    handlers: shortcutHandlers,
+    handlers: availableShortcuts,
     overrides: shortcutOverrides,
   });
   // Same handlers, projected into the macOS native menu (File, Settings) and
   // run from it. Inert off macOS. See menu/nativeMenu.ts.
-  useNativeMenu({ handlers: shortcutHandlers, overrides: shortcutOverrides });
+  useNativeMenu({ handlers: availableShortcuts, overrides: shortcutOverrides });
 
   // Shared by the Insert menu and the search palette — one implementation,
   // two entry points. Both name the FOCUSED composition at event time: a menu
@@ -1123,7 +1136,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
     [enterAgentMode, t],
   );
 
-  useCommandProvider(() =>
+  useCommandProvider(() => exportReviewCommands(
     buildAppCommands(
       shortcutHandlers,
       {
@@ -1154,21 +1167,11 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
         busy,
         canUndo: !!summary?.history.can_undo,
         canRedo: !!summary?.history.can_redo,
-        // Locked for every non-terminal phase, stated as the TERMINAL set
-        // rather than by listing the running ones. Listing them had already
-        // gone stale: `preparing` was missing, so the export command stayed
-        // enabled through the readiness wait — unreachable by pointer (the
-        // panel is modal) but not by the keyboard/palette path, which is
-        // exactly what this flag gates. Naming the terminal set instead means
-        // a phase added later is locked by default.
-        exportLocked:
-          busy ||
-          (!!exportState &&
-            exportState.kind !== "complete" &&
-            exportState.kind !== "error"),
+        exportLocked: busy || exportEditLocked,
       },
     ),
-  );
+    exportEditLocked,
+  ));
 
   const dockPanelContracts = useMemo<DockPanelContracts>(
     () => ({
@@ -1176,6 +1179,8 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
       previewRef,
       onSeek: seekTo,
       onTogglePlay: togglePlay,
+      editingLocked: exportEditLocked,
+      backgroundExportActive,
       previewDecodableOf,
       revealedTrackId,
       keybindings,
@@ -1193,6 +1198,8 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
       summary,
       seekTo,
       togglePlay,
+      exportEditLocked,
+      backgroundExportActive,
       previewDecodableOf,
       revealedTrackId,
       keybindings,
@@ -1228,6 +1235,24 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
     );
   }
 
+  const exportPanel = exportState && (
+    <ExportPanel
+      key={exportState.job?.job_id}
+      state={exportState}
+      onClose={() => {
+        setExportState(null);
+        setExportDialogOpen(false);
+      }}
+      onPlay={openRenderPlayPopup}
+      onReveal={revealExportedFile}
+      onOpenSettings={() => {
+        if (exportState.kind !== "error" || !exportState.onRetry) setExportState(null);
+        setExportDialogOpen(false);
+        openSettings("performance");
+      }}
+    />
+  );
+
   return (
     <ShortcutBindingsProvider overrides={shortcutOverrides}>
     <div className="app">
@@ -1240,6 +1265,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
           workspaceProfiles={viewMenuWorkspaces}
           onMotifColdStart={runMotifColdStart}
         />
+        {backgroundExportActive && <BackgroundExportProgress state={exportState} />}
       </div>
 
       <main className="app-main">
@@ -1286,10 +1312,6 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
         />
       )}
 
-      {/* One modal overlay: the settings form while idle, the progress panel
-          once an export is running (exportState set). Keeping the dialog open
-          through the export means progress shows in the same popup and blocks
-          UI interaction until the user dismisses on complete/error. */}
       {exportDialogOpen && summary && exportState == null && (
         <ExportSettingsDialog
           comp={rootCompositionOf(summary)}
@@ -1299,28 +1321,11 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
           )}
           onCancel={() => setExportDialogOpen(false)}
           onConfirm={(settings, path, range, overwrite) => {
-            // Don't close — the progress panel takes over the same overlay.
             void runExportWithSettings(settings, path, range, overwrite);
           }}
         />
       )}
-      {exportState && !settingsOpen && (
-        <ExportPanel
-          key={exportState.job?.job_id}
-          state={exportState}
-          onClose={() => {
-            setExportState(null);
-            setExportDialogOpen(false);
-          }}
-          onPlay={openRenderPlayPopup}
-          onReveal={revealExportedFile}
-          onOpenSettings={() => {
-            if (exportState.kind !== "error" || !exportState.onRetry) setExportState(null);
-            setExportDialogOpen(false);
-            openSettings("performance");
-          }}
-        />
-      )}
+      {!backgroundExportActive && !settingsOpen && exportPanel}
       {staleMotifs.length > 0 && (
         <MotifStaleDialog
           entries={staleMotifs}

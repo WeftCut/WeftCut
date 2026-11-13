@@ -188,6 +188,20 @@
   pointer-events: none;
 }
 
+.preview-export-capacity {
+  position: absolute;
+  inset-inline: calc(8 * var(--ui-px));
+  bottom: calc(8 * var(--ui-px));
+  padding: calc(6 * var(--ui-px)) calc(10 * var(--ui-px));
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-control);
+  background: var(--card);
+  color: var(--foreground);
+  font-size: var(--font-size-caption);
+  text-align: center;
+  pointer-events: none;
+}
+
 .preview-spinner {
   width: calc(24 * var(--ui-px));
   height: calc(24 * var(--ui-px));

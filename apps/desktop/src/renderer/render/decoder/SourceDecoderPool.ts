@@ -24,8 +24,10 @@ import { openMediaInput, type OpenedMedia } from "./mediaInput";
 import { PacketPump, type PumpDeps } from "./PacketPump";
 import { FfmpegSource, type FfmpegSourceInit } from "./FfmpegSource";
 import type { SourceHandleInit, PreviewDecodeDevice } from "./session";
+import { isResourceCapacityError } from "../../../shared/resource-policy";
 
 const IDLE_DISPOSE_MS = 5_000;
+const CAPACITY_RETRY_MS = 1_000;
 
 /// Shared per-source state: the opened mediabunny `Input` (lazily-read
 /// proxy) + its `EncodedPacketSink`, plus the once-per-source decoder
@@ -221,6 +223,9 @@ export class SourceHandle {
     return this.media.mediaId;
   }
 
+  private capacityRetryAt = 0;
+  isCapacityBlocked(): boolean { return this.capacityRetryAt > 0; }
+
   constructor(layerId: string, media: SourceMedia) {
     this.layerId = layerId;
     this.media = media;
@@ -247,6 +252,7 @@ export class SourceHandle {
     if (this.ready && this.decoder) return;
     if (this.readyP) return this.readyP;
     this.readyP = this._doEnsureReady().catch(error => {
+      this.capacityRetryAt = isResourceCapacityError(error) ? performance.now() + CAPACITY_RETRY_MS : 0;
       try { this.decoder?.close(); } catch { /* already closed */ }
       this.decoder = null;
       this.releaseResources?.(); this.releaseResources = null;
@@ -265,6 +271,7 @@ export class SourceHandle {
       const release = await acquireRenderResources(64 + width * height * 64 / 1048576);
       if (this._disposed) { release(); return; }
       this.releaseResources = release;
+      this.capacityRetryAt = 0;
     }
     // Capture the decoder identity so that stale error callbacks from
     // a decoder we've since replaced (via inactivity-rebuild) bail
@@ -495,7 +502,15 @@ export class SourceHandle {
   /// on first call, then delegates to the single-flight `PacketPump`.
   async requestFrameAt(tUs: number): Promise<void> {
     const version = ++this.requestVersion;
-    if (!this.ready || !this.decoder) await this.ensureReady();
+    if (!this.ready || !this.decoder) {
+      if (performance.now() < this.capacityRetryAt) return;
+      try {
+        await this.ensureReady();
+      } catch (error) {
+        if (isResourceCapacityError(error)) return;
+        throw error;
+      }
+    }
     if (this._disposed || !this.pump || version !== this.requestVersion) return;
     this.lastUseMs = performance.now();
     this.pump.requestFrameAt(tUs);

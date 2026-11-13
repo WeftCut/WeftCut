@@ -34,6 +34,8 @@ test('resource preferences are understandable, persistent and independent of dec
     await expect(pane.getByRole('combobox')).toHaveCount(1);
     await expect(pane.getByLabel('并行解码数', { exact: true })).toHaveCount(0);
     const before = (await read()).decode_engine;
+    const previewDuringExport = pane.getByRole('checkbox', { name: /导出时预览/ });
+    await expect(previewDuringExport).not.toBeChecked();
     await memory.fill('4');
     await expect.poll(async () => (await read()).resource_policy?.memory_mib).toBe(4096);
     await expect(memory).toBeFocused();
@@ -48,17 +50,20 @@ test('resource preferences are understandable, persistent and independent of dec
     await page.getByRole('option', { name: '低占用', exact: true }).click();
     await pane.getByLabel('临时缓存空间', { exact: true }).fill('3');
     await pane.getByRole('checkbox', { name: /播放时继续后台处理/ }).check();
+    await previewDuringExport.check();
     await expect.poll(async () => (await read()).resource_policy).toEqual({
-      version: 2, memory_mib: 4096, processing: 'low', disk_cache_mib: 3072, background_playback: true,
+      version: 2, memory_mib: 4096, processing: 'low', disk_cache_mib: 3072, background_playback: true, preview_during_export: true,
     });
     await page.screenshot({ path: testInfo.outputPath('resource-settings.png'), animations: 'disabled' });
     expect(await pane.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
     await page.reload(); await openPerformance(page);
     await expect(memory).toHaveValue('4');
+    await expect(previewDuringExport).toBeChecked();
     await expect(pane.getByRole('combobox', { name: '处理强度', exact: true })).toHaveText('低占用');
     expect((await read()).decode_engine).toBe(before);
     await pane.getByRole('button', { name: '恢复默认值', exact: true }).click();
     await expect.poll(async () => (await read()).resource_policy).toEqual(DEFAULT_RESOURCE_POLICY);
+    await expect(previewDuringExport).not.toBeChecked();
     const status = await page.evaluate(() => window.api.resources.status());
     expect(['normal', 'constrained']).toContain(status.pressure);
     await expect.poll(async () => (await page.evaluate(() => window.api.resources.status())).memory_scope).toBe('process-tree');

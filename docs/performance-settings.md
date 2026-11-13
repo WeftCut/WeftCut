@@ -92,8 +92,13 @@ floor does not guarantee 1080p export: it projects to 409 MiB of work, while a
 Refusal reports recovery options; it never lowers output quality.
 
 Export suspends preview and releases its idle decoder leases before
-preparation; preview resumes after sink finish/cancel and finalization.
-Waiting for the worker to start instead can deadlock encoder admission.
+preparation; waiting for the worker to start instead can deadlock encoder
+admission. Preview resumes after sink finish/cancel and finalization, or, with
+**Preview during export (beta)** enabled in Performance settings, as soon as the
+export's resources are admitted: the timeline stays read-only, scrubbing and
+playback work, and a preview decoder that cannot get resources shows a notice
+and retries. The export's plan and output do not change. The setting is off by
+default and applies to the next export.
 
 ## Memory telemetry and pressure
 

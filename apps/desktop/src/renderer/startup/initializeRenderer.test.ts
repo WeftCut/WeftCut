@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   syncUserMotifsFromBackend: vi.fn(),
   installMotifsChangedListener: vi.fn(),
+  installMotifFrameWorkspaceListener: vi.fn(),
 }));
 
 vi.mock("@/bridge/ipc", () => ({ invoke: mocks.invoke }));
@@ -16,6 +17,9 @@ vi.mock("../render/motifs/syncCatalog", () => ({
   syncUserMotifsFromBackend: mocks.syncUserMotifsFromBackend,
   installMotifsChangedListener: mocks.installMotifsChangedListener,
 }));
+vi.mock("../render/motifs/motifFrameWorkspace", () => ({
+  installMotifFrameWorkspaceListener: mocks.installMotifFrameWorkspaceListener,
+}));
 
 import { startRendererInitialization } from "./initializeRenderer";
 
@@ -25,6 +29,7 @@ beforeEach(() => {
   mocks.invoke.mockResolvedValue(undefined);
   mocks.syncUserMotifsFromBackend.mockResolvedValue(undefined);
   mocks.installMotifsChangedListener.mockResolvedValue(() => {});
+  mocks.installMotifFrameWorkspaceListener.mockResolvedValue(() => {});
 });
 
 describe("startRendererInitialization", () => {
@@ -57,6 +62,7 @@ describe("startRendererInitialization", () => {
     });
     expect(mocks.syncUserMotifsFromBackend).toHaveBeenCalledOnce();
     expect(mocks.installMotifsChangedListener).toHaveBeenCalledOnce();
+    expect(mocks.installMotifFrameWorkspaceListener).toHaveBeenCalledOnce();
     expect(settled).toBe(false);
     expect(progress[0]).toEqual({
       pending: [

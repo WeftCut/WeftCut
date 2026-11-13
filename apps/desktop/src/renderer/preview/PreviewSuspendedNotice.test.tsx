@@ -1,5 +1,4 @@
 // @vitest-environment jsdom
-import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 
@@ -7,24 +6,10 @@ import i18n from "../i18n";
 import type { ProjectSummary } from "../ipc";
 import { useProjectStore } from "../state/projectStore";
 import { summaryFixture } from "../testing/summaryFixture";
-import { PreviewSurface, type PreviewSurfaceHandle } from "./PreviewSurface";
+import { PreviewSurface } from "./PreviewSurface";
+import { suspendExportPreview } from "../render/exportPreviewSuspension";
 
-/// The compositor's side of the surface: what it was told about suspension,
-/// and the order its decoders were yielded and taken back.
-const pixi = vi.hoisted(() => ({ suspended: false, log: [] as string[] }));
-
-vi.mock("../render/PixiPreview", async () => {
-  const React = await import("react");
-  return {
-    PixiPreview: React.forwardRef(function FakePixiPreview(props: { exportSuspended?: boolean }, ref) {
-      pixi.suspended = props.exportSuspended ?? false;
-      React.useImperativeHandle(ref, () => ({
-        suspendForExport: () => { pixi.log.push("yield"); return () => { pixi.log.push("restore"); }; },
-      }), []);
-      return React.createElement("canvas");
-    }),
-  };
-});
+vi.mock("../render/PixiPreview", () => ({ PixiPreview: () => null }));
 // The surface's other overlays follow the selection and the tools, not suspension.
 vi.mock("./TextToolOverlay", () => ({ TextToolOverlayHost: () => null }));
 vi.mock("./SafeAreaGuides", () => ({ SafeAreaGuidesHost: () => null }));
@@ -47,17 +32,13 @@ function fixture(): ProjectSummary {
   }) as unknown as ProjectSummary;
 }
 
-function mount() {
-  const ref = createRef<PreviewSurfaceHandle>();
-  render(<PreviewSurface ref={ref} hasContent />);
-  return ref.current!;
+function mount(backgroundExportActive = false) {
+  return render(<PreviewSurface hasContent backgroundExportActive={backgroundExportActive} />);
 }
 
 beforeEach(async () => {
   await i18n.changeLanguage("en-US");
   useProjectStore.getState().apply(fixture());
-  pixi.suspended = false;
-  pixi.log.length = 0;
 });
 afterEach(cleanup);
 
@@ -66,24 +47,34 @@ describe("a suspended preview says who is using it", () => {
     ["agent", "An agent is viewing"],
     ["export", "Exporting"],
   ] as const)("names the %s for as long as it holds the decoders, and nothing after", (by, text) => {
-    const surface = mount();
+    mount();
     expect(screen.queryByRole("status")).toBeNull();
 
     let restore!: () => void;
-    act(() => { restore = surface.suspendForExport(by); });
+    act(() => { restore = suspendExportPreview(by); });
     expect(screen.getByRole("status").textContent).toBe(text);
-    expect(pixi.suspended).toBe(true);
 
     act(() => restore());
     expect(screen.queryByRole("status")).toBeNull();
-    expect(pixi.suspended).toBe(false);
-    expect(pixi.log).toEqual(["yield", "restore"]);
   });
 
   it("reads in the interface language", async () => {
-    const surface = mount();
+    mount();
     await act(async () => { await i18n.changeLanguage("zh-CN"); });
-    act(() => { surface.suspendForExport("agent"); });
+    let restore!: () => void;
+    act(() => { restore = suspendExportPreview("agent"); });
     expect(screen.getByRole("status").textContent).toBe("Agent 正在查看");
+    act(() => restore());
   });
+});
+
+it("a remounted beta preview observes the same preparation hold", () => {
+  const first = mount(true);
+  let restore!: () => void;
+  act(() => { restore = suspendExportPreview("export"); });
+  first.unmount();
+  mount(true);
+  expect(screen.getByRole("status").textContent).toBe("Preparing export");
+  act(() => restore());
+  expect(screen.queryByRole("status")).toBeNull();
 });

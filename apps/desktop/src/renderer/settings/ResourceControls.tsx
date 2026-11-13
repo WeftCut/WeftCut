@@ -44,6 +44,12 @@ export function ResourceControls({ settings, disabled, save }: {
       <input type="checkbox" checked={policy.background_playback} disabled={disabled}
         onChange={e => void commit({ background_playback: e.target.checked })} />
     </label>
+    <label className="settings-control-row"><div className="settings-performance-copy">
+      <span className="settings-toggle-label">{t('resources.preview_during_export')}</span>
+      <p className="settings-toggle-hint">{t('resources.preview_during_export_hint')}</p></div>
+      <input type="checkbox" checked={policy.preview_during_export} disabled={disabled}
+        onChange={e => void commit({ preview_during_export: e.target.checked })} />
+    </label>
     {failed && <div className="settings-performance-actions"><span role="alert">{t('performance.save_failed')}</span>
       <Button variant="secondary" onClick={() => void commit(failed)}>{t('performance.retry_save')}</Button></div>}
     {status && <p className="settings-toggle-hint" role="status">{t(status.pressure === 'constrained' ? 'resources.constrained' : 'resources.normal')}

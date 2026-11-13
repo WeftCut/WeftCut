@@ -31,6 +31,7 @@ import {
   ChevronUpIcon,
   GripHorizontalIcon,
   GripVerticalIcon,
+  LockIcon,
   TextAlignStartIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -126,6 +127,8 @@ export interface DockPanelContracts {
   previewRef: RefObject<PreviewSurfaceHandle | null>;
   onSeek: (timeUs: number) => void;
   onTogglePlay: () => void;
+  editingLocked?: boolean;
+  backgroundExportActive?: boolean;
   previewDecodableOf: (mediaId: string) => boolean;
   revealedTrackId: string | null;
   keybindings: KeybindingsMap;
@@ -251,6 +254,8 @@ function PreviewDockPanel() {
       previewRef={contracts.previewRef}
       summary={contracts.summary}
       onTogglePlay={contracts.onTogglePlay}
+      editingLocked={contracts.editingLocked ?? false}
+      backgroundExportActive={contracts.backgroundExportActive ?? false}
       previewDecodableOf={contracts.previewDecodableOf}
       visible={runtime.isVisible}
     />
@@ -286,7 +291,8 @@ function TimelineDockPanel() {
         keybindings={contracts.keybindings}
         fpsNum={comp?.fps_num ?? 30}
         fpsDen={comp?.fps_den ?? 1}
-        bladeMode={bladeMode}
+        bladeMode={bladeMode && !contracts.editingLocked}
+        editingLocked={contracts.editingLocked ?? false}
         media={summary?.media ?? []}
         readinessOf={contracts.readinessOf}
         visible={runtime.isVisible}
@@ -539,6 +545,8 @@ export function WeftCutPanelRenderer({
 }: IDockviewPanelProps<DockPanelParams>) {
   if (!isPanelKind(params.kind)) return null;
   const Component = PANEL_COMPONENTS[params.kind];
+  const { editingLocked } = useContracts();
+  const locked = editingLocked === true && PANEL_REGISTRY[params.kind].duringExport === "locked";
   const chrome = useWorkspaceChrome();
   const isVisible = useDockviewPanelVisibility(api);
   const instance = params.instance;
@@ -555,28 +563,32 @@ export function WeftCutPanelRenderer({
   );
   return (
     <DockPanelRuntimeContext.Provider value={runtime}>
-      <div
-        className="weft-dock-panel"
-        data-panel-kind={params.kind}
-        // The Panel IS the focus region (ADR 0041). `tabIndex={-1}` makes it a
-        // programmatic focus target and never a Tab stop: `useFocusRegions`
-        // focuses it when a press lands on non-focusable panel content, which
-        // both releases whatever field was parked and gives bare-key shortcuts
-        // a region to be scoped against. A separate attribute from
-        // `data-panel-kind` on purpose — that one is also on the tab
-        // renderers, which are chrome, not regions.
-        tabIndex={-1}
-        data-focus-region={params.kind}
-        // A SECOND attribute, never a richer value in the first one:
-        // `data-focus-region` is a `PanelKind` and `ActionDef.scope` is a list
-        // of them, so widening it would put an instance where the shortcut
-        // catalogue reads a kind. `useFocusRegions` is what pairs the two.
-        {...(instance === null ? {} : { [FOCUS_REGION_INSTANCE_ATTR]: instance })}
-        data-panel-visible={isVisible ? "true" : "false"}
-        onPointerEnter={() => chrome.setHoveredPanel(runtime.id)}
-        onPointerLeave={() => chrome.setHoveredPanel(null)}
-      >
-        <Component />
+      <div className="weft-dock-panel-frame">
+        <div
+          className="weft-dock-panel"
+          inert={locked}
+          data-panel-kind={params.kind}
+          // The Panel IS the focus region (ADR 0041). `tabIndex={-1}` makes it a
+          // programmatic focus target and never a Tab stop: `useFocusRegions`
+          // focuses it when a press lands on non-focusable panel content, which
+          // both releases whatever field was parked and gives bare-key shortcuts
+          // a region to be scoped against. A separate attribute from
+          // `data-panel-kind` on purpose — that one is also on the tab
+          // renderers, which are chrome, not regions.
+          tabIndex={-1}
+          data-focus-region={params.kind}
+          // A SECOND attribute, never a richer value in the first one:
+          // `data-focus-region` is a `PanelKind` and `ActionDef.scope` is a list
+          // of them, so widening it would put an instance where the shortcut
+          // catalogue reads a kind. `useFocusRegions` is what pairs the two.
+          {...(instance === null ? {} : { [FOCUS_REGION_INSTANCE_ATTR]: instance })}
+          data-panel-visible={isVisible ? "true" : "false"}
+          onPointerEnter={() => chrome.setHoveredPanel(runtime.id)}
+          onPointerLeave={() => chrome.setHoveredPanel(null)}
+        >
+          <Component />
+        </div>
+        {locked && <div className="weft-dock-panel-lock" aria-hidden="true"><AppIcon icon={LockIcon} size="display" /></div>}
       </div>
     </DockPanelRuntimeContext.Provider>
   );

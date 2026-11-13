@@ -3,7 +3,7 @@ import { MotifPrewarmer } from './MotifPrewarmer';
 import { planLookaheadTargets, type LookaheadContent } from './motifDemand';
 import { motifTuning } from './tuning';
 import {
-  acquireMotifFrame, motifFrameCoverage, resetMotifFrameRequests,
+  acquireMotifFrame, motifFrameCoverage, bindMotifFrameWorkspace,
   sharedBakedKeyIndex, sharedMotifFrameCache, setMotifPreparationCoverage,
 } from './motifFrameSource';
 import { captureMotif, MotifTransportError, type MotifCaptureReply, type MotifCaptureRequest } from './frameTransport';
@@ -40,6 +40,7 @@ let captures: {
 let read: MockInstance<MotifFrameCache['readBitmap']>;
 
 beforeEach(() => {
+  bindMotifFrameWorkspace(1);
   cleanup = [];
   captures = [];
   vi.stubGlobal('createImageBitmap', vi.fn(async () => bitmap()));
@@ -55,7 +56,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   cleanup.forEach(fn => fn());
-  resetMotifFrameRequests();
+  bindMotifFrameWorkspace(null);
   await settle();
   sharedBakedKeyIndex.clear();
   sharedMotifFrameCache.clearAll();

@@ -10,12 +10,13 @@ import {
  * scroll or editing surface. Updating only this transform avoids rendering
  * the track tree on scroll. Each row clips its own decorations and hit area. */
 export function TimelineFixedRow({
-  compositionId, widthPx, header, children,
+  compositionId, widthPx, header, children, inert = false,
 }: {
   compositionId: string | null;
   widthPx: number;
   header: ReactNode;
   children: ReactNode;
+  inert?: boolean;
 }) {
   useUiScale(); // header column width
   const contentRef = useRef<HTMLDivElement>(null);
@@ -29,7 +30,7 @@ export function TimelineFixedRow({
     return useTimelineScrollStore.subscribe(sync);
   }, [compositionId]);
   return (
-    <div className="relative isolate grid min-w-0 overflow-hidden" style={{ gridTemplateColumns: `${headerColumnPx()}px minmax(0, 1fr)` }}>
+    <div inert={inert} className="relative isolate grid min-w-0 overflow-hidden" style={{ gridTemplateColumns: `${headerColumnPx()}px minmax(0, 1fr)` }}>
       <div className="border-r border-border bg-card">{header}</div>
       <div className="min-w-0 overflow-hidden">
         <div ref={contentRef} className="relative" style={{ width: widthPx }}>{children}</div>

@@ -16,6 +16,7 @@ vi.mock("@/platform", async (importActual) => {
 });
 
 import i18n from "../i18n";
+import { BackgroundExportProgress } from "./BackgroundExportProgress";
 import { ExportPanel, type ExportState } from "./ExportPanel";
 import { DEFAULT_EXPORT_SETTINGS } from "../../shared/exportSettings";
 
@@ -192,4 +193,25 @@ describe("ExportPanel stalled encoder", () => {
     expect(screen.queryByText(/encoder stopped responding/)).toBeNull();
     expect(screen.getByText(/Check the technical details/)).toBeTruthy();
   });
+});
+
+it("shows encoding progress and cancel without trapping the editor controls", async () => {
+  const onPlay = vi.fn();
+  const onCancel = vi.fn();
+  render(
+    <>
+      <button onClick={onPlay}>Play timeline</button>
+      <BackgroundExportProgress
+        state={{ kind: "progress", background: true, progress: { progress: 0.5, currentTimeUs: 0, frame: 90, fps: 30, speed: 1 }, onCancel }}
+      />
+    </>,
+  );
+
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByText("Timeline read-only")).toBeTruthy();
+  expect(screen.getByRole("progressbar").getAttribute("value")).toBe("50");
+  await userEvent.click(screen.getByRole("button", { name: "Play timeline" }));
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(onPlay).toHaveBeenCalledOnce();
+  expect(onCancel).toHaveBeenCalledOnce();
 });

@@ -64,6 +64,24 @@ async function settle() { for (let i = 0; i < 30; i++) await Promise.resolve(); 
 afterEach(() => { reads.gate = null; reads.opens = []; reads.windows = []; reads.failOpen = false; reads.failRead = false; vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe("session-owned preview audio transport", () => {
+  it("allows seeking while export preparation holds playback and resumes at the new position", async () => {
+    const { engine } = setup();
+    try {
+      engine.play();
+      await settle();
+      expect(engine.snapshot().phase).toBe("playing");
+      const resume = engine.suspendPlayback();
+      engine.seek(1_000_000);
+      engine.play();
+      expect(engine.snapshot().phase).toBe("paused");
+      expect(engine.positionUs()).toBe(1_000_000);
+      resume();
+      await settle();
+      expect(engine.snapshot().phase).toBe("playing");
+      expect(engine.positionUs()).toBe(1_000_000);
+    } finally { engine.dispose(); }
+  });
+
   it("keeps retimed preparation and playback through marker and visual-only edits", async () => {
     const { engine: unused, graph, summary, layer } = setup();
     unused.dispose();

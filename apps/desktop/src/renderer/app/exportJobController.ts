@@ -1,6 +1,7 @@
 import { invoke } from '@/bridge/ipc';
 import { listen } from '@/bridge/events';
 import { projectSummary } from '../ipc';
+import { useAppSettingsStore } from '../settings/appSettingsStore';
 import { exportTerminal, type ExportJob, type ExportRun } from '../../shared/exportJob';
 import { createExportRunner } from './exportRunner';
 import { RendererCannotDrawError, type OmittableFeature } from '../render/rendererCapability';
@@ -16,6 +17,7 @@ import type { ExportState } from '../panels/ExportPanel';
 export function createExportJobController(deps: Omit<Parameters<typeof createExportRunner>[0], 'publish' | 'cancel'> & { onBegin: (request: ExportRun) => void }) {
   const token = crypto.randomUUID();
   let active: ExportRun | undefined;
+  let background = false;
   let abort = new AbortController();
   let running = Promise.resolve();
   let disposed = false;
@@ -31,7 +33,7 @@ export function createExportJobController(deps: Omit<Parameters<typeof createExp
   const display = () => {
     if (disposed) return;
     deps.onState(state && active ? {
-      ...state, job: active,
+      ...state, job: active, background,
       ...(!['complete', 'error'].includes(state.kind) ? { onCancel: cancel } : {}),
       ...(state.kind === 'error' && state.onRetry ? {
         onRetry: async (filename?: string) => { await invoke('export_job_retry', { job_id: active!.job_id, ...(filename ? { filename } : {}) }); },
@@ -104,8 +106,10 @@ export function createExportJobController(deps: Omit<Parameters<typeof createExp
         listen<ExportRun>('export:run', ({ payload: request }) => {
           if (disposed || request.renderer_token !== token || active && !exportTerminal(active.state)) return;
           const jobAbort = abort = new AbortController();
-          active = request; deps.onBegin(request);
-          void enqueue(request, async () => { await runner.run(request, jobAbort); if (jobAbort.signal.aborted) await runner.discard(); await settle(request, jobAbort.signal); });
+          active = request;
+          const review = background = useAppSettingsStore.getState().settings.resource_policy?.preview_during_export === true;
+          deps.onBegin(request);
+          void enqueue(request, async () => { await runner.run(request, jobAbort, review); if (jobAbort.signal.aborted) await runner.discard(); await settle(request, jobAbort.signal); });
         }),
         // `render_frames`: export-path stills for an agent, queued behind any
         // export so the two never share the pipeline.
@@ -153,7 +157,7 @@ export function createExportJobController(deps: Omit<Parameters<typeof createExp
           else if (!active || exportTerminal(active.state)) {
             if (payload.state === 'failed') deps.onState({ kind: 'error', job: payload, detail: payload.error?.message ?? 'Export failed' });
             else if (payload.state === 'cancelled') deps.onState(null);
-            else if (!exportTerminal(payload.state)) deps.onState({ kind: 'starting', job: payload, onCancel: () => { void invoke('export_job_cancel', { job_id: payload.job_id }).catch(reportError); } });
+            else if (!exportTerminal(payload.state)) deps.onState({ kind: 'starting', job: payload, background: useAppSettingsStore.getState().settings.resource_policy?.preview_during_export === true, onCancel: () => { void invoke('export_job_cancel', { job_id: payload.job_id }).catch(reportError); } });
           }
         }),
       ]);
