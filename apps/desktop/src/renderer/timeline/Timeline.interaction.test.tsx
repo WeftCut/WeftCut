@@ -667,6 +667,45 @@ describe("Timeline seek/selection coupling", () => {
     expect(ipcMocks.trimLayer).not.toHaveBeenCalled();
   });
 
+  // Clip A ends where Clip B starts, so the dragged edge starts on a target.
+  // A small wiggle crosses the starting frame both ways; the guide must stay
+  // on that target throughout rather than vanish whenever the pointer is back
+  // over the starting frame, and only leave once the edge is pulled out of range.
+  it.each([
+    { name: "move", label: "Clip B", left: 160, right: 320, downX: 240 },
+    { name: "trim-end", label: "Clip A", left: 0, right: 160, downX: 160 },
+  ])("keeps the guide on the target an edge started on while the pointer crosses its starting frame ($name)", ({
+    label, left, right, downX,
+  }) => {
+    vi.useFakeTimers();
+    setPlayheadTimeUs(4_800_000);
+    const dragged = label === "Clip A" ? layer : linkedLayer;
+    const { getByText, queryByTestId } = renderTimeline({
+      tracks: [linkedTrack],
+      selectedLayerId: dragged.id,
+    });
+    const block = getByText(label).closest(".timeline-layer") as HTMLElement;
+    vi.spyOn(block, "getBoundingClientRect").mockReturnValue({
+      left, right, top: 0, bottom: 48, width: right - left, height: 48,
+      x: left, y: 0, toJSON: () => ({}),
+    });
+    const guideAt = (dx: number) => {
+      fireEvent.pointerMove(window, { clientX: downX + dx, clientY: 30 });
+      return queryByTestId("timeline-snap-guide")?.getAttribute("data-snap-boundary-us") ?? null;
+    };
+
+    fireEvent.pointerDown(block, { button: 0, clientX: downX, clientY: 30 });
+    // +4 px names the next frame and snaps back; +1 px is still the starting frame.
+    expect([4, 1, 4, 1, 0].map(guideAt)).toEqual(Array(5).fill("2000000"));
+    expect(guideAt(40)).toBeNull();
+    guideAt(1);
+    fireEvent.pointerUp(window, { clientX: downX + 1, clientY: 30 });
+
+    expect(queryByTestId("timeline-snap-guide")).toBeNull();
+    expect(ipcMocks.moveLayer).not.toHaveBeenCalled();
+    expect(ipcMocks.trimLayer).not.toHaveBeenCalled();
+  });
+
   it("keeps a short drag on an unselected clip as selection only", () => {
     vi.useFakeTimers();
     useAppSettingsStore.setState((s) => ({

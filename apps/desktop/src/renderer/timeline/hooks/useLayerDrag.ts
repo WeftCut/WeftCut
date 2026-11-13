@@ -610,12 +610,16 @@ export function useLayerDrag(opts: {
         // Panel picks the delta up again — the whole gesture is recomputed from
         // the pointer each event.
         frameDeltaUs: timeChanged && foreignCompositionId === null ? frameDeltaUs : 0,
-        // A purely vertical move preserves time: its zero horizontal delta must
-        // not be attracted to the playhead or an edge; it only reports a target
-        // its unchanged edges already sit on. The drop strip is NOT one of these
-        // cases: it takes a landing like any other destination, so the clip
-        // stays under the hand that carried it there.
-        preserveTime: trackChanged && !timeChanged,
+        // A pointer that names no new frame preserves time, whether the move
+        // is purely vertical or back over the frame the gesture started on: a
+        // zero delta must not be attracted to the playhead or an edge, so it
+        // only reports a target its unchanged edges already sit on. That keeps
+        // the guide on an edge that started on a target while the pointer
+        // wanders across its starting frame, instead of blinking off there.
+        // The drop strip is NOT one of these cases: it takes a landing like any
+        // other destination, so the clip stays under the hand that carried it
+        // there.
+        preserveTime: !timeChanged,
         projectMove: state.kind === "move"
           ? (deltaUs) => buildMoveProjection(state, deltaUs, overTrackId)
           : undefined,
@@ -629,7 +633,10 @@ export function useLayerDrag(opts: {
         fpsNum,
         fpsDen,
         pxPerSec,
-        enabled: tailSnapEnabled && !snapSuspended && hasEditIntent && foreignCompositionId === null,
+        // Not gated on edit intent: `preserveTime` already pins a no-intent
+        // pointer's delta to zero, and release commits only with intent
+        // (`handlePointerUp`).
+        enabled: tailSnapEnabled && !snapSuspended && foreignCompositionId === null,
         strengthPx: tailSnapStrengthPx,
       });
       const nextState: DragState = {

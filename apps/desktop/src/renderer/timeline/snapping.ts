@@ -130,8 +130,9 @@ export function resolveTimelineDragSnap<Placement extends MoveSnapPlacement>(
   const ignored = ignoredLayerIds(state.layerId, state.escapeLink, opts.links, opts.linkByLayerId);
   for (const subject of state.subjects ?? []) ignored.add(subject.layerId);
 
-  // A track-only move has one possible placement. Test that landing's edges
-  // on the composition grid before ranking targets by distance.
+  // A time-preserving move (track-only, or no new frame at all) has one
+  // possible placement. Test that landing's edges on the composition grid
+  // before ranking targets by distance.
   const fixed = preserveTime ? fallback() : null;
   const edges: ("tStartUs" | "tEndUs")[] =
     state.kind === "move" ? ["tStartUs", "tEndUs"] :
