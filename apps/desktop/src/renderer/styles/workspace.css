@@ -139,8 +139,19 @@
   inset: 0;
   display: grid;
   place-items: center;
-  background: color-mix(in srgb, var(--card) 72%, transparent);
+  background: color-mix(in srgb, var(--card) 75%, transparent);
   color: var(--muted-foreground);
+}
+
+/* Several panels lock at once during an export; the dimming says so, and the
+   lock appears only on the panel the pointer is over. */
+.weft-dock-panel-lock > .app-icon {
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.weft-dock-panel-lock:hover > .app-icon {
+  opacity: 1;
 }
 
 .weft-dock-panel {
