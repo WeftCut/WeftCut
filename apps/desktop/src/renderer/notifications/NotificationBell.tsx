@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { BellIcon } from "lucide-react";
 import { AppIcon } from "@/components/AppIcon";
-import { Button } from "@/components/ui/button";
 import { useStatusPopover } from "@/components/useStatusPopover";
 import { useAgentActivity } from "../agent/activityStore";
 import { useUnreviewedCount } from "../agent/reviewStore";
@@ -30,7 +29,7 @@ interface Props {
 /// item not dismissed, and it counts nothing. Its popover is the notification
 /// center. Dismissing a row only takes it out of here: each state keeps its own
 /// home (the settings page "Open settings" leads to, Help · Check for Updates),
-/// and the dismiss button's tooltip names it. Layout and behaviour:
+/// and the dismiss link's tooltip names it. Layout and behaviour:
 /// `docs/status-log.md` § Notification center.
 export function NotificationBell({ notices, onOpenSettings, placement = "up" }: Props) {
   const { t } = useTranslation();
@@ -106,8 +105,8 @@ export function NotificationBell({ notices, onOpenSettings, placement = "up" }: 
 }
 
 /// Severity dot · title · a description of at most two lines (the full text
-/// in its tooltip); the row's buttons stack at its end, the way to the fix
-/// above the dismissal, both small secondary buttons so each shows focus.
+/// in its tooltip); the row's actions stack at its end as links, the way to
+/// the fix above the dismissal.
 function AttentionRow({ item, onAct, onDismiss }: {
   item: AttentionItem;
   onAct: (item: AttentionItem) => void;
@@ -124,20 +123,20 @@ function AttentionRow({ item, onAct, onDismiss }: {
       </div>
       <div className="attention-actions">
         {text.action && (
-          <Button variant="secondary" size="xs" onClick={() => onAct(item)}>
+          <button type="button" className="attention-link" onClick={() => onAct(item)}>
             {text.action}
-          </Button>
+          </button>
         )}
         {text.dismiss && (
-          <Button
-            variant="secondary"
-            size="xs"
+          <button
+            type="button"
+            className="attention-link"
             onClick={() => onDismiss(item)}
             title={text.dismissHint}
             aria-description={text.dismissHint}
           >
             {text.dismiss}
-          </Button>
+          </button>
         )}
       </div>
     </li>

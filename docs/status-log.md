@@ -234,13 +234,13 @@ the window at each theme's minimum size.
 The bell's popover, titled "Needs attention" since the bell has no text. One
 flat list: rows separated by dividers, no cards. A row is severity dot, title
 and a description of at most two lines (full text in its tooltip); at its end
-a column of small secondary buttons, the way to the fix (Open settings, Open
-review, View) above the dismissal (Got it, Later).
+a column of links, the way to the fix (Open settings, Open review, View) above
+the dismissal (Got it, Later).
 Empty: "Nothing needs attention".
 
 Dismissing takes a row out of the center, nothing more: the center only
 points. Each state keeps a home where it always shows and can be acted on,
-and the dismiss button's tooltip names it — the native decode engine on
+and the dismiss link's tooltip names it — the native decode engine on
 Settings · General (its engine marked unavailable), the agent Skill on
 Settings · Agent (with Reinstall), unencrypted cloud keys on the model pages
 where keys are entered, an offered update under Help · Check for Updates.
