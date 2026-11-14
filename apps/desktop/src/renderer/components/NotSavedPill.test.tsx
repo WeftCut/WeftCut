@@ -108,4 +108,15 @@ describe("NotSavedPill", () => {
     expect(screen.getByRole("status").textContent).toBe("Could not open the folder: Error: no file manager");
     expect(details()).not.toBeNull();
   });
+
+  it("does not come back open when saving fails again after a recovery", () => {
+    render(<NotSavedPill actions={actions()} />);
+    fail("ENOSPC");
+    fireEvent.click(pill()!);
+    expect(details()).not.toBeNull();
+    recover();
+    fail("EACCES");
+    expect(pill()!.getAttribute("aria-expanded")).toBe("false");
+    expect(details()).toBeNull();
+  });
 });

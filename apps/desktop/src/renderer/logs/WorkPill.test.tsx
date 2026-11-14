@@ -103,7 +103,9 @@ describe("work pill", () => {
     expect(details.querySelector('[data-work="agent"] .work-row-name')!.textContent).toBe("Claude · split_layers");
     // Both proxy variants read as one kind.
     expect(details.querySelector('[data-work="derivatives"] .work-row-detail')!.textContent).toBe("Proxy · Waveform");
-    act(() => { fireEvent.keyDown(window, { key: "Escape" }); });
+    const cancel = details.querySelector<HTMLElement>(".compute-job-cancel")!;
+    cancel.focus();
+    act(() => { fireEvent.keyDown(cancel, { key: "Escape" }); });
     expect(container.querySelector(".work-pill-details")).toBeNull();
     expect(document.activeElement).toBe(trigger);
   });
