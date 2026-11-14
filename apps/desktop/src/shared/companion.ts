@@ -55,11 +55,16 @@ export interface CompanionState {
   editor: 'ready' | 'opening'
   /** The app's UI language setting (a locale code), null when unset. */
   language: string | null
+  /** The editor window. Minimized, it paints about once a second, and so does
+   *  the picture. */
+  window: CompanionWindow
 }
 
+export type CompanionWindow = 'normal' | 'minimized' | 'hidden'
+
 /** Events on `GET /companion/events`. `project` and `editor` say "read the
- *  state again"; the other three carry their new value. */
-export type CompanionEventName = 'project' | 'editor' | 'transport' | 'export' | 'activity'
+ *  state again"; the others carry their new value. */
+export type CompanionEventName = 'project' | 'editor' | 'transport' | 'export' | 'activity' | 'window'
 
 /** Main → renderer: a page asked the player to move. */
 export type CompanionControl =
@@ -72,9 +77,12 @@ export type CompanionControl =
 export type CompanionPageAction = CompanionControl | { action: 'focus' }
 
 /** What main needs from the attached editor. `watch`: some page is open, so
- *  the editor pushes its transport; with none open it pushes nothing. */
+ *  the editor pushes its transport; with none open it pushes nothing.
+ *  `picture`: some page shows the preview and no export runs, so the editor
+ *  captures and encodes its canvas; otherwise it touches neither. */
 export interface CompanionDemand {
   watch: boolean
+  picture: boolean
 }
 
 /** Renderer → main channels. Every one carries the bridge's token; main acts
@@ -82,6 +90,8 @@ export interface CompanionDemand {
 export const COMPANION_ATTACH = 'companion_attach'
 export const COMPANION_DETACH = 'companion_detach'
 export const COMPANION_TRANSPORT = 'companion_transport'
+export const COMPANION_MIRROR_CONFIG = 'companion_mirror_config'
+export const COMPANION_MIRROR_CHUNK = 'companion_mirror_chunk'
 
 /** Main → renderer events, each addressed to one bridge token. */
 export const COMPANION_DEMAND_EVENT = 'companion:demand'
@@ -90,3 +100,42 @@ export const COMPANION_CONTROL_EVENT = 'companion:control'
 export interface CompanionAttachReply { demand: CompanionDemand }
 export type CompanionDemandMessage = CompanionDemand & { token: string }
 export type CompanionControlMessage = CompanionControl & { token: string }
+
+// ── the picture ─────────────────────────────────────────────────────────────
+
+/** What a page's decoder is configured with before the first keyframe. No
+ *  `description`: H.264 comes as Annex B, which a decoder reads as is. */
+export interface CompanionMirrorConfig {
+  codec: string
+  coded_width: number
+  coded_height: number
+}
+
+/** One encoded frame. `data` is the bitstream. */
+export interface CompanionMirrorChunk {
+  key: boolean
+  timestamp_us: number
+  data: ArrayBuffer
+}
+
+export type CompanionMirrorConfigMessage = CompanionMirrorConfig & { token: string }
+export type CompanionMirrorChunkMessage = CompanionMirrorChunk & { token: string }
+
+/** `GET /companion/video` is a run of frames, each a header and its payload:
+ *  u8 kind, f64 timestamp in microseconds, u32 payload length, little-endian.
+ *  A config frame's payload is a `CompanionMirrorConfig` as JSON.
+ *  LANDMINE: the page reads the same layout in `cli/companion/ui/pictureChunks.js`;
+ *  change both (`pageUi.test.ts` holds them equal). */
+export const MIRROR_FRAME_CONFIG = 0
+export const MIRROR_FRAME_KEY = 1
+export const MIRROR_FRAME_DELTA = 2
+export const MIRROR_HEADER_BYTES = 1 + 8 + 4
+
+/** The most frames a second the picture carries. */
+export const PICTURE_FPS = 15
+/** The widest the picture is encoded: a side browser is narrower than this. */
+export const PICTURE_MAX_WIDTH = 960
+/** The most a viewer may have waiting to be sent. A viewer past it gets no
+ *  frame until it is under again, and then only from the next keyframe, so a
+ *  slow page never backs up main or the other pages. */
+export const VIEWER_BUFFER_BYTES = 2_000_000

@@ -9,7 +9,7 @@ import { PAGE_CSP, UI_FILES } from './pageFiles'
 import { createActor } from '../state/actor'
 import { blankProject } from '../state/model'
 import { uuidV7Gen } from '../state/ids'
-import { COMPANION_ATTACH } from '../../shared/companion'
+import { COMPANION_ATTACH, COMPANION_MIRROR_CONFIG, MIRROR_FRAME_CONFIG } from '../../shared/companion'
 
 const PAGE_KEY = 'a'.repeat(64)
 /** What an MCP client holds: a valid bearer for `/mcp`, and nothing here. */
@@ -23,6 +23,8 @@ const hub = new CompanionHub({
   sendToEditor: () => {},
   focusEditor: () => {},
   language: () => null,
+  windowState: () => 'normal',
+  pictureRunning: () => {},
 })
 const rejected: Array<Parameters<CompanionRouteDeps['rejected']>[0]> = []
 let server: http.Server
@@ -70,10 +72,23 @@ function openEvents(): Promise<{ status: number; text: () => string; close: () =
   })
 }
 
+/** Opens the picture and collects its bytes. */
+function openVideo(): Promise<{ status: number; type: string | undefined; bytes: () => Buffer; close: () => void }> {
+  return new Promise((resolve, reject) => {
+    const req = http.get({ host: '127.0.0.1', port, path: '/companion/video', headers: { Host: `127.0.0.1:${port}`, Authorization: `Bearer ${PAGE_KEY}` } }, (res) => {
+      const got: Buffer[] = []
+      res.on('data', (c: Buffer) => { got.push(c) })
+      resolve({ status: res.statusCode!, type: res.headers['content-type'], bytes: () => Buffer.concat(got), close: () => req.destroy() })
+    })
+    req.on('error', reject)
+  })
+}
+
 const bearer = (key: string) => ({ Authorization: `Bearer ${key}` })
 const DATA_ROUTES: Array<{ method: string; path: string; body?: unknown }> = [
   { method: 'GET', path: '/companion/state' },
   { method: 'GET', path: '/companion/events' },
+  { method: 'GET', path: '/companion/video' },
   { method: 'POST', path: '/companion/control', body: { action: 'play' } },
 ]
 
@@ -105,6 +120,21 @@ describe('the data routes', () => {
     hub.handleInvoke(COMPANION_ATTACH, { token: 'T' })
     expect((await request('/companion/control', { method: 'POST', headers: bearer(PAGE_KEY), body: { action: 'play' } })).status).toBe(204)
     expect((await request('/companion/control', { method: 'POST', headers: bearer(PAGE_KEY), body: { action: 'delete_layers' } })).status).toBe(400)
+    hub.detach('T')
+  })
+
+  it('ask the editor for the picture while a page has it open, and stream the frames to it', async () => {
+    hub.attach('T')
+    expect(hub.demand().picture).toBe(false)
+    const video = await openVideo()
+    expect(video.status).toBe(200)
+    expect(video.type).toBe('application/octet-stream')
+    await expect.poll(() => hub.demand().picture).toBe(true)
+    hub.handleInvoke(COMPANION_MIRROR_CONFIG, { token: 'T', codec: 'vp8', coded_width: 640, coded_height: 360 })
+    await expect.poll(() => video.bytes().length).toBeGreaterThan(0)
+    expect(video.bytes().readUInt8(0)).toBe(MIRROR_FRAME_CONFIG)
+    video.close()
+    await expect.poll(() => hub.demand().picture).toBe(false)
     hub.detach('T')
   })
 

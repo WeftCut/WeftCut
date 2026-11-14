@@ -1,8 +1,9 @@
 // The editor's half of the companion page (`main/companion/hub.ts`): it
 // attaches to main once its listeners are in place, follows the demand main
 // gives it, and runs the page's player controls. With no page open the demand
-// is empty and the bridge subscribes to nothing.
-import { invoke } from "../bridge/ipc";
+// is empty and the bridge subscribes to nothing; without a page showing the
+// picture it captures and encodes nothing (`mirrorEncoder.ts`).
+import { invoke, invokeRaw } from "../bridge/ipc";
 import { listen, type UnlistenFn } from "../bridge/events";
 import { playheadTimeUs, usePlayheadStore } from "../state/playheadStore";
 import { transportPause, transportPlay, usePlaybackStore } from "../state/playbackStore";
@@ -11,12 +12,17 @@ import {
   COMPANION_CONTROL_EVENT,
   COMPANION_DEMAND_EVENT,
   COMPANION_DETACH,
+  COMPANION_MIRROR_CHUNK,
+  COMPANION_MIRROR_CONFIG,
   COMPANION_TRANSPORT,
   type CompanionAttachReply,
   type CompanionControlMessage,
   type CompanionDemand,
   type CompanionDemandMessage,
+  type CompanionMirrorChunkMessage,
+  type CompanionMirrorConfigMessage,
 } from "../../shared/companion";
+import { startMirror, type Mirror, type MirrorSend } from "./mirrorEncoder";
 
 /** The most often the transport goes to main while playing: a page moves its
  *  own playhead between updates, so this sets how soon it corrects, not how
@@ -28,6 +34,16 @@ export function installCompanionBridge(seekTo: (rootUs: number) => void): () => 
   const token = crypto.randomUUID();
   let disposed = false;
   let unwatch: (() => void) | null = null;
+  let mirror: Mirror | null = null;
+  // Frames are no edit: they skip the publication barrier `invoke` waits on.
+  const send: MirrorSend = {
+    config: (config) => {
+      void invokeRaw(COMPANION_MIRROR_CONFIG, { token, ...config } satisfies CompanionMirrorConfigMessage).catch(() => {});
+    },
+    chunk: (chunk) => {
+      void invokeRaw(COMPANION_MIRROR_CHUNK, { token, ...chunk } satisfies CompanionMirrorChunkMessage).catch(() => {});
+    },
+  };
 
   const apply = (demand: CompanionDemand): void => {
     if (disposed) return;
@@ -35,6 +51,11 @@ export function installCompanionBridge(seekTo: (rootUs: number) => void): () => 
     else if (!demand.watch && unwatch !== null) {
       unwatch();
       unwatch = null;
+    }
+    if (demand.picture && mirror === null) mirror = startMirror(send);
+    else if (!demand.picture && mirror !== null) {
+      mirror.stop();
+      mirror = null;
     }
   };
 
@@ -61,6 +82,8 @@ export function installCompanionBridge(seekTo: (rootUs: number) => void): () => 
     disposed = true;
     unwatch?.();
     unwatch = null;
+    mirror?.stop();
+    mirror = null;
     for (const u of listening) void u.then((f) => f());
     void invoke(COMPANION_DETACH, { token }).catch(() => {});
   };

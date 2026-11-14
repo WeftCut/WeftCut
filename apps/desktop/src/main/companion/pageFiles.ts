@@ -10,6 +10,7 @@ import viewStateJs from '../../../cli/companion/ui/viewState.js?raw'
 import timelineJs from '../../../cli/companion/ui/timeline.js?raw'
 import stringsJs from '../../../cli/companion/ui/strings.js?raw'
 import transportLoopbackJs from '../../../cli/companion/ui/transportLoopback.js?raw'
+import pictureChunksJs from '../../../cli/companion/ui/pictureChunks.js?raw'
 import appCss from '../../../cli/companion/ui/app.css?raw'
 
 export interface PageFile { body: string; type: string }
@@ -26,6 +27,7 @@ export const UI_FILES: ReadonlyMap<string, PageFile> = new Map([
   ['timeline.js', { body: timelineJs, type: JS }],
   ['strings.js', { body: stringsJs, type: JS }],
   ['transportLoopback.js', { body: transportLoopbackJs, type: JS }],
+  ['pictureChunks.js', { body: pictureChunksJs, type: JS }],
   ['app.css', { body: appCss, type: 'text/css; charset=utf-8' }],
 ])
 

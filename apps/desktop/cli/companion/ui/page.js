@@ -9,6 +9,11 @@ const clock = { sleep: (ms) => new Promise((resolve) => { setTimeout(resolve, ms
 
 mountCompanion(
   document.getElementById('companion'),
-  loopbackTransport({ fetch: (...args) => fetch(...args), key, clock }),
+  loopbackTransport({
+    fetch: (...args) => fetch(...args),
+    key,
+    clock,
+    codecs: typeof VideoDecoder === 'undefined' ? null : { VideoDecoder, EncodedVideoChunk },
+  }),
   { locale: navigator.language },
 )

@@ -2562,7 +2562,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   //    (`mcp/companionTool.ts`), with or without a project open. No UI
   //    resource: calling it draws nothing in the chat. ──
   { name: 'open_companion', exec: 'dedicated', annotations: ANN_READ,
-    description: "A link to WeftCut's companion page: the timeline, play/pause/seek and export progress, for a desktop host's built-in browser beside the chat. Call it only when the user wants to watch the edit there; a terminal has nowhere to show it. Open the link in that browser or give it to the user. The page never edits the project. Returns `{ url }`.",
+    description: "A link to WeftCut's companion page: the timeline, play/pause/seek, export progress and, on request, a live picture of the preview, for a desktop host's built-in browser beside the chat. Call it only when the user wants to watch the edit there; a terminal has nowhere to show it. Open the link in that browser or give it to the user. The page never edits the project. Returns `{ url }`.",
     inputSchema: { type: 'object', properties: {} },
     parseDedicated: (a) => {
       const extra = Object.keys(a)[0]
