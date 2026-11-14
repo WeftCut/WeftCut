@@ -1,8 +1,9 @@
 // What the bell's notification center lists: the things that need the user and
 // have no entry of their own in the bar. A dismissed item leaves the list; the
-// state it points at stays where it lives (a settings page, the Help menu).
-// Pure, so ordering, dismissal and the bell's severity are tested without a
-// renderer. Layout and behaviour: `docs/status-log.md` § Notification center.
+// state it points at stays where it lives (a settings page, Help · Check for
+// Updates). Pure, so ordering, dismissal and the bell's severity are tested
+// without a renderer. Layout and behaviour: `docs/status-log.md` §
+// Notification center.
 //
 // Not saved is deliberately absent: it has its own entry in the bar, and a
 // second one here would be a duplicate way in.

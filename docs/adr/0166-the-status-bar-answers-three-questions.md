@@ -49,11 +49,12 @@ has one way in.
 Dismissal ("Got it", "Later") takes a row out of the center and clears its
 share of the dot; the center keeps no pile of dismissed rows. The center only
 points: every state it lists has a home where it always shows and can be acted
-on (the settings page its row leads to, the Help menu for an update), so
-dismissing never loses it. A dismissal lasts while its cause stands: a notice
-dismissed stays dismissed until main settles a notice set without it, and an
-update dismissed stays so for that version only. Dismissals are main-owned app settings, so they survive
-restarts; review items cannot be dismissed, they leave once reviewed.
+on (the settings page its row leads to, Help · Check for Updates for an
+update), so dismissing never loses it. A dismissal lasts while its cause
+stands: a notice dismissed stays dismissed until main settles a notice set
+without it, and an update dismissed stays so for that version only.
+Dismissals are main-owned app settings, so they survive restarts; review
+items cannot be dismissed, they leave once reviewed.
 
 In agent mode the titlebar carries the same Not saved pill and the same bell,
 their popovers dropping down in place.
@@ -61,8 +62,7 @@ their popovers dropping down in place.
 ## Consequences
 
 - The System status panel, the review badge, the System badge, the update
-  pill, the standalone export pill and the Logs toggle are gone. An update
-  offer also marks the Help menu.
+  pill, the standalone export pill and the Logs toggle are gone.
 - The bar's right side is at most three items, so it fits the minimum window
   at every layout theme; the log line truncates instead.
 - Recovering from a failed save no longer leaves agent mode.

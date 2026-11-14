@@ -383,8 +383,7 @@
   font-weight: 400;
 }
 
-.work-group-link,
-.attention-link {
+.work-group-link {
   padding: 0;
   border: none;
   background: none;
@@ -394,13 +393,11 @@
   cursor: pointer;
 }
 
-.work-group-link:hover,
-.attention-link:hover {
+.work-group-link:hover {
   text-decoration: underline;
 }
 
-.work-group-link:focus-visible,
-.attention-link:focus-visible {
+.work-group-link:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
   border-radius: var(--radius-control);
@@ -595,17 +592,11 @@
   line-height: var(--line-height-body);
 }
 
-.attention-row-more {
+/* The row's buttons at its end: the way to the fix above the dismissal, one
+   width so they read as a column. */
+.attention-actions {
   display: flex;
-  gap: calc(12 * var(--ui-px));
-  margin-top: calc(4 * var(--ui-px));
-}
-
-.attention-link.is-quiet {
-  color: var(--muted-foreground);
-}
-
-.attention-primary {
-  align-self: start;
-  padding-top: calc(1 * var(--ui-px));
+  flex-direction: column;
+  align-items: stretch;
+  gap: calc(4 * var(--ui-px));
 }

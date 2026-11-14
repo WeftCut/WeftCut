@@ -218,8 +218,6 @@ focus back. A popover whose trigger already says what it is has no title.
   no number — most items are states, not messages. No dot when nothing is
   listed or everything is dismissed. Its accessible name states the severity
   ("Needs attention: warning"). The same bell sits in agent mode's titlebar.
-- **Help menu**: an offered update marks the menu and its Check for Updates
-  row with a blue dot.
 - Modes are not badges: a switch the user is in shows on its own control (the
   link override on its Quick Actions toggle and the dimmed link accents).
 - A visually hidden `aria-live="polite"` region announces errors with the
@@ -235,17 +233,17 @@ the window at each theme's minimum size.
 
 The bell's popover, titled "Needs attention" since the bell has no text. One
 flat list: rows separated by dividers, no cards. A row is severity dot, title
-and a description of at most two lines (full text in its tooltip); its primary
-action is a link at the row's end, the dismissal sits under the description.
+and a description of at most two lines (full text in its tooltip); at its end
+a column of small secondary buttons, the way to the fix (Open settings, Open
+review, View) above the dismissal (Got it, Later).
 Empty: "Nothing needs attention".
 
 Dismissing takes a row out of the center, nothing more: the center only
 points. Each state keeps a home where it always shows and can be acted on,
-and the dismiss link's tooltip names it — the native decode engine on
+and the dismiss button's tooltip names it — the native decode engine on
 Settings · General (its engine marked unavailable), the agent Skill on
 Settings · Agent (with Reinstall), unencrypted cloud keys on the model pages
-where keys are entered, an offered update in the Help menu (its dot stays until
-the update is installed or skipped).
+where keys are entered, an offered update under Help · Check for Updates.
 
 | Item | Level | Dismiss | Shows again when |
 |---|---|---|---|

@@ -173,22 +173,3 @@
   font-size: var(--font-size-body);
   margin-left: auto;
 }
-
-/* A menu with something new in it (Help with an offered update): a dot after
-   the trigger's label, and after the row it points at. */
-.menu-trigger-label.is-marked,
-.app-menu-item-label.is-marked {
-  position: relative;
-}
-
-.menu-trigger-label.is-marked::after,
-.app-menu-item-label.is-marked::after {
-  content: "";
-  display: inline-block;
-  width: calc(6 * var(--ui-px));
-  height: calc(6 * var(--ui-px));
-  margin-left: calc(5 * var(--ui-px));
-  vertical-align: super;
-  border-radius: 50%;
-  background: var(--color-blue-300);
-}
