@@ -1288,6 +1288,20 @@ Changes tabs), Tacks and the Timeline diff with *Approve all* / *Revert all* are
 specified in [mcp.md § Review](mcp.md#review) and [§ Tacks](mcp.md#tacks).
 Revert all is a recorded, lock-gated revert path ([Undo-stack scope](#undo-stack-scope)).
 
+## Companion page
+
+A page beside an agent's chat, in a desktop host's built-in browser, opened
+from the link `open_companion` gives the agent: the project's name and the
+latest agent call, play / pause, the time, a small timeline to seek on, and
+export progress. It never edits. The preview's picture is off until the user
+presses *Show picture* (turning it on costs the editor some processing; a
+reload of the page turns it off again) and stops while an export runs. The
+page names its state instead of showing a frozen frame: link no longer valid,
+WeftCut not running (it reconnects by itself), opening, no project, exporting,
+minimized (*Show WeftCut* brings the editor forward). It speaks the app's
+language. Routes, key and wire: [mcp.md § Companion page](mcp.md#companion-page);
+why a page: [ADR 0168](adr/0168-the-preview-beside-an-agents-chat-is-a-page-or-a-panel-view.md).
+
 ## Strip overflow
 
 The dock tab strip and the Quick Actions strip never wrap. When they overflow,

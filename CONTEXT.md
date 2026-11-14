@@ -787,6 +787,19 @@ served skill. No server and no executable; the app registers the server.
 See ADR 0167.
 _Avoid_: launcher, extension
 
+**Companion page**:
+The page `open_companion` links to, for a desktop host's side browser: the
+timeline, play / pause / seek, export progress and, once the user turns it on,
+the picture (the preview, encoded by the editor). Reads, never edits. See
+ADR 0168, [mcp.md](docs/mcp.md#companion-page).
+_Avoid_: widget, card, dashboard
+
+**Page key**:
+The secret in a companion link's fragment that opens the companion page's
+data routes and nothing else. Not the MCP bearer; kept in the profile, never
+rotated by itself.
+_Avoid_: token, bearer (both the MCP one)
+
 **Agent activity**:
 A structured record of an MCP call or checkpoint action in this opening: who,
 work session, operation, state, duration, error, history IDs. Not persisted.
