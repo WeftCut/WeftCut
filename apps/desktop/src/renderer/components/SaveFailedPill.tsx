@@ -105,15 +105,16 @@ function SaveFailedDetails({ failure, reason, actions, onLeave }: {
               : t("save_status.open_folder_failed", { detail: result.detail })}
         </p>
       )}
+      {/* At the bottom right, the primary last, as the app's dialogs end. */}
       <div className="save-failed-actions">
-        <Button variant="default" size="xs" onClick={() => void retry()} disabled={result?.kind === "retrying"}>
-          {t("save_status.retry")}
+        <Button variant="secondary" size="xs" onClick={() => void openFolder()}>
+          {t("save_status.open_folder")}
         </Button>
         <Button variant="secondary" size="xs" onClick={() => { onLeave(); actions.saveAs(); }}>
           {t("save_status.save_as")}
         </Button>
-        <Button variant="secondary" size="xs" onClick={() => void openFolder()}>
-          {t("save_status.open_folder")}
+        <Button variant="default" size="xs" onClick={() => void retry()} disabled={result?.kind === "retrying"}>
+          {t("save_status.retry")}
         </Button>
       </div>
     </>

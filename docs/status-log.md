@@ -217,8 +217,9 @@ already says what it is has no title.
   project failing to save (`shared/save-status.ts`, [data-model.md §
   Saving](data-model.md#saving)). Its tooltip gives the reason and the last
   successful save. Its popover is the recovery in place: the
-  reason, the last successful save and the project folder, then Retry
-  (primary), Save As… and Open folder. A retry that succeeds takes the pill
+  reason, the last successful save and the project folder, then, at the
+  bottom right as the app's dialogs end, Open folder, Save As… and Retry
+  (primary, last). A retry that succeeds takes the pill
   and popover away; one that fails says so in place. In agent mode, which has
   no status bar, the same pill sits in the titlebar and its popover drops
   down there.

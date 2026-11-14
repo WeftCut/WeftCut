@@ -558,6 +558,7 @@
 .save-failed-actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   gap: calc(8 * var(--ui-px));
   margin-top: calc(6 * var(--ui-px));
 }

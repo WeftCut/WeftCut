@@ -52,6 +52,10 @@ describe("SaveFailedPill", () => {
       "Not saved since the project was opened",
       "Project folder: /home/u/Projects/Demo",
     ]);
+    // The ways out end the popover as the app's dialogs do: the primary last.
+    const buttons = [...details()!.querySelectorAll("button")];
+    expect(buttons.map((b) => b.textContent)).toEqual(["Open folder", "Save As…", "Retry now"]);
+    expect(buttons.map((b) => b.classList.contains("bg-primary"))).toEqual([false, false, true]);
   });
 
   it("opens below its trigger in the agent titlebar", () => {
