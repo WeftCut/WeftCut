@@ -223,7 +223,9 @@ function WorkDetails({ view, titled, onLeave }: { view: WorkView; titled: boolea
 /// Rows carry no icon of their own (the one icon in a row is a clip job's
 /// state), so with several groups the title tells them apart; a lone group is
 /// untitled, its rows and the trigger naming the work. The name stays for
-/// assistive technology either way, and a group's action keeps its place.
+/// assistive technology either way. The title line holds the title alone; a
+/// group's action (the agent link) closes the group at the bottom right, where
+/// a row's Cancel ends its row, titled or not.
 function WorkGroup({ title, titled, action, children }: {
   title: string;
   titled: boolean;
@@ -232,10 +234,9 @@ function WorkGroup({ title, titled, action, children }: {
 }) {
   return (
     <div className="work-group" role="group" aria-label={title}>
-      {titled
-        ? <h3 className="work-group-header"><span>{title}</span>{action}</h3>
-        : action && <div className="work-group-header is-untitled">{action}</div>}
+      {titled && <h3 className="work-group-header">{title}</h3>}
       <ul className="work-rows">{children}</ul>
+      {action && <div className="work-group-footer">{action}</div>}
     </div>
   );
 }

@@ -97,7 +97,7 @@ describe("work pill", () => {
     act(() => trigger.click());
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
     const details = container.querySelector<HTMLElement>(".work-pill-details")!;
-    expect([...details.querySelectorAll(".work-group-header > span:first-child")].map((h) => h.textContent))
+    expect([...details.querySelectorAll(".work-group-header")].map((h) => h.textContent))
       .toEqual(["Clip jobs", "Agent", "Derivatives"]);
     expect(details.querySelector('[data-work="compute"] .compute-job-cancel')).not.toBeNull();
     expect(details.querySelector('[data-work="agent"] .work-row-name')!.textContent).toBe("Claude · split_layers");
@@ -121,13 +121,20 @@ describe("work pill", () => {
     expect(screen.getByRole("group").getAttribute("aria-label")).toBe("Clip jobs");
   });
 
-  it("keeps a lone group's action without its title", async () => {
+  it("closes a group with its action, titled or not, so a lone group starts with its rows", async () => {
     const { container } = render(<WorkPill />);
     await act(async () => {});
     await setCalls([agentCall("call-1")]);
     act(() => pill(container)!.click());
-    const header = container.querySelector<HTMLElement>(".work-group-header")!;
-    expect(header.textContent).toBe("Open in Agent panel");
+    const group = screen.getByRole("group", { name: "Agent" });
+    expect(group.querySelector(".work-group-header")).toBeNull();
+    expect(group.firstElementChild!.classList).toContain("work-rows");
+    expect(group.lastElementChild!.textContent).toBe("Open in Agent panel");
+
+    // Beside another group it gains its title; the action still closes it.
+    await publish([jobFixture("a", { kind: "inferring", done: 1, total: 2 })]);
+    expect(group.querySelector(".work-group-header")!.textContent).toBe("Agent");
+    expect(group.lastElementChild!.textContent).toBe("Open in Agent panel");
   });
 
   it("opens the agent panel's Activity tab from the agent group, closing the details", async () => {
@@ -216,7 +223,7 @@ describe("background export in the work pill", () => {
     expect(details.textContent).toContain("final.mp4");
     // Beside another group it is titled, as every group is; the percent stays
     // the trigger's alone.
-    expect([...document.querySelectorAll(".work-group-header > span:first-child")].map((h) => h.textContent))
+    expect([...document.querySelectorAll(".work-group-header")].map((h) => h.textContent))
       .toEqual(["Export", "Clip jobs"]);
     expect(details.textContent).not.toContain("50%");
     expect(details.textContent).toContain("30 fps · 1.0×");

@@ -374,17 +374,16 @@
 }
 
 .work-group-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   margin: 0;
   color: var(--muted-foreground);
   font-size: var(--font-size-caption);
   font-weight: 400;
 }
 
-/* A lone group has no title; its action keeps the header's right edge. */
-.work-group-header.is-untitled {
+/* A group's action (the agent link) closes the group at the bottom right,
+   titled or not. */
+.work-group-footer {
+  display: flex;
   justify-content: flex-end;
 }
 
@@ -493,6 +492,22 @@
   color: var(--foreground);
   font-size: var(--font-size-caption);
   cursor: pointer;
+}
+
+/* A row's actions end its last line, as the export's Cancel does: a waiting
+   job's reason can wrap over several lines, and its wait time and Cancel then
+   sit at the bottom right, on the last line's baseline, while the hourglass
+   stays with the first. Scoped here; the panels' inline status keeps its own. */
+.work-row .compute-job-status.variant-inline {
+  align-items: last baseline;
+}
+
+.work-row .compute-job-status.variant-inline .compute-job-icon {
+  align-self: flex-start;
+}
+
+.work-row .compute-job-status.variant-inline .compute-job-text {
+  flex: 1;
 }
 
 .work-row .compute-job-cancel:hover:not(:disabled) {

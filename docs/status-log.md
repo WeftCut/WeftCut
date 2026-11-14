@@ -197,9 +197,12 @@ already says what it is has no title.
   Generating derivatives…) and several are counted; when every row is queued
   for admission the spinner becomes an hourglass. The popover groups rows by
   owner, the export first. A lone group has no heading, its rows and the
-  trigger naming the work (its action, such as the agent group's link, stays);
-  with several, each is headed so they can be told apart. The export's percent
-  is the trigger's alone. The export: the file and elapsed time, a bar, fps and
+  trigger naming the work; with several, each is headed so they can be told
+  apart. A heading is the title alone. Actions sit at the bottom right: a row's
+  Cancel ends its last line (a waiting job's reason may wrap, its wait time and
+  Cancel staying on the last line), and a group's action, the agent link,
+  closes the group. The export's percent is the trigger's alone. The export:
+  the file and elapsed time, a bar, fps and
   speed, Cancel (no remaining-time estimate); clip jobs with their status and
   Cancel (`ComputeJobStatus`); agent calls with a link to the Activity tab;
   derivatives one row per media item with the kinds in progress. Every Cancel
