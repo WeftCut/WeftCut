@@ -233,9 +233,11 @@ the window at each theme's minimum size.
 
 The bell's popover, titled "Needs attention" since the bell has no text. One
 flat list: rows separated by dividers, no cards. A row is severity dot, title
-and a description of at most two lines (full text in its tooltip); at its end
-a column of links, the way to the fix (Open settings, Open review, View) above
-the dismissal (Got it, Later).
+and a description of at most two lines (full text in its tooltip). At its end,
+the way to the fix (Open settings, Open review, View) is a link at the top; the
+dismissal (Got it, Later), second in rank, sits grey at the bottom and shows
+while the row is hovered or holds keyboard focus, so a list at rest reads as
+what needs doing.
 Empty: "Nothing needs attention".
 
 Dismissing takes a row out of the center, nothing more: the center only

@@ -105,8 +105,9 @@ export function NotificationBell({ notices, onOpenSettings, placement = "up" }: 
 }
 
 /// Severity dot · title · a description of at most two lines (the full text
-/// in its tooltip); the row's actions stack at its end as links, the way to
-/// the fix above the dismissal.
+/// in its tooltip). At its end the way to the fix is a link at the top; the
+/// dismissal, second in rank, sits grey at the bottom and shows while the row is
+/// hovered or holds focus, so a list at rest reads as what needs doing.
 function AttentionRow({ item, onAct, onDismiss }: {
   item: AttentionItem;
   onAct: (item: AttentionItem) => void;
@@ -122,15 +123,15 @@ function AttentionRow({ item, onAct, onDismiss }: {
         {text.body && <div className="attention-row-body" title={text.body}>{text.body}</div>}
       </div>
       <div className="attention-actions">
-        {text.action && (
+        {text.action ? (
           <button type="button" className="attention-link" onClick={() => onAct(item)}>
             {text.action}
           </button>
-        )}
+        ) : <span />}
         {text.dismiss && (
           <button
             type="button"
-            className="attention-link"
+            className="attention-link attention-dismiss"
             onClick={() => onDismiss(item)}
             title={text.dismissHint}
             aria-description={text.dismissHint}
