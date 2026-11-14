@@ -192,7 +192,9 @@ describe("background export in the work pill", () => {
     expect(groups).toEqual(["Export", "Clip jobs"]);
     const details = exportRegion()!;
     expect(details.textContent).toContain("final.mp4");
-    expect(details.textContent).toContain("50%");
+    // The trigger right below says "Export" and the percent; the group repeats neither.
+    expect(details.querySelector(".work-group-header")).toBeNull();
+    expect(details.textContent).not.toContain("50%");
     expect(details.textContent).toContain("30 fps · 1.0×");
     fireEvent.click(screen.getByRole("button", { name: "Cancel export" }));
     expect(onCancel).toHaveBeenCalledOnce();
@@ -214,14 +216,14 @@ describe("background export in the work pill", () => {
     rerender(<WorkPill backgroundExport={encoding(0.2)} />);
 
     fireEvent.click(screen.getByTestId("status-bar-work"));
-    expect(elapsedShown()).toBe(`20% · ${elapsed(65_000)}`);
+    expect(elapsedShown()).toBe(elapsed(65_000));
     // Closing and opening again keeps the clock.
     fireEvent.click(screen.getByTestId("status-bar-work"));
     fireEvent.click(screen.getByTestId("status-bar-work"));
-    expect(elapsedShown()).toBe(`20% · ${elapsed(65_000)}`);
+    expect(elapsedShown()).toBe(elapsed(65_000));
 
     // A new export starts its own clock.
     rerender(<WorkPill backgroundExport={encoding(0.01, { job: { ...JOB, job_id: "j2" } })} />);
-    expect(elapsedShown()).toBe(`1% · ${elapsed(0)}`);
+    expect(elapsedShown()).toBe(elapsed(0));
   });
 });

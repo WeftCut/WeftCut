@@ -83,7 +83,9 @@ export function WorkPill({ backgroundExport }: {
       {open && (
         <section id={detailsId} className="status-popover work-pill-details" aria-label={t("status_bar.work.title")}>
           {backgroundExport && exportView && exportStartedAt !== null && (
-            <WorkGroup title={t("status_bar.work.group_export")}>
+            // The trigger names the export and its percent; the group keeps
+            // its name for assistive technology only.
+            <WorkGroup title={t("status_bar.work.group_export")} titleShown={false}>
               <ExportRow state={backgroundExport} phase={exportView.phase} percent={exportView.percent} startedAt={exportStartedAt} />
             </WorkGroup>
           )}
@@ -141,8 +143,8 @@ function ProgressRing({ phase, percent }: { phase: string; percent: number | und
   );
 }
 
-/// The file, percent and elapsed time, the bar, then the measured rate with
-/// Cancel. No remaining-time estimate: by product decision an export shows
+/// The file and elapsed time, the bar, then the measured rate with Cancel. The
+/// percent is the trigger's, right below. No remaining-time estimate: by product decision an export shows
 /// percent and elapsed time, never a prediction.
 function ExportRow({ state, phase, percent, startedAt }: {
   state: ExportState;
@@ -159,7 +161,7 @@ function ExportRow({ state, phase, percent, startedAt }: {
     <li className="work-row" data-work="export">
       <div className="work-row-line">
         <span className="work-row-name">{state.job?.filename ?? t("export.title")}</span>
-        <span className="work-row-elapsed">{percent === undefined ? elapsed : `${percent}% · ${elapsed}`}</span>
+        <span className="work-row-elapsed">{elapsed}</span>
       </div>
       {percent !== undefined && (
         <div className="progress-track work-row-progress" aria-hidden="true">
@@ -219,10 +221,15 @@ function WorkDetails({ view, onLeave }: { view: WorkView; onLeave: () => void })
 
 /// The header names the kind of work, so rows carry no icon of their own; the
 /// one icon in a row is a clip job's state (working or waiting).
-function WorkGroup({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
+function WorkGroup({ title, titleShown = true, action, children }: {
+  title: string;
+  titleShown?: boolean;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <div className="work-group" role="group" aria-label={title}>
-      <h3 className="work-group-header"><span>{title}</span>{action}</h3>
+      {titleShown && <h3 className="work-group-header"><span>{title}</span>{action}</h3>}
       <ul className="work-rows">{children}</ul>
     </div>
   );
