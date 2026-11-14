@@ -470,8 +470,33 @@
   overflow: hidden;
 }
 
+/* Cancel in the work popover, the export's and every clip job's alike: a small
+   secondary button, not the flat control the Activity rows use, so the one
+   action in a row reads as one and shows where focus is. */
 .work-row .compute-job-cancel {
   margin-left: auto;
+  height: calc(22 * var(--ui-px));
+  padding: 0 calc(10 * var(--ui-px));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--secondary);
+  color: var(--foreground);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.work-row .compute-job-cancel:hover:not(:disabled) {
+  background: var(--accent);
+}
+
+.work-row .compute-job-cancel:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* The label says it; the clip job's ✕ and spinner would only crowd the button. */
+.work-row .compute-job-cancel svg {
+  display: none;
 }
 
 /* Not saved's popover: the reason first, then the facts and the actions. */

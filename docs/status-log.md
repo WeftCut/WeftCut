@@ -195,7 +195,8 @@ focus back. A popover whose trigger already says what it is has no title.
   owner, the export first: the file, percent and elapsed time, a bar, fps and
   speed, Cancel (no remaining-time estimate); clip jobs with their status and
   Cancel (`ComputeJobStatus`); agent calls with a link to the Activity tab;
-  derivatives one row per media item with the kinds in progress. Log ops are
+  derivatives one row per media item with the kinds in progress. Every Cancel
+  here is a small secondary button, so a row's one action shows focus. Log ops are
   not counted: the work a Started row stands for shows where it was started
   (the import row, the Shots panel, the Pauses buttons, the voiceover dialog),
   and the console shows the op. Derivative jobs are tracked app-wide
