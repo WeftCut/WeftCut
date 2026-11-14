@@ -1323,6 +1323,7 @@ const zhCN: Resources = {
     "begin_agent_session": "开始工作会话",
     "open_project": "打开项目",
     "create_project": "新建项目",
+    "open_companion": "获取伴随页面链接",
     "end_agent_session": "结束工作会话",
     "create_tacks": "添加批注",
     "check_composition": "检查剪辑",

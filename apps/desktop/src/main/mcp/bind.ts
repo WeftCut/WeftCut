@@ -39,6 +39,14 @@ function attempt(target: Listenable, port: number): Promise<Attempt> {
   })
 }
 
+/// The `Host` header values a request to the listener on `port` may carry: the
+/// bind itself, by address or by name. Anything else is a page that reached
+/// loopback through a rebound DNS name. One list for every route on the
+/// listener, `/mcp` and the companion page alike.
+export function loopbackHosts(port: number): string[] {
+  return [`${LOOPBACK}:${port}`, `localhost:${port}`]
+}
+
 /// Bind the MCP host to loopback, preferring `hintPort` and falling back to an
 /// OS-picked port on any failure.
 ///

@@ -1512,6 +1512,7 @@ const enUS = {
     "begin_agent_session": "Start work session",
     "open_project": "Open project",
     "create_project": "New project",
+    "open_companion": "Get the companion page link",
     "end_agent_session": "End work session",
     "create_tacks": "Add tacks",
     "check_composition": "Check the edit",

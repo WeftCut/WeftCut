@@ -1,4 +1,5 @@
 import { startPreviewAudioSession } from "./render/audio/previewAudioSession";
+import { installCompanionBridge } from "./companion/companionBridge";
 import { transportPlay, transportPause, transportSeek, usePlaybackStore } from "./state/playbackStore";
 import { save as saveDialog } from "@/bridge/dialog";
 import { listen } from "@/bridge/events";
@@ -336,6 +337,10 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
     setPlayheadTimeUs(clamped);
     transportSeek(previewLocalUs(clamped));
   }, []);
+
+  // The companion page's player controls and transport, while a page is open
+  // (`companion/companionBridge.ts`).
+  useEffect(() => installCompanionBridge(seekTo), [seekTo]);
 
   // R.7: click on a Playhead Panel row → reveal that hidden track inline at its
   // natural accretion slot AND select the clicked layer. Single-track

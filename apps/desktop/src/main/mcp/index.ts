@@ -7,9 +7,10 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { buildMcpServer, type McpServerOptions } from './server.js'
 import { loadOrInitAuth, saveAuth, rotateToken, type McpAuth } from './auth.js'
-import { listenLoopback } from './bind.js'
+import { listenLoopback, loopbackHosts } from './bind.js'
 import { NO_MCP_LOG, type McpLogEntryInput } from './withLog.js'
 import type { AgentConnection, AgentConnectionSnapshot } from '../../shared/agent-activity.js'
+import type { CompanionRouteDeps } from '../companion/routes.js'
 
 type Backend = import('@weftcut/core').Backend
 
@@ -53,8 +54,18 @@ export interface SessionReaperOptions {
 }
 const REAPER_DEFAULTS: Required<SessionReaperOptions> = { graceMs: 90_000, idleMs: 30 * 60_000, sweepMs: 15_000 }
 
+/** The companion page on this listener (`main/companion/`): its routes, and
+ *  the link `open_companion` hands out, built from this host's own URL. */
+export interface McpHostCompanion {
+  mount(app: express.Express, deps: CompanionRouteDeps): void
+  link(mcpUrl: string): string
+}
+
 /** Host-level seams, forwarded verbatim to every per-session `buildMcpServer`. */
-export type McpHostOptions = McpServerOptions & { sessionReaper?: SessionReaperOptions }
+export type McpHostOptions = Omit<McpServerOptions, 'companionLink'> & {
+  sessionReaper?: SessionReaperOptions
+  companion?: McpHostCompanion
+}
 
 export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}): Promise<McpHost> {
   let auth: McpAuth = loadOrInitAuth()
@@ -123,6 +134,12 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
     next()
   })
 
+  // The companion page brings its own guards (`companion/routes.ts`): its key
+  // opens nothing under `/mcp`, and the bearer above opens none of its data.
+  opts.companion?.mount(appExpress, {
+    rejected: (details) => emitLifecycle('warn', { kind: 'System' }, 'Companion request rejected', details),
+  })
+
   appExpress.all('/mcp', async (req, res) => {
     const sid = req.headers['mcp-session-id'] as string | undefined
     let transport = sid ? transports.get(sid) : undefined
@@ -171,7 +188,7 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
         // isn't our bind. The 256-bit bearer is still the primary gate; Origin
         // is left unrestricted so non-browser MCP clients (no/odd Origin) work.
         enableDnsRebindingProtection: true,
-        allowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`],
+        allowedHosts: loopbackHosts(port),
       })
       transport.onclose = () => {
         const sessionId = transport!.sessionId
@@ -209,7 +226,7 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
         // of those. `Warn`, not `Error`: the request failed, the app did not.
         emitLifecycle('warn', { kind: 'System' }, 'MCP transport error', { error: detail })
       }
-      newServer = buildMcpServer(backend, { ...opts, connectionId, version })
+      newServer = buildMcpServer(backend, { ...opts, connectionId, version, ...(companionLink === null ? {} : { companionLink }) })
       servers.add(newServer)
       // `getClientVersion()` is populated while the `initialize` REQUEST is
       // handled, which precedes the `notifications/initialized` that fires this
@@ -270,6 +287,7 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
   saveAuth(auth)
 
   const url = `http://127.0.0.1:${port}/mcp`
+  const companionLink = opts.companion?.link(url) ?? null
   console.log(`[mcp] listening ${url}`)
   // Pre-workspace by construction — the host binds at `app.whenReady()` — so
   // this row exists only because the producer-side deferred queue holds it until
