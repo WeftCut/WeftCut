@@ -1,8 +1,9 @@
 // The companion page's transport when it runs in a browser on this machine:
 // plain fetch to the app's loopback listener, the page key as a bearer on
 // every request. No cookie and no storage, so a sandboxed frame with an opaque
-// origin works as a tab does. `app.js` sees only the three handlers and
-// `control`, which is the seam a second transport fills.
+// origin works as a tab does. `app.js` sees only the three handlers,
+// `control` and `openPicture`, which is the seam a second transport fills.
+import { pictureDecoder, readPicture } from './pictureChunks.js'
 
 /** How long the page waits before asking an app that went away again: the
  *  first wait, doubling while the app stays away, up to the longest. A
@@ -16,9 +17,12 @@ export const RETRY_MAX_MS = 5000
  *   fetch: typeof fetch,
  *   key: string | null,
  *   clock: { sleep(ms: number): Promise<void> },
- * }} deps
+ *   codecs?: { VideoDecoder: typeof VideoDecoder, EncodedVideoChunk: typeof EncodedVideoChunk } | null,
+ *   doc?: Document,
+ * }} deps `codecs` is null where the browser has no WebCodecs: the picture
+ *   needs them here.
  */
-export function loopbackTransport({ fetch, key, clock }) {
+export function loopbackTransport({ fetch, key, clock, codecs = null, doc = globalThis.document }) {
   const abort = new AbortController()
   let handlers = null
   let stopped = false
@@ -26,7 +30,7 @@ export function loopbackTransport({ fetch, key, clock }) {
   const call = (path, init = {}) => fetch(path, {
     ...init,
     headers: { Authorization: `Bearer ${key}`, ...(init.headers ?? {}) },
-    signal: abort.signal,
+    signal: init.signal ?? abort.signal,
   })
 
   function revoked() {
@@ -119,6 +123,42 @@ export function loopbackTransport({ fetch, key, clock }) {
       handlers.link('connecting')
       void run()
       return () => { stopped = true; abort.abort() }
+    },
+
+    /** The picture, drawn into `view.mount`, `view.shown()` on every frame.
+     *  Asking for it is what makes the app encode it; `close` stops that.
+     *  Reconnects as the event stream does. Null where it cannot be shown. */
+    openPicture(view) {
+      if (codecs === null || stopped) return null
+      const own = new AbortController()
+      const signal = AbortSignal.any([abort.signal, own.signal])
+      const canvas = doc.createElement('canvas')
+      view.mount.replaceChildren(canvas)
+      const decoder = pictureDecoder({ canvas, codecs, shown: view.shown })
+      const open = () => !stopped && !own.signal.aborted
+      void (async () => {
+        let wait = RETRY_FIRST_MS
+        while (open()) {
+          try {
+            const r = await call('/companion/video', { signal })
+            if (r.status === 401) return revoked()
+            if (r.ok && r.body !== null) {
+              wait = RETRY_FIRST_MS
+              await readPicture(r.body, decoder)
+            }
+          } catch { /* not reachable: wait and ask again */ }
+          if (!open()) return
+          await clock.sleep(wait)
+          wait = Math.min(wait * 2, RETRY_MAX_MS)
+        }
+      })()
+      return {
+        close() {
+          own.abort()
+          decoder.close()
+          canvas.remove()
+        },
+      }
     },
 
     /** A player control or `focus`. `not_ready`: the app has no editor to

@@ -3,14 +3,18 @@
 // `renderer/companion/pageApp.test.ts`, which has the DOM types; the page in
 // a real browser by e2e `companion-page.spec.ts`.
 import { describe, expect, it } from 'vitest'
+import { frame } from './pictureStream'
+import {
+  MIRROR_FRAME_CONFIG, MIRROR_FRAME_DELTA, MIRROR_FRAME_KEY, MIRROR_HEADER_BYTES,
+} from '../../shared/companion'
 
-/** The modules are plain JS with no declarations, so they load untyped. */
-const pageModule = (file: string): Promise<any> => import(/* @vite-ignore */ new URL(`../../../cli/companion/ui/${file}`, import.meta.url).href)
+import { companionPageModule as pageModule } from '../../shared/testing/companionPage'
 
-const { pageState, exportRunning } = await pageModule('viewState.js')
-const { STRINGS, stringsFor } = await pageModule('strings.js')
-const { formatTime, timeAt, timelineRows } = await pageModule('timeline.js')
-const { loopbackTransport, RETRY_FIRST_MS, RETRY_MAX_MS } = await pageModule('transportLoopback.js')
+const { pageState, pictureState, exportRunning } = await pageModule('viewState')
+const chunks = await pageModule('pictureChunks')
+const { STRINGS, stringsFor } = await pageModule('strings')
+const { formatTime, timeAt, timelineRows } = await pageModule('timeline')
+const { loopbackTransport, RETRY_FIRST_MS, RETRY_MAX_MS } = await pageModule('transportLoopback')
 
 const strings = STRINGS.en
 const KEY = 'a'.repeat(64)
@@ -38,6 +42,19 @@ describe('pageState', () => {
     for (const state of ['queued', 'preparing', 'rendering', 'finalizing']) expect(exportRunning({ state }), state).toBe(true)
     for (const state of ['awaiting_retry', 'completed', 'failed', 'cancelled']) expect(exportRunning({ state }), state).toBe(false)
     expect(exportRunning(null)).toBe(false)
+  })
+})
+
+describe('pictureState', () => {
+  const live = { exporting: false, wanted: true, supported: true, minimized: false, shown: true }
+
+  it('names the first state that holds, in order', () => {
+    expect(pictureState({ ...live, exporting: true, wanted: false, supported: false, minimized: true, shown: false }, strings).picture).toBe('export')
+    expect(pictureState({ ...live, wanted: false, supported: false, minimized: true }, strings).picture).toBe('off')
+    expect(pictureState({ ...live, supported: false, minimized: true }, strings).picture).toBe('unsupported')
+    expect(pictureState({ ...live, minimized: true, shown: false }, strings).picture).toBe('minimized')
+    expect(pictureState({ ...live, shown: false }, strings).picture).toBe('starting')
+    expect(pictureState(live, strings)).toEqual({ picture: 'live', message: null })
   })
 })
 
@@ -243,5 +260,154 @@ describe('loopbackTransport', () => {
     expect(await transport.control({ action: 'play' })).toBe('revoked')
     expect(h.log.at(-1)).toBe('revoked')
     expect(await transport.control({ action: 'play' })).toBe('offline')
+  })
+})
+
+// ── the picture over loopback ───────────────────────────────────────────────
+
+const config = { codec: 'vp8', coded_width: 640, coded_height: 360 }
+const configFrame = () => frame(MIRROR_FRAME_CONFIG, 0, Buffer.from(JSON.stringify(config)))
+const keyFrame = (ts: number) => frame(MIRROR_FRAME_KEY, ts, Buffer.from([1]))
+const deltaFrame = (ts: number) => frame(MIRROR_FRAME_DELTA, ts, Buffer.from([2]))
+
+/** A VideoDecoder that records what it was given; the test sets its queue. */
+function fakeDecoders() {
+  const made: Array<{ configured: unknown; decoded: Array<{ type: string; timestamp: number }>; decodeQueueSize: number; state: string; fail(): void; draw(): void }> = []
+  class VideoDecoder {
+    configured: unknown = null
+    decoded: Array<{ type: string; timestamp: number }> = []
+    decodeQueueSize = 0
+    state = 'unconfigured'
+    constructor(private readonly init: { output(f: { close(): void }): void; error(e: unknown): void }) { made.push(this) }
+    configure(c: unknown) { this.configured = c; this.state = 'configured' }
+    decode(c: { type: string; timestamp: number }) { this.decoded.push({ type: c.type, timestamp: c.timestamp }) }
+    close() { this.state = 'closed' }
+    fail() { this.state = 'closed'; this.init.error(new Error('decode failed')) }
+    draw() { this.init.output({ close() {} }) }
+  }
+  class EncodedVideoChunk {
+    readonly type: string
+    readonly timestamp: number
+    constructor(init: { type: string; timestamp: number }) { this.type = init.type; this.timestamp = init.timestamp }
+  }
+  return { made, codecs: { VideoDecoder, EncodedVideoChunk } }
+}
+
+function fakeCanvas() {
+  const drawn: unknown[] = []
+  return { drawn, canvas: { width: 0, height: 0, getContext: () => ({ drawImage: (f: unknown) => { drawn.push(f) } }), remove() {} } }
+}
+
+describe('the picture stream', () => {
+  it('reads the frame layout main writes', () => {
+    expect([chunks.HEADER_BYTES, chunks.FRAME_CONFIG, chunks.FRAME_KEY, chunks.FRAME_DELTA])
+      .toEqual([MIRROR_HEADER_BYTES, MIRROR_FRAME_CONFIG, MIRROR_FRAME_KEY, MIRROR_FRAME_DELTA])
+  })
+
+  it('splits frames however the bytes arrive', () => {
+    const bytes = new Uint8Array(Buffer.concat([configFrame(), keyFrame(1_000), deltaFrame(2_000)]))
+    const split = chunks.frameSplitter()
+    const got = [...split(bytes.subarray(0, 5)), ...split(bytes.subarray(5, 40)), ...split(bytes.subarray(40))]
+    expect(got.map((f: { kind: number; timestamp: number }) => [f.kind, f.timestamp])).toEqual([[MIRROR_FRAME_CONFIG, 0], [MIRROR_FRAME_KEY, 1_000], [MIRROR_FRAME_DELTA, 2_000]])
+    expect(JSON.parse(new TextDecoder().decode(got[0].payload))).toEqual(config)
+  })
+})
+
+describe('pictureDecoder', () => {
+  const take = (decoder: { take(f: unknown): void }, buf: Buffer) => {
+    for (const f of chunks.frameSplitter()(new Uint8Array(buf))) decoder.take(f)
+  }
+
+  it('configures from the stream, without a description, and starts at a keyframe', () => {
+    const { made, codecs } = fakeDecoders()
+    const { canvas } = fakeCanvas()
+    const decoder = chunks.pictureDecoder({ canvas, codecs, shown: () => {} })
+    take(decoder, deltaFrame(1))
+    take(decoder, configFrame())
+    take(decoder, deltaFrame(2))
+    take(decoder, keyFrame(3))
+    take(decoder, deltaFrame(4))
+    expect([canvas.width, canvas.height]).toEqual([640, 360])
+    expect(made).toHaveLength(1)
+    expect(made[0]!.configured).toEqual({ codec: 'vp8', codedWidth: 640, codedHeight: 360, optimizeForLatency: true })
+    expect(made[0]!.decoded.map((c) => c.timestamp)).toEqual([3, 4])
+  })
+
+  it('drops a delta when the decoder falls behind, and then waits for a keyframe', () => {
+    const { made, codecs } = fakeDecoders()
+    const decoder = chunks.pictureDecoder({ canvas: fakeCanvas().canvas, codecs, shown: () => {} })
+    take(decoder, configFrame())
+    take(decoder, keyFrame(1))
+    made[0]!.decodeQueueSize = chunks.DECODE_QUEUE_MAX + 1
+    take(decoder, deltaFrame(2))
+    made[0]!.decodeQueueSize = 0
+    take(decoder, deltaFrame(3))
+    take(decoder, keyFrame(4))
+    expect(made[0]!.decoded.map((c) => c.timestamp)).toEqual([1, 4])
+  })
+
+  it('starts a new decoder at the next keyframe after one fails', () => {
+    const { made, codecs } = fakeDecoders()
+    const decoder = chunks.pictureDecoder({ canvas: fakeCanvas().canvas, codecs, shown: () => {} })
+    take(decoder, configFrame())
+    take(decoder, keyFrame(1))
+    made[0]!.fail()
+    take(decoder, deltaFrame(2))
+    take(decoder, keyFrame(3))
+    expect(made).toHaveLength(2)
+    expect(made[1]!.decoded.map((c) => c.timestamp)).toEqual([3])
+  })
+
+  it('draws each decoded frame and says so', () => {
+    const { made, codecs } = fakeDecoders()
+    const { canvas, drawn } = fakeCanvas()
+    let shown = 0
+    const decoder = chunks.pictureDecoder({ canvas, codecs, shown: () => { shown++ } })
+    take(decoder, configFrame())
+    take(decoder, keyFrame(1))
+    made[0]!.draw()
+    expect([drawn.length, shown]).toEqual([1, 1])
+  })
+})
+
+describe('loopbackTransport.openPicture', () => {
+  const pictureDoc = () => ({ createElement: () => fakeCanvas().canvas })
+  const view = () => ({ mount: { replaceChildren() {} }, shown() {} })
+
+  it('opens nothing where the browser has no WebCodecs', () => {
+    const app = fakeApp()
+    const transport = loopbackTransport({ fetch: app.fetch, key: KEY, clock: fakeClock().clock, codecs: null, doc: pictureDoc() })
+    transport.start(handlersLog().handlers)
+    expect(transport.openPicture(view())).toBeNull()
+    expect(app.requests.filter((r) => r.path === '/companion/video')).toEqual([])
+  })
+
+  it('asks for the picture with the page key, and again after the app went away', async () => {
+    const app = fakeApp()
+    const first = eventStream()
+    app.answer('/companion/video', () => new Response(first.body))
+    const { clock, wake } = fakeClock()
+    const { made, codecs } = fakeDecoders()
+    const transport = loopbackTransport({ fetch: app.fetch, key: KEY, clock, codecs, doc: pictureDoc() })
+    const picture = transport.openPicture(view())
+    await until(() => app.requests.some((r) => r.path === '/companion/video'))
+    expect(app.requests.find((r) => r.path === '/companion/video')?.auth).toBe(`Bearer ${KEY}`)
+    first.end()
+    const second = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new Uint8Array(Buffer.concat([configFrame(), keyFrame(1)]))) } })
+    app.answer('/companion/video', () => new Response(second))
+    await wake()
+    await until(() => made.length === 1 && made[0]!.decoded.length === 1)
+    picture.close()
+  })
+
+  it('says the link is turned off on a 401', async () => {
+    const app = fakeApp()
+    app.answer('/companion/video', () => new Response(null, { status: 401 }))
+    const { codecs } = fakeDecoders()
+    const transport = loopbackTransport({ fetch: app.fetch, key: KEY, clock: fakeClock().clock, codecs, doc: pictureDoc() })
+    const h = handlersLog()
+    transport.start(h.handlers)
+    transport.openPicture(view())
+    await until(() => h.log.at(-1) === 'revoked')
   })
 })

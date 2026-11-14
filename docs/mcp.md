@@ -254,9 +254,10 @@ version to a hash of the files, and a change needs a new version and entry.
 ### Companion page
 
 A page beside the chat, for a desktop host's built-in browser: the project's
-name and the latest agent call, play / pause and the time, a small timeline to
-seek on, and export progress. It reads the project and drives the player; it
-never edits. A terminal host has nowhere to show it.
+name and the latest agent call, on request a live picture of the preview, play
+/ pause and the time, a small timeline to seek on, and export progress. It
+reads the project and drives the player; it never edits. A terminal host has
+nowhere to show it. Why a page and not a card in the chat: ADR 0168.
 
 - **`open_companion {}`** answers `{ url }`:
   `http://127.0.0.1:<port>/companion#k=<page key>`. It carries no UI resource,
@@ -275,8 +276,9 @@ never edits. A terminal host has nowhere to show it.
 - **Routes.** `GET /companion` and `/companion/ui/*` need no key: they hold no
   project data, and the key travels in the fragment, which a browser never
   sends. `/companion/state`, `/companion/events` (server-sent events read
-  over fetch) and `POST /companion/control` (`play`, `pause`, `seek` with
-  `t_us`, `focus`) need `Authorization: Bearer <page key>`. A missing or wrong
+  over fetch), `/companion/video` (the picture) and `POST /companion/control`
+  (`play`, `pause`, `seek` with `t_us`, `focus`) need
+  `Authorization: Bearer <page key>`. A missing or wrong
   key, the MCP bearer included, is `401` and a `Companion request rejected`
   row (never the header); a `Host` other than the loopback bind is `403`. A
   control while no editor is attached is `409 editor_not_ready`. The page's
@@ -291,9 +293,30 @@ never edits. A terminal host has nowhere to show it.
   bridge only of changes. While a page is open the editor pushes its transport
   (at most every 100 ms); with none open it pushes nothing. A reload, a crash
   or the window closing drops the attach.
+- **The picture** is off until the user turns it on in the page; the choice
+  is not kept across a reload of the page. While some page shows it, no
+  export runs and the editor is attached, the editor captures its own preview
+  canvas (the final composite) and encodes it: H.264 (Annex B) on a hardware
+  encoder where one takes the size, else VP8 in software; an encoder that
+  fails hands over to the next. At most 15 frames a second and 960 px wide,
+  2 a second while paused (every frame for 600 ms after a seek), a keyframe
+  every 2 s, a frame dropped while the encoder is behind. With no page
+  showing it nothing is captured or encoded. Meanwhile main turns the editor
+  window's background throttling off, so a hidden window still paints.
+- **`/companion/video`** is a run of frames: `u8` kind (0 config, 1 key,
+  2 delta), `f64` timestamp in µs, `u32` length, little-endian, then the
+  payload; a config's payload is `{ codec, coded_width, coded_height }` as
+  JSON. A new viewer gets the config and the last keyframe at once and
+  continues from the next keyframe. A viewer with more than 2 MB unsent gets
+  nothing until it is under again, and then only from a keyframe. The page
+  decodes with WebCodecs; without them it says it cannot show the picture.
 - **What the page says**, first that holds: the link no longer works (`401`);
   WeftCut is not running (it retries after 1 s, backing off to 5 s); WeftCut
-  is opening the project; no project is open. It speaks the app's UI language.
+  is opening the project; no project is open. Then, over the picture: an
+  export runs (no picture until it ends); the picture is off ([Show picture]);
+  the browser cannot show it; WeftCut is minimized, so the picture updates
+  about once a second ([Show WeftCut]); starting; live. The stage carries the
+  state as `data-picture`. It speaks the app's UI language.
 
 ## Multi-agent semantics
 

@@ -22,6 +22,29 @@ export function pageState(input, strings) {
   return { state: 'ready', message: null }
 }
 
+/**
+ * What the picture's stage says once the page is `ready`, by the same rule as
+ * `pageState`: the first that holds.
+ * @param {{
+ *   exporting: boolean,
+ *   wanted: boolean,
+ *   supported: boolean,
+ *   minimized: boolean,
+ *   shown: boolean,
+ * }} input `wanted`: the user turned the picture on; `supported`: this
+ *   browser can show it; `shown`: a frame was drawn since it last started.
+ * @param {Record<string, string>} strings
+ * @returns {{ picture: 'export' | 'off' | 'unsupported' | 'minimized' | 'starting' | 'live', message: string | null }}
+ */
+export function pictureState(input, strings) {
+  if (input.exporting) return { picture: 'export', message: strings.picture_export }
+  if (!input.wanted) return { picture: 'off', message: strings.picture_off }
+  if (!input.supported) return { picture: 'unsupported', message: strings.picture_unsupported }
+  if (input.minimized) return { picture: 'minimized', message: strings.picture_minimized }
+  if (!input.shown) return { picture: 'starting', message: strings.picture_starting }
+  return { picture: 'live', message: null }
+}
+
 /** An export the page shows progress for: one still running. A job waiting
  *  for a retry the user decides on is not. */
 export function exportRunning(job) {

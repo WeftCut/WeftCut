@@ -58,6 +58,46 @@ button:disabled { opacity: 0.5; cursor: default; }
   border-bottom: 1px solid var(--cw-line);
 }
 
+.cw-stage {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  max-height: 60vh;
+  margin: 0 auto;
+  width: 100%;
+  background: #000;
+  border-bottom: 1px solid var(--cw-line);
+  overflow: hidden;
+}
+.cw-picture, .cw-picture canvas { width: 100%; height: 100%; }
+.cw-picture canvas { display: block; object-fit: contain; }
+/* A picture with nothing new behind the message is dimmed under it. */
+.cw-stage[data-picture="export"] .cw-picture,
+.cw-stage[data-picture="starting"] .cw-picture { opacity: 0.35; }
+.cw-stage[data-picture="off"] .cw-picture,
+.cw-stage[data-picture="unsupported"] .cw-picture { display: none; }
+.cw-stage-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  text-align: center;
+  color: var(--cw-dim);
+}
+.cw-stage-message { margin: 0; max-width: 32em; }
+/* Minimized, the picture still moves: the message stays out of its way. */
+.cw-stage[data-picture="minimized"] .cw-stage-overlay {
+  inset: auto 0 0 0;
+  flex-direction: row;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: rgba(0, 0, 0, 0.7);
+  text-align: left;
+}
+
 .cw-controls {
   display: flex;
   gap: 8px;
@@ -67,6 +107,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 }
 .cw-play { min-width: 40px; }
 .cw-time { font-variant-numeric: tabular-nums; }
+.cw-hide-picture { margin-left: auto; }
 
 .cw-timeline {
   display: flex;

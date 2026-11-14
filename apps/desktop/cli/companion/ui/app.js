@@ -1,17 +1,19 @@
 // The companion page's one UI: the project's name and the latest agent call,
-// play / pause and the time, a small timeline to seek on, and export progress.
-// It reads the project and drives the player; it never edits. Everything it
+// the preview's picture once the user asks for it, play / pause and the time,
+// a small timeline to seek on, and export progress. It reads the project and
+// drives the player; it never edits. Everything it
 // knows arrives through `transport` (`transportLoopback.js` in a browser), and
 // the DOM is built node by node: the page's CSP admits no inline style or
 // markup from data.
-import { exportRunning, pageState } from './viewState.js'
+import { exportRunning, pageState, pictureState } from './viewState.js'
 import { clipBox, formatTime, rulerTicks, timeAt, timelineRows } from './timeline.js'
 import { fill, stringsFor } from './strings.js'
 
 /**
  * @param {HTMLElement} root
  * @param {{ start(h: { state(s: object): void, event(name: string, data: unknown): void, link(status: string): void }): () => void,
- *           control(action: object): Promise<string> }} transport
+ *           control(action: object): Promise<string>,
+ *           openPicture(view: { mount: HTMLElement, shown(): void }): { close(): void } | null }} transport
  * @param {{ now?: () => number, frame?: (cb: () => void) => void, locale?: string }} [env]
  *   `now` in milliseconds and `frame` (a requestAnimationFrame) move the
  *   playhead between transport updates; `locale` is the browser's, used until
@@ -39,11 +41,24 @@ export function mountCompanion(root, transport, env = {}) {
   const notice = el('p', 'cw-notice')
   notice.setAttribute('role', 'status')
 
+  const pictureMount = el('div', 'cw-picture')
+  const stageMessage = el('p', 'cw-stage-message')
+  const showPicture = el('button', 'cw-show-picture')
+  showPicture.type = 'button'
+  const stageFocus = el('button', 'cw-stage-focus')
+  stageFocus.type = 'button'
+  const stageOverlay = el('div', 'cw-stage-overlay')
+  stageOverlay.append(stageMessage, showPicture, stageFocus)
+  const stage = el('section', 'cw-stage')
+  stage.append(pictureMount, stageOverlay)
+
   const play = el('button', 'cw-play')
   play.type = 'button'
   const time = el('span', 'cw-time')
+  const hidePicture = el('button', 'cw-hide-picture')
+  hidePicture.type = 'button'
   const controls = el('div', 'cw-controls')
-  controls.append(play, time)
+  controls.append(play, time, hidePicture)
 
   const labels = el('div', 'cw-labels')
   const ruler = el('div', 'cw-ruler')
@@ -61,7 +76,7 @@ export function mountCompanion(root, transport, env = {}) {
   const exportBox = el('div', 'cw-export')
   exportBox.append(exportLabel, exportTrack)
 
-  root.replaceChildren(header, notice, controls, timeline, exportBox)
+  root.replaceChildren(header, notice, stage, controls, timeline, exportBox)
 
   let link = 'connecting'
   let state = null
@@ -70,6 +85,11 @@ export function mountCompanion(root, transport, env = {}) {
   /** When `state.transport` arrived, for moving the playhead while playing. */
   let transportAt = now()
   let ticking = false
+  /** The user's word on the picture; not kept across a reload. */
+  let pictureWanted = false
+  let picture = null
+  let pictureSupported = true
+  let pictureShown = false
 
   const duration = () => state?.composition?.duration_us ?? 0
   const ready = () => view().state === 'ready'
@@ -89,6 +109,50 @@ export function mountCompanion(root, transport, env = {}) {
     notice.hidden = v.message === null
     play.disabled = v.state !== 'ready'
     focus.disabled = link !== 'online'
+    paintStage()
+  }
+
+  function paintStage() {
+    const ready = view().state === 'ready'
+    const exporting = exportRunning(state?.export ?? null)
+    // A frame from before counts for nothing once the picture had to stop.
+    if (!ready || exporting) pictureShown = false
+    const p = pictureState({
+      exporting,
+      wanted: pictureWanted,
+      supported: pictureSupported,
+      minimized: state?.window === 'minimized',
+      shown: pictureShown,
+    }, strings)
+    stage.hidden = !ready
+    stage.dataset.picture = p.picture
+    if (state?.composition) stage.style.aspectRatio = `${state.composition.width} / ${state.composition.height}`
+    stageMessage.textContent = p.message ?? ''
+    stageOverlay.hidden = p.message === null
+    showPicture.hidden = p.picture !== 'off'
+    stageFocus.hidden = p.picture !== 'minimized'
+    hidePicture.hidden = !pictureWanted
+    hidePicture.disabled = !ready
+  }
+
+  function setPicture(on) {
+    pictureWanted = on
+    if (on && picture === null) {
+      pictureShown = false
+      picture = transport.openPicture({
+        mount: pictureMount,
+        shown() {
+          if (pictureShown) return
+          pictureShown = true
+          paintStage()
+        },
+      })
+      pictureSupported = picture !== null
+    } else if (!on && picture !== null) {
+      picture.close()
+      picture = null
+    }
+    paintStage()
   }
 
   function paintText() {
@@ -97,6 +161,9 @@ export function mountCompanion(root, transport, env = {}) {
     doc.title = project === null ? strings.title : `${project} · ${strings.title}`
     name.textContent = project ?? strings.title
     focus.textContent = strings.show_editor
+    stageFocus.textContent = strings.show_editor
+    showPicture.textContent = strings.show_picture
+    hidePicture.textContent = strings.hide_picture
     timeline.setAttribute('aria-label', strings.timeline)
   }
 
@@ -150,6 +217,7 @@ export function mountCompanion(root, transport, env = {}) {
   function paintExport() {
     const job = state?.export ?? null
     exportBox.hidden = !exportRunning(job)
+    paintStage()
     if (exportBox.hidden) return
     const percent = Math.round(job.progress * 100)
     exportLabel.textContent = fill(strings.exporting, { percent, file: job.filename })
@@ -184,7 +252,11 @@ export function mountCompanion(root, transport, env = {}) {
     if (!ready()) return
     void transport.control({ action: state.transport.playing ? 'pause' : 'play' }).then(answered)
   })
-  focus.addEventListener('click', () => { void transport.control({ action: 'focus' }).then(answered) })
+  const focusEditor = () => { void transport.control({ action: 'focus' }).then(answered) }
+  focus.addEventListener('click', focusEditor)
+  stageFocus.addEventListener('click', focusEditor)
+  showPicture.addEventListener('click', () => setPicture(true))
+  hidePicture.addEventListener('click', () => setPicture(false))
 
   // Seeking while dragging: the playhead follows the pointer at once, and the
   // app hears the latest position, one request at a time.
@@ -221,7 +293,7 @@ export function mountCompanion(root, transport, env = {}) {
   lanes.addEventListener('pointercancel', endDrag)
 
   paintAll()
-  const stop = transport.start({
+  const stopTransport = transport.start({
     state(s) {
       state = s
       editorRefused = false
@@ -241,6 +313,9 @@ export function mountCompanion(root, transport, env = {}) {
       } else if (eventName === 'activity') {
         state.activity = data
         paintActivity()
+      } else if (eventName === 'window') {
+        state.window = data
+        paintStage()
       }
     },
     link(status) {
@@ -248,5 +323,10 @@ export function mountCompanion(root, transport, env = {}) {
       paintView()
     },
   })
-  return { stop }
+  return {
+    stop() {
+      setPicture(false)
+      stopTransport()
+    },
+  }
 }

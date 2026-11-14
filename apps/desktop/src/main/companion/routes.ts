@@ -87,6 +87,15 @@ export function mountCompanionRoutes(app: express.Express, hub: CompanionHub, ke
     res.on('close', close)
   })
 
+  // The picture, framed as `shared/companion.ts` MIRROR_* says. An open
+  // response is what makes the editor capture and encode its canvas at all.
+  app.get('/companion/video', (_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
+    res.flushHeaders()
+    const close = hub.showPicture(res)
+    res.on('close', close)
+  })
+
   app.post('/companion/control', (req, res) => {
     const outcome = hub.control(req.body)
     if (outcome === 'ok') res.status(204).end()
