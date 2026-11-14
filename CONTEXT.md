@@ -774,6 +774,19 @@ A registered protocol connection, identified independently of client name.
 Transport close ends its work session; registration is not a heartbeat.
 _Avoid_: online agent
 
+**Agent host**:
+An app an agent runs in that connects to WeftCut's MCP server (ChatGPT / Codex,
+Claude Code, Claude Desktop, DeepSeek Harness, Cursor). Its config format,
+config file and preview surface (side panel, side browser or none) are one row
+of the host table. See ADR 0167.
+_Avoid_: platform, integration
+
+**Content plugin**:
+The `weftcut` agent plugin: two manifests and a small skill that points at the
+served skill. No server and no executable; the app registers the server.
+See ADR 0167.
+_Avoid_: launcher, extension
+
 **Agent activity**:
 A structured record of an MCP call or checkpoint action in this opening: who,
 work session, operation, state, duration, error, history IDs. Not persisted.

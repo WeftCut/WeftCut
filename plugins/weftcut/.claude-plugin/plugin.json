@@ -1,0 +1,13 @@
+{
+  "name": "weftcut",
+  "version": "0.1.0",
+  "description": "Edit video in the WeftCut desktop editor from your agent. Connect WeftCut's MCP server from the app: Settings > Agent.",
+  "author": {
+    "name": "WeftCut",
+    "url": "https://weftcut.com"
+  },
+  "homepage": "https://weftcut.com",
+  "repository": "https://github.com/WeftCut/WeftCut",
+  "license": "MIT",
+  "keywords": ["video", "video-editing", "mcp"]
+}

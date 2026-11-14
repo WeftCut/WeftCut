@@ -48,6 +48,7 @@
 
 .connect-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: calc(2 * var(--ui-px));
   margin: 0;
   border-bottom: 1px solid var(--border-soft);
