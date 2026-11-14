@@ -48,6 +48,7 @@ import { mcpActor } from '../state/mcp-actor.js'
 import { argProblemMessage } from './argCheck.js'
 import { importRecord, shapeHybridResult } from './hybridResult.js'
 import { PROJECT_TOOLS, runProjectTool } from './projectTools.js'
+import { OPEN_COMPANION, runOpenCompanion } from './companionTool.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
 import { HOST_RESOURCE_DEFS, HOST_RESOURCE_TEMPLATES, mediaResourceDefs } from './hostResources.js'
 import { isSkillUri, readSkillResource, readSkillView, skillResourceDefs } from './skillResources.js'
@@ -407,6 +408,7 @@ export async function handleCallTool(
   client?: string,
   compute?: ComputeCaller,
   captureMotifPng: MotifPngCapture = NO_MOTIF_CAPTURE,
+  companionLink: string | null = null,
 ): Promise<ServerResult> {
   const route = routeMcpTool(name)
   // Nothing the user can see is open: every project tool refuses before it
@@ -421,7 +423,7 @@ export async function handleCallTool(
     // LANDMINE: no `await` may precede this call — the 'ts' route commits inside
     // `dispatchTool`'s synchronous prefix, and `withLog`'s commit window closes
     // at the first await (see its window-integrity cases).
-    return await dispatchTool(backend, getTsHost, route, name, args, getSpeech, getVlm, peaksPathFor, client, compute, captureMotifPng)
+    return await dispatchTool(backend, getTsHost, route, name, args, getSpeech, getVlm, peaksPathFor, client, compute, captureMotifPng, companionLink)
   } catch (e) {
     if (e instanceof ComputeCancelledError) return cancelledToolResult(e)
     if (e instanceof ExportValidationError || e instanceof ExportJobError) return toolErrorResult(exportRefusal(e))
@@ -457,6 +459,7 @@ async function dispatchTool(
   client: string | undefined,
   compute: ComputeCaller | undefined,
   captureMotifPng: MotifPngCapture,
+  companionLink: string | null,
 ): Promise<ServerResult> {
   const tsHost = getTsHost()
   if (route === 'export') {
@@ -575,6 +578,8 @@ async function dispatchTool(
     const p = mcpDef('read_project').parseDedicated!(args)
     return readTacksView(tsHost.agent.tacks, p.composition_id as string | null)
   }
+  // The companion page's link is the host's, not the project's.
+  if (name === OPEN_COMPANION) return runOpenCompanion(companionLink, args)
   if (tsHost) {
     // Opening swaps the actor's whole state and moves the editor with it, so
     // the host runs these, not the actor (`projectTools.ts`).
@@ -1088,6 +1093,9 @@ export interface McpServerOptions {
   /** Renders `preview_motif`'s frames. Omitted → every preview is refused as
    *  `closed`. */
   captureMotifPng?: MotifPngCapture
+  /** The companion page's link, key included, that `open_companion` answers
+   *  with; `startMcpHost` builds it from its own URL. Omitted → refused. */
+  companionLink?: string
 }
 
 export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): Server {
@@ -1148,7 +1156,7 @@ export function buildMcpServer(backend: Backend, opts: McpServerOptions = {}): S
     const compute = COMPUTE_TOOLS.has(name)
       ? mcpComputeCaller({ extra, client: client ?? 'MCP', closed: () => server.transport === undefined, onPhase: activityPhase(getTsHost) })
       : undefined
-    return handleCallTool(backend, getTsHost, name, (req.params.arguments ?? {}) as Record<string, unknown>, getSpeech, getVlm, peaksPathFor, client, compute, captureMotifPng)
+    return handleCallTool(backend, getTsHost, name, (req.params.arguments ?? {}) as Record<string, unknown>, getSpeech, getVlm, peaksPathFor, client, compute, captureMotifPng, opts.companionLink ?? null)
   }, log, clientInfo)
   server.setRequestHandler(CallToolRequestSchema, (req: CallToolRequest, extra: unknown) =>
     callTool(req, extra))

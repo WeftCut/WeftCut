@@ -59,7 +59,7 @@ describe('the read set', () => {
   const OLD_RULE = /^(get_|list_|read_|ping$|view_|analyze_|describe_|transcribe_|compare_|detect_|extract_|preview_)/
   // Reads whose names the pattern does not match — each one a review
   // decision, listed here so a stray annotation is still caught.
-  const READS_BEYOND_THE_REGEX = ['export_captions', 'check_composition', 'render_frames']
+  const READS_BEYOND_THE_REGEX = ['export_captions', 'check_composition', 'render_frames', 'open_companion']
   it('is exactly the set the retired name regex named, plus the reads added since', () => {
     const byAnnotation = merged.filter((t) => (t.annotations as Ann | undefined)?.readOnlyHint === true).map((t) => t.name).sort()
     const byRegex = [...merged.filter((t) => OLD_RULE.test(t.name)).map((t) => t.name), ...READS_BEYOND_THE_REGEX].sort()
@@ -80,7 +80,10 @@ describe('the read set', () => {
       export_captions: { format: 'srt' },
       check_composition: {},
     }
-    const reads = MCP_TOOL_DEFS.filter((d) => d.annotations.readOnlyHint === true).map((d) => d.name)
+    // Answered by the MCP host from what it holds, never by the actor: the
+    // companion link (`mcp/companionTool.ts`).
+    const hostServed = new Set(['open_companion'])
+    const reads = MCP_TOOL_DEFS.filter((d) => d.annotations.readOnlyHint === true && !hostServed.has(d.name)).map((d) => d.name)
     expect(reads.sort()).toEqual(Object.keys(argsFor).sort()) // a new TS read tool needs its probe here
     for (const name of reads) {
       const before = actor.snapshot()

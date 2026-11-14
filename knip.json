@@ -20,7 +20,7 @@
       "project": ["src/**/*.{ts,tsx}"],
       // Ambient Vite type-augmentation file: consumed by tsc via `include`,
       // never `import`ed, so Knip's static graph can't see its use.
-      "ignore": ["src/renderer/vite-env.d.ts"],
+      "ignore": ["src/renderer/vite-env.d.ts", "src/main/companion/raw.d.ts"],
       "ignoreDependencies": [
         // napi-rs native module: `file:native` resolves to a .node binary
         // Knip can't follow. Imported by main/index.ts + mcp/*.

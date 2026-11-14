@@ -134,6 +134,9 @@ const motifTuning = resolveMotifTuning(process.env)
 /// especially visible in e2e, which launches and closes the app rapidly. No-op
 /// once the window (or its webContents) is gone.
 function emitToRenderer(event: string, payload: unknown): void {
+  // Ahead of the guard: an export or an agent call goes on while the window is
+  // gone, and an open companion page still shows it.
+  companionHub?.observe(event, payload)
   const w = mainWindow
   if (!w || w.isDestroyed()) return
   const wc = w.webContents
@@ -156,6 +159,9 @@ app.on('second-instance', bringMainWindowForward)
 // it (the TS actor host's resource-list relay) are built BEFORE the host
 // exists. Hold it module-scoped and set it right after `startMcpHost` resolves.
 let mcpHostRef: import('./mcp/index.js').McpHost | null = null
+// The companion page's state and the editor's bridge to it. Module-scoped for
+// `emitToRenderer` and the main window's lifecycle, which both predate it.
+let companionHub: import('./companion/hub.js').CompanionHub | null = null
 let tsHost: import('./state/ts-actor-host.js').TsActorHost | null = null
 // The clip-compute job registry (ADR 0121). Module-scoped for the `onEvent`
 // closure's sake, like `tsHost`: native phase events route to it, and it is
@@ -446,7 +452,14 @@ async function createWindow(): Promise<BrowserWindow> {
   // window only leaves secondary disposed-frame/texture-release errors.
   win.webContents.on('render-process-gone', (_event, details) => {
     console.error(`[renderer:gone] reason=${details.reason} exitCode=${details.exitCode}`)
+    companionHub?.editorGone()
   })
+  // A reload replaces the document, and the companion bridge with it, without
+  // a detach. Same-document and subframe navigations leave it in place.
+  win.webContents.on('did-start-navigation', (details) => {
+    if (details.isMainFrame && !details.isSameDocument) companionHub?.editorGone()
+  })
+  win.on('closed', () => companionHub?.editorGone())
 
   if (isDev) {
     await win.loadURL(process.env['ELECTRON_RENDERER_URL']!)
@@ -1275,7 +1288,21 @@ app.whenReady().then(async () => {
   // MCP serves the shipped skill from the bundle itself, so what it reads is
   // this version's whatever became of the userData mirror.
   configureSkillBundle(skillsSource.isPackaged ? skillsSource.resourcesSkills : skillsSource.devSkills)
+  const { CompanionHub } = await import('./companion/hub.js')
+  const { mountCompanionRoutes } = await import('./companion/routes.js')
+  const { loadOrCreatePageKey } = await import('./companion/pageKey.js')
+  const hub = companionHub = new CompanionHub({
+    getTsHost: () => tsHost,
+    sendToEditor: (event, payload) => emitToRenderer(event, payload),
+    focusEditor: bringMainWindowForward,
+    language: () => appSettings.get().language ?? null,
+  })
+  const pageKey = loadOrCreatePageKey(app.getPath('userData'))
   const mcpHost = await startMcpHost(backend, {
+    companion: {
+      mount: (appExpress, deps) => mountCompanionRoutes(appExpress, hub, pageKey, deps),
+      link: (mcpUrl) => `${mcpUrl.replace(/\/mcp$/, '/companion')}#k=${pageKey}`,
+    },
     getTsHost: () => tsHost,
     getSpeech,
     getVlm,
@@ -1617,6 +1644,12 @@ app.whenReady().then(async () => {
         case 'export_job_path_exists': return exportPathExists(a.path);
         case 'export_job_suggest_name': return suggestExportName(a.path);
       }
+    }
+    // Before any await: the attach and the detach of one bridge must reach the
+    // hub in the order the renderer sent them.
+    if (channel.startsWith('companion_')) {
+      if (_e.sender !== mainWindow?.webContents) throw new Error('The companion bridge requires the editor window');
+      return companionHub!.handleInvoke(channel, args);
     }
     if (channel === 'project_open_state') return tsHost!.openedProject();
     if (channel === 'project_startup_open') {

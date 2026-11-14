@@ -827,6 +827,7 @@ describe('weftcut mcp over real stdio + HTTP', () => {
     /// committed Rust catalog in place of the native addon. Prompt and resource
     /// reads echo what they were asked, so equal results also mean equal params
     /// reached the app.
+    const COMPANION_LINK = `http://127.0.0.1:1/companion#k=${'0'.repeat(64)}`
     const idGen = uuidV7Gen()
     const actor = createActor({ initial: blankProject(idGen, 'parity'), idGen, clock: () => '<TS>' })
     const host = { actor, mcpCall: (n: string, a: string) => actor.mcpCall(n, a), motifTool: () => [] }
@@ -840,7 +841,7 @@ describe('weftcut mcp over real stdio + HTTP', () => {
           JSON.stringify({ ok: true, result: { contents: [{ uri, mimeType: 'text/plain', text: uri }] } }),
         mcpCallTool: async () => { throw new Error('no native tool is called by this gate') },
       }
-      return buildMcpServer(backend as never, { getTsHost: () => host as never })
+      return buildMcpServer(backend as never, { getTsHost: () => host as never, companionLink: COMPANION_LINK })
     }
 
     async function directClient(): Promise<Client> {
@@ -893,6 +894,13 @@ describe('weftcut mcp over real stdio + HTTP', () => {
       // catalog, not two empty sides.
       expect(direct.get('tools/list')).toMatchObject({ result: { tools: expect.arrayContaining([expect.objectContaining({ name: 'read_project' })]) } })
       for (const method of direct.keys()) expect.soft(shimmed.get(method), method).toEqual(direct.get(method))
+    })
+
+    it('hands out the same companion link through the shim as over HTTP', async () => {
+      const ask = (client: Client) => outcome(client, 'tools/call', { name: 'open_companion', arguments: {} })
+      const direct = await ask(await directClient())
+      expect(direct).toMatchObject({ result: { structuredContent: { url: COMPANION_LINK } } })
+      expect(await ask(await sdkClient(target, appData))).toEqual(direct)
     })
   })
 })

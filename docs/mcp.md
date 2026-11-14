@@ -251,6 +251,50 @@ two manifests' name, version and description equal, and fails when the
 plugin's files change while `version` does not: `content.lock.json` maps each
 version to a hash of the files, and a change needs a new version and entry.
 
+### Companion page
+
+A page beside the chat, for a desktop host's built-in browser: the project's
+name and the latest agent call, play / pause and the time, a small timeline to
+seek on, and export progress. It reads the project and drives the player; it
+never edits. A terminal host has nowhere to show it.
+
+- **`open_companion {}`** answers `{ url }`:
+  `http://127.0.0.1:<port>/companion#k=<page key>`. It carries no UI resource,
+  so calling it draws nothing in the chat; the agent opens the link in the
+  host's browser or gives it to the user. It answers with or without a project
+  open, and the same over `weftcut mcp` as over HTTP.
+- **Served by the app** on the MCP listener (`main/companion/`). The page's
+  files are plain ES modules in `apps/desktop/cli/companion/`, where the
+  `weftcut` binary's module can also reach them; the app bundles them at
+  build time.
+- **The page key** is 32 random bytes, hex, in `<userData>/companion_key.json`
+  (`0600` on POSIX), apart from the MCP bearer: neither opens the other's
+  routes. It is made once and never rotated by itself, and *Refresh* in
+  Connect agent leaves it alone. With the port reused (the stored port is the
+  first one tried), a page left open finds the app again after a restart.
+- **Routes.** `GET /companion` and `/companion/ui/*` need no key: they hold no
+  project data, and the key travels in the fragment, which a browser never
+  sends. `/companion/state`, `/companion/events` (server-sent events read
+  over fetch) and `POST /companion/control` (`play`, `pause`, `seek` with
+  `t_us`, `focus`) need `Authorization: Bearer <page key>`. A missing or wrong
+  key, the MCP bearer included, is `401` and a `Companion request rejected`
+  row (never the header); a `Host` other than the loopback bind is `403`. A
+  control while no editor is attached is `409 editor_not_ready`. The page's
+  CSP admits only its own files and origin, with no inline script or style.
+- **Sandboxed frames.** A host that frames the page with
+  `sandbox="allow-scripts"` gives it an opaque origin; its requests arrive
+  with `Origin: null`, which alone gets `Access-Control-Allow-Origin: null`.
+  The key, not the origin, authorizes. No cookie or storage is used, so such a
+  frame works as a tab does.
+- **What the editor does for it.** The editor window attaches a bridge once
+  it can hear main; main answers with what it needs and afterwards tells that
+  bridge only of changes. While a page is open the editor pushes its transport
+  (at most every 100 ms); with none open it pushes nothing. A reload, a crash
+  or the window closing drops the attach.
+- **What the page says**, first that holds: the link no longer works (`401`);
+  WeftCut is not running (it retries after 1 s, backing off to 5 s); WeftCut
+  is opening the project; no project is open. It speaks the app's UI language.
+
 ## Multi-agent semantics
 
 - The single-writer actor serializes all mutations regardless of source; each
@@ -384,7 +428,7 @@ dispatches nothing. Default-deny: only `APP_SCOPE_TOOLS` /
 `APP_SCOPE_RESOURCES` in `main/mcp/mutationTools.ts` answer — the
 Motif library tools, the export preset tools,
 `get_export_status`, `cancel_export`, `retry_export`, `open_project`,
-`create_project`, `read_project` for views `session` / `effects` / `taste` /
+`create_project`, `open_companion`, `read_project` for views `session` / `effects` / `taste` /
 `skill`, and the resources `project://session`, `project://taste`,
 `effects://catalog`, `motifs://current`, `skill://weftcut/*`. One predicate (`servesWithoutProject`) serves both gates;
 `mcp.project-scope` sweeps the whole catalog. `install_motif` with no project

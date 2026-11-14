@@ -33,7 +33,7 @@ const PINNED_APP_SCOPE = [
   'list_export_presets', 'create_export_preset', 'update_export_preset', 'delete_export_preset',
   'get_export_status', 'cancel_export', 'retry_export',
   'list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'preview_motif',
-  'open_project', 'create_project',
+  'open_project', 'create_project', 'open_companion',
 ]
 
 /** A production-shaped host over an in-memory filesystem: nothing is open. */
