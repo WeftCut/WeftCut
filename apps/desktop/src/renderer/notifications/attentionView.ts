@@ -5,7 +5,7 @@
 // without a renderer. Layout and behaviour: `docs/status-log.md` §
 // Notification center.
 //
-// Not saved is deliberately absent: it has its own entry in the bar, and a
+// Save failed is deliberately absent: it has its own entry in the bar, and a
 // second one here would be a duplicate way in.
 
 import type { AppNotice, AppNoticeCode } from "../../shared/ipc";

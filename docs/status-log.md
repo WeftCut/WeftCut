@@ -160,12 +160,12 @@ next splash ("did not exit normally"). Storage failures never block startup.
 ### Bar
 
 ```
-[2] 14:32 [Agent · Claude] Added 3 layers to track V1  ⌃ │ ◔ Export 42% · 3 more │ ⚠ Not saved │ 🔔•
+[2] 14:32 [Agent · Claude] Added 3 layers to track V1  ⌃ │ ◔ Export 42% · 3 more │ ⚠ Save failed │ 🔔•
 ```
 
 The bar answers three questions, one element each: what just happened (the
 log line), what is running (the work pill), what needs me (the bell). Colour
-carries severity only. Not saved is the one exception: a problem with a place
+carries severity only. Save failed is the one exception: a problem with a place
 of its own, because it must never be missed ([ADR 0166](adr/0166-the-status-bar-answers-three-questions.md)). Every popover opens
 from its own trigger (`components/useStatusPopover.ts`): one is open at a
 time, a second click or a click outside closes it, Escape closes it and hands
@@ -210,7 +210,7 @@ already says what it is has no title.
   (`state/derivativeJobsStore.ts`), since agent mode unmounts the bar; bench
   scripts read their count, undelayed, from the E2E hook's
   `derivativeJobCount()`.
-- **Not saved** (`NotSavedPill`, amber): present only while main reports the
+- **Save failed** (`SaveFailedPill`, amber): present only while main reports the
   project failing to save (`shared/save-status.ts`, [data-model.md §
   Saving](data-model.md#saving)). Its tooltip gives the reason and the last
   successful save. Its popover is the recovery in place: the
@@ -228,10 +228,10 @@ already says what it is has no title.
 - Modes are not badges: a switch the user is in shows on its own control (the
   link override on its Quick Actions toggle and the dimmed link accents).
 - A visually hidden `aria-live="polite"` region announces errors with the
-  unseen count, and the turn to not saved (once per turn; its log row is a
+  unseen count, and the turn to failing saves (once per turn; its log row is a
   `Warn`).
 
-The bar's right group grows to the bell, the work pill and Not saved at once;
+The bar's right group grows to the bell, the work pill and Save failed at once;
 the log line truncates to make room. Everything sizes off `--ui-px` and the
 font-size tokens, so all six layout themes scale it, and popovers keep inside
 the window at each theme's minimum size.
@@ -284,7 +284,7 @@ where keys are entered, an offered update under Help · Check for Updates.
 | Environment notices (`app:notices`: keyring, native decode, agent Skill) | the notice's | Got it | the notice was gone, then returns |
 | Update offered, not skipped | info | Skip this version (none while restarting) | a different version is offered |
 
-Not saved is not listed: it has its own entry, and two ways in to one problem
+Save failed is not listed: it has its own entry, and two ways in to one problem
 would be one too many. Dismissals are main-owned app settings
 (`dismissed_notices`, and for an update the same `skipped_update_version` the
 update dialog's skip writes: [releases.md](releases.md)), so they survive

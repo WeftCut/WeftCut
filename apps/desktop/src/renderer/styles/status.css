@@ -21,7 +21,7 @@
    Status bar (see docs/status-log.md).
 
    Three questions, one element each: the log line (what just happened),
-   the work pill (what is running), the bell (what needs me). Not saved is
+   the work pill (what is running), the bell (what needs me). Save failed is
    the one problem with a place of its own. Colour carries severity only.
    =================================================================== */
 
@@ -273,16 +273,16 @@
   }
 }
 
-/* Not saved (NotSavedPill): the warn notices' amber as a tinted pill. */
-.not-saved-pill {
+/* Save failed (SaveFailedPill): the warn notices' amber as a tinted pill. */
+.save-failed-pill {
   border-color: color-mix(in srgb, var(--color-amber-300) 32%, transparent);
   border-radius: 999px;
   background: color-mix(in srgb, var(--color-amber-300) 12%, transparent);
   color: var(--color-amber-300);
 }
 
-.not-saved-pill:hover,
-.not-saved-pill[aria-expanded="true"] {
+.save-failed-pill:hover,
+.save-failed-pill[aria-expanded="true"] {
   background: color-mix(in srgb, var(--color-amber-300) 22%, transparent);
 }
 
@@ -509,38 +509,38 @@
   display: none;
 }
 
-/* Not saved's popover: the reason first, then the facts and the actions. */
-.not-saved-details {
+/* The Save failed popover: the reason first, then the facts and the actions. */
+.save-failed-details {
   width: min(calc(320 * var(--ui-px)), calc(100vw - calc(24 * var(--ui-px))));
   gap: calc(4 * var(--ui-px));
   padding: calc(12 * var(--ui-px)) calc(14 * var(--ui-px));
 }
 
-.not-saved-details p {
+.save-failed-details p {
   margin: 0;
 }
 
-.not-saved-reason {
+.save-failed-reason {
   font-weight: 500;
 }
 
-.not-saved-body,
-.not-saved-folder,
-.not-saved-result {
+.save-failed-body,
+.save-failed-folder,
+.save-failed-result {
   color: var(--muted-foreground);
   font-size: var(--font-size-caption);
   line-height: var(--line-height-body);
 }
 
-.not-saved-folder {
+.save-failed-folder {
   overflow-wrap: anywhere;
 }
 
-.not-saved-result {
+.save-failed-result {
   color: var(--foreground);
 }
 
-.not-saved-actions {
+.save-failed-actions {
   display: flex;
   flex-wrap: wrap;
   gap: calc(8 * var(--ui-px));

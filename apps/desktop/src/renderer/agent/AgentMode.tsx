@@ -25,7 +25,7 @@ import { selectChange, selectTack, useReviewFocus, type ReviewTarget } from "./r
 import { useChangeMarkLabel, useCompositionChangeRanges, useReviewConsumer } from "./reviewStore";
 import { Button } from "@/components/ui/button";
 import { WindowControls } from "../components/WindowControls";
-import { NotSavedPill, type SaveFailureActions } from "../components/NotSavedPill";
+import { SaveFailedPill, type SaveFailureActions } from "../components/SaveFailedPill";
 import type { NoticeSettingsPage } from "../notifications/appNotices";
 import { NotificationBell } from "../notifications/NotificationBell";
 import { useUiScale } from '../settings/layoutTheme';
@@ -41,7 +41,7 @@ import { UI_METRICS } from '../settings/uiMetrics';
 /// Both the menu bar and editor-mode status bar are hidden — in
 /// agent mode the record panel IS the surface for activity. The two status
 /// bar entries that cannot wait for the editor ride the titlebar instead:
-/// Not saved and the bell, their popovers dropping down in place.
+/// Save failed and the bell, their popovers dropping down in place.
 interface AgentModeProps {
   summary: ProjectSummary | null;
   /// Switch the renderer layout back to the editor.
@@ -151,7 +151,7 @@ export const AgentMode = forwardRef(function AgentMode(
           button lives here too — top-right, ahead of the caption
           buttons. */}
       <div className="agent-titlebar" data-drag-region>
-        <NotSavedPill actions={saveActions} placement="down" />
+        <SaveFailedPill actions={saveActions} placement="down" />
         <Button
           className="agent-exit-button"
           onClick={onExit}

@@ -82,7 +82,7 @@ import { MotifPicker } from "./motifs/MotifPicker";
 import { tenBitExportCapable } from "./render/exportSettings";
 import { MotifStaleDialog } from "./panels/MotifStaleDialog";
 import { noticeLogMessage, useAppNotices, type NoticeSettingsPage } from "./notifications/appNotices";
-import type { SaveFailureActions } from "./components/NotSavedPill";
+import type { SaveFailureActions } from "./components/SaveFailedPill";
 import { useDerivativeJobEvents } from "./state/derivativeJobsStore";
 import { open as shellOpen } from "@/bridge/shell";
 import { PickOverlayHost } from "./colorpick/PickOverlayHost";
@@ -614,7 +614,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
     }
   }, [run, t]);
 
-  // Not saved's actions. Retry is the explicit save itself, not `run`: the
+  // The Save failed pill's actions. Retry is the explicit save itself, not `run`: the
   // popover shows its outcome in place.
   const saveFailureActions = useMemo<SaveFailureActions>(() => ({
     retry: projectSave,

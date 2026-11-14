@@ -1,5 +1,5 @@
 // The renderer's mirror of main's save status (shared/save-status.ts): whether
-// the open project is reaching disk. State only — the Not saved pill and its
+// the open project is reaching disk. State only — the Save failed pill and its
 // popover decide what to draw from it.
 
 import { create } from "zustand";

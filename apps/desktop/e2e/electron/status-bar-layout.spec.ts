@@ -12,11 +12,11 @@ import zhCN from '../../src/renderer/i18n/locales/zh-CN'
 
 // Every status-bar item at once, at each layout theme's minimum window size,
 // in both UI languages: the log line on the left (with its unseen-error count)
-// gives way and truncates, and the right group (the work pill, Not saved, the
+// gives way and truncates, and the right group (the work pill, Save failed, the
 // bell) keeps its one row inside the bar, each item whole, none overlapping.
-// Each popover (work, Not saved, the bell's notification center), open, stays
+// Each popover (work, Save failed, the bell's notification center), open, stays
 // inside the window above the bar, and opening one closes the other. Then agent
-// mode, whose titlebar carries the same Not saved pill and bell beside the exit
+// mode, whose titlebar carries the same Save failed pill and bell beside the exit
 // button and the caption buttons: one row, inside the bar, no overlaps, and
 // both popovers drop down inside the window. Layout properties only, never
 // pixels; screenshots and boxes are attached for a human to look at.
@@ -36,7 +36,7 @@ const LOCALES = { 'en-US': enUS, 'zh-CN': zhCN } as const
 /** The right group's items, by the selector each renders with. */
 const RIGHT_ITEMS = {
   work: '[data-testid="status-bar-work"]',
-  notSaved: '[data-testid="not-saved-pill"]',
+  saveFailed: '[data-testid="save-failed-pill"]',
   bell: '[data-testid="status-bar-bell"]',
 } as const
 
@@ -123,14 +123,14 @@ for (const locale of Object.keys(LOCALES) as Array<keyof typeof LOCALES>) {
         job_id: randomUUID(), tool: 'transcribe_clip', layer_id: '', media_id: 'layout-probe', window: { t_start_us: 0, t_end_us: 1_000_000 },
         phase: { kind: 'inferring', done: 1, total: 2 }, phase_since: now, started_at: now, origin: { kind: 'user' },
         callers: 1, caller_disconnected: false, request_ids: [] }] }
-      const notSaved: SaveStatus = { state: 'failing', revision: 1_000_000_000, since: now, last_saved_at: null, code: 'ENOSPC',
+      const saveFailed: SaveStatus = { state: 'failing', revision: 1_000_000_000, since: now, last_saved_at: null, code: 'ENOSPC',
         path: '/home/u/Projects/status-layout/project.json', dir: '/home/u/Projects/status-layout' }
       await sendToRenderer(app, [
         [COMPUTE_JOBS_EVENT, jobs],
         ['media:job_started', { media_id: 'layout-probe', kind: 'proxy' }],
         ['agent_activity:changed', activity],
         ['app:notices', [NOTICE]],
-        [SAVE_STATUS_EVENT, notSaved],
+        [SAVE_STATUS_EVENT, saveFailed],
       ])
       // An update on offer: main's own status handler answers it; the bell polls.
       await app.evaluate(({ ipcMain }) => {
@@ -140,7 +140,7 @@ for (const locale of Object.keys(LOCALES) as Array<keyof typeof LOCALES>) {
 
       const bar = page.locator('.status-bar')
       const workPopover = page.locator('.work-pill-details')
-      const notSavedPopover = page.getByTestId('not-saved-details')
+      const saveFailedPopover = page.getByTestId('save-failed-details')
       const attention = page.getByTestId('attention-center')
       const win = await app.browserWindow(page)
 
@@ -216,16 +216,16 @@ for (const locale of Object.keys(LOCALES) as Array<keyof typeof LOCALES>) {
         await page.keyboard.press('Escape')
         await expect(workPopover).toHaveCount(0)
 
-        // Not saved: the reason and the three ways out.
-        await bar.locator(RIGHT_ITEMS.notSaved).click()
-        await expect(notSavedPopover).toBeVisible()
-        await expect(notSavedPopover.getByRole('button')).toHaveCount(3)
-        await capture('not-saved-popover')
-        const notSavedBox = await popoverBox(notSavedPopover)
+        // Save failed: the reason and the three ways out.
+        await bar.locator(RIGHT_ITEMS.saveFailed).click()
+        await expect(saveFailedPopover).toBeVisible()
+        await expect(saveFailedPopover.getByRole('button')).toHaveCount(3)
+        await capture('save-failed-popover')
+        const saveFailedBox = await popoverBox(saveFailedPopover)
 
-        // The bell, opened over Not saved: the review, the update and the notice.
+        // The bell, opened over Save failed: the review, the update and the notice.
         await bar.locator(RIGHT_ITEMS.bell).click()
-        await expect(notSavedPopover).toHaveCount(0)
+        await expect(saveFailedPopover).toHaveCount(0)
         await expect(attention).toBeVisible()
         for (const key of ['review', 'update', `notice:${NOTICE.code}`]) await expect(attention.locator(`[data-attention="${key}"]`)).toBeVisible()
         await capture('attention-popover')
@@ -234,12 +234,12 @@ for (const locale of Object.keys(LOCALES) as Array<keyof typeof LOCALES>) {
         await expect(attention).toHaveCount(0)
 
         // Agent mode at the same size: its titlebar holds every item it can show
-        // at once (Not saved, the exit button, the bell, the caption buttons off
+        // at once (Save failed, the exit button, the bell, the caption buttons off
         // macOS). Captured before any assertion, so the screenshots survive a failure.
         await page.locator('.menu-trigger').nth(2).click()
         await page.locator('.app-menu-item').filter({ hasText: new RegExp(`^${strings.view.enter_agent_mode}$`) }).click()
         const titlebar = page.locator('.agent-titlebar')
-        await expect(titlebar.getByTestId('not-saved-pill')).toBeVisible()
+        await expect(titlebar.getByTestId('save-failed-pill')).toBeVisible()
         await expect(titlebar.getByTestId('status-bar-bell')).toBeVisible()
         await expect(titlebar.locator('.agent-exit-button')).toBeVisible()
         if (process.platform !== 'darwin') await expect(titlebar.locator('.window-controls')).toBeVisible()
@@ -268,12 +268,12 @@ for (const locale of Object.keys(LOCALES) as Array<keyof typeof LOCALES>) {
         await testInfo.attach(`agent-titlebar-${tag}-layout`, { body: JSON.stringify({ size, ...agentBar }, null, 2), contentType: 'application/json' })
 
         // Both titlebar popovers drop down, in place: agent mode stays.
-        await titlebar.getByTestId('not-saved-pill').click()
-        await expect(notSavedPopover).toBeVisible()
-        await capture('agent-not-saved-popover')
-        const agentNotSavedBox = await popoverBox(notSavedPopover)
+        await titlebar.getByTestId('save-failed-pill').click()
+        await expect(saveFailedPopover).toBeVisible()
+        await capture('agent-save-failed-popover')
+        const agentSaveFailedBox = await popoverBox(saveFailedPopover)
         await titlebar.getByTestId('status-bar-bell').click()
-        await expect(notSavedPopover).toHaveCount(0)
+        await expect(saveFailedPopover).toHaveCount(0)
         await expect(attention).toBeVisible()
         await capture('agent-attention-popover')
         const agentAttentionBox = await popoverBox(attention)
@@ -308,7 +308,7 @@ for (const locale of Object.keys(LOCALES) as Array<keyof typeof LOCALES>) {
         expect(layout.message.scrollWidth, `[${tag}] the log message truncates rather than pushing items out`).toBeGreaterThan(layout.message.clientWidth)
 
         expectPopoverPlaced(`[${tag}] the work popover`, workBox, { above: layout.bar.top })
-        expectPopoverPlaced(`[${tag}] the Not saved popover`, notSavedBox, { above: layout.bar.top })
+        expectPopoverPlaced(`[${tag}] the Save failed popover`, saveFailedBox, { above: layout.bar.top })
         expectPopoverPlaced(`[${tag}] the notification center`, attentionBox, { above: layout.bar.top })
 
         // The titlebar has no text meant to truncate: its free space (the drag
@@ -329,7 +329,7 @@ for (const locale of Object.keys(LOCALES) as Array<keyof typeof LOCALES>) {
         for (let i = 1; i < ordered.length; i++) {
           expect(ordered[i]!.left, `[${tag}] ${ordered[i - 1]!.name} overlaps ${ordered[i]!.name}: ${agentNumbers}`).toBeGreaterThanOrEqual(ordered[i - 1]!.right - 0.5)
         }
-        expectPopoverPlaced(`[${tag}] agent mode's Not saved popover`, agentNotSavedBox, { below: agentBar.bar.bottom })
+        expectPopoverPlaced(`[${tag}] agent mode's Save failed popover`, agentSaveFailedBox, { below: agentBar.bar.bottom })
         expectPopoverPlaced(`[${tag}] agent mode's notification center`, agentAttentionBox, { below: agentBar.bar.bottom })
       }
     } finally {

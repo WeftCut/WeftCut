@@ -7,7 +7,7 @@ import { useLogStore } from "./store";
 import type { LogEntry, LogLevel } from "../ipc";
 import { AppIcon } from "@/components/AppIcon";
 import type { ExportState } from "../panels/ExportPanel";
-import { NotSavedPill, type SaveFailureActions } from "../components/NotSavedPill";
+import { SaveFailedPill, type SaveFailureActions } from "../components/SaveFailedPill";
 import { saveFailureReason } from "../components/saveFailure";
 import type { NoticeSettingsPage } from "../notifications/appNotices";
 import { NotificationBell } from "../notifications/NotificationBell";
@@ -16,7 +16,7 @@ import { useSaveFailure } from "../state/saveStatusStore";
 /// Persistent status bar pinned to the bottom of the editor view. It answers
 /// three questions, one element each: what just happened (the log line, whose
 /// leading segment opens the console), what is running (the work pill), what needs me (the
-/// bell). Not saved is the one problem with a place of its own.
+/// bell). Save failed is the one problem with a place of its own.
 ///
 /// Layout and behaviour: `docs/status-log.md`.
 interface StatusBarProps {
@@ -120,7 +120,7 @@ export function StatusBar({
       </div>
       <div className="status-bar-right">
         <WorkPill backgroundExport={backgroundExport} />
-        <NotSavedPill actions={saveActions} />
+        <SaveFailedPill actions={saveActions} />
         <span className="status-bar-divider" aria-hidden="true" />
         <NotificationBell onOpenSettings={onOpenSettings} />
       </div>

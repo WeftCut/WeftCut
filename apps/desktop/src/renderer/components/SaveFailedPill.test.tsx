@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "../i18n";
 import { receiveSaveStatus, useSaveStatusStore } from "../state/saveStatusStore";
-import { NotSavedPill, type SaveFailureActions } from "./NotSavedPill";
+import { SaveFailedPill, type SaveFailureActions } from "./SaveFailedPill";
 
 let revision = 0;
 const fail = (code: string | null, last_saved_at: string | null = null) =>
@@ -18,8 +18,8 @@ const actions = (over: Partial<SaveFailureActions> = {}): SaveFailureActions => 
   openFolder: vi.fn(async (_dir: string) => {}),
   ...over,
 });
-const pill = () => screen.queryByTestId("not-saved-pill");
-const details = () => screen.queryByTestId("not-saved-details");
+const pill = () => screen.queryByTestId("save-failed-pill");
+const details = () => screen.queryByTestId("save-failed-details");
 
 afterEach(() => {
   cleanup();
@@ -27,13 +27,13 @@ afterEach(() => {
   revision = 0;
 });
 
-describe("NotSavedPill", () => {
+describe("SaveFailedPill", () => {
   it("is absent while saving works, and comes and goes with the failing state", () => {
-    render(<NotSavedPill actions={actions()} />);
+    render(<SaveFailedPill actions={actions()} />);
     expect(pill()).toBeNull();
     fail("ENOSPC");
-    expect(pill()!.textContent).toBe("Not saved");
-    expect(pill()!.getAttribute("aria-label")).toBe("Not saved: The disk is full.");
+    expect(pill()!.textContent).toBe("Save failed");
+    expect(pill()!.getAttribute("aria-label")).toBe("Save failed: The disk is full.");
     // The reason and the last good save show on hover, without opening it.
     expect(pill()!.getAttribute("title")).toBe("The disk is full.\nNot saved since the project was opened");
     recover();
@@ -41,7 +41,7 @@ describe("NotSavedPill", () => {
   });
 
   it("leads its popover with the reason, then the body, the last save and the folder, a line each", () => {
-    render(<NotSavedPill actions={actions()} />);
+    render(<SaveFailedPill actions={actions()} />);
     fail("ENOSPC");
     fireEvent.click(pill()!);
     expect(pill()!.getAttribute("aria-expanded")).toBe("true");
@@ -55,7 +55,7 @@ describe("NotSavedPill", () => {
   });
 
   it("opens below its trigger in the agent titlebar", () => {
-    render(<NotSavedPill actions={actions()} placement="down" />);
+    render(<SaveFailedPill actions={actions()} placement="down" />);
     fail("EACCES");
     fireEvent.click(pill()!);
     expect(details()!.classList).toContain("is-below");
@@ -64,7 +64,7 @@ describe("NotSavedPill", () => {
   it("retries: says it is saving, and a success takes the pill and popover away", async () => {
     let finish!: () => void;
     const retry = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
-    render(<NotSavedPill actions={actions({ retry })} />);
+    render(<SaveFailedPill actions={actions({ retry })} />);
     fail("ENOSPC");
     fireEvent.click(pill()!);
     fireEvent.click(screen.getByRole("button", { name: "Retry now" }));
@@ -80,18 +80,18 @@ describe("NotSavedPill", () => {
 
   it("says when a retry fails again, and lets it be tried once more", async () => {
     const retry = vi.fn(async () => { throw new Error("ENOSPC"); });
-    render(<NotSavedPill actions={actions({ retry })} />);
+    render(<SaveFailedPill actions={actions({ retry })} />);
     fail("ENOSPC");
     fireEvent.click(pill()!);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Retry now" })); });
-    expect(screen.getByRole("status").textContent).toBe("Still not saved.");
+    expect(screen.getByRole("status").textContent).toBe("Save failed again.");
     expect((screen.getByRole("button", { name: "Retry now" }) as HTMLButtonElement).disabled).toBe(false);
     expect(pill()).not.toBeNull();
   });
 
   it("hands over to Save As, closing the popover for its dialog", () => {
     const saveAs = vi.fn();
-    render(<NotSavedPill actions={actions({ saveAs })} />);
+    render(<SaveFailedPill actions={actions({ saveAs })} />);
     fail("ENOSPC");
     fireEvent.click(pill()!);
     fireEvent.click(screen.getByRole("button", { name: "Save As…" }));
@@ -102,7 +102,7 @@ describe("NotSavedPill", () => {
 
   it("opens the project folder, and says so when it cannot", async () => {
     const openFolder = vi.fn(async (_dir: string) => { throw new Error("no file manager"); });
-    render(<NotSavedPill actions={actions({ openFolder })} />);
+    render(<SaveFailedPill actions={actions({ openFolder })} />);
     fail("ENOENT");
     fireEvent.click(pill()!);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Open folder" })); });
@@ -112,7 +112,7 @@ describe("NotSavedPill", () => {
   });
 
   it("does not come back open when saving fails again after a recovery", () => {
-    render(<NotSavedPill actions={actions()} />);
+    render(<SaveFailedPill actions={actions()} />);
     fail("ENOSPC");
     fireEvent.click(pill()!);
     expect(details()).not.toBeNull();

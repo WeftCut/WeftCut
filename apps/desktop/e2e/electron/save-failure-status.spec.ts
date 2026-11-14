@@ -9,7 +9,7 @@ import type { RendererOS } from '../../src/renderer/platform'
 import enUS from '../../src/renderer/i18n/locales/en-US'
 
 // A project whose saves fail end to end: the real autosave, the real atomic
-// write, main's state, the Not saved pill and its popover in the status bar
+// write, main's state, the Save failed pill and its popover in the status bar
 // and in agent mode's titlebar, and the recovery through Retry now
 // (docs/data-model.md § Saving).
 //
@@ -34,7 +34,7 @@ function layerIds(projectFile: string): string[] {
   return Object.values(p.compositions).flatMap((c) => c.tracks.flatMap((t) => t.layers.map((l) => l.id)))
 }
 
-test('a project that cannot be saved shows Not saved, offers recovery, and clears on the next good save', async () => {
+test('a project that cannot be saved shows Save failed, offers recovery, and clears on the next good save', async () => {
   test.setTimeout(120_000 + PILL_WITHIN_MS)
   const { app, page } = await launchApp()
   try {
@@ -51,7 +51,7 @@ test('a project that cannot be saved shows Not saved, offers recovery, and clear
     await invokeCmd(page, 'project_open', { path: dir })
     await expect(page.locator('.splash-screen')).toHaveCount(0, { timeout: 15_000 })
 
-    const pill = page.locator('.status-bar').getByTestId('not-saved-pill')
+    const pill = page.locator('.status-bar').getByTestId('save-failed-pill')
     expect(await invokeCmd<SaveStatus>(page, SAVE_STATUS_CHANNEL)).toMatchObject({ state: 'ok' })
     const blocker = projectFile + ATOMIC_TEMP_SUFFIX
     fs.mkdirSync(blocker)
@@ -69,10 +69,10 @@ test('a project that cannot be saved shows Not saved, offers recovery, and clear
 
     // The pill's popover is the recovery: the reason first, the folder, and
     // the three ways out. Escape closes it and hands focus back.
-    const details = page.getByTestId('not-saved-details')
+    const details = page.getByTestId('save-failed-details')
     await pill.click()
     await expect(details).toBeVisible()
-    await expect(details.locator('.not-saved-reason')).toHaveText(reasonText(status.code))
+    await expect(details.locator('.save-failed-reason')).toHaveText(reasonText(status.code))
     await expect(details).toContainText(status.dir)
     for (const name of [enUS.save_status.retry, enUS.save_status.save_as, enUS.save_status.open_folder]) {
       await expect(details.getByRole('button', { name, exact: true })).toBeVisible()
@@ -87,14 +87,14 @@ test('a project that cannot be saved shows Not saved, offers recovery, and clear
     await page.locator('.app-menu-item').filter({ hasText: /^Enter Agent Mode$/ }).click()
     const shell = page.locator('.agent-mode-shell')
     await expect(shell).toBeVisible()
-    const agentPill = page.locator('.agent-titlebar').getByTestId('not-saved-pill')
+    const agentPill = page.locator('.agent-titlebar').getByTestId('save-failed-pill')
     await agentPill.click()
     await expect(details).toBeVisible()
     await expect(shell).toBeVisible()
     await expect(details).toContainText(reasonText(status.code))
     const below = await page.evaluate(() => {
       const bar = document.querySelector('.agent-titlebar')!.getBoundingClientRect()
-      const box = document.querySelector('[data-testid="not-saved-details"]')!.getBoundingClientRect()
+      const box = document.querySelector('[data-testid="save-failed-details"]')!.getBoundingClientRect()
       return { barBottom: bar.bottom, top: box.top }
     })
     expect(below.top, `the popover drops below the titlebar: ${JSON.stringify(below)}`).toBeGreaterThanOrEqual(below.barBottom - 0.5)

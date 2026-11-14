@@ -1,4 +1,4 @@
-// A status popover (the work pill, Not saved, the bell): its trigger toggles
+// A status popover (the work pill, Save failed, the bell): its trigger toggles
 // it, a press outside or Escape closes it, and Escape hands focus back to the
 // trigger. Not modal — the editor stays usable while it is open. One is open
 // at a time: opening one closes the other, whether by pointer or keyboard. A

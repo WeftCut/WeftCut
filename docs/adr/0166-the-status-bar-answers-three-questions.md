@@ -41,7 +41,7 @@ The bar answers three questions, one element each:
 
 Colour carries severity and nothing else.
 
-One exception: **Not saved** keeps a place in the bar, beside the bell, with
+One exception: **Save failed** keeps a place in the bar, beside the bell, with
 its own popover holding the recovery actions. It must never be missed, and a
 row among the bell's could be. It is not also listed in the bell; one problem
 has one way in.
@@ -57,7 +57,7 @@ that version only — one meaning of dismissing an update, wherever it is done.
 Dismissals are main-owned app settings, so they survive restarts; review
 items cannot be dismissed, they leave once reviewed.
 
-In agent mode the titlebar carries the same Not saved pill and the same bell,
+In agent mode the titlebar carries the same Save failed pill and the same bell,
 their popovers dropping down in place.
 
 ## Consequences

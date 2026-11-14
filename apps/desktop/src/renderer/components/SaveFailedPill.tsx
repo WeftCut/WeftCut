@@ -17,12 +17,12 @@ export interface SaveFailureActions {
   openFolder: (dir: string) => Promise<void>;
 }
 
-/// "Not saved": shown only while main reports the project failing to save
+/// "Save failed": shown only while main reports the project failing to save
 /// (shared/save-status.ts). The one problem with its own place in the bar —
 /// it must never be missed, so it is not one row among the bell's. Its popover
 /// is the recovery in place: the reason, then Retry, Save As and the folder.
 /// `down` in the agent-mode titlebar.
-export function NotSavedPill({ actions, placement = "up" }: {
+export function SaveFailedPill({ actions, placement = "up" }: {
   actions: SaveFailureActions;
   placement?: "up" | "down";
 }) {
@@ -38,8 +38,8 @@ export function NotSavedPill({ actions, placement = "up" }: {
       <button
         {...triggerProps}
         type="button"
-        className="status-bar-slot not-saved-pill"
-        data-testid="not-saved-pill"
+        className="status-bar-slot save-failed-pill"
+        data-testid="save-failed-pill"
         title={hint}
         aria-label={`${t("save_status.badge")}: ${reason}`}
       >
@@ -49,11 +49,11 @@ export function NotSavedPill({ actions, placement = "up" }: {
       {open && (
         <section
           id={detailsId}
-          className={`status-popover not-saved-details${placement === "down" ? " is-below" : ""}`}
+          className={`status-popover save-failed-details${placement === "down" ? " is-below" : ""}`}
           aria-label={t("save_status.badge")}
-          data-testid="not-saved-details"
+          data-testid="save-failed-details"
         >
-          <NotSavedDetails failure={failure} reason={reason} actions={actions} onLeave={close} />
+          <SaveFailedDetails failure={failure} reason={reason} actions={actions} onLeave={close} />
         </section>
       )}
     </div>
@@ -61,7 +61,7 @@ export function NotSavedPill({ actions, placement = "up" }: {
 }
 
 /// Split out so the retry outcome resets with each opening.
-function NotSavedDetails({ failure, reason, actions, onLeave }: {
+function SaveFailedDetails({ failure, reason, actions, onLeave }: {
   failure: Extract<SaveStatus, { state: "failing" }>;
   reason: string;
   actions: SaveFailureActions;
@@ -92,12 +92,12 @@ function NotSavedDetails({ failure, reason, actions, onLeave }: {
 
   return (
     <>
-      <p className="not-saved-reason">{reason}</p>
-      <p className="not-saved-body">{t("save_status.card_body")}</p>
-      <p className="not-saved-body">{lastSavedText(t, failure.last_saved_at)}</p>
-      <p className="not-saved-folder">{t("save_status.folder", { dir: failure.dir })}</p>
+      <p className="save-failed-reason">{reason}</p>
+      <p className="save-failed-body">{t("save_status.card_body")}</p>
+      <p className="save-failed-body">{lastSavedText(t, failure.last_saved_at)}</p>
+      <p className="save-failed-folder">{t("save_status.folder", { dir: failure.dir })}</p>
       {result !== null && (
-        <p className="not-saved-result" role="status">
+        <p className="save-failed-result" role="status">
           {result.kind === "retrying"
             ? t("save_status.retrying")
             : result.kind === "retry_failed"
@@ -105,7 +105,7 @@ function NotSavedDetails({ failure, reason, actions, onLeave }: {
               : t("save_status.open_folder_failed", { detail: result.detail })}
         </p>
       )}
-      <div className="not-saved-actions">
+      <div className="save-failed-actions">
         <Button variant="default" size="xs" onClick={() => void retry()} disabled={result?.kind === "retrying"}>
           {t("save_status.retry")}
         </Button>

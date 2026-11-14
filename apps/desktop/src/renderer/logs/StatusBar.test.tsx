@@ -139,7 +139,7 @@ describe("bar contents", () => {
   });
 });
 
-describe("not saved", () => {
+describe("save failed", () => {
   let revision = 0;
   const failing = (code: string | null, last_saved_at: string | null = null) => ({
     state: "failing" as const, revision: ++revision, since: "2026-01-02T03:04:05.000Z", last_saved_at,
@@ -150,20 +150,20 @@ describe("not saved", () => {
   it("shows its pill on the right while saving fails, and announces the turn to failing once", async () => {
     const { bar, announced } = renderBar();
     await act(async () => {});
-    const pill = () => bar.querySelector<HTMLElement>('[data-testid="not-saved-pill"]');
+    const pill = () => bar.querySelector<HTMLElement>('[data-testid="save-failed-pill"]');
     expect(pill()).toBeNull();
 
     act(() => receiveSaveStatus(failing("ENOSPC")));
     expect(pill()!.closest(".status-bar-right")).not.toBeNull();
-    expect(announced()).toBe("Project not saved: The disk is full.");
+    expect(announced()).toBe("Save failed: The disk is full.");
 
     // A new reason is not a second turn.
     act(() => receiveSaveStatus(failing("EROFS", "2026-01-02T03:00:00.000Z")));
-    expect(announced()).toBe("Project not saved: The disk is full.");
+    expect(announced()).toBe("Save failed: The disk is full.");
 
     act(() => receiveSaveStatus({ state: "ok", revision: ++revision }));
     expect(pill()).toBeNull();
     act(() => receiveSaveStatus(failing("EACCES")));
-    expect(announced()).toBe("Project not saved: WeftCut is not allowed to write to the project folder.");
+    expect(announced()).toBe("Save failed: WeftCut is not allowed to write to the project folder.");
   });
 });
