@@ -1,7 +1,7 @@
 # MCP Server & Agent UX
 
-WeftCut is an MCP server. External agents (Claude Code, Claude Desktop, Codex,
-Cursor, custom clients) edit the open project through a structured tool
+WeftCut is an MCP server. External agents (ChatGPT / Codex, Claude Code,
+Claude Desktop, DeepSeek Harness, Cursor, custom clients) edit the open project through a structured tool
 surface, over **stdio through the `weftcut` binary** (recommended) or **HTTP-direct**.
 Per-tool arguments, return shapes and refusals live in the advertised catalog
 (tool descriptions and schemas) — that is the contract agents read. This doc
@@ -89,18 +89,18 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
 ## Connection UX
 
 **Settings → Agent → Connect agent**:
-- **Primary: stdio config**, one snippet per client (Codex TOML, Claude
-  and Cursor JSON) plus a self-configuration prompt. The entry is the
+- **Primary: stdio config**, one tab per agent host, drawn from the host table
+  (`shared/agentHosts.ts`, [ADR 0167](adr/0167-the-app-registers-the-server-and-a-plugin-carries-content.md);
+  [below](#agent-hosts)), plus a self-configuration prompt. The entry is the
   profile's copy of the binary with the one argument `mcp`, and no
-  environment. The `Generic` tab prints
-  the connection facts unwrapped, because MCP standardises the protocol, not
-  the config file (`mcpServers` is a Claude Desktop convention). An `mcp add`
-  one-liner accompanies a snippet where the client's CLI can express the whole
+  environment. The `Generic` tab prints the connection facts unwrapped,
+  because MCP standardises the protocol, not the config file. An `mcp add`
+  one-liner accompanies a snippet where the host's CLI can express the whole
   entry (Codex and Claude Code for stdio; Claude Code alone for HTTP —
   `codex mcp add --url` takes only an env-var name for the bearer). Windows
   paths are double-quoted for Git Bash and PowerShell.
 - **Advanced: HTTP-direct** — URL, masked token, the same snippets in URL +
-  header form; breaks when the app is closed and goes stale when port or
+  header form, for each host whose config can name one; breaks when the app is closed and goes stale when port or
   token change. Until the binary is installed (an unpackaged run before
   `npm run build:cli`) HTTP renders as primary; "starting…" shows until the port is bound.
 - **`initialize` carries `instructions` on both transports**: the session
@@ -133,6 +133,123 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   `io.modelcontextprotocol/skills` extension is not declared (no `skills/list`
   or `skills/get`), because hosts have barely adopted it; the URIs conform, so
   declaring it later is additive.
+
+### Agent hosts
+
+What differs between hosts is data in one table, `shared/agentHosts.ts`: the
+config format and file, whether that file takes an HTTP entry, and the preview
+surface the host's desktop app offers beside the chat (a view in its side
+panel, a loopback page in its side browser, or none; a terminal session of
+the same host has none). Nothing reads the surface yet. The block below is
+rendered from the table; `main/mcp/agentHosts.test.ts` fails when it differs,
+and its expected side is the text to paste.
+
+<!-- agent-hosts:begin -->
+
+| Host | Config file | HTTP direct | Preview surface |
+|---|---|---|---|
+| ChatGPT / Codex | `~/.codex/config.toml` | yes | side panel |
+| Claude Code | `~/.claude.json`; project: `.mcp.json` | yes | side browser |
+| Claude Desktop | macOS `~/Library/Application Support/Claude/claude_desktop_config.json`, Windows `%APPDATA%\Claude\claude_desktop_config.json`, Linux `~/.config/Claude/claude_desktop_config.json` | no | none |
+| DeepSeek Harness | `~/.dsh/cordis.patch.yml` | yes | side browser |
+| Cursor | `~/.cursor/mcp.json`; project: `.cursor/mcp.json` | yes | side browser |
+| Generic | the client's own docs | yes | none |
+
+The stdio entry per host, `<userData>/cli/weftcut` standing for the
+profile's copy of the binary:
+
+**ChatGPT / Codex**
+
+```toml
+[mcp_servers.weftcut]
+command = "<userData>/cli/weftcut"
+args = ["mcp"]
+```
+
+Or in a terminal: `codex mcp add weftcut -- <userData>/cli/weftcut mcp`
+
+**Claude Code**
+
+```json
+{
+  "mcpServers": {
+    "weftcut": {
+      "type": "stdio",
+      "command": "<userData>/cli/weftcut",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
+}
+```
+
+Or in a terminal: `claude mcp add weftcut -s user -- <userData>/cli/weftcut mcp`
+
+**Claude Desktop**
+
+```json
+{
+  "mcpServers": {
+    "weftcut": {
+      "command": "<userData>/cli/weftcut",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
+}
+```
+
+**DeepSeek Harness**
+
+```yaml
+- insert:
+    - id: mcp-weftcut
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: weftcut
+        transport: stdio
+        command: "<userData>/cli/weftcut"
+        args: ["mcp"]
+```
+
+**Cursor**
+
+```json
+{
+  "mcpServers": {
+    "weftcut": {
+      "command": "<userData>/cli/weftcut",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
+}
+```
+
+**Generic**
+
+```text
+transport: stdio
+command:   <userData>/cli/weftcut
+arg:       mcp
+```
+
+<!-- agent-hosts:end -->
+
+**The content plugin** (`plugins/weftcut/`) carries a Claude manifest
+(`.claude-plugin/plugin.json`), an Agent Plugins manifest (`plugin.json`) and
+one small skill with no version in it. The skill sends the agent to the
+served skill (`skill://weftcut/SKILL.md`) before its first tool call and, when
+the `weftcut` tools are missing, sends the user to Settings → Agent. The plugin
+declares no MCP server, hook or executable: the app registers the server
+(ADR 0167). Its catalog lives in a separate repository whose one entry is a
+`git-subdir` source pointing here. `main/mcp/contentPlugin.test.ts` holds the
+two manifests' name, version and description equal, and fails when the
+plugin's files change while `version` does not: `content.lock.json` maps each
+version to a hash of the files, and a change needs a new version and entry.
 
 ## Multi-agent semantics
 

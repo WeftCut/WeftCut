@@ -1982,23 +1982,13 @@ const zhCN: Resources = {
     cli_note: "或者在终端运行以下命令",
     copy_command: "复制命令",
     tabs: {
-      codex: "Codex",
-      claude: "Claude",
-      cursor: "Cursor",
       generic: "通用",
     },
-    hint: {
-      codex: "粘贴到 ~/.codex/config.toml",
-      claude: "粘贴到 .mcp.json（项目级）或 ~/.claude.json",
-      cursor: "粘贴到 ~/.cursor/mcp.json 或项目的 .cursor/mcp.json",
-      generic: "连接信息，请参照具体客户端文档填写对应值",
-    },
-    hint_stdio: {
-      codex: "粘贴到 ~/.codex/config.toml",
-      claude: "粘贴到 .mcp.json（项目级）或 ~/.claude.json",
-      cursor: "粘贴到 ~/.cursor/mcp.json 或项目的 .cursor/mcp.json",
-      generic: "连接信息，请参照具体客户端文档填写对应值",
-    },
+    paste_into: "粘贴到 {{places}}",
+    place_project: "项目的 {{path}}",
+    place_or: " 或 ",
+    hint_facts: "连接信息，请参照具体客户端文档填写对应值",
+    http_unsupported: "{{host}} 只支持本地命令，请通过 stdio 配置连接。",
   },
   settings: {
     auto_install_updates_on_quit: '关闭应用时自动安装可用更新',

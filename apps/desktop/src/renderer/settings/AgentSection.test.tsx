@@ -2,10 +2,9 @@
 //
 // Covers the Settings "Agent" tab (AgentSection): a single generic setup
 // prompt — MCP entry plus skill install, for the agent to carry out itself —
-// plus one copyable config snippet per agent client (Codex TOML / Claude /
-// Cursor JSON, and raw connection facts under Generic — MCP fixes the
-// protocol, never the config file). Codex and Claude also get a `mcp add`
-// one-liner beside the snippet. With the `weftcut` binary installed (cli_path
+// plus one copyable config snippet per agent host, one tab per entry of the
+// host table (shared/agentHosts.ts; the snippet formats are tested there).
+// Codex and Claude Code also get a `mcp add` one-liner beside the snippet. With the `weftcut` binary installed (cli_path
 // set) the stdio config is the primary snippet — no token in it — and
 // HTTP-direct moves behind an "advanced" disclosure; without it (an unpackaged
 // run before build:cli) the HTTP snippet renders as primary, token masked until revealed, copy always
@@ -34,6 +33,7 @@ vi.mock("../ipc", async (importActual) => {
 
 import i18n from "../i18n";
 import { AgentSection } from "./AgentSection";
+import { AGENT_HOSTS, stdioSnippet } from "../../shared/agentHosts";
 
 /// No binary installed → the HTTP-primary layout (an unpackaged run before
 /// `build:cli`). Its skill state matches: a dev tree before `build:skills`
@@ -147,7 +147,7 @@ describe("AgentSection", () => {
     render(<AgentSection />);
     await snippetText();
 
-    await userEvent.click(screen.getByRole("tab", { name: "Claude" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Claude Code" }));
     const claude = JSON.parse((await snippetText()).trim());
     expect(claude.mcpServers.weftcut.type).toBe("http");
     expect(claude.mcpServers.weftcut.url).toBe(INFO.url);
@@ -183,7 +183,7 @@ describe("AgentSection", () => {
   it("gives Claude an HTTP `mcp add` one-liner, token masked until revealed", async () => {
     render(<AgentSection />);
     await snippetText();
-    await userEvent.click(screen.getByRole("tab", { name: "Claude" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Claude Code" }));
     expect(await cliText()).toBe(
       `claude mcp add -s user -t http weftcut ${INFO.url} ` +
         '-H "Authorization: Bearer ••••••••••••••••"',
@@ -193,6 +193,16 @@ describe("AgentSection", () => {
     expect(await cliText()).toContain(
       `-H "Authorization: Bearer ${INFO.bearer_token}"`,
     );
+  });
+
+  it("says so instead of a snippet for a host whose config takes no HTTP entry", async () => {
+    render(<AgentSection />);
+    await snippetText();
+    await userEvent.click(screen.getByRole("tab", { name: "Claude Desktop" }));
+    const panel = await screen.findByRole("tabpanel");
+    expect(panel.querySelector("pre")).toBeNull();
+    expect(panel.textContent).toContain("Claude Desktop takes local commands only");
+    expect(screen.queryByRole("button", { name: "Copy config" })).toBeNull();
   });
 
   it("reveals the token in the snippet on demand", async () => {
@@ -308,13 +318,34 @@ describe("AgentSection with the weftcut binary installed", () => {
       args: ["mcp"],
     });
 
-    await userEvent.click(screen.getByRole("tab", { name: "Claude" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Claude Code" }));
     const claude = JSON.parse((await snippetText()).trim());
     expect(claude.mcpServers.weftcut).toEqual({
       type: "stdio",
       command: INFO_CLI.cli_path,
       args: ["mcp"],
     });
+  });
+
+  it("has a tab for every host in the table, in its order", async () => {
+    render(<AgentSection />);
+    await snippetText();
+    const tabs = screen.getAllByRole("tab").map((tab) => tab.textContent);
+    expect(tabs).toEqual(AGENT_HOSTS.map((h) => h.name));
+  });
+
+  it("each tab's snippet is the table's, under a hint naming the host's file", async () => {
+    render(<AgentSection />);
+    await snippetText();
+    await userEvent.click(screen.getByRole("tab", { name: "DeepSeek Harness" }));
+    const panel = await screen.findByRole("tabpanel");
+    const host = AGENT_HOSTS.find((h) => h.name === "DeepSeek Harness")!;
+    expect(panel.querySelector("pre")?.textContent).toBe(
+      stdioSnippet(host, { command: INFO_CLI.cli_path, args: ["mcp"] }),
+    );
+    expect(panel.textContent).toContain("Paste into ~/.dsh/cordis.patch.yml");
+    // No terminal command writes a Harness entry.
+    expect(await cliText()).toBeNull();
   });
 
   it("the Generic tab shows the command and its argument with no config wrapper", async () => {
@@ -338,7 +369,7 @@ describe("AgentSection with the weftcut binary installed", () => {
 
     expect(await cliText()).toBe(`codex mcp add weftcut -- ${launch}`);
 
-    await userEvent.click(screen.getByRole("tab", { name: "Claude" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Claude Code" }));
     expect(await cliText()).toBe(`claude mcp add weftcut -s user -- ${launch}`);
   });
 

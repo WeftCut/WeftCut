@@ -104,8 +104,8 @@ Rejected:
 - The binary exists in a profile only after the app has run there once. A
   config comes from the running app's Connect panel, so a client never holds
   one before that.
-- `weftcut` is not on `PATH`. A package that must name the command without a
-  path has to wait for that.
+- `weftcut` is not on `PATH`. A package names no command: the app registers
+  the server with each host, and a plugin carries content only (ADR 0167).
 - An AppImage that was moved is found again only after it is opened once
   from its new place.
 - On macOS with several copies of the app and a stale `launch.json`,

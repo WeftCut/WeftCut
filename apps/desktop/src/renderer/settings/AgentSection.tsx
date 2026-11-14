@@ -20,124 +20,31 @@ import { reveal as revealInShell } from "@/bridge/shell";
 import { AppInput } from "../components/AppInput";
 import { Button } from "@/components/ui/button";
 import { AppIcon } from "@/components/AppIcon";
+import { rendererOS, type RendererOS } from "../platform";
+import {
+  AGENT_HOSTS,
+  httpCommand,
+  httpSnippet as hostHttpSnippet,
+  placePath,
+  stdioCommand,
+  stdioSnippet as hostStdioSnippet,
+  type AgentHost,
+  type AgentHostOs,
+  type StdioEntry,
+} from "../../shared/agentHosts";
 
 const REFRESH_INTERVAL_MS = 1000;
 const MASKED_TOKEN = "••••••••••••••••";
 
-/// Agent clients with a known MCP config format, in sidebar order. Each gets
-/// its own snippet tab. `generic` is not a fourth format: MCP standardises the
-/// protocol, never the config file, so the tab for "some other client" shows
-/// the raw connection facts and leaves the wrapper to that client's docs.
-type ClientId = "codex" | "claude" | "cursor" | "generic";
-const CLIENTS: readonly ClientId[] = ["codex", "claude", "cursor", "generic"];
+const HOST_OS: Record<RendererOS, AgentHostOs> = {
+  mac: "mac",
+  windows: "windows",
+  linux: "linux",
+};
 
-/// What a stdio client runs: the `weftcut` binary in the profile and its
-/// `mcp` subcommand. No environment: the binary finds the profile from where
-/// it sits.
-interface StdioCfg {
-  command: string;
-  args: string[];
-}
-
-function stdioCfgFrom(info: McpInfoView): StdioCfg | null {
+function stdioEntryFrom(info: McpInfoView): StdioEntry | null {
   if (!info.cli_path) return null;
   return { command: info.cli_path, args: ["mcp"] };
-}
-
-/// Render `key: value` rows with the values column-aligned — what the
-/// `generic` tab shows in place of a config snippet. One row per arg, so a
-/// value containing a space stays unambiguous.
-function factsBlock(rows: readonly (readonly [string, string])[]): string {
-  const width = Math.max(...rows.map(([k]) => k.length)) + 2;
-  return rows.map(([k, v]) => `${k}:`.padEnd(width) + v).join("\n");
-}
-
-/// Shell-quote one CLI argument. Whitespace forces quoting, and so does a
-/// backslash: a bare Windows path survives PowerShell but a POSIX shell eats
-/// the separators (`C:\ud` → `C:ud`), and Windows users do run these in Git
-/// Bash. Nothing needs escaping *inside* the quotes — these values are
-/// filesystem paths, a URL and a header, none of which can carry a double
-/// quote, and a double-quoted backslash is literal in both shells.
-function shq(s: string): string {
-  return /[\s\\]/.test(s) ? `"${s}"` : s;
-}
-
-/// Ready-to-paste stdio config for one client. JSON.stringify doubles as the
-/// TOML basic-string encoder — TOML's escape set is a superset of JSON's, so
-/// Windows backslash paths survive both formats.
-function buildStdioSnippet(client: ClientId, cfg: StdioCfg): string {
-  if (client === "generic") {
-    return factsBlock([
-      ["transport", "stdio"],
-      ["command", cfg.command],
-      ...cfg.args.map((a) => ["arg", a] as const),
-    ]);
-  }
-  if (client === "codex") {
-    return [
-      "[mcp_servers.weftcut]",
-      `command = ${JSON.stringify(cfg.command)}`,
-      `args = [${cfg.args.map((a) => JSON.stringify(a)).join(", ")}]`,
-    ].join("\n");
-  }
-  const server = client === "claude" ? { type: "stdio", ...cfg } : cfg;
-  return JSON.stringify({ mcpServers: { weftcut: server } }, null, 2);
-}
-
-/// Ready-to-paste HTTP-direct config for one client (the advanced path).
-/// Formats follow each client's official docs:
-/// - codex:   `~/.codex/config.toml`, `[mcp_servers.<name>]` table; HTTP
-///   servers declare `url` + static `http_headers` (no inline bearer field).
-/// - claude:  `.mcp.json` / `~/.claude.json`; a `url` entry is an error
-///   without `"type": "http"`.
-/// - cursor:  `~/.cursor/mcp.json`; `url` + `headers`, no `type` field.
-/// - generic: the endpoint and header alone, no wrapper.
-function buildHttpSnippet(client: ClientId, url: string, token: string): string {
-  if (client === "generic") {
-    return factsBlock([
-      ["transport", "streamable HTTP"],
-      ["url", url],
-      ["header", `Authorization: Bearer ${token}`],
-    ]);
-  }
-  if (client === "codex") {
-    return [
-      "[mcp_servers.weftcut]",
-      `url = "${url}"`,
-      `http_headers = { "Authorization" = "Bearer ${token}" }`,
-    ].join("\n");
-  }
-  const server =
-    client === "claude"
-      ? { type: "http", url, headers: { Authorization: `Bearer ${token}` } }
-      : { url, headers: { Authorization: `Bearer ${token}` } };
-  return JSON.stringify({ mcpServers: { weftcut: server } }, null, 2);
-}
-
-/// Terminal one-liner that makes the client write its own config entry —
-/// offered alongside the snippet because it finds the config file itself and
-/// merges rather than replaces. `null` where no such command exists: Cursor
-/// ships no MCP CLI, and `generic` has none by definition. Flags verified
-/// against `codex mcp add --help` (0.152.0) and `claude mcp add --help`.
-function buildStdioCli(client: ClientId, cfg: StdioCfg): string | null {
-  const launch = [cfg.command, ...cfg.args].map(shq).join(" ");
-  if (client === "codex") return `codex mcp add weftcut -- ${launch}`;
-  if (client === "claude") return `claude mcp add weftcut -s user -- ${launch}`;
-  return null;
-}
-
-/// HTTP-direct one-liner. Claude Code alone can express the whole entry:
-/// `codex mcp add --url` takes only `--bearer-token-env-var` (the *name* of an
-/// env var to read), never a literal header, so Codex's HTTP entry stays
-/// file-only and falls back to the snippet above it.
-function buildHttpCli(
-  client: ClientId,
-  url: string,
-  token: string,
-): string | null {
-  if (client !== "claude") return null;
-  const header = shq(`Authorization: Bearer ${token}`);
-  return `claude mcp add -s user -t http weftcut ${shq(url)} -H ${header}`;
 }
 
 /// The staged skill folder — the thing that gets copied, named by both the
@@ -165,7 +72,7 @@ function skillFolder(skillsDir: string): string {
 export function AgentSection() {
   const { t } = useTranslation();
   const [info, setInfo] = useState<McpInfoView | null>(null);
-  const [client, setClient] = useState<ClientId>("codex");
+  const [host, setHost] = useState<AgentHost>(AGENT_HOSTS[0]!);
   const [revealed, setRevealed] = useState(false);
   // Which copy button last fired, for its 1.5s "Copied!" flash. One key beats
   // a boolean per button now that six of them share the behaviour.
@@ -200,39 +107,39 @@ export function AgentSection() {
     };
   }, []);
 
-  const stdio = useMemo(() => (info ? stdioCfgFrom(info) : null), [info]);
+  const stdio = useMemo(() => (info ? stdioEntryFrom(info) : null), [info]);
 
   const stdioSnippet = useMemo(
-    () => (stdio ? buildStdioSnippet(client, stdio) : ""),
-    [stdio, client],
+    () => (stdio ? hostStdioSnippet(host, stdio) : ""),
+    [stdio, host],
   );
 
   const stdioCli = useMemo(
-    () => (stdio ? buildStdioCli(client, stdio) : null),
-    [stdio, client],
+    () => (stdio ? stdioCommand(host, stdio) : null),
+    [stdio, host],
   );
 
   // Displayed HTTP snippet masks the token unless revealed; the copy below
   // always uses the real one.
   const httpSnippet = useMemo(() => {
-    if (!info) return "";
-    return buildHttpSnippet(
-      client,
+    if (!info) return null;
+    return hostHttpSnippet(
+      host,
       info.url,
       revealed ? info.bearer_token : MASKED_TOKEN,
     );
-  }, [info, client, revealed]);
+  }, [info, host, revealed]);
 
   // Same masking rule as the snippet: the rendered command hides the token,
   // the copy carries the real one.
   const httpCli = useMemo(() => {
     if (!info) return null;
-    return buildHttpCli(
-      client,
+    return httpCommand(
+      host,
       info.url,
       revealed ? info.bearer_token : MASKED_TOKEN,
     );
-  }, [info, client, revealed]);
+  }, [info, host, revealed]);
 
   /// Write to the clipboard and flash `key`'s button for 1.5s. The clear is
   /// guarded so a later copy's flash isn't cut short by an earlier timer.
@@ -251,23 +158,24 @@ export function AgentSection() {
 
   const copyStdio = async () => {
     if (!stdio) return;
-    await copy("stdio", buildStdioSnippet(client, stdio));
+    await copy("stdio", hostStdioSnippet(host, stdio));
   };
 
   const copyStdioCli = async () => {
     if (!stdio) return;
-    const cli = buildStdioCli(client, stdio);
+    const cli = stdioCommand(host, stdio);
     if (cli) await copy("stdio-cli", cli);
   };
 
   const copyHttp = async () => {
     if (!info) return;
-    await copy("http", buildHttpSnippet(client, info.url, info.bearer_token));
+    const snippet = hostHttpSnippet(host, info.url, info.bearer_token);
+    if (snippet) await copy("http", snippet);
   };
 
   const copyHttpCli = async () => {
     if (!info) return;
-    const cli = buildHttpCli(client, info.url, info.bearer_token);
+    const cli = httpCommand(host, info.url, info.bearer_token);
     if (cli) await copy("http-cli", cli);
   };
 
@@ -350,16 +258,16 @@ export function AgentSection() {
     }
   };
 
-  /// Arrow keys move between client tabs (horizontal tablist).
+  /// Arrow keys move between host tabs (horizontal tablist).
   const onTabsKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const idx = CLIENTS.indexOf(client);
-    let next: ClientId | undefined;
-    if (e.key === "ArrowRight") next = CLIENTS[(idx + 1) % CLIENTS.length];
-    else if (e.key === "ArrowLeft")
-      next = CLIENTS[(idx - 1 + CLIENTS.length) % CLIENTS.length];
+    const idx = AGENT_HOSTS.indexOf(host);
+    const n = AGENT_HOSTS.length;
+    let next: AgentHost | undefined;
+    if (e.key === "ArrowRight") next = AGENT_HOSTS[(idx + 1) % n];
+    else if (e.key === "ArrowLeft") next = AGENT_HOSTS[(idx - 1 + n) % n];
     if (next) {
       e.preventDefault();
-      setClient(next);
+      setHost(next);
     }
   };
 
@@ -367,28 +275,43 @@ export function AgentSection() {
     return <p className="settings-status">{t("connect.starting")}</p>;
   }
 
-  /// One tablist per snippet block; both share the `client` selection so
+  /// Where the selected host's snippet goes, from the table's places on this
+  /// OS. A host with none (Generic) is told to follow its own docs.
+  const hint = () => {
+    if (host.places.length === 0) return t("connect.hint_facts");
+    const places = host.places.map((place) => {
+      const path = placePath(place, HOST_OS[rendererOS]);
+      return place.scope === "project"
+        ? t("connect.place_project", { path })
+        : path;
+    });
+    return t("connect.paste_into", {
+      places: places.join(t("connect.place_or")),
+    });
+  };
+
+  /// One tablist per snippet block; both share the `host` selection so
   /// switching tabs in the primary block also switches the advanced one.
-  const clientTabs = (section: string) => (
+  const hostTabs = (section: string) => (
     <div
       className="connect-tabs"
       role="tablist"
       aria-label={t("connect.snippets_heading")}
       onKeyDown={onTabsKeyDown}
     >
-      {CLIENTS.map((id) => (
+      {AGENT_HOSTS.map((h) => (
         <button
-          key={id}
+          key={h.id}
           type="button"
           role="tab"
-          id={`connect-tab-${section}-${id}`}
-          aria-selected={client === id}
+          id={`connect-tab-${section}-${h.id}`}
+          aria-selected={host === h}
           aria-controls={`connect-snippet-panel-${section}`}
-          tabIndex={client === id ? 0 : -1}
-          className={client === id ? "connect-tab is-active" : "connect-tab"}
-          onClick={() => setClient(id)}
+          tabIndex={host === h ? 0 : -1}
+          className={host === h ? "connect-tab is-active" : "connect-tab"}
+          onClick={() => setHost(h)}
         >
-          {t(`connect.tabs.${id}`)}
+          {t(`connect.tabs.${h.id}`, { defaultValue: h.name })}
         </button>
       ))}
     </div>
@@ -477,22 +400,30 @@ export function AgentSection() {
     </div>
   );
 
+  /// A host whose config cannot name an HTTP endpoint gets a line saying so
+  /// in place of the snippet.
   const httpSnippetBlock = (section: string) => (
     <div
       className="connect-panel"
       role="tabpanel"
       id={`connect-snippet-panel-${section}`}
-      aria-labelledby={`connect-tab-${section}-${client}`}
+      aria-labelledby={`connect-tab-${section}-${host.id}`}
     >
-      <div className="connect-snippet">
-        <div className="connect-snippet-header">
-          <span>{t(`connect.hint.${client}`)}</span>
-          {httpActions()}
+      {httpSnippet === null ? (
+        <p className="settings-blurb">
+          {t("connect.http_unsupported", { host: host.name })}
+        </p>
+      ) : (
+        <div className="connect-snippet">
+          <div className="connect-snippet-header">
+            <span>{hint()}</span>
+            {httpActions()}
+          </div>
+          <pre>
+            <code>{httpSnippet}</code>
+          </pre>
         </div>
-        <pre>
-          <code>{httpSnippet}</code>
-        </pre>
-      </div>
+      )}
       {cliBlock(httpCli, "http-cli", () => void copyHttpCli())}
     </div>
   );
@@ -547,16 +478,16 @@ export function AgentSection() {
         {stdio ? (
           <>
             <p className="settings-blurb">{t("connect.stdio_note")}</p>
-            {clientTabs("stdio")}
+            {hostTabs("stdio")}
             <div
               className="connect-panel"
               role="tabpanel"
               id="connect-snippet-panel-stdio"
-              aria-labelledby={`connect-tab-stdio-${client}`}
+              aria-labelledby={`connect-tab-stdio-${host.id}`}
             >
               <div className="connect-snippet">
                 <div className="connect-snippet-header">
-                  <span>{t(`connect.hint_stdio.${client}`)}</span>
+                  <span>{hint()}</span>
                   <div className="connect-snippet-actions">
                     {copyButton("stdio", () => void copyStdio())}
                   </div>
@@ -570,7 +501,7 @@ export function AgentSection() {
           </>
         ) : (
           <>
-            {clientTabs("http")}
+            {hostTabs("http")}
             {httpSnippetBlock("http")}
           </>
         )}
@@ -648,7 +579,7 @@ export function AgentSection() {
           {httpOpen && (
             <>
               <p className="settings-blurb">{t("connect.http_note")}</p>
-              {clientTabs("http")}
+              {hostTabs("http")}
               {httpSnippetBlock("http")}
             </>
           )}

@@ -2220,26 +2220,18 @@ const enUS = {
       "Connects directly to the running app. The connection drops once the app closes, and the configuration becomes invalid when the port or token changes. Unless your client does not support stdio, use the configuration above.",
     cli_note: "Or run the following command in a terminal",
     copy_command: "Copy command",
+    // Host names come from shared/agentHosts.ts and stay untranslated; only a
+    // tab whose label is a common word has an entry here.
     tabs: {
-      codex: "Codex",
-      claude: "Claude",
-      cursor: "Cursor",
       generic: "Generic",
     },
-    hint: {
-      codex: "Paste into ~/.codex/config.toml",
-      claude: "Paste into .mcp.json (project) or ~/.claude.json",
-      cursor: "Paste into ~/.cursor/mcp.json or a project's .cursor/mcp.json",
-      generic:
-        "Connection details — refer to your client's own docs to fill in each value.",
-    },
-    hint_stdio: {
-      codex: "Paste into ~/.codex/config.toml",
-      claude: "Paste into .mcp.json (project) or ~/.claude.json",
-      cursor: "Paste into ~/.cursor/mcp.json or a project's .cursor/mcp.json",
-      generic:
-        "Connection details — refer to your client's own docs to fill in each value.",
-    },
+    paste_into: "Paste into {{places}}",
+    place_project: "a project's {{path}}",
+    place_or: " or ",
+    hint_facts:
+      "Connection details — refer to your client's own docs to fill in each value.",
+    http_unsupported:
+      "{{host}} takes local commands only, so it connects through the stdio configuration.",
   },
   settings: {
     auto_install_updates_on_quit: 'Automatically install available updates when closing the app',
