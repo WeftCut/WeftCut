@@ -87,8 +87,8 @@ export function createExportLogMirror(): {
       message,
       i18n_key: i18nKey,
       i18n_args: i18nArgs,
-      // Fast runs never got a Started, so the terminal row stands alone; a
-      // dangling op_state would spin the running badge forever.
+      // Fast runs never got a Started, so the terminal row stands alone, with
+      // no op to close (the house three-state above).
       ...(op.startedOut ? { op_id: op.id, op_state: { state } } : {}),
       details,
     });

@@ -14,7 +14,7 @@
 // unaffected: an agent passes `escape_link` explicitly.
 //
 // Module-level store because its readers sit off App's props chain (the
-// Quick Actions strip, the status bar, the drag hook). Subscribers use the
+// Quick Actions strip, the clip accents, the drag hook). Subscribers use the
 // atomic hook below (`feedback_zustand_composite_selector`).
 
 import { create } from "zustand";
@@ -39,7 +39,7 @@ export function linkOverrideOn(): boolean {
   return useLinkOverrideStore.getState().on;
 }
 
-/// Subscription form, for the chip, the strip button and the accents that
+/// Subscription form, for the strip button and the accents that
 /// must re-render when the switch flips.
 export const useLinkOverride = (): boolean =>
   useLinkOverrideStore((s) => s.on);

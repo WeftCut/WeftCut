@@ -10,7 +10,7 @@ import enUS from '../../src/renderer/i18n/locales/en-US'
 
 // Quitting a project that cannot be saved (docs/data-model.md § Saving): the
 // question the quit asks, and on which window, what each answer leaves on disk
-// and running, that opening alone is not unsaved, and the save-failure card's
+// and running, that opening alone is not unsaved, and the Save failed popover's
 // Open folder. Saves fail as in save-failure-status.spec.ts: a directory where
 // atomicWrite puts its temp file.
 //
@@ -18,9 +18,9 @@ import enUS from '../../src/renderer/i18n/locales/en-US'
 // answer neither, and a real opener on a headless runner wedges the quit.
 
 const CANVAS = { width: 640, height: 360, fpsNum: 30, fpsDen: 1 }
-/** The badge appears at the first failed write once the edit has waited the
+/** The Save failed pill appears at the first failed write once the edit has waited the
  *  interval — a liveness bound, generous for a loaded runner. */
-const BADGE_WITHIN_MS = AUTOSAVE_INTERVAL_MIN_SECS * 1000 * 6
+const PILL_WITHIN_MS = AUTOSAVE_INTERVAL_MIN_SECS * 1000 * 6
 /** Liveness bounds: the quit's save is one write, and the teardown after it
  *  waits on every window and child. */
 const ASKED_WITHIN_MS = 30_000
@@ -28,7 +28,7 @@ const EXITED_WITHIN_MS = 60_000
 /** The dialog as main builds it in en-US, with an empty reason. */
 const QUIT_DIALOG = quitSaveDialog(false, '')
 /** Quiet window for a state that must NOT turn: were an untouched open
- *  counted as unsaved, its failing writes would turn Not saved at the
+ *  counted as unsaved, its failing writes would turn to Save failed at the
  *  interval's deadline, armed at the latest by the first write half a second
  *  after the open. Two intervals cover both. */
 const NOT_SAVED_QUIET_MS = AUTOSAVE_INTERVAL_MIN_SECS * 1000 * 2
@@ -51,7 +51,7 @@ interface FastAutosaveProject {
   blocker: string
 }
 
-/** A project with the shortest autosave interval, so the Not saved state turns
+/** A project with the shortest autosave interval, so the Save failed state turns
  *  within seconds; not opened yet. */
 async function writeFastAutosaveProject(page: Page): Promise<FastAutosaveProject> {
   const parent = tmpDir('weftcut-save-failure-quit-')
@@ -183,15 +183,15 @@ function samePath(p: string): string {
 }
 
 test('a quit that cannot save asks first: Cancel keeps the app editing, Retry once the cause is gone saves every edit and quits', async () => {
-  test.setTimeout(120_000 + BADGE_WITHIN_MS)
+  test.setTimeout(120_000 + PILL_WITHIN_MS)
   const { app, page } = await launchApp()
   const record = test.info().outputPath('quit-dialog.jsonl')
   try {
     const { projectFile, blocker } = await openFastAutosaveProject(page)
     fs.mkdirSync(blocker)
     const first = await addLayer(page)
-    const badge = page.getByTestId('save-status-badge')
-    await expect(badge).toBeVisible({ timeout: BADGE_WITHIN_MS })
+    const pill = page.getByTestId('save-failed-pill')
+    await expect(pill).toBeVisible({ timeout: PILL_WITHIN_MS })
 
     await answerQuitDialog(app, record, 'cancel')
     await recordWorkspaceSignals(app, page)
@@ -210,7 +210,7 @@ test('a quit that cannot save asks first: Cancel keeps the app editing, Retry on
     const second = await addLayer(page)
     const live = (await summary(page)).tracks.flatMap((t) => t.layers.map((l) => l.id))
     expect(live).toEqual(expect.arrayContaining([first, second]))
-    await expect(badge).toBeVisible()
+    await expect(pill).toBeVisible()
     expect(layerIds(projectFile)).not.toContain(first)
     // The failed saves aborted the close before it began: nothing working for
     // the project was told it was changing, or reset.
@@ -273,7 +273,7 @@ test('a quit with nothing unsaved asks nothing, even when the save fails', async
 
 // Opening is not an edit: a project whose file already holds it has nothing
 // to save, so a folder no save can land in says nothing until the user edits.
-test('a project opened where no save can land, and not edited, is not Not saved and quits without asking', async () => {
+test('a project opened where no save can land, and not edited, never shows Save failed and quits without asking', async () => {
   test.setTimeout(120_000 + NOT_SAVED_QUIET_MS)
   const { app, page } = await launchApp()
   const record = test.info().outputPath('quit-dialog.jsonl')
@@ -286,7 +286,7 @@ test('a project opened where no save can land, and not edited, is not Not saved 
     // happen cannot be polled for. The quit below does not depend on it.
     await page.waitForTimeout(NOT_SAVED_QUIET_MS)
     expect(await invokeCmd<SaveStatus>(page, SAVE_STATUS_CHANNEL)).toMatchObject({ state: 'ok' })
-    await expect(page.getByTestId('save-status-badge')).toHaveCount(0)
+    await expect(page.getByTestId('save-failed-pill')).toHaveCount(0)
 
     // The quit's save fails here too; with nothing unsaved it asks nothing.
     await answerQuitDialog(app, record, 'discard')
@@ -381,24 +381,25 @@ async function recordOpenedPaths(app: ElectronApplication): Promise<void> {
 const openedPaths = (app: ElectronApplication): Promise<string[]> =>
   app.evaluate(() => (globalThis as { __openedPaths?: string[] }).__openedPaths ?? [])
 
-test("the save-failure card's Open folder opens the project folder", async () => {
-  test.setTimeout(120_000 + BADGE_WITHIN_MS)
+test("the Save failed popover's Open folder opens the project folder", async () => {
+  test.setTimeout(120_000 + PILL_WITHIN_MS)
   const { app, page } = await launchApp()
   try {
     const { dir, blocker } = await openFastAutosaveProject(page)
     fs.mkdirSync(blocker)
     await addLayer(page)
-    const badge = page.getByTestId('save-status-badge')
-    await expect(badge).toBeVisible({ timeout: BADGE_WITHIN_MS })
+    const pill = page.getByTestId('save-failed-pill')
+    await expect(pill).toBeVisible({ timeout: PILL_WITHIN_MS })
 
     await recordOpenedPaths(app)
-    await badge.click()
-    const card = page.getByTestId('save-failure-card')
-    await card.getByRole('button', { name: enUS.save_status.open_folder }).click()
+    await pill.click()
+    const details = page.getByTestId('save-failed-details')
+    await details.getByRole('button', { name: enUS.save_status.open_folder, exact: true }).click()
     await expect.poll(() => openedPaths(app), { timeout: ASKED_WITHIN_MS }).toHaveLength(1)
     expect((await openedPaths(app)).map(samePath)).toEqual([samePath(dir)])
-    // The card reports a failed open in place; this one succeeded.
-    await expect(card.locator('.save-failure-result')).toHaveCount(0)
+    // The popover reports a failed open in place; this one succeeded.
+    await expect(details).toBeVisible()
+    await expect(details.locator('.save-failed-result')).toHaveCount(0)
   } finally {
     await closeApp(app)
   }

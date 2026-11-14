@@ -113,7 +113,7 @@ describe("logMutationFailure / refusalText", () => {
     });
   });
 
-  // The status bar's running badge clears only on a terminal row under the
+  // The console shows an op as running until a terminal row lands under the
   // same `op_id`, so a dialog that announced its run with a Started row must
   // hand that id here — on BOTH branches, refusal and prose alike.
   it("logMutationFailure closes the op it is handed, refusal or prose", () => {

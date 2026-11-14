@@ -1,6 +1,6 @@
 // The renderer's mirror of main's save status (shared/save-status.ts): whether
-// the open project is reaching disk. State only — the status-bar badge and the
-// System panel's card decide what to draw from it.
+// the open project is reaching disk. State only — the Save failed pill and its
+// popover decide what to draw from it.
 
 import { create } from "zustand";
 import { listen } from "@/bridge/events";

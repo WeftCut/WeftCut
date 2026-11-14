@@ -785,30 +785,6 @@
   margin-bottom: 0;
 }
 
-/* Status-bar pill: "Generating N derivatives…". */
-
-.derivatives-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: calc(6 * var(--ui-px));
-  padding: calc(2 * var(--ui-px)) calc(10 * var(--ui-px));
-  border-radius: 999px;
-  background: rgba(96, 165, 250, 0.12);
-  border: 1px solid rgba(96, 165, 250, 0.32);
-  color: var(--color-blue-200);
-  font-size: var(--font-size-caption);
-  white-space: nowrap;
-}
-
-.derivatives-pill-spinner {
-  width: calc(10 * var(--ui-px));
-  height: calc(10 * var(--ui-px));
-  border-radius: 50%;
-  border: 2px solid rgba(191, 219, 254, 0.25);
-  border-top-color: var(--color-blue-300);
-  animation: preview-spin 0.9s linear infinite;
-}
-
 /* Search-palette "reveal in media pool" flash (cleared after ~1.6 s). */
 .media-item.is-search-flash {
   outline: 2px solid var(--ring);

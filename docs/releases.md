@@ -60,10 +60,10 @@ own code hash. Main passes no updater on darwin.
 Packaged Windows/Linux builds use electron-updater against the public GitHub
 Release feed (`src/main/updates.ts`); dev, E2E and macOS builds do not check.
 Prereleases and downgrades are off. Checks run 5 s after startup and every six
-hours. An available update shows as a start-screen button and an "Update
-available" status-bar pill; neither interrupts work, and showing them only
-reads status. Clicking either opens the same dialog as Help → Check for
-Updates, which is the explicit check.
+hours. An available update shows as a start-screen button and a row in the
+editor's notification center (the status bar's bell); neither interrupts work,
+and showing them only reads status. Both open the same dialog as Help → Check
+for Updates, which is the explicit check.
 
 - `auto_install_updates_on_quit` (General settings, default on): downloads in
   the background and installs on normal exit, after the autosave flush, without
@@ -75,10 +75,12 @@ Updates, which is the explicit check.
   and the update available. A version-bound, one-use `update-resume.json`
   (`updateResume.ts`) restores the exact project or start screen without
   touching the reopen-on-launch preference.
-- "Skip this version" stores `skipped_update_version`: both indicators hide it
-  and background download and exit install step aside. Help → Check for
+- "Skip this version" stores `skipped_update_version`: the passive entries hide
+  it and background download and exit install step aside. Help → Check for
   Updates still offers it, and downloading from there clears the skip. A newer
-  release is never covered by an older skip. "Later" only closes the dialog.
+  release is never covered by an older skip. The notification center's update
+  row offers the same skip as its dismissal, so the row and the bell's dot go
+  for that version only; "Later" in the dialog only closes it.
 
 Windows updates show the NSIS progress page without location or mode choices
 and close on success; only update-and-restart relaunches. File replacement is

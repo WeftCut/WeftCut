@@ -75,9 +75,9 @@ export async function runDescribe(target: DescribeRunTarget): Promise<string> {
   const requestId = crypto.randomUUID();
   setDescribing({ mediaId, srcStartUs, srcEndUs, requestId, purpose });
   // Twenty seconds against a local model, so the run announces itself: without
-  // a Started row the status badge has nothing to spin on and the user cannot
-  // tell a slow engine from a dead one. One `op_id` pairs it with the terminal
-  // row (docs/status-log.md).
+  // a Started row the user cannot tell a slow engine from a dead one. One
+  // `op_id` pairs it with the terminal row, which closes the op in the console
+  // (docs/status-log.md).
   const opId = crypto.randomUUID();
   void logEmit({
     level: "info",
@@ -155,7 +155,7 @@ export async function runDescribe(target: DescribeRunTarget): Promise<string> {
     setDescribeError(purpose, message);
     setDescribing(null);
     // Under the run's own `op_id`, or the Started row above never closes and the
-    // status bar keeps a description spinning that has already failed. A
+    // console shows a description still running that has already failed. A
     // resource refusal is its summary, the native sentence in `details`.
     if (computeResourceReason(message) !== null) {
       const reason = computeFailureText(i18n.t, "describe_clip", message);

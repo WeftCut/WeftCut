@@ -3,11 +3,12 @@
 A status strip pinned to the bottom of the editor plus an expandable console
 overlay that lifts over the editor (drag-resizable, does not push it up). It
 records command results, long operations, MCP activity and errors. The agent
-panel's activity stream is separate (see the last section). The
-`derivatives-pill` in the strip is the liveness signal for background derivative
-jobs; `ExportPanel` and `QueuePanel` own export progress, except a background
-export (Preview during export): its `ExportProgressPill` in the strip shows a
-progress ring and percent, and opens its details and Cancel on click.
+panel's activity stream is separate (see the last section). The work pill
+(`WorkPill`) in the strip is the liveness signal for background work —
+a background export (Preview during export), derivative jobs, clip-compute
+jobs and agent calls; `ExportPanel` and `QueuePanel` own a foreground
+export's progress. The strip's bell opens the notification center: what needs
+the user and has no entry of its own.
 
 ## Backend
 
@@ -46,8 +47,8 @@ stamped by the bus; `level` (trace…error); `category` (`Shortcut`, `Mcp`, `Job
   keep secrets out of `message`. Over 4 KB serialized, `details` is replaced by
   `{ truncated, original_bytes, preview }`.
 - A long op emits one entry per state change under one `op_id`; the console
-  collapses them. **Every exit path owes a terminal row**, or the running badge
-  never clears.
+  collapses them under the first row, which shows the op's state. **Every exit
+  path owes a terminal row**, or the console shows the op as still running.
 
 ## Producers
 
@@ -82,7 +83,7 @@ or per chunk — the ring is 1000 entries.
   `System` row with the resolved encoder plan (`Warn` when the ffmpeg shadow
   refused).
 - **Derivative jobs** (`Job`, `Error` only): one row per failed job
-  (`jobs::emit_job_error`); no Started/Ok rows — the pill owns liveness.
+  (`jobs::emit_job_error`); no Started/Ok rows — the work pill owns liveness.
 - **MCP tool calls** (`Mcp`): one `withLog` decorator (`main/mcp/withLog.ts`) on
   every request handler, so new tools log automatically. Level from
   `routeMcpTool`: mutations `Info`, quick reads `Debug`, failures `Error`; any op
@@ -159,24 +160,144 @@ next splash ("did not exit normally"). Storage failures never block startup.
 ### Bar
 
 ```
-[●] 14:32  Added 3 layers to track v1 · agent  [N to review] [⚠2] [↻1] [⚠ Not saved] [System N] [Update] [Logs ▾]
+[2] 14:32 [Agent · Claude] Added 3 layers to track V1  ⌃ │ ◔ Export 42% · 3 more │ ⚠ Save failed │ 🔔•
 ```
 
-- Latest `Info+` message with time and source; an `Error` sticks 10 s
-  (`ERROR_STICKY_MS`); the error badge pulses once (1.5 s) on increment.
-- Badges: unreviewed agent changes (ADR 0115; opens the agent panel's Changes
-  tab), errors, running ops, running clip-compute jobs, project not saved,
-  system notices (opens the status panel with recovery cards), update offer
-  (`docs/releases.md`).
-- **Not saved** (`SaveStatusBadge`, amber): present only while main reports the
+The bar answers three questions, one element each: what just happened (the
+log line), what is running (the work pill), what needs me (the bell). Colour
+carries severity only. Save failed is the one exception: a problem with a place
+of its own, because it must never be missed ([ADR 0166](adr/0166-the-status-bar-answers-three-questions.md)). Every popover opens
+from its own trigger (`components/useStatusPopover.ts`): one is open at a
+time, a second click or a click outside closes it, Escape closes it and hands
+focus back. That Escape is the popover's alone: it does not also restore a
+maximized panel or leave blade mode, though a menu or dialog holding focus
+keeps its own. A popover closes with its trigger (the work ends, the save
+recovers) and never comes back open on its own. A popover whose trigger
+already says what it is has no title.
+
+- **Log line**: the latest `Info+` message — level dot, time, source,
+  message, in the console row's order; an `Error` sticks 10 s
+  (`ERROR_STICKY_MS`). The leading segment (dot, time, source and a chevron)
+  is the button that toggles the console, so the target keeps its width
+  whatever the message; the message only reads, its full text in the
+  tooltip. While errors
+  arrived since the console was last open, a red count replaces the level dot
+  (`unseenErrors` in `logs/store.ts`); opening the console clears it, and
+  errors that land while it is open never count. It pulses once (1.5 s) when
+  it appears. The button's accessible name is the count, the message and
+  "Open the log".
+- **Work pill** (`WorkPill`, model in `logs/workView.ts`): one pill for a
+  background export (Preview during export), clip-compute jobs (ADR 0121),
+  agent calls and derivative jobs. One piece of work is one row: an agent call
+  running a clip-compute job is that job's row, tagged with the agent. Work
+  shows once it has run 250 ms, so an agent's quick reads never flash; the
+  export, started by the user, shows at once. The label: a running export
+  leads with a progress ring and its percent, the rest counted after it
+  ("Export 42% · 3 more"); otherwise one row names what it does (Transcribing,
+  Generating derivatives…) and several are counted; when every row is queued
+  for admission the spinner becomes an hourglass. The popover groups rows by
+  owner, the export first. A lone group has no heading, its rows and the
+  trigger naming the work; with several, each is headed so they can be told
+  apart. A heading is the title alone. Actions sit at the bottom right: a row's
+  Cancel ends its last line (a waiting job's reason may wrap, its wait time and
+  Cancel staying on the last line), and a group's action, the agent link,
+  closes the group. The export's percent is the trigger's alone. The export:
+  the file and elapsed time, a bar, fps and
+  speed, Cancel (no remaining-time estimate); clip jobs with their status and
+  Cancel (`ComputeJobStatus`); agent calls with a link to the Activity tab;
+  derivatives one row per media item with the kinds in progress. Every Cancel
+  here is a small secondary button, so a row's one action shows focus. Log ops are
+  not counted: the work a Started row stands for shows where it was started
+  (the import row, the Shots panel, the Pauses buttons, the voiceover dialog),
+  and the console shows the op. Derivative jobs are tracked app-wide
+  (`state/derivativeJobsStore.ts`), since agent mode unmounts the bar; bench
+  scripts read their count, undelayed, from the E2E hook's
+  `derivativeJobCount()`.
+- **Save failed** (`SaveFailedPill`, amber): present only while main reports the
   project failing to save (`shared/save-status.ts`, [data-model.md §
   Saving](data-model.md#saving)). Its tooltip gives the reason and the last
-  successful save; a click opens the status panel, where a save-failure card
-  leads the notices with Retry now, Save As… and Open folder. The same badge
-  sits in agent mode's titlebar, which has no status bar; there its click returns
-  to the editor with the panel open.
-- A visually hidden `aria-live="polite"` region announces errors, and the turn
-  to not saved (once per turn; its log row is a `Warn`).
+  successful save. Its popover is the recovery in place: the
+  reason, the last successful save and the project folder, then, at the
+  bottom right as the app's dialogs end, Open folder, Save As… and Retry
+  (primary, last). A retry that succeeds takes the pill
+  and popover away; one that fails says so in place. In agent mode, which has
+  no status bar, the same pill sits in the titlebar and its popover drops
+  down there.
+- **Bell** (`notifications/NotificationBell.tsx`, model in
+  `notifications/attentionView.ts`): always present; its dot is the most
+  severe item not dismissed (info blue, warn amber, error red), and it carries
+  no number — most items are states, not messages. No dot when nothing is
+  listed or everything is dismissed. Its accessible name states the severity
+  ("Needs attention: warning"). The same bell sits in agent mode's titlebar.
+- Modes are not badges: a switch the user is in shows on its own control (the
+  link override on its Quick Actions toggle and the dimmed link accents).
+- A visually hidden `aria-live="polite"` region announces errors with the
+  unseen count, and the turn to failing saves (once per turn; its log row is a
+  `Warn`).
+
+The bar's right group grows to the bell, the work pill and Save failed at once;
+the log line truncates to make room. Everything sizes off `--ui-px` and the
+font-size tokens, so all six layout themes scale it, and popovers keep inside
+the window at each theme's minimum size.
+
+What the earlier bar showed and this one deliberately does not
+([ADR 0166](adr/0166-the-status-bar-answers-three-questions.md)):
+
+- **A count of open log ops.** The work pill shows tracked work only. Imports
+  show on the Media Pool, which is the import's own entry and stays open; a
+  foreground export shows in its own dialog, hidden only behind Settings after
+  it has failed; voiceover runs in its modal dialog; pause and shot-apply
+  commits and command dispatches settle quickly.
+  **Known gap:** Shots analysis and measuring, minutes long on a long source,
+  show only while the Shots panel is open, where the earlier bar still counted
+  them; model downloads outside Settings show only as the log line's percent.
+- Separate counts per kind of work; one pill counts all of it.
+- Hints that only reassured: "the editor stays usable" on derivatives, "still
+  finishing" on agent calls.
+- The full job list in the work pill's accessible name, the level dot's
+  tooltip and `role="status"` on the bar: the popover is reachable, and one
+  live region announces.
+- An export's phase beside its fps and speed: while there is a rate the phase
+  is encoding.
+- The status panel and the console closing each other: popovers close each
+  other; the console is a panel.
+
+### Notification center
+
+The bell's popover, titled "Needs attention" since the bell has no text. One
+flat list: rows separated by dividers, no cards. A row is severity dot, title
+and a description of at most two lines (full text in its tooltip). At its end,
+the way to the fix (a notice's names its settings page — Open API key settings,
+Open decode settings, Open agent settings — then Open review, View) is a link at the top; the
+dismissal (Got it, Skip this version), second in rank, sits grey at the bottom and shows
+while the row is hovered or holds keyboard focus, so a list at rest reads as
+what needs doing. Popover links carry a padded hit area and a faint chip on
+hover, the focus ring's shape; no underline.
+Empty: "Nothing needs attention".
+
+Dismissing takes a row out of the center, nothing more: the center only
+points. Each state keeps a home where it always shows and can be acted on,
+and the dismiss link's tooltip names it — the native decode engine on
+Settings · General (its engine marked unavailable), the agent Skill on
+Settings · Agent (with Reinstall), unencrypted cloud keys on the model pages
+where keys are entered, an offered update under Help · Check for Updates.
+
+| Item | Level | Dismiss | Shows again when |
+|---|---|---|---|
+| Agent changes to review (ADR 0115) | info | no | — (gone once reviewed) |
+| Environment notices (`app:notices`: keyring, native decode, agent Skill) | the notice's | Got it | the notice was gone, then returns |
+| Update offered, not skipped | info | Skip this version (none while restarting) | a different version is offered |
+
+Save failed is not listed: it has its own entry, and two ways in to one problem
+would be one too many. Dismissals are main-owned app settings
+(`dismissed_notices`, and for an update the same `skipped_update_version` the
+update dialog's skip writes: [releases.md](releases.md)), so they survive
+restarts. The environment notices, each code's settings page and its log line
+live in one catalog (`notifications/appNotices.ts`), mirrored app-wide from
+main for the bell and the settings pages alike.
+Main drops a dismissed code whenever it settles a notice set that lacks it
+(at startup, once every startup notice is collected, and after the agent Skill
+is reinstalled), so a notice that went away and came back is new.
 
 ### Console
 
@@ -184,7 +305,7 @@ next splash ("did not exit normally"). Storage failures never block startup.
   source, free-text search over English message, translated rendering and
   `details`.
 - Actions: autoscroll toggle, Copy (filtered view), Open log folder. Clear clears
-  history rows only; it never touches the system-status panel.
+  history rows only; it never touches the notification center.
 - Rows: time, level, category and source pills, message; disclosure shows
   `details` JSON and `op_id`. Ops collapse to one row with a counter; progress ops
   show an inline bar. `role="log"`. Not virtualized (1000 rows render fine).

@@ -109,6 +109,7 @@ import {
 import { probeBothModes, type BothModesResult } from "../render/decoder/importProbe";
 import type { ActiveClipProbe, CompositorPerfSnapshot } from "../render/Compositor";
 import { getPreviewGpuBudget, type PreviewGpuBudgetSnapshot } from "@/bridge/previewGpu";
+import { useDerivativeJobsStore } from "../state/derivativeJobsStore";
 import {
   ensureWaveformWindow,
   registerWaveformProducer,
@@ -549,6 +550,10 @@ export interface E2EHook {
   stageProfilingReset(): void;
   /// Per-stage percentiles + time-share for the window recorded so far.
   stageProfilingSnapshot(): StageSnapshot;
+  /// Derivative jobs running now (proxies, thumbnails, waveforms…), from the
+  /// app-wide store and without the work pill's show delay: a bench that
+  /// samples while they run is measuring them too.
+  derivativeJobCount(): number;
 }
 
 /// JSON-serializable projection of DockWorkspaceSnapshot: Panels named by kind
@@ -811,6 +816,7 @@ export function installPlaybackBenchHooks(): void {
   // its doc comment).
   hookSlot().setProxyOverride = (mediaId: string, value: boolean | null) =>
     setProxyOverride(mediaId, value);
+  hookSlot().derivativeJobCount = () => Object.keys(useDerivativeJobsStore.getState().jobs).length;
 }
 
 /// Root-side: install Motif test hooks (prebake, cache ops, sprite frames,

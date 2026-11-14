@@ -330,7 +330,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       if (state.kind === 'failing' && !wasFailing) {
         deps.emitLog?.({
           level: 'warn', category: { kind: 'Project' }, source: { kind: 'System' },
-          message: 'Project not saved: project.json cannot be written', i18n_key: 'log.save_failing',
+          message: 'Save failed: project.json cannot be written', i18n_key: 'log.save_failing',
           details: { kind: 'SaveFailing', code: state.code, path: state.path, since: state.since.toISOString(),
             last_saved_at: state.lastSavedAt?.toISOString() ?? null },
         })

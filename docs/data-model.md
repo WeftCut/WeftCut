@@ -705,7 +705,7 @@ within the interval; an explicit save reports the failure to its caller. A
 leftover `project.json.tmp` from a crash is harmless and is replaced by the next
 write.
 
-When saving keeps failing, the user is told. The project counts as **not saved**
+When saving keeps failing, the user is told. The project counts as **failing to save**
 once edits have been unsaved for at least the autosave interval and the latest
 write failed; the interval's own deadline always attempts a write, so the state
 is judged at each failed attempt and a failure a later cycle fixes in time shows
@@ -713,10 +713,10 @@ nothing. Main owns the state (`autosave.ts` decides, `ts-actor-host.ts` pushes
 `project:save-status` and answers the `project_save_status` pull, both typed in
 `shared/save-status.ts`). The next successful write of `project.json` clears it,
 and so does another project replacing this one (switch, close, new, Save As). The
-status bar then shows a **Not saved** badge whose card, in the System status
-panel, names the reason (disk full, no permission, file in use, folder missing,
-read-only drive, else the error code), the file and the last successful save,
-with Retry now, Save As… and Open folder ([status-log.md § Bar](status-log.md#bar)).
+status bar then shows a **Save failed** pill whose popover names the reason (disk
+full, no permission, file in use, folder missing, read-only drive, else the
+error code), the last successful save and the project folder, with Retry now,
+Save As… and Open folder ([status-log.md § Bar](status-log.md#bar)).
 Save As works out of a failing folder: it writes the whole project to the new
 one, so the old folder's failed flush does not stop it. The log gets one `Warn`
 row when the state turns and one `Info` row when a write succeeds again.

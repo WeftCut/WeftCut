@@ -38,6 +38,18 @@ export interface AppSettingsStore {
   get(): AppSettings
   /** Apply a patch atomically; returns the post-patch settings. */
   apply(patch: AppSettingsPatch): AppSettings
+  /** Drop every dismissed notice code absent from `present`, the notice set main
+   *  publishes now. Returns the post-prune settings when something was dropped,
+   *  null when nothing changed (no write, nothing to broadcast). */
+  pruneDismissedNotices(present: readonly string[]): AppSettings | null
+}
+
+/** Strings only, first occurrence kept; an empty result is undefined so the key
+ *  stays off disk. */
+function readNoticeCodes(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const codes = [...new Set(value.filter((c): c is string => typeof c === 'string' && c !== ''))]
+  return codes.length > 0 ? codes : undefined
 }
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v, lo), hi)
@@ -96,6 +108,7 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
         ? parsed.auto_install_updates_on_quit : true,
       skipped_update_version: typeof parsed.skipped_update_version === 'string' && parsed.skipped_update_version !== ''
         ? parsed.skipped_update_version : undefined,
+      dismissed_notices: readNoticeCodes(parsed.dismissed_notices),
       layout_theme: readLayoutTheme(parsed.layout_theme),
       resource_policy: readResourcePolicy(parsed.resource_policy),
       performance: budgets ? resolvePerformanceBudgets(budgets, calibration) : readPerformanceSettings(parsed.performance),
@@ -290,6 +303,10 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
         if (typeof patch.skipped_update_version !== 'string') throw new Error('Invalid skipped update version')
         current.skipped_update_version = patch.skipped_update_version === '' ? undefined : patch.skipped_update_version
       }
+      if (patch.dismiss_notice !== undefined) {
+        if (typeof patch.dismiss_notice !== 'string' || patch.dismiss_notice === '') throw new Error('Invalid notice code')
+        current.dismissed_notices = readNoticeCodes([...(current.dismissed_notices ?? []), patch.dismiss_notice])
+      }
       if (patch.export_preset_change !== undefined) {
         current.export_presets = changeExportPresets(current.export_presets ?? [], patch.export_preset_change)
         if (!exportPresetLibrary(current).some(p => p.id === current.default_export_preset_id)) current.default_export_preset_id = DEFAULT_EXPORT_PRESET_ID
@@ -331,6 +348,16 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
         if (typeof patch.default_text_font !== 'string') throw new Error('default_text_font must be a string')
         current.default_text_font = patch.default_text_font.trim() || undefined
       }
+      write(current)
+      deps.onCommitted?.(current)
+      return current
+    },
+    pruneDismissedNotices(present) {
+      const current = read()
+      const before = current.dismissed_notices ?? []
+      const kept = before.filter(code => present.includes(code))
+      if (kept.length === before.length) return null
+      current.dismissed_notices = kept.length > 0 ? kept : undefined
       write(current)
       deps.onCommitted?.(current)
       return current

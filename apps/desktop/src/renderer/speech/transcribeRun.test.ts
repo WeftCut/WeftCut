@@ -123,7 +123,7 @@ describe("runTranscribe", () => {
       op_state: { state: "Ok" },
     });
     // One op, two rows: the terminal row has to join the Started one or the
-    // status badge spins forever.
+    // console never closes the run.
     expect(rows()[0].op_id).toBe(rows()[1].op_id);
   });
 

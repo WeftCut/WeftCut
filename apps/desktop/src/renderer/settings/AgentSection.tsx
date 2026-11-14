@@ -315,7 +315,7 @@ export function AgentSection() {
   /// Re-run the install and take whatever it found. The poll above stopped at
   /// the first `info`, so the new state has to be spliced in here; the main
   /// process separately re-broadcasts the notice list, which is what clears the
-  /// System-status card.
+  /// skill notice from the notification center.
   const retrySkill = async () => {
     if (retryingSkill) return;
     setRetryingSkill(true);

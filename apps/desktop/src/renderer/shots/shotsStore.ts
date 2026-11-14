@@ -417,8 +417,8 @@ export async function analyzeShotSubject(clipName: string): Promise<void> {
   if (subject === null || analyzing !== null) return;
   set({ analyzing: subject.mediaId, error: "" });
   // Minutes-long on a long source and there is no percentage to report — the
-  // ffmpeg pass emits metadata lines, not progress — so the Started row is what
-  // the status badge spins on. One `op_id` pairs it with the terminal row
+  // ffmpeg pass emits metadata lines, not progress — so the Started row records
+  // that it began. One `op_id` pairs it with the terminal row
   // (docs/status-log.md).
   const opId = crypto.randomUUID();
   void logEmit({
@@ -513,9 +513,9 @@ export async function measureShotRows(
   const mediaId = subject.mediaId;
   set({ measuring: mediaId, error: "" });
   // Three ffmpeg extracts per fresh span and no percentage to report, so the
-  // Started row is what the status badge spins on — and the span count is the
-  // fact worth recording, since it is what the pass costs. One `op_id` pairs it
-  // with the terminal row (docs/status-log.md).
+  // Started row records that it began — and the span count is the fact worth
+  // recording, since it is what the pass costs. One `op_id` pairs it with the
+  // terminal row (docs/status-log.md).
   const opId = crypto.randomUUID();
   void logEmit({
     level: "info",

@@ -126,9 +126,9 @@ export function elideLarge(value: unknown, maxBytes: number = ELIDE_MAX_BYTES): 
  *  A `slow` op is `Info` whatever its route: crossing `SLOW_OP_MS` is itself the
  *  test of whether the user is waiting on it, and `Debug` would strand them —
  *  the bar's latest slot refuses `debug` outright (`renderer/logs/store.ts`), so
- *  a multi-second `transcribe_clip` would spin the running badge while naming
- *  nothing. Reads stay out of the way because they are *quick*, not because they
- *  are reads. */
+ *  a multi-second `transcribe_clip` would leave the log line naming nothing
+ *  while the user waits. Reads stay out of the way because they are *quick*,
+ *  not because they are reads. */
 function levelFor(method: McpLoggedMethod, tool: string, failed: boolean, slow: boolean): McpLogEntryInput['level'] {
   if (failed) return 'error'
   if (method === 'tools/call' && routeMcpTool(tool) !== 'rust') return 'info'

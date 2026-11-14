@@ -444,8 +444,8 @@ function PausesBody({ layer, subject, projectId, recipe }: {
   ///
   /// One shared runner because the two differ only in the call and the words:
   /// the `op_id` pairing, the terminal-row rule and the re-arm on failure are
-  /// the same contract, and a second copy of them is a second place to get the
-  /// status bar stuck on a spinner.
+  /// the same contract, and a second copy of them is a second place to leave an
+  /// op open in the console.
   const run = async (
     phaseName: "mark" | "remove",
     tool: string,
@@ -487,7 +487,7 @@ function PausesBody({ layer, subject, projectId, recipe }: {
       // throw away the actionable half.
       setError(refusalText(err));
       // Under the run's own `op_id`: the Started row above has to close as
-      // `Err`, or the status bar keeps a run spinning that already failed.
+      // `Err`, or the console shows a run still going that already failed.
       logMutationFailure(err, tool, opId);
     }
     setBusy(null);

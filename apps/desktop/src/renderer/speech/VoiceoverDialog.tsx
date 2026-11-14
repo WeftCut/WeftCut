@@ -181,7 +181,7 @@ function VoiceoverDialogInner() {
       // that away.
       setError(refusalText(err));
       // Under the run's own `op_id`, so the Started row above closes as `Err`
-      // instead of spinning on in the status bar.
+      // instead of staying open in the console as a run still going.
       logMutationFailure(err, "synthesize_speech", opId);
       setGenerating(false);
     }

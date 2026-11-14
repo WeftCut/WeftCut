@@ -110,7 +110,6 @@ export const LogConsole = forwardRef<LogConsoleHandle, Props>(function LogConsol
 ) {
   const { t } = useTranslation();
   const entries = useLogStore((s) => s.entries);
-  const acknowledgeErrorSticky = useLogStore((s) => s.acknowledgeErrorSticky);
 
   const [levelFilter, setLevelFilter] = useState<LevelFilter>("info");
   const [categoryFilters, setCategoryFilters] = useState<Set<CategoryKind>>(
@@ -189,11 +188,13 @@ export const LogConsole = forwardRef<LogConsoleHandle, Props>(function LogConsol
     [],
   );
 
-  // Acknowledge any sticky error in the bar when the console opens —
-  // the user is now looking; the bar can roll forward.
+  // While the console is open the user is looking: the bar's unseen-error
+  // count clears and stays clear, and a sticky error can roll forward.
   useEffect(() => {
-    acknowledgeErrorSticky();
-  }, [acknowledgeErrorSticky]);
+    const { setConsoleOpen } = useLogStore.getState();
+    setConsoleOpen(true);
+    return () => setConsoleOpen(false);
+  }, []);
 
   // Resolve the workspace's Logs/ path so the "Open log folder" action
   // can hand it to the OS file manager.

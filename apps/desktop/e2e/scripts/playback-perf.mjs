@@ -790,15 +790,16 @@ async function runCell(leg, tracks) {
     while (Date.now() - quietStart < 300_000) {
       const [m, derivativeJobsPending] = await Promise.all([
         readMetrics().catch(() => null),
-        page.evaluate(() => document.querySelector(".derivatives-pill") !== null),
+        page.evaluate(() => window.__weftcutTest.derivativeJobCount() > 0),
       ]);
       const total = (m ?? []).reduce((s, p) => s + (p.cpu?.percentCPUUsage ?? 0), 0);
       quietPolls++;
       if (total >= 20) quietCpuBusyPolls++;
       if (derivativeJobsPending) quietDerivativeBusyPolls++;
       // CPU can dip between ffmpeg jobs while the derivative queue is still
-      // active. The status pill is driven directly by job started/complete/error
-      // events, so both signals must stay quiet for the full consecutive window.
+      // active. The bar's derivative count is driven directly by job
+      // started/complete/error events, so both signals must stay quiet for the
+      // full consecutive window.
       quietRuns = total < 20 && !derivativeJobsPending ? quietRuns + 1 : 0;
       if (quietRuns >= 4) { quietReached = true; break; }
       await sleep(500);

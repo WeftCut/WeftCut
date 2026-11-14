@@ -190,11 +190,23 @@ test('changes: an agent edit is listed, highlighted and counted until reverted o
     await page.locator('.agent-exit-button').click()
     await expect(page.locator('.agent-mode-shell')).toHaveCount(0)
 
-    // Editor: the clip carries the added mark, and the status bar counts it.
+    // Editor: the clip carries the added mark, and the bell's notification
+    // center counts it; its row opens the review.
     await expect(page.locator('[data-testid="review-clip-mark"][data-review-mark="added"]')).toHaveCount(1)
-    const status = page.getByTestId('status-bar-review')
-    await expect(status).toHaveText('1 to review')
-    await status.click()
+    const bell = page.locator('.status-bar').getByTestId('status-bar-bell')
+    const reviewRow = page.getByTestId('attention-center').locator('[data-attention="review"]')
+    /** The review row as the bell lists it now; the popover is closed again after. */
+    const expectReviewRows = async (count: number) => {
+      await bell.click()
+      await expect(page.getByTestId('attention-center')).toBeVisible()
+      await expect(reviewRow).toHaveCount(count)
+      await page.keyboard.press('Escape')
+      await expect(page.getByTestId('attention-center')).toHaveCount(0)
+    }
+    await bell.click()
+    await expect(reviewRow).toContainText('1 agent change to review')
+    await reviewRow.getByRole('button', { name: 'Open review' }).click()
+    await expect(page.getByTestId('attention-center')).toHaveCount(0)
     await expect(dockPanel(page, 'agent')).toHaveCount(1)
     await expect(page.getByRole('tab', { name: /Changes/ })).toHaveAttribute('aria-selected', 'true')
     await expect(page.locator('.agent-change')).toHaveCount(1)
@@ -212,17 +224,18 @@ test('changes: an agent edit is listed, highlighted and counted until reverted o
     await page.getByRole('button', { name: 'Revert all' }).click()
     await expect(page.locator('.agent-change')).toHaveCount(0)
     await expect(page.getByTestId('review-clip-mark')).toHaveCount(0)
-    await expect(page.getByTestId('status-bar-review')).toHaveCount(0)
+    await expectReviewRows(0)
     // Undo brings the clip back, unreviewed as before.
     await invokeCmd(page, 'project_undo', {})
     await expect(page.locator('.agent-change')).toHaveCount(1)
     await expect(page.locator('[data-testid="review-clip-mark"][data-review-mark="added"]')).toHaveCount(1)
+    await expectReviewRows(1)
 
     // Approve all: the list, the highlight and the count go together.
     await page.getByRole('button', { name: 'Approve all' }).click()
     await expect(page.locator('.agent-change')).toHaveCount(0)
     await expect(page.getByTestId('review-clip-mark')).toHaveCount(0)
-    await expect(page.getByTestId('status-bar-review')).toHaveCount(0)
+    await expectReviewRows(0)
   } finally {
     await client?.close()
     await app.close()

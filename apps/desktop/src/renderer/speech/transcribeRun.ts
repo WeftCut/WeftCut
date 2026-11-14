@@ -108,8 +108,8 @@ const ROW = {
 } as const;
 
 /// Multi-second and network-dependent, so the run announces itself: without a
-/// Started row the status badge has nothing to spin on and the user cannot tell
-/// a slow engine from a dead one. One `op_id` pairs it with the terminal row
+/// Started row the user cannot tell a slow engine from a dead one. One `op_id`
+/// pairs it with the terminal row, which closes the op in the console
 /// (docs/status-log.md). One clip is named; several are counted — the names
 /// are in the Caption Panel the moment the cues land.
 function startedRow(clips: readonly TranscribeClip[], opId: string): LogEntryInput {
@@ -285,7 +285,7 @@ export async function runTranscribe(target: TranscribeRunTarget): Promise<string
   }
 
   // Exactly one row closes the op, whatever happened: the Started row above
-  // otherwise never closes and the status bar keeps a transcription spinning
+  // otherwise never closes and the console shows a transcription still running
   // that has already ended. The write failure is that row when there is one
   // (it is the half that touches the project), else the clip that failed,
   // else the cues that landed.

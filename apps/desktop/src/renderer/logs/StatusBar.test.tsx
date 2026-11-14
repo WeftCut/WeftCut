@@ -1,170 +1,169 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, render, within } from "@testing-library/react";
 import "../i18n";
-import { MEDIA_JOB_EVENTS, type ComputeJob, type ComputeOrigin, type ComputePhase, type MediaJobEvent } from "../ipc";
-import { StatusBar } from "./StatusBar";
+import type { LogEntry, LogLevel } from "../ipc";
+import type { AppNotice } from "../../shared/ipc";
 import type { Change } from "../../shared/review";
+import { StatusBar } from "./StatusBar";
+import { useLogStore } from "./store";
+import { receiveSaveStatus, useSaveStatusStore } from "../state/saveStatusStore";
+import { resetAppNoticesForTests, useAppNoticesStore } from "../notifications/appNotices";
 
-const handlers = vi.hoisted(() => new Map<string, (event: { payload: MediaJobEvent }) => void>());
-vi.mock("@/bridge/events", () => ({
-  listen: vi.fn(async (name, handler) => {
-    handlers.set(name, handler);
-    return () => handlers.delete(name);
-  }),
-}));
+vi.mock("@/bridge/events", () => ({ listen: vi.fn(async () => () => {}) }));
 // No backend under jsdom: IPC answers nothing (the review fetch keeps its last
 // view; a command's log row goes nowhere).
 vi.mock("@/bridge/ipc", () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
-afterEach(() => { cleanup(); handlers.clear(); });
 
-it("cached completions do not hide another media item's running generation", async () => {
-  const { container } = render(<StatusBar />);
-  await act(async () => {});
-  const emit = (name: string, payload: MediaJobEvent) => act(() => handlers.get(name)!({ payload }));
-  const active = { media_id: "generating-audio", kind: "waveform" };
-  emit(MEDIA_JOB_EVENTS.started, active);
-  emit(MEDIA_JOB_EVENTS.complete, { media_id: "cached-audio", kind: "conform" });
-  expect(container.querySelector(".derivatives-pill")?.textContent).toContain("1");
-  emit(MEDIA_JOB_EVENTS.complete, active);
-  expect(container.querySelector(".derivatives-pill")).toBeNull();
-});
-
-it("duplicate starts and terminal events cannot leave a phantom derivative", async () => {
-  const { container } = render(<StatusBar />);
-  await act(async () => {});
-  const payload = { media_id: "source", kind: "thumbnails" };
-  act(() => {
-    handlers.get(MEDIA_JOB_EVENTS.started)!({ payload });
-    handlers.get(MEDIA_JOB_EVENTS.started)!({ payload });
-    handlers.get(MEDIA_JOB_EVENTS.error)!({ payload });
-  });
-  expect(container.querySelector(".derivatives-pill")).toBeNull();
-});
-
-it("shows the unreviewed change count while there is one; a click opens the agent panel's Changes tab", async () => {
-  const { useReview, resetReviewForTests } = await import("../agent/reviewStore");
-  const { useAgentActivity } = await import("../agent/activityStore");
-  const { registerCommandProvider } = await import("../commands/registry");
+afterEach(async () => {
+  cleanup();
+  useLogStore.setState({ entries: [], unseenErrors: 0, consoleOpen: false, latest: null, latestStickyUntil: 0 });
+  useSaveStatusStore.setState({ status: { state: "ok", revision: 0 } });
+  resetAppNoticesForTests();
+  const { resetReviewForTests } = await import("../agent/reviewStore");
   resetReviewForTests();
-  const open = vi.fn();
-  const unregister = registerCommandProvider(() => [{ id: "openAgentPanel", run: open } as never]);
-  useAgentActivity.setState({ tab: "activity" });
-  const { container } = render(<StatusBar />);
-  await act(async () => {});
-  expect(container.querySelector('[data-testid="status-bar-review"]')).toBeNull();
-  const change = (id: `Layer:${string}`): Change => ({ id, class: "added", details: [], composition_id: "r", ranges: [] });
-  act(() => { useReview.getState().apply({ version: { session: 1, revision: 1, baseline_revision: 1 }, content_revision: 1, has_baseline: true, unreviewed: [change("Layer:a"), change("Layer:b")], user: [], user_count: 0, decorations: [] }); });
-  const badge = container.querySelector<HTMLElement>('[data-testid="status-bar-review"]')!;
-  expect(badge.textContent).toBe("2 to review");
-  act(() => badge.click());
-  expect(useAgentActivity.getState().tab).toBe("changes");
-  expect(open).toHaveBeenCalledTimes(1);
-  act(() => { useReview.getState().apply({ version: { session: 1, revision: 1, baseline_revision: 2 }, content_revision: 1, has_baseline: true, unreviewed: [], user: [], user_count: 0, decorations: [] }); });
-  expect(container.querySelector('[data-testid="status-bar-review"]')).toBeNull();
-  unregister();
-  resetReviewForTests();
+  const { resetDerivativeJobsForTests } = await import("../state/derivativeJobsStore");
+  resetDerivativeJobsForTests();
 });
 
-describe("clip-compute pill", () => {
-  let revision = 2_000_000;
-  const jobFixture = (id: string, phase: ComputePhase, origin: ComputeOrigin = { kind: "user" }): ComputeJob => ({
-    job_id: id, tool: "transcribe_clip", layer_id: `layer-${id}`, media_id: "m", window: { t_start_us: 0, t_end_us: 1 },
-    phase, phase_since: new Date(Date.now() - 70_000).toISOString(), started_at: `2026-10-18T00:00:0${id.length}Z`,
-    origin, callers: 1, caller_disconnected: false, request_ids: [],
-  });
-  const publish = async (jobs: ComputeJob[]) => {
-    const { receiveComputeJobs } = await import("../compute/computeJobsStore");
-    act(() => receiveComputeJobs({ revision: ++revision, jobs }));
-  };
-  afterEach(async () => { await publish([]); });
+let entryId = 0;
+const entry = (level: LogLevel, message: string): LogEntry => ({
+  id: `e${++entryId}`, ts: "2026-01-02T03:04:05.000Z", level,
+  category: { kind: "Project" }, source: { kind: "User" }, message,
+});
+const log = (e: LogEntry) => act(() => useLogStore.getState().append(e));
 
-  it("shows an hourglass while every job waits, lists each job's reason, and links a budget wait to the derivatives pill", async () => {
-    const { container } = render(<StatusBar />);
-    await act(async () => {});
-    expect(container.querySelector('[data-testid="status-bar-compute"]')).toBeNull();
-    act(() => handlers.get(MEDIA_JOB_EVENTS.started)!({ payload: { media_id: "long", kind: "proxy" } }));
-    expect(container.querySelector<HTMLElement>(".derivatives-pill")!.title).not.toContain("waiting for these");
-    await publish([jobFixture("a", { kind: "queued", reason: "budget" }), jobFixture("bb", { kind: "queued", reason: "memory" })]);
-    const pill = container.querySelector<HTMLElement>('[data-testid="status-bar-compute"]')!;
-    expect(pill.dataset.state).toBe("waiting");
-    expect(pill.textContent).toBe("2 clip jobs waiting");
-    expect(pill.querySelector(".lucide-hourglass")).not.toBeNull();
-    expect(pill.querySelector(".status-bar-spinner")).toBeNull();
-    expect(pill.title).toContain("Transcribe: Waiting for processing capacity — background work such as proxy generation is using it · waiting 1m 10s");
-    expect(pill.title).toContain("Transcribe: Waiting for memory to free up");
-    expect(container.querySelector<HTMLElement>(".derivatives-pill")!.title).toContain("A transcription or description is waiting for these to finish.");
-  });
+function renderBar(props: { logsOpen?: boolean; notices?: AppNotice[]; onToggleLogs?: () => void } = {}) {
+  useAppNoticesStore.setState({ notices: props.notices ?? [] });
+  const view = render(
+    <StatusBar
+      onToggleLogs={props.onToggleLogs ?? vi.fn()}
+      logsOpen={props.logsOpen ?? false}
+      onOpenSettings={vi.fn()}
+      saveActions={{ retry: vi.fn(async () => {}), saveAs: vi.fn(), openFolder: vi.fn(async () => {}) }}
+    />,
+  );
+  const bar = view.container.querySelector<HTMLElement>(".status-bar")!;
+  const logLine = () => within(bar).getByTestId("status-bar-log");
+  const errors = () => bar.querySelector<HTMLElement>('[data-testid="status-bar-errors"]');
+  const announced = () => bar.querySelector('[aria-live="polite"]')!.textContent;
+  return { ...view, bar, logLine, errors, announced };
+}
 
-  it("spins once any job works, names a single job by what it does, and opens the log for a person's job", async () => {
+describe("log line", () => {
+  it("opens the log from its leading segment, named by its message and what a press does", async () => {
     const onToggleLogs = vi.fn();
-    const { container } = render(<StatusBar onToggleLogs={onToggleLogs} />);
+    const { logLine, rerender } = renderBar({ onToggleLogs });
     await act(async () => {});
-    await publish([jobFixture("a", { kind: "inferring", done: 30, total: 100 })]);
-    const pill = container.querySelector<HTMLElement>('[data-testid="status-bar-compute"]')!;
-    expect(pill.dataset.state).toBe("working");
-    expect(pill.textContent).toBe("Transcribing");
-    expect(pill.querySelector(".status-bar-spinner")).not.toBeNull();
-    expect(pill.title).toContain("Transcribe: Transcribing 30%");
-    act(() => pill.click());
+    expect(logLine().tagName).toBe("BUTTON");
+    expect(logLine().getAttribute("aria-expanded")).toBe("false");
+    expect(logLine().getAttribute("aria-label")).toBe("No activity yet — Open the log");
+
+    log(entry("info", "Clip trimmed"));
+    // The message reads beside the button; it is no part of the target.
+    expect(logLine().textContent).not.toContain("Clip trimmed");
+    expect(logLine().nextElementSibling!.textContent).toBe("Clip trimmed");
+    expect(logLine().getAttribute("aria-label")).toBe("Clip trimmed — Open the log");
+    act(() => logLine().click());
     expect(onToggleLogs).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <StatusBar onToggleLogs={onToggleLogs} logsOpen onOpenSettings={vi.fn()}
+        saveActions={{ retry: vi.fn(async () => {}), saveAs: vi.fn(), openFolder: vi.fn(async () => {}) }} />,
+    );
+    expect(logLine().getAttribute("aria-expanded")).toBe("true");
+    expect(logLine().getAttribute("aria-label")).toBe("Clip trimmed — Close the log");
   });
 
-  it("opens the agent panel's Activity tab when an agent's job is running", async () => {
-    const { useAgentActivity } = await import("../agent/activityStore");
-    const { registerCommandProvider } = await import("../commands/registry");
-    const open = vi.fn();
-    const unregister = registerCommandProvider(() => [{ id: "openAgentPanel", run: open } as never]);
-    useAgentActivity.setState({ tab: "changes" });
-    const { container } = render(<StatusBar />);
+  it("puts the source before the message, as the console row has it", async () => {
+    const { logLine, bar } = renderBar();
     await act(async () => {});
-    await publish([jobFixture("a", { kind: "queued", reason: null }), jobFixture("bb", { kind: "loading_model" }, { kind: "agent", client: "claude" })]);
-    const pill = container.querySelector<HTMLElement>('[data-testid="status-bar-compute"]')!;
-    expect(pill.textContent).toBe("2 clip jobs");
-    act(() => pill.click());
-    expect(useAgentActivity.getState().tab).toBe("activity");
-    expect(open).toHaveBeenCalledTimes(1);
-    unregister();
+    log({ ...entry("info", "split_layers"), source: { kind: "Agent", client: "Claude" } });
+    const source = logLine().querySelector(".status-bar-source")!;
+    const message = bar.querySelector(".status-bar-message")!;
+    expect(source.textContent).toBe("Agent · Claude");
+    expect(source.compareDocumentPosition(message) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("swaps the level dot for a count of errors the log has not shown, and drops it once the log opens", async () => {
+    const { logLine, errors } = renderBar();
+    await act(async () => {});
+    log(entry("warn", "Proxy slow"));
+    expect(errors()).toBeNull();
+    expect(logLine().querySelector(".status-bar-level-dot.level-warn")).not.toBeNull();
+
+    log(entry("error", "Export failed"));
+    log(entry("error", "Decode failed"));
+    expect(errors()!.textContent).toBe("2");
+    expect(logLine().querySelector(".status-bar-level-dot")).toBeNull();
+    expect(logLine().getAttribute("aria-label")).toBe("2 new errors — Decode failed — Open the log");
+
+    act(() => useLogStore.getState().setConsoleOpen(true));
+    expect(errors()).toBeNull();
+    expect(logLine().querySelector(".status-bar-level-dot.level-error")).not.toBeNull();
+  });
+
+  it("announces each error with the count the line now shows, and not lower levels", async () => {
+    const { announced } = renderBar();
+    await act(async () => {});
+    log(entry("error", "Export failed"));
+    expect(announced()).toBe("Error: Export failed. 1 new error");
+    log(entry("warn", "Proxy slow"));
+    expect(announced()).toBe("Error: Export failed. 1 new error");
+    log(entry("error", "Decode failed"));
+    expect(announced()).toBe("Error: Decode failed. 2 new errors");
+
+    // With the console open the error is seen there: announced without a count.
+    act(() => useLogStore.getState().setConsoleOpen(true));
+    log(entry("error", "Mux failed"));
+    expect(announced()).toBe("Error: Mux failed");
   });
 });
 
-describe("not-saved badge", () => {
+describe("bar contents", () => {
+  it("holds the log line and the bell, with no review, System or Logs entry of their own", async () => {
+    const { useReview } = await import("../agent/reviewStore");
+    const { bar } = renderBar({ notices: [{ level: "warn", code: "keyring_unavailable" }] });
+    await act(async () => {});
+    const change = (id: `Layer:${string}`): Change => ({ id, class: "added", details: [], composition_id: "r", ranges: [] });
+    act(() => {
+      useReview.getState().apply({
+        version: { session: 1, revision: 1, baseline_revision: 1 }, content_revision: 1, has_baseline: true,
+        unreviewed: [change("Layer:a")], user: [], user_count: 0, decorations: [],
+      });
+    });
+    // A notice and unreviewed changes both reach the user through the bell.
+    expect(within(bar).getAllByRole("button").map((b) => b.dataset.testid))
+      .toEqual(["status-bar-log", "status-bar-bell"]);
+    expect(within(bar).getByTestId("status-bar-bell").dataset.level).toBe("warn");
+  });
+});
+
+describe("save failed", () => {
   let revision = 0;
   const failing = (code: string | null, last_saved_at: string | null = null) => ({
     state: "failing" as const, revision: ++revision, since: "2026-01-02T03:04:05.000Z", last_saved_at,
     code, path: "/home/u/Demo/project.json", dir: "/home/u/Demo",
   });
-  afterEach(async () => {
-    const { useSaveStatusStore } = await import("../state/saveStatusStore");
-    useSaveStatusStore.setState({ status: { state: "ok", revision: 0 } });
-    revision = 0;
-  });
+  afterEach(() => { revision = 0; });
 
-  it("shows only while saving fails, says why in its tooltip, opens the System panel, and is announced once", async () => {
-    const { receiveSaveStatus } = await import("../state/saveStatusStore");
-    const onOpenSaveStatus = vi.fn();
-    const { container } = render(<StatusBar onOpenSaveStatus={onOpenSaveStatus} />);
+  it("shows its pill on the right while saving fails, and announces the turn to failing once", async () => {
+    const { bar, announced } = renderBar();
     await act(async () => {});
-    const badge = () => container.querySelector<HTMLElement>('[data-testid="save-status-badge"]');
-    const announced = () => container.querySelector('[aria-live="polite"]')!.textContent;
-    expect(badge()).toBeNull();
+    const pill = () => bar.querySelector<HTMLElement>('[data-testid="save-failed-pill"]');
+    expect(pill()).toBeNull();
 
     act(() => receiveSaveStatus(failing("ENOSPC")));
-    expect(badge()!.textContent).toBe("Not saved");
-    expect(badge()!.closest(".status-bar-right")).not.toBeNull();
-    expect(badge()!.title).toBe("The disk is full.\nNot saved since the project was opened");
-    expect(announced()).toBe("Project not saved: The disk is full.");
-    act(() => badge()!.click());
-    expect(onOpenSaveStatus).toHaveBeenCalledTimes(1);
+    expect(pill()!.closest(".status-bar-right")).not.toBeNull();
+    expect(announced()).toBe("Save failed: The disk is full.");
 
-    // A new reason updates the tooltip but is not a second announcement.
+    // A new reason is not a second turn.
     act(() => receiveSaveStatus(failing("EROFS", "2026-01-02T03:00:00.000Z")));
-    expect(badge()!.title).toMatch(/^The project folder is on a read-only drive\.\nLast saved at /);
-    expect(announced()).toBe("Project not saved: The disk is full.");
+    expect(announced()).toBe("Save failed: The disk is full.");
 
     act(() => receiveSaveStatus({ state: "ok", revision: ++revision }));
-    expect(badge()).toBeNull();
+    expect(pill()).toBeNull();
     act(() => receiveSaveStatus(failing("EACCES")));
-    expect(announced()).toBe("Project not saved: WeftCut is not allowed to write to the project folder.");
+    expect(announced()).toBe("Save failed: WeftCut is not allowed to write to the project folder.");
   });
 });

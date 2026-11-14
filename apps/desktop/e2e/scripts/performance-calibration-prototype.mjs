@@ -137,7 +137,7 @@ async function runFixture(fixture, scenario) {
   const invoke = (cmd, args) => page.evaluate(({ cmd, args }) => window.api.backend.invoke(cmd, args), { cmd, args });
   const ids = [];
   const probes = () => page.evaluate(ids => ids.map(id => window.__weftcutTest.activeClipProbe(id)), ids);
-  const snapshot = () => page.evaluate(() => ({ resource: window.__weftcutTest.previewResourceProbe(), perf: window.__weftcutTest.compositorPerfSnapshot(), stage: window.__weftcutTest.stageProfilingSnapshot(), derivativeJobsPending: !!document.querySelector('.derivatives-pill') }));
+  const snapshot = () => page.evaluate(() => ({ resource: window.__weftcutTest.previewResourceProbe(), perf: window.__weftcutTest.compositorPerfSnapshot(), stage: window.__weftcutTest.stageProfilingSnapshot(), derivativeJobsPending: window.__weftcutTest.derivativeJobCount() > 0 }));
   const metrics = () => app.evaluate(({ app }) => app.getAppMetrics());
   const root = path.join(runDir, name);
   fs.mkdirSync(path.join(root, 'projects'), { recursive: true });
@@ -175,7 +175,7 @@ async function runFixture(fixture, scenario) {
       return poll(async () => {
         const m = await metrics();
         const cpu = m.reduce((sum,p) => sum + (p.cpu?.percentCPUUsage ?? 0), 0);
-        const jobs = await page.evaluate(() => !!document.querySelector('.derivatives-pill'));
+        const jobs = await page.evaluate(() => window.__weftcutTest.derivativeJobCount() > 0);
         quiet = cpu < 20 && !jobs ? quiet + 1 : 0;
         return { cpu, jobs, quiet };
       }, x => x.quiet >= 3, plan.quietS * 1000, 500);

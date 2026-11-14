@@ -59,9 +59,8 @@ export function refusalText(err: unknown): string {
 ///
 /// `opId` is for a caller that already announced the run with a `Started` row
 /// (the analysis dialogs): the failure row then closes that op as `Err`. The
-/// status bar's running badge clears only on a terminal row under the SAME
-/// `op_id` (`logs/store.ts` `runningOps`), so a Started row whose failure is
-/// logged standalone spins forever.
+/// console groups an op's rows by `op_id`, so a Started row whose failure is
+/// logged standalone reads as still running.
 export function logMutationFailure(err: unknown, context: string, opId?: string): void {
   const closesOp = opId === undefined ? {} : { op_id: opId, op_state: { state: "Err" as const } };
   const refusal = describeRefusal(err);
