@@ -5,15 +5,13 @@ import { renderLogMessage } from "./renderMessage";
 import { WorkPill } from "./WorkPill";
 import { useLogStore } from "./store";
 import type { LogEntry, LogLevel } from "../ipc";
-import type { AppNotice } from "../../shared/ipc";
 import { AppIcon } from "@/components/AppIcon";
 import type { ExportState } from "../panels/ExportPanel";
 import { NotSavedPill, type SaveFailureActions } from "../components/NotSavedPill";
 import { saveFailureReason } from "../components/saveFailure";
-import type { SystemSettingsTarget } from "../components/systemStatus";
+import type { NoticeSettingsPage } from "../notifications/appNotices";
 import { NotificationBell } from "../notifications/NotificationBell";
 import { useSaveFailure } from "../state/saveStatusStore";
-import { useDerivativeJobsStore } from "../state/derivativeJobsStore";
 
 /// Persistent status bar pinned to the bottom of the editor view. It answers
 /// three questions, one element each: what just happened (the log line, whose
@@ -22,10 +20,9 @@ import { useDerivativeJobsStore } from "../state/derivativeJobsStore";
 ///
 /// Layout and behaviour: `docs/status-log.md`.
 interface StatusBarProps {
-  notices: readonly AppNotice[];
   onToggleLogs: () => void;
   logsOpen: boolean;
-  onOpenSettings: (target: SystemSettingsTarget) => void;
+  onOpenSettings: (page: NoticeSettingsPage) => void;
   saveActions: SaveFailureActions;
   /// A running export that leaves the editor usable (preview during export);
   /// a foreground export shows its own dialog instead.
@@ -33,7 +30,6 @@ interface StatusBarProps {
 }
 
 export function StatusBar({
-  notices,
   onToggleLogs,
   logsOpen,
   onOpenSettings,
@@ -51,9 +47,6 @@ export function StatusBar({
   // separately from `latest` so a flurry of low-severity entries
   // doesn't spam the screen reader.
   const [announce, setAnnounce] = useState("");
-  // Bench scripts read the derivative queue here, not from the work pill:
-  // the pill holds work back for its show delay.
-  const derivativeJobs = useDerivativeJobsStore((s) => Object.keys(s.jobs).length);
 
   // The unseen count rises with each error; the announcement names the error
   // and the count the log line now shows.
@@ -84,11 +77,7 @@ export function StatusBar({
   ].filter(Boolean).join(" — ");
 
   return (
-    <footer
-      className="status-bar"
-      data-derivative-jobs={derivativeJobs}
-      aria-label={t("status_bar.label")}
-    >
+    <footer className="status-bar" aria-label={t("status_bar.label")}>
       <div className="status-bar-left">
         {/* The line's leading segment opens the log: a target whose width
             does not follow the message. The message itself only reads. */}
@@ -133,7 +122,7 @@ export function StatusBar({
         <WorkPill backgroundExport={backgroundExport} />
         <NotSavedPill actions={saveActions} />
         <span className="status-bar-divider" aria-hidden="true" />
-        <NotificationBell notices={notices} onOpenSettings={onOpenSettings} />
+        <NotificationBell onOpenSettings={onOpenSettings} />
       </div>
       <div
         className="sr-only"

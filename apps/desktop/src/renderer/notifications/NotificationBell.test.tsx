@@ -9,6 +9,7 @@ import type { Change } from "../../shared/review";
 import type { UpdateStatus } from "../../shared/updates";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { NotificationBell } from "./NotificationBell";
+import { resetAppNoticesForTests, useAppNoticesStore } from "./appNotices";
 
 vi.mock("@/bridge/events", () => ({ listen: vi.fn(async () => () => {}) }));
 // No backend under jsdom: the review fetch answers nothing and keeps its view.
@@ -23,6 +24,7 @@ const STATUS_POLL_SEEN_MS = 10_000;
 afterEach(async () => {
   cleanup();
   useAppSettingsStore.setState({ settings: APP_SETTINGS_DEFAULTS });
+  resetAppNoticesForTests();
   const { resetReviewForTests } = await import("../agent/reviewStore");
   resetReviewForTests();
 });
@@ -34,7 +36,6 @@ function setup(update: UpdateStatus = { phase: "current" }) {
     return {
       ...settings,
       ...(patch.dismiss_notice ? { dismissed_notices: [...(settings.dismissed_notices ?? []), patch.dismiss_notice] } : {}),
-      ...(patch.dismissed_update_version !== undefined ? { dismissed_update_version: patch.dismissed_update_version } : {}),
       ...(patch.skipped_update_version ? { skipped_update_version: patch.skipped_update_version } : {}),
     };
   });
@@ -49,7 +50,8 @@ function setup(update: UpdateStatus = { phase: "current" }) {
 }
 
 function renderBell(notices: AppNotice[] = [], onOpenSettings = vi.fn()) {
-  const view = render(<NotificationBell notices={notices} onOpenSettings={onOpenSettings} />);
+  useAppNoticesStore.setState({ notices });
+  const view = render(<NotificationBell onOpenSettings={onOpenSettings} />);
   const bell = () => screen.getByTestId("status-bar-bell");
   const openCenter = () => {
     fireEvent.click(bell());
@@ -162,16 +164,25 @@ describe("offered update", () => {
     expect(updates.check).not.toHaveBeenCalled();
   });
 
-  it("dismisses this version with Later", async () => {
+  it("skips this version from its row, the same skip the update dialog makes", async () => {
     setup({ phase: "available", version: "1.2.0" });
     const { bell, openCenter } = renderBell();
     await waitFor(() => expect(bell().dataset.level).toBe("info"));
     const row = openCenter().querySelector<HTMLElement>('[data-attention="update"]')!;
-    const later = within(row).getByRole("button", { name: "Later" });
-    expect(later.getAttribute("title")).toBe("Hides it here; Help · Check for Updates still has it");
-    fireEvent.click(later);
-    expect(mocks.set).toHaveBeenCalledExactlyOnceWith({ dismissed_update_version: "1.2.0" });
+    const skip = within(row).getByRole("button", { name: "Skip this version" });
+    expect(skip.getAttribute("title"))
+      .toBe("No reminder or automatic download for this version; Help · Check for Updates still offers it");
+    fireEvent.click(skip);
+    expect(mocks.set).toHaveBeenCalledExactlyOnceWith({ skipped_update_version: "1.2.0" });
     await waitFor(() => expect(bell().dataset.level).toBe("none"));
+  });
+
+  it("offers no skip once the restart that installs it is under way", async () => {
+    setup({ phase: "restarting", version: "1.2.0" });
+    const { bell, openCenter } = renderBell();
+    await waitFor(() => expect(bell().dataset.level).toBe("info"));
+    const row = openCenter().querySelector<HTMLElement>('[data-attention="update"]')!;
+    expect(within(row).getAllByRole("button").map((b) => b.textContent)).toEqual(["View"]);
   });
 
   it("opens the update dialog from its row, and the row goes once the version is skipped there", async () => {

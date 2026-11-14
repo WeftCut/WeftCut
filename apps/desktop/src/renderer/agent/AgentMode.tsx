@@ -26,9 +26,8 @@ import { useChangeMarkLabel, useCompositionChangeRanges, useReviewConsumer } fro
 import { Button } from "@/components/ui/button";
 import { WindowControls } from "../components/WindowControls";
 import { NotSavedPill, type SaveFailureActions } from "../components/NotSavedPill";
-import type { SystemSettingsTarget } from "../components/systemStatus";
+import type { NoticeSettingsPage } from "../notifications/appNotices";
 import { NotificationBell } from "../notifications/NotificationBell";
-import type { AppNotice } from "../../shared/ipc";
 import { useUiScale } from '../settings/layoutTheme';
 import { UI_METRICS } from '../settings/uiMetrics';
 
@@ -47,10 +46,9 @@ interface AgentModeProps {
   summary: ProjectSummary | null;
   /// Switch the renderer layout back to the editor.
   onExit: () => void;
-  notices: readonly AppNotice[];
   saveActions: SaveFailureActions;
   /// A notice's settings link; settings are an editor surface.
-  onOpenSettings: (target: SystemSettingsTarget) => void;
+  onOpenSettings: (page: NoticeSettingsPage) => void;
 }
 
 /// Record-panel width bounds, in baseline units (UI_METRICS.agent).
@@ -76,7 +74,6 @@ export const AgentMode = forwardRef(function AgentMode(
   {
     summary,
     onExit,
-    notices,
     saveActions,
     onOpenSettings,
   }: AgentModeProps,
@@ -162,7 +159,7 @@ export const AgentMode = forwardRef(function AgentMode(
         >
           {t("agent_mode.exit")}
         </Button>
-        <NotificationBell notices={notices} onOpenSettings={onOpenSettings} placement="down" />
+        <NotificationBell onOpenSettings={onOpenSettings} placement="down" />
         <WindowControls />
       </div>
       <section className="agent-preview">

@@ -8,6 +8,7 @@ import type { Change } from "../../shared/review";
 import { StatusBar } from "./StatusBar";
 import { useLogStore } from "./store";
 import { receiveSaveStatus, useSaveStatusStore } from "../state/saveStatusStore";
+import { resetAppNoticesForTests, useAppNoticesStore } from "../notifications/appNotices";
 
 vi.mock("@/bridge/events", () => ({ listen: vi.fn(async () => () => {}) }));
 // No backend under jsdom: IPC answers nothing (the review fetch keeps its last
@@ -18,6 +19,7 @@ afterEach(async () => {
   cleanup();
   useLogStore.setState({ entries: [], unseenErrors: 0, consoleOpen: false, latest: null, latestStickyUntil: 0 });
   useSaveStatusStore.setState({ status: { state: "ok", revision: 0 } });
+  resetAppNoticesForTests();
   const { resetReviewForTests } = await import("../agent/reviewStore");
   resetReviewForTests();
   const { resetDerivativeJobsForTests } = await import("../state/derivativeJobsStore");
@@ -32,9 +34,9 @@ const entry = (level: LogLevel, message: string): LogEntry => ({
 const log = (e: LogEntry) => act(() => useLogStore.getState().append(e));
 
 function renderBar(props: { logsOpen?: boolean; notices?: AppNotice[]; onToggleLogs?: () => void } = {}) {
+  useAppNoticesStore.setState({ notices: props.notices ?? [] });
   const view = render(
     <StatusBar
-      notices={props.notices ?? []}
       onToggleLogs={props.onToggleLogs ?? vi.fn()}
       logsOpen={props.logsOpen ?? false}
       onOpenSettings={vi.fn()}
@@ -66,7 +68,7 @@ describe("log line", () => {
     expect(onToggleLogs).toHaveBeenCalledTimes(1);
 
     rerender(
-      <StatusBar notices={[]} onToggleLogs={onToggleLogs} logsOpen onOpenSettings={vi.fn()}
+      <StatusBar onToggleLogs={onToggleLogs} logsOpen onOpenSettings={vi.fn()}
         saveActions={{ retry: vi.fn(async () => {}), saveAs: vi.fn(), openFolder: vi.fn(async () => {}) }} />,
     );
     expect(logLine().getAttribute("aria-expanded")).toBe("true");
@@ -134,15 +136,6 @@ describe("bar contents", () => {
     expect(within(bar).getAllByRole("button").map((b) => b.dataset.testid))
       .toEqual(["status-bar-log", "status-bar-bell"]);
     expect(within(bar).getByTestId("status-bar-bell").dataset.level).toBe("warn");
-  });
-
-  it("carries the derivative count on the bar at once, ahead of the work pill's show delay", async () => {
-    const { derivativeJobStarted } = await import("../state/derivativeJobsStore");
-    const { bar } = renderBar();
-    await act(async () => {});
-    act(() => derivativeJobStarted({ media_id: "fresh", kind: "thumbnails" }));
-    expect(bar.getAttribute("data-derivative-jobs")).toBe("1");
-    expect(bar.querySelector('[data-testid="status-bar-work"]')).toBeNull();
   });
 });
 

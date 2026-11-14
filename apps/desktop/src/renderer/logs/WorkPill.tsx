@@ -5,7 +5,7 @@ import { Hourglass } from "lucide-react";
 import { AppIcon } from "@/components/AppIcon";
 import { useStatusPopover } from "@/components/useStatusPopover";
 import { useAgentActivity } from "../agent/activityStore";
-import { getCommand } from "../commands/registry";
+import { openAgentTab } from "../agent/openAgentTab";
 import { ComputeJobStatus } from "../compute/ComputeJobStatus";
 import { computeToolLabel, formatComputeDuration } from "../compute/computeJobView";
 import { useComputeJobsStore } from "../compute/computeJobsStore";
@@ -51,11 +51,9 @@ export function WorkPill({ backgroundExport }: {
   const exportView = backgroundExport ? exportPhaseView(backgroundExport, t) : null;
   const total = view.count + (backgroundExport ? 1 : 0);
 
+  // The popover goes with the last piece of work (the hook closes it with its
+  // anchor), and does not come back open.
   const { open, close, rootRef, detailsId, triggerProps } = useStatusPopover();
-  // The popover goes with the last piece of work, and does not come back open.
-  useEffect(() => {
-    if (total === 0) close();
-  }, [total, close]);
   if (total === 0) return null;
 
   const waiting = !backgroundExport && view.waiting;
@@ -192,8 +190,7 @@ function WorkDetails({ view, onLeave }: { view: WorkView; onLeave: () => void })
   const { t } = useTranslation();
   const openActivity = () => {
     onLeave();
-    useAgentActivity.setState({ tab: "activity" });
-    void getCommand("openAgentPanel")?.run();
+    openAgentTab("activity");
   };
   return (
     <>

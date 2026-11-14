@@ -8,7 +8,7 @@
 // Not saved is deliberately absent: it has its own entry in the bar, and a
 // second one here would be a duplicate way in.
 
-import type { AppNotice } from "../../shared/ipc";
+import type { AppNotice, AppNoticeCode } from "../../shared/ipc";
 import type { UpdateStatus } from "../../shared/updates";
 
 export type AttentionLevel = AppNotice["level"];
@@ -17,7 +17,7 @@ export type AttentionItem =
   /// Unreviewed agent changes (ADR 0115). Gone once reviewed; never dismissed.
   | { kind: "review"; key: "review"; level: "info"; count: number }
   /// An environment notice from main (`app:notices`), at its own level.
-  | { kind: "notice"; key: string; level: AttentionLevel; code: string }
+  | { kind: "notice"; key: string; level: AttentionLevel; code: AppNoticeCode }
   /// An offered update the user has not skipped.
   | { kind: "update"; key: "update"; level: "info"; update: UpdateStatus & { version: string } };
 
@@ -34,10 +34,9 @@ export interface AttentionInput {
   /// stands; main forgets it once the notice is gone, so a return shows again.
   dismissedNotices: readonly string[];
   unreviewed: number;
-  /// From `useNoticedUpdate`: offered and not skipped, else null.
+  /// From `useNoticedUpdate`: offered and not skipped, else null. Skipping is
+  /// the update's one dismissal, the same in the center and the update dialog.
   update: UpdateStatus | null;
-  /// "Later" on this version; a different (newer) one shows again.
-  dismissedUpdateVersion: string | undefined;
 }
 
 const RANK: Record<AttentionLevel, number> = { error: 0, warn: 1, info: 2 };
@@ -52,7 +51,7 @@ export function attentionView(input: AttentionInput): AttentionView {
     active.push({ kind: "review", key: "review", level: "info", count: input.unreviewed });
   }
   const update = input.update;
-  if (update?.version && update.version !== input.dismissedUpdateVersion) {
+  if (update?.version) {
     active.push({ kind: "update", key: "update", level: "info", update: { ...update, version: update.version } });
   }
   // Stable: within a level, notices, then review, then the update.

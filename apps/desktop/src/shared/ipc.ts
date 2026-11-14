@@ -66,7 +66,14 @@ export type SystemStats = {
 /// (e.g. keyring-unavailable → plaintext cloud keys) and the renderer PULLS them
 /// on mount via `app.notices()` — a pull model so a notice can't be lost to the
 /// fire-once-before-subscribe race a pushed event had.
-export type AppNotice = { level: 'info' | 'warn' | 'error'; code: string }
+export type AppNotice = { level: 'info' | 'warn' | 'error'; code: AppNoticeCode }
+/// Every notice main can raise. A new one also needs its catalog entry
+/// (`renderer/notifications/appNotices.ts`) and its `app_notice.<code>` strings.
+export type AppNoticeCode =
+  | 'native_decode_unavailable'
+  | 'keyring_unavailable'
+  | 'agent_skill_unavailable'
+  | 'agent_skill_stale'
 
 /// Version identity for the About dialog, pulled by the renderer (the bundle
 /// has no package.json access). `app` is app.getVersion(); the rest are

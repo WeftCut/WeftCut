@@ -10,9 +10,8 @@ vi.mock("../ipc", () => ipc);
 vi.mock("@/bridge/events", () => ({ listen: vi.fn(async (_event: string, callback: () => void) => { events.refresh = callback; return () => {}; }) }));
 vi.mock("@/bridge/dialog", () => ({ open: vi.fn(async () => "/custom/file") }));
 vi.mock("../search/searchIndexStore", () => ({ onDescribeViewChanged: vi.fn() }));
-const notices = vi.hoisted(() => ({ list: [] as { level: "info" | "warn" | "error"; code: string }[] }));
-vi.mock("../components/useAppNotices", () => ({ useAppNotices: () => notices.list }));
 import { open as openFileDialog } from "@/bridge/dialog";
+import { resetAppNoticesForTests, useAppNoticesStore } from "../notifications/appNotices";
 import { ModelSection } from "./ModelSection";
 import { ModelEditor } from "./ModelEditor";
 import { VlmSection } from "./VlmSection";
@@ -26,7 +25,7 @@ function initial(): ModelsView {
 }
 beforeEach(() => {
   cleanup(); vi.clearAllMocks();
-  notices.list = [];
+  resetAppNoticesForTests();
   ipc.modelsList.mockResolvedValue(initial());
   ipc.modelsUse.mockResolvedValue(undefined); ipc.modelsCancel.mockResolvedValue(undefined);
 });
@@ -58,7 +57,7 @@ describe("model settings", () => {
     expect(screen.queryByTestId("keys-unencrypted")).toBeNull();
     cleanup();
     // The bell's row may have been dismissed; this home shows the state regardless.
-    notices.list = [{ level: "warn", code: "keyring_unavailable" }];
+    useAppNoticesStore.setState({ notices: [{ level: "warn", code: "keyring_unavailable" }] });
     render(<ModelSection family="speech" onError={vi.fn()} />);
     expect((await screen.findByTestId("keys-unencrypted")).textContent).toContain("No OS keyring is available");
   });

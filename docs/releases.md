@@ -78,10 +78,9 @@ for Updates, which is the explicit check.
 - "Skip this version" stores `skipped_update_version`: the passive entries hide
   it and background download and exit install step aside. Help → Check for
   Updates still offers it, and downloading from there clears the skip. A newer
-  release is never covered by an older skip. "Later" in the dialog only closes
-  it; "Later" on the notification center's row stores
-  `dismissed_update_version`, which takes the row out of the center and clears
-  the bell's dot for that version only.
+  release is never covered by an older skip. The notification center's update
+  row offers the same skip as its dismissal, so the row and the bell's dot go
+  for that version only; "Later" in the dialog only closes it.
 
 Windows updates show the NSIS progress page without location or mode choices
 and close on success; only update-and-restart relaunches. File replacement is

@@ -72,8 +72,6 @@ export const useAutoInstallUpdatesOnQuit = () =>
   useAppSettingsStore((s) => s.settings.auto_install_updates_on_quit !== false);
 export const useSkippedUpdateVersion = () =>
   useAppSettingsStore((s) => s.settings.skipped_update_version);
-export const useDismissedUpdateVersion = (): string | undefined =>
-  useAppSettingsStore((s) => s.settings.dismissed_update_version);
 // One shared empty list: a fresh `[]` per call is a new reference every render,
 // the same loop the composite-selector note above describes.
 const NO_DISMISSED_NOTICES: readonly string[] = [];

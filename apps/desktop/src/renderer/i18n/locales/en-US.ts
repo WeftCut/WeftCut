@@ -2950,7 +2950,7 @@ const enUS = {
     level_warn: "warning",
     level_error: "error",
     dismiss_hint_settings: "Hides it here; it stays in Settings · {{page}}",
-    dismiss_hint_update: "Hides it here; Help · Check for Updates still has it",
+    dismiss_hint_update: "No reminder or automatic download for this version; Help · Check for Updates still offers it",
     open_settings: "Open settings",
     review_title_one: "{{count}} agent change to review",
     review_title_other: "{{count}} agent changes to review",

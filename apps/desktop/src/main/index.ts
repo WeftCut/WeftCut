@@ -67,6 +67,7 @@ import { windowsAppIdentity } from './appIdentity.js'
 import { installWindowsNotifications } from './windowsNotifications.js'
 import { buildApplicationMenuTemplate, sanitizeMenuProjection } from './appMenu.js'
 import type { MenuProjection } from '../shared/menu.js'
+import type { AppNotice } from '../shared/ipc.js'
 import { broadcastEvent } from './broadcast.js'
 import { createDeferredLog } from './deferredLog.js'
 import { createWorkspaceEventGate } from './workspaceEvents.js'
@@ -192,7 +193,7 @@ const isDev = !!process.env['ELECTRON_RENDERER_URL']
 // IPC (see AppNotice in src/shared/ipc.ts). Collected here at startup, fetched
 // when the renderer is ready — a pull model, because a push send loses any
 // notice emitted before the renderer subscribes.
-const startupNotices: { level: string; code: string }[] = []
+const startupNotices: AppNotice[] = []
 
 // GPU identity for the HW capability lane: vendor/device/driver — a
 // driver update or GPU swap invalidates every cached HW verdict. `getGPUInfo`
@@ -2682,8 +2683,8 @@ app.whenReady().then(async () => {
   //  - autofill after every install — each plan is a no-op for items it does
   //    not claim, so neither consumer needs to know which family just landed,
   //  - one LogBus op per item (Started → Progress at ≤1 Hz → Ok/Err under one
-  //    op_id, so the status bar collapses it to one row; the message carries
-  //    the percentage, which is the progress surface OUTSIDE Settings),
+  //    op_id, so the console collapses it to one row; the message carries
+  //    the percentage, which the log line shows OUTSIDE Settings),
   //  - the pending-id list persisted under cache/, which is what lets a quit
   //    mid-download pick up where it stopped at the next boot.
   const contentQueueFile = path.join(dataRoot.cacheDir, 'content-queue.json')

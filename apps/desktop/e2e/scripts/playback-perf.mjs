@@ -790,7 +790,7 @@ async function runCell(leg, tracks) {
     while (Date.now() - quietStart < 300_000) {
       const [m, derivativeJobsPending] = await Promise.all([
         readMetrics().catch(() => null),
-        page.evaluate(() => Number(document.querySelector(".status-bar")?.getAttribute("data-derivative-jobs") ?? 0) > 0),
+        page.evaluate(() => window.__weftcutTest.derivativeJobCount() > 0),
       ]);
       const total = (m ?? []).reduce((s, p) => s + (p.cpu?.percentCPUUsage ?? 0), 0);
       quietPolls++;

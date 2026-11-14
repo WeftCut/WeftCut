@@ -12,6 +12,7 @@ import { PROJECT_OPENED_EVENT,type ProjectOpenedPayload } from "../shared/projec
 import { App } from "./App";
 import { PreviousSessionReport } from './app/DiagnosticReport';
 import { initEval } from "./eval";
+import { useAppNoticeEvents } from "./notifications/appNotices";
 import { useFocusRegions } from "./focus/useFocusRegions";
 import "./i18n";
 import {
@@ -107,6 +108,9 @@ function Root() {
   // editor already on screen remounts on the new project exactly as a UI Close
   // + Open would, and no store of the previous project survives.
   const [projectEpoch, setProjectEpoch] = useState(0);
+  // Here, above both surfaces: the start screen's Settings shows a notice's
+  // home as the editor's bell and Settings do.
+  useAppNoticeEvents();
 
   useEffect(() => {
     let cancelled = false;

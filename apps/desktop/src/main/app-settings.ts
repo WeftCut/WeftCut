@@ -108,8 +108,6 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
         ? parsed.auto_install_updates_on_quit : true,
       skipped_update_version: typeof parsed.skipped_update_version === 'string' && parsed.skipped_update_version !== ''
         ? parsed.skipped_update_version : undefined,
-      dismissed_update_version: typeof parsed.dismissed_update_version === 'string' && parsed.dismissed_update_version !== ''
-        ? parsed.dismissed_update_version : undefined,
       dismissed_notices: readNoticeCodes(parsed.dismissed_notices),
       layout_theme: readLayoutTheme(parsed.layout_theme),
       resource_policy: readResourcePolicy(parsed.resource_policy),
@@ -304,10 +302,6 @@ export function createAppSettingsStore(deps: PerformanceEnvironment & { cores?: 
       if (patch.skipped_update_version !== undefined) {
         if (typeof patch.skipped_update_version !== 'string') throw new Error('Invalid skipped update version')
         current.skipped_update_version = patch.skipped_update_version === '' ? undefined : patch.skipped_update_version
-      }
-      if (patch.dismissed_update_version !== undefined) {
-        if (typeof patch.dismissed_update_version !== 'string') throw new Error('Invalid dismissed update version')
-        current.dismissed_update_version = patch.dismissed_update_version === '' ? undefined : patch.dismissed_update_version
       }
       if (patch.dismiss_notice !== undefined) {
         if (typeof patch.dismiss_notice !== 'string' || patch.dismiss_notice === '') throw new Error('Invalid notice code')

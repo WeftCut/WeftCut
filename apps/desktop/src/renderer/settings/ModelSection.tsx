@@ -10,7 +10,7 @@ import { AppDialog } from "../components/AppDialog";
 import { canSwitchModel, ModelPicker, ONLINE_MODEL_IDS } from "./ModelPicker";
 import { ModelEditor } from "./ModelEditor";
 import { AppIcon } from "@/components/AppIcon";
-import { useAppNotices } from "../components/useAppNotices";
+import { useAppNoticeStanding } from "../notifications/appNotices";
 
 type Panel = { kind: "add" } | { kind: "editor"; id: string; mode: "prepare" | "edit" | "new"; backend?: ModelBackend };
 export function modelSize(bytes: number): string {
@@ -39,7 +39,7 @@ export function ModelSection({ family, onError }: { family: ModelFamily; onError
   const [dialogError, setDialogError] = useState("");
   // The keyring notice's home: where cloud keys are entered, it always shows,
   // whether or not the bell's row was dismissed.
-  const keysUnencrypted = useAppNotices().some((notice) => notice.code === "keyring_unavailable");
+  const keysUnencrypted = useAppNoticeStanding("keyring_unavailable");
   const wanted = useRef<ModelUseRequest | null>(null);
   const acknowledged = useRef(false);
   const refreshRef = useRef<() => Promise<void>>(async () => {});

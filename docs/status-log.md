@@ -169,7 +169,11 @@ carries severity only. Not saved is the one exception: a problem with a place
 of its own, because it must never be missed ([ADR 0166](adr/0166-the-status-bar-answers-three-questions.md)). Every popover opens
 from its own trigger (`components/useStatusPopover.ts`): one is open at a
 time, a second click or a click outside closes it, Escape closes it and hands
-focus back. A popover whose trigger already says what it is has no title.
+focus back. That Escape is the popover's alone: it does not also restore a
+maximized panel or leave blade mode, though a menu or dialog holding focus
+keeps its own. A popover closes with its trigger (the work ends, the save
+recovers) and never comes back open on its own. A popover whose trigger
+already says what it is has no title.
 
 - **Log line**: the latest `Info+` message — level dot, time, source,
   message, in the console row's order; an `Error` sticks 10 s
@@ -201,9 +205,9 @@ focus back. A popover whose trigger already says what it is has no title.
   not counted: the work a Started row stands for shows where it was started
   (the import row, the Shots panel, the Pauses buttons, the voiceover dialog),
   and the console shows the op. Derivative jobs are tracked app-wide
-  (`state/derivativeJobsStore.ts`), since agent mode unmounts the bar; the
-  bar's `data-derivative-jobs` carries their count, undelayed, for bench
-  scripts.
+  (`state/derivativeJobsStore.ts`), since agent mode unmounts the bar; bench
+  scripts read their count, undelayed, from the E2E hook's
+  `derivativeJobCount()`.
 - **Not saved** (`NotSavedPill`, amber): present only while main reports the
   project failing to save (`shared/save-status.ts`, [data-model.md §
   Saving](data-model.md#saving)). Its popover is the recovery in place: the
@@ -235,7 +239,7 @@ The bell's popover, titled "Needs attention" since the bell has no text. One
 flat list: rows separated by dividers, no cards. A row is severity dot, title
 and a description of at most two lines (full text in its tooltip). At its end,
 the way to the fix (Open settings, Open review, View) is a link at the top; the
-dismissal (Got it, Later), second in rank, sits grey at the bottom and shows
+dismissal (Got it, Skip this version), second in rank, sits grey at the bottom and shows
 while the row is hovered or holds keyboard focus, so a list at rest reads as
 what needs doing. Popover links carry a padded hit area and a faint chip on
 hover, the focus ring's shape; no underline.
@@ -252,11 +256,15 @@ where keys are entered, an offered update under Help · Check for Updates.
 |---|---|---|---|
 | Agent changes to review (ADR 0115) | info | no | — (gone once reviewed) |
 | Environment notices (`app:notices`: keyring, native decode, agent Skill) | the notice's | Got it | the notice was gone, then returns |
-| Update offered, not skipped | info | Later | a different version is offered |
+| Update offered, not skipped | info | Skip this version (none while restarting) | a different version is offered |
 
 Not saved is not listed: it has its own entry, and two ways in to one problem
 would be one too many. Dismissals are main-owned app settings
-(`dismissed_notices`, `dismissed_update_version`), so they survive restarts.
+(`dismissed_notices`, and for an update the same `skipped_update_version` the
+update dialog's skip writes: [releases.md](releases.md)), so they survive
+restarts. The environment notices, each code's settings page and its log line
+live in one catalog (`notifications/appNotices.ts`), mirrored app-wide from
+main for the bell and the settings pages alike.
 Main drops a dismissed code whenever it settles a notice set that lacks it
 (at startup, once every startup notice is collected, and after the agent Skill
 is reinstalled), so a notice that went away and came back is new.

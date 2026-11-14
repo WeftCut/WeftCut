@@ -8,7 +8,6 @@ const input = (over: Partial<AttentionInput> = {}): AttentionInput => ({
   dismissedNotices: [],
   unreviewed: 0,
   update: null,
-  dismissedUpdateVersion: undefined,
   ...over,
 });
 const keys = (items: { key: string }[]) => items.map((i) => i.key);
@@ -49,29 +48,22 @@ describe("attentionView", () => {
     expect(view.level).toBe("info");
   });
 
-  it("dismisses an update only for the version dismissed; a newer one shows again", () => {
-    expect(attentionView(input({ update: offered, dismissedUpdateVersion: "1.2.0" })).active).toEqual([]);
-    const newer = attentionView(input({ update: { phase: "available", version: "1.3.0" }, dismissedUpdateVersion: "1.2.0" }));
-    expect(keys(newer.active)).toEqual(["update"]);
-  });
-
   it("lists no update without a version to name", () => {
     expect(attentionView(input({ update: { phase: "available" } })).active).toEqual([]);
   });
 
   it("never dismisses the review, and drops it once nothing is unreviewed", () => {
     // No dismissal input reaches it: whatever the user dismissed, it stays.
-    const view = attentionView(input({ unreviewed: 3, dismissedNotices: ["review"], dismissedUpdateVersion: "review" }));
+    const view = attentionView(input({ unreviewed: 3, dismissedNotices: ["review"] }));
     expect(view.active).toEqual([{ kind: "review", key: "review", level: "info", count: 3 }]);
     expect(attentionView(input({ unreviewed: 0 })).active).toEqual([]);
   });
 
   it("shows no dot when every item is dismissed", () => {
+    // A skipped update never arrives here (`useNoticedUpdate` drops it).
     const view = attentionView(input({
       notices: [{ level: "error", code: "agent_skill_unavailable" }],
       dismissedNotices: ["agent_skill_unavailable"],
-      update: offered,
-      dismissedUpdateVersion: "1.2.0",
     }));
     expect(view.active).toEqual([]);
     expect(view.level).toBeNull();

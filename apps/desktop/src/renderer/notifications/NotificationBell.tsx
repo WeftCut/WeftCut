@@ -4,23 +4,21 @@ import type { TFunction } from "i18next";
 import { BellIcon } from "lucide-react";
 import { AppIcon } from "@/components/AppIcon";
 import { useStatusPopover } from "@/components/useStatusPopover";
-import { useAgentActivity } from "../agent/activityStore";
+import { openAgentTab } from "../agent/openAgentTab";
 import { useUnreviewedCount } from "../agent/reviewStore";
 import { useNoticedUpdate } from "../app/updateStatus";
 import { UpdateDialog } from "../app/UpdateDialog";
-import { getCommand } from "../commands/registry";
-import { systemSettingsTarget, type SystemSettingsTarget } from "../components/systemStatus";
-import {
-  setAppSettings,
-  useDismissedNotices,
-  useDismissedUpdateVersion,
-} from "../settings/appSettingsStore";
-import type { AppNotice } from "../../shared/ipc";
+import { setAppSettings, useDismissedNotices } from "../settings/appSettingsStore";
 import { attentionView, type AttentionItem } from "./attentionView";
+import {
+  NOTICE_PAGE_LABEL,
+  noticeSettingsPage,
+  useAppNotices,
+  type NoticeSettingsPage,
+} from "./appNotices";
 
 interface Props {
-  notices: readonly AppNotice[];
-  onOpenSettings: (target: SystemSettingsTarget) => void;
+  onOpenSettings: (page: NoticeSettingsPage) => void;
   /// `down` in the agent-mode titlebar, where the bell sits at the top.
   placement?: "up" | "down";
 }
@@ -31,13 +29,13 @@ interface Props {
 /// home (the settings page "Open settings" leads to, Help · Check for Updates),
 /// and the dismiss link's tooltip names it. Layout and behaviour:
 /// `docs/status-log.md` § Notification center.
-export function NotificationBell({ notices, onOpenSettings, placement = "up" }: Props) {
+export function NotificationBell({ onOpenSettings, placement = "up" }: Props) {
   const { t } = useTranslation();
+  const notices = useAppNotices();
   const unreviewed = useUnreviewedCount();
   const update = useNoticedUpdate();
   const dismissedNotices = useDismissedNotices();
-  const dismissedUpdateVersion = useDismissedUpdateVersion();
-  const view = attentionView({ notices, dismissedNotices, unreviewed, update, dismissedUpdateVersion });
+  const view = attentionView({ notices, dismissedNotices, unreviewed, update });
   const { open, close, rootRef, detailsId, triggerProps } = useStatusPopover();
   const [updateOpen, setUpdateOpen] = useState(false);
 
@@ -47,19 +45,15 @@ export function NotificationBell({ notices, onOpenSettings, placement = "up" }: 
 
   const act = (item: AttentionItem) => {
     close();
-    if (item.kind === "review") {
-      useAgentActivity.setState({ tab: "changes" });
-      void getCommand("openAgentPanel")?.run();
-    } else if (item.kind === "update") {
-      setUpdateOpen(true);
-    } else {
-      const target = systemSettingsTarget(item.code);
-      if (target) onOpenSettings(target);
-    }
+    if (item.kind === "review") openAgentTab("changes");
+    else if (item.kind === "update") setUpdateOpen(true);
+    else onOpenSettings(noticeSettingsPage(item.code));
   };
   const dismiss = (item: AttentionItem) => {
+    // Skipping is the update's one dismissal, as in the update dialog: no
+    // reminder, download or install for this version; a newer one shows again.
     const patch = item.kind === "update"
-      ? { dismissed_update_version: item.update.version }
+      ? { skipped_update_version: item.update.version }
       : item.kind === "notice" ? { dismiss_notice: item.code } : null;
     if (patch) void setAppSettings(patch).catch((error) => console.warn("[notifications] dismiss", error));
   };
@@ -123,11 +117,9 @@ function AttentionRow({ item, onAct, onDismiss }: {
         {text.body && <div className="attention-row-body" title={text.body}>{text.body}</div>}
       </div>
       <div className="attention-actions">
-        {text.action ? (
-          <button type="button" className="attention-link" onClick={() => onAct(item)}>
-            {text.action}
-          </button>
-        ) : <span />}
+        <button type="button" className="attention-link" onClick={() => onAct(item)}>
+          {text.action}
+        </button>
         {text.dismiss && (
           <button
             type="button"
@@ -144,17 +136,10 @@ function AttentionRow({ item, onAct, onDismiss }: {
   );
 }
 
-/// The settings page a notice's home is on, by the tab label it carries there.
-const SETTINGS_PAGE_LABEL: Record<SystemSettingsTarget, string> = {
-  general: "settings.cat_general",
-  speech: "settings.cat_speech",
-  agent: "settings.cat_agent",
-};
-
 function rowText(t: TFunction, item: AttentionItem): {
   title: string;
   body?: string;
-  action?: string;
+  action: string;
   dismiss?: string;
   /// Where the state stays once the row is dismissed.
   dismissHint?: string;
@@ -183,23 +168,22 @@ function rowText(t: TFunction, item: AttentionItem): {
         title,
         ...(body ? { body } : {}),
         action: t("notifications.update_action"),
-        dismiss: t("updates.later"),
-        dismissHint: t("notifications.dismiss_hint_update"),
+        // A restart already under way installs it; there is nothing to skip.
+        ...(phase === "restarting" ? {} : {
+          dismiss: t("updates.skip"),
+          dismissHint: t("notifications.dismiss_hint_update"),
+        }),
       };
     }
-    case "notice": {
-      const target = systemSettingsTarget(item.code);
+    case "notice":
       return {
         title: t(`app_notice.${item.code}.title`),
         body: t(`app_notice.${item.code}.body`),
-        ...(target
-          ? {
-            action: t("notifications.open_settings"),
-            dismissHint: t("notifications.dismiss_hint_settings", { page: t(SETTINGS_PAGE_LABEL[target]) }),
-          }
-          : {}),
+        action: t("notifications.open_settings"),
         dismiss: t("app_notice.dismiss"),
+        dismissHint: t("notifications.dismiss_hint_settings", {
+          page: t(NOTICE_PAGE_LABEL[noticeSettingsPage(item.code)]),
+        }),
       };
-    }
   }
 }

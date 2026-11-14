@@ -84,22 +84,6 @@ describe('app-settings store', () => {
     expect(() => createAppSettingsStore(deps).apply({ skipped_update_version: 6 as never })).toThrow()
     expect(files.get(PATH)).toBe(before)
   })
-  it('persists a dismissed update version, clears it with an empty string and refuses a non-string', () => {
-    const { fs, files } = memFs()
-    const deps = { fs, path: PATH, dir: DIR }
-    expect(createAppSettingsStore(deps).get().dismissed_update_version).toBeUndefined()
-    createAppSettingsStore(deps).apply({ dismissed_update_version: '0.8.0' })
-    expect(createAppSettingsStore(deps).get().dismissed_update_version).toBe('0.8.0')
-    createAppSettingsStore(deps).apply({ dismissed_update_version: '' })
-    expect(createAppSettingsStore(deps).get().dismissed_update_version).toBeUndefined()
-    expect(JSON.parse(files.get(PATH)!)).not.toHaveProperty('dismissed_update_version')
-    const before = files.get(PATH)
-    expect(() => createAppSettingsStore(deps).apply({ dismissed_update_version: 8 as never })).toThrow()
-    expect(files.get(PATH)).toBe(before)
-  })
-  it.each([42, null, '', ['a']])('ignores an unreadable dismissed update version %s', value => {
-    expect(store({ [PATH]: JSON.stringify({ dismissed_update_version: value }) }).get().dismissed_update_version).toBeUndefined()
-  })
 
   describe('dismissed notices', () => {
     it('keeps no dismissal list on disk until a notice is dismissed', () => {

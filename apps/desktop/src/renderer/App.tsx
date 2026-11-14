@@ -81,14 +81,10 @@ import {
 import { MotifPicker } from "./motifs/MotifPicker";
 import { tenBitExportCapable } from "./render/exportSettings";
 import { MotifStaleDialog } from "./panels/MotifStaleDialog";
-import { useAppNotices } from "./components/useAppNotices";
+import { noticeLogMessage, useAppNotices, type NoticeSettingsPage } from "./notifications/appNotices";
 import type { SaveFailureActions } from "./components/NotSavedPill";
 import { useDerivativeJobEvents } from "./state/derivativeJobsStore";
 import { open as shellOpen } from "@/bridge/shell";
-import {
-  systemNoticeLogMessage,
-  type SystemSettingsTarget,
-} from "./components/systemStatus";
 import { PickOverlayHost } from "./colorpick/PickOverlayHost";
 import { ExportSettingsDialog } from "./panels/ExportSettingsDialog";
 import { type PreviewSurfaceHandle } from "./preview/PreviewSurface";
@@ -462,7 +458,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
         level: notice.level,
         category: { kind: "System" },
         source: { kind: "System" },
-        message: systemNoticeLogMessage(notice),
+        message: noticeLogMessage(notice.code),
         details: { notice_code: notice.code },
       }).catch(() => {
         loggedSystemNoticeCodes.current.delete(notice.code);
@@ -502,8 +498,8 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
         const msg = String(e);
         setError(msg);
         // The user-facing error path is the status bar, not inline chrome. Push
-        // every caught UI error into the log so the bar's error counter +
-        // sticky-latest behavior surfaces it.
+        // every caught UI error into the log so the log line's unseen-error
+        // count and sticky latest entry surface it.
         void logEmit({
           level: "error",
           category: { kind: "System" },
@@ -803,7 +799,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
   }, []);
 
   const openSystemSettings = useCallback(
-    (category: SystemSettingsTarget) => {
+    (category: NoticeSettingsPage) => {
       setLogConsoleOpen(false);
       openSettings(category);
     },
@@ -1205,7 +1201,6 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
           ref={previewRef}
           summary={summary}
           onExit={exitAgentMode}
-          notices={systemNotices}
           saveActions={saveFailureActions}
           // Settings are an editor surface: the way there leaves agent mode.
           onOpenSettings={(target) => { void exitAgentMode(); openSystemSettings(target); }}
@@ -1366,7 +1361,6 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
       )}
       {paletteOpen && <SearchPalette onClose={() => setPaletteOpen(false)} />}
       <StatusBar
-        notices={systemNotices}
         backgroundExport={backgroundExportActive && exportState ? exportState : undefined}
         onToggleLogs={toggleLogConsole}
         logsOpen={logConsoleOpen}
