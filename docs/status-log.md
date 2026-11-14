@@ -160,7 +160,7 @@ next splash ("did not exit normally"). Storage failures never block startup.
 ### Bar
 
 ```
-[2] 14:32 [Agent · Claude] Added 3 layers to track V1  ⌃ │ ◔ Export 42% · +3 │ ⚠ Not saved │ 🔔•
+[2] 14:32 [Agent · Claude] Added 3 layers to track V1  ⌃ │ ◔ Export 42% · 3 more │ ⚠ Not saved │ 🔔•
 ```
 
 The bar answers three questions, one element each: what just happened (the
@@ -193,7 +193,7 @@ already says what it is has no title.
   shows once it has run 250 ms, so an agent's quick reads never flash; the
   export, started by the user, shows at once. The label: a running export
   leads with a progress ring and its percent, the rest counted after it
-  ("Export 42% · +3"); otherwise one row names what it does (Transcribing,
+  ("Export 42% · 3 more"); otherwise one row names what it does (Transcribing,
   Generating derivatives…) and several are counted; when every row is queued
   for admission the spinner becomes an hourglass. The popover groups rows by
   owner, the export first and without a heading, since the trigger names it

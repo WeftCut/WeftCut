@@ -177,7 +177,7 @@ describe("background export in the work pill", () => {
     render(<WorkPill backgroundExport={encoding(0.42)} />);
     await publish([jobFixture("a", { kind: "queued", reason: "budget" }), jobFixture("b", { kind: "queued", reason: "memory" })]);
     const trigger = screen.getByTestId("status-bar-work");
-    expect(trigger.textContent).toBe("Export 42% · +2");
+    expect(trigger.textContent).toBe("Export 42% · 2 more");
     // A running export is work, not a wait, while everything else queues.
     expect(trigger.dataset.state).toBe("working");
     expect(trigger.querySelector(".lucide-hourglass")).toBeNull();

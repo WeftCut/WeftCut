@@ -2918,7 +2918,7 @@ const enUS = {
       kind_audio_fx: "Audio effects",
       group_export: "Export",
       // The export leads the pill; the rest of the work is counted after it.
-      with_more: "{{label}} · +{{count}}",
+      with_more: "{{label}} · {{count}} more",
     },
   },
   save_status: {

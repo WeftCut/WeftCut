@@ -107,7 +107,7 @@ function useExportStartedAt(state: ExportState | undefined): number | null {
   return started?.at ?? null;
 }
 
-/// The export leads: "Export 42%", and "+3" for the rest.
+/// The export leads: "Export 42%", and "3 more" for the rest.
 function exportLabel(t: TFunction, percent: number | undefined, others: number): string {
   const own = percent === undefined ? t("export.title") : t("export.pill", { percent });
   return others > 0 ? t("status_bar.work.with_more", { label: own, count: others }) : own;
