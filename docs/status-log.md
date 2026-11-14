@@ -237,7 +237,8 @@ and a description of at most two lines (full text in its tooltip). At its end,
 the way to the fix (Open settings, Open review, View) is a link at the top; the
 dismissal (Got it, Later), second in rank, sits grey at the bottom and shows
 while the row is hovered or holds keyboard focus, so a list at rest reads as
-what needs doing.
+what needs doing. Popover links carry a padded hit area and a faint chip on
+hover, the focus ring's shape; no underline.
 Empty: "Nothing needs attention".
 
 Dismissing takes a row out of the center, nothing more: the center only

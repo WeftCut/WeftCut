@@ -383,10 +383,15 @@
   font-weight: 400;
 }
 
+/* A link in a popover: blue text, a padded hit area whose negative margin
+   keeps the text where it sits, and a faint chip on hover the same shape as
+   the focus ring. */
 .work-group-link,
 .attention-link {
-  padding: 0;
+  padding: calc(2 * var(--ui-px)) calc(6 * var(--ui-px));
+  margin: calc(-2 * var(--ui-px)) calc(-6 * var(--ui-px));
   border: none;
+  border-radius: var(--radius-control);
   background: none;
   color: var(--color-blue-300);
   font-size: var(--font-size-caption);
@@ -396,7 +401,7 @@
 
 .work-group-link:hover,
 .attention-link:hover {
-  text-decoration: underline;
+  background: var(--hover-neutral);
 }
 
 .work-group-link:focus-visible,
