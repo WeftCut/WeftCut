@@ -495,14 +495,16 @@
 }
 
 /* A row's actions end its last line, as the export's Cancel does: a waiting
-   job's reason can wrap over several lines, and its wait time and Cancel then
+   job's reason wraps over several lines, and its wait time and Cancel then
    sit at the bottom right, on the last line's baseline, while the hourglass
-   stays with the first. Scoped here; the panels' inline status keeps its own. */
-.work-row .compute-job-status.variant-inline {
+   stays with the first. Waiting rows only: a working row is one short line,
+   centred like the export's, where a top-pinned spinner would sit above the
+   text. Scoped here; the panels' inline status keeps its own. */
+.work-row .compute-job-status.variant-inline.state-waiting {
   align-items: last baseline;
 }
 
-.work-row .compute-job-status.variant-inline .compute-job-icon {
+.work-row .compute-job-status.variant-inline.state-waiting .compute-job-icon {
   align-self: flex-start;
 }
 
