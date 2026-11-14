@@ -999,7 +999,7 @@ describe("ShotsPanel — describing one shot", () => {
       i18n_key: "log.describe_done",
       op_state: { state: "Ok" },
     });
-    // One `op_id` across the pair, or the status badge keeps spinning.
+    // One `op_id` across the pair, or the console shows the run as still going.
     expect(started?.op_id).toBe(done?.op_id);
     // The shot's ordinal is in the subject, so a sweep's rows say which run
     // each one was.

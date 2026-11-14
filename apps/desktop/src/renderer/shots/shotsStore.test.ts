@@ -320,8 +320,8 @@ describe("Analyze", () => {
     // it reaches the inline slot verbatim.
     expect(useShotsStore.getState().error).toContain("re-import it");
     const rows = mocks.logEmit.mock.calls.map(([entry]) => entry);
-    // The op is TERMINATED, not left open: an unterminated one keeps the status
-    // bar's running badge spinning for the rest of the session.
+    // The op is TERMINATED, not left open: the console shows an unterminated
+    // one as running for the rest of the session.
     expect(rows[1]).toMatchObject({ op_state: { state: "Err" }, level: "error" });
     expect(rows[0]?.op_id).toBe(rows[1]?.op_id);
   });
@@ -397,7 +397,8 @@ describe("Measure shots", () => {
 
     expect(mocks.attachShotStats).not.toHaveBeenCalled();
     // And no op is opened either: a pass that measures nothing has nothing to
-    // report, and a Started row with no terminal one spins the status badge.
+    // report, and a Started row with no terminal one stays running in the
+    // console.
     expect(mocks.logEmit).not.toHaveBeenCalled();
   });
 
@@ -439,8 +440,8 @@ describe("Measure shots", () => {
     expect(useShotsStore.getState().measuring).toBeNull();
     expect(useShotsStore.getState().error).toContain("spans[1]");
     const rows = mocks.logEmit.mock.calls.map(([entry]) => entry);
-    // TERMINATED, not left open: an unterminated op keeps the status bar's
-    // running badge spinning for the rest of the session.
+    // TERMINATED, not left open: the console shows an unterminated op as
+    // running for the rest of the session.
     expect(rows[1]).toMatchObject({
       i18n_key: "log.shots_stats_failed",
       op_state: { state: "Err" },

@@ -349,8 +349,8 @@ describe("the status rows", () => {
       level: "error",
       details: { context: "apply_shot_cuts" },
     });
-    // An unterminated op keeps the status bar's running badge spinning for the
-    // rest of the session.
+    // The console shows an unterminated op as running for the rest of the
+    // session.
     expect(rows[0]?.op_id).toBe(rows[1]?.op_id);
   });
 

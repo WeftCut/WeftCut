@@ -126,8 +126,8 @@ export interface CompositionState {
 interface Props {
   readDecodeDevices?: () => import('../render/decoder/session').PreviewDecodeDevice[];
   onClose: () => void;
-  /// Category selected when the modal mounts. System-status actions use this
-  /// to deep-link directly to the relevant recovery controls.
+  /// Category selected when the modal mounts. A notification's "Open settings"
+  /// uses this to deep-link directly to the relevant recovery controls.
   initialCategory?: SettingsCategory;
   /// Shortcut overrides owned by App.tsx. Threaded through so the
   /// Keyboard section can render the current bindings and the

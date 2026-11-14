@@ -2,7 +2,8 @@
 // Part B; ADR 0115): unreviewed changes, the user's own, and the Group layers
 // containing either. Main computes it lazily, so the renderer reads it only
 // while a review surface is mounted — the Changes tab, the editor timeline under
-// the Review overlay, the agent view's mini timeline, the status bar count.
+// the Review overlay, the agent view's mini timeline, the notification center's
+// review row.
 //
 // One owner: consumers `acquireReview()` (or `useReviewView()`); the first one
 // subscribes to `review:changed` and to project publications and fetches, the

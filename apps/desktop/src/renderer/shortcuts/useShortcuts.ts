@@ -300,7 +300,7 @@ export function runCommandWithLogging(
 /// a native NLE does nothing on an empty undo); anything else keeps the raw
 /// `String(err)` framing. `opId` is set when a Started entry may already be
 /// out — the terminal `op_state` must follow even for a Debug line, or the
-/// running-ops spinner never clears.
+/// console shows the op as running for the rest of the session.
 function emitActionFailure(
   id: string,
   labelKey: string,
