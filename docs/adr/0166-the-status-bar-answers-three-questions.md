@@ -26,9 +26,11 @@ display-capped layout theme switches to compact chrome.
 
 The bar answers three questions, one element each:
 
-- **What just happened** — the log line. The whole left side is one button
-  that opens the console; errors since the console was last open show as a
-  red count in place of the level dot.
+- **What just happened** — the log line. Its leading segment (level dot,
+  time, source, chevron) is the button that opens the console, a target
+  whose width does not follow the message; the message only reads. Errors
+  since the console was last open show as a red count in place of the level
+  dot.
 - **What is running** — the work pill. The background export joins it as the
   first group instead of keeping a pill of its own.
 - **What needs me** — the bell. It opens the notification center, a flat list

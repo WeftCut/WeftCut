@@ -16,8 +16,8 @@ import { useSaveFailure } from "../state/saveStatusStore";
 import { useDerivativeJobsStore } from "../state/derivativeJobsStore";
 
 /// Persistent status bar pinned to the bottom of the editor view. It answers
-/// three questions, one element each: what just happened (the log line, which
-/// opens the console), what is running (the work pill), what needs me (the
+/// three questions, one element each: what just happened (the log line, whose
+/// leading segment opens the console), what is running (the work pill), what needs me (the
 /// bell). Not saved is the one problem with a place of its own.
 ///
 /// Layout and behaviour: `docs/status-log.md`.
@@ -89,40 +89,46 @@ export function StatusBar({
       data-derivative-jobs={derivativeJobs}
       aria-label={t("status_bar.label")}
     >
-      {/* The whole left side is one button: the latest line opens the log. */}
-      <button
-        type="button"
-        className="status-bar-log"
-        data-testid="status-bar-log"
-        onClick={onToggleLogs}
-        aria-expanded={logsOpen}
-        aria-label={logLabel}
-        title={message}
-      >
-        {unseenErrors > 0 ? (
-          <span className="status-bar-errors" data-testid="status-bar-errors" aria-hidden="true">
-            {unseenErrors}
-          </span>
-        ) : latest ? (
-          <LevelDot level={latest.level} />
-        ) : null}
-        {latest ? (
-          <>
-            <span className="status-bar-time">{formatTime(latest.ts)}</span>
-            {/* Before the message, as the console row has it. */}
-            <SourcePill entry={latest} />
-            <span className="status-bar-message">{message}</span>
-          </>
-        ) : (
-          <span className="status-bar-message status-bar-empty">{message}</span>
-        )}
-        <AppIcon
-          icon={logsOpen ? ChevronDownIcon : ChevronUpIcon}
-          size="caption"
-          className="status-bar-log-chevron"
-          aria-hidden
-        />
-      </button>
+      <div className="status-bar-left">
+        {/* The line's leading segment opens the log: a target whose width
+            does not follow the message. The message itself only reads. */}
+        <button
+          type="button"
+          className="status-bar-log"
+          data-testid="status-bar-log"
+          onClick={onToggleLogs}
+          aria-expanded={logsOpen}
+          aria-label={logLabel}
+          title={t(logsOpen ? "status_bar.close_log" : "status_bar.open_log")}
+        >
+          {unseenErrors > 0 ? (
+            <span className="status-bar-errors" data-testid="status-bar-errors" aria-hidden="true">
+              {unseenErrors}
+            </span>
+          ) : latest ? (
+            <LevelDot level={latest.level} />
+          ) : null}
+          {latest && (
+            <>
+              <span className="status-bar-time">{formatTime(latest.ts)}</span>
+              {/* Before the message, as the console row has it. */}
+              <SourcePill entry={latest} />
+            </>
+          )}
+          <AppIcon
+            icon={logsOpen ? ChevronDownIcon : ChevronUpIcon}
+            size="caption"
+            className="status-bar-log-chevron"
+            aria-hidden
+          />
+        </button>
+        <span
+          className={latest ? "status-bar-message" : "status-bar-message status-bar-empty"}
+          title={message}
+        >
+          {message}
+        </span>
+      </div>
       <div className="status-bar-right">
         <WorkPill backgroundExport={backgroundExport} />
         <NotSavedPill actions={saveActions} />

@@ -171,9 +171,12 @@ from its own trigger (`components/useStatusPopover.ts`): one is open at a
 time, a second click or a click outside closes it, Escape closes it and hands
 focus back. A popover whose trigger already says what it is has no title.
 
-- **Log line** (the whole left side, one button): the latest `Info+` message —
-  level dot, time, source, message, in the console row's order; an `Error`
-  sticks 10 s (`ERROR_STICKY_MS`). A click toggles the console. While errors
+- **Log line**: the latest `Info+` message — level dot, time, source,
+  message, in the console row's order; an `Error` sticks 10 s
+  (`ERROR_STICKY_MS`). The leading segment (dot, time, source and a chevron)
+  is the button that toggles the console, so the target keeps its width
+  whatever the message; the message only reads, its full text in the
+  tooltip. While errors
   arrived since the console was last open, a red count replaces the level dot
   (`unseenErrors` in `logs/store.ts`); opening the console clears it, and
   errors that land while it is open never count. It pulses once (1.5 s) when

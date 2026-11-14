@@ -40,14 +40,21 @@
   flex-shrink: 0;
 }
 
-/* The whole left side: one button that opens the log. It gives way first
-   when the right side needs room. */
-.status-bar-log {
+/* The log line: a leading segment that opens the log, then the message, which
+   only reads. The message gives way first when the right side needs room. */
+.status-bar-left {
   display: flex;
   align-items: center;
   gap: calc(8 * var(--ui-px));
   flex: 1;
   min-width: 0;
+}
+
+.status-bar-log {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--ui-px));
+  flex-shrink: 0;
   height: calc(22 * var(--ui-px));
   padding: 0 calc(8 * var(--ui-px));
   border: 0;

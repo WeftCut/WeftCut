@@ -49,7 +49,7 @@ function renderBar(props: { logsOpen?: boolean; notices?: AppNotice[]; onToggleL
 }
 
 describe("log line", () => {
-  it("is one button that toggles the log, named by its message and what a press does", async () => {
+  it("opens the log from its leading segment, named by its message and what a press does", async () => {
     const onToggleLogs = vi.fn();
     const { logLine, rerender } = renderBar({ onToggleLogs });
     await act(async () => {});
@@ -58,7 +58,9 @@ describe("log line", () => {
     expect(logLine().getAttribute("aria-label")).toBe("No activity yet — Open the log");
 
     log(entry("info", "Clip trimmed"));
-    expect(logLine().textContent).toContain("Clip trimmed");
+    // The message reads beside the button; it is no part of the target.
+    expect(logLine().textContent).not.toContain("Clip trimmed");
+    expect(logLine().nextElementSibling!.textContent).toBe("Clip trimmed");
     expect(logLine().getAttribute("aria-label")).toBe("Clip trimmed — Open the log");
     act(() => logLine().click());
     expect(onToggleLogs).toHaveBeenCalledTimes(1);
@@ -72,11 +74,11 @@ describe("log line", () => {
   });
 
   it("puts the source before the message, as the console row has it", async () => {
-    const { logLine } = renderBar();
+    const { logLine, bar } = renderBar();
     await act(async () => {});
     log({ ...entry("info", "split_layers"), source: { kind: "Agent", client: "Claude" } });
     const source = logLine().querySelector(".status-bar-source")!;
-    const message = logLine().querySelector(".status-bar-message")!;
+    const message = bar.querySelector(".status-bar-message")!;
     expect(source.textContent).toBe("Agent · Claude");
     expect(source.compareDocumentPosition(message) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
