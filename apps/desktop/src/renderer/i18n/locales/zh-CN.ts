@@ -1859,18 +1859,22 @@ const zhCN: Resources = {
     dismiss: "知道了",
     keyring_unavailable: {
       title: "云 API 密钥未加密",
+      action: "打开 API 密钥设置",
       body: "系统没有可用的密钥环，云 API 密钥将以未加密方式写入磁盘（cloud_keys.json）。请安装密钥环（如 GNOME Keyring / KWallet），或妥善保护你的用户数据目录。",
     },
     native_decode_unavailable: {
       title: "原生解码引擎不可用",
+      action: "打开解码设置",
       body: "原生解码组件（@weftcut/native-decode）加载失败，预览将仅使用 WebCodecs 引擎。重新安装应用可恢复。",
     },
     agent_skill_unavailable: {
       title: "缺少代理 Skill",
+      action: "打开代理设置",
       body: "用于教会外部代理操作 WeftCut 的 Skill 没能安装，因此没有任何内容可以交给你的代理。重新安装应用可恢复。",
     },
     agent_skill_stale: {
       title: "代理 Skill 未更新",
+      action: "打开代理设置",
       body: "WeftCut 无法刷新自带的代理 Skill，当前提供的是旧版本留下的副本。使用它的代理可能会调用本版本已经没有的工具。",
     },
   },
@@ -2679,7 +2683,6 @@ const zhCN: Resources = {
     level_error: "错误",
     dismiss_hint_settings: "从这里收起；之后仍可在 设置 · {{page}} 中查看",
     dismiss_hint_update: "此版本不再提醒，也不自动下载；仍可在 帮助 · 检查更新 中获取",
-    open_settings: "打开设置",
     review_title_one: "{{count}} 项代理变更待审阅",
     review_title_other: "{{count}} 项代理变更待审阅",
     review_body: "在代理面板的「变更」标签页中通过或撤销。",

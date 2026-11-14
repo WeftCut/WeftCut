@@ -210,7 +210,8 @@ already says what it is has no title.
   `derivativeJobCount()`.
 - **Not saved** (`NotSavedPill`, amber): present only while main reports the
   project failing to save (`shared/save-status.ts`, [data-model.md §
-  Saving](data-model.md#saving)). Its popover is the recovery in place: the
+  Saving](data-model.md#saving)). Its tooltip gives the reason and the last
+  successful save. Its popover is the recovery in place: the
   reason, the last successful save and the project folder, then Retry
   (primary), Save As… and Open folder. A retry that succeeds takes the pill
   and popover away; one that fails says so in place. In agent mode, which has
@@ -233,12 +234,35 @@ the log line truncates to make room. Everything sizes off `--ui-px` and the
 font-size tokens, so all six layout themes scale it, and popovers keep inside
 the window at each theme's minimum size.
 
+What the earlier bar showed and this one deliberately does not
+([ADR 0166](adr/0166-the-status-bar-answers-three-questions.md)):
+
+- **A count of open log ops.** The work pill shows tracked work only. Imports
+  show on the Media Pool, which is the import's own entry and stays open; a
+  foreground export shows in its own dialog, hidden only behind Settings after
+  it has failed; voiceover runs in its modal dialog; pause and shot-apply
+  commits and command dispatches settle quickly.
+  **Known gap:** Shots analysis and measuring, minutes long on a long source,
+  show only while the Shots panel is open, where the earlier bar still counted
+  them; model downloads outside Settings show only as the log line's percent.
+- Separate counts per kind of work; one pill counts all of it.
+- Hints that only reassured: "the editor stays usable" on derivatives, "still
+  finishing" on agent calls.
+- The full job list in the work pill's accessible name, the level dot's
+  tooltip and `role="status"` on the bar: the popover is reachable, and one
+  live region announces.
+- An export's phase beside its fps and speed: while there is a rate the phase
+  is encoding.
+- The status panel and the console closing each other: popovers close each
+  other; the console is a panel.
+
 ### Notification center
 
 The bell's popover, titled "Needs attention" since the bell has no text. One
 flat list: rows separated by dividers, no cards. A row is severity dot, title
 and a description of at most two lines (full text in its tooltip). At its end,
-the way to the fix (Open settings, Open review, View) is a link at the top; the
+the way to the fix (a notice's names its settings page — Open API key settings,
+Open decode settings, Open agent settings — then Open review, View) is a link at the top; the
 dismissal (Got it, Skip this version), second in rank, sits grey at the bottom and shows
 while the row is hovered or holds keyboard focus, so a list at rest reads as
 what needs doing. Popover links carry a padded hit area and a faint chip on

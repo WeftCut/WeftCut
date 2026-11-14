@@ -31,6 +31,8 @@ export function NotSavedPill({ actions, placement = "up" }: {
   const { open, close, rootRef, detailsId, triggerProps } = useStatusPopover();
   if (!failure) return null;
   const reason = saveFailureReason(t, failure.code);
+  // The reason and the last good save at a glance, without opening the popover.
+  const hint = [reason, lastSavedText(t, failure.last_saved_at)].join("\n");
   return (
     <div className="status-popover-anchor" ref={rootRef}>
       <button
@@ -38,6 +40,7 @@ export function NotSavedPill({ actions, placement = "up" }: {
         type="button"
         className="status-bar-slot not-saved-pill"
         data-testid="not-saved-pill"
+        title={hint}
         aria-label={`${t("save_status.badge")}: ${reason}`}
       >
         <AppIcon icon={AlertTriangleIcon} size="label" aria-hidden />

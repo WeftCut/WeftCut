@@ -2086,18 +2086,22 @@ const enUS = {
     dismiss: "Got it",
     keyring_unavailable: {
       title: "Cloud API keys aren't encrypted",
+      action: "Open API key settings",
       body: "No OS keyring is available, so cloud API keys are saved to disk without encryption (cloud_keys.json). Install a keyring (e.g. GNOME Keyring / KWallet), or protect your user-data folder.",
     },
     native_decode_unavailable: {
       title: "Native decode engine unavailable",
+      action: "Open decode settings",
       body: "The native decode component (@weftcut/native-decode) failed to load, so previews use the WebCodecs engine only. Reinstall the app to restore it.",
     },
     agent_skill_unavailable: {
       title: "Agent Skill missing",
+      action: "Open agent settings",
       body: "The Skill that teaches a connected agent how to drive WeftCut did not install, so there is nothing to hand to your agent. Reinstall the app to restore it.",
     },
     agent_skill_stale: {
       title: "Agent Skill not up to date",
+      action: "Open agent settings",
       body: "WeftCut could not refresh its agent Skill, so the copy on offer is one an earlier version left behind. An agent using it may call tools this version no longer has.",
     },
   },
@@ -2951,7 +2955,6 @@ const enUS = {
     level_error: "error",
     dismiss_hint_settings: "Hides it here; it stays in Settings · {{page}}",
     dismiss_hint_update: "No reminder or automatic download for this version; Help · Check for Updates still offers it",
-    open_settings: "Open settings",
     review_title_one: "{{count}} agent change to review",
     review_title_other: "{{count}} agent changes to review",
     review_body: "Approve or revert them in the Agent panel’s Changes tab.",

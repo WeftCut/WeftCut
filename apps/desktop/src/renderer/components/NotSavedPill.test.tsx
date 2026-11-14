@@ -34,6 +34,8 @@ describe("NotSavedPill", () => {
     fail("ENOSPC");
     expect(pill()!.textContent).toBe("Not saved");
     expect(pill()!.getAttribute("aria-label")).toBe("Not saved: The disk is full.");
+    // The reason and the last good save show on hover, without opening it.
+    expect(pill()!.getAttribute("title")).toBe("The disk is full.\nNot saved since the project was opened");
     recover();
     expect(pill()).toBeNull();
   });

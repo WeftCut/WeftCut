@@ -26,7 +26,7 @@ interface Props {
 /// The bell: what needs the user. Colour only — the dot is the most severe
 /// item not dismissed, and it counts nothing. Its popover is the notification
 /// center. Dismissing a row only takes it out of here: each state keeps its own
-/// home (the settings page "Open settings" leads to, Help · Check for Updates),
+/// home (the settings page its row's link names, Help · Check for Updates),
 /// and the dismiss link's tooltip names it. Layout and behaviour:
 /// `docs/status-log.md` § Notification center.
 export function NotificationBell({ onOpenSettings, placement = "up" }: Props) {
@@ -179,7 +179,8 @@ function rowText(t: TFunction, item: AttentionItem): {
       return {
         title: t(`app_notice.${item.code}.title`),
         body: t(`app_notice.${item.code}.body`),
-        action: t("notifications.open_settings"),
+        // Named for where it leads, as the notice's home page is.
+        action: t(`app_notice.${item.code}.action`),
         dismiss: t("app_notice.dismiss"),
         dismissHint: t("notifications.dismiss_hint_settings", {
           page: t(NOTICE_PAGE_LABEL[noticeSettingsPage(item.code)]),

@@ -116,11 +116,11 @@ describe("notices", () => {
     expect(center.textContent).toContain("Nothing needs attention");
   });
 
-  it("opens the notice's settings page and closes the center", async () => {
+  it("opens the notice's settings page, named on its link, and closes the center", async () => {
     setup();
     const { openCenter, onOpenSettings } = renderBell([{ level: "error", code: "agent_skill_unavailable" }]);
     await act(async () => {});
-    fireEvent.click(within(openCenter()).getByRole("button", { name: "Open settings" }));
+    fireEvent.click(within(openCenter()).getByRole("button", { name: "Open agent settings" }));
     expect(onOpenSettings).toHaveBeenCalledExactlyOnceWith("agent");
     expect(screen.queryByTestId("attention-center")).toBeNull();
   });

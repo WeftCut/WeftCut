@@ -3,7 +3,7 @@
 // where its home is in Settings and its line in the persistent log — and one
 // app-wide mirror of the current set, read by the bell, the notice's settings
 // home and the editor's log mirror alike. The UI strings are
-// `app_notice.<code>.title` / `.body`.
+// `app_notice.<code>.title` / `.body` / `.action` (the way to its page).
 //
 // The mirror is pulled once and then follows main's `app:notices` pushes: main
 // collects notices before any window exists, so a push alone would be lost to
