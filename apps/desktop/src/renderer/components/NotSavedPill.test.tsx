@@ -38,7 +38,7 @@ describe("NotSavedPill", () => {
     expect(pill()).toBeNull();
   });
 
-  it("leads its popover with the reason, then the body with the last save, then the folder", () => {
+  it("leads its popover with the reason, then the body, the last save and the folder, a line each", () => {
     render(<NotSavedPill actions={actions()} />);
     fail("ENOSPC");
     fireEvent.click(pill()!);
@@ -46,7 +46,8 @@ describe("NotSavedPill", () => {
     const lines = [...details()!.querySelectorAll("p")].map((p) => p.textContent);
     expect(lines).toEqual([
       "The disk is full.",
-      "Recent edits are not on disk yet. WeftCut keeps trying to save them. Not saved since the project was opened",
+      "Recent edits are not on disk yet. WeftCut keeps trying to save them.",
+      "Not saved since the project was opened",
       "Project folder: /home/u/Projects/Demo",
     ]);
   });

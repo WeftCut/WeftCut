@@ -16,7 +16,7 @@ const offered: UpdateStatus = { phase: "available", version: "1.2.0" };
 
 describe("attentionView", () => {
   it("lists nothing and shows no dot when nothing needs the user", () => {
-    expect(attentionView(input())).toEqual({ active: [], dismissed: [], level: null });
+    expect(attentionView(input())).toEqual({ active: [], level: null });
   });
 
   it("orders the most severe first, keeping notices, review, update in that order within a level", () => {
@@ -38,23 +38,21 @@ describe("attentionView", () => {
     expect(view.level).toBe("error");
   });
 
-  it("dismisses a notice by its code alone, leaving the others", () => {
+  it("drops a dismissed notice by its code alone, leaving the others", () => {
     const notices: AppNotice[] = [
       { level: "warn", code: "keyring_unavailable" },
       { level: "info", code: "native_decode_unavailable" },
     ];
     const view = attentionView(input({ notices, dismissedNotices: ["keyring_unavailable"] }));
     expect(keys(view.active)).toEqual(["notice:native_decode_unavailable"]);
-    expect(keys(view.dismissed)).toEqual(["notice:keyring_unavailable"]);
     // The bell follows what is left, not what was dismissed.
     expect(view.level).toBe("info");
   });
 
   it("dismisses an update only for the version dismissed; a newer one shows again", () => {
-    expect(keys(attentionView(input({ update: offered, dismissedUpdateVersion: "1.2.0" })).dismissed)).toEqual(["update"]);
+    expect(attentionView(input({ update: offered, dismissedUpdateVersion: "1.2.0" })).active).toEqual([]);
     const newer = attentionView(input({ update: { phase: "available", version: "1.3.0" }, dismissedUpdateVersion: "1.2.0" }));
     expect(keys(newer.active)).toEqual(["update"]);
-    expect(newer.dismissed).toEqual([]);
   });
 
   it("lists no update without a version to name", () => {
@@ -76,7 +74,6 @@ describe("attentionView", () => {
       dismissedUpdateVersion: "1.2.0",
     }));
     expect(view.active).toEqual([]);
-    expect(keys(view.dismissed)).toEqual(["notice:agent_skill_unavailable", "update"]);
     expect(view.level).toBeNull();
   });
 });

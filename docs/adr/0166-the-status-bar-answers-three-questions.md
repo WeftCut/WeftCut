@@ -46,10 +46,13 @@ its own popover holding the recovery actions. It must never be missed, and a
 row among the bell's could be. It is not also listed in the bell; one problem
 has one way in.
 
-Dismissal ("Got it", "Later") folds a row and clears its share of the dot. It
-lasts while its cause stands: a notice dismissed stays dismissed until main
-settles a notice set without it, and an update dismissed stays so for that
-version only. Dismissals are main-owned app settings, so they survive
+Dismissal ("Got it", "Later") takes a row out of the center and clears its
+share of the dot; the center keeps no pile of dismissed rows. The center only
+points: every state it lists has a home where it always shows and can be acted
+on (the settings page its row leads to, the Help menu for an update), so
+dismissing never loses it. A dismissal lasts while its cause stands: a notice
+dismissed stays dismissed until main settles a notice set without it, and an
+update dismissed stays so for that version only. Dismissals are main-owned app settings, so they survive
 restarts; review items cannot be dismissed, they leave once reviewed.
 
 In agent mode the titlebar carries the same Not saved pill and the same bell,

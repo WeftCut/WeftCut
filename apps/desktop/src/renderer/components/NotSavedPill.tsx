@@ -90,9 +90,8 @@ function NotSavedDetails({ failure, reason, actions, onLeave }: {
   return (
     <>
       <p className="not-saved-reason">{reason}</p>
-      <p className="not-saved-body">
-        {t("save_status.card_body")} {lastSavedText(t, failure.last_saved_at)}
-      </p>
+      <p className="not-saved-body">{t("save_status.card_body")}</p>
+      <p className="not-saved-body">{lastSavedText(t, failure.last_saved_at)}</p>
       <p className="not-saved-folder">{t("save_status.folder", { dir: failure.dir })}</p>
       {result !== null && (
         <p className="not-saved-result" role="status">

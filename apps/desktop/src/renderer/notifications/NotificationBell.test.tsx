@@ -95,26 +95,23 @@ describe("bell", () => {
 });
 
 describe("notices", () => {
-  it("dismisses a notice through app settings, folding it away and taking the dot with it", async () => {
+  it("dismisses a notice through app settings, out of the center and the dot, naming where it stays", async () => {
     setup();
     const { bell, openCenter } = renderBell([{ level: "warn", code: "keyring_unavailable" }]);
     await act(async () => {});
     const center = openCenter();
     const row = center.querySelector<HTMLElement>('[data-attention="notice:keyring_unavailable"]')!;
     expect(row.textContent).toContain("Cloud API keys aren't encrypted");
-    fireEvent.click(within(row).getByRole("button", { name: "Got it" }));
+    const gotIt = within(row).getByRole("button", { name: "Got it" });
+    // The state keeps a home; the link says which, before it is pressed.
+    expect(gotIt.getAttribute("title")).toBe("Hides it here; it stays in Settings · Transcription");
+    fireEvent.click(gotIt);
     expect(mocks.set).toHaveBeenCalledExactlyOnceWith({ dismiss_notice: "keyring_unavailable" });
 
     await waitFor(() => expect(bell().dataset.level).toBe("none"));
-    expect(center.querySelector(".attention-list:not(.is-dismissed)")).toBeNull();
-    const fold = within(center).getByRole("button", { name: "1 dismissed" });
-    expect(fold.getAttribute("aria-expanded")).toBe("false");
+    // No pile of dismissed rows: the center is simply empty again.
     expect(center.querySelector('[data-attention="notice:keyring_unavailable"]')).toBeNull();
-    fireEvent.click(fold);
-    // Folded rows keep their way to the fix and lose the dismissal.
-    const folded = center.querySelector<HTMLElement>('.is-dismissed [data-attention="notice:keyring_unavailable"]')!;
-    expect(within(folded).getByRole("button", { name: "Open settings" })).toBeTruthy();
-    expect(within(folded).queryByRole("button", { name: "Got it" })).toBeNull();
+    expect(center.textContent).toContain("Nothing needs attention");
   });
 
   it("opens the notice's settings page and closes the center", async () => {
@@ -170,7 +167,9 @@ describe("offered update", () => {
     const { bell, openCenter } = renderBell();
     await waitFor(() => expect(bell().dataset.level).toBe("info"));
     const row = openCenter().querySelector<HTMLElement>('[data-attention="update"]')!;
-    fireEvent.click(within(row).getByRole("button", { name: "Later" }));
+    const later = within(row).getByRole("button", { name: "Later" });
+    expect(later.getAttribute("title")).toBe("Hides it here; Help · Check for Updates still has it");
+    fireEvent.click(later);
     expect(mocks.set).toHaveBeenCalledExactlyOnceWith({ dismissed_update_version: "1.2.0" });
     await waitFor(() => expect(bell().dataset.level).toBe("none"));
   });

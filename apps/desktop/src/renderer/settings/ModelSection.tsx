@@ -10,6 +10,7 @@ import { AppDialog } from "../components/AppDialog";
 import { canSwitchModel, ModelPicker, ONLINE_MODEL_IDS } from "./ModelPicker";
 import { ModelEditor } from "./ModelEditor";
 import { AppIcon } from "@/components/AppIcon";
+import { useAppNotices } from "../components/useAppNotices";
 
 type Panel = { kind: "add" } | { kind: "editor"; id: string; mode: "prepare" | "edit" | "new"; backend?: ModelBackend };
 export function modelSize(bytes: number): string {
@@ -36,6 +37,9 @@ export function ModelSection({ family, onError }: { family: ModelFamily; onError
   const [failure, setFailure] = useState<ModelOperation | null>(null);
   const [confirmation, setConfirmation] = useState<{ id: string; action: "remove" | "clear" } | null>(null);
   const [dialogError, setDialogError] = useState("");
+  // The keyring notice's home: where cloud keys are entered, it always shows,
+  // whether or not the bell's row was dismissed.
+  const keysUnencrypted = useAppNotices().some((notice) => notice.code === "keyring_unavailable");
   const wanted = useRef<ModelUseRequest | null>(null);
   const acknowledged = useRef(false);
   const refreshRef = useRef<() => Promise<void>>(async () => {});
@@ -137,6 +141,9 @@ export function ModelSection({ family, onError }: { family: ModelFamily; onError
   </div>;
   return <section className="settings-section settings-model-section">
     <p className="settings-blurb">{t(family === "speech" ? "settings.speech_blurb" : "settings.vlm_blurb")}</p>
+    {keysUnencrypted && (
+      <p className="settings-warn" data-testid="keys-unencrypted">{t("app_notice.keyring_unavailable.body")}</p>
+    )}
     <div className="settings-model-selector">
       <span className="settings-slider-label">{t("models.current_label")}</span>
       <ModelPicker models={models} activeId={view.active[family]} disabled={submitting} preparing={preparing} onChoose={choose}

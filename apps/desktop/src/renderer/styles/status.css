@@ -582,7 +582,13 @@
   font-weight: 500;
 }
 
+/* At most two lines in the list; the full text is in the tooltip and on the
+   settings page the row leads to. */
 .attention-row-body {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   margin-top: calc(1 * var(--ui-px));
   color: var(--muted-foreground);
   font-size: var(--font-size-caption);
@@ -602,38 +608,4 @@
 .attention-primary {
   align-self: start;
   padding-top: calc(1 * var(--ui-px));
-}
-
-/* Dismissed rows fold at the bottom; the bell ignores them. */
-.attention-fold {
-  border-top: 1px solid var(--border-soft);
-  padding: calc(8 * var(--ui-px)) calc(14 * var(--ui-px)) calc(10 * var(--ui-px));
-}
-
-.attention-fold-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: calc(4 * var(--ui-px));
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--muted-foreground);
-  font-size: var(--font-size-caption);
-  cursor: pointer;
-}
-
-.attention-fold-toggle:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-  border-radius: var(--radius-control);
-}
-
-.attention-list.is-dismissed .attention-row {
-  padding: calc(6 * var(--ui-px)) 0 0;
-  border-top: 0;
-  opacity: 0.75;
-}
-
-.attention-list.is-dismissed .attention-row:hover {
-  background: none;
 }

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { BellIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
+import { BellIcon } from "lucide-react";
 import { AppIcon } from "@/components/AppIcon";
 import { useStatusPopover } from "@/components/useStatusPopover";
 import { useAgentActivity } from "../agent/activityStore";
@@ -27,7 +27,9 @@ interface Props {
 
 /// The bell: what needs the user. Colour only — the dot is the most severe
 /// item not dismissed, and it counts nothing. Its popover is the notification
-/// center. Layout and behaviour: `docs/status-log.md` § Notification center.
+/// center. Dismissing a row only takes it out of here: each state keeps its own
+/// home (the settings page "Open settings" leads to, the Help menu), and the
+/// dismiss link's tooltip names it. Layout and behaviour: `docs/status-log.md` § Notification center.
 export function NotificationBell({ notices, onOpenSettings, placement = "up" }: Props) {
   const { t } = useTranslation();
   const unreviewed = useUnreviewedCount();
@@ -85,19 +87,14 @@ export function NotificationBell({ notices, onOpenSettings, placement = "up" }: 
           data-testid="attention-center"
         >
           <h2 id={`${detailsId}-title`} className="attention-title">{t("notifications.title")}</h2>
-          {view.active.length === 0 && view.dismissed.length === 0 ? (
+          {view.active.length === 0 ? (
             <p className="attention-empty">{t("notifications.empty")}</p>
           ) : (
-            <>
-              {view.active.length > 0 && (
-                <ul className="attention-list">
-                  {view.active.map((item) => (
-                    <AttentionRow key={item.key} item={item} onAct={act} onDismiss={dismiss} />
-                  ))}
-                </ul>
-              )}
-              {view.dismissed.length > 0 && <DismissedFold items={view.dismissed} onAct={act} />}
-            </>
+            <ul className="attention-list">
+              {view.active.map((item) => (
+                <AttentionRow key={item.key} item={item} onAct={act} onDismiss={dismiss} />
+              ))}
+            </ul>
           )}
         </section>
       )}
@@ -106,36 +103,13 @@ export function NotificationBell({ notices, onOpenSettings, placement = "up" }: 
   );
 }
 
-function DismissedFold({ items, onAct }: { items: AttentionItem[]; onAct: (item: AttentionItem) => void }) {
-  const { t } = useTranslation();
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <div className="attention-fold">
-      <button
-        type="button"
-        className="attention-fold-toggle"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((was) => !was)}
-      >
-        {t("notifications.dismissed", { count: items.length })}
-        <AppIcon icon={expanded ? ChevronUpIcon : ChevronDownIcon} size="caption" aria-hidden />
-      </button>
-      {expanded && (
-        <ul className="attention-list is-dismissed">
-          {items.map((item) => <AttentionRow key={item.key} item={item} onAct={onAct} />)}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-/// Severity dot · title · one-line description; the primary action is a link
-/// at the row's end, dismissal sits under the description. A dismissed row
-/// keeps its primary action and loses the dismissal.
+/// Severity dot · title · a description of at most two lines (the full text
+/// in its tooltip); the primary action is a link at the row's end, dismissal
+/// sits under the description.
 function AttentionRow({ item, onAct, onDismiss }: {
   item: AttentionItem;
   onAct: (item: AttentionItem) => void;
-  onDismiss?: (item: AttentionItem) => void;
+  onDismiss: (item: AttentionItem) => void;
 }) {
   const { t } = useTranslation();
   const text = rowText(t, item);
@@ -144,10 +118,16 @@ function AttentionRow({ item, onAct, onDismiss }: {
       <span className="attention-dot" aria-hidden="true" />
       <div className="attention-body">
         <div className="attention-row-title">{text.title}</div>
-        {text.body && <div className="attention-row-body">{text.body}</div>}
-        {onDismiss && text.dismiss && (
+        {text.body && <div className="attention-row-body" title={text.body}>{text.body}</div>}
+        {text.dismiss && (
           <div className="attention-row-more">
-            <button type="button" className="attention-link is-quiet" onClick={() => onDismiss(item)}>
+            <button
+              type="button"
+              className="attention-link is-quiet"
+              onClick={() => onDismiss(item)}
+              title={text.dismissHint}
+              aria-description={text.dismissHint}
+            >
               {text.dismiss}
             </button>
           </div>
@@ -162,11 +142,20 @@ function AttentionRow({ item, onAct, onDismiss }: {
   );
 }
 
+/// The settings page a notice's home is on, by the tab label it carries there.
+const SETTINGS_PAGE_LABEL: Record<SystemSettingsTarget, string> = {
+  general: "settings.cat_general",
+  speech: "settings.cat_speech",
+  agent: "settings.cat_agent",
+};
+
 function rowText(t: TFunction, item: AttentionItem): {
   title: string;
   body?: string;
   action?: string;
   dismiss?: string;
+  /// Where the state stays once the row is dismissed.
+  dismissHint?: string;
 } {
   switch (item.kind) {
     case "review":
@@ -193,14 +182,22 @@ function rowText(t: TFunction, item: AttentionItem): {
         ...(body ? { body } : {}),
         action: t("notifications.update_action"),
         dismiss: t("updates.later"),
+        dismissHint: t("notifications.dismiss_hint_update"),
       };
     }
-    case "notice":
+    case "notice": {
+      const target = systemSettingsTarget(item.code);
       return {
         title: t(`app_notice.${item.code}.title`),
         body: t(`app_notice.${item.code}.body`),
-        ...(systemSettingsTarget(item.code) ? { action: t("notifications.open_settings") } : {}),
+        ...(target
+          ? {
+            action: t("notifications.open_settings"),
+            dismissHint: t("notifications.dismiss_hint_settings", { page: t(SETTINGS_PAGE_LABEL[target]) }),
+          }
+          : {}),
         dismiss: t("app_notice.dismiss"),
       };
+    }
   }
 }
