@@ -110,6 +110,26 @@ describe("work pill", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
+  it("titles no group when it is the only one; its rows and the trigger name the work", async () => {
+    const { container } = render(<WorkPill />);
+    await act(async () => {});
+    await publish([jobFixture("a", { kind: "inferring", done: 1, total: 2 }), jobFixture("b", { kind: "inferring", done: 1, total: 2 })]);
+    act(() => pill(container)!.click());
+    const details = container.querySelector<HTMLElement>(".work-pill-details")!;
+    expect(details.querySelector(".work-group-header")).toBeNull();
+    // Still named for assistive technology.
+    expect(screen.getByRole("group").getAttribute("aria-label")).toBe("Clip jobs");
+  });
+
+  it("keeps a lone group's action without its title", async () => {
+    const { container } = render(<WorkPill />);
+    await act(async () => {});
+    await setCalls([agentCall("call-1")]);
+    act(() => pill(container)!.click());
+    const header = container.querySelector<HTMLElement>(".work-group-header")!;
+    expect(header.textContent).toBe("Open in Agent panel");
+  });
+
   it("opens the agent panel's Activity tab from the agent group, closing the details", async () => {
     const { useAgentActivity } = await import("../agent/activityStore");
     const { registerCommandProvider } = await import("../commands/registry");
@@ -194,12 +214,21 @@ describe("background export in the work pill", () => {
     expect(groups).toEqual(["Export", "Clip jobs"]);
     const details = exportRegion()!;
     expect(details.textContent).toContain("final.mp4");
-    // The trigger right below says "Export" and the percent; the group repeats neither.
-    expect(details.querySelector(".work-group-header")).toBeNull();
+    // Beside another group it is titled, as every group is; the percent stays
+    // the trigger's alone.
+    expect([...document.querySelectorAll(".work-group-header > span:first-child")].map((h) => h.textContent))
+      .toEqual(["Export", "Clip jobs"]);
     expect(details.textContent).not.toContain("50%");
     expect(details.textContent).toContain("30 fps · 1.0×");
     fireEvent.click(screen.getByRole("button", { name: "Cancel export" }));
     expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it("leaves a lone export untitled: the trigger right below names it", () => {
+    render(<WorkPill backgroundExport={encoding(0.5)} />);
+    fireEvent.click(screen.getByTestId("status-bar-work"));
+    expect(exportRegion()!.textContent).toContain("final.mp4");
+    expect(document.querySelector(".work-group-header")).toBeNull();
   });
 
   it("offers no cancel once the export is cancelling", () => {

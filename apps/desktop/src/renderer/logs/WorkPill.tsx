@@ -60,6 +60,11 @@ export function WorkPill({ backgroundExport }: {
   const label = exportView
     ? exportLabel(t, exportView.percent, view.count)
     : pillLabel(t, view);
+  // One group's rows say what they are, beside a trigger that names them, so
+  // a lone group goes untitled; several are each titled to tell them apart.
+  const groupCount = [backgroundExport, view.compute.length, view.agent.length, view.derivatives.length]
+    .filter(Boolean).length;
+  const titled = groupCount > 1;
   return (
     <div className="status-popover-anchor" ref={rootRef}>
       <button
@@ -81,13 +86,11 @@ export function WorkPill({ backgroundExport }: {
       {open && (
         <section id={detailsId} className="status-popover work-pill-details" aria-label={t("status_bar.work.title")}>
           {backgroundExport && exportView && exportStartedAt !== null && (
-            // The trigger names the export and its percent; the group keeps
-            // its name for assistive technology only.
-            <WorkGroup title={t("status_bar.work.group_export")} titleShown={false}>
+            <WorkGroup title={t("status_bar.work.group_export")} titled={titled}>
               <ExportRow state={backgroundExport} phase={exportView.phase} percent={exportView.percent} startedAt={exportStartedAt} />
             </WorkGroup>
           )}
-          <WorkDetails view={view} onLeave={close} />
+          <WorkDetails view={view} titled={titled} onLeave={close} />
         </section>
       )}
     </div>
@@ -186,7 +189,7 @@ function ExportRow({ state, phase, percent, startedAt }: {
 }
 
 /// Split out so the one-second clock only runs while the popover is open.
-function WorkDetails({ view, onLeave }: { view: WorkView; onLeave: () => void }) {
+function WorkDetails({ view, titled, onLeave }: { view: WorkView; titled: boolean; onLeave: () => void }) {
   const { t } = useTranslation();
   const openActivity = () => {
     onLeave();
@@ -195,20 +198,21 @@ function WorkDetails({ view, onLeave }: { view: WorkView; onLeave: () => void })
   return (
     <>
       {view.compute.length > 0 && (
-        <WorkGroup title={t("status_bar.work.group_compute")}>
+        <WorkGroup title={t("status_bar.work.group_compute")} titled={titled}>
           {view.compute.map((job) => <ComputeRow key={job.job_id} job={job} />)}
         </WorkGroup>
       )}
       {view.agent.length > 0 && (
         <WorkGroup
           title={t("status_bar.work.group_agent")}
+          titled={titled}
           action={<button type="button" className="work-group-link" onClick={openActivity}>{t("status_bar.work.open_agent_panel")}</button>}
         >
           {view.agent.map((activity) => <AgentRow key={activity.id} activity={activity} />)}
         </WorkGroup>
       )}
       {view.derivatives.length > 0 && (
-        <WorkGroup title={t("status_bar.work.group_derivatives")}>
+        <WorkGroup title={t("status_bar.work.group_derivatives")} titled={titled}>
           {view.derivatives.map((media) => <MediaRow key={media.media_id} media={media} />)}
         </WorkGroup>
       )}
@@ -216,17 +220,21 @@ function WorkDetails({ view, onLeave }: { view: WorkView; onLeave: () => void })
   );
 }
 
-/// The header names the kind of work, so rows carry no icon of their own; the
-/// one icon in a row is a clip job's state (working or waiting).
-function WorkGroup({ title, titleShown = true, action, children }: {
+/// Rows carry no icon of their own (the one icon in a row is a clip job's
+/// state), so with several groups the title tells them apart; a lone group is
+/// untitled, its rows and the trigger naming the work. The name stays for
+/// assistive technology either way, and a group's action keeps its place.
+function WorkGroup({ title, titled, action, children }: {
   title: string;
-  titleShown?: boolean;
+  titled: boolean;
   action?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <div className="work-group" role="group" aria-label={title}>
-      {titleShown && <h3 className="work-group-header"><span>{title}</span>{action}</h3>}
+      {titled
+        ? <h3 className="work-group-header"><span>{title}</span>{action}</h3>
+        : action && <div className="work-group-header is-untitled">{action}</div>}
       <ul className="work-rows">{children}</ul>
     </div>
   );

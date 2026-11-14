@@ -196,9 +196,11 @@ already says what it is has no title.
   ("Export 42% · 3 more"); otherwise one row names what it does (Transcribing,
   Generating derivatives…) and several are counted; when every row is queued
   for admission the spinner becomes an hourglass. The popover groups rows by
-  owner, the export first and without a heading, since the trigger names it
-  and its percent: the file and elapsed time, a bar, fps and speed, Cancel (no
-  remaining-time estimate); clip jobs with their status and
+  owner, the export first. A lone group has no heading, its rows and the
+  trigger naming the work (its action, such as the agent group's link, stays);
+  with several, each is headed so they can be told apart. The export's percent
+  is the trigger's alone. The export: the file and elapsed time, a bar, fps and
+  speed, Cancel (no remaining-time estimate); clip jobs with their status and
   Cancel (`ComputeJobStatus`); agent calls with a link to the Activity tab;
   derivatives one row per media item with the kinds in progress. Every Cancel
   here is a small secondary button, so a row's one action shows focus. Log ops are

@@ -383,6 +383,11 @@
   font-weight: 400;
 }
 
+/* A lone group has no title; its action keeps the header's right edge. */
+.work-group-header.is-untitled {
+  justify-content: flex-end;
+}
+
 /* A link in a popover: blue text, a padded hit area whose negative margin
    keeps the text where it sits, and a faint chip on hover the same shape as
    the focus ring. */
