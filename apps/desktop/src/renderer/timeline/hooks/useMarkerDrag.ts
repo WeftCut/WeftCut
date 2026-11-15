@@ -1,4 +1,3 @@
-import { modKeyHeld } from "@/platform";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { moveMarker, type LinkSummary, type TrackSummary } from "../../ipc";
 import { snapFrameRound } from "../../frames";
@@ -14,6 +13,7 @@ import {
 } from "../markerAtFrame";
 import { resolveTimelineTimeSnap } from "../snapping";
 import { setTimelineSnapGuide } from "../timelineSnapFeedbackStore";
+import { useModKeyReading } from "../../modKeyReading";
 
 const US_PER_SEC = 1_000_000;
 
@@ -164,6 +164,38 @@ export function useMarkerDrag(opts: {
   // gesture, so it is not an event-rate write.
   const [active, setActive] = useState(false);
   const [preview, setPreview] = useState<MarkerDragPreview | null>(null);
+  // Where the pointer last was, so a Mod change with the pointer still can
+  // re-land the mark where the next move would.
+  const lastClientXRef = useRef(0);
+
+  /// Where the mark lands for a pointer at `clientX`, or null with no gesture.
+  const landing = useCallback(
+    (clientX: number, snapSuspended: boolean) => {
+      const ctx = contextRef.current;
+      if (ctx === null) return null;
+      const deltaUs =
+        ((clientX - ctx.startClientX) / ctx.pxPerSec) * US_PER_SEC;
+      // Event-time read: the playhead is a snap TARGET, and playback moves it
+      // while the pointer is down.
+      return markerDragSnap(ctx, deltaUs, playheadClockUs(compositionId), snapSuspended);
+    },
+    [compositionId],
+  );
+
+  const showLanding = useCallback(
+    (clientX: number, snapSuspended: boolean) => {
+      lastClientXRef.current = clientX;
+      const result = landing(clientX, snapSuspended);
+      if (result === null) return;
+      setTimelineSnapGuide(compositionId, "marker", result.boundaryUs);
+      setPreview((p) => (p === null || p.tUs === result.timeUs ? p : { ...p, tUs: result.timeUs }));
+    },
+    [compositionId, landing],
+  );
+
+  const modKey = useModKeyReading(active, (held) =>
+    showLanding(lastClientXRef.current, held),
+  );
 
   // Every marker-gesture exit (release, cancel, teardown) passes through
   // this cleanup. Its guide cannot survive a cancelled gesture.
@@ -182,10 +214,12 @@ export function useMarkerDrag(opts: {
       const ctx = freezeMarkerDrag(compositionId, markerId, e.clientX, pxPerSec);
       if (ctx === null) return;
       contextRef.current = ctx;
+      lastClientXRef.current = e.clientX;
+      modKey.observe(e);
       setActive(true);
       setPreview({ markerId, tUs: ctx.originalTUs });
     },
-    [compositionId, pxPerSec],
+    [compositionId, modKey, pxPerSec],
   );
 
   // A Panel torn down mid-gesture leaves no drag behind.
@@ -197,24 +231,12 @@ export function useMarkerDrag(opts: {
 
   useEffect(() => {
     if (!active) return;
-    const landing = (clientX: number, snapSuspended: boolean) => {
-      const ctx = contextRef.current;
-      if (ctx === null) return null;
-      const deltaUs =
-        ((clientX - ctx.startClientX) / ctx.pxPerSec) * US_PER_SEC;
-      // Event-time read: the playhead is a snap TARGET, and playback moves it
-      // while the pointer is down.
-      return markerDragSnap(ctx, deltaUs, playheadClockUs(compositionId), snapSuspended);
-    };
-    const onMove = (e: PointerEvent) => {
-      const result = landing(e.clientX, modKeyHeld(e));
-      if (result === null) return;
-      setTimelineSnapGuide(compositionId, "marker", result.boundaryUs);
-      setPreview((p) => (p === null || p.tUs === result.timeUs ? p : { ...p, tUs: result.timeUs }));
-    };
+    const onMove = (e: PointerEvent) => showLanding(e.clientX, modKey.observe(e));
     const onUp = (e: PointerEvent) => {
       const ctx = contextRef.current;
-      const result = landing(e.clientX, modKeyHeld(e));
+      // Mod as the preview last showed it, not as this event reads it — see
+      // `modKeyReading.ts`.
+      const result = landing(e.clientX, modKey.held());
       const tUs = result?.timeUs ?? null;
       finishMarkerGesture();
       setActive(false);
@@ -269,7 +291,7 @@ export function useMarkerDrag(opts: {
       window.removeEventListener("pointercancel", onCancel);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [active, compositionId, finishMarkerGesture]);
+  }, [active, finishMarkerGesture, landing, modKey, showLanding]);
 
   return { preview, beginMarkerDrag };
 }

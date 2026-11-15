@@ -1,4 +1,4 @@
-import { modKeyHeld } from "@/platform";
+import type { ModifierFlags } from "@/modKeyReading";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LayerBlock, type PendingLayerPlacement } from "./LayerBlock";
@@ -26,7 +26,6 @@ import type {
   TransitionSummary,
 } from "../ipc";
 import type { GapSelection } from "../state/selectionStore";
-import { playheadClockUs } from "../state/playheadProjection";
 import { useMarqueeAnchor } from "./hooks/useMarqueeAnchor";
 import {
   MEDIA_DRAG_CURSOR_OFFSET_PX,
@@ -38,7 +37,8 @@ import {
   useMediaDragStore,
   type MediaDragPayload,
   type MediaDropPlan,
-  type MediaDropSnapOptions,
+  mediaDropSnapAt,
+  type MediaDropSnapSetup,
 } from "./mediaDrag";
 import { ReviewCuts, ReviewFocusWash, ReviewGhosts, ReviewWasFrames } from "./ReviewMarks";
 
@@ -106,8 +106,10 @@ export function TrackLane({
   pendingLayerById: ReadonlyMap<string, LayerSummary>;
   dragLayerById: ReadonlyMap<string, LayerSummary>;
   bladeMode: boolean;
-  onBladeSplit: (layer: LayerSummary, clientX: number, snapSuspended?: boolean) => void;
-  onBladePreview: (layer: LayerSummary | null, clientX?: number, snapSuspended?: boolean) => void;
+  /// `mods` carries the pointer event's Mod state; the Timeline owns the reading
+  /// (`modKeyReading.ts`), so a key press with the pointer still re-resolves too.
+  onBladeSplit: (layer: LayerSummary, clientX: number, mods: ModifierFlags) => void;
+  onBladePreview: (layer: LayerSummary | null, clientX?: number, mods?: ModifierFlags) => void;
   /// Pass-through to `LayerBlock`, whose prop docstring owns the contract:
   /// applies the click's selection semantics, returns whether the clicked layer
   /// is selected afterwards.
@@ -152,7 +154,7 @@ export function TrackLane({
   onHeightDragStart: (e: React.PointerEvent) => void;
   fpsNum: number;
   fpsDen: number;
-  mediaDropSnap: Omit<MediaDropSnapOptions, "currentTimeUs">;
+  mediaDropSnap: MediaDropSnapSetup;
   /// The composition this lane belongs to — this Panel's own, whichever tab
   /// holds the keyboard. It offers the playhead as a snap boundary on this
   /// Panel's own axis (`state/playheadProjection.ts`) and answers the cycle gate
@@ -295,7 +297,7 @@ export function TrackLane({
         pxPerSec,
         fpsNum,
         fpsDen,
-        snap: { ...mediaDropSnap, enabled: mediaDropSnap.enabled && !modKeyHeld(e), currentTimeUs: playheadClockUs(compositionId) },
+        snap: mediaDropSnapAt(mediaDropSnap, compositionId, e),
       });
       e.dataTransfer.dropEffect = plan.validity === "valid" ? "copy" : "none";
       const slot = mediaDropGhostSlot(height, plan);
@@ -374,7 +376,7 @@ export function TrackLane({
             pxPerSec,
             fpsNum,
             fpsDen,
-            snap: { ...mediaDropSnap, enabled: mediaDropSnap.enabled && !modKeyHeld(e), currentTimeUs: playheadClockUs(compositionId) },
+            snap: mediaDropSnapAt(mediaDropSnap, compositionId, e),
           })
         : null;
       setDropPreview(null);

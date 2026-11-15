@@ -1053,6 +1053,34 @@ describe("dragging a marker", () => {
       ),
     );
   });
+
+  // Mod pressed or released with the pointer still sends no pointer event; the
+  // mark has to move anyway, and the release must land where it stood. Both
+  // modifier flags, so the case holds on either platform's Mod.
+  it.each([
+    { name: "pressed", before: {}, key: "keyDown", after: { ctrlKey: true, metaKey: true }, landsUs: 2_200_000 },
+    { name: "released", before: { ctrlKey: true, metaKey: true }, key: "keyUp", after: {}, landsUs: 3_000_000 },
+  ] as const)("re-lands the mark when Mod is $name with the pointer still, and commits there", async ({
+    before, key, after, landsUs,
+  }) => {
+    setSettings({ tail_snap_enabled: true, tail_snap_strength_px: 12 });
+    seed([point({ t_us: 2_000_000 })], [clipTrack()]);
+    const { container } = renderLane({ pxPerSec: 10 });
+    const left = () => markById(container, "point-1").style.left;
+    fireEvent.pointerDown(markById(container, "point-1"), { button: 0, clientX: 0, ...before });
+    fireEvent.pointerMove(window, { clientX: 2, ...before });
+    const beforeKey = left();
+
+    fireEvent[key](window, { key: "Control", ctrlKey: false, metaKey: false, ...after });
+    const shown = left();
+    expect(shown).not.toBe(beforeKey);
+    expect(shown).toBe(`${(landsUs / 1_000_000) * 10}px`);
+
+    fireEvent.pointerUp(window, { clientX: 2, ...after });
+    await waitFor(() =>
+      expect(ipcMocks.moveMarker).toHaveBeenCalledExactlyOnceWith("point-1", landsUs, null),
+    );
+  });
 });
 
 describe("review marks on the marker lane (ADR 0116)", () => {

@@ -121,6 +121,7 @@ const ipcMocks = vi.hoisted(() => ({
     }),
   ),
   trimLayer: vi.fn().mockResolvedValue(undefined),
+  splitLayerLinked: vi.fn().mockResolvedValue(undefined),
   getWaveformPeaks: vi.fn().mockRejectedValue("not_ready"),
   linksCreate: vi.fn().mockResolvedValue("link-created"),
   linksDissolve: vi.fn().mockResolvedValue(undefined),
@@ -162,6 +163,7 @@ vi.mock("../ipc", async (importOriginal) => {
     moveTrack: ipcMocks.moveTrack,
     pasteLayers: ipcMocks.pasteLayers,
     trimLayer: ipcMocks.trimLayer,
+    splitLayerLinked: ipcMocks.splitLayerLinked,
     getWaveformPeaks: ipcMocks.getWaveformPeaks,
     linksCreate: ipcMocks.linksCreate,
     linksDissolve: ipcMocks.linksDissolve,
@@ -188,6 +190,9 @@ afterEach(() => {
   useLayerDragStore.getState().end();
   clearTrackPreview();
 });
+
+const MOD_FLAGS = { ctrlKey: true, metaKey: true };
+const NO_MOD_FLAGS = { ctrlKey: false, metaKey: false };
 
 const staticNum = (value: number) => ({ mode: "Static" as const, value });
 
@@ -1799,6 +1804,63 @@ describe("Timeline seek/selection coupling", () => {
     fireEvent.pointerMove(block, { clientX: 118, buttons: 0, ctrlKey: true, metaKey: true });
     expect(mark()?.dataset.snapped).toBe("false");
     expect(mark()?.dataset.atUs).not.toBe("1500000");
+  });
+
+  // Mod pressed or released with the pointer still sends no pointer event. The
+  // mark has to follow it anyway, and the click must cut where the mark stood.
+  // Both modifier flags, so each case holds on either platform's Mod.
+  it.each([
+    { name: "pressed", before: {}, key: "keyDown", after: MOD_FLAGS, snapped: "false" },
+    { name: "released", before: MOD_FLAGS, key: "keyUp", after: {}, snapped: "true" },
+  ] as const)("moves the blade mark when Mod is $name with the pointer still, and cuts there", async ({
+    before, key, after, snapped,
+  }) => {
+    ipcMocks.splitLayerLinked.mockClear();
+    const target = { ...layer, id: "target", label: "Target", t_start_us: 1_500_000, t_end_us: 3_000_000 };
+    const { container } = renderTimeline({
+      bladeMode: true, tracks: [track, { ...track, id: "t2", layers: [target] }],
+    });
+    const block = container.querySelector(`.timeline-layer[data-layer-id="${layer.id}"]`)!;
+    const mark = () => container.querySelector<HTMLElement>('[data-testid="timeline-blade-mark"]');
+
+    fireEvent.pointerMove(block, { clientX: 118, buttons: 0, ...before });
+    expect(mark()?.dataset.snapped).not.toBe(snapped);
+    fireEvent[key](window, { key: "Control", ...NO_MOD_FLAGS, ...after });
+    expect(mark()?.dataset.snapped).toBe(snapped);
+    const shownAtUs = Number(mark()?.dataset.atUs);
+
+    fireEvent.pointerDown(block, { button: 0, clientX: 118, ...after });
+    await waitFor(() => expect(ipcMocks.splitLayerLinked).toHaveBeenCalledTimes(1));
+    expect(ipcMocks.splitLayerLinked.mock.calls[0]!.slice(0, 2)).toEqual([layer.id, shownAtUs]);
+  });
+
+  // The clip-drag twin of the case above: the clip and its guide follow Mod at
+  // a still pointer, and the release commits where the clip was drawn.
+  it.each([
+    { name: "pressed", before: {}, key: "keyDown", after: MOD_FLAGS, guide: null },
+    { name: "released", before: MOD_FLAGS, key: "keyUp", after: {}, guide: "1500000" },
+  ] as const)("moves the dragged clip when Mod is $name with the pointer still, and commits there", async ({
+    before, key, after, guide,
+  }) => {
+    const target = { ...layer, id: "target", label: "Target", t_start_us: 1_500_000, t_end_us: 3_000_000 };
+    const { getByText, queryByTestId } = renderTimeline({
+      selectedLayerId: layer.id, tracks: [track, { ...track, id: "t2", layers: [target] }],
+    });
+    const block = getByText("Clip A").closest(".timeline-layer") as HTMLElement;
+    const guideAt = () => queryByTestId("timeline-snap-guide")?.getAttribute("data-snap-boundary-us") ?? null;
+
+    // +118 px puts the head at 1.475 s, inside the snap radius of the 1.5 s edge.
+    fireEvent.pointerDown(block, { button: 0, clientX: 80, clientY: 30, ...before });
+    fireEvent.pointerMove(window, { clientX: 198, clientY: 30, ...before });
+    expect(guideAt()).not.toBe(guide);
+    fireEvent[key](window, { key: "Control", ...NO_MOD_FLAGS, ...after });
+    expect(guideAt()).toBe(guide);
+    const shownLeft = block.style.left;
+
+    fireEvent.pointerUp(window, { clientX: 198, clientY: 30, ...after });
+    await waitFor(() => expect(ipcMocks.moveLayer).toHaveBeenCalledTimes(1));
+    const committedStartUs = Number(ipcMocks.moveLayer.mock.calls[0]![2]);
+    expect(`${(committedStartUs / 1_000_000) * 80}px`).toBe(shownLeft);
   });
 
   it.each(["cancel", "blur", "escape", "unmount"])("does not leave ruler seeking armed after %s", (ending) => {
