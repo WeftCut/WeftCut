@@ -703,9 +703,9 @@ and autosave writes nothing, since the workspace may already name the next
 folder while the outgoing project is still in memory.
 
 Every write of `project.json` (autosave, Save As, New, the pre-upgrade copy)
-writes `project.json.tmp` beside it, flushes it to disk and renames it over the
-target (`main/atomicWrite.ts`), so an interrupted or failed write leaves the
-previous file whole. A failed autosave keeps the edits unsaved and retries
+writes `project.json.tmp` beside it, flushes it to disk, renames it over the
+target and flushes the folder entry (`main/atomicWrite.ts`, except on Windows),
+so an interrupted or failed write leaves the previous file whole. A failed autosave keeps the edits unsaved and retries
 within the interval; an explicit save reports the failure to its caller. A
 leftover `project.json.tmp` from a crash is harmless and is replaced by the next
 write.

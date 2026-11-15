@@ -7,6 +7,7 @@
 // The workspace adapter's `writeFile` (project.json, pre-upgrade backups) is
 // this function.
 import fs from 'node:fs'
+import path from 'node:path'
 
 /** The file-level steps `writeFileAtomic` composes; node:fs in production. */
 export interface AtomicWriteIo {
@@ -19,6 +20,9 @@ export interface AtomicWriteIo {
   close(fd: number): void
   /** Replaces `to` with `from` in one step (same directory). */
   rename(from: string, to: string): void
+  /** Flushes the directory entry of `path` (the rename) to the device.
+   *  Best-effort: a failure here does not undo a replacement that happened. */
+  syncDir(path: string): void
   /** Must not throw on a missing file. */
   rm(path: string): void
   /** Blocks the calling thread for `ms`. */
@@ -62,6 +66,9 @@ export function writeFileAtomic(io: AtomicWriteIo, path: string, text: string): 
     try { io.rm(temp) } catch { /* a leftover temp is overwritten by the next write */ }
     throw error
   }
+  // Without it a crash soon after can bring back the previous file: the new
+  // bytes are on the device, the name pointing at them may not be yet.
+  try { io.syncDir(path) } catch { /* the file is replaced; only its durability is unconfirmed */ }
 }
 
 function renameWithRetry(io: AtomicWriteIo, from: string, to: string): void {
@@ -85,6 +92,12 @@ export const nodeAtomicWriteIo: AtomicWriteIo = {
   fsync: (fd) => fs.fsyncSync(fd),
   close: (fd) => fs.closeSync(fd),
   rename: (from, to) => fs.renameSync(from, to),
+  // Windows cannot open a directory for fsync; NTFS journals the rename itself.
+  syncDir: (p) => {
+    if (process.platform === 'win32') return
+    const fd = fs.openSync(path.dirname(p), 'r')
+    try { fs.fsyncSync(fd) } finally { fs.closeSync(fd) }
+  },
   rm: (p) => fs.rmSync(p, { force: true }),
   pause: (ms) => { Atomics.wait(pauseCell, 0, 0, ms) },
 }
