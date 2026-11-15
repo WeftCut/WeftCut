@@ -12,6 +12,7 @@ import stringsJs from '../../../cli/companion/ui/strings.js?raw'
 import transportLoopbackJs from '../../../cli/companion/ui/transportLoopback.js?raw'
 import pictureChunksJs from '../../../cli/companion/ui/pictureChunks.js?raw'
 import appCss from '../../../cli/companion/ui/app.css?raw'
+import iconSvg from '../../../cli/companion/ui/icon.svg?raw'
 
 export interface PageFile { body: string; type: string }
 
@@ -29,9 +30,13 @@ export const UI_FILES: ReadonlyMap<string, PageFile> = new Map([
   ['transportLoopback.js', { body: transportLoopbackJs, type: JS }],
   ['pictureChunks.js', { body: pictureChunksJs, type: JS }],
   ['app.css', { body: appCss, type: 'text/css; charset=utf-8' }],
+  // LANDMINE: a copy of the editor's `renderer/public/icons/icon.svg`, so the
+  // page's folder stays whole for the `weftcut` binary; `pageUi.test.ts`
+  // holds the two equal.
+  ['icon.svg', { body: iconSvg, type: 'image/svg+xml; charset=utf-8' }],
 ])
 
 /** The page loads its own files and talks to its own origin, nothing else:
  *  no inline script or style, so a label that reached the DOM as markup could
  *  not run. */
-export const PAGE_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'"
+export const PAGE_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'"

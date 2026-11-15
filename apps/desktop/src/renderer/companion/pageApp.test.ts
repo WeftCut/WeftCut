@@ -3,9 +3,11 @@
 // what it draws from the state, and what it makes of the app's answers.
 import { describe, expect, it } from 'vitest'
 
+import { formatTimecode } from '../frames'
 import { companionPageModule as pageModule } from '../../shared/testing/companionPage'
 const { mountCompanion } = await pageModule('app')
 const { STRINGS } = await pageModule('strings')
+const { timecode, frameStartUs } = await pageModule('timeline')
 
 type Handlers = { state(s: unknown): void; event(name: string, data: unknown): void; link(status: string): void }
 
@@ -33,10 +35,15 @@ function fakeTransport(answer = 'ok', pictureSupported = true) {
   }
 }
 
+const FPS = { num: 30, den: 1 }
+
 const state = (over: Record<string, unknown> = {}) => ({
   project: { name: 'Example cut' },
-  composition: { duration_us: 10_000_000, width: 640, height: 360, fps: { num: 30, den: 1 } },
-  tracks: [{ track_id: 't1', clips: [{ layer_id: 'L1', kind: 'Color', label: 'Red block', t_start_us: 0, t_end_us: 5_000_000 }] }],
+  composition: { duration_us: 10_000_000, width: 640, height: 360, fps: FPS },
+  tracks: [{ track_id: 't1', clips: [
+    { layer_id: 'L1', kind: 'Color', label: 'Red block', t_start_us: 0, t_end_us: 5_000_000 },
+    { layer_id: 'L2', kind: 'Text', label: 'Title', t_start_us: 6_000_000, t_end_us: 8_000_000 },
+  ] }],
   transport: { t_us: 0, playing: false },
   export: null,
   activity: null,
@@ -53,14 +60,27 @@ function mount(answer?: string, pictureSupported?: boolean) {
   const page = mountCompanion(root, fake.transport, { now: () => 0, frame: () => {} })
   const stage = () => root.querySelector<HTMLElement>('.cw-stage')!
   const button = (name: string) => root.querySelector<HTMLButtonElement>(name)!
-  return { root, page, stage, button, ...fake }
+  const seeks = () => fake.sent.filter((a) => (a as { action: string }).action === 'seek')
+  return { root, page, stage, button, seeks, ...fake }
 }
+
+function ready(answer?: string, over: Record<string, unknown> = {}) {
+  const m = mount(answer)
+  m.h.link('online')
+  m.h.state(state(over))
+  return m
+}
+
+const key = (k: string, init: KeyboardEventInit = {}) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, ...init }))
+
+/** Lets the page's seek requests go out. Seeks made while one is in flight
+ *  collapse to the latest, which is what a drag wants; these tests look at
+ *  each step, so they wait between them. */
+const sent = () => new Promise((resolve) => { setTimeout(resolve, 0) })
 
 describe('the companion page', () => {
   it('draws each layer of the state on the timeline, by its id', () => {
-    const { root, h } = mount()
-    h.link('online')
-    h.state(state())
+    const { root } = ready()
     expect(root.dataset.state).toBe('ready')
     const clip = root.querySelector<HTMLElement>('.cw-clip[data-layer-id="L1"]')
     expect(clip?.textContent).toBe('Red block')
@@ -72,60 +92,136 @@ describe('the companion page', () => {
     h.link('online')
     h.state(state({ project: null, composition: null, tracks: [], language: 'zh-CN' }))
     expect(root.dataset.state).toBe('no_project')
-    expect(root.querySelector('.cw-notice')?.textContent).toBe(STRINGS.zh.state_no_project)
+    expect(root.querySelector('.cw-empty-title')?.textContent).toBe(STRINGS.zh.no_project_title)
     h.link('offline')
     expect(root.dataset.state).toBe('offline')
-    expect(root.querySelector('.cw-notice')?.textContent).toBe(STRINGS.zh.state_offline)
+    expect(root.querySelector('.cw-empty-title')?.textContent).toBe(STRINGS.zh.offline_title)
+  })
+
+  it('shows no player while nothing can be played', () => {
+    const { root, h } = mount()
+    const body = root.querySelector<HTMLElement>('.cw-body')!
+    h.link('online')
+    h.state(state({ transport: { t_us: 4_000_000, playing: false } }))
+    expect(body.hidden).toBe(false)
+    h.state(state({ project: null, composition: null, tracks: [], transport: { t_us: 4_000_000, playing: false } }))
+    expect(body.hidden).toBe(true)
+    h.link('offline')
+    expect(body.hidden).toBe(true)
+    h.link('revoked')
+    expect(body.hidden).toBe(true)
   })
 
   it('says the project is opening when the app refuses a control for want of an editor, until the state says otherwise', async () => {
-    const { root, h } = mount('not_ready')
-    h.link('online')
-    h.state(state())
-    root.querySelector<HTMLButtonElement>('.cw-play')!.click()
+    const { root, h, button } = ready('not_ready')
+    button('.cw-play').click()
     await expect.poll(() => root.dataset.state).toBe('opening')
     h.state(state())
     expect(root.dataset.state).toBe('ready')
   })
 
   it('plays or pauses by what the transport last said', async () => {
-    const { root, h, sent } = mount()
-    h.link('online')
-    h.state(state())
-    root.querySelector<HTMLButtonElement>('.cw-play')!.click()
+    const { h, sent, button } = ready()
+    button('.cw-play').click()
     h.event('transport', { t_us: 1_000_000, playing: true })
-    root.querySelector<HTMLButtonElement>('.cw-play')!.click()
+    button('.cw-play').click()
     await expect.poll(() => sent).toEqual([{ action: 'play' }, { action: 'pause' }])
   })
 
   it('offers no control while nothing can be driven', () => {
-    const { root, h } = mount()
-    h.link('online')
-    h.state(state({ editor: 'opening' }))
-    expect(root.querySelector<HTMLButtonElement>('.cw-play')!.disabled).toBe(true)
+    const { button } = ready(undefined, { editor: 'opening' })
+    for (const b of ['.cw-play', '.cw-prev', '.cw-next', '.cw-to-start', '.cw-to-end']) expect(button(b).disabled, b).toBe(true)
   })
 
-  it('shows export progress only while an export runs', () => {
-    const { root, h } = mount()
-    h.link('online')
-    h.state(state())
+  it('shows the time as the editor shows it', () => {
+    const { root, h } = ready()
+    h.event('transport', { t_us: 2_500_000, playing: false })
+    expect(root.querySelector('.cw-time-now')?.textContent).toBe(formatTimecode(2_500_000, FPS.num, FPS.den))
+    expect(root.querySelector('.cw-time-end')?.textContent).toBe(formatTimecode(10_000_000, FPS.num, FPS.den))
+  })
+
+  it('shows export progress while it runs, and the outcome once it ends', () => {
+    const { root, h } = ready()
     const box = root.querySelector<HTMLElement>('.cw-export')!
     expect(box.hidden).toBe(true)
     h.event('export', { job_id: 'j', state: 'rendering', progress: 0.42, filename: 'cut.mp4' })
     expect(box.hidden).toBe(false)
     expect(box.textContent).toContain('42%')
     h.event('export', { job_id: 'j', state: 'completed', progress: 1, filename: 'cut.mp4' })
+    expect(box.textContent).toContain(STRINGS.en.export_done)
+    h.event('export', { job_id: 'k', state: 'cancelled', progress: 0.3, filename: 'cut.mp4' })
     expect(box.hidden).toBe(true)
+  })
+
+  it('lists the agent calls it saw, newest first, a finished call in place of its running row', () => {
+    const { root, h } = ready(undefined, { activity: { client: 'Agent', tool: 'read_project', state: 'done' } })
+    h.event('activity', { client: 'Agent', tool: 'split_layer', state: 'running' })
+    h.event('activity', { client: 'Agent', tool: 'split_layer', state: 'done' })
+    const rows = [...root.querySelectorAll<HTMLElement>('.cw-call')]
+    expect(rows.map((r) => [r.dataset.state, r.querySelector('.cw-call-text')?.textContent])).toEqual([
+      ['done', 'split layer'],
+      ['done', 'read project'],
+    ])
+  })
+})
+
+describe('seeking', () => {
+  it('steps one frame either way from the frame on screen', async () => {
+    const { h, button, seeks } = ready()
+    h.event('transport', { t_us: frameStartUs(10, FPS), playing: false })
+    for (const b of ['.cw-next', '.cw-prev', '.cw-prev']) { button(b).click(); await sent() }
+    expect(seeks()).toEqual([
+      { action: 'seek', t_us: frameStartUs(11, FPS) },
+      { action: 'seek', t_us: frameStartUs(10, FPS) },
+      { action: 'seek', t_us: frameStartUs(9, FPS) },
+    ])
+  })
+
+  it('goes to either end, and never past one', async () => {
+    const { button, seeks } = ready()
+    for (const b of ['.cw-to-end', '.cw-next', '.cw-to-start', '.cw-prev']) { button(b).click(); await sent() }
+    expect(seeks()).toEqual([
+      { action: 'seek', t_us: 10_000_000 },
+      { action: 'seek', t_us: 10_000_000 },
+      { action: 'seek', t_us: 0 },
+      { action: 'seek', t_us: 0 },
+    ])
+  })
+
+  it('answers the keys the editor uses for the player', async () => {
+    const { sent: actions } = ready()
+    key(' ')
+    await expect.poll(() => actions).toEqual([{ action: 'play' }])
+    const presses: Array<[string, KeyboardEventInit?]> = [['End'], ['ArrowLeft'], ['ArrowLeft', { shiftKey: true }], ['Home'], ['ArrowRight']]
+    for (const [k, init] of presses) { key(k, init); await sent() }
+    expect(actions.slice(1)).toEqual([
+      { action: 'seek', t_us: 10_000_000 },
+      { action: 'seek', t_us: frameStartUs(299, FPS) },
+      { action: 'seek', t_us: frameStartUs(299, FPS) - 1_000_000 },
+      { action: 'seek', t_us: 0 },
+      { action: 'seek', t_us: frameStartUs(1, FPS) },
+    ])
+  })
+
+  it('leaves the keys alone once the page is gone', () => {
+    const { page, sent: actions } = ready()
+    page.stop()
+    key(' ')
+    expect(actions).toEqual([])
+  })
+
+  it('goes to a clip\'s start on a double click', async () => {
+    const { root, seeks } = ready()
+    root.querySelector('.cw-clip[data-layer-id="L2"]')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    await expect.poll(seeks).toEqual([{ action: 'seek', t_us: 6_000_000 }])
   })
 })
 
 describe('the picture', () => {
   it('is not asked for until the user turns it on, and is live from its first frame', () => {
-    const { h, stage, button, pictures } = mount()
-    h.link('online')
-    h.state(state())
+    const { stage, button, pictures } = ready()
     expect(stage().dataset.picture).toBe('off')
-    expect(stage().textContent).toContain(STRINGS.en.picture_off)
+    expect(stage().textContent).toContain(STRINGS.en.picture_off_title)
     expect(pictures).toEqual([])
     button('.cw-show-picture').click()
     expect(pictures).toHaveLength(1)
@@ -135,9 +231,7 @@ describe('the picture', () => {
   })
 
   it('says an export holds it, and starts over when the export ends', () => {
-    const { h, stage, button, pictures } = mount()
-    h.link('online')
-    h.state(state())
+    const { h, stage, button, pictures } = ready()
     button('.cw-show-picture').click()
     pictures[0]!.view.shown()
     h.event('export', { job_id: 'j', state: 'rendering', progress: 0.1, filename: 'cut.mp4' })
@@ -149,9 +243,7 @@ describe('the picture', () => {
   })
 
   it('says a minimized WeftCut updates it slowly, and offers to bring WeftCut forward', () => {
-    const { h, stage, button, pictures, sent } = mount()
-    h.link('online')
-    h.state(state())
+    const { h, stage, button, pictures, sent } = ready()
     button('.cw-show-picture').click()
     pictures[0]!.view.shown()
     h.event('window', 'minimized')
@@ -162,10 +254,16 @@ describe('the picture', () => {
     expect(stage().dataset.picture).toBe('live')
   })
 
+  it('offers to copy it only while a frame is on screen', () => {
+    const { button, pictures } = ready()
+    button('.cw-show-picture').click()
+    expect(button('.cw-copy-picture').hidden).toBe(true)
+    pictures[0]!.view.shown()
+    expect(button('.cw-copy-picture').hidden).toBe(false)
+  })
+
   it('closes when the user hides it', () => {
-    const { h, stage, button, pictures } = mount()
-    h.link('online')
-    h.state(state())
+    const { stage, button, pictures } = ready()
     button('.cw-show-picture').click()
     button('.cw-hide-picture').click()
     expect(pictures[0]!.closed).toBe(true)
@@ -179,10 +277,16 @@ describe('the picture', () => {
     button('.cw-show-picture').click()
     expect(stage().dataset.picture).toBe('unsupported')
   })
+})
 
-  it('has no stage while the page is not ready', () => {
-    const { h, stage } = mount()
-    h.link('offline')
-    expect(stage().hidden).toBe(true)
+// LANDMINE twin: the page's timecode cannot load the editor's wasm frame grid,
+// so it is held equal to `formatTimecode` here.
+describe('the page timecode', () => {
+  it('reads as the editor\'s at every rate it offers', () => {
+    const rates: Array<[number, number]> = [[24_000, 1001], [24, 1], [25, 1], [30_000, 1001], [30, 1], [50, 1], [60_000, 1001], [60, 1]]
+    const times = [0, 1, 16_666, 16_667, 33_333, 33_367, 999_999, 1_000_000, 59_999_999, 3_599_999_999, 3_600_000_000, 86_399_000_000]
+    for (const [num, den] of rates) {
+      for (const us of times) expect(timecode(us, { num, den }), `${us} @ ${num}/${den}`).toBe(formatTimecode(us, num, den))
+    }
   })
 })
