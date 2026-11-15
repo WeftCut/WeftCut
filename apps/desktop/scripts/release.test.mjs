@@ -78,8 +78,8 @@ test('release notes name every installer the validator requires', () => {
     assert.ok(notes.includes(file), `notes omit ${file}`)
   }
   assert.doesNotMatch(notes, /WeftCut-\d+\.\d+\.\d+/)
-  // The Gatekeeper escape hatch is the one line a blocked macOS user needs verbatim.
-  assert.ok(notes.includes('xattr -dr com.apple.quarantine /Applications/WeftCut.app'))
+  assert.match(notes, /signed with Developer ID and notarized by Apple/)
+  assert.doesNotMatch(notes, /xattr|Open Anyway|ad-hoc/)
 })
 test('release validation refuses corrupt installer bytes', async t => {
   const dir = await assets(t)

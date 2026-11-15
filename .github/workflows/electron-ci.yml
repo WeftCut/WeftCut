@@ -29,7 +29,7 @@ on:
         type: string
         default: ''
       package:
-        description: 'Run the unsigned packaging step'
+        description: 'Package installers (signed macOS on main)'
         type: boolean
         default: true
       full:
@@ -107,7 +107,8 @@ jobs:
     # must still clear a slow green leg; re-check it after rebalancing the split.
     # Coverage cuts belong in the @matrix tier (apps/desktop/e2e/README.md),
     # not here.
-    timeout-minutes: ${{ matrix.part == 'all' && 90 || 60 }}
+    # The macOS packaging carrier also waits for Apple's notary service.
+    timeout-minutes: ${{ (matrix.part == 'all' || (matrix.os == 'macos-latest' && matrix.part == 'e2e-2')) && 90 || 60 }}
     # CONCURRENCY BUDGET — the build/test phase has 18 jobs: 1 `checks` + 3
     # `rust-test` + this matrix's 13 + 1 `compare`. The short release-plan runs
     # before this matrix; the release job waits for all gates. GitHub Free
@@ -586,9 +587,8 @@ jobs:
           retention-days: 14
           path: apps/desktop/e2e-report/**
 
-      # Certificate-free packaging: Windows and Linux ship unsigned, macOS signs
-      # ad-hoc (electron-builder.yml §mac) — no identity, so nothing secret rides
-      # this step. Deliberately NOT `npm run package`: that script
+      # Test packages use no credentials; macOS release candidates use the
+      # separate signed step. Deliberately NOT `npm run package`: that script
       # re-runs napi:build + napi:build:decode for a one-shot local package,
       # and both addons already built above (their .node artefacts persist in
       # node_modules/@weftcut/{core,native-decode}). Run the two remaining
@@ -601,8 +601,18 @@ jobs:
       # fewer specs, so no leg is the worst case for carrying an extra. It must
       # be a leg every OS runs, or that OS never packages.
       - name: Package (unsigned)
-        if: (github.event_name != 'workflow_dispatch' || inputs.package) && (matrix.part == 'e2e-2' || matrix.part == 'all')
+        if: (github.event_name != 'workflow_dispatch' || inputs.package) && (matrix.part == 'e2e-2' || matrix.part == 'all') && !(runner.os == 'macOS' && github.repository == 'WeftCut/WeftCut' && github.ref == 'refs/heads/main' && (needs.release-plan.outputs.publish == 'true' || github.event_name == 'workflow_dispatch'))
         run: npm run build && npx electron-builder --publish never
+
+      - name: Package signed macOS release
+        if: runner.os == 'macOS' && github.repository == 'WeftCut/WeftCut' && github.ref == 'refs/heads/main' && (needs.release-plan.outputs.publish == 'true' || (github.event_name == 'workflow_dispatch' && inputs.package)) && (matrix.part == 'e2e-2' || matrix.part == 'all')
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run build && node scripts/package-macos-release.mjs
 
       # What only a packaged app can show of the stdio MCP entry (ADR 0165): the
       # RunAsNode fuse reads off, and a client config written for the JS shim of
@@ -619,7 +629,7 @@ jobs:
         if: runner.os == 'macOS' && (github.event_name != 'workflow_dispatch' || inputs.package) && (matrix.part == 'e2e-2' || matrix.part == 'all')
         run: node scripts/smoke-packaged-decode-probe.mjs
 
-      # Packaging is VERIFIED on every push by "Package (unsigned)" above; this
+      # Packaging is verified on every push by the packaging steps above; this
       # step only PERSISTS the resulting installer. Installers are large
       # (~0.4–0.9 GB per OS) and nothing downstream consumes them (the compare
       # job only needs determinism-*). Uploading every OS's installer on every

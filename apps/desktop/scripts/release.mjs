@@ -115,9 +115,7 @@ export async function validateAssets(directory, version) {
 }
 
 // Prepended to every release's generated changelog (gh puts --notes ahead of
-// the notes it generates). The releases page is the only download page, and the
-// macOS steps are not guessable: the build is ad-hoc signed, not notarized, so
-// Gatekeeper blocks the first launch (electron-builder.yml §mac has the why).
+// the notes it generates).
 export function releaseNotes() {
   const { 'latest.yml': [exe], 'latest-linux.yml': [appImage, deb], 'latest-mac.yml': [dmg] } = INSTALLERS
   const code = text => '`' + text + '`'
@@ -127,15 +125,7 @@ export function releaseNotes() {
     `- **Windows** — run ${code(exe)}. The app keeps itself current: new versions download in the background and install when you quit.`,
     `- **Linux** — ${code(appImage)} (mark it executable first) or ${code(deb)}. Self-updates like Windows.`,
     `- **macOS (Apple Silicon, macOS 13 or newer)** — open ${code(dmg)} and drag WeftCut into Applications. ` +
-      'The build is ad-hoc signed and not notarized (WeftCut has no Apple Developer ID), so macOS blocks the first launch: ' +
-      'open the app once, click **Done**, then go to **System Settings → Privacy & Security** and click **Open Anyway**. ' +
-      'If macOS calls the app *damaged* instead, clear the download quarantine in Terminal and open it again:',
-    '',
-    '  ```sh',
-    '  xattr -dr com.apple.quarantine /Applications/WeftCut.app',
-    '  ```',
-    '',
-    '  macOS builds do not self-update; watch this page for new versions.',
+      'The app is signed with Developer ID and notarized by Apple. macOS builds do not self-update; download new versions from this page.',
     '',
   ].join('\n')
 }

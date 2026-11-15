@@ -42,18 +42,64 @@ the version in the tag segment, so differential Windows updates still work.
 
 ## macOS signing
 
-The Mac build is ad-hoc signed (`identity: "-"`), not notarized: there is no
-Apple Developer ID. Ad-hoc rather than unsigned keeps the seal consistent after
-electron-builder rewrites Electron's bundle, so Gatekeeper reports an
-unidentified developer instead of "damaged". Users allow it once under System
-Settings → Privacy & Security → Open Anyway, or run
-`xattr -dr com.apple.quarantine`; release notes carry both. Only arm64 ships:
-the runner, the ffmpeg sidecar and the from-source LGPL libraries are Apple
-Silicon.
+Published Mac builds use a Developer ID Application certificate and Apple
+notarization. `scripts/package-macos-release.mjs` requires all signing and
+notarization credentials before invoking electron-builder, then verifies the
+app's full signature, Developer ID authority, Team ID, stapled notarization
+ticket and Gatekeeper acceptance before the installer can be uploaded. This
+explicit gate matters because electron-builder 26 can skip notarization when
+credentials are missing. The ticket is stapled to the app inside the DMG.
 
-macOS cannot self-update: Squirrel.Mac installs only a build satisfying the
-running app's designated requirement, and an ad-hoc requirement is that build's
-own code hash. Main passes no updater on darwin.
+Only arm64 ships: the runner, ffmpeg sidecar and from-source LGPL libraries
+are Apple Silicon. macOS self-update remains disabled in main; adding it also
+requires a ZIP target, release asset validation and installed-app upgrade tests.
+
+Local and PR packages use the base config's ad-hoc signature (`identity: "-"`)
+without notarization. Re-signing keeps Electron's rewritten bundle seal valid;
+these test packages require a manual Gatekeeper exception and are not releases.
+No Apple credentials are passed to PR packaging.
+
+### Apple and GitHub setup
+
+Use an active Apple Developer Program membership. Under Certificates, create a
+**Developer ID Application** certificate with a CSR whose private key you retain.
+Export the certificate and matching private key as a password-protected `.p12`;
+include Apple's Developer ID G2 intermediate certificate. A downloaded `.cer`
+alone cannot sign an app. Keep these files outside the repository.
+
+Create an app-specific password at <https://account.apple.com/> for notarization.
+In GitHub, open **Settings → Secrets and variables → Actions → New repository
+secret** and configure:
+
+| Secret | Value |
+| --- | --- |
+| `CSC_LINK` | Base64 contents of the `.p12` file, on one line |
+| `CSC_KEY_PASSWORD` | Password protecting that `.p12` |
+| `APPLE_ID` | Apple account email |
+| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password for notarization |
+| `APPLE_TEAM_ID` | Ten-character Team ID from membership details |
+
+The signing step receives these secrets only on `main` in `WeftCut/WeftCut`, for
+an unpublished release candidate or a manual packaging run. Missing credentials,
+failed signing, rejected notarization or failed verification stops publication;
+there is no ad-hoc fallback for a release.
+
+To validate without publishing, manually run `electron-ci` on `main`, select
+`macos-latest`, keep packaging enabled and scope E2E as needed. Manual runs
+upload an installer artifact but never publish a GitHub Release. Install that
+DMG on another Mac and check first launch, native decode and FFmpeg operations.
+First-time notarization can take longer than later submissions.
+
+For a local signed package on a Mac, bootstrap the native dependencies, set the
+same five environment variables, then run from `apps/desktop`:
+
+```sh
+npm run build
+node scripts/package-macos-release.mjs
+```
+
+Reference: [Developer ID certificates](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/),
+[electron-builder signing and notarization](https://www.electron.build/v26/docs/notarization/).
 
 ## Auto-update (Windows and Linux)
 
