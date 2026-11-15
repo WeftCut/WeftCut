@@ -1093,7 +1093,7 @@ export interface McpServerOptions {
   /** Renders `preview_motif`'s frames. Omitted → every preview is refused as
    *  `closed`. */
   captureMotifPng?: MotifPngCapture
-  /** The companion page's link, key included, that `open_companion` answers
+  /** The companion page's link, key included, that `open_side_preview` answers
    *  with; `startMcpHost` builds it from its own URL. Omitted → refused. */
   companionLink?: string
 }

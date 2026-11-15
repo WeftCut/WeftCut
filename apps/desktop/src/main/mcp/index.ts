@@ -55,7 +55,7 @@ export interface SessionReaperOptions {
 const REAPER_DEFAULTS: Required<SessionReaperOptions> = { graceMs: 90_000, idleMs: 30 * 60_000, sweepMs: 15_000 }
 
 /** The companion page on this listener (`main/companion/`): its routes, and
- *  the link `open_companion` hands out, built from this host's own URL. */
+ *  the link `open_side_preview` hands out, built from this host's own URL. */
 export interface McpHostCompanion {
   mount(app: express.Express, deps: CompanionRouteDeps): void
   link(mcpUrl: string): string

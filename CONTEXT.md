@@ -788,10 +788,11 @@ See ADR 0167.
 _Avoid_: launcher, extension
 
 **Companion page**:
-The page `open_companion` links to, for a desktop host's side browser: the
+The page `open_side_preview` links to, for a desktop host's side browser: the
 timeline, play / pause / seek, export progress and, once the user turns it on,
-the picture (the preview, encoded by the editor). Reads, never edits. See
-ADR 0168, [mcp.md](docs/mcp.md#companion-page).
+the picture (the preview, encoded by the editor). Reads, never edits. Users and
+agents call it the side preview, hence the tool's name. See ADR 0168,
+[mcp.md](docs/mcp.md#companion-page).
 _Avoid_: widget, card, dashboard
 
 **Page key**:

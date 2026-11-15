@@ -897,7 +897,7 @@ describe('weftcut mcp over real stdio + HTTP', () => {
     })
 
     it('hands out the same companion link through the shim as over HTTP', async () => {
-      const ask = (client: Client) => outcome(client, 'tools/call', { name: 'open_companion', arguments: {} })
+      const ask = (client: Client) => outcome(client, 'tools/call', { name: 'open_side_preview', arguments: {} })
       const direct = await ask(await directClient())
       expect(direct).toMatchObject({ result: { structuredContent: { url: COMPANION_LINK } } })
       expect(await ask(await sdkClient(target, appData))).toEqual(direct)

@@ -253,17 +253,21 @@ version to a hash of the files, and a change needs a new version and entry.
 
 ### Companion page
 
-A page beside the chat, for a desktop host's built-in browser: the project's
+The side preview: a page beside the chat, for a desktop host's built-in browser: the project's
 name and the latest agent call, on request a live picture of the preview, play
 / pause and the time, a small timeline to seek on, and export progress. It
 reads the project and drives the player; it never edits. A terminal host has
 nowhere to show it. Why a page and not a card in the chat: ADR 0168.
 
-- **`open_companion {}`** answers `{ url }`:
+- **`open_side_preview {}`** answers `{ url }`:
   `http://127.0.0.1:<port>/companion#k=<page key>`. It carries no UI resource,
   so calling it draws nothing in the chat; the agent opens the link in the
   host's browser or gives it to the user. It answers with or without a project
-  open, and the same over `weftcut mcp` as over HTTP.
+  open, and the same over `weftcut mcp` as over HTTP. The name and description
+  start from what the user says ("open the preview") and rule out opening the
+  app: a host that found no match started another WeftCut install on its own.
+  With the app closed only the binary's two tools are listed; `launch_weftcut`
+  brings this one in through `tools/list_changed`.
 - **Served by the app** on the MCP listener (`main/companion/`). The page's
   files are plain ES modules in `apps/desktop/cli/companion/`, where the
   `weftcut` binary's module can also reach them; the app bundles them at
@@ -451,7 +455,7 @@ dispatches nothing. Default-deny: only `APP_SCOPE_TOOLS` /
 `APP_SCOPE_RESOURCES` in `main/mcp/mutationTools.ts` answer — the
 Motif library tools, the export preset tools,
 `get_export_status`, `cancel_export`, `retry_export`, `open_project`,
-`create_project`, `open_companion`, `read_project` for views `session` / `effects` / `taste` /
+`create_project`, `open_side_preview`, `read_project` for views `session` / `effects` / `taste` /
 `skill`, and the resources `project://session`, `project://taste`,
 `effects://catalog`, `motifs://current`, `skill://weftcut/*`. One predicate (`servesWithoutProject`) serves both gates;
 `mcp.project-scope` sweeps the whole catalog. `install_motif` with no project

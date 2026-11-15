@@ -1,4 +1,4 @@
-// The companion page an agent hands the user through `open_companion`: it
+// The companion page an agent hands the user through `open_side_preview`: it
 // opens in a browser of this machine, follows the project, works inside a
 // sandboxed frame, shows the preview's picture only once the user asks and
 // steps it aside for an export, outlives a restart of the app, and its key
@@ -54,7 +54,7 @@ test('the link opens the page, whose timeline follows an MCP edit, in a window a
       parent_folder: tmpDir('weftcut-companion-project-'), name: 'Companion',
       width: 640, height: 360, fps: { num: 30, den: 1 },
     })
-    const { url } = await call<{ url: string }>(client, 'open_companion')
+    const { url } = await call<{ url: string }>(client, 'open_side_preview')
     expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/companion#k=[0-9a-f]{64}$/)
 
     const companion = await openWindow(app, url)
@@ -111,7 +111,7 @@ test('the picture is captured only once the user turns it on, and an export hold
     })
     const captures = () => page.evaluate(() => (window as unknown as { __captures: number }).__captures)
 
-    const { url } = await call<{ url: string }>(client, 'open_companion')
+    const { url } = await call<{ url: string }>(client, 'open_side_preview')
     const companion = await openWindow(app, url)
     const root = companion.locator('#companion')
     const stage = companion.locator('.cw-stage')
@@ -163,7 +163,7 @@ test('a link outlives a restart of the app, and its key opens nothing under /mcp
   const first = await launchApp({ userDataDir })
   try {
     const { client } = await connect(first.page)
-    ;({ url } = await call<{ url: string }>(client, 'open_companion'))
+    ;({ url } = await call<{ url: string }>(client, 'open_side_preview'))
     await client.close()
   } finally {
     await first.app.close()

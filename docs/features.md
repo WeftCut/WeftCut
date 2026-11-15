@@ -1305,7 +1305,7 @@ Revert all is a recorded, lock-gated revert path ([Undo-stack scope](#undo-stack
 ## Companion page
 
 A page beside an agent's chat, in a desktop host's built-in browser, opened
-from the link `open_companion` gives the agent: the project's name and the
+from the link `open_side_preview` gives the agent: the project's name and the
 latest agent call, play / pause, the time, a small timeline to seek on, and
 export progress. It never edits. The preview's picture is off until the user
 presses *Show picture* (turning it on costs the editor some processing; a

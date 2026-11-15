@@ -1,6 +1,6 @@
 // apps/desktop/src/main/mcp/companionTool.ts
 //
-// `open_companion`: the link to the companion page (`main/companion/`), for a
+// `open_side_preview`: the link to the companion page (`main/companion/`), for a
 // desktop host's built-in browser beside the chat. The host answers it from the
 // link it was started with; it carries no UI resource, so calling it draws
 // nothing in the chat. Answers with or without a project open
@@ -10,7 +10,7 @@ import { mcpDef } from '../state/mcp-commands.js'
 import { toolRecord } from '../state/mcp-results.js'
 import { toolErrorResult } from './toolResult.js'
 
-export const OPEN_COMPANION = 'open_companion'
+export const OPEN_COMPANION = 'open_side_preview'
 
 /** `link` is null where no listener serves the page (a session built without
  *  one, as in tests). */

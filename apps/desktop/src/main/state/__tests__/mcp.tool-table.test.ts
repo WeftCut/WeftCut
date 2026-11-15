@@ -29,7 +29,7 @@ const EXPECTED_TOOL_NAMES = new Set<string>([
   'apply_transcripts', 'correct_caption_text',
   'set_keyframe', 'get_param_track', 'delete_keyframe', 'update_keyframe', 'set_param_track',
   'update_link', 'read_project',
-  'create_checkpoint', 'restore_checkpoint', 'begin_agent_session', 'end_agent_session', 'export_captions', 'open_project', 'create_project', 'open_companion',
+  'create_checkpoint', 'restore_checkpoint', 'begin_agent_session', 'end_agent_session', 'export_captions', 'open_project', 'create_project', 'open_side_preview',
   'create_tacks', 'update_tack', 'delete_tacks', 'check_composition', 'restyle_to_taste',
   'apply_subtitles', 'auto_split_by_shot', 'remove_pauses',
 ])

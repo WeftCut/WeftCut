@@ -2561,12 +2561,12 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
   // ── the companion page — answered by the MCP host from the link it serves
   //    (`mcp/companionTool.ts`), with or without a project open. No UI
   //    resource: calling it draws nothing in the chat. ──
-  { name: 'open_companion', exec: 'dedicated', annotations: ANN_READ,
-    description: "A link to WeftCut's companion page: the timeline, play/pause/seek, export progress and, on request, a live picture of the preview, for a desktop host's built-in browser beside the chat. Call it only when the user wants to watch the edit there; a terminal has nowhere to show it. Open the link in that browser or give it to the user. The page never edits the project. Returns `{ url }`.",
+  { name: 'open_side_preview', exec: 'dedicated', annotations: ANN_READ,
+    description: "Open the side preview: a page beside this chat, in a desktop host's built-in browser, with the timeline, play/pause/seek, export progress and, on request, a live picture of the edit. Use it when the user asks to open or see the preview; it is not for opening WeftCut, which is already running whenever this tool answers. Open the returned link in that browser, or give it to the user. A terminal has nowhere to show it. The page never edits the project. Returns `{ url }`.",
     inputSchema: { type: 'object', properties: {} },
     parseDedicated: (a) => {
       const extra = Object.keys(a)[0]
-      if (extra !== undefined) throw new McpArgError(`open_companion takes no arguments; got '${extra}'`, extra)
+      if (extra !== undefined) throw new McpArgError(`open_side_preview takes no arguments; got '${extra}'`, extra)
       return {}
     } },
 ]
