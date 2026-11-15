@@ -21,6 +21,7 @@ import { ExportJobs } from '../exportJobs'
 import { autosaveMaxWaitMs } from './autosave'
 import { rootComposition } from './model'
 import { errno } from './__tests__/fixtures/memAtomicIo'
+import { settleQuitSave } from '../quitSave'
 import { SAVE_STATUS_CHANNEL, SAVE_STATUS_EVENT, type SaveStatus } from '../../shared/save-status'
 
 describe('mapChangeEvent', () => {
@@ -379,6 +380,26 @@ describe('createTsActorHost — persistence-route integration', () => {
     host.actor.dispatch('undo', {})
     host.actor.dispatch('redo', {})
     expect(fonts()).toEqual([DEFAULT_CAPTION_FONT_FAMILY, 'Example Sans', 'Example Sans', DEFAULT_CAPTION_FONT_FAMILY])
+  })
+
+  it('the playhead read takes the project as it is when the editor answers, not when it was asked', async () => {
+    const { deps } = makeInMemoryDeps()
+    let answer: ((r: import('../../shared/editorPlayhead').EditorPlayheadReport) => void) | undefined
+    const host = createTsActorHost({ ...deps, readEditorPlayhead: () => new Promise((resolve) => { answer = resolve }) })
+    const idOf = (r: ReturnType<typeof host.actor.dispatch>): string => {
+      if (!r.ok) throw new Error(JSON.stringify(r.error))
+      return r.value as string
+    }
+    const track = idOf(host.actor.dispatch('add_track', {}))
+    const layer = idOf(host.actor.dispatch('add_layer', { track, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }))
+    const asked = host.playhead!()
+    expect(answer).toBeDefined()
+    // The user renames the clip while the question is with the editor.
+    expect(host.actor.dispatch('update_layer', { layer, patch: { label: 'Renamed' } }).ok).toBe(true)
+    const root = host.actor.snapshot().root_id
+    answer!({ root_id: root, composition_id: root, t_us: 500_000, timecode: '00:00:00:15', playing: false, range: null, selection: [layer] })
+    const view = await asked as { under_playhead: Array<{ layer_id: string; label: string }> }
+    expect(view.under_playhead).toEqual([expect.objectContaining({ layer_id: layer, label: 'Renamed' })])
   })
 
   it('app settings immediately control cleanup without changing project state or history', async () => {
@@ -775,6 +796,26 @@ describe('createTsActorHost — persistence-route integration', () => {
         await opening
         expect(savedMarkers(t.vfs, first)).toEqual([before])
         await expect(t.host.handleInvoke('add_marker', { tUs: 2_000_000 })).resolves.toEqual(expect.any(String))
+      } finally { t.done() }
+    })
+
+    it('a folder that is gone does not drop unsaved edits: Close refuses and a quit asks', async () => {
+      const t = signalledHost()
+      try {
+        const dir = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
+        await t.host.handleInvoke('add_marker', { tUs: 1_000_000 })
+        // The folder went away (an unplugged drive, a move in the file manager).
+        t.deps.fs.writeFile = () => { throw errno('ENOENT') }
+        const exists = t.deps.fs.exists
+        t.deps.fs.exists = (p: string) => p !== dir && !p.startsWith(`${dir}/`) && exists(p)
+        await expect(t.host.handleInvoke('project_close', {})).rejects.toMatchObject({ code: 'ENOENT' })
+        expect(t.host.openedProject()).toEqual({ dir })
+        const ask = vi.fn(async () => 'cancel' as const)
+        await expect(settleQuitSave({ save: () => t.host.shutdown(), unsaved: () => t.host.hasUnsavedEdits(), ask, discard: () => t.host.abandon() }))
+          .resolves.toBe(false)
+        expect(ask).toHaveBeenCalledTimes(1)
+        expect(t.host.hasUnsavedEdits()).toBe(true)
+        expect(t.host.openedProject()).toEqual({ dir })
       } finally { t.done() }
     })
 
