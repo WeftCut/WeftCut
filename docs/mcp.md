@@ -175,7 +175,7 @@ command = "<userData>/cli/weftcut"
 args = ["mcp"]
 ```
 
-Or in a terminal: `codex mcp add weftcut -- <userData>/cli/weftcut mcp`
+Or in a terminal: `codex mcp add weftcut -- '<userData>/cli/weftcut' mcp`
 
 **Claude Code**
 
@@ -193,7 +193,7 @@ Or in a terminal: `codex mcp add weftcut -- <userData>/cli/weftcut mcp`
 }
 ```
 
-Or in a terminal: `claude mcp remove weftcut -s user; claude mcp add weftcut -s user -- <userData>/cli/weftcut mcp`
+Or in a terminal: `claude mcp remove weftcut -s user; claude mcp add weftcut -s user -- '<userData>/cli/weftcut' mcp`
 
 **Claude Desktop**
 

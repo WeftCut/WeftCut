@@ -155,14 +155,18 @@ function factsBlock(rows: readonly (readonly [string, string])[]): string {
   return rows.map(([k, v]) => `${k}:`.padEnd(width) + v).join("\n");
 }
 
-/// Shell-quote one CLI argument. Whitespace forces quoting, and so does a
-/// backslash: a bare Windows path survives PowerShell but a POSIX shell eats
-/// the separators (`C:\ud` → `C:ud`), and Windows users do run these in Git
-/// Bash. Nothing needs escaping *inside* the quotes: these values are
-/// filesystem paths, a URL and a header, none of which can carry a double
-/// quote, and a double-quoted backslash is literal in both shells.
+/// Shell-quote one CLI argument for both shells these lines are pasted into:
+/// PowerShell and a POSIX shell (Git Bash on Windows). Single quotes, because
+/// inside them neither shell expands anything: in double quotes PowerShell
+/// expands `$name` and backticks, a POSIX shell `$`, and a profile path may
+/// hold either. A bare backslash would be eaten by a POSIX shell (`C:\ud` →
+/// `C:ud`), so it forces quoting too. A single quote inside has no spelling
+/// both shells read: a Windows path (drive or backslash) takes PowerShell's
+/// `''`, anything else the POSIX `'\''`.
 function shq(s: string): string {
-  return /[\s\\]/.test(s) ? `"${s}"` : s;
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(s)) return s;
+  if (!s.includes("'")) return `'${s}'`;
+  return /^[A-Za-z]:|\\/.test(s) ? `'${s.replaceAll("'", "''")}'` : `'${s.replaceAll("'", "'\\''")}'`;
 }
 
 /// JSON.stringify doubles as the string encoder for TOML and YAML: TOML basic

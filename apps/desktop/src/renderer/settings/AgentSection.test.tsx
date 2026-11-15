@@ -187,12 +187,12 @@ describe("AgentSection", () => {
     expect(await cliText()).toBe(
       "claude mcp remove weftcut -s user; " +
         `claude mcp add -s user -t http weftcut ${INFO.url} ` +
-        '-H "Authorization: Bearer ••••••••••••••••"',
+        "-H 'Authorization: Bearer ••••••••••••••••'",
     );
 
     await userEvent.click(screen.getByRole("button", { name: "Reveal token" }));
     expect(await cliText()).toContain(
-      `-H "Authorization: Bearer ${INFO.bearer_token}"`,
+      `-H 'Authorization: Bearer ${INFO.bearer_token}'`,
     );
   });
 
@@ -364,9 +364,10 @@ describe("AgentSection with the weftcut binary installed", () => {
 
   it("gives Codex and Claude an `mcp add` one-liner with the path quoted, Claude's replacing an existing entry", async () => {
     render(<AgentSection />);
-    // shq quotes on whitespace *or* a backslash: unquoted, a POSIX shell would
-    // eat the Windows separators (C:\Users → C:Users) in Git Bash.
-    const launch = `"${INFO_CLI.cli_path}" mcp`;
+    // Quoted for a backslash: unquoted, a POSIX shell would eat the Windows
+    // separators (C:\Users → C:Users) in Git Bash. Single quotes: neither
+    // shell expands inside them.
+    const launch = `'${INFO_CLI.cli_path}' mcp`;
 
     expect(await cliText()).toBe(`codex mcp add weftcut -- ${launch}`);
 

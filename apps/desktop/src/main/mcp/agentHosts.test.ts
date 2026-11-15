@@ -75,6 +75,27 @@ describe('agent host snippets', () => {
   })
 })
 
+describe('one-liners', () => {
+  const codex = AGENT_HOSTS.find((h) => h.id === 'codex')!
+  it('keep a path verbatim in PowerShell and a POSIX shell: nothing inside the quotes expands', () => {
+    // A profile under a user name with `$` (or a backtick) in it: double quotes
+    // would have PowerShell substitute `$review`.
+    expect(stdioCommand(codex, stdioEntry('C:\\Users\\$review\\AppData\\Roaming\\WeftCut\\cli\\weftcut.exe')))
+      .toBe("codex mcp add weftcut -- 'C:\\Users\\$review\\AppData\\Roaming\\WeftCut\\cli\\weftcut.exe' mcp")
+    expect(stdioCommand(codex, stdioEntry('/home/u/$HOME `x`/WeftCut/cli/weftcut')))
+      .toBe("codex mcp add weftcut -- '/home/u/$HOME `x`/WeftCut/cli/weftcut' mcp")
+  })
+  it('spell a single quote inside the way the path\'s own shell reads it', () => {
+    expect(stdioCommand(codex, stdioEntry("C:\\Users\\o'neil\\cli\\weftcut.exe")))
+      .toBe("codex mcp add weftcut -- 'C:\\Users\\o''neil\\cli\\weftcut.exe' mcp")
+    expect(stdioCommand(codex, stdioEntry("/home/o'neil/cli/weftcut")))
+      .toBe("codex mcp add weftcut -- '/home/o'\\''neil/cli/weftcut' mcp")
+  })
+  it('leave a plain path bare', () => {
+    expect(stdioCommand(codex, stdioEntry('/home/u/.config/WeftCut/cli/weftcut'))).toBe('codex mcp add weftcut -- /home/u/.config/WeftCut/cli/weftcut mcp')
+  })
+})
+
 // ── docs/mcp.md host block ──────────────────────────────────────────────────
 
 const BEGIN = '<!-- agent-hosts:begin -->'
