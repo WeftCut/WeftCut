@@ -1,8 +1,9 @@
 // What check-packaged-cli.mjs knows about a packaged app, kept apart from the
 // run so node:test can load it: where electron-builder leaves the unpacked
-// app, how Electron stores its fuses, and how a client config written before
-// the `weftcut` binary starts the app (ADR 0165).
+// app, how Electron stores its fuses, and how a client config written for the
+// JS shim of 0.7.x starts the app (ADR 0165).
 import path from 'node:path'
+import { cliBinaryFile } from './cli-identity.mjs'
 
 /** The unpacked app electron-builder leaves under `releaseDir` for `platform`. */
 export function packagedApp(platform, releaseDir) {
@@ -53,19 +54,18 @@ export function runAsNodeFuse(binary) {
   return states
 }
 
-/** The name `weftcut mcp` answers `initialize` under. */
-export const SERVER_NAME = 'weftcut-mcp'
-
 /**
  * How a client config written by a release with the JS shim starts the app on
  * `profile`: the shim script as the one argument, and the two variables that
- * made the executable run it as Node.
+ * made the executable run it as Node. `binary` is what the app's refusal of
+ * that start names: the profile's copy of the binary the new config runs.
  */
 export function legacyInvocation(platform, profile) {
   const paths = platform === 'win32' ? path.win32 : path.posix
   return {
     args: [paths.join(profile, 'cli', 'weftcut-mcp.cjs')],
     env: { ELECTRON_RUN_AS_NODE: '1', WEFTCUT_USERDATA: profile },
+    binary: paths.join(profile, 'cli', cliBinaryFile(platform)),
   }
 }
 

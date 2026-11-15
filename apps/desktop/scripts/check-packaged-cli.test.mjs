@@ -63,14 +63,15 @@ test('the packaged app is built with the RunAsNode fuse off, and no other fuse s
   assert.deepEqual(config.electronFuses, { runAsNode: false })
 })
 
-test('an old config starts the app on the shim script, as Node, naming its profile', () => {
+test("an old config starts the app on the shim script, as Node, naming its profile; the refusal names the profile's binary", () => {
   assert.deepEqual(legacyInvocation('linux', '/home/u/.config/WeftCut'), {
     args: ['/home/u/.config/WeftCut/cli/weftcut-mcp.cjs'],
     env: { ELECTRON_RUN_AS_NODE: '1', WEFTCUT_USERDATA: '/home/u/.config/WeftCut' },
+    binary: '/home/u/.config/WeftCut/cli/weftcut',
   })
-  assert.deepEqual(legacyInvocation('win32', 'C:\\Users\\u\\AppData\\Roaming\\WeftCut').args, [
-    'C:\\Users\\u\\AppData\\Roaming\\WeftCut\\cli\\weftcut-mcp.cjs',
-  ])
+  const windows = legacyInvocation('win32', 'C:\\Users\\u\\AppData\\Roaming\\WeftCut')
+  assert.deepEqual(windows.args, ['C:\\Users\\u\\AppData\\Roaming\\WeftCut\\cli\\weftcut-mcp.cjs'])
+  assert.equal(windows.binary, 'C:\\Users\\u\\AppData\\Roaming\\WeftCut\\cli\\weftcut.exe')
 })
 
 test('the DevTools port is read from the line Chromium announces it on', () => {

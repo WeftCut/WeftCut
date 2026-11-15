@@ -82,7 +82,8 @@ binary may start the app:
 - **A config written by an earlier release still works.** Started as
   `<app> <userData>/cli/weftcut-mcp.cjs`, the app opens no window and hands
   its stdio to `weftcut mcp`. Those configs sit in files the app does not
-  own, so nothing else could move them.
+  own, so nothing else could move them. (Removed in 0.8.0; see the note
+  below.)
 
 Rejected:
 
@@ -115,7 +116,7 @@ Rejected:
   profile, without the single-instance lock and without opening anything. On
   macOS it is a foreground app until Electron runs the code that hides its
   Dock icon: measured, about a tenth of a second. It ends when those configs
-  are replaced.
+  are replaced. (Removed in 0.8.0; see the note below.)
 - A Windows terminal does not wait for a GUI-subsystem program. Typed at a
   cmd or PowerShell prompt, `weftcut info` prints after the prompt has
   returned and leaves no exit code; PowerShell loses the output outright when
@@ -125,3 +126,21 @@ Rejected:
   lift this; nothing needs one while the binary is not on `PATH`.
 - The fuse is flipped at packaging, so an unpackaged run still honours
   `ELECTRON_RUN_AS_NODE`; only checks on the packaged app can see it off.
+
+## Note (2026-11-15): 0.8.0 refuses a 0.7.x config instead of serving it
+
+The hand-over above is gone. 0.8.0 is a release that may break things, and
+the hand-over was the one part of this design kept only for configs the app
+does not own: an Electron boot per agent session, a moment of Dock icon on
+macOS, a second path into the app before its single-instance lock, and a CI
+gate to hold all of it. An old config needs replacing once, from a panel that
+already writes the new one.
+
+Started as `<app> <userData>/cli/weftcut-mcp.cjs`, the app now writes one line
+to stderr, naming the binary the new config runs and Settings → Agent as where
+to copy it from, and exits non-zero. It opens no window, takes no profile lock
+and starts no diagnostics; recognition still runs before anything else
+(`main/mcp/legacyConfig.ts`). `scripts/check-packaged-cli.mjs` starts the
+packaged app that way and expects that refusal. Claude Code's `mcp add`
+refuses a name the scope already holds, so the panel's Claude Code one-liner
+removes the old `weftcut` entry first.

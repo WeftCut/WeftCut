@@ -609,8 +609,8 @@ jobs:
 
       # What only a packaged app can show of the stdio MCP entry (ADR 0165): the
       # RunAsNode fuse reads off, and a client config written for the JS shim of
-      # an earlier release is still served, with no window. Fuses are flipped at
-      # packaging, so every unpackaged run above still honours
+      # 0.7.x is refused with one line on stderr and no window. Fuses are
+      # flipped at packaging, so every unpackaged run above still honours
       # ELECTRON_RUN_AS_NODE. Linux needs a display for the app to boot at all.
       - name: Verify packaged stdio MCP entry
         if: (github.event_name != 'workflow_dispatch' || inputs.package) && (matrix.part == 'e2e-2' || matrix.part == 'all')

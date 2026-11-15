@@ -45,7 +45,7 @@ nothing but `npm run build:cli` (and `npm run build`, which calls it) produces.
 Without it the file fails by name; after a change under `apps/desktop/cli/`,
 rebuild first or the cases judge the old program. `WEFTCUT_CLI_BIN` names another
 binary by absolute path. What only a packaged app shows (the RunAsNode fuse, a
-config written for the JS shim still being served) is checked on the packaged app
+config written for the JS shim being refused) is checked on the packaged app
 by `scripts/check-packaged-cli.mjs`, in CI's package step on each OS.
 
 **Build-script tests are a separate command on purpose.** `vitest.config.ts`
