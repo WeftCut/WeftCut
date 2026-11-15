@@ -2131,9 +2131,9 @@ const zhCN: Resources = {
     prebake_motifs_hint:
       "后台烘焙时间线上用到的所有 Motif 帧。",
     preview_heading: "预览",
-    preview_snap_enabled: "吸附到画面和图层",
+    preview_snap_enabled: "画面吸附",
     preview_snap_enabled_hint:
-      "在预览中移动或缩放片段时，自动对齐到画面边缘、中线以及其它片段。按住 {{mod}} 可临时关闭。",
+      "在预览中移动或缩放片段时，自动对齐到画面边缘、中线、其他片段及已启用的网格线。按住 {{mod}} 可临时关闭。",
     preview_snap_strength: "画面吸附强度",
     preview_snap_strength_hint:
       "以屏幕像素为单位。也适用于网格吸附。",

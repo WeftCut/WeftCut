@@ -137,8 +137,25 @@ test('crop: Quick Panel, context menu, drag/cancel, snapping and exported pixels
     const bounds = await box.boundingBox();
     if (!bounds) throw new Error('no transform box');
     const grab = { x: bounds.x + bounds.width * 0.3, y: bounds.y + bounds.height * 0.7 };
-    await page.mouse.move(grab.x, grab.y); await page.mouse.down();
-    await page.mouse.move(grab.x - 78 * (await boxInComp()).scale, grab.y, { steps: 5 });
+    const scale = (await boxInComp()).scale;
+    const dragTo = async () => {
+      await page.mouse.move(grab.x, grab.y);
+      await page.mouse.down();
+      await page.mouse.move(grab.x - 78 * scale, grab.y, { steps: 5 });
+    };
+    const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
+    await page.keyboard.down(mod);
+    await dragTo();
+    await expect(page.getByTestId('transform-gizmo-guide-x')).toHaveCSS('display', 'none');
+    await expect(page.getByRole('menuitem', { name: 'Crop in preview', exact: true })).toHaveCount(0);
+    await page.mouse.up();
+    await page.keyboard.up(mod);
+    await expect.poll(async () => (await stored()).x.value).toBeGreaterThan(81);
+    await expect.poll(async () => (await stored()).x.value).toBeLessThan(84);
+    await invokeCmd(page, 'project_undo', {});
+    await expect.poll(async () => Math.round((await boxInComp()).x)).toBe(80);
+
+    await dragTo();
     // A vertical SVG line has zero layout width; Playwright's visibility
     // predicate calls that hidden even when its stroke is being painted.
     await expect(page.getByTestId('transform-gizmo-guide-x')).not.toHaveCSS('display', 'none');

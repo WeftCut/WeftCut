@@ -2380,9 +2380,9 @@ const enUS = {
     prebake_motifs_hint:
       "Bake every motif frame the timeline uses in the background.",
     preview_heading: "Preview",
-    preview_snap_enabled: "Snap to frame and layers",
+    preview_snap_enabled: "Canvas snapping",
     preview_snap_enabled_hint:
-      "Align clips to the frame's edges and centre lines, and to other clips, while moving or resizing them on the preview. Hold {{mod}} to override.",
+      "Align clips to the frame, other clips and enabled grid lines when moving or resizing in the preview. Hold {{mod}} to override.",
     preview_snap_strength: "Canvas snap strength",
     preview_snap_strength_hint:
       "Measured in screen pixels. Also applies to grid snapping.",

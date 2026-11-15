@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { DEFAULT_PREVIEW_GRID, type PreviewGridSettings } from "../../shared/preview-grid";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { isMac } from "@/platform";
 import { initEval } from '../eval';
 import { translatePath, type PathPosition } from '../../shared/position';
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -422,11 +423,16 @@ describe("snapping", () => {
     expect(transformOverrideFor("l1")).toEqual({ dx: 320, dy: 0 });
   });
 
-  it("snaps to shown grid subdivisions, honors Ctrl, and commits only the final position", async () => {
+  it("snaps to hidden grid subdivisions, honors Mod, and commits only the final position", async () => {
     setSnap(true, 12, { visible: true, opacity: 0, column_divisions: 16, rows: false });
     render(<TransformGizmoHost />);
     const el = await box();
-    fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
+    const mod = isMac ? { metaKey: true } : { ctrlKey: true };
+    fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0, ...mod });
+    fireEvent.pointerMove(el, { clientX: 38, clientY: 9, ...mod });
+    expect(transformOverrideFor("l1")).toEqual({ dx: 76, dy: 18 });
+    expect(guide("x").style.display).toBe("none");
+
     fireEvent.pointerMove(el, { clientX: 38, clientY: 9 });
     expect(transformOverrideFor("l1")).toEqual({ dx: 80, dy: 0 });
     await waitFor(() => expect(guide("x").style.display).not.toBe("none"));
@@ -434,7 +440,7 @@ describe("snapping", () => {
     expect(guideLine("x").getAttribute("x1")).toBe("40");
     expect(guide("y").style.display).not.toBe("none");
 
-    fireEvent.pointerMove(el, { clientX: 38, clientY: 9, ctrlKey: true });
+    fireEvent.pointerMove(el, { clientX: 38, clientY: 9, ...mod });
     expect(transformOverrideFor("l1")).toEqual({ dx: 76, dy: 18 });
     await waitFor(() => expect(guide("x").style.display).toBe("none"));
     fireEvent.pointerMove(el, { clientX: 38, clientY: 9 });
@@ -445,12 +451,12 @@ describe("snapping", () => {
   });
 
   it("does not snap to a visible grid when canvas snapping is off", async () => {
-    setSnap(false, 12, { visible: true });
+    setSnap(false, 12, { visible: true, column_divisions: 16, rows: false });
     render(<TransformGizmoHost />);
     const el = await box();
     fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
-    fireEvent.pointerMove(el, { clientX: 155, clientY: 0 });
-    expect(transformOverrideFor("l1")).toEqual({ dx: 310, dy: 0 });
+    fireEvent.pointerMove(el, { clientX: 38, clientY: 9 });
+    expect(transformOverrideFor("l1")).toEqual({ dx: 76, dy: 18 });
     expect(guide("x").style.display).toBe("none");
   });
 

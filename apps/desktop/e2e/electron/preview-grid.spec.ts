@@ -146,6 +146,38 @@ test('Quick Actions toggles the grid; preview toolbar edits columns, rows and ax
   }
 })
 
+test('the grid eye restores its last opacity after an app restart', async () => {
+  const userDataDir = tmpDir('weftcut-e2e-grid-profile-')
+  const first = await launchApp({ userDataDir })
+  try {
+    await startPreview(first.page, 1280, 720)
+    await invokeCmd(first.page, 'app_settings_set', { patch: { preview_grid: { visible: true, opacity: 40 } } })
+    const eye = first.page.getByTestId('grid-opacity-eye')
+    await expect(overlay(first.page).locator('g[opacity="0.4"]').first()).toBeAttached()
+    await eye.click()
+    await expect(eye).toHaveAttribute('aria-pressed', 'false')
+    await expect.poll(async () => (await settings(first.page)).preview_grid.opacity).toBe(0)
+  } finally {
+    await first.app.close()
+  }
+
+  const second = await launchApp({ userDataDir })
+  try {
+    const { page } = second
+    await page.locator('.startup-recent-item').filter({ hasText: 'preview-grid' }).click()
+    await expect(page.getByTestId('pixi-preview-initializing')).toBeHidden()
+    const eye = page.getByTestId('grid-opacity-eye')
+    await expect(eye).toHaveAttribute('aria-pressed', 'false')
+    await expect(overlay(page).locator('g[opacity="0"]').first()).toBeAttached()
+    await eye.click()
+    await expect(eye).toHaveAttribute('aria-pressed', 'true')
+    await expect(overlay(page).locator('g[opacity="0.4"]').first()).toBeAttached()
+    await expect.poll(async () => (await settings(page)).preview_grid.opacity).toBe(40)
+  } finally {
+    await second.app.close()
+  }
+})
+
 test('Enter and Escape both return focus from the grid editor to the canvas', async () => {
   const { app, page } = await launchApp()
   try {

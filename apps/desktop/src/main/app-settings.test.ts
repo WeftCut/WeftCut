@@ -55,7 +55,7 @@ describe('app-settings store', () => {
       preview_grid: { visible: 'on', opacity: 500, column_divisions: 500, row_divisions: 0, rows: false },
     }) });
     expect(invalid.get().preview_grid).toEqual({
-      ...DEFAULT_PREVIEW_GRID, opacity: 100,
+      ...DEFAULT_PREVIEW_GRID, opacity: 100, last_visible_opacity: 100,
       column_divisions: GRID_DIVISIONS_MAX, row_divisions: GRID_DIVISIONS_MIN, rows: false,
     });
   });
@@ -71,6 +71,15 @@ describe('app-settings store', () => {
     expect(settings.get().preview_grid.opacity).toBe(10);
   });
 
+  it('loads saved opacity from before the eye preference was stored', () => {
+    const visible = store({ [PATH]: JSON.stringify({ preview_grid: { opacity: 40 } }) });
+    expect(visible.get().preview_grid.last_visible_opacity).toBe(40);
+    const hidden = store({ [PATH]: JSON.stringify({ preview_grid: { opacity: 0 } }) });
+    expect(hidden.get().preview_grid).toMatchObject({
+      opacity: 0, last_visible_opacity: DEFAULT_PREVIEW_GRID.opacity,
+    });
+  });
+
   it('accepts 64 subdivisions on either axis and clamps 65 to 64', () => {
     const settings = store({ [PATH]: JSON.stringify({
       preview_grid: { column_divisions: 64, row_divisions: 65 },
@@ -83,13 +92,19 @@ describe('app-settings store', () => {
     const { fs } = memFs();
     const deps = { fs, path: PATH, dir: DIR };
     const initial = createAppSettingsStore(deps);
-    initial.apply({ preview_grid: { visible: true, column_divisions: 12, row_divisions: 5, rows: false, opacity: 0 } });
-    expect(createAppSettingsStore(deps).get().preview_grid).toEqual({
-      ...DEFAULT_PREVIEW_GRID, visible: true, column_divisions: 12, row_divisions: 5, rows: false, opacity: 0,
+    initial.apply({ preview_grid: { visible: true, column_divisions: 12, row_divisions: 5, rows: false, opacity: 40 } });
+    initial.apply({ preview_grid: { opacity: 0 } });
+
+    const reopened = createAppSettingsStore(deps);
+    const hidden = reopened.get().preview_grid;
+    expect(hidden).toEqual({
+      ...DEFAULT_PREVIEW_GRID, visible: true, column_divisions: 12, row_divisions: 5, rows: false,
+      opacity: 0, last_visible_opacity: 40,
     });
-    initial.apply({ preview_grid: { rows: true, opacity: 47 } });
+    reopened.apply({ preview_grid: { rows: true, opacity: hidden.last_visible_opacity } });
     expect(createAppSettingsStore(deps).get().preview_grid).toMatchObject({
-      visible: true, column_divisions: 12, row_divisions: 5, rows: true, opacity: 47,
+      visible: true, column_divisions: 12, row_divisions: 5, rows: true,
+      opacity: 40, last_visible_opacity: 40,
     });
   });
 

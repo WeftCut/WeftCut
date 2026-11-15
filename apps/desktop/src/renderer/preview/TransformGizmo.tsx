@@ -1145,18 +1145,15 @@ function TransformGizmo({
   /// mid-drag, the guides do not follow the animated layers.
   const grabSnap = (): SnapContext | null => {
     const settings = useAppSettingsStore.getState().settings;
-    const alignment = settings.preview_snap_enabled;
+    if (!settings.preview_snap_enabled) return null;
     const gridSettings = settings.preview_grid;
-    if (!alignment) return null;
     const probe = getGizmoProbe();
     if (!probe) return null;
     const comp = compRef.current;
-    const others = alignment
-      ? otherLayerBoxes(compositionRef.current, layerRef.current.id, focusedPlayheadUs(), probe)
-      : [];
+    const others = otherLayerBoxes(compositionRef.current, layerRef.current.id, focusedPlayheadUs(), probe);
     const grid = gridSettings.visible ? previewGrid(comp.width, comp.height, gridSettings, settings.safe_area_guides_visible) : undefined;
     return {
-      targets: snapTargets(comp.width, comp.height, others, { alignment, grid }),
+      targets: snapTargets(comp.width, comp.height, others, { grid }),
       strengthPx: settings.preview_snap_strength_px,
     };
   };

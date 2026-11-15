@@ -78,9 +78,8 @@ export function snapTargets(
   compW: number,
   compH: number,
   others: readonly Aabb[],
-  { alignment = true, grid }: { alignment?: boolean; grid?: PreviewGrid | undefined } = {},
+  { grid }: { grid?: PreviewGrid | undefined } = {},
 ): SnapTargets {
-  if (!alignment) return { xs: [], ys: [], grid };
   const xs: SnapTarget[] = [
     { at: 0, source: "composition" },
     { at: compW / 2, source: "composition" },
@@ -100,7 +99,7 @@ export function snapTargets(
 
 /// The setting's SCREEN-pixel radius in composition pixels. Zero (or worse)
 /// disables snapping entirely, which is how the caller expresses both "the
-/// preference is off" and "Ctrl is held" without a second flag — the same
+/// preference is off" and "the bypass key is held" without a second flag — the same
 /// `threshold <= 0` short-circuit `timeline/snapping.ts` uses.
 export function snapThresholdComp(strengthPx: number, fitScale: number): number {
   if (!(fitScale > 0) || !Number.isFinite(fitScale)) return 0;

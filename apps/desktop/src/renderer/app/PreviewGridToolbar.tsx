@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Columns3, Eye, EyeOff, Rows3 } from "lucide-react";
 import { AppIcon } from "@/components/AppIcon";
 import { AppNumberField } from "../components/AppNumberField";
-import { DEFAULT_PREVIEW_GRID, GRID_DIVISIONS_MAX, GRID_DIVISIONS_MIN } from "../../shared/preview-grid";
+import { GRID_DIVISIONS_MAX, GRID_DIVISIONS_MIN } from "../../shared/preview-grid";
 import { setAppSettings, usePreviewGrid } from "../settings/appSettingsStore";
 
 /** Inline grid counts: part of working on the canvas, not a Quick Actions popover.
@@ -43,13 +43,6 @@ function GridCount({ value, field, label }: {
 export function PreviewGridToolbar() {
   const { t } = useTranslation();
   const grid = usePreviewGrid();
-  // The eye mutes the drawing, not the grid itself: at 0% the same
-  // subdivisions remain eligible snap targets. Remember a user's preferred
-  // nonzero opacity so toggling the eye never destroys their Settings value.
-  const lastVisibleOpacity = useRef(DEFAULT_PREVIEW_GRID.opacity);
-  useEffect(() => {
-    if (grid.opacity > 0) lastVisibleOpacity.current = grid.opacity;
-  }, [grid.opacity]);
   if (!grid.visible) return null;
   const toggle = (field: "columns" | "rows") => {
     void setAppSettings({ preview_grid: { [field]: !grid[field] } });
@@ -109,7 +102,7 @@ export function PreviewGridToolbar() {
         title={t(grid.opacity > 0 ? "quick_actions.grid_mute" : "quick_actions.grid_unmute")}
         data-testid="grid-opacity-eye"
         onClick={() => void setAppSettings({
-          preview_grid: { opacity: grid.opacity > 0 ? 0 : lastVisibleOpacity.current },
+          preview_grid: { opacity: grid.opacity > 0 ? 0 : grid.last_visible_opacity },
         })}
       >
         <AppIcon icon={grid.opacity > 0 ? Eye : EyeOff} size="caption" aria-hidden />

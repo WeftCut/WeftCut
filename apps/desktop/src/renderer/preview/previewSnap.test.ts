@@ -111,7 +111,7 @@ describe("grid snapping", () => {
   const drives = { x: true, y: true };
 
   it("pulls move edges and centers to the nearest grid lines", () => {
-    const targets = snapTargets(1920, 1080, [], { alignment: false, grid });
+    const targets = snapTargets(1920, 1080, [], { grid });
     expect(snapMove({ left: 94, top: 103, right: 145, bottom: 132 }, targets, 12)).toEqual({
       dx: 6, dy: 2.5, guides: { x: 100, y: 120 },
     });
@@ -128,7 +128,7 @@ describe("grid snapping", () => {
   });
 
   it("honors the zoom-adjusted radius and only snaps along driven, enabled axes", () => {
-    const targets = snapTargets(1920, 1080, [], { alignment: false, grid: { ...grid, y: null } });
+    const targets = snapTargets(1920, 1080, [], { grid: { ...grid, y: null } });
     const point = { x: 107, y: 119 };
     expect(snapScaleTarget(point, drives, targets, snapThresholdComp(12, 2))).toEqual({
       target: point, guides: { x: null, y: null },
@@ -140,7 +140,7 @@ describe("grid snapping", () => {
   });
 
   it("snaps uniform resize along its ray, rejecting a near-parallel grid line", () => {
-    const targets = snapTargets(1920, 1080, [], { alignment: false, grid });
+    const targets = snapTargets(1920, 1080, [], { grid });
     const hit = snapUniformScale({ x: 98, y: 0 }, { x: 1, y: 119 }, 1, drives, targets, 5);
     expect(hit.guides).toEqual({ x: null, y: 120 });
     expect(hit.t * 119).toBeCloseTo(120, 9);

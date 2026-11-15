@@ -1177,10 +1177,8 @@ changing geometry or progress.
   lines and every other staged layer's bounds, **each axis independently**; ties
   go to composition lines. Radius is in screen px (`preview_snap_strength_px`,
   default 12; `preview_snap_enabled`), its own app setting, separate from the
-  timeline's. Holding Mod (Ctrl; ⌘ on macOS) suppresses snapping. Not Alt, which
-  opens the Windows menu bar; not a bare Ctrl on macOS, where Chromium turns a
-  Ctrl+press into a context-menu click. Guides are magenta, one per axis at
-  most. A uniform resize solves the snap by ray/line intersection, ranked by
+  timeline's. Hold Ctrl (⌘ on macOS) to bypass snapping. Guides are magenta, one
+  per axis at most. A uniform resize solves the snap by ray/line intersection, ranked by
   displacement. Targets are frozen at pointer-down. Solver: `preview/previewSnap.ts`, run before the override is
   written.
 
@@ -1189,7 +1187,7 @@ Canvas Snap toggles, backed by the same commands in the View menu and search
 palette. When Grid is on, the preview's top bar shows independently editable
 `columns × rows` counts (default 3 × 3, 1–64) and per-axis line toggles.
 A small eye icon beside the counts mutes/unmutes grid drawing without
-disabling snapping and restores the last nonzero opacity. There is no
+disabling snapping and restores the last nonzero opacity across restarts. There is no
 configuration popover, count preset, or equal/independent mode. The preview
 header has the same height when Grid is toggled: all preview toolbar
 controls are 24 UI-scaled pixels tall, and narrow dock panels reserve a
@@ -1200,8 +1198,7 @@ reserved for the preview eye button; if currently hidden, Settings shows
 that state and any adjustment restores at least 10% opacity. Visibility
 controls painting only: at 0% the grid can still snap while Grid and Canvas
 Snap are on. Disabled grid axes contribute no subdivision targets; the separate frame and
-layer targets still work when Canvas Snap is on. Ctrl bypasses snapping during
-a drag.
+layer targets still work when Canvas Snap is on.
 When safe-area guides are visible, subdivisions occupy the title-safe rectangle
 and its visible outer edges become snap targets; without guides they occupy the
 full composition. The grid preference is app-level, not project data.

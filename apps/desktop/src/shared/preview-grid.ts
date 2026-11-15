@@ -3,6 +3,7 @@ export interface PreviewGridSettings {
   visible: boolean;
   /** Percent opacity of the overlay; 0 hides paint but does not disable snapping. */
   opacity: number;
+  last_visible_opacity: number;
   column_divisions: number;
   row_divisions: number;
   /** Show vertical and horizontal interior lines independently. */
@@ -18,6 +19,7 @@ export const GRID_DIVISIONS_MAX = 64;
 export const DEFAULT_PREVIEW_GRID: PreviewGridSettings = {
   visible: false,
   opacity: 70,
+  last_visible_opacity: 70,
   column_divisions: 3,
   row_divisions: 3,
   columns: true,
@@ -32,12 +34,14 @@ export function readPreviewGridSettings(raw: unknown): PreviewGridSettings {
     typeof value === "number" && Number.isFinite(value)
       ? Math.round(Math.min(max, Math.max(min, value)))
       : fallback;
-  const opacity = clamp(grid.opacity, 0, 100, d.opacity);
+  const storedOpacity = clamp(grid.opacity, 0, 100, d.opacity);
+  const opacity = storedOpacity === 0 ? 0 : Math.max(GRID_OPACITY_MIN_VISIBLE, storedOpacity);
   return {
     visible: typeof grid.visible === "boolean" ? grid.visible : d.visible,
-    // Preserve the eye's deliberate hidden state. Any positive opacity must
-    // be legible, including values restored from previously saved settings.
-    opacity: opacity === 0 ? 0 : Math.max(GRID_OPACITY_MIN_VISIBLE, opacity),
+    opacity,
+    last_visible_opacity: opacity || clamp(
+      grid.last_visible_opacity, GRID_OPACITY_MIN_VISIBLE, 100, d.last_visible_opacity,
+    ),
     column_divisions: clamp(grid.column_divisions, GRID_DIVISIONS_MIN, GRID_DIVISIONS_MAX, d.column_divisions),
     row_divisions: clamp(grid.row_divisions, GRID_DIVISIONS_MIN, GRID_DIVISIONS_MAX, d.row_divisions),
     columns: typeof grid.columns === "boolean" ? grid.columns : d.columns,
