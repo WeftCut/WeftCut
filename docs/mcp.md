@@ -500,6 +500,7 @@ path nodes keep their stored `id` (`get_param_track` answers them as
 | `project://taste` | the merged style (`extends` in `TASTE.md`, else `weftcut-default`) + overrides: roles, tokens, example `motifs` per role, `fonts` resolved against installed families, provenance, diagnostics, revision. Pixel tokens are for a 1080-px frame. Read fresh every call; the app never writes `TASTE.md` |
 | `project://session` | active work session (or null), recent sessions, history lock, `project`, `recent_projects`, `default_parent_folder` |
 | `project://tacks` | the opening's tacks, oldest first (see *Tacks*) |
+| `project://playhead` | where the user is in the editor, asked of the editor window at read time (see below) |
 | `project://history` | recent ops and checkpoints (no snapshots); see below |
 | `project://compiled` | compiled audio IRGraph |
 | `composition://meter` | preview master-bus level `{ live, rms_db, peak_db }`, pushed ~2 Hz, `live: false` after 2 s of silence; a tap on what the user hears, never a render. Per-role meters reach no MCP surface ([audio.md](audio.md#meters)) |
@@ -530,6 +531,22 @@ no remedy names them.
 `read_project { view }` serves the same views as a tool for clients without
 resource support (`READ_PROJECT_VIEWS`, plus `media_thumbnail` / `media_frame`
 as image blocks), through the same function, so the two never disagree.
+
+**`project://playhead`.** The one read of the editor's view rather than the
+project: `composition_id` (the timeline holding the keyboard, the root or a
+Group entered from it), `t_us` and `timecode` on that composition's clock,
+`playing`, `range` (the marked in/out as `{ t_start_us, t_end_us }` on the same
+clock, a lone end running to the film's edge; null when none), `selection`
+(selected layer ids) and `under_playhead` (the layers the playhead is over, as
+`project://tracks` envelopes with their `track_id`). Main asks the editor per
+read and the editor answers from its stores, so nothing travels between reads.
+With no project open it is refused as every project read is; with the editor
+window gone, reloading or still loading the project, or when its answer names a
+project or Group the actor no longer holds, it is refused with
+`EditorNotReady` (retry). While `playing`, `t_us` is where the playhead was
+when asked. The skill's rule: on "here", "now", "this part", read it first; a
+range wins over the selection, the selection over what lies under the
+playhead.
 
 **`project://history` positions.** `ops` is a window (the last 100 of a
 200-entry cap) and `cursor` is an absolute stack index. `window_start` is the

@@ -830,7 +830,9 @@ describe('weftcut mcp over real stdio + HTTP', () => {
     const COMPANION_LINK = `http://127.0.0.1:1/companion#k=${'0'.repeat(64)}`
     const idGen = uuidV7Gen()
     const actor = createActor({ initial: blankProject(idGen, 'parity'), idGen, clock: () => '<TS>' })
-    const host = { actor, mcpCall: (n: string, a: string) => actor.mcpCall(n, a), motifTool: () => [] }
+    /// What the editor would answer: a read that reaches the host answers it.
+    const PLAYHEAD = { composition_id: 'comp-root', t_us: 1_000_000, timecode: '00:00:01:00', playing: false, range: null, selection: [], under_playhead: [] }
+    const host = { actor, mcpCall: (n: string, a: string) => actor.mcpCall(n, a), motifTool: () => [], playhead: async () => PLAYHEAD }
     function realAppServer(): Server {
       const backend = {
         mcpCatalog: async () => RUST_CATALOG,
@@ -894,6 +896,18 @@ describe('weftcut mcp over real stdio + HTTP', () => {
       // catalog, not two empty sides.
       expect(direct.get('tools/list')).toMatchObject({ result: { tools: expect.arrayContaining([expect.objectContaining({ name: 'read_project' })]) } })
       for (const method of direct.keys()) expect.soft(shimmed.get(method), method).toEqual(direct.get(method))
+    })
+
+    it('reads the playhead the same through the shim as over HTTP, as a tool and as a resource', async () => {
+      const asks = [
+        (client: Client) => outcome(client, 'tools/call', { name: 'read_project', arguments: { view: 'playhead' } }),
+        (client: Client) => outcome(client, 'resources/read', { uri: 'project://playhead' }),
+      ]
+      for (const ask of asks) {
+        const direct = await ask(await directClient())
+        expect(JSON.stringify(direct)).toContain('00:00:01:00')
+        expect(await ask(await sdkClient(target, appData))).toEqual(direct)
+      }
     })
 
     it('hands out the same companion link through the shim as over HTTP', async () => {

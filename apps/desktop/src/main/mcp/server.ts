@@ -49,6 +49,7 @@ import { argProblemMessage } from './argCheck.js'
 import { importRecord, shapeHybridResult } from './hybridResult.js'
 import { PROJECT_TOOLS, runProjectTool } from './projectTools.js'
 import { OPEN_COMPANION, runOpenCompanion } from './companionTool.js'
+import { EditorNotReadyError } from './playheadView.js'
 import { MOTIF_TOOL_DEFS, MOTIF_RESOURCE_DEFS } from './motifToolDefs.js'
 import { HOST_RESOURCE_DEFS, HOST_RESOURCE_TEMPLATES, mediaResourceDefs } from './hostResources.js'
 import { isSkillUri, readSkillResource, readSkillView, skillResourceDefs } from './skillResources.js'
@@ -592,6 +593,16 @@ async function dispatchTool(
     if (name === 'read_project' && args.view === 'session' && tsHost.agent) {
       return toolRecord(sessionView(tsHost)) as unknown as ServerResult
     }
+    // The playhead is the editor's, not the actor's: the same record
+    // `project://playhead` serves.
+    if (name === 'read_project' && args.view === 'playhead') {
+      mcpDef('read_project').parseDedicated!(args)
+      try { return toolRecord(await readPlayhead(tsHost)) as unknown as ServerResult }
+      catch (e) {
+        if (e instanceof EditorNotReadyError) return toolErrorResult({ code: 'invalid_request', message: e.message, data: { error: e.variant } })
+        throw e
+      }
+    }
     // The effects vocabulary is a catalog, not project state, so it is answered
     // here — the same record `effects://catalog` serves.
     if (name === 'read_project' && args.view === 'effects') {
@@ -816,6 +827,12 @@ export function sessionView(host: Pick<TsActorHost, 'agent'> & Partial<Pick<TsAc
   }
 }
 
+/** `project://playhead` / `read_project { view: "playhead" }` (`playheadView.ts`).
+ *  A host built without the editor's reader has no editor to ask. */
+function readPlayhead(tsHost: TsActorHost): Promise<Record<string, unknown>> {
+  return tsHost.playhead ? tsHost.playhead() : Promise.reject(new EditorNotReadyError())
+}
+
 /** A still's thumbnail, 640 px wide, as base64 JPEG; null where Electron's
  *  decoder cannot read it (or outside Electron). */
 async function stillThumbnail(file: string): Promise<string | null> {
@@ -860,6 +877,13 @@ export async function handleReadResource(
     // protocol error, with the same text the tools answer.
     if (noProjectOpen(tsHost) && !APP_SCOPE_RESOURCES.has(uri)) throw new McpError(ErrorCode.InvalidRequest, NO_PROJECT_OPEN_MESSAGE)
     if (tsHost.agent && isTacksUri(uri)) return readTacksResource(tsHost.agent.tacks, uri)
+    if (uri === 'project://playhead') {
+      try { return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(await readPlayhead(tsHost), null, 2) }] } as unknown as ServerResult }
+      catch (e) {
+        if (e instanceof EditorNotReadyError) throw new McpError(ErrorCode.InvalidRequest, e.message, { error: e.variant })
+        throw e
+      }
+    }
     const served = serveProjectResource(uri, tsHost.actor)
     if (served) return served
     // A still has no thumbnail job (thumbnails are a video derivative), so its

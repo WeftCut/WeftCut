@@ -128,6 +128,17 @@ Which tool for a job — the descriptions carry the rest:
   beats: audition.
 - A title, a lower third, a credit: a text layer with its `graphic_role`.
 
+## Where the user is looking
+
+When the user says "here", "now", "this part" or "this section", read
+`project://playhead` (or `read_project` view "playhead") first; do not ask
+where. "This part" is the marked `range` if there is one, else the `selection`,
+else `under_playhead`. Every time it answers is on the clock of its
+`composition_id` (a Group's when the user has one open), the clock of that
+composition's `project://tracks`. Say which clip or span you took it to be
+as you act. While `playing` is true the position is approximate: name what you
+read and confirm with the user before editing on it.
+
 ## Pointing the user at something
 
 Tacks point the user at something to review — a pause to check, a shot to

@@ -1670,7 +1670,7 @@ const LAYER_PARAMS_PATCH_SCHEMA = {
 /** The `project://*` views `read_project` serves — one per state-view resource
  *  the TS host answers (`resource-views.ts`), so the two never disagree on what
  *  an agent can read. The Rust-compute resources are not here. */
-export const READ_PROJECT_VIEWS = ['composition', 'compositions', 'media', 'tracks', 'layer', 'markers', 'links', 'transitions', 'settings', 'history', 'session', 'effects', 'tacks', 'taste', 'skill', 'media_thumbnail', 'media_frame'] as const
+export const READ_PROJECT_VIEWS = ['composition', 'compositions', 'media', 'tracks', 'layer', 'markers', 'links', 'transitions', 'settings', 'history', 'session', 'effects', 'tacks', 'taste', 'playhead', 'skill', 'media_thumbnail', 'media_frame'] as const
 /** The views that take `composition_id` — the per-composition resources. */
 export const SCOPED_PROJECT_VIEWS: ReadonlySet<string> = new Set(['composition', 'tracks', 'markers', 'links', 'transitions'])
 /** Every view `composition_id` narrows: the per-composition ones, plus `tacks`,
@@ -2519,7 +2519,7 @@ export const MCP_TOOL_DEFS: ReadonlyArray<McpToolDef> = [
     } },
   // ── dedicated-exec: reads, for a client without MCP resources ─────────────
   { name: 'read_project', exec: 'dedicated', annotations: ANN_READ,
-    description: "The `project://*` views as a tool result, for clients without resources. `view`: `composition`, `compositions`, `media` (with `id`, one item's card), `tracks` (layer envelopes), `layer` (needs `id`), `markers`, `links`, `transitions`, `settings` (preferences, role mix, metadata), `history`, `session` (who holds the session), `effects` (effects catalog), `tacks` (review tacks; `composition_id` narrows), `taste` (style tokens + provenance), `media_thumbnail` / `media_frame` (an IMAGE; `id` is the media id, `media_frame` takes `src_us`). `composition`, `tracks`, `markers`, `links`, `transitions` take `composition_id` for a Group's (root if omitted); others refuse it. JSON views answer as text.",
+    description: "The `project://*` views as a tool result, for clients without resources. `view`: `composition`, `compositions`, `media` (with `id`, one item's card), `tracks` (layer envelopes), `layer` (needs `id`), `markers`, `links`, `transitions`, `settings` (preferences, role mix, metadata), `history`, `session` (work session), `effects` (catalog), `tacks` (review tacks; `composition_id` narrows), `taste` (style tokens + provenance), `playhead` (where the user is in the editor), `media_thumbnail` / `media_frame` (an IMAGE of media `id`; `media_frame` takes `src_us`). `composition`, `tracks`, `markers`, `links`, `transitions` take `composition_id` for a Group's (root if omitted). JSON views are text.",
     inputSchema: { type: 'object', properties: {
       view: { type: 'string', enum: [...READ_PROJECT_VIEWS], description: 'Which view to read.' },
       id: { type: 'string', description: 'The layer id for view `layer`; the media id for `media` (optional) / `media_thumbnail` / `media_frame`.' },

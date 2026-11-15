@@ -85,6 +85,8 @@ const KNOWN_NON_TOOLS = new Set([
   // SKILL.md — tack feedback: a mutating call's and end_agent_session's
   // result fields (activity.ts, server.ts)
   'affected_tacks', 'tacks_to_review',
+  // SKILL.md — project://playhead's result fields (playheadView.ts)
+  'composition_id', 'range', 'selection', 'under_playhead', 'playing',
   // SKILL.md — the MCP protocol method whose `instructions` the head mirrors
   'initialize',
   // motif-authoring.md — manifest fields

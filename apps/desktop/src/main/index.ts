@@ -33,6 +33,7 @@ import { createUpdateResume } from './updateResume.js'
 import { mediaMimeForExt } from './mediaMime.js'
 import { nodeAtomicWriteIo, writeFileAtomic } from './atomicWrite.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
+import { PLAYHEAD_READ_EVENT, PLAYHEAD_REPORT } from '../shared/editorPlayhead.js'
 import { registerMotifProtocol } from './motif/protocol.js'
 import { installPerformanceCalibration } from './performanceCalibration.js'
 import { MotifCapturer } from './motif/capture.js'
@@ -1089,8 +1090,19 @@ app.whenReady().then(async () => {
   // scan lands.
   let installedFonts: ReadonlySet<string> | null = null
   void listSystemFontFamilies().then((families) => { installedFonts = new Set(families.map((f) => f.toLowerCase())) }).catch((err) => console.warn('[fonts] system font scan failed', err))
+  // `project://playhead`: asked of the editor window per read, never pushed.
+  const { PlayheadReader } = await import('./mcp/playheadView.js')
+  const playheadReader = new PlayheadReader({
+    ask: (message) => {
+      const w = mainWindow
+      if (!w || w.isDestroyed() || w.webContents.isDestroyed()) return false
+      w.webContents.send('evt:' + PLAYHEAD_READ_EVENT, message)
+      return true
+    },
+  })
   tsHost = createTsActorHost({
     exportJobs,
+    readEditorPlayhead: () => playheadReader.read(),
     installedFonts: () => installedFonts,
     // Built-in style packages ride beside the built-in Motifs (electron-builder
     // extraResources); user packages live in the data root.
@@ -1670,6 +1682,10 @@ app.whenReady().then(async () => {
     if (channel.startsWith('companion_')) {
       if (_e.sender !== mainWindow?.webContents) throw new Error('The companion bridge requires the editor window');
       return companionHub!.handleInvoke(channel, args);
+    }
+    if (channel === PLAYHEAD_REPORT) {
+      if (_e.sender !== mainWindow?.webContents) throw new Error('The playhead report requires the editor window');
+      return playheadReader.answer(args);
     }
     if (channel === 'project_open_state') return tsHost!.openedProject();
     if (channel === 'project_startup_open') {

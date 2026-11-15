@@ -74,6 +74,7 @@ export const SKIP_ON = {
     "mcp-export.spec.ts",
     "mcp-flip.spec.ts",
     "mcp-motif.spec.ts",
+    "mcp-playhead.spec.ts",
     "mcp-server.spec.ts",
     "motif-workspace.spec.ts",
     "ts-actor-bringup.spec.ts",

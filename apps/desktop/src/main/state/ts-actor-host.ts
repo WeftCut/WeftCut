@@ -40,6 +40,7 @@ import type { KeybindingsStore } from '../keybindings'
 import type { RecentsStore } from '../recents'
 import { tasteView } from '../taste/view'
 import { AuditStore } from '../lint/audits'
+import { playheadView } from '../mcp/playheadView'
 import type { WorkspaceStore } from '../workspace'
 import { ExportJobError } from '../exportJobs'
 
@@ -47,6 +48,9 @@ export interface TsActorHostDeps {
   exportJobs?: import("../exportJobs").ExportJobs
   /** Where style packages live. Absent (tests) → no taste view. */
   styleDirs?: import("../taste/view").StyleDirs
+  /** Ask the editor window where the user is (`mcp/playheadView.ts`). Absent
+   *  (tests, no window) → `project://playhead` refuses as not ready. */
+  readEditorPlayhead?: () => Promise<import("../../shared/editorPlayhead").EditorPlayheadReport>
   /** Installed font families, lowercased; null until the system scan lands.
    *  A style's font slots resolve against it (spec H2-D4). */
   installedFonts?: () => ReadonlySet<string> | null
@@ -176,6 +180,9 @@ export interface TsActorHost {
   /** The open project's merged style tokens (`project://taste`); the default
    *  style alone on the start screen. Read fresh: TASTE.md is the user's file. */
   taste?: () => import("../taste/view").TasteView
+  /** `project://playhead`: the editor's view at this moment, with what lies
+   *  under the playhead read from the project as it stands after the answer. */
+  playhead?: () => Promise<Record<string, unknown>>
   /** The last `check_composition` result per composition, for freshness. */
   audits: import("../lint/audits").AuditStore
   /** MCP's `open_project` / `create_project`: the start screen's Open and New,
@@ -1061,6 +1068,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       autosave.forceFlush()
     },
     ...(deps.styleDirs ? { taste: () => tasteView(deps.styleDirs!, opened?.dir ?? null, { motif: (id) => motifCatalog.get(id) ?? null, fonts: deps.installedFonts?.() ?? null }) } : {}),
+    ...(deps.readEditorPlayhead ? { playhead: async () => playheadView(actor.snapshot(), await deps.readEditorPlayhead!()) } : {}),
     audits: new AuditStore((id) => motifCatalog.get(id) ?? null),
     projectStatus: () => ({
       project: opened === null ? null : { name: actor.snapshot().metadata.name, dir: opened.dir },
