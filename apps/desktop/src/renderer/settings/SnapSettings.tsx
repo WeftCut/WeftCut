@@ -9,7 +9,7 @@ import {
   TAIL_SNAP_STRENGTH_MIN_PX,
   type AppSettingsPatch,
 } from "../../shared/app-settings";
-import { GRID_OPACITY_MIN_VISIBLE } from "../../shared/preview-grid";
+import { GRID_OPACITY_MAX, GRID_OPACITY_MIN } from "../../shared/preview-grid";
 import { AppNumberField } from "../components/AppNumberField";
 import { AppSlider } from "../components/AppSlider";
 import { AppSwitch } from "../components/AppSwitch";
@@ -52,14 +52,13 @@ function SnapToggle({ label, hint, checked, onChange }: {
   );
 }
 
-function SnapNumber({ label, value, min, max, unit, disabled = false, slider, onSave }: {
+function SnapNumber({ label, value, min, max, unit, disabled = false, onSave }: {
   label: string;
   value: number;
   min: number;
   max: number;
   unit?: string;
   disabled?: boolean;
-  slider?: boolean;
   onSave: (value: number) => Promise<boolean>;
 }) {
   const [draft, setDraft] = useState(value);
@@ -74,17 +73,15 @@ function SnapNumber({ label, value, min, max, unit, disabled = false, slider, on
   return (
     <div className="settings-slider-row">
       <span className="settings-slider-label">{label}</span>
-      {slider && (
-        <AppSlider
-          min={min}
-          max={max}
-          value={draft}
-          disabled={disabled}
-          onValueChange={setDraft}
-          onValueCommitted={(next) => void commit(next)}
-          ariaLabel={label}
-        />
-      )}
+      <AppSlider
+        min={min}
+        max={max}
+        value={draft}
+        disabled={disabled}
+        onValueChange={setDraft}
+        onValueCommitted={(next) => void commit(next)}
+        ariaLabel={label}
+      />
       <AppNumberField
         value={draft}
         min={min}
@@ -101,21 +98,17 @@ function SnapNumber({ label, value, min, max, unit, disabled = false, slider, on
   );
 }
 
-interface SnapSettingsProps {
-  compact?: boolean;
-  onError: ReportError;
-}
+type SnapSettingsProps = { onError: ReportError };
 
-export function TimelineSnapSettings({ compact, onError }: SnapSettingsProps) {
+export function TimelineSnapSettings({ onError }: SnapSettingsProps) {
   const { t } = useTranslation();
   const enabled = useTailSnapEnabled();
   const strength = useTailSnapStrengthPx();
-
   return (
     <>
       <SnapToggle
         label={t("settings.tail_snap_enabled")}
-        hint={compact ? undefined : t("settings.tail_snap_enabled_hint", { mod: modKeyLabel() })}
+        hint={t("settings.tail_snap_enabled_hint", { mod: modKeyLabel() })}
         checked={enabled}
         onChange={(next) => void save({ tail_snap_enabled: next }, onError)}
       />
@@ -126,15 +119,14 @@ export function TimelineSnapSettings({ compact, onError }: SnapSettingsProps) {
         max={TAIL_SNAP_STRENGTH_MAX_PX}
         unit="px"
         disabled={!enabled}
-        slider={!compact}
         onSave={(next) => save({ tail_snap_strength_px: next }, onError)}
       />
-      {!compact && <p className="settings-toggle-hint">{t("settings.tail_snap_strength_hint")}</p>}
+      <p className="settings-toggle-hint">{t("settings.tail_snap_strength_hint")}</p>
     </>
   );
 }
 
-export function CanvasSnapSettings({ compact, onError }: SnapSettingsProps) {
+export function CanvasSnapSettings({ onError }: SnapSettingsProps) {
   const { t } = useTranslation();
   const enabled = usePreviewSnapEnabled();
   const strength = usePreviewSnapStrengthPx();
@@ -142,7 +134,7 @@ export function CanvasSnapSettings({ compact, onError }: SnapSettingsProps) {
     <>
       <SnapToggle
         label={t("settings.preview_snap_enabled")}
-        hint={compact ? undefined : t("settings.preview_snap_enabled_hint", { mod: modKeyLabel() })}
+        hint={t("settings.preview_snap_enabled_hint", { mod: modKeyLabel() })}
         checked={enabled}
         onChange={(next) => void save({ preview_snap_enabled: next }, onError)}
       />
@@ -153,28 +145,26 @@ export function CanvasSnapSettings({ compact, onError }: SnapSettingsProps) {
         max={PREVIEW_SNAP_STRENGTH_MAX_PX}
         unit="px"
         disabled={!enabled}
-        slider={!compact}
         onSave={(next) => save({ preview_snap_strength_px: next }, onError)}
       />
+      <p className="settings-toggle-hint">{t("settings.preview_snap_strength_hint")}</p>
     </>
   );
 }
 
-export function GridOpacitySettings({ onError }: { onError: ReportError }) {
+/** How strongly the grid is drawn. Hiding it is the preview eye's job, so the
+ *  range stays above zero and the eye always brings this value back. */
+export function GridOpacitySettings({ onError }: SnapSettingsProps) {
   const { t } = useTranslation();
   const opacity = usePreviewGrid().opacity;
-  // The slider never reaches 0% from a visible grid; the toolbar's eye is
-  // the deliberate hide action. Its 0% state remains representable here.
-  const minimum = opacity === 0 ? 0 : GRID_OPACITY_MIN_VISIBLE;
   return (
     <SnapNumber
-      label={t("quick_actions.grid_opacity")}
+      label={t("settings.grid_opacity")}
       value={opacity}
-      min={minimum}
-      max={100}
+      min={GRID_OPACITY_MIN}
+      max={GRID_OPACITY_MAX}
       unit="%"
-      slider
-      onSave={(next) => save({ preview_grid: { opacity: Math.max(GRID_OPACITY_MIN_VISIBLE, next) } }, onError)}
+      onSave={(next) => save({ preview_grid: { opacity: next } }, onError)}
     />
   );
 }

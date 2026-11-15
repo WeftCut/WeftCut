@@ -13,7 +13,8 @@ export function PreviewGridOverlayHost() {
   const settings = usePreviewGrid();
   const safeArea = useSafeAreaGuidesVisible();
   const composition = useComposition(usePreviewRenderTargetId());
-  if (!settings.visible || !composition || (!settings.columns && !settings.rows)) return null;
+  // Hidden is drawing only: the gizmo still snaps to an enabled grid.
+  if (!settings.enabled || settings.hidden || !composition || (!settings.columns && !settings.rows)) return null;
   return <PreviewGridOverlay width={composition.width} height={composition.height} settings={settings} safeArea={safeArea} />;
 }
 

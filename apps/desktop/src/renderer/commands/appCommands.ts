@@ -25,7 +25,7 @@ import {
   markersVisible,
   playbackResolution,
   safeAreaGuidesVisible,
-  previewGridVisible,
+  previewGridEnabled,
   previewSnapEnabled,
   togglePreviewGrid,
   togglePreviewSnap,
@@ -553,7 +553,7 @@ export function buildAppCommands(
     },
     togglePreviewGrid: {
       run: () => void togglePreviewGrid(),
-      checked: () => previewGridVisible(),
+      checked: () => previewGridEnabled(),
     },
     togglePreviewSnap: {
       run: () => void togglePreviewSnap(),

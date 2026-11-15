@@ -1,3 +1,12 @@
+// The broadcast safe areas as plain geometry, apart from the overlay that
+// draws them, so the alignment grid can share the title-safe rectangle
+// without importing a React component.
+
+/// The delivery margins every broadcaster's spec is a restatement of, written as
+/// the FRACTION of the frame the rectangle keeps: action-safe drops 3.5% per
+/// side, title-safe 5%. Exported because they are constants a test can compare
+/// against another module's margin — the caption importer's 8% box has to fall
+/// inside title-safe, and a number nobody can read is a number nobody can check.
 export const ACTION_SAFE_FRACTION = 0.93;
 export const TITLE_SAFE_FRACTION = 0.9;
 

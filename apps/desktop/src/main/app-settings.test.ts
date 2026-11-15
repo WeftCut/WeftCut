@@ -3,7 +3,7 @@ import { mergeSettings } from '../shared/exportSettings';
 import { describe, it, expect, vi } from 'vitest'
 import { createAppSettingsStore, type AppSettingsFs } from './app-settings'
 import { APP_SETTINGS_DEFAULTS } from '../shared/app-settings'
-import { DEFAULT_PREVIEW_GRID, GRID_DIVISIONS_MAX, GRID_DIVISIONS_MIN } from '../shared/preview-grid'
+import { DEFAULT_PREVIEW_GRID, GRID_DIVISIONS_MAX, GRID_DIVISIONS_MIN, GRID_OPACITY_MIN } from '../shared/preview-grid'
 import { LAYOUT_THEME_IDS } from '../shared/layout-theme'
 import { PERFORMANCE_DEFAULTS } from '../shared/performance-settings'
 import { playbackCalibrationRecommendation, PLAYBACK_CALIBRATION } from '../shared/playback-calibration'
@@ -48,63 +48,39 @@ function memFs(seed: Record<string, string> = {}) {
 const store = (seed?: Record<string, string>) => createAppSettingsStore({ ...memFs(seed), path: PATH, dir: DIR })
 
 describe('app-settings store', () => {
-  it('defaults to independent 3×3 subdivisions and clamps each axis and opacity', () => {
-    expect(DEFAULT_PREVIEW_GRID).toMatchObject({ column_divisions: 3, row_divisions: 3, opacity: 70 });
+  it('defaults to an off 3×3 grid and clamps every stored value into its range', () => {
     expect(store({ [PATH]: '{ "display_mode": "AllTracks" }' }).get().preview_grid).toEqual(DEFAULT_PREVIEW_GRID);
     const invalid = store({ [PATH]: JSON.stringify({
-      preview_grid: { visible: 'on', opacity: 500, column_divisions: 500, row_divisions: 0, rows: false },
+      preview_grid: { enabled: 'on', opacity: 0, column_divisions: 500, row_divisions: 0, rows: false },
     }) });
     expect(invalid.get().preview_grid).toEqual({
-      ...DEFAULT_PREVIEW_GRID, opacity: 100, last_visible_opacity: 100,
+      ...DEFAULT_PREVIEW_GRID, opacity: GRID_OPACITY_MIN,
       column_divisions: GRID_DIVISIONS_MAX, row_divisions: GRID_DIVISIONS_MIN, rows: false,
     });
   });
 
-  it('reserves zero for the eye and normalises low positive opacity to 10%', () => {
-    const settings = store({ [PATH]: JSON.stringify({ preview_grid: { opacity: 5 } }) });
-    expect(settings.get().preview_grid.opacity).toBe(10);
-    settings.apply({ preview_grid: { opacity: 1 } });
-    expect(settings.get().preview_grid.opacity).toBe(10);
-    settings.apply({ preview_grid: { opacity: 0 } });
-    expect(settings.get().preview_grid.opacity).toBe(0);
-    settings.apply({ preview_grid: { opacity: 10 } });
-    expect(settings.get().preview_grid.opacity).toBe(10);
-  });
-
-  it('loads saved opacity from before the eye preference was stored', () => {
-    const visible = store({ [PATH]: JSON.stringify({ preview_grid: { opacity: 40 } }) });
-    expect(visible.get().preview_grid.last_visible_opacity).toBe(40);
-    const hidden = store({ [PATH]: JSON.stringify({ preview_grid: { opacity: 0 } }) });
-    expect(hidden.get().preview_grid).toMatchObject({
-      opacity: 0, last_visible_opacity: DEFAULT_PREVIEW_GRID.opacity,
-    });
-  });
-
-  it('accepts 64 subdivisions on either axis and clamps 65 to 64', () => {
-    const settings = store({ [PATH]: JSON.stringify({
-      preview_grid: { column_divisions: 64, row_divisions: 65 },
-    }) }).get().preview_grid;
-    expect(settings.column_divisions).toBe(64);
-    expect(settings.row_divisions).toBe(64);
-  });
-
-  it('persists grid counts, axis visibility and zero opacity independently', () => {
+  it('keeps opacity while the grid is hidden, so showing it after a restart brings the same lines back', () => {
     const { fs } = memFs();
     const deps = { fs, path: PATH, dir: DIR };
     const initial = createAppSettingsStore(deps);
-    initial.apply({ preview_grid: { visible: true, column_divisions: 12, row_divisions: 5, rows: false, opacity: 40 } });
-    initial.apply({ preview_grid: { opacity: 0 } });
+    initial.apply({ preview_grid: { enabled: true, column_divisions: 12, row_divisions: 5, rows: false, opacity: 40 } });
+    initial.apply({ preview_grid: { hidden: true } });
 
     const reopened = createAppSettingsStore(deps);
-    const hidden = reopened.get().preview_grid;
-    expect(hidden).toEqual({
-      ...DEFAULT_PREVIEW_GRID, visible: true, column_divisions: 12, row_divisions: 5, rows: false,
-      opacity: 0, last_visible_opacity: 40,
+    expect(reopened.get().preview_grid).toEqual({
+      ...DEFAULT_PREVIEW_GRID, enabled: true, hidden: true,
+      column_divisions: 12, row_divisions: 5, rows: false, opacity: 40,
     });
-    reopened.apply({ preview_grid: { rows: true, opacity: hidden.last_visible_opacity } });
-    expect(createAppSettingsStore(deps).get().preview_grid).toMatchObject({
-      visible: true, column_divisions: 12, row_divisions: 5, rows: true,
-      opacity: 40, last_visible_opacity: 40,
+    reopened.apply({ preview_grid: { hidden: false } });
+    expect(createAppSettingsStore(deps).get().preview_grid).toMatchObject({ hidden: false, opacity: 40 });
+  });
+
+  it('applies a partial grid patch without resetting the other fields', () => {
+    const settings = store();
+    settings.apply({ preview_grid: { enabled: true, column_divisions: 8 } });
+    settings.apply({ preview_grid: { row_divisions: GRID_DIVISIONS_MAX + 1 } });
+    expect(settings.get().preview_grid).toEqual({
+      ...DEFAULT_PREVIEW_GRID, enabled: true, column_divisions: 8, row_divisions: GRID_DIVISIONS_MAX,
     });
   });
 

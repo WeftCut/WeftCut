@@ -94,8 +94,10 @@ export interface QuickActionState {
   reviewOverlay: boolean;
   /// Clip snapping — the magnet (`tail_snap_enabled`).
   snapEnabled: boolean;
+  /// Canvas snapping (`preview_snap_enabled`): frame, layers and grid lines.
   previewSnapEnabled: boolean;
-  gridVisible: boolean;
+  /// The alignment grid (`preview_grid.enabled`), drawn and snapped together.
+  gridEnabled: boolean;
   /// Whether the timeline pages itself to keep the playhead on screen.
   followPlayhead: boolean;
   /// Whether the preview draws the title-safe / action-safe rectangles.
@@ -317,8 +319,8 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
       {
         id: "togglePreviewGrid",
         icon: Grid3x3,
-        active: (s) => s.gridVisible,
-        hint: (s) => s.gridVisible
+        active: (s) => s.gridEnabled,
+        hint: (s) => s.gridEnabled
           ? "quick_actions.grid_on_hint"
           : "quick_actions.grid_off_hint",
       },

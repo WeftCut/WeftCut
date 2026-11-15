@@ -1146,12 +1146,19 @@ function TransformGizmo({
   const grabSnap = (): SnapContext | null => {
     const settings = useAppSettingsStore.getState().settings;
     if (!settings.preview_snap_enabled) return null;
-    const gridSettings = settings.preview_grid;
     const probe = getGizmoProbe();
     if (!probe) return null;
     const comp = compRef.current;
-    const others = otherLayerBoxes(compositionRef.current, layerRef.current.id, focusedPlayheadUs(), probe);
-    const grid = gridSettings.visible ? previewGrid(comp.width, comp.height, gridSettings, settings.safe_area_guides_visible) : undefined;
+    const others = otherLayerBoxes(
+      compositionRef.current,
+      layerRef.current.id,
+      focusedPlayheadUs(),
+      probe,
+    );
+    // An enabled grid snaps even while its eye hides the lines.
+    const grid = settings.preview_grid.enabled
+      ? previewGrid(comp.width, comp.height, settings.preview_grid, settings.safe_area_guides_visible)
+      : undefined;
     return {
       targets: snapTargets(comp.width, comp.height, others, { grid }),
       strengthPx: settings.preview_snap_strength_px,

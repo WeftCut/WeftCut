@@ -8,7 +8,7 @@ const settings = vi.hoisted(() => ({
   markersVisible: true,
   tailSnapEnabled: true,
   previewSnapEnabled: true,
-  previewGridVisible: false,
+  previewGridEnabled: false,
   followPlayhead: true,
   safeAreaGuides: false,
   playbackResolution: "full" as "full" | "half" | "quarter",
@@ -22,7 +22,7 @@ vi.mock("../settings/appSettingsStore", () => ({
   useMarkersVisible: () => settings.markersVisible,
   useTailSnapEnabled: () => settings.tailSnapEnabled,
   usePreviewSnapEnabled: () => settings.previewSnapEnabled,
-  usePreviewGrid: () => ({ visible: settings.previewGridVisible }),
+  usePreviewGrid: () => ({ enabled: settings.previewGridEnabled }),
   useFollowPlayheadEnabled: () => settings.followPlayhead,
   useSafeAreaGuidesVisible: () => settings.safeAreaGuides,
   usePlaybackResolution: () => settings.playbackResolution,
@@ -113,7 +113,7 @@ beforeEach(() => {
   settings.markersVisible = true;
   settings.tailSnapEnabled = true;
   settings.previewSnapEnabled = true;
-  settings.previewGridVisible = false;
+  settings.previewGridEnabled = false;
   settings.followPlayhead = true;
   settings.safeAreaGuides = false;
   settings.playbackResolution = "full";

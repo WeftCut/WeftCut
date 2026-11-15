@@ -68,7 +68,7 @@ export function ViewMenu({
   const followPlayhead = useFollowPlayheadEnabled();
   const markersVisible = useMarkersVisible();
   const safeAreaGuides = useSafeAreaGuidesVisible();
-  const gridVisible = usePreviewGrid().visible;
+  const gridEnabled = usePreviewGrid().enabled;
   const reviewOverlay = useAgentActivity((s) => s.reviewOverlay);
   // Reset is a Workspace op (restore the active profile's saved baseline) when
   // profiles are wired; before they load it falls back to the adapter's built-in
@@ -205,8 +205,8 @@ export function ViewMenu({
         onSelect={() => void getCommand("toggleSafeAreaGuides")?.run()}
       />
       <MenuItem
-        label={t("quick_actions.show_grid")}
-        checked={gridVisible}
+        label={t("view.grid")}
+        checked={gridEnabled}
         onSelect={() => void getCommand("togglePreviewGrid")?.run()}
       />
       {/* The Review overlay (ADR 0115): agent review material painted on the

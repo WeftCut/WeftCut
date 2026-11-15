@@ -6,8 +6,8 @@ import { AppNumberField } from "../components/AppNumberField";
 import { GRID_DIVISIONS_MAX, GRID_DIVISIONS_MIN } from "../../shared/preview-grid";
 import { setAppSettings, usePreviewGrid } from "../settings/appSettingsStore";
 
-/** Inline grid counts: part of working on the canvas, not a Quick Actions popover.
- * Each control remains accessible while the grid is on. */
+/** One axis's count. The draft survives a store echo while the field is
+ *  focused, so a debounced commit never rewrites what is being typed. */
 function GridCount({ value, field, label }: {
   value: number;
   field: "column_divisions" | "row_divisions";
@@ -43,40 +43,35 @@ function GridCount({ value, field, label }: {
 export function PreviewGridToolbar() {
   const { t } = useTranslation();
   const grid = usePreviewGrid();
-  if (!grid.visible) return null;
+  if (!grid.enabled) return null;
   const toggle = (field: "columns" | "rows") => {
     void setAppSettings({ preview_grid: { [field]: !grid[field] } });
   };
-  const columnsLabel = t("quick_actions.grid_column_divisions");
-  const rowsLabel = t("quick_actions.grid_row_divisions");
+  const columnsLabel = t("preview.grid_columns");
+  const rowsLabel = t("preview.grid_rows");
+  const eyeLabel = t(grid.hidden ? "preview.grid_show" : "preview.grid_hide");
   return (
     <div
       className="preview-grid-toolbar"
       role="group"
-      aria-label={t("quick_actions.snapping_grid")}
+      aria-label={t("preview.grid_label")}
       data-testid="preview-grid-toolbar"
-      onKeyDown={(event) => {
-        // The number field owns Enter and Escape's commit/cancel logic.
-        // Stop transport shortcuts, but let the field finish processing before
-        // moving focus (blurring during keydown can commit the uncancelled text).
-        if (event.target instanceof HTMLInputElement) event.stopPropagation();
-      }}
       onKeyUp={(event) => {
         if (!(event.target instanceof HTMLInputElement)) return;
-        event.stopPropagation();
-        if (event.key === "Enter" || event.key === "Escape") {
-          // The preview surface is intentionally not focusable: the dock panel
-          // is the focus region that receives scoped keyboard shortcuts.
-          event.currentTarget.closest<HTMLElement>('[data-focus-region="preview"]')?.focus();
-        }
+        if (event.key !== "Enter" && event.key !== "Escape") return;
+        // On keyup, not keydown: the field commits or discards on keydown, and
+        // blurring first would commit the text Escape is about to discard.
+        // The panel, not the canvas, is the focus region that owns the
+        // preview's scoped shortcuts.
+        event.currentTarget.closest<HTMLElement>('[data-focus-region="preview"]')?.focus();
       }}
     >
       <div className="preview-grid-axis">
         <GridCount value={grid.column_divisions} field="column_divisions" label={columnsLabel} />
         <button type="button" className="preview-grid-axis-toggle"
-          aria-label={t("quick_actions.grid_columns")}
+          aria-label={t("preview.grid_vertical_lines")}
           aria-pressed={grid.columns}
-          title={t("quick_actions.grid_columns")}
+          title={t("preview.grid_vertical_lines")}
           data-testid="grid-columns-visible"
           onClick={() => toggle("columns")}
         >
@@ -87,9 +82,9 @@ export function PreviewGridToolbar() {
       <div className="preview-grid-axis">
         <GridCount value={grid.row_divisions} field="row_divisions" label={rowsLabel} />
         <button type="button" className="preview-grid-axis-toggle"
-          aria-label={t("quick_actions.grid_rows")}
+          aria-label={t("preview.grid_horizontal_lines")}
           aria-pressed={grid.rows}
-          title={t("quick_actions.grid_rows")}
+          title={t("preview.grid_horizontal_lines")}
           data-testid="grid-rows-visible"
           onClick={() => toggle("rows")}
         >
@@ -99,15 +94,13 @@ export function PreviewGridToolbar() {
       <button
         type="button"
         className="preview-grid-axis-toggle preview-grid-eye-toggle"
-        aria-label={t(grid.opacity > 0 ? "quick_actions.grid_mute" : "quick_actions.grid_unmute")}
-        aria-pressed={grid.opacity > 0}
-        title={t(grid.opacity > 0 ? "quick_actions.grid_mute" : "quick_actions.grid_unmute")}
-        data-testid="grid-opacity-eye"
-        onClick={() => void setAppSettings({
-          preview_grid: { opacity: grid.opacity > 0 ? 0 : grid.last_visible_opacity },
-        })}
+        aria-label={eyeLabel}
+        aria-pressed={!grid.hidden}
+        title={eyeLabel}
+        data-testid="grid-eye"
+        onClick={() => void setAppSettings({ preview_grid: { hidden: !grid.hidden } })}
       >
-        <AppIcon icon={grid.opacity > 0 ? Eye : EyeOff} size="caption" aria-hidden />
+        <AppIcon icon={grid.hidden ? EyeOff : Eye} size="caption" aria-hidden />
       </button>
     </div>
   );

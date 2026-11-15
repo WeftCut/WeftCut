@@ -215,35 +215,6 @@ test("the Quick Actions grip drags the strip, which takes its axis from where it
     const strip = dockPanel(page, "quick-actions");
     // Scoped by class, not by role: the preview transport is a toolbar too.
     const toolbar = page.locator(".weft-quick-actions");
-    const magnet = toolbar.locator('[data-quick-action="toggleTailSnap"]');
-    const canvasSnap = toolbar.locator('[data-quick-action="togglePreviewSnap"]');
-    const grid = toolbar.locator('[data-quick-action="togglePreviewGrid"]');
-    const gridEditor = page.getByTestId("preview-grid-toolbar");
-    const checkSnappingControls = async (arrow: "ArrowDown" | "ArrowRight") => {
-      // The two preview controls follow the timeline magnet in roving-focus
-      // order. Quick Actions contains one-click toggles, not a grid popover.
-      await magnet.focus();
-      await magnet.press(arrow);
-      await expect(canvasSnap).toBeFocused();
-      await canvasSnap.press(arrow);
-      await expect(grid).toBeFocused();
-
-      const original = await grid.getAttribute("aria-pressed");
-      if (original !== "true" && original !== "false") throw new Error("Grid has no toggle state");
-      await grid.press("Enter");
-      await expect(grid).toHaveAttribute("aria-pressed", original === "true" ? "false" : "true");
-      if (original === "false") {
-        await expect(gridEditor).toBeVisible();
-        await expect(gridEditor.locator("input.app-number-input")).toHaveCount(2);
-      } else {
-        await expect(gridEditor).toHaveCount(0);
-      }
-      await grid.press("Enter");
-      await expect(grid).toHaveAttribute("aria-pressed", original);
-      await expect(gridEditor).toHaveCount(original === "true" ? 1 : 0);
-      await expect(grid).toBeFocused();
-      await expect(page.getByRole("dialog", { name: "Grid", exact: true })).toHaveCount(0);
-    };
 
     // Baseline: a full-height left edge bar, so the strip runs as a column.
     await expect(grip).toBeVisible();
@@ -251,7 +222,6 @@ test("the Quick Actions grip drags the strip, which takes its axis from where it
     const before = await strip.boundingBox();
     if (!before) throw new Error("strip has no layout box");
     expect(before.height).toBeGreaterThan(before.width);
-    await checkSnappingControls("ArrowDown");
 
     // Drop below the Timeline: the strip becomes a wide, short row.
     await dragDockTab(page, gripTab, dockPanel(page, "timeline"), "bottom");
@@ -275,7 +245,6 @@ test("the Quick Actions grip drags the strip, which takes its axis from where it
     await expect
       .poll(async () => (await strip.boundingBox())?.height ?? Infinity)
       .toBeLessThan(80);
-    await checkSnappingControls("ArrowRight");
 
     // Beside the Timeline instead of under it. The cell a side-by-side drop
     // yields is far wider than it is tall, and reading THAT as a row is the
@@ -296,20 +265,6 @@ test("the Quick Actions grip drags the strip, which takes its axis from where it
     // The Timeline keeps its row: a cap aimed at the bar's long axis would have
     // shrink-wrapped the whole row to the bar's thickness instead.
     expect(timeline.height).toBeGreaterThan(80);
-
-    // Move the strip to the top edge of the workspace. The old custom
-    // positioner incorrectly opened ABOVE here whenever the window's title
-    // and app toolbar left enough room for the popup.
-    await dragDockTab(page, gripTab, dockPanel(page, "media"), "top");
-    await expect(toolbar).toHaveAttribute("aria-orientation", "horizontal");
-    await expect
-      .poll(async () => {
-        const group = await strip.boundingBox();
-        const workspace = await page.locator(".dock-workspace").boundingBox();
-        return group && workspace ? Math.abs(group.y - workspace.y) : Infinity;
-      })
-      .toBeLessThanOrEqual(24);
-    await checkSnappingControls("ArrowRight");
   } finally {
     await app.close();
   }

@@ -60,7 +60,7 @@ function state(over: Partial<QuickActionState> = {}): QuickActionState {
     reviewOverlay: true,
     snapEnabled: true,
     previewSnapEnabled: true,
-    gridVisible: false,
+    gridEnabled: false,
     followPlayhead: true,
     safeAreaGuides: false,
     playbackResolution: "full",
@@ -299,7 +299,7 @@ describe("quickActions catalogue", () => {
     it.each([
       ["toggleTailSnap", "snapEnabled"],
       ["togglePreviewSnap", "previewSnapEnabled"],
-      ["togglePreviewGrid", "gridVisible"],
+      ["togglePreviewGrid", "gridEnabled"],
       ["toggleFollowPlayhead", "followPlayhead"],
       ["toggleSafeAreaGuides", "safeAreaGuides"],
       ["toggleLinkOverride", "linkOverride"],

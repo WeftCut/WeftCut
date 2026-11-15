@@ -70,10 +70,11 @@ export interface AppSettings {
   /// Pixel threshold for boundary snapping. Clamped on write.
   tail_snap_strength_px: number;
   /// Snap the preview gizmo's move and resize gestures to the composition's
-  /// edges and centre lines and to other staged layers' bounding boxes.
-  /// Deliberately separate from `tail_snap_enabled`: the two domains differ by
-  /// an order of magnitude in target density (every clip boundary on every
-  /// visible track vs six composition lines plus a handful of layers), so one
+  /// edges and centre lines, to other staged layers' bounding boxes, and to
+  /// the alignment grid's lines while `preview_grid.enabled`. Deliberately
+  /// separate from `tail_snap_enabled`: the two domains differ by an order of
+  /// magnitude in target density (every clip boundary on every visible track
+  /// vs six composition lines plus a handful of layers and grid lines), so one
   /// threshold cannot be tuned for both.
   preview_snap_enabled: boolean;
   /// SCREEN-pixel snap radius for the preview gizmo — the same unit as
@@ -82,6 +83,7 @@ export interface AppSettings {
   /// pixels would feel different on a 1080p and a 4K composition and would
   /// drift as the panel is resized. Clamped on write.
   preview_snap_strength_px: number;
+  /// The preview's alignment grid. See `shared/preview-grid.ts`.
   preview_grid: PreviewGridSettings;
   /// When true, the frames Motif layers use on the timeline are baked to disk
   /// in the background (L2), including ones nothing has played yet. Frames a

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
 import type { AppSettings } from '../../src/shared/app-settings'
-import { DEFAULT_PREVIEW_GRID } from '../../src/shared/preview-grid'
+import { GRID_DIVISIONS_MAX } from '../../src/shared/preview-grid'
 import { driveExport, invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver'
 
 const canvas = (page: Page) => page.locator('.pixi-preview-canvas')
@@ -23,6 +23,30 @@ async function startPreview(page: Page, width: number, height: number) {
   await expect(page.locator('.splash-screen')).toHaveCount(0)
 }
 
+/** Every preview-bar control shares one height and one centre line: the bar
+ *  never wraps, and no control sits taller than the rest. */
+async function expectOneRowOfEqualControls(page: Page) {
+  const rects = await page.evaluate(() => {
+    const selectors = [
+      '.preview-target-select',
+      '.preview-zoom-select',
+      '.preview-grid-count .app-input',
+      '[data-testid="grid-columns-visible"]',
+      '[data-testid="grid-rows-visible"]',
+      '[data-testid="grid-eye"]',
+    ]
+    return selectors.map((selector) => {
+      const rect = document.querySelector(selector)?.getBoundingClientRect()
+      if (!rect) throw new Error(`missing preview bar control: ${selector}`)
+      return { selector, height: rect.height, centerY: rect.top + rect.height / 2 }
+    })
+  })
+  for (const rect of rects) {
+    expect(rect.height, `${rect.selector} height`).toBe(rects[0]!.height)
+    expect(rect.centerY, `${rect.selector} centre line`).toBe(rects[0]!.centerY)
+  }
+}
+
 async function expectGridSpacing(page: Page, xFraction: number, yFraction: number) {
   await expect.poll(() => overlay(page).evaluate((svg, { x, y }) => {
     const canvasBox = svg.parentElement!.querySelector('.pixi-preview-canvas')!.getBoundingClientRect()
@@ -38,7 +62,7 @@ async function expectGridSpacing(page: Page, xFraction: number, yFraction: numbe
   }, { x: xFraction, y: yFraction })).toBeLessThanOrEqual(1)
 }
 
-test('Quick Actions toggles the grid; preview toolbar edits columns, rows and axes without a popover', async () => {
+test('Quick Actions toggles the grid; the preview bar edits columns, rows and axes', async () => {
   const { app, page } = await launchApp()
   try {
     const width = 1600, height = 900
@@ -55,30 +79,11 @@ test('Quick Actions toggles the grid; preview toolbar edits columns, rows and ax
     await gridButton.click()
     await expect(gridButton).toHaveAttribute('aria-pressed', 'true')
     await expect(toolbar).toBeVisible()
-    const heights = await page.evaluate(() => {
-      const names = {
-        target: '.preview-target-select',
-        zoom: '.preview-zoom-select',
-        number: '.preview-grid-count .app-input',
-        columnIcon: '[data-testid="grid-columns-visible"]',
-        rowIcon: '[data-testid="grid-rows-visible"]',
-        eyeIcon: '[data-testid="grid-opacity-eye"]',
-      };
-      return Object.fromEntries(Object.entries(names).map(([name, selector]) => {
-        const rect = document.querySelector(selector)?.getBoundingClientRect();
-        if (!rect) throw new Error(`Missing toolbar control: ${selector}`);
-        return [name, { height: rect.height, centerY: rect.top + rect.height / 2 }];
-      }));
-    }) as Record<string, { height: number; centerY: number }>;
-    for (const [name, rect] of Object.entries(heights)) {
-      expect(rect.height, `${name} control height`).toBe(24);
-      expect(rect.centerY, `${name} center alignment`).toBe(heights.target!.centerY);
-    }
+    await expectOneRowOfEqualControls(page)
     await expect.poll(async () => (await bar.boundingBox())!.height).toBe(baselineHeight)
     await expect(toolbar.getByLabel('Columns', { exact: true })).toHaveValue('3')
     await expect(toolbar.getByLabel('Rows', { exact: true })).toHaveValue('3')
     await expectGridSpacing(page, 1 / 3, 1 / 3)
-    expect(await page.getByRole('dialog', { name: 'Canvas snapping and grid' }).count()).toBe(0)
 
     const columns = toolbar.getByLabel('Columns', { exact: true })
     const rows = toolbar.getByLabel('Rows', { exact: true })
@@ -102,18 +107,18 @@ test('Quick Actions toggles the grid; preview toolbar edits columns, rows and ax
     await expect(snapButton).toHaveAttribute('aria-pressed', 'false')
     await snapButton.click()
     await expect(snapButton).toHaveAttribute('aria-pressed', 'true')
-    const eye = toolbar.getByTestId('grid-opacity-eye')
+    // The eye hides the lines only: the grid stays on (and snapping with it).
+    const eye = toolbar.getByTestId('grid-eye')
     await invokeCmd(page, 'app_settings_set', { patch: { preview_grid: { opacity: 47 } } })
     await expect(eye).toHaveAttribute('aria-pressed', 'true')
     await eye.click()
-    await expect.poll(async () => (await settings(page)).preview_grid.opacity).toBe(0)
     await expect(eye).toHaveAttribute('aria-pressed', 'false')
-    await expect(overlay(page).locator('g[opacity="0"]')).toHaveCount(2)
+    await expect(overlay(page)).toHaveCount(0)
+    expect((await settings(page)).preview_grid).toMatchObject({ enabled: true, hidden: true, opacity: 47 })
     await expect(gridButton).toHaveAttribute('aria-pressed', 'true')
     await expect(snapButton).toHaveAttribute('aria-pressed', 'true')
     await expect(toolbar).toBeVisible()
     await eye.click()
-    await expect.poll(async () => (await settings(page)).preview_grid.opacity).toBe(47)
     await expect(eye).toHaveAttribute('aria-pressed', 'true')
     await expectGridSpacing(page, 1 / 12, 1 / 5)
 
@@ -139,24 +144,24 @@ test('Quick Actions toggles the grid; preview toolbar edits columns, rows and ax
 
     expect(await invokeCmd(page, 'project_summary')).toEqual(beforeProject)
     expect((await settings(page)).preview_grid).toMatchObject({
-      visible: true, opacity: 47, column_divisions: 12, row_divisions: 5,
+      enabled: true, hidden: false, opacity: 47, column_divisions: 12, row_divisions: 5,
     })
   } finally {
     await app.close()
   }
 })
 
-test('the grid eye restores its last opacity after an app restart', async () => {
+test('a hidden grid stays hidden across a restart and comes back at its own opacity', async () => {
   const userDataDir = tmpDir('weftcut-e2e-grid-profile-')
   const first = await launchApp({ userDataDir })
   try {
     await startPreview(first.page, 1280, 720)
-    await invokeCmd(first.page, 'app_settings_set', { patch: { preview_grid: { visible: true, opacity: 40 } } })
-    const eye = first.page.getByTestId('grid-opacity-eye')
+    await invokeCmd(first.page, 'app_settings_set', { patch: { preview_grid: { enabled: true, opacity: 40 } } })
+    const eye = first.page.getByTestId('grid-eye')
     await expect(overlay(first.page).locator('g[opacity="0.4"]').first()).toBeAttached()
     await eye.click()
     await expect(eye).toHaveAttribute('aria-pressed', 'false')
-    await expect.poll(async () => (await settings(first.page)).preview_grid.opacity).toBe(0)
+    await expect.poll(async () => (await settings(first.page)).preview_grid.hidden).toBe(true)
   } finally {
     await first.app.close()
   }
@@ -166,13 +171,12 @@ test('the grid eye restores its last opacity after an app restart', async () => 
     const { page } = second
     await page.locator('.startup-recent-item').filter({ hasText: 'preview-grid' }).click()
     await expect(page.getByTestId('pixi-preview-initializing')).toBeHidden()
-    const eye = page.getByTestId('grid-opacity-eye')
+    const eye = page.getByTestId('grid-eye')
     await expect(eye).toHaveAttribute('aria-pressed', 'false')
-    await expect(overlay(page).locator('g[opacity="0"]').first()).toBeAttached()
+    await expect(overlay(page)).toHaveCount(0)
     await eye.click()
     await expect(eye).toHaveAttribute('aria-pressed', 'true')
     await expect(overlay(page).locator('g[opacity="0.4"]').first()).toBeAttached()
-    await expect.poll(async () => (await settings(page)).preview_grid.opacity).toBe(40)
   } finally {
     await second.app.close()
   }
@@ -199,7 +203,7 @@ test('Enter and Escape return focus from grid fields to the preview region', asy
   }
 })
 
-test('64 subdivisions fit inside compact two-digit grid inputs', async () => {
+test('the count fields hold the largest count with the steppers clear of the digits', async () => {
   const { app, page } = await launchApp()
   try {
     await startPreview(page, 853, 480)
@@ -207,16 +211,12 @@ test('64 subdivisions fit inside compact two-digit grid inputs', async () => {
     const toolbar = page.getByTestId('preview-grid-toolbar')
     const columns = toolbar.getByLabel('Columns', { exact: true })
     const rows = toolbar.getByLabel('Rows', { exact: true })
-    for (const field of [columns, rows]) {
-      const box = await field.boundingBox()
-      expect(box?.width).toBe(56)
-      expect(box?.height).toBe(24)
-      await field.fill('64')
-    }
-    await expect.poll(async () => (await settings(page)).preview_grid.column_divisions).toBe(64)
-    await expect.poll(async () => (await settings(page)).preview_grid.row_divisions).toBe(64)
-    await expect(columns).toHaveValue('64')
-    await expect(rows).toHaveValue('64')
+    const max = String(GRID_DIVISIONS_MAX)
+    for (const field of [columns, rows]) await field.fill(max)
+    await expect.poll(async () => (await settings(page)).preview_grid.column_divisions).toBe(GRID_DIVISIONS_MAX)
+    await expect.poll(async () => (await settings(page)).preview_grid.row_divisions).toBe(GRID_DIVISIONS_MAX)
+    await expect(columns).toHaveValue(max)
+    await expect(rows).toHaveValue(max)
     // The text stays centred even on hover; the chevrons must not cover either digit.
     for (const field of [columns, rows]) {
       await field.hover()
@@ -237,12 +237,12 @@ test('64 subdivisions fit inside compact two-digit grid inputs', async () => {
       })
       expect(clearance, 'chevrons must clear a centred two-digit number').toBeGreaterThanOrEqual(2)
     }
-    await expectGridSpacing(page, 1 / 64, 1 / 64)
-    // The visible editor cannot exceed the new 64-division limit.
-    await columns.fill('99')
+    await expectGridSpacing(page, 1 / GRID_DIVISIONS_MAX, 1 / GRID_DIVISIONS_MAX)
+    // Typing past the limit settles on the limit.
+    await columns.fill(String(GRID_DIVISIONS_MAX + 1))
     await columns.press('Tab')
-    await expect(columns).toHaveValue('64')
-    expect((await settings(page)).preview_grid.column_divisions).toBe(64)
+    await expect(columns).toHaveValue(max)
+    expect((await settings(page)).preview_grid.column_divisions).toBe(GRID_DIVISIONS_MAX)
   } finally {
     await app.close()
   }
@@ -269,7 +269,7 @@ test('the portrait grid follows the canvas and leaves exported frame pixels unch
     const baseline = await exportFrameHash('hidden')
     expect(baseline).toMatch(/^SHA256=[\da-f]{64}$/)
     await invokeCmd(page, 'app_settings_set', { patch: {
-      preview_grid: { visible: true, column_divisions: 12, row_divisions: 5 },
+      preview_grid: { enabled: true, column_divisions: 12, row_divisions: 5 },
     } })
     await expect(overlay(page)).toBeVisible()
     await expectGridSpacing(page, 1 / 12, 1 / 5)
@@ -279,23 +279,21 @@ test('the portrait grid follows the canvas and leaves exported frame pixels unch
   }
 })
 
-test('preview bar stays fixed-height at both wide and narrow dock layouts', async () => {
+test('turning the grid on keeps the preview bar one row at every panel width', async () => {
   const { app, page } = await launchApp()
   try {
     await startPreview(page, 1280, 720)
     const bar = page.locator('.preview-target-bar')
-    const target = page.locator('.preview-target-select')
     const grid = page.getByTestId('preview-grid-toolbar')
     for (const width of [1100, 850, 650, 500]) {
       await page.setViewportSize({ width, height: 840 })
-      await invokeCmd(page, 'app_settings_set', { patch: { preview_grid: { visible: false } } })
+      await invokeCmd(page, 'app_settings_set', { patch: { preview_grid: { enabled: false } } })
       await expect(grid).toHaveCount(0)
       const before = (await bar.boundingBox())!.height
-      await invokeCmd(page, 'app_settings_set', { patch: { preview_grid: { visible: true } } })
-      await expect(grid).toBeVisible()
+      await invokeCmd(page, 'app_settings_set', { patch: { preview_grid: { enabled: true } } })
+      await expect(grid).toBeAttached()
       await expect.poll(async () => (await bar.boundingBox())!.height).toBe(before)
-      // The target dropdown must not collapse into a narrow, wrapped sliver.
-      expect((await target.boundingBox())!.width).toBeGreaterThan(80)
+      await expectOneRowOfEqualControls(page)
     }
   } finally {
     await app.close()

@@ -13,8 +13,6 @@
 // state, so it records no history entry. See ADR 0049.
 
 import { useEffect, useRef } from "react";
-import { ACTION_SAFE_FRACTION, TITLE_SAFE_FRACTION, safeAreaRect } from "./safeAreaGeometry";
-export { ACTION_SAFE_FRACTION, TITLE_SAFE_FRACTION, safeAreaRect } from "./safeAreaGeometry";
 
 import type { CompositionSummary } from "../ipc";
 import { useSafeAreaGuidesVisible } from "../settings/appSettingsStore";
@@ -23,12 +21,8 @@ import { useComposition } from "../state/projectStore";
 import { compToClient, containFit } from "./gizmoGeometry";
 import { getGizmoProbe } from "./gizmoProbeRegistry";
 import { observeClientRect } from "./layoutRectCache";
+import { ACTION_SAFE_FRACTION, TITLE_SAFE_FRACTION, safeAreaRect } from "./safeAreaGeometry";
 
-/// The delivery margins every broadcaster's spec is a restatement of, written as
-/// the FRACTION of the frame the rectangle keeps: action-safe drops 3.5% per
-/// side, title-safe 5%. Exported because they are constants a test can compare
-/// against another module's margin — the caption importer's 8% box has to fall
-/// inside title-safe, and a number nobody can read is a number nobody can check.
 /// Dashed, and hard-coded white over a dark backing rather than a theme token:
 /// same two reasons the snap guides are hard-coded magenta (see
 /// `TransformGizmo.tsx`) — the palette is achromatic and the preview has no

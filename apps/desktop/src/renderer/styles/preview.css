@@ -45,9 +45,6 @@
 .preview {
   display: flex;
   flex-direction: column;
-  /* Dock panels can be narrow even in a wide window. Use pane width,
-     not viewport width, for the preview toolbar's responsive layout. */
-  container: preview / inline-size;
   align-items: stretch;
   justify-content: stretch;
   /* Unified with every other Panel on --card; still light enough that the
@@ -68,6 +65,14 @@
   background: var(--card);
   border-bottom: 1px solid var(--border-soft);
   flex: 0 0 auto;
+  /* Always one row, so turning the grid on never changes the bar's height or
+     re-fits the canvas under the user's alignment work. The target label
+     truncates first; past that the row scrolls. No scrollbar: a classic one is
+     in flow and would change the height this rule exists to hold (the Quick
+     Actions strip's reason, workspace.css). */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
 
 .preview-target-bar .app-select {
@@ -77,7 +82,16 @@
 }
 
 .preview-target-select {
+  flex: 0 1 auto;
+  min-width: calc(72 * var(--ui-px));
   max-width: calc(280 * var(--ui-px));
+}
+
+.preview-target-select > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Both preview dropdowns use the compact toolbar scale and the trigger's
@@ -98,11 +112,11 @@
   /* A fixed floor so the toolbar does not jiggle as the percentage changes
      width under the wheel. Outranks .app-select's own min-width. */
   min-width: 5.5rem;
+  flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
 }
 
-/* Grid controls are visible only while the one-click Grid action is on.
-   No popover, no duplicate controls in Settings, and zoom stays at the edge. */
+/* Shown while the grid is on, between the target and the zoom readout. */
 .preview-grid-toolbar {
   display: inline-flex;
   align-items: center;
@@ -137,32 +151,6 @@
 .preview-grid-eye-toggle { margin-inline-start: calc(3 * var(--ui-px)); }
 .preview-grid-axis-toggle:hover { background: var(--accent); }
 .preview-grid-axis-toggle:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
-/* At small dock widths, reserve the grid's second row even when hidden.
-   A toggle therefore never changes the preview's height or squeezes the
-   Follow focus label; the unused row can host later preview controls. */
-@container preview (max-width: 450px) {
-  .preview-target-bar {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-rows: var(--preview-control-height) var(--preview-control-height);
-    row-gap: calc(4 * var(--ui-px));
-  }
-  .preview-target-select {
-    grid-column: 1;
-    grid-row: 1;
-    justify-self: start;
-    max-width: 100%;
-  }
-  .preview-target-bar .preview-zoom-select {
-    grid-column: 2;
-    grid-row: 1;
-    margin-left: 0;
-  }
-  .preview-grid-toolbar {
-    grid-column: 1 / -1;
-    grid-row: 2;
-  }
-}
 
 .video-surface {
   flex: 1;

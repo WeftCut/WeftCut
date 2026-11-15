@@ -159,7 +159,7 @@ function useRovingFocus(
 
   const onKeyDown = (event: React.KeyboardEvent) => {
     const container = ref.current;
-    if (!container?.contains(event.target as Node)) return;
+    if (!container) return;
     const buttons = Array.from(
       container.querySelectorAll<HTMLButtonElement>("button[data-quick-action]"),
     );
@@ -292,7 +292,7 @@ export function QuickActionsPanel({
   // (`feedback_zustand_composite_selector`).
   const snapEnabled = useTailSnapEnabled();
   const previewSnapEnabled = usePreviewSnapEnabled();
-  const gridVisible = usePreviewGrid().visible;
+  const gridEnabled = usePreviewGrid().enabled;
   const followPlayhead = useFollowPlayheadEnabled();
   const safeAreaGuides = useSafeAreaGuidesVisible();
   const playbackResolution = usePlaybackResolution();
@@ -347,7 +347,7 @@ export function QuickActionsPanel({
     reviewOverlay,
     snapEnabled,
     previewSnapEnabled,
-    gridVisible,
+    gridEnabled,
     followPlayhead,
     safeAreaGuides,
     playbackResolution,
@@ -393,7 +393,8 @@ export function QuickActionsPanel({
           aria-label={t(`quick_actions.${section.id}`)}
         >
           {section.resolved.map(({ item, command }) => {
-            const own = ++index;
+            index += 1;
+            const own = index;
             return (
               <QuickActionButton
                 key={item.id}

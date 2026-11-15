@@ -25,7 +25,7 @@ vi.mock("react-i18next", async (importOriginal) => ({
 const prefs = vi.hoisted(() => ({
   markersVisible: true,
   safeAreaGuides: false,
-  gridVisible: false,
+  gridEnabled: false,
 }));
 
 vi.mock("../settings/appSettingsStore", () => ({
@@ -33,7 +33,7 @@ vi.mock("../settings/appSettingsStore", () => ({
   useFollowPlayheadEnabled: () => true,
   useMarkersVisible: () => prefs.markersVisible,
   useSafeAreaGuidesVisible: () => prefs.safeAreaGuides,
-  usePreviewGrid: () => ({ visible: prefs.gridVisible }),
+  usePreviewGrid: () => ({ enabled: prefs.gridEnabled }),
 }));
 
 vi.mock("../ipc", async (importActual) => ({

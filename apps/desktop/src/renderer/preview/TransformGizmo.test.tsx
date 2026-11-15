@@ -424,7 +424,7 @@ describe("snapping", () => {
   });
 
   it("snaps to hidden grid subdivisions, honors Mod, and commits only the final position", async () => {
-    setSnap(true, 12, { visible: true, opacity: 0, column_divisions: 16, rows: false });
+    setSnap(true, 12, { enabled: true, hidden: true, column_divisions: 16, rows: false });
     render(<TransformGizmoHost />);
     const el = await box();
     const mod = isMac ? { metaKey: true } : { ctrlKey: true };
@@ -450,8 +450,8 @@ describe("snapping", () => {
     expect(committedStatics()).toEqual([["x", 400], ["y", 180]]);
   });
 
-  it("does not snap to a visible grid when canvas snapping is off", async () => {
-    setSnap(false, 12, { visible: true, column_divisions: 16, rows: false });
+  it("does not snap to an enabled grid when canvas snapping is off", async () => {
+    setSnap(false, 12, { enabled: true, column_divisions: 16, rows: false });
     render(<TransformGizmoHost />);
     const el = await box();
     fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
