@@ -213,7 +213,10 @@ and Chromium's rendering adapter cannot masquerade as decode use). On Linux a
 database), memory sources (NVML if loadable, amdgpu sysfs, i915/xe regions;
 Intel free-memory counters deliberately omitted), browser render API status
 and per-backend codec probes. Missing libraries or permissions leave values
-unknown with a reason; nothing is privileged or guessed.
+unknown with a reason; nothing is privileged or guessed. A firmware
+framebuffer card (simple-/efi-/vesa-framebuffer) is the PCI adapter it hangs
+from; a non-PCI device without ID files is listed unidentified, which is not an
+inventory failure, and neither is a host without the DRM class.
 
 Inventory is cached for 10 s. **Test acceleration** runs 640×360 8-bit
 H.264/HEVC/VP9 fixtures through the production Standard-engine probes and the

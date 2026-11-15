@@ -64,9 +64,16 @@ async function pciNames(io: LinuxHardwareIO): Promise<Map<string, string>> {
   }
   return new Map();
 }
-async function numberFile(io: LinuxHardwareIO, file: string, failed?: (reason: HardwareFailure) => void): Promise<number | null> {
+async function numberFile(io: LinuxHardwareIO, file: string, failed?: (error: unknown) => void): Promise<number | null> {
   try { const text = (await io.readFile(file)).trim(); const n = Number(text); return text && Number.isSafeInteger(n) && n >= 0 ? n : null; }
-  catch (error) { failed?.(hardwareFailure(error)); return null; }
+  catch (error) { failed?.(error); return null; }
+}
+const absent = (error: unknown) => (error as { code?: string })?.code === 'ENOENT';
+const isPciAddress = (name: string) => /^[\da-f]{4}:[\da-f]{2}:[\da-f]{2}\.[\da-f]$/i.test(name);
+/** A class directory that does not exist (DRM not loaded, no PCI bus) enumerates nothing; only other errors are failures. */
+async function listDir(io: LinuxHardwareIO, dir: string): Promise<string[]> {
+  try { return await io.readdir(dir); }
+  catch (error) { if (absent(error)) return []; throw error; }
 }
 function fallbackName(vendor: number | null, device: number | null): string {
   if (vendor === null || device === null) return 'GPU';
@@ -83,13 +90,13 @@ export async function collectLinuxHardware(info: unknown, host: LinuxHardwareIO 
   try {
     const entries: { path: string; node: string | null }[] = [];
     try {
-      entries.push(...(await host.readdir('/sys/class/drm')).filter(n => /^(?:renderD\d+|card\d+)$/.test(n)).sort()
+      entries.push(...(await listDir(host, '/sys/class/drm')).filter(n => /^(?:renderD\d+|card\d+)$/.test(n)).sort()
         .map(name => ({ path: `/sys/class/drm/${name}/device`, node: name.startsWith('render') ? `/dev/dri/${name}` : null })));
     } catch (error) { inventoryReason = hardwareFailure(error); }
     // A bound NVIDIA/CUDA device need not have a DRM node. PCI display-class
     // enumeration also retains unbound GPUs without pretending they can render.
     try {
-      const addresses = (await host.readdir('/sys/bus/pci/devices')).filter(n => /^[\da-f]{4}:[\da-f]{2}:[\da-f]{2}\.[\da-f]$/i.test(n)).slice(0, 512);
+      const addresses = (await listDir(host, '/sys/bus/pci/devices')).filter(isPciAddress).slice(0, 512);
       const displayDevices = await Promise.all(addresses.map(async address => {
         const dir = `/sys/bus/pci/devices/${address}`;
         const cls = await numberFile(host, `${dir}/class`);
@@ -99,14 +106,20 @@ export async function collectLinuxHardware(info: unknown, host: LinuxHardwareIO 
     } catch (error) { inventoryReason ??= hardwareFailure(error); }
     for (const entry of entries.slice(0, 128)) {
       try {
-        const dir = await host.realpath(entry.path);
-        const address = path.basename(dir);
-        const pci = /^[\da-f]{4}:[\da-f]{2}:[\da-f]{2}\.[\da-f]$/i.test(address) ? address : null;
+        const resolved = await host.realpath(entry.path);
+        // A firmware framebuffer card (sysfb's simple-/efi-/vesa-framebuffer)
+        // is a child of the PCI function whose memory it scans out: it is that
+        // adapter, not a second GPU without identity.
+        const dir = !isPciAddress(path.basename(resolved)) && isPciAddress(path.basename(path.dirname(resolved)))
+          ? path.dirname(resolved) : resolved;
+        const pci = isPciAddress(path.basename(dir)) ? path.basename(dir) : null;
         const id = pci ?? dir;
         const node = entry.node;
         const existing = devices.find(d => d.id === id);
         if (existing) { if (node) existing.render_nodes.push(node); continue; }
-        const identityFailed = (reason: HardwareFailure) => { inventoryReason ??= reason; };
+        // Every PCI function exposes vendor/device; a platform, USB or other
+        // non-PCI device may simply have none, which leaves it unidentified.
+        const identityFailed = (error: unknown) => { if (pci || !absent(error)) inventoryReason ??= hardwareFailure(error); };
         const vendor = await numberFile(host, `${dir}/vendor`, identityFailed), device = await numberFile(host, `${dir}/device`, identityFailed);
         let driver: string | null = null;
         try { driver = path.basename(await host.realpath(`${dir}/driver`)); } catch { /* Driver may not be bound. */ }
@@ -114,7 +127,7 @@ export async function collectLinuxHardware(info: unknown, host: LinuxHardwareIO 
         const memory = unknownMemory();
         if (driver === 'amdgpu') {
           memory.source = 'amdgpu';
-          const total = await numberFile(host, `${dir}/mem_info_vram_total`, reason => { memory.reason = reason; });
+          const total = await numberFile(host, `${dir}/mem_info_vram_total`, error => { memory.reason = hardwareFailure(error); });
           const used = await numberFile(host, `${dir}/mem_info_vram_used`);
           if (total !== null) Object.assign(memory, { kind: 'local', source: 'amdgpu', total_mib: total / 1024 ** 2,
             used_mib: used === null ? null : used / 1024 ** 2, free_mib: used !== null && used <= total ? (total - used) / 1024 ** 2 : null, reason: null });

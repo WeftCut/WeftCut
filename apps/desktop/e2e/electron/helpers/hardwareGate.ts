@@ -16,8 +16,9 @@ export async function hardwareEnvironmentGate(app: ElectronApplication, page: Pa
   }
   if (process.platform !== 'linux' || lane !== 'nvdec') return
   const hardware = (await page.evaluate(() => window.api.performanceResources.info())).hardware
-  if (!linuxHardwareAbsent(hardware, auto)) return
+  // Attached on both outcomes: a run that should have skipped needs the inventory that kept it from skipping.
   await test.info().attach('hardware-inventory', { body: JSON.stringify(hardware), contentType: 'application/json' })
+  if (!linuxHardwareAbsent(hardware, auto)) return
   if (hardwareRequired(lane, codec, process.platform, process.env.WEFTCUT_REQUIRE_HW_VARIANTS)
       || (auto && hardwareRequired('vaapi', codec, process.platform, process.env.WEFTCUT_REQUIRE_HW_VARIANTS)))
     throw new Error('Required NVDEC hardware missing: inventory contains no NVIDIA adapter')

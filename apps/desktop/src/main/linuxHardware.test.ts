@@ -96,3 +96,46 @@ it('does not attach stale NVML results through a reused render node when PCI ide
   expect(result.devices.some(d => d.name === 'Removed Example')).toBe(false);
   expect(result.devices.find(d => d.vendor_id === 0x10de)?.memory.total_mib).toBeNull();
 });
+
+function sysfs(options: { drm?: string[] | 'absent'; links?: Record<string, string>; files?: Record<string, string> }): LinuxHardwareIO {
+  const missing = () => Object.assign(new Error('missing'), { code: 'ENOENT' });
+  const files: Record<string, string> = options.files ?? {};
+  return {
+    readdir: async p => {
+      if (p === '/sys/class/drm') { if (options.drm === 'absent') throw missing(); return options.drm ?? []; }
+      if (p === '/sys/bus/pci/devices') return Object.keys(files).filter(f => f.startsWith('/sys/bus/pci/') && f.endsWith('/class')).map(f => f.split('/')[5]);
+      throw missing();
+    },
+    realpath: async p => { const target = options.links?.[p]; if (!target) throw missing(); return target; },
+    readFile: async p => { if (!(p in files)) throw missing(); return files[p]; },
+    nativeMemory: async () => ({ reason: null, devices: [] }),
+  };
+}
+const vga = {
+  '/sys/bus/pci/devices/0000:00:03.0/class': '0x030000',
+  '/sys/devices/pci0000:00/0000:00:03.0/vendor': '0x1d0f', '/sys/devices/pci0000:00/0000:00:03.0/device': '0x1111',
+};
+const vgaLink = { '/sys/bus/pci/devices/0000:00:03.0': '/sys/devices/pci0000:00/0000:00:03.0' };
+
+it('counts a firmware framebuffer card as the PCI adapter it scans out, not a second unidentified GPU', async () => {
+  const result = await collectLinuxHardware(null, sysfs({ drm: ['card0', 'version'], files: vga, links: {
+    ...vgaLink, '/sys/class/drm/card0/device': '/sys/devices/pci0000:00/0000:00:03.0/simple-framebuffer.0',
+  } }));
+  expect(result.inventory_reason).toBeNull();
+  expect(result.devices).toEqual([expect.objectContaining({ pci_address: '0000:00:03.0', vendor_id: 0x1d0f, device_id: 0x1111 })]);
+});
+it('leaves a non-PCI device without ID files unidentified instead of failing the inventory', async () => {
+  const result = await collectLinuxHardware(null, sysfs({ drm: ['card0'],
+    links: { '/sys/class/drm/card0/device': '/sys/devices/platform/simple-framebuffer.0' } }));
+  expect(result.inventory_reason).toBeNull();
+  expect(result.devices).toEqual([expect.objectContaining({ pci_address: null, vendor_id: null })]);
+});
+it('still fails the inventory when a PCI function hides its IDs', async () => {
+  const result = await collectLinuxHardware(null, sysfs({ files: { '/sys/bus/pci/devices/0000:00:03.0/class': '0x030000' }, links: vgaLink }));
+  expect(result.inventory_reason).toBe('unknown');
+});
+it('reads a host without the DRM class as having no DRM nodes', async () => {
+  const result = await collectLinuxHardware(null, sysfs({ drm: 'absent', files: vga, links: vgaLink }));
+  expect(result.inventory_reason).toBeNull();
+  expect(result.devices).toEqual([expect.objectContaining({ vendor_id: 0x1d0f, render_nodes: [] })]);
+});
