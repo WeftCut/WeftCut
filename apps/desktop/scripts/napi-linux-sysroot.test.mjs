@@ -15,9 +15,11 @@ test('only a Linux x64 host builds against the sysroot', () => {
 test('C, C++ and ar are routed to the cross toolchain under the per-triple names', () => {
   const { args, env } = linuxSysroot({}, { platform: 'linux', arch: 'x64' })
   assert.equal(args, '--use-napi-cross --target x86_64-unknown-linux-gnu')
-  assert.deepEqual(Object.keys(env).sort(), ['AR_x86_64_unknown_linux_gnu', 'CC_x86_64_unknown_linux_gnu', 'CXX_x86_64_unknown_linux_gnu'])
+  const { LZMA_API_STATIC, ...compilers } = env
+  assert.equal(LZMA_API_STATIC, '1')
+  assert.deepEqual(Object.keys(compilers).sort(), ['AR_x86_64_unknown_linux_gnu', 'CC_x86_64_unknown_linux_gnu', 'CXX_x86_64_unknown_linux_gnu'])
   const toolchains = join(homedir(), '.napi-rs', 'cross-toolchain')
-  for (const value of Object.values(env)) assert.ok(value.startsWith(toolchains), value)
+  for (const value of Object.values(compilers)) assert.ok(value.startsWith(toolchains), value)
   assert.match(env.CC_x86_64_unknown_linux_gnu, /x86_64-unknown-linux-gnu-gcc$/)
 })
 
