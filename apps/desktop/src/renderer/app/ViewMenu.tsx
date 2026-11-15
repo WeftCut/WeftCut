@@ -8,7 +8,7 @@ import {
   useFollowPlayheadEnabled,
   useMarkersVisible,
   useSafeAreaGuidesVisible,
-  usePreviewGrid,
+  usePreviewGridEnabled,
 } from "../settings/appSettingsStore";
 import {
   PANEL_KINDS,
@@ -68,7 +68,7 @@ export function ViewMenu({
   const followPlayhead = useFollowPlayheadEnabled();
   const markersVisible = useMarkersVisible();
   const safeAreaGuides = useSafeAreaGuidesVisible();
-  const gridEnabled = usePreviewGrid().enabled;
+  const gridEnabled = usePreviewGridEnabled();
   const reviewOverlay = useAgentActivity((s) => s.reviewOverlay);
   // Reset is a Workspace op (restore the active profile's saved baseline) when
   // profiles are wired; before they load it falls back to the adapter's built-in
@@ -205,7 +205,7 @@ export function ViewMenu({
         onSelect={() => void getCommand("toggleSafeAreaGuides")?.run()}
       />
       <MenuItem
-        label={t("view.grid")}
+        label={t("view.grid", { defaultValue: "Grid" })}
         checked={gridEnabled}
         onSelect={() => void getCommand("togglePreviewGrid")?.run()}
       />

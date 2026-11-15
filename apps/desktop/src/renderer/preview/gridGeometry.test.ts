@@ -1,54 +1,33 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_PREVIEW_GRID } from "../../shared/preview-grid";
+import { DEFAULT_PREVIEW_GRID, GRID_DIVISIONS_MAX } from "../../shared/preview-grid";
 import { nearestGridLine, previewGrid } from "./gridGeometry";
 
 describe("previewGrid", () => {
-  it.each([[1920, 1080], [1080, 1920], [640, 360], [801, 603]])(
-    "defaults to three equal subdivisions of %i × %i",
-    (width, height) => {
-      expect(previewGrid(width, height, DEFAULT_PREVIEW_GRID)).toEqual({
-        x: { step: width / 3, last: 2 },
-        y: { step: height / 3, last: 2 },
-      });
-    },
-  );
-
-  it.each([[1920, 1080], [1080, 1920], [640, 360], [801, 603]])(
-    "divides %i × %i into 12 columns and 5 rows without rounding fractional positions",
-    (width, height) => {
+  it.each([
+    [DEFAULT_PREVIEW_GRID.column_divisions, DEFAULT_PREVIEW_GRID.row_divisions],
+    [12, 5],
+    [GRID_DIVISIONS_MAX, GRID_DIVISIONS_MAX],
+  ])("divides the frame into %i × %i equal fields without rounding", (columns, rows) => {
+    for (const [width, height] of [[1920, 1080], [1080, 1920], [801, 603]] as const) {
       const grid = previewGrid(width, height, {
-        ...DEFAULT_PREVIEW_GRID, column_divisions: 12, row_divisions: 5,
+        ...DEFAULT_PREVIEW_GRID, column_divisions: columns, row_divisions: rows,
       });
       expect(grid).toEqual({
-        x: { step: width / 12, last: 11 },
-        y: { step: height / 5, last: 4 },
+        x: { origin: 0, step: width / columns, last: columns - 1, includeBounds: false },
+        y: { origin: 0, step: height / rows, last: rows - 1, includeBounds: false },
+        bounds: { x: 0, y: 0, w: width, h: height },
       });
-      expect(grid.x!.step / width).toBeCloseTo(1 / 12);
-      expect(grid.y!.step / height).toBeCloseTo(1 / 5);
-    },
-  );
-
-  it('preserves fractional 64-division geometry on portrait and landscape frames', () => {
-    for (const [width, height] of [[1920, 1080], [1080, 1920], [853, 480]] as const) {
-      const grid = previewGrid(width, height, {
-        ...DEFAULT_PREVIEW_GRID, column_divisions: 64, row_divisions: 64,
-      });
-      expect(grid.x).toEqual({ step: width / 64, last: 63 });
-      expect(grid.y).toEqual({ step: height / 64, last: 63 });
     }
   });
 
-  it("omits disabled axes and axes with only one field in independent mode", () => {
-    expect(previewGrid(800, 500, {
-      ...DEFAULT_PREVIEW_GRID, columns: false, row_divisions: 1,
-    })).toEqual({ x: null, y: null });
-    expect(previewGrid(800, 500, {
-      ...DEFAULT_PREVIEW_GRID, column_divisions: 1, row_divisions: 5,
-    })).toEqual({ x: null, y: { step: 100, last: 4 } });
+  it("omits an axis that is off or has a single field", () => {
+    const grid = previewGrid(800, 500, { ...DEFAULT_PREVIEW_GRID, columns: false, row_divisions: 1 });
+    expect(grid.x).toBeNull();
+    expect(grid.y).toBeNull();
   });
 
-  it("uses the visible title-safe bounds and snaps to the outer lines when guides are on", () => {
+  it("divides the title-safe rectangle and snaps to its edges while the guides are on", () => {
     const grid = previewGrid(1000, 500, { ...DEFAULT_PREVIEW_GRID, column_divisions: 2, row_divisions: 4 }, true);
     expect(grid.bounds).toEqual({ x: 50, y: 25, w: 900, h: 450 });
     expect(grid.x).toEqual({ origin: 50, step: 450, last: 1, includeBounds: true });
@@ -57,15 +36,15 @@ describe("previewGrid", () => {
     expect(nearestGridLine(954, grid.x!)).toBe(950);
   });
 
-  it("does not remove title-safe outer targets when a count is one", () => {
+  it("keeps the title-safe edges as targets when a count is one", () => {
     const grid = previewGrid(1000, 500, { ...DEFAULT_PREVIEW_GRID, column_divisions: 1, row_divisions: 1 }, true);
-    expect(grid.x).toMatchObject({ step: 900, last: 0, includeBounds: true });
+    expect(grid.x).toMatchObject({ last: 0, includeBounds: true });
     expect(nearestGridLine(45, grid.x!)).toBe(50);
     expect(nearestGridLine(955, grid.x!)).toBe(950);
   });
 
   it("resolves midpoints toward the lower line and clamps to the interior", () => {
-    const axis = { step: 100, last: 7 };
+    const axis = { origin: 0, step: 100, last: 7, includeBounds: false };
     expect(nearestGridLine(349.9, axis)).toBe(300);
     expect(nearestGridLine(350, axis)).toBe(300);
     expect(nearestGridLine(350.1, axis)).toBe(400);

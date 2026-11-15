@@ -107,7 +107,8 @@ describe("snapTargets", () => {
 });
 
 describe("grid snapping", () => {
-  const grid = { x: { step: 100, last: 19 }, y: { step: 120, last: 8 } };
+  const axis = (step: number, last: number) => ({ origin: 0, step, last, includeBounds: false });
+  const grid = { x: axis(100, 19), y: axis(120, 8), bounds: { x: 0, y: 0, w: 1920, h: 1080 } };
   const drives = { x: true, y: true };
 
   it("pulls move edges and centers to the nearest grid lines", () => {

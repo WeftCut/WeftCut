@@ -24,19 +24,25 @@ import { AppDialog } from "../components/AppDialog";
 import { AppTimecodeField } from "../components/AppTimecodeField";
 import { AppNumberField } from "../components/AppNumberField";
 import { AppSelect } from "../components/AppSelect";
+import { AppSlider } from "../components/AppSlider";
 import { AppSwitch } from "../components/AppSwitch";
 import { Button } from "@/components/ui/button";
+import { modKeyLabel } from "@/platform";
 import { KeybindingPanel } from "./KeybindingPanel";
 import { LayoutThemeControl } from "./LayoutThemeControl";
 import { AgentSection } from "./AgentSection";
 import { PreviewSection } from "./PreviewSection";
+import { GridOpacitySection } from "./GridOpacitySection";
 import { PerformanceSection } from "./PerformanceSection";
 import { ModelSection } from "./ModelSection";
 import { VlmSection } from "./VlmSection";
-import { CanvasSnapSettings, GridOpacitySettings, TimelineSnapSettings } from "./SnapSettings";
 import {
   setAppSettings,
   usePrebakeMotifsEnabled,
+  usePreviewSnapEnabled,
+  usePreviewSnapStrengthPx,
+  useTailSnapEnabled,
+  useTailSnapStrengthPx,
   useTimelineWheelAxis,
   useAutoDeleteEmptyTracks,
   useDefaultTextFont,
@@ -51,6 +57,26 @@ import {
   fpsLabel,
   resolutionLabel,
 } from "../startup/canvasPresets";
+// Straight from the shared module the main process clamps against, so the
+// slider's ends and the persisted range cannot drift apart.
+import {
+  PREVIEW_SNAP_STRENGTH_MAX_PX,
+  PREVIEW_SNAP_STRENGTH_MIN_PX,
+} from "../../shared/app-settings";
+
+const TAIL_SNAP_MIN_PX = 2;
+const TAIL_SNAP_MAX_PX = 80;
+
+function clampTailSnapStrength(value: number): number {
+  return Math.round(Math.min(TAIL_SNAP_MAX_PX, Math.max(TAIL_SNAP_MIN_PX, value)));
+}
+
+function clampPreviewSnapStrength(value: number): number {
+  return Math.round(
+    Math.min(PREVIEW_SNAP_STRENGTH_MAX_PX, Math.max(PREVIEW_SNAP_STRENGTH_MIN_PX, value)),
+  );
+}
+
 /// The sidebar's tabs. Exported because App holds the selected one as state and
 /// deep-links into it: a capability notice's recovery card and the describe
 /// dialog's "no engine configured" button both name a category, and a narrower
@@ -290,15 +316,15 @@ export function SettingsPanel({
               <h3>{t("settings.timeline_heading")}</h3>
               <TimelineWheelSection onError={setError} />
               <EmptyTrackCleanupSection onError={setError} />
-              <TimelineSnapSettings onError={setError} />
+              <TimelineSnapSection onError={setError} />
             </section>
 
             <section className="settings-section">
               <h3>{t("settings.preview_heading")}</h3>
               <PreviewSection onError={setError} />
               <PrebakeSection onError={setError} />
-              <CanvasSnapSettings onError={setError} />
-              <GridOpacitySettings onError={setError} />
+              <PreviewSnapSection onError={setError} />
+              <GridOpacitySection onError={setError} />
             </section>
           </div>
 
@@ -473,6 +499,161 @@ function EmptyTrackCleanupSection({ onError }: { onError: (msg: string) => void 
         <span className="settings-toggle-hint">{t("settings.auto_delete_empty_tracks_hint")}</span>
       </span>
     </label>
+  );
+}
+
+function TimelineSnapSection({
+  onError,
+}: {
+  onError: (msg: string) => void;
+}) {
+  const { t } = useTranslation();
+  const enabled = useTailSnapEnabled();
+  const strengthPx = useTailSnapStrengthPx();
+  const [draftStrengthPx, setDraftStrengthPx] = useState(strengthPx);
+
+  useEffect(() => {
+    setDraftStrengthPx(strengthPx);
+  }, [strengthPx]);
+
+  const commitStrength = async (value: number) => {
+    const next = clampTailSnapStrength(value);
+    setDraftStrengthPx(next);
+    onError("");
+    try {
+      await setAppSettings({ tail_snap_strength_px: next });
+    } catch (e) {
+      onError(String(e));
+      setDraftStrengthPx(strengthPx);
+    }
+  };
+
+  return (
+    <>
+      <label className="settings-toggle-row">
+        <AppSwitch
+          checked={enabled}
+          onCheckedChange={async (next) => {
+            onError("");
+            try {
+              await setAppSettings({ tail_snap_enabled: next });
+            } catch (err) {
+              onError(String(err));
+            }
+          }}
+        />
+        <span>
+          <span className="settings-toggle-label">
+            {t("settings.tail_snap_enabled")}
+          </span>
+          <span className="settings-toggle-hint">
+            {t("settings.tail_snap_enabled_hint", { mod: modKeyLabel() })}
+          </span>
+        </span>
+      </label>
+      <div className="settings-slider-row">
+        <span className="settings-slider-label">
+          {t("settings.tail_snap_strength")}
+        </span>
+        <AppSlider
+          min={TAIL_SNAP_MIN_PX}
+          max={TAIL_SNAP_MAX_PX}
+          value={draftStrengthPx}
+          disabled={!enabled}
+          onValueChange={setDraftStrengthPx}
+          onValueCommitted={(v) => void commitStrength(v)}
+          ariaLabel={t("settings.tail_snap_strength")}
+        />
+        <AppNumberField value={draftStrengthPx} min={TAIL_SNAP_MIN_PX} max={TAIL_SNAP_MAX_PX}
+          disabled={!enabled} align="center" className="settings-input-narrow"
+          ariaLabel={t("settings.tail_snap_strength")}
+          onValueChange={setDraftStrengthPx} onCommit={(v) => void commitStrength(v)} />
+        <span className="settings-slider-unit">px</span>
+      </div>
+      <p className="settings-toggle-hint">
+        {t("settings.tail_snap_strength_hint")}
+      </p>
+    </>
+  );
+}
+
+/// The preview gizmo's snapping, deliberately its own pair rather than a reuse
+/// of the timeline's: the target densities differ by an order of magnitude, so
+/// one radius cannot be tuned for both. Same shape as `TimelineSnapSection`
+/// otherwise — draft state on the slider, commit on release, roll back on error.
+function PreviewSnapSection({
+  onError,
+}: {
+  onError: (msg: string) => void;
+}) {
+  const { t } = useTranslation();
+  const enabled = usePreviewSnapEnabled();
+  const strengthPx = usePreviewSnapStrengthPx();
+  const [draftStrengthPx, setDraftStrengthPx] = useState(strengthPx);
+
+  useEffect(() => {
+    setDraftStrengthPx(strengthPx);
+  }, [strengthPx]);
+
+  const commitStrength = async (value: number) => {
+    const next = clampPreviewSnapStrength(value);
+    setDraftStrengthPx(next);
+    onError("");
+    try {
+      await setAppSettings({ preview_snap_strength_px: next });
+    } catch (e) {
+      onError(String(e));
+      setDraftStrengthPx(strengthPx);
+    }
+  };
+
+  return (
+    <>
+      <label className="settings-toggle-row">
+        <AppSwitch
+          checked={enabled}
+          onCheckedChange={async (next) => {
+            onError("");
+            try {
+              await setAppSettings({ preview_snap_enabled: next });
+            } catch (err) {
+              onError(String(err));
+            }
+          }}
+        />
+        <span>
+          <span className="settings-toggle-label">
+            {t("settings.preview_snap_enabled")}
+          </span>
+          <span className="settings-toggle-hint">
+            {t("settings.preview_snap_enabled_hint", { mod: modKeyLabel() })}
+          </span>
+        </span>
+      </label>
+      <div className="settings-slider-row">
+        <span className="settings-slider-label">
+          {t("settings.preview_snap_strength")}
+        </span>
+        <AppSlider
+          min={PREVIEW_SNAP_STRENGTH_MIN_PX}
+          max={PREVIEW_SNAP_STRENGTH_MAX_PX}
+          value={draftStrengthPx}
+          disabled={!enabled}
+          onValueChange={setDraftStrengthPx}
+          onValueCommitted={(v) => void commitStrength(v)}
+          ariaLabel={t("settings.preview_snap_strength")}
+        />
+        <AppNumberField value={draftStrengthPx} min={PREVIEW_SNAP_STRENGTH_MIN_PX}
+          max={PREVIEW_SNAP_STRENGTH_MAX_PX}
+          disabled={!enabled} align="center" className="settings-input-narrow"
+          ariaLabel={t("settings.preview_snap_strength")}
+          onValueChange={setDraftStrengthPx} onCommit={(v) => void commitStrength(v)} />
+        <span className="settings-slider-unit">px</span>
+      </div>
+      <p className="settings-toggle-hint">
+        {t("settings.preview_snap_strength_hint")}
+      </p>
+    </>
   );
 }
 

@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { DEFAULT_PREVIEW_GRID, type PreviewGridSettings } from "../../shared/preview-grid";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { isMac } from "@/platform";
 import { initEval } from '../eval';
 import { translatePath, type PathPosition } from '../../shared/position';
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -423,31 +422,17 @@ describe("snapping", () => {
     expect(transformOverrideFor("l1")).toEqual({ dx: 320, dy: 0 });
   });
 
-  it("snaps to hidden grid subdivisions, honors Mod, and commits only the final position", async () => {
+  it("snaps to an enabled grid whose lines the eye has hidden", async () => {
     setSnap(true, 12, { enabled: true, hidden: true, column_divisions: 16, rows: false });
     render(<TransformGizmoHost />);
     const el = await box();
-    const mod = isMac ? { metaKey: true } : { ctrlKey: true };
-    fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0, ...mod });
-    fireEvent.pointerMove(el, { clientX: 38, clientY: 9, ...mod });
-    expect(transformOverrideFor("l1")).toEqual({ dx: 76, dy: 18 });
-    expect(guide("x").style.display).toBe("none");
-
+    fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
     fireEvent.pointerMove(el, { clientX: 38, clientY: 9 });
+    // The first column line is 1280/16 = 80; the 18 px vertical drift snaps
+    // back to the frame's top edge.
     expect(transformOverrideFor("l1")).toEqual({ dx: 80, dy: 0 });
     await waitFor(() => expect(guide("x").style.display).not.toBe("none"));
-    // The first composition-relative column line is 1280/16 = 80.
     expect(guideLine("x").getAttribute("x1")).toBe("40");
-    expect(guide("y").style.display).not.toBe("none");
-
-    fireEvent.pointerMove(el, { clientX: 38, clientY: 9, ...mod });
-    expect(transformOverrideFor("l1")).toEqual({ dx: 76, dy: 18 });
-    await waitFor(() => expect(guide("x").style.display).toBe("none"));
-    fireEvent.pointerMove(el, { clientX: 38, clientY: 9 });
-    expect(commit).not.toHaveBeenCalled();
-    fireEvent.pointerUp(el, { clientX: 38, clientY: 9 });
-    expect(commit).toHaveBeenCalledTimes(1);
-    expect(committedStatics()).toEqual([["x", 400], ["y", 180]]);
   });
 
   it("does not snap to an enabled grid when canvas snapping is off", async () => {

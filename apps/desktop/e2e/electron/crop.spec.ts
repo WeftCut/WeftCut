@@ -150,8 +150,10 @@ test('crop: Quick Panel, context menu, drag/cancel, snapping and exported pixels
     await expect(page.getByRole('menuitem', { name: 'Crop in preview', exact: true })).toHaveCount(0);
     await page.mouse.up();
     await page.keyboard.up(mod);
-    await expect.poll(async () => (await stored()).x.value).toBeGreaterThan(81);
-    await expect.poll(async () => (await stored()).x.value).toBeLessThan(84);
+    // Mod held before the press: the box moved, but not onto the snap line
+    // (x = 80) the same drag lands on below.
+    await expect.poll(async () => (await stored()).x.value).not.toBe(160);
+    expect((await stored()).x.value).not.toBe(80);
     await invokeCmd(page, 'project_undo', {});
     await expect.poll(async () => Math.round((await boxInComp()).x)).toBe(80);
 

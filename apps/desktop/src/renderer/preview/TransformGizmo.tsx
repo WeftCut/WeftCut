@@ -1155,7 +1155,6 @@ function TransformGizmo({
       focusedPlayheadUs(),
       probe,
     );
-    // An enabled grid snaps even while its eye hides the lines.
     const grid = settings.preview_grid.enabled
       ? previewGrid(comp.width, comp.height, settings.preview_grid, settings.safe_area_guides_visible)
       : undefined;

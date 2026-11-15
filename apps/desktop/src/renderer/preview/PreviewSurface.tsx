@@ -137,9 +137,10 @@ export const PreviewSurface = forwardRef<PreviewSurfaceHandle, Props>(
         {/* After the canvas so they stack above it; screen-space by design —
             see TransformGizmo.tsx. Skipped while the dock tab is hidden — an
             overlay would otherwise track a canvas nobody can see.
-            The Text tool's click surface first: it must sit UNDER the gizmo
-            host so an open inline editor stays clickable (TextToolOverlay.tsx).
-            Grid and safe areas paint under the selection box and handles. */}
+            The grid first (it takes no pointer events), then the Text tool's
+            click surface: it must sit UNDER the gizmo host so an open inline
+            editor stays clickable (TextToolOverlay.tsx). Grid and safe areas
+            paint under the selection box and handles. */}
         {visible && <PreviewGridOverlayHost />}
         {visible && !editingLocked && <TextToolOverlayHost />}
         {visible && <SafeAreaGuidesHost />}

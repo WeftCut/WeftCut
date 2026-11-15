@@ -15,8 +15,7 @@ export interface PreviewGridSettings {
   rows: boolean;
 }
 
-/** Below this the lines are easy to miss on real footage, which is the
- *  near-invisible grid that still snaps the eye exists to make explicit. */
+/** The range's floor: fainter lines are easy to miss on real footage. */
 export const GRID_OPACITY_MIN = 10;
 export const GRID_OPACITY_MAX = 100;
 

@@ -13,15 +13,20 @@ export function PreviewGridOverlayHost() {
   const settings = usePreviewGrid();
   const safeArea = useSafeAreaGuidesVisible();
   const composition = useComposition(usePreviewRenderTargetId());
-  // Hidden is drawing only: the gizmo still snaps to an enabled grid.
   if (!settings.enabled || settings.hidden || !composition || (!settings.columns && !settings.rows)) return null;
   return <PreviewGridOverlay width={composition.width} height={composition.height} settings={settings} safeArea={safeArea} />;
 }
 
+/// Interior lines only: with safe-area guides on, the region's outer edges are
+/// snap targets that the guides already draw.
 function gridPath(axis: GridAxis | null, line: (at: number) => string): string {
   if (!axis) return "";
-  return Array.from({ length: axis.last }, (_, i) => line((axis.origin ?? 0) + (i + 1) * axis.step)).join(" ");
+  return Array.from({ length: axis.last }, (_, i) => line(axis.origin + (i + 1) * axis.step)).join(" ");
 }
+
+/// Line spacing, in screen pixels, below which an axis starts to fade: denser
+/// than this the lines merge into a wash that hides the picture.
+const FADE_BELOW_SPACING_PX = 6;
 
 function PreviewGridOverlay({ width, height, settings, safeArea }: {
   width: number;
@@ -36,8 +41,8 @@ function PreviewGridOverlay({ width, height, settings, safeArea }: {
   const grid = useMemo(
     () => previewGrid(width, height, settings, safeArea), [width, height, settings, safeArea],
   );
-  const columns = useMemo(() => gridPath(grid.x, (x) => "M " + x + " " + (grid.bounds?.y ?? 0) + " v " + (grid.bounds?.h ?? height)), [grid.x, grid.bounds, height]);
-  const rows = useMemo(() => gridPath(grid.y, (y) => "M " + (grid.bounds?.x ?? 0) + " " + y + " h " + (grid.bounds?.w ?? width)), [grid.y, grid.bounds, width]);
+  const columns = useMemo(() => gridPath(grid.x, (x) => `M ${x} ${grid.bounds.y} v ${grid.bounds.h}`), [grid.x, grid.bounds]);
+  const rows = useMemo(() => gridPath(grid.y, (y) => `M ${grid.bounds.x} ${y} h ${grid.bounds.w}`), [grid.y, grid.bounds]);
 
   useEffect(() => {
     const overlay = overlayRef.current;
@@ -64,9 +69,9 @@ function PreviewGridOverlay({ width, height, settings, safeArea }: {
       frame.setAttribute("width", String(width * fit.scale));
       frame.setAttribute("height", String(height * fit.scale));
       frame.setAttribute("visibility", "visible");
-      // Fade each axis as its lines approach screen-pixel density.
-      if (grid.x) columnsRef.current?.setAttribute("opacity", String(settings.opacity / 100 * Math.min(1, grid.x.step * fit.scale / 6)));
-      if (grid.y) rowsRef.current?.setAttribute("opacity", String(settings.opacity / 100 * Math.min(1, grid.y.step * fit.scale / 6)));
+      const fade = (step: number) => Math.min(1, step * fit.scale / FADE_BELOW_SPACING_PX);
+      if (grid.x) columnsRef.current?.setAttribute("opacity", String(settings.opacity / 100 * fade(grid.x.step)));
+      if (grid.y) rowsRef.current?.setAttribute("opacity", String(settings.opacity / 100 * fade(grid.y.step)));
     };
     draw();
     return () => {

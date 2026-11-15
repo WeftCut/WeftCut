@@ -1248,7 +1248,6 @@ const enUS = {
     grid_rows: "Rows",
     grid_vertical_lines: "Vertical grid lines",
     grid_horizontal_lines: "Horizontal grid lines",
-    // The eye hides the lines only; an enabled grid keeps snapping.
     grid_hide: "Hide grid lines (snapping stays on)",
     grid_show: "Show grid lines",
     // The status-area note while the canvas fallback renderer (no WebGPU or

@@ -1093,7 +1093,6 @@ const zhCN: Resources = {
     grid_rows: "行数",
     grid_vertical_lines: "垂直网格线",
     grid_horizontal_lines: "水平网格线",
-    // 眼睛只隐藏线条；网格开启时仍会吸附。
     grid_hide: "隐藏网格线（吸附保持开启）",
     grid_show: "显示网格线",
     renderer_limit: "部分未绘制",
@@ -2134,7 +2133,7 @@ const zhCN: Resources = {
     preview_heading: "预览",
     preview_snap_enabled: "启用画面吸附",
     preview_snap_enabled_hint:
-      "在预览中移动或缩放片段时，自动对齐到画面边缘、中线、其他片段以及网格线。按住 {{mod}} 可临时关闭。",
+      "在预览中移动或缩放片段时，自动对齐到画面边缘、中线、其它片段以及网格线。按住 {{mod}} 可临时关闭。",
     preview_snap_strength: "吸附强度",
     preview_snap_strength_hint:
       "以屏幕像素为单位。",

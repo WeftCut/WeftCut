@@ -1,10 +1,7 @@
-// The canvas snapping glyph: the timeline's magnet, inside two frame corners.
-//
-// The magnet already means "snapping" one button to the left (clip snapping),
-// so this glyph reuses it rather than inventing a second metaphor; the frame
-// corners say where it applies — the picture, not the tracks. Lucide's
-// corner-bracket "scan" family was the obvious stock choice and is wrong here:
-// it reads as scanning, and `ScanEye` already wears it in the same strip.
+// The canvas snapping glyph: the clip snapping magnet beside it, inside two
+// frame corners. One metaphor for both snap switches; the corners say where
+// this one applies. Not a stock `Scan*` glyph: those read as scanning, and
+// `ScanEye` already wears that shape in the same strip.
 
 import type { SVGProps } from "react";
 

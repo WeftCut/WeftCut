@@ -33,7 +33,7 @@ vi.mock("../settings/appSettingsStore", () => ({
   useFollowPlayheadEnabled: () => true,
   useMarkersVisible: () => prefs.markersVisible,
   useSafeAreaGuidesVisible: () => prefs.safeAreaGuides,
-  usePreviewGrid: () => ({ enabled: prefs.gridEnabled }),
+  usePreviewGridEnabled: () => prefs.gridEnabled,
 }));
 
 vi.mock("../ipc", async (importActual) => ({
@@ -316,6 +316,38 @@ describe("ViewMenu safe areas", () => {
     renderMenu();
     openView();
     const item = await screen.findByText("Show safe areas");
+    expect(
+      item.closest('[role="menuitem"]')?.querySelector(".app-menu-item-check svg"),
+    ).not.toBeNull();
+    fireEvent.click(item);
+    expect(run).toHaveBeenCalledOnce();
+  });
+});
+
+// The preview's alignment grid: a bindingless toggle beside safe areas, run
+// through the same registry command as its Quick Actions button.
+describe("ViewMenu grid", () => {
+  afterEach(() => {
+    prefs.gridEnabled = false;
+  });
+
+  it("follows Show safe areas, reflects the grid and flips it through the registry command", async () => {
+    const run = vi.fn();
+    provide([{ id: "togglePreviewGrid", labelKey: "actions.toggle_preview_grid", run }]);
+    prefs.gridEnabled = true;
+    render(
+      <ViewMenu
+        workspaceController={controller()}
+        workspaceProfiles={null}
+        workspaceSnapshot={EMPTY_DOCK_WORKSPACE_SNAPSHOT}
+      />,
+    );
+    openView();
+    const item = await screen.findByText("Grid");
+    const labels = screen
+      .getAllByRole("menuitem")
+      .map((row) => row.querySelector(".app-menu-item-label")?.textContent ?? "");
+    expect(labels.indexOf("Grid")).toBe(labels.indexOf("Show safe areas") + 1);
     expect(
       item.closest('[role="menuitem"]')?.querySelector(".app-menu-item-check svg"),
     ).not.toBeNull();

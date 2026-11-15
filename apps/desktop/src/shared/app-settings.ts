@@ -74,8 +74,8 @@ export interface AppSettings {
   /// the alignment grid's lines while `preview_grid.enabled`. Deliberately
   /// separate from `tail_snap_enabled`: the two domains differ by an order of
   /// magnitude in target density (every clip boundary on every visible track
-  /// vs six composition lines plus a handful of layers and grid lines), so one
-  /// threshold cannot be tuned for both.
+  /// vs six composition lines, a handful of layers and the grid's nearest
+  /// line per axis), so one threshold cannot be tuned for both.
   preview_snap_enabled: boolean;
   /// SCREEN-pixel snap radius for the preview gizmo — the same unit as
   /// `tail_snap_strength_px`, and the reason the solver divides it by the

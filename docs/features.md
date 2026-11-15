@@ -1187,7 +1187,7 @@ changing geometry or progress.
 
 **Preview alignment grid:** a subdivision grid over the frame, toggled by Grid
 in Quick Actions, View › Grid and the search palette (Canvas snapping has its
-own Quick Actions toggle beside it). While it is on, the preview bar shows
+own toggle beside it in Quick Actions and the palette). While it is on, the preview bar shows
 `columns × rows` fields (default 3 × 3, 1–64) and an icon per axis; an axis
 that is off neither draws nor snaps, and keeps its count. The eye beside them
 hides the lines without turning the grid off, so an enabled grid still snaps

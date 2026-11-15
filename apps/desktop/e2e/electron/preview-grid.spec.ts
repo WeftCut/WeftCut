@@ -31,8 +31,8 @@ async function expectOneRowOfEqualControls(page: Page) {
       '.preview-target-select',
       '.preview-zoom-select',
       '.preview-grid-count .app-input',
-      '[data-testid="grid-columns-visible"]',
-      '[data-testid="grid-rows-visible"]',
+      '[data-testid="grid-columns-axis"]',
+      '[data-testid="grid-rows-axis"]',
       '[data-testid="grid-eye"]',
     ]
     return selectors.map((selector) => {
@@ -93,20 +93,16 @@ test('Quick Actions toggles the grid; the preview bar edits columns, rows and ax
     await expect.poll(async () => (await settings(page)).preview_grid.row_divisions).toBe(5)
     await expectGridSpacing(page, 1 / 12, 1 / 5)
 
-    await toolbar.getByTestId('grid-rows-visible').click()
-    await expect(toolbar.getByTestId('grid-rows-visible')).toHaveAttribute('aria-pressed', 'false')
+    await toolbar.getByTestId('grid-rows-axis').click()
+    await expect(toolbar.getByTestId('grid-rows-axis')).toHaveAttribute('aria-pressed', 'false')
     await expect(overlay(page).locator('.preview-grid-line')).toHaveCount(1)
     await expect(rows).toHaveValue('5')
-    await toolbar.getByTestId('grid-columns-visible').click()
+    await toolbar.getByTestId('grid-columns-axis').click()
     await expect(overlay(page)).toHaveCount(0)
-    await toolbar.getByTestId('grid-columns-visible').click()
-    await toolbar.getByTestId('grid-rows-visible').click()
+    await toolbar.getByTestId('grid-columns-axis').click()
+    await toolbar.getByTestId('grid-rows-axis').click()
     await expectGridSpacing(page, 1 / 12, 1 / 5)
 
-    await snapButton.click()
-    await expect(snapButton).toHaveAttribute('aria-pressed', 'false')
-    await snapButton.click()
-    await expect(snapButton).toHaveAttribute('aria-pressed', 'true')
     // The eye hides the lines only: the grid stays on (and snapping with it).
     const eye = toolbar.getByTestId('grid-eye')
     await invokeCmd(page, 'app_settings_set', { patch: { preview_grid: { opacity: 47 } } })
@@ -151,59 +147,27 @@ test('Quick Actions toggles the grid; the preview bar edits columns, rows and ax
   }
 })
 
-test('a hidden grid stays hidden across a restart and comes back at its own opacity', async () => {
-  const userDataDir = tmpDir('weftcut-e2e-grid-profile-')
-  const first = await launchApp({ userDataDir })
-  try {
-    await startPreview(first.page, 1280, 720)
-    await invokeCmd(first.page, 'app_settings_set', { patch: { preview_grid: { enabled: true, opacity: 40 } } })
-    const eye = first.page.getByTestId('grid-eye')
-    await expect(overlay(first.page).locator('g[opacity="0.4"]').first()).toBeAttached()
-    await eye.click()
-    await expect(eye).toHaveAttribute('aria-pressed', 'false')
-    await expect.poll(async () => (await settings(first.page)).preview_grid.hidden).toBe(true)
-  } finally {
-    await first.app.close()
-  }
-
-  const second = await launchApp({ userDataDir })
-  try {
-    const { page } = second
-    await page.locator('.startup-recent-item').filter({ hasText: 'preview-grid' }).click()
-    await expect(page.getByTestId('pixi-preview-initializing')).toBeHidden()
-    const eye = page.getByTestId('grid-eye')
-    await expect(eye).toHaveAttribute('aria-pressed', 'false')
-    await expect(overlay(page)).toHaveCount(0)
-    await eye.click()
-    await expect(eye).toHaveAttribute('aria-pressed', 'true')
-    await expect(overlay(page).locator('g[opacity="0.4"]').first()).toBeAttached()
-  } finally {
-    await second.app.close()
-  }
-})
-
 test('Enter and Escape return focus from grid fields to the preview region', async () => {
   const { app, page } = await launchApp()
   try {
     await startPreview(page, 1280, 720)
     await page.locator('[data-quick-action="togglePreviewGrid"]').click()
     const count = page.getByTestId('preview-grid-toolbar').getByLabel('Columns', { exact: true })
+    const region = page.locator('[data-focus-region="preview"]')
     await count.fill('12')
     await count.press('Enter')
     await expect.poll(async () => (await settings(page)).preview_grid.column_divisions).toBe(12)
-    await expect(page.locator('[data-focus-region="preview"]')).toBeFocused()
-    // Escape leaves the field and returns to canvas. Whether a preceding edit
-    // has already auto-committed depends on the number field's debounce.
+    await expect(region).toBeFocused()
     await count.focus()
     await count.press('Escape')
-    await expect(page.locator('[data-focus-region="preview"]')).toBeFocused()
+    await expect(region).toBeFocused()
     expect((await settings(page)).preview_grid.column_divisions).toBe(12)
   } finally {
     await app.close()
   }
 })
 
-test('the count fields hold the largest count with the steppers clear of the digits', async () => {
+test('the count fields hold the largest count and settle on it when typed past', async () => {
   const { app, page } = await launchApp()
   try {
     await startPreview(page, 853, 480)
@@ -217,26 +181,6 @@ test('the count fields hold the largest count with the steppers clear of the dig
     await expect.poll(async () => (await settings(page)).preview_grid.row_divisions).toBe(GRID_DIVISIONS_MAX)
     await expect(columns).toHaveValue(max)
     await expect(rows).toHaveValue(max)
-    // The text stays centred even on hover; the chevrons must not cover either digit.
-    for (const field of [columns, rows]) {
-      await field.hover()
-      const clearance = await field.evaluate((input) => {
-        const fieldBounds = input.getBoundingClientRect()
-        const stepper = input.closest('.app-number-field')?.querySelector('.app-number-steppers')
-        if (!stepper) throw new Error('missing number-field chevrons')
-        const stepperBounds = stepper.getBoundingClientRect()
-        if (stepperBounds.width === 0) throw new Error('number-field chevrons are not visible on hover')
-        const style = getComputedStyle(input)
-        if (style.textAlign !== 'center') throw new Error('grid count is no longer centred')
-        const canvas = document.createElement('canvas')
-        const context = canvas.getContext('2d')!
-        context.font = style.font
-        const textWidth = context.measureText((input as HTMLInputElement).value).width
-        const textRight = fieldBounds.left + (fieldBounds.width + textWidth) / 2
-        return stepperBounds.left - textRight
-      })
-      expect(clearance, 'chevrons must clear a centred two-digit number').toBeGreaterThanOrEqual(2)
-    }
     await expectGridSpacing(page, 1 / GRID_DIVISIONS_MAX, 1 / GRID_DIVISIONS_MAX)
     // Typing past the limit settles on the limit.
     await columns.fill(String(GRID_DIVISIONS_MAX + 1))

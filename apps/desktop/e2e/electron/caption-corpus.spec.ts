@@ -84,11 +84,9 @@ interface StoredTextParams {
 /// between two modules that each own a delivery margin — the importer insets a
 /// cue by `SAFE_AREA_MARGIN` per side (`state/mutations/captions.ts`, twin of
 /// `subtitles/layout.rs`) and the overlay draws title-safe at
-/// `TITLE_SAFE_FRACTION` (`preview/safeAreaGeometry.ts`) — and no unit test can
-/// hold both: the two projects' tsconfigs make a main↔renderer import of a
-/// `.tsx` unresolvable in either direction. Reading the drawn rectangle restates
-/// neither constant, and it holds the guides to being a usable answer to "how
-/// wide should a caption be".
+/// `TITLE_SAFE_FRACTION` (`preview/safeAreaGeometry.ts`). Reading the drawn
+/// rectangle restates neither constant, and it holds the guides to being a
+/// usable answer to "how wide should a caption be".
 ///
 /// The canvas element IS the composition's extent — the preview panel owns both
 /// letterbox axes and the canvas is contain-sized inside it

@@ -28,6 +28,7 @@ export interface SnapTarget {
   source: SnapSource;
 }
 
+/// Lower wins a tie: composition, then layer, then grid.
 const SOURCE_RANK: Record<SnapSource, number> = { composition: 0, layer: 1, grid: 2 };
 
 export interface SnapTargets {
@@ -35,6 +36,8 @@ export interface SnapTargets {
   xs: readonly SnapTarget[];
   /// Horizontal lines — candidate `y` values.
   ys: readonly SnapTarget[];
+  /// The alignment grid, matched by its nearest line rather than enumerated:
+  /// up to 63 lines per axis would only be scanned to find the closest.
   grid?: PreviewGrid | undefined;
 }
 
@@ -66,7 +69,8 @@ function axisCandidates(low: number, high: number): [number, number, number] {
   return [low, (low + high) / 2, high];
 }
 
-/// The composition's own lines plus every other staged layer's box. `others`
+/// The composition's own lines plus every other staged layer's box, and the
+/// grid when one is on. `others`
 /// arrives already resolved and mapped — building it needs the animated tracks
 /// and so belongs to the caller, which is what keeps this module pure.
 ///
@@ -116,8 +120,9 @@ interface AxisHit {
 
 /// The smallest move that puts one of `candidates` onto one of `targets`.
 ///
-/// Ranked by (distance, source). Existing targets win grid ties, and
-/// composition targets win layer ties.
+/// Ranked by (distance, source), lexicographically: `SOURCE_RANK` decides
+/// ties. `>=` on the distance alone would hand ties to whichever target the
+/// loop reached first.
 function snapAxis(
   candidates: readonly number[],
   targets: readonly SnapTarget[],

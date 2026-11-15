@@ -24,7 +24,7 @@ import {
   useFollowPlayheadEnabled,
   useMarkersVisible,
   usePlaybackResolution,
-  usePreviewGrid,
+  usePreviewGridEnabled,
   usePreviewSnapEnabled,
   useSafeAreaGuidesVisible,
   useTailSnapEnabled,
@@ -286,13 +286,13 @@ export function QuickActionsPanel({
   const hasRange = useHasMarkedRange();
   const markersVisible = useMarkersVisible();
   const reviewOverlay = useAgentActivity((s) => s.reviewOverlay);
-  // The app-settings values the strip renders as pressed or armed: three
+  // The app-settings values the strip renders as pressed or armed: five
   // toggles and the modal playback resolution. Atomic selectors, one field
   // each — never a composite one
   // (`feedback_zustand_composite_selector`).
   const snapEnabled = useTailSnapEnabled();
   const previewSnapEnabled = usePreviewSnapEnabled();
-  const gridEnabled = usePreviewGrid().enabled;
+  const gridEnabled = usePreviewGridEnabled();
   const followPlayhead = useFollowPlayheadEnabled();
   const safeAreaGuides = useSafeAreaGuidesVisible();
   const playbackResolution = usePlaybackResolution();

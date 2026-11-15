@@ -4,6 +4,7 @@ import { Columns3, Eye, EyeOff, Rows3 } from "lucide-react";
 import { AppIcon } from "@/components/AppIcon";
 import { AppNumberField } from "../components/AppNumberField";
 import { GRID_DIVISIONS_MAX, GRID_DIVISIONS_MIN } from "../../shared/preview-grid";
+import { regionRootOf } from "../focus/focusRegion";
 import { setAppSettings, usePreviewGrid } from "../settings/appSettingsStore";
 
 /** One axis's count. The draft survives a store echo while the field is
@@ -20,8 +21,7 @@ function GridCount({ value, field, label }: {
   }, [value]);
   const bounded = (next: number) =>
     Math.min(GRID_DIVISIONS_MAX, Math.max(GRID_DIVISIONS_MIN, Math.round(next)));
-  const commit = (next: number) => {
-    const count = bounded(next);
+  const commit = (count: number) => {
     if (count !== value) void setAppSettings({ preview_grid: { [field]: count } });
   };
   return (
@@ -57,13 +57,11 @@ export function PreviewGridToolbar() {
       aria-label={t("preview.grid_label")}
       data-testid="preview-grid-toolbar"
       onKeyUp={(event) => {
-        if (!(event.target instanceof HTMLInputElement)) return;
-        if (event.key !== "Enter" && event.key !== "Escape") return;
-        // On keyup, not keydown: the field commits or discards on keydown, and
-        // blurring first would commit the text Escape is about to discard.
-        // The panel, not the canvas, is the focus region that owns the
-        // preview's scoped shortcuts.
-        event.currentTarget.closest<HTMLElement>('[data-focus-region="preview"]')?.focus();
+        // Enter hands the keyboard back to the preview's region, as Escape
+        // already does app-wide (`useFocusRegions`). On keyup so the field has
+        // committed on keydown before it loses focus.
+        if (event.key !== "Enter" || !(event.target instanceof HTMLInputElement)) return;
+        regionRootOf(event.currentTarget)?.focus();
       }}
     >
       <div className="preview-grid-axis">
@@ -72,7 +70,7 @@ export function PreviewGridToolbar() {
           aria-label={t("preview.grid_vertical_lines")}
           aria-pressed={grid.columns}
           title={t("preview.grid_vertical_lines")}
-          data-testid="grid-columns-visible"
+          data-testid="grid-columns-axis"
           onClick={() => toggle("columns")}
         >
           <AppIcon icon={Columns3} size="caption" aria-hidden />
@@ -85,7 +83,7 @@ export function PreviewGridToolbar() {
           aria-label={t("preview.grid_horizontal_lines")}
           aria-pressed={grid.rows}
           title={t("preview.grid_horizontal_lines")}
-          data-testid="grid-rows-visible"
+          data-testid="grid-rows-axis"
           onClick={() => toggle("rows")}
         >
           <AppIcon icon={Rows3} size="caption" aria-hidden />
