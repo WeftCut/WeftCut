@@ -45,6 +45,8 @@ export const STRINGS = {
     picture_export: 'The picture returns when the export ends.',
     picture_minimized: 'WeftCut is minimized: about one frame a second.',
     picture_unsupported: 'This browser can’t show the picture.',
+    picture_failed: 'WeftCut couldn’t encode the picture.',
+    picture_retry: 'Try again',
   },
   zh: {
     lang: 'zh',
@@ -88,6 +90,8 @@ export const STRINGS = {
     picture_export: '导出结束后恢复画面。',
     picture_minimized: 'WeftCut 已最小化，约每秒一帧。',
     picture_unsupported: '此浏览器无法显示画面。',
+    picture_failed: 'WeftCut 无法编码画面。',
+    picture_retry: '重试',
   },
 }
 

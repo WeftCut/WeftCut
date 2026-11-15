@@ -133,8 +133,9 @@ export function mountCompanion(root, transport, env = {}) {
   poster.append(posterTitle, posterBody, showPicture)
   const stageMessage = el('p', 'cw-stage-message')
   const stageFocus = textButton('cw-stage-focus')
+  const stageRetry = textButton('cw-stage-retry')
   const stageNote = el('div', 'cw-stage-note')
-  stageNote.append(stageMessage, stageFocus)
+  stageNote.append(stageMessage, stageFocus, stageRetry)
   const hud = el('span', 'cw-hud')
   const copyPicture = iconButton('copy', 'cw-copy-picture')
   const pip = iconButton('pip', 'cw-pip')
@@ -199,6 +200,8 @@ export function mountCompanion(root, transport, env = {}) {
   let picture = null
   let pictureSupported = true
   let pictureShown = false
+  /** The app said it cannot encode the picture, since the page last asked. */
+  let pictureFailed = false
   /** Agent calls this page saw, newest first (`recordCall`). */
   let seenCalls = []
 
@@ -241,16 +244,21 @@ export function mountCompanion(root, transport, env = {}) {
       exporting,
       wanted: pictureWanted,
       supported: pictureSupported,
+      failed: pictureFailed,
       minimized: state?.window === 'minimized',
       shown: pictureShown,
     })
     stage.dataset.picture = p
     if (state?.composition) stage.style.aspectRatio = `${state.composition.width} / ${state.composition.height}`
     poster.hidden = p !== 'off'
-    const message = { export: strings.picture_export, unsupported: strings.picture_unsupported, minimized: strings.picture_minimized, starting: strings.picture_starting }[p]
+    const message = {
+      export: strings.picture_export, unsupported: strings.picture_unsupported, failed: strings.picture_failed,
+      minimized: strings.picture_minimized, starting: strings.picture_starting,
+    }[p]
     stageMessage.textContent = message ?? ''
     stageNote.hidden = message === undefined
     stageFocus.hidden = p !== 'minimized'
+    stageRetry.hidden = p !== 'failed'
     stageTools.hidden = !pictureWanted
     copyPicture.hidden = !(p === 'live' || p === 'minimized')
     pip.hidden = !doc.pictureInPictureEnabled || !(p === 'live' || p === 'minimized')
@@ -258,18 +266,34 @@ export function mountCompanion(root, transport, env = {}) {
 
   function setPicture(on) {
     pictureWanted = on
-    if (on && picture === null) {
+    syncPicture()
+  }
+
+  /** Pulls the picture while the user wants it and can see it: in the tab,
+   *  or popped out. An open picture keeps the app encoding, so a hidden tab
+   *  lets go of it and asks again once shown. */
+  function syncPicture() {
+    const seen = !doc.hidden || doc.pictureInPictureElement != null
+    const pull = pictureWanted && seen
+    if (pull && picture === null) {
       pictureShown = false
+      pictureFailed = false
       picture = transport.openPicture({
         mount: pictureMount,
         shown() {
           if (pictureShown) return
           pictureShown = true
+          pictureFailed = false
+          paintStage()
+        },
+        failed() {
+          pictureFailed = true
+          pictureShown = false
           paintStage()
         },
       })
       pictureSupported = picture !== null
-    } else if (!on && picture !== null) {
+    } else if (!pull && picture !== null) {
       picture.close()
       picture = null
     }
@@ -291,6 +315,7 @@ export function mountCompanion(root, transport, env = {}) {
     for (const [button, label] of titled) { button.title = label; button.setAttribute('aria-label', label) }
     emptyFocus.textContent = strings.show_editor
     stageFocus.textContent = strings.show_editor
+    stageRetry.textContent = strings.picture_retry
     emptyWait.textContent = strings.waiting
     posterTitle.textContent = strings.picture_off_title
     posterBody.textContent = strings.picture_off_body
@@ -449,6 +474,9 @@ export function mountCompanion(root, transport, env = {}) {
   for (const b of [focus, emptyFocus, stageFocus]) b.addEventListener('click', focusEditor)
   showPicture.addEventListener('click', () => setPicture(true))
   hidePicture.addEventListener('click', () => setPicture(false))
+  // Only a new request has the app start an encoder again after one failed.
+  stageRetry.addEventListener('click', () => { setPicture(false); setPicture(true) })
+  doc.addEventListener('visibilitychange', syncPicture)
 
   copyPicture.addEventListener('click', () => {
     const canvas = pictureMount.querySelector('canvas')
@@ -471,6 +499,8 @@ export function mountCompanion(root, transport, env = {}) {
     const video = el('video')
     video.muted = true
     video.srcObject = canvas.captureStream()
+    // Closing the pop-out while the tab is hidden leaves nobody watching.
+    video.addEventListener('leavepictureinpicture', syncPicture)
     await video.play()
     await video.requestPictureInPicture()
   })
@@ -559,6 +589,7 @@ export function mountCompanion(root, transport, env = {}) {
       setPicture(false)
       stopTransport()
       doc.removeEventListener('keydown', onKey)
+      doc.removeEventListener('visibilitychange', syncPicture)
       win?.clearInterval(agoTimer)
       win?.clearTimeout(toastTimer)
     },

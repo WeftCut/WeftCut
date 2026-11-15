@@ -271,9 +271,9 @@ has nowhere to show it. Why a page and not a card in the chat: ADR 0168.
   With the app closed only the binary's two tools are listed; `launch_weftcut`
   brings this one in through `tools/list_changed`.
 - **Served by the app** on the MCP listener (`main/companion/`). The page's
-  files are plain ES modules in `apps/desktop/cli/companion/`, where the
-  `weftcut` binary's module can also reach them; the app bundles them at
-  build time.
+  files are plain ES modules in `apps/desktop/cli/companion/`, with no build
+  step of their own; the app bundles them at build time. The `weftcut` binary
+  does not serve them (ADR 0168).
 - **The page key** is 32 random bytes, hex, in `<userData>/companion_key.json`
   (`0600` on POSIX), apart from the MCP bearer: neither opens the other's
   routes. It is made once and never rotated by itself, and *Refresh* in
@@ -286,8 +286,11 @@ has nowhere to show it. Why a page and not a card in the chat: ADR 0168.
   (`play`, `pause`, `seek` with `t_us`, `focus`) need
   `Authorization: Bearer <page key>`. A missing or wrong
   key, the MCP bearer included, is `401` and a `Companion request rejected`
-  row (never the header); a `Host` other than the loopback bind is `403`. A
-  control while no editor is attached is `409 editor_not_ready`. The page's
+  row (never the header); a `Host` other than the loopback bind is `403`. Both
+  checks come before any body is read; a control body over 1 KB is `413`. A
+  control while no editor is attached is `409 editor_not_ready`. The event
+  stream writes a comment every 15 s, and drops a page with more than
+  256 KB unsent, which reconnects and reads the state again. The page's
   CSP admits only its own files, images included, and origin, with no inline script or style.
 - **Sandboxed frames.** A host that frames the page with
   `sandbox="allow-scripts"` gives it an opaque origin; its requests arrive
@@ -304,15 +307,21 @@ has nowhere to show it. Why a page and not a card in the chat: ADR 0168.
   export runs and the editor is attached, the editor captures its own preview
   canvas (the final composite) and encodes it: H.264 (Annex B) on a hardware
   encoder where one takes the size, else VP8 in software; an encoder that
-  fails hands over to the next. At most 15 frames a second and 960 px wide,
+  fails hands over to the next. When the last one fails, the editor tells
+  main, which stops asking for the picture and tells the pages showing it;
+  it asks again when a page opens the picture anew or another editor
+  attaches. The capture follows the preview's canvas: switching between the
+  editor and agent mode replaces it, and the new one starts on a keyframe.
+  At most 15 frames a second and 960 px wide,
   2 a second while paused (every frame for 600 ms after a seek), a keyframe
   every 2 s, a frame dropped while the encoder is behind. With no page
   showing it nothing is captured or encoded. Meanwhile main turns the editor
   window's background throttling off, so a hidden window still paints.
 - **`/companion/video`** is a run of frames: `u8` kind (0 config, 1 key,
-  2 delta), `f64` timestamp in µs, `u32` length, little-endian, then the
-  payload; a config's payload is `{ codec, coded_width, coded_height }` as
-  JSON. A new viewer gets the config and the last keyframe at once and
+  2 delta, 3 failed), `f64` timestamp in µs, `u32` length, little-endian, then
+  the payload; a config's payload is `{ codec, coded_width, coded_height }` as
+  JSON, a failed one's is empty. A page in a hidden tab closes the stream,
+  unless the picture is popped out, and opens it again when shown. A new viewer gets the config and the last keyframe at once and
   continues from the next keyframe. A viewer with more than 2 MB unsent gets
   nothing until it is under again, and then only from a keyframe. The page
   decodes with WebCodecs; without them it says it cannot show the picture.
@@ -320,7 +329,8 @@ has nowhere to show it. Why a page and not a card in the chat: ADR 0168.
   WeftCut is not running (it retries after 1 s, backing off to 5 s); WeftCut
   is opening the project; no project is open. Then, over the picture: an
   export runs (no picture until it ends); the picture is off ([Show picture]);
-  the browser cannot show it; WeftCut is minimized, so the picture updates
+  the browser cannot show it; WeftCut could not encode it ([Try again]
+  opens it anew); WeftCut is minimized, so the picture updates
   about once a second ([Show WeftCut]); starting; live. The stage carries the
   state as `data-picture`. It speaks the app's UI language.
 

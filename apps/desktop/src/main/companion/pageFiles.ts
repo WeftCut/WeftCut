@@ -2,7 +2,7 @@
 //
 // The companion page's files as the app serves them, bundled into main at build
 // time. They live in `apps/desktop/cli/companion/`, plain ES modules with no
-// build step, so the `weftcut` binary's module can embed the same files.
+// build step, which the tests load as they are (`shared/testing/companionPage.ts`).
 import pageHtml from '../../../cli/companion/page.html?raw'
 import pageJs from '../../../cli/companion/ui/page.js?raw'
 import appJs from '../../../cli/companion/ui/app.js?raw'
@@ -31,8 +31,8 @@ export const UI_FILES: ReadonlyMap<string, PageFile> = new Map([
   ['pictureChunks.js', { body: pictureChunksJs, type: JS }],
   ['app.css', { body: appCss, type: 'text/css; charset=utf-8' }],
   // LANDMINE: a copy of the editor's `renderer/public/icons/icon.svg`, so the
-  // page's folder stays whole for the `weftcut` binary; `pageUi.test.ts`
-  // holds the two equal.
+  // page's folder holds every file the page loads; `pageUi.test.ts` holds the
+  // two equal.
   ['icon.svg', { body: iconSvg, type: 'image/svg+xml; charset=utf-8' }],
 ])
 

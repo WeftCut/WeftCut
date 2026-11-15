@@ -15,18 +15,29 @@ import { codecGlobals, fakeCapture, log, paint, resetCodecs, support } from "./t
 
 const FRAME_MS = 1000 / PICTURE_FPS;
 
-function harness() {
+const fakeCanvas = () => ({ captureStream: fakeCapture }) as unknown as HTMLCanvasElement;
+/** Lets whatever microtasks are queued (a read, a configure, an encode) settle. */
+const settle = () => new Promise<void>((r) => { setImmediate(r); });
+
+function harness(initialCanvas: HTMLCanvasElement | null = fakeCanvas()) {
   const clock = { now: 0 };
   const player = { playing: false, moved: null as (() => void) | null };
-  const sent = { configs: [] as CompanionMirrorConfig[], chunks: [] as CompanionMirrorChunk[] };
+  const preview = { canvas: initialCanvas };
+  const sent = { configs: [] as CompanionMirrorConfig[], chunks: [] as CompanionMirrorChunk[], failed: 0 };
+  /** The encoder's pending waits; each ends only when the test says time passed. */
+  const waits: Array<() => void> = [];
   const env: MirrorEnv = {
-    canvas: () => ({ captureStream: fakeCapture }) as unknown as HTMLCanvasElement,
+    canvas: () => preview.canvas,
     playing: () => player.playing,
     onPlayheadMove: (cb) => { player.moved = cb; return () => { player.moved = null; }; },
     now: () => clock.now,
-    wait: async () => {},
+    wait: () => new Promise<void>((r) => { waits.push(r); }),
   };
-  const mirror = startMirror({ config: (c) => sent.configs.push(c), chunk: (c) => sent.chunks.push(c) }, env);
+  const mirror = startMirror({
+    config: (c) => sent.configs.push(c),
+    chunk: (c) => sent.chunks.push(c),
+    failed: () => { sent.failed++; },
+  }, env);
   const encoder = () => log.encoders.at(-1)!;
   const encodedCount = () => log.encoders.reduce((n, e) => n + e.encoded.length, 0);
   /** Paints a frame at `at` ms and waits until the encoder took or skipped it. */
@@ -34,11 +45,15 @@ function harness() {
     clock.now = at;
     const before = encodedCount();
     paint(size[0], size[1], at * 1000);
-    // The read, the configure and the encode all settle as microtasks.
-    await new Promise<void>((r) => { setImmediate(r); });
+    await settle();
     return encodedCount() > before;
   };
-  return { mirror, clock, player, sent, encoder, frameAt };
+  /** Ends every wait pending now, as `CANVAS_RETRY_MS` passing would. */
+  const elapse = async () => {
+    for (const end of waits.splice(0)) end();
+    await settle();
+  };
+  return { mirror, clock, player, preview, sent, encoder, frameAt, elapse };
 }
 
 beforeEach(() => {
@@ -48,13 +63,65 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("startMirror", () => {
-  it("captures the canvas once, and stop ends its track and closes the encoder", async () => {
-    const { mirror, frameAt, encoder } = harness();
+  it("keeps one capture while the preview keeps its canvas, and stop ends its track and closes the encoder", async () => {
+    const { mirror, frameAt, encoder, elapse, sent } = harness();
     await vi.waitFor(() => expect(log.captures).toBe(1));
     expect(await frameAt(0)).toBe(true);
+    await elapse();
+    await elapse();
+    expect(log.captures).toBe(1);
     mirror.stop();
     expect(log.tracksStopped).toBe(1);
     expect(encoder().state).toBe("closed");
+    expect(sent.failed).toBe(0);
+  });
+
+  it("follows the preview to the canvas that replaced its own, starting it on a keyframe", async () => {
+    const { mirror, frameAt, encoder, elapse, player, preview } = harness();
+    player.playing = true;
+    await vi.waitFor(() => expect(log.captures).toBe(1));
+    await frameAt(0);
+    await frameAt(FRAME_MS);
+    expect(encoder().encoded.map((e) => e.keyFrame)).toEqual([true, false]);
+
+    // Agent mode and the editor each mount their own preview.
+    preview.canvas = fakeCanvas();
+    await elapse();
+    await vi.waitFor(() => expect(log.captures).toBe(2));
+    expect(log.tracksStopped).toBe(1);
+    expect(await frameAt(2 * FRAME_MS)).toBe(true);
+    expect(encoder().encoded.at(-1)!.keyFrame).toBe(true);
+    mirror.stop();
+  });
+
+  it("waits while the preview has no canvas, and captures the one mounted next", async () => {
+    const { mirror, frameAt, elapse, preview } = harness(null);
+    await elapse();
+    expect(log.captures).toBe(0);
+    preview.canvas = fakeCanvas();
+    await elapse();
+    await vi.waitFor(() => expect(log.captures).toBe(1));
+    expect(await frameAt(0)).toBe(true);
+
+    preview.canvas = null;
+    await elapse();
+    expect(log.tracksStopped).toBe(1);
+    await elapse();
+    expect(log.captures).toBe(1);
+    mirror.stop();
+  });
+
+  it("tells the bridge once, and ends the capture, when every encoder refuses the frames", async () => {
+    for (const c of CANDIDATES) support.refusing.add(c.codec);
+    const { frameAt, sent, mirror } = harness();
+    await vi.waitFor(() => expect(log.captures).toBe(1));
+    await frameAt(0);
+    await frameAt(FRAME_MS);
+    expect(log.encoders.map((e) => e.config!.codec)).toEqual(CANDIDATES.map((c) => c.codec));
+    await vi.waitFor(() => expect(sent.failed).toBe(1));
+    expect(log.tracksStopped).toBe(1);
+    mirror.stop();
+    expect(sent.failed).toBe(1);
   });
 
   it("prefers hardware H.264 and hands over to VP8 when that encoder refuses the frames", async () => {

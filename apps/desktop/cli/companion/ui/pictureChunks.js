@@ -9,6 +9,8 @@ export const HEADER_BYTES = 13
 export const FRAME_CONFIG = 0
 export const FRAME_KEY = 1
 export const FRAME_DELTA = 2
+/** No payload: the app's encoder gave up, until the picture is asked for again. */
+export const FRAME_FAILED = 3
 
 /** Frames waiting in the decoder past which a delta is dropped. The deltas
  *  after a dropped one reference it, so the decoder then waits for the next
@@ -48,9 +50,11 @@ export function frameSplitter() {
  *   canvas: HTMLCanvasElement,
  *   codecs: { VideoDecoder: typeof VideoDecoder, EncodedVideoChunk: typeof EncodedVideoChunk },
  *   shown(): void,
- * }} deps `shown` is called on every frame drawn.
+ *   failed(): void,
+ * }} deps `shown` is called on every frame drawn; `failed` when the app says
+ *   it cannot encode the picture.
  */
-export function pictureDecoder({ canvas, codecs, shown }) {
+export function pictureDecoder({ canvas, codecs, shown, failed }) {
   const context = canvas.getContext('2d')
   let config = null
   let decoder = null
@@ -87,6 +91,13 @@ export function pictureDecoder({ canvas, codecs, shown }) {
         canvas.height = config.coded_height
         closeDecoder()
         waitingKey = true
+        return
+      }
+      if (frame.kind === FRAME_FAILED) {
+        config = null
+        closeDecoder()
+        waitingKey = true
+        failed()
         return
       }
       const key = frame.kind === FRAME_KEY

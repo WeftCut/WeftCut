@@ -179,7 +179,7 @@ button:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, v
 .cw-picture, .cw-picture canvas { width: 100%; height: 100%; }
 .cw-picture canvas { display: block; object-fit: contain; }
 /* A picture with nothing new behind the message is dimmed under it. */
-.cw-stage:is([data-picture="export"], [data-picture="starting"]) .cw-picture { opacity: 0.3; }
+.cw-stage:is([data-picture="export"], [data-picture="starting"], [data-picture="failed"]) .cw-picture { opacity: 0.3; }
 .cw-stage:is([data-picture="off"], [data-picture="unsupported"]) .cw-picture { display: none; }
 
 .cw-poster {

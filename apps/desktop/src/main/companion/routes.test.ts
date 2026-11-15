@@ -2,9 +2,12 @@
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import express from 'express'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CompanionHub } from './hub'
-import { mountCompanionRoutes, type CompanionRouteDeps } from './routes'
+import {
+  CONTROL_BODY_LIMIT_BYTES, EVENTS_BUFFER_BYTES, EVENTS_HEARTBEAT_MS, mountCompanionRoutes, streamEvents,
+  type CompanionRouteDeps, type EventResponse,
+} from './routes'
 import { PAGE_CSP, UI_FILES } from './pageFiles'
 import { createActor } from '../state/actor'
 import { blankProject } from '../state/model'
@@ -31,8 +34,8 @@ let server: http.Server
 let port: number
 
 beforeAll(async () => {
+  // No body parser of the app's own: the routes bring theirs, as on the MCP host.
   const app = express()
-  app.use(express.json())
   mountCompanionRoutes(app, hub, PAGE_KEY, { rejected: (d) => { rejected.push(d) } })
   server = await new Promise<http.Server>((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)) })
   port = (server.address() as AddressInfo).port
@@ -42,9 +45,10 @@ beforeEach(() => { rejected.length = 0 })
 
 interface Answer { status: number; headers: http.IncomingHttpHeaders; body: string }
 
-function request(path: string, opts: { method?: string; headers?: Record<string, string>; body?: unknown } = {}): Promise<Answer> {
+/** `raw` is sent as the JSON body as is, valid or not. */
+function request(path: string, opts: { method?: string; headers?: Record<string, string>; body?: unknown; raw?: string } = {}): Promise<Answer> {
   return new Promise((resolve, reject) => {
-    const body = opts.body === undefined ? undefined : JSON.stringify(opts.body)
+    const body = opts.raw ?? (opts.body === undefined ? undefined : JSON.stringify(opts.body))
     const req = http.request({
       host: '127.0.0.1', port, path, method: opts.method ?? 'GET',
       headers: { Host: `127.0.0.1:${port}`, ...(body ? { 'Content-Type': 'application/json' } : {}), ...opts.headers },
@@ -123,6 +127,17 @@ describe('the data routes', () => {
     hub.detach('T')
   })
 
+  it('refuse a control body without the key before reading it, and read only a small one with it', async () => {
+    const control = { method: 'POST', headers: { Origin: 'null' } }
+    const tooLarge = JSON.stringify({ action: 'play', pad: 'x'.repeat(CONTROL_BODY_LIMIT_BYTES) })
+    // Parsed first, these would answer 413 and 400.
+    expect((await request('/companion/control', { ...control, raw: tooLarge })).status).toBe(401)
+    expect((await request('/companion/control', { ...control, raw: '{"action":' })).status).toBe(401)
+    const keyed = { method: 'POST', headers: bearer(PAGE_KEY) }
+    expect((await request('/companion/control', { ...keyed, raw: tooLarge })).status).toBe(413)
+    expect((await request('/companion/control', { ...keyed, body: { action: 'focus' } })).status).toBe(204)
+  })
+
   it('ask the editor for the picture while a page has it open, and stream the frames to it', async () => {
     hub.attach('T')
     expect(hub.demand().picture).toBe(false)
@@ -192,5 +207,61 @@ describe('cross-origin reads', () => {
       const preflight = await request('/companion/state', { method: 'OPTIONS', headers: { Origin: origin, 'Access-Control-Request-Method': 'GET' } })
       expect(preflight.headers['access-control-allow-origin'], origin).toBeUndefined()
     }
+  })
+})
+
+describe('an event stream', () => {
+  type Viewer = Parameters<CompanionHub['watch']>[0]
+  /** A response that takes what it is given, `unsent` bytes behind. */
+  function fakeResponse() {
+    const written: string[] = []
+    let onClose: (() => void) | null = null
+    const res = {
+      unsent: 0,
+      destroyed: false,
+      get writableLength() { return this.unsent },
+      write(chunk: string) { written.push(chunk) },
+      destroy() { this.destroyed = true; onClose?.() },
+      on(_event: 'close', listener: () => void) { onClose = listener },
+    }
+    return { res: res satisfies EventResponse, written, close: () => onClose?.() }
+  }
+  /** A hub with one thing to say, that counts who listens. */
+  function fakeHub() {
+    const viewers = new Set<Viewer>()
+    return {
+      viewers,
+      say: () => { for (const v of viewers) v.send('project', {}) },
+      watch: (v: Viewer) => { viewers.add(v); return () => { viewers.delete(v) } },
+    }
+  }
+
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('writes a comment every EVENTS_HEARTBEAT_MS, and stops with the stream', () => {
+    const { res, written, close } = fakeResponse()
+    const hub = fakeHub()
+    streamEvents(res, hub)
+    vi.advanceTimersByTime(EVENTS_HEARTBEAT_MS)
+    expect(written).toHaveLength(2)
+    expect(written[1]).toMatch(/^:.*\n\n$/)
+    close()
+    expect(hub.viewers.size).toBe(0)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('drops a page with more than EVENTS_BUFFER_BYTES unsent, and stops watching for it', () => {
+    const { res, written } = fakeResponse()
+    const hub = fakeHub()
+    streamEvents(res, hub)
+    hub.say()
+    expect(written).toHaveLength(2)
+    res.unsent = EVENTS_BUFFER_BYTES + 1
+    hub.say()
+    expect(res.destroyed).toBe(true)
+    expect(written).toHaveLength(2)
+    expect(hub.viewers.size).toBe(0)
+    expect(vi.getTimerCount()).toBe(0)
   })
 })
