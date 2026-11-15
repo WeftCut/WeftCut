@@ -6,9 +6,10 @@
 // reaches the package through `extraResources` from out/cli, a link that packs
 // nothing without complaining when `npm run build:cli` did not run, or ran for
 // another OS. A build without it would ship an app whose Connect panel has no
-// stdio config to offer and whose older configs find nothing to serve them.
+// stdio config to offer and whose configs find nothing to run.
 import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { cliBinaryFile } from './cli-identity.mjs'
 
 const LABEL = 'afterPack(cli):'
 
@@ -17,7 +18,7 @@ export const GO_LICENSE = 'GO-LICENSE.txt'
 
 /** Where the packaged binary must be for `platform`. */
 export function cliPath(resourcesDir, platform) {
-  return join(resourcesDir, 'cli', platform === 'win32' ? 'weftcut.exe' : 'weftcut')
+  return join(resourcesDir, 'cli', cliBinaryFile(platform))
 }
 
 export default function afterPackCli(context) {

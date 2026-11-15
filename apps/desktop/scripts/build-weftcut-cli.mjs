@@ -12,12 +12,13 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { cliBinaryFile, identity } from './cli-identity.mjs'
 
 const ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url))) // apps/desktop
 const { version } = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
 const outDir = path.join(ROOT, 'out', 'cli')
 const windows = process.platform === 'win32'
-const out = path.join(outDir, windows ? 'weftcut.exe' : 'weftcut')
+const out = path.join(outDir, cliBinaryFile(process.platform))
 // Windows: linked for the GUI subsystem, so no client's way of spawning it can
 // make Windows open a console window. The binary takes its parent's console
 // itself (cli/console_windows.go).
@@ -38,4 +39,4 @@ if (built.error) {
   process.exit(1)
 }
 if (built.status !== 0) process.exit(built.status ?? 1)
-console.log(`built ${path.relative(ROOT, out)} (weftcut ${version})`)
+console.log(`built ${path.relative(ROOT, out)} (${identity.binaryName} ${version})`)

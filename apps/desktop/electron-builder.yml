@@ -1,3 +1,5 @@
+# appId, productName, executableName and the out/cli filter below are copies of
+# cli/identity.json; scripts/cli-identity.test.mjs holds them to it.
 appId: dev.weftcut.desktop
 productName: WeftCut
 executableName: WeftCut

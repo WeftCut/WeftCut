@@ -185,7 +185,8 @@ describe("AgentSection", () => {
     await snippetText();
     await userEvent.click(screen.getByRole("tab", { name: "Claude Code" }));
     expect(await cliText()).toBe(
-      `claude mcp add -s user -t http weftcut ${INFO.url} ` +
+      "claude mcp remove weftcut -s user; " +
+        `claude mcp add -s user -t http weftcut ${INFO.url} ` +
         '-H "Authorization: Bearer ••••••••••••••••"',
     );
 
@@ -361,7 +362,7 @@ describe("AgentSection with the weftcut binary installed", () => {
     ]);
   });
 
-  it("gives Codex and Claude an `mcp add` one-liner with the path quoted", async () => {
+  it("gives Codex and Claude an `mcp add` one-liner with the path quoted, Claude's replacing an existing entry", async () => {
     render(<AgentSection />);
     // shq quotes on whitespace *or* a backslash: unquoted, a POSIX shell would
     // eat the Windows separators (C:\Users → C:Users) in Git Bash.
@@ -370,7 +371,11 @@ describe("AgentSection with the weftcut binary installed", () => {
     expect(await cliText()).toBe(`codex mcp add weftcut -- ${launch}`);
 
     await userEvent.click(screen.getByRole("tab", { name: "Claude Code" }));
-    expect(await cliText()).toBe(`claude mcp add weftcut -s user -- ${launch}`);
+    // `claude mcp add` refuses a name the scope holds; the remove may fail
+    // on nothing to remove, so `;` and not `&&` joins them.
+    expect(await cliText()).toBe(
+      `claude mcp remove weftcut -s user; claude mcp add weftcut -s user -- ${launch}`,
+    );
   });
 
   it("leaves a path without spaces or backslashes unquoted in the one-liner", async () => {

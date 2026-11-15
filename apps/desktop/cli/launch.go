@@ -11,9 +11,6 @@ import (
 	"strings"
 )
 
-// bundleID is the app's macOS bundle identifier (electron-builder.yml appId).
-const bundleID = "dev.weftcut.desktop"
-
 // appTarget is what starts the app.
 type appTarget struct {
 	exec string
@@ -78,7 +75,7 @@ func siblingApp(h host) (appTarget, bool) {
 	if h.goos == "windows" {
 		suffix = ".exe"
 	}
-	for _, name := range []string{"WeftCut", "weftcut"} {
+	for _, name := range []string{product.ProductName, strings.ToLower(product.ProductName)} {
 		if candidate := filepath.Join(root, name+suffix); h.isFile(candidate) {
 			return appTarget{exec: candidate}, true
 		}
@@ -115,7 +112,7 @@ func launchCommand(h host, t appTarget) (name string, args []string) {
 	if h.isDir(t.bundle) {
 		args = []string{"-a", t.bundle}
 	} else {
-		args = []string{"-b", bundleID}
+		args = []string{"-b", product.BundleID}
 	}
 	if len(t.args) > 0 {
 		args = append(append(args, "--args"), t.args...)

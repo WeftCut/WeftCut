@@ -54,9 +54,9 @@ func (h host) home() string {
 const authFileName = "mcp_auth.json"
 
 // defaultUserDataDir is the last-resort guess, for a binary run from outside
-// any profile. Electron names the directory after package.json's productName
-// ("WeftCut"); the scoped name is where profiles written before that key was
-// set live. Whichever holds the rendezvous file wins, else the first.
+// any profile. Electron names the directory after package.json's productName;
+// the package name is where profiles written before that key was set live.
+// Whichever holds the rendezvous file wins, else the first.
 func defaultUserDataDir(h host) string {
 	var appData string
 	switch h.goos {
@@ -71,7 +71,7 @@ func defaultUserDataDir(h host) string {
 			appData = filepath.Join(h.home(), ".config")
 		}
 	}
-	candidates := []string{filepath.Join(appData, "WeftCut"), filepath.Join(appData, "@weftcut", "desktop")}
+	candidates := []string{filepath.Join(appData, product.ProductName), filepath.Join(appData, filepath.FromSlash(product.PackageName))}
 	for _, c := range candidates {
 		if h.isFile(filepath.Join(c, authFileName)) {
 			return c

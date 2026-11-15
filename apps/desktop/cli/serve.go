@@ -325,9 +325,15 @@ func (s *server) clientRequest(r *request) {
 	}
 }
 
-// inUse reports whether the client still awaits an answer under this id.
+// inUse reports whether an answer may still come under this id: the client
+// awaits one, or the app still owes one for a call the shim already answered.
+// The app's late answer to that call would otherwise reach the request that
+// reused its id.
 func (s *server) inUse(key string) bool {
 	if _, ok := s.pending[key]; ok {
+		return true
+	}
+	if _, ok := s.orphans[key]; ok {
 		return true
 	}
 	if _, ok := s.local[key]; ok {

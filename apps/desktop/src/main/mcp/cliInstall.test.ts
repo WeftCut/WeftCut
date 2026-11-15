@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { LEGACY_SHIM_NAME, cliBinaryName, installCli, launchRecord, stdioConnectConfig, type LaunchRecord } from './cliInstall.js'
+import { LEGACY_SHIM_NAME, cliBinaryName, installCli, launchRecord, type LaunchRecord } from './cliInstall.js'
 
 const tmps: string[] = []
 function tmpDir(): string {
@@ -143,14 +143,5 @@ describe('launchRecord', () => {
     const dev = { ...mac, isPackaged: false, execPath: '/Users/u/repo/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron' }
     expect('bundle' in launchRecord(dev)).toBe(false)
     expect('bundle' in launchRecord(base)).toBe(false)
-  })
-})
-
-describe('stdioConnectConfig', () => {
-  it('is the installed binary and the mcp subcommand, with no environment', () => {
-    expect(stdioConnectConfig('C:\\Users\\u\\AppData\\Roaming\\WeftCut\\cli\\weftcut.exe')).toEqual({
-      command: 'C:\\Users\\u\\AppData\\Roaming\\WeftCut\\cli\\weftcut.exe',
-      args: ['mcp'],
-    })
   })
 })
