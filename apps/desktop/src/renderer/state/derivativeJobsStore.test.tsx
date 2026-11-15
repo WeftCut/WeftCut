@@ -56,4 +56,19 @@ describe("derivative jobs", () => {
     unmount();
     expect(handlers.size).toBe(0);
   });
+
+  it("forgets the leaving project's jobs, which main cancels without an end event, and counts the next one's", async () => {
+    function Host() {
+      useDerivativeJobEvents();
+      return null;
+    }
+    render(<Host />);
+    await act(async () => {});
+    const emit = (name: string, payload: MediaJobEvent) => act(() => handlers.get(name)!({ payload }));
+    emit(MEDIA_JOB_EVENTS.started, { media_id: "a", kind: "proxy" });
+    act(() => handlers.get("project:workspace-changing")!({ payload: {} as MediaJobEvent }));
+    expect(running()).toEqual([]);
+    emit(MEDIA_JOB_EVENTS.started, { media_id: "b", kind: "thumbnails" });
+    expect(running()).toEqual(["b:thumbnails"]);
+  });
 });
