@@ -32,9 +32,12 @@ async function call<T>(client: Client, name: string, args: Record<string, unknow
   return result.structuredContent as T
 }
 
-/** The view through both doors, which must agree. */
-async function readPlayhead(client: Client): Promise<Playhead> {
-  const tool = await call<Playhead>(client, 'read_project', { view: 'playhead' })
+const readPlayhead = (client: Client): Promise<Playhead> => call<Playhead>(client, 'read_project', { view: 'playhead' })
+
+/** The view through both doors, once the editor has settled: two reads of a
+ *  live view taken while a change lands answer two moments. */
+async function readSettled(client: Client): Promise<Playhead> {
+  const tool = await readPlayhead(client)
   const resource = await client.readResource({ uri: 'project://playhead' })
   expect(JSON.parse((resource.contents[0] as { text: string }).text)).toEqual(tool)
   return tool
@@ -69,7 +72,7 @@ test('an agent reads where the user is: the clip under the playhead, the selecti
     await page.keyboard.press('Shift+ArrowRight')
     await expect.poll(() => playheadUs(page)).toBe(1_000_000)
 
-    const parked = await readPlayhead(client)
+    const parked = await readSettled(client)
     expect(parked).toMatchObject({ t_us: 1_000_000, timecode: '00:00:01:00', playing: false, range: null })
     expect(parked.under_playhead.map((l) => l.layer_id)).toContain(closing)
     expect(parked.under_playhead.map((l) => l.layer_id)).not.toContain(opening)
@@ -82,7 +85,7 @@ test('an agent reads where the user is: the clip under the playhead, the selecti
     await page.keyboard.press('o')
     await page.evaluate((id) => (window as any).__weftcutTest.revealLayer({ layerId: id }), opening)
     await expect.poll(async () => { const p = await readPlayhead(client!); return p.range !== null && p.selection.includes(opening!) }).toBe(true)
-    const marked = await readPlayhead(client)
+    const marked = await readSettled(client)
     expect(marked.selection).toContain(opening)
     expect(marked.range!.t_start_us).toBe(0)
     expect(marked.range!.t_end_us).toBeGreaterThan(1_000_000)
