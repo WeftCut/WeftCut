@@ -1,15 +1,17 @@
 // The app's side of the `weftcut` binary's contract (apps/desktop/cli, ADR
 // 0165): at every start it puts the binary in <userData>/cli/ and writes
-// launch.json beside it, and it tells a client how to run that copy.
+// launch.json beside it. A client config runs that copy (`stdioEntry`,
+// shared/agentHosts.ts).
 //
 // Electron-free (paths ride in as arguments): `electron` cannot load under the
 // unit runner.
 import fs from 'node:fs'
 import path from 'node:path'
+import identity from '../../../cli/identity.json'
 
 /// The binary's file name on `platform`.
 export function cliBinaryName(platform: NodeJS.Platform): string {
-  return platform === 'win32' ? 'weftcut.exe' : 'weftcut'
+  return platform === 'win32' ? `${identity.binaryName}.exe` : identity.binaryName
 }
 
 /// Where this app ships the binary: `<resources>/cli/` when packaged
@@ -19,8 +21,8 @@ export function shippedCliDir(opts: { isPackaged: boolean; resourcesPath: string
   return opts.isPackaged ? path.join(opts.resourcesPath, 'cli') : path.join(opts.mainDir, '..', 'cli')
 }
 
-/// The stdio shim earlier releases installed in the same folder. A config that
-/// still names it is served by `legacyShim.ts`.
+/// The JS stdio shim 0.7.x and earlier installed in the same folder. A config
+/// that still names it is refused (`legacyConfig.ts`).
 export const LEGACY_SHIM_NAME = 'weftcut-mcp.cjs'
 
 const LAUNCH_RECORD_NAME = 'launch.json'
@@ -159,11 +161,4 @@ export function installCli(opts: {
     /* the copy of an earlier start stays */
   }
   return fs.existsSync(dest) ? dest : null
-}
-
-/// What a client config runs: the profile's copy of the binary and the `mcp`
-/// subcommand. No URL, token or environment: the binary finds the profile from
-/// where it sits and reads the endpoint there at every connect.
-export function stdioConnectConfig(cliPath: string): { command: string; args: string[] } {
-  return { command: cliPath, args: ['mcp'] }
 }

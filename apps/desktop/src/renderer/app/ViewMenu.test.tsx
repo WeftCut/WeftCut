@@ -392,6 +392,21 @@ describe("ViewMenu registry dispatch", () => {
     );
   });
 
+  // The palette greys out what an export holds; the menu must not offer it.
+  it("disables a row whose command is disabled, and does not run it", async () => {
+    const run = vi.fn();
+    provide([
+      { id: "enterAgentMode", labelKey: "view.enter_agent_mode", enabled: () => false, run },
+    ]);
+    renderMenu();
+    openView();
+
+    const row = (await screen.findByText("Enter Agent Mode")).closest('[role="menuitem"]')!;
+    expect(row.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(row);
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("an unregistered command id is a silent no-op (absent-id policy)", async () => {
     renderMenu();
     openView();

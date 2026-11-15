@@ -135,7 +135,7 @@ func TestLaunchCommand(t *testing.T) {
 			command{"/usr/bin/open", []string{"-a", bundle, "--args", "--a", "b c"}}},
 		{"and by bundle id once the path is gone",
 			machine("darwin", nil, "", nil, nil), appTarget{exec: exe, args: []string{"--a"}, bundle: bundle},
-			command{"/usr/bin/open", []string{"-b", bundleID, "--args", "--a"}}},
+			command{"/usr/bin/open", []string{"-b", product.BundleID, "--args", "--a"}}},
 		{"macOS without a bundle (a dev run) runs the executable",
 			machine("darwin", nil, "", nil, nil), appTarget{exec: "/dev/electron", args: []string{"."}},
 			command{"/dev/electron", []string{"."}}},

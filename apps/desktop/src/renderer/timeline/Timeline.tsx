@@ -135,6 +135,7 @@ import { useFollowPlayhead } from "./hooks/useFollowPlayhead";
 import { useWheelScroll } from "./hooks/useWheelScroll";
 import { useHeightDrag } from "./hooks/useHeightDrag";
 import { usePointerGesture } from "../hooks/usePointerGesture";
+import { useModKeyReading, type ModifierFlags } from "../modKeyReading";
 import { useLayerDrag } from "./hooks/useLayerDrag";
 import { LayerDragTrimMonitor } from "./LayerDragTrimMonitor";
 import { useIsLayerDragging } from "./layerDragStore";
@@ -336,6 +337,11 @@ export const Timeline = memo(function Timeline({
     atUs: number;
     snapped: boolean;
   } | null>(null);
+  // The clip and pointer x the blade mark was last resolved for, so a Mod
+  // change with the pointer still can resolve it again. `bladeHovering` mounts
+  // the key listeners for exactly that span.
+  const bladeHoverRef = useRef<{ layer: LayerSummary; clientX: number } | null>(null);
+  const [bladeHovering, setBladeHovering] = useState(false);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
@@ -1524,8 +1530,8 @@ export const Timeline = memo(function Timeline({
     ],
   );
 
-  const updateBladePreview = useCallback(
-    (layer: LayerSummary | null, clientX?: number, snapSuspended = false) => {
+  const showBladePreview = useCallback(
+    (layer: LayerSummary | null, clientX: number | undefined, snapSuspended: boolean) => {
       const snapResult = bladeMode && layer && clientX !== undefined
         ? bladeCutTimeFromClientX(layer, clientX, snapSuspended) : null;
       setBladePreview(snapResult === null || !layer ? null : {
@@ -1535,9 +1541,32 @@ export const Timeline = memo(function Timeline({
     [bladeCutTimeFromClientX, bladeMode],
   );
 
+  const bladeModKey = useModKeyReading(bladeHovering, (held) => {
+    const hover = bladeHoverRef.current;
+    if (hover !== null) showBladePreview(hover.layer, hover.clientX, held);
+  });
+
+  const setBladeHover = useCallback(
+    (hover: { layer: LayerSummary; clientX: number } | null) => {
+      bladeHoverRef.current = hover;
+      setBladeHovering(hover !== null);
+    },
+    [],
+  );
+
+  const updateBladePreview = useCallback(
+    (layer: LayerSummary | null, clientX?: number, mods?: ModifierFlags) => {
+      setBladeHover(layer !== null && clientX !== undefined ? { layer, clientX } : null);
+      showBladePreview(layer, clientX, mods ? bladeModKey.observe(mods) : false);
+    },
+    [bladeModKey, setBladeHover, showBladePreview],
+  );
+
   useEffect(() => {
-    if (!bladeMode) setBladePreview(null);
-  }, [bladeMode]);
+    if (bladeMode) return;
+    setBladePreview(null);
+    setBladeHover(null);
+  }, [bladeMode, setBladeHover]);
 
   // Subscribed, not read at event time: flipping the override while hovering
   // changes what the click would cut, and the blade mark must say so.
@@ -1555,11 +1584,17 @@ export const Timeline = memo(function Timeline({
   // frame-precise cuts. After a split the user stays in blade mode
   // (NLE convention); press `C` or `Esc` to exit.
   const splitFromClientX = useCallback(
-    async (layer: LayerSummary, clientX: number, snapSuspended = false) => {
+    async (layer: LayerSummary, clientX: number, mods: ModifierFlags) => {
+      // Mod as the blade mark showed it while one is shown on this clip, so the
+      // cut lands where the mark stood; a click with no mark yet reads its own.
+      const snapSuspended = bladeHoverRef.current?.layer.id === layer.id
+        ? bladeModKey.held() : bladeModKey.observe(mods);
       const snapResult = bladeCutTimeFromClientX(layer, clientX, snapSuspended);
       if (snapResult === null) return;
       const atUs = snapResult.atUs;
       setBladePreview(null);
+      // The hovered clip is about to be two: the next pointermove names which.
+      setBladeHover(null);
       try {
         // Link-aware, as `splitAtPlayhead` sends it; escaped only under the
         // link override.
@@ -1569,7 +1604,7 @@ export const Timeline = memo(function Timeline({
         logMutationFailure(err, "Blade split");
       }
     },
-    [bladeCutTimeFromClientX, onMutated],
+    [bladeCutTimeFromClientX, bladeModKey, onMutated, setBladeHover],
   );
 
   // Esc disarms the sample-region one-shot. Its own effect rather than a branch

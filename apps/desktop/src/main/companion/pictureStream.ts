@@ -5,7 +5,7 @@
 // encodes once; every viewer gets the same bytes, as fast as it takes them.
 // Whether the editor encodes at all is `hub.ts`'s demand.
 import {
-  MIRROR_FRAME_CONFIG, MIRROR_FRAME_DELTA, MIRROR_FRAME_KEY, MIRROR_HEADER_BYTES, VIEWER_BUFFER_BYTES,
+  MIRROR_FRAME_CONFIG, MIRROR_FRAME_DELTA, MIRROR_FRAME_FAILED, MIRROR_FRAME_KEY, MIRROR_HEADER_BYTES, VIEWER_BUFFER_BYTES,
   type CompanionMirrorConfig,
 } from '../../shared/companion.js'
 
@@ -65,6 +65,13 @@ export class PictureStream {
       v.needKey = false
       sink.write(buf)
     }
+  }
+
+  /** No encoder takes the picture: every viewer is told so, past its buffer
+   *  bound too (the frame is a header). Call after `reset`. */
+  fail(): void {
+    const failed = frame(MIRROR_FRAME_FAILED, 0, Buffer.alloc(0))
+    for (const sink of this.viewers.keys()) sink.write(failed)
   }
 
   /** The encoder stopped: the next one starts with a config of its own. The

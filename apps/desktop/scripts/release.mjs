@@ -114,12 +114,20 @@ export async function validateAssets(directory, version) {
   return names.map(name => path.join(directory, name))
 }
 
+/// What a user must do or know before updating to `version`, when that
+/// version breaks something: docs/release-notes/<version>.md, or null.
+export async function readUpgradeNotes(version, root = ROOT) {
+  try { return (await fs.readFile(path.join(root, 'docs', 'release-notes', `${version}.md`), 'utf8')).trim() }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error }
+}
+
 // Prepended to every release's generated changelog (gh puts --notes ahead of
-// the notes it generates).
-export function releaseNotes() {
+// the notes it generates), after the version's upgrade notes when it has any.
+export function releaseNotes(upgrade = null) {
   const { 'latest.yml': [exe], 'latest-linux.yml': [appImage, deb], 'latest-mac.yml': [dmg] } = INSTALLERS
   const code = text => '`' + text + '`'
   return [
+    ...(upgrade ? [upgrade, ''] : []),
     '## Install',
     '',
     `- **Windows** — run ${code(exe)}. The app keeps itself current: new versions download in the background and install when you quit.`,
@@ -142,7 +150,10 @@ async function main() {
   const [command, arg] = process.argv.slice(2)
   if (command === 'version') return setVersion(arg)
   const version = await readVersion()
-  if (command === 'validate') return console.log(`Release version: ${version}`)
+  if (command === 'validate') {
+    const upgrade = await readUpgradeNotes(version)
+    return console.log(`Release version: ${version}${upgrade ? ' (with upgrade notes)' : ''}`)
+  }
   if (!process.env.GITHUB_REPOSITORY) throw new Error('GITHUB_REPOSITORY is required')
   if (command === 'plan') {
     const publish = planRelease(version, listReleases())
@@ -165,7 +176,7 @@ async function main() {
     const remote = execFileSync('git', ['ls-remote', '--tags', 'origin', `refs/tags/${tag}`], { encoding: 'utf8' }).trim()
     if (remote) throw new Error(`Tag ${tag} already exists without a matching draft`)
     gh(['release', 'create', tag, '--target', process.env.GITHUB_SHA, '--draft', '--title', `WeftCut ${version}`,
-      '--generate-notes', '--notes', releaseNotes()])
+      '--generate-notes', '--notes', releaseNotes(await readUpgradeNotes(version))])
   }
   gh(['release', 'upload', tag, ...files, '--clobber'])
   // The update provider sees the release only once every OS is complete.

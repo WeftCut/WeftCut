@@ -27,10 +27,10 @@ import {
   httpSnippet as hostHttpSnippet,
   placePath,
   stdioCommand,
+  stdioEntry,
   stdioSnippet as hostStdioSnippet,
   type AgentHost,
   type AgentHostOs,
-  type StdioEntry,
 } from "../../shared/agentHosts";
 
 const REFRESH_INTERVAL_MS = 1000;
@@ -41,11 +41,6 @@ const HOST_OS: Record<RendererOS, AgentHostOs> = {
   windows: "windows",
   linux: "linux",
 };
-
-function stdioEntryFrom(info: McpInfoView): StdioEntry | null {
-  if (!info.cli_path) return null;
-  return { command: info.cli_path, args: ["mcp"] };
-}
 
 /// The staged skill folder — the thing that gets copied, named by both the
 /// install prompt and the manual block. The separator is inferred from the
@@ -107,7 +102,10 @@ export function AgentSection() {
     };
   }, []);
 
-  const stdio = useMemo(() => (info ? stdioEntryFrom(info) : null), [info]);
+  const stdio = useMemo(
+    () => (info?.cli_path ? stdioEntry(info.cli_path) : null),
+    [info],
+  );
 
   const stdioSnippet = useMemo(
     () => (stdio ? hostStdioSnippet(host, stdio) : ""),

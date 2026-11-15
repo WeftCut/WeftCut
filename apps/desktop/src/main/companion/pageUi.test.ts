@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { frame } from './pictureStream'
 import { UI_FILES } from './pageFiles'
 import {
-  MIRROR_FRAME_CONFIG, MIRROR_FRAME_DELTA, MIRROR_FRAME_KEY, MIRROR_HEADER_BYTES,
+  MIRROR_FRAME_CONFIG, MIRROR_FRAME_DELTA, MIRROR_FRAME_FAILED, MIRROR_FRAME_KEY, MIRROR_HEADER_BYTES,
 } from '../../shared/companion'
 
 import { companionPageModule as pageModule } from '../../shared/testing/companionPage'
@@ -49,12 +49,13 @@ describe('pageState', () => {
 })
 
 describe('pictureState', () => {
-  const live = { exporting: false, wanted: true, supported: true, minimized: false, shown: true }
+  const live = { exporting: false, wanted: true, supported: true, failed: false, minimized: false, shown: true }
 
   it('names the first state that holds, in order', () => {
-    expect(pictureState({ ...live, exporting: true, wanted: false, supported: false, minimized: true, shown: false })).toBe('export')
-    expect(pictureState({ ...live, wanted: false, supported: false, minimized: true })).toBe('off')
-    expect(pictureState({ ...live, supported: false, minimized: true })).toBe('unsupported')
+    expect(pictureState({ ...live, exporting: true, wanted: false, supported: false, failed: true, minimized: true, shown: false })).toBe('export')
+    expect(pictureState({ ...live, wanted: false, supported: false, failed: true, minimized: true })).toBe('off')
+    expect(pictureState({ ...live, supported: false, failed: true, minimized: true })).toBe('unsupported')
+    expect(pictureState({ ...live, failed: true, minimized: true, shown: false })).toBe('failed')
     expect(pictureState({ ...live, minimized: true, shown: false })).toBe('minimized')
     expect(pictureState({ ...live, shown: false })).toBe('starting')
     expect(pictureState(live)).toBe('live')
@@ -350,8 +351,8 @@ function fakeCanvas() {
 
 describe('the picture stream', () => {
   it('reads the frame layout main writes', () => {
-    expect([chunks.HEADER_BYTES, chunks.FRAME_CONFIG, chunks.FRAME_KEY, chunks.FRAME_DELTA])
-      .toEqual([MIRROR_HEADER_BYTES, MIRROR_FRAME_CONFIG, MIRROR_FRAME_KEY, MIRROR_FRAME_DELTA])
+    expect([chunks.HEADER_BYTES, chunks.FRAME_CONFIG, chunks.FRAME_KEY, chunks.FRAME_DELTA, chunks.FRAME_FAILED])
+      .toEqual([MIRROR_HEADER_BYTES, MIRROR_FRAME_CONFIG, MIRROR_FRAME_KEY, MIRROR_FRAME_DELTA, MIRROR_FRAME_FAILED])
   })
 
   it('splits frames however the bytes arrive', () => {
@@ -406,6 +407,64 @@ describe('pictureDecoder', () => {
     take(decoder, keyFrame(3))
     expect(made).toHaveLength(2)
     expect(made[1]!.decoded.map((c) => c.timestamp)).toEqual([3])
+  })
+
+  it('says when the app gave up, and decodes again only from a new config', () => {
+    const { made, codecs } = fakeDecoders()
+    let failed = 0
+    const decoder = chunks.pictureDecoder({ canvas: fakeCanvas().canvas, codecs, shown: () => {}, failed: () => { failed++ } })
+    take(decoder, configFrame())
+    take(decoder, keyFrame(1))
+    take(decoder, frame(MIRROR_FRAME_FAILED, 0, Buffer.alloc(0)))
+    expect(failed).toBe(1)
+    take(decoder, keyFrame(2))
+    take(decoder, configFrame())
+    take(decoder, keyFrame(3))
+    expect(made.map((d) => d.decoded.map((c) => c.timestamp))).toEqual([[1], [3]])
+  })
+
+  it('stops once this browser keeps losing its decoder with nothing drawn, until a new config', () => {
+    const { made, codecs } = fakeDecoders()
+    let failed = 0
+    const decoder = chunks.pictureDecoder({ canvas: fakeCanvas().canvas, codecs, shown: () => {}, failed: () => { failed++ } })
+    take(decoder, configFrame())
+    for (let i = 1; i <= chunks.DECODE_ERRORS_MAX; i++) {
+      take(decoder, keyFrame(i))
+      made.at(-1)!.fail()
+    }
+    expect(failed).toBe(1)
+    take(decoder, keyFrame(10))
+    take(decoder, keyFrame(11))
+    expect(made).toHaveLength(chunks.DECODE_ERRORS_MAX)
+    take(decoder, configFrame())
+    take(decoder, keyFrame(12))
+    expect(made).toHaveLength(chunks.DECODE_ERRORS_MAX + 1)
+  })
+
+  it('counts only losses in a row: a drawn frame between them starts the count over', () => {
+    const { made, codecs } = fakeDecoders()
+    let failed = 0
+    const decoder = chunks.pictureDecoder({ canvas: fakeCanvas().canvas, codecs, shown: () => {}, failed: () => { failed++ } })
+    take(decoder, configFrame())
+    for (let i = 1; i <= chunks.DECODE_ERRORS_MAX * 2; i++) {
+      take(decoder, keyFrame(i))
+      made.at(-1)!.draw()
+      made.at(-1)!.fail()
+    }
+    expect(failed).toBe(0)
+  })
+
+  it('counts a decoder refused at configure as lost', () => {
+    const { made, codecs } = fakeDecoders()
+    let failed = 0
+    class Refusing extends codecs.VideoDecoder {
+      override configure(): void { throw new DOMException('codec not supported', 'NotSupportedError') }
+    }
+    const decoder = chunks.pictureDecoder({ canvas: fakeCanvas().canvas, codecs: { ...codecs, VideoDecoder: Refusing }, shown: () => {}, failed: () => { failed++ } })
+    take(decoder, configFrame())
+    for (let i = 1; i <= chunks.DECODE_ERRORS_MAX; i++) take(decoder, keyFrame(i))
+    expect(failed).toBe(1)
+    expect(made.every((d) => d.state === 'closed')).toBe(true)
   })
 
   it('draws each decoded frame and says so', () => {

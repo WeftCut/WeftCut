@@ -61,12 +61,17 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   ignored; `scripts/check-packaged-cli.mjs` reads the fuse back from the
   packaged app in CI. An unpackaged run keeps Electron's defaults.
 - **A config that starts the app on `<userData>/cli/weftcut-mcp.cjs` is
-  served.** That is the shape of a config written for the JS shim of 0.7.x and
-  earlier, in files the app does not own. Started that way the app opens no
-  window, takes no profile lock and starts no MCP host: it runs `weftcut mcp`
-  on its own stdio and exits with it (`main/entry.ts`,
-  `main/mcp/legacyShim.ts`). The same CI check starts the packaged app this
-  way.
+  refused.** That is the shape of a config written for the JS shim of 0.7.x
+  and earlier. Started that way the app writes one line to stderr, naming the
+  binary the new config runs and where to copy that config from, opens no
+  window, takes no profile lock, starts no MCP host and exits non-zero
+  (`main/entry.ts`, `main/mcp/legacyConfig.ts`). The same CI check starts the
+  packaged app this way.
+- **The app's names have one home**, `apps/desktop/cli/identity.json`: the
+  macOS bundle id, the product name, the package name and the binary's name.
+  The binary embeds it; main and the build scripts read it;
+  `scripts/cli-identity.test.mjs` holds `electron-builder.yml` and
+  `package.json`, which cannot read it, to it.
 - Port and bearer token persist in `<userData>/mcp_auth.json`; an occupied
   saved port falls back to a fresh one and rewrites the file. One server per
   running instance. Localhost only; remote access is out of scope.
@@ -93,12 +98,16 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
   (`shared/agentHosts.ts`, [ADR 0167](adr/0167-the-app-registers-the-server-and-a-plugin-carries-content.md);
   [below](#agent-hosts)), plus a self-configuration prompt. The entry is the
   profile's copy of the binary with the one argument `mcp`, and no
-  environment. The `Generic` tab prints the connection facts unwrapped,
+  environment (`stdioEntry`, which `weftcut print-config` matches). The
+  `Generic` tab prints the connection facts unwrapped,
   because MCP standardises the protocol, not the config file. An `mcp add`
   one-liner accompanies a snippet where the host's CLI can express the whole
   entry (Codex and Claude Code for stdio; Claude Code alone for HTTP —
-  `codex mcp add --url` takes only an env-var name for the bearer). Windows
-  paths are double-quoted for Git Bash and PowerShell.
+  `codex mcp add --url` takes only an env-var name for the bearer). Claude
+  Code's one-liner removes an existing `weftcut` entry first, joined with `;`:
+  `claude mcp add` refuses a name the scope already holds, an entry written
+  for 0.7.x included. Windows paths are double-quoted for Git Bash and
+  PowerShell.
 - **Advanced: HTTP-direct** — URL, masked token, the same snippets in URL +
   header form, for each host whose config can name one; breaks when the app is closed and goes stale when port or
   token change. Until the binary is installed (an unpackaged run before
@@ -166,7 +175,7 @@ command = "<userData>/cli/weftcut"
 args = ["mcp"]
 ```
 
-Or in a terminal: `codex mcp add weftcut -- <userData>/cli/weftcut mcp`
+Or in a terminal: `codex mcp add weftcut -- '<userData>/cli/weftcut' mcp`
 
 **Claude Code**
 
@@ -184,7 +193,7 @@ Or in a terminal: `codex mcp add weftcut -- <userData>/cli/weftcut mcp`
 }
 ```
 
-Or in a terminal: `claude mcp add weftcut -s user -- <userData>/cli/weftcut mcp`
+Or in a terminal: `claude mcp remove weftcut -s user; claude mcp add weftcut -s user -- '<userData>/cli/weftcut' mcp`
 
 **Claude Desktop**
 
@@ -271,9 +280,9 @@ has nowhere to show it. Why a page and not a card in the chat: ADR 0168.
   With the app closed only the binary's two tools are listed; `launch_weftcut`
   brings this one in through `tools/list_changed`.
 - **Served by the app** on the MCP listener (`main/companion/`). The page's
-  files are plain ES modules in `apps/desktop/cli/companion/`, where the
-  `weftcut` binary's module can also reach them; the app bundles them at
-  build time.
+  files are plain ES modules in `apps/desktop/cli/companion/`, with no build
+  step of their own; the app bundles them at build time. The `weftcut` binary
+  does not serve them (ADR 0168).
 - **The page key** is 32 random bytes, hex, in `<userData>/companion_key.json`
   (`0600` on POSIX), apart from the MCP bearer: neither opens the other's
   routes. It is made once and never rotated by itself, and *Refresh* in
@@ -286,8 +295,11 @@ has nowhere to show it. Why a page and not a card in the chat: ADR 0168.
   (`play`, `pause`, `seek` with `t_us`, `focus`) need
   `Authorization: Bearer <page key>`. A missing or wrong
   key, the MCP bearer included, is `401` and a `Companion request rejected`
-  row (never the header); a `Host` other than the loopback bind is `403`. A
-  control while no editor is attached is `409 editor_not_ready`. The page's
+  row (never the header); a `Host` other than the loopback bind is `403`. Both
+  checks come before any body is read; a control body over 1 KB is `413`. A
+  control while no editor is attached is `409 editor_not_ready`. The event
+  stream writes a comment every 15 s, and drops a page with more than
+  256 KB unsent, which reconnects and reads the state again. The page's
   CSP admits only its own files, images included, and origin, with no inline script or style.
 - **Sandboxed frames.** A host that frames the page with
   `sandbox="allow-scripts"` gives it an opaque origin; its requests arrive
@@ -304,15 +316,21 @@ has nowhere to show it. Why a page and not a card in the chat: ADR 0168.
   export runs and the editor is attached, the editor captures its own preview
   canvas (the final composite) and encodes it: H.264 (Annex B) on a hardware
   encoder where one takes the size, else VP8 in software; an encoder that
-  fails hands over to the next. At most 15 frames a second and 960 px wide,
+  fails hands over to the next. When the last one fails, the editor tells
+  main, which stops asking for the picture and tells the pages showing it;
+  it asks again when a page opens the picture anew or another editor
+  attaches. The capture follows the preview's canvas: switching between the
+  editor and agent mode replaces it, and the new one starts on a keyframe.
+  At most 15 frames a second and 960 px wide,
   2 a second while paused (every frame for 600 ms after a seek), a keyframe
   every 2 s, a frame dropped while the encoder is behind. With no page
   showing it nothing is captured or encoded. Meanwhile main turns the editor
   window's background throttling off, so a hidden window still paints.
 - **`/companion/video`** is a run of frames: `u8` kind (0 config, 1 key,
-  2 delta), `f64` timestamp in µs, `u32` length, little-endian, then the
-  payload; a config's payload is `{ codec, coded_width, coded_height }` as
-  JSON. A new viewer gets the config and the last keyframe at once and
+  2 delta, 3 failed), `f64` timestamp in µs, `u32` length, little-endian, then
+  the payload; a config's payload is `{ codec, coded_width, coded_height }` as
+  JSON, a failed one's is empty. A page in a hidden tab closes the stream,
+  unless the picture is popped out, and opens it again when shown. A new viewer gets the config and the last keyframe at once and
   continues from the next keyframe. A viewer with more than 2 MB unsent gets
   nothing until it is under again, and then only from a keyframe. The page
   decodes with WebCodecs; without them it says it cannot show the picture.
@@ -320,7 +338,8 @@ has nowhere to show it. Why a page and not a card in the chat: ADR 0168.
   WeftCut is not running (it retries after 1 s, backing off to 5 s); WeftCut
   is opening the project; no project is open. Then, over the picture: an
   export runs (no picture until it ends); the picture is off ([Show picture]);
-  the browser cannot show it; WeftCut is minimized, so the picture updates
+  the browser cannot show it; WeftCut could not encode it ([Try again]
+  opens it anew); WeftCut is minimized, so the picture updates
   about once a second ([Show WeftCut]); starting; live. The stage carries the
   state as `data-picture`. It speaks the app's UI language.
 

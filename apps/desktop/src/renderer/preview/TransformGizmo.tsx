@@ -20,8 +20,8 @@
 // Spec: docs/features.md#on-canvas-transform-gizmo
 
 import { useCropEditingStore } from '../state/cropEditingStore';
-import { useEffect, useRef } from "react";
-import { modKeyHeld } from "@/platform";
+import { useEffect, useRef, useState } from "react";
+import { useModKeyReading } from "@/modKeyReading";
 import { RotateCcwIcon } from "lucide-react";
 
 import { logMutationFailure } from "../errors/tryMutate";
@@ -422,6 +422,14 @@ interface ScaleDrag extends DragBase {
 
 type Drag = MoveDrag | RotateDrag | AnchorDrag | ScaleDrag;
 
+/// The pointer input a move or scale step reads. Mod is not here: it comes from
+/// the gizmo's `ModKeyReading`, which key events update too.
+interface GizmoPointer {
+  clientX: number;
+  clientY: number;
+  shiftKey: boolean;
+}
+
 /// Below this, a gesture's delta is float noise rather than an edit.
 ///
 /// LANDMINE: `Math.cos(±π/2)` is 6e-17, not 0, so anything that passes through
@@ -634,9 +642,9 @@ const NO_GUIDES: SnapGuides = { x: null, y: null };
 
 /// The snap radius in composition pixels for this move, or 0 — which is how both
 /// "the preference is off" and "the bypass key is held" reach the solvers, since
-/// they all short-circuit on a non-positive threshold. The key is read per move,
-/// so tapping it releases the layer from a guide and letting go re-arms it, with
-/// no gesture state to carry.
+/// they all short-circuit on a non-positive threshold. The key is read per move
+/// and per Mod key event (`modKeyReading.ts`), so tapping it releases the layer
+/// from a guide and letting go re-arms it, the pointer moving or not.
 ///
 /// LANDMINE: the bypass key is Mod (⌘ on macOS), never a bare Ctrl. On macOS,
 /// Chromium turns a Ctrl+press into a context-menu click, so a drag started with
@@ -644,9 +652,9 @@ const NO_GUIDES: SnapGuides = { x: null, y: null };
 function thresholdFor(
   snap: SnapContext | null,
   fit: ContainFit,
-  e: { ctrlKey: boolean; metaKey: boolean },
+  snapSuspended: boolean,
 ): number {
-  if (!snap || modKeyHeld(e)) return 0;
+  if (!snap || snapSuspended) return 0;
   return snapThresholdComp(snap.strengthPx, fit.scale);
 }
 
@@ -687,6 +695,19 @@ function TransformGizmo({
   /// per handle per octant crossed instead of one per frame.
   const handleCursors = useRef(new Map<ScaleHandleId, string>());
   const dragRef = useRef<Drag | null>(null);
+  /// The last pointer input of the gesture in flight, so a Mod change with the
+  /// pointer still can re-solve the move or scale it drew.
+  const lastPointerRef = useRef<GizmoPointer | null>(null);
+  /// Mounts the Mod key listeners for a gesture that snaps, and nothing else:
+  /// flipped twice per gesture, never at pointer rate.
+  const [snapGestureLive, setSnapGestureLive] = useState(false);
+  const modKey = useModKeyReading(snapGestureLive, () => {
+    const pointer = lastPointerRef.current;
+    const drag = dragRef.current;
+    if (pointer === null) return;
+    if (drag?.kind === "move") stepMove(drag, pointer);
+    else if (drag?.kind === "scale") stepScale(drag, pointer);
+  });
   /// The pivot the last drawn frame used, in client pixels. A rotate gesture
   /// starts from what the user actually grabbed rather than from a geometry
   /// re-resolved a frame later.
@@ -1120,6 +1141,7 @@ function TransformGizmo({
       e.stopPropagation();
       dragRef.current = null;
       guidesRef.current = NO_GUIDES;
+      setSnapGestureLive(false);
       // Re-derive, not clear: Escape cancels the LIVE gesture, not the ones
       // already committed, so a carry has to survive it.
       applyOverride(null);
@@ -1164,6 +1186,22 @@ function TransformGizmo({
     };
   };
 
+  /// A move or scale gesture's first pointer input. Mod is listened to only when
+  /// the gesture snaps: with nothing to suspend, the key changes nothing drawn.
+  const beginPointer = (e: React.PointerEvent, snaps: boolean): void => {
+    lastPointerRef.current = { clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey };
+    modKey.observe(e);
+    if (snaps) setSnapGestureLive(true);
+  };
+
+  /// Records a pointermove's input for a later Mod re-solve, and its Mod state.
+  const notePointer = (e: React.PointerEvent): GizmoPointer => {
+    const pointer = { clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey };
+    lastPointerRef.current = pointer;
+    modKey.observe(e);
+    return pointer;
+  };
+
   const beginDrag = (e: React.PointerEvent<SVGPolygonElement>): void => {
     if (e.button !== 0) return;
     // The preview is not a selection surface, so nothing downstream needs this
@@ -1171,16 +1209,18 @@ function TransformGizmo({
     e.preventDefault();
     e.stopPropagation();
     const frame = geomRef.current;
+    const snap = frame ? grabSnap() : null;
     dragRef.current = {
       kind: "move",
       startClientX: e.clientX,
       startClientY: e.clientY,
       tInLayerUs: grabTimeUs(),
       frame,
-      snap: frame ? grabSnap() : null,
+      snap,
       dxComp: 0,
       dyComp: 0,
     };
+    beginPointer(e, snap !== null);
     // Capture so the drag survives the pointer leaving the box (which it always
     // does — the box is being dragged out from under the cursor).
     e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -1189,6 +1229,10 @@ function TransformGizmo({
   const moveDrag = (e: React.PointerEvent<SVGPolygonElement>): void => {
     const drag = dragRef.current;
     if (drag?.kind !== "move") return;
+    stepMove(drag, notePointer(e));
+  };
+
+  const stepMove = (drag: MoveDrag, e: GizmoPointer): void => {
     const rect = getGizmoProbe()?.canvasRect();
     const fit = rect ? containFit(rect, compRef.current.width, compRef.current.height) : null;
     if (!fit) return;
@@ -1206,7 +1250,7 @@ function TransformGizmo({
       : null;
     const hit =
       drag.snap && rawBox
-        ? snapMove(rawBox, drag.snap.targets, thresholdFor(drag.snap, fit, e))
+        ? snapMove(rawBox, drag.snap.targets, thresholdFor(drag.snap, fit, modKey.held()))
         : null;
     drag.dxComp = raw.x + (hit?.dx ?? 0);
     drag.dyComp = raw.y + (hit?.dy ?? 0);
@@ -1220,6 +1264,7 @@ function TransformGizmo({
     const drag = dragRef.current;
     dragRef.current = null;
     guidesRef.current = NO_GUIDES;
+    setSnapGestureLive(false);
     e.currentTarget.releasePointerCapture?.(e.pointerId);
     if (drag?.kind !== "move") return;
     const base = commitBase();
@@ -1380,6 +1425,7 @@ function TransformGizmo({
     // pair wherever it is set: reading the box again at release could straddle a
     // summary and diff the gesture against a base it never measured.
     const box = boxState();
+    const snap = grabSnap();
     dragRef.current = {
       kind: "scale",
       id,
@@ -1390,18 +1436,23 @@ function TransformGizmo({
       pivotComp: layerPivot(frame),
       handleComp,
       linked: readScaleLinked(layerRef.current.params),
-      snap: grabSnap(),
+      snap,
       ray: uniformScaleRay(frame, id),
       box: layerRef.current.params.kind === TEXT_KIND ? { base: box, live: box } : null,
       dScaleX: 0,
       dScaleY: 0,
     };
+    beginPointer(e, snap !== null);
     e.currentTarget.setPointerCapture?.(e.pointerId);
   };
 
   const moveScale = (e: React.PointerEvent<SVGGElement>): void => {
     const drag = dragRef.current;
     if (drag?.kind !== "scale") return;
+    stepScale(drag, notePointer(e));
+  };
+
+  const stepScale = (drag: ScaleDrag, e: GizmoPointer): void => {
     const rect = getGizmoProbe()?.canvasRect();
     const fit = rect ? containFit(rect, compRef.current.width, compRef.current.height) : null;
     if (!fit) return;
@@ -1418,7 +1469,7 @@ function TransformGizmo({
     // 0049), so neither `scale_linked` — whose remaining job is the inspector's
     // one Scale lane vs two — nor Shift has anything left to say about it.
     const uniform = drag.box ? isCornerHandle(drag.id) : drag.linked || e.shiftKey;
-    const threshold = thresholdFor(drag.snap, fit, e);
+    const threshold = thresholdFor(drag.snap, fit, modKey.held());
     // Straight off HANDLE_DIR, never re-derived: an axis this handle does not
     // drive is one `solveScale` would leave alone, so snapping there would draw
     // a guide for a change that then gets discarded.
@@ -1531,6 +1582,7 @@ function TransformGizmo({
     const drag = dragRef.current;
     dragRef.current = null;
     guidesRef.current = NO_GUIDES;
+    setSnapGestureLive(false);
     e.currentTarget.releasePointerCapture?.(e.pointerId);
     if (drag?.kind !== "scale") return;
     const base = commitBase();

@@ -1,4 +1,4 @@
-import { modKeyHeld } from "@/platform";
+import type { ModifierFlags } from "@/modKeyReading";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BetweenHorizontalStart } from "lucide-react";
@@ -13,7 +13,6 @@ import {
 import { DROP_STRIP_HEIGHT_PX } from "./geometry";
 import type { PendingLayerPlacement } from "./LayerBlock";
 import { placementRefuses, SPAWN_TRACK_ID } from "./placement";
-import { playheadClockUs } from "../state/playheadProjection";
 import {
   MEDIA_DRAG_CURSOR_OFFSET_PX,
   MEDIA_DRAG_TYPE,
@@ -24,7 +23,8 @@ import {
   useMediaDragStore,
   type MediaDragPayload,
   type MediaDropPlan,
-  type MediaDropSnapOptions,
+  mediaDropSnapAt,
+  type MediaDropSnapSetup,
 } from "./mediaDrag";
 import {
   useForeignDropStripAnchorUs,
@@ -167,7 +167,7 @@ export function DropStrip({
   pxPerSec: number;
   fpsNum: number;
   fpsDen: number;
-  mediaDropSnap: Omit<MediaDropSnapOptions, "currentTimeUs">;
+  mediaDropSnap: MediaDropSnapSetup;
   /// The composition this strip spawns into — this Panel's own, whichever tab
   /// holds the keyboard, so a drop here is a local act on a background timeline
   /// too. It routes the drop, offers the playhead as a snap boundary on this
@@ -251,7 +251,7 @@ export function DropStrip({
   }, [pendingLayerById, pendingPlacements, stripDrag]);
 
   const planFor = useCallback(
-    (media: MediaDragPayload, pointerXPx: number, snapSuspended = false) =>
+    (media: MediaDragPayload, pointerXPx: number, mods: ModifierFlags) =>
       planMediaDrop({
         compositionId,
         track: null,
@@ -260,7 +260,7 @@ export function DropStrip({
         pxPerSec,
         fpsNum,
         fpsDen,
-        snap: { ...mediaDropSnap, enabled: mediaDropSnap.enabled && !snapSuspended, currentTimeUs: playheadClockUs(compositionId) },
+        snap: mediaDropSnapAt(mediaDropSnap, compositionId, mods),
       }),
     [compositionId, fpsDen, fpsNum, mediaDropSnap, pxPerSec],
   );
@@ -271,7 +271,7 @@ export function DropStrip({
       e.preventDefault();
       if (activeMediaDrag === null) return;
       const rect = e.currentTarget.getBoundingClientRect();
-      const plan = planFor(activeMediaDrag, e.clientX - rect.left, modKeyHeld(e));
+      const plan = planFor(activeMediaDrag, e.clientX - rect.left, e);
       e.dataTransfer.dropEffect = mediaDropInvalid(plan.validity) ? "none" : "copy";
       // Collapse the floating media card into a chip inside the strip, the same
       // way a lane absorbs it. Not cosmetic here: at full size the card covers
@@ -334,7 +334,7 @@ export function DropStrip({
       e.preventDefault();
       endMediaDrag();
       const rect = e.currentTarget.getBoundingClientRect();
-      const plan = planFor(payload, e.clientX - rect.left, modKeyHeld(e));
+      const plan = planFor(payload, e.clientX - rect.left, e);
       if (mediaDropInvalid(plan.validity)) return;
       onMediaDrop(null, payload, plan);
     },

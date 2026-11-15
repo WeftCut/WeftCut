@@ -11,7 +11,7 @@ const { timecode, frameStartUs } = await pageModule('timeline')
 
 type Handlers = { state(s: unknown): void; event(name: string, data: unknown): void; link(status: string): void }
 
-type PictureView = { mount: HTMLElement; shown(): void }
+type PictureView = { mount: HTMLElement; shown(): void; failed(): void }
 
 function fakeTransport(answer = 'ok', pictureSupported = true) {
   let handlers!: Handlers
@@ -272,6 +272,58 @@ describe('the picture', () => {
     button('.cw-hide-picture').click()
     expect(pictures[0]!.closed).toBe(true)
     expect(stage().dataset.picture).toBe('off')
+  })
+
+  it('says when the picture failed, lets go of it so the app stops encoding, and asks again only on Try again', async () => {
+    const { stage, button, pictures } = ready()
+    button('.cw-show-picture').click()
+    pictures[0]!.view.shown()
+    pictures[0]!.view.failed()
+    expect(stage().dataset.picture).toBe('failed')
+    expect(stage().textContent).toContain(STRINGS.en.picture_failed)
+    // The page lets go once the decoder that reported it has returned.
+    await Promise.resolve()
+    expect(pictures[0]!.closed).toBe(true)
+    // Coming back to the tab is not asking again.
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(pictures).toHaveLength(1)
+    expect(stage().dataset.picture).toBe('failed')
+    button('.cw-stage-retry').click()
+    expect(pictures).toHaveLength(2)
+    expect(stage().dataset.picture).toBe('starting')
+    pictures[1]!.view.shown()
+    expect(stage().dataset.picture).toBe('live')
+  })
+
+  it('lets go of it while the tab is hidden, unless popped out, and asks again once shown', () => {
+    const tab = { hidden: false, pip: null as Element | null }
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => tab.hidden })
+    Object.defineProperty(document, 'pictureInPictureElement', { configurable: true, get: () => tab.pip })
+    const turn = (hidden: boolean) => { tab.hidden = hidden; document.dispatchEvent(new Event('visibilitychange')) }
+    try {
+      const { button, pictures } = ready()
+      // Hidden before the user asked: nothing to let go of, nothing asked for.
+      turn(true)
+      turn(false)
+      expect(pictures).toEqual([])
+      button('.cw-show-picture').click()
+      turn(true)
+      expect(pictures.map((p) => p.closed)).toEqual([true])
+      turn(false)
+      expect(pictures.map((p) => p.closed)).toEqual([true, false])
+
+      tab.pip = document.createElement('video')
+      turn(true)
+      expect(pictures.map((p) => p.closed)).toEqual([true, false])
+      turn(false)
+      button('.cw-hide-picture').click()
+      turn(true)
+      turn(false)
+      expect(pictures).toHaveLength(2)
+    } finally {
+      delete (document as { hidden?: boolean }).hidden
+      delete (document as { pictureInPictureElement?: Element | null }).pictureInPictureElement
+    }
   })
 
   it('says so where the browser cannot show it', () => {

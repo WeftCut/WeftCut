@@ -9,7 +9,7 @@ import { uuidV7Gen } from '../state/ids'
 import { AGENT_ACTIVITY_EVENT } from '../../shared/agent-activity'
 import {
   COMPANION_ATTACH, COMPANION_CONTROL_EVENT, COMPANION_DEMAND_EVENT, COMPANION_DETACH, COMPANION_MIRROR_CHUNK,
-  COMPANION_MIRROR_CONFIG, COMPANION_TRANSPORT, MIRROR_FRAME_CONFIG, MIRROR_FRAME_KEY,
+  COMPANION_MIRROR_CONFIG, COMPANION_MIRROR_FAILED, COMPANION_TRANSPORT, MIRROR_FRAME_CONFIG, MIRROR_FRAME_FAILED, MIRROR_FRAME_KEY,
   type CompanionEventName, type CompanionWindow,
 } from '../../shared/companion'
 
@@ -172,6 +172,36 @@ describe('the picture', () => {
     hub.observe('export:status', exportStatus('rendering'))
     hub.handleInvoke(COMPANION_MIRROR_CHUNK, chunk('T1', true))
     expect(viewer.kinds()).toEqual([MIRROR_FRAME_CONFIG, MIRROR_FRAME_KEY])
+  })
+
+  it('drops the picture the editor cannot encode, tells its viewers, and asks again once a page opens it anew', () => {
+    const { hub, sent, running } = setup()
+    const viewer = sink()
+    hub.attach('T1')
+    hub.showPicture(viewer.s)
+    hub.handleInvoke(COMPANION_MIRROR_FAILED, { token: 'T0' })
+    expect(hub.demand().picture).toBe(true)
+
+    hub.handleInvoke(COMPANION_MIRROR_FAILED, { token: 'T1' })
+    expect(hub.demand().picture).toBe(false)
+    expect(demands(sent).at(-1)).toMatchObject({ picture: false, token: 'T1' })
+    // Throttling goes back on: nothing is captured for the pages any more.
+    expect(running).toEqual([true, false])
+    expect(viewer.kinds()).toEqual([MIRROR_FRAME_FAILED])
+
+    hub.showPicture(sink().s)
+    expect(hub.demand().picture).toBe(true)
+    expect(demands(sent).at(-1)).toMatchObject({ picture: true, token: 'T1' })
+    expect(running).toEqual([true, false, true])
+  })
+
+  it('asks a newly attached editor for the picture the last one could not encode', () => {
+    const { hub } = setup()
+    hub.attach('T1')
+    hub.showPicture(sink().s)
+    hub.handleInvoke(COMPANION_MIRROR_FAILED, { token: 'T1' })
+    hub.editorGone()
+    expect(hub.attach('T2').demand.picture).toBe(true)
   })
 
   it('refuses a frame without its bytes', () => {

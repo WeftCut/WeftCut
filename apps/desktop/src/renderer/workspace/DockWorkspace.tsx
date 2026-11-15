@@ -548,6 +548,7 @@ export function WeftCutPanelRenderer({
   const Component = PANEL_COMPONENTS[params.kind];
   const { editingLocked } = useContracts();
   const locked = editingLocked === true && PANEL_REGISTRY[params.kind].duringExport === "locked";
+  const { t } = useTranslation();
   const chrome = useWorkspaceChrome();
   const isVisible = useDockviewPanelVisibility(api);
   const instance = params.instance;
@@ -589,7 +590,14 @@ export function WeftCutPanelRenderer({
         >
           <Component />
         </div>
-        {locked && <div className="weft-dock-panel-lock" aria-hidden="true"><AppIcon icon={LockIcon} size="display" /></div>}
+        {/* The Panel behind is inert, so this overlay is the only thing a screen
+            reader can reach here: it carries the reason as text. */}
+        {locked && (
+          <div className="weft-dock-panel-lock" title={t("dock_workspace.locked_during_export")}>
+            <AppIcon icon={LockIcon} size="display" aria-hidden />
+            <span className="sr-only">{t("dock_workspace.locked_during_export")}</span>
+          </div>
+        )}
       </div>
     </DockPanelRuntimeContext.Provider>
   );

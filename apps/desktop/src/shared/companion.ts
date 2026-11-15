@@ -78,8 +78,9 @@ export type CompanionPageAction = CompanionControl | { action: 'focus' }
 
 /** What main needs from the attached editor. `watch`: some page is open, so
  *  the editor pushes its transport; with none open it pushes nothing.
- *  `picture`: some page shows the preview and no export runs, so the editor
- *  captures and encodes its canvas; otherwise it touches neither. */
+ *  `picture`: some page shows the preview, no export runs and the encoder has
+ *  not failed since a page last asked, so the editor captures and encodes its
+ *  canvas; otherwise it touches neither. */
 export interface CompanionDemand {
   watch: boolean
   picture: boolean
@@ -92,6 +93,8 @@ export const COMPANION_DETACH = 'companion_detach'
 export const COMPANION_TRANSPORT = 'companion_transport'
 export const COMPANION_MIRROR_CONFIG = 'companion_mirror_config'
 export const COMPANION_MIRROR_CHUNK = 'companion_mirror_chunk'
+/** The editor's encoder stopped for good: no encoder takes the picture. */
+export const COMPANION_MIRROR_FAILED = 'companion_mirror_failed'
 
 /** Main → renderer events, each addressed to one bridge token. */
 export const COMPANION_DEMAND_EVENT = 'companion:demand'
@@ -123,12 +126,15 @@ export type CompanionMirrorChunkMessage = CompanionMirrorChunk & { token: string
 
 /** `GET /companion/video` is a run of frames, each a header and its payload:
  *  u8 kind, f64 timestamp in microseconds, u32 payload length, little-endian.
- *  A config frame's payload is a `CompanionMirrorConfig` as JSON.
+ *  A config frame's payload is a `CompanionMirrorConfig` as JSON; a failed
+ *  frame's is empty, and says no encoder takes the picture until a page asks
+ *  for it again.
  *  LANDMINE: the page reads the same layout in `cli/companion/ui/pictureChunks.js`;
  *  change both (`pageUi.test.ts` holds them equal). */
 export const MIRROR_FRAME_CONFIG = 0
 export const MIRROR_FRAME_KEY = 1
 export const MIRROR_FRAME_DELTA = 2
+export const MIRROR_FRAME_FAILED = 3
 export const MIRROR_HEADER_BYTES = 1 + 8 + 4
 
 /** The most frames a second the picture carries. */

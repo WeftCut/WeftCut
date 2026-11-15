@@ -7,9 +7,11 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   AGENT_HOSTS,
+  httpCommand,
   httpSnippet,
   placePath,
   stdioCommand,
+  stdioEntry,
   stdioSnippet,
   type AgentConfigFormat,
   type AgentHost,
@@ -22,9 +24,24 @@ const DOC = path.join(repoRoot, 'docs/mcp.md')
 const WIN_PATH = 'C:\\Users\\u\\AppData\\Roaming\\WeftCut\\cli\\weftcut.exe'
 
 describe('agent host snippets', () => {
+  it('a stdio entry is the binary and its `mcp` subcommand, nothing else', () => {
+    expect(stdioEntry(WIN_PATH)).toEqual({ command: WIN_PATH, args: ['mcp'] })
+  })
+
+  it("Claude Code's one-liners remove an existing weftcut entry, then add theirs whatever the remove found", () => {
+    const claude = AGENT_HOSTS.find((h) => h.cli === 'claude')!
+    for (const line of [stdioCommand(claude, stdioEntry(WIN_PATH)), httpCommand(claude, 'http://127.0.0.1:4711/mcp', 'secret')]) {
+      // `&&` would skip the add on a machine with nothing to remove.
+      const [remove, add, ...rest] = line!.split('; ')
+      expect(remove).toBe('claude mcp remove weftcut -s user')
+      expect(add).toMatch(/^claude mcp add .*-s user/)
+      expect(rest).toEqual([])
+    }
+  })
+
   it('every stdio snippet runs the profile binary with `mcp` and sets no environment', () => {
     for (const host of AGENT_HOSTS) {
-      const text = stdioSnippet(host, { command: WIN_PATH, args: ['mcp'] })
+      const text = stdioSnippet(host, stdioEntry(WIN_PATH))
       // The path as the format encodes it: JSON escapes, which TOML and YAML
       // double-quoted strings share; the facts block prints it raw.
       const encoded = host.format === 'facts' ? WIN_PATH : JSON.stringify(WIN_PATH)
@@ -37,7 +54,7 @@ describe('agent host snippets', () => {
 
   it('the JSON hosts carry exactly the command and its argument', () => {
     for (const host of AGENT_HOSTS.filter((h) => h.format.endsWith('json'))) {
-      const entry = JSON.parse(stdioSnippet(host, { command: WIN_PATH, args: ['mcp'] })).mcpServers.weftcut
+      const entry = JSON.parse(stdioSnippet(host, stdioEntry(WIN_PATH))).mcpServers.weftcut
       const { type, ...rest } = entry
       expect(rest, host.id).toEqual({ command: WIN_PATH, args: ['mcp'] })
       // Claude Code types its entries; the others take none.
@@ -58,13 +75,34 @@ describe('agent host snippets', () => {
   })
 })
 
+describe('one-liners', () => {
+  const codex = AGENT_HOSTS.find((h) => h.id === 'codex')!
+  it('keep a path verbatim in PowerShell and a POSIX shell: nothing inside the quotes expands', () => {
+    // A profile under a user name with `$` (or a backtick) in it: double quotes
+    // would have PowerShell substitute `$review`.
+    expect(stdioCommand(codex, stdioEntry('C:\\Users\\$review\\AppData\\Roaming\\WeftCut\\cli\\weftcut.exe')))
+      .toBe("codex mcp add weftcut -- 'C:\\Users\\$review\\AppData\\Roaming\\WeftCut\\cli\\weftcut.exe' mcp")
+    expect(stdioCommand(codex, stdioEntry('/home/u/$HOME `x`/WeftCut/cli/weftcut')))
+      .toBe("codex mcp add weftcut -- '/home/u/$HOME `x`/WeftCut/cli/weftcut' mcp")
+  })
+  it('spell a single quote inside the way the path\'s own shell reads it', () => {
+    expect(stdioCommand(codex, stdioEntry("C:\\Users\\o'neil\\cli\\weftcut.exe")))
+      .toBe("codex mcp add weftcut -- 'C:\\Users\\o''neil\\cli\\weftcut.exe' mcp")
+    expect(stdioCommand(codex, stdioEntry("/home/o'neil/cli/weftcut")))
+      .toBe("codex mcp add weftcut -- '/home/o'\\''neil/cli/weftcut' mcp")
+  })
+  it('leave a plain path bare', () => {
+    expect(stdioCommand(codex, stdioEntry('/home/u/.config/WeftCut/cli/weftcut'))).toBe('codex mcp add weftcut -- /home/u/.config/WeftCut/cli/weftcut mcp')
+  })
+})
+
 // ── docs/mcp.md host block ──────────────────────────────────────────────────
 
 const BEGIN = '<!-- agent-hosts:begin -->'
 const END = '<!-- agent-hosts:end -->'
 
 /// What the doc shows for the profile's copy of the binary.
-const DOC_ENTRY = { command: '<userData>/cli/weftcut', args: ['mcp'] }
+const DOC_ENTRY = stdioEntry('<userData>/cli/weftcut')
 
 const FENCE: Record<AgentConfigFormat, string> = {
   'codex-toml': 'toml',

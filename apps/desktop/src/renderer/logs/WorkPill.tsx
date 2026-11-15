@@ -170,7 +170,10 @@ function ExportRow({ state, phase, percent, startedAt }: {
         </div>
       )}
       <div className="work-row-detail">
-        <span role="status">
+        {/* Only the phase is live: the rate changes on every progress tick, and
+            a live region around it would re-announce each one. */}
+        <span className="sr-only" role="status">{phase}</span>
+        <span>
           {progress && !cancelling ? t("export.pill_rate", { fps: Math.round(progress.fps), speed: progress.speed.toFixed(1) }) : phase}
         </span>
         {!cancelling && state.onCancel && (

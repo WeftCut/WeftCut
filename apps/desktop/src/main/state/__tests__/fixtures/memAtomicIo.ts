@@ -3,7 +3,7 @@
 // names and then read what the map holds.
 import type { AtomicWriteIo } from '../../../atomicWrite'
 
-type Step = 'open' | 'write' | 'fsync' | 'close' | 'rename'
+type Step = 'open' | 'write' | 'fsync' | 'close' | 'rename' | 'syncDir'
 
 export interface MemAtomicIo extends AtomicWriteIo {
   files: Map<string, string>
@@ -57,6 +57,7 @@ export function memAtomicIo(files = new Map<string, string>()): MemAtomicIo {
       if (text === undefined) throw errno('ENOENT')
       files.set(to, text); files.delete(from)
     },
+    syncDir: () => { step('syncDir') },
     rm: (p) => { log.push('rm'); files.delete(p) },
     pause: () => { log.push('pause') },
   }

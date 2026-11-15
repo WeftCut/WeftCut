@@ -1,3 +1,4 @@
+import type { ComponentProps } from "react";
 import { useTranslation } from "react-i18next";
 
 import { getCommand } from "../commands/registry";
@@ -47,11 +48,12 @@ export interface ViewMenuWorkspaces {
 /// value changed — whether from `T` / `Shift+F`, the Quick Actions strip, or the
 /// search palette.
 ///
-/// Items with a command form dispatch through `getCommand(...).run()`: the
-/// registry funnel logs one `Shortcut` row per dispatch, same as the chord
-/// (commands/registry.ts). The panel and workspace items are parameterized
-/// per-row ops with no command form (see MENU_ONLY_COMMAND_IDS's reasoning in
-/// commands/appCommands.ts) and stay raw.
+/// Items with a command form are `CommandItem` rows: they dispatch through the
+/// registry, whose funnel logs one `Shortcut` row per dispatch, same as the
+/// chord (commands/registry.ts), and they are disabled whenever the command is.
+/// The panel and workspace items are parameterized per-row ops with no command
+/// form (see MENU_ONLY_COMMAND_IDS's reasoning in commands/appCommands.ts) and
+/// stay raw.
 interface ViewMenuProps {
   workspaceController: DockWorkspaceController | null;
   workspaceSnapshot: DockWorkspaceSnapshot;
@@ -159,83 +161,106 @@ export function ViewMenu({
           defaultValue: "Track display",
         })}
       />
-      <MenuItem
+      <CommandItem
+        commandId="toggleDisplayMode"
         actionId="toggleDisplayMode"
         label={t("view.display_ab_roll", {
           defaultValue: "A/B Roll",
         })}
         checked={mode === "AbRoll"}
-        onSelect={() => {
-          if (mode !== "AbRoll") void getCommand("toggleDisplayMode")?.run();
-        }}
+        runIf={mode !== "AbRoll"}
       />
-      <MenuItem
+      <CommandItem
+        commandId="toggleDisplayMode"
         label={t("view.display_all_tracks", {
           defaultValue: "All Tracks",
         })}
         checked={mode === "AllTracks"}
-        onSelect={() => {
-          if (mode !== "AllTracks") void getCommand("toggleDisplayMode")?.run();
-        }}
+        runIf={mode !== "AllTracks"}
       />
       <MenuSeparator />
-      <MenuItem
+      <CommandItem
+        commandId="toggleFollowPlayhead"
         actionId="toggleFollowPlayhead"
         label={t("view.follow_playhead", {
           defaultValue: "Timeline auto-scroll",
         })}
         checked={followPlayhead}
-        onSelect={() => void getCommand("toggleFollowPlayhead")?.run()}
       />
       {/* Directly below Timeline auto-scroll: both are "how my timeline is
           displayed". No `actionId`, so no accelerator to right-align — see
           `MENU_ONLY_COMMAND_IDS` in `commands/appCommands.ts` for why this
           toggle has no binding. */}
-      <MenuItem
+      <CommandItem
+        commandId="toggleMarkersVisible"
         label={t("view.show_markers", { defaultValue: "Show markers" })}
         checked={markersVisible}
-        onSelect={() => void getCommand("toggleMarkersVisible")?.run()}
       />
       {/* Preview chrome rather than timeline display, so it sits below the two
           timeline toggles. Bindingless like the marker toggle — see
           `SELF_CONTAINED_COMMAND_IDS` in `commands/appCommands.ts`. */}
-      <MenuItem
+      <CommandItem
+        commandId="toggleSafeAreaGuides"
         label={t("view.show_safe_areas", { defaultValue: "Show safe areas" })}
         checked={safeAreaGuides}
-        onSelect={() => void getCommand("toggleSafeAreaGuides")?.run()}
       />
-      <MenuItem
+      <CommandItem
+        commandId="togglePreviewGrid"
         label={t("view.grid", { defaultValue: "Grid" })}
         checked={gridEnabled}
-        onSelect={() => void getCommand("togglePreviewGrid")?.run()}
       />
       {/* The Review overlay (ADR 0115): agent review material painted on the
           timeline — the Review lane of tack chips, unreviewed changes on the
           clips (edges, removed-clip ghosts, Group badges). Runtime state of the agent
           panel's store, like the material it shows; no binding. Last of the
           display toggles: it shows agent material, not the user's project. */}
-      <MenuItem
+      <CommandItem
+        commandId="toggleReviewOverlay"
         label={t("view.review_overlay")}
         checked={reviewOverlay}
-        onSelect={() => void getCommand("toggleReviewOverlay")?.run()}
       />
       {/* The preview's view, with its own chrome. Fit only: the two stepping
           commands read as an errand from a menu, and the toolbar's zoom
           readout is a menu of the scales already. Labelled from the command so
           the row, the palette and Settings → Keyboard cannot drift. */}
-      <MenuItem
+      <CommandItem
+        commandId="previewZoomFit"
         actionId="previewZoomFit"
         label={t("actions.preview_zoom_fit")}
-        onSelect={() => void getCommand("previewZoomFit")?.run()}
       />
       <MenuSeparator />
       {/* Enter path only: while a session is active the whole menu bar is
           swapped out for AgentMode, so exit stays on AgentMode's "Exit to
           editor" button. */}
-      <MenuItem
+      <CommandItem
+        commandId="enterAgentMode"
         label={t("view.enter_agent_mode", { defaultValue: "Enter Agent Mode" })}
-        onSelect={() => void getCommand("enterAgentMode")?.run()}
       />
     </Menu>
+  );
+}
+
+/// A View-menu row backed by a registry command. `enabled` is read here, in the
+/// row's own render, as `CommandMenu` reads it: Base UI mounts the popup on
+/// open, so a lock that started after the menu bar rendered (an export holding
+/// the project) still disables the row. An unregistered id stays a silent no-op.
+function CommandItem({
+  commandId,
+  runIf = true,
+  ...row
+}: Omit<ComponentProps<typeof MenuItem>, "onSelect" | "disabled"> & {
+  commandId: string;
+  /// False for a radio row already in its state, whose select changes nothing.
+  runIf?: boolean;
+}) {
+  const command = getCommand(commandId);
+  return (
+    <MenuItem
+      {...row}
+      disabled={command?.enabled ? !command.enabled() : false}
+      onSelect={() => {
+        if (runIf) void command?.run();
+      }}
+    />
   );
 }

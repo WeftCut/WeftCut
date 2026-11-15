@@ -34,6 +34,7 @@ import { mediaMimeForExt } from './mediaMime.js'
 import { nodeAtomicWriteIo, writeFileAtomic } from './atomicWrite.js'
 import { VLM_ENDPOINT_KEY_TAG } from '../shared/vlm-config.js'
 import { PLAYHEAD_READ_EVENT, PLAYHEAD_REPORT } from '../shared/editorPlayhead.js'
+import { stdioEntry } from '../shared/agentHosts.js'
 import { registerMotifProtocol } from './motif/protocol.js'
 import { installPerformanceCalibration } from './performanceCalibration.js'
 import { MotifCapturer } from './motif/capture.js'
@@ -1368,7 +1369,7 @@ app.whenReady().then(async () => {
 
   // Refresh <userData>/cli/: the `weftcut` binary a client config names, and
   // the record of how to start this app again (ADR 0165, docs/mcp.md).
-  const { cliBinaryName, installCli, launchRecord, shippedCliDir, stdioConnectConfig } = await import('./mcp/cliInstall.js')
+  const { cliBinaryName, installCli, launchRecord, shippedCliDir } = await import('./mcp/cliInstall.js')
   const cliPath = installCli({
     source: path.join(
       shippedCliDir({ isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, mainDir: import.meta.dirname }),
@@ -1431,7 +1432,7 @@ app.whenReady().then(async () => {
   pruneDismissedNotices()
   const connectInfo = () => ({ cli_path: cliPath, skills })
   if (!app.isPackaged && cliPath) {
-    console.log(`[mcp] stdio connect: ${JSON.stringify({ mcpServers: { weftcut: stdioConnectConfig(cliPath) } })}`)
+    console.log(`[mcp] stdio connect: ${JSON.stringify({ mcpServers: { weftcut: stdioEntry(cliPath) } })}`)
   }
 
   ipcMain.handle('get_mcp_info', () => ({ ...mcpHost.getInfo(), ...connectInfo() }))
@@ -1494,8 +1495,9 @@ app.whenReady().then(async () => {
         workspaceStore?.flush()
         windowGeometryStore?.flush()
         if (!await confirmQuit()) throw new Error("Update restart cancelled while work is active");
-        await tsHost?.shutdown()
-        quitFlushed = true
+        // The quit's own final save: a failure with edits at stake asks the
+        // same question a quit asks, and Cancel keeps the project open.
+        if (!await finishQuitSave()) throw new Error("Update restart cancelled to keep unsaved edits");
       } catch (error) {
         updateResume.clear()
         throw error

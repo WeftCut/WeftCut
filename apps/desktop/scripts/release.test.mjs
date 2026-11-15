@@ -4,7 +4,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
-import { validateVersion, planRelease, setVersion, readVersion, validateAssets, releaseNotes } from './release.mjs'
+import { validateVersion, planRelease, setVersion, readVersion, validateAssets, releaseNotes, readUpgradeNotes } from './release.mjs'
 
 test('only increasing stable versions become releases; unpublished versions retry', () => {
   for (const bad of ['0.1.001', 'v0.1.1', '0.1.1-beta.1', '0.1.1+001', '1.2', null]) {
@@ -80,6 +80,18 @@ test('release notes name every installer the validator requires', () => {
   assert.doesNotMatch(notes, /WeftCut-\d+\.\d+\.\d+/)
   assert.match(notes, /signed with Developer ID and notarized by Apple/)
   assert.doesNotMatch(notes, /xattr|Open Anyway|ad-hoc/)
+})
+test('a version\'s upgrade notes come first, and a version without them gets the install steps alone', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'release-notes-'))
+  t.after(() => fs.rm(root, { recursive: true, force: true }))
+  await fs.mkdir(path.join(root, 'docs', 'release-notes'), { recursive: true })
+  await fs.writeFile(path.join(root, 'docs', 'release-notes', '2.0.0.md'), '## Upgrading\n\nCopy the new config.\n')
+  const upgrade = await readUpgradeNotes('2.0.0', root)
+  assert.equal(upgrade, '## Upgrading\n\nCopy the new config.')
+  const notes = releaseNotes(upgrade)
+  assert.ok(notes.indexOf('## Upgrading') < notes.indexOf('## Install'))
+  assert.equal(await readUpgradeNotes('2.0.1', root), null)
+  assert.ok(releaseNotes(null).startsWith('## Install'))
 })
 test('release validation refuses corrupt installer bytes', async t => {
   const dir = await assets(t)

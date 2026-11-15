@@ -14,7 +14,7 @@ import { exportTerminal, type ExportJob, type ExportJobState } from '../../share
 import { AGENT_ACTIVITY_EVENT, type AgentActivityUpdate } from '../../shared/agent-activity.js'
 import {
   COMPANION_ATTACH, COMPANION_CONTROL_EVENT, COMPANION_DEMAND_EVENT, COMPANION_DETACH, COMPANION_MIRROR_CHUNK,
-  COMPANION_MIRROR_CONFIG, COMPANION_TRANSPORT,
+  COMPANION_MIRROR_CONFIG, COMPANION_MIRROR_FAILED, COMPANION_TRANSPORT,
   type CompanionActivity, type CompanionAttachReply, type CompanionClip, type CompanionControl,
   type CompanionControlMessage, type CompanionDemand, type CompanionDemandMessage, type CompanionEventName,
   type CompanionExport, type CompanionState, type CompanionTrack, type CompanionTransport, type CompanionWindow,
@@ -56,6 +56,10 @@ export class CompanionHub {
   private readonly picture = new PictureStream()
   /** What `pictureRunning` was last told. */
   private pictureOn = false
+  /** The editor's encoder gave up. Asking again would fail again, so the
+   *  picture stays off until a page asks anew (opens the picture) or another
+   *  editor attaches. */
+  private pictureFailed = false
   /** The window state pages last heard, so they hear only changes. */
   private window: CompanionWindow | null = null
 
@@ -95,6 +99,7 @@ export class CompanionHub {
   /** A page opened the picture. Returns its close. */
   showPicture(sink: PictureSink): () => void {
     const remove = this.picture.add(sink)
+    this.pictureFailed = false
     this.demandChanged()
     return () => {
       remove()
@@ -121,7 +126,7 @@ export class CompanionHub {
     const attached = this.attached !== null
     return {
       watch: attached && this.viewers.size > 0,
-      picture: attached && this.picture.size > 0 && !exportRunning(this.exportJob),
+      picture: attached && this.picture.size > 0 && !exportRunning(this.exportJob) && !this.pictureFailed,
     }
   }
 
@@ -151,6 +156,13 @@ export class CompanionHub {
         if (this.picturing(a.token)) this.picture.chunk(a.key, a.timestamp_us, data)
         return null
       }
+      case COMPANION_MIRROR_FAILED:
+        if (this.picturing(a.token)) {
+          this.pictureFailed = true
+          this.demandChanged()
+          this.picture.fail()
+        }
+        return null
     }
     throw new Error(`unknown companion channel ${channel}`)
   }
@@ -161,6 +173,7 @@ export class CompanionHub {
    *  older one. */
   attach(token: string): CompanionAttachReply {
     this.attached = token
+    this.pictureFailed = false
     const demand = this.demand()
     this.told = demand
     this.settlePicture(demand)

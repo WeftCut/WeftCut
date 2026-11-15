@@ -422,6 +422,31 @@ describe("snapping", () => {
     expect(transformOverrideFor("l1")).toEqual({ dx: 320, dy: 0 });
   });
 
+  // Mod pressed or released with the pointer still sends no pointer event; the
+  // box has to follow it anyway, and the release must commit where it stood.
+  // Both modifier flags, so each case holds on either platform's Mod.
+  it.each([
+    { name: "pressed", before: {}, key: "keyDown", after: { ctrlKey: true, metaKey: true }, dx: 310 },
+    { name: "released", before: { ctrlKey: true, metaKey: true }, key: "keyUp", after: {}, dx: 320 },
+  ] as const)("re-solves the move when Mod is $name with the pointer still, and commits it", async ({
+    before, key, after, dx,
+  }) => {
+    setSnap(true);
+    render(<TransformGizmoHost />);
+    const el = await box();
+    fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0, ...before });
+    fireEvent.pointerMove(el, { clientX: 155, clientY: 0, ...before });
+    expect(transformOverrideFor("l1")).not.toEqual({ dx, dy: 0 });
+    fireEvent[key](window, { key: "Control", ctrlKey: false, metaKey: false, ...after });
+    expect(transformOverrideFor("l1")).toEqual({ dx, dy: 0 });
+    fireEvent.pointerUp(el, { clientX: 155, clientY: 0, ...after });
+    // The layer sits at x = 320 before the gesture.
+    expect(commit).toHaveBeenCalledWith("l1", [
+      ["x", { mode: "Static", value: 320 + dx }],
+      ["y", { mode: "Static", value: 180 }],
+    ]);
+  });
+
   it("snaps to an enabled grid whose lines the eye has hidden", async () => {
     setSnap(true, 12, { enabled: true, hidden: true, column_divisions: 16, rows: false });
     render(<TransformGizmoHost />);

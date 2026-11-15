@@ -11,9 +11,10 @@ import {
   COMPANION_DETACH,
   COMPANION_MIRROR_CHUNK,
   COMPANION_MIRROR_CONFIG,
+  COMPANION_MIRROR_FAILED,
   COMPANION_TRANSPORT,
 } from "../../shared/companion";
-import { codecGlobals, fakeCapture, log, paint, resetCodecs } from "./testing/fakeCodecs";
+import { codecGlobals, fakeCapture, log, paint, resetCodecs, support } from "./testing/fakeCodecs";
 
 const mocks = vi.hoisted(() => ({
   calls: [] as Array<[string, Record<string, unknown> | undefined]>,
@@ -132,6 +133,28 @@ describe("installCompanionBridge", () => {
     expect(log.tracksStopped).toBe(1);
     expect(log.encoders.map((e) => e.state)).toEqual(["closed"]);
     expect(log.captures).toBe(1);
+    dispose();
+  });
+
+  it("tells main when no encoder takes the picture, and starts anew when main asks again", async () => {
+    for (const codec of ["avc1.42E01F", "vp8"]) support.refusing.add(codec);
+    const dispose = installCompanionBridge(() => {});
+    await vi.waitFor(() => expect(sentOn(COMPANION_ATTACH)).toHaveLength(1));
+    tell(COMPANION_DEMAND_EVENT, { token: tokenOf(), watch: true, picture: true });
+    await vi.waitFor(() => expect(log.captures).toBe(1));
+    paint(640, 360);
+    await vi.waitFor(() => expect(log.encoders).toHaveLength(1));
+    paint(640, 360);
+    await vi.waitFor(() => expect(sentOn(COMPANION_MIRROR_FAILED)).toEqual([{ token: tokenOf() }]));
+    expect(log.tracksStopped).toBe(1);
+
+    // Main drops the demand, and raises it again when a page asks anew.
+    support.refusing.clear();
+    tell(COMPANION_DEMAND_EVENT, { token: tokenOf(), watch: true, picture: false });
+    tell(COMPANION_DEMAND_EVENT, { token: tokenOf(), watch: true, picture: true });
+    await vi.waitFor(() => expect(log.captures).toBe(2));
+    paint(640, 360);
+    await vi.waitFor(() => expect(sentOn(COMPANION_MIRROR_CHUNK)).toHaveLength(1));
     dispose();
   });
 

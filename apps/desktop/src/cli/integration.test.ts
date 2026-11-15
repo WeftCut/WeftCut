@@ -25,6 +25,7 @@ import {
   ResultSchema,
   SUPPORTED_PROTOCOL_VERSIONS,
 } from '@modelcontextprotocol/sdk/types.js'
+import { AGENT_HOSTS, stdioEntry, stdioSnippet } from '../shared/agentHosts.js'
 import { installCli } from '../main/mcp/cliInstall.js'
 import { mcpInstructions } from '../main/mcp/instructions.js'
 import { buildMcpServer } from '../main/mcp/server.js'
@@ -509,6 +510,24 @@ describe('weftcut mcp over real stdio + HTTP', () => {
       expect(client.answersTo(slow.id)).toHaveLength(1)
     })
 
+    it("an id the app still owes a late answer under is refused, so that answer reaches no other request", async () => {
+      const app = await scriptedApp()
+      const client = open(target, profile(app.port), { WEFTCUT_MCP_TOOL_TIMEOUT_MS: String(SHORT_IDLE_MS) })
+      await client.initialize()
+      const slow = client.start('tools/call', { name: 'slow', arguments: {} })
+      expect((await slow.answer()).result.isError).toBe(true)
+      // The slow job still runs in the app; the client reuses its id.
+      client.send({ id: slow.id, method: 'tools/call', params: { name: 'add_marker', arguments: {} } })
+      const reused = await client.received.when('an answer to the reused id', () => client.answersTo(slow.id)[1])
+      expect(reused.error?.code).toBe(ErrorCode.InvalidRequest)
+      expect(app.calls.filter((c) => c.name === 'add_marker')).toEqual([])
+      app.release()
+      await app.seen.when('the slow job finished in the app', () => app.calls.find((c) => c.name === 'slow')?.finished)
+      // A round trip behind the late reply, so it has had its way through the shim.
+      expect(textOf(await callTool(client, 'add_marker'))).toBe('called:add_marker')
+      expect(client.answersTo(slow.id)).toHaveLength(2)
+    })
+
     it("progress from the app re-arms the idle window and reaches the client under the client's token", async () => {
       const app = await scriptedApp()
       const client = open(target, profile(app.port), { WEFTCUT_MCP_TOOL_TIMEOUT_MS: String(BEATING_IDLE_MS) })
@@ -767,6 +786,10 @@ describe('weftcut mcp over real stdio + HTTP', () => {
       expect(entry.args).toEqual(['mcp'])
       expect(path.isAbsolute(entry.command)).toBe(true)
       expect(fs.realpathSync(entry.command)).toBe(fs.realpathSync(target.bin))
+      // Byte for byte what the app's panel gives a host of that format for the
+      // same path: the two sides build the entry apart.
+      const plain = AGENT_HOSTS.find((host) => host.format === 'mcp-servers-json')!
+      expect(out.stdout).toBe(`${stdioSnippet(plain, stdioEntry(entry.command))}\n`)
     })
 
     it('an unknown command exits 2 and names it', async () => {

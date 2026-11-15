@@ -217,10 +217,12 @@ describe('open_project / create_project', () => {
 })
 
 describe('closing and quitting shut the gate before the flush', () => {
-  it('keeps the project writable when an update shutdown cannot save', async () => {
+  it('keeps the project writable when an update shutdown cannot save its edits', async () => {
     const { ts, fs, workspaceDir } = host({ parent: '/work' })
     await call(ts, 'create_project', { name: 'Example' })
     workspaceDir.mockReturnValue('/work/Example')
+    expect((await call(ts, 'add_track', { label: 'Unsaved' })).isError).not.toBe(true)
+    expect(ts.hasUnsavedEdits()).toBe(true)
     const failingWrite = vi.spyOn(fs, 'writeFile').mockImplementation(() => { throw new Error('disk full') })
     await expect(ts.shutdown()).rejects.toThrow('disk full')
     expect(ts.projects.shuttingDown()).toBe(false)

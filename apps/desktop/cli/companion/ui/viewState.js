@@ -28,16 +28,19 @@ export function pageState(input) {
  *   exporting: boolean,
  *   wanted: boolean,
  *   supported: boolean,
+ *   failed: boolean,
  *   minimized: boolean,
  *   shown: boolean,
  * }} input `wanted`: the user turned the picture on; `supported`: this
- *   browser can show it; `shown`: a frame was drawn since it last started.
- * @returns {'export' | 'off' | 'unsupported' | 'minimized' | 'starting' | 'live'}
+ *   browser can show it; `failed`: the app could not encode it since it was
+ *   last asked for; `shown`: a frame was drawn since it last started.
+ * @returns {'export' | 'off' | 'unsupported' | 'failed' | 'minimized' | 'starting' | 'live'}
  */
 export function pictureState(input) {
   if (input.exporting) return 'export'
   if (!input.wanted) return 'off'
   if (!input.supported) return 'unsupported'
+  if (input.failed) return 'failed'
   if (input.minimized) return 'minimized'
   if (!input.shown) return 'starting'
   return 'live'

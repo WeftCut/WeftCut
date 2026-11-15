@@ -23,6 +23,15 @@ describe('writeFileAtomic', () => {
     expect(io.files.has(TEMP)).toBe(false)
     expect(io.log.indexOf('fsync')).toBeLessThan(io.log.indexOf('close'))
     expect(io.log.indexOf('close')).toBeLessThan(io.log.indexOf('rename'))
+    expect(io.log.indexOf('rename')).toBeLessThan(io.log.indexOf('syncDir'))
+  })
+
+  it('a failed flush of the folder entry does not fail a replacement that happened', () => {
+    const io = memAtomicIo(new Map([[TARGET, GOOD]]))
+    io.fail('syncDir', errno('EIO'))
+    writeFileAtomic(io, TARGET, NEXT)
+    expect(io.files.get(TARGET)).toBe(NEXT)
+    expect(io.files.has(TEMP)).toBe(false)
   })
 
   it.each(['open', 'write', 'fsync', 'close', 'rename'] as const)(

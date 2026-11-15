@@ -716,6 +716,8 @@ const enUS = {
     reset: "Reset Workspace",
     close_panel: "Close Panel",
     move_panel: "Drag to move {{title}}",
+    // Over a Panel that an export in progress has locked.
+    locked_during_export: "Locked while the export runs.",
     scroll_tabs: {
       start: "Show earlier Panel tabs",
       end: "Show later Panel tabs",

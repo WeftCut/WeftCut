@@ -14,6 +14,7 @@ import {
   COMPANION_DETACH,
   COMPANION_MIRROR_CHUNK,
   COMPANION_MIRROR_CONFIG,
+  COMPANION_MIRROR_FAILED,
   COMPANION_TRANSPORT,
   type CompanionAttachReply,
   type CompanionControlMessage,
@@ -42,6 +43,12 @@ export function installCompanionBridge(seekTo: (rootUs: number) => void): () => 
     },
     chunk: (chunk) => {
       void invokeRaw(COMPANION_MIRROR_CHUNK, { token, ...chunk } satisfies CompanionMirrorChunkMessage).catch(() => {});
+    },
+    // Only the running mirror fails (a stopped one never does). Main then
+    // drops the demand and tells the pages; a page asking again starts anew.
+    failed: () => {
+      mirror = null;
+      void invokeRaw(COMPANION_MIRROR_FAILED, { token }).catch(() => {});
     },
   };
 

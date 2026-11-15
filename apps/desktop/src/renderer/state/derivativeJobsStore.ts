@@ -33,6 +33,12 @@ export function derivativeJobStarted(job: MediaJobEvent, now = Date.now()): void
   );
 }
 
+/// The project is leaving: main cancels its jobs without an end event for
+/// each (a cancelled job is not an error), and forgets them itself.
+export function derivativeJobsReset(): void {
+  useDerivativeJobsStore.setState((s) => (Object.keys(s.jobs).length === 0 ? s : { jobs: {} }));
+}
+
 export function derivativeJobEnded(job: MediaJobEvent): void {
   const key = keyOf(job);
   useDerivativeJobsStore.setState((s) => {
@@ -52,6 +58,8 @@ export function useDerivativeJobEvents(): void {
       listen<MediaJobEvent>(MEDIA_JOB_EVENTS.started, (e) => derivativeJobStarted(e.payload)),
       listen<MediaJobEvent>(MEDIA_JOB_EVENTS.complete, (e) => derivativeJobEnded(e.payload)),
       listen<MediaJobEvent>(MEDIA_JOB_EVENTS.error, (e) => derivativeJobEnded(e.payload)),
+      // Sent before the next project's jobs start, on the same channel order.
+      listen("project:workspace-changing", () => derivativeJobsReset()),
     ]).then((offs) => {
       if (cancelled) for (const off of offs) off();
       else unlisteners.push(...offs);

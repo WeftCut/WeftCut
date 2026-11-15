@@ -479,3 +479,68 @@ describe('autosave save state', () => {
     } finally { s.done() }
   })
 })
+
+describe('autosave hold, the span of a workspace replacement', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  function held() {
+    const fs = memFs()
+    const write = vi.fn(fs.writeFile)
+    fs.writeFile = write
+    const s = setup({ fs })
+    s.ctl.start()
+    const projectWrites = () => write.mock.calls.filter(([p]) => p === `/ws/${PROJECT_FILE}`).length
+    return { ...s, write, projectWrites }
+  }
+
+  it('writes nothing while held, even past the autosave interval, and an asked save is a no-op', () => {
+    const { actor, ctl, projectWrites } = held()
+    ctl.hold()
+    actor.dispatch('add_track', {})
+    vi.advanceTimersByTime(60 * 60 * 1000)
+    ctl.forceFlush()
+    expect(projectWrites()).toBe(0)
+    ctl.stop()
+  })
+
+  it('drops what changed during the hold when the project it belonged to left', () => {
+    const { actor, ctl, projectWrites } = held()
+    ctl.hold()
+    actor.dispatch('add_track', {})
+    ctl.release(false)
+    expect(ctl.unsaved()).toBe(false)
+    vi.advanceTimersByTime(60 * 60 * 1000)
+    expect(projectWrites()).toBe(0)
+    ctl.stop()
+  })
+
+  it('owes the disk what changed during the hold when the project stayed', () => {
+    const { actor, ctl, projectWrites } = held()
+    ctl.hold()
+    actor.dispatch('add_track', {})
+    ctl.release(true)
+    expect(ctl.unsaved()).toBe(true)
+    vi.runOnlyPendingTimers()
+    expect(projectWrites()).toBe(1)
+    expect(ctl.unsaved()).toBe(false)
+    ctl.stop()
+  })
+
+  it('keeps an edit the opening flush failed to write, and retries it only after the hold', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { actor, ctl, write, projectWrites } = held()
+    actor.dispatch('add_track', {})
+    write.mockImplementationOnce(() => { throw errno('EBUSY') })
+    expect(() => ctl.forceFlush()).toThrow()
+    ctl.hold()
+    vi.advanceTimersByTime(60 * 60 * 1000)
+    expect(projectWrites()).toBe(1)
+    ctl.release(true)
+    vi.advanceTimersByTime(60 * 60 * 1000)
+    expect(projectWrites()).toBe(2)
+    expect(ctl.unsaved()).toBe(false)
+    ctl.stop()
+    vi.restoreAllMocks()
+  })
+})

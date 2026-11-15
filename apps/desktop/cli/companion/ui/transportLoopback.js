@@ -125,16 +125,17 @@ export function loopbackTransport({ fetch, key, clock, codecs = null, doc = glob
       return () => { stopped = true; abort.abort() }
     },
 
-    /** The picture, drawn into `view.mount`, `view.shown()` on every frame.
-     *  Asking for it is what makes the app encode it; `close` stops that.
-     *  Reconnects as the event stream does. Null where it cannot be shown. */
+    /** The picture, drawn into `view.mount`, `view.shown()` on every frame,
+     *  `view.failed()` when the app cannot encode it. Asking for it is what
+     *  makes the app encode it; `close` stops that. Reconnects as the event
+     *  stream does. Null where it cannot be shown. */
     openPicture(view) {
       if (codecs === null || stopped) return null
       const own = new AbortController()
       const signal = AbortSignal.any([abort.signal, own.signal])
       const canvas = doc.createElement('canvas')
       view.mount.replaceChildren(canvas)
-      const decoder = pictureDecoder({ canvas, codecs, shown: view.shown })
+      const decoder = pictureDecoder({ canvas, codecs, shown: view.shown, failed: view.failed })
       const open = () => !stopped && !own.signal.aborted
       void (async () => {
         let wait = RETRY_FIRST_MS

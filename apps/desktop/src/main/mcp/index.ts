@@ -106,7 +106,9 @@ export async function startMcpHost(backend: Backend, opts: McpHostOptions = {}):
   }
 
   const appExpress = express()
-  appExpress.use(express.json({ limit: '50mb' }))
+  // `/mcp` only: the companion routes parse their own small bodies, and only
+  // past their key check (`companion/routes.ts`).
+  appExpress.use('/mcp', express.json({ limit: '50mb' }))
 
   // Constant-time compare: a plain `!==` leaks timing. Not a real attack surface
   // for a 256-bit localhost token, but timingSafeEqual is the correct form.

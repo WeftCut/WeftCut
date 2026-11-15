@@ -73,6 +73,16 @@ export interface AutosaveController {
    *  last save start over, and a failing state reported for the previous one is
    *  withdrawn. */
   beginProject(): void
+  /** A workspace replacement has begun, after its opening flush: nothing is
+   *  written until `release`. The workspace slot may already name the next
+   *  folder while the actor still holds the previous project, so any write
+   *  here could land one project's state in the other's folder. */
+  hold(): void
+  /** The replacement settled. `keep`: the actor still holds the project the
+   *  changes made during the hold belong to (a failed Open, a Save As), so
+   *  they are owed to the disk; otherwise they belonged to the project that
+   *  left and are dropped. */
+  release(keep: boolean): void
   stop(): void
 }
 
@@ -104,6 +114,10 @@ export function createAutosave(deps: AutosaveDeps): AutosaveController {
   let commitsSinceSnapshot = 0
   let lastSnapshotAtMs = now().getTime()
   let pendingTraceId: string | undefined
+  /** Between `hold` and `release`. */
+  let held = false
+  /** A change arrived during the hold. */
+  let changedWhileHeld = false
 
   /** ISO-8601, no colons/dashes/dots — sorts lexicographically == chronologically
    *  (Windows-filename-safe). */
@@ -220,6 +234,11 @@ export function createAutosave(deps: AutosaveDeps): AutosaveController {
     // the save status reports, is the user's edits only. A load-time repair
     // (upgrade, grid, relink) is written with the next edit.
     if (e.replaced) return
+    if (held) { changedWhileHeld = true; return }
+    markDirty()
+  }
+
+  function markDirty(): void {
     if (!dirty) dirtySince = now()
     dirty = true
     if (quiet !== null) clearTimer(quiet)
@@ -238,6 +257,9 @@ export function createAutosave(deps: AutosaveDeps): AutosaveController {
     },
     /** The force path always snapshots and resets the counters. */
     forceFlush(): void {
+      // The replacement's opening flush already wrote every edit made before
+      // it; a save asked for during the hold has nothing of its own to write.
+      if (held) return
       clearTimers()
       const traceId = pendingTraceId
       pendingTraceId = undefined
@@ -265,7 +287,22 @@ export function createAutosave(deps: AutosaveDeps): AutosaveController {
       if (deadline !== null) { clearTimer(deadline); deadline = null; armDeadline() }
       if (reported.kind === 'failing') report({ kind: 'ok', cause: 'reset' })
     },
+    hold() {
+      held = true
+      changedWhileHeld = false
+      clearTimers()
+    },
+    release(keep) {
+      if (!held) return
+      held = false
+      const owed = keep && changedWhileHeld
+      changedWhileHeld = false
+      if (owed) markDirty()
+      else if (dirty && unsubscribe !== null && deadline === null) armDeadline()
+    },
     stop() {
+      held = false
+      changedWhileHeld = false
       pendingTraceId = undefined
       clearTimers()
       if (unsubscribe) { unsubscribe(); unsubscribe = null }

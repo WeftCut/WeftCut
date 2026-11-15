@@ -21,6 +21,7 @@ import { ExportJobs } from '../exportJobs'
 import { autosaveMaxWaitMs } from './autosave'
 import { rootComposition } from './model'
 import { errno } from './__tests__/fixtures/memAtomicIo'
+import { settleQuitSave } from '../quitSave'
 import { SAVE_STATUS_CHANNEL, SAVE_STATUS_EVENT, type SaveStatus } from '../../shared/save-status'
 
 describe('mapChangeEvent', () => {
@@ -154,10 +155,12 @@ describe('createTsActorHost — persistence-route integration', () => {
     } finally { host.stop() }
   })
 
-  it('restores export readiness for the retained project when saving on close fails', async () => {
+  it('restores export readiness for the retained project when saving its edits on close fails', async () => {
     const { deps, host, jobs, sessions } = makeExportSessionHost()
+    host.start()
     try {
       const dir = await host.handleInvoke('project_new_workspace', publicationProject)
+      await host.handleInvoke('add_marker', { tUs: 1_000_000 })
       deps.fs.writeFile = () => { throw new Error('disk full') }
       await expect(host.handleInvoke('project_close', {})).rejects.toThrow('disk full')
       expect(host.openedProject()).toEqual({ dir })
@@ -281,14 +284,17 @@ describe('createTsActorHost — persistence-route integration', () => {
   it('does not invent a session on failed replacement or flush, but reports an actual swap despite later failure', async () => {
     const { deps } = makeInMemoryDeps()
     const host = createTsActorHost(deps)
+    host.start()
     await host.handleInvoke('project_new_workspace', publicationProject)
     const old = host.publication()
     await expect(host.handleInvoke('project_open', { path: '/missing' })).rejects.toThrow()
     expect(host.publication()).toEqual(old)
+    await host.handleInvoke('add_marker', { tUs: 1_000_000 })
+    const marked = host.publication()
     const write = deps.fs.writeFile
     deps.fs.writeFile = () => { throw new Error('disk full') }
     await expect(host.handleInvoke('project_close', {})).rejects.toThrow('disk full')
-    expect(host.publication()).toEqual(old)
+    expect(host.publication()).toEqual(marked)
     expect(host.openedProject()).toEqual({ dir: '/projects/Publication' })
     deps.fs.writeFile = write
     deps.napi.pushRecent = () => { throw new Error('recent list failed') }
@@ -374,6 +380,26 @@ describe('createTsActorHost — persistence-route integration', () => {
     host.actor.dispatch('undo', {})
     host.actor.dispatch('redo', {})
     expect(fonts()).toEqual([DEFAULT_CAPTION_FONT_FAMILY, 'Example Sans', 'Example Sans', DEFAULT_CAPTION_FONT_FAMILY])
+  })
+
+  it('the playhead read takes the project as it is when the editor answers, not when it was asked', async () => {
+    const { deps } = makeInMemoryDeps()
+    let answer: ((r: import('../../shared/editorPlayhead').EditorPlayheadReport) => void) | undefined
+    const host = createTsActorHost({ ...deps, readEditorPlayhead: () => new Promise((resolve) => { answer = resolve }) })
+    const idOf = (r: ReturnType<typeof host.actor.dispatch>): string => {
+      if (!r.ok) throw new Error(JSON.stringify(r.error))
+      return r.value as string
+    }
+    const track = idOf(host.actor.dispatch('add_track', {}))
+    const layer = idOf(host.actor.dispatch('add_layer', { track, kind: 'color', t_start_us: 0, t_end_us: 1_000_000 }))
+    const asked = host.playhead!()
+    expect(answer).toBeDefined()
+    // The user renames the clip while the question is with the editor.
+    expect(host.actor.dispatch('update_layer', { layer, patch: { label: 'Renamed' } }).ok).toBe(true)
+    const root = host.actor.snapshot().root_id
+    answer!({ root_id: root, composition_id: root, t_us: 500_000, timecode: '00:00:00:15', playing: false, range: null, selection: [layer] })
+    const view = await asked as { under_playhead: Array<{ layer_id: string; label: string }> }
+    expect(view.under_playhead).toEqual([expect.objectContaining({ layer_id: layer, label: 'Renamed' })])
   })
 
   it('app settings immediately control cleanup without changing project state or history', async () => {
@@ -503,12 +529,14 @@ describe('createTsActorHost — persistence-route integration', () => {
     }
   })
 
-  it.each(['EACCES', 'ENOSPC', 'ENOENT'])('keeps save failures blocking replacement when the old directory exists: %s', async (code) => {
+  it.each(['EACCES', 'ENOSPC', 'ENOENT'])('keeps save failures blocking replacement when the old directory exists and edits are unsaved: %s', async (code) => {
     const { deps } = makeInMemoryDeps()
     const host = createTsActorHost(deps)
+    host.start()
     const args = { parentFolder: '/projects', name: 'Existing', width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 }
     try {
       await host.handleInvoke('project_new_workspace', args)
+      await host.handleInvoke('add_marker', { tUs: 1_000_000 })
       const failure = Object.assign(new Error('Cannot save'), { code })
       deps.fs.writeFile = () => { throw failure }
       await expect(host.handleInvoke('project_new_workspace', { ...args, name: 'Next' })).rejects.toBe(failure)
@@ -768,6 +796,70 @@ describe('createTsActorHost — persistence-route integration', () => {
         await opening
         expect(savedMarkers(t.vfs, first)).toEqual([before])
         await expect(t.host.handleInvoke('add_marker', { tUs: 2_000_000 })).resolves.toEqual(expect.any(String))
+      } finally { t.done() }
+    })
+
+    it('a folder that is gone does not drop unsaved edits: Close refuses and a quit asks', async () => {
+      const t = signalledHost()
+      try {
+        const dir = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
+        await t.host.handleInvoke('add_marker', { tUs: 1_000_000 })
+        // The folder went away (an unplugged drive, a move in the file manager).
+        t.deps.fs.writeFile = () => { throw errno('ENOENT') }
+        const exists = t.deps.fs.exists
+        t.deps.fs.exists = (p: string) => p !== dir && !p.startsWith(`${dir}/`) && exists(p)
+        await expect(t.host.handleInvoke('project_close', {})).rejects.toMatchObject({ code: 'ENOENT' })
+        expect(t.host.openedProject()).toEqual({ dir })
+        const ask = vi.fn(async () => 'cancel' as const)
+        await expect(settleQuitSave({ save: () => t.host.shutdown(), unsaved: () => t.host.hasUnsavedEdits(), ask, discard: () => t.host.abandon() }))
+          .resolves.toBe(false)
+        expect(ask).toHaveBeenCalledTimes(1)
+        expect(t.host.hasUnsavedEdits()).toBe(true)
+        expect(t.host.openedProject()).toEqual({ dir })
+      } finally { t.done() }
+    })
+
+    it.each(['close', 'switch', 'quit'] as const)('%s: a project with nothing unsaved leaves even when its save fails', async (how) => {
+      const t = signalledHost()
+      try {
+        const dir = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
+        expect(t.host.hasUnsavedEdits()).toBe(false)
+        t.signals.length = 0
+        t.failing.add(`${dir}/project.json`)
+        const attempt = how === 'close' ? t.host.handleInvoke('project_close', {})
+          : how === 'switch' ? t.host.handleInvoke('project_new_workspace', { ...publicationProject, name: 'Next' })
+          : t.host.shutdown()
+        await expect(attempt).resolves.not.toThrow()
+        expect(t.signals[0]).toBe('changing')
+        expect(t.host.openedProject()).toEqual(how === 'switch' ? { dir: expect.not.stringMatching(`^${dir}$`) } : null)
+      } finally { t.done() }
+    })
+
+    it('a change that lands mid-switch, after the workspace moved, is not written into the next folder', async () => {
+      const t = signalledHost()
+      let resume: (() => void) | undefined
+      const commit = t.deps.napi.commitWorkspace
+      try {
+        const first = await t.host.handleInvoke('project_new_workspace', publicationProject) as string
+        const MID = '00000000-0000-0000-0000-0000000000ab'
+        const item = mediaItemTemplate(MID, 'Video', 4_000_000)
+        expect(t.host.actor.dispatch('add_media_item', { media: item }).ok).toBe(true)
+        vi.advanceTimersByTime(10 * 60 * 1000)
+        expect(t.host.hasUnsavedEdits()).toBe(false)
+        // The workspace slot names the next folder; the actor still holds the first project.
+        t.deps.napi.commitWorkspace = async (p) => { await commit(p); await new Promise<void>((r) => { resume = r }) }
+        const opening = t.host.handleInvoke('project_new_workspace', { ...publicationProject, name: 'Next' }) as Promise<string>
+        await vi.waitFor(() => expect(resume).toBeDefined())
+        // poolFiles confirming a file of the outgoing project: a write-back `replacing` does not gate.
+        expect(t.host.actor.dispatch('set_media_workspace_paths', { media: MID, paths: {
+          path_abs: item.path_abs, path_rel: item.path_rel, file_hash_blake3: item.file_hash_blake3, file_size: item.file_size, file_mtime: 1 } }).ok).toBe(true)
+        vi.advanceTimersByTime(10 * 60 * 1000)
+        resume!()
+        const next = await opening
+        expect(next).not.toBe(first)
+        expect(JSON.parse(t.vfs[`${next}/project.json`]!).metadata.name).toBe('Next')
+        // It belonged to the project that left: the next one owes the disk nothing.
+        expect(t.host.hasUnsavedEdits()).toBe(false)
       } finally { t.done() }
     })
   })

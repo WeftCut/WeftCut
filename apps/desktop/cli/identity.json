@@ -1,0 +1,7 @@
+{
+  "$comment": "The app's identity, in one place. The weftcut binary embeds this file (identity.go); main and the build scripts read it (src/main/mcp/cliInstall.ts, scripts/cli-identity.mjs); scripts/cli-identity.test.mjs holds electron-builder.yml and package.json to it.",
+  "bundleId": "dev.weftcut.desktop",
+  "productName": "WeftCut",
+  "packageName": "@weftcut/desktop",
+  "binaryName": "weftcut"
+}

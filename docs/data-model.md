@@ -687,20 +687,25 @@ first unsaved one while edits keep arriving (a long agent run).
 at once.
 
 Only edits count as unsaved, and only a write of them that does not complete is
-a save failure. Opening or creating a project is not an edit, so nothing is
-written for it; a load-time repair (a schema upgrade, a grid repair, a relink)
-lives in memory and is written with the next edit.
+a save failure. Opening or creating a project is not an edit, so it leaves
+nothing unsaved; a load-time repair (a schema upgrade, a grid repair, a relink)
+lives in memory and is written with the next edit, or by the flush that closes
+the project.
 
-Switching, closing and quitting flush first and change nothing before the flush
-has succeeded: a failed flush aborts with the project, its imports, jobs and
-bakes as they were. Edits made before the flush are in it; from the flush to the
-end of the switch every write is refused (`ProjectBusy`), since one landing then
-would be dropped by the swap.
+Switching, closing, quitting and an update restart flush first. With edits
+unsaved, nothing changes before the flush has succeeded: a failed flush aborts
+with the project, its imports, jobs and bakes as they were (a quit or update
+restart asks whether to retry, quit without saving, or stay). With nothing
+unsaved a failed flush loses nothing and the project leaves anyway. Edits made
+before the flush are in it; from the flush to the end of the switch every edit
+is refused (`ProjectBusy`), since one landing then would be dropped by the swap,
+and autosave writes nothing, since the workspace may already name the next
+folder while the outgoing project is still in memory.
 
 Every write of `project.json` (autosave, Save As, New, the pre-upgrade copy)
-writes `project.json.tmp` beside it, flushes it to disk and renames it over the
-target (`main/atomicWrite.ts`), so an interrupted or failed write leaves the
-previous file whole. A failed autosave keeps the edits unsaved and retries
+writes `project.json.tmp` beside it, flushes it to disk, renames it over the
+target and flushes the folder entry (`main/atomicWrite.ts`, except on Windows),
+so an interrupted or failed write leaves the previous file whole. A failed autosave keeps the edits unsaved and retries
 within the interval; an explicit save reports the failure to its caller. A
 leftover `project.json.tmp` from a crash is harmless and is replaced by the next
 write.

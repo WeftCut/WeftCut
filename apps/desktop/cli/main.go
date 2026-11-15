@@ -153,7 +153,9 @@ func listTools(h host) int {
 
 // printConfig prints the fragment a client config needs: this binary and the
 // subcommand. No URL, token or environment: the binary finds the profile from
-// where it sits and reads the endpoint from it at every connect.
+// where it sits and reads the endpoint from it at every connect. The app's
+// Agent panel builds the same entry (stdioEntry, src/shared/agentHosts.ts);
+// src/cli/integration.test.ts holds the two byte-equal.
 func printConfig() int {
 	exe, err := os.Executable()
 	if err != nil {

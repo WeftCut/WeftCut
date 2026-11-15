@@ -1,4 +1,3 @@
-import { modKeyHeld } from "@/platform";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   moveLayer,
@@ -38,6 +37,7 @@ import { timelineDestination } from "../timelineDestination";
 import { foreignCompositionAtPoint } from "../timelineSurfaces";
 import { playheadClockUs } from "../../state/playheadProjection";
 import { useToolStore } from "../../state/toolStore";
+import { useModKeyReading } from "../../modKeyReading";
 import {
   evaluateTimelinePlacements,
   previewTrackId,
@@ -80,7 +80,6 @@ interface LayerDragGesture {
   armAtMs: number;
   lastClientX: number;
   lastClientY: number;
-  lastSnapSuspended: boolean;
 }
 
 interface PointerDragEvaluation {
@@ -408,7 +407,6 @@ export function useLayerDrag(opts: {
         armAtMs: Date.now() + armDelayMs,
         lastClientX: seed.startX,
         lastClientY: seed.startY,
-        lastSnapSuspended: false,
       };
       setGestureActive(true);
     },
@@ -703,13 +701,12 @@ export function useLayerDrag(opts: {
     setTimelineSnapGuide(compositionId, "layer", evaluation.snapBoundaryUs);
   }, [compositionId]);
 
-  const handlePointerMove = useCallback(
-    (e: PointerEvent) => {
+  /// One step of the gesture at a pointer position and a Mod reading: a
+  /// pointermove, or Mod pressed or released with the pointer still.
+  const advanceGesture = useCallback(
+    (clientX: number, clientY: number, snapSuspended: boolean) => {
       const current = gestureRef.current;
       if (!current) return;
-      const clientX = e.clientX;
-      const clientY = e.clientY;
-      const snapSuspended = modKeyHeld(e);
       const evaluation = evaluatePointer(current.state, clientX, clientY, snapSuspended);
       announceForeignComposition(
         evaluation.foreignCompositionId,
@@ -719,7 +716,6 @@ export function useLayerDrag(opts: {
         ...current,
         lastClientX: clientX,
         lastClientY: clientY,
-        lastSnapSuspended: snapSuspended,
       };
       const store = useLayerDragStore.getState();
       if (current.phase === "pending") {
@@ -736,6 +732,8 @@ export function useLayerDrag(opts: {
       } else {
         gestureRef.current = { ...next, state: evaluation.state };
         store.publish(evaluation.state);
+        // Also at a stationary pointer, for a Mod change: a destination Panel
+        // resolves its own landing from this (`ForeignDragGhost.tsx`).
         store.moveVisual(clientX, clientY, snapSuspended);
       }
       showLayerSnapGuide(evaluation);
@@ -743,15 +741,30 @@ export function useLayerDrag(opts: {
     [announceForeignComposition, evaluatePointer, showLayerSnapGuide],
   );
 
+  const modKey = useModKeyReading(gestureActive, (held) => {
+    const current = gestureRef.current;
+    if (current) advanceGesture(current.lastClientX, current.lastClientY, held);
+  });
+
+  const handlePointerMove = useCallback(
+    (e: PointerEvent) => {
+      advanceGesture(e.clientX, e.clientY, modKey.observe(e));
+    },
+    [advanceGesture, modKey],
+  );
+
   const handlePointerUp = useCallback(
     async (e: PointerEvent) => {
       const current = gestureRef.current;
       if (!current) return;
+      // Mod as the preview last showed it, not as this event reads it: a key
+      // event the release disagrees with has already re-drawn the preview, and
+      // the commit must land where that preview said.
       const evaluation = evaluatePointer(
         current.state,
         e.clientX,
         e.clientY,
-        modKeyHeld(e),
+        modKey.held(),
       );
       const temporalArmReached =
         current.phase === "dragging" || Date.now() >= current.armAtMs;
@@ -939,6 +952,7 @@ export function useLayerDrag(opts: {
       // freshness someone else's dependency list.
       fpsDen,
       fpsNum,
+      modKey,
       onLaneSpawned,
       onMutated,
     ],
@@ -966,7 +980,7 @@ export function useLayerDrag(opts: {
         current.state,
         current.lastClientX,
         current.lastClientY,
-        current.lastSnapSuspended,
+        modKey.held(),
       );
       if (!evaluation.hasEditIntent) return;
       gestureRef.current = {
@@ -976,7 +990,7 @@ export function useLayerDrag(opts: {
       };
       useLayerDragStore
         .getState()
-        .begin(evaluation.state, current.lastClientX, current.lastClientY, current.lastSnapSuspended);
+        .begin(evaluation.state, current.lastClientX, current.lastClientY, modKey.held());
       showLayerSnapGuide(evaluation);
     };
     timer = window.setTimeout(
@@ -984,7 +998,7 @@ export function useLayerDrag(opts: {
       Math.max(0, (gestureRef.current?.armAtMs ?? 0) - Date.now()),
     );
     return () => window.clearTimeout(timer);
-  }, [evaluatePointer, gestureActive, showLayerSnapGuide]);
+  }, [evaluatePointer, gestureActive, modKey, showLayerSnapGuide]);
 
   useEffect(() => {
     if (!gestureActive) return;

@@ -35,10 +35,15 @@ function versionAbove(version, floor) {
   return false
 }
 
-/// The loaded libraries and the highest minimum macOS among the slices of
-/// one binary, from `otool -l`-shaped text. A binary's own LC_ID_DYLIB is not a load.
+/// Where an `@rpath/` load may be searched for: inside the bundle or the OS.
+const RPATH_ALLOWED = ['/usr/lib/', '/System/Library/', '@loader_path', '@executable_path']
+
+/// The loaded libraries, the run-path search list and the highest minimum
+/// macOS among the slices of one binary, from `otool -l`-shaped text. A
+/// binary's own LC_ID_DYLIB is not a load.
 export function parseLoadCommands(text) {
   const deps = new Set()
+  const rpaths = new Set()
   let minos = null
   let command = null
   for (const raw of text.split('\n')) {
@@ -47,17 +52,27 @@ export function parseLoadCommands(text) {
     if (cmd) { command = cmd[1]; continue }
     const name = line.match(/^name (.+) \(offset \d+\)$/)
     if (name && LOADS.has(command)) deps.add(name[1])
+    const rpath = command === 'LC_RPATH' && line.match(/^path (.+) \(offset \d+\)$/)
+    if (rpath) rpaths.add(rpath[1])
     const version = (command === 'LC_BUILD_VERSION' && line.match(/^minos (\S+)/)) ||
       (command === 'LC_VERSION_MIN_MACOSX' && line.match(/^version (\S+)/))
     if (version && (minos === null || versionAbove(version[1], minos))) minos = version[1]
   }
-  return { deps: [...deps], minos }
+  return { deps: [...deps], rpaths: [...rpaths], minos }
 }
 
 /// Every problem that would stop `file` loading on a Mac at `floor`.
-export function portabilityProblems(file, { deps, minos }, floor) {
+export function portabilityProblems(file, { deps, rpaths = [], minos }, floor) {
   const problems = deps.filter(dep => !ALLOWED.some(prefix => dep.startsWith(prefix)))
     .map(dep => `${file} loads ${dep}, which no user's Mac provides`)
+  // An `@rpath/` load is only as portable as the places it is searched for:
+  // a run path into the build host (Homebrew, a build tree) finds nothing on
+  // a user's Mac, or finds that user's own copy of the library.
+  if (deps.some(dep => dep.startsWith('@rpath/'))) {
+    for (const rpath of rpaths.filter(r => !RPATH_ALLOWED.some(prefix => r.startsWith(prefix)))) {
+      problems.push(`${file} searches ${rpath} for its @rpath libraries, which no user's Mac provides`)
+    }
+  }
   if (minos === null) problems.push(`${file} declares no minimum macOS`)
   else if (versionAbove(minos, floor)) problems.push(`${file} requires macOS ${minos}; the app supports ${floor}`)
   return problems

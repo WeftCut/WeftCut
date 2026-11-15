@@ -2,6 +2,9 @@ import { useEffect } from "react";
 import { create } from "zustand";
 
 import { snapFrameRound } from "../frames";
+import type { ModifierFlags } from "../modKeyReading";
+import { modKeyHeld } from "../platform";
+import { playheadClockUs } from "../state/playheadProjection";
 import type {
   CompositionSummary,
   LinkSummary,
@@ -102,6 +105,26 @@ export interface MediaDropSnapOptions {
   currentTimeUs: number;
   enabled: boolean;
   strengthPx: number;
+}
+
+/// What a timeline Panel hands its drop rows: everything a media drop snaps
+/// against except the reads that belong to the event.
+export type MediaDropSnapSetup = Omit<MediaDropSnapOptions, "currentTimeUs">;
+
+/// The snap options for one dragover or drop event over a Panel's rows. Mod is
+/// read from the event: a native drag fires dragover continuously, so a key
+/// pressed with the pointer still reaches the next one. The playhead is read at
+/// the event because it is a snap target and playback moves it.
+export function mediaDropSnapAt(
+  setup: MediaDropSnapSetup,
+  compositionId: string | null,
+  e: ModifierFlags,
+): MediaDropSnapOptions {
+  return {
+    ...setup,
+    enabled: setup.enabled && !modKeyHeld(e),
+    currentTimeUs: playheadClockUs(compositionId),
+  };
 }
 
 interface MediaDropTarget {

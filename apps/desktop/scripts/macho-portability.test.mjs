@@ -50,6 +50,20 @@ test('a binary that loads a host-installed library or targets a newer macOS is r
   assert.match(portabilityProblems('lib', { ...portable, minos: null }, floor).join(), /declares no minimum macOS/)
 })
 
+test('an @rpath load is refused when a run path leads into the build host', () => {
+  const rpathText = (paths) => loadCommands({ loads: ['@rpath/libfoo.1.dylib'] }) +
+    paths.map(p => `Load command\n          cmd LC_RPATH\n      cmdsize 32\n         path ${p} (offset 12)\n`).join('')
+  const parsed = parseLoadCommands(rpathText(['@loader_path/../Frameworks', '/opt/homebrew/lib']))
+  assert.deepEqual(parsed.rpaths, ['@loader_path/../Frameworks', '/opt/homebrew/lib'])
+  assert.match(portabilityProblems('lib', parsed, '13.0').join(), /searches \/opt\/homebrew\/lib for its @rpath libraries/)
+  // Run paths inside the bundle are what @rpath is for.
+  assert.deepEqual(portabilityProblems('lib', parseLoadCommands(rpathText(['@executable_path/../Frameworks', '@loader_path'])), '13.0'), [])
+  // A host run path matters only to a binary that searches it.
+  const noRpathLoads = parseLoadCommands(loadCommands({ loads: ['/usr/lib/libSystem.B.dylib'] }) +
+    'Load command\n          cmd LC_RPATH\n      cmdsize 32\n         path /usr/local/lib (offset 12)\n')
+  assert.deepEqual(portabilityProblems('lib', noRpathLoads, '13.0'), [])
+})
+
 test('the gate names every non-portable binary at once', () => {
   const texts = {
     a: loadCommands({ loads: ['/opt/homebrew/opt/libx11/lib/libX11.6.dylib'] }),

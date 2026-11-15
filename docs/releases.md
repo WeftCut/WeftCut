@@ -7,6 +7,11 @@ The desktop version is plain SemVer. Bump it with
 package-lock.json together; a version edit in one package fails
 `release.mjs validate`. Native crate versions are independent.
 
+A version that breaks something (before 1.0, a minor bump) gets
+`docs/release-notes/<x.y.z>.md` in the same commit: what a user must do or know
+before updating. The release puts it ahead of the install steps and the
+generated changelog; a version without one gets those alone.
+
 On a push to `main` in `WeftCut/WeftCut`, electron-ci's `release-plan` job
 compares the version with published GitHub Releases; an unpublished, higher
 version is a release candidate. PRs, scheduled and manual runs never publish.
@@ -79,7 +84,9 @@ these test packages require a manual Gatekeeper exception and are not releases.
 The credentials are secrets of the `macos-release` GitHub environment, whose
 deployment branches are limited to `main`. Only `package-macos` and
 `macos-notary-status` name that environment, and no job that runs tests holds
-a secret.
+a secret. Within `package-macos` each secret is set on the one step that uses
+it: the app build (bundler plugins, build-time dependencies) runs in a step of
+its own and never sees the certificate.
 
 | Secret | Value |
 | --- | --- |

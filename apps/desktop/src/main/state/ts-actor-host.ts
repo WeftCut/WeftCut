@@ -494,16 +494,13 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
 
   // Serialize all cache-root/session changes, including Save As and Close.
   let persistenceTail: Promise<unknown> = Promise.resolve()
-  /** The outgoing project's flush may fail without blocking the replacement:
-   *  `keepsEdits` (Save As writes the whole current state elsewhere, which is
-   *  the way out the save-failure card offers), or its folder is gone (a
-   *  deleted project must not block New/Open/Save As/Close; an explicit Save
-   *  still reports it). */
-  const flushMayFail = (error: unknown, keepsEdits: boolean): boolean => {
-    if (keepsEdits) return true
-    const dir = deps.workspaceDir()
-    return error instanceof Error && (error as NodeJS.ErrnoException).code === 'ENOENT' && dir !== null && !deps.fs.exists(dir)
-  }
+  /** The outgoing project's flush may fail without blocking the replacement
+   *  only when nothing is lost by it: nothing of it is unsaved, or `keepsEdits`
+   *  (Save As writes the whole current state elsewhere, which is the way out the
+   *  save-failure card offers). One rule for every way a project leaves (Close,
+   *  Open, New, quit, update restart). A folder that is gone is no exception:
+   *  with edits unsaved, a quit asks and the rest refuse, so Save As keeps them. */
+  const flushMayFail = (keepsEdits: boolean): boolean => keepsEdits || !autosave.unsaved()
   /** Flush, then replace. A flush that fails aborts before anything is
    *  invalidated: no service hears of a change that did not happen, and every
    *  import, job and bake of the open project goes on. */
@@ -525,12 +522,13 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       replacing = true
       try { autosave.forceFlush() }
       catch (error) {
-        if (!flushMayFail(error, keepsEdits)) {
+        if (!flushMayFail(keepsEdits)) {
           replacing = false
           if (closing && opened === null) opened = openAtRequest
           throw error
         }
       }
+      autosave.hold()
       importGeneration++
       deps.onWorkspaceChanging?.()
       replacementOccurred = false
@@ -557,6 +555,9 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         poolFiles.clear()
         // Another project (or none) now: what was unsaved belonged to the old one.
         if (succeeded || replacementOccurred) autosave.beginProject()
+        // Save As keeps the project it wrote; a replacement that failed before
+        // the swap keeps the one it would have replaced.
+        autosave.release(keepsEdits || !(succeeded || replacementOccurred))
         const pending = deferredChange as { event: ChangeEvent; traceId?: string } | null
         if (replacementOccurred || pending || (succeeded && (!closing || publishedProject !== null))) {
           publishChange(pending?.event, pending?.traceId,
@@ -574,7 +575,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   }
 
   let opened: OpenedProject | null = null
-  /** Set once the app starts quitting; never cleared. Nothing opens after it. */
+  /** Set while the app quits: nothing opens after it. A quit that fails to
+   *  close the project (Cancel, a failed update restart) clears it again. */
   let quitting = false
   // Each record update runs only after its operation resolves, so a failed
   // open leaves the record as it was — and an open still in flight when the
@@ -1068,7 +1070,9 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       autosave.forceFlush()
     },
     ...(deps.styleDirs ? { taste: () => tasteView(deps.styleDirs!, opened?.dir ?? null, { motif: (id) => motifCatalog.get(id) ?? null, fonts: deps.installedFonts?.() ?? null }) } : {}),
-    ...(deps.readEditorPlayhead ? { playhead: async () => playheadView(actor.snapshot(), await deps.readEditorPlayhead!()) } : {}),
+    // The project is read once the editor has answered: an edit made while the
+    // question was out is in both halves of the answer, not only the editor's.
+    ...(deps.readEditorPlayhead ? { playhead: async () => { const report = await deps.readEditorPlayhead!(); return playheadView(actor.snapshot(), report) } } : {}),
     audits: new AuditStore((id) => motifCatalog.get(id) ?? null),
     projectStatus: () => ({
       project: opened === null ? null : { name: actor.snapshot().metadata.name, dir: opened.dir },

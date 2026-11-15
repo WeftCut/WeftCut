@@ -22,7 +22,9 @@ export interface QuitSaveDeps {
 }
 
 /** True to go on quitting, false to stay (Cancel). A failure with nothing
- *  unsaved quits without asking: no edit is lost by it. */
+ *  unsaved quits without asking: no edit is lost by it. The host already lets
+ *  a clean project's failed flush through (ts-actor-host `flushMayFail`); what
+ *  reaches here with nothing unsaved failed later in the close. */
 export async function settleQuitSave(deps: QuitSaveDeps): Promise<boolean> {
   for (;;) {
     try {

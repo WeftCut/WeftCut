@@ -609,8 +609,8 @@ jobs:
 
       # What only a packaged app can show of the stdio MCP entry (ADR 0165): the
       # RunAsNode fuse reads off, and a client config written for the JS shim of
-      # an earlier release is still served, with no window. Fuses are flipped at
-      # packaging, so every unpackaged run above still honours
+      # 0.7.x is refused with one line on stderr and no window. Fuses are
+      # flipped at packaging, so every unpackaged run above still honours
       # ELECTRON_RUN_AS_NODE. Linux needs a display for the app to boot at all.
       - name: Verify packaged stdio MCP entry
         if: (github.event_name != 'workflow_dispatch' || inputs.package) && (matrix.part == 'e2e-2' || matrix.part == 'all')
@@ -730,13 +730,19 @@ jobs:
       - uses: ./.github/actions/rust-artifacts
         if: steps.resume.outputs.resumed != 'true'
 
+      # The build runs every bundler plugin and build-time dependency; none of
+      # them may see the certificate, so it is a step of its own.
+      - name: Build app bundle
+        if: steps.resume.outputs.resumed != 'true'
+        run: npm run build
+
       - name: Package signed macOS release
         if: steps.resume.outputs.resumed != 'true'
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run build && node scripts/package-macos-release.mjs build
+        run: node scripts/package-macos-release.mjs build
 
       # The signed app must still pass what the unsigned one passed in e2e:
       # signing comes after the fuse flip and must not break the bundle.
