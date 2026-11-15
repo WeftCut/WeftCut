@@ -174,6 +174,7 @@ import {
   focusedCompositionId,
   openComposition,
 } from "../state/compositionAnchorStore";
+import i18n from "../i18n";
 import { useProjectStore } from "../state/projectStore";
 import {
   compositionFixture,
@@ -585,6 +586,12 @@ describe("DockWorkspace React integration", () => {
     const lock = document.querySelector(".weft-dock-panel-lock");
     expect(!!lock).toBe(locked);
     expect(lock?.closest("[inert]") ?? null).toBeNull();
+    // The Panel behind is inert, so the overlay itself must say why to a
+    // screen reader: not hidden from it, and carrying the reason as text.
+    if (lock) {
+      expect(lock.closest('[aria-hidden="true"]')).toBeNull();
+      expect(lock.textContent).toBe(i18n.t("dock_workspace.locked_during_export"));
+    }
 
     view.rerender(<DockWorkspace contracts={contracts} />);
     expect(panel.hasAttribute("inert")).toBe(false);

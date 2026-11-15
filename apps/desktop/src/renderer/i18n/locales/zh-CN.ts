@@ -659,6 +659,7 @@ const zhCN: Resources = {
     reset: "重置工作区",
     close_panel: "关闭面板",
     move_panel: "拖动以移动{{title}}",
+    locked_during_export: "导出期间已锁定。",
     scroll_tabs: {
       start: "显示前面的面板标签",
       end: "显示后面的面板标签",

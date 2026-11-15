@@ -49,7 +49,11 @@ export function PreviewGridToolbar() {
   };
   const columnsLabel = t("preview.grid_columns");
   const rowsLabel = t("preview.grid_rows");
-  const eyeLabel = t(grid.hidden ? "preview.grid_show" : "preview.grid_hide");
+  // The name stays fixed and `aria-pressed` carries the state, so a screen
+  // reader hears "Show grid lines, pressed" rather than a name that flips with
+  // it. The tooltip names what a click does.
+  const eyeLabel = t("preview.grid_show");
+  const eyeHint = t(grid.hidden ? "preview.grid_show" : "preview.grid_hide");
   return (
     <div
       className="preview-grid-toolbar"
@@ -94,7 +98,7 @@ export function PreviewGridToolbar() {
         className="preview-grid-axis-toggle preview-grid-eye-toggle"
         aria-label={eyeLabel}
         aria-pressed={!grid.hidden}
-        title={eyeLabel}
+        title={eyeHint}
         data-testid="grid-eye"
         onClick={() => void setAppSettings({ preview_grid: { hidden: !grid.hidden } })}
       >

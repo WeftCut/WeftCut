@@ -66,10 +66,11 @@
   border-bottom: 1px solid var(--border-soft);
   flex: 0 0 auto;
   /* Always one row, so turning the grid on never changes the bar's height or
-     re-fits the canvas under the user's alignment work. The target label
-     truncates first; past that the row scrolls. No scrollbar: a classic one is
-     in flow and would change the height this rule exists to hold (the Quick
-     Actions strip's reason, workspace.css). */
+     re-fits the canvas under the user's alignment work. As it narrows, the
+     target label truncates first, then the grid toolbar scrolls inside its own
+     box, and the zoom readout keeps its place; only past both does the row
+     scroll. No scrollbar: a classic one is in flow and would change the height
+     this rule exists to hold (the Quick Actions strip's reason, workspace.css). */
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -82,7 +83,9 @@
 }
 
 .preview-target-select {
-  flex: 0 1 auto;
+  /* Far ahead of the grid toolbar's 1, so the label truncates to its floor
+     before the grid starts to give way (the bar's order above). */
+  flex: 0 100 auto;
   min-width: calc(72 * var(--ui-px));
   max-width: calc(280 * var(--ui-px));
 }
@@ -116,12 +119,22 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Shown while the grid is on, between the target and the zoom readout. */
+/* Shown while the grid is on, between the target and the zoom readout. It
+   gives way before the zoom readout does: it shrinks and scrolls its own
+   controls (wheel, or Tab into a hidden one), scrollbar hidden for the bar's
+   reason. The padding, cancelled by the margin, keeps the focus rings of its
+   edge controls inside the box that now clips them. */
 .preview-grid-toolbar {
   display: inline-flex;
   align-items: center;
   gap: calc(5 * var(--ui-px));
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  padding: calc(3 * var(--ui-px));
+  margin: calc(-3 * var(--ui-px));
   font-variant-numeric: tabular-nums;
 }
 .preview-grid-axis { display: inline-flex; align-items: center; gap: calc(2 * var(--ui-px)); }

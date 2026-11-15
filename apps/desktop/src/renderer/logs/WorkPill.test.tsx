@@ -231,6 +231,18 @@ describe("background export in the work pill", () => {
     expect(onCancel).toHaveBeenCalledOnce();
   });
 
+  // The rate changes on every progress tick; a live region around it would
+  // re-announce each one. Only a phase change is news.
+  it("keeps the rate out of the live region, which carries the phase", () => {
+    const { rerender } = render(<WorkPill backgroundExport={encoding(0.5)} />);
+    fireEvent.click(screen.getByTestId("status-bar-work"));
+    const live = () => [...exportRegion()!.querySelectorAll('[role="status"]')].map((el) => el.textContent);
+    expect(live()).toEqual(["Encoding"]);
+    rerender(<WorkPill backgroundExport={encoding(0.6)} />);
+    expect(exportRegion()!.textContent).toContain("30 fps");
+    expect(live()).toEqual(["Encoding"]);
+  });
+
   it("leaves a lone export untitled: the trigger right below names it", () => {
     render(<WorkPill backgroundExport={encoding(0.5)} />);
     fireEvent.click(screen.getByTestId("status-bar-work"));
