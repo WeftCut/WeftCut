@@ -1,0 +1,62 @@
+name: macos-notary-status
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  status:
+    if: github.repository == 'WeftCut/WeftCut' && github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    timeout-minutes: 10
+    env:
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - name: Find WeftCut notarization submissions
+        id: history
+        shell: bash
+        run: |
+          : "${APPLE_ID:?Missing APPLE_ID}"
+          : "${APPLE_APP_SPECIFIC_PASSWORD:?Missing APPLE_APP_SPECIFIC_PASSWORD}"
+          : "${APPLE_TEAM_ID:?Missing APPLE_TEAM_ID}"
+          xcrun notarytool history --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" \
+            --output-format json > "$RUNNER_TEMP/notary-history.json"
+          python3 - <<'PY'
+          import json, os, pathlib
+          history = json.loads((pathlib.Path(os.environ['RUNNER_TEMP']) / 'notary-history.json').read_text())
+          submissions = sorted(
+              (item for item in history.get('history', []) if item.get('name', '').startswith('WeftCut')),
+              key=lambda item: item['createdDate'], reverse=True,
+          )
+          print(json.dumps(submissions[:5], indent=2))
+          if submissions:
+              latest = submissions[0]
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+                  output.write(f"id={latest['id']}\nstatus={latest['status']}\n")
+          else:
+              print('No WeftCut submission is recorded by Apple.')
+          PY
+
+      - name: Read latest submission status
+        if: steps.history.outputs.id != ''
+        env:
+          SUBMISSION_ID: ${{ steps.history.outputs.id }}
+        shell: bash
+        run: |
+          xcrun notarytool info "$SUBMISSION_ID" --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" \
+            --output-format json
+
+      - name: Read completed submission log
+        if: steps.history.outputs.status == 'Accepted' || steps.history.outputs.status == 'Invalid'
+        env:
+          SUBMISSION_ID: ${{ steps.history.outputs.id }}
+        shell: bash
+        run: |
+          xcrun notarytool log "$SUBMISSION_ID" --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID"

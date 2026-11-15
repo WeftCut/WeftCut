@@ -90,6 +90,13 @@ upload an installer artifact but never publish a GitHub Release. Install that
 DMG on another Mac and check first launch, native decode and FFmpeg operations.
 First-time notarization can take longer than later submissions.
 
+For a long-running submission, manually run `macos-notary-status` on `main`.
+It queries Apple's history and the newest WeftCut submission, plus the diagnostic
+log when a verdict is available. It never uploads software or submits another
+notarization request. `In Progress` means Apple has recorded the upload and is
+still processing it; no recorded submission means the build has not completed
+that handoff.
+
 For a local signed package on a Mac, bootstrap the native dependencies, set the
 same five environment variables, then run from `apps/desktop`:
 
