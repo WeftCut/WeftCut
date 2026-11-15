@@ -56,6 +56,8 @@
 /* The render-target control sits over the picture it names. A toolbar row, not
    a header bar: the Panel's title is its dock tab. */
 .preview-target-bar {
+  /* One shared dimension keeps selects, fields and icon toggles aligned. */
+  --preview-control-height: calc(24 * var(--ui-px));
   display: flex;
   align-items: center;
   gap: calc(8 * var(--ui-px));
@@ -63,15 +65,33 @@
   background: var(--card);
   border-bottom: 1px solid var(--border-soft);
   flex: 0 0 auto;
+  /* Always one row, so turning the grid on never changes the bar's height or
+     re-fits the canvas under the user's alignment work. The target label
+     truncates first; past that the row scrolls. No scrollbar: a classic one is
+     in flow and would change the height this rule exists to hold (the Quick
+     Actions strip's reason, workspace.css). */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
 
 .preview-target-bar .app-select {
-  padding: calc(2 * var(--ui-px)) calc(6 * var(--ui-px));
+  height: var(--preview-control-height);
+  padding: 0 calc(6 * var(--ui-px));
   font-size: var(--font-size-caption);
 }
 
 .preview-target-select {
+  flex: 0 1 auto;
+  min-width: calc(72 * var(--ui-px));
   max-width: calc(280 * var(--ui-px));
+}
+
+.preview-target-select > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Both preview dropdowns use the compact toolbar scale and the trigger's
@@ -92,8 +112,45 @@
   /* A fixed floor so the toolbar does not jiggle as the percentage changes
      width under the wheel. Outranks .app-select's own min-width. */
   min-width: 5.5rem;
+  flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
 }
+
+/* Shown while the grid is on, between the target and the zoom readout. */
+.preview-grid-toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(5 * var(--ui-px));
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+.preview-grid-axis { display: inline-flex; align-items: center; gap: calc(2 * var(--ui-px)); }
+/* Two centred digits need room beside the 16px hover steppers and 2px inset.
+   56 UI pixels leaves a small gap without shifting the number off centre. */
+.preview-grid-toolbar .preview-grid-count { width: calc(56 * var(--ui-px)); min-width: 0; }
+.preview-grid-toolbar .preview-grid-count .app-input {
+  height: var(--preview-control-height);
+  padding: 0 calc(4 * var(--ui-px));
+}
+.preview-grid-times { color: var(--muted-foreground); font-size: var(--font-size-caption); }
+.preview-grid-axis-toggle {
+  width: var(--preview-control-height);
+  height: var(--preview-control-height);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+}
+.preview-grid-axis-toggle[aria-pressed="true"] {
+  color: var(--foreground);
+  background: var(--accent);
+  border-color: var(--border-soft);
+}
+.preview-grid-eye-toggle { margin-inline-start: calc(3 * var(--ui-px)); }
+.preview-grid-axis-toggle:hover { background: var(--accent); }
+.preview-grid-axis-toggle:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 
 .video-surface {
   flex: 1;
@@ -136,6 +193,25 @@
   height: var(--pixi-preview-canvas-height);
   max-width: none;
   max-height: none;
+}
+
+.preview-grid-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  fill: none;
+}
+
+.preview-grid-under {
+  stroke: rgb(0 0 0 / 48%);
+  stroke-width: 2.5px;
+}
+
+.preview-grid-line {
+  stroke: rgb(255 255 255 / 46%);
+  stroke-width: 1px;
 }
 
 .preview-hand-overlay {

@@ -4,6 +4,7 @@
 // snake_case to match the file written historically by the Rust addon, so
 // existing users' app_settings.json keeps working after the move to TS.
 
+import { DEFAULT_PREVIEW_GRID, type PreviewGridSettings } from "./preview-grid";
 import type { PausePreset, PausePresetChange } from "./pause-presets";
 import { DEFAULT_LAYOUT_THEME, type LayoutTheme } from './layout-theme';
 import { DEFAULT_RESOURCE_POLICY, resolveResourcePolicy } from './resource-policy';
@@ -69,11 +70,12 @@ export interface AppSettings {
   /// Pixel threshold for boundary snapping. Clamped on write.
   tail_snap_strength_px: number;
   /// Snap the preview gizmo's move and resize gestures to the composition's
-  /// edges and centre lines and to other staged layers' bounding boxes.
-  /// Deliberately separate from `tail_snap_enabled`: the two domains differ by
-  /// an order of magnitude in target density (every clip boundary on every
-  /// visible track vs six composition lines plus a handful of layers), so one
-  /// threshold cannot be tuned for both.
+  /// edges and centre lines, to other staged layers' bounding boxes, and to
+  /// the alignment grid's lines while `preview_grid.enabled`. Deliberately
+  /// separate from `tail_snap_enabled`: the two domains differ by an order of
+  /// magnitude in target density (every clip boundary on every visible track
+  /// vs six composition lines, a handful of layers and the grid's nearest
+  /// line per axis), so one threshold cannot be tuned for both.
   preview_snap_enabled: boolean;
   /// SCREEN-pixel snap radius for the preview gizmo — the same unit as
   /// `tail_snap_strength_px`, and the reason the solver divides it by the
@@ -81,6 +83,8 @@ export interface AppSettings {
   /// pixels would feel different on a 1080p and a 4K composition and would
   /// drift as the panel is resized. Clamped on write.
   preview_snap_strength_px: number;
+  /// The preview's alignment grid. See `shared/preview-grid.ts`.
+  preview_grid: PreviewGridSettings;
   /// When true, the frames Motif layers use on the timeline are baked to disk
   /// in the background (L2), including ones nothing has played yet. Frames a
   /// preview or export captures are stored either way. Default false. See
@@ -183,6 +187,7 @@ export interface AppSettingsPatch {
   tail_snap_strength_px?: number;
   preview_snap_enabled?: boolean;
   preview_snap_strength_px?: number;
+  preview_grid?: Partial<PreviewGridSettings>;
   prebake_motifs?: boolean;
   preview_effects_enabled?: boolean;
   decode_engine?: "auto" | "ffmpeg" | "webcodecs";
@@ -228,6 +233,7 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   // learn. On by default, like the timeline's.
   preview_snap_enabled: true,
   preview_snap_strength_px: 12,
+  preview_grid: DEFAULT_PREVIEW_GRID,
   prebake_motifs: false,
   preview_effects_enabled: true,
   decode_engine: "auto",

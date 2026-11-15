@@ -96,6 +96,12 @@ export const usePreviewSnapEnabled = (): boolean =>
   useAppSettingsStore((s) => s.settings.preview_snap_enabled);
 export const usePreviewSnapStrengthPx = (): number =>
   useAppSettingsStore((s) => s.settings.preview_snap_strength_px);
+export const usePreviewGrid = () =>
+  useAppSettingsStore((s) => s.settings.preview_grid);
+export const usePreviewGridEnabled = (): boolean =>
+  useAppSettingsStore((s) => s.settings.preview_grid.enabled);
+export const usePreviewGridOpacity = (): number =>
+  useAppSettingsStore((s) => s.settings.preview_grid.opacity);
 export const usePrebakeMotifsEnabled = (): boolean =>
   useAppSettingsStore((s) => s.settings.prebake_motifs);
 export const useDecodeEngine = (): AppSettings["decode_engine"] =>
@@ -171,6 +177,22 @@ export async function toggleFollowPlayhead(): Promise<AppSettings> {
 export async function toggleMarkersVisible(): Promise<AppSettings> {
   const current = useAppSettingsStore.getState().settings.markers_visible;
   return setAppSettings({ markers_visible: !current });
+}
+
+export function previewGridEnabled(): boolean {
+  return useAppSettingsStore.getState().settings.preview_grid.enabled;
+}
+
+export function previewSnapEnabled(): boolean {
+  return useAppSettingsStore.getState().settings.preview_snap_enabled;
+}
+
+export async function togglePreviewGrid(): Promise<AppSettings> {
+  return setAppSettings({ preview_grid: { enabled: !previewGridEnabled() } });
+}
+
+export async function togglePreviewSnap(): Promise<AppSettings> {
+  return setAppSettings({ preview_snap_enabled: !previewSnapEnabled() });
 }
 
 export async function toggleSafeAreaGuides(): Promise<AppSettings> {

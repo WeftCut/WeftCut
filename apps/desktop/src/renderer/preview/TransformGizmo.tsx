@@ -102,6 +102,7 @@ import {
   type SnapGuides,
   type SnapTargets,
 } from "./previewSnap";
+import { previewGrid } from "./gridGeometry";
 
 /// Affordance sizes — rotation knob, anchor target, resize handles — are
 /// `UI_METRICS.gizmo`: client pixels, so they are identical on a 4K composition
@@ -1154,8 +1155,11 @@ function TransformGizmo({
       focusedPlayheadUs(),
       probe,
     );
+    const grid = settings.preview_grid.enabled
+      ? previewGrid(comp.width, comp.height, settings.preview_grid, settings.safe_area_guides_visible)
+      : undefined;
     return {
-      targets: snapTargets(comp.width, comp.height, others),
+      targets: snapTargets(comp.width, comp.height, others, { grid }),
       strengthPx: settings.preview_snap_strength_px,
     };
   };

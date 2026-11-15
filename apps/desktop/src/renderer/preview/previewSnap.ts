@@ -13,13 +13,14 @@
 // Spec: docs/features.md#on-canvas-transform-gizmo
 
 import type { Pt } from "./gizmoGeometry";
+import { nearestGridLine, type GridAxis, type PreviewGrid } from "./gridGeometry";
 
 /// A candidate alignment line, and where it came from. The source is carried
 /// rather than inferred from array position because it decides ties, and a
 /// tie-break that depends on construction order is exactly what
 /// `timeline/snapping.ts` gets away with only because its boundary set has a
 /// stable track order.
-export type SnapSource = "composition" | "layer";
+export type SnapSource = "composition" | "layer" | "grid";
 
 export interface SnapTarget {
   /// The line's position on its axis, composition pixels.
@@ -27,16 +28,17 @@ export interface SnapTarget {
   source: SnapSource;
 }
 
-/// Composition wins ties, so it ranks first.
-function sourceRank(s: SnapSource): number {
-  return s === "composition" ? 0 : 1;
-}
+/// Lower wins a tie: composition, then layer, then grid.
+const SOURCE_RANK: Record<SnapSource, number> = { composition: 0, layer: 1, grid: 2 };
 
 export interface SnapTargets {
   /// Vertical lines — candidate `x` values.
   xs: readonly SnapTarget[];
   /// Horizontal lines — candidate `y` values.
   ys: readonly SnapTarget[];
+  /// The alignment grid, matched by its nearest line rather than enumerated:
+  /// up to 63 lines per axis would only be scanned to find the closest.
+  grid?: PreviewGrid | undefined;
 }
 
 /// An axis-aligned box in composition pixels. What a rotated layer contributes
@@ -67,7 +69,8 @@ function axisCandidates(low: number, high: number): [number, number, number] {
   return [low, (low + high) / 2, high];
 }
 
-/// The composition's own lines plus every other staged layer's box. `others`
+/// The composition's own lines plus every other staged layer's box, and the
+/// grid when one is on. `others`
 /// arrives already resolved and mapped — building it needs the animated tracks
 /// and so belongs to the caller, which is what keeps this module pure.
 ///
@@ -79,6 +82,7 @@ export function snapTargets(
   compW: number,
   compH: number,
   others: readonly Aabb[],
+  { grid }: { grid?: PreviewGrid | undefined } = {},
 ): SnapTargets {
   const xs: SnapTarget[] = [
     { at: 0, source: "composition" },
@@ -94,12 +98,12 @@ export function snapTargets(
     for (const at of axisCandidates(box.left, box.right)) xs.push({ at, source: "layer" });
     for (const at of axisCandidates(box.top, box.bottom)) ys.push({ at, source: "layer" });
   }
-  return { xs, ys };
+  return { xs, ys, grid };
 }
 
 /// The setting's SCREEN-pixel radius in composition pixels. Zero (or worse)
 /// disables snapping entirely, which is how the caller expresses both "the
-/// preference is off" and "Ctrl is held" without a second flag — the same
+/// preference is off" and "the bypass key is held" without a second flag — the same
 /// `threshold <= 0` short-circuit `timeline/snapping.ts` uses.
 export function snapThresholdComp(strengthPx: number, fitScale: number): number {
   if (!(fitScale > 0) || !Number.isFinite(fitScale)) return 0;
@@ -116,30 +120,33 @@ interface AxisHit {
 
 /// The smallest move that puts one of `candidates` onto one of `targets`.
 ///
-/// Ranked by (distance, source), lexicographically: a layer line must be
-/// STRICTLY nearer than a composition line to win, which is the whole of the
-/// tie-break rule `sourceRank` exists for. `>=` on the distance alone would hand
-/// ties to whichever target the loop reached first.
+/// Ranked by (distance, source), lexicographically: `SOURCE_RANK` decides
+/// ties. `>=` on the distance alone would hand ties to whichever target the
+/// loop reached first.
 function snapAxis(
   candidates: readonly number[],
   targets: readonly SnapTarget[],
   thresholdComp: number,
+  grid?: GridAxis | null,
 ): AxisHit | null {
   if (!(thresholdComp > 0)) return null;
   let best: AxisHit | null = null;
   let bestDistance = Number.POSITIVE_INFINITY;
   let bestRank = Number.POSITIVE_INFINITY;
+  const consider = (at: number, candidate: number, rank: number) => {
+    const distance = Math.abs(at - candidate);
+    if (distance > thresholdComp || distance > bestDistance) return;
+    if (distance === bestDistance && rank >= bestRank) return;
+    bestDistance = distance;
+    bestRank = rank;
+    best = { delta: at - candidate, at };
+  };
   for (const target of targets) {
-    const rank = sourceRank(target.source);
-    for (const candidate of candidates) {
-      const distance = Math.abs(target.at - candidate);
-      if (distance > thresholdComp) continue;
-      if (distance > bestDistance) continue;
-      if (distance === bestDistance && rank >= bestRank) continue;
-      bestDistance = distance;
-      bestRank = rank;
-      best = { delta: target.at - candidate, at: target.at };
-    }
+    const rank = SOURCE_RANK[target.source];
+    for (const candidate of candidates) consider(target.at, candidate, rank);
+  }
+  if (grid) {
+    for (const candidate of candidates) consider(nearestGridLine(candidate, grid), candidate, SOURCE_RANK.grid);
   }
   return best;
 }
@@ -177,8 +184,8 @@ export function snapMove(
   targets: SnapTargets,
   thresholdComp: number,
 ): MoveSnapResult {
-  const x = snapAxis(axisCandidates(box.left, box.right), targets.xs, thresholdComp);
-  const y = snapAxis(axisCandidates(box.top, box.bottom), targets.ys, thresholdComp);
+  const x = snapAxis(axisCandidates(box.left, box.right), targets.xs, thresholdComp, targets.grid?.x);
+  const y = snapAxis(axisCandidates(box.top, box.bottom), targets.ys, thresholdComp, targets.grid?.y);
   return {
     dx: x?.delta ?? 0,
     dy: y?.delta ?? 0,
@@ -216,8 +223,8 @@ export function snapScaleTarget(
   targets: SnapTargets,
   thresholdComp: number,
 ): ScaleSnapResult {
-  const x = drives.x ? snapAxis([target.x], targets.xs, thresholdComp) : null;
-  const y = drives.y ? snapAxis([target.y], targets.ys, thresholdComp) : null;
+  const x = drives.x ? snapAxis([target.x], targets.xs, thresholdComp, targets.grid?.x) : null;
+  const y = drives.y ? snapAxis([target.y], targets.ys, thresholdComp, targets.grid?.y) : null;
   return {
     target: { x: target.x + (x?.delta ?? 0), y: target.y + (y?.delta ?? 0) },
     guides: { x: x?.at ?? null, y: y?.at ?? null },
@@ -278,24 +285,26 @@ export function snapUniformScale(
     origin: number,
     component: number,
     axis: "x" | "y",
+    grid?: GridAxis | null,
   ): void => {
-    for (const line of lines) {
-      const t = (line.at - origin) / component;
-      if (!Number.isFinite(t)) continue;
+    const considerLine = (at: number, rank: number) => {
+      const t = (at - origin) / component;
+      if (!Number.isFinite(t)) return;
       const shift = Math.abs(t - rawT) * rayLen;
-      if (shift > thresholdComp) continue;
-      const rank = sourceRank(line.source);
-      if (shift > bestShift) continue;
-      if (shift === bestShift && rank >= bestRank) continue;
+      if (shift > thresholdComp || shift > bestShift) return;
+      if (shift === bestShift && rank >= bestRank) return;
       bestShift = shift;
       bestRank = rank;
       bestT = t;
-      bestGuides = axis === "x" ? { x: line.at, y: null } : { x: null, y: line.at };
-    }
+      bestGuides = axis === "x" ? { x: at, y: null } : { x: null, y: at };
+    };
+    for (const line of lines) considerLine(line.at, SOURCE_RANK[line.source]);
+    // On each driven axis, the nearest line in that axis also minimizes |delta t|.
+    if (grid) considerLine(nearestGridLine(origin + rawT * component, grid), SOURCE_RANK.grid);
   };
 
-  if (drives.x) consider(targets.xs, pivot.x, ray.x, "x");
-  if (drives.y) consider(targets.ys, pivot.y, ray.y, "y");
+  if (drives.x) consider(targets.xs, pivot.x, ray.x, "x", targets.grid?.x);
+  if (drives.y) consider(targets.ys, pivot.y, ray.y, "y", targets.grid?.y);
 
   return bestT === null ? { t: rawT, guides: NO_GUIDES } : { t: bestT, guides: bestGuides };
 }

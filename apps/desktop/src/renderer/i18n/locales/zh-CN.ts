@@ -532,6 +532,7 @@ const zhCN: Resources = {
     follow_playhead: "时间线自动滚动",
     show_markers: "显示标记",
     show_safe_areas: "显示安全框",
+    grid: "网格",
     review_overlay: "审阅叠加层",
     close_active_panel: "关闭活动面板",
     reset_workspace: "重置工作区",
@@ -568,6 +569,10 @@ const zhCN: Resources = {
     // 新加入本区的三个开关沿用同样的两态写法：按下态说明是哪一种状态，提示说明点击会做什么。
     snap_on_hint: "片段吸附已开启。点击关闭。",
     snap_off_hint: "片段吸附已关闭。点击开启。",
+    canvas_snap_on_hint: "画面吸附已开启。点击关闭。",
+    canvas_snap_off_hint: "画面吸附已关闭。点击开启。",
+    grid_on_hint: "网格已开启。点击关闭。",
+    grid_off_hint: "网格已关闭。点击开启。",
     review_overlay_on_hint: "审阅叠加层已开启：时间线上显示批注和代理尚未审阅的变更。点击隐藏。",
     review_overlay_off_hint: "审阅叠加层已关闭。点击在时间线上显示批注和代理尚未审阅的变更。",
     follow_on_hint: "时间线自动滚动已开启。点击关闭。",
@@ -894,6 +899,8 @@ const zhCN: Resources = {
     toggle_follow_playhead: "切换时间线自动滚动",
     toggle_markers_visible: "切换时间线标记",
     toggle_safe_area_guides: "切换安全框参考线",
+    toggle_preview_grid: "切换网格",
+    toggle_preview_snap: "切换画面吸附",
     toggle_tail_snap: "切换片段吸附",
     toggle_review_overlay: "切换审阅叠加层",
     // 带前缀，不像设置里的单选那样只写"完整"/"1/2"：这些标签同时出现在搜索面板里，
@@ -1080,6 +1087,14 @@ const zhCN: Resources = {
     zoom_label: "预览缩放",
     zoom_fit: "适应窗口",
     zoom_percent: "{{percent}}%",
+    // 渲染目标旁的网格一行，网格开启时显示。
+    grid_label: "网格",
+    grid_columns: "列数",
+    grid_rows: "行数",
+    grid_vertical_lines: "垂直网格线",
+    grid_horizontal_lines: "水平网格线",
+    grid_hide: "隐藏网格线（吸附保持开启）",
+    grid_show: "显示网格线",
     renderer_limit: "部分未绘制",
     renderer_limit_hint:
       "这台电脑以 {{renderer}} 备用渲染器绘制预览（没有 WebGPU 或 WebGL2），无法绘制此处的{{features}}，相关片段显示时不含这些内容。导出和画面检查会拒绝这样的画面。解决方法：开启硬件加速，或换用 GPU 驱动正常的电脑。",
@@ -2118,10 +2133,11 @@ const zhCN: Resources = {
     preview_heading: "预览",
     preview_snap_enabled: "启用画面吸附",
     preview_snap_enabled_hint:
-      "在预览中移动或缩放片段时，自动对齐到画面边缘、中线以及其它片段。按住 {{mod}} 可临时关闭。",
+      "在预览中移动或缩放片段时，自动对齐到画面边缘、中线、其它片段以及网格线。按住 {{mod}} 可临时关闭。",
     preview_snap_strength: "吸附强度",
     preview_snap_strength_hint:
       "以屏幕像素为单位。",
+    grid_opacity: "网格可见度",
     decode_engine: "解码引擎",
     decode_engine_auto: "自动",
     decode_engine_auto_desc: "按素材选择最合适的引擎",

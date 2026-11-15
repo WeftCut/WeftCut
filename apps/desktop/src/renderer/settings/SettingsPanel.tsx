@@ -32,6 +32,7 @@ import { KeybindingPanel } from "./KeybindingPanel";
 import { LayoutThemeControl } from "./LayoutThemeControl";
 import { AgentSection } from "./AgentSection";
 import { PreviewSection } from "./PreviewSection";
+import { GridOpacitySection } from "./GridOpacitySection";
 import { PerformanceSection } from "./PerformanceSection";
 import { ModelSection } from "./ModelSection";
 import { VlmSection } from "./VlmSection";
@@ -323,6 +324,7 @@ export function SettingsPanel({
               <PreviewSection onError={setError} />
               <PrebakeSection onError={setError} />
               <PreviewSnapSection onError={setError} />
+              <GridOpacitySection onError={setError} />
             </section>
           </div>
 

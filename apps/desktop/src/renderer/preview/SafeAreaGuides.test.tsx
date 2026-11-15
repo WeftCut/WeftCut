@@ -7,12 +7,8 @@ import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { useProjectStore } from "../state/projectStore";
 import { clearLayerSelection } from "../state/selectionStore";
 import { clearGizmoProbe, registerGizmoProbe, type GizmoProbe } from "./gizmoProbeRegistry";
-import {
-  ACTION_SAFE_FRACTION,
-  safeAreaRect,
-  SafeAreaGuidesHost,
-  TITLE_SAFE_FRACTION,
-} from "./SafeAreaGuides";
+import { SafeAreaGuidesHost } from "./SafeAreaGuides";
+import { ACTION_SAFE_FRACTION, safeAreaRect, TITLE_SAFE_FRACTION } from "./safeAreaGeometry";
 import { summaryFixture } from "../testing/summaryFixture";
 
 /// A 1280×720 composition with NO layers: the guides are a property of the

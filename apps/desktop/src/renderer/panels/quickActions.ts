@@ -20,6 +20,7 @@ import {
   FoldHorizontal,
   FoldVertical,
   Group,
+  Grid3x3,
   Hand,
   Link,
   Link2Off,
@@ -41,6 +42,7 @@ import type { AppSettings, DisplayMode } from "../ipc";
 import type { LinkToggleState } from "../timeline/linkEligibility";
 import type { GroupState, UngroupState } from "../timeline/groupEligibility";
 import type { Tool } from "../state/toolStore";
+import { CanvasSnapIcon } from "./CanvasSnapIcon";
 import { FollowPlayheadIcon } from "./FollowPlayheadIcon";
 import { ClearRangeIcon, MarkInIcon, MarkOutIcon } from "./MarkRangeIcon";
 import {
@@ -92,6 +94,10 @@ export interface QuickActionState {
   reviewOverlay: boolean;
   /// Clip snapping — the magnet (`tail_snap_enabled`).
   snapEnabled: boolean;
+  /// Canvas snapping (`preview_snap_enabled`): frame, layers and grid lines.
+  previewSnapEnabled: boolean;
+  /// The alignment grid (`preview_grid.enabled`), drawn and snapped together.
+  gridEnabled: boolean;
   /// Whether the timeline pages itself to keep the playhead on screen.
   followPlayhead: boolean;
   /// Whether the preview draws the title-safe / action-safe rectangles.
@@ -290,6 +296,19 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
             : "quick_actions.review_overlay_off_hint",
       },
       {
+        // Auto-scroll. A lane with the playhead standing in it, drawn in
+        // `FollowPlayheadIcon.tsx`: every reticle lucide offers says "centre on
+        // a target", and centring is the one thing `followPlayhead.ts` does not
+        // do — it pages, and parks the playhead off to the leading side.
+        id: "toggleFollowPlayhead",
+        icon: FollowPlayheadIcon,
+        active: (s) => s.followPlayhead,
+        hint: (s) =>
+          s.followPlayhead
+            ? "quick_actions.follow_on_hint"
+            : "quick_actions.follow_off_hint",
+      },
+      {
         // The magnet. Its home in every NLE is a toolbar button, and until this
         // row it lived only in Settings — a per-edit switch behind a
         // preferences panel. One fixed glyph for the marker-toggle reason: a
@@ -303,17 +322,23 @@ export const QUICK_ACTION_SECTIONS: readonly QuickActionSection[] = [
             : "quick_actions.snap_off_hint",
       },
       {
-        // Auto-scroll. A lane with the playhead standing in it, drawn in
-        // `FollowPlayheadIcon.tsx`: every reticle lucide offers says "centre on
-        // a target", and centring is the one thing `followPlayhead.ts` does not
-        // do — it pages, and parks the playhead off to the leading side.
-        id: "toggleFollowPlayhead",
-        icon: FollowPlayheadIcon,
-        active: (s) => s.followPlayhead,
-        hint: (s) =>
-          s.followPlayhead
-            ? "quick_actions.follow_on_hint"
-            : "quick_actions.follow_off_hint",
+        // After the magnet: the two snap switches sit together, and lead from
+        // the timeline's toggles into the preview's (grid, then safe areas,
+        // which the grid divides when both are on).
+        id: "togglePreviewSnap",
+        icon: CanvasSnapIcon,
+        active: (s) => s.previewSnapEnabled,
+        hint: (s) => s.previewSnapEnabled
+          ? "quick_actions.canvas_snap_on_hint"
+          : "quick_actions.canvas_snap_off_hint",
+      },
+      {
+        id: "togglePreviewGrid",
+        icon: Grid3x3,
+        active: (s) => s.gridEnabled,
+        hint: (s) => s.gridEnabled
+          ? "quick_actions.grid_on_hint"
+          : "quick_actions.grid_off_hint",
       },
       {
         // Title-safe / action-safe rectangles. It has NO keyboard binding at

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { DEFAULT_PREVIEW_GRID, type PreviewGridSettings } from "../../shared/preview-grid";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { initEval } from '../eval';
 import { translatePath, type PathPosition } from '../../shared/position';
@@ -162,9 +163,14 @@ const probe: GizmoProbe = {
 /// tests below assert exact deltas and would be measuring the snap instead of
 /// the gesture. Same reason `Timeline.interaction.test.tsx` turns
 /// `tail_snap_enabled` off for its drag assertions.
-function setSnap(enabled: boolean, strengthPx = 12): void {
+function setSnap(enabled: boolean, strengthPx = 12, grid: Partial<PreviewGridSettings> = {}): void {
   useAppSettingsStore.setState((s) => ({
-    settings: { ...s.settings, preview_snap_enabled: enabled, preview_snap_strength_px: strengthPx },
+    settings: {
+      ...s.settings,
+      preview_snap_enabled: enabled,
+      preview_snap_strength_px: strengthPx,
+      preview_grid: { ...DEFAULT_PREVIEW_GRID, ...grid },
+    },
   }));
 }
 
@@ -416,13 +422,26 @@ describe("snapping", () => {
     expect(transformOverrideFor("l1")).toEqual({ dx: 320, dy: 0 });
   });
 
-  it("does not snap at all when the preference is off", async () => {
-    setSnap(false);
+  it("snaps to an enabled grid whose lines the eye has hidden", async () => {
+    setSnap(true, 12, { enabled: true, hidden: true, column_divisions: 16, rows: false });
     render(<TransformGizmoHost />);
     const el = await box();
     fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
-    fireEvent.pointerMove(el, { clientX: 155, clientY: 0 });
-    expect(transformOverrideFor("l1")).toEqual({ dx: 310, dy: 0 });
+    fireEvent.pointerMove(el, { clientX: 38, clientY: 9 });
+    // The first column line is 1280/16 = 80; the 18 px vertical drift snaps
+    // back to the frame's top edge.
+    expect(transformOverrideFor("l1")).toEqual({ dx: 80, dy: 0 });
+    await waitFor(() => expect(guide("x").style.display).not.toBe("none"));
+    expect(guideLine("x").getAttribute("x1")).toBe("40");
+  });
+
+  it("does not snap to an enabled grid when canvas snapping is off", async () => {
+    setSnap(false, 12, { enabled: true, column_divisions: 16, rows: false });
+    render(<TransformGizmoHost />);
+    const el = await box();
+    fireEvent.pointerDown(el, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(el, { clientX: 38, clientY: 9 });
+    expect(transformOverrideFor("l1")).toEqual({ dx: 76, dy: 18 });
     expect(guide("x").style.display).toBe("none");
   });
 

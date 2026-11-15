@@ -3,6 +3,7 @@ import { mergeSettings } from '../shared/exportSettings';
 import { describe, it, expect, vi } from 'vitest'
 import { createAppSettingsStore, type AppSettingsFs } from './app-settings'
 import { APP_SETTINGS_DEFAULTS } from '../shared/app-settings'
+import { DEFAULT_PREVIEW_GRID, GRID_DIVISIONS_MAX, GRID_DIVISIONS_MIN, GRID_OPACITY_MIN } from '../shared/preview-grid'
 import { LAYOUT_THEME_IDS } from '../shared/layout-theme'
 import { PERFORMANCE_DEFAULTS } from '../shared/performance-settings'
 import { playbackCalibrationRecommendation, PLAYBACK_CALIBRATION } from '../shared/playback-calibration'
@@ -47,6 +48,42 @@ function memFs(seed: Record<string, string> = {}) {
 const store = (seed?: Record<string, string>) => createAppSettingsStore({ ...memFs(seed), path: PATH, dir: DIR })
 
 describe('app-settings store', () => {
+  it('defaults to an off 3×3 grid and clamps every stored value into its range', () => {
+    expect(store({ [PATH]: '{ "display_mode": "AllTracks" }' }).get().preview_grid).toEqual(DEFAULT_PREVIEW_GRID);
+    const invalid = store({ [PATH]: JSON.stringify({
+      preview_grid: { enabled: 'on', opacity: 0, column_divisions: 500, row_divisions: 0, rows: false },
+    }) });
+    expect(invalid.get().preview_grid).toEqual({
+      ...DEFAULT_PREVIEW_GRID, opacity: GRID_OPACITY_MIN,
+      column_divisions: GRID_DIVISIONS_MAX, row_divisions: GRID_DIVISIONS_MIN, rows: false,
+    });
+  });
+
+  it('keeps opacity while the grid is hidden, so showing it after a restart brings the same lines back', () => {
+    const { fs } = memFs();
+    const deps = { fs, path: PATH, dir: DIR };
+    const initial = createAppSettingsStore(deps);
+    initial.apply({ preview_grid: { enabled: true, column_divisions: 12, row_divisions: 5, rows: false, opacity: 40 } });
+    initial.apply({ preview_grid: { hidden: true } });
+
+    const reopened = createAppSettingsStore(deps);
+    expect(reopened.get().preview_grid).toEqual({
+      ...DEFAULT_PREVIEW_GRID, enabled: true, hidden: true,
+      column_divisions: 12, row_divisions: 5, rows: false, opacity: 40,
+    });
+    reopened.apply({ preview_grid: { hidden: false } });
+    expect(createAppSettingsStore(deps).get().preview_grid).toMatchObject({ hidden: false, opacity: 40 });
+  });
+
+  it('applies a partial grid patch without resetting the other fields', () => {
+    const settings = store();
+    settings.apply({ preview_grid: { enabled: true, column_divisions: 8 } });
+    settings.apply({ preview_grid: { row_divisions: GRID_DIVISIONS_MAX + 1 } });
+    expect(settings.get().preview_grid).toEqual({
+      ...DEFAULT_PREVIEW_GRID, enabled: true, column_divisions: 8, row_divisions: GRID_DIVISIONS_MAX,
+    });
+  });
+
   it.each([undefined, null, 'true', 1, false])('defaults export overwrite off for absent or invalid saved value %s', value => {
     expect(store({ [PATH]: JSON.stringify({ export_auto_overwrite: value }) }).get().export_auto_overwrite).toBe(false);
   });
