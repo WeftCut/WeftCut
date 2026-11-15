@@ -65,7 +65,9 @@ export function PreviewGridToolbar() {
         if (!(event.target instanceof HTMLInputElement)) return;
         event.stopPropagation();
         if (event.key === "Enter" || event.key === "Escape") {
-          event.currentTarget.closest(".preview")?.querySelector<HTMLElement>(".preview-video")?.focus();
+          // The preview surface is intentionally not focusable: the dock panel
+          // is the focus region that receives scoped keyboard shortcuts.
+          event.currentTarget.closest<HTMLElement>('[data-focus-region="preview"]')?.focus();
         }
       }}
     >

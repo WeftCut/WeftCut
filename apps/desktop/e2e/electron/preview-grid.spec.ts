@@ -178,7 +178,7 @@ test('the grid eye restores its last opacity after an app restart', async () => 
   }
 })
 
-test('Enter and Escape both return focus from the grid editor to the canvas', async () => {
+test('Enter and Escape return focus from grid fields to the preview region', async () => {
   const { app, page } = await launchApp()
   try {
     await startPreview(page, 1280, 720)
@@ -187,12 +187,12 @@ test('Enter and Escape both return focus from the grid editor to the canvas', as
     await count.fill('12')
     await count.press('Enter')
     await expect.poll(async () => (await settings(page)).preview_grid.column_divisions).toBe(12)
-    await expect(page.locator('.preview-video')).toBeFocused()
+    await expect(page.locator('[data-focus-region="preview"]')).toBeFocused()
     // Escape leaves the field and returns to canvas. Whether a preceding edit
     // has already auto-committed depends on the number field's debounce.
     await count.focus()
     await count.press('Escape')
-    await expect(page.locator('.preview-video')).toBeFocused()
+    await expect(page.locator('[data-focus-region="preview"]')).toBeFocused()
     expect((await settings(page)).preview_grid.column_divisions).toBe(12)
   } finally {
     await app.close()
