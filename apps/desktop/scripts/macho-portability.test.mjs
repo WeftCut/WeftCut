@@ -75,7 +75,7 @@ test('Mach-O files are found by content, without following symlinks',
   fs.writeFileSync(path.join(dir, 'Contents/Info.plist'), '<?xml version="1.0"?>')
   fs.writeFileSync(path.join(dir, 'Contents/empty'), '')
   assert.deepEqual(machOFiles(dir).map(f => path.relative(dir, f)),
-    ['Contents/Frameworks/X.framework/Versions/A/X', 'Contents/app'])
+    [path.join('Contents', 'Frameworks', 'X.framework', 'Versions', 'A', 'X'), path.join('Contents', 'app')])
 })
 
 test('the packaged-app gate runs on macOS only, over the .app bundle, at the declared floor', (t) => {
@@ -86,7 +86,7 @@ test('the packaged-app gate runs on macOS only, over the .app bundle, at the dec
   const context = (platform) => ({ appOutDir, electronPlatformName: platform, packager: { appInfo: { productFilename: 'WeftCut' } } })
   const calls = []
   afterPackMacosPortable(context('darwin'), (files, options) => calls.push({ files, options }))
-  assert.deepEqual(calls.map(c => c.files.map(f => path.relative(appOutDir, f))), [['WeftCut.app/Contents/MacOS/WeftCut']])
+  assert.deepEqual(calls.map(c => c.files.map(f => path.relative(appOutDir, f))), [[path.join('WeftCut.app', 'Contents', 'MacOS', 'WeftCut')]])
   assert.equal(calls[0].options.floor, macMinimumSystemVersion())
   for (const platform of ['linux', 'win32']) afterPackMacosPortable(context(platform), () => assert.fail('ran off macOS'))
 })
