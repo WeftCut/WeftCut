@@ -101,7 +101,11 @@ async function refuseLegacyConfig() {
     })
     assert.equal(exit.signal, null, `the app was killed rather than exiting\n${diagnose()}`)
     assert.notEqual(exit.code, 0, `the app exited 0 on a config it does not serve\n${diagnose()}`)
-    assert.equal(stdout, '', `stdout carries something, and a client parses every line of it\n${diagnose()}`)
+    // LANDMINE: whitespace, not nothing. Electron on Windows writes "\r\n" to a
+    // redirected stdout as it exits, whatever the app did (a bare app that only
+    // calls process.exit does it too, Electron 44.11.3). It is not ours to stop;
+    // what must not reach the client is a line with content.
+    assert.equal(stdout.trim(), '', `stdout carries something, and a client parses every line of it\n${diagnose()}`)
     const refusal = stderr.split(/\r?\n/).filter((line) => line.includes(`${binary} mcp`))
     assert.equal(refusal.length, 1, `stderr has no one line naming ${binary} mcp\n${diagnose()}`)
     const pages = await windows
