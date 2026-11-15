@@ -254,10 +254,12 @@ version to a hash of the files, and a change needs a new version and entry.
 ### Companion page
 
 The side preview: a page beside the chat, for a desktop host's built-in browser: the project's
-name and the latest agent call, on request a live picture of the preview, play
-/ pause and the time, a small timeline to seek on, and export progress. It
-reads the project and drives the player; it never edits. A terminal host has
-nowhere to show it. Why a page and not a card in the chat: ADR 0168.
+name, on request a live picture of the preview (copied as an image or popped
+out picture-in-picture from the page), play / pause, frame steps and either
+end with the editor's timecode and player keys, a small timeline to seek on,
+export progress and outcome, and the agent calls seen since the page opened.
+It reads the project and drives the player; it never edits. A terminal host
+has nowhere to show it. Why a page and not a card in the chat: ADR 0168.
 
 - **`open_side_preview {}`** answers `{ url }`:
   `http://127.0.0.1:<port>/companion#k=<page key>`. It carries no UI resource,
@@ -286,7 +288,7 @@ nowhere to show it. Why a page and not a card in the chat: ADR 0168.
   key, the MCP bearer included, is `401` and a `Companion request rejected`
   row (never the header); a `Host` other than the loopback bind is `403`. A
   control while no editor is attached is `409 editor_not_ready`. The page's
-  CSP admits only its own files and origin, with no inline script or style.
+  CSP admits only its own files, images included, and origin, with no inline script or style.
 - **Sandboxed frames.** A host that frames the page with
   `sandbox="allow-scripts"` gives it an opaque origin; its requests arrive
   with `Origin: null`, which alone gets `Access-Control-Allow-Origin: null`.

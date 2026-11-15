@@ -1,6 +1,6 @@
-// What the companion page says about itself, as one pure decision. The order
-// is the rule: the first state that holds is the one shown, so a page whose
-// link was turned off never claims the app is merely closed.
+// What the companion page says about itself, as pure decisions. The order is
+// the rule: the first state that holds is the one shown, so a page whose link
+// was turned off never claims the app is merely closed.
 
 /**
  * @param {{
@@ -9,21 +9,20 @@
  *   state: { project: unknown, editor: 'ready' | 'opening' } | null,
  * }} input `link` is the transport's latest word; `editorRefused` is a control
  *   the app answered with 409 since the state last said the editor was ready.
- * @param {Record<string, string>} strings
- * @returns {{ state: 'revoked' | 'offline' | 'connecting' | 'opening' | 'no_project' | 'ready', message: string | null }}
+ * @returns {'revoked' | 'offline' | 'connecting' | 'opening' | 'no_project' | 'ready'}
  */
-export function pageState(input, strings) {
+export function pageState(input) {
   const { link, editorRefused, state } = input
-  if (link === 'revoked') return { state: 'revoked', message: strings.state_revoked }
-  if (link === 'offline') return { state: 'offline', message: strings.state_offline }
-  if (state === null) return { state: 'connecting', message: null }
-  if (editorRefused || (state.project !== null && state.editor !== 'ready')) return { state: 'opening', message: strings.state_opening }
-  if (state.project === null) return { state: 'no_project', message: strings.state_no_project }
-  return { state: 'ready', message: null }
+  if (link === 'revoked') return 'revoked'
+  if (link === 'offline') return 'offline'
+  if (state === null) return 'connecting'
+  if (editorRefused || (state.project !== null && state.editor !== 'ready')) return 'opening'
+  if (state.project === null) return 'no_project'
+  return 'ready'
 }
 
 /**
- * What the picture's stage says once the page is `ready`, by the same rule as
+ * What the picture's stage shows once the page is `ready`, by the same rule as
  * `pageState`: the first that holds.
  * @param {{
  *   exporting: boolean,
@@ -33,20 +32,45 @@ export function pageState(input, strings) {
  *   shown: boolean,
  * }} input `wanted`: the user turned the picture on; `supported`: this
  *   browser can show it; `shown`: a frame was drawn since it last started.
- * @param {Record<string, string>} strings
- * @returns {{ picture: 'export' | 'off' | 'unsupported' | 'minimized' | 'starting' | 'live', message: string | null }}
+ * @returns {'export' | 'off' | 'unsupported' | 'minimized' | 'starting' | 'live'}
  */
-export function pictureState(input, strings) {
-  if (input.exporting) return { picture: 'export', message: strings.picture_export }
-  if (!input.wanted) return { picture: 'off', message: strings.picture_off }
-  if (!input.supported) return { picture: 'unsupported', message: strings.picture_unsupported }
-  if (input.minimized) return { picture: 'minimized', message: strings.picture_minimized }
-  if (!input.shown) return { picture: 'starting', message: strings.picture_starting }
-  return { picture: 'live', message: null }
+export function pictureState(input) {
+  if (input.exporting) return 'export'
+  if (!input.wanted) return 'off'
+  if (!input.supported) return 'unsupported'
+  if (input.minimized) return 'minimized'
+  if (!input.shown) return 'starting'
+  return 'live'
 }
 
 /** An export the page shows progress for: one still running. A job waiting
  *  for a retry the user decides on is not. */
 export function exportRunning(job) {
   return job != null && !['completed', 'failed', 'cancelled', 'awaiting_retry'].includes(job.state)
+}
+
+/** An export the page shows at all: one running, or the last one's outcome
+ *  once it completed or failed. A cancelled job is the user's own doing and
+ *  says nothing new. */
+export function exportShown(job) {
+  return exportRunning(job) || job?.state === 'completed' || job?.state === 'failed'
+}
+
+/** How many agent calls the page lists. */
+export const CALLS_KEPT = 4
+
+/**
+ * The page's agent calls, newest first, with `activity` taken in at `at`
+ * (ms since the epoch). The app sends only the latest call, so the list is
+ * what this page saw since it opened. A call that ends replaces its own
+ * running row instead of adding one.
+ * @param {Array<{ client: string, tool: string, state: string, at: number }>} calls
+ * @param {{ client: string, tool: string, state: string } | null} activity
+ * @param {number} at
+ */
+export function recordCall(calls, activity, at) {
+  if (activity === null) return calls
+  const head = calls[0]
+  const sameRunning = head !== undefined && head.state === 'running' && head.client === activity.client && head.tool === activity.tool
+  return [{ client: activity.client, tool: activity.tool, state: activity.state, at }, ...(sameRunning ? calls.slice(1) : calls)].slice(0, CALLS_KEPT)
 }

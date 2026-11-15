@@ -42,10 +42,32 @@ export function rulerTicks(durationUs) {
 }
 const TICK_STEPS_US = [1e6, 2e6, 5e6, 10e6, 15e6, 30e6, 60e6, 120e6, 300e6, 600e6, 1800e6, 3600e6]
 
-/** `mm:ss.t`, minutes past 59 included, truncated to the tenth. */
-export function formatTime(us) {
-  const tenths = Math.floor(Math.max(0, us) / 1e5)
-  const m = Math.floor(tenths / 600)
-  const rest = tenths - m * 600
-  return `${String(m).padStart(2, '0')}:${String(Math.floor(rest / 10)).padStart(2, '0')}.${rest % 10}`
+/** A ruler label, `mm:ss`, minutes past 59 included. Ticks fall on whole
+ *  seconds, so nothing finer is needed. */
+export function rulerLabel(us) {
+  const s = Math.floor(Math.max(0, us) / 1e6)
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+}
+
+/** The composition frame nearest `us`, at `fps` `{ num, den }`.
+ *  LANDMINE: twin of `frameIndexRound` behind the editor's `formatTimecode`
+ *  (renderer/frames.ts). The page cannot load the editor's wasm; doubles are
+ *  exact here as long as `us * num` stays under 2^53 (a day at 60000/1001). */
+export function frameAt(us, fps) {
+  return Math.max(0, Math.round((us * fps.num) / (fps.den * 1e6)))
+}
+
+/** Where frame `index` starts, in whole microseconds. */
+export function frameStartUs(index, fps) {
+  return Math.round((index * fps.den * 1e6) / fps.num)
+}
+
+/** `HH:MM:SS:FF` as the editor's timecode reads it: non-drop-frame, the frame
+ *  field counting to the rate rounded to a whole number. */
+export function timecode(us, fps) {
+  const frames = frameAt(us, fps)
+  const perSecond = Math.max(1, Math.round(fps.num / fps.den))
+  const secs = Math.floor(frames / perSecond)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${pad(Math.floor(secs / 3600))}:${pad(Math.floor(secs / 60) % 60)}:${pad(secs % 60)}:${pad(frames % perSecond)}`
 }

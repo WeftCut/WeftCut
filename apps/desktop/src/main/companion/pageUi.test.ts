@@ -2,40 +2,37 @@
 // run here as the browser runs them. `app.js`'s DOM is covered in
 // `renderer/companion/pageApp.test.ts`, which has the DOM types; the page in
 // a real browser by e2e `companion-page.spec.ts`.
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { frame } from './pictureStream'
+import { UI_FILES } from './pageFiles'
 import {
   MIRROR_FRAME_CONFIG, MIRROR_FRAME_DELTA, MIRROR_FRAME_KEY, MIRROR_HEADER_BYTES,
 } from '../../shared/companion'
 
 import { companionPageModule as pageModule } from '../../shared/testing/companionPage'
 
-const { pageState, pictureState, exportRunning } = await pageModule('viewState')
+const { pageState, pictureState, exportRunning, exportShown, recordCall, CALLS_KEPT } = await pageModule('viewState')
 const chunks = await pageModule('pictureChunks')
 const { STRINGS, stringsFor } = await pageModule('strings')
-const { formatTime, timeAt, timelineRows } = await pageModule('timeline')
+const { frameAt, frameStartUs, rulerLabel, timeAt, timecode, timelineRows } = await pageModule('timeline')
 const { loopbackTransport, RETRY_FIRST_MS, RETRY_MAX_MS } = await pageModule('transportLoopback')
 
-const strings = STRINGS.en
 const KEY = 'a'.repeat(64)
 const projectState = (over: Record<string, unknown> = {}) => ({ project: { name: 'Cut' }, editor: 'ready', ...over })
 
 describe('pageState', () => {
   it('names the first state that holds, in order', () => {
     const offline = { link: 'offline', editorRefused: true, state: projectState({ project: null }) }
-    expect(pageState({ ...offline, link: 'revoked' }, strings).state).toBe('revoked')
-    expect(pageState(offline, strings).state).toBe('offline')
-    expect(pageState({ link: 'connecting', editorRefused: false, state: null }, strings).state).toBe('connecting')
+    expect(pageState({ ...offline, link: 'revoked' })).toBe('revoked')
+    expect(pageState(offline)).toBe('offline')
+    expect(pageState({ link: 'connecting', editorRefused: false, state: null })).toBe('connecting')
     // A refused control says the editor is opening even before the state does.
-    expect(pageState({ link: 'online', editorRefused: true, state: projectState({ project: null }) }, strings).state).toBe('opening')
-    expect(pageState({ link: 'online', editorRefused: false, state: projectState({ editor: 'opening' }) }, strings).state).toBe('opening')
+    expect(pageState({ link: 'online', editorRefused: true, state: projectState({ project: null }) })).toBe('opening')
+    expect(pageState({ link: 'online', editorRefused: false, state: projectState({ editor: 'opening' }) })).toBe('opening')
     // No project: the editor is not mounted at all, which is not "opening".
-    expect(pageState({ link: 'online', editorRefused: false, state: projectState({ project: null, editor: 'opening' }) }, strings).state).toBe('no_project')
-    expect(pageState({ link: 'online', editorRefused: false, state: projectState() }, strings)).toEqual({ state: 'ready', message: null })
-  })
-
-  it('says each state in the strings it is given', () => {
-    expect(pageState({ link: 'revoked', editorRefused: false, state: null }, STRINGS.zh).message).toBe(STRINGS.zh.state_revoked)
+    expect(pageState({ link: 'online', editorRefused: false, state: projectState({ project: null, editor: 'opening' }) })).toBe('no_project')
+    expect(pageState({ link: 'online', editorRefused: false, state: projectState() })).toBe('ready')
   })
 
   it('shows progress for a running export only', () => {
@@ -43,18 +40,49 @@ describe('pageState', () => {
     for (const state of ['awaiting_retry', 'completed', 'failed', 'cancelled']) expect(exportRunning({ state }), state).toBe(false)
     expect(exportRunning(null)).toBe(false)
   })
+
+  it('keeps showing an export once it completed or failed, not once cancelled or waiting on the user', () => {
+    for (const state of ['rendering', 'completed', 'failed']) expect(exportShown({ state }), state).toBe(true)
+    for (const state of ['awaiting_retry', 'cancelled']) expect(exportShown({ state }), state).toBe(false)
+    expect(exportShown(null)).toBe(false)
+  })
 })
 
 describe('pictureState', () => {
   const live = { exporting: false, wanted: true, supported: true, minimized: false, shown: true }
 
   it('names the first state that holds, in order', () => {
-    expect(pictureState({ ...live, exporting: true, wanted: false, supported: false, minimized: true, shown: false }, strings).picture).toBe('export')
-    expect(pictureState({ ...live, wanted: false, supported: false, minimized: true }, strings).picture).toBe('off')
-    expect(pictureState({ ...live, supported: false, minimized: true }, strings).picture).toBe('unsupported')
-    expect(pictureState({ ...live, minimized: true, shown: false }, strings).picture).toBe('minimized')
-    expect(pictureState({ ...live, shown: false }, strings).picture).toBe('starting')
-    expect(pictureState(live, strings)).toEqual({ picture: 'live', message: null })
+    expect(pictureState({ ...live, exporting: true, wanted: false, supported: false, minimized: true, shown: false })).toBe('export')
+    expect(pictureState({ ...live, wanted: false, supported: false, minimized: true })).toBe('off')
+    expect(pictureState({ ...live, supported: false, minimized: true })).toBe('unsupported')
+    expect(pictureState({ ...live, minimized: true, shown: false })).toBe('minimized')
+    expect(pictureState({ ...live, shown: false })).toBe('starting')
+    expect(pictureState(live)).toBe('live')
+  })
+})
+
+describe('recordCall', () => {
+  const call = (tool: string, state: string) => ({ client: 'Agent', tool, state })
+
+  it('puts the newest call first, and keeps a bounded few', () => {
+    let calls: unknown[] = []
+    for (let i = 0; i < CALLS_KEPT + 2; i++) calls = recordCall(calls, call(`t${i}`, 'done'), i)
+    expect(calls).toHaveLength(CALLS_KEPT)
+    expect((calls[0] as { tool: string }).tool).toBe(`t${CALLS_KEPT + 1}`)
+  })
+
+  it('lets a call that ends replace its own running row', () => {
+    let calls = recordCall([], call('split_layer', 'running'), 1)
+    calls = recordCall(calls, call('split_layer', 'done'), 2)
+    expect(calls).toEqual([{ ...call('split_layer', 'done'), at: 2 }])
+    // A different call does not replace it.
+    calls = recordCall(recordCall([], call('a', 'running'), 1), call('b', 'running'), 2)
+    expect(calls.map((c: { tool: string }) => c.tool)).toEqual(['b', 'a'])
+  })
+
+  it('takes nothing from a state with no call', () => {
+    const calls = recordCall([], call('a', 'done'), 1)
+    expect(recordCall(calls, null, 2)).toBe(calls)
   })
 })
 
@@ -91,10 +119,32 @@ describe('timeline', () => {
     expect(timeAt(150, 100, 0, 10_000_000)).toBe(0)
   })
 
-  it('formats time as minutes, seconds and tenths, never rounding up into the next second', () => {
-    expect(formatTime(59_999_999)).toBe('00:59.9')
-    expect(formatTime(61_200_000)).toBe('01:01.2')
-    expect(formatTime(3_600_000_000)).toBe('60:00.0')
+  it('labels the ruler in minutes and seconds, minutes past 59 included', () => {
+    expect(rulerLabel(59_999_999)).toBe('00:59')
+    expect(rulerLabel(3_600_000_000)).toBe('60:00')
+  })
+
+  // The editor's own formatter is the reference: `pageApp.test.ts` holds the
+  // two equal across rates. These pin the shape.
+  it('reads a timecode as the editor does, non-drop-frame', () => {
+    expect(timecode(0, { num: 30, den: 1 })).toBe('00:00:00:00')
+    expect(timecode(3_600_000_000, { num: 30, den: 1 })).toBe('01:00:00:00')
+    expect(timecode(30 * 33_367, { num: 30_000, den: 1001 })).toBe('00:00:01:00')
+  })
+
+  it('steps a frame from where a frame starts to where the next one starts', () => {
+    for (const fps of [{ num: 24, den: 1 }, { num: 30_000, den: 1001 }, { num: 60, den: 1 }]) {
+      for (const index of [0, 1, 29, 1799, 107_892]) {
+        expect(frameAt(frameStartUs(index, fps), fps), `${fps.num}/${fps.den} #${index}`).toBe(index)
+      }
+    }
+  })
+})
+
+describe('page files', () => {
+  it('serve the same icon the editor shows', () => {
+    const editorIcon = readFileSync(new URL('../../renderer/public/icons/icon.svg', import.meta.url), 'utf8')
+    expect(UI_FILES.get('icon.svg')?.body).toBe(editorIcon)
   })
 })
 
