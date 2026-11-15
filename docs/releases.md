@@ -79,7 +79,9 @@ these test packages require a manual Gatekeeper exception and are not releases.
 The credentials are secrets of the `macos-release` GitHub environment, whose
 deployment branches are limited to `main`. Only `package-macos` and
 `macos-notary-status` name that environment, and no job that runs tests holds
-a secret.
+a secret. Within `package-macos` each secret is set on the one step that uses
+it: the app build (bundler plugins, build-time dependencies) runs in a step of
+its own and never sees the certificate.
 
 | Secret | Value |
 | --- | --- |

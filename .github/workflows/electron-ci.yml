@@ -730,13 +730,19 @@ jobs:
       - uses: ./.github/actions/rust-artifacts
         if: steps.resume.outputs.resumed != 'true'
 
+      # The build runs every bundler plugin and build-time dependency; none of
+      # them may see the certificate, so it is a step of its own.
+      - name: Build app bundle
+        if: steps.resume.outputs.resumed != 'true'
+        run: npm run build
+
       - name: Package signed macOS release
         if: steps.resume.outputs.resumed != 'true'
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run build && node scripts/package-macos-release.mjs build
+        run: node scripts/package-macos-release.mjs build
 
       # The signed app must still pass what the unsigned one passed in e2e:
       # signing comes after the fuse flip and must not break the bundle.
