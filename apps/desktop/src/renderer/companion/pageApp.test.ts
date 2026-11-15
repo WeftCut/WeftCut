@@ -73,10 +73,14 @@ function ready(answer?: string, over: Record<string, unknown> = {}) {
 
 const key = (k: string, init: KeyboardEventInit = {}) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, ...init }))
 
-/** Lets the page's seek requests go out. Seeks made while one is in flight
- *  collapse to the latest, which is what a drag wants; these tests look at
- *  each step, so they wait between them. */
-const sent = () => new Promise((resolve) => { setTimeout(resolve, 0) })
+/** Gives one input and waits until its request reaches the transport. Seeks
+ *  made while one is in flight collapse to the latest, which is what a drag
+ *  wants; these tests look at each step, so each goes out before the next. */
+async function sendOne(sent: unknown[], input: () => void) {
+  const before = sent.length
+  input()
+  await expect.poll(() => sent.length).toBe(before + 1)
+}
 
 describe('the companion page', () => {
   it('draws each layer of the state on the timeline, by its id', () => {
@@ -167,9 +171,9 @@ describe('the companion page', () => {
 
 describe('seeking', () => {
   it('steps one frame either way from the frame on screen', async () => {
-    const { h, button, seeks } = ready()
+    const { h, button, seeks, sent } = ready()
     h.event('transport', { t_us: frameStartUs(10, FPS), playing: false })
-    for (const b of ['.cw-next', '.cw-prev', '.cw-prev']) { button(b).click(); await sent() }
+    for (const b of ['.cw-next', '.cw-prev', '.cw-prev']) await sendOne(sent, () => button(b).click())
     expect(seeks()).toEqual([
       { action: 'seek', t_us: frameStartUs(11, FPS) },
       { action: 'seek', t_us: frameStartUs(10, FPS) },
@@ -178,8 +182,8 @@ describe('seeking', () => {
   })
 
   it('goes to either end, and never past one', async () => {
-    const { button, seeks } = ready()
-    for (const b of ['.cw-to-end', '.cw-next', '.cw-to-start', '.cw-prev']) { button(b).click(); await sent() }
+    const { button, seeks, sent } = ready()
+    for (const b of ['.cw-to-end', '.cw-next', '.cw-to-start', '.cw-prev']) await sendOne(sent, () => button(b).click())
     expect(seeks()).toEqual([
       { action: 'seek', t_us: 10_000_000 },
       { action: 'seek', t_us: 10_000_000 },
@@ -193,7 +197,7 @@ describe('seeking', () => {
     key(' ')
     await expect.poll(() => actions).toEqual([{ action: 'play' }])
     const presses: Array<[string, KeyboardEventInit?]> = [['End'], ['ArrowLeft'], ['ArrowLeft', { shiftKey: true }], ['Home'], ['ArrowRight']]
-    for (const [k, init] of presses) { key(k, init); await sent() }
+    for (const [k, init] of presses) await sendOne(actions, () => key(k, init))
     expect(actions.slice(1)).toEqual([
       { action: 'seek', t_us: 10_000_000 },
       { action: 'seek', t_us: frameStartUs(299, FPS) },
