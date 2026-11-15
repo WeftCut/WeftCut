@@ -29,6 +29,7 @@ import { join, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execSync } from 'node:child_process'
 import { cpus, tmpdir } from 'node:os'
+import { assertMacPortable, macMinimumSystemVersion } from './macho-portability.mjs'
 
 // n8.1 matches the crate pin ffmpeg-next = "8.1" (decode/Cargo.toml). The
 // win/linux descriptors name the BtbN asset, the archive's top dir, the
@@ -54,10 +55,10 @@ const BUILDS = {
   // STATIC builds (and GPL — they link x264/x265); Homebrew's ffmpeg bottle is
   // shared but --enable-gpl. So the mac leg builds FFmpeg n8.1 from the pinned
   // release tarball: LGPL-clean by construction (--enable-shared, no
-  // --enable-gpl/--enable-nonfree), single-arch (host), zero non-system deps
-  // (configure autodetect picks up Apple frameworks only), so the staged
-  // dylibs are as self-contained as BtbN's. The hard sha256 pin is the
-  // integrity gate (ffmpeg.org publishes only a GPG .asc), mirroring the
+  // --enable-gpl/--enable-nonfree), single-arch (host), and portable by
+  // construction: only the SDK's libraries, built for the app's minimum macOS
+  // (macConfigureArgs), checked on the result (macho-portability.mjs). The
+  // hard sha256 pin is the integrity gate (ffmpeg.org publishes only a GPG .asc), mirroring the
   // LIBVA .deb pins below.
   mac: {
     source: {
@@ -265,6 +266,14 @@ function curlWithRetries(url, dest) {
   }
 }
 
+/** The real (non-symlink) dylibs of a staged macOS tree. */
+function macDylibs(dest) {
+  const libDir = join(dest, 'lib')
+  return readdirSync(libDir)
+    .filter((n) => n.endsWith('.dylib') && !lstatSync(join(libDir, n)).isSymbolicLink())
+    .map((n) => join(libDir, n))
+}
+
 /** Rewrite every real dylib in `libDir`: LC_ID_DYLIB and every libav*
  * cross-reference go from the absolute --prefix install paths to
  * `@loader_path/<name>`, so the staged tree is relocatable and a .node linked
@@ -296,6 +305,37 @@ function rewriteMacInstallNames(libDir) {
   return dylibs
 }
 
+/// The macOS libraries configure may link: exactly the ones the SDK provides.
+/// Left to autodetect, configure also links whatever the build host happens to
+/// have installed — Homebrew's libX11/libxcb on a CI runner — and the dylibs
+/// then fail to load on every Mac without them. Two SDK libraries stay out:
+/// `metal` feeds only the yadif_videotoolbox filter and needs Xcode's
+/// separately downloaded Metal toolchain, so it would make the build depend on
+/// the host again; `iconv` only converts text-subtitle and MPEG-TS service-name
+/// charsets, and is disabled explicitly (macConfigureArgs). Decode uses neither.
+export const MAC_SYSTEM_LIBRARIES = [
+  'appkit', 'audiotoolbox', 'avfoundation', 'bzlib', 'coreimage',
+  'securetransport', 'videotoolbox', 'zlib',
+]
+
+/// configure arguments for the macOS build. `floor` is the app's minimum macOS:
+/// without it clang targets the build host's own version, and dyld refuses the
+/// dylibs on every older Mac the app supports.
+export function macConfigureArgs(prefix, floor) {
+  const target = `-mmacosx-version-min=${floor}`
+  return [
+    `--prefix=${prefix}`,
+    '--enable-shared', '--disable-static',
+    '--disable-debug', '--disable-doc', '--disable-ffplay',
+    // LANDMINE — --disable-iconv must stay: under --disable-autodetect FFmpeg's
+    // configure assumes iconv is in libc unless it is disabled, and on macOS
+    // (where it is libiconv) libavcodec then fails to link.
+    '--disable-autodetect', '--disable-iconv',
+    ...MAC_SYSTEM_LIBRARIES.map((name) => `--enable-${name}`),
+    `--extra-cflags=${target}`, `--extra-ldflags=${target}`,
+  ]
+}
+
 /** macOS leg (see BUILDS.mac): no prebuilt LGPL-shared asset exists, so build
  * FFmpeg n8.1 from the pinned, sha256-verified release tarball and stage a
  * BtbN-shaped tree (include/ + lib/ + LICENSE.txt + manifest.json). The
@@ -321,19 +361,23 @@ function buildMacFromSource(cfg, dest, manifestPath) {
     // LGPL-clean by construction: --enable-shared without --enable-gpl /
     // --enable-nonfree; x264/x265 (GPL) stay off. --disable-ffplay keeps the
     // build independent of an SDL2 that may or may not be installed.
-    const configureArgs = [
-      `--prefix=${prefix}`,
-      '--enable-shared', '--disable-static',
-      '--disable-debug', '--disable-doc', '--disable-ffplay',
-    ]
-    execSync(`./configure ${configureArgs.join(' ')}`, { cwd: src, stdio: 'inherit' })
-    execSync(`make -j${cpus().length}`, { cwd: src, stdio: 'inherit' })
+    const floor = macMinimumSystemVersion()
+    // configure tries pkg-config before the SDK for some enabled libraries; an
+    // empty search path keeps a host's Homebrew .pc files out of that lookup.
+    const pkgConfigDir = join(work, 'no-pkg-config')
+    mkdirSync(pkgConfigDir)
+    const env = { ...process.env, MACOSX_DEPLOYMENT_TARGET: floor, PKG_CONFIG_LIBDIR: pkgConfigDir, PKG_CONFIG_PATH: '' }
+    const configureArgs = macConfigureArgs(prefix, floor).map((arg) => `"${arg}"`)
+    execSync(`./configure ${configureArgs.join(' ')}`, { cwd: src, stdio: 'inherit', env })
+    execSync(`make -j${cpus().length}`, { cwd: src, stdio: 'inherit', env })
     execSync('make install', { cwd: src, stdio: 'inherit' })
     const versionOut = execSync(`"${join(prefix, 'bin', 'ffmpeg')}" -version`, { encoding: 'utf8' })
     const configLine = versionOut.split(/\r?\n/).find((l) => l.startsWith('configuration:')) ?? ''
     const configuration = configLine.replace(/^configuration:\s*/, '')
     assertLgplBanner(configuration)
     const dylibs = rewriteMacInstallNames(join(prefix, 'lib'))
+    // Refused here, before staging: the CI cache saves whatever this step stages.
+    assertMacPortable(dylibs.map((name) => join(prefix, 'lib', name)), { floor, label: 'ffmpeg-lgpl(mac):' })
     mkdirSync(dest, { recursive: true })
     // verbatimSymlinks: keep the libfoo.dylib -> libfoo.NN.dylib chain's
     // RELATIVE targets as-is (same hazard as the win/linux extract above).
@@ -367,6 +411,16 @@ function main() {
   const dest = destOf(OS_KEY)
   const manifestPath = join(dest, 'manifest.json')
 
+  // A tree built before the build was made portable is rebuilt, not reused:
+  // the manifest alone cannot tell the two apart.
+  if (OS_KEY === 'mac' && existsSync(manifestPath)) {
+    try {
+      assertMacPortable(macDylibs(dest), { label: 'ffmpeg-lgpl(mac):' })
+    } catch (err) {
+      console.log(`${err.message}\nRebuilding ${dest}.`)
+      rmSync(dest, { recursive: true, force: true })
+    }
+  }
   if (existsSync(manifestPath)) {
     const m = JSON.parse(readFileSync(manifestPath, 'utf8'))
     assertLgplBanner(m.configuration) // re-assert even on the cached copy

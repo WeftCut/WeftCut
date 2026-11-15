@@ -8,6 +8,7 @@
 import cli from './after-pack-cli.mjs'
 import glibc from './after-pack-glibc.mjs'
 import licensing from './after-pack-licensing.mjs'
+import macosPortable from './after-pack-macos-portable.mjs'
 import reaper from './after-pack-reaper.mjs'
 import skill from './after-pack-skill.mjs'
 
@@ -17,4 +18,5 @@ export default function afterPack(context) {
   cli(context)
   reaper(context)
   glibc(context)
+  macosPortable(context)
 }
