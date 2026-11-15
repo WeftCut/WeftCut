@@ -495,12 +495,14 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   // Serialize all cache-root/session changes, including Save As and Close.
   let persistenceTail: Promise<unknown> = Promise.resolve()
   /** The outgoing project's flush may fail without blocking the replacement:
-   *  `keepsEdits` (Save As writes the whole current state elsewhere, which is
-   *  the way out the save-failure card offers), or its folder is gone (a
-   *  deleted project must not block New/Open/Save As/Close; an explicit Save
-   *  still reports it). */
+   *  nothing of it is unsaved, `keepsEdits` (Save As writes the whole current
+   *  state elsewhere, which is the way out the save-failure card offers), or
+   *  its folder is gone (a deleted project must not block New/Open/Save
+   *  As/Close; an explicit Save still reports it). */
   const flushMayFail = (error: unknown, keepsEdits: boolean): boolean => {
-    if (keepsEdits) return true
+    // Nothing unsaved: the failed write had no edit to lose. The one rule for
+    // every way a project leaves (Close, Open, New, quit, update restart).
+    if (keepsEdits || !autosave.unsaved()) return true
     const dir = deps.workspaceDir()
     return error instanceof Error && (error as NodeJS.ErrnoException).code === 'ENOENT' && dir !== null && !deps.fs.exists(dir)
   }
@@ -531,6 +533,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
           throw error
         }
       }
+      autosave.hold()
       importGeneration++
       deps.onWorkspaceChanging?.()
       replacementOccurred = false
@@ -557,6 +560,9 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         poolFiles.clear()
         // Another project (or none) now: what was unsaved belonged to the old one.
         if (succeeded || replacementOccurred) autosave.beginProject()
+        // Save As keeps the project it wrote; a replacement that failed before
+        // the swap keeps the one it would have replaced.
+        autosave.release(keepsEdits || !(succeeded || replacementOccurred))
         const pending = deferredChange as { event: ChangeEvent; traceId?: string } | null
         if (replacementOccurred || pending || (succeeded && (!closing || publishedProject !== null))) {
           publishChange(pending?.event, pending?.traceId,
@@ -574,7 +580,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   }
 
   let opened: OpenedProject | null = null
-  /** Set once the app starts quitting; never cleared. Nothing opens after it. */
+  /** Set while the app quits: nothing opens after it. A quit that fails to
+   *  close the project (Cancel, a failed update restart) clears it again. */
   let quitting = false
   // Each record update runs only after its operation resolves, so a failed
   // open leaves the record as it was — and an open still in flight when the

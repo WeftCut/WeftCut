@@ -1494,8 +1494,9 @@ app.whenReady().then(async () => {
         workspaceStore?.flush()
         windowGeometryStore?.flush()
         if (!await confirmQuit()) throw new Error("Update restart cancelled while work is active");
-        await tsHost?.shutdown()
-        quitFlushed = true
+        // The quit's own final save: a failure with edits at stake asks the
+        // same question a quit asks, and Cancel keeps the project open.
+        if (!await finishQuitSave()) throw new Error("Update restart cancelled to keep unsaved edits");
       } catch (error) {
         updateResume.clear()
         throw error
