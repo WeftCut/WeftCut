@@ -42,13 +42,29 @@ the version in the tag segment, so differential Windows updates still work.
 
 ## macOS signing
 
-Published Mac builds use a Developer ID Application certificate and Apple
-notarization. `scripts/package-macos-release.mjs` requires all signing and
-notarization credentials before invoking electron-builder, then verifies the
-app's full signature, Developer ID authority, Team ID, stapled notarization
-ticket and Gatekeeper acceptance before the installer can be uploaded. This
-explicit gate matters because electron-builder 26 can skip notarization when
-credentials are missing. The ticket is stapled to the app inside the DMG.
+Published Mac builds carry a Developer ID Application signature and a
+notarization ticket stapled to the DMG. The `package-macos` job in
+`electron-ci` makes them, after the e2e, checks and rust-test gates pass, with
+`scripts/package-macos-release.mjs` in three steps:
+
+1. **build** signs the app and the DMG (no notarization) and checks the app's
+   signature, Developer ID authority and Team ID. The packaged-app checks the
+   e2e leg ran on the unsigned build run again on the signed one.
+2. **submit** hands the DMG to Apple's notary service and records the
+   submission id.
+3. **finish** waits up to 40 minutes for Apple's verdict, staples the ticket to
+   the DMG, checks the ticket and Gatekeeper on the image and on the app inside
+   it, then rewrites `latest-mac.yml`, because stapling changes the DMG's bytes.
+
+The DMG is notarized rather than the app alone because it is what users
+download: one submission covers the image and the code inside it.
+
+A submission still in progress after the wait fails the job and leaves the
+submitted DMG as the `macos-notary-pending` artifact. **Re-run failed jobs** on
+that run: `package-macos` finds the artifact, skips the build and resumes the
+wait for the same submission. "Re-run all jobs" discards it and submits a new
+build. A refusal (`Invalid`) prints Apple's log and is not resumable; fix the
+cause and ship it as a new commit.
 
 Only arm64 ships: the runner, ffmpeg sidecar and from-source LGPL libraries
 are Apple Silicon. macOS self-update remains disabled in main; adding it also
@@ -57,56 +73,55 @@ requires a ZIP target, release asset validation and installed-app upgrade tests.
 Local and PR packages use the base config's ad-hoc signature (`identity: "-"`)
 without notarization. Re-signing keeps Electron's rewritten bundle seal valid;
 these test packages require a manual Gatekeeper exception and are not releases.
-No Apple credentials are passed to PR packaging.
 
-### Apple and GitHub setup
+### Credentials
 
-Use an active Apple Developer Program membership. Under Certificates, create a
-**Developer ID Application** certificate with a CSR whose private key you retain.
-Export the certificate and matching private key as a password-protected `.p12`;
-include Apple's Developer ID G2 intermediate certificate. A downloaded `.cer`
-alone cannot sign an app. Keep these files outside the repository.
-
-Create an app-specific password at <https://account.apple.com/> for notarization.
-In GitHub, open **Settings → Secrets and variables → Actions → New repository
-secret** and configure:
+The credentials are secrets of the `macos-release` GitHub environment, whose
+deployment branches are limited to `main`. Only `package-macos` and
+`macos-notary-status` name that environment, and no job that runs tests holds
+a secret.
 
 | Secret | Value |
 | --- | --- |
-| `CSC_LINK` | Base64 contents of the `.p12` file, on one line |
+| `CSC_LINK` | Base64 of the password-protected `.p12`: the Developer ID Application certificate and its private key, on one line |
 | `CSC_KEY_PASSWORD` | Password protecting that `.p12` |
-| `APPLE_ID` | Apple account email |
-| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password for notarization |
-| `APPLE_TEAM_ID` | Ten-character Team ID from membership details |
+| `APPLE_TEAM_ID` | Ten-character Team ID from the membership details |
+| `APPLE_API_KEY` | Full text of the App Store Connect API key (`AuthKey_<id>.p8`) |
+| `APPLE_API_KEY_ID` | That key's Key ID |
+| `APPLE_API_ISSUER` | Issuer ID shown above the key list |
 
-The signing step receives these secrets only on `main` in `WeftCut/WeftCut`, for
-an unpublished release candidate or a manual packaging run. Missing credentials,
-failed signing, rejected notarization or failed verification stops publication;
-there is no ad-hoc fallback for a release.
+Notarization uses a team API key (App Store Connect → Users and Access →
+Integrations → Team Keys, role **Developer**) rather than an Apple Account
+password: it belongs to the team, not a person, and is revoked on its own. A
+downloaded `.cer` alone cannot sign; the `.p12` must hold the private key from
+the CSR. Keep both files outside the repository.
 
-To validate without publishing, manually run `electron-ci` on `main`, select
-`macos-latest`, keep packaging enabled and scope E2E as needed. Manual runs
-upload an installer artifact but never publish a GitHub Release. Install that
-DMG on another Mac and check first launch, native decode and FFmpeg operations.
-First-time notarization can take longer than later submissions.
+### Checking and testing
 
-For a long-running submission, manually run `macos-notary-status` on `main`.
-It queries Apple's history and the newest WeftCut submission, plus the diagnostic
-log when a verdict is available. It never uploads software or submits another
-notarization request. `In Progress` means Apple has recorded the upload and is
-still processing it; no recorded submission means the build has not completed
-that handoff.
+To sign without publishing, manually run `electron-ci` on `main` with
+**Also sign and notarize the macOS package** on; select `macos-latest` and scope
+E2E as needed. The run uploads `installer-macos-signed` and never publishes a
+GitHub Release. Install that DMG on another Mac and check first launch, native
+decode and FFmpeg operations.
+
+`macos-notary-status` (manual, on `main`) lists the team's newest WeftCut
+submissions, the latest one's status and, once Apple has a verdict, its log.
+It submits nothing. A new team's first submissions can stay `In Progress` for
+hours to days; later ones normally finish in minutes.
 
 For a local signed package on a Mac, bootstrap the native dependencies, set the
-same five environment variables, then run from `apps/desktop`:
+six environment variables, then run from `apps/desktop`:
 
 ```sh
 npm run build
-node scripts/package-macos-release.mjs
+node scripts/package-macos-release.mjs build
+node scripts/package-macos-release.mjs submit
+node scripts/package-macos-release.mjs finish
 ```
 
 Reference: [Developer ID certificates](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/),
-[electron-builder signing and notarization](https://www.electron.build/v26/docs/notarization/).
+[notarizing before distribution](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution),
+[GitHub deployment environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments).
 
 ## Auto-update (Windows and Linux)
 

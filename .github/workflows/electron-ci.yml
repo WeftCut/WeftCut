@@ -29,9 +29,13 @@ on:
         type: string
         default: ''
       package:
-        description: 'Package installers (signed macOS on main)'
+        description: 'Package installers (unsigned)'
         type: boolean
         default: true
+      sign_macos:
+        description: 'Also sign and notarize the macOS package (main only)'
+        type: boolean
+        default: false
       full:
         description: 'Include @matrix tests while preserving OS slices and determinism comparison'
         type: boolean
@@ -107,8 +111,7 @@ jobs:
     # must still clear a slow green leg; re-check it after rebalancing the split.
     # Coverage cuts belong in the @matrix tier (apps/desktop/e2e/README.md),
     # not here.
-    # The macOS packaging carrier also waits for Apple's notary service.
-    timeout-minutes: ${{ (matrix.part == 'all' || (matrix.os == 'macos-latest' && matrix.part == 'e2e-2')) && 90 || 60 }}
+    timeout-minutes: ${{ matrix.part == 'all' && 90 || 60 }}
     # CONCURRENCY BUDGET — the build/test phase has 18 jobs: 1 `checks` + 3
     # `rust-test` + this matrix's 13 + 1 `compare`. The short release-plan runs
     # before this matrix; the release job waits for all gates. GitHub Free
@@ -587,8 +590,8 @@ jobs:
           retention-days: 14
           path: apps/desktop/e2e-report/**
 
-      # Test packages use no credentials; macOS release candidates use the
-      # separate signed step. Deliberately NOT `npm run package`: that script
+      # Test packages use no credentials; the signed macOS release is the
+      # `package-macos` job's. Deliberately NOT `npm run package`: that script
       # re-runs napi:build + napi:build:decode for a one-shot local package,
       # and both addons already built above (their .node artefacts persist in
       # node_modules/@weftcut/{core,native-decode}). Run the two remaining
@@ -601,18 +604,8 @@ jobs:
       # fewer specs, so no leg is the worst case for carrying an extra. It must
       # be a leg every OS runs, or that OS never packages.
       - name: Package (unsigned)
-        if: (github.event_name != 'workflow_dispatch' || inputs.package) && (matrix.part == 'e2e-2' || matrix.part == 'all') && !(runner.os == 'macOS' && github.repository == 'WeftCut/WeftCut' && github.ref == 'refs/heads/main' && (needs.release-plan.outputs.publish == 'true' || github.event_name == 'workflow_dispatch'))
+        if: (github.event_name != 'workflow_dispatch' || inputs.package) && (matrix.part == 'e2e-2' || matrix.part == 'all')
         run: npm run build && npx electron-builder --publish never
-
-      - name: Package signed macOS release
-        if: runner.os == 'macOS' && github.repository == 'WeftCut/WeftCut' && github.ref == 'refs/heads/main' && (needs.release-plan.outputs.publish == 'true' || (github.event_name == 'workflow_dispatch' && inputs.package)) && (matrix.part == 'e2e-2' || matrix.part == 'all')
-        env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run build && node scripts/package-macos-release.mjs
 
       # What only a packaged app can show of the stdio MCP entry (ADR 0165): the
       # RunAsNode fuse reads off, and a client config written for the JS shim of
@@ -636,9 +629,10 @@ jobs:
       # push refills the account artifact-storage quota, which then fails the
       # essential (tiny) determinism-* upload and reddens the whole matrix. So
       # only keep an installer when needed for a release or a manual dispatch —
-      # with short retention on top.
+      # with short retention on top. A release's macOS installer is the signed
+      # one from `package-macos`, so this leg's unsigned DMG stays out of it.
       - name: Upload installer
-        if: success() && (matrix.part == 'e2e-2' || matrix.part == 'all') && ((github.event_name == 'workflow_dispatch' && inputs.package) || needs.release-plan.outputs.publish == 'true')
+        if: success() && (matrix.part == 'e2e-2' || matrix.part == 'all') && ((github.event_name == 'workflow_dispatch' && inputs.package) || (needs.release-plan.outputs.publish == 'true' && runner.os != 'macOS'))
         uses: actions/upload-artifact@v7
         with:
           name: installer-${{ matrix.os }}
@@ -652,8 +646,153 @@ jobs:
             apps/desktop/release/*.blockmap
             apps/desktop/release/latest*.yml
 
+  # The Developer ID signed, notarized macOS installer of a release
+  # (docs/releases.md §macOS signing). Its own job, after the test gates, so
+  # Apple's credentials reach one job that runs no test code, a broken build is
+  # never submitted, and a slow notarization holds no e2e leg. The credentials
+  # are secrets of the `macos-release` environment, which admits only main.
+  #
+  # The notary wait is bounded below the job's cap. A submission still in
+  # progress at that bound leaves its DMG as `macos-notary-pending`; re-running
+  # the failed jobs finds it and resumes the wait instead of rebuilding.
+  package-macos:
+    needs: [release-plan, e2e, checks, rust-test]
+    if: github.repository == 'WeftCut/WeftCut' && github.ref == 'refs/heads/main' && (needs.release-plan.outputs.publish == 'true' || (github.event_name == 'workflow_dispatch' && inputs.sign_macos))
+    runs-on: macos-latest
+    timeout-minutes: 90
+    environment: macos-release
+    permissions:
+      contents: read
+      actions: read
+    defaults:
+      run:
+        working-directory: apps/desktop
+    # Each secret is set on the step that uses it, never job-wide: the install
+    # and the packaged-app checks run code that has no business reading them.
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      # Fails when this run has no such artifact, which is every first attempt.
+      - name: Find a submission left by an earlier attempt
+        id: resume
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh run download "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" -n macos-notary-pending -D release; then
+            echo "resumed=true" >> "$GITHUB_OUTPUT"
+            cat release/notary-submission.json
+          fi
+
+      - name: Install dependencies
+        working-directory: .
+        run: npm ci
+
+      # The build inputs the e2e job explains step by step, restored from the
+      # caches its macOS legs saved.
+      - uses: actions/setup-go@v7
+        if: steps.resume.outputs.resumed != 'true'
+        with:
+          go-version-file: apps/desktop/cli/go.mod
+          cache: false
+
+      - name: Restore ffmpeg cache
+        if: steps.resume.outputs.resumed != 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: apps/desktop/resources/ffmpeg
+          key: ffmpeg-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/fetch-ffmpeg.mjs') }}
+
+      - name: Fetch ffmpeg
+        if: steps.resume.outputs.resumed != 'true'
+        run: npm run ffmpeg:fetch
+
+      - name: Restore ffmpeg-lgpl cache
+        if: steps.resume.outputs.resumed != 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: apps/desktop/resources/ffmpeg-lgpl
+          key: ffmpeg-lgpl-${{ runner.os }}-${{ hashFiles('apps/desktop/scripts/fetch-ffmpeg-lgpl.mjs') }}
+
+      - name: Fetch LGPL ffmpeg (native-decode)
+        if: steps.resume.outputs.resumed != 'true'
+        run: npm run ffmpeg:fetch-lgpl
+
+      # LANDMINE — after the LGPL fetch: the decode addon's build reads it.
+      - uses: ./.github/actions/rust-artifacts
+        if: steps.resume.outputs.resumed != 'true'
+
+      - name: Package signed macOS release
+        if: steps.resume.outputs.resumed != 'true'
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run build && node scripts/package-macos-release.mjs build
+
+      # The signed app must still pass what the unsigned one passed in e2e:
+      # signing comes after the fuse flip and must not break the bundle.
+      - name: Verify packaged stdio MCP entry
+        if: steps.resume.outputs.resumed != 'true'
+        run: node scripts/check-packaged-cli.mjs
+
+      - name: Verify packaged macOS decode probe
+        if: steps.resume.outputs.resumed != 'true'
+        run: node scripts/smoke-packaged-decode-probe.mjs
+
+      - name: Submit for notarization
+        if: steps.resume.outputs.resumed != 'true'
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: node scripts/package-macos-release.mjs submit
+
+      - name: Notarize, staple and verify
+        id: finish
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          # Below the job's cap, so an unfinished submission is kept for a resume.
+          NOTARY_TIMEOUT: 40m
+        run: node scripts/package-macos-release.mjs finish
+
+      - name: Keep the submission for a resumed attempt
+        if: failure() && steps.finish.outputs.pending == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-notary-pending
+          overwrite: true
+          retention-days: 5
+          if-no-files-found: error
+          path: |
+            apps/desktop/release/WeftCut-mac-arm64.dmg
+            apps/desktop/release/latest-mac.yml
+            apps/desktop/release/notary-submission.json
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: installer-macos-signed
+          retention-days: 5
+          if-no-files-found: error
+          path: |
+            apps/desktop/release/WeftCut-mac-arm64.dmg
+            apps/desktop/release/latest-mac.yml
+
   release:
-    needs: [release-plan, e2e, checks, rust-test, compare]
+    needs: [release-plan, e2e, checks, rust-test, compare, package-macos]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'WeftCut/WeftCut' && needs.release-plan.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
