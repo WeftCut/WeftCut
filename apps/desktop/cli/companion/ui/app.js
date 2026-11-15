@@ -271,10 +271,11 @@ export function mountCompanion(root, transport, env = {}) {
 
   /** Pulls the picture while the user wants it and can see it: in the tab,
    *  or popped out. An open picture keeps the app encoding, so a hidden tab
-   *  lets go of it and asks again once shown. */
+   *  lets go of it and asks again once shown. A failed picture is let go of
+   *  too, and asked for again only by Try again. */
   function syncPicture() {
     const seen = !doc.hidden || doc.pictureInPictureElement != null
-    const pull = pictureWanted && seen
+    const pull = pictureWanted && seen && !pictureFailed
     if (pull && picture === null) {
       pictureShown = false
       pictureFailed = false
@@ -289,6 +290,8 @@ export function mountCompanion(root, transport, env = {}) {
         failed() {
           pictureFailed = true
           pictureShown = false
+          // Called from inside the decoder: let go of the stream once it returns.
+          queueMicrotask(syncPicture)
           paintStage()
         },
       })
@@ -475,7 +478,7 @@ export function mountCompanion(root, transport, env = {}) {
   showPicture.addEventListener('click', () => setPicture(true))
   hidePicture.addEventListener('click', () => setPicture(false))
   // Only a new request has the app start an encoder again after one failed.
-  stageRetry.addEventListener('click', () => { setPicture(false); setPicture(true) })
+  stageRetry.addEventListener('click', () => { pictureFailed = false; setPicture(false); setPicture(true) })
   doc.addEventListener('visibilitychange', syncPicture)
 
   copyPicture.addEventListener('click', () => {

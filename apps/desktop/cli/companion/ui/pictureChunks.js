@@ -17,6 +17,12 @@ export const FRAME_FAILED = 3
  *  keyframe; a page that cannot keep up shows fewer frames, never broken ones. */
 export const DECODE_QUEUE_MAX = 3
 
+/** Decoders lost in a row with no frame drawn, past which the page stops: a
+ *  browser that takes the codec in `configure` but cannot decode it would
+ *  otherwise build a decoder at every keyframe, with the app encoding for
+ *  nothing. One loss is retried: a decoder also closes on a GPU reset. */
+export const DECODE_ERRORS_MAX = 2
+
 /** Returns a splitter: given the stream's next bytes, it answers the whole
  *  frames they complete, `{ kind, timestamp, payload }`, and keeps the rest. */
 export function frameSplitter() {
@@ -51,30 +57,54 @@ export function frameSplitter() {
  *   codecs: { VideoDecoder: typeof VideoDecoder, EncodedVideoChunk: typeof EncodedVideoChunk },
  *   shown(): void,
  *   failed(): void,
- * }} deps `shown` is called on every frame drawn; `failed` when the app says
- *   it cannot encode the picture.
+ * }} deps `shown` is called on every frame drawn; `failed` when the picture
+ *   stopped for good: the app says it cannot encode it, or this browser cannot
+ *   decode it. Nothing is decoded after that until a new config arrives.
  */
 export function pictureDecoder({ canvas, codecs, shown, failed }) {
   const context = canvas.getContext('2d')
   let config = null
   let decoder = null
   let waitingKey = true
+  /** Decoders lost since a frame was last drawn. */
+  let losses = 0
+
+  function giveUp() {
+    config = null
+    closeDecoder()
+    waitingKey = true
+    failed()
+  }
+
+  /** A decoder closed by an error, or refused at `configure`. */
+  function lost() {
+    waitingKey = true
+    if (++losses >= DECODE_ERRORS_MAX) giveUp()
+  }
 
   function open() {
     const d = new codecs.VideoDecoder({
       output: (frame) => {
         context?.drawImage(frame, 0, 0, canvas.width, canvas.height)
         frame.close()
+        losses = 0
         shown()
       },
       error: () => {
         // A closed decoder takes nothing more: a new one starts at the next keyframe.
-        if (decoder === d) decoder = null
-        waitingKey = true
+        if (decoder !== d) return
+        decoder = null
+        lost()
       },
     })
-    // No `description`: H.264 comes as Annex B, which the decoder reads as is.
-    d.configure({ codec: config.codec, codedWidth: config.coded_width, codedHeight: config.coded_height, optimizeForLatency: true })
+    try {
+      // No `description`: H.264 comes as Annex B, which the decoder reads as is.
+      d.configure({ codec: config.codec, codedWidth: config.coded_width, codedHeight: config.coded_height, optimizeForLatency: true })
+    } catch {
+      if (d.state !== 'closed') d.close()
+      lost()
+      return null
+    }
     return d
   }
 
@@ -91,18 +121,17 @@ export function pictureDecoder({ canvas, codecs, shown, failed }) {
         canvas.height = config.coded_height
         closeDecoder()
         waitingKey = true
+        losses = 0
         return
       }
       if (frame.kind === FRAME_FAILED) {
-        config = null
-        closeDecoder()
-        waitingKey = true
-        failed()
+        giveUp()
         return
       }
       const key = frame.kind === FRAME_KEY
       if (config === null || (waitingKey && !key)) return
       if (decoder === null) decoder = open()
+      if (decoder === null) return
       if (!key && decoder.decodeQueueSize > DECODE_QUEUE_MAX) {
         waitingKey = true
         return

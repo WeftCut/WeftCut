@@ -423,6 +423,50 @@ describe('pictureDecoder', () => {
     expect(made.map((d) => d.decoded.map((c) => c.timestamp))).toEqual([[1], [3]])
   })
 
+  it('stops once this browser keeps losing its decoder with nothing drawn, until a new config', () => {
+    const { made, codecs } = fakeDecoders()
+    let failed = 0
+    const decoder = chunks.pictureDecoder({ canvas: fakeCanvas().canvas, codecs, shown: () => {}, failed: () => { failed++ } })
+    take(decoder, configFrame())
+    for (let i = 1; i <= chunks.DECODE_ERRORS_MAX; i++) {
+      take(decoder, keyFrame(i))
+      made.at(-1)!.fail()
+    }
+    expect(failed).toBe(1)
+    take(decoder, keyFrame(10))
+    take(decoder, keyFrame(11))
+    expect(made).toHaveLength(chunks.DECODE_ERRORS_MAX)
+    take(decoder, configFrame())
+    take(decoder, keyFrame(12))
+    expect(made).toHaveLength(chunks.DECODE_ERRORS_MAX + 1)
+  })
+
+  it('counts only losses in a row: a drawn frame between them starts the count over', () => {
+    const { made, codecs } = fakeDecoders()
+    let failed = 0
+    const decoder = chunks.pictureDecoder({ canvas: fakeCanvas().canvas, codecs, shown: () => {}, failed: () => { failed++ } })
+    take(decoder, configFrame())
+    for (let i = 1; i <= chunks.DECODE_ERRORS_MAX * 2; i++) {
+      take(decoder, keyFrame(i))
+      made.at(-1)!.draw()
+      made.at(-1)!.fail()
+    }
+    expect(failed).toBe(0)
+  })
+
+  it('counts a decoder refused at configure as lost', () => {
+    const { made, codecs } = fakeDecoders()
+    let failed = 0
+    class Refusing extends codecs.VideoDecoder {
+      override configure(): void { throw new DOMException('codec not supported', 'NotSupportedError') }
+    }
+    const decoder = chunks.pictureDecoder({ canvas: fakeCanvas().canvas, codecs: { ...codecs, VideoDecoder: Refusing }, shown: () => {}, failed: () => { failed++ } })
+    take(decoder, configFrame())
+    for (let i = 1; i <= chunks.DECODE_ERRORS_MAX; i++) take(decoder, keyFrame(i))
+    expect(failed).toBe(1)
+    expect(made.every((d) => d.state === 'closed')).toBe(true)
+  })
+
   it('draws each decoded frame and says so', () => {
     const { made, codecs } = fakeDecoders()
     const { canvas, drawn } = fakeCanvas()

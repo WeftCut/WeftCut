@@ -274,15 +274,21 @@ describe('the picture', () => {
     expect(stage().dataset.picture).toBe('off')
   })
 
-  it('says when the app could not encode it, and asks again on Try again', () => {
+  it('says when the picture failed, lets go of it so the app stops encoding, and asks again only on Try again', async () => {
     const { stage, button, pictures } = ready()
     button('.cw-show-picture').click()
     pictures[0]!.view.shown()
     pictures[0]!.view.failed()
     expect(stage().dataset.picture).toBe('failed')
     expect(stage().textContent).toContain(STRINGS.en.picture_failed)
-    button('.cw-stage-retry').click()
+    // The page lets go once the decoder that reported it has returned.
+    await Promise.resolve()
     expect(pictures[0]!.closed).toBe(true)
+    // Coming back to the tab is not asking again.
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(pictures).toHaveLength(1)
+    expect(stage().dataset.picture).toBe('failed')
+    button('.cw-stage-retry').click()
     expect(pictures).toHaveLength(2)
     expect(stage().dataset.picture).toBe('starting')
     pictures[1]!.view.shown()
