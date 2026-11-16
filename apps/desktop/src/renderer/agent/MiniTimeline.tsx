@@ -5,7 +5,7 @@ import { formatTimecode } from "../frames";
 import type { MarkerSummary } from "../ipc";
 import type { TackView } from "../../shared/agent-activity";
 import type { ReviewRangeMark } from "./reviewHighlight";
-import { hitBand, type BandItem, type ReviewTarget } from "./reviewFocus";
+import { hitBand, rangeKey, type BandItem, type ReviewTarget } from "./reviewFocus";
 import { tackCoverage } from "./tackModel";
 import { useFocusedPlayheadUs } from "../state/playheadProjection";
 import { usePointerGesture } from "../hooks/usePointerGesture";
@@ -32,7 +32,8 @@ interface MiniTimelineProps {
   /// The review focus (`reviewFocus`), shown as the editor timeline shows it:
   /// its range washed the strip's full height, its own mark at full strength
   /// and the others in its band stepping back. No mark grows, so a focused
-  /// change never covers the removal row under it.
+  /// change never covers the removal row under it. A focused changed range
+  /// comes as its `rangeKey`.
   focus?: ReviewTarget | null;
   /// The panel row under the pointer (`reviewHover`): its mark is ringed
   /// inside its own box.
@@ -47,7 +48,8 @@ interface MiniTimelineProps {
   /// alone when absent.
   changeLabel?: (mark: ReviewRangeMark) => string;
   /// A press on a band that names an item (`hitBand`) focuses it instead of
-  /// seeking; the caller shows its row.
+  /// seeking; the caller shows its row. On the change band the item is the
+  /// changed range under the press (`kind: "range"`, its `rangeKey`).
   onFocus?: (item: ReviewTarget) => void;
   onSeek: (tUs: number) => void;
   fpsNum: number;
@@ -128,9 +130,18 @@ function changeBlocks(marks: readonly ReviewRangeMark[], extentUs: number, width
   return out;
 }
 
-/// The change a block names for the panel: its first unreviewed one, so a
-/// press on a range shows a row the Changes tab lists.
-const blockChange = (b: ChangeBlock): string | null => b.marks[0]?.range.change_ids[0] ?? null;
+/// The range of block `b` a press at `tUs` names: the one holding it, else
+/// the nearest — a block merges ranges for the eye only, each still its own
+/// to focus.
+function blockRangeAt(b: ChangeBlock, tUs: number): ReviewRangeMark | null {
+  let best: ReviewRangeMark | null = null;
+  let distance = Infinity;
+  for (const m of b.marks) {
+    const d = tUs < m.tStartUs ? m.tStartUs - tUs : tUs > m.tEndUs ? tUs - m.tEndUs : 0;
+    if (d < distance) { best = m; distance = d; }
+  }
+  return best;
+}
 
 export function MiniTimeline({
   durationUs,
@@ -234,49 +245,59 @@ export function MiniTimeline({
     item?.kind === "tack" ? tackItems.find((x) => x.id === item.id) ?? null : null;
   const selectedSpan = tackSpan(focus);
   const hoverSpan = hover?.kind === "tack" && hover.id !== selectedSpan?.id ? tackSpan(hover) : null;
-  // The focus's washes: the tack's range, or each changed range the
-  // focused change plays in.
-  const names = (b: ChangeBlock, item: ReviewTarget | null) =>
-    item?.kind === "change" && b.marks.some((m) => m.range.change_ids.includes(item.id as never));
-  const focusWashes: { kind: ReviewTarget["kind"]; startUs: number; endUs: number }[] =
+  // The focus's washes: the tack's range, the focused changed range, or
+  // each changed range the focused change plays in.
+  const marksOf = (item: ReviewTarget | null): readonly ReviewRangeMark[] =>
+    item?.kind === "range"
+      ? changes.filter((m) => rangeKey(m.range) === item.id)
+      : item?.kind === "change"
+        ? changes.filter((m) => m.range.change_ids.includes(item.id as never))
+        : [];
+  const focusMarks = marksOf(focus);
+  const hoverMarks = marksOf(hover);
+  const names = (b: ChangeBlock, marks: readonly ReviewRangeMark[]) => b.marks.some((m) => marks.includes(m));
+  const focusWashes: { kind: "tack" | "change"; startUs: number; endUs: number }[] =
     selectedSpan !== null
       ? [{ kind: "tack", startUs: selectedSpan.startUs, endUs: selectedSpan.endUs }]
-      : focus?.kind === "change"
-        ? changes.filter((c) => c.range.change_ids.includes(focus.id as never))
-            .map((c) => ({ kind: "change", startUs: c.tStartUs, endUs: c.tEndUs }))
-        : [];
+      : focusMarks.map((c) => ({ kind: "change", startUs: c.tStartUs, endUs: c.tEndUs }));
   const focusBand = focusWashes[0]?.kind;
   const changeMark = (b: ChangeBlock) =>
-    names(b, focus) ? " mini-change-selected" : names(b, hover) ? " mini-change-hover" : "";
+    names(b, focusMarks) ? " mini-change-selected" : names(b, hoverMarks) ? " mini-change-hover" : "";
 
-  // A band press names the item under it — the tack or change whose range
+  // A band press names the item under it — the tack or changed range that
   // holds that moment — and focuses it; on bare band it falls through to the
   // strip's seek. Measured on the hit row itself, which spans the strip.
-  const bandItemAt = (items: readonly BandItem[], e: React.MouseEvent<HTMLElement>): string | null => {
+  const bandTimeAt = (e: React.MouseEvent<HTMLElement>): number | null => {
     const rect = e.currentTarget.getBoundingClientRect();
     if (rect.width <= 0 || durationUs <= 0) return null;
-    const tUs = ((e.clientX - rect.left) / rect.width) * extentUs;
-    return hitBand(items, tUs, (uiPixels(MINI.pointSlop) / rect.width) * extentUs);
+    return ((e.clientX - rect.left) / rect.width) * extentUs;
   };
-  // A press on the change band names a block; the panel shows its first
-  // change, and the block's hover text says each range in it.
+  const bandItemAt = (items: readonly BandItem[], e: React.MouseEvent<HTMLElement>): string | null => {
+    const tUs = bandTimeAt(e);
+    if (tUs === null) return null;
+    const width = e.currentTarget.getBoundingClientRect().width;
+    return hitBand(items, tUs, (uiPixels(MINI.pointSlop) / width) * extentUs);
+  };
+  // A press on the change band names a block, and in it the range under the
+  // press, which the panel shows; the block's hover text says each range in it.
   const blockOf = (key: string): ChangeBlock | undefined => blocks.find((b) => b.key === key);
   const blockLabel = (key: string): string =>
     (blockOf(key)?.marks ?? []).map((m) => (changeLabel ? changeLabel(m) : t(`changes.class_${m.cls}`))).join("\n");
   // A double press jumps to the item's start on this strip — the first press
   // already focused it — and only moves the moment, as the strip's seek does.
-  // `focusOf`: the item a band item focuses, when not itself.
+  // `focusOf`: the item a band item focuses at that moment, when not itself.
   const bandHandlers = (
     kind: ReviewTarget["kind"],
     itemAt: (e: React.MouseEvent<HTMLElement>) => string | null,
     label: (id: string) => string,
     items: readonly BandItem[],
-    focusOf: (id: string) => string | null = (id) => id,
+    focusOf: (id: string, tUs: number) => string | null = (id) => id,
   ) => ({
     onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.button !== 0 || onFocus === undefined) return;
       const at = itemAt(e);
-      const id = at === null ? null : focusOf(at);
+      const tUs = bandTimeAt(e);
+      const id = at === null || tUs === null ? null : focusOf(at, tUs);
       if (id === null) return;
       // The strip's own pointerdown would seek; this press was for the item.
       e.stopPropagation();
@@ -426,9 +447,10 @@ export function MiniTimeline({
           <div
             data-testid="mini-change-band"
             className="mini-band-hit mini-band-hit-changes"
-            {...bandHandlers("change", (e) => bandItemAt(changeItems, e), blockLabel, changeItems, (key) => {
+            {...bandHandlers("range", (e) => bandItemAt(changeItems, e), blockLabel, changeItems, (key, tUs) => {
               const b = blockOf(key);
-              return b === undefined ? null : blockChange(b);
+              const m = b === undefined ? null : blockRangeAt(b, tUs);
+              return m === null ? null : rangeKey(m.range);
             })}
           />
         )}

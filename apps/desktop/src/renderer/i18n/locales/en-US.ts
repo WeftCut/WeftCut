@@ -1095,6 +1095,9 @@ const enUS = {
     // objects here, so a translation must keep them apart.
     seek_prev_marker: "Go to previous marker",
     seek_next_marker: "Go to next marker",
+    seek_prev_changed_range: "Go to previous changed range",
+    seek_next_changed_range: "Go to next changed range",
+    play_changed_range: "Play changed range",
     clear_range: "Clear in/out points",
     open_search: "Search everything…",
     search: "Search",
@@ -1682,6 +1685,17 @@ const enUS = {
   },
   changes: {
     subtitle: "What agents changed since you last approved",
+    // The bar over the list while a changed range is focused: its line, a
+    // stepper through its changes, play, the neighbouring ranges, close.
+    range_bar: {
+      label: "Changed range",
+      whole_one: "{{count}} change",
+      whole_other: "All {{count}}",
+      step: "{{index}} / {{count}}",
+      prev_change: "Previous change in this range",
+      next_change: "Next change in this range",
+      close: "Let go of this range",
+    },
     approve_all: "Approve all",
     approve_all_hint: "Make the project as it is now the new review baseline — your own changes included",
     revert_all: "Revert all",

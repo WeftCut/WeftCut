@@ -11,7 +11,8 @@ import { formatClock } from '../history/historyRows'
 import { AppDialog } from '../components/AppDialog'
 import { AgentSection } from '../settings/AgentSection'
 import { AGENT_PANEL_TABS, useAgentActivity, type AgentPanelTab } from './activityStore'
-import { releaseFocus, useReviewFocus } from './reviewFocus'
+import { escapeFocus, useReviewFocus } from './reviewFocus'
+import { RangeBar } from './RangeBar'
 import { TacksTab } from './TacksTab'
 import { ChangesTab } from './ChangesTab'
 import { clearActivityChanges, showActivityChanges, useActivityHighlightHost, useReview, useUnreviewedCount } from './reviewStore'
@@ -142,7 +143,9 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
     {expanded[`reads-${r.id}`] && r.activities.map(entry)}</div>
   /** A tab's count badge: open tacks, unreviewed changes; nothing for Activity. */
   const badge = (id: AgentPanelTab) => id === 'tacks' ? openTacks : id === 'changes' ? unreviewed : 0
-  // Esc lets the review focus go — from inside the panel only. Everywhere else
+  // Esc steps the review focus back — from a change stepped to inside a range
+  // to the whole range — and else lets it go, from inside the panel only.
+  // Everywhere else
   // Esc already has owners (blade and region arms, the inline track reveal, a
   // maximised panel's restore), and a focus that vanished as one of those was
   // dismissed would be a second, unasked-for effect. Here it is the nearest
@@ -153,7 +156,7 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
     if (useReviewFocus.getState().focus === null) return
     e.preventDefault()
     e.stopPropagation()
-    releaseFocus()
+    escapeFocus()
   }
   return <div className="agent-panel agent-activity-panel" onKeyDown={onKeyDown}>
     {/* One status row: the service (its toggle opens the connection details),
@@ -187,6 +190,7 @@ export function AgentPanel({ editor = false }: { editor?: boolean }) {
     {shown?.status === 'ready' && <div className="agent-activity-highlight" role="status"><AppIcon icon={Highlighter} size="label" aria-hidden />
       <span>{t(shown.reverted ? 'agent_panel.highlight_reverted' : 'agent_panel.highlight_active', { count: shown.count })}</span>
       <button type="button" aria-label={t('agent_panel.highlight_clear')} title={t('agent_panel.highlight_clear')} onClick={clearActivityChanges}><AppIcon icon={X} size="label" /></button></div>}
+    <RangeBar source="activity" />
     <div className="agent-activity-list" ref={list} onScroll={onScroll}>
       {!!snapshot?.evicted && <p className="agent-retention-note">{t('agent_panel.truncated', { count: snapshot.evicted })}</p>}
       {!sections.length && (ready

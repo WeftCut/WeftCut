@@ -978,6 +978,9 @@ const zhCN: Resources = {
     // 在这里却是两种对象，译名必须分开。
     seek_prev_marker: "跳到上一个标记",
     seek_next_marker: "跳到下一个标记",
+    seek_prev_changed_range: "跳到上一个变化区间",
+    seek_next_changed_range: "跳到下一个变化区间",
+    play_changed_range: "播放变化区间",
     clear_range: "清除入出点",
     open_search: "全局搜索…",
     search: "搜索",
@@ -1490,6 +1493,17 @@ const zhCN: Resources = {
   },
   changes: {
     subtitle: "自上次批准以来代理所做的变更",
+    // 聚焦一个变化区间时列表上方的条：区间的一句话、逐项切换、播放、
+    // 前后区间、关闭。
+    range_bar: {
+      label: "变化区间",
+      whole_one: "共 {{count}} 项",
+      whole_other: "全部 {{count}} 项",
+      step: "{{index}} / {{count}}",
+      prev_change: "区间内上一项",
+      next_change: "区间内下一项",
+      close: "取消聚焦此区间",
+    },
     approve_all: "全部批准",
     approve_all_hint: "将项目当前状态作为新的审阅基线，包括你自己的变更",
     revert_all: "全部撤回",

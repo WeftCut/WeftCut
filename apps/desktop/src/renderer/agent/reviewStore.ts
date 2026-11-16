@@ -343,17 +343,27 @@ export function useTrackReviewCuts(trackId: string): readonly ReviewCut[] {
   }, [overlay, cuts, trackId])
 }
 
-/** Changed ranges on one composition — the review bands. The user's own
- *  show only while the user-changes switch is on. Not gated by the overlay:
- *  the agent view has no overlay switch. */
+/** Changed ranges on one composition as the review bands paint them: the
+ *  user's own only while the user-changes switch is on, or within a selected
+ *  call's. The one reading the bands and the range walk share. */
+export function compositionChangeRanges(
+  ranges: readonly ReviewRangeMark[], compositionId: string | null, showUser: boolean,
+): readonly ReviewRangeMark[] {
+  if (compositionId === null || ranges.length === 0) return NO_RANGES
+  const mine = ranges.filter(r => r.compositionId === compositionId && (showUser || !r.user))
+  return mine.length === 0 ? NO_RANGES : mine
+}
+
+/** Whether the user's own ranges are on the bands: the switch, or a call's. */
+export const rangesShowUser = (s: Pick<ReviewState, 'showUser' | 'activity'>): boolean =>
+  s.showUser || s.activity?.status === 'ready'
+
+/** Changed ranges on one composition — the review bands. Not gated by the
+ *  overlay: the agent view has no overlay switch. */
 export function useCompositionChangeRanges(compositionId: string | null): readonly ReviewRangeMark[] {
   const ranges = useReview(s => selectHighlight(s).ranges)
-  const showUser = useReview(s => s.showUser || s.activity?.status === 'ready')
-  return useMemo(() => {
-    if (compositionId === null || ranges.length === 0) return NO_RANGES
-    const mine = ranges.filter(r => r.compositionId === compositionId && (showUser || !r.user))
-    return mine.length === 0 ? NO_RANGES : mine
-  }, [ranges, compositionId, showUser])
+  const showUser = useReview(rangesShowUser)
+  return useMemo(() => compositionChangeRanges(ranges, compositionId, showUser), [ranges, compositionId, showUser])
 }
 
 // ── Approve all / revert all ──────────────────────────────────────────────────

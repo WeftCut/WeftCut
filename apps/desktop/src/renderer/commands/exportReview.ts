@@ -10,6 +10,7 @@ import type { CommandDef } from "./registry";
 const EXPORT_REVIEW_COMMANDS: ReadonlySet<string> = new Set([
   "togglePlay", "seekFrameBack", "seekFrameForward", "seekSecondBack", "seekSecondForward",
   "seekPrevEdit", "seekNextEdit", "seekPrevMarker", "seekNextMarker", "seekStart", "seekEnd",
+  "seekPrevChangedRange", "seekNextChangedRange", "playChangedRange",
   "previewZoomFit", "previewZoomIn", "previewZoomOut", "selectHandTool", "selectTool",
   "toggleFollowPlayhead", "toggleDisplayMode", "toggleSafeAreaGuides", "togglePreviewGrid", "togglePreviewSnap",
   "toggleMarkersVisible",

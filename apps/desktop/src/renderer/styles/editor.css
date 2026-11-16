@@ -356,11 +356,24 @@
   background: color-mix(in srgb, var(--review-focus-hue) 9%, transparent);
 }
 
+/* A changed range around the change stepped to inside it: still there, as
+   context, under that change's own wash. */
+.review-focus-wash[data-context] {
+  background: color-mix(in srgb, var(--review-focus-hue) 4%, transparent);
+  box-shadow:
+    inset 1px 0 0 color-mix(in srgb, var(--review-focus-hue) 30%, transparent),
+    inset -1px 0 0 color-mix(in srgb, var(--review-focus-hue) 30%, transparent);
+}
+
 .review-focus-wash[data-point] {
   width: 2px; /* fixed-px: time-axis line weight */
   margin-left: -1px; /* fixed-px: centres the line on its frame */
   background: color-mix(in srgb, var(--review-focus-hue) 75%, transparent);
   box-shadow: none;
+}
+
+.review-focus-wash[data-point][data-context] {
+  background: color-mix(in srgb, var(--review-focus-hue) 35%, transparent);
 }
 
 /* A removal's baseline footprint (ADR 0116): where it was, which the content

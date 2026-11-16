@@ -68,6 +68,9 @@ export type ActionId =
   | "addMarkerAtPlayhead"
   | "seekPrevMarker"
   | "seekNextMarker"
+  | "seekPrevChangedRange"
+  | "seekNextChangedRange"
+  | "playChangedRange"
   | "clearRange"
   | "openSearchPalette"
   | "openSettings";
@@ -427,6 +430,20 @@ export const ACTION_DEFS: Record<ActionId, ActionDef> = {
   // walking marks is deliberately unscoped, so it has no other gate to inherit.
   seekPrevMarker:    { defaultKeys: ["Mod+Shift+M"],       labelKey: "actions.seek_prev_marker",    repeatable: true, fireWhenEditing: false },
   seekNextMarker:    { defaultKeys: ["Shift+M"],           labelKey: "actions.seek_next_marker",    repeatable: true },
+  // Walking the changed ranges (ADR 0169; `agent/rangeWalk.ts`): the ↑/↓ of
+  // edit points with Alt, since Alt+←/→ are the nudges. Unscoped and
+  // repeatable for the marker walk's reasons above — reviewing is watching —
+  // and it does not wrap either. Unlike a review focus, a walk seeks.
+  //
+  // `fireWhenEditing: false` because a chord otherwise fires in a text field,
+  // where Alt+↑/↓ is the platform's own paragraph move.
+  seekPrevChangedRange: { defaultKeys: ["Alt+ArrowUp"],    labelKey: "actions.seek_prev_changed_range", repeatable: true, fireWhenEditing: false },
+  seekNextChangedRange: { defaultKeys: ["Alt+ArrowDown"],  labelKey: "actions.seek_next_changed_range", repeatable: true, fireWhenEditing: false },
+  // Play the focused changed range, or the one under or after the playhead,
+  // and pause after it: Space's twin, so `captureGlobal` for Space's reason —
+  // a focused button (the panel's range bar) would otherwise take the key.
+  // Not repeatable: a held key would restart the play on every repeat.
+  playChangedRange:  { defaultKeys: ["Shift+Space"],       labelKey: "actions.play_changed_range",  captureGlobal: true },
   clearRange:        { defaultKeys: ["Alt+X"],             labelKey: "actions.clear_range" },
   // Global search palette. A chord, so it fires while a text input is
   // focused (default chord behavior) — expected for a Spotlight-style UI.

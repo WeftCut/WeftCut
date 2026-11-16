@@ -1,14 +1,15 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { TackView } from '../../shared/agent-activity'
-import type { Change, EntityKey, ReviewView } from '../../shared/review'
+import type { Change, ChangedRange, EntityKey, ReviewView } from '../../shared/review'
 import { useAgentActivity } from './activityStore'
 import type { AgentActivitySnapshot, AgentWorkSession } from '../../shared/agent-activity'
 import { resetReviewForTests, useReview } from './reviewStore'
 import {
-  EMPTY_FOCUS_PAINT, buildFocusPaint, focusRevealScrollLeft, hitBand, selectChange, selectTack, setReviewFocus, setReviewHover, useFocusPaint, useReviewFocus,
+  EMPTY_FOCUS_PAINT, buildFocusPaint, escapeFocus, focusRevealScrollLeft, hitBand, orderSteps, rangeKey, resolveRange, selectChange, selectRange, selectTack,
+  setReviewFocus, setReviewHover, stepRange, useFocusPaint, useReviewFocus,
 } from './reviewFocus'
-import { EMPTY_HIGHLIGHT } from './reviewHighlight'
+import { EMPTY_HIGHLIGHT, rangeMarks } from './reviewHighlight'
 import { tackGroupKey, tackRowKey } from './expansion'
 
 const S = 1_000_000
@@ -40,7 +41,7 @@ describe('buildFocusPaint', () => {
     expect(p.focus).toBe(focus)
     expect(p.washes).toEqual([{ kind: 'tack', compositionId: 'root', startUs: 2 * S, endUs: 3 * S }])
     expect([...p.layers]).toEqual([['x', 'tack']])
-    expect(p.changeFocused).toBe(false)
+    expect(p.spotlit.size).toBe(0)
   })
 
   it('a point tack washes one instant; a tack with no place washes nothing', () => {
@@ -54,7 +55,7 @@ describe('buildFocusPaint', () => {
     const p = buildFocusPaint({ kind: 'change', source: 'review', id: 'Layer:b' }, null, [], of(changes))
     expect([...p.layers]).toEqual([['b', 'change']])
     expect(p.washes).toEqual([{ kind: 'change', compositionId: 'root', startUs: 7 * S, endUs: 9 * S }])
-    expect(p.changeFocused).toBe(true)
+    expect([...p.spotlit]).toEqual(['Layer:b'])
     expect(buildFocusPaint({ kind: 'change', source: 'review', id: 'Layer:a' }, null, [], of(changes)).washes.map(w => w.compositionId)).toEqual(['root', 'grp'])
   })
 
@@ -65,7 +66,7 @@ describe('buildFocusPaint', () => {
 
   it('a hovered change row only outlines, and the focus wins on a clip both name', () => {
     const hover = buildFocusPaint(null, { kind: 'change', source: 'review', id: 'Layer:a' }, [], of(changes))
-    expect([[...hover.layers], hover.washes, hover.changeFocused]).toEqual([[['a', 'hover']], [], false])
+    expect([[...hover.layers], hover.washes, hover.spotlit.size]).toEqual([[['a', 'hover']], [], 0])
     const both = buildFocusPaint({ kind: 'change', source: 'review', id: 'Layer:a' }, { kind: 'change', source: 'review', id: 'Layer:a' }, [], of(changes))
     expect([...both.layers]).toEqual([['a', 'change']])
     // A hovered tack row has no clip outline: its chip and mini mark read the hover.
@@ -114,7 +115,7 @@ describe('buildFocusPaint', () => {
 
   it('an item no longer listed paints nothing and recedes nothing', () => {
     const p = buildFocusPaint({ kind: 'change', source: 'review', id: 'Layer:approved' }, null, [tack()], of(changes))
-    expect([p.layers.size, p.ghosts.size, p.washes, p.changeFocused]).toEqual([0, 0, [], false])
+    expect([p.layers.size, p.ghosts.size, p.washes, p.spotlit.size]).toEqual([0, 0, [], 0])
   })
 })
 
@@ -238,7 +239,7 @@ describe('the review focus rule: an item stays while its list shows it', () => {
     expect([useAgentActivity.getState().tab, focus()]).toEqual(['activity', { kind: 'change', source: 'activity', id: 'Layer:a' }])
     expect(useReview.getState().activity).not.toBeNull()
     // Its paint reads the call's own change, not the Review view's of that entity.
-    expect(useFocusPaint.getState().changeFocused).toBe(true)
+    expect([...useFocusPaint.getState().spotlit]).toEqual(['Layer:a'])
     // The highlight goes (the row collapsed, another row, a tab): so does the focus.
     useReview.setState({ activity: null })
     expect(focus()).toBeNull()
@@ -294,5 +295,121 @@ describe('hitBand', () => {
     expect(hitBand(items, 12.4 * S, 0.2 * S)).toBe('near')
     expect(hitBand(items, 11 * S, 0.2 * S)).toBeNull()
     expect(hitBand([], 0, S)).toBeNull()
+  })
+})
+
+describe('a changed range as the focus', () => {
+  const R = (patch: Partial<ChangedRange> & Pick<ChangedRange, 'change_ids'>): ChangedRange => ({
+    composition_id: 'root', class: 'modified', t_start_us: S, t_end_us: 2 * S, before_start_us: S, before_end_us: 2 * S, source: 'review', ...patch,
+  })
+  const at = (id: EntityKey, start: number) => change({ id, ranges: [{ composition_id: 'root', track_id: 'v1', t_start_us: start, t_end_us: start + S }] })
+  // Listed b, a, c by time; the range names a before b.
+  const listed = [at('Layer:a', 2 * S), at('Layer:b', S), at('Layer:c', 6 * S)]
+  const view = (ranges: ChangedRange[], revision: number, unreviewed: Change[] = listed): ReviewView => ({
+    version: { session: 1, revision, baseline_revision: 1 }, content_revision: revision, has_baseline: true, unreviewed, user: [], user_count: 0, decorations: [], ranges,
+  })
+  const pair = R({ change_ids: ['Layer:a', 'Layer:b'] })
+  const focus = () => useReviewFocus.getState().focus
+  const range = () => useReviewFocus.getState().range
+  beforeEach(() => {
+    resetReviewForTests()
+    useAgentActivity.setState({ snapshot: null, tab: 'activity', expanded: {} })
+    useReviewFocus.setState({ focus: null, hover: null, range: null })
+    useReview.getState().apply(view([pair, R({ change_ids: ['Layer:c'], t_start_us: 6 * S, t_end_us: 7 * S })], 1))
+  })
+  afterEach(() => resetReviewForTests())
+
+  describe('resolveRange', () => {
+    it('finds the range sharing the most of its changes, in its composition only', () => {
+      const most = R({ change_ids: ['Layer:a', 'Layer:b'], t_start_us: 9 * S, t_end_us: 10 * S })
+      const one = R({ change_ids: ['Layer:a'] })
+      const elsewhere = R({ change_ids: ['Layer:a', 'Layer:b'], composition_id: 'grp' })
+      expect(resolveRange(pair, [one, elsewhere, most])).toBe(most)
+    })
+    it('breaks a tie by the nearest span, and finds nothing once no range shares a change', () => {
+      const near = R({ change_ids: ['Layer:a'], t_start_us: 3 * S, t_end_us: 4 * S })
+      const far = R({ change_ids: ['Layer:b'], t_start_us: 8 * S, t_end_us: 9 * S })
+      expect(resolveRange(pair, [far, near])).toBe(near)
+      expect(resolveRange(pair, [R({ change_ids: ['Layer:c'] })])).toBeNull()
+    })
+  })
+
+  it('is focused from its list and shown in the Changes tab, never seeking', () => {
+    selectRange(pair)
+    expect(useAgentActivity.getState().tab).toBe('changes')
+    expect(focus()).toMatchObject({ kind: 'range', source: 'review', id: rangeKey(pair), step: null })
+  })
+
+  it('survives a recompute that moves it, as the same select — and goes with its changes', () => {
+    selectRange(pair)
+    const held = focus()
+    const moved = R({ change_ids: ['Layer:a', 'Layer:b'], t_start_us: 3 * S, t_end_us: 5 * S })
+    useReview.getState().apply(view([R({ change_ids: ['Layer:c'], t_start_us: S, t_end_us: 2 * S }), moved], 2))
+    // Same focus object: a commit is not a fresh select, so no timeline re-reveals.
+    expect(focus()).toBe(held)
+    expect(range()).toBe(moved)
+    expect(useFocusPaint.getState().washes).toEqual([{ kind: 'change', compositionId: 'root', startUs: 3 * S, endUs: 5 * S }])
+    useReview.getState().apply(view([R({ change_ids: ['Layer:c'] })], 3))
+    expect([focus(), range()]).toEqual([null, null])
+  })
+
+  it('paints its span and every clip it lists, and makes the rest recede', () => {
+    selectRange(pair)
+    const p = useFocusPaint.getState()
+    expect([...p.layers].sort()).toEqual([['a', 'change'], ['b', 'change']])
+    expect([...p.spotlit].sort()).toEqual(['Layer:a', 'Layer:b'])
+    expect(p.washes).toEqual([{ kind: 'change', compositionId: 'root', startUs: S, endUs: 2 * S }])
+  })
+
+  it('steps from the whole range through its changes in the list\'s row order, without wrapping', () => {
+    selectRange(pair)
+    stepRange(-1)
+    expect(focus()).toMatchObject({ step: null })
+    stepRange(1)
+    expect(focus()).toMatchObject({ kind: 'range', step: 'Layer:b' })
+    // Stepped: that change is focused over a fainter wash of the range.
+    const p = useFocusPaint.getState()
+    expect([...p.layers]).toEqual([['b', 'change']])
+    expect([...p.spotlit]).toEqual(['Layer:b'])
+    expect(p.washes[0]).toEqual({ kind: 'change', compositionId: 'root', startUs: S, endUs: 2 * S, context: true })
+    stepRange(1)
+    expect(focus()).toMatchObject({ step: 'Layer:a' })
+    stepRange(1)
+    expect(focus()).toMatchObject({ step: 'Layer:a' })
+    stepRange(-1)
+    stepRange(-1)
+    expect(focus()).toMatchObject({ kind: 'range', step: null })
+  })
+
+  it('orders steps by the rows that list them, unlisted ones last', () => {
+    expect(orderSteps(['Layer:a', 'Layer:x', 'Layer:b'], ['Layer:b', 'Layer:c', 'Layer:a'])).toEqual(['Layer:b', 'Layer:a', 'Layer:x'])
+  })
+
+  it('Esc steps back to the whole range, then lets go', () => {
+    selectRange(pair, 'Layer:a')
+    escapeFocus()
+    expect(focus()).toMatchObject({ kind: 'range', step: null })
+    escapeFocus()
+    expect(focus()).toBeNull()
+  })
+
+  it('a stepped change the range no longer holds falls back to the whole range', () => {
+    selectRange(pair, 'Layer:b')
+    const narrowed = R({ change_ids: ['Layer:a'] })
+    useReview.getState().apply(view([narrowed], 2))
+    expect(focus()).toMatchObject({ kind: 'range', step: null })
+    expect(range()).toBe(narrowed)
+  })
+
+  it('stays with a selected call\'s ranges in the Activity tab, and goes with a tab switch', () => {
+    const own = R({ change_ids: ['Layer:a'], t_start_us: 4 * S, t_end_us: 5 * S })
+    useAgentActivity.setState({ tab: 'activity' })
+    useReview.setState({ activity: { activityId: 'a1', historyIds: ['h1'], effect: 'applied', status: 'ready', reverted: false, count: 1,
+      highlight: { ...EMPTY_HIGHLIGHT, changes: new Map([['Layer:a', listed[0]!]]), ranges: rangeMarks([own]) } } })
+    selectRange(own)
+    expect(useAgentActivity.getState().tab).toBe('activity')
+    expect(focus()).toMatchObject({ kind: 'range', source: 'activity' })
+    useAgentActivity.setState({ tab: 'tacks' })
+    expect(focus()).toBeNull()
   })
 })

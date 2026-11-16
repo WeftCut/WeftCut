@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import i18n from '../i18n'
-import type { Change, ReviewView } from '../../shared/review'
+import type { Change, ChangedRange, ReviewView } from '../../shared/review'
 import type { LayerSummary, TrackSummary } from '../ipc'
 import type { AgentActivitySnapshot } from '../../shared/agent-activity'
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), jump: vi.fn(), reveal: vi.fn(() => true), listeners: new Map<string, (e: { payload: unknown }) => void>() }))
@@ -17,7 +17,7 @@ import { useAgentActivity } from './activityStore'
 import { resetReviewForTests, useReview } from './reviewStore'
 import { useProjectStore } from '../state/projectStore'
 import { ROOT_ID, compositionFixture, summaryFixture } from '../testing/summaryFixture'
-import { selectChange, useReviewFocus } from './reviewFocus'
+import { selectChange, selectRange, useReviewFocus } from './reviewFocus'
 
 const S = 1_000_000
 const clip = (id: string, label: string, s: number, e: number): LayerSummary => ({
@@ -343,6 +343,39 @@ describe('AgentPanel Changes tab', () => {
       await flush()
       expect(screen.getByRole('tab', { name: /Changes/ }).getAttribute('aria-selected')).toBe('true')
       expect(scrolled).toContain('Layer:late')
+    } finally { delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView }
+  })
+
+  it('a focused range frames its rows under a bar that steps through them; Esc steps back, then lets go', async () => {
+    const pair: ChangedRange = { composition_id: ROOT_ID, class: 'modified', t_start_us: S, t_end_us: 9 * S, before_start_us: S, before_end_us: 9 * S,
+      source: 'review', change_ids: ['Layer:late', 'Layer:early'] }
+    mocks.invoke.mockImplementation(async (channel: string, args?: { include_user?: boolean }) =>
+      channel === 'review_view' ? served({ ...view(1), ranges: [pair] }, args) : { available: true, url: '', connections: [] })
+    const scrolled: string[] = []
+    HTMLElement.prototype.scrollIntoView = function (this: HTMLElement) { scrolled.push(this.dataset.changeId ?? '') }
+    try {
+      render(<AgentPanel editor />)
+      await flush()
+      act(() => selectRange(pair))
+      const framed = () => rows().filter(r => r.dataset.inRange).map(r => r.dataset.changeId)
+      expect(framed()).toEqual(['Layer:early', 'Layer:late'])
+      expect(scrolled.at(-1)).toBe('Layer:early')
+      const bar = screen.getByRole('group', { name: 'Changed range' })
+      expect(bar.textContent).toContain('All 2')
+      // Steps follow the rows, top to bottom.
+      fireEvent.click(within(bar).getByRole('button', { name: 'Next change in this range' }))
+      expect(useReviewFocus.getState().focus).toMatchObject({ kind: 'range', step: 'Layer:early' })
+      expect(bar.textContent).toContain('1 / 2')
+      expect(rows().find(r => r.dataset.changeId === 'Layer:early')!.dataset.selected).toBe('true')
+      // A framed row's click steps to it, keeping the range.
+      fireEvent.click(within(rows().find(r => r.dataset.changeId === 'Layer:late')!).getByRole('button', { name: /Late clip/ }))
+      expect(useReviewFocus.getState().focus).toMatchObject({ kind: 'range', step: 'Layer:late' })
+      fireEvent.keyDown(within(bar).getByRole('button', { name: 'Next change in this range' }), { key: 'Escape' })
+      expect(useReviewFocus.getState().focus).toMatchObject({ kind: 'range', step: null })
+      fireEvent.keyDown(within(bar).getByRole('button', { name: 'Next change in this range' }), { key: 'Escape' })
+      expect(useReviewFocus.getState().focus).toBeNull()
+      expect(screen.queryByRole('group', { name: 'Changed range' })).toBeNull()
+      expect(framed()).toEqual([])
     } finally { delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView }
   })
 })
