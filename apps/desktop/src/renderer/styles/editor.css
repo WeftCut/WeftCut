@@ -303,9 +303,10 @@
 .ruler-range[data-selected] { opacity: 1; background: color-mix(in srgb, var(--range-hue) 30%, transparent); }
 /* Out of sync (`data-sync`, RulerRanges): a tick at the onset, where the
    eye should land, and ⇄ beside it when the range has room. Only out of
-   sync, with no bound sync broken (`loose`), the body is that one fact: a
-   faint shear hatch over a dashed foot, deepening where the wash would. The
-   ⇄ sits in the lower half, under the timecode labels' row. */
+   sync, with no bound sync broken (`loose`), the range is that one fact and
+   leaves the ruler's body to its ticks and timecodes: only a dashed foot
+   marks how far it runs, and a light wash comes up under the pointer or the
+   focus. The ⇄ sits in the lower half, under the timecode labels' row. */
 .ruler-range[data-sync]::before {
   content: "";
   position: absolute;
@@ -325,14 +326,14 @@
   pointer-events: none;
 }
 .ruler-range[data-sync="loose"] {
-  --hatch: 28%;
+  --wash: 0%;
   box-shadow: none;
   background:
     repeating-linear-gradient(90deg, var(--range-hue) 0 calc(4 * var(--ui-px)), transparent 0 calc(7 * var(--ui-px))) left bottom / 100% calc(2 * var(--ui-px)) no-repeat,
-    repeating-linear-gradient(-45deg, color-mix(in srgb, var(--range-hue) var(--hatch), transparent) 0 var(--ui-px), transparent 0 calc(5 * var(--ui-px)));
+    color-mix(in srgb, var(--range-hue) var(--wash), transparent);
 }
-.ruler-range[data-sync="loose"][data-hovered] { --hatch: 50%; }
-.ruler-range[data-sync="loose"][data-selected] { --hatch: 70%; }
+.ruler-range[data-sync="loose"][data-hovered] { --wash: 8%; }
+.ruler-range[data-sync="loose"][data-selected] { --wash: 14%; }
 .ruler-range[data-cut] {
   top: auto;
   width: 0;
@@ -452,7 +453,7 @@
    differs in is the panel's to say, in words, not one more hue. The edge is
    as loud as the film difference its change plays in (`ReviewWeight`): solid
    where a changed range lists it, dashed where only a loose sync range does
-   (the ruler hatches those), a faint hairline where none does — never
+   (the ruler dashes their foot), a faint hairline where none does — never
    hidden, since Revert all moves that clip too (ADR 0116). */
 .review-clip-mark[data-review-mark="added"] { --review-mark: var(--review-added); }
 .review-clip-mark[data-review-mark="modified"] { --review-mark: var(--review-modified); }

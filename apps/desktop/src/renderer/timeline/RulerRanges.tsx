@@ -32,8 +32,8 @@ const SYNC_GLYPH_MIN_PX = 14;
 ///
 /// A range out of sync (`rangeSync`) marks its onset with a tick and ⇄, since
 /// where it starts is the thing to look at; one only out of sync, with no
-/// bound sync broken, is drawn as that one fact — a hatch, not a wash of
-/// changed content.
+/// bound sync broken, is drawn as that one fact — a dashed foot, not a wash
+/// of changed content.
 ///
 /// A sibling of the ruler strip, not a child: the strip's direct children are
 /// its ticks (see the landmine in `TimelineRuler`).

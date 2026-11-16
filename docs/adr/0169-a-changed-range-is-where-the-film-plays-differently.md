@@ -59,8 +59,9 @@ relative timing.
 - **The range diff replaces the entity band** on the mini timeline and is drawn
   on the editor's ruler: a range is a stretch of the film's clock, and the
   Review lane stays the agent's tacks. A loose desync (out of sync only, no
-  bound sync broken) is drawn as one fact: a faint hatch with a dashed foot,
-  not a wash; every desync marks its onset with a tick, and with ⇄ where the
+  bound sync broken) is drawn as one fact: a dashed foot only, the ruler's
+  body left to its ticks, with a light wash under the pointer or the focus;
+  every desync marks its onset with a tick, and with ⇄ where the
   ruler has room. A press there still scrubs; the hover names the range.
 - **A range is reviewed as a whole.** A double press on the ruler, or a press
   on the mini timeline's band, focuses the range itself, not one of its
