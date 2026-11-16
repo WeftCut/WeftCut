@@ -11,10 +11,7 @@ import { getCommand } from "../commands/registry";
 import { useUiScale } from "../settings/layoutTheme";
 import { UI_METRICS } from "../settings/uiMetrics";
 import { useComposition } from "../state/projectStore";
-import { releaseFocus, selectChange, selectTack as focusTack, useReviewFocus } from "../agent/reviewFocus";
-import { useCompositionChangeRanges, useRangeMarkLabel } from "../agent/reviewStore";
-import type { ReviewRangeMark } from "../agent/reviewHighlight";
-import { seekLocalUs } from "../state/playheadProjection";
+import { releaseFocus, selectTack as focusTack, useReviewFocus } from "../agent/reviewFocus";
 import { useCompositionTacks, useReviewLaneExists } from "../agent/tackModel";
 import { locate } from "../agent/locate";
 import { useRulerScrollBlockPx } from "./TimelineRuler";
@@ -36,12 +33,6 @@ import { useCloseOnAnchorMove } from "./contextMenuAnchor";
 /// so an agent resolving or adding tacks mid-session cannot reflow the tracks.
 /// One row high, the marker lane's height, whatever it holds: tacks whose chips
 /// would touch share one group chip with a count (`groupLaneTacks`).
-///
-/// Along its foot, the changed ranges (ADR 0169): where the film plays
-/// differently from the review baseline, each in its class hue, a cut point
-/// where baseline content was taken out and what followed closed up. A press
-/// on one focuses the first change playing in it and shows its row; a double
-/// press seeks to its start.
 ///
 /// Never a scrub surface: the ruler stays the sole one. A chip click focuses
 /// its tack (the review focus, shared with the agent panel) and shows its row;
@@ -157,7 +148,6 @@ export function ReviewLane({
   // that is resolved, hibernating or on another composition paints nowhere
   // here, and dimming every chip for it would point at nothing.
   const selectionHere = selected !== null && groups.some((g) => g.members.some((m) => m.id === selected));
-  const ranges = useCompositionChangeRanges(exists ? resolvedId : null);
 
   // The row itself, not merely its contents — see `reviewLaneExists`.
   if (!exists) return null;
@@ -232,51 +222,8 @@ export function ReviewLane({
           </button>
         );
       })}
-      {ranges.length > 0 && <RangeStrip ranges={ranges} pxPerSec={pxPerSec} compositionId={resolvedId} />}
       {menu && <TackGroupMenu group={menu.group} anchor={menu.anchor} selected={selected} onClose={closeMenu} />}
     </div>
-  );
-}
-
-/// The changed ranges along the lane's foot, under the chips' row.
-function RangeStrip({ ranges, pxPerSec, compositionId }: { ranges: readonly ReviewRangeMark[]; pxPerSec: number; compositionId: string | null }) {
-  const label = useRangeMarkLabel();
-  const focused = useReviewFocus((s) => (s.focus?.kind === "change" ? s.focus.id : null));
-  const hovered = useReviewFocus((s) => (s.hover?.kind === "change" ? s.hover.id : null));
-  const plays = (m: ReviewRangeMark, id: string | null) => id !== null && m.range.change_ids.includes(id as never);
-  return (
-    <>
-      {ranges.map((m) => {
-        const x = (m.tStartUs / 1_000_000) * pxPerSec;
-        const w = ((m.tEndUs - m.tStartUs) / 1_000_000) * pxPerSec;
-        const first = m.range.change_ids[0];
-        return (
-          <div
-            key={m.key}
-            data-testid="timeline-review-range"
-            data-change-class={m.cls}
-            data-cut={m.cut || undefined}
-            data-user={m.user || undefined}
-            data-selected={plays(m, focused) || undefined}
-            data-hovered={plays(m, hovered) || undefined}
-            title={label(m)}
-            className={`review-range review-range-${m.cls}`}
-            // A cut point at the film's start hangs from its edge, not half off it.
-            style={m.cut ? { left: x, ...(m.tStartUs <= 0 ? { marginLeft: 0 } : {}) } : { left: x, width: Math.max(2, w) }}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (first === undefined) return;
-              selectChange(first);
-              void getCommand("openAgentPanel")?.run();
-            }}
-            onDoubleClick={(e) => {
-              e.stopPropagation();
-              seekLocalUs(compositionId, m.tStartUs);
-            }}
-          />
-        );
-      })}
-    </>
   );
 }
 

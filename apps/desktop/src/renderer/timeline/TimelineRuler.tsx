@@ -11,6 +11,7 @@ import {
 } from "../state/timelineScrollStore";
 import { RULER_SCROLL_QUANTUM_PX, computeRulerModel } from "./rulerModel";
 import { RULER_HEIGHT_PX } from "./geometry";
+import { RulerRanges } from "./RulerRanges";
 
 /// Time ruler at the top of the scrollable timeline root. Width matches the
 /// canvas so horizontal scroll keeps ticks aligned with the layers below.
@@ -21,7 +22,8 @@ import { RULER_HEIGHT_PX } from "./geometry";
 ///
 /// The SOLE scrub surface, and it stays sole by carrying nothing a press could
 /// mean something else on: ticks, timecode and the in/out caps, every one of
-/// them pointer-inert. Every x on this strip is a position on THIS
+/// them pointer-inert, and the changed ranges over it (`RulerRanges`), whose
+/// press scrubs as the bare strip's does. Every x on this strip is a position on THIS
 /// composition's own clock — the ticks are already local, and the in/out caps,
 /// which are root times because export runs the root, are projected here.
 
@@ -164,6 +166,11 @@ export function TimelineRuler({
   // in/out change when the user marks them, not once per composition frame, so
   // a React commit per change costs nothing worth optimising away. Atomic
   // selectors per `feedback_zustand_composite_selector`.
+  const openRulerMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setRulerMenu({ x: e.clientX, y: e.clientY });
+  };
   const rangeInUs = useRangeInUs();
   const rangeOutUs = useRangeOutUs();
   // A React subscription, not the playhead's transient pattern, for the same
@@ -215,11 +222,7 @@ export function TimelineRuler({
       // Right-click anywhere on the strip. One menu, because the strip holds one
       // subject — the timeline's clock — and the commands on it are the in/out
       // and marker COMMANDS, never an act on a particular mark.
-      onContextMenu={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setRulerMenu({ x: e.clientX, y: e.clientY });
-      }}
+      onContextMenu={openRulerMenu}
     >
       {ticks.map((tk) => (
         <div
@@ -255,6 +258,13 @@ export function TimelineRuler({
     {/* Outside the strip div (the Timeline.tsx placement), not inside it:
         whatever Base UI renders inline must never count as a strip child — see
         the landmine above. The popup itself portals to the body. */}
+    {/* The changed ranges over the strip, a sibling for the landmine above. */}
+    <RulerRanges
+      compositionId={compositionId}
+      pxPerSec={pxPerSec}
+      onScrub={onScrub}
+      onContextMenu={openRulerMenu}
+    />
     {rulerMenu !== null && (
       <RulerContextMenu
         x={rulerMenu.x}

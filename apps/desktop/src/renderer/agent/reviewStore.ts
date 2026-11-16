@@ -290,7 +290,7 @@ export function useRangeMarkLabel(): (mark: ReviewRangeMark) => string {
 
 /** Removed layers to outline on one track of the editor timeline: only
  *  where that track is empty now (a lift). Where other material closed up
- *  over the place, the Review lane's cut point and the list say it instead
+ *  over the place, the ruler's cut point and the list say it instead
  *  (ADR 0169) — a box there would name the clip now in it as removed. */
 export function useTrackReviewGhosts(trackId: string): readonly ReviewGhost[] {
   const overlay = useOverlay()

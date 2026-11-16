@@ -264,34 +264,38 @@
   color: inherit;
 }
 
-/* Changed ranges along the Review lane's foot (ADR 0169), under the chips:
-   the mini timeline's change band at the editor's scale. A cut point hangs a
-   notch where baseline content was taken out. */
-.review-range {
+/* Changed ranges on the ruler (ADR 0169, timeline/RulerRanges.tsx): the
+   stretch of the clock washed in its class hue, faint enough to leave the
+   ticks and timecode readable, and the hue itself along the ruler's foot so
+   the class still reads where the wash is too faint to. A cut point is a ▼
+   down to the foot, the cut mark's shape on the lanes below. The user's own
+   ranges are neutral and stepped back; the focused range's wash deepens. */
+.ruler-range {
+  --range-hue: var(--review-modified);
   position: absolute;
+  top: 0;
   bottom: 0;
-  height: calc(3 * var(--ui-px));
-  border-radius: 1px;
-  opacity: 0.85;
-  cursor: pointer;
+  pointer-events: auto;
+  cursor: ew-resize;
+  background: color-mix(in srgb, var(--range-hue) 14%, transparent);
+  box-shadow: inset 0 calc(-2 * var(--ui-px)) 0 var(--range-hue);
 }
-.review-range-added { background: var(--review-added); }
-.review-range-modified { background: var(--review-modified); }
-.review-range-removed { background: var(--review-removed); }
-.review-range[data-cut] {
+.ruler-range-added { --range-hue: var(--review-added); }
+.ruler-range-removed { --range-hue: var(--review-removed); }
+.ruler-range[data-user] { --range-hue: var(--muted-foreground); opacity: 0.6; }
+.ruler-range[data-hovered] { background: color-mix(in srgb, var(--range-hue) 22%, transparent); }
+.ruler-range[data-selected] { opacity: 1; background: color-mix(in srgb, var(--range-hue) 30%, transparent); }
+.ruler-range[data-cut] {
+  top: auto;
   width: 0;
   height: 0;
   margin-left: calc(-4 * var(--ui-px));
-  border-radius: 0;
-  background: transparent;
+  background: none;
+  box-shadow: none;
   border-left: calc(4 * var(--ui-px)) solid transparent;
   border-right: calc(4 * var(--ui-px)) solid transparent;
-  border-bottom: calc(6 * var(--ui-px)) solid var(--review-removed);
+  border-top: calc(6 * var(--ui-px)) solid var(--range-hue);
 }
-.review-range[data-user] { background: var(--muted-foreground); opacity: 0.45; }
-.review-range[data-cut][data-user] { background: transparent; border-bottom-color: var(--muted-foreground); }
-.review-range[data-selected] { opacity: 1; box-shadow: 0 0 0 1px var(--review-focus); }
-.review-range[data-hovered]:not([data-selected]) { box-shadow: 0 0 0 1px var(--review-focus); }
 
 .review-lane[data-selecting] .review-tack:not([data-selected]) {
   opacity: 0.55;

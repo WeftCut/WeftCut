@@ -46,7 +46,9 @@ relative timing.
   edit elsewhere is nothing new to it. A range with no entity change is a bug
   in one of the two comparisons and is logged, never skipped.
 - **The range diff replaces the entity band** on the mini timeline and is drawn
-  along the Review lane's foot. Clip marks, the change list and the entity
+  on the editor's ruler: a range is a stretch of the film's clock, and the
+  Review lane stays the agent's tacks. A press there still scrubs; the hover
+  names the range and a double press focuses it. Clip marks, the change list and the entity
   stat stay with the entity diff; the stat gains how many ranges there are to
   review and how long they run. Removed clips keep a track ghost only where
   their track is empty now. A selected activity's ranges are found between its
@@ -72,6 +74,7 @@ Rejected: per-entity "moved only" as a fourth stat or class (misses desync,
 contradicts 0116's classes); a toggle between the entity band and range band
 (one place, two meanings); entity-id signatures (a razor split reads as added);
 a frame tolerance (hides sub-frame desync; uniform shifts are already
-unchanged); a fourth "desync" state (needs a definition of "only desync" that
+unchanged); a strip in the Review lane (a second meaning in the tacks' row, and it took
+the chips' room); a fourth "desync" state (needs a definition of "only desync" that
 the two sides do not give); aligning each track on its own (hides a picture
 rippled without its sound).

@@ -320,6 +320,54 @@ describe("Review focus on the editor timeline", () => {
   });
 });
 
+describe("Changed ranges on the ruler", () => {
+  // The Review lane exists once an agent session has run, and the ranges with it.
+  const ranged: ReviewView = {
+    ...view, version: { ...view.version, revision: 3 }, content_revision: 3,
+    ranges: [
+      { composition_id: ROOT_ID, class: "modified", t_start_us: S, t_end_us: 2 * S, before_start_us: S, before_end_us: 2 * S, source: "review", change_ids: ["Layer:edited"] },
+      { composition_id: ROOT_ID, class: "removed", t_start_us: 3 * S, t_end_us: 3 * S, before_start_us: 3 * S, before_end_us: 4 * S, source: "review", change_ids: ["Layer:gone"] },
+    ],
+  };
+  beforeEach(() => {
+    useAgentActivity.setState({
+      snapshot: { workspace_id: "w", revision: 1, session: null, sessions: [{ id: "s1", reason: "Tighten" } as never], activities: [], evicted: 0, lock_reason: null, checkpoints: [], tacks: [] },
+    });
+    useReviewFocus.setState({ focus: null, hover: null });
+    useReview.getState().apply(ranged);
+  });
+  const painted = (c: HTMLElement) => q(c, '[data-testid="timeline-ruler-range"]');
+
+  it("paints on the ruler row, not in the Review lane, and goes with the overlay", () => {
+    const { container } = renderTimeline();
+    const ranges = painted(container);
+    expect(ranges.map((r) => [r.dataset.changeClass, r.dataset.cut ?? null])).toEqual([["modified", null], ["removed", "true"]]);
+    const lane = container.querySelector('[data-testid="timeline-review-lane"]')!;
+    for (const r of ranges) expect(lane.contains(r)).toBe(false);
+    const ruler = container.querySelector('[data-testid="timeline-ruler"]')!;
+    expect(ranges[0]!.parentElement!.parentElement).toBe(ruler.parentElement);
+    act(() => useAgentActivity.setState({ reviewOverlay: false }));
+    expect(painted(container)).toHaveLength(0);
+  });
+
+  it("a press on a range scrubs as the bare ruler does and focuses nothing; a double press focuses its change", () => {
+    const onSeek = vi.fn();
+    const { container } = render(
+      <Timeline compositionId={null} tracks={[track, other]} links={[]} transitions={[]} durationUs={10 * S} keybindings={{}}
+        fpsNum={30} fpsDen={1} bladeMode={false} media={[]} readinessOf={() => ({ ready: true })}
+        onExitBlade={vi.fn()} onSeek={onSeek} onMutated={vi.fn().mockResolvedValue(undefined)} />,
+    );
+    const [range] = painted(container);
+    fireEvent.pointerDown(range!, { button: 0, clientX: 200 });
+    fireEvent.pointerUp(window, { clientX: 200 });
+    fireEvent.click(range!);
+    expect(onSeek).toHaveBeenCalled();
+    expect(useReviewFocus.getState().focus).toBeNull();
+    fireEvent.doubleClick(range!);
+    expect(useReviewFocus.getState().focus).toMatchObject({ kind: "change", id: "Layer:edited" });
+  });
+});
+
 describe("Pure change marks", () => {
   it("retains the original lane-top trim placement, size, click focus and overlay lifecycle", () => {
     const trimmed = change({ id: "Layer:edited", class: "modified", ranges: [{ composition_id: ROOT_ID, track_id: "track-1", t_start_us: S, t_end_us: 2 * S }],
