@@ -29,6 +29,15 @@ export function planRelease(version, releases) {
   }
   return version !== '0.0.0' && !published.some(r => r.tagName === `v${version}`)
 }
+// Only the push that changes the version is a release candidate. Retrying an
+// unpublished version on every later push would ship code the bump never
+// meant to release, and turn one failed release into a red (stale draft) or
+// re-notarizing run per push. `previous` is null when the push has no parent
+// to compare with, such as a branch creation.
+export function releaseCandidate(version, releases, previous) {
+  const unpublished = planRelease(version, releases)
+  return unpublished && previous !== null && previous !== version
+}
 
 async function readPackages(root) {
   return Promise.all(['package.json', 'apps/desktop/package.json', 'package-lock.json']
@@ -146,6 +155,16 @@ function gh(args) {
 function listReleases() {
   return JSON.parse(gh(['release', 'list', '--limit', '1000', '--json', 'tagName,isDraft']))
 }
+// The desktop version at the commit this push replaced. Read through the API
+// rather than git: the checkout is shallow and holds only the pushed commit.
+function versionBefore(sha) {
+  if (!/^[a-f0-9]{40}$/.test(sha ?? '') || /^0+$/.test(sha)) return null
+  const raw = execFileSync('gh', ['api', '-H', 'Accept: application/vnd.github.raw+json',
+    `repos/${process.env.GITHUB_REPOSITORY}/contents/apps/desktop/package.json?ref=${sha}`], {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  return JSON.parse(raw).version
+}
 async function main() {
   const [command, arg] = process.argv.slice(2)
   if (command === 'version') return setVersion(arg)
@@ -156,9 +175,11 @@ async function main() {
   }
   if (!process.env.GITHUB_REPOSITORY) throw new Error('GITHUB_REPOSITORY is required')
   if (command === 'plan') {
-    const publish = planRelease(version, listReleases())
+    const previous = versionBefore(process.env.BEFORE_SHA)
+    const publish = releaseCandidate(version, listReleases(), previous)
     await fs.appendFile(process.env.GITHUB_OUTPUT, `version=${version}\npublish=${publish}\n`)
-    console.log(`${version}: ${publish ? 'publish after all CI gates pass' : 'already released'}`)
+    console.log(`${version}: ${publish ? 'publish after all CI gates pass'
+      : previous === version ? 'this push does not change the version' : 'not a release candidate'}`)
     return
   }
   if (command !== 'publish') throw new Error(`Unknown release command: ${command}`)

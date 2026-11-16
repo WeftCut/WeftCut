@@ -13,10 +13,11 @@ before updating. The release puts it ahead of the install steps and the
 generated changelog; a version without one gets those alone.
 
 On a push to `main` in `WeftCut/WeftCut`, electron-ci's `release-plan` job
-compares the version with published GitHub Releases; an unpublished, higher
-version is a release candidate. PRs, scheduled and manual runs never publish.
-A later main push retries an unpublished version whose build failed; a
-published version is never overwritten.
+compares the version with the one at the commit the push replaced and with
+published GitHub Releases. Only a push that changes the version to an
+unpublished, higher one is a release candidate; later pushes never retry it.
+PRs, scheduled and manual runs never publish, and a published version is never
+overwritten.
 
 The packaging leg (`e2e-2`) builds NSIS (.exe) on Windows, AppImage + .deb on
 Linux and an arm64 DMG on macOS, plus update manifests and blockmaps. The
@@ -29,11 +30,13 @@ platforms' manifests, versions, sizes and SHA-512 hashes, creates a draft
 uploads, then publishes it as Latest. Installer artifacts are kept 5 days in
 Actions; release assets are the permanent update source.
 
-A failed upload leaves a draft, invisible to update checks; re-run the failed
-job at the same commit to resume. If a draft belongs to an older commit, delete
-it (and its tag, if GitHub created one) before retrying. The workflow refuses
-existing tags without a matching draft and lower versions. Ship fixes as a
-higher patch; never replace installers under a published version.
+A release that fails on a transient cause (a flaky leg, a failed upload, a
+slow notarization) resumes by re-running the failed jobs of the version-bump
+run. A failed upload leaves a draft, invisible to update checks; the re-run
+finishes it. A failure that needs a code fix ships as a higher patch: fix,
+bump, push. Delete the abandoned version's draft (and its tag, if GitHub
+created one). The workflow refuses existing tags without a matching draft and
+lower versions; never replace installers under a published version.
 
 ## Asset names
 

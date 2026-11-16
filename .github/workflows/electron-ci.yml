@@ -90,11 +90,14 @@ jobs:
           node-version-file: .nvmrc
       - name: Validate package versions
         run: node apps/desktop/scripts/release.mjs validate
-      - name: Plan unpublished version
+      # Only the push that changes the version publishes (release.mjs
+      # releaseCandidate); every other push plans `publish=false`.
+      - name: Plan release
         id: plan
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'WeftCut/WeftCut'
         env:
           GH_TOKEN: ${{ github.token }}
+          BEFORE_SHA: ${{ github.event.before }}
         run: node apps/desktop/scripts/release.mjs plan
 
   e2e:
@@ -802,12 +805,13 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'WeftCut/WeftCut' && needs.release-plan.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Push runs are per commit (see the workflow's concurrency note), so two of
-    # them can reach this job with the same unpublished version. Publishing is
-    # the one step that must not interleave — a draft created by one run and
-    # uploaded to by another is exactly the "draft belongs to another commit"
-    # refusal in release.mjs — so it alone queues, never cancels. The second run
-    # then finds the version published and leaves it untouched.
+    # Push runs are per commit (see the workflow's concurrency note), and two
+    # can still reach this job with one version: a bump reverted and pushed
+    # again. Publishing is the one step that must not interleave — a draft
+    # created by one run and uploaded to by another is exactly the "draft
+    # belongs to another commit" refusal in release.mjs — so it alone queues,
+    # never cancels. The second run then finds the version published and leaves
+    # it untouched.
     concurrency:
       group: ${{ github.workflow }}-release-publish
       cancel-in-progress: false

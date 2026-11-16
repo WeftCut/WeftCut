@@ -4,9 +4,9 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
-import { validateVersion, planRelease, setVersion, readVersion, validateAssets, releaseNotes, readUpgradeNotes } from './release.mjs'
+import { validateVersion, planRelease, releaseCandidate, setVersion, readVersion, validateAssets, releaseNotes, readUpgradeNotes } from './release.mjs'
 
-test('only increasing stable versions become releases; unpublished versions retry', () => {
+test('only increasing, unpublished stable versions can be released', () => {
   for (const bad of ['0.1.001', 'v0.1.1', '0.1.1-beta.1', '0.1.1+001', '1.2', null]) {
     assert.throws(() => validateVersion(bad))
   }
@@ -16,6 +16,18 @@ test('only increasing stable versions become releases; unpublished versions retr
   assert.equal(planRelease('0.1.1', [{ tagName: 'v0.1.1', isDraft: false }]), false)
   assert.equal(planRelease('0.1.10', [{ tagName: 'v0.1.9', isDraft: false }]), true)
   assert.throws(() => planRelease('0.1.1', [{ tagName: 'v0.1.2', isDraft: false }]))
+})
+
+test('only the push that changes the version is a release candidate', () => {
+  assert.equal(releaseCandidate('0.1.1', [], '0.1.0'), true)
+  // A later push on an unpublished version does not retry it, with or without
+  // a draft left by the failed attempt.
+  assert.equal(releaseCandidate('0.1.1', [], '0.1.1'), false)
+  assert.equal(releaseCandidate('0.1.1', [{ tagName: 'v0.1.1', isDraft: true }], '0.1.1'), false)
+  assert.equal(releaseCandidate('0.1.1', [{ tagName: 'v0.1.1', isDraft: false }], '0.1.0'), false)
+  assert.equal(releaseCandidate('0.1.1', [], null), false)
+  // A push that does not bump still refuses a version below a published one.
+  assert.throws(() => releaseCandidate('0.1.1', [{ tagName: 'v0.1.2', isDraft: false }], '0.1.1'))
 })
 
 test('version command keeps both packages and all lockfile version entries in sync', async t => {
