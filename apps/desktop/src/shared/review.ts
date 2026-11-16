@@ -101,8 +101,10 @@ export interface ChangedRange {
   change_ids: EntityKey[]
   /** A range to review that also holds the user's own changes. */
   includes_user?: true
-  /** Only the audio, or only the picture, plays differently. */
-  only?: 'audio' | 'picture'
+  /** Only the audio, only the picture, or only their sync plays differently. */
+  only?: 'audio' | 'picture' | 'sync'
+  /** Bound sync is broken: members of one link play apart, or dialogue plays apart from picture. */
+  sync_bound?: true
   /** Layers that play here moved by different amounts: they are out of sync
    *  with each other by this much, in µs. */
   sync_offset_us?: number

@@ -1710,6 +1710,10 @@ const enUS = {
     class_added: "Added",
     class_removed: "Removed",
     class_modified: "Modified",
+    // After a change's line, where the film shows the change less loudly
+    // than its class says (ADR 0169).
+    weight_quiet: "plays the same",
+    weight_soft: "out of sync only",
     // The diff stat at the start of the Changes toolbar (+ − ~).
     stats: {
       label: "Unreviewed changes:",

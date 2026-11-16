@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import "../i18n";
-import type { Change, ReviewView } from "../../shared/review";
+import type { Change, ChangedRange, ReviewView } from "../../shared/review";
 import type { LayerSummary, TrackSummary } from "../ipc";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { useAgentActivity } from "../agent/activityStore";
@@ -144,6 +144,43 @@ describe("Review overlay clip decorations", () => {
     const { container } = renderTimeline();
     act(() => { useReview.getState().apply({ ...view, version: { ...view.version, baseline_revision: 2 }, unreviewed: [] }); });
     expect(q(container, '[data-testid="review-clip-mark"], [data-testid="review-ghost"], [data-testid="review-group-badge"]')).toHaveLength(0);
+  });
+
+  describe("a mark is as loud as the film difference it plays in", () => {
+    const range = (ids: string[], patch: Partial<ChangedRange> = {}): ChangedRange => ({
+      composition_id: ROOT_ID, class: "modified", t_start_us: 0, t_end_us: 5 * S, before_start_us: 0, before_end_us: 5 * S,
+      source: "review", change_ids: ids as ChangedRange["change_ids"], ...patch,
+    });
+    // "shifted" slid with a ripple: the range over its stretch names others.
+    const weighed: ReviewView = { ...view, version: { ...view.version, revision: 2 }, ranges: [
+      range(["Layer:added"], { class: "added" }), range(["Layer:edited"]), range(["Layer:moved"], { only: "sync" }),
+    ] };
+    const weights = (c: HTMLElement) => Object.fromEntries(q(c, '[data-testid="review-clip-mark"]').map((m) => [m.closest<HTMLElement>("[data-layer-id]")!.dataset.layerId, m.dataset.reviewWeight]));
+    const block = (c: HTMLElement, id: string) => c.querySelector<HTMLElement>(`[data-layer-id="${id}"]`)!;
+
+    it("is full where a range lists its change, soft where only a loose sync range does, quiet where none does", () => {
+      act(() => { useReview.getState().apply(weighed); });
+      const { container } = renderTimeline();
+      expect(weights(container)).toEqual({ added: "full", edited: "full", moved: "soft", shifted: "quiet" });
+    });
+
+    it("its clip's tooltip says how little plays differently, a full one nothing more", () => {
+      act(() => { useReview.getState().apply(weighed); });
+      const { container } = renderTimeline();
+      expect(block(container, "shifted").title).toContain("plays the same");
+      expect(block(container, "moved").title).toContain("out of sync only");
+      expect(block(container, "edited").title).not.toMatch(/plays the same|out of sync only/);
+    });
+
+    it("a quiet clip focused is still the one pointed at, and the others still step back", () => {
+      act(() => { useReview.getState().apply(weighed); });
+      const { container } = renderTimeline();
+      act(() => selectChange("Layer:shifted"));
+      const mark = (id: string) => block(container, id).querySelector<HTMLElement>('[data-testid="review-clip-mark"]')!;
+      expect(block(container, "shifted").querySelector('[data-testid="review-focus-outline"]')).not.toBeNull();
+      expect([mark("shifted").dataset.reviewWeight, mark("shifted").dataset.pointed, mark("shifted").dataset.recede]).toEqual(["quiet", "true", undefined]);
+      expect(mark("edited").dataset.recede).toBe("true");
+    });
   });
 });
 

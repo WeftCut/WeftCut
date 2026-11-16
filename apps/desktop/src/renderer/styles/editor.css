@@ -386,6 +386,33 @@
   );
 }
 
+/* A clip's review mark, inside its rounded box: green for what is new, amber
+   for what differs — a move to another track or time included; what it
+   differs in is the panel's to say, in words, not one more hue. The edge is
+   as loud as the film difference its change plays in (`ReviewWeight`): solid
+   where a changed range lists it, dashed where only a loose sync range does
+   (the ruler hatches those), a faint hairline where none does — never
+   hidden, since Revert all moves that clip too (ADR 0116). */
+.review-clip-mark[data-review-mark="added"] { --review-mark: var(--review-added); }
+.review-clip-mark[data-review-mark="modified"] { --review-mark: var(--review-modified); }
+.review-clip-mark[data-review-weight="full"] {
+  box-shadow: inset 0 0 0 2px var(--review-mark);
+}
+/* A border, as only a border dashes; border-box keeps it inside the clip
+   where the solid edge is. */
+.review-clip-mark[data-review-weight="soft"] {
+  box-sizing: border-box;
+  border: 2px dashed var(--review-mark);
+}
+.review-clip-mark[data-review-weight="quiet"] {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--review-mark) 50%, transparent);
+}
+/* Pointed at, a quiet edge takes its full hue, so the one clip left undimmed
+   still says its class. */
+.review-clip-mark[data-review-weight="quiet"][data-pointed] {
+  box-shadow: inset 0 0 0 1px var(--review-mark);
+}
+
 /* A clip the focus names: one neutral hairline INSIDE its own box, just
    inside a review mark's 2px edge. A ring outside the box ran over the lane's
    edge and onto the clip next door, and left a gap that read as one more

@@ -160,6 +160,10 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 /* The work session that made the change. */
 .agent-change-copy small.agent-change-from { color: var(--muted-foreground); font-size: var(--font-size-micro); }
 .agent-change.source-user { opacity: .7; }
+/* How little the film shows of the change (`ReviewWeight`): a note after the
+   line; quiet, the badge steps back too, its order and class unchanged. */
+.agent-change-weight { color: var(--muted-foreground); }
+.agent-change[data-review-weight="quiet"] .agent-change-badge { opacity: .6; }
 .agent-change.source-user .agent-change-badge { border-style: dashed; }
 .agent-change-mine { flex: none; color: var(--muted-foreground); font-size: var(--font-size-micro); white-space: nowrap; }
 /* The review focus (shared with the timelines): a change row selects as a tack

@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { CheckCheck, LocateFixed, Undo2 } from 'lucide-react'
 import { useProjectStore } from '../state/projectStore'
 import { AppIcon } from '@/components/AppIcon'
-import { approveAllChanges, revertAllChanges, setShowUser, useChangeWords, useReview, useReviewView } from './reviewStore'
+import { approveAllChanges, revertAllChanges, setShowUser, useChangeWeights, useChangeWords, useReview, useReviewView } from './reviewStore'
+import { changeWeight } from './reviewHighlight'
 import { groupChanges, sessionReason, sessionReasonIndex, type ChangeRow } from './changeModel'
 import { changePlace, changeTitle, describeChange } from './changeWords'
 import { canLocate, locate } from './locate'
@@ -38,7 +39,10 @@ import { setReviewFocus, setReviewHover, useReviewFocus } from './reviewFocus'
  *  marks stepping back); a second click lets it go. Hovering a row outlines
  *  its clips. Neither seeks — Locate does.
  *
- *  Each row describes one entity and identifies its work session.
+ *  Each row describes one entity and identifies its work session. A row whose
+ *  change the film shows less loudly than its class (`ReviewWeight`) says so
+ *  at the end of its line, as its clip's tooltip does; a quiet one's badge
+ *  steps back, in place — the order stays the entity diff's.
  */
 export function ChangesTab({ editor }: { editor: boolean }) {
   const { t } = useTranslation()
@@ -53,6 +57,7 @@ export function ChangesTab({ editor }: { editor: boolean }) {
   const activity = useAgentActivity(s => s.snapshot)
   const reasons = useMemo(() => sessionReasonIndex(activity), [activity])
   const words = useChangeWords({ frame: 'review' })
+  const weights = useChangeWeights()
   const unreviewed = view?.unreviewed ?? []
   const stats = useMemo(() => changeStats({ unreviewed: view?.unreviewed ?? [], ranges: view?.ranges ?? [] }), [view?.unreviewed, view?.ranges])
   const groups = useMemo(
@@ -88,7 +93,10 @@ export function ChangesTab({ editor }: { editor: boolean }) {
     const reason = source === 'agent' ? sessionReason(c, reasons) : null
     const locatable = editor && canLocate({ kind: 'change', change: c })
     const focused = selected === c.id
+    const weight = changeWeight(c, weights)
+    const note = weight === 'soft' || weight === 'quiet' ? t(`changes.weight_${weight}`) : null
     return <article key={`${source}-${c.id}`} data-change-id={c.id} data-source={source} data-selected={focused ? 'true' : undefined}
+      data-review-weight={weight ?? undefined}
       className={`agent-change class-${c.class} source-${source}`}
       onMouseEnter={() => setReviewHover({ kind: 'change', source: 'review', id: c.id })} onMouseLeave={() => setReviewHover(null)}>
       <div className="agent-tack-row">
@@ -96,7 +104,8 @@ export function ChangesTab({ editor }: { editor: boolean }) {
           onClick={() => setReviewFocus(focused ? null : { kind: 'change', source: 'review', id: c.id })}>
           <span className={`agent-change-badge class-${c.class}`}>{t(`changes.class_${c.class}`)}</span>
           <span className="agent-activity-copy agent-change-copy"><span>{changeTitle(c, words)}</span>
-            <small title={when?.timecode}>{[describeChange(c, words), when?.text].filter(Boolean).join(' · ')}</small>
+            <small title={when?.timecode}>{[describeChange(c, words), when?.text].filter(Boolean).join(' · ')}
+              {note && <span className="agent-change-weight">{' · '}{note}</span>}</small>
             {reason && <small className="agent-change-from">{t('changes.from_session', { reason })}</small>}</span>
         </button>
         {source === 'user' && <span className="agent-change-mine" title={t('changes.mine_hint')}>{t('changes.mine')}</span>}
