@@ -189,3 +189,47 @@ test('track resize handles cannot cover the ruler after vertical scrolling', asy
     await app.close()
   }
 })
+
+test('a clip never draws over its neighbour, however far the timeline zooms out', async () => {
+  const { app, page } = await launchApp()
+  try {
+    await newProject(page, {
+      parentFolder: tmpDir('weftcut-narrow-clips-'), name: 'narrow-clips',
+      canvas: { width: 640, height: 360, fpsNum: 30, fpsDen: 1 },
+    })
+    await expect(page.locator('.splash-screen')).toHaveCount(0)
+    const { tracks } = await rootSummary<{ tracks: Array<{ id: string; role: string | null }> }>(page)
+    const trackId = tracks.find(track => track.role === 'b-roll')!.id
+    // Short clips butted end to end, then one long enough that fitting the
+    // project shrinks the short ones below every width tier.
+    const durationsUs = [100_000, 200_000, 500_000, 1_000_000, 2_000_000, 100_000, 3_000_000, 300_000_000]
+    const ids: string[] = []
+    let tUs = 0
+    for (const durationUs of durationsUs) {
+      ids.push(await invokeCmd<string>(page, 'add_color_layer', { trackId, tStartUs: tUs, durationUs }))
+      tUs += durationUs
+    }
+    await expect(page.locator(`.timeline-layer[data-layer-id="${ids.at(-1)}"]`)).toBeVisible()
+    // `-` stops at fit-to-project, so pressing past it parks there.
+    const first = page.locator(`.timeline-layer[data-layer-id="${ids[0]}"]`)
+    const widthOfFirst = () => first.evaluate(el => el.getBoundingClientRect().width)
+    let previous = await widthOfFirst()
+    for (;;) {
+      await page.keyboard.press('-')
+      const next = await widthOfFirst()
+      if (next >= previous) break
+      previous = next
+    }
+
+    const boxes = await page.evaluate(layerIds => layerIds.map(id => {
+      const box = document.querySelector(`.timeline-layer[data-layer-id="${id}"]`)!.getBoundingClientRect()
+      return { left: box.left, right: box.right }
+    }), ids)
+    // A sub-pixel clip draws a one-pixel hairline, so allow that much.
+    for (let i = 1; i < boxes.length; i++) {
+      expect(boxes[i - 1]!.right, `clip ${i - 1} reaches into clip ${i}`).toBeLessThanOrEqual(boxes[i]!.left + 1)
+    }
+  } finally {
+    await app.close()
+  }
+})

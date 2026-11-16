@@ -700,6 +700,13 @@ lane), recomputed per gesture. Pressing into a stop does nothing. Geometry:
 `renderer/timeline/zoom.ts`; state and the `scrollLeft` write:
 `hooks/useTimelineView.ts`.
 
+A clip draws only inside its own time span, at every zoom, so it never covers
+its neighbour; one narrower than a pixel is a hairline. As it narrows it drops,
+in order, its full label, then its label and corner badges (the `⚑N` of a Group
+included), then its trim edges (below 18 px the whole clip moves; zoom in to
+trim), then its border, becoming a sliver without keyframe diamonds. Tiers:
+`clipDetail` in `renderer/timeline/geometry.ts`.
+
 The keys are bare `=`/`-`, not `Mod+=`/`Mod+-`: `hardenWindow`
 (`src/main/windows.ts`) consumes Ctrl/Cmd +/−/0 at `before-input-event` to kill
 Chromium page zoom, so a chorded binding would never reach the renderer. Both are
@@ -809,8 +816,8 @@ labels and notes and excludes hibernating marks.
 project, grouped by composition, with label, colour and note editable in place;
 activating a row opens that Group's timeline and seeks. Hibernating marks are a
 separate last section, showing their footage position and offering Detach — the
-only surface they appear on. A Group clip on the parent timeline shows a `⚑N`
-badge counting marks inside it, nested ones included.
+only surface they appear on. A Group clip on the parent timeline wide enough for
+its label shows a `⚑N` badge counting marks inside it, nested ones included.
 
 **Limits.** Time is read-only in the Panel (an anchored time is a cache the next
 commit rewrites); the lane drag is the one way to move a marker. Regions drag

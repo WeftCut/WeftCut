@@ -61,6 +61,35 @@ export function trackHeightBaseline(px: number): number {
 
 export const LAYER_PREVIEW_MIN_PX = 16;
 
+/// What a layer chip of `widthPx` CSS px draws and which gestures it offers,
+/// from widest to narrowest: full label and every affordance; a shortened
+/// label and the corner badges; a bare bordered body; a sliver. Below
+/// `layerTrimMin` the whole chip is a move grip.
+///
+/// Each tier draws only what fits inside the chip's own time span, so a chip
+/// never covers a neighbour at any zoom. That includes the border: a chip is
+/// `border-box`, and its padding and border cannot shrink below their sum, so
+/// a sliver that kept them would render wider than its `width`.
+export interface ClipDetail {
+  sliver: boolean;
+  /// Width of each trim zone at the chip's edges; 0 when the chip is too
+  /// narrow to trim.
+  trimEdgePx: number;
+  /// The (shortened) label, and the corner badges, which need the same room.
+  label: boolean;
+  fullAffordances: boolean;
+}
+
+export function clipDetail(widthPx: number, uiScale: number): ClipDetail {
+  const m = UI_METRICS.timeline;
+  return {
+    sliver: widthPx < m.layerSliverMax * uiScale,
+    trimEdgePx: widthPx >= m.layerTrimMin * uiScale ? m.trimEdgeZone * uiScale : 0,
+    label: widthPx >= m.layerLabelMin * uiScale,
+    fullAffordances: widthPx > m.layerFullLabelMin * uiScale,
+  };
+}
+
 /// Width of the sticky track-header column (UI_METRICS.timeline.headerColumn).
 export const headerColumnPx = (): number => uiPixels(UI_METRICS.timeline.headerColumn);
 
