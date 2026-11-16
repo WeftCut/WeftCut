@@ -10,6 +10,7 @@ import type { TsActorHost } from './state/ts-actor-host';
 import type { ExportRun } from '../shared/exportJob';
 
 const cleanup: string[] = [];
+const USER = { kind: 'user' } as const;
 it('suggests an unused numbered name without creating or replacing any file', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'weftcut-export-name-'));
   cleanup.push(dir);
@@ -61,7 +62,7 @@ it('admits one of two agent requests racing through their plans and refuses the 
   expect(admitted).toHaveLength(1);
   expect(refused).toEqual([expect.objectContaining({ code: 'export_busy' })]);
   expect(s.native.mock.calls.filter(([c]) => c === 'export_begin')).toHaveLength(1);
-  await s.jobs.cancel(admitted[0].job_id); await s.jobs.update(admitted[0].job_id, 'renderer', { state: 'cancelled' });
+  await s.jobs.cancel(admitted[0].job_id, USER); await s.jobs.update(admitted[0].job_id, 'renderer', { state: 'cancelled' });
 });
 
 it('deduplicates before busy/default resolution and retains terminal records', async () => {
@@ -86,7 +87,7 @@ it('waits for the matching renderer and rejects stale ownership', async () => {
   await s.jobs.update(job.job_id, 'renderer', { state: 'finalizing', phase: 'mux' });
   expect(s.jobs.status(job.job_id)).toMatchObject({ phase: 'mux', can_cancel: true, can_retry: false });
   await expect(s.jobs.publish(job.job_id, 'bad')).rejects.toMatchObject({ code: 'stale_renderer' });
-  await s.jobs.cancel(job.job_id); await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
+  await s.jobs.cancel(job.job_id, USER); await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
 });
 
 it('get_export_status { wait_s }: wakes on a state change, not on progress, and at once when terminal', async () => {
@@ -102,7 +103,7 @@ it('get_export_status { wait_s }: wakes on a state change, not on progress, and 
   expect(s.jobs.status(job.job_id)?.state).toBe('finalizing');
   // Without a change the wait ends when it elapses: returning is the assertion.
   await s.jobs.waitForStateChange(undefined, 30);
-  await s.jobs.cancel(job.job_id); await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
+  await s.jobs.cancel(job.job_id, USER); await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
   // A terminal job does not sit out the wait it was given.
   const wait = 5_000;
   const before = Date.now();
@@ -129,7 +130,7 @@ it('a job waiting for admission reads queued with its holders, and get_export_st
   await admitted;
   expect(s.jobs.status(job.job_id)).toMatchObject({ state: 'rendering' });
   expect(s.jobs.status(job.job_id)).not.toHaveProperty('queued');
-  await s.jobs.cancel(job.job_id); await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
+  await s.jobs.cancel(job.job_id, USER); await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
 });
 
 it('an explicit path into the project\'s own output/ creates that folder; any other missing folder still refuses', async () => {
@@ -142,16 +143,52 @@ it('an explicit path into the project\'s own output/ creates that folder; any ot
   const job = await s.jobs.start({ output_path: path.join(output, 'cut.mp4') });
   expect(job).toMatchObject({ state: 'preparing', output_path: path.join(output, 'cut.mp4') });
   expect((await fs.stat(output)).isDirectory()).toBe(true);
-  await s.jobs.cancel(job.job_id); await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
+  await s.jobs.cancel(job.job_id, USER); await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
 });
 
 it('keeps admission during cancellation until the renderer acknowledges cleanup', async () => {
   const s = await setup(); s.ready(); const job = await s.jobs.start({});
-  await s.jobs.cancel(job.job_id); expect(s.jobs.isActive()).toBe(true);
+  await s.jobs.cancel(job.job_id, USER); expect(s.jobs.isActive()).toBe(true);
   expect(() => s.jobs.assertWritable()).toThrow('export');
   await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
   expect(s.jobs.isActive()).toBe(false);
-  expect(await s.jobs.cancel(job.job_id)).toMatchObject({ state: 'cancelled' });
+  expect(await s.jobs.cancel(job.job_id, USER)).toMatchObject({ state: 'cancelled' });
+});
+
+it('ends a cancelled job cancelled, adopting no later state or failure the renderer reports', async () => {
+  const s = await setup(); s.ready(); const job = await s.jobs.start({});
+  await s.jobs.cancel(job.job_id, USER);
+  await s.jobs.update(job.job_id, 'renderer', { state: 'awaiting_retry', error: { code: 'finalization_failed', message: 'export cancelled' } });
+  expect(s.jobs.status(job.job_id)).toMatchObject({ phase: 'cancelling', can_retry: false });
+  expect(s.jobs.status(job.job_id)?.state).not.toBe('awaiting_retry');
+  await s.jobs.update(job.job_id, 'renderer', { state: 'failed', error: { code: 'export_failed', message: 'no active video sink' } });
+  const status = s.jobs.status(job.job_id);
+  expect(status?.state).toBe('cancelled');
+  expect(status).not.toHaveProperty('error');
+});
+
+it('records the first canceller on the job, whoever cancels it again', async () => {
+  const s = await setup(); s.ready(); const job = await s.jobs.start({});
+  await s.jobs.cancel(job.job_id, { kind: 'agent', client: 'Claude' });
+  expect(s.send).toHaveBeenCalledWith('export:status', expect.objectContaining({ job_id: job.job_id, phase: 'cancelling', cancelled_by: { kind: 'agent', client: 'Claude' } }));
+  await s.jobs.cancel(job.job_id, USER);
+  await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
+  expect(s.jobs.status(job.job_id)).toMatchObject({ state: 'cancelled', cancelled_by: { kind: 'agent', client: 'Claude' } });
+});
+
+it('releases a cancelled export only after its one native stop ends, even when the renderer settles first', async () => {
+  const s = await setup(); s.ready(); const job = await s.jobs.start({});
+  const order: string[] = [];
+  let stop!: () => void;
+  const stopped = new Promise<void>(resolve => { stop = () => { order.push('stopped'); resolve(); }; });
+  s.native.mockImplementation(async (channel: string) => { if (channel === 'export_cancel') await stopped; return null; });
+  s.send.mockImplementation((event: string, payload: { state?: string } | null) => { if (event === 'export:status' && payload?.state === 'cancelled') order.push('released'); });
+  const cancelling = s.jobs.cancel(job.job_id, USER);
+  const settled = s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
+  stop(); await cancelling; await settled;
+  expect(order).toEqual(['stopped', 'released']);
+  expect(s.jobs.isActive()).toBe(false);
+  expect(s.native.mock.calls.filter(([c]) => c === 'export_cancel')).toHaveLength(1);
 });
 
 it('retains files for finalization retry and removes overwrite approval for a new filename', async () => {
@@ -169,7 +206,7 @@ it('retains files for finalization retry and removes overwrite approval for a ne
 
 it('reports completion when publication wins a cancellation race', async () => {
   const s = await setup(); s.ready(); const job = await s.jobs.start({});
-  await s.jobs.publish(job.job_id, 'renderer'); await s.jobs.cancel(job.job_id);
+  await s.jobs.publish(job.job_id, 'renderer'); await s.jobs.cancel(job.job_id, USER);
   await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
   expect(s.jobs.status(job.job_id)?.state).toBe('completed');
 });

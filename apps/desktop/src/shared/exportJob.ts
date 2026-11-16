@@ -4,6 +4,9 @@ import type { ResourceHolder } from './resource-policy';
 
 /** `queued`: admission waits for the resource budget, for as long as it takes. */
 export type ExportJobState = 'queued' | 'preparing' | 'rendering' | 'finalizing' | 'awaiting_retry' | 'completed' | 'failed' | 'cancelled';
+/** Who asked for a cancel: the user (the app's UI), an agent over MCP, or the
+ *  app itself (quitting, the export window gone). */
+export type ExportCanceller = { kind: 'user' } | { kind: 'agent'; client: string } | { kind: 'app' };
 export interface ExportJob {
   job_id: string;
   state: ExportJobState;
@@ -22,6 +25,8 @@ export interface ExportJob {
   queued?: { reason: Exclude<ResourceWaitReason, 'budget-too-small'>; holders: ResourceHolder[] };
   /** A typed failure also carries its variant (`error`) and data, flat. */
   error?: { code: string; message: string; [key: string]: unknown };
+  /** The first cancel asked of this job; set from then on, whatever the job ends as. */
+  cancelled_by?: ExportCanceller;
 }
 export interface ExportRun extends ExportJob { staging_path: string; encoded_video_path: string; encoded_audio_path: string; renderer_token: string }
 export const exportTerminal = (state: ExportJobState): state is 'completed' | 'failed' | 'cancelled' => ['completed', 'failed', 'cancelled'].includes(state);

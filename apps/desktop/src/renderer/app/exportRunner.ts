@@ -157,7 +157,12 @@ export function createExportRunner(deps: {
   const pendingFinalization = { current: null as ReturnType<typeof createExportFinalization> | null };
   let state: ExportState | null = null;
   let exportController = new AbortController();
-  const setExportState = (next: ExportState | null) => { state = next; deps.onState(next); };
+  /// A cancelled export reports no failure: once its signal aborts, whatever a
+  /// stage answers is the cancel's doing (main stops the native stages).
+  const setExportState = (next: ExportState | null) => {
+    state = next?.kind === "error" && exportController.signal.aborted ? null : next;
+    deps.onState(state);
+  };
   /// A mux behind a running derivative reads queued and names it, as admission
   /// does, then returns to the step it was on.
   async function watchMuxWait(mux: () => Promise<void>) {
@@ -727,6 +732,7 @@ export function createExportRunner(deps: {
             outputPath: tempVideoPath,
           });
         } catch (e) {
+          if (exportController.signal.aborted) { setExportState(null); return; }
           const msg = e instanceof Error ? e.message : String(e);
           console.error("[weftcut/pixi] video sink start failed:", e);
           // Native encoder unavailable under `auto`, on a combo WebCodecs can
@@ -874,6 +880,7 @@ export function createExportRunner(deps: {
         try {
           await exportVideoSinkFinish();
         } catch (e) {
+          if (exportController.signal.aborted) { setExportState(null); return; }
           const msg = e instanceof Error ? e.message : String(e);
           console.error("[weftcut/pixi] sink finish failed:", e);
           setExportState({ kind: "error", detail: `Finalize failed: ${msg}` });
@@ -885,7 +892,7 @@ export function createExportRunner(deps: {
       retained = true;
       await finalize(() => muxExport(tempVideoPath, tempAudioPath, path, { token: finalizationReservation.token, audioRequired: audioProduced, stagingOutput: true }), cleanup, durationUs);
     } catch (error) {
-      setExportState(exportController.signal.aborted ? null : { kind: "error", detail: error instanceof Error ? error.message : String(error) });
+      setExportState({ kind: "error", detail: error instanceof Error ? error.message : String(error) });
     } finally {
       if (!retained) await cleanup?.();
       resumePreview();

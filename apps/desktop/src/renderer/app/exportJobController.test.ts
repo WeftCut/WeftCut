@@ -28,9 +28,10 @@ beforeEach(() => {
   mock.runner.state = () => null; mock.runner.discard = async () => { };
   mock.runner.run = async () => { }; mock.runner.retry = async () => { };
 });
+const onJob = vi.fn();
 const controller = () => createExportJobController({
   proxyStateRef: { current: new Map() }, decodeProbeMemo: { current: new Map() },
-  t: vi.fn() as unknown as TFunction, onState: vi.fn(), onBegin: vi.fn(),
+  t: vi.fn() as unknown as TFunction, onState: vi.fn(), onBegin: vi.fn(), onJob,
 });
 
 it('renews readiness after a workspace replacement without requiring the editor to remount', async () => {
@@ -91,6 +92,24 @@ it('reports a queued admission as queued with its holders, then admission as pre
   expect(updates()).toEqual([{ state: 'queued', queued: { reason: 'busy', holders } }, { state: 'preparing' }]);
   cancel('q');
   await vi.waitFor(() => expect(updatesFor('q')).toContain('cancelled'));
+  await c.dispose();
+});
+
+// Main stops the native stages between these two messages; a stage failing
+// under that stop must find the run already aborted.
+it('aborts the run when main publishes cancelling, before export:cancel arrives', async () => {
+  let signal: AbortSignal | undefined;
+  mock.runner.run = (_request, abort) => { signal = abort.signal; return new Promise(resolve => abort.signal.addEventListener('abort', () => resolve())); };
+  const { c, run, cancel } = await mountedWithToken();
+  run('a');
+  await vi.waitFor(() => expect(signal).toBeDefined());
+  const cancelling = { ...(job('a') as object), state: 'rendering', phase: 'cancelling', cancelled_by: { kind: 'user' } };
+  emit('export:status', cancelling);
+  expect(signal!.aborted).toBe(true);
+  // The log mirror learns who cancelled from the same message, unbatched.
+  expect(onJob).toHaveBeenLastCalledWith(cancelling);
+  cancel('a');
+  await vi.waitFor(() => expect(updatesFor('a')).toEqual(['cancelled']));
   await c.dispose();
 });
 

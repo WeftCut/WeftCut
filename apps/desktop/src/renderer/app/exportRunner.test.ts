@@ -192,17 +192,18 @@ type ExportHarness = {
 function mount(pipeline = createRef<ExportHarness>(), cap: RendererCapability = GPU, background = true) {
   let output = '';
   const controller = new AbortController();
+  const states: Array<ExportState | null> = [];
   return renderHook(() => {
     const [exportState, setState] = useState<ExportState | null>(null);
     const runner = useMemo(() => createExportRunner({
       render: init => pipeline.current!.render(init),
       suspendPreview: by => pipeline.current?.suspendPreview(by) ?? (() => {}),
       proxyStateRef: { current: new Map() }, decodeProbeMemo: { current: new Map() },
-      t: translate as TFunction, onState: setState, cancel: () => controller.abort(), publish: async () => output,
+      t: translate as TFunction, onState: next => { states.push(next); setState(next); }, cancel: () => controller.abort(), publish: async () => output,
       capability: async () => cap,
 }), []);
     return {
-exportState, runner, runExportWithSettings: async (settings: ExportSettings, path: string, range?: { startUs: number; endUs: number }) => {
+exportState, runner, controller, states, runExportWithSettings: async (settings: ExportSettings, path: string, range?: { startUs: number; endUs: number }) => {
         output = path;
         await runner.run({ job_id: 'test', state: 'preparing', filename: 'out.mp4', renderer_token: 'test', agent: false, settings, range: range ?? { startUs: 0, endUs: 2_000_000 }, output_path: path, staging_path: path, encoded_video_path: '/tmp/video.mp4', encoded_audio_path: '/tmp/audio.m4a' }, controller, background);
       }
@@ -275,6 +276,36 @@ describe("exportRunner", () => {
     expect(suspendedBy).toEqual(["export"]);
     expect(suspended).toBe(false);
   });
+
+  // Main aborts the run, then stops the native stages; the stage in flight
+  // answers with the stop's error.
+  it.each(["export_project_audio_only", "export_video_sink_start", "export_video_sink_finish", "mux_export"])(
+    "a cancel that stops %s reports no failure and asks no fallback question", async (stage) => {
+      const project = summary([track("track-v", "Video", [COLOR_LAYER]), track("track-a", "Audio", [AUDIO_LAYER])]);
+      const { useProjectStore } = await import("../state/projectStore");
+      act(() => useProjectStore.getState().apply(project));
+      bridge.answers.set("project_summary", () => project);
+      bridge.answers.set("ensure_export_audio_fx", () => ({ waiting: [], failed: [] }));
+      bridge.answers.set("export_project_audio_only", () => true);
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+      const pipeline = createRef<ExportHarness>();
+      pipeline.current = { suspendPreview: () => () => { }, render: async () => ({ framesEncoded: 60, totalFrames: 60, fpsNum: 30, fpsDen: 1 }) } as unknown as ExportHarness;
+      const { result } = mount(pipeline);
+      bridge.answers.set(stage, () => {
+        result.current.controller.abort();
+        throw new Error("export cancelled");
+      });
+      try {
+        await act(async () => result.current.runExportWithSettings({
+          ...DEFAULT_EXPORT_SETTINGS, encoderEngine: "auto", includeVideo: true,
+          audio: { ...DEFAULT_EXPORT_SETTINGS.audio, include: true },
+        }, "/out/movie.mp4"));
+        expect(bridge.log).toContain(`invoke ${stage}`);
+        expect(result.current.states.filter(s => s?.kind === "error")).toEqual([]);
+        expect(result.current.exportState).toBeNull();
+        expect(confirm).not.toHaveBeenCalled();
+      } finally { confirm.mockRestore(); }
+    });
 
   it("a mux behind a running derivative reads queued, names it, and returns to finalizing", async () => {
     const project = summary([track("track-v", "Video", [COLOR_LAYER])]);

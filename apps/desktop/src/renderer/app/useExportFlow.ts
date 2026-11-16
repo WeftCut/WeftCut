@@ -147,10 +147,7 @@ export function useExportFlow(deps: {
   useEffect(() => {
     const translate = ((...args: Parameters<typeof t>) => translationRef.current(...args)) as typeof t;
     const controller = createExportJobController({
-      ...deps, t: translate, onState: setExportState, onBegin: request => {
-        setExportDialogOpen(false);
-        exportLog.begin({ output: request.output_path, codec: request.settings.codec });
-      }
+      ...deps, t: translate, onState: setExportState, onBegin: () => setExportDialogOpen(false), onJob: job => exportLog.job(job),
 });
     controllerRef.current = controller;
     void controller.mount().catch(error => setExportState({ kind: 'error', detail: String(error) }));
