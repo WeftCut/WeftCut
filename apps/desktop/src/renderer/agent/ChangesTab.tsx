@@ -10,7 +10,7 @@ import { canLocate, locate } from './locate'
 import { JumpButton } from './JumpButton'
 import { useAgentActivity } from './activityStore'
 import { changeStats } from './changeStats'
-import { ChangeStats } from './ChangeStats'
+import { ChangeStatsBar } from './ChangeStatsBar'
 import { setReviewFocus, setReviewHover, useReviewFocus } from './reviewFocus'
 
 /** The Changes tab of the shared agent panel (ADR 0115): what differs from the
@@ -122,7 +122,7 @@ export function ChangesTab({ editor }: { editor: boolean }) {
         toolbar holds what the list amounts to (+ − ~) and what can act on it,
         while something awaits review. */}
     {toolbar && <div className="agent-activity-toolbar">
-      {unreviewed.length > 0 && <ChangeStats stats={stats} />}
+      {unreviewed.length > 0 && <ChangeStatsBar stats={stats} />}
       {stale && <span className="agent-changes-stale" role="status" title={t(`changes.${stale}_stale`)}>{t(`changes.${stale}_stale_short`)}</span>}
       {unreviewed.length > 0 && <span className="agent-changes-actions">
         <button type="button" className="agent-changes-revert-all" disabled={busy || locked}

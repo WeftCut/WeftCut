@@ -131,7 +131,7 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 /* Revert all and Approve all sit together at the toolbar's end, and wrap as one. */
 .agent-changes-actions { display: flex; flex: none; gap: calc(3 * var(--ui-px)); margin-left: auto; }
 .agent-changes-actions button.agent-changes-approve-all:last-child { margin-left: 0; }
-/* The diff stat (ChangeStats) at the toolbar's start: signed figures in their
+/* The diff stat (ChangeStatsBar) at the toolbar's start: signed figures in their
    class hue, a zero one stepped back so the stat keeps its shape. */
 .agent-changes-stats { display: flex; flex: none; align-items: baseline; gap: calc(10 * var(--ui-px)); margin: 0 calc(6 * var(--ui-px)) 0 calc(2 * var(--ui-px)); font-size: var(--font-size-heading); line-height: 1; font-variant-numeric: tabular-nums; font-weight: 600; }
 .agent-changes-stat.class-added { color: var(--review-added); }

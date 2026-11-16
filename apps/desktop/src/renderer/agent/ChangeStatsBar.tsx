@@ -20,7 +20,7 @@ function figure(stat: ChangeStat, t: TFunction): { short: string; full: string; 
 
 /** The Changes tab's diff stat (`changeStats.ts`), at its toolbar's start:
  *  the figures in a row, each signed and coloured like its class badge. */
-export function ChangeStats({ stats }: { stats: readonly ChangeStat[] }) {
+export function ChangeStatsBar({ stats }: { stats: readonly ChangeStat[] }) {
   const { t } = useTranslation()
   if (!stats.length) return null
   return <p className="agent-changes-stats">

@@ -1,6 +1,6 @@
 // The figures of the Changes tab's diff stat (ADR 0115): what the unreviewed
 // list amounts to, read at a glance the way a git diff stat is. Pure — the stat is
-// drawn by `ChangeStats.tsx`, the list comes from `reviewStore.ts`.
+// drawn by `ChangeStatsBar.tsx`, the list comes from `reviewStore.ts`.
 //
 // A figure is a fact, never a sentence: `changeStats` decides which figures
 // there are and their values, the component words and colours each `kind`.
