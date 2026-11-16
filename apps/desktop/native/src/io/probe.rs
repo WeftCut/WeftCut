@@ -743,7 +743,7 @@ mod tests {
     fn meta_from_probe_json(json: &str) -> MediaMetadata {
         serde_json::from_str::<RawProbe>(json)
             .expect("probe JSON")
-            .into_metadata_and_streams()
+            .into_metadata()
     }
 
     /// Pins nearest-µs, not truncation: truncating drops this half-µs (→299674)
@@ -769,7 +769,9 @@ mod tests {
                 "disposition": { "attached_pic": 0 }
             }]
         }"#;
-        let (meta, streams) = meta_from_probe_json(json);
+        let (meta, streams) = serde_json::from_str::<RawProbe>(json)
+            .expect("probe JSON")
+            .into_metadata_and_streams();
         assert_eq!(meta.start_pts_us, Some(299_674));
         assert_eq!(meta.container_duration_us, Some(10_299_674));
         assert_eq!(meta.duration_us, Some(10_000_000));
