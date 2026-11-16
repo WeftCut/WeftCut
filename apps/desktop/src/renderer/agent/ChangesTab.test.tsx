@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import i18n from '../i18n'
-import type { Change, ReviewView } from '../../shared/review'
+import type { Change, ChangedRange, ReviewView } from '../../shared/review'
 import type { LayerSummary, TrackSummary } from '../ipc'
 import type { AgentActivitySnapshot } from '../../shared/agent-activity'
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), jump: vi.fn(), reveal: vi.fn(() => true), listeners: new Map<string, (e: { payload: unknown }) => void>() }))
@@ -246,7 +246,10 @@ describe('AgentPanel Changes tab', () => {
       change({ id: 'Layer:trimmed', class: 'modified', ranges: range(2.5 * S, 4 * S),
         details: [{ type: 'time', field: 'start', from_us: 2 * S, to_us: 2.5 * S }, { type: 'trim', side: 'start', delta_us: -0.5 * S }] }),
     ]
-    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_view' ? view(1, list, []) : { available: true, url: '', connections: [] })
+    // Both edited clips play differently: their lines carry no weight note.
+    const plays: ChangedRange = { composition_id: ROOT_ID, class: 'modified', t_start_us: S, t_end_us: 4 * S, before_start_us: 2 * S, before_end_us: 4 * S,
+      source: 'review', change_ids: ['Layer:early', 'Layer:trimmed'] }
+    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_view' ? { ...view(1, list, []), ranges: [plays] } : { available: true, url: '', connections: [] })
     render(<AgentPanel editor />)
     await flush()
     const row = (id: string) => document.querySelector<HTMLElement>(`[data-change-id="${id}"]`)!
@@ -311,6 +314,22 @@ describe('AgentPanel Changes tab', () => {
     expect(rows().find(r => r.dataset.changeId === 'Layer:next')!.textContent).toContain('Start 4.0 → 3.0 s')
   })
 
+
+  it('a row the film shows less loudly says so after its line, in the entity diff\'s order', async () => {
+    const changed = (ids: string[], only?: 'sync'): ChangedRange => ({ composition_id: ROOT_ID, class: 'modified', t_start_us: 0, t_end_us: 9 * S,
+      before_start_us: 0, before_end_us: 9 * S, source: 'review', change_ids: ids as ChangedRange['change_ids'], ...(only ? { only } : {}) })
+    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_view'
+      ? { ...view(1, unreviewed, []), ranges: [changed(['Layer:early', 'Layer:inner']), changed(['Layer:late'], 'sync')] }
+      : { available: true, url: '', connections: [] })
+    render(<AgentPanel editor />)
+    await flush()
+    expect(rows().map(r => r.dataset.changeId)).toEqual(['Layer:early', 'Layer:a', 'Layer:late', 'Layer:inner'])
+    const notes = Object.fromEntries(rows().map(r => [r.dataset.changeId, [r.dataset.reviewWeight, r.querySelector('.agent-change-weight')?.textContent ?? null]]))
+    expect(notes).toEqual({
+      'Layer:early': ['full', null], 'Layer:inner': ['full', null],
+      'Layer:a': ['quiet', ' · plays the same'], 'Layer:late': ['soft', ' · out of sync only'],
+    })
+  })
 
   it('an agent row names the work session that last edited it; a user row does not', async () => {
     useReview.setState({ showUser: true })

@@ -1518,6 +1518,10 @@ const zhCN: Resources = {
     class_added: "新增",
     class_removed: "删除",
     class_modified: "修改",
+    // After a change's line, where the film shows the change less loudly
+    // than its class says (ADR 0169).
+    weight_quiet: "播放内容不变",
+    weight_soft: "仅不同步",
     stats: {
       label: "待审阅变更：",
       added: "新增 {{count}} 项",

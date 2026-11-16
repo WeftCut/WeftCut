@@ -22,7 +22,7 @@ import { useAgentActivity } from './activityStore'
 import type { AgentActivity } from '../../shared/agent-activity'
 import { changeWordsContext, type ChangeFrame, type ChangeWordsContext, type Translate } from './changeWords'
 import { rangeLine } from './rangeWords'
-import { buildReviewHighlight, EMPTY_HIGHLIGHT, rangeMarks, type ReviewClipMark, type ReviewCut, type ReviewGhost, type ReviewMarkerGhost, type ReviewHighlight, type ReviewRangeMark } from './reviewHighlight'
+import { buildReviewHighlight, changeWeights, EMPTY_HIGHLIGHT, rangeMarks, type ReviewClipMark, type ReviewWeight, type ReviewCut, type ReviewGhost, type ReviewMarkerGhost, type ReviewHighlight, type ReviewRangeMark } from './reviewHighlight'
 
 /** One activity row's own changes (spec Part B, per-activity highlight):
  *  what that call did, shown on the timelines in place of the unreviewed
@@ -112,8 +112,9 @@ export const useReview = create<ReviewState>((set, get) => ({
     const held = get()
     const fillsUser = listsUser && !held.viewListsUser && held.view !== null && sameVersion(next.version, held.view.version)
     if (!fillsUser && !isNewerReviewView(next.version, held.view?.version ?? null)) return false
-    // Filling in the user's list keeps the clip marks (they show the
-    // unreviewed changes alone) but takes the ranges, which now hold theirs.
+    // Filling in the user's list keeps the clip marks and their weights (they
+    // show the unreviewed changes alone, which the same ranges list either
+    // way) but takes the ranges, which now hold theirs.
     const highlight = fillsUser ? { ...held.highlight, ranges: rangeMarks(next.ranges) } : buildReviewHighlight(next.unreviewed, next.decorations, next.ranges)
     set({ view: next, viewListsUser: listsUser, highlight, ...noUserLeft(next) })
     return true
@@ -236,6 +237,19 @@ const useOverlay = () => useAgentActivity(s => s.reviewOverlay)
 export function useLayerReviewMark(layerId: string): ReviewClipMark | null {
   const overlay = useOverlay()
   return useReview(s => (overlay ? selectHighlight(s).layers.get(layerId) ?? null : null))
+}
+
+/** How loud a clip's review mark is (`ReviewWeight`), or null unmarked. */
+export function useLayerReviewWeight(layerId: string | null): ReviewWeight | null {
+  const overlay = useOverlay()
+  return useReview(s => (overlay && layerId !== null ? selectHighlight(s).layerWeights.get(layerId) ?? null : null))
+}
+
+/** Each change of the Review view by the weight its ranges give it
+ *  (`changeWeights`): the Changes tab's rows. */
+export function useChangeWeights(): ReadonlyMap<string, Exclude<ReviewWeight, 'quiet'>> {
+  const ranges = useReview(s => s.view?.ranges)
+  return useMemo(() => changeWeights(ranges ?? []), [ranges])
 }
 
 /** The change that marks a clip on the editor timeline, or null — what its
