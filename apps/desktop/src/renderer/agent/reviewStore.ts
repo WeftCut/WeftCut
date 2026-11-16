@@ -49,7 +49,7 @@ interface ReviewState {
    *  `view`. Rebuilt only when the view is replaced, so per-clip selectors
    *  read a stable map. */
   highlight: ReviewHighlight
-  /** The Changes tab's "show my changes" filter: user-only differences are
+  /** The Changes tab's user-changes switch: user-only differences are
    *  listed too. Off by default; runtime only, like the review itself. Main
    *  sends that list only while it is on (`setShowUser`). It turns itself off
    *  when a view says the user has no changes left (an undo took them back):
@@ -87,7 +87,7 @@ export function isNewerReviewView(next: ReviewView['version'], held: ReviewView[
 }
 
 /** The changes the Changes tab lists: the unreviewed ones, and the user's own
- *  while "show my changes" is on — what a review focus can name. */
+ *  while the user-changes switch is on — what a review focus can name. */
 export function listedChanges(s: Pick<ReviewState, 'view' | 'showUser'>): readonly Change[] {
   if (s.view === null) return []
   return s.showUser && s.view.user.length > 0 ? [...s.view.unreviewed, ...s.view.user] : s.view.unreviewed
@@ -96,7 +96,7 @@ export function listedChanges(s: Pick<ReviewState, 'view' | 'showUser'>): readon
 const sameVersion = (a: ReviewVersion, b: ReviewVersion): boolean =>
   a.session === b.session && a.revision === b.revision && a.baseline_revision === b.baseline_revision
 
-/** A view with no user changes switches "show my changes" off. */
+/** A view with no user changes turns the user-changes switch off. */
 const noUserLeft = (next: { user_count: number }): Partial<ReviewState> =>
   next.user_count === 0 ? { showUser: false } : {}
 
@@ -186,7 +186,7 @@ export function acquireReview(): () => void {
   }
 }
 
-/** Turn "show my changes" on or off; turning it on fetches the user-only list
+/** Turn the user-changes switch on or off; turning it on fetches the user-only list
  *  unless the held view already has it. */
 export function setShowUser(on: boolean): void {
   useReview.setState({ showUser: on })

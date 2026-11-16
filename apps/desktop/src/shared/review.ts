@@ -103,7 +103,7 @@ export interface GroupDecoration {
 export interface ReviewVersion { session: number; revision: number; baseline_revision: number }
 
 /** `review_view` arguments. The user-only list is sent only when asked for
- *  (the Changes tab's "show my changes"); its count always is.
+ *  (the Changes tab's user-changes switch); its count always is.
  *  `held_content`: the `content_revision` of the view the caller holds, read
  *  with the same `include_user` — when the lists are still those, the answer
  *  is a `ReviewViewUnchanged` instead of the lists again. */

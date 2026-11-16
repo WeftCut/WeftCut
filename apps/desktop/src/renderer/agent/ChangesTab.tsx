@@ -9,6 +9,8 @@ import { changePlace, changeTitle, describeChange } from './changeWords'
 import { canLocate, locate } from './locate'
 import { JumpButton } from './JumpButton'
 import { useAgentActivity } from './activityStore'
+import { changeStats } from './changeStats'
+import { ChangeStats } from './ChangeStats'
 import { setReviewFocus, setReviewHover, useReviewFocus } from './reviewFocus'
 
 /** The Changes tab of the shared agent panel (ADR 0115): what differs from the
@@ -22,10 +24,11 @@ import { setReviewFocus, setReviewHover, useReviewFocus } from './reviewFocus'
  *  lock). Both compare whole states, so both take the user's own differences
  *  with the agent's.
  *
- *  "Show my changes" lists the differences only the user made, too. They need
- *  no approval — the baseline is what the user accepted, and their own edits
- *  are accepted by making them — so their rows are muted and marked as the
- *  user's. Main sends them only while shown.
+ *  A note after the list counts the differences only the user made, and its
+ *  switch lists them too. They need no approval — the baseline is what the
+ *  user accepted, and their own edits are accepted by making them — so the
+ *  note comes last and their rows are muted and marked as the user's. Main
+ *  sends them only while shown.
  *
  *  Either action names the list on screen; one made after an agent changed
  *  the list does nothing and says so in the toolbar, over the fresh list.
@@ -51,6 +54,7 @@ export function ChangesTab({ editor }: { editor: boolean }) {
   const reasons = useMemo(() => sessionReasonIndex(activity), [activity])
   const words = useChangeWords({ frame: 'review' })
   const unreviewed = view?.unreviewed ?? []
+  const stats = useMemo(() => changeStats({ unreviewed: view?.unreviewed ?? [] }), [view?.unreviewed])
   const groups = useMemo(
     () => (view ? groupChanges(view.unreviewed, showUser ? view.user : [], summary?.root_id ?? null) : []),
     [view, showUser, summary?.root_id])
@@ -105,33 +109,39 @@ export function ChangesTab({ editor }: { editor: boolean }) {
 
   const userCount = view?.user_count ?? 0
   const empty = !view ? 'agent_panel.loading' : !view.has_baseline ? 'changes.no_baseline' : 'changes.empty'
-  const canShowUser = userCount > 0
-  const toolbar = canShowUser || stale || unreviewed.length > 0
+  const toolbar = stale || unreviewed.length > 0
+  /** The user's own changes, below the list: how many, and the switch that
+   *  lists them. Last, since they need no review. */
+  const userNote = userCount > 0 && <p className="agent-changes-user-note">
+    <span>{t('changes.user_note', { count: userCount })}</span>{' · '}
+    <button type="button" aria-pressed={showUser} title={t('changes.show_mine_hint')}
+      onClick={() => setShowUser(!showUser)}>{t(showUser ? 'changes.hide_user' : 'changes.show_user')}</button>
+  </p>
   return <div className="agent-tacks agent-changes" role="tabpanel" aria-label={t('agent_panel.tab_changes')}>
     {/* The unreviewed count is the tab's badge; the subtitle, its title. The
-        toolbar holds only what can act: Approve all and Revert all while
-        something awaits review, the user's filter while they have changes. */}
+        toolbar holds what the list amounts to (+ − ~) and what can act on it,
+        while something awaits review. */}
     {toolbar && <div className="agent-activity-toolbar">
-      {canShowUser && <button type="button" aria-pressed={showUser} title={t('changes.show_mine_hint')}
-        onClick={() => setShowUser(!showUser)}>{t('changes.show_mine', { count: userCount })}</button>}
+      {unreviewed.length > 0 && <ChangeStats stats={stats} />}
       {stale && <span className="agent-changes-stale" role="status" title={t(`changes.${stale}_stale`)}>{t(`changes.${stale}_stale_short`)}</span>}
-      {unreviewed.length > 0 && <>
+      {unreviewed.length > 0 && <span className="agent-changes-actions">
         <button type="button" className="agent-changes-revert-all" disabled={busy || locked}
           title={locked ? t('changes.revert_all_locked') : t('changes.revert_all_hint')}
           onClick={() => void settle(revertAllChanges)}><AppIcon icon={Undo2} size="body" />{t('changes.revert_all')}</button>
         <button type="button" className="agent-changes-approve-all" disabled={busy} title={t('changes.approve_all_hint')}
           onClick={() => void settle(approveAllChanges)}><AppIcon icon={CheckCheck} size="body" />{t('changes.approve_all')}</button>
-      </>}
+      </span>}
     </div>}
     <div className="agent-activity-list" ref={list}>
       {!groups.length && (view
-        ? <div className="agent-empty"><p>{t(empty)}</p><p className="agent-empty-subtitle">{t('changes.retention')}</p></div>
+        ? <div className="agent-empty"><p>{t(empty)}</p>{userNote}<p className="agent-empty-subtitle">{t('changes.retention')}</p></div>
         : <p className="agent-empty">{t(empty)}</p>)}
       {groups.map(g => <section key={g.compositionId ?? 'project'} className="agent-work-group agent-change-group">
         <h3 className="agent-change-group-heading"><span>{heading(g.compositionId)}</span>
           <small>{t('changes.group_count', { count: g.rows.filter(r => r.source === 'agent').length })}</small></h3>
         {g.rows.map(row)}
       </section>)}
+      {groups.length > 0 && userNote}
       {groups.length > 0 && <p className="agent-retention-note agent-list-footnote">{t('changes.retention')}</p>}
     </div>
   </div>

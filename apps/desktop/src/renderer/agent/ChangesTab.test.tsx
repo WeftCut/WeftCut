@@ -65,14 +65,25 @@ useReviewFocus.setState({ focus: null, hover: null })
 afterEach(() => { cleanup(); resetReviewForTests() })
 
 const rows = () => [...document.querySelectorAll<HTMLElement>('[data-change-id]')]
+/** The switch in the note under the list that lists the user's own changes. */
+const userSwitch = () => document.querySelector<HTMLButtonElement>('.agent-changes-user-note button')!
+/** The toolbar's text past its diff stat: the notes and the actions. */
+const toolbarControls = () => [...document.querySelector('.agent-changes .agent-activity-toolbar')!.children]
+  .filter(e => !e.classList.contains('agent-changes-stats')).map(e => e.textContent).join('')
 
 describe('AgentPanel Changes tab', () => {
   it('is the third tab with an unreviewed badge; groups by composition, root first, in timeline order', async () => {
     render(<AgentPanel editor />)
     await flush()
     expect(screen.getAllByRole('tab').map(t => t.textContent)).toEqual(['Activity', 'Tacks', 'Changes4'])
-    // The badge is the count: the toolbar does not repeat it, nor the subtitle (the tab's title) the list.
-    expect(document.querySelector('.agent-changes .agent-activity-toolbar')!.textContent).toBe('Show my changes (1)Revert allApprove all')
+    // The badge is the count; the toolbar opens with its diff stat, then what acts. The
+    // subtitle (the tab's title) does not repeat over the list.
+    expect(document.querySelector('.agent-changes .agent-activity-toolbar')!.firstElementChild!.classList.contains('agent-changes-stats')).toBe(true)
+    expect(toolbarControls()).toBe('Revert allApprove all')
+    // The user's own changes are a note after the list, before its footnote: they need no review.
+    const note = document.querySelector<HTMLElement>('.agent-changes-user-note')!
+    expect(note.textContent).toBe('Plus 1 user change · Show')
+    expect(note.nextElementSibling!.classList.contains('agent-list-footnote')).toBe(true)
     expect(screen.queryByText('What agents changed since you last approved')).toBeNull()
     expect(screen.getByRole('tab', { name: /Changes/ }).title).toBe('What agents changed since you last approved')
     const groups = [...document.querySelectorAll('.agent-change-group-heading > span')].map(e => e.textContent)
@@ -104,12 +115,11 @@ describe('AgentPanel Changes tab', () => {
     expect(within(empty).getByText('Approving records nothing in history; reverting is one step you can undo. To drop a single change, undo it or edit it back.')).toBeTruthy()
     expect(within(empty).queryByText('What agents changed since you last approved')).toBeNull()
     expect(document.querySelector('.agent-changes .agent-list-footnote')).toBeNull()
-    // Nothing awaits review: both actions leave; the user's filter stays while they have changes.
-    expect(screen.queryByRole('button', { name: 'Approve all' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Revert all' })).toBeNull()
-    expect(document.querySelector('.agent-changes .agent-activity-toolbar')!.textContent).toBe('Show my changes (1)')
-    act(() => { useReview.getState().apply(view(5, [], [])) })
+    // Nothing awaits review: the toolbar leaves; the user's note stays under the message while they have changes.
     expect(document.querySelector('.agent-changes .agent-activity-toolbar')).toBeNull()
+    expect(within(empty).getByText('Plus 1 user change')).toBeTruthy()
+    act(() => { useReview.getState().apply(view(5, [], [])) })
+    expect(document.querySelector('.agent-changes-user-note')).toBeNull()
   })
 
   it('revert all names the held view and empties the tab; it waits while history is locked', async () => {
@@ -130,14 +140,15 @@ describe('AgentPanel Changes tab', () => {
     expect(rows()).toHaveLength(0)
   })
 
-  it('"show my changes" lists user-only changes, marked as the user\'s', async () => {
+  it('the user-changes note lists user-only changes, marked as the user\'s', async () => {
     render(<AgentPanel editor />)
     await flush()
-    const filter = screen.getByRole('button', { name: 'Show my changes (1)' })
-    expect(filter.getAttribute('aria-pressed')).toBe('false')
+    expect(userSwitch().getAttribute('aria-pressed')).toBe('false')
     expect(document.querySelector('[data-source="user"]')).toBeNull()
-    fireEvent.click(filter)
+    fireEvent.click(userSwitch())
     await flush()
+    expect(userSwitch().getAttribute('aria-pressed')).toBe('true')
+    expect(userSwitch().textContent).toBe('Hide')
     expect(calls('review_view').at(-1)).toEqual({ include_user: true })
     const user = document.querySelector<HTMLElement>('[data-source="user"]')!
     expect(user.dataset.changeId).toBe('Layer:mine')
@@ -147,18 +158,35 @@ describe('AgentPanel Changes tab', () => {
     expect(screen.getByRole('tab', { name: /Changes/ }).textContent).toBe('Changes4')
   })
 
-  it('"show my changes" switches itself off once an undo takes the user\'s changes back', async () => {
+  it('heads the list with a diff stat of the unreviewed changes alone, gone once nothing awaits review', async () => {
+    const stat = () => [...document.querySelectorAll<HTMLElement>('.agent-changes-stats .agent-changes-stat')]
+      .map(s => [s.querySelector('[aria-hidden="true"]')!.textContent, s.title])
     render(<AgentPanel editor />)
     await flush()
-    fireEvent.click(screen.getByRole('button', { name: 'Show my changes (1)' }))
+    const expected = [['+1', '1 added'], ['−1', '1 removed'], ['~2', '2 modified']]
+    expect(stat()).toEqual(expected)
+    // The user's own change is listed under the filter but needs no review, so it is not counted.
+    fireEvent.click(userSwitch())
+    await flush()
+    expect(document.querySelector('[data-source="user"]')).not.toBeNull()
+    expect(stat()).toEqual(expected)
+    fireEvent.click(screen.getByRole('button', { name: 'Approve all' }))
+    await flush()
+    expect(document.querySelector('.agent-changes-stats')).toBeNull()
+  })
+
+  it('the user-changes switch turns itself off once an undo takes the user\'s changes back', async () => {
+    render(<AgentPanel editor />)
+    await flush()
+    fireEvent.click(userSwitch())
     await flush()
     expect(useReview.getState().showUser).toBe(true)
     act(() => { useReview.getState().apply(view(5, unreviewed, []), true) })
     expect(useReview.getState().showUser).toBe(false)
-    expect(screen.queryByRole('button', { name: /Show my changes/ })).toBeNull()
+    expect(document.querySelector('.agent-changes-user-note')).toBeNull()
     expect(document.querySelector('[data-source="user"]')).toBeNull()
     // Revert all and Approve all still have their row, alone.
-    expect(document.querySelector('.agent-changes .agent-activity-toolbar')!.textContent).toBe('Revert allApprove all')
+    expect(toolbarControls()).toBe('Revert allApprove all')
   })
 
   it('an approval made after the list changed approves nothing and says so in the toolbar', async () => {
@@ -173,7 +201,7 @@ describe('AgentPanel Changes tab', () => {
     expect(note.getAttribute('role')).toBe('status')
     expect(note.title).toBe('The changes were updated — review again. Nothing was approved.')
     expect(note.parentElement!.classList.contains('agent-activity-toolbar')).toBe(true)
-    expect(note.nextElementSibling?.textContent).toBe('Revert all')
+    expect(note.nextElementSibling?.textContent).toBe('Revert allApprove all')
     // An approval that applies clears it.
     mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_approve_all' ? { applied: true, view: view(4, []) } : fresh)
     fireEvent.click(screen.getByRole('button', { name: 'Approve all' }))
@@ -263,14 +291,14 @@ describe('AgentPanel Changes tab', () => {
     expect(useReviewFocus.getState().focus).toBeNull()
   })
 
-  it('a user change stays focusable only while "show my changes" lists it', async () => {
+  it('a user change stays focusable only while the user-changes switch lists it', async () => {
     useReview.setState({ showUser: true })
     render(<AgentPanel editor />)
     await flush()
     act(() => selectChange('Layer:mine'))
     act(() => { useReview.getState().apply(view(2), true) })
     expect(useReviewFocus.getState().focus).toEqual({ kind: 'change', source: 'review', id: 'Layer:mine' })
-    fireEvent.click(screen.getByRole('button', { name: 'Show my changes (1)' }))
+    fireEvent.click(userSwitch())
     expect(useReviewFocus.getState().focus).toBeNull()
   })
 

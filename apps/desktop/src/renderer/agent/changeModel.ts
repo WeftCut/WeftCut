@@ -5,7 +5,7 @@ import type { AgentActivitySnapshot } from '../../shared/agent-activity'
 import { entityKey, parseEntityKey, type Change, type EntityKind } from '../../shared/review'
 
 /** Whose change a row lists: an unreviewed (agent-touched) one, or one only the
- *  user made — shown under "show my changes", never needing approval. */
+ *  user made — listed by the Changes tab's user-changes switch, never needing approval. */
 export type ChangeSource = 'agent' | 'user'
 export interface ChangeRow {
   change: Change

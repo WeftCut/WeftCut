@@ -74,6 +74,12 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-retention-note { margin: 0; padding: calc(7 * var(--ui-px)) calc(12 * var(--ui-px)); color: var(--muted-foreground); font-size: var(--font-size-micro); line-height: 1.5; }
 /* The retention note closes the list and scrolls with it. */
 .agent-retention-note.agent-list-footnote { padding: calc(10 * var(--ui-px)) calc(7 * var(--ui-px)) 0; }
+/* The user's own changes, after the list (or under its empty message): a
+   muted count and a text switch that lists them. */
+.agent-changes-user-note { margin: 0; padding: calc(10 * var(--ui-px)) calc(7 * var(--ui-px)) 0; color: var(--muted-foreground); font-size: var(--font-size-caption); }
+.agent-empty > .agent-changes-user-note { padding: calc(6 * var(--ui-px)) 0 0; }
+.agent-changes-user-note > button { display: inline; padding: 0; border: 0; background: none; color: var(--primary); font: inherit; cursor: pointer; }
+.agent-changes-user-note > button:hover { text-decoration: underline; }
 .agent-connect-dialog { width: min(var(--dialog-width-settings), 90vw); max-height: 85vh; background: var(--card); color: var(--foreground); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .agent-connect-dialog > header { display: flex; justify-content: space-between; align-items: center; padding: calc(12 * var(--ui-px)) calc(16 * var(--ui-px)); border-bottom: 1px solid var(--border); }
 .agent-connect-dialog-body { padding: calc(16 * var(--ui-px)); max-height: calc(85vh - calc(55 * var(--ui-px))); overflow: auto; font-size: var(--font-size-body); }
@@ -119,12 +125,23 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-tack.unplaced .agent-activity-copy small { font-style: italic; }
 .agent-tack-body { margin: 0 0 calc(8 * var(--ui-px)); white-space: pre-wrap; overflow-wrap: anywhere; max-height: calc(220 * var(--ui-px)); overflow: auto; }
 /* Changes tab (ADR 0115): rows reuse the tack row layout; the class badge
-   carries the review hue, user-only rows ("show my changes") are muted. */
+   carries the review hue, user-only rows (the user-changes switch) are muted. */
 .agent-panel-tab-count.tab-changes { background: color-mix(in srgb, var(--review-modified) 24%, transparent); }
 .agent-changes-approve-all, .agent-changes-revert-all { border: 1px solid var(--border); font-size: var(--font-size-caption); flex: none; }
-/* Revert all and Approve all sit together at the toolbar's end. */
-.agent-activity-toolbar .agent-changes-revert-all { margin-left: auto; }
-.agent-activity-toolbar .agent-changes-revert-all + button.agent-changes-approve-all:last-child { margin-left: 0; }
+/* Revert all and Approve all sit together at the toolbar's end, and wrap as one. */
+.agent-changes-actions { display: flex; flex: none; gap: calc(3 * var(--ui-px)); margin-left: auto; }
+.agent-changes-actions button.agent-changes-approve-all:last-child { margin-left: 0; }
+/* The diff stat (ChangeStats) at the toolbar's start: signed figures in their
+   class hue, a zero one stepped back so the stat keeps its shape. */
+.agent-changes-stats { display: flex; flex: none; align-items: baseline; gap: calc(10 * var(--ui-px)); margin: 0 calc(6 * var(--ui-px)) 0 calc(2 * var(--ui-px)); font-size: var(--font-size-heading); line-height: 1; font-variant-numeric: tabular-nums; font-weight: 600; }
+.agent-changes-stat.class-added { color: var(--review-added); }
+.agent-changes-stat.class-removed { color: var(--review-removed); }
+.agent-changes-stat.class-modified { color: var(--review-modified); }
+.agent-changes-stat.is-zero { color: var(--muted-foreground); font-weight: 400; }
+/* In a narrow panel the Changes toolbar wraps whole controls to a second row
+   rather than breaking a label. */
+.agent-changes .agent-activity-toolbar { flex-wrap: wrap; row-gap: calc(6 * var(--ui-px)); }
+.agent-changes .agent-activity-toolbar button { white-space: nowrap; }
 /* An approve or revert all that named a list since changed: said in the toolbar. */
 .agent-changes-stale { flex: 1; min-width: 0; text-align: right; color: var(--muted-foreground); font-size: var(--font-size-micro); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-change-group-heading { display: flex; align-items: baseline; justify-content: space-between; gap: calc(8 * var(--ui-px)); margin: 0; padding: calc(10 * var(--ui-px)) calc(7 * var(--ui-px)) calc(4 * var(--ui-px)); font-size: var(--font-size-body); font-weight: 500; }

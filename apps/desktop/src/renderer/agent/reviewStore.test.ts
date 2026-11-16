@@ -162,7 +162,7 @@ describe('review consumers', () => {
     release()
   })
 
-  it('asks for the user-only list only while "show my changes" is on', async () => {
+  it('asks for the user-only list only while the user-changes switch is on', async () => {
     const mine = change({ id: 'Layer:mine' })
     mocks.invoke.mockImplementation(async (_: string, args: { include_user?: boolean }) =>
       ({ ...view(1, 1), user: args.include_user ? [mine] : [], user_count: 1 }))
