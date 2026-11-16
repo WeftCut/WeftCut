@@ -1689,11 +1689,9 @@ const enUS = {
     // stepper through its changes, play, the neighbouring ranges, close.
     range_bar: {
       label: "Changed range",
-      whole_one: "{{count}} change",
-      whole_other: "All {{count}}",
-      step: "{{index}} / {{count}}",
-      prev_change: "Previous change in this range",
-      next_change: "Next change in this range",
+      play: "Play",
+      spot: "{{index}} of {{count}}",
+      step: "change {{index}} of {{count}}",
       close: "Let go of this range",
     },
     approve_all: "Approve all",
@@ -3029,6 +3027,9 @@ const enUS = {
     update_body_error: "Open the update to try again.",
   },
   log: {
+    changed_range_at: "Changed range {{index}} of {{count}} · {{line}}",
+    changed_range_last: "No later changed range",
+    changed_range_first: "No earlier changed range",
     save_failing: "Save failed: project.json cannot be written",
     save_recovered: "Project saved again",
     level_filter: "Severity filter",

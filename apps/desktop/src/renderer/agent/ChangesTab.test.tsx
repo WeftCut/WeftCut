@@ -365,7 +365,7 @@ describe('AgentPanel Changes tab', () => {
     } finally { delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView }
   })
 
-  it('a focused range frames its rows under a bar that steps through them; Esc steps back, then lets go', async () => {
+  it('a focused range frames its rows under a bar that names it; a framed row steps to it, Esc steps back, then lets go', async () => {
     const pair: ChangedRange = { composition_id: ROOT_ID, class: 'modified', t_start_us: S, t_end_us: 9 * S, before_start_us: S, before_end_us: 9 * S,
       source: 'review', change_ids: ['Layer:late', 'Layer:early'] }
     mocks.invoke.mockImplementation(async (channel: string, args?: { include_user?: boolean }) =>
@@ -380,18 +380,18 @@ describe('AgentPanel Changes tab', () => {
       expect(framed()).toEqual(['Layer:early', 'Layer:late'])
       expect(scrolled.at(-1)).toBe('Layer:early')
       const bar = screen.getByRole('group', { name: 'Changed range' })
-      expect(bar.textContent).toContain('All 2')
-      // Steps follow the rows, top to bottom.
-      fireEvent.click(within(bar).getByRole('button', { name: 'Next change in this range' }))
-      expect(useReviewFocus.getState().focus).toMatchObject({ kind: 'range', step: 'Layer:early' })
-      expect(bar.textContent).toContain('1 / 2')
-      expect(rows().find(r => r.dataset.changeId === 'Layer:early')!.dataset.selected).toBe('true')
-      // A framed row's click steps to it, keeping the range.
+      // Which of the timeline's ranges it is; which change only once one is pointed at.
+      expect(bar.textContent).toContain('1 of 1')
+      expect(bar.textContent).not.toContain('change 2 of 2')
+      // A framed row's click steps to it, keeping the range; the line says which, in row order.
       fireEvent.click(within(rows().find(r => r.dataset.changeId === 'Layer:late')!).getByRole('button', { name: /Late clip/ }))
       expect(useReviewFocus.getState().focus).toMatchObject({ kind: 'range', step: 'Layer:late' })
-      fireEvent.keyDown(within(bar).getByRole('button', { name: 'Next change in this range' }), { key: 'Escape' })
+      expect(rows().find(r => r.dataset.changeId === 'Layer:late')!.dataset.selected).toBe('true')
+      expect(bar.textContent).toContain('change 2 of 2')
+      const close = within(bar).getByRole('button', { name: 'Let go of this range' })
+      fireEvent.keyDown(close, { key: 'Escape' })
       expect(useReviewFocus.getState().focus).toMatchObject({ kind: 'range', step: null })
-      fireEvent.keyDown(within(bar).getByRole('button', { name: 'Next change in this range' }), { key: 'Escape' })
+      fireEvent.keyDown(close, { key: 'Escape' })
       expect(useReviewFocus.getState().focus).toBeNull()
       expect(screen.queryByRole('group', { name: 'Changed range' })).toBeNull()
       expect(framed()).toEqual([])

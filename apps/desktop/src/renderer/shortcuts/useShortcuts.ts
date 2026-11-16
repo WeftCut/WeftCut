@@ -14,7 +14,15 @@ import { usePickSessionStore } from "../colorpick/pickColor";
 import { activeRegion } from "../focus/focusRegionStore";
 import type { PanelKind } from "../workspace/panelRegistry";
 
-export type Handler = () => void | Promise<void>;
+/// What a synchronous command can say it did, in place of its generic
+/// `Shortcut` row: a walk names where it landed, or that there was nowhere
+/// left to go. Still one row per dispatch.
+export interface CommandOutcome {
+  message: string;
+  i18n_key: string;
+  i18n_args?: Record<string, unknown>;
+}
+export type Handler = () => void | CommandOutcome | Promise<void>;
 export type HandlerMap = Partial<Record<ActionId, Handler>>;
 export type OverrideMap = Partial<Record<ActionId, string[]>>;
 
@@ -212,7 +220,7 @@ export function useShortcuts({
 /// catalogue. Exported for the macOS native menu (`menu/nativeMenu.ts`), which
 /// dispatches the same actions through the same handler map — a menu-chosen
 /// Save must log exactly like the Cmd+S that would otherwise have run it.
-export function runWithLogging(actionId: ActionId, fn: () => void | Promise<void>) {
+export function runWithLogging(actionId: ActionId, fn: Handler) {
   runCommandWithLogging(actionId, ACTION_DEFS[actionId].labelKey, fn);
 }
 
@@ -237,9 +245,9 @@ export function runWithLogging(actionId: ActionId, fn: () => void | Promise<void
 export function runCommandWithLogging(
   id: string,
   labelKey: string,
-  fn: () => void | Promise<void>,
+  fn: Handler,
 ) {
-  let result: void | Promise<void>;
+  let result: void | CommandOutcome | Promise<void>;
   try {
     result = fn();
   } catch (err) {
@@ -247,13 +255,14 @@ export function runCommandWithLogging(
     return;
   }
   if (!result || typeof (result as Promise<void>).then !== "function") {
+    const outcome = result as CommandOutcome | undefined;
     void logEmit({
       level: "info",
       category: { kind: "Shortcut" },
       source: { kind: "User" },
-      message: `Shortcut: ${id}`,
-      i18n_key: "log.shortcut_ok",
-      i18n_args: { actionId: id, label_key: labelKey },
+      message: outcome?.message ?? `Shortcut: ${id}`,
+      i18n_key: outcome?.i18n_key ?? "log.shortcut_ok",
+      i18n_args: outcome ? { actionId: id, label_key: labelKey, ...outcome.i18n_args } : { actionId: id, label_key: labelKey },
     });
     return;
   }

@@ -94,6 +94,15 @@ describe('walking and playing on the open timeline', () => {
     expect(walk(-1)).toEqual([cut.t_start_us, rangeKey(cut)])
   })
 
+  it('says where it landed for the status line, and that there is nothing further at an end', () => {
+    expect(walkChangedRange(1)).toMatchObject({ i18n_key: 'log.changed_range_at', i18n_args: { index: 1, count: 3 } })
+    walkChangedRange(1)
+    expect(walkChangedRange(1)).toMatchObject({ i18n_args: { index: 3, count: 3 } })
+    expect(walkChangedRange(1)).toMatchObject({ i18n_key: 'log.changed_range_last' })
+    selectRange(a)
+    expect(walkChangedRange(-1)).toMatchObject({ i18n_key: 'log.changed_range_first' })
+  })
+
   it('walks from the playhead when nothing is focused', () => {
     releaseFocus()
     setPlayheadTimeUs(6 * S)

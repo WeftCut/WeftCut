@@ -69,7 +69,9 @@ export function Menu({ label, hint, children }: MenuProps) {
 interface MenuItemProps {
   label: string;
   hint?: string;
-  onSelect: () => void | Promise<void>;
+  /// A command handler may answer with what it did (its log row); a menu
+  /// only runs it.
+  onSelect: () => unknown;
   disabled?: boolean;
   /// Renders a check glyph; useful for radio-style preset rows.
   checked?: boolean;

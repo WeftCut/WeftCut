@@ -209,11 +209,6 @@ export function rangeStepsIn(range: ChangedRange, source: ChangeSource, listed: 
   return source === 'activity' ? [...range.change_ids] : orderSteps(range.change_ids, listed)
 }
 
-/** `rangeStepsIn` over the lists held now. */
-function rangeSteps(range: ChangedRange, source: ChangeSource): EntityKey[] {
-  const r = useReview.getState()
-  return rangeStepsIn(range, source, source === 'activity' ? [] : listedOrder(r.view, r.showUser, useProjectStore.getState().summary?.root_id ?? null))
-}
 
 /** Point at change `step` of the focused range, keeping the range as context
  *  (null: the whole range again). Nothing without a focused range. */
@@ -221,18 +216,6 @@ export function stepRangeTo(step: EntityKey | null): void {
   const { focus, range } = useReviewFocus.getState()
   if (focus?.kind !== 'range') return
   setReviewFocus({ ...focus, range: range ?? focus.range, step })
-}
-
-/** Step through the focused range's changes: position 0 is the whole range,
- *  1… its changes in `rangeSteps` order. No wrap — the ends are where the
- *  stepper stops. */
-export function stepRange(delta: -1 | 1): void {
-  const { focus, range } = useReviewFocus.getState()
-  if (focus?.kind !== 'range' || range === null) return
-  const steps = rangeSteps(range, focus.source)
-  const at = focus.step === null ? 0 : steps.indexOf(focus.step) + 1
-  const next = Math.max(0, Math.min(steps.length, at + delta))
-  if (next !== at) stepRangeTo(next === 0 ? null : steps[next - 1]!)
 }
 
 /** Esc in the panel: a change stepped to inside a range goes back to the

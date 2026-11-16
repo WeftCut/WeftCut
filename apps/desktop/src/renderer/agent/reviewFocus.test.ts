@@ -7,7 +7,7 @@ import type { AgentActivitySnapshot, AgentWorkSession } from '../../shared/agent
 import { resetReviewForTests, useReview } from './reviewStore'
 import {
   EMPTY_FOCUS_PAINT, buildFocusPaint, escapeFocus, focusRevealScrollLeft, hitBand, orderSteps, rangeKey, resolveRange, selectChange, selectRange, selectTack,
-  setReviewFocus, setReviewHover, stepRange, useFocusPaint, useReviewFocus,
+  setReviewFocus, setReviewHover, stepRangeTo, useFocusPaint, useReviewFocus,
 } from './reviewFocus'
 import { EMPTY_HIGHLIGHT, rangeMarks } from './reviewHighlight'
 import { tackGroupKey, tackRowKey } from './expansion'
@@ -361,23 +361,16 @@ describe('a changed range as the focus', () => {
     expect(p.washes).toEqual([{ kind: 'change', compositionId: 'root', startUs: S, endUs: 2 * S }])
   })
 
-  it('steps from the whole range through its changes in the list\'s row order, without wrapping', () => {
+  it('points at one of its changes with the range kept as context, and back', () => {
     selectRange(pair)
-    stepRange(-1)
-    expect(focus()).toMatchObject({ step: null })
-    stepRange(1)
+    stepRangeTo('Layer:b')
     expect(focus()).toMatchObject({ kind: 'range', step: 'Layer:b' })
     // Stepped: that change is focused over a fainter wash of the range.
     const p = useFocusPaint.getState()
     expect([...p.layers]).toEqual([['b', 'change']])
     expect([...p.spotlit]).toEqual(['Layer:b'])
     expect(p.washes[0]).toEqual({ kind: 'change', compositionId: 'root', startUs: S, endUs: 2 * S, context: true })
-    stepRange(1)
-    expect(focus()).toMatchObject({ step: 'Layer:a' })
-    stepRange(1)
-    expect(focus()).toMatchObject({ step: 'Layer:a' })
-    stepRange(-1)
-    stepRange(-1)
+    stepRangeTo(null)
     expect(focus()).toMatchObject({ kind: 'range', step: null })
   })
 

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import type { ActionId } from "../shortcuts/defs";
-import { runCommandWithLogging } from "../shortcuts/useShortcuts";
+import { runCommandWithLogging, type Handler } from "../shortcuts/useShortcuts";
 
 /// The unified user-invocable command surface: providers registered here are
 /// the one catalog the search palette reads. Module-level, playbackStore-style:
@@ -18,7 +18,7 @@ export interface CommandDef {
   /// Current state of a checkable command (armed tool, active mode).
   /// Evaluated at render time, like `enabled`; absent = not checkable.
   checked?: () => boolean;
-  run: () => void | Promise<void>;
+  run: Handler;
 }
 
 type Provider = () => CommandDef[];

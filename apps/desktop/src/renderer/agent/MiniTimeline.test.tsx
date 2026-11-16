@@ -127,19 +127,6 @@ it("paints touching ranges of one look as one block, every range still named", (
   expect(hit.title).toBe("modified 1\nmodified 2");
 });
 
-it("paints a range only out of sync apart from solid ones, never merged with them", () => {
-  const sync = { sync_offset_us: 2_000_000 };
-  const { container } = render(<MiniTimeline durationUs={10_000_000} markers={[]}
-    changes={marks(
-      ["modified", 1_000_000, 2_000_000, ["Layer:a"], { ...sync, only: "sync" }],
-      ["modified", 2_000_000, 3_000_000, ["Layer:b"], { ...sync }],
-      ["modified", 3_000_000, 4_000_000, ["Layer:c"], { ...sync, only: "sync", sync_bound: true }],
-    )}
-    onSeek={() => {}} fpsNum={30} fpsDen={1} />);
-  const band = [...container.querySelectorAll<HTMLElement>("[data-testid='mini-change']")];
-  expect(band.map((b) => [b.dataset.sync, b.dataset.count])).toEqual([["loose", "1"], ["mixed", "1"], ["bound", "1"]]);
-});
-
 describe("review focus on the strip", () => {
   const tacks = [
     { id: "long", t_us: 1_000_000, end_t_us: 6_000_000, label: "Long", kind: "note" },

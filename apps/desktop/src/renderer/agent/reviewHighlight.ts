@@ -17,8 +17,9 @@ export type ReviewClipMark = Exclude<ChangeClass, 'removed'>
 /** How loud a change shows: as loud as the film difference it plays in
  *  (ADR 0169). `full` where a changed range lists it, `soft` where only loose
  *  sync ranges do, `quiet` where none does — touched, but the film plays the
- *  same (displaced only, or a label or a lock). Weight never hides a change:
- *  the entity diff stays whole (ADR 0116). */
+ *  same (displaced only, or a label or a lock). Soft and quiet draw alike
+ *  and differ in their words. Weight never hides a change: the entity diff
+ *  stays whole (ADR 0116). */
 export type ReviewWeight = 'full' | 'soft' | 'quiet'
 
 /** Each listed change's weight by the ranges that list it — attribution,
@@ -27,7 +28,7 @@ export type ReviewWeight = 'full' | 'soft' | 'quiet'
 export function changeWeights(ranges: readonly ChangedRange[]): ReadonlyMap<string, Exclude<ReviewWeight, 'quiet'>> {
   const out = new Map<string, Exclude<ReviewWeight, 'quiet'>>()
   for (const r of ranges) {
-    // A loose sync range is hatched on the ruler, not filled: soft.
+    // Out of sync only between unbound layers: soft, worded apart from quiet.
     const w = rangeSync(r) === 'loose' ? 'soft' : 'full'
     for (const id of r.change_ids) if (out.get(id) !== 'full') out.set(id, w)
   }

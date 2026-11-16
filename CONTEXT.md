@@ -842,7 +842,8 @@ _Avoid_: diff hunk, region, shifted range; desync as a class
 **Review weight**:
 How loud an unreviewed change shows on its clip and row: full, soft (listed
 only by loose out-of-sync ranges) or quiet (listed by no changed range, so the
-film plays the same there). Not a class and not a stat. See ADR 0169.
+film plays the same there). Soft and quiet draw alike and differ in their
+words. Not a class and not a stat. See ADR 0169.
 _Avoid_: moved only, shifted
 
 **Cut point**:

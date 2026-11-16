@@ -1497,11 +1497,9 @@ const zhCN: Resources = {
     // 前后区间、关闭。
     range_bar: {
       label: "变化区间",
-      whole_one: "共 {{count}} 项",
-      whole_other: "全部 {{count}} 项",
-      step: "{{index}} / {{count}}",
-      prev_change: "区间内上一项",
-      next_change: "区间内下一项",
+      play: "播放",
+      spot: "第 {{index}}/{{count}} 处",
+      step: "第 {{index}}/{{count}} 项",
       close: "取消聚焦此区间",
     },
     approve_all: "全部批准",
@@ -2753,6 +2751,9 @@ const zhCN: Resources = {
     update_body_error: "打开更新窗口重试。",
   },
   log: {
+    changed_range_at: "变化区间 第 {{index}}/{{count}} 处 · {{line}}",
+    changed_range_last: "已是最后一处变化区间",
+    changed_range_first: "已是第一处变化区间",
     save_failing: "保存失败：无法写入 project.json",
     save_recovered: "项目已重新保存",
     level_filter: "严重程度筛选",

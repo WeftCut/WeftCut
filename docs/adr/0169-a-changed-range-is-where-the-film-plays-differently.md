@@ -62,15 +62,19 @@ relative timing.
   bound sync broken) is drawn as one fact: a dashed foot only, the ruler's
   body left to its ticks, with a light wash under the pointer or the focus;
   every desync marks its onset with a tick, and with ⇄ where the
-  ruler has room. A press there still scrubs; the hover names the range.
+  ruler has room. The mini timeline's band is too thin to say more and draws
+  every modified range alike. A press there still scrubs; the hover names the range.
 - **A range is reviewed as a whole.** A double press on the ruler, or a press
   on the mini timeline's band, focuses the range itself, not one of its
   changes; after every recompute it is found again by the changes it shares
-  (most shared, then nearest span) and goes when none is left. The panel steps
-  through its changes in the list's row order with the range kept as context;
-  Esc steps back, then lets go. Alt+↑/↓ walk the ranges of the timeline on
+  (most shared, then nearest span) and goes when none is left. The panel heads
+  its framed rows with one flat bar: play, the range's line, which of the
+  timeline's ranges it is between the way to its neighbours, close. A press on
+  a framed row points at that change with the range kept as context; Esc
+  steps back, then lets go. Alt+↑/↓ walk the ranges of the timeline on
   screen without wrapping, and unlike a focus they seek: the playhead parks on
-  the range's start, a cut point on the cut. Shift+Space plays the focused
+  the range's start, a cut point on the cut. A walk names where it landed (or
+  that none is left that way) in the status line and never opens the panel. Shift+Space plays the focused
   range, else the one under or after the playhead, from 1 s before it to
   0.5 s after (a cut point 2 s either side); the transport pauses there, any
   play, pause, seek or scrub drops that stop, and in and out points are left
@@ -78,9 +82,10 @@ relative timing.
 - Clip marks, the change list and the entity stat stay with the entity diff:
   every change keeps its mark, its row and its class. A mark and a row are as
   loud as the ranges that list the change: a solid edge where a changed range
-  does, a dashed edge where only a loose sync range lists a modified change,
-  and a faint hairline noted "plays the same" where none does (displaced only,
-  or a change with no playback effect). Weight is read from `change_ids`,
+  does, a faint hairline where none does (displaced only, or a change with no
+  playback effect: "plays the same") or only a loose sync range lists a
+  modified change ("out of sync only"): the clip itself plays what it did, and
+  the ruler already marks the relation. Weight is read from `change_ids`,
   never from time overlap, and never hides, reorders or counts a change. The
   stat gains how many ranges there are to review and how long they run. Removed clips keep a track ghost only where
   their track is empty now. A selected activity's ranges are found between its

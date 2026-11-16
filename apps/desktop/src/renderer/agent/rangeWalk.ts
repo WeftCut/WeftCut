@@ -15,6 +15,10 @@ import { currentOpenComposition } from '../state/projectStore'
 import { playRootSpan, seekToClamped } from '../state/navigation'
 import { compositionChangeRanges, rangesShowUser, selectHighlight, useReview } from './reviewStore'
 import { rangeKey, selectRange, useReviewFocus } from './reviewFocus'
+import i18n from '../i18n'
+import type { CommandOutcome } from '../shortcuts/useShortcuts'
+import type { Translate } from './changeWords'
+import { rangeLine } from './rangeWords'
 
 /** How much of the film a play shows before a range and after it: enough
  *  to hear what leads in and to see it settle. */
@@ -67,17 +71,33 @@ export function nextRange(
 
 /** Walk to the previous or next changed range: park the playhead on its
  *  start (a cut point: on the cut) and focus it. From the focused range when
- *  it is on this timeline, else from the playhead. */
-export function walkChangedRange(dir: 1 | -1): void {
+ *  it is on this timeline, else from the playhead.
+ *
+ *  It answers with the status line's words, as a walk usually runs with the
+ *  panel closed: which range it landed on and what it is, or that there is
+ *  none further that way. Never opens the panel. */
+export function walkChangedRange(dir: 1 | -1): CommandOutcome | undefined {
   const comp = currentOpenComposition()
-  if (comp === null) return
+  if (comp === null) return undefined
   const { focus, range } = useReviewFocus.getState()
   const from = focus?.kind === 'range' && range !== null && range.composition_id === comp.id ? { range } : { playheadUs: focusedPlayheadUs() }
-  const next = nextRange(walkableRanges(), from, dir, (us) => displayedFrameStartUs(us, comp.fps_num, comp.fps_den))
-  if (next === null) return
+  const ranges = walkableRanges()
+  const next = nextRange(ranges, from, dir, (us) => displayedFrameStartUs(us, comp.fps_num, comp.fps_den))
+  if (next === null) {
+    if (ranges.length === 0) return undefined
+    const key = dir === 1 ? 'log.changed_range_last' : 'log.changed_range_first'
+    return { message: dir === 1 ? 'No later changed range' : 'No earlier changed range', i18n_key: key }
+  }
   // Seek first: the focus's reveal then scrolls to the range the playhead is on.
   seekToClamped(focusedRootUs(next.t_start_us))
   selectRange(next)
+  const index = ranges.findIndex(r => rangeKey(r) === rangeKey(next)) + 1
+  const line = rangeLine(next, i18n.t.bind(i18n) as unknown as Translate)
+  return {
+    message: `Changed range ${index} of ${ranges.length}`,
+    i18n_key: 'log.changed_range_at',
+    i18n_args: { index, count: ranges.length, line },
+  }
 }
 
 /** What a play of `r` runs, on its composition's clock: from a lead-in before
