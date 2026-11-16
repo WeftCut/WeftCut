@@ -9,7 +9,7 @@
 // The input is deliberately just a change set: the Review view's unreviewed
 // list, or one activity's own changes (`review_activity_view`) — both through
 // the same function onto the same surfaces (`reviewStore.ts`).
-import { changeKind, parseEntityKey, type Change, type ChangeClass, type ChangedRange, type EntityKind, type GroupDecoration } from '../../shared/review'
+import { changeKind, parseEntityKey, rangeSync, type Change, type ChangeClass, type ChangedRange, type EntityKind, type GroupDecoration } from '../../shared/review'
 
 /** How a CURRENT clip is decorated. `removed` has no current clip: it is a ghost. */
 export type ReviewClipMark = Exclude<ChangeClass, 'removed'>
@@ -21,17 +21,14 @@ export type ReviewClipMark = Exclude<ChangeClass, 'removed'>
  *  the entity diff stays whole (ADR 0116). */
 export type ReviewWeight = 'full' | 'soft' | 'quiet'
 
-/** Out of sync only, between tracks no link or dialogue binds: the ruler
- *  hatches it rather than filling it, and a change only there is `soft`. */
-const looseSync = (r: ChangedRange): boolean => r.only === 'sync' && !r.sync_bound
-
 /** Each listed change's weight by the ranges that list it — attribution,
  *  never time overlap. Only the ranges given count: one the surface does not
  *  hold promotes nothing. A change absent from the map is `quiet`. */
 export function changeWeights(ranges: readonly ChangedRange[]): ReadonlyMap<string, Exclude<ReviewWeight, 'quiet'>> {
   const out = new Map<string, Exclude<ReviewWeight, 'quiet'>>()
   for (const r of ranges) {
-    const w = looseSync(r) ? 'soft' : 'full'
+    // A loose sync range is hatched on the ruler, not filled: soft.
+    const w = rangeSync(r) === 'loose' ? 'soft' : 'full'
     for (const id of r.change_ids) if (out.get(id) !== 'full') out.set(id, w)
   }
   return out

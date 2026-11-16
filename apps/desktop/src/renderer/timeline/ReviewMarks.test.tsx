@@ -153,7 +153,7 @@ describe("Review overlay clip decorations", () => {
     });
     // "shifted" slid with a ripple: the range over its stretch names others.
     const weighed: ReviewView = { ...view, version: { ...view.version, revision: 2 }, ranges: [
-      range(["Layer:added"], { class: "added" }), range(["Layer:edited"]), range(["Layer:moved"], { only: "sync" }),
+      range(["Layer:added"], { class: "added" }), range(["Layer:edited"]), range(["Layer:moved"], { only: "sync", sync_offset_us: 2 * S }),
     ] };
     const weights = (c: HTMLElement) => Object.fromEntries(q(c, '[data-testid="review-clip-mark"]').map((m) => [m.closest<HTMLElement>("[data-layer-id]")!.dataset.layerId, m.dataset.reviewWeight]));
     const block = (c: HTMLElement, id: string) => c.querySelector<HTMLElement>(`[data-layer-id="${id}"]`)!;

@@ -317,7 +317,7 @@ describe('AgentPanel Changes tab', () => {
 
   it('a row the film shows less loudly says so after its line, in the entity diff\'s order', async () => {
     const changed = (ids: string[], only?: 'sync'): ChangedRange => ({ composition_id: ROOT_ID, class: 'modified', t_start_us: 0, t_end_us: 9 * S,
-      before_start_us: 0, before_end_us: 9 * S, source: 'review', change_ids: ids as ChangedRange['change_ids'], ...(only ? { only } : {}) })
+      before_start_us: 0, before_end_us: 9 * S, source: 'review', change_ids: ids as ChangedRange['change_ids'], ...(only ? { only, sync_offset_us: 2 * S } : {}) })
     mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_view'
       ? { ...view(1, unreviewed, []), ranges: [changed(['Layer:early', 'Layer:inner']), changed(['Layer:late'], 'sync')] }
       : { available: true, url: '', connections: [] })

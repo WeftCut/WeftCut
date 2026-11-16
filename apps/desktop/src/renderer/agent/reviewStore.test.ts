@@ -244,8 +244,8 @@ describe('review mark weight', () => {
     composition_id: 'root', class: 'modified', t_start_us: 0, t_end_us: 1_000_000, before_start_us: 0, before_end_us: 1_000_000,
     source: 'review', change_ids: ids as ChangedRange['change_ids'], ...patch,
   })
-  const loose = (ids: string[]) => range(ids, { only: 'sync' })
-  const bound = (ids: string[]) => range(ids, { only: 'sync', sync_bound: true })
+  const loose = (ids: string[]) => range(ids, { only: 'sync', sync_offset_us: 2_000_000 })
+  const bound = (ids: string[]) => range(ids, { only: 'sync', sync_offset_us: 2_000_000, sync_bound: true })
   const layer = (id: string) => change({ id: `Layer:${id}`, class: 'modified' })
   const weightOf = (id: string, ranges: ChangedRange[]) =>
     buildReviewHighlight([layer(id)], [], ranges).layerWeights.get(id)
