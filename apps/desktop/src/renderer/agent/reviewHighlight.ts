@@ -40,9 +40,13 @@ export function changeWeights(ranges: readonly ChangedRange[]): ReadonlyMap<stri
 const WEIGHED = new Set<EntityKind>(['Layer', 'Transition', 'AudioRole'])
 
 /** `change`'s weight under `weights` (`changeWeights`), or null for a kind no
- *  range lists. */
-export function changeWeight(change: Pick<Change, 'id'>, weights: ReadonlyMap<string, Exclude<ReviewWeight, 'quiet'>>): ReviewWeight | null {
-  return WEIGHED.has(changeKind(change)) ? weights.get(change.id) ?? 'quiet' : null
+ *  range lists. Only a modified change can be soft: a clip removed or added
+ *  where a loose sync range opens is the content the rest moved apart over,
+ *  not something that plays the same elsewhere. */
+export function changeWeight(change: Pick<Change, 'id' | 'class'>, weights: ReadonlyMap<string, Exclude<ReviewWeight, 'quiet'>>): ReviewWeight | null {
+  if (!WEIGHED.has(changeKind(change))) return null
+  const w = weights.get(change.id) ?? 'quiet'
+  return w === 'soft' && change.class !== 'modified' ? 'full' : w
 }
 
 /** A removed layer, outlined where it was on a track that still exists
@@ -157,7 +161,7 @@ export function buildReviewHighlight(changes: readonly Change[], decorations: re
     if (kind !== 'Layer') continue
     if (c.class !== 'removed') {
       layers.set(id, c.class)
-      layerWeights.set(id, weights.get(c.id) ?? 'quiet')
+      layerWeights.set(id, changeWeight(c, weights) ?? 'quiet')
       layerChanges.set(id, c.id)
       const r = c.ranges[0]
       if (r && r.track_id !== null) for (const d of c.details) {

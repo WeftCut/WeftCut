@@ -289,10 +289,18 @@ describe('review mark weight', () => {
 
   it('gives no weight to a kind no range can list', () => {
     const weights = changeWeights([range(['Marker:m', 'Layer:c'])])
-    expect(changeWeight({ id: 'Marker:m' }, weights)).toBeNull()
-    expect(changeWeight({ id: 'Track:t' }, weights)).toBeNull()
-    expect(changeWeight({ id: 'Layer:c' }, weights)).toBe('full')
-    expect(changeWeight({ id: 'Transition:x' }, weights)).toBe('quiet')
+    expect(changeWeight({ id: 'Marker:m', class: 'modified' }, weights)).toBeNull()
+    expect(changeWeight({ id: 'Track:t', class: 'modified' }, weights)).toBeNull()
+    expect(changeWeight({ id: 'Layer:c', class: 'modified' }, weights)).toBe('full')
+    expect(changeWeight({ id: 'Transition:x', class: 'modified' }, weights)).toBe('quiet')
+  })
+
+  it('never calls a removal a loose sync range opens over "out of sync only"', () => {
+    // The clip rippled out where the bed ran on: the range lists it, but it is
+    // the content the rest moved apart over, not content playing the same.
+    const weights = changeWeights([loose(['Layer:gone', 'Layer:moved'])])
+    expect(changeWeight({ id: 'Layer:gone', class: 'removed' }, weights)).toBe('full')
+    expect(changeWeight({ id: 'Layer:moved', class: 'modified' }, weights)).toBe('soft')
   })
 })
 
