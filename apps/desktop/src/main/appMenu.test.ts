@@ -53,6 +53,7 @@ function fullProjection(): MenuProjection {
   return {
     actions: {
       importMedia: { label: 'Import media…', keys: ['Mod+I'] },
+      importTimeline: { label: 'Import FCPXML…', keys: ['Mod+Shift+I'] },
       save: { label: 'Save', keys: ['Mod+S'] },
       saveAs: { label: 'Save as…', keys: ['Mod+Shift+S'] },
       closeProject: { label: 'Save and Close', keys: ['Mod+W'] },
@@ -125,6 +126,7 @@ describe('macOS application menu template', () => {
     const template = buildApplicationMenuTemplate({ projection: fullProjection(), dispatch: noop, appName: 'WeftCut' })
     expect(labelsOf(submenuOf(template, 'File'))).toEqual([
       'Import media…',
+      'Import FCPXML…',
       'Save',
       'Save as…',
       'Save and Close',
@@ -167,15 +169,17 @@ describe('macOS application menu template', () => {
   })
 
   it('omits what the current surface cannot run, rather than disabling it', () => {
-    // The startup screen has no project to save; it projects Settings only.
+    // The startup screen can import a fresh timeline but has no project to save or export.
     const template = buildApplicationMenuTemplate({
-      projection: { actions: { openSettings: { label: '设置…', keys: ['Mod+Comma'] } }, labels: {} },
+      projection: { actions: {
+        openSettings: { label: '设置…', keys: ['Mod+Comma'] },
+        importTimeline: { label: 'Import FCPXML…', keys: ['Mod+Shift+I'] },
+      }, labels: {} },
       dispatch: noop,
       appName: 'WeftCut',
     })
-    // No File menu at all — no dead entries, and no live-state IPC to keep it
-    // in step (ADR 0031: that sync cost is what full parity would buy).
-    expect(template.map((i) => i.label)).not.toContain('File')
+    // Only the import command is exposed in File — Save and Export stay omitted.
+    expect(labelsOf(submenuOf(template, 'File'))).toEqual(['Import FCPXML…'])
     expect(labelsOf(submenuOf(template, 'WeftCut'))).toContain('设置…')
   })
 

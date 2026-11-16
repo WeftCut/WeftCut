@@ -84,7 +84,7 @@ export function buildApplicationMenuTemplate(deps: AppMenuDeps): MenuItemConstru
 /// deliberate exception — it moves to the App menu on macOS.
 function fileSubmenu(deps: AppMenuDeps): MenuItemConstructorOptions[] {
   return sections([
-    item(deps, 'importMedia'),
+    [...item(deps, 'importMedia'), ...item(deps, 'importTimeline')],
     [...item(deps, 'save'), ...item(deps, 'saveAs'), ...item(deps, 'closeProject')],
     item(deps, 'export'),
   ])

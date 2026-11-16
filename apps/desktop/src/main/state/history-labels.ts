@@ -31,6 +31,7 @@ export const HISTORY_SUMMARY = {
   initial: { key: 'history.initial', text: 'Initial' },
 
   layerAdd: { key: 'history.layer.add', text: 'Added clip' },
+  timelineImportGroup: { key: 'history.timeline.import_group', text: 'Imported timeline into Group' },
   layerPaste: { key: 'history.layer.paste', text: 'Pasted clip' },
   layerDuplicate: { key: 'history.layer.duplicate', text: 'Duplicated clip' },
   layerMove: { key: 'history.layer.move', text: 'Moved clip' },

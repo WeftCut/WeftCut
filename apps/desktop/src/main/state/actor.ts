@@ -7,7 +7,7 @@ import { assertLockedLayersUnchanged } from './layerLocks'
 import type { Animated, AudioRole, Composition, Continuity, Interpolation, LayerParams, MarkerAnchor, MotifRebindEntry, Project, Rational, Rgba, TransitionKind, Uuid , TextParams} from './model'
 import { blankProject, eachLayer, rootComposition } from './model'
 import type { IdGen } from './ids'
-import { History, type Actor, type EntityRef, type TrackFlagsPatch, type RoleFlagsPatch, type ReviewState, type OpDiff } from './history'
+import { History, type Actor, type EntityRef, type HistoryEntry, type TrackFlagsPatch, type RoleFlagsPatch, type ReviewState, type OpDiff } from './history'
 import { mcpActor } from './mcp-actor'
 import { HISTORY_SUMMARY, addedLayersSummary, groupAddMembersSummary, groupCreateSummary, layersEnabledSummary, moveToCompositionSummary, pastedLayersSummary, removedMediaSummary, roleGainSummary, type HistorySummary } from './history-labels'
 import { CommandFailure, ValidationFailure, type CommandError } from './errors'
@@ -38,6 +38,7 @@ import { applyCompositionsDelete, applyGroupsAddMembers, applyGroupsCreate, appl
 import { applyMoveLayersToComposition } from './mutations/moveToComposition'
 import { applySetLayerFlags, applySetLayersEnabled, applyUpdateLayer, type LayerPatch } from './mutations/update'
 import { applyFitComposition } from './mutations/composition'
+import { applyImportedTimelineGroup, type ImportedCanvasPlacement } from './timeline-import/merge'
 import { applyDurationAutofit, compositionOf, locateLayer, locateTrack, requireLayer, requireSameComposition, requireTrack, scopeComposition } from './mutations/helpers'
 import { applyAttachMarker, applyDetachMarker, applyUpdateMarker, applyRemoveMarker, type MarkerPatch } from './mutations/markers'
 import { applyDeleteTrack, applyMoveTrack, applyRenameTrack } from './mutations/tracks'
@@ -164,13 +165,15 @@ export interface ActorOptions {
 }
 export type DispatchResult = { ok: true; value: unknown } | { ok: false; error: CommandError }
 
+export type InitialProjectEdit = Omit<HistoryEntry, 'op_id' | 'actor' | 'timestamp'>
+
 export interface ActorHandle {
   snapshot(): Project
   /** `by` attributes this one call's commits and checkpoints to someone other
    *  than the instance actor — how an MCP hybrid's writes carry its client. */
   dispatch(channel: string, args: Record<string, unknown>, by?: Actor): DispatchResult
   command(channel: string, wireArgs: Record<string, unknown>): DispatchResult
-  replaceState(next: Project): void
+  replaceState(next: Project, firstEdit?: InitialProjectEdit): void
   subscribe(cb: (e: ChangeEvent) => void): () => void
   historyView(limit: number): ReturnType<History['view']>
   historyStatus(): ReturnType<History['status']>
@@ -919,14 +922,22 @@ export function createActor(opts: ActorOptions): ActorHandle {
   //    FIRST (a failure mints NO id and leaves history intact); on success reset
   //    history to a single 'Initial' entry (drops the old project's snapshots +
   //    checkpoints + lock — they reference a different project_id) then broadcast
-  //    unrecorded. modified_at is NOT touched. Mints exactly 2 ids on success
-  //    (reset op_id + broadcast event id); a caller that built `next` via
-  //    blankProject already spent its 4 ids → 6 total. ──
-  function replaceState(next: Project): void {
+  //    unrecorded. A workspace created with a staged first edit keeps it as
+  //    one undo step. Mints the reset and event IDs, plus an ID for that edit.
+  //    modified_at is NOT touched. ──
+  function replaceState(next: Project, firstEdit?: InitialProjectEdit): void {
     opts.assertWritable?.()
     runValidate(next)                              // throws CommandFailure(ValidationFailed); no id spent
-    history.reset(next, actor, idGen(), clock())   // +1 id (the 'Initial' op_id)
+    if (firstEdit) {
+      if (firstEdit.snapshot.project_id !== next.project_id) {
+        throw new CommandFailure({ error: 'InvalidArgument', field: 'firstEdit', detail: 'The initial edit belongs to a different project' })
+      }
+      runValidate(firstEdit.snapshot)
+    }
+    const timestamp = clock()
+    history.reset(next, actor, idGen(), timestamp) // +1 id (the 'Initial' op_id)
     lockHolderMay = null
+    if (firstEdit) history.record({ ...firstEdit, op_id: idGen(), actor, timestamp })
     broadcastUnrecorded('Replaced project state', current(), { kind: 'Coarse' }, undefined, true)  // +1 id (the event op_id)
   }
 
@@ -964,6 +975,13 @@ export function createActor(opts: ActorOptions): ActorHandle {
         }
         // Creation ops take `composition_id?` (root by default) — the ONLY ops
         // that carry a scope; everything layer-addressed derives it (ADR 0052).
+        case 'import_timeline_group': {
+          if (a.expectedProjectId !== current().project_id)
+            throw new CommandFailure({ error: 'InvalidArgument', field: 'expectedProjectId', detail: 'The current project changed during import review' })
+          const id = commit(HISTORY_SUMMARY.timelineImportGroup, layerRef, { kind: 'Coarse' },
+            draft => applyImportedTimelineGroup(draft, a.imported as Project, idGen, a.canvas as ImportedCanvasPlacement))
+          return { ok: true, value: id }
+        }
         case 'add_track': { const comp = compositionArg(a); return { ok: true, value: commit(HISTORY_SUMMARY.trackAdd, trackRef, { kind: 'Coarse' }, (d) => applyAddTrack(d, idGen, (a.label as string) ?? null, undefined, comp)) } }
         // `anchor` rides the ADD for the same reason `add_markers` takes one per
         // row: the mark and its tie are one gesture, and splitting them into an

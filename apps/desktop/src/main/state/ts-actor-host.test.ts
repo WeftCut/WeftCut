@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync, existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, rmSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
 import nodePath from 'node:path'
-import { mapChangeEvent, createTsActorHost } from './ts-actor-host'
+import { mapChangeEvent, createTsActorHost, type TsActorHostDeps } from './ts-actor-host'
 import { UserMotifStore } from '../motif/store'
 import { createAppSettingsStore } from '../app-settings'
 import { createViewStateStore } from '../view-state'
@@ -20,6 +21,8 @@ import { mediaItemTemplate } from './mutations/media'
 import { ExportJobs } from '../exportJobs'
 import { autosaveMaxWaitMs } from './autosave'
 import { rootComposition } from './model'
+import { serializeProjectToJson } from './persistence'
+import type { TimelineImportPreview, TimelineMediaBlocked } from '../../shared/timelineImport'
 import { errno } from './__tests__/fixtures/memAtomicIo'
 import { settleQuitSave } from '../quitSave'
 import { SAVE_STATUS_CHANNEL, SAVE_STATUS_EVENT, type SaveStatus } from '../../shared/save-status'
@@ -89,10 +92,10 @@ describe('createTsActorHost — persistence-route integration', () => {
       fs: memFs,
       join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/'),
       napi: memNapi,
-      compute: { probeMedia: async () => '{}', hashMediaSource: async () => 'h', parseSubtitles: async () => '{}', synthesizeSpeechCompute: async () => '{}' },
+      compute: { probeMedia: async (_path: string) => '{}', hashMediaSource: async () => 'h', parseSubtitles: async () => '{}', synthesizeSpeechCompute: async () => '{}' },
       enqueueWorkspaceCopy: async () => {},
       readFile: (p: string) => memFs.readFile(p),
-      statPath: () => ({ kind: 'file' as const, readable: true }),
+      statPath: (() => ({ kind: 'file', readable: true })) as TsActorHostDeps['statPath'],
       workspaceDir: () => wsDir,
       appSettings: createAppSettingsStore({ fs: memFs, path: '/cfg/app_settings.json', dir: '/cfg' }),
       viewState: createViewStateStore({ fs: memFs, join: (...parts: string[]) => parts.join('/').replace(/\/+/g, '/') }),
@@ -105,6 +108,351 @@ describe('createTsActorHost — persistence-route integration', () => {
 
     return { deps, vfs, napiCalls, sent }
   }
+
+  function timelineFixture() {
+    const fixture = makeInMemoryDeps()
+    const folder = mkdtempSync(nodePath.join(tmpdir(), 'weftcut-review-'))
+    fixture.deps.statPath = (asked) => ({ kind: asked === folder ? 'directory' : 'file', readable: true })
+    const path = nodePath.join(folder, 'Lantern.fcpxml')
+    const source = nodePath.join(folder, 'Lantern.mov')
+    writeFileSync(source, 'Fictional source bytes')
+    writeFileSync(path, `<fcpxml version="1.10"><resources>
+      <format id="f" width="320" height="240" frameDuration="1/30s"/>
+      <asset id="a" format="f" hasVideo="1" duration="1s" src="${pathToFileURL(source).href}"/>
+      </resources><project name="Lantern"><sequence format="f" duration="1s"><spine>
+      <asset-clip ref="a" start="0s" duration="1s"/>
+      </spine></sequence></project></fcpxml>`)
+    fixture.deps.compute.probeMedia = async () => JSON.stringify({
+      ...mediaItemTemplate('00000000-0000-0000-0000-0000000000ab', 'Video', 1_000_000),
+      path_abs: source,
+      metadata: { duration_us: 1_000_000,
+        video: { width: 320, height: 240, fps_num: 30, fps_den: 1 }, audio: null },
+    })
+    const copy = vi.fn(async () => {})
+    fixture.deps.enqueueWorkspaceCopy = copy
+    const host = createTsActorHost(fixture.deps)
+    const close = () => { host.stop(); rmSync(folder, { recursive: true, force: true }) }
+    return { ...fixture, host, folder, path, source, copy, close }
+  }
+
+  describe('FCPXML actor import', () => {
+    it('creates a workspace only after review, protects occupied folders, and persists an undoable import', async () => {
+      const f = timelineFixture()
+      try {
+        const before = f.host.actor.snapshot()
+        const preview = async () => await f.host.handleInvoke('project_preview_timeline',
+          { path: f.path, newProject: true }) as TimelineImportPreview
+        const cancel = await preview()
+        expect(cancel).toMatchObject({ current: null, destination: null, fps: { num: 30, den: 1 } })
+        await f.host.handleInvoke('project_discard_timeline_preview', { id: cancel.id })
+        expect(f.deps.workspaceDir()).toBeNull()
+        expect(f.host.actor.snapshot()).toBe(before)
+        expect(f.napiCalls).toEqual([])
+
+        const occupied = f.deps.join(f.folder, 'Occupied')
+        const sentinel = f.deps.join(occupied, 'project.json')
+        f.deps.fs.mkdirp(occupied)
+        f.vfs[sentinel] = 'The other project'
+        const ready = await preview()
+        const confirm = (id: string, name: string) => f.host.handleInvoke('project_import_timeline',
+          { id, destination: { parentFolder: f.folder, name } })
+        await expect(confirm(ready.id, 'Occupied')).rejects.toThrow(/ProjectFolderExists/)
+        expect(f.vfs[sentinel]).toBe('The other project')
+
+        f.deps.compute.hashMediaSource = async () => 'changed'
+        const target = f.deps.join(f.folder, 'Lantern Edit')
+        await expect(confirm(ready.id, 'Lantern Edit')).rejects.toThrow(/Original media changed/)
+        expect(f.deps.fs.exists(target)).toBe(false)
+        expect(f.host.actor.snapshot()).toBe(before)
+        expect(f.copy).not.toHaveBeenCalled()
+
+        f.deps.compute.hashMediaSource = async () => 'h'
+        const fresh = await preview()
+        expect(await confirm(fresh.id, 'Lantern Edit')).toBe(target)
+        const imported = f.host.actor.snapshot()
+        expect(imported.metadata.name).toBe('Lantern Edit')
+        expect(rootComposition(imported)).toMatchObject({ width: 320, height: 240, fps: { num: 30, den: 1 } })
+        expect(f.vfs[f.deps.join(target, 'project.json')]).toEqual(serializeProjectToJson(imported))
+        expect(f.copy).toHaveBeenCalledOnce()
+        expect(f.host.actor.dispatch('undo', {}).ok).toBe(true)
+        expect(f.host.actor.snapshot().project_id).toBe(imported.project_id)
+        expect(Object.keys(f.host.actor.snapshot().compositions)).toHaveLength(1)
+        expect(f.host.actor.snapshot().media_pool).toEqual({})
+        expect(f.host.actor.dispatch('redo', {}).ok).toBe(true)
+        expect(f.host.actor.snapshot()).toEqual(imported)
+      } finally { f.close() }
+    })
+
+    it('reviews without writes, cancels without edits, and imports a reusable composition in one undo', async () => {
+      const f = timelineFixture()
+      try {
+        await f.host.handleInvoke('project_new_workspace', { parentFolder: '/projects', name: 'Existing',
+          width: 320, height: 240, fpsNum: 30, fpsDen: 1 })
+        const before = f.host.actor.snapshot()
+        const bytes = readFileSync(f.source)
+        const review = await f.host.handleInvoke('project_preview_timeline', { path: f.path }) as { id: string }
+        expect(f.host.actor.snapshot()).toBe(before)
+        expect(f.copy).not.toHaveBeenCalled()
+        await f.host.handleInvoke('project_discard_timeline_preview', { id: review.id })
+        await expect(f.host.handleInvoke('project_import_timeline', { id: review.id })).rejects.toThrow(/expired/)
+        expect(f.host.actor.snapshot()).toBe(before)
+        const ready = await f.host.handleInvoke('project_preview_timeline', { path: f.path }) as { id: string }
+        await f.host.handleInvoke('project_import_timeline', { id: ready.id })
+        expect(Object.keys(f.host.actor.snapshot().compositions)).toHaveLength(2)
+        expect(f.copy).toHaveBeenCalledOnce()
+        expect(readFileSync(f.source)).toEqual(bytes)
+        const first = f.host.actor.snapshot()
+        const reuse = await f.host.handleInvoke('project_preview_timeline', { path: f.path }) as { id: string }
+        await f.host.handleInvoke('project_import_timeline', { id: reuse.id })
+        expect(Object.keys(f.host.actor.snapshot().compositions)).toHaveLength(3)
+        expect(f.host.actor.snapshot().media_pool).toEqual(first.media_pool)
+        expect(f.copy).toHaveBeenCalledOnce()
+        expect(f.host.actor.dispatch('undo', {}).ok).toBe(true)
+        expect(f.host.actor.snapshot()).toEqual(first)
+        expect(f.host.actor.dispatch('undo', {}).ok).toBe(true)
+        expect(f.host.actor.snapshot()).toEqual(before)
+      } finally { f.close() }
+    })
+
+    it('offers an explicit replacement for incompatible media and requires consent for usable differences', async () => {
+      const f = timelineFixture()
+      const replacement = nodePath.join(f.folder, 'SDR Copy.mov')
+      try {
+        writeFileSync(f.path, readFileSync(f.path, 'utf8').replace('width="320"', 'width="320" colorSpace="9-16-9"'))
+        writeFileSync(replacement, 'Fictional SDR replacement')
+        const normal = JSON.parse(await f.deps.compute.probeMedia(f.source))
+        f.deps.compute.probeMedia = async path => JSON.stringify({
+          ...normal, path_abs: path, metadata: { ...normal.metadata, video: { ...normal.metadata.video,
+            width: 640, height: 360, color_primaries: 'bt709', color_transfer: nodePath.basename(path) === 'Lantern.mov' ? 'smpte2084' : 'bt709',
+          } },
+        })
+        const preview = (replacements?: unknown) => f.host.handleInvoke('project_preview_timeline',
+          { path: f.path, newProject: true, replacements })
+        const before = f.host.actor.snapshot()
+        expect(await preview()).toMatchObject({ kind: 'media-blocked',
+          issues: [{ assetRef: 'a', detail: expect.stringContaining('Export an SDR Rec. 709 copy') }] })
+        const ready = await preview([{ assetRef: 'a', path: replacement }]) as TimelineImportPreview
+        expect(ready.outputColorChange).toBe('HDR (Rec. 2020 PQ)')
+        expect(ready.mediaChanges).toMatchObject([{ kind: 'color-format', assetRef: 'a' }, { kind: 'video-size', assetRef: 'a' }])
+        expect(ready.relinkedMedia).toMatchObject([{ from: f.source }])
+        const args = { id: ready.id, destination: { parentFolder: f.folder, name: 'New Edit' } }
+        await expect(f.host.handleInvoke('project_import_timeline', args)).rejects.toThrow(/accept the media differences/)
+        expect(f.host.actor.snapshot()).toBe(before)
+        await f.host.handleInvoke('project_import_timeline', { ...args, acceptMediaChanges: true })
+        expect(Object.values(f.host.actor.snapshot().media_pool)).toMatchObject([{ metadata: { video: { width: 640 } } }])
+        expect(readFileSync(f.source, 'utf8')).toBe('Fictional source bytes')
+      } finally { f.close() }
+    })
+
+    it('refuses to apply a selected sequence index to an updated FCPXML file', async () => {
+      const f = timelineFixture()
+      try {
+        const { documentId } = await f.host.handleInvoke('project_list_timeline_sequences', { path: f.path }) as { documentId: string }
+        writeFileSync(f.path, readFileSync(f.path, 'utf8').replace('name="Lantern"', 'name="Different Cut"'))
+        await expect(f.host.handleInvoke('project_preview_timeline', { path: f.path, newProject: true, sequenceIndex: 0, documentId }))
+          .rejects.toThrow(/file changed since you opened it/)
+        expect(f.napiCalls).toEqual([])
+      } finally { f.close() }
+    })
+
+    it('keeps the clips when effect omission is reviewed and explicitly approved', async () => {
+      const f = timelineFixture()
+      try {
+        const original = readFileSync(f.path, 'utf8')
+        const withEffect = original.replace('duration="1s"/>\n      </spine>', 'duration="1s"><filter-video name="Glow"/></asset-clip>\n      </spine>')
+        writeFileSync(f.path, withEffect)
+        const preview = (omitEffects: boolean) => f.host.handleInvoke('project_preview_timeline',
+          { path: f.path, newProject: true, omitEffects })
+        expect(await preview(false)).toMatchObject({ kind: 'edit-blocked', canOmitEffects: true })
+        const ready = await preview(true) as TimelineImportPreview
+        expect(ready.omittedEffects).toMatchObject([{ label: 'Glow', status: 'approximated' }])
+        const args = { id: ready.id, destination: { parentFolder: f.folder, name: 'Plain Edit' } }
+        await expect(f.host.handleInvoke('project_import_timeline', args)).rejects.toThrow(/accept the omitted effects/)
+        expect(f.deps.workspaceDir()).toBeNull()
+        await f.host.handleInvoke('project_import_timeline', { ...args, acceptOmittedEffects: true })
+        const imported = Object.values(f.host.actor.snapshot().compositions).find(comp => comp.label === 'Lantern')
+        expect(imported?.tracks.flatMap(track => track.layers)).toMatchObject([
+          { t_start_us: 0, t_end_us: 1_000_000, effects: [], params: { kind: 'VideoClip' } },
+        ])
+      } finally { f.close() }
+    })
+
+    it('requires consent to omit audio that cannot occupy a sample and preserves the rest of the edit', async () => {
+      const f = timelineFixture()
+      try {
+        const source = pathToFileURL(nodePath.join(f.folder, 'Offline Click.wav')).href
+        const original = readFileSync(f.path, 'utf8')
+        writeFileSync(f.path, original
+          .replace('hasVideo="1"', 'hasVideo="1" hasAudio="1"')
+          .replace('</resources>', '<asset id="tiny" src="' + source + '" duration="1s" hasAudio="1"/></resources>')
+          .replace('<asset-clip ref="a" start="0s" duration="1s"/>',
+            '<asset-clip ref="a" name="Picture" audioDuration="1/1000000s" audioRole="dialogue.slate" start="0s" duration="1s">' +
+            '<adjust-volume amount="-6dB"/></asset-clip>')
+          .replace('</spine>', '<audio ref="tiny" name="Slate click" offset="1s" start="0s" duration="7/1000000s">' +
+            '<marker value="Mark this beat" start="1/1000000s" duration="0s" completed="1"/></audio>' +
+            '<asset-clip ref="a" name="Next picture" srcEnable="video" offset="2s" start="0s" duration="1s"/></spine>')
+          .replace('<sequence format="f" duration="1s"', '<sequence format="f" duration="3s"'))
+        const ready = await f.host.handleInvoke('project_preview_timeline', { path: f.path, newProject: true }) as TimelineImportPreview
+        expect(ready).toMatchObject({ audioClips: 0, videoClips: 2, media: 1, durationFrames: 90, omittedShortAudio: [
+          { label: 'Picture', timelineFrames: { start: 0, end: 1 } },
+          { label: 'Slate click', timelineFrames: { start: 30, end: 31 } },
+        ] })
+        expect(ready.omittedShortAudio[1]!.notes.join(' ')).toContain('Its to-do status is left out.')
+        const picture = ready.compatibilityItems.find(item => item.label === 'Picture')
+        expect(picture).toBeDefined()
+        expect(picture!.notes.join(' ')).not.toMatch(/Separate picture and sound trims|Static clip gain|Audio subrole/)
+        const args = { id: ready.id, destination: { parentFolder: f.folder, name: 'Recovered Edit' } }
+        await expect(f.host.handleInvoke('project_import_timeline', args)).rejects.toThrow(/accept the short audio/)
+        expect(f.deps.workspaceDir()).toBeNull()
+        await f.host.handleInvoke('project_import_timeline', { ...args, acceptShortAudioOmissions: true })
+        const imported = Object.values(f.host.actor.snapshot().compositions).find(comp => comp.label === 'Lantern')
+        expect(imported?.tracks.flatMap(track => track.layers)).toMatchObject([
+          { label: 'Picture', t_start_us: 0, t_end_us: 1_000_000, params: { kind: 'VideoClip' } },
+          { label: 'Next picture', t_start_us: 2_000_000, t_end_us: 3_000_000, params: { kind: 'VideoClip' } },
+        ])
+        expect(imported?.markers).toMatchObject([{ label: 'Mark this beat', t_us: 1_000_000, anchor: null }])
+      } finally { f.close() }
+    })
+
+    it('requires consent for only the unavailable media and restores it when found during review', async () => {
+      const f = timelineFixture()
+      try {
+        const missing = nodePath.join(f.folder, 'Missing camera.mov')
+        writeFileSync(f.path, readFileSync(f.path, 'utf8')
+          .replace('</resources>', '<asset id="offline" format="f" duration="1s" hasVideo="1" src="' +
+            pathToFileURL(missing).href + '"/></resources>')
+          .replace('</spine>', '<asset-clip ref="offline" name="Cutaway" offset="1s" duration="1s">' +
+            '<marker value="Beat" start="1/2s" duration="0s"/></asset-clip>' +
+            '<asset-clip ref="a" name="Return" offset="2s" duration="1s"/></spine>')
+          .replace('<sequence format="f" duration="1s"', '<sequence format="f" duration="3s"'))
+        const review = (leaveMediaGaps?: string[]) => f.host.handleInvoke('project_preview_timeline',
+          { path: f.path, newProject: true, leaveMediaGaps: leaveMediaGaps })
+        const blocked = await review() as TimelineMediaBlocked
+        expect(blocked).toMatchObject({ kind: 'media-blocked', issues: [{ assetRef: 'offline', canLeaveGaps: true }] })
+        const gap = await review(['offline', 'a']) as TimelineImportPreview
+        expect(gap.mediaGaps).toMatchObject([{ assetRef: 'offline', label: 'Cutaway', timelineFrames: { start: 30, end: 60 } }])
+        expect(gap).toMatchObject({ durationFrames: 90, videoClips: 2, media: 1 })
+        const args = { id: gap.id, destination: { parentFolder: f.folder, name: 'Rebuilt Edit' } }
+        await expect(f.host.handleInvoke('project_import_timeline', args)).rejects.toThrow(/accept the marked media gaps/)
+        expect(f.deps.workspaceDir()).toBeNull()
+
+        writeFileSync(missing, 'Replacement camera source')
+        const repaired = await review(['offline']) as TimelineImportPreview
+        expect(repaired.mediaGaps).toEqual([])
+        expect(repaired.videoClips).toBe(3)
+      } finally { f.close() }
+    })
+
+    it('can leave out an unusable range of a file used by another cut', async () => {
+      const f = timelineFixture()
+      try {
+        writeFileSync(f.path, readFileSync(f.path, 'utf8')
+          .replace('hasVideo="1" duration="1s"', 'hasVideo="1" duration="2s"')
+          .replace('<sequence format="f" duration="1s"', '<sequence format="f" duration="2s"')
+          .replace('</spine>', '<asset-clip ref="a" name="Outside the file" offset="1s" start="1s" duration="1s"/></spine>'))
+        const args = { path: f.path, newProject: true }
+        const blocked = await f.host.handleInvoke('project_preview_timeline', args) as TimelineMediaBlocked
+        expect(blocked.issues).toMatchObject([{ assetRef: 'a', canLeaveGaps: true, placements: 1 }])
+        const reviewed = await f.host.handleInvoke('project_preview_timeline', { ...args, leaveMediaGaps: ['a'] }) as TimelineImportPreview
+        expect(reviewed).toMatchObject({ videoClips: 1, media: 1, mediaGaps: [
+          { label: 'Outside the file', timelineFrames: { start: 30, end: 60 } },
+        ] })
+        await f.host.handleInvoke('project_import_timeline', {
+          id: reviewed.id, acceptMediaGaps: true, destination: { parentFolder: f.folder, name: 'Kept Cut' },
+        })
+        const imported = Object.values(f.host.actor.snapshot().compositions).find(comp => comp.label === 'Lantern')
+        expect(imported?.tracks.flatMap(track => track.layers)).toMatchObject([
+          { t_start_us: 0, t_end_us: 1_000_000, params: { kind: 'VideoClip' } },
+        ])
+        expect(imported?.markers).toMatchObject([
+          { label: 'Replace media — Outside the file', t_us: 1_000_000, end_t_us: 2_000_000, anchor: null },
+        ])
+        expect(imported?.duration_us).toBe(2_000_000)
+      } finally { f.close() }
+    })
+
+    it('requires title-gap approval and keeps later cuts at their original positions', async () => {
+      const f = timelineFixture()
+      try {
+        const original = readFileSync(f.path, 'utf8')
+        const withTitle = original.replace('</spine>', `<title name="Opening Card" ref="motion" offset="1s" duration="1s"><text>Fictional card</text></title>
+          <asset-clip ref="a" offset="2s" start="0s" duration="1s"/></spine>`)
+          .replace('<sequence format="f" duration="1s"', '<sequence format="f" duration="3s"')
+        writeFileSync(f.path, withTitle)
+        const preview = (leaveTitleGaps: boolean) => f.host.handleInvoke('project_preview_timeline',
+          { path: f.path, newProject: true, leaveTitleGaps })
+        expect(await preview(false)).toMatchObject({ kind: 'edit-blocked', canOmitEffects: false,
+          issues: [{ label: 'Opening Card', recovery: 'leave-title-gap', timelineFrames: { start: 30, end: 60 } }] })
+        const ready = await preview(true) as TimelineImportPreview
+        expect(ready.omittedTitles).toMatchObject([{ label: 'Opening Card', status: 'approximated' }])
+        const args = { id: ready.id, destination: { parentFolder: f.folder, name: 'Recovered Edit' } }
+        await expect(f.host.handleInvoke('project_import_timeline', args)).rejects.toThrow(/accept the titles/)
+        expect(f.deps.workspaceDir()).toBeNull()
+        await f.host.handleInvoke('project_import_timeline', { ...args, acceptTitleGaps: true })
+        const imported = Object.values(f.host.actor.snapshot().compositions).find(comp => comp.label === 'Lantern')
+        expect(imported?.duration_us).toBe(3_000_000)
+        expect(imported?.tracks.flatMap(track => track.layers)).toMatchObject([
+          { t_start_us: 0, t_end_us: 1_000_000, params: { kind: 'VideoClip' } },
+          { t_start_us: 2_000_000, t_end_us: 3_000_000, params: { kind: 'VideoClip' } },
+        ])
+      } finally { f.close() }
+    })
+
+    it('refuses a review if an edit lands while source bytes are rechecked', async () => {
+      const f = timelineFixture()
+      try {
+        await f.host.handleInvoke('project_new_workspace', { parentFolder: '/projects', name: 'Existing',
+          width: 320, height: 240, fpsNum: 30, fpsDen: 1 })
+        const review = await f.host.handleInvoke('project_preview_timeline', { path: f.path }) as { id: string }
+        f.deps.compute.hashMediaSource = async () => {
+          f.host.actor.dispatch('add_marker', { t_us: 0, label: 'Keep this marker' })
+          return 'h'
+        }
+        await expect(f.host.handleInvoke('project_import_timeline', { id: review.id }))
+          .rejects.toThrow(/changed during confirmation/)
+        expect(Object.keys(f.host.actor.snapshot().compositions)).toHaveLength(1)
+        expect(Object.values(f.host.actor.snapshot().media_pool)).toEqual([])
+        expect(rootComposition(f.host.actor.snapshot()).markers).toMatchObject([{ label: 'Keep this marker' }])
+        expect(f.copy).not.toHaveBeenCalled()
+      } finally { f.close() }
+    })
+
+    it('requires a fresh review if the XML changes after preflight', async () => {
+      const f = timelineFixture()
+      try {
+        const before = f.host.actor.snapshot()
+        const review = async () => await f.host.handleInvoke('project_preview_timeline', { path: f.path, newProject: true }) as TimelineImportPreview
+        const previous = await review()
+        const destination = { parentFolder: f.folder, name: 'Updated project' }
+        writeFileSync(f.path, readFileSync(f.path, 'utf8').replace('name="Lantern"', 'name="Updated Edit"'))
+        await expect(f.host.handleInvoke('project_import_timeline', { id: previous.id, destination })).rejects.toThrow(/FCPXML file changed/)
+        expect(f.host.actor.snapshot()).toBe(before)
+        expect(f.deps.workspaceDir()).toBeNull()
+        expect(f.copy).not.toHaveBeenCalled()
+        const current = await review()
+        expect(current.name).toBe('Updated Edit')
+        await f.host.handleInvoke('project_import_timeline', { id: current.id, destination })
+        expect(Object.values(f.host.actor.snapshot().compositions).some(comp => comp.label === 'Updated Edit')).toBe(true)
+      } finally { f.close() }
+    })
+
+    it('refuses changed source bytes and malformed XML without modifying project content', async () => {
+      const f = timelineFixture()
+      try {
+        await f.host.handleInvoke('project_new_workspace', { parentFolder: '/projects', name: 'Existing',
+          width: 320, height: 240, fpsNum: 30, fpsDen: 1 })
+        const before = f.host.actor.snapshot()
+        const review = await f.host.handleInvoke('project_preview_timeline', { path: f.path }) as { id: string }
+        f.deps.compute.hashMediaSource = async () => 'changed'
+        await expect(f.host.handleInvoke('project_import_timeline', { id: review.id })).rejects.toThrow(/Original media changed/)
+        expect(f.host.actor.snapshot()).toBe(before)
+        writeFileSync(f.path, '<fcpxml>')
+        await expect(f.host.handleInvoke('project_preview_timeline', { path: f.path })).rejects.toThrow(/Malformed/)
+        expect(f.host.actor.snapshot()).toBe(before)
+        expect(f.copy).not.toHaveBeenCalled()
+      } finally { f.close() }
+    })
+  })
 
   const publicationProject = { parentFolder: '/projects', name: 'Publication', width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 }
 

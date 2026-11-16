@@ -76,26 +76,10 @@ fn rate_filter(mut rate: f64, pitch: bool) -> Result<String> {
     Ok(filters.join(","))
 }
 
-async fn stretch(
-    source: &Path,
-    timing: &TimingFields,
-    src_in: i64,
-    src_out: i64,
-    duration: i64,
-    dir: &Path,
-    cancel: &Cancellation,
-) -> Result<PathBuf> {
-    check_cancelled(cancel)?;
-    stretch_window(
-        source,
-        timing,
-        timing.content_time(src_in, 0.0),
-        timing.source_end(src_out),
-        duration,
-        dir,
-        cancel,
-    )
-    .await
+struct RetimeWork<'a> {
+    dir: &'a Path,
+    cancel: &'a Cancellation,
+    permit: &'a crate::resources::Permit,
 }
 
 async fn stretch_window(
@@ -104,9 +88,13 @@ async fn stretch_window(
     start_us: f64,
     end_us: f64,
     duration: i64,
-    dir: &Path,
-    cancel: &Cancellation,
+    work: &RetimeWork<'_>,
 ) -> Result<PathBuf> {
+    let RetimeWork {
+        dir,
+        cancel,
+        permit,
+    } = *work;
     check_cancelled(cancel)?;
     let frames = us_to_frame(duration).max(0) as u64;
     let start = start_us / 1e6;
@@ -126,7 +114,8 @@ async fn stretch_window(
             let cancel = cancel.clone();
             tokio::task::spawn_blocking(move || write_mix(empty, &target, &cancel)).await??;
         } else {
-            super::fx::render_cancellable(source, &graph, &dest, Some(frames), cancel).await?;
+            super::fx::render_cancellable(source, &graph, &dest, Some(frames), cancel, permit)
+                .await?;
         }
     }
     Ok(dest)
@@ -173,13 +162,12 @@ fn composition<'a>(
     project: &'a Project,
     id: Uuid,
     overrides: &'a HashMap<Uuid, PathBuf>,
-    dir: &'a Path,
     signature: &'a str,
     depth: usize,
-    cancel: &'a Cancellation,
+    work: &'a RetimeWork<'a>,
 ) -> Pin<Box<dyn Future<Output = Result<Vec<Stem>>> + Send + 'a>> {
     Box::pin(async move {
-        check_cancelled(cancel)?;
+        check_cancelled(work.cancel)?;
         anyhow::ensure!(depth <= 32, "audio composition nesting exceeds 32");
         let comp = project
             .composition(&id)
@@ -205,14 +193,13 @@ fn composition<'a>(
                             .get(&layer.id)
                             .or(media.conform_path.as_ref())
                             .context("audio conform or effect bake not ready")?;
-                        let path = stretch(
+                        let path = stretch_window(
                             source,
                             &p.timing,
-                            p.src_in_us,
-                            p.src_out_us,
+                            p.timing.content_time(p.src_in_us, 0.0),
+                            p.timing.source_end(p.src_out_us),
                             duration,
-                            dir,
-                            cancel,
+                            work,
                         )
                         .await?;
                         roles.entry(p.role).or_default().push(MixLayer {
@@ -236,10 +223,9 @@ fn composition<'a>(
                             project,
                             p.composition,
                             overrides,
-                            dir,
                             signature,
                             depth + 1,
-                            cancel,
+                            work,
                         )
                         .await?
                         {
@@ -249,8 +235,7 @@ fn composition<'a>(
                                 p.timing.content_time(p.src_in_us, 0.0),
                                 p.timing.content_time(p.src_in_us, duration as f64),
                                 duration,
-                                dir,
-                                cancel,
+                                work,
                             )
                             .await?;
                             roles.entry(child.role).or_default().push(MixLayer {
@@ -274,7 +259,9 @@ fn composition<'a>(
             let Some(layers) = roles.remove(&role) else {
                 continue;
             };
-            let path = dir.join(format!("retime-{signature}-{id}-{}.vconf", role.as_str()));
+            let path = work
+                .dir
+                .join(format!("retime-{signature}-{id}-{}.vconf", role.as_str()));
             if !crate::cache::cached_ok(&path) {
                 let plan = MixPlan {
                     window_start_frame: 0,
@@ -282,7 +269,7 @@ fn composition<'a>(
                     layers,
                 };
                 let dest = path.clone();
-                let cancel = cancel.clone();
+                let cancel = work.cancel.clone();
                 tokio::task::spawn_blocking(move || write_mix(plan, &dest, &cancel)).await??;
             }
             stems.push(Stem {
@@ -300,14 +287,22 @@ pub async fn prepare(
     id: Uuid,
     overrides: &HashMap<Uuid, PathBuf>,
 ) -> Result<Vec<Stem>> {
-    prepare_cancellable(project, id, overrides, None).await
+    let permit = crate::resources::held_by(
+        crate::resources::Holder::new("audio_retime"),
+        crate::resources::interactive(128),
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
+    prepare_cancellable(project, id, overrides, None, &permit).await
 }
 pub async fn prepare_cancellable(
     project: &Project,
     id: Uuid,
     overrides: &HashMap<Uuid, PathBuf>,
     cancel: Cancellation,
+    permit: &crate::resources::Permit,
 ) -> Result<Vec<Stem>> {
+    // Both callers hold their memory permit before waiting for this lock.
     // Concurrent preview/export requests share immutable files. Serialize cache
     // publication; a cancelled request releases this lock and ffmpeg on drop.
     static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
@@ -325,7 +320,19 @@ pub async fn prepare_cancellable(
     let signature_project = project.clone();
     let sorted: std::collections::BTreeMap<_, _> = overrides.iter().collect();
     let signature = digest(&(2, &signature_project, sorted))?;
-    composition(project, id, overrides, dir, &signature, 0, &cancel).await
+    composition(
+        project,
+        id,
+        overrides,
+        &signature,
+        0,
+        &RetimeWork {
+            dir,
+            cancel: &cancel,
+            permit,
+        },
+    )
+    .await
 }
 
 pub fn stem_plan(project: &Project, stems: Vec<Stem>, window: Option<(i64, i64)>) -> MixPlan {
@@ -402,14 +409,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("short.vconf");
         write_vconf(&source, 1, &[0.5; 480]);
+        let permit = crate::resources::interactive(128).await.unwrap();
+        let work = RetimeWork {
+            dir: dir.path(),
+            cancel: &None,
+            permit: &permit,
+        };
         let path = stretch_window(
             &source,
             &timing(2, 1, true),
             1_000_000.0,
             3_000_000.0,
             1_000_000,
-            dir.path(),
-            &None,
+            &work,
         )
         .await
         .unwrap();
@@ -442,15 +454,20 @@ mod tests {
             .map(|i| (i as f64 * 440.0 * std::f64::consts::TAU / 48000.0).sin() as f32 * 0.2)
             .collect();
         write_vconf(&source, 1, &samples);
+        let permit = crate::resources::interactive(128).await.unwrap();
+        let work = RetimeWork {
+            dir: dir.path(),
+            cancel: &None,
+            permit: &permit,
+        };
         for pitch in [true, false] {
-            let path = stretch(
+            let path = stretch_window(
                 &source,
                 &timing(2, 1, pitch),
-                0,
-                2_000_000,
+                0.0,
+                2_000_000.0,
                 1_000_000,
-                dir.path(),
-                &None,
+                &work,
             )
             .await
             .unwrap();
@@ -460,14 +477,13 @@ mod tests {
             assert!((frequency(&pcm, 1) - if pitch { 440.0 } else { 880.0 }).abs() < 5.0);
             // The outer Group restores duration while keeping the child pitch.
             // Flattening the rates to 1 would incorrectly restore 440 Hz.
-            let nested = stretch(
+            let nested = stretch_window(
                 &path,
                 &timing(1, 2, true),
-                0,
-                1_000_000,
+                0.0,
+                1_000_000.0,
                 2_000_000,
-                dir.path(),
-                &None,
+                &work,
             )
             .await
             .unwrap();

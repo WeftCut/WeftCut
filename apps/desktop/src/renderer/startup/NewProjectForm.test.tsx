@@ -28,7 +28,7 @@ vi.mock("@/bridge/path", () => ({
 }));
 
 import i18n from "../i18n";
-import { NewProjectForm } from "./StartupScreen";
+import { NewProjectForm } from "./NewProjectForm";
 
 // jsdom has no PointerEvent; Base UI's Select reads MouseEvent's client coords.
 (window as unknown as { PointerEvent: unknown }).PointerEvent = window.MouseEvent;

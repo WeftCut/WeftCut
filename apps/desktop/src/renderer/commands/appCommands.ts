@@ -417,6 +417,7 @@ export function buildAppCommands(
     undo: () => !flags.busy && flags.canUndo,
     redo: () => !flags.busy && flags.canRedo,
     importMedia: () => !flags.busy,
+    importTimeline: () => !flags.busy,
     export: () => !flags.exportLocked,
     toggleBladeMode: () => !flags.busy && projectHasLayers(),
     // The Text tool's gate is the Blade's (`projectHasLayers`). The strip

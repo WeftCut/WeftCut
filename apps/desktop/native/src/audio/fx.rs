@@ -218,7 +218,21 @@ pub(super) async fn render(
     dest: &Path,
     expected_frames: Option<u64>,
 ) -> Result<PathBuf> {
-    render_cancellable(conform_path, filter_complex, dest, expected_frames, &None).await
+    let permit = crate::resources::held_by(
+        crate::resources::Holder::new("audio_fx"),
+        crate::resources::interactive(128),
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
+    render_cancellable(
+        conform_path,
+        filter_complex,
+        dest,
+        expected_frames,
+        &None,
+        &permit,
+    )
+    .await
 }
 pub(super) async fn render_cancellable(
     conform_path: &Path,
@@ -226,6 +240,7 @@ pub(super) async fn render_cancellable(
     dest: &Path,
     expected_frames: Option<u64>,
     cancel: &Cancellation,
+    _permit: &crate::resources::Permit,
 ) -> Result<PathBuf> {
     check_cancelled(cancel)?;
     if !ffmpeg_is_installed() {
@@ -238,13 +253,6 @@ pub(super) async fn render_cancellable(
     let mut temp = TempGuard::arm(dest);
     let tmp = claim_temp(dest)?;
 
-    let _resources = tokio::select! {
-        _ = cancelled(cancel) => anyhow::bail!("export cancelled"),
-        permit = crate::resources::held_by(
-            crate::resources::Holder::new("audio_fx"),
-            crate::resources::interactive(128),
-        ) => permit.map_err(anyhow::Error::msg)?,
-    };
     // Finish fallible output setup before starting a child. Once spawned, every
     // error/cancellation path below explicitly stops and reaps it.
     let mut f = tokio::fs::File::create(&tmp)

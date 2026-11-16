@@ -114,9 +114,7 @@ test.describe('macOS application menu', () => {
       })
       .toEqual([appMenuLabel])
 
-    // The startup screen has no project to save or export, and an action this
-    // surface cannot run is OMITTED rather than shown dead — so there is no
-    // File menu at all yet: App, Edit, View, Window.
+    // With no project open, the startup screen projects no File actions.
     expect(await menuBar(app)).toHaveLength(4)
 
     await app.close()
@@ -149,6 +147,7 @@ test.describe('macOS application menu', () => {
       })
       .toEqual([
         'CommandOrControl+I', // Import media…
+        'CommandOrControl+Shift+I', // Import FCPXML…
         'CommandOrControl+S', // Save
         'CommandOrControl+Shift+S', // Save as…
         'CommandOrControl+W', // Save and Close — the app's action, not Close Window

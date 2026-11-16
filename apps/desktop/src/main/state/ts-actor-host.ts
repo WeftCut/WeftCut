@@ -1,5 +1,5 @@
 // apps/desktop/src/main/state/ts-actor-host.ts
-import { resolve as resolvePath } from 'node:path'
+import { isAbsolute, resolve as resolvePath } from 'node:path'
 import { createActor, type ActorHandle, type ChangeEvent } from './actor'
 import type { EntityRef } from './history'
 import { uuidV7Gen } from './ids'
@@ -43,6 +43,12 @@ import { AuditStore } from '../lint/audits'
 import { playheadView } from '../mcp/playheadView'
 import type { WorkspaceStore } from '../workspace'
 import { ExportJobError } from '../exportJobs'
+import { TimelineEditFailure } from './timeline-import/fcpxml'
+import { listTimelineSequences, prepareTimelineProject, TimelineMediaFailure, type TimelineMediaProbe } from './timeline-import/project'
+import type { TimelineImageCheck } from '../timelineImageCheck'
+import type { TimelineEditBlocked, TimelineImportPreview, TimelineMediaBlocked, TimelineProjectDestination } from '../../shared/timelineImport'
+import { validateProjectName } from '../../shared/newProject'
+import { WorkspaceFailure } from '../../shared/workspaceErrors'
 
 export interface TsActorHostDeps {
   exportJobs?: import("../exportJobs").ExportJobs
@@ -78,6 +84,10 @@ export interface TsActorHostDeps {
   napi: WorkspaceNapi
   /** Rust compute facade for the native-compute → TS-write hybrids. */
   compute: ComputeNapi
+  timelineReviewCompute?: Pick<ComputeNapi, 'hashMediaSource'> & {
+    inspectMedia(path: string, startup: boolean): Promise<TimelineMediaProbe>
+  }
+  createTimelineImageCheck?: () => TimelineImageCheck
   /** Queue the background workspace-copy job (Backend.enqueueWorkspaceCopy). */
   enqueueWorkspaceCopy: (mediaId: string, sourcePath: string) => Promise<string | null | void>
   /** node:fs readFile (utf8) — for the subtitle hybrid. */
@@ -441,9 +451,9 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   } }
   const swapActor: Pick<ActorHandle, 'replaceState' | 'snapshot'> = {
     snapshot: () => actor.snapshot(),
-    replaceState: (next) => {
+    replaceState: (next, firstEdit) => {
       swapping = true
-      try { actor.replaceState(next) } finally { swapping = false }
+      try { actor.replaceState(next, firstEdit) } finally { swapping = false }
     },
   }
   const orchestratorDeps = { actor: swapActor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink, onGridRepair, onSchemaUpgrade, migration }
@@ -494,6 +504,17 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
 
   // Serialize all cache-root/session changes, including Save As and Close.
   let persistenceTail: Promise<unknown> = Promise.resolve()
+  let timelineReviewId: string | null = null
+  let timelineReview: {
+    preparation: Awaited<ReturnType<typeof prepareTimelineProject>>
+    assertCurrent: () => void
+    original: ReturnType<typeof actor.snapshot>
+    startup: boolean
+  } | null = null
+  function discardTimelineReview() {
+    timelineReviewId = null
+    timelineReview = null
+  }
   /** The outgoing project's flush may fail without blocking the replacement
    *  only when nothing is lost by it: nothing of it is unsaved, or `keepsEdits`
    *  (Save As writes the whole current state elsewhere, which is the way out the
@@ -529,6 +550,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         }
       }
       autosave.hold()
+      discardTimelineReview()
       importGeneration++
       deps.onWorkspaceChanging?.()
       replacementOccurred = false
@@ -931,6 +953,160 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       case 'open': return persistence.open((args as { path: string }).path)
       case 'saveAs': return persistence.saveAs((args as { path: string }).path)
       case 'newWorkspace': return persistence.newWorkspace(args as never)
+      case 'listTimelineSequences': {
+        if (quitting || workspaceTransitions > 0) throw new Error('Wait for the current project operation to finish')
+        return listTimelineSequences(args.path, hybridDeps)
+      }
+      case 'previewTimeline': {
+        if (quitting || workspaceTransitions > 0) throw new Error('Wait for the current project operation to finish')
+        const startup = args.newProject === true
+        if (!startup && !opened) throw new Error('Open a project before importing FCPXML')
+        const dir = startup ? null : opened!.dir
+        const original = actor.snapshot()
+        const id = idGen()
+        timelineReviewId = id
+        timelineReview = null
+        const assertSession = captureImportSession(hybridDeps)
+        const assertCurrent = () => {
+          assertSession()
+          if (quitting || workspaceTransitions > 0 || timelineReviewId !== id) throw new Error('The timeline review expired. Review the timeline again')
+        }
+        const makeImageCheck = deps.createTimelineImageCheck
+        let imageCheck: TimelineImageCheck | undefined
+        const reviewCompute = deps.timelineReviewCompute
+        const media = {
+          ...hybridDeps,
+          compute: {
+            probeMedia: deps.compute.probeMedia,
+            hashMediaSource: (startup ? reviewCompute : undefined)?.hashMediaSource ?? deps.compute.hashMediaSource,
+          },
+          inspectMedia: reviewCompute && ((path: string) => reviewCompute.inspectMedia(path, startup)),
+          inspectImage: makeImageCheck && ((path: string) => (imageCheck ??= makeImageCheck()).inspect(path)),
+        }
+        let preparation: Awaited<ReturnType<typeof prepareTimelineProject>>
+        try {
+          preparation = await prepareTimelineProject(args.path, dir, idGen, media, assertCurrent,
+            args.relinkDirectory, args.sequenceIndex, startup ? undefined : original, args.replacements, args.documentId, args.omitEffects === true,
+            args.leaveTitleGaps === true, args.revalidateReplacements === true, args.leaveMediaGaps)
+        } catch (error) {
+          assertCurrent()
+          if (error instanceof TimelineEditFailure || error instanceof TimelineMediaFailure) {
+            const mediaReview = error.mediaReview ?? { replacements: [], unmatchedReplacements: [] }
+            const common = { ...mediaReview, mediaChanges: error.mediaChanges }
+            if (error instanceof TimelineEditFailure) {
+              return { ...common, kind: 'edit-blocked', issues: error.issues, canOmitEffects: error.canOmitEffects } satisfies TimelineEditBlocked
+            }
+            return { ...common, kind: 'media-blocked', issues: error.issues, canSearchFolder: error.canSearchFolder,
+              editIssues: error.editIssues } satisfies TimelineMediaBlocked
+          }
+          throw error
+        } finally {
+          imageCheck?.close()
+        }
+        assertCurrent()
+        if (actor.snapshot() !== original) throw new Error('The current project changed during import review. Review again')
+        timelineReview = { preparation, assertCurrent, original, startup }
+        const current = rootComposition(original)
+        return { id, ...preparation.report, current: startup ? null : {
+          width: current.width, height: current.height, fps: current.fps,
+          sampleRate: current.sample_rate, channels: current.channels,
+        } } satisfies TimelineImportPreview
+      }
+      case 'discardTimelinePreview':
+        if (args.id === timelineReviewId) discardTimelineReview()
+        return null
+      case 'importTimeline': {
+        if (quitting || workspaceTransitions > 0) throw new Error('Wait for the current project operation to finish')
+        deps.exportJobs?.assertWritable()
+        const review = timelineReview
+        if (!review || args.id !== timelineReviewId) throw new Error('The timeline review expired. Review the timeline again')
+        const { preparation: { project, report, assertDocumentUnchanged }, assertCurrent, original, startup } = review
+        assertCurrent()
+        if ((report.mediaChanges.length || report.outputColorChange) && args.acceptMediaChanges !== true) {
+          throw new Error('Review and accept the media differences before importing')
+        }
+        if (report.omittedEffects.length && args.acceptOmittedEffects !== true) {
+          throw new Error('Review and accept the omitted effects before importing')
+        }
+        if (report.omittedShortAudio.length && args.acceptShortAudioOmissions !== true) {
+          throw new Error('Review and accept the short audio edits that will be left out before importing')
+        }
+        if (report.omittedTitles.length && args.acceptTitleGaps !== true) {
+          throw new Error('Review and accept the titles that will be left out before importing')
+        }
+        if (report.mediaGaps.length && args.acceptMediaGaps !== true) {
+          throw new Error('Review and accept the marked media gaps before importing')
+        }
+        let destination: TimelineProjectDestination | undefined
+        if (startup) {
+          const input = args.destination as Partial<TimelineProjectDestination> | undefined
+          if (!input || typeof input.name !== 'string' || validateProjectName(input.name) || /[\x00-\x1f]/.test(input.name)) {
+            throw new Error('Choose a valid project folder name')
+          }
+          if (typeof input.parentFolder !== 'string' || !isAbsolute(input.parentFolder) || input.parentFolder.includes('\0')
+            || deps.statPath(input.parentFolder)?.kind !== 'directory') {
+            throw new Error('Choose an existing parent folder for the new project')
+          }
+          if (deps.fs.exists(deps.join(input.parentFolder, input.name))) throw new WorkspaceFailure({ error: 'ProjectFolderExists' })
+          destination = { name: input.name, parentFolder: input.parentFolder }
+        } else if (args.destination !== undefined) {
+          throw new Error('This timeline was reviewed for the open project')
+        }
+        timelineReview = null
+        if (actor.snapshot() !== original) {
+          throw new Error('The current project changed during review. Review the import again')
+        }
+        const compute = (startup ? deps.timelineReviewCompute : undefined) ?? deps.compute
+        for (const item of Object.values(project.media_pool)) {
+          let hash: string | undefined
+          try { hash = await compute.hashMediaSource(item.path_abs) } catch { /* a missing or unreadable original */ }
+          assertCurrent()
+          if (hash !== item.file_hash_blake3)
+            throw new Error('Original media changed or became unreadable after review. Review the timeline again')
+        }
+        await assertDocumentUnchanged()
+        assertCurrent()
+        if (actor.snapshot() !== original) throw new Error('The current project changed during confirmation. Review the import again')
+        deps.exportJobs?.assertWritable()
+        if (args.canvas !== undefined && !['fit', 'fill', 'original'].includes(args.canvas as string)) {
+          throw new Error('Choose how the imported canvas should fit')
+        }
+        const canvas = args.canvas ?? 'fit'
+        const applyImport = (target: ActorHandle, placement: unknown) => {
+          const result = target.dispatch('import_timeline_group', {
+            imported: project, expectedProjectId: target.snapshot().project_id, canvas: placement,
+          })
+          if (!result.ok) throw new Error(JSON.stringify(result.error))
+        }
+        let dir: string
+        if (destination) {
+          const { width, height, fps } = rootComposition(project)
+          const createArgs = { ...destination, width, height, fpsNum: fps.num, fpsDen: fps.den }
+          dir = await replaceWorkspace(async () => {
+            const created = await newWorkspace(orchestratorDeps, createArgs, (blank) => {
+              const staging = createActor({ initial: blank, idGen })
+              applyImport(staging, 'fit')
+              const { summary, label_key, label_args, affected } = staging.historyView(1).ops[0]!
+              return { summary, label_key, label_args, affected, snapshot: staging.snapshot() }
+            })
+            opens(created)
+            return created
+          })
+        } else {
+          applyImport(actor, canvas)
+          dir = opened!.dir
+        }
+        const addedMedia = Object.values(project.media_pool).filter(item => startup || !original.media_pool[item.id])
+        if (!quitting && opened?.dir === dir) {
+          for (const item of addedMedia.filter(item => item.path_rel === null)) {
+            void deps.enqueueWorkspaceCopy(item.id, item.path_abs).catch(error =>
+              console.warn('[timeline import] Workspace media copy failed', error))
+          }
+          void Promise.resolve(deps.napi.enqueueJobsForMedia(JSON.stringify(addedMedia)))
+            .catch(error => console.warn('[timeline import] Derivative enqueue failed', error))
+        }
+        return dir
+      }
       case 'save': return persistence.save()
       case 'close': return persistence.close()
       case 'tacks': return runTackIpc(agent.tacks, channel, args)

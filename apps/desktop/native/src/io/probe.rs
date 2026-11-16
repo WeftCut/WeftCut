@@ -11,7 +11,7 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use crate::ffmpeg::{ffprobe_is_installed, Bound, FfmpegCommand};
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::state::media::{AudioStreamMeta, MediaKind, MediaMetadata, VideoStreamMeta};
@@ -123,8 +123,25 @@ pub async fn probe_metadata_scoped(
     path: &Path,
     cache: &crate::cache::CacheLayout,
 ) -> Result<MediaMetadata> {
+    Ok(probe_scoped(path, cache).await?.into_metadata())
+}
+
+#[derive(Default, Serialize)]
+pub struct StreamDurations {
+    video_us: Option<i64>,
+    audio_us: Option<i64>,
+}
+
+pub async fn probe_timeline_media_scoped(
+    path: &Path,
+    cache: &crate::cache::CacheLayout,
+) -> Result<(MediaMetadata, StreamDurations)> {
+    Ok(probe_scoped(path, cache).await?.into_metadata_and_streams())
+}
+
+async fn probe_scoped(path: &Path, cache: &crate::cache::CacheLayout) -> Result<RawProbe> {
     if !ffprobe_is_installed() {
-        return Ok(MediaMetadata::default());
+        return Ok(RawProbe::default());
     }
     let mut command = FfmpegCommand::ffprobe(Bound::Timeout(PROBE_TIMEOUT));
     command
@@ -148,7 +165,7 @@ pub async fn probe_metadata_scoped(
         "ffprobe failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    Ok(serde_json::from_slice::<RawProbe>(&output.stdout)?.into_metadata())
+    Ok(serde_json::from_slice(&output.stdout)?)
 }
 
 /// Seconds of source scanned to estimate the keyframe interval. A few
@@ -307,7 +324,7 @@ pub fn detect_kind(path: &Path, metadata: &MediaMetadata) -> MediaKind {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct RawProbe {
     #[serde(default)]
     format: RawFormat,
@@ -381,6 +398,10 @@ fn min_opt(a: Option<i64>, b: i64) -> Option<i64> {
 
 impl RawProbe {
     fn into_metadata(self) -> MediaMetadata {
+        self.into_metadata_and_streams().0
+    }
+
+    fn into_metadata_and_streams(self) -> (MediaMetadata, StreamDurations) {
         let container_format = self.format.format_name;
         let format_start_us = self
             .format
@@ -416,8 +437,10 @@ impl RawProbe {
                     max_end_us = max_opt(max_end_us, s + d);
                 }
             }
+            d
         };
 
+        let mut streams = StreamDurations::default();
         let mut video = None;
         let mut audio = None;
         for stream in self.streams {
@@ -445,7 +468,7 @@ impl RawProbe {
                     color_transfer,
                     disposition: _,
                 } if video.is_none() => {
-                    consider_extent(start_time.as_deref(), duration.as_deref());
+                    streams.video_us = consider_extent(start_time.as_deref(), duration.as_deref());
                     let start_pts_us = start_time.as_deref().and_then(duration_seconds_to_us);
                     let (num, den) = parse_rational(r_frame_rate.as_deref().unwrap_or("0/1"));
                     video = Some(VideoStreamMeta {
@@ -470,7 +493,7 @@ impl RawProbe {
                     start_time,
                     duration,
                 } if audio.is_none() => {
-                    consider_extent(start_time.as_deref(), duration.as_deref());
+                    streams.audio_us = consider_extent(start_time.as_deref(), duration.as_deref());
                     let start_pts_us = start_time.as_deref().and_then(duration_seconds_to_us);
                     audio = Some(AudioStreamMeta {
                         sample_rate: sample_rate
@@ -509,14 +532,17 @@ impl RawProbe {
             },
         };
         let start_pts_us = min_start_us.or(format_start_us);
-        MediaMetadata {
-            duration_us,
-            start_pts_us,
-            container_duration_us: max_duration_us,
-            video,
-            audio,
-            container_format,
-        }
+        (
+            MediaMetadata {
+                duration_us,
+                start_pts_us,
+                container_duration_us: max_duration_us,
+                video,
+                audio,
+                container_format,
+            },
+            streams,
+        )
     }
 }
 
@@ -717,7 +743,7 @@ mod tests {
     fn meta_from_probe_json(json: &str) -> MediaMetadata {
         serde_json::from_str::<RawProbe>(json)
             .expect("probe JSON")
-            .into_metadata()
+            .into_metadata_and_streams()
     }
 
     /// Pins nearest-µs, not truncation: truncating drops this half-µs (→299674)
@@ -743,7 +769,7 @@ mod tests {
                 "disposition": { "attached_pic": 0 }
             }]
         }"#;
-        let meta = meta_from_probe_json(json);
+        let (meta, streams) = meta_from_probe_json(json);
         assert_eq!(meta.start_pts_us, Some(299_674));
         assert_eq!(meta.container_duration_us, Some(10_299_674));
         assert_eq!(meta.duration_us, Some(10_000_000));
@@ -751,6 +777,7 @@ mod tests {
             meta.video.as_ref().and_then(|v| v.start_pts_us),
             Some(299_674)
         );
+        assert_eq!(streams.video_us, Some(10_000_000));
     }
 
     /// Some containers (notably MKV/WebM) report `start_time` + `duration`

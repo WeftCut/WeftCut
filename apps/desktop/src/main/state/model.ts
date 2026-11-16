@@ -217,7 +217,9 @@ export interface RoleMixSettings { gain_db: number; muted: boolean; solo: boolea
 export interface MediaVideoMetadata {
   width?: number; height?: number; fps_num?: number; fps_den?: number
   codec?: string; pix_fmt?: string; start_pts_us?: TimeUs | null
-  nb_frames?: number | null; [k: string]: unknown
+  nb_frames?: number | null
+  color_matrix?: string | null; color_range?: string | null
+  color_primaries?: string | null; color_transfer?: string | null; [k: string]: unknown
 }
 export interface MediaAudioMetadata {
   sample_rate?: number; channels?: number; codec?: string
