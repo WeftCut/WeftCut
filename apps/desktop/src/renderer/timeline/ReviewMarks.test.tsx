@@ -366,6 +366,24 @@ describe("Changed ranges on the ruler", () => {
     fireEvent.doubleClick(range!);
     expect(useReviewFocus.getState().focus).toMatchObject({ kind: "change", id: "Layer:edited" });
   });
+
+  it("marks a range out of sync by how it reads, its onset glyph only where it has room", () => {
+    const sync = { class: "modified", source: "review", sync_offset_us: 2 * S, sound_lag_us: 2 * S, sound_role: "music" } as const;
+    useReview.getState().apply({
+      ...ranged, version: { ...ranged.version, revision: 4 }, content_revision: 4,
+      ranges: [
+        { ...sync, change_ids: ["Layer:edited"], composition_id: ROOT_ID, t_start_us: 2 * S, t_end_us: 6 * S, before_start_us: 2 * S, before_end_us: 6 * S, only: "sync" },
+        { ...sync, change_ids: ["Layer:edited"], composition_id: ROOT_ID, t_start_us: 7 * S, t_end_us: 7 * S + 1, before_start_us: 7 * S, before_end_us: 7 * S + 1, only: "sync", sync_bound: true },
+        { ...sync, change_ids: ["Layer:edited"], composition_id: ROOT_ID, t_start_us: 8 * S, t_end_us: 9 * S, before_start_us: 8 * S, before_end_us: 9 * S },
+      ],
+    });
+    const { container } = renderTimeline();
+    const ranges = painted(container);
+    expect(ranges.map((r) => [r.dataset.sync, r.querySelector(".ruler-range-sync-glyph") !== null])).toEqual([
+      ["loose", true], ["bound", false], ["mixed", true],
+    ]);
+    expect(ranges[0]!.title).toBe("Out of sync · 4.0 s · Music 2.0 s later than picture");
+  });
 });
 
 describe("Pure change marks", () => {

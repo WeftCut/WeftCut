@@ -5,6 +5,12 @@ import { selectChange, useReviewFocus } from "../agent/reviewFocus";
 import { useCompositionChangeRanges, useRangeMarkLabel } from "../agent/reviewStore";
 import type { ReviewRangeMark } from "../agent/reviewHighlight";
 import { useReviewLaneExists } from "../agent/tackModel";
+import { uiScaled, useUiScale } from "../settings/layoutTheme";
+import { rangeSync } from "../../shared/review";
+
+/// The narrowest desync range, in baseline px, that still holds its ⇄ beside
+/// the onset tick; a narrower one keeps the tick alone.
+const SYNC_GLYPH_MIN_PX = 14;
 
 /// The changed ranges (ADR 0169) on the ruler: where the film plays
 /// differently from the review baseline, each stretch of the clock washed in
@@ -21,6 +27,11 @@ import { useReviewLaneExists } from "../agent/tackModel";
 /// it would on the bare ruler, so a range never takes the place the user
 /// meant to seek to. The hover names the range; a double press focuses its
 /// first change and shows its row, the one thing a range adds.
+///
+/// A range out of sync (`rangeSync`) marks its onset with a tick and ⇄, since
+/// where it starts is the thing to look at; one only out of sync, with no
+/// bound sync broken, is drawn as that one fact — a hatch, not a wash of
+/// changed content.
 ///
 /// A sibling of the ruler strip, not a child: the strip's direct children are
 /// its ticks (see the landmine in `TimelineRuler`).
@@ -41,6 +52,7 @@ export function RulerRanges({
   const label = useRangeMarkLabel();
   const focused = useReviewFocus((s) => (s.focus?.kind === "change" ? s.focus.id : null));
   const hovered = useReviewFocus((s) => (s.hover?.kind === "change" ? s.hover.id : null));
+  useUiScale(); // the ⇄'s room
   if (ranges.length === 0) return null;
   const plays = (m: ReviewRangeMark, id: string | null) => id !== null && m.range.change_ids.includes(id as never);
   return (
@@ -49,6 +61,7 @@ export function RulerRanges({
         const x = (m.tStartUs / 1_000_000) * pxPerSec;
         const w = ((m.tEndUs - m.tStartUs) / 1_000_000) * pxPerSec;
         const first = m.range.change_ids[0];
+        const sync = m.cut ? undefined : rangeSync(m.range);
         return (
           <div
             key={m.key}
@@ -58,6 +71,7 @@ export function RulerRanges({
             data-user={m.user || undefined}
             data-selected={plays(m, focused) || undefined}
             data-hovered={plays(m, hovered) || undefined}
+            data-sync={sync}
             title={label(m)}
             className={`ruler-range ruler-range-${m.cls}`}
             // A cut point at the film's start hangs from its edge, not half off it.
@@ -74,7 +88,11 @@ export function RulerRanges({
               void getCommand("openAgentPanel")?.run();
             }}
             onContextMenu={onContextMenu}
-          />
+          >
+            {sync !== undefined && w >= uiScaled(SYNC_GLYPH_MIN_PX) && (
+              <span aria-hidden="true" className="ruler-range-sync-glyph">⇄</span>
+            )}
+          </div>
         );
       })}
     </div>

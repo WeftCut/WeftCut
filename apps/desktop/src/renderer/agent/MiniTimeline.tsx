@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { formatTimecode } from "../frames";
 import type { MarkerSummary } from "../ipc";
 import type { TackView } from "../../shared/agent-activity";
+import { rangeSync, type RangeSync } from "../../shared/review";
 import type { ReviewRangeMark } from "./reviewHighlight";
 import { hitBand, type BandItem, type ReviewTarget } from "./reviewFocus";
 import { tackCoverage } from "./tackModel";
@@ -41,7 +42,8 @@ interface MiniTimelineProps {
   /// 0169), painted as a second band along the strip's head — opposite the
   /// tack band, so the two never read as one: each range in its class hue, a
   /// cut point (removed with no width now) as a mark hanging from the top, the
-  /// user's own ranges muted.
+  /// user's own ranges muted, a range only out of sync hatched from a tick at
+  /// its onset (`rangeSync`).
   changes?: readonly ReviewRangeMark[];
   /// What a range says under the pointer (`useRangeMarkLabel`) — its class
   /// alone when absent.
@@ -97,13 +99,15 @@ function formatTickLabel(us: number): string {
 /// near two changed ranges paint as one block.
 const MINI = UI_METRICS.agent.miniTimeline;
 
-/// One painted block of the change band: ranges of one class and owner
-/// close enough at this width to read as one, kept apart in the hover text.
+/// One painted block of the change band: ranges of one look (class, owner,
+/// sync) close enough at this width to read as one, kept apart in the hover
+/// text.
 interface ChangeBlock {
   key: string;
   cls: ReviewRangeMark["cls"];
   cut: boolean;
   user: boolean;
+  sync: RangeSync | undefined;
   startUs: number;
   endUs: number;
   marks: ReviewRangeMark[];
@@ -118,11 +122,12 @@ function changeBlocks(marks: readonly ReviewRangeMark[], extentUs: number, width
   const out: ChangeBlock[] = [];
   for (const m of [...marks].sort((a, b) => a.tStartUs - b.tStartUs)) {
     const last = out.at(-1);
-    if (last && last.cls === m.cls && last.cut === m.cut && last.user === m.user && m.tStartUs - last.endUs <= mergeUs) {
+    const sync = m.cut ? undefined : rangeSync(m.range);
+    if (last && last.cls === m.cls && last.cut === m.cut && last.user === m.user && last.sync === sync && m.tStartUs - last.endUs <= mergeUs) {
       last.endUs = Math.max(last.endUs, m.tEndUs);
       last.marks.push(m);
     } else {
-      out.push({ key: m.key, cls: m.cls, cut: m.cut, user: m.user, startUs: m.tStartUs, endUs: m.tEndUs, marks: [m] });
+      out.push({ key: m.key, cls: m.cls, cut: m.cut, user: m.user, sync, startUs: m.tStartUs, endUs: m.tEndUs, marks: [m] });
     }
   }
   return out;
@@ -415,6 +420,7 @@ export function MiniTimeline({
               data-change-class={b.cls}
               data-cut={b.cut || undefined}
               data-user={b.user || undefined}
+              data-sync={b.sync}
               data-count={b.marks.length}
               className={`mini-change mini-change-${b.cls}${b.cut ? " mini-change-cut" : ""}${b.user ? " mini-change-user" : ""}${changeMark(b)}`}
               // A cut point at the film's start hangs from its edge, not half off it.

@@ -12,7 +12,7 @@ import { keyTimeUs } from '../../shared/keyframe'
 import { localAtContent } from '../../renderer/layerTiming'
 import { addTime, approximateTime, exactTime, ZERO_TIME } from '../../renderer/timeMapping'
 import { playbackValues } from '../agent/playbackValues'
-import type { Composition, Layer, Project, Transition } from './model'
+import type { AudioRole, Composition, Layer, Project, Transition } from './model'
 import { sourceInstantAt } from './mutations/markers'
 import { jsonEqual } from './reviewEntities'
 import type { SourceInstant } from './summary'
@@ -160,8 +160,7 @@ function slice(p: Project, c: Composition, inner: ReadonlyMap<string, Timeline>)
       for (let j = cursor[ti]!; j < ls.length && ls[j]!.t_start_us <= s; j++) {
         const l = ls[j]!
         if (l.t_end_us <= s) continue
-        const role_gain_db = l.params.kind === 'Audio' ? p.audio_roles[l.params.role]?.gain_db ?? 0 : 0
-        items.push({ layer: l, role_gain_db })
+        items.push({ layer: l, role_gain_db: roleGain(p, l) })
       }
     })
     const transitions: Played[] = []
@@ -170,6 +169,10 @@ function slice(p: Project, c: Composition, inner: ReadonlyMap<string, Timeline>)
     slices.push({ start: s, end: e, items, transitions, key })
   }
   return { slices, end }
+}
+
+function roleGain(p: Project, l: Layer): number {
+  return l.params.kind === 'Audio' ? p.audio_roles[l.params.role]?.gain_db ?? 0 : 0
 }
 
 /** The slice of `tl` playing at `t`, or null past its end or before zero. */
@@ -477,22 +480,140 @@ function entitiesIn(S: Side, c: Composition, t0: number, t1: number, out: Set<En
   }
 }
 
-/** How far apart the current items at `t` moved from where the baseline
- *  played their content — when they moved by different amounts, the tracks
- *  play out of sync by the spread. Only layers with a source window count. */
-function syncOffset(B: Side, cb: Composition, t: number, baseline: ReadonlyMap<string, Layer>): number | undefined {
-  const s = sliceAt(timelineOf(B.p, cb), t)
-  if (!s) return undefined
-  const deltas = new Set<number>()
-  for (const x of s.items) {
-    const kind = x.layer.params.kind
-    if (kind !== 'VideoClip' && kind !== 'Audio' && kind !== 'CompositionRef') continue
-    const was = baseline.get(x.layer.id)
-    if (!was) return undefined
-    deltas.add(t - placeOf(was, instantAt(x.layer, t)))
+// ── Sync ──────────────────────────────────────────────────────────────────────
+
+/** Layers whose content is a stretch of source time: only their displacement
+ *  says anything about sync (a title or a colour has no source to drift
+ *  against the picture). */
+const SYNCED_KINDS: ReadonlySet<Layer['params']['kind']> = new Set(['VideoClip', 'Audio', 'CompositionRef'])
+
+/** What a modified stretch says about sync, before its range is joined with
+ *  its neighbours. */
+interface SyncFacts {
+  /** As `ChangedRange.sync_offset_us`, `sound_lag_us`, `sound_role` and
+   *  `sync_bound`; absent unless two displacements differ. */
+  offset?: number
+  lag?: number
+  role?: AudioRole
+  bound?: true
+  /** Every layer playing on either side is the same layer playing the same
+   *  content with the same values elsewhere on the other side, and so is
+   *  every transition — save content that plays nowhere now (`goneUntil`). */
+  same: boolean
+  /** Where baseline content that plays nowhere now stops, -Infinity when
+   *  none: a hole the picture closed up over. Sync-only holds only while it
+   *  lies at the range's onset, within the offset (`goneAtOnset`). */
+  goneUntil: number
+}
+
+/** One composition's layers and transitions on each side, by id. */
+interface Entities {
+  before: ReadonlyMap<string, Layer>; now: ReadonlyMap<string, Layer>
+  transitionsBefore: ReadonlyMap<string, Transition>; transitionsNow: ReadonlyMap<string, Transition>
+  /** Layer id → the links holding it on either side. */
+  links: ReadonlyMap<string, readonly string[]>
+}
+
+/** The layers and transitions playing in `[t0, t1)` of `tl`, by id. */
+function playingIn(tl: Timeline, t0: number, t1: number): { items: Map<string, Item>; transitions: Map<string, Transition> } {
+  const items = new Map<string, Item>(), transitions = new Map<string, Transition>()
+  for (let i = firstEndingAfter(tl, t0); i < tl.slices.length && tl.slices[i]!.start < t1; i++) {
+    const sl = tl.slices[i]!
+    for (const x of sl.items) items.set(x.layer.id, x)
+    for (const x of sl.transitions) transitions.set(x.tr.id, x.tr)
   }
-  if (deltas.size < 2) return undefined
-  return Math.max(...deltas) - Math.min(...deltas)
+  return { items, transitions }
+}
+
+/** The sync facts of a modified stretch, `[b, b1)` of `ca` on the baseline
+ *  and `[c, c1)` of `cb` now. Each layer is followed by identity to where the
+ *  other side plays its content: its displacement is how far that moved.
+ *  Known edge: a razor split inside a desynced stretch makes a new layer, so
+ *  the stretch is not sync-only, though its offset is still stated. Linear in
+ *  the layers playing in the stretch; a Group is one layer, its content the
+ *  Group's own time. */
+function syncFacts(A: Side, ca: Composition, b: number, b1: number, B: Side, cb: Composition, c: number, c1: number, sides: Entities): SyncFacts {
+  const { before, now } = sides
+  const was = playingIn(timelineOf(A.p, ca), b, b1), is = playingIn(timelineOf(B.p, cb), c, c1)
+  const deltas = new Map<string, Set<number>>()
+  let same = true, goneUntil = -Infinity
+  const samePlay = (bx: Item, bt: number, cx: Item, ct: number, d: number) =>
+    sameStart(bx, bt, cx, ct) && sameRest(A, bx, bt, B, cx, ct, d, 0)
+  /** `x` over `[s, e)` followed to `y` on side `T`; `sign` turns the gap
+   *  between them into now minus baseline. */
+  const follow = (x: Item, s: number, e: number, T: Side, y: Layer | undefined, sign: 1 | -1): 'gone' | 'same' | 'apart' => {
+    if (!y) return 'gone'
+    const at = placeOf(y, instantAt(x.layer, s))
+    if (at >= y.t_end_us || at + (e - s) <= y.t_start_us) return 'gone'
+    if (SYNCED_KINDS.has(x.layer.params.kind)) {
+      let ds = deltas.get(x.layer.id)
+      if (!ds) deltas.set(x.layer.id, ds = new Set())
+      ds.add(sign * (at - s))
+    }
+    if (at < y.t_start_us || at + (e - s) > y.t_end_us) return 'apart'
+    const twin: Item = { layer: y, role_gain_db: roleGain(T.p, y) }
+    // Baseline first, as the alignment compares.
+    return (sign === 1 ? samePlay(x, s, twin, at, e - s) : samePlay(twin, at, x, s, e - s)) ? 'same' : 'apart'
+  }
+  for (const x of is.items.values()) {
+    const s = Math.max(c, x.layer.t_start_us), e = Math.min(c1, x.layer.t_end_us)
+    if (follow(x, s, e, A, before.get(x.layer.id), -1) !== 'same') same = false
+  }
+  for (const x of was.items.values()) {
+    const s = Math.max(b, x.layer.t_start_us), e = Math.min(b1, x.layer.t_end_us)
+    const r = follow(x, s, e, B, now.get(x.layer.id), 1)
+    if (r === 'gone') goneUntil = Math.max(goneUntil, e)
+    else if (r === 'apart') same = false
+  }
+  for (const tr of is.transitions.values()) if (!jsonEqual(tr, sides.transitionsBefore.get(tr.id))) same = false
+  for (const tr of was.transitions.values()) {
+    const twin = sides.transitionsNow.get(tr.id)
+    if (twin !== undefined) { if (!jsonEqual(tr, twin)) same = false; continue }
+    // A transition goes with a layer that went: part of the same hole.
+    const w = now.has(tr.to_layer) && now.has(tr.from_layer) ? null : transitionWindow(tr, before)
+    if (w) goneUntil = Math.max(goneUntil, Math.min(b1, w[1]))
+    else same = false
+  }
+  const all = new Set<number>()
+  for (const ds of deltas.values()) for (const d of ds) all.add(d)
+  if (all.size < 2) return { same: false, goneUntil }
+  const facts: SyncFacts = { offset: Math.max(...all) - Math.min(...all), same, goneUntil }
+  const sound = new Set<number>(), picture = new Set<number>(), dialogue = new Set<number>(), roles = new Set<AudioRole>()
+  const byLink = new Map<string, Set<number>>()
+  for (const [id, ds] of deltas) {
+    const p = (now.get(id) ?? before.get(id))!.params
+    for (const d of ds) {
+      (p.kind === 'Audio' ? sound : picture).add(d)
+      if (p.kind === 'Audio' && p.role === 'dialogue') dialogue.add(d)
+      for (const link of sides.links.get(id) ?? []) {
+        let at = byLink.get(link)
+        if (!at) byLink.set(link, at = new Set())
+        at.add(d)
+      }
+    }
+    if (p.kind === 'Audio') roles.add(p.role)
+  }
+  if (sound.size === 1 && picture.size === 1) {
+    facts.lag = [...sound][0]! - [...picture][0]!
+    if (roles.size === 1) facts.role = [...roles][0]!
+  }
+  // Members of one link (as linked on either side) play apart, or dialogue
+  // plays apart from picture: sync the edit was bound to keep.
+  const dialogueApart = dialogue.size > 0 && picture.size > 0 && (dialogue.size > 1 || picture.size > 1 || !picture.has([...dialogue][0]!))
+  if (dialogueApart || [...byLink.values()].some(ds => ds.size > 1)) facts.bound = true
+  return facts
+}
+
+/** Whether content gone from the baseline lies at the onset of a range
+ *  starting at `beforeStart`, within its offset — the hole the rest closed up
+ *  over, which the range's start already marks. Gone content further in is a
+ *  removal of its own, so the range is more than out of sync. */
+const goneAtOnset = (f: SyncFacts, beforeStart: number) => f.goneUntil <= beforeStart + (f.offset ?? 0)
+
+/** Whether two adjacent ranges state the same sync. */
+function sameSync(a: ChangedRange, b: ChangedRange): boolean {
+  return a.sync_offset_us === b.sync_offset_us && a.sound_lag_us === b.sound_lag_us && a.sound_role === b.sound_role
+    && a.sync_bound === b.sync_bound && (a.only === 'sync') === (b.only === 'sync')
 }
 
 /** Which list each changed entity is on, and whether it plays: a
@@ -529,6 +650,18 @@ export function diffRanges(baseline: Project, current: Project, lists: ChangeLis
     const layersBefore = new Map<string, Layer>(), layersNow = new Map<string, Layer>()
     if (ca) for (const t of ca.tracks) for (const l of t.layers) layersBefore.set(l.id, l)
     for (const t of cb.tracks) for (const l of t.layers) layersNow.set(l.id, l)
+    const links = new Map<string, string[]>()
+    for (const link of [...(ca?.links ?? []), ...cb.links]) for (const m of link.members) {
+      const of = links.get(m)
+      if (!of) links.set(m, [link.id])
+      else if (!of.includes(link.id)) of.push(link.id)
+    }
+    const entities: Entities = {
+      before: layersBefore, now: layersNow, links,
+      transitionsBefore: new Map((ca?.transitions ?? []).map(tr => [tr.id, tr])), transitionsNow: new Map(cb.transitions.map(tr => [tr.id, tr])),
+    }
+    /** The facts behind each sync-only range, for judging a join. */
+    const facts = new WeakMap<ChangedRange, SyncFacts>()
     let b = 0, c = 0
     const residual = (b1: number, c1: number) => {
       // Where nothing played, each stretch that plays now is its own
@@ -552,8 +685,13 @@ export function diffRanges(baseline: Project, current: Project, lists: ChangeLis
       for (let i = 0; i + 1 < at.length; i++) {
         const r = describe(at[i]! - shift, at[i + 1]! - shift, at[i]!, at[i + 1]!)
         if (r === null) { if (held) out.push(held); held = null; continue }
-        if (held && held.class === r.class && held.source === r.source && held.gap === r.gap && held.t_end_us === r.t_start_us) {
-          held = joined(held, r)
+        const adjacent = held !== null && held.class === r.class && held.source === r.source && held.gap === r.gap && held.t_end_us === r.t_start_us
+        // A piece judged sync-only from its own start is not, once its gone
+        // content falls past the onset of the range it would join.
+        const f = facts.get(r)
+        if (adjacent && f && held!.only === 'sync' && !goneAtOnset(f, held!.before_start_us)) delete r.only
+        if (adjacent && sameSync(held!, r)) {
+          held = joined(held!, r)
         } else {
           if (held) out.push(held)
           held = r
@@ -590,8 +728,14 @@ export function diffRanges(baseline: Project, current: Project, lists: ChangeLis
       }
       if (review.length > 0 && user.length > 0) range.includes_user = true
       if (r.cls === 'modified' && ca) {
-        const offset = syncOffset(B, cb, c, layersBefore)
-        if (offset !== undefined && offset > 0) range.sync_offset_us = offset
+        const f = syncFacts(A, ca, b, b1, B, cb, c, c1, entities)
+        if (f.offset !== undefined) {
+          range.sync_offset_us = f.offset
+          if (f.lag !== undefined) range.sound_lag_us = f.lag
+          if (f.role !== undefined) range.sound_role = f.role
+          if (f.bound) range.sync_bound = true
+          if (f.same && goneAtOnset(f, b)) { range.only = 'sync'; facts.set(range, f) }
+        }
       }
       if (range.sync_offset_us === undefined) {
         const only = onlyOf([...review, ...user], layersBefore, layersNow)
@@ -605,14 +749,12 @@ export function diffRanges(baseline: Project, current: Project, lists: ChangeLis
   return out
 }
 
-/** Two adjacent ranges of one class and owner as one. */
+/** Two adjacent ranges of one class, owner and sync (`sameSync`) as one. */
 function joined(a: ChangedRange, b: ChangedRange): ChangedRange {
   const ids = [...new Set([...a.change_ids, ...b.change_ids])]
   const out: ChangedRange = { ...a, t_end_us: b.t_end_us, before_end_us: b.before_end_us, change_ids: ids }
   if (a.includes_user || b.includes_user) out.includes_user = true
   if (a.only !== b.only) delete out.only
-  const sync = Math.max(a.sync_offset_us ?? 0, b.sync_offset_us ?? 0)
-  if (sync > 0) out.sync_offset_us = sync
   return out
 }
 

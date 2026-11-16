@@ -131,7 +131,7 @@
 }
 
 .mini-change-added { background: var(--review-added); }
-.mini-change-modified { background: var(--review-modified); }
+.mini-change-modified { background: var(--review-modified); --hatch-hue: var(--review-modified); }
 .mini-change-removed { background: var(--review-removed); }
 
 /* A cut point: baseline content stopped here and what followed closed up, so
@@ -151,7 +151,23 @@
 
 /* The user's own ranges, shown with the user-changes switch: never to
    review, so stepped back to the muted ink. */
-.mini-change-user { background: var(--muted-foreground); opacity: 0.45; }
+.mini-change-user { background: var(--muted-foreground); opacity: 0.45; --hatch-hue: var(--muted-foreground); }
+
+/* A range only out of sync (`data-sync="loose"`): one fact, where it starts,
+   not a stretch of changed content — a shear hatch from a solid tick at its
+   onset, inside the band's own box. */
+.mini-change[data-sync="loose"] {
+  background: repeating-linear-gradient(-45deg, var(--hatch-hue) 0 calc(1.5 * var(--ui-px)), transparent 0 calc(3 * var(--ui-px)));
+}
+.mini-change[data-sync="loose"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px; /* fixed-px: time-axis tick weight */
+  background: var(--hatch-hue);
+}
 .mini-change-cut.mini-change-user { background: transparent; border-top-color: var(--muted-foreground); }
 
 /* The review focus on the strip (agent/reviewFocus.ts), as the editor
@@ -285,6 +301,38 @@
 .ruler-range[data-user] { --range-hue: var(--muted-foreground); opacity: 0.6; }
 .ruler-range[data-hovered] { background: color-mix(in srgb, var(--range-hue) 22%, transparent); }
 .ruler-range[data-selected] { opacity: 1; background: color-mix(in srgb, var(--range-hue) 30%, transparent); }
+/* Out of sync (`data-sync`, RulerRanges): a tick at the onset, where the
+   eye should land, and ⇄ beside it when the range has room. Only out of
+   sync, with no bound sync broken (`loose`), the body is that one fact: a
+   faint shear hatch over a dashed foot, deepening where the wash would. The
+   ⇄ sits in the lower half, under the timecode labels' row. */
+.ruler-range[data-sync]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 2px; /* fixed-px: time-axis tick weight */
+  height: calc(10 * var(--ui-px));
+  background: var(--range-hue);
+}
+.ruler-range-sync-glyph {
+  position: absolute;
+  left: calc(4 * var(--ui-px));
+  bottom: calc(2 * var(--ui-px));
+  font-size: calc(7 * var(--ui-px));
+  line-height: 1;
+  color: var(--range-hue);
+  pointer-events: none;
+}
+.ruler-range[data-sync="loose"] {
+  --hatch: 28%;
+  box-shadow: none;
+  background:
+    repeating-linear-gradient(90deg, var(--range-hue) 0 calc(4 * var(--ui-px)), transparent 0 calc(7 * var(--ui-px))) left bottom / 100% calc(2 * var(--ui-px)) no-repeat,
+    repeating-linear-gradient(-45deg, color-mix(in srgb, var(--range-hue) var(--hatch), transparent) 0 var(--ui-px), transparent 0 calc(5 * var(--ui-px)));
+}
+.ruler-range[data-sync="loose"][data-hovered] { --hatch: 50%; }
+.ruler-range[data-sync="loose"][data-selected] { --hatch: 70%; }
 .ruler-range[data-cut] {
   top: auto;
   width: 0;
