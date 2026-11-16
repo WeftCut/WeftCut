@@ -60,6 +60,7 @@ const view: ReviewView = {
     change({ id: "Layer:inner", composition_id: "grp" }),
   ],
   decorations: [{ layer_id: "group-clip", composition_id: ROOT_ID, t_start_us: 6 * S, t_end_us: 8 * S, change_ids: ["Layer:inner"] }],
+  ranges: [],
 };
 
 function renderTimeline() {

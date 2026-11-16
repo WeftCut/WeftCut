@@ -22,6 +22,7 @@ import { SAVE_STATUS_EVENT, type SaveStatus } from '../../shared/save-status'
 import { PUBLICATION_BASE_ARG, type ProjectVersion, type ProjectPublication, type PublishedResult } from '../../shared/projectPublication'
 import { createPublicationAnswers } from './publicationAnswers'
 import { REVIEW_CHANGED_EVENT, type ReviewActivityArgs, type ReviewActivityView, type ReviewActionArgs, type ReviewActionResult, type ReviewChangedPayload, type ReviewVersion, type ReviewView, type ReviewViewArgs, type ReviewViewUnchanged } from '../../shared/review'
+import { rangesToReview } from './reviewRanges'
 import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
 import { recoverInterruptedImports } from './importRecovery'
 import { captureImportSession, createMediaImporter, type MediaImporter } from './mediaImport'
@@ -731,8 +732,9 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     // open there is nothing to review, though the actor still holds one.
     // What this reader reads: the user-only list's changes move it only when asked for.
     const content_revision = includeUser ? s.content_revision_with_user : s.content_revision
-    if (publishedDir === null) return { version, content_revision, has_baseline: false, unreviewed: [], user: [], user_count: 0, decorations: [] }
-    return { version, content_revision, has_baseline: s.has_baseline, unreviewed: s.unreviewed, user: includeUser ? s.user : [], user_count: s.user.length, decorations: s.decorations }
+    if (publishedDir === null) return { version, content_revision, has_baseline: false, unreviewed: [], user: [], user_count: 0, decorations: [], ranges: [] }
+    const ranges = includeUser ? s.ranges : rangesToReview(s.ranges, s.unreviewed)
+    return { version, content_revision, has_baseline: s.has_baseline, unreviewed: s.unreviewed, user: includeUser ? s.user : [], user_count: s.user.length, decorations: s.decorations, ranges }
   }
 
   /** `review_view` for a caller holding the lists of content revision
@@ -759,7 +761,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
    *  `reviewView`, nothing to show with no project open. */
   function reviewActivityView(ids: unknown): ReviewActivityView {
     const wanted = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string') : []
-    if (publishedDir === null || wanted.length === 0) return { available: false, reverted: false, changes: [], decorations: [] }
+    if (publishedDir === null || wanted.length === 0) return { available: false, reverted: false, changes: [], decorations: [], ranges: [] }
     return actor.reviewOpDiff(wanted)
   }
 

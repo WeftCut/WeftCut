@@ -66,7 +66,7 @@ const reviewWith = async (count: number) => {
   act(() => {
     useReview.getState().apply({
       version: { session: 1, revision: 1, baseline_revision: count + 1 }, content_revision: 1, has_baseline: true,
-      unreviewed: Array.from({ length: count }, (_, n) => change(n)), user: [], user_count: 0, decorations: [],
+      unreviewed: Array.from({ length: count }, (_, n) => change(n)), user: [], user_count: 0, decorations: [], ranges: [],
     });
   });
 };

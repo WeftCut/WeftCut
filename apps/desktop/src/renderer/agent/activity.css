@@ -138,6 +138,9 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-changes-stat.class-removed { color: var(--review-removed); }
 .agent-changes-stat.class-modified { color: var(--review-modified); }
 .agent-changes-stat.is-zero { color: var(--muted-foreground); font-weight: 400; }
+/* What there is to watch again (ADR 0169): time, not entities, so it steps
+   out of the class hues and sits apart after a dot. */
+.agent-changes-stat.ranges { color: var(--muted-foreground); font-size: var(--font-size-body); font-weight: 500; }
 /* In a narrow panel the Changes toolbar wraps whole controls to a second row
    rather than breaking a label. */
 .agent-changes .agent-activity-toolbar { flex-wrap: wrap; row-gap: calc(6 * var(--ui-px)); }

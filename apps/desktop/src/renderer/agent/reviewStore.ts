@@ -20,8 +20,9 @@ import { tryMutate } from '../errors/tryMutate'
 import { useProjectStore } from '../state/projectStore'
 import { useAgentActivity } from './activityStore'
 import type { AgentActivity } from '../../shared/agent-activity'
-import { changeLine, changeWordsContext, framedWords, type ChangeFrame, type ChangeWordsContext, type Translate } from './changeWords'
-import { buildReviewHighlight, EMPTY_HIGHLIGHT, type ReviewClipMark, type ReviewCut, type ReviewGhost, type ReviewMarkerGhost, type ReviewHighlight, type ReviewRangeMark } from './reviewHighlight'
+import { changeWordsContext, type ChangeFrame, type ChangeWordsContext, type Translate } from './changeWords'
+import { rangeLine } from './rangeWords'
+import { buildReviewHighlight, EMPTY_HIGHLIGHT, rangeMarks, type ReviewClipMark, type ReviewCut, type ReviewGhost, type ReviewMarkerGhost, type ReviewHighlight, type ReviewRangeMark } from './reviewHighlight'
 
 /** One activity row's own changes (spec Part B, per-activity highlight):
  *  what that call did, shown on the timelines in place of the unreviewed
@@ -111,7 +112,10 @@ export const useReview = create<ReviewState>((set, get) => ({
     const held = get()
     const fillsUser = listsUser && !held.viewListsUser && held.view !== null && sameVersion(next.version, held.view.version)
     if (!fillsUser && !isNewerReviewView(next.version, held.view?.version ?? null)) return false
-    set({ view: next, viewListsUser: listsUser, highlight: fillsUser ? held.highlight : buildReviewHighlight(next.unreviewed, next.decorations), ...noUserLeft(next) })
+    // Filling in the user's list keeps the clip marks (they show the
+    // unreviewed changes alone) but takes the ranges, which now hold theirs.
+    const highlight = fillsUser ? { ...held.highlight, ranges: rangeMarks(next.ranges) } : buildReviewHighlight(next.unreviewed, next.decorations, next.ranges)
+    set({ view: next, viewListsUser: listsUser, highlight, ...noUserLeft(next) })
     return true
   },
   applyUnchanged: (next) => {
@@ -278,28 +282,37 @@ export function useChangeWords({ active = true, frame }: { active?: boolean; fra
   return useMemo(() => changeWordsContext(t as unknown as Translate, { summary, layerById, groupOrdinals }, f), [t, summary, layerById, groupOrdinals, f])
 }
 
-/** What a mark of the mini timeline's change band says under the pointer:
- *  its change's line, and for a removal's baseline footprint whose place it
- *  is — in the frame the highlight shows. */
-export function useChangeMarkLabel(): (mark: ReviewRangeMark) => string {
-  const words = useChangeWords()
-  const changes = useHighlightedChanges()
-  return useCallback((mark: ReviewRangeMark) => {
-    const c = changes.get(mark.changeId)
-    const line = c ? changeLine(c, words) : words.t(`changes.class_${mark.cls}`, {})
-    return mark.historical ? `${line} · ${framedWords(words, 'before_label')}` : line
-  }, [words, changes])
+/** What a changed range says under the pointer (`rangeWords.ts`). */
+export function useRangeMarkLabel(): (mark: ReviewRangeMark) => string {
+  const { t } = useTranslation()
+  return useCallback((mark: ReviewRangeMark) => rangeLine(mark.range, t as unknown as Translate), [t])
 }
 
-/** Removed layers to outline on one track of the editor timeline. */
+/** Removed layers to outline on one track of the editor timeline: only
+ *  where that track is empty now (a lift). Where other material closed up
+ *  over the place, the Review lane's cut point and the list say it instead
+ *  (ADR 0169) — a box there would name the clip now in it as removed. */
 export function useTrackReviewGhosts(trackId: string): readonly ReviewGhost[] {
   const overlay = useOverlay()
   const ghosts = useReview(s => selectHighlight(s).ghosts)
-  return useMemo(() => {
+  const mine = useMemo(() => {
     if (!overlay || ghosts.length === 0) return NO_GHOSTS
-    const mine = ghosts.filter(g => g.trackId === trackId)
-    return mine.length === 0 ? NO_GHOSTS : mine
+    const on = ghosts.filter(g => g.trackId === trackId)
+    return on.length === 0 ? NO_GHOSTS : on
   }, [overlay, ghosts, trackId])
+  const layers = useProjectStore(s => (mine.length === 0 ? null : trackLayers(s.summary, trackId)))
+  return useMemo(() => {
+    if (mine.length === 0 || layers === null) return mine
+    const open = mine.filter(g => !layers.some(l => l.t_start_us < g.tEndUs && l.t_end_us > g.tStartUs))
+    return open.length === mine.length ? mine : open.length === 0 ? NO_GHOSTS : open
+  }, [mine, layers])
+}
+
+/** The layers of track `trackId` in `summary`, or null without it. */
+function trackLayers(summary: ReturnType<typeof useProjectStore.getState>['summary'], trackId: string): readonly { t_start_us: number; t_end_us: number }[] | null {
+  if (!summary) return null
+  for (const c of Object.values(summary.compositions)) for (const t of c.tracks) if (t.id === trackId) return t.layers
+  return null
 }
 
 /** A marker's review mark on the editor's marker lane, or null. */
@@ -330,14 +343,17 @@ export function useTrackReviewCuts(trackId: string): readonly ReviewCut[] {
   }, [overlay, cuts, trackId])
 }
 
-/** Change ranges on one composition — the mini timeline's change band. Not
- *  gated by the overlay: the agent view has no overlay switch. */
+/** Changed ranges on one composition — the review bands. The user's own
+ *  show only while the user-changes switch is on. Not gated by the overlay:
+ *  the agent view has no overlay switch. */
 export function useCompositionChangeRanges(compositionId: string | null): readonly ReviewRangeMark[] {
   const ranges = useReview(s => selectHighlight(s).ranges)
+  const showUser = useReview(s => s.showUser || s.activity?.status === 'ready')
   return useMemo(() => {
     if (compositionId === null || ranges.length === 0) return NO_RANGES
-    return ranges.filter(r => r.compositionId === compositionId)
-  }, [ranges, compositionId])
+    const mine = ranges.filter(r => r.compositionId === compositionId && (showUser || !r.user))
+    return mine.length === 0 ? NO_RANGES : mine
+  }, [ranges, compositionId, showUser])
 }
 
 // ── Approve all / revert all ──────────────────────────────────────────────────
@@ -400,7 +416,7 @@ export async function showActivityChanges(a: Pick<AgentActivity, 'id' | 'history
     if (token !== activityToken) return
     const cur = useReview.getState().activity!
     useReview.setState({ activity: v.available
-      ? { ...cur, status: 'ready', reverted: v.reverted, count: v.changes.length, highlight: buildReviewHighlight(v.changes, v.decorations) }
+      ? { ...cur, status: 'ready', reverted: v.reverted, count: v.changes.length, highlight: buildReviewHighlight(v.changes, v.decorations, v.ranges) }
       : { ...cur, status: 'unavailable', reverted: false, count: 0, highlight: EMPTY_HIGHLIGHT } })
   } catch {
     if (token === activityToken) useReview.setState({ activity: null })

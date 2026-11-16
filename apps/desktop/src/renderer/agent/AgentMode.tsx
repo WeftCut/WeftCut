@@ -22,7 +22,7 @@ import { MiniTimeline } from "./MiniTimeline";
 import { AgentPanel } from "./AgentPanel";
 import { useCompositionTacks } from "./tackModel";
 import { selectChange, selectTack, useReviewFocus, type ReviewTarget } from "./reviewFocus";
-import { useChangeMarkLabel, useCompositionChangeRanges, useReviewConsumer } from "./reviewStore";
+import { useCompositionChangeRanges, useRangeMarkLabel, useReviewConsumer } from "./reviewStore";
 import { Button } from "@/components/ui/button";
 import { WindowControls } from "../components/WindowControls";
 import { SaveFailedPill, type SaveFailureActions } from "../components/SaveFailedPill";
@@ -89,7 +89,7 @@ export const AgentMode = forwardRef(function AgentMode(
   // The mini timeline's change band is a review surface: keep the view fresh.
   useReviewConsumer();
   const changes = useCompositionChangeRanges(comp?.id ?? null);
-  const changeLabel = useChangeMarkLabel();
+  const changeLabel = useRangeMarkLabel();
   const scale = useUiScale();
   const [recordWidthBase, setRecordWidth] = useState<number>(AGENT.recordWidth.default);
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth);

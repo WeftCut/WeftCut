@@ -54,7 +54,7 @@ export function ChangesTab({ editor }: { editor: boolean }) {
   const reasons = useMemo(() => sessionReasonIndex(activity), [activity])
   const words = useChangeWords({ frame: 'review' })
   const unreviewed = view?.unreviewed ?? []
-  const stats = useMemo(() => changeStats({ unreviewed: view?.unreviewed ?? [] }), [view?.unreviewed])
+  const stats = useMemo(() => changeStats({ unreviewed: view?.unreviewed ?? [], ranges: view?.ranges ?? [] }), [view?.unreviewed, view?.ranges])
   const groups = useMemo(
     () => (view ? groupChanges(view.unreviewed, showUser ? view.user : [], summary?.root_id ?? null) : []),
     [view, showUser, summary?.root_id])

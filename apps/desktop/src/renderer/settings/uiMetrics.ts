@@ -29,9 +29,8 @@ export const UI_METRICS = {
     miniTimeline: {
       /** How near a point mark a band press still names it. */
       pointSlop: 4,
-      /** Where the row of removals' baseline footprints starts, under the
-       * current change band (`.mini-change-historical`). */
-      historyRowTop: 5,
+      /** How near two changed ranges of one look paint as one block. */
+      changeMergePx: 3,
     },
   },
 

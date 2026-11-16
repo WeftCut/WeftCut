@@ -15,6 +15,17 @@ function figure(stat: ChangeStat, t: TFunction): { short: string; full: string; 
       full: t(`changes.stats.${stat.class}`, { count: stat.count }),
       tone: `class-${stat.class}${stat.count === 0 ? ' is-zero' : ''}`,
     }
+    case 'ranges': {
+      const duration = t('changes.range.seconds', { value: (stat.durationUs / 1_000_000).toFixed(1) })
+      return {
+        // Cut points alone have nothing to watch for a length of time.
+        short: stat.durationUs > 0
+          ? t('changes.stats.ranges_short', { count: stat.count, duration })
+          : t('changes.stats.ranges_points_short', { count: stat.count }),
+        full: t('changes.stats.ranges', { count: stat.count, duration }),
+        tone: 'ranges',
+      }
+    }
   }
 }
 

@@ -3,7 +3,8 @@ import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "../i18n";
 import { MiniTimeline } from "./MiniTimeline";
-import type { ReviewRangeMark } from "./reviewHighlight";
+import { rangeMarks, type ReviewRangeMark } from "./reviewHighlight";
+import type { ChangeClass, ChangedRange, EntityKey } from "../../shared/review";
 import type { TackView } from "../../shared/agent-activity";
 
 beforeEach(() => vi.stubGlobal("ResizeObserver", class {
@@ -11,6 +12,13 @@ beforeEach(() => vi.stubGlobal("ResizeObserver", class {
   disconnect() {}
 }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+/** Changed ranges on the root, as the bands receive them. */
+const marks = (...rs: Array<[ChangeClass, number, number, EntityKey[], Partial<ChangedRange>?]>): ReviewRangeMark[] =>
+  rangeMarks(rs.map(([cls, s, e, ids, extra]) => ({
+    composition_id: "root", class: cls, t_start_us: s, t_end_us: e, before_start_us: s, before_end_us: e,
+    source: "review", change_ids: ids, ...extra,
+  })));
 
 it.each(["release", "cancel", "escape", "blur", "unmount"])(
   "stops mini-timeline seeking on %s so later edits cannot inherit its scrub",
@@ -83,25 +91,39 @@ it("draws the focused tack over the union, and nothing for a focus it does not p
   expect(selected()).toBeNull();
 });
 
-it("paints review change ranges as a second band, by class, apart from the tack band", () => {
+it("paints changed ranges as a second band, by class, a cut point as a notch, apart from the tack band", () => {
   const { container } = render(<MiniTimeline
     durationUs={10_000_000}
     markers={[]}
     tacks={[{ id: "t", t_us: 2_000_000, end_t_us: 4_000_000, label: "Pause" }] as never}
-    changes={[
-      { changeId: "Layer:a", cls: "added", compositionId: "root", tStartUs: 0, tEndUs: 1_000_000 },
-      { changeId: "Layer:m", cls: "modified", compositionId: "root", tStartUs: 2_000_000, tEndUs: 3_000_000 },
-      { changeId: "Layer:r", cls: "removed", compositionId: "root", tStartUs: 5_000_000, tEndUs: 6_000_000 },
-      { changeId: "Layer:moved", cls: "modified", compositionId: "root", tStartUs: 6_000_000, tEndUs: 9_000_000 },
-    ]}
+    changes={marks(
+      ["added", 0, 1_000_000, ["Layer:a"]],
+      ["modified", 2_000_000, 3_000_000, ["Layer:m"]],
+      ["removed", 5_000_000, 5_000_000, ["Layer:r"], { before_end_us: 6_000_000 }],
+      ["modified", 6_000_000, 9_000_000, ["Layer:u"], { source: "user" }],
+    )}
     onSeek={() => {}} fpsNum={30} fpsDen={1}
   />);
   const band = [...container.querySelectorAll<HTMLElement>("[data-testid='mini-change']")];
-  expect(band.map((b) => [b.dataset.changeClass, b.style.left, b.style.width])).toEqual([
-    ["added", "0%", "10%"], ["modified", "20%", "10%"], ["removed", "50%", "10%"], ["modified", "60%", "30%"],
+  expect(band.map((b) => [b.dataset.changeClass, b.dataset.cut ?? null, b.dataset.user ?? null, b.style.left, b.style.width])).toEqual([
+    ["added", null, null, "0%", "10%"], ["modified", null, null, "20%", "10%"],
+    ["removed", "true", null, "50%", ""], ["modified", null, "true", "60%", "30%"],
   ]);
   expect(band.every((b) => b.classList.contains("mini-change") && !b.classList.contains("mini-tack"))).toBe(true);
   expect(container.querySelectorAll("[data-testid='mini-tack']")).toHaveLength(1);
+});
+
+it("paints touching ranges of one look as one block, every range still named", () => {
+  const changeLabel = (m: ReviewRangeMark) => `${m.cls} ${m.tStartUs / 1_000_000}`;
+  const { container, getByTestId } = render(<MiniTimeline durationUs={10_000_000} markers={[]}
+    changes={marks(["modified", 1_000_000, 2_000_000, ["Layer:a"]], ["modified", 2_000_000, 3_000_000, ["Layer:b"]], ["added", 3_000_000, 4_000_000, ["Layer:c"]])}
+    changeLabel={changeLabel} onFocus={() => {}} onSeek={() => {}} fpsNum={30} fpsDen={1} />);
+  const band = [...container.querySelectorAll<HTMLElement>("[data-testid='mini-change']")];
+  expect(band.map((b) => [b.dataset.changeClass, b.dataset.count])).toEqual([["modified", "2"], ["added", "1"]]);
+  const hit = getByTestId("mini-change-band");
+  vi.spyOn(hit, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 500, 36));
+  fireEvent.pointerMove(hit, { clientX: 75 }); // 1.5 s
+  expect(hit.title).toBe("modified 1\nmodified 2");
 });
 
 describe("review focus on the strip", () => {
@@ -110,11 +132,10 @@ describe("review focus on the strip", () => {
     { id: "short", t_us: 2_000_000, end_t_us: 3_000_000, label: "Short", kind: "issue" },
     { id: "point", t_us: 8_000_000, end_t_us: null, label: "", kind: "question" },
   ] as TackView[];
-  const changes = [
-    { changeId: "Layer:a", cls: "added" as const, compositionId: "root", tStartUs: 0, tEndUs: 1_000_000 },
-    { changeId: "Layer:m", cls: "modified" as const, compositionId: "root", tStartUs: 5_000_000, tEndUs: 7_000_000 },
-    { changeId: "Group:g", cls: "modified" as const, compositionId: "root", tStartUs: 8_000_000, tEndUs: 9_000_000, group: true as const },
-  ];
+  const changes = marks(
+    ["added", 0, 1_000_000, ["Layer:a"]],
+    ["modified", 5_000_000, 7_000_000, ["Layer:m", "Layer:n"]],
+  );
   function strip(props: Partial<React.ComponentProps<typeof MiniTimeline>> = {}) {
     const onSeek = vi.fn();
     const onFocus = vi.fn();
@@ -139,57 +160,27 @@ describe("review focus on the strip", () => {
     expect(onSeek).not.toHaveBeenCalled();
   });
 
-  it("a removal's baseline footprint is dashed apart, says so under the pointer, and a press focuses it", () => {
-    const removed = { changeId: "Layer:r", cls: "removed" as const, compositionId: "root", tStartUs: 3_000_000, tEndUs: 4_000_000, historical: true as const };
-    const changeLabel = (m: ReviewRangeMark) => `${m.changeId}${m.historical ? " · Baseline position" : ""}`;
-    const { container, band, onFocus, onSeek } = strip({ changes: [...changes, removed], changeLabel });
-    const mark = container.querySelector<HTMLElement>("[data-change-id='Layer:r']")!;
-    expect([mark.dataset.historical, mark.classList.contains("mini-change-historical")]).toEqual(["true", true]);
-    expect(container.querySelector<HTMLElement>("[data-change-id='Layer:m']")!.classList.contains("mini-change-historical")).toBe(false);
-    fireEvent.pointerMove(band("mini-change-band"), { clientX: 175 }); // 3.5 s
-    expect(band("mini-change-band").title).toBe("Layer:r · Baseline position");
-    fireEvent.pointerDown(band("mini-change-band"), { button: 0, pointerId: 1, clientX: 175 });
+  it("a cut point says how much was removed under the pointer, and a press focuses its change", () => {
+    const withCut = marks(
+      ["added", 0, 1_000_000, ["Layer:a"]],
+      ["removed", 3_000_000, 3_000_000, ["Layer:r"], { before_start_us: 3_000_000, before_end_us: 5_000_000 }],
+      ["modified", 5_000_000, 7_000_000, ["Layer:m", "Layer:n"]],
+    );
+    const changeLabel = (m: ReviewRangeMark) => `${m.cls} ${(m.range.before_end_us - m.range.before_start_us) / 1_000_000}`;
+    const { band, onFocus, onSeek } = strip({ changes: withCut, changeLabel });
+    fireEvent.pointerMove(band("mini-change-band"), { clientX: 151 }); // a pixel off 3 s
+    expect(band("mini-change-band").title).toBe("removed 2");
+    fireEvent.pointerDown(band("mini-change-band"), { button: 0, pointerId: 1, clientX: 151 });
     expect(onFocus).toHaveBeenCalledWith({ kind: "change", id: "Layer:r" });
     expect(onSeek).not.toHaveBeenCalled();
   });
 
-  it("a removal's footprint under a current change has its own row: a press there names it, above names the current one", () => {
-    // A ripple closed up: Layer:m now sits exactly where Layer:r was.
-    const under = { changeId: "Layer:r", cls: "removed" as const, compositionId: "root", tStartUs: 5_000_000, tEndUs: 7_000_000, historical: true as const };
-    const { band, onFocus } = strip({ changes: [...changes, under] });
-    fireEvent.pointerDown(band("mini-change-band"), { button: 0, pointerId: 1, clientX: 300, clientY: 1 });
-    expect(onFocus).toHaveBeenLastCalledWith({ kind: "change", id: "Layer:m" });
-    fireEvent.pointerDown(band("mini-change-band"), { button: 0, pointerId: 1, clientX: 300, clientY: 8 });
-    expect(onFocus).toHaveBeenLastCalledWith({ kind: "change", id: "Layer:r" });
-  });
-
-  it("runs past the film's end to a removal's footprint there, shaded, and never seeks beyond the end", () => {
-    const past = { changeId: "Marker:x", cls: "removed" as const, compositionId: "root", tStartUs: 12_000_000, tEndUs: 12_000_000, historical: true as const };
-    const { container, onSeek, onFocus, band } = strip({ changes: [past] });
-    // Scale 0–12 s on a 10 s film, and a little room after 12 s.
-    const extent = 12_240_000;
-    expect(container.querySelector<HTMLElement>("[data-testid='mini-beyond-end']")!.style.left).toBe(`${(10_000_000 / extent) * 100}%`);
-    expect(container.querySelector<HTMLElement>("[data-change-id='Marker:x']")!.style.left).toBe(`${(12_000_000 / extent) * 100}%`);
-    fireEvent.pointerDown(band("mini-change-band"), { button: 0, pointerId: 1, clientX: 490, clientY: 8 });
-    expect(onFocus).toHaveBeenCalledWith({ kind: "change", id: "Marker:x" });
-    const real = container.querySelector<HTMLElement>(".mini-timeline-strip-real")!;
-    fireEvent.pointerDown(real, { button: 0, pointerId: 2, clientX: 250 });
-    expect(onSeek).toHaveBeenLastCalledWith(6_120_000);
-    fireEvent.pointerMove(window, { pointerId: 2, clientX: 480 });
-    expect(onSeek).toHaveBeenLastCalledWith(10_000_000);
-    fireEvent.pointerUp(window, { pointerId: 2 });
-    // Without one, no shade and the film's own scale.
-    cleanup();
-    const plain = strip();
-    expect(plain.container.querySelector("[data-testid='mini-beyond-end']")).toBeNull();
-  });
-
-  it("a press on the change band focuses the change under it, never a Group footprint", () => {
+  it("a press on a changed range focuses the first change playing in it", () => {
     const { band, onSeek, onFocus } = strip();
     fireEvent.pointerDown(band("mini-change-band"), { button: 0, pointerId: 1, clientX: 300 }); // 6 s
     expect(onFocus).toHaveBeenCalledWith({ kind: "change", id: "Layer:m" });
     expect(onSeek).not.toHaveBeenCalled();
-    fireEvent.pointerDown(band("mini-change-band"), { button: 0, pointerId: 1, clientX: 425 }); // 8.5 s: Group only
+    fireEvent.pointerDown(band("mini-change-band"), { button: 0, pointerId: 1, clientX: 425 }); // 8.5 s: bare band
     expect(onFocus).toHaveBeenCalledTimes(1);
     expect(onSeek).toHaveBeenLastCalledWith(8_500_000);
   });
@@ -199,9 +190,9 @@ describe("review focus on the strip", () => {
     fireEvent.doubleClick(band("mini-tack-band"), { clientX: 125 });
     expect(onSeek).toHaveBeenLastCalledWith(tacks.find((x) => x.id === "short")!.t_us);
     fireEvent.doubleClick(band("mini-change-band"), { clientX: 300 });
-    expect(onSeek).toHaveBeenLastCalledWith(changes.find((x) => x.changeId === "Layer:m")!.tStartUs);
+    expect(onSeek).toHaveBeenLastCalledWith(5_000_000);
     onSeek.mockClear();
-    fireEvent.doubleClick(band("mini-change-band"), { clientX: 425 }); // a Group footprint names nothing
+    fireEvent.doubleClick(band("mini-change-band"), { clientX: 425 }); // bare band names nothing
     expect(onSeek).not.toHaveBeenCalled();
   });
 
@@ -219,31 +210,32 @@ describe("review focus on the strip", () => {
     expect(band("mini-change-band").title).toBe("Added");
   });
 
-  it("rings the hovered tack and fills the focused change's ranges", () => {
-    const { container } = strip({ focus: { kind: "change", id: "Layer:m" }, hover: { kind: "tack", id: "short" } });
+  it("rings the hovered tack and fills the ranges the focused change plays in", () => {
+    const { container } = strip({ focus: { kind: "change", id: "Layer:n" }, hover: { kind: "tack", id: "short" } });
     const hover = container.querySelector<HTMLElement>("[data-testid='mini-tack-hover']")!;
     expect([hover.style.left, hover.style.width]).toEqual(["20%", "10%"]);
     expect(container.querySelector("[data-testid='mini-tack-selected']")).toBeNull();
-    const marks = [...container.querySelectorAll<HTMLElement>("[data-testid='mini-change']")];
-    expect(marks.map((m) => [m.dataset.changeId, m.classList.contains("mini-change-selected")])).toEqual([
-      ["Layer:a", false], ["Layer:m", true], ["Group:g", false],
+    // A range is selected while the focused change plays in it.
+    const painted = [...container.querySelectorAll<HTMLElement>("[data-testid='mini-change']")];
+    expect(painted.map((m) => [m.dataset.changeClass, m.classList.contains("mini-change-selected")])).toEqual([
+      ["added", false], ["modified", true],
     ]);
   });
 
-  it("washes the focused range the strip's full height and steps its band back, as the editor timeline does", () => {
-    const removed = { changeId: "Layer:r", cls: "removed" as const, compositionId: "root", tStartUs: 2_000_000, tEndUs: 3_000_000, historical: true as const };
-    const { container, rerender } = render(<MiniTimeline durationUs={10_000_000} markers={[]} tacks={tacks} changes={[...changes, removed]}
+  it("washes the focused change's ranges the strip's full height and steps its band back, as the editor timeline does", () => {
+    const withCut = marks(["added", 0, 1_000_000, ["Layer:a"]], ["removed", 2_000_000, 2_000_000, ["Layer:r"]], ["modified", 5_000_000, 7_000_000, ["Layer:m"]]);
+    const { container, rerender } = render(<MiniTimeline durationUs={10_000_000} markers={[]} tacks={tacks} changes={withCut}
       focus={{ kind: "change", id: "Layer:m" }} onSeek={() => {}} fpsNum={30} fpsDen={1} />);
     const strip = () => container.querySelector<HTMLElement>(".mini-timeline-strip-real")!;
     const washes = () => [...container.querySelectorAll<HTMLElement>("[data-testid='mini-focus-wash']")]
-      .map((w) => [w.dataset.kind, w.dataset.historical ?? null, w.style.left, w.style.width]);
+      .map((w) => [w.dataset.kind, w.dataset.point ?? null, w.style.left, w.style.width]);
     expect(washes()).toEqual([["change", null, "50%", "20%"]]);
     expect(strip().classList.contains("mini-focus-change")).toBe(true);
     // Under every mark: the wash comes first in the strip.
     expect(strip().firstElementChild?.getAttribute("data-testid")).toBe("mini-focus-wash");
-    rerender(<MiniTimeline durationUs={10_000_000} markers={[]} tacks={tacks} changes={[...changes, removed]}
+    rerender(<MiniTimeline durationUs={10_000_000} markers={[]} tacks={tacks} changes={withCut}
       focus={{ kind: "change", id: "Layer:r" }} onSeek={() => {}} fpsNum={30} fpsDen={1} />);
-    expect(washes()).toEqual([["change", "true", "20%", "10%"]]);
+    expect(washes()).toEqual([["change", "true", "20%", ""]]);
     rerender(<MiniTimeline durationUs={10_000_000} markers={[]} tacks={tacks} changes={changes}
       focus={{ kind: "tack", id: "short" }} onSeek={() => {}} fpsNum={30} fpsDen={1} />);
     expect(washes()).toEqual([["tack", null, "20%", "10%"]]);
