@@ -17,7 +17,7 @@ import { Timeline } from "./Timeline";
 import { mergeCuts } from "./ReviewMarks";
 import { uiPixels } from "../settings/layoutTheme";
 import { UI_METRICS } from "../settings/uiMetrics";
-import { selectChange, selectTack, setReviewFocus, setReviewHover, useReviewFocus } from "../agent/reviewFocus";
+import { rangeKey, selectChange, selectTack, setReviewFocus, setReviewHover, useReviewFocus } from "../agent/reviewFocus";
 
 // The Review overlay's clip decorations (ADR 0115) are paint inside boxes that
 // already exist: turning them on must not move or size a clip or a lane, and
@@ -387,7 +387,7 @@ describe("Changed ranges on the ruler", () => {
     expect(painted(container)).toHaveLength(0);
   });
 
-  it("a press on a range scrubs as the bare ruler does and focuses nothing; a double press focuses its change", () => {
+  it("a press on a range scrubs as the bare ruler does and focuses nothing; a double press focuses the range", () => {
     const onSeek = vi.fn();
     const { container } = render(
       <Timeline compositionId={null} tracks={[track, other]} links={[]} transitions={[]} durationUs={10 * S} keybindings={{}}
@@ -401,7 +401,18 @@ describe("Changed ranges on the ruler", () => {
     expect(onSeek).toHaveBeenCalled();
     expect(useReviewFocus.getState().focus).toBeNull();
     fireEvent.doubleClick(range!);
-    expect(useReviewFocus.getState().focus).toMatchObject({ kind: "change", id: "Layer:edited" });
+    expect(useReviewFocus.getState().focus).toMatchObject({ kind: "range", id: rangeKey(ranged.ranges[0]!), step: null });
+    // Selected as itself; its clips outlined, the rest receding.
+    expect(painted(container).map((r) => r.dataset.selected ?? null)).toEqual(["true", null]);
+    const outlined = q(container, '[data-testid="review-focus-outline"]').map((o) => o.closest<HTMLElement>("[data-layer-id]")?.dataset.layerId);
+    expect(outlined).toEqual(["edited"]);
+  });
+
+  it("a right press focuses the range before the ruler's menu opens, so its rows act on it", () => {
+    const { container } = renderTimeline();
+    const cut = painted(container)[1]!;
+    fireEvent.contextMenu(cut, { clientX: 300, clientY: 10 });
+    expect(useReviewFocus.getState().focus).toMatchObject({ kind: "range", id: rangeKey(ranged.ranges[1]!) });
   });
 
   it("marks a range out of sync by how it reads, its onset glyph only where it has room", () => {

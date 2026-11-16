@@ -76,6 +76,7 @@ import {
   seekToPrevMarker,
 } from "./state/navigation";
 import { AgentMode } from "./agent/AgentMode";
+import { playChangedRange, walkChangedRange } from "./agent/rangeWalk";
 import {
   SettingsPanel,
   type SettingsCategory,
@@ -958,6 +959,11 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
     seekNextMarker: () => {
       seekToNextMarker();
     },
+    // The changed ranges (`agent/rangeWalk.ts`): the walk seeks and focuses,
+    // the play runs the range and stops after it.
+    seekPrevChangedRange: () => walkChangedRange(-1),
+    seekNextChangedRange: () => walkChangedRange(1),
+    playChangedRange,
     // The ends of the timeline the keyboard is IN, projected up: standing in a
     // Group, Home is that Group's first frame, not the film's.
     seekStart: () => {

@@ -14,7 +14,7 @@ import {
   useMarkerReviewMark,
 } from "../agent/reviewStore";
 import { framedWords } from "../agent/changeWords";
-import { selectChange, useFocusedChangeId, useReviewMarksRecede } from "../agent/reviewFocus";
+import { selectChange, useReviewMarksRecede, useSpotlit, useSpotlitChanges } from "../agent/reviewFocus";
 import { getCommand } from "../commands/registry";
 import { useMarkerDrag } from "./hooks/useMarkerDrag";
 import { MarkerContextMenu } from "./MarkerContextMenu";
@@ -281,7 +281,7 @@ const MarkerGlyph = memo(function MarkerGlyph({
 /// Review overlay switch, both stepping back while another change is focused.
 function ReviewMarkerRing({ view }: { view: LaneMarker }) {
   const mark = useMarkerReviewMark(view.id);
-  const focused = useFocusedChangeId() === entityKey('Marker', view.id);
+  const focused = useSpotlit(entityKey('Marker', view.id));
   const recede = useReviewMarksRecede() && !focused;
   if (mark === null) return null;
   const width = view.shape === "region" ? view.widthPx : L_WIDTH_PX;
@@ -325,7 +325,7 @@ function ReviewMarkerGhosts({
   const scale = useUiScale();
   const ownId = useComposition(compositionId)?.id ?? null;
   const ghosts = useCompositionMarkerGhosts(ownId);
-  const focusedId = useFocusedChangeId();
+  const spotlit = useSpotlitChanges();
   const recedeAll = useReviewMarksRecede();
   const words = useChangeWords({ active: false });
   if (ghosts.length === 0) return null;
@@ -340,7 +340,7 @@ function ReviewMarkerGhosts({
           label: g.label.trim() || t("kinds.marker"),
           at,
         });
-        const recede = (recedeAll && focusedId !== g.changeId) || undefined;
+        const recede = (recedeAll && !spotlit.has(g.changeId)) || undefined;
         const focus = () => {
           selectChange(g.changeId);
           void getCommand("openAgentPanel")?.run();

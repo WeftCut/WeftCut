@@ -9,6 +9,7 @@ import {
 import { CommandContextItem } from "../menu/CommandContextItem";
 import { MenuSeparator } from "../menu/Menu";
 import { useCursorAnchor } from "./contextMenuAnchor";
+import { useReviewFocus } from "../agent/reviewFocus";
 
 /// The menu's rows, in order. Exported so a test can sweep them against the
 /// command registry — the safety net `CommandContextItem`'s untyped `id`
@@ -31,6 +32,16 @@ export const RULER_MENU_COMMAND_IDS = [
   "seekPrevMarker",
   "seekNextMarker",
   "toggleMarkersVisible",
+] as const;
+
+/// A third family, only while a changed range is focused — which a right
+/// press on a ruler range does first (`RulerRanges`), so these rows act on the
+/// range pressed: play it, walk to its neighbours. Without a focused range the
+/// rows would name no range of their own, so they are not offered.
+export const RULER_RANGE_COMMAND_IDS = [
+  "playChangedRange",
+  "seekPrevChangedRange",
+  "seekNextChangedRange",
 ] as const;
 
 /**
@@ -70,6 +81,7 @@ export function RulerContextMenu({
   // ever opens long after that, but the subscription costs one line and keeps
   // the rows from vanishing if a provider ever remounts under an open menu.
   useSyncExternalStore(subscribeCommandRegistry, commandRegistryVersion);
+  const rangeFocused = useReviewFocus((s) => s.focus?.kind === "range");
   return (
     <MenuPrimitive.Root
       open
@@ -98,6 +110,11 @@ export function RulerContextMenu({
                 <CommandContextItem key={id} id={id} onRun={onClose} />
               ),
             )}
+            {rangeFocused && <MenuSeparator />}
+            {rangeFocused &&
+              RULER_RANGE_COMMAND_IDS.map((id) => (
+                <CommandContextItem key={id} id={id} onRun={onClose} />
+              ))}
           </MenuPrimitive.Popup>
         </AppMenuPositioner>
       </MenuPrimitive.Portal>

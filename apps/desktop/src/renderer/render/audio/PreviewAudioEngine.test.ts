@@ -3,6 +3,7 @@ import { summaryFixture, compositionFixture, groupLayerFixture, ROOT_ID } from "
 import type { LayerSummary, TrackSummary } from "../../ipc";
 import type { AudioGraph } from "./AudioGraph";
 import { PreviewAudioEngine } from "./PreviewAudioEngine";
+import { lastFrameAnchorUs } from "../../frames";
 
 const reads = vi.hoisted(() => ({ gate: null as Promise<void> | null,
   opens: [] as string[], windows: [] as number[], failOpen: false, failRead: false }));
@@ -358,6 +359,46 @@ describe("session-owned preview audio transport", () => {
     expect(moments.every((us) => us <= 4_966_667)).toBe(true);
     expect(sources.every((s) => s.stop.mock.calls.length > 0)).toBe(true);
     engine.dispose();
+  });
+
+  it("a bounded play pauses on the last frame before its stop, and holds that frame meanwhile", async () => {
+    const { engine, ctx } = setup();
+    const moments: number[] = [];
+    engine.onTimeUpdate((us) => moments.push(us));
+    const stopUs = 2_000_000;
+    const last = lastFrameAnchorUs(stopUs, 30, 1);
+    try {
+      engine.seek(500_000);
+      engine.play(stopUs); await settle();
+      expect(engine.isPlaying()).toBe(true);
+      ctx.currentTime += 3;
+      await vi.advanceTimersByTimeAsync(32);
+      expect(engine.snapshot().phase).toBe("paused");
+      expect(engine.positionUs()).toBe(last);
+      expect(moments.every((us) => us <= last)).toBe(true);
+      // The bound went with the stop: the next play runs on to the material end.
+      engine.play(); await settle();
+      ctx.currentTime += 1;
+      await vi.advanceTimersByTimeAsync(32);
+      expect(engine.isPlaying()).toBe(true);
+      expect(engine.positionUs()).toBeGreaterThan(stopUs);
+    } finally { engine.dispose(); }
+  });
+
+  it.each(["pause and play", "seek", "play"] as const)("a user's %s drops a bounded play's stop", async (action) => {
+    const { engine, ctx } = setup();
+    const stopUs = 2_000_000;
+    try {
+      engine.play(stopUs); await settle();
+      if (action === "pause and play") { engine.pause(); engine.play(); }
+      else if (action === "seek") engine.seek(1_000_000);
+      else engine.play();
+      await settle();
+      ctx.currentTime += 3;
+      await vi.advanceTimersByTimeAsync(32);
+      expect(engine.isPlaying()).toBe(true);
+      expect(engine.positionUs()).toBeGreaterThan(stopUs);
+    } finally { engine.dispose(); }
   });
 
   it("holds observable time at the last frame while raw time still approaches the end", async () => {

@@ -52,6 +52,10 @@ export class PreviewAudioEngine {
   private summary: ProjectSummary | null = null;
   private targetId: string | null = null;
   private playableEndUs = 0;
+  /// Where a bounded play stops (`play(untilUs)`), exclusive, on the target's
+  /// clock; null when playing runs to the material end. Any later play,
+  /// pause, playhead seek or retarget drops it.
+  private stopUs: number | null = null;
   private entries = new Map<string, Entry>();
   private generation = 0;
   private stemSignature = '';
@@ -98,8 +102,9 @@ export class PreviewAudioEngine {
     // reaches it, or tick before the independent end timer. Hold the last
     // visible frame in both cases; leave the raw audio clock running so the
     // timer still stops at the actual end. Explicit paused seeks stay free.
-    return this.isPlaying() && this.playableEndUs > 0 && comp
-      ? Math.min(tUs, lastFrameAnchorUs(this.playableEndUs, comp.fps_num, comp.fps_den))
+    const end = this.endUs();
+    return this.isPlaying() && end > 0 && comp
+      ? Math.min(tUs, lastFrameAnchorUs(end, comp.fps_num, comp.fps_den))
       : tUs;
   }
   onStateChange(cb: (state: PlaybackSnapshot) => void): () => void {
@@ -117,6 +122,7 @@ export class PreviewAudioEngine {
     const target = compositionOrRoot(summary, targetId)?.id ?? null;
     const replaced = summary?.project_id !== this.summary?.project_id;
     const retargeted = target !== this.targetId;
+    if (replaced || retargeted) this.stopUs = null;
     if (replaced) {
       this.pause();
       this.clearEntries();
@@ -220,12 +226,20 @@ export class PreviewAudioEngine {
     }
   }
 
-  play(): void {
-    if (this.disposed || this.playbackSuspended || this.state.requestedPlaying || !this.summary) return;
+  /// Play from the position. With `untilUs` (exclusive, this clock), pause on
+  /// the last frame before it, the way the material end stops; already
+  /// playing, that bound replaces the running one. Without it, a bound in
+  /// force is dropped: a play the user asked for runs on.
+  play(untilUs?: number): void {
+    if (this.disposed || this.playbackSuspended || !this.summary) return;
+    this.stopUs = untilUs ?? null;
+    if (this.state.requestedPlaying) return;
     this.previewUs = null;
     const end = this.endUs();
     const comp = compositionOrRoot(this.summary, this.targetId)!;
     if (end > 0 && this.clock.positionUs() >= lastFrameAnchorUs(end, comp.fps_num, comp.fps_den)) {
+      // At a bound already: nothing of it is left to play.
+      if (this.stopUs !== null) { this.stopUs = null; return; }
       this.clock.setPosition(0);
       this.emitTime();
       this.emitSeek();
@@ -247,6 +261,7 @@ export class PreviewAudioEngine {
 
   pause(): void {
     if (this.disposed) return;
+    this.stopUs = null;
     const started = performance.now();
     if (this.graph.ctx.state === "running") this.clock.tick();
     const tUs = this.transportPositionUs();
@@ -270,6 +285,7 @@ export class PreviewAudioEngine {
     const resume = this.state.requestedPlaying;
     this.invalidate();
     this.previewUs = null;
+    this.stopUs = null;
     this.clock.setPosition(tUs);
     this.emitTime();
     this.emitSeek();
@@ -369,6 +385,7 @@ export class PreviewAudioEngine {
         const comp = compositionOrRoot(this.summary, this.targetId)!;
         this.invalidate();
         this.previewUs = null;
+        this.stopUs = null;
         this.clock.setPosition(lastFrameAnchorUs(end, comp.fps_num, comp.fps_den));
         this.setState("paused");
         this.emitTime();
@@ -408,8 +425,9 @@ export class PreviewAudioEngine {
     }
   }
 
+  /// Where playing stops: the material end, or a bounded play's stop before it.
   private endUs(): number {
-    return this.playableEndUs;
+    return this.stopUs === null ? this.playableEndUs : Math.min(this.playableEndUs, this.stopUs);
   }
   private current(generation: number): boolean { return !this.disposed && generation === this.generation; }
   private invalidate(): void {

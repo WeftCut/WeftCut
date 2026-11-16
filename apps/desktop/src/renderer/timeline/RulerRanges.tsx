@@ -1,7 +1,7 @@
 import type React from "react";
 import { getCommand } from "../commands/registry";
 import { useComposition } from "../state/projectStore";
-import { selectChange, useReviewFocus } from "../agent/reviewFocus";
+import { rangeKey, selectRange, useReviewFocus } from "../agent/reviewFocus";
 import { useCompositionChangeRanges, useRangeMarkLabel } from "../agent/reviewStore";
 import type { ReviewRangeMark } from "../agent/reviewHighlight";
 import { useReviewLaneExists } from "../agent/tackModel";
@@ -25,8 +25,10 @@ const SYNC_GLYPH_MIN_PX = 14;
 ///
 /// The ruler is the sole scrub surface and stays one: a press here scrubs as
 /// it would on the bare ruler, so a range never takes the place the user
-/// meant to seek to. The hover names the range; a double press focuses its
-/// first change and shows its row, the one thing a range adds.
+/// meant to seek to. The hover names the range; a double press focuses the
+/// range itself (`selectRange`) and shows its rows. A right press focuses it
+/// too before the ruler's menu opens, so the menu's changed-range rows act on
+/// the range pressed.
 ///
 /// A range out of sync (`rangeSync`) marks its onset with a tick and ⇄, since
 /// where it starts is the thing to look at; one only out of sync, with no
@@ -51,6 +53,7 @@ export function RulerRanges({
   const ranges = useCompositionChangeRanges(exists ? resolvedId : null);
   const label = useRangeMarkLabel();
   const focused = useReviewFocus((s) => (s.focus?.kind === "change" ? s.focus.id : null));
+  const focusedRange = useReviewFocus((s) => (s.focus?.kind === "range" && s.range !== null ? rangeKey(s.range) : null));
   const hovered = useReviewFocus((s) => (s.hover?.kind === "change" ? s.hover.id : null));
   useUiScale(); // the ⇄'s room
   if (ranges.length === 0) return null;
@@ -60,8 +63,8 @@ export function RulerRanges({
       {ranges.map((m) => {
         const x = (m.tStartUs / 1_000_000) * pxPerSec;
         const w = ((m.tEndUs - m.tStartUs) / 1_000_000) * pxPerSec;
-        const first = m.range.change_ids[0];
         const sync = m.cut ? undefined : rangeSync(m.range);
+        const selected = rangeKey(m.range) === focusedRange || plays(m, focused);
         return (
           <div
             key={m.key}
@@ -69,7 +72,7 @@ export function RulerRanges({
             data-change-class={m.cls}
             data-cut={m.cut || undefined}
             data-user={m.user || undefined}
-            data-selected={plays(m, focused) || undefined}
+            data-selected={selected || undefined}
             data-hovered={plays(m, hovered) || undefined}
             data-sync={sync}
             title={label(m)}
@@ -83,11 +86,13 @@ export function RulerRanges({
             onClick={(e) => e.stopPropagation()}
             onDoubleClick={(e) => {
               e.stopPropagation();
-              if (first === undefined) return;
-              selectChange(first);
+              selectRange(m.range);
               void getCommand("openAgentPanel")?.run();
             }}
-            onContextMenu={onContextMenu}
+            onContextMenu={(e) => {
+              selectRange(m.range);
+              onContextMenu(e);
+            }}
           >
             {sync !== undefined && w >= uiScaled(SYNC_GLYPH_MIN_PX) && (
               <span aria-hidden="true" className="ruler-range-sync-glyph">⇄</span>

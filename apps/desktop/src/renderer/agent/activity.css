@@ -179,3 +179,24 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-tack.unplaced:not([data-selected="true"]) { opacity: .7; }
 /* A compute refusal's Settings button and details, under the row's error line. */
 .agent-activity .compute-refusal-actions { margin: 0 calc(7 * var(--ui-px)) calc(3 * var(--ui-px)) calc(27 * var(--ui-px)); }
+/* The focused changed range (RangeBar): its line and close on the first row,
+   the stepper through its changes, play and the walk to its neighbours on the
+   second; the left edge in the range's class hue, as on the ruler. */
+.agent-range-bar { --range-hue: var(--review-modified); display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: calc(4 * var(--ui-px)); margin: 0 calc(10 * var(--ui-px)) calc(6 * var(--ui-px)); padding: calc(2 * var(--ui-px)) calc(2 * var(--ui-px)) calc(2 * var(--ui-px)) calc(8 * var(--ui-px)); border: 1px solid var(--border); border-left: calc(2 * var(--ui-px)) solid var(--range-hue); border-radius: var(--radius-control); font-size: var(--font-size-caption); }
+.agent-range-bar[data-class="added"] { --range-hue: var(--review-added); }
+.agent-range-bar[data-class="removed"] { --range-hue: var(--review-removed); }
+.agent-range-bar-line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-range-bar-controls { grid-column: 1 / -1; display: flex; align-items: center; gap: calc(1 * var(--ui-px)); margin-left: calc(-6 * var(--ui-px)); }
+.agent-activity-panel .agent-range-bar button { flex: none; padding: calc(3 * var(--ui-px)); color: var(--muted-foreground); }
+.agent-activity-panel .agent-range-bar button:hover:not([aria-disabled]) { color: var(--foreground); }
+.agent-activity-panel .agent-range-bar button[aria-disabled="true"] { opacity: .45; cursor: default; background: none; }
+.agent-range-step { min-width: calc(44 * var(--ui-px)); text-align: center; font-variant-numeric: tabular-nums; color: var(--muted-foreground); white-space: nowrap; }
+.agent-range-bar-sep { flex: 1; }
+/* Its changes' rows framed as one group — a bar down their left edge over a
+   faint wash, joined where they follow each other — and the rest stepped back. */
+.agent-changes[data-range-focus] .agent-change:not([data-in-range]) { opacity: .5; }
+.agent-change[data-in-range] { background: color-mix(in srgb, var(--review-focus) 6%, transparent); box-shadow: inset calc(2 * var(--ui-px)) 0 0 var(--review-focus); }
+.agent-change[data-in-range]:hover { background: color-mix(in srgb, var(--review-focus) 11%, transparent); }
+.agent-change[data-in-range][data-selected="true"] { background: var(--selection-bg); }
+.agent-change[data-in-range]:has(+ .agent-change[data-in-range]) { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.agent-change[data-in-range] + .agent-change[data-in-range] { border-top-left-radius: 0; border-top-right-radius: 0; }

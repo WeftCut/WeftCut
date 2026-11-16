@@ -8,7 +8,9 @@ import type { PlaybackPhase, PlaybackSnapshot } from "../render/audio/PreviewAud
 /// Commands exposed by the editor session. Preview edits may borrow the
 /// monitor with mode="preview" without changing the session Moment.
 export interface TransportHandle {
-  play(): void;
+  /// `untilUs`: pause on the last frame before it (exclusive, this clock). A
+  /// later play, pause or playhead seek drops the bound.
+  play(untilUs?: number): void;
   pause(): void;
   seek(tUs: number, mode?: "playhead" | "preview"): void;
   isPlaying(): boolean;
@@ -56,8 +58,8 @@ export function setTransportSnapshot(snapshot: PlaybackSnapshot): void {
 }
 
 /// Safe no-ops when there is no editor session.
-export function transportPlay(): void {
-  usePlaybackStore.getState().transport?.play();
+export function transportPlay(untilUs?: number): void {
+  usePlaybackStore.getState().transport?.play(untilUs);
 }
 
 export function transportPause(): void {

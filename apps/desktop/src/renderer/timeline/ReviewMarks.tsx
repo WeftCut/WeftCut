@@ -16,10 +16,10 @@ import {
 import type { ReviewCut } from "../agent/reviewHighlight";
 import {
   useCompositionFocusWashes,
-  useFocusedChangeId,
   useGhostFocus,
   useLayerFocusMark,
   useReviewMarksRecede,
+  useSpotlitChanges,
   useTrackFocusWas,
   useFocusPaint,
   releaseFocus,
@@ -52,7 +52,8 @@ export function ReviewClipMarkLayer({ layerId }: { layerId: string }) {
   const mark = useLayerReviewMark(layerId);
   const weight = useLayerReviewWeight(layerId);
   const focus = useLayerFocusMark(layerId);
-  // While a change is focused every other clip dims (`ReviewFocusExit` ends it).
+  // While a change or range is focused every clip it does not name dims
+  // (`ReviewFocusExit` ends it).
   const dim = useReviewMarksRecede() && focus !== "change";
   const recede = dim;
   if (mark === null && focus === null && !dim) return null;
@@ -240,9 +241,11 @@ export function ReviewGhosts({
 /// over the lane's own background and under everything the lane draws — gap,
 /// ghosts, clips. Paint only: no pointer events, no box of its own in the
 /// flow, so the focus moving never reflows or re-hits anything. The tack hue
-/// for a tack, the neutral review-focus hue for a change; a removal's baseline
-/// footprint hatched in the removed hue — where it was, not what is there —
-/// unless it is a clip whose lane survives, which its raised ghost shows.
+/// for a tack, the neutral review-focus hue for a change or a changed range
+/// (fainter as the context of a change stepped to inside it); a removal's
+/// baseline footprint hatched in the removed hue — where it was, not what is
+/// there — unless it is a clip whose lane survives, which its raised ghost
+/// shows.
 export function ReviewFocusWash({
   compositionId,
   pxPerSec,
@@ -263,6 +266,7 @@ export function ReviewFocusWash({
             data-kind={w.kind}
             data-point={point || undefined}
             data-historical={w.historical || undefined}
+            data-context={w.context || undefined}
             aria-hidden="true"
             className="review-focus-wash pointer-events-none absolute inset-y-0 z-[2]"
             style={{
@@ -323,9 +327,9 @@ export function ReviewWasFrames({
   );
 }
 
-/// A focused change dims the rest of the timeline, so the focus ends with the
-/// look: a press on the lanes anywhere but a clip of the focused change lets
-/// it go (approving it already does). A press on the focused clip keeps it, so
+/// A focused change or range dims the rest of the timeline, so the focus ends
+/// with the look: a press on the lanes anywhere but a clip it names lets it go
+/// (approving it already does). A press on the focused clip keeps it, so
 /// it can still be selected and trimmed. Not Esc — on the timeline Esc already
 /// ends blade and region arms, and one key ending two things is a surprise.
 export function ReviewFocusExit() {
@@ -384,7 +388,7 @@ export function ReviewCuts({ trackId, pxPerSec }: { trackId: string; pxPerSec: n
   const changes = useHighlightedChanges();
   const words = useChangeWords({ active: cuts.length > 0 });
   const recede = useReviewMarksRecede();
-  const focused = useFocusedChangeId();
+  const spotlit = useSpotlitChanges();
   if (cuts.length === 0) return null;
   const metrics = UI_METRICS.timeline.review.cutMark;
   const [width, height] = [uiPixels(metrics.width), uiPixels(metrics.height)];
@@ -401,7 +405,7 @@ export function ReviewCuts({ trackId, pxPerSec }: { trackId: string; pxPerSec: n
         }
         const label = lines.join("\n");
         const first = g.cuts[0]!;
-        const mine = focused !== null && seen.has(focused);
+        const mine = [...seen].some((id) => spotlit.has(id));
         return (
           <span
             key={`${first.changeId}:${first.kind}:${first.tUs}`}
