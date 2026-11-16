@@ -1673,7 +1673,7 @@ app.whenReady().then(async () => {
         case 'export_job_update': return exportJobs.update(a.job_id, a.renderer_token, a.update);
         case 'export_job_publish': return exportJobs.publish(a.job_id, a.renderer_token);
         case 'export_job_status': return exportJobs.status(a.job_id);
-        case 'export_job_cancel': return exportJobs.cancel(a.job_id);
+        case 'export_job_cancel': return exportJobs.cancel(a.job_id, { kind: 'user' });
         case 'export_job_retry': return exportJobs.retry(a.job_id, a.filename);
         case 'export_job_path_exists': return exportPathExists(a.path);
         case 'export_job_suggest_name': return suggestExportName(a.path);

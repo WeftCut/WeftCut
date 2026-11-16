@@ -177,6 +177,11 @@ test('MCP export reconnects, reports the actual renamed file, and retries public
     expect(whileDraining.isError).toBe(true);
     await app.evaluate(() => (globalThis as any).__releaseExportMux());
     await expect.poll(async () => (await call('get_export_status', { job_id: ui.job_id })).job.state, { timeout: 30_000 }).toBe('cancelled');
+    // The agent's cancel of the user's job is the agent's, on the job and in the log.
+    expect((await call('get_export_status', { job_id: ui.job_id })).job.cancelled_by).toEqual({ kind: 'agent', client: 'export-e2e' });
+    await expect.poll(async () => (await invokeCmd<any[]>(page, 'log_list'))
+      .find(e => e.i18n_key === 'log.export_cancelled' && e.details?.output === cancelledOutput)?.source, { timeout: 30_000 })
+      .toEqual({ kind: 'Agent', client: 'export-e2e' });
     expect((await client.callTool({ name: 'add_track', arguments: {} })).isError).toBeFalsy();
   } finally {
     await app.evaluate(() => (globalThis as any).__releaseExportMux?.()).catch(() => { });

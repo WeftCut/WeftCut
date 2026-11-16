@@ -79,7 +79,11 @@ or per chunk — the ring is 1000 entries.
 - **Import** (`Import`): `Started` → `Ok`/`Err`; no per-file progress rows (the
   import queue UI owns that). Import timing diagnostics: below.
 - **Export** (`Export`): `renderer/app/exportLog.ts` mirrors `ExportState`; house
-  shape plus a `Progress` row per tenth of the encode. The native sink adds one
+  shape plus a `Progress` row per tenth of the encode. Rows name the file from
+  main's job record; a cancel row's source is the job's `cancelled_by` (the
+  user, the agent, or `System` for the app). Discarding a finalization that
+  awaits retry logs one standalone cancel row after the failure row, whose op
+  stays `Err`. The native sink adds one
   `System` row with the resolved encoder plan (`Warn` when the ffmpeg shadow
   refused).
 - **Derivative jobs** (`Job`, `Error` only): one row per failed job

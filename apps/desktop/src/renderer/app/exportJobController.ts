@@ -14,7 +14,11 @@ import type { ExportState } from '../panels/ExportPanel';
  * job is active when it runs, and each job is reported terminal once: main
  * may answer before its status event arrives, and by then the next job can be
  * active. */
-export function createExportJobController(deps: Omit<Parameters<typeof createExportRunner>[0], 'publish' | 'cancel'> & { onBegin: (request: ExportRun) => void }) {
+export function createExportJobController(deps: Omit<Parameters<typeof createExportRunner>[0], 'publish' | 'cancel'> & {
+  onBegin: (request: ExportRun) => void;
+  /** Every job record main publishes, as it arrives (never batched into a render). */
+  onJob?: (job: ExportJob) => void;
+}) {
   const token = crypto.randomUUID();
   let active: ExportRun | undefined;
   let background = false;
@@ -142,6 +146,7 @@ export function createExportJobController(deps: Omit<Parameters<typeof createExp
           void enqueue(job, async () => { await runner.retry(); if (jobAbort.signal.aborted) await runner.discard(); await settle(job, jobAbort.signal); });
         }),
         listen<ExportJob>('export:status', ({ payload }) => {
+          deps.onJob?.(payload);
           if (exportTerminal(payload.state)) ended.add(payload.job_id);
           if (exportTerminal(payload.state) || payload.state === 'awaiting_retry') {
             settledJobs.add(payload.job_id);
@@ -149,6 +154,10 @@ export function createExportJobController(deps: Omit<Parameters<typeof createExp
             waiters.delete(payload.job_id);
           }
           if (active?.job_id === payload.job_id) {
+            // Main publishes `cancelling` before it stops the native stages, and
+            // sends `export:cancel` only after they stopped. Aborting here is what
+            // lets a stage the stop fails read as cancelled, not as a failure.
+            if (payload.phase === 'cancelling') abort.abort();
             active = { ...active, ...payload };
             if (payload.state === 'completed') state = { kind: 'complete', payload: { outputPath: payload.output_path, durationUs: payload.duration_us ?? 0 } };
             if (payload.state === 'cancelled') state = null;

@@ -44,7 +44,7 @@ import { mergeMcpCatalog, mergeMcpResources } from './mcpCatalog.js'
 import { MCP_TOOL_DEFS, MCP_TOOLS, McpArgError, mcpDef, type McpErrorCode, type McpToolErrorJson, type ToolAnnotations } from '../state/mcp-commands.js'
 import { NO_PROJECT_OPEN_MESSAGE, noProjectOpenResult, toolErrorResult, thrownToToolError, UnknownToolError } from './toolResult.js'
 import { toolRecord } from '../state/mcp-results.js'
-import { mcpActor } from '../state/mcp-actor.js'
+import { mcpActor, normalizeClientName } from '../state/mcp-actor.js'
 import { argProblemMessage } from './argCheck.js'
 import { importRecord, shapeHybridResult } from './hybridResult.js'
 import { PROJECT_TOOLS, runProjectTool } from './projectTools.js'
@@ -483,7 +483,7 @@ async function dispatchTool(
       : name === 'start_export' ? await jobs.start(args)
       : name === 'get_export_status' ? null
       : name === 'retry_export' ? await jobs.retry(args.job_id as string, args.filename as string | undefined)
-      : await jobs.cancel(args.job_id as string);
+      : await jobs.cancel(args.job_id as string, { kind: 'agent', client: normalizeClientName(client) });
     // One shape whatever was asked: `{ job }`, the job named, else the active
     // or most recent one, null only when no job has run this session.
     if (name === 'get_export_status') {

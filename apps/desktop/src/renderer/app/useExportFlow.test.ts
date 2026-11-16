@@ -14,7 +14,7 @@ vi.mock('./exportJobController', () => ({
   }),
 }))
 vi.mock('./exportLog', () => ({
-  createExportLogMirror: () => ({ begin: vi.fn(), observe: vi.fn() }),
+  createExportLogMirror: () => ({ job: vi.fn(), observe: vi.fn() }),
 }))
 
 function translate(key: string, args?: Record<string, unknown>) {

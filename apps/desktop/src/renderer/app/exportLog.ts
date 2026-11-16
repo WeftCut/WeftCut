@@ -1,5 +1,7 @@
 import { logEmit } from "../ipc";
+import type { LogEntryInput } from "../ipc";
 import type { ExportState } from "../panels/ExportPanel";
+import type { ExportCanceller, ExportJob } from "../../shared/exportJob";
 
 /// LogBus mirror for the export lifecycle — the log-row sibling of the
 /// taskbar-progress and native-notification mirrors in `useExportFlow`. All
@@ -12,13 +14,7 @@ import type { ExportState } from "../panels/ExportPanel";
 /// settles inside `STARTED_AFTER_MS` is one row with no `op_id`; a slower one
 /// is `Started` + `Ok`/`Err` under one `op_id`. A cancel (running → null)
 /// closes the op as `Ok`, not `Err` — same convention as the content-download
-/// op in `src/main/index.ts`.
-
-export interface ExportLogContext {
-  /// User-chosen output path — names the run in every row.
-  output: string;
-  codec: string;
-}
+/// op in `src/main/index.ts` — with the canceller as the row's source.
 
 /// House slow-op threshold. Keep equal to `runCommandWithLogging`'s — the
 /// 250 ms line is one project-wide definition of "the user is waiting".
@@ -32,7 +28,8 @@ const PROGRESS_STEPS = 10;
 
 interface RunningOp {
   id: string;
-  ctx: ExportLogContext;
+  /// The job this run is; its record names the output and the canceller.
+  jobId: string | null;
   startedOut: boolean;
   timer: number;
   lastStep: number;
@@ -41,32 +38,47 @@ interface RunningOp {
 const CATEGORY = { kind: "Export" } as const;
 const SOURCE = { kind: "User" } as const;
 
+const cancelDetails = (output: string, by: ExportCanceller | undefined) =>
+  ({ output, ...(by ? { cancelled_by: by } : {}) });
+
+function cancelSource(by: ExportCanceller | undefined): LogEntryInput["source"] {
+  if (by?.kind === "agent") return { kind: "Agent", client: by.client };
+  if (by?.kind === "app") return { kind: "System" };
+  return SOURCE;
+}
+
 export function createExportLogMirror(): {
-  /// Call at the top of a run with the run's identity; the next observed
-  /// non-null state opens the op with it.
-  begin(ctx: ExportLogContext): void;
+  /// Feed every job record main publishes. Rows read the output and the
+  /// canceller from it, by job id: the run's first state can precede the
+  /// record that names its file.
+  job(job: ExportJob): void;
   /// Feed every committed `exportState`. Re-observing the same reference is a
   /// no-op (StrictMode re-runs the effect with an unchanged state).
   observe(state: ExportState | null): void;
 } {
-  let pendingCtx: ExportLogContext = { output: "", codec: "" };
+  let latest: ExportJob | null = null;
   let last: ExportState | null = null;
   let op: RunningOp | null = null;
+
+  const jobOf = (jobId: string | null | undefined) =>
+    jobId && latest?.job_id === jobId ? latest : null;
+  const outputOf = (run: RunningOp) => jobOf(run.jobId)?.output_path ?? "";
 
   const emitStarted = () => {
     if (!op || op.startedOut) return;
     op.startedOut = true;
     window.clearTimeout(op.timer);
+    const output = outputOf(op);
     void logEmit({
       level: "info",
       category: CATEGORY,
       source: SOURCE,
-      message: `Exporting ${op.ctx.output}`,
+      message: `Exporting ${output}`,
       i18n_key: "log.export_started",
-      i18n_args: { path: op.ctx.output },
+      i18n_args: { path: output },
       op_id: op.id,
       op_state: { state: "Started" },
-      details: { output: op.ctx.output, codec: op.ctx.codec },
+      details: { output, codec: jobOf(op.jobId)?.settings.codec ?? "" },
     });
   };
 
@@ -77,13 +89,14 @@ export function createExportLogMirror(): {
     i18nKey: string,
     i18nArgs: Record<string, unknown>,
     details: Record<string, unknown>,
+    source: LogEntryInput["source"] = SOURCE,
   ) => {
     if (!op) return;
     window.clearTimeout(op.timer);
     void logEmit({
       level,
       category: CATEGORY,
-      source: SOURCE,
+      source,
       message,
       i18n_key: i18nKey,
       i18n_args: i18nArgs,
@@ -96,8 +109,24 @@ export function createExportLogMirror(): {
   };
 
   return {
-    begin(ctx: ExportLogContext) {
-      pendingCtx = ctx;
+    job(job: ExportJob) {
+      // Discarding a finalization that awaits retry ends the job with no run
+      // left to observe: its op closed on the failure. The cancel stands alone,
+      // never under that op, which would read as having ended Ok.
+      const discarded = latest?.job_id === job.job_id && latest.state === "awaiting_retry"
+        && job.state === "cancelled" && op?.jobId !== job.job_id;
+      latest = job;
+      if (discarded) {
+        void logEmit({
+          level: "info",
+          category: CATEGORY,
+          source: cancelSource(job.cancelled_by),
+          message: "Export cancelled",
+          i18n_key: "log.export_cancelled",
+          i18n_args: {},
+          details: cancelDetails(job.output_path, job.cancelled_by),
+        });
+      }
     },
 
     observe(state: ExportState | null) {
@@ -113,7 +142,7 @@ export function createExportLogMirror(): {
       if (running && !op) {
         op = {
           id: crypto.randomUUID(),
-          ctx: pendingCtx,
+          jobId: state?.job?.job_id ?? null,
           startedOut: false,
           timer: window.setTimeout(emitStarted, STARTED_AFTER_MS),
           lastStep: -1,
@@ -121,6 +150,7 @@ export function createExportLogMirror(): {
       }
 
       if (op) {
+        op.jobId ??= state?.job?.job_id ?? null;
         if (state !== null && state.kind === "progress") {
           // Encode progress means the user is visibly waiting: flush the
           // Started row now so no Progress row can precede it.
@@ -128,13 +158,14 @@ export function createExportLogMirror(): {
           const step = Math.floor(state.progress.progress * PROGRESS_STEPS);
           if (step > op.lastStep) {
             op.lastStep = step;
+            const output = outputOf(op);
             void logEmit({
               level: "info",
               category: CATEGORY,
               source: SOURCE,
-              message: `Exporting ${op.ctx.output}`,
+              message: `Exporting ${output}`,
               i18n_key: "log.export_started",
-              i18n_args: { path: op.ctx.output },
+              i18n_args: { path: output },
               op_id: op.id,
               op_state: { state: "Progress", progress: state.progress.progress },
             });
@@ -158,18 +189,20 @@ export function createExportLogMirror(): {
             `Export failed: ${state.detail}`,
             "log.export_failed",
             { error: state.detail },
-            { output: op.ctx.output, error: state.detail },
+            { output: outputOf(op), error: state.detail },
           );
         } else if (state === null) {
           // Running → null is the cancel path (readiness aborts); dismissing
           // a terminal panel also lands here but the op is already closed.
+          const by = jobOf(op.jobId)?.cancelled_by;
           endOp(
             "info",
             "Ok",
             "Export cancelled",
             "log.export_cancelled",
             {},
-            { output: op.ctx.output },
+            cancelDetails(outputOf(op), by),
+            cancelSource(by),
           );
         }
         return;
@@ -179,6 +212,7 @@ export function createExportLogMirror(): {
       // guard errors straight from idle). One row, no op — same shape as a
       // fast failure.
       if (state !== null && state.kind === "error") {
+        const output = state.job?.output_path;
         void logEmit({
           level: "error",
           category: CATEGORY,
@@ -186,7 +220,7 @@ export function createExportLogMirror(): {
           message: `Export failed: ${state.detail}`,
           i18n_key: "log.export_failed",
           i18n_args: { error: state.detail },
-          details: { output: pendingCtx.output, error: state.detail },
+          details: { ...(output ? { output } : {}), error: state.detail },
         });
       }
     },

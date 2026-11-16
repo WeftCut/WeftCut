@@ -1191,6 +1191,10 @@ Export jobs are application-session jobs shared with the UI (ADR 0111).
   `state` changes (progress does not wake it) and answers at once when it is
   terminal; there are no progress notifications. A failed job's `error`
   carries its family's variant and data (`ResourceBusy` with `holders`).
+  Once anyone cancels a job, `cancelled_by` names the first to ask: `user`,
+  `agent` with its `client`, or `app` (quit, the export window gone). It
+  stays whatever the job ends as: a cancel that loses to publication ends
+  `completed`, and the export window going away ends `failed`.
   Only a completed status certifies `output_path`. Export locks
   editing and project switching until terminal; closing MCP does not affect
   the job; jobs do not survive an app restart.

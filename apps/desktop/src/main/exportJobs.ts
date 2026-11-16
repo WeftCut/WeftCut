@@ -8,7 +8,7 @@ import type { TsActorHost } from './state/ts-actor-host';
 import { rootComposition } from './state/model';
 import { snapFrameRound } from './state/snap';
 import { resolveExportRequest, resolveExportOptions, EXPORT_COMPATIBILITY, ExportValidationError } from '../shared/exportValidation';
-import { exportTerminal, exportWire, type ExportJob, type ExportRun } from '../shared/exportJob';
+import { exportTerminal, exportWire, type ExportCanceller, type ExportJob, type ExportRun } from '../shared/exportJob';
 
 /** Rendered stills: JPEG bytes per time, or one labelled sheet of them. */
 export interface StillsResult {
@@ -25,7 +25,7 @@ interface Entry {
   view: ExportJob; staging: string; video: string; audio: string; policy: 'rename' | 'fail' | 'overwrite';
   session: string; renderer?: string; dispatched: boolean; cancelling: boolean;
   published: boolean; prepared?: boolean; timer?: ReturnType<typeof setTimeout>; preparation: Promise<void>;
-  publishing?: Promise<string>; finishing?: Promise<void>;
+  publishing?: Promise<string>; finishing?: Promise<void>; stopping?: Promise<unknown>;
 }
 interface Deps {
   host: () => TsActorHost | null;
@@ -324,11 +324,14 @@ export class ExportJobs {
     if (typeof update.duration_us === 'number') j.view.duration_us = update.duration_us;
     if (update.state && exportTerminal(update.state)) {
       if (update.state === 'completed' && !j.published) throw new ExportJobError('invalid_state', 'Export cannot complete before publication');
-      await this.finish(j, j.published ? 'completed' : j.cancelling ? 'cancelled' : update.state, update.error?.message, update.error?.code, update.error);
-    } else if (update.state && ['queued', 'preparing', 'rendering', 'finalizing', 'awaiting_retry'].includes(update.state)) {
+      // A cancel wins over whatever the renderer reports after it, failure included.
+      const state = j.published ? 'completed' : j.cancelling ? 'cancelled' : update.state;
+      if (state === 'failed') await this.finish(j, state, update.error?.message, update.error?.code, update.error);
+      else await this.finish(j, state);
+    } else if (!j.cancelling && update.state && ['queued', 'preparing', 'rendering', 'finalizing', 'awaiting_retry'].includes(update.state)) {
       j.view.state = update.state; j.view.error = update.error;
       if (update.state === 'queued') j.view.queued = exportQueued(update.queued); else delete j.view.queued;
-      if (!j.cancelling) j.view.phase = update.phase && ['sink', 'audio', 'mux'].includes(update.phase) ? update.phase : update.state;
+      j.view.phase = update.phase && ['sink', 'audio', 'mux'].includes(update.phase) ? update.phase : update.state;
       this.notify(j);
     }
     return this.status(id);
@@ -343,15 +346,16 @@ export class ExportJobs {
     });
     try { return await j.publishing; } finally { j.publishing = undefined; }
   }
-  async cancel(id: string) {
+  async cancel(id: string, by: ExportCanceller) {
     const j = this.entries.get(id);
     if (!j) throw new ExportJobError('job_not_found', `Unknown export job ${id}`);
     if (exportTerminal(j.view.state)) return this.status(id);
+    j.view.cancelled_by ??= by;
     j.cancelling = true; j.view.phase = 'cancelling'; clearTimeout(j.timer); this.notify(j);
     await j.preparation.catch(() => { });
     // Publication is the commit point; settle it before deciding cancellation.
     await j.publishing?.catch(() => { });
-    if (!j.published) await this.deps.native('export_cancel', {});
+    if (!j.published) await this.stopNative(j);
     if (j.dispatched) this.deps.send('export:cancel', { job_id: id, renderer_token: j.renderer });
     else await this.finish(j, 'cancelled');
     return this.status(id);
@@ -367,12 +371,19 @@ export class ExportJobs {
     this.deps.send('export:retry', { job_id: id, renderer_token: j.renderer });
     return this.status(id);
   }
+  /** One native stop per job, shared by cancel and finish: the renderer can
+   *  settle while cancel's stop is still running, and the job must not release
+   *  admission before that stop has ended (its last step reclaims a sink a
+   *  racing start spawned). */
+  private stopNative(j: Entry) {
+    return j.stopping ??= this.deps.native('export_cancel', {}).catch(error => { j.stopping = undefined; throw error; });
+  }
   private async finish(j: Entry, state: 'completed' | 'failed' | 'cancelled', message?: string, code = 'export_failed', fault?: ExportJob['error']) {
     if (j.finishing) return j.finishing;
     j.finishing = (async () => {
       clearTimeout(j.timer);
       j.cancelling = true;
-      if (!j.published) await this.deps.native('export_cancel', {});
+      if (!j.published) await this.stopNative(j);
       await Promise.all([j.staging, j.video, j.audio].filter(Boolean).map(file => fs.rm(file, { force: true })));
       j.view.state = j.published ? 'completed' : state;
       j.view.phase = j.view.state;
@@ -394,7 +405,7 @@ export class ExportJobs {
     this.ready = undefined;
     const j = this.active;
     if (!j) return;
-    await this.cancel(j.view.job_id);
+    await this.cancel(j.view.job_id, { kind: 'app' });
     await this.finish(j, 'failed', 'Export renderer disconnected', 'renderer_unavailable');
   }
   async drainForQuit() {
@@ -402,7 +413,7 @@ export class ExportJobs {
     const j = this.active;
     if (!j) return;
     const drained = new Promise<void>(resolve => this.idleWaiters.add(resolve));
-    try { await this.cancel(j.view.job_id); await drained; }
+    try { await this.cancel(j.view.job_id, { kind: 'app' }); await drained; }
     catch (error) { this.stopping = false; throw error; }
   }
 }
