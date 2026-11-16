@@ -24,6 +24,7 @@ import { adjacentFrameBoundaryUs, formatTimecode } from "../frames";
 import { groupDisplayName, layerDisplayName } from "../lib/layerName";
 import { AppInput } from "../components/AppInput";
 import {
+  clipDetail,
   headerColumnPx,
   linkHue,
   keyframeHitTest,
@@ -524,7 +525,11 @@ export function LayerBlock({
   }
 
   const left = (Math.max(0, liveStart) / 1_000_000) * pxPerSec;
-  const width = ((liveEnd - liveStart) / 1_000_000) * pxPerSec;
+  // A clip narrower than a pixel still draws a hairline where it sits: the one
+  // case where a chip outgrows its time span, by less than a pixel.
+  const layerWidthPx = Math.max(((liveEnd - liveStart) / 1_000_000) * pxPerSec, 1);
+  const uiScale = useUiScale();
+  const detail = clipDetail(layerWidthPx, uiScale);
   const label = layerDisplayName(layer, t, groupOrdinals);
 
   /// The clip's head in SOURCE time — 0 for the kinds that window no source.
@@ -540,15 +545,16 @@ export function LayerBlock({
 
   // Edge-hover trim: pointerdown within the trim edge zone of the layer's
   // left/right edge dispatches trim-start/trim-end; everywhere else
-  // dispatches a move. The zone clamps to a third of the chip's width
-  // so the two edges never overlap on a narrow clip.
+  // dispatches a move. A chip too narrow for both zones and a grip between
+  // them has none (`clipDetail`), so a press on a thin clip never trims.
   const [edgeHover, setEdgeHover] = useState<"left" | "right" | null>(null);
 
   const edgeZoneFor = (
     clientX: number,
     rect: DOMRect,
   ): "left" | "right" | null => {
-    const zone = Math.min(uiPixels(UI_METRICS.timeline.trimEdgeZone), Math.floor(rect.width / 3));
+    // The measured box, not `layerWidthPx`: it shares `clientX`'s coordinates.
+    const zone = clipDetail(rect.width, uiScale).trimEdgePx;
     if (zone <= 0) return null;
     const rel = clientX - rect.left;
     if (rel < zone) return "left";
@@ -697,10 +703,8 @@ export function LayerBlock({
         )
       : label;
 
-  const layerWidthPx = Math.max(width, 4);
-  const uiScale = useUiScale();
-  const showLabel = layerWidthPx >= UI_METRICS.timeline.layerLabelMin * uiScale;
-  const showFullAffordances = layerWidthPx > UI_METRICS.timeline.layerFullLabelMin * uiScale;
+  const showLabel = detail.label;
+  const showFullAffordances = detail.fullAffordances;
   const labelCap = showFullAffordances ? CLIP_LABEL.maxWidth : CLIP_LABEL.compactMaxWidth;
   const labelReserve = !locked
     ? CLIP_LABEL.edgeReserve
@@ -714,8 +718,8 @@ export function LayerBlock({
   );
 
   // `docs/features.md#links` — a 2 px left border in the link's hue on every
-  // member, plus a chain glyph inside that edge on a clip wide enough for its
-  // full label (a narrow clip keeps the accent alone). The glyph is the same
+  // member wider than a sliver, plus a chain glyph inside that edge on a clip
+  // wide enough for its full label (a narrow clip keeps the accent alone). The glyph is the same
   // `Link2` the inspector's scale-link uses: one chain means "tied together"
   // everywhere. The extra left padding keeps the label clear of the glyph.
   const linkHueValue = linkId !== null ? linkHue(linkId) : null;
@@ -724,7 +728,7 @@ export function LayerBlock({
   // canvas itself says links are not in force.
   const linkAccentAlpha = linksOff ? 0.4 : 1;
   const linkStyle: React.CSSProperties = {};
-  if (linkHueValue !== null) {
+  if (linkHueValue !== null && !detail.sliver) {
     linkStyle.borderLeft = `2px solid hsl(${linkHueValue} 75% 60% / ${linkAccentAlpha})`;
   }
   if (showLinkGlyph) linkStyle.paddingLeft = 16;
@@ -743,7 +747,7 @@ export function LayerBlock({
   // above's resize handle (`z-[3]`) lives. A selected block is a `z-[2]`
   // stacking context, so the tab cannot out-rank the handle on its own — the
   // BLOCK is lifted while it draws link chrome, or the badge is unclickable.
-  const linkChromeShown = linkTab !== null && !previewOnly && linkHiddenCount > 0;
+  const linkChromeShown = linkTab !== null && !previewOnly && linkHiddenCount > 0 && showLabel;
 
   const sliceClasses =
     slice === "top"
@@ -763,7 +767,8 @@ export function LayerBlock({
     };
     // When the track is expanded the keyframes render in the sub-lanes
     // below (KeyframeLane), so the collapsed in-clip diamonds are hidden.
-    if (isTrackExpanded || !focusedParam) return none;
+    // A sliver has no room to tell its keys apart or to grab one.
+    if (isTrackExpanded || !focusedParam || detail.sliver) return none;
     const track = kfPreview ?? readLayerParamTrack(layer, focusedParam);
     if (!track || track.mode !== "Keyframed") return none;
     // collapsed mode hides out-of-range keys (kept in data)
@@ -856,10 +861,16 @@ export function LayerBlock({
       aria-invalid={dragIsInvalid || undefined}
       className={[
         "timeline-layer", // JS hook for the blade-cursor rule; carries no styles itself.
-        "absolute flex items-center rounded border border-white/10 px-2",
+        "absolute flex items-center",
         "text-[length:var(--font-size-caption)] font-semibold text-white select-none cursor-grab",
-        "shadow-[0_1px_2px_rgba(0,0,0,0.28)] transition-[outline,box-shadow,border-color] duration-75",
-        "hover:border-white/20 hover:shadow-[0_2px_5px_rgba(0,0,0,0.36)]",
+        // Every tier keeps the corners and shadow, which take no width: CSS
+        // shrinks radii that outgrow the box, so a sliver rounds as far as it
+        // can. The border and padding do take width, so only chips that fit
+        // them get them (`clipDetail`).
+        "rounded shadow-[0_1px_2px_rgba(0,0,0,0.28)] transition-[outline,box-shadow,border-color] duration-75",
+        "hover:shadow-[0_2px_5px_rgba(0,0,0,0.36)]",
+        detail.sliver ? "" : "border border-white/10 hover:border-white/20",
+        showLabel ? "px-2" : "",
         sliceClasses,
         linkChromeShown && !isDragging ? "z-[4]" : isSelected ? "z-[2]" : "",
         isDragging
@@ -1090,7 +1101,7 @@ export function LayerBlock({
           come through `inherit` as well. */}
       {layer.params.kind !== "Color" && (
         <span
-          className="pointer-events-none absolute -inset-px z-[1] rounded-[inherit] border-t-2 opacity-90"
+          className={`pointer-events-none absolute ${detail.sliver ? "inset-0" : "-inset-px"} z-[1] rounded-[inherit] border-t-2 opacity-90`}
           style={{ borderTopColor: layerTheme.accent }}
           aria-hidden="true"
         />
@@ -1135,7 +1146,7 @@ export function LayerBlock({
           <AppIcon icon={Link2} size="micro" strokeWidth={2} />
         </span>
       )}
-      {linkTab !== null && linkHueValue !== null && !previewOnly && (
+      {linkTab !== null && linkHueValue !== null && !previewOnly && showLabel && (
         <LinkTab
           tab={linkTab}
           hue={linkHueValue}
@@ -1144,17 +1155,15 @@ export function LayerBlock({
           hiddenCount={linkHiddenCount}
         />
       )}
-      {layer.params.kind === "Audio" && !previewOnly && <AudioSyncBadge layerId={layer.id} locked={locked} />}
-      {/* No width gate, unlike the label and the chain glyph. Those two sit in
-          the block's flow and a narrow clip has no room to spend on them; this
-          one is absolutely positioned in the corner `AudioSyncBadge` already
-          uses, so it displaces nothing at any width. A gate would also silence
-          it exactly where it earns its keep: at the zoom that makes every Group
-          clip a sliver, "is there anything in there" is the live question. */}
-      {groupCompositionId !== null && !previewOnly && (
+      {/* The corner badges are gated with the label: narrower, a badge is
+          wider than the clip and would sit on the next one. */}
+      {layer.params.kind === "Audio" && !previewOnly && showLabel && (
+        <AudioSyncBadge layerId={layer.id} locked={locked} />
+      )}
+      {groupCompositionId !== null && !previewOnly && showLabel && (
         <GroupMarkerBadge compositionId={groupCompositionId} layerId={layer.id} locked={locked} />
       )}
-      {groupCompositionId !== null && !previewOnly && (
+      {groupCompositionId !== null && !previewOnly && showLabel && (
         <ReviewGroupBadge layerId={layer.id} locked={locked} />
       )}
       {isEditing && showLabel ? (

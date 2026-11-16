@@ -3,6 +3,7 @@ import {
   trackHeightPx,
   minTrackHeightPx,
   clamp,
+  clipDetail,
   computeTimelineExtent,
   computeLayerSlices,
   formatRulerLabel,
@@ -22,6 +23,7 @@ import {
   visualOrderedTracks,
 } from "./geometry";
 import type { LayerSummary, TrackSummary } from "../ipc";
+import { UI_METRICS } from "../settings/uiMetrics";
 
 function layer(partial: Partial<LayerSummary>): LayerSummary {
   return {
@@ -309,6 +311,41 @@ describe("formatRulerLabel", () => {
   });
   it("formats centiseconds for sub-second steps", () => {
     expect(formatRulerLabel(1.25, 0.5)).toBe("0:01.25");
+  });
+});
+
+describe("clipDetail", () => {
+  const m = UI_METRICS.timeline;
+  const tierAt = (widthPx: number, uiScale = 1) => clipDetail(widthPx, uiScale);
+
+  it("drops affordances in one direction as a chip narrows: label, trim, frame", () => {
+    // Each width tells a strictly wider chip's story minus something, never
+    // plus something.
+    expect(m.layerSliverMax).toBeLessThan(m.layerTrimMin);
+    expect(m.layerTrimMin).toBeLessThan(m.layerLabelMin);
+    expect(m.layerLabelMin).toBeLessThan(m.layerFullLabelMin);
+    const widths = [1, m.layerSliverMax, m.layerTrimMin, m.layerLabelMin, m.layerFullLabelMin + 1];
+    for (let i = 1; i < widths.length; i++) {
+      const narrow = tierAt(widths[i - 1]!);
+      const wide = tierAt(widths[i]!);
+      expect(wide.sliver && !narrow.sliver).toBe(false);
+      expect(wide.trimEdgePx).toBeGreaterThanOrEqual(narrow.trimEdgePx);
+      expect(narrow.label && !wide.label).toBe(false);
+      expect(narrow.fullAffordances && !wide.fullAffordances).toBe(false);
+    }
+  });
+
+  it("gives a trimmable chip a move grip between its edges at least as wide as either", () => {
+    const d = tierAt(m.layerTrimMin);
+    expect(d.trimEdgePx).toBeGreaterThan(0);
+    expect(m.layerTrimMin - 2 * d.trimEdgePx).toBeGreaterThanOrEqual(d.trimEdgePx);
+    expect(tierAt(m.layerTrimMin - 1).trimEdgePx).toBe(0);
+  });
+
+  it("scales every threshold with the layout theme", () => {
+    expect(tierAt(m.layerTrimMin * 1.5, 1.5).trimEdgePx).toBe(m.trimEdgeZone * 1.5);
+    expect(tierAt(m.layerTrimMin, 1.5).trimEdgePx).toBe(0);
+    expect(tierAt(m.layerSliverMax, 1.5).sliver).toBe(true);
   });
 });
 

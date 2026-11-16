@@ -2070,12 +2070,14 @@ describe("Timeline seek/selection coupling", () => {
       selectedLayerId: oneFrameLayer.id,
     });
     const block = container.querySelector(".timeline-layer") as HTMLElement;
+    // Measured wide enough to have trim edges: at this zoom one frame is a
+    // sliver, which only moves, and the trim clamp is the subject here.
     vi.spyOn(block, "getBoundingClientRect").mockReturnValue({
       left: 0,
-      right: 4,
+      right: 24,
       top: 0,
       bottom: 48,
-      width: 4,
+      width: 24,
       height: 48,
       x: 0,
       y: 0,
@@ -2083,15 +2085,15 @@ describe("Timeline seek/selection coupling", () => {
     });
 
     const oneFrameWidthPx = (33_333 / 1_000_000) * 80;
-    fireEvent.pointerDown(block, { button: 0, clientX: 4, clientY: 24 });
+    fireEvent.pointerDown(block, { button: 0, clientX: 22, clientY: 24 });
     fireEvent.pointerMove(window, {
-      clientX: 4 + oneFrameWidthPx,
+      clientX: 22 + oneFrameWidthPx,
       clientY: 24,
     });
     expect(block.title).toContain("00:00:00:00 → 00:00:00:02");
 
     fireEvent.pointerUp(window, {
-      clientX: 4 + oneFrameWidthPx,
+      clientX: 22 + oneFrameWidthPx,
       clientY: 24,
     });
     await waitFor(() => {
@@ -2102,6 +2104,29 @@ describe("Timeline seek/selection coupling", () => {
         false,
       );
     });
+  });
+
+  it("moves a clip too narrow to trim, even when pressed at its edge", () => {
+    vi.useFakeTimers();
+    useAppSettingsStore.setState((s) => ({
+      settings: { ...s.settings, tail_snap_enabled: false },
+    }));
+    const { container } = renderTimeline({ selectedLayerId: layer.id });
+    const block = container.querySelector(".timeline-layer") as HTMLElement;
+    const narrowPx = UI_METRICS.timeline.layerTrimMin - 1;
+    vi.spyOn(block, "getBoundingClientRect").mockReturnValue({
+      left: 0, right: narrowPx, top: 0, bottom: 48, width: narrowPx, height: 48,
+      x: 0, y: 0, toJSON: () => ({}),
+    });
+
+    fireEvent.pointerMove(block, { clientX: narrowPx - 1, clientY: 24, buttons: 0 });
+    expect(block.style.cursor).not.toBe("ew-resize");
+    fireEvent.pointerDown(block, { button: 0, clientX: narrowPx - 1, clientY: 24 });
+    fireEvent.pointerMove(window, { clientX: narrowPx + 20, clientY: 24 });
+    fireEvent.pointerUp(window, { clientX: narrowPx + 20, clientY: 24 });
+
+    expect(ipcMocks.trimLayer).not.toHaveBeenCalled();
+    expect(ipcMocks.moveLayer).toHaveBeenCalledOnce();
   });
 
   it("moves a selection with an authorized transition overlap", async () => {
@@ -4692,10 +4717,9 @@ describe("Timeline group marker badge", () => {
     expect(layerIdsOf(currentSelection()).size).toBe(0);
   });
 
-  // The zoom that makes a Group clip a sliver is the zoom at which "is there
-  // anything in there" is the live question, so the badge outlives the flow
-  // chrome the same width takes away.
-  it("survives a clip too narrow for its own full label", () => {
+  // Narrower than the label's room the badge is wider than the clip, and
+  // would draw over the next one.
+  it("steps aside on a clip too narrow to hold it", () => {
     const sliver = groupLayerFixture({
       id: "ref-outer",
       compositionId: OUTER,
@@ -4705,7 +4729,7 @@ describe("Timeline group marker badge", () => {
     const sliverTrack: TrackSummary = { ...track, id: "t-root", layers: [sliver] };
     applySummary([groupComposition(OUTER, { markers: [marker()] })], [sliverTrack]);
     renderTimeline({ tracks: [sliverTrack] });
-    expect(badge()?.textContent).toBe("1");
+    expect(badge()).toBeNull();
   });
 
   it("no other clip kind carries it", () => {
