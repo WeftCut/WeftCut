@@ -15,8 +15,18 @@ describe('changeStats', () => {
   })
 
   it('keeps every class figure at zero, so the line has one shape', () => {
-    expect(changeStats({ unreviewed: [change('a', 'added')] }).map(s => [s.class, s.count]))
+    expect(changeStats({ unreviewed: [change('a', 'added')] }).map(s => s.kind === 'class' ? [s.class, s.count] : s.kind))
       .toEqual([['added', 1], ['removed', 0], ['modified', 0]])
+  })
+
+  it('follows the class figures with what there is to watch: the ranges to review and how long they run', () => {
+    const range = (s: number, e: number, source: 'review' | 'user' = 'review') => ({
+      composition_id: 'root', class: 'modified' as const, t_start_us: s, t_end_us: e, before_start_us: s, before_end_us: e, source, change_ids: [],
+    })
+    // A cut point counts and adds no time; the user's own ranges are not to review.
+    const stats = changeStats({ unreviewed: [change('a', 'modified')], ranges: [range(0, 2_000_000), range(5_000_000, 5_000_000), range(6_000_000, 9_000_000, 'user')] })
+    expect(stats.at(-1)).toEqual({ kind: 'ranges', count: 2, durationUs: 2_000_000 })
+    expect(changeStats({ unreviewed: [change('a', 'modified')], ranges: [range(0, 1, 'user')] }).some(s => s.kind === 'ranges')).toBe(false)
   })
 
   it('gives each figure of a line its own key', () => {

@@ -118,8 +118,8 @@
   margin-left: -1px; /* fixed-px: centres the tick on its frame */
 }
 
-/* Review changes (ADR 0115): a band along the strip's head, opposite the tack
-   band at its foot. A point change (a marker) keeps a visible tick width. */
+/* Changed ranges (ADR 0169): a band along the strip's head, opposite the tack
+   band at its foot, each range in its class hue. */
 .mini-change {
   position: absolute;
   top: 0;
@@ -134,32 +134,25 @@
 .mini-change-modified { background: var(--review-modified); }
 .mini-change-removed { background: var(--review-removed); }
 
-/* A removal's baseline footprint: the removed hue's own solid block, in a
-   row of its own just under the current band (`historyRowTop` in
-   UI_METRICS.agent.miniTimeline) — what now sits where it was keeps the band
-   above, so neither paints over the other. As tall as the band: the row and the hue
-   set it apart, not its weight. */
-.mini-change-historical {
-  top: calc(5 * var(--ui-px));
-  height: calc(4 * var(--ui-px));
+/* A cut point: baseline content stopped here and what followed closed up, so
+   it has no width now. A notch hanging from the band, the cut mark's shape
+   (`.review-cut`), centred on its instant. */
+.mini-change-cut {
+  width: 0;
+  min-width: 0;
+  height: 0;
+  margin-left: calc(-4 * var(--ui-px));
+  border-radius: 0;
+  background: transparent;
+  border-left: calc(4 * var(--ui-px)) solid transparent;
+  border-right: calc(4 * var(--ui-px)) solid transparent;
+  border-top: calc(7 * var(--ui-px)) solid var(--review-removed);
 }
 
-/* Past the film's end: the strip runs on only so a removal's baseline
-   footprint there has somewhere to be. Shaded as no film; seeking stops at
-   its edge. */
-.mini-beyond-end {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  right: 0;
-  pointer-events: none;
-  border-left: 1px solid color-mix(in srgb, var(--muted-foreground) 45%, transparent);
-  background: repeating-linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--muted-foreground) 12%, transparent) 0 3px,
-    transparent 3px 6px
-  );
-}
+/* The user's own ranges, shown with the user-changes switch: never to
+   review, so stepped back to the muted ink. */
+.mini-change-user { background: var(--muted-foreground); opacity: 0.45; }
+.mini-change-cut.mini-change-user { background: transparent; border-top-color: var(--muted-foreground); }
 
 /* The review focus on the strip (agent/reviewFocus.ts), as the editor
    timeline draws it: the focused range washed the strip's full height
@@ -186,11 +179,18 @@
   z-index: 1;
 }
 
-.mini-change-hover,
 .mini-tack-hover {
   background: transparent;
   opacity: 1;
   box-shadow: inset 0 0 0 1px var(--review-focus);
+}
+
+/* A changed range holds several changes: the hovered row's range keeps its
+   class fill and gains the ring, so hovering one change never blanks the
+   hue of a range it shares. */
+.mini-change-hover {
+  opacity: 1;
+  box-shadow: 0 0 0 1px var(--review-focus);
 }
 
 /* The bands' click targets: a strip of the band's own edge, a little taller
@@ -262,6 +262,39 @@
 
 .review-tack[data-selected] .review-tack-icon {
   color: inherit;
+}
+
+/* Changed ranges on the ruler (ADR 0169, timeline/RulerRanges.tsx): the
+   stretch of the clock washed in its class hue, faint enough to leave the
+   ticks and timecode readable, and the hue itself along the ruler's foot so
+   the class still reads where the wash is too faint to. A cut point is a ▼
+   down to the foot, the cut mark's shape on the lanes below. The user's own
+   ranges are neutral and stepped back; the focused range's wash deepens. */
+.ruler-range {
+  --range-hue: var(--review-modified);
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: auto;
+  cursor: ew-resize;
+  background: color-mix(in srgb, var(--range-hue) 14%, transparent);
+  box-shadow: inset 0 calc(-2 * var(--ui-px)) 0 var(--range-hue);
+}
+.ruler-range-added { --range-hue: var(--review-added); }
+.ruler-range-removed { --range-hue: var(--review-removed); }
+.ruler-range[data-user] { --range-hue: var(--muted-foreground); opacity: 0.6; }
+.ruler-range[data-hovered] { background: color-mix(in srgb, var(--range-hue) 22%, transparent); }
+.ruler-range[data-selected] { opacity: 1; background: color-mix(in srgb, var(--range-hue) 30%, transparent); }
+.ruler-range[data-cut] {
+  top: auto;
+  width: 0;
+  height: 0;
+  margin-left: calc(-4 * var(--ui-px));
+  background: none;
+  box-shadow: none;
+  border-left: calc(4 * var(--ui-px)) solid transparent;
+  border-right: calc(4 * var(--ui-px)) solid transparent;
+  border-top: calc(6 * var(--ui-px)) solid var(--range-hue);
 }
 
 .review-lane[data-selecting] .review-tack:not([data-selected]) {

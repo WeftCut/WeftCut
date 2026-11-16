@@ -37,14 +37,14 @@ interface MiniTimelineProps {
   /// The panel row under the pointer (`reviewHover`): its mark is ringed
   /// inside its own box.
   hover?: ReviewTarget | null;
-  /// Review change ranges on this composition (`useCompositionChangeRanges`),
-  /// painted as a second band along the strip's head — opposite the tack band,
-  /// so the two never read as one: added/modified in their review hues; a
-  /// removal at its baseline footprint, in the removed hue on a row of its
-  /// own just under them (ADR 0116).
+  /// Changed ranges on this composition (`useCompositionChangeRanges`; ADR
+  /// 0169), painted as a second band along the strip's head — opposite the
+  /// tack band, so the two never read as one: each range in its class hue, a
+  /// cut point (removed with no width now) as a mark hanging from the top, the
+  /// user's own ranges muted.
   changes?: readonly ReviewRangeMark[];
-  /// What a change mark says under the pointer (`useChangeMarkLabel`) —
-  /// its class alone when absent.
+  /// What a range says under the pointer (`useRangeMarkLabel`) — its class
+  /// alone when absent.
   changeLabel?: (mark: ReviewRangeMark) => string;
   /// A press on a band that names an item (`hitBand`) focuses it instead of
   /// seeking; the caller shows its row.
@@ -93,22 +93,44 @@ function formatTickLabel(us: number): string {
   return `${m}:${pad(s, 2)}`;
 }
 
-/// The review bands' baselines: a press's slop round a point mark, and the
-/// top of the removals' row — a press below it names a historical mark first,
-/// one above it a current mark first.
+/// The review bands' metrics: a press's slop round a point mark, and how
+/// near two changed ranges paint as one block.
 const MINI = UI_METRICS.agent.miniTimeline;
 
-/// A change band item per painted change range — not the "contains changes"
-/// footprints of Group clips, which name no row to show.
-function changeBandItems(changes: readonly ReviewRangeMark[]): BandItem[] {
-  return changes
-    .filter((c) => !c.group)
-    .map((c) => ({ id: c.changeId, startUs: c.tStartUs, endUs: c.tEndUs }));
+/// One painted block of the change band: ranges of one class and owner
+/// close enough at this width to read as one, kept apart in the hover text.
+interface ChangeBlock {
+  key: string;
+  cls: ReviewRangeMark["cls"];
+  cut: boolean;
+  user: boolean;
+  startUs: number;
+  endUs: number;
+  marks: ReviewRangeMark[];
 }
 
-/// Room left after the last baseline footprint past the film's end, as a
-/// fraction of its time.
-const BEYOND_END_PAD = 0.02;
+/// The band's blocks at `widthPx`: a range keeps at least `minPx`, and ranges
+/// of one look nearer than `mergePx` paint as one block — merged for the eye
+/// only, every range still named under the pointer.
+function changeBlocks(marks: readonly ReviewRangeMark[], extentUs: number, widthPx: number): ChangeBlock[] {
+  const usPerPx = widthPx > 0 ? extentUs / widthPx : 0;
+  const mergeUs = MINI.changeMergePx * usPerPx;
+  const out: ChangeBlock[] = [];
+  for (const m of [...marks].sort((a, b) => a.tStartUs - b.tStartUs)) {
+    const last = out.at(-1);
+    if (last && last.cls === m.cls && last.cut === m.cut && last.user === m.user && m.tStartUs - last.endUs <= mergeUs) {
+      last.endUs = Math.max(last.endUs, m.tEndUs);
+      last.marks.push(m);
+    } else {
+      out.push({ key: m.key, cls: m.cls, cut: m.cut, user: m.user, startUs: m.tStartUs, endUs: m.tEndUs, marks: [m] });
+    }
+  }
+  return out;
+}
+
+/// The change a block names for the panel: its first unreviewed one, so a
+/// press on a range shows a row the Changes tab lists.
+const blockChange = (b: ChangeBlock): string | null => b.marks[0]?.range.change_ids[0] ?? null;
 
 export function MiniTimeline({
   durationUs,
@@ -153,15 +175,9 @@ export function MiniTimeline({
 
   // Click / drag anywhere on the strip → seek. The shared pointer session
   // tracks outside the strip and releases every listener if scrubbing aborts.
-  // The strip's scale: the composition, stretched past its end when a
-  // removal's baseline footprint lies there (a ripple shortened the film) —
-  // where it was is still somewhere to point at, with a little room after it
-  // so a point there is not cut off by the strip's edge. Seeking stays inside
-  // the film.
-  const extentUs = useMemo(() => {
-    const end = changes.reduce((e, c) => (c.historical ? Math.max(e, c.tEndUs) : e), durationUs);
-    return end > durationUs ? Math.round(end * (1 + BEYOND_END_PAD)) : durationUs;
-  }, [changes, durationUs]);
+  // Changed ranges are in the film's own time (ADR 0169), so the strip's
+  // scale is the composition.
+  const extentUs = durationUs;
   const seekFromClientX = useCallback(
     (clientX: number) => {
       const el = stripRef.current;
@@ -210,30 +226,28 @@ export function MiniTimeline({
       ),
     [tacks],
   );
-  const changeItems = useMemo(() => changeBandItems(changes.filter((c) => !c.historical)), [changes]);
-  const historyItems = useMemo(() => changeBandItems(changes.filter((c) => c.historical)), [changes]);
-  const changeBandAll = useMemo(() => [...changeItems, ...historyItems], [changeItems, historyItems]);
+  const blocks = useMemo(() => changeBlocks(changes, extentUs, width), [changes, extentUs, width]);
+  const changeItems = useMemo<BandItem[]>(() => blocks.map((b) => ({ id: b.key, startUs: b.startUs, endUs: b.endUs })), [blocks]);
   // The focused and hovered tack, drawn over the union: the selection solid,
   // the hover ringed (a hover on the selection adds nothing).
   const tackSpan = (item: ReviewTarget | null) =>
     item?.kind === "tack" ? tackItems.find((x) => x.id === item.id) ?? null : null;
   const selectedSpan = tackSpan(focus);
   const hoverSpan = hover?.kind === "tack" && hover.id !== selectedSpan?.id ? tackSpan(hover) : null;
-  // The focus's washes: the tack's range, or each range of the change.
-  const focusWashes: { kind: ReviewTarget["kind"]; startUs: number; endUs: number; historical: boolean }[] =
+  // The focus's washes: the tack's range, or each changed range the
+  // focused change plays in.
+  const names = (b: ChangeBlock, item: ReviewTarget | null) =>
+    item?.kind === "change" && b.marks.some((m) => m.range.change_ids.includes(item.id as never));
+  const focusWashes: { kind: ReviewTarget["kind"]; startUs: number; endUs: number }[] =
     selectedSpan !== null
-      ? [{ kind: "tack", startUs: selectedSpan.startUs, endUs: selectedSpan.endUs, historical: false }]
+      ? [{ kind: "tack", startUs: selectedSpan.startUs, endUs: selectedSpan.endUs }]
       : focus?.kind === "change"
-        ? changes.filter((c) => c.changeId === focus.id)
-            .map((c) => ({ kind: "change", startUs: c.tStartUs, endUs: c.tEndUs, historical: c.historical === true }))
+        ? changes.filter((c) => c.range.change_ids.includes(focus.id as never))
+            .map((c) => ({ kind: "change", startUs: c.tStartUs, endUs: c.tEndUs }))
         : [];
   const focusBand = focusWashes[0]?.kind;
-  const changeMark = (c: ReviewRangeMark) =>
-    focus?.kind === "change" && focus.id === c.changeId
-      ? " mini-change-selected"
-      : hover?.kind === "change" && hover.id === c.changeId
-        ? " mini-change-hover"
-        : "";
+  const changeMark = (b: ChangeBlock) =>
+    names(b, focus) ? " mini-change-selected" : names(b, hover) ? " mini-change-hover" : "";
 
   // A band press names the item under it — the tack or change whose range
   // holds that moment — and focuses it; on bare band it falls through to the
@@ -244,24 +258,25 @@ export function MiniTimeline({
     const tUs = ((e.clientX - rect.left) / rect.width) * extentUs;
     return hitBand(items, tUs, (uiPixels(MINI.pointSlop) / rect.width) * extentUs);
   };
-  // The change band holds two rows; the one pressed is asked first, so a
-  // removal's footprint under a current change is reachable from its own row.
-  const changeAt = (e: React.MouseEvent<HTMLElement>): string | null => {
-    const lower = e.clientY - e.currentTarget.getBoundingClientRect().top >= uiPixels(MINI.historyRowTop);
-    const [first, second] = lower ? [historyItems, changeItems] : [changeItems, historyItems];
-    return bandItemAt(first, e) ?? bandItemAt(second, e);
-  };
+  // A press on the change band names a block; the panel shows its first
+  // change, and the block's hover text says each range in it.
+  const blockOf = (key: string): ChangeBlock | undefined => blocks.find((b) => b.key === key);
+  const blockLabel = (key: string): string =>
+    (blockOf(key)?.marks ?? []).map((m) => (changeLabel ? changeLabel(m) : t(`changes.class_${m.cls}`))).join("\n");
   // A double press jumps to the item's start on this strip — the first press
   // already focused it — and only moves the moment, as the strip's seek does.
+  // `focusOf`: the item a band item focuses, when not itself.
   const bandHandlers = (
     kind: ReviewTarget["kind"],
     itemAt: (e: React.MouseEvent<HTMLElement>) => string | null,
     label: (id: string) => string,
     items: readonly BandItem[],
+    focusOf: (id: string) => string | null = (id) => id,
   ) => ({
     onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.button !== 0 || onFocus === undefined) return;
-      const id = itemAt(e);
+      const at = itemAt(e);
+      const id = at === null ? null : focusOf(at);
       if (id === null) return;
       // The strip's own pointerdown would seek; this press was for the item.
       e.stopPropagation();
@@ -316,7 +331,6 @@ export function MiniTimeline({
               data-testid="mini-focus-wash"
               data-kind={w.kind}
               data-point={point || undefined}
-              data-historical={w.historical || undefined}
               aria-hidden="true"
               className="review-focus-wash mini-focus-wash"
               style={{
@@ -391,37 +405,31 @@ export function MiniTimeline({
             />
           ),
         )}
-        {durationUs > 0 && extentUs > durationUs && (
-          <div
-            data-testid="mini-beyond-end"
-            className="mini-beyond-end"
-            style={{ left: `${(durationUs / extentUs) * 100}%` }}
-          />
-        )}
-        {durationUs > 0 && changes.map((c, i) => {
-          const left = (c.tStartUs / extentUs) * 100;
-          const span = ((c.tEndUs - c.tStartUs) / extentUs) * 100;
+        {durationUs > 0 && blocks.map((b) => {
+          const left = (b.startUs / extentUs) * 100;
+          const span = ((b.endUs - b.startUs) / extentUs) * 100;
           return (
             <div
-              key={`${c.changeId}-${i}`}
+              key={b.key}
               data-testid="mini-change"
-              data-change-id={c.changeId}
-              data-change-class={c.cls}
-              data-historical={c.historical || undefined}
-              className={`mini-change mini-change-${c.cls}${c.historical ? " mini-change-historical" : ""}${changeMark(c)}`}
-              style={{ left: `${left}%`, width: `${Math.max(0, span)}%` }}
+              data-change-class={b.cls}
+              data-cut={b.cut || undefined}
+              data-user={b.user || undefined}
+              data-count={b.marks.length}
+              className={`mini-change mini-change-${b.cls}${b.cut ? " mini-change-cut" : ""}${b.user ? " mini-change-user" : ""}${changeMark(b)}`}
+              // A cut point at the film's start hangs from its edge, not half off it.
+              style={b.cut ? { left: `${left}%`, ...(b.startUs <= 0 ? { marginLeft: 0 } : {}) } : { left: `${left}%`, width: `${Math.max(0, span)}%` }}
             />
           );
         })}
-        {durationUs > 0 && onFocus !== undefined && changeItems.length + historyItems.length > 0 && (
+        {durationUs > 0 && onFocus !== undefined && changeItems.length > 0 && (
           <div
             data-testid="mini-change-band"
             className="mini-band-hit mini-band-hit-changes"
-            {...bandHandlers("change", changeAt, (id) => {
-              const c = changes.find((x) => x.changeId === id);
-              if (c === undefined) return "";
-              return changeLabel ? changeLabel(c) : t(`changes.class_${c.cls}`);
-            }, changeBandAll)}
+            {...bandHandlers("change", (e) => bandItemAt(changeItems, e), blockLabel, changeItems, (key) => {
+              const b = blockOf(key);
+              return b === undefined ? null : blockChange(b);
+            })}
           />
         )}
         {durationUs > 0 && onFocus !== undefined && tackItems.length > 0 && (

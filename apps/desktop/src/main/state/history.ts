@@ -2,8 +2,9 @@
 import type { Layer, MediaItem, Project, ProjectSettings, RoleMixSettings, Uuid } from './model'
 import { HISTORY_SUMMARY, createLayerFlattener, resolveEntityLabels, restoredCheckpointSummary, type EntityLabel } from './history-labels'
 import { diffProjects, groupDecorations, locateChanges } from './reviewDiff'
+import { diffRanges, placeRanges, rangesToReview } from './reviewRanges'
 import { jsonEqual, touchedEntityKeys } from './reviewEntities'
-import type { Change, EntityKey, GroupDecoration } from '../../shared/review'
+import type { Change, ChangedRange, EntityKey, GroupDecoration } from '../../shared/review'
 
 export type Actor = { kind: 'User' } | { kind: 'Agent'; client: string }
 export type EntityRef =
@@ -108,6 +109,8 @@ export interface ReviewState {
   unreviewed: Change[]
   user: Change[]
   decorations: GroupDecoration[]
+  /** Where the film plays differently (ADR 0169), both lists' ranges. */
+  ranges: ChangedRange[]
 }
 
 /** What a set of recorded ops did — `History.opDiff`, served as
@@ -117,8 +120,9 @@ export interface OpDiff {
   reverted: boolean
   changes: Change[]
   decorations: GroupDecoration[]
+  ranges: ChangedRange[]
 }
-const unavailableOpDiff = (): OpDiff => ({ available: false, reverted: false, changes: [], decorations: [] })
+const unavailableOpDiff = (): OpDiff => ({ available: false, reverted: false, changes: [], decorations: [], ranges: [] })
 
 const sameChanges = (a: readonly Change[], b: readonly Change[]): boolean =>
   a.length === b.length && a.every((x, i) => x === b[i] || jsonEqual(x, b[i]))
@@ -129,13 +133,17 @@ const sameChanges = (a: readonly Change[], b: readonly Change[]): boolean =>
  *  the current timeline), and only that placing depends on the commit. A
  *  snapshot rewritten by an `*Everywhere` patch is a new object, and diffs
  *  afresh. */
-const runDiffs = new WeakMap<Project, WeakMap<Project, Change[]>>()
-function runDiff(before: Project, after: Project): Change[] {
+interface RunDiff { changes: Change[]; ranges: ChangedRange[] }
+const runDiffs = new WeakMap<Project, WeakMap<Project, RunDiff>>()
+function runDiff(before: Project, after: Project): RunDiff {
   let byAfter = runDiffs.get(before)
   if (!byAfter) runDiffs.set(before, byAfter = new WeakMap())
-  let changes = byAfter.get(after)
-  if (!changes) byAfter.set(after, changes = diffProjects(before, after))
-  return changes
+  let run = byAfter.get(after)
+  if (!run) {
+    const changes = diffProjects(before, after)
+    byAfter.set(after, run = { changes, ranges: diffRanges(before, after, { unreviewed: changes, user: [] }) })
+  }
+  return run
 }
 
 /** One row's resolved `entity_labels` and the objects they were resolved from. */
@@ -401,14 +409,15 @@ export class History {
     const current = this.current()
     if (review === null) {
       this.reviewMemo = null
-      return this.stamped({ baseline_revision: this.reviewRev, has_baseline: false, unreviewed: [], user: [], decorations: [] })
+      return this.stamped({ baseline_revision: this.reviewRev, has_baseline: false, unreviewed: [], user: [], decorations: [], ranges: [] })
     }
     const m = this.reviewMemo
     if (m && m.rev === this.reviewRev && m.base === review.base && m.current === current) return m.state
     const changes = diffProjects(review.base, current)
     const unreviewed: Change[] = [], user: Change[] = []
     for (const c of changes) (review.agentTouched.has(c.id) ? unreviewed : user).push(c)
-    const state = this.stamped({ baseline_revision: this.reviewRev, has_baseline: true, unreviewed, user, decorations: groupDecorations(changes, current) })
+    const ranges = diffRanges(review.base, current, { unreviewed, user })
+    const state = this.stamped({ baseline_revision: this.reviewRev, has_baseline: true, unreviewed, user, decorations: groupDecorations(changes, current), ranges })
     this.reviewMemo = { rev: this.reviewRev, base: review.base, current, state }
     return state
   }
@@ -423,8 +432,9 @@ export class History {
     const last = this.reviewLast
     const sameListed = last !== null && last.has_baseline === state.has_baseline && sameChanges(last.unreviewed, state.unreviewed)
       && jsonEqual(last.decorations, state.decorations)
+      && jsonEqual(rangesToReview(last.ranges, last.unreviewed), rangesToReview(state.ranges, state.unreviewed))
     if (!sameListed) this.reviewContent += 1
-    if (!sameListed || !sameChanges(last!.user, state.user)) this.reviewContentWithUser += 1
+    if (!sameListed || !sameChanges(last!.user, state.user) || !jsonEqual(last!.ranges, state.ranges)) this.reviewContentWithUser += 1
     const out = { ...state, content_revision: this.reviewContent, content_revision_with_user: this.reviewContentWithUser }
     this.reviewLast = out
     return out
@@ -453,15 +463,20 @@ export class History {
     at.sort((a, b) => a - b)
     const current = this.current()
     const changes = new Map<string, Change>()
+    const ranges: ChangedRange[] = []
     for (let s = 0; s < at.length;) {
       let e = s
       while (e + 1 < at.length && at[e + 1] === at[e] + 1) e += 1
-      const run = runDiff(this.snapshots[at[s] - 1].snapshot, this.snapshots[at[e]].snapshot)
-      for (const c of run) { changes.delete(c.id); changes.set(c.id, c) }
+      const after = this.snapshots[at[e]].snapshot
+      const run = runDiff(this.snapshots[at[s] - 1].snapshot, after)
+      for (const c of run.changes) { changes.delete(c.id); changes.set(c.id, c) }
+      // Each run's ranges are found on its own last snapshot, and placed
+      // where that content plays now.
+      ranges.push(...placeRanges(run.ranges, after, current))
       s = e + 1
     }
     const located = locateChanges([...changes.values()], current)
-    return { available: true, reverted: this.effectStates(ids).every((x) => x === 'reverted'), changes: located, decorations: groupDecorations(located, current) }
+    return { available: true, reverted: this.effectStates(ids).every((x) => x === 'reverted'), changes: located, decorations: groupDecorations(located, current), ranges }
   }
 
   /** Preference patch applied to ALL snapshots + checkpoints; cursor unchanged

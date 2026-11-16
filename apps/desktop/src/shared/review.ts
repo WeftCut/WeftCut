@@ -77,6 +77,39 @@ export interface Change {
   ranges: PlacedRange[]
 }
 
+/** A stretch of a composition that plays differently from the review baseline
+ *  (ADR 0169): stretches that play the same are matched wherever each side has
+ *  them, and what stays unmatched between two matches is one range. Content
+ *  only displaced is in none. */
+export interface ChangedRange {
+  composition_id: string
+  /** By what each side holds: `added` where nothing played (or silence),
+   *  `removed` where nothing plays now, `modified` where both play something
+   *  different. */
+  class: ChangeClass
+  /** Where it is now. Equal for a removal with no width now — a cut point,
+   *  where baseline content stopped and what followed closed up. */
+  t_start_us: number
+  t_end_us: number
+  /** Where it was in the baseline; equal when nothing was there. */
+  before_start_us: number
+  before_end_us: number
+  /** `review` when an unreviewed change plays in it, else `user`: the
+   *  range borrows its list from the entity changes inside (ADR 0115). */
+  source: 'review' | 'user'
+  /** The entity changes that play in it, unreviewed first. */
+  change_ids: EntityKey[]
+  /** A range to review that also holds the user's own changes. */
+  includes_user?: true
+  /** Only the audio, or only the picture, plays differently. */
+  only?: 'audio' | 'picture'
+  /** Layers that play here moved by different amounts: they are out of sync
+   *  with each other by this much, in µs. */
+  sync_offset_us?: number
+  /** Silence lengthened (`added`) or shortened (`removed`), nothing else. */
+  gap?: true
+}
+
 /** The kind of entity a change describes. */
 export function changeKind(change: Pick<Change, 'id'>): EntityKind {
   return parseEntityKey(change.id).kind
@@ -129,6 +162,9 @@ export interface ReviewView {
   /** Group layers containing changes of EITHER list; filter by `change_ids`
    *  against the list on screen. */
   decorations: GroupDecoration[]
+  /** Where the film plays differently (ADR 0169): the ranges to review, and
+   *  the user's own too when the user-only list was asked for. */
+  ranges: ChangedRange[]
 }
 
 /** A `review_view` answer to a caller that holds the current lists
@@ -171,6 +207,9 @@ export interface ReviewActivityView {
   reverted: boolean
   changes: Change[]
   decorations: GroupDecoration[]
+  /** Where the call made the film play differently, placed where that
+   *  content plays now. */
+  ranges: ChangedRange[]
 }
 
 /** Main → renderer: the baseline changed (approval, attribution, re-pin,

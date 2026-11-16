@@ -451,7 +451,7 @@ describe('opDiff — what one call did', () => {
     const { a, tA } = setup()
     const x = color(a, tA, 0, S, AGENT)
     const op = lastOp(a)
-    expect(a.reviewOpDiff([op, 'not-an-op'])).toEqual({ available: false, reverted: false, changes: [], decorations: [] })
+    expect(a.reviewOpDiff([op, 'not-an-op'])).toEqual({ available: false, reverted: false, changes: [], decorations: [], ranges: [] })
     expect(a.reviewOpDiff([])).toMatchObject({ available: false })
     // Its predecessor goes first: as the oldest stored entry it has nothing to diff against.
     for (let i = 0; i < a.historyCapacity() - 1; i++) label(a, x, `n${i}`)

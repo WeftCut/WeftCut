@@ -829,6 +829,19 @@ touched: added, removed or modified (新增 / 删除 / 修改). No causal infere
 between entities. UI word: Change / 变更. See ADR 0116.
 _Avoid_: diff entry, hunk, carried change; shifted / moved as classes
 
+**Changed range**:
+A stretch of a composition that plays differently from the review baseline:
+stretches that play the same are matched wherever each side has them, so
+content only displaced is in none. Added, removed or modified by what each side
+holds there; borrows its list from the unreviewed changes playing in it. UI
+word: Changed range / 变化区间. See ADR 0169.
+_Avoid_: diff hunk, region, shifted range
+
+**Cut point**:
+A changed range removed with no width now: baseline content stopped there and
+what followed closed up. UI word: Cut point / 删除点.
+_Avoid_: seam (ADR 0116's inferred ripple seam), gap (a gap is silence)
+
 **Approve**:
 Make the current state the review baseline, all at once (no per-change
 approval). Records nothing. UI word: Approve all / 全部批准. See ADR 0115.

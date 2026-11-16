@@ -129,7 +129,7 @@ describe("bar contents", () => {
     act(() => {
       useReview.getState().apply({
         version: { session: 1, revision: 1, baseline_revision: 1 }, content_revision: 1, has_baseline: true,
-        unreviewed: [change("Layer:a")], user: [], user_count: 0, decorations: [],
+        unreviewed: [change("Layer:a")], user: [], user_count: 0, decorations: [], ranges: [],
       });
     });
     // A notice and unreviewed changes both reach the user through the bell.
