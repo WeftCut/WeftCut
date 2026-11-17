@@ -18,7 +18,7 @@ Title: type(scope): summary
 
 ## Evidence
 
-<!-- Performance: before and after numbers, method, hardware. UI: screenshots. Otherwise delete this section. -->
+<!-- Performance: before and after numbers, method, hardware. UI: before and after screenshots of each changed state (npm run shots). Otherwise delete this section. -->
 
 ## Other changes
 
