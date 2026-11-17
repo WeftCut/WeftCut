@@ -390,17 +390,31 @@ describe('AgentPanel Changes tab', () => {
       expect(useReviewFocus.getState().focus).toMatchObject({ kind: 'range', step: 'Layer:late' })
       expect(rows().find(r => r.dataset.changeId === 'Layer:late')!.dataset.selected).toBe('true')
       expect(bar.textContent).toContain('change 2 of 2')
-      const close = within(bar).getByRole('button', { name: 'Let go of this range' })
-      fireEvent.keyDown(close, { key: 'Escape' })
+      const count = within(bar).getByRole('button', { name: '1 of 1' })
+      fireEvent.keyDown(count, { key: 'Escape' })
       expect(useReviewFocus.getState().focus).toMatchObject({ kind: 'range', step: null })
-      fireEvent.keyDown(close, { key: 'Escape' })
+      fireEvent.keyDown(count, { key: 'Escape' })
       expect(useReviewFocus.getState().focus).toBeNull()
       // Let go, the bar is the ranges' total again.
       const total = screen.getByRole('group', { name: 'Changed range' })
       expect(total.textContent).toContain('1 spot · 8.0 s')
-      expect(within(total).queryByRole('button', { name: 'Let go of this range' })).toBeNull()
       expect(framed()).toEqual([])
     } finally { delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView }
+  })
+
+  it('a press on the focused range\'s count goes back to all the ranges', async () => {
+    const pair: ChangedRange = { composition_id: ROOT_ID, class: 'modified', t_start_us: S, t_end_us: 9 * S, before_start_us: S, before_end_us: 9 * S,
+      source: 'review', change_ids: ['Layer:late', 'Layer:early'] }
+    mocks.invoke.mockImplementation(async (channel: string, args?: { include_user?: boolean }) =>
+      channel === 'review_view' ? served({ ...view(1), ranges: [pair] }, args) : { available: true, url: '', connections: [] })
+    render(<AgentPanel editor />)
+    await flush()
+    act(() => selectRange(pair))
+    const count = within(screen.getByRole('group', { name: 'Changed range' })).getByRole('button', { name: '1 of 1' })
+    expect(count.getAttribute('title')).toBe('Back to all 1 (Esc)')
+    fireEvent.click(count)
+    expect(useReviewFocus.getState().focus).toBeNull()
+    expect(screen.getByRole('group', { name: 'Changed range' }).textContent).toContain('1 spot · 8.0 s')
   })
 
   describe('the range bar with no range focused', () => {

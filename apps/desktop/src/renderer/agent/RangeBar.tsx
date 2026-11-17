@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowUpRight, ChevronLeft, ChevronRight, Play, X, type LucideIcon } from 'lucide-react'
+import { ArrowUpRight, ChevronLeft, ChevronRight, Play, type LucideIcon } from 'lucide-react'
 import { AppIcon } from '@/components/AppIcon'
 import { ACTION_DEFS, type ActionId } from '../shortcuts/defs'
 import { useEffectiveBindings } from '../shortcuts/bindings-context'
@@ -29,8 +29,9 @@ const byTime = (a: ReviewRangeMark, b: ReviewRangeMark) => a.tStartUs - b.tStart
  *  timeline it names the Group's own and offers the film's, which hold what
  *  every Group shows.
  *
- *  With one focused it is that range: play, what it is, which of the
- *  timeline's ranges it is with the way to its neighbours, and close. Its
+ *  With one focused it is that range: play, what it is, and which of the
+ *  timeline's ranges it is between the way to its neighbours; a press on
+ *  that count goes back to all of them, as Esc does. Its
  *  changes are the framed rows below; a press on one points at it, and only
  *  then does the line say which of them it is (`· 2 / 3`). The neighbours
  *  are the same walk as Alt+↑/↓, so they seek. */
@@ -63,12 +64,14 @@ export function RangeBar({ source }: { source: ChangeSource }) {
     return <div className="agent-range-bar" role="group" aria-label={t('changes.range_bar.label')}>
       <PlayButton label={t('changes.range_bar.play')} />
       <span className="agent-range-bar-line" title={line}>{line}</span>
-      {spot >= 0 && <span className="agent-range-bar-spots">
-        <ActionButton icon={ChevronLeft} action="seekPrevChangedRange" disabled={spot === 0} onClick={() => walkChangedRange(-1)} />
-        <span className="agent-range-bar-spot" aria-live="polite">{t('changes.range_bar.spot', { index: spot + 1, count: order.length })}</span>
-        <ActionButton icon={ChevronRight} action="seekNextChangedRange" disabled={spot === order.length - 1} onClick={() => walkChangedRange(1)} />
-      </span>}
-      <BarButton icon={X} label={t('changes.range_bar.close')} onClick={releaseFocus} />
+      <span className="agent-range-bar-spots">
+        {spot >= 0 && <ActionButton icon={ChevronLeft} action="seekPrevChangedRange" disabled={spot === 0} onClick={() => walkChangedRange(-1)} />}
+        {/* Which of the ranges this is, and the way back to all of them:
+            the overview's count, narrowed. Not a close: the bar stays. */}
+        <button type="button" className="agent-range-bar-spot" aria-live="polite" title={t('changes.range_bar.back', { count: order.length })}
+          onClick={releaseFocus}>{spot >= 0 ? t('changes.range_bar.spot', { index: spot + 1, count: order.length }) : t('changes.range_bar.all', { count: order.length })}</button>
+        {spot >= 0 && <ActionButton icon={ChevronRight} action="seekNextChangedRange" disabled={spot === order.length - 1} onClick={() => walkChangedRange(1)} />}
+      </span>
     </div>
   }
   // The bands paint a selected call's ranges or the Review view's: the row

@@ -1495,7 +1495,7 @@ const zhCN: Resources = {
     subtitle: "自上次批准以来代理所做的变更",
     // 列表上方的条：未聚焦时是区间总数与总时长和进入复看的入口（复看、
     // 组内跳到全片）；聚焦一个区间时是它的一句话、逐项切换、播放、
-    // 前后区间、关闭。
+    // 前后区间，以及可点回全部区间的计数。
     range_bar: {
       label: "变化区间",
       review: "复看",
@@ -1513,7 +1513,10 @@ const zhCN: Resources = {
       play: "播放",
       spot: "第 {{index}}/{{count}} 处",
       step: "第 {{index}}/{{count}} 项",
-      close: "取消聚焦此区间",
+      all_one: "全部 {{count}} 处",
+      all_other: "全部 {{count}} 处",
+      back_one: "回到全部 {{count}} 处 (Esc)",
+      back_other: "回到全部 {{count}} 处 (Esc)",
     },
     approve_all: "全部批准",
     approve_all_hint: "将项目当前状态作为新的审阅基线，包括你自己的变更",

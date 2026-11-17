@@ -74,7 +74,8 @@ relative timing.
   stays while the bands of the timeline on screen paint it, whichever tab the
   panel shows, and goes with another timeline. The panel heads
   its framed rows with one flat bar: play, the range's line, which of the
-  timeline's ranges it is between the way to its neighbours, close. With no
+  timeline's ranges it is between the way to its neighbours; a press on that
+  count (or Esc) goes back to all of them. With no
   range focused the bar stays, in the tab whose list the bands paint: how
   many ranges the timeline on screen has and how long they run now (a cut
   point counts and adds no time; cut points alone are named as such), Review

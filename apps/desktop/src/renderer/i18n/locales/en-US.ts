@@ -1688,7 +1688,7 @@ const enUS = {
     // The bar over the list: with no range focused, how many there are and
     // how long, and the way into them (review, a Group's way out to the
     // film); with one focused, its line, a stepper through its changes,
-    // play, the neighbouring ranges, close.
+    // play, the neighbouring ranges around a count that goes back to all.
     range_bar: {
       label: "Changed range",
       review: "Review",
@@ -1706,7 +1706,10 @@ const enUS = {
       play: "Play",
       spot: "{{index}} of {{count}}",
       step: "change {{index}} of {{count}}",
-      close: "Let go of this range",
+      all_one: "All {{count}}",
+      all_other: "All {{count}}",
+      back_one: "Back to all {{count}} (Esc)",
+      back_other: "Back to all {{count}} (Esc)",
     },
     approve_all: "Approve all",
     approve_all_hint: "Make the project as it is now the new review baseline — your own changes included",
