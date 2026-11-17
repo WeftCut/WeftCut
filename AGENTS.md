@@ -36,7 +36,7 @@ A test asserts the property it is about (order, cause, ownership, a bound the pr
 
 ### PR screenshots
 
-Before capturing screenshots for a PR, read `docs/agents/screenshots.md`: one shot file and `npm run shots` produce the before/after images and their PR-body section.
+A PR that changes the UI shows before and after screenshots of each state it changes. Before capturing them, read `docs/agents/screenshots.md`: one shot file and `npm run shots` produce the images and their PR-body section.
 
 ### Code comments
 

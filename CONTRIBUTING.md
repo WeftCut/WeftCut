@@ -55,6 +55,9 @@ reports follow [SECURITY.md](SECURITY.md).
      be written, say how you verified it.
    - Performance work: before and after numbers, how they were measured, and on
      what hardware.
+   - A UI change: before and after screenshots of each state it changes, with
+     the same data and window size on both sides. `npm run shots` produces them
+     ([screenshots](docs/agents/screenshots.md)).
    - A platform claim: name the platforms you actually ran it on.
    - Every behavior change in the diff, listed in the description.
 
