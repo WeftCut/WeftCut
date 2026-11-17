@@ -76,19 +76,21 @@ export class PboFrameReader {
     this.queue.push(idx);
   }
 
-  /// Every submitted frame, oldest first, each in a fresh exactly-sized buffer
-  /// the caller owns (it can transfer it without a copy). getBufferSubData
+  /// Every submitted frame, oldest first, each in an exactly-sized buffer from
+  /// `buffer` that the caller then owns (it can transfer it without a copy);
+  /// by default a fresh one. getBufferSubData
   /// waits only for the GPU work it reads; GL ordering makes each buffer hold
   /// its own frame.
   ///
   /// LANDMINE: no fence. Chromium updates a fence's status only at frame
   /// boundaries, so polling one costs up to a display frame per readback,
   /// however early the GPU finished.
-  drain(): Uint8Array[] {
+  drain(buffer: (bytes: number) => Uint8Array = bytes => new Uint8Array(bytes)): Uint8Array[] {
     const gl = this.gl;
     const frames: Uint8Array[] = [];
     for (const idx of this.queue) {
-      const out = new Uint8Array(this.frameBytes);
+      const out = buffer(this.frameBytes);
+      if (out.byteLength !== this.frameBytes) throw new Error("PboFrameReader: a frame buffer of the wrong size");
       gl.bindBuffer(gl.PIXEL_PACK_BUFFER, this.pbos[idx]!);
       for (let i = 0; i < this.planes.length; i++) {
         const p = this.planes[i]!;
