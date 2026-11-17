@@ -9,6 +9,7 @@ import { listMotifsInner, motifRevision } from './authoring'
 import { packageContentHash } from './contentHash'
 import { readMotifDirectory } from './packageFiles'
 import { PackageRevisions, STAMP_SETTLE_MS } from './packageRevisions'
+import { MotifResolver } from './resolver'
 import { UserMotifStore } from './store'
 import { MotifWorkspace } from './workspace'
 
@@ -106,18 +107,19 @@ describe('an installed package with a model', () => {
 
   it('is pinned under the revision it lists, before and after an edit in the store', () => {
     const store = new UserMotifStore(root, { revisions: new PackageRevisions(null, '', settledClock) })
+    const resolver = new MotifResolver(store, [])
     install(store)
     const first = listed(store) as string
 
-    const pin = store.pinPackage('scene', first)
-    expect(store.readFile('scene', `.revisions/${first}/assets/model.glb`)).toEqual(MODEL)
-    pin!.release()
+    const pin = resolver.pin('scene--library', first)
+    expect(resolver.readFile('scene--library', `.revisions/${first}/assets/model.glb`)).toEqual(MODEL)
+    pin.release()
 
     rewrite(model, OTHER_MODEL)
     const second = listed(store) as string
-    const repinned = store.pinPackage('scene', second)
-    expect(store.readFile('scene', `.revisions/${second}/assets/model.glb`)).toEqual(OTHER_MODEL)
-    repinned!.release()
+    const repinned = resolver.pin('scene--library', second)
+    expect(resolver.readFile('scene--library', `.revisions/${second}/assets/model.glb`)).toEqual(OTHER_MODEL)
+    repinned.release()
   })
 
   it('keeps its recorded revision through the move to its version folder', () => {
@@ -142,7 +144,7 @@ describe('an installed package with a model', () => {
     const store = new UserMotifStore(root, { revisions: new PackageRevisions(null, '', settledClock) })
     install(store)
     listed(store)
-    expect(() => store.pinPackage('scene', 'f'.repeat(64))).toThrow(/revision changed/)
+    expect(() => new MotifResolver(store, []).pin('scene--library', 'f'.repeat(64))).toThrow(/revision changed/)
   })
 })
 

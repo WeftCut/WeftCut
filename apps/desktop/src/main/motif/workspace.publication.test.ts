@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameS
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { UserMotifStore } from './store'
+import { MotifResolver } from './resolver'
 import { proposalPreviewId } from '../../shared/motifs/projectMotifs'
 import { MotifWorkspace } from './workspace'
 import { runMotifTool, type MotifToolDeps } from './motifTools'
@@ -204,7 +205,7 @@ describe('the proposal preview id', () => {
     w.call('install_motif', { motif_id: d.motif_id, expected_revision: d.revision })
     const id = proposalPreviewId(d.motif_id)
     expect(w.store.getMotif(id)).not.toBeNull()
-    expect(w.store.pinPackage(id, d.revision)).not.toBeNull()
+    expect(() => new MotifResolver(w.store, []).pin(id, d.revision)).not.toThrow()
     expect(() => w.call('read_motif', { motif_id: id })).toThrow(/Invalid Motif id/)
     await expect(w.call('delete_motif', { motif_id: id })).rejects.toThrow(/Invalid Motif id/)
   })

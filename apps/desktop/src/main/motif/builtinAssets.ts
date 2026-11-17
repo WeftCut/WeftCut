@@ -1,8 +1,5 @@
 import path from "node:path";
 import { app } from "electron";
-import { BUILTIN_IDS } from "../../shared/motifs/catalog";
-import type { UserMotifStore } from "./store";
-import { readMotifFile } from './packageFiles';
 
 /**
  * PRODUCTION-ONLY: base dir of built-in served assets. Mirrors the ffmpeg-sidecar
@@ -38,26 +35,4 @@ export function contentTypeFor(rel: string): string {
     case "otf": return "font/otf";
     default: return "application/octet-stream";
   }
-}
-
-/**
- * Resolve `motif://<id>/<rest>` to bytes + content-type. Embedded built-ins win;
- * the on-disk user store is the fallback. `builtinDir` is passed EXPLICITLY (the
- * caller — index.ts — computes it via `builtinAssetDir()`; tests pass a fixture dir).
- */
-export function resolveMotifFile(
-  builtinDir: string,
-  store: UserMotifStore,
-  id: string,
-  rest: string,
-): { bytes: Buffer; contentType: string } | null {
-  if (BUILTIN_IDS.includes(id)) {
-    // Built-in branch is TERMINAL: a built-in id always wins and never falls
-    // through to the user store — a missing/unsafe read returns null rather than
-    // letting a same-id user file shadow a built-in.
-    const bytes = readMotifFile(builtinDir, `${id}/${rest}`);
-    return bytes ? { bytes, contentType: contentTypeFor(rest) } : null;
-  }
-  const bytes = store.readFile(id, rest);
-  return bytes ? { bytes, contentType: contentTypeFor(rest) } : null;
 }

@@ -8,9 +8,8 @@ import { parseManifestIsland, type Manifest } from "../../shared/motifs/catalog"
 import { hasMotifFile, motifFileSegments, readMotifFile, readMotifDirectory, stampMotifFile, type MotifFile } from './packageFiles';
 import { packageContentHash } from './contentHash';
 import { PackageRevisions } from './packageRevisions';
-import { PackageSource, type PackageListing, type PackageSnapshot, type PinnedPackage } from './packageSource';
+import { PackageSource, type PackageListing, type PackageSnapshot } from './packageSource';
 import { LINEAGE_FILE, MotifLineage } from './lineage';
-import { MotifError } from '../../shared/motifs/errors';
 import { isProposalPreviewId, proposalOfHost } from '../../shared/motifs/projectMotifs';
 
 export const DRAFTS_DIR = "drafts";
@@ -68,14 +67,6 @@ export class UserMotifStore {
   }
 
   root(): string { return this._root; }
-  assertRenderable(id:string):void {
-    if(motifFileSegments(id)?.length!==1)return;
-    const file=path.join(this._root,'.workspaces',id+'.json');
-    if(existsSync(file)){
-      const diagnostic=JSON.parse(readFileSync(file,'utf8')).diagnostic;
-      if(diagnostic)throw new MotifError('content','Motif working directory is invalid: '+diagnostic);
-    }
-  }
   private draftsRoot(): string { return path.join(this._root, DRAFTS_DIR); }
 
   /** Choose one complete package; never fill missing published assets from a draft. */
@@ -136,6 +127,23 @@ export class UserMotifStore {
     return rel ? { ...this.source.snapshot(path.join(this._root, rel)), version: versionOfDir(rel.slice(id.length + 1))! } : null;
   }
 
+  /** The current version of installed `id` as `describe` lists it; null
+   *  when `id` is not installed, throws when it is no package. */
+  installedListing(id: string): PackageListing | null {
+    if (id === DRAFTS_DIR || motifFileSegments(id)?.length !== 1) return null;
+    const rel = this.currentRel(id);
+    if (!rel) return null;
+    const { html, revision, paths } = this.source.listing(path.join(this._root, rel));
+    return { html, revision, paths };
+  }
+
+  /** A file of installed `id`'s current version. */
+  installedFile(id: string, rel: string): Buffer | null {
+    if (id === DRAFTS_DIR || motifFileSegments(id)?.length !== 1 || !motifFileSegments(rel)) return null;
+    const current = this.currentRel(id);
+    return current ? readMotifFile(this._root, `${current}/${rel}`) : null;
+  }
+
   /** The selected package of `id`, read in full only when its files changed
    *  since its revision was recorded. Null when there is none; throws when
    *  its directory or its manifest island is not a package's. */
@@ -156,18 +164,9 @@ export class UserMotifStore {
   }
 
   readFile(id: string, rel: string): Buffer | null {
-    const revision = /^\.revisions\/([0-9a-f]{64})\/(.+)$/.exec(rel);
-    if (revision) return this.source.pinnedFile(id, revision[1]!, revision[2]!);
     if (!motifFileSegments(rel)) return null;
     const pkg = this.packageRel(id);
     return pkg ? readMotifFile(this._root, `${pkg}/${rel}`) : null;
-  }
-
-  /** Pins the revision's files for a capture host, which serves its page and
-   * companion URLs from the revision directory (`PackageSource.pin`). Null
-   * when the Motif is gone. */
-  pinPackage(id: string, revision: string): PinnedPackage | null {
-    return this.source.pin(id, revision, () => this.getMotif(id) ? path.join(this._root, this.packageRel(id)!) : null);
   }
 
   packageFiles(id: string): MotifFile[] {

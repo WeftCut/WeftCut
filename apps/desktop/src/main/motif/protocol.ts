@@ -2,9 +2,9 @@ import { protocol } from 'electron'
 import { PARAMS_PAGE_FILE } from '../../shared/motifs/catalog.js'
 import { CAPTURE_HOST_FILE } from '../../shared/motifs/frameMarker.js'
 import fs from 'node:fs'
-import { resolveMotifFile } from './builtinAssets.js'
+import { contentTypeFor } from './builtinAssets.js'
 import { servedMotifMedia } from './mediaProps.js'
-import type { UserMotifStore } from './store.js'
+import type { MotifResolver } from './resolver.js'
 
 /// CSP served with every Motif RENDER document (`index.html` and friends).
 /// Render documents load scripts/styles/models from their OWN motif origin,
@@ -62,16 +62,16 @@ export const MOTIF_SCHEME_ENTRY = {
   privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
 } as const
 
-/// Serve motif://<id>/<rest> from TS (built-in assets + the user store). The
-/// Captures pin user packages under /.revisions/<hash>/ so relative companion
-/// URLs read the same immutable navigation snapshot. The ?v= query also busts
-/// the host page cache. Unversioned library/parameter resources use no-store.
+/// Serve motif://<host>/<rest> through the resolver, which says what a host
+/// names (`resolver.ts`). Captures pin packages under /.revisions/<hash>/ so
+/// relative companion URLs read the same immutable navigation snapshot. The
+/// ?v= query also busts the host page cache. Unversioned resources use no-store.
 ///
 /// With `standard:true`, `motif://countdown/index.html` parses with
 /// `hostname === 'countdown'` and `pathname === '/index.html'`.
-export function registerMotifProtocol(builtinDir: string, store: UserMotifStore): void {
+export function registerMotifProtocol(resolver: Pick<MotifResolver, 'readFile'>): void {
   protocol.handle('motif', async (request) => {
-    const url = new URL(request.url) // motif://<id>/<rest>
+    const url = new URL(request.url) // motif://<host>/<rest>
     const id = url.hostname
     let rest: string
     try { rest = decodeURIComponent(url.pathname.replace(/^\/+/, '')) || 'index.html' }
@@ -92,12 +92,12 @@ export function registerMotifProtocol(builtinDir: string, store: UserMotifStore)
         headers: { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': CAPTURE_HOST_CSP, 'Cache-Control': 'no-store' },
       })
     }
-    const file = resolveMotifFile(builtinDir, store, id, rest)
-    if (!file) return new Response('not found: ' + id + '/' + rest, { status: 404 })
-    return new Response(new Uint8Array(file.bytes), {
+    const bytes = resolver.readFile(id, rest)
+    if (!bytes) return new Response('not found: ' + id + '/' + rest, { status: 404 })
+    return new Response(new Uint8Array(bytes), {
       status: 200,
       headers: {
-        'Content-Type': file.contentType,
+        'Content-Type': contentTypeFor(rest),
         'Content-Security-Policy': cspForMotifFile(rest),
         'Cache-Control': 'no-store',
       },

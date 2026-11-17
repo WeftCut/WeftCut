@@ -5,13 +5,13 @@ import { CaptureQueue, type CaptureArgs, type CaptureOptions, type CaptureRun, t
 import { HostPool, type HostKey, type HostPoolLease } from './hostPool.js'
 import { CaptureHost, HostRenderError, type CapturePhase } from './captureHost.js'
 import { LanePolicy } from './lanePolicy.js'
-import { BUILTIN_MANIFESTS, motifCtxDurationS, type Manifest } from '../../shared/motifs/catalog.js'
+import { motifCtxDurationS, type Manifest } from '../../shared/motifs/catalog.js'
 import { MotifError } from '../../shared/motifs/errors.js'
 import { resolveMotifMediaProps } from './mediaProps.js'
 import { frameMarkerRows } from '../../shared/motifs/frameMarker.js'
 import { fitsMotifTexture } from '../../shared/motifs/limits.js'
 import type { MotifTuning } from '../../shared/motifs/tuning.js'
-import type { UserMotifStore } from './store.js'
+import type { MotifResolver } from './resolver.js'
 import type { MotifFramePriority, MotifPresence } from '../../shared/motifs/frameTransport.js'
 import { backgroundResourcePause, onBackgroundResourceChange, processMemoryMiB } from '../resources.js'
 import { resourceAllocation } from '../../shared/resource-policy.js'
@@ -19,8 +19,9 @@ import { resourceAllocation } from '../../shared/resource-policy.js'
 /** The tuning keys the capture hosts run on (`shared/motifs/tuning.ts`). */
 export type CaptureTuning = Pick<MotifTuning, 'captureHosts' | 'hostMemoryMib' | 'hostMemoryPercent' | 'hostResidencyMs' | 'hostAgingMs' | 'hostWarmLeadMs' | 'framesInFlight' | 'captureFrameRate' | 'skippedFrameRetries' | 'backgroundAgingMs' | 'hostAffinityMs' | 'stallNudgeMs'>
 
-/** What a capture reads from the Motif store. */
-export type CaptureStore = Pick<UserMotifStore, 'getMotif' | 'assertRenderable' | 'pinPackage'>
+/** What a capture asks of the resolver: whether a host may render, and its
+ *  revision pinned. */
+export type CaptureStore = Pick<MotifResolver, 'gate' | 'pin'>
 
 export interface MotifCapturerDeps {
   tuning: CaptureTuning
@@ -71,13 +72,14 @@ export class MotifCapturer {
   private readonly failures = new LanePolicy()
   private textureEnabled = false
 
-  /// Resolved user-Motif manifests keyed by `${motifId}\0${contentHash}`:
-  /// getMotif is readFileSync + parseManifestIsland — synchronous fs on the
-  /// capture hot path, once per frame. The content hash IS the invalidation
-  /// signal, so caching by it is exact. Empty contentHash (MCP callers) is never
-  /// cached: no invalidation signal. FIFO-evicted at `MANIFEST_CACHE_CAP` —
-  /// drafts churn keys on every edit. Built-ins never reach here (already in RAM).
-  private readonly manifestCache = new Map<string, Manifest | null>()
+  /// Manifests of hosts that passed the gate, keyed by `${motifId}\0${contentHash}`:
+  /// the gate stats the package and reads its manifest — synchronous fs on
+  /// the capture hot path, once per frame. Only a manifest read at the
+  /// revision the key names is kept: a revision is its bytes, and a host
+  /// renders it from its pin. Empty contentHash (MCP callers) is never cached:
+  /// no invalidation signal. FIFO-evicted at `MANIFEST_CACHE_CAP`, as edits
+  /// churn keys.
+  private readonly manifestCache = new Map<string, Manifest>()
 
   /// Latched by `shutdown` — a capture that wakes up afterwards must not build
   /// a window. See there for why.
@@ -234,7 +236,7 @@ export class MotifCapturer {
   private openHost(key: HostKey, a: CaptureArgs): Promise<CaptureHost> {
     const runtime = this.runtimeSource()
     if (!runtime) throw new MotifError('closed', 'motif runtime not registered yet (call motif_register_runtime)')
-    const pin = /^[0-9a-f]{64}$/.test(key.contentHash) ? this.store.pinPackage(key.motifId, key.contentHash) : null
+    const pin = /^[0-9a-f]{64}$/.test(key.contentHash) ? this.store.pin(key.motifId, key.contentHash) : null
     this.counters.hostBuilds++
     this.counters.pageLoads++
     this.diagnosticsLane(key.motifId, key.contentHash).pageLoads++
@@ -350,23 +352,24 @@ export class MotifCapturer {
   /// Shows another content version of `host`'s Motif in its window, from a
   /// pin of that version's revision.
   private swapHost(host: CaptureHost, key: HostKey): Promise<boolean> {
-    const pin = /^[0-9a-f]{64}$/.test(key.contentHash) ? this.store.pinPackage(key.motifId, key.contentHash) : null
+    const pin = /^[0-9a-f]{64}$/.test(key.contentHash) ? this.store.pin(key.motifId, key.contentHash) : null
     this.counters.hostSwaps++
     this.counters.pageLoads++
     this.diagnosticsLane(key.motifId, key.contentHash).pageLoads++
     return host.swap(key, pin)
   }
 
-  private manifestFor(a: CaptureArgs): Manifest | undefined {
-    const builtin = BUILTIN_MANIFESTS.get(a.motifId)
-    if (builtin) return builtin
-    if (a.contentHash === '') return this.store.getMotif(a.motifId)?.manifest
+  /// The manifest of a host that may render; throws why it may not.
+  private gatedManifest(a: CaptureArgs): Manifest {
     const key = laneKeyOf(a.motifId, a.contentHash)
-    if (this.manifestCache.has(key)) return this.manifestCache.get(key) ?? undefined
-    const manifest = this.store.getMotif(a.motifId)?.manifest ?? null
-    if (this.manifestCache.size >= MANIFEST_CACHE_CAP) this.manifestCache.delete(this.manifestCache.keys().next().value!)
-    this.manifestCache.set(key, manifest)
-    return manifest ?? undefined
+    const cached = this.manifestCache.get(key)
+    if (cached) return cached
+    const { manifest, revision } = this.store.gate(a.motifId)
+    if (a.contentHash !== '' && revision === a.contentHash) {
+      if (this.manifestCache.size >= MANIFEST_CACHE_CAP) this.manifestCache.delete(this.manifestCache.keys().next().value!)
+      this.manifestCache.set(key, manifest)
+    }
+    return manifest
   }
 
   /// Renders one frame on the leased host; returns once the frame has
@@ -374,11 +377,10 @@ export class MotifCapturer {
   private async render<T>(lease: HostPoolLease<CaptureHost>, a: CaptureArgs, output: (frame: MotifOsrFrame) => Promise<T>): Promise<Rendered<T>> {
     // Refuse rather than resurrect — see `shutdown`.
     if (this.shuttingDown) throw closedError()
-    this.store.assertRenderable(a.motifId)
-    const manifest = this.manifestFor(a)
+    const manifest = this.gatedManifest(a)
     // A `media` prop becomes a URL on the Motif's origin before setup sees it.
     const props = await resolveMotifMediaProps(a.motifId, manifest, JSON.parse(a.propsJson) as Record<string, unknown>)
-    const duration = manifest ? motifCtxDurationS(manifest, props) : 5
+    const duration = motifCtxDurationS(manifest, props)
     // meta.fps must be the rate the caller computed tSec on (the composition's
     // fps) — a Motif reading it (or ctx.frame = round(t*fps)) renders wrong when
     // it disagrees. 30 only when no rate arrived (MCP without a project, legacy).

@@ -13,7 +13,7 @@ import { newLineage } from './lineage'
 import { declaredManifest, declaredPackage, emptyPackageFiles, normalize, validateFiles } from './motifPackage'
 import { motifFileSegments, readMotifDirectory, readMotifFile, sameStamps, stampMotifDirectory, type MotifFile } from './packageFiles'
 import { PackageRevisions, type PackageStamp } from './packageRevisions'
-import { PackageSource, type PackageListing, type PackageSnapshot, type PinnedPackage } from './packageSource'
+import { PackageSource, type PackageListing, type PackageSnapshot } from './packageSource'
 import { revisionConflict } from './refusal'
 import type { UserMotifStore } from './store'
 
@@ -163,18 +163,9 @@ export class ProjectMotifStore {
     return this.snapshot(id)?.files ?? []
   }
 
-  /** A file of `id`'s package, or of a pinned revision under
-   *  `.revisions/<revision>/`. */
+  /** A file of `id`'s package. */
   readFile(id: string, rel: string): Buffer | null {
-    const pinned = /^\.revisions\/([0-9a-f]{64})\/(.+)$/.exec(rel)
-    if (pinned) return this.source.pinnedFile(id, pinned[1]!, pinned[2]!)
     try { return readMotifFile(this.folder(id), rel) } catch { return null }
-  }
-
-  /** Pins `revision` of `id` for a capture host (`PackageSource.pin`); null
-   *  when its folder is gone. */
-  pin(id: string, revision: string): PinnedPackage | null {
-    return this.source.pin(id, revision, () => this.present(id) ? this.folder(id) : null)
   }
 
   /** Copies `files` into `id`'s folder, written aside and renamed into place

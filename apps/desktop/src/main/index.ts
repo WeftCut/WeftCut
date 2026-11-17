@@ -25,7 +25,7 @@ import { app, autoUpdater, BrowserWindow, dialog, ipcMain, MessageChannelMain, M
 import { createHash } from 'node:crypto'
 import { MotifCovers } from './motif/covers.js'
 import { BITMAP_CANVAS_RUNTIME_SOURCE } from './motif/bitmapCanvasRuntime.js'
-import { builtinMotifs, getMotifSource, motifRevision } from './motif/authoring.js'
+import { builtinMotifs } from './motif/authoring.js'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
 import electronUpdater from 'electron-updater'
 import { createUpdates, macSelfUpdateBlocked } from './updates.js'
@@ -56,8 +56,9 @@ import { MotifBakeWorkspace, validateBakePlan } from './motif/bakeWorkspace.js'
 import { motifColdStart } from './motif/coldStart.js'
 import { MOTIF_BAKE_READY_EVENT, type MotifBakePlan } from '../shared/motifs/baking.js'
 import { MotifGpuTransport } from './motif/gpuTransport.js'
-import { spawnMotifWatcher, type MotifWatcher } from './motif/watcher.js'
-import { MotifWorkspace } from './motif/workspace.js'
+import { spawnMotifWatcher, watchProjectMotifs, type MotifWatcher } from './motif/watcher.js'
+import { MotifResolver } from './motif/resolver.js'
+import { ProjectMotifStore, type MotifState } from './motif/projectStore.js'
 import { builtinAssetDir } from './motif/builtinAssets.js'
 import { createSecondary, actOnSecondary, secondaryExists, hardenWindow, restoreGeometry, rememberGeometry, quitWithEditor } from './windows.js'
 import { QUIT_SAVE_CHOICES, quitSaveDialog, settleQuitSave } from './quitSave.js'
@@ -175,6 +176,8 @@ let computeJobs: ComputeJobs | null = null
 // it, and it does not exist until whenReady has built the actor it subscribes to.
 let audioFxBaker: AudioFxBaker | null = null
 let motifWatcher: MotifWatcher | null = null
+// The open project's `Motifs/` watch, attached again on every project switch.
+let projectMotifWatcher: MotifWatcher | null = null
 // Built in whenReady once the native readers exist; module-scoped for the MCP
 // host, which starts before it, and for before-quit. `motifCaptureClosed`
 // records a before-quit that ran first, so a capturer built after it is shut
@@ -846,6 +849,26 @@ app.whenReady().then(async () => {
   // is read only from its version folders.
   motifStore.upgrade()
   const motifBuiltinDir = builtinAssetDir()
+  // Built-in Motif sources, loaded once (manifest, page and files).
+  const motifBuiltins = builtinMotifs(motifBuiltinDir)
+  // What every `motif://` host serves; its project follows the open workspace
+  // (`setMotifProject`).
+  const motifResolver = new MotifResolver(motifStore, motifBuiltins)
+  let motifProjectDir: string | null = null
+  /** A project Motif's folder changed on disk. */
+  const projectMotifChanged = (_id: string, _state: MotifState): void => {
+    emitToRenderer('motifs:changed', {})
+  }
+  /** Points the resolver and the `Motifs/` watch at the workspace in `dir`. */
+  const setMotifProject = (dir: string | null): void => {
+    if (dir === motifProjectDir) return
+    motifProjectDir = dir
+    projectMotifWatcher?.close()
+    projectMotifWatcher = null
+    const project = dir === null ? null : new ProjectMotifStore(dir, { revisions: motifStore.revisions })
+    motifResolver.setProject(project)
+    if (project) projectMotifWatcher = watchProjectMotifs(project, projectMotifChanged)
+  }
   // `media` props resolve against the open project's pool; video frames are kept here.
   setMotifMediaSource(() => (tsHost?.actor.snapshot().media_pool ?? null) as never, path.join(dataRoot.cacheDir, 'motif-media'))
 
@@ -917,6 +940,7 @@ app.whenReady().then(async () => {
     wsCache = JSON.parse(await backend!.invoke('workspace_dir', '{}')) as string | null
   } catch { /* no workspace at cold boot */ }
   if (wsCache) measureCacheDisk(wsCache)
+  setMotifProject(wsCache)
 
   // Holds MCP LogBus rows produced before a workspace exists — chiefly the host's
   // `listening` row, emitted at app.whenReady(). See ./deferredLog.ts.
@@ -956,6 +980,7 @@ app.whenReady().then(async () => {
         throw error
       }
       wsCache = p
+      setMotifProject(p)
       motifReader?.workspaceChanged()
       measureCacheDisk(p)
       // Replay AFTER wsCache is set, so every replayed row takes the direct path
@@ -970,6 +995,7 @@ app.whenReady().then(async () => {
       const generation = await backend!.endWorkspace()
       workspaceEvents.activate(generation)
       wsCache = null
+      setMotifProject(null)
       motifReader?.workspaceChanged()
       emitToRenderer('import:queue', [])
     },
@@ -1032,10 +1058,6 @@ app.whenReady().then(async () => {
       return toolResultPayload(result) as import('./state/hybrids.js').DetectPausesResult
     },
   }
-
-  // Load built-in Motif sources once (manifest + relocated index.html) for the
-  // TS catalog/authoring surface. builtinMotifs reads from motifBuiltinDir.
-  const motifBuiltins = builtinMotifs(motifBuiltinDir)
 
   // Per-workspace view state — resolves the workspace dir per call; no-op pre-workspace.
   const { createViewStateStore } = await import('./view-state.js')
@@ -1226,15 +1248,13 @@ app.whenReady().then(async () => {
   // Motif file watch: on any disk change under <dataRoot>/motifs/, refresh
   // the actor catalog (so a disk-written Motif is placeable via add_layers)
   // AND emit motifs:changed (renderer resync → ?v= host buster).
-  const motifWorkspace = new MotifWorkspace(motifStore, motifBuiltins)
   // The MCP file-transfer tools are gone; releases up to 0.5.6 left their
   // temporary uploads (up to 512 MiB) under `.transfers/`. Nothing reads it.
   fs.rm(path.join(motifStore.root(), '.transfers'), { recursive: true, force: true }, () => {})
-  motifWatcher =spawnMotifWatcher(dataRoot.motifsDir, () => {
-    motifWorkspace.syncLinked()
+  motifWatcher = spawnMotifWatcher(dataRoot.motifsDir, () => {
     tsHost?.refreshMotifCatalog()
     emitToRenderer('motifs:changed', {})
-  }, () => motifWorkspace.directoryRoots())
+  })
 
   // The two engine-selection closures the clip-compute tools resolve against.
   // Defined once and shared by the MCP host below and the renderer's
@@ -1550,7 +1570,7 @@ app.whenReady().then(async () => {
   // The renderer registers the clock-takeover runtime once at boot
   // (`motif_register_runtime` below).
   let motifRuntime: string | null = null
-  const capturer = new MotifCapturer({ tuning: motifTuning, store: motifStore, runtimeSource: () => motifRuntime, markerReader, textureReader })
+  const capturer = new MotifCapturer({ tuning: motifTuning, store: motifResolver, runtimeSource: () => motifRuntime, markerReader, textureReader })
   if (motifCaptureClosed) capturer.shutdown()
   motifCapturer = capturer
   const motifCapture = new MotifCaptureService({
@@ -1654,8 +1674,9 @@ app.whenReady().then(async () => {
 
   let coverRuntimeVersion = ''
   const motifCovers = new MotifCovers(path.join(dataRoot.cacheDir, 'motif-covers'), {
-    resolve: id => {
-      return { manifest: getMotifSource(motifStore, motifBuiltins, id).manifest, contentHash: motifRevision(motifStore, motifBuiltins, id) }
+    resolve: host => {
+      const { manifest, revision } = motifResolver.gate(host)
+      return { manifest, contentHash: revision }
     },
     renderVersion: () => `${process.versions.chrome}:${coverRuntimeVersion}`,
     capture: async args => Buffer.from(await capturer.capturePng(args, { priority: 'background' }), 'base64'),
@@ -1668,7 +1689,7 @@ app.whenReady().then(async () => {
       return image.resize({ width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)), quality: 'best' }).toPNG()
     },
   })
-  await motifCovers.prune([...motifBuiltins.map(m => m.id), ...motifStore.publishedIds(), ...motifStore.listDraftIds()])
+  await motifCovers.prune(motifResolver.hosts())
   const invokeBackend = async (_e: Electron.IpcMainInvokeEvent, { channel, args }: { channel: string; args?: any }): Promise<unknown> => {
     if (channel.startsWith('export_job_')) {
       if (_e.sender !== mainWindow?.webContents) throw new Error('Export jobs require the editor window');
@@ -2973,7 +2994,7 @@ app.whenReady().then(async () => {
     })),
   )
 
-  registerMotifProtocol(motifBuiltinDir, motifStore)
+  registerMotifProtocol(motifResolver)
 
   protocol.handle('weftcut-media', async (request) => {
     // URL form: weftcut-media://localhost/<encodeURIComponent(absPath)>
@@ -3104,6 +3125,7 @@ app.on('before-quit', (event) => {
     return
   }
   motifWatcher?.close(); motifWatcher = null
+  projectMotifWatcher?.close(); projectMotifWatcher = null
   // Abort an in-flight content download so its file handle closes at a chunk
   // boundary. The partial and the persisted queue both stay: the next boot
   // resumes exactly there. Idempotent, so the re-entrant before-quit is fine.

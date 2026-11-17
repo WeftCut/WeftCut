@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { DEBOUNCE_QUIET_MS, Debouncer, spawnMotifWatcher } from './watcher'
+import { composeMotifHtml } from '../../shared/motifs/catalog'
+import { ProjectMotifStore, type MotifState } from './projectStore'
+import { DEBOUNCE_QUIET_MS, Debouncer, spawnMotifWatcher, watchProjectMotifs } from './watcher'
 
 describe('Debouncer', () => {
   beforeEach(() => vi.useFakeTimers())
@@ -73,5 +75,55 @@ describe('spawnMotifWatcher', () => {
       windowsVerbatimArguments: true,
     }).stdout.trim()
     await expectFiresOnWrite(short)
+  }, 2 * WATCH_REPORTS_MS)
+})
+
+describe('watchProjectMotifs', () => {
+  const page = (id: string, n: number) => composeMotifHtml(
+    { id, name: id, version: 1, size: [320, 180], default_duration_s: 2, props_schema: {} },
+    `<html><head></head><body><script>motif.define({frame(t){ /* ${n} */ }})</script></body></html>`)
+  const write = (project: ProjectMotifStore, id: string, n: number) => {
+    mkdirSync(path.join(project.root(), id), { recursive: true })
+    writeFileSync(path.join(project.root(), id, 'index.html'), page(id, n))
+  }
+  let dir: string
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
+
+  it('tells only the Motif whose folder was edited, with its new revision', async () => {
+    dir = mkdtempSync(path.join(tmpdir(), 'project-watch-'))
+    const project = new ProjectMotifStore(dir)
+    write(project, 'edited', 0)
+    write(project, 'untouched', 0)
+    const told: Array<[string, MotifState]> = []
+    const w = watchProjectMotifs(project, (id, state) => told.push([id, state]))
+    try {
+      // Written until the attached watch reports one, each write a new revision.
+      let writes = 1
+      await vi.waitFor(() => {
+        if (told.length === 0) write(project, 'edited', writes++)
+        expect(told.length).toBeGreaterThan(0)
+      }, { timeout: WATCH_REPORTS_MS, interval: 2 * DEBOUNCE_QUIET_MS })
+      expect(told.map(([id]) => id).every(id => id === 'edited')).toBe(true)
+      expect(told.at(-1)![1]).toEqual(project.status('edited'))
+      expect(told.at(-1)![1].status).toBe('ok')
+    } finally {
+      w.close()
+    }
+  }, 2 * WATCH_REPORTS_MS)
+
+  it('attaches when the project gains its Motifs folder', async () => {
+    dir = mkdtempSync(path.join(tmpdir(), 'project-watch-'))
+    const project = new ProjectMotifStore(dir)
+    const told: string[] = []
+    const w = watchProjectMotifs(project, id => told.push(id))
+    try {
+      let writes = 0
+      await vi.waitFor(() => {
+        if (told.length === 0) write(project, 'late', writes++)
+        expect(told).toContain('late')
+      }, { timeout: WATCH_REPORTS_MS, interval: 2 * DEBOUNCE_QUIET_MS })
+    } finally {
+      w.close()
+    }
   }, 2 * WATCH_REPORTS_MS)
 })

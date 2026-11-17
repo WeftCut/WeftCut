@@ -149,7 +149,6 @@ it('reports invalid linked edits without losing the draft, blocks publication an
     writeFileSync(path.join(directory, 'manifest.json'), '{broken');
     expect(workspace.read(draft.motif_id).diagnostic).toBeTruthy();
     expect(workspace.list('draft')).toHaveLength(1);
-    expect(() => store.assertRenderable(draft.motif_id)).toThrow(/invalid/);
     expect(() => workspace.publish(draft.motif_id, draft.revision)).toThrow(/invalid/);
     writeFileSync(path.join(directory, 'manifest.json'), JSON.stringify(manifest));
     expect(workspace.read(draft.motif_id).diagnostic).toBeUndefined();
@@ -167,17 +166,6 @@ it('refuses escaping paths, path collisions and directory junctions before modif
     expect(workspace.read(draft.motif_id).diagnostic).toMatch(/symbolic/);
     expect(readFileSync(path.join(directory, 'index.html'), 'utf8')).toContain('one');
     rmSync(path.join(directory, 'linked'));
-});
-it('keeps a capture navigation on the same resource bytes while the directory advances', () => {
-    const store = new UserMotifStore(temp()), workspace = new MotifWorkspace(store, []), directory = folder();
-    writeFileSync(path.join(directory, 'scene.js'), 'old');
-    const draft = workspace.open({ kind: 'directory', path: directory });
-    expect(store.pinPackage(draft.motif_id, draft.revision)).not.toBeNull();
-    writeFileSync(path.join(directory, 'scene.js'), 'new');
-    const next = workspace.read(draft.motif_id);
-    expect(next.revision).not.toBe(draft.revision);
-    expect(store.readFile(draft.motif_id, `.revisions/${draft.revision}/scene.js`)?.toString()).toBe('old');
-    expect(store.readFile(draft.motif_id, 'scene.js')?.toString()).toBe('new');
 });
 it('requires an explicit target version and rejects a second editor overwriting a newer publication', () => {
     const store = new UserMotifStore(temp()), workspace = new MotifWorkspace(store, []);

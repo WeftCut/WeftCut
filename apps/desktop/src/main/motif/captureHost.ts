@@ -8,7 +8,7 @@ import { CAPTURE_HOST_FILE, frameMarkerRows } from '../../shared/motifs/frameMar
 import { MOTIF_DEADLINES, type MotifTuning } from '../../shared/motifs/tuning.js'
 import type { Rendered } from './captureQueue.js'
 import type { HostKey, PooledHost } from './hostPool.js'
-import type { PinnedPackage } from './packageSource.js'
+import type { PinnedPackage } from './resolver.js'
 
 /** The capture phases whose time the capturer accumulates. */
 export type CapturePhase = 'loadMs' | 'readyMs' | 'setupMs' | 'renderMs' | 'outputMs'

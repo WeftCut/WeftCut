@@ -346,26 +346,3 @@ describe("UserMotifStore versioning a format 1 library", () => {
   });
 });
 
-describe("UserMotifStore revision snapshots", () => {
-  it("keeps a snapshot a host holds through later pins, and two that none hold", () => {
-    const s = new UserMotifStore(root);
-    const ids = ["a", "b", "c", "d"];
-    const revision: Record<string, string> = {};
-    for (const id of ids) {
-      s.writeDraft(id, composeMotifHtml(man(id, id, 1), body));
-      const m = s.getMotif(id)!;
-      revision[id] = motifContentHash(m.manifest, m.html, s.packageFiles(id));
-    }
-    const served = (id: string) => s.readFile(id, `.revisions/${revision[id]}/index.html`) !== null;
-    // The first host is still loading its page when three more pin theirs.
-    const first = s.pinPackage("a", revision.a!)!;
-    const later = ["b", "c", "d"].map((id) => s.pinPackage(id, revision[id]!)!);
-    expect(served("a")).toBe(true);
-    first.release();
-    first.release();
-    for (const pin of later) pin.release();
-    // None held: the two pinned last stay for reuse.
-    expect(ids.map(served)).toEqual([false, false, true, true]);
-    expect(s.pinPackage("gone", revision.a!)).toBeNull();
-  });
-});

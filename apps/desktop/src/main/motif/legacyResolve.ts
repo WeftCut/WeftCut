@@ -3,6 +3,8 @@
 // version, else its draft (`drafts/<id>`, which is also a linked directory's
 // mirror). This is the app-wide resolution v5 used; only the upgrade may
 // resolve through it.
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { BUILTIN_IDS, BUILTIN_MANIFESTS, type Manifest } from '../../shared/motifs/catalog'
 import { isProposalPreviewId } from '../../shared/motifs/projectMotifs'
 import type { LegacyMotif, MigrationContext, MotifCopy } from '../state/migrate'
@@ -24,10 +26,18 @@ export function resolveLegacyMotif(store: UserMotifStore, builtins: readonly Bui
     return { uid: library.uid, revision: library.revision, from, files: library.files }
   }
   if (BUILTIN_IDS.includes(id) || isProposalPreviewId(id) || !store.getDraft(id)) return null
-  // A linked draft whose directory was invalid rendered nothing.
-  try { store.assertRenderable(id) } catch { return null }
+  if (linkedDiagnostic(store, id)) return null
   const draft = store.packageSnapshot(id)
   return draft ? { uid: store.lineage.of(`${DRAFTS_DIR}/${id}`), revision: draft.revision, from: null, files: draft.files } : null
+}
+
+/** Why draft `id`'s linked directory was invalid, as its working state
+ *  recorded it; such a draft rendered nothing. */
+function linkedDiagnostic(store: UserMotifStore, id: string): string | null {
+  try {
+    const state = JSON.parse(readFileSync(path.join(store.root(), '.workspaces', `${id}.json`), 'utf8')) as { diagnostic?: unknown }
+    return typeof state.diagnostic === 'string' && state.diagnostic ? state.diagnostic : null
+  } catch { return null }
 }
 
 /** The manifest v5 sized Motif `id` with: a built-in's, else the store's. */

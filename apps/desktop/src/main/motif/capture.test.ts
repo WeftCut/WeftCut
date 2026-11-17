@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { PNG } from 'pngjs'
 import { FRAME_MARKER_PIXELS, FRAME_MARKER_READ_PIXELS, frameMarkerBits, frameMarkerRows, frameWitnessBits } from '../../shared/motifs/frameMarker'
+import { MotifError } from '../../shared/motifs/errors'
 
 let opened = 0
 let lastHost: EventEmitter | null = null
@@ -241,8 +242,12 @@ const { MotifCapturer } = await import('./capture')
 const { MOTIF_TUNING_DEFAULTS } = await import('../../shared/motifs/tuning')
 type MotifCapturerDeps = import('./capture').MotifCapturerDeps
 
-/// A store that knows no user Motif: the default duration, nothing pinned.
-const emptyStore: MotifCapturerDeps['store'] = { getMotif: () => null, assertRenderable: () => {}, pinPackage: () => null }
+/// A resolver that lets every host render at a five-second duration and pins
+/// nothing it holds.
+const emptyStore: MotifCapturerDeps['store'] = {
+  gate: host => ({ manifest: { id: host, name: host, version: 1, size: [32, 16], default_duration_s: 5, props_schema: {} }, revision: '' }),
+  pin: () => ({ release: () => {} }),
+}
 
 /// A capturer of its own per test, with the runtime registered and the native
 /// marker reader present; `deps` replaces any of its seams.
@@ -436,7 +441,7 @@ describe('MotifCapturer', () => {
   it("holds a host's revision pin until the host retires", async () => {
     const revision = 'a'.repeat(64)
     const held: string[] = [], released: string[] = []
-    const store: MotifCapturerDeps['store'] = { ...emptyStore, pinPackage: (motifId) => {
+    const store: MotifCapturerDeps['store'] = { ...emptyStore, pin: (motifId) => {
       held.push(motifId)
       let done = false
       return { release: () => { if (!done) { done = true; released.push(motifId) } } }
@@ -469,34 +474,40 @@ describe('MotifCapturer', () => {
       .resolves.toBe('UE5H')
   })
 
-  it('reads the manifest once per (motifId, contentHash), not per frame', async () => {
-    // getMotif is readFileSync + parse on the capture hot path; the content
-    // hash is the invalidation signal, so repeat captures of one lane resolve
-    // the manifest once. Empty hash (MCP) has no signal → never cached.
-    let reads = 0
-    const manifest = {
-      id: 'cached-motif', name: 'Cached', version: 1,
-      size: [32, 16] as [number, number], default_duration_s: 5, props_schema: {},
-    }
+  it('gates a revision once, not per frame, and only the revision the gate read', async () => {
+    // The gate stats the package and reads its manifest on the capture hot
+    // path; the content hash is the invalidation signal, so repeat captures of
+    // one lane gate once. A gate that read another revision, or an empty hash
+    // (MCP), leaves nothing to keep.
+    const gated: string[] = []
+    let current = 'h1'
     capturer = newCapturer({
       store: {
         ...emptyStore,
-        getMotif: (id: string) => {
-          reads++
-          return id === 'cached-motif' ? { manifest, html: '<html/>' } as unknown as ReturnType<MotifCapturerDeps['store']['getMotif']> : null
-        },
+        gate: host => { gated.push(current); return { ...emptyStore.gate(host), revision: current } },
       },
     })
     const at = (contentHash: string, tSec: number) =>
       capturer.capturePng({ ...args, motifId: 'cached-motif', contentHash, tSec }, bg)
     await expect(at('h1', 0)).resolves.toBe('UE5H')
     await expect(at('h1', 0.5)).resolves.toBe('UE5H')
-    expect(reads).toBe(1)
+    expect(gated).toEqual(['h1'])
+    current = 'h3'
     await expect(at('h2', 0)).resolves.toBe('UE5H')
-    expect(reads).toBe(2)
+    await expect(at('h2', 0.5)).resolves.toBe('UE5H')
+    expect(gated).toEqual(['h1', 'h3', 'h3'])
     await expect(at('', 0)).resolves.toBe('UE5H')
     await expect(at('', 1)).resolves.toBe('UE5H')
-    expect(reads).toBe(4)
+    expect(gated).toHaveLength(5)
+  })
+
+  it('renders nothing of a host the gate refuses', async () => {
+    const before = renderCalls
+    capturer = newCapturer({
+      store: { ...emptyStore, gate: () => { throw new MotifError('content', "Motif 'gone' has no folder in this project") } },
+    })
+    await expect(capturer.capturePng({ ...args, motifId: 'gone' }, bg)).rejects.toMatchObject({ code: 'content' })
+    expect(renderCalls).toBe(before)
   })
 
   it('sizes the host window to the capture plus its marker rows', async () => {
@@ -841,7 +852,7 @@ describe('MotifCapturer', () => {
   it('another content version of a Motif loads in the same window, after its frames in flight', async () => {
     const v1 = 'a'.repeat(64), v2 = 'b'.repeat(64)
     const held: string[] = [], released: string[] = []
-    capturer = newCapturer({ tuning: ONE_HOST, store: { ...emptyStore, pinPackage: (_motifId, revision) => {
+    capturer = newCapturer({ tuning: ONE_HOST, store: { ...emptyStore, pin: (_motifId, revision) => {
       held.push(revision.slice(0, 1))
       let done = false
       return { release: () => { if (!done) { done = true; released.push(revision.slice(0, 1)) } } }
