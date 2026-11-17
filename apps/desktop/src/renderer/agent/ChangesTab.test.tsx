@@ -18,6 +18,8 @@ import { resetReviewForTests, useReview } from './reviewStore'
 import { useProjectStore } from '../state/projectStore'
 import { ROOT_ID, compositionFixture, summaryFixture } from '../testing/summaryFixture'
 import { selectChange, selectRange, useReviewFocus } from './reviewFocus'
+import { openComposition, useCompositionAnchorStore } from '../state/compositionAnchorStore'
+import { setPlayheadTimeUs } from '../state/playheadStore'
 
 const S = 1_000_000
 const clip = (id: string, label: string, s: number, e: number): LayerSummary => ({
@@ -388,13 +390,78 @@ describe('AgentPanel Changes tab', () => {
       expect(useReviewFocus.getState().focus).toMatchObject({ kind: 'range', step: 'Layer:late' })
       expect(rows().find(r => r.dataset.changeId === 'Layer:late')!.dataset.selected).toBe('true')
       expect(bar.textContent).toContain('change 2 of 2')
-      const close = within(bar).getByRole('button', { name: 'Let go of this range' })
-      fireEvent.keyDown(close, { key: 'Escape' })
+      const count = within(bar).getByRole('button', { name: '1 of 1' })
+      fireEvent.keyDown(count, { key: 'Escape' })
       expect(useReviewFocus.getState().focus).toMatchObject({ kind: 'range', step: null })
-      fireEvent.keyDown(close, { key: 'Escape' })
+      fireEvent.keyDown(count, { key: 'Escape' })
       expect(useReviewFocus.getState().focus).toBeNull()
-      expect(screen.queryByRole('group', { name: 'Changed range' })).toBeNull()
+      // Let go, the bar is the ranges' total again.
+      const total = screen.getByRole('group', { name: 'Changed range' })
+      expect(total.textContent).toContain('1 spot · 8.0 s')
       expect(framed()).toEqual([])
     } finally { delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView }
+  })
+
+  it('a press on the focused range\'s count goes back to all the ranges', async () => {
+    const pair: ChangedRange = { composition_id: ROOT_ID, class: 'modified', t_start_us: S, t_end_us: 9 * S, before_start_us: S, before_end_us: 9 * S,
+      source: 'review', change_ids: ['Layer:late', 'Layer:early'] }
+    mocks.invoke.mockImplementation(async (channel: string, args?: { include_user?: boolean }) =>
+      channel === 'review_view' ? served({ ...view(1), ranges: [pair] }, args) : { available: true, url: '', connections: [] })
+    render(<AgentPanel editor />)
+    await flush()
+    act(() => selectRange(pair))
+    const count = within(screen.getByRole('group', { name: 'Changed range' })).getByRole('button', { name: '1 of 1' })
+    expect(count.getAttribute('title')).toBe('Back to all 1 (Esc)')
+    fireEvent.click(count)
+    expect(useReviewFocus.getState().focus).toBeNull()
+    expect(screen.getByRole('group', { name: 'Changed range' }).textContent).toContain('1 spot · 8.0 s')
+  })
+
+  describe('the range bar with no range focused', () => {
+    const at = (s: number, e: number, composition_id = ROOT_ID): ChangedRange => ({ composition_id, class: 'modified', t_start_us: s, t_end_us: e,
+      before_start_us: s, before_end_us: e, source: 'review', change_ids: ['Layer:late'] })
+    const serve = (ranges: ChangedRange[]) => mocks.invoke.mockImplementation(async (channel: string, args?: { include_user?: boolean }) =>
+      channel === 'review_view' ? served({ ...view(1), ranges }, args) : { available: true, url: '', connections: [] })
+    const bar = () => screen.queryByRole('group', { name: 'Changed range' })
+
+    it('tells how many ranges there are and how long they run, apart from the entity stat', async () => {
+      // A cut point counts and adds no time.
+      serve([at(S, 3 * S), at(5 * S, 5 * S)])
+      render(<AgentPanel editor />)
+      await flush()
+      expect(bar()!.textContent).toContain('2 spots · 2.0 s')
+      expect(document.querySelector('.agent-changes-stats')!.textContent).not.toContain('spot')
+    })
+
+    it('with nothing but cut points, has no length to tell', async () => {
+      serve([at(5 * S, 5 * S)])
+      render(<AgentPanel editor />)
+      await flush()
+      expect(bar()!.textContent).toContain('1 cut point')
+    })
+
+    it('Review focuses the range under or after the playhead — past the last, the first', async () => {
+      serve([at(S, 3 * S), at(5 * S, 6 * S)])
+      render(<AgentPanel editor />)
+      await flush()
+      setPlayheadTimeUs(4 * S)
+      fireEvent.click(within(bar()!).getByRole('button', { name: /Review/ }))
+      expect(useReviewFocus.getState().range).toMatchObject({ t_start_us: 5 * S })
+      act(() => useReviewFocus.setState({ focus: null, range: null }))
+      setPlayheadTimeUs(7 * S)
+      fireEvent.click(within(bar()!).getByRole('button', { name: /Review/ }))
+      expect(useReviewFocus.getState().range).toMatchObject({ t_start_us: S })
+    })
+
+    it('in a Group\'s timeline names the Group\'s own, and offers the film\'s', async () => {
+      serve([at(S, 3 * S), at(5 * S, 6 * S)])
+      render(<AgentPanel editor />)
+      await flush()
+      act(() => { openComposition('grp', null) })
+      expect(bar()!.textContent).toContain('No changed ranges in this Group')
+      fireEvent.click(within(bar()!).getByRole('button', { name: /Film: 2/ }))
+      expect(useCompositionAnchorStore.getState().focusedId).toBe(ROOT_ID)
+      expect(bar()!.textContent).toContain('2 spots')
+    })
   })
 })

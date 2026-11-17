@@ -1474,7 +1474,7 @@ const enUS = {
   agent_panel: {
   // The agent view's Jump: the preview's time only, never a selection.
   "jump": "Jump the preview here",
-  "jump_elsewhere": "Not on the timeline the preview shows — locate it in the editor",
+  "jump_elsewhere": "Doesn't play in the film — locate it in the editor",
   "service_unknown": "MCP status unavailable",
   "service_ready": "MCP service ready",
   "service_offline": "MCP service offline",
@@ -1685,14 +1685,31 @@ const enUS = {
   },
   changes: {
     subtitle: "What agents changed since you last approved",
-    // The bar over the list while a changed range is focused: its line, a
-    // stepper through its changes, play, the neighbouring ranges, close.
+    // The bar over the list: with no range focused, how many there are and
+    // how long, and the way into them (review, a Group's way out to the
+    // film); with one focused, its line, a stepper through its changes,
+    // play, the neighbouring ranges around a count that goes back to all.
     range_bar: {
       label: "Changed range",
+      review: "Review",
+      total_one: "{{count}} spot · {{duration}}",
+      total_other: "{{count}} spots · {{duration}}",
+      total_full_one: "{{count}} stretch plays differently, {{duration}} in all",
+      total_full_other: "{{count}} stretches play differently, {{duration}} in all",
+      total_cuts_one: "{{count}} cut point",
+      total_cuts_other: "{{count}} cut points",
+      group_total: "This Group: {{total}}",
+      group_none: "No changed ranges in this Group",
+      film_one: "Film: {{count}}",
+      film_other: "Film: {{count}}",
+      film_hint: "Open the main timeline to review the whole film's ranges",
       play: "Play",
       spot: "{{index}} of {{count}}",
       step: "change {{index}} of {{count}}",
-      close: "Let go of this range",
+      all_one: "All {{count}}",
+      all_other: "All {{count}}",
+      back_one: "Back to all {{count}} (Esc)",
+      back_other: "Back to all {{count}} (Esc)",
     },
     approve_all: "Approve all",
     approve_all_hint: "Make the project as it is now the new review baseline — your own changes included",
@@ -1732,12 +1749,6 @@ const enUS = {
       added: "{{count}} added",
       removed: "{{count}} removed",
       modified: "{{count}} modified",
-      ranges_points_short_one: "{{count}} spot",
-      ranges_points_short_other: "{{count}} spots",
-      ranges_short_one: "{{count}} spot · {{duration}}",
-      ranges_short_other: "{{count}} spots · {{duration}}",
-      ranges_one: "{{count}} stretch plays differently, {{duration}} to watch",
-      ranges_other: "{{count}} stretches play differently, {{duration}} to watch",
     },
     range: {
       added: "Added · {{duration}}",

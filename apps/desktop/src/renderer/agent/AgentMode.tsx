@@ -12,7 +12,8 @@ import {
 import {
   type ProjectSummary,
 } from "../ipc";
-import { useOpenComposition } from "../state/projectStore";
+import { useComposition } from "../state/projectStore";
+import { useShownTimelineId } from "../state/compositionAnchorStore";
 import { seekLocalUs } from "../state/playheadProjection";
 import {
   PreviewSurface,
@@ -87,9 +88,10 @@ export const AgentMode = forwardRef(function AgentMode(
   previewRef: ForwardedRef<PreviewSurfaceHandle>,
 ) {
   const { t } = useTranslation();
-  // The mini timeline shows the OPEN composition; `summary` keeps the
+  // The agent view watches the film: the mini timeline is the root's, whatever
+  // timeline the editor focused (`filmView`); `summary` keeps the
   // project-wide fields (layer_count, history).
-  const comp = useOpenComposition();
+  const comp = useComposition(useShownTimelineId());
   const tacks = useCompositionTacks(comp?.id ?? null);
   // A focused range is drawn where it is now, by its key there.
   const focus = useReviewFocus((s) => s.focus);
@@ -195,8 +197,7 @@ export const AgentMode = forwardRef(function AgentMode(
           // A band press focuses its item and shows its row in the panel
           // beside the strip (tab, group and row opened; the tab scrolls to it).
           onFocus={(item) => focusReviewItem(item, changes)}
-          // The strip is the open composition's own clock, as its ticks and
-          // playhead are: a press there names that composition's moment.
+          // The strip is the film's clock, as its ticks and playhead are.
           onSeek={(t) => seekLocalUs(comp?.id ?? null, t)}
           fpsNum={comp?.fps_num ?? 30}
           fpsDen={comp?.fps_den ?? 1}

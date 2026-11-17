@@ -68,7 +68,7 @@ export function ChangesTab({ editor }: { editor: boolean }) {
   const words = useChangeWords({ frame: 'review' })
   const weights = useChangeWeights()
   const unreviewed = view?.unreviewed ?? []
-  const stats = useMemo(() => changeStats({ unreviewed: view?.unreviewed ?? [], ranges: view?.ranges ?? [], filmId: summary?.root_id ?? null }), [view?.unreviewed, view?.ranges, summary?.root_id])
+  const stats = useMemo(() => changeStats({ unreviewed: view?.unreviewed ?? [] }), [view?.unreviewed])
   const groups = useMemo(
     () => (view ? groupChanges(view.unreviewed, showUser ? view.user : [], summary?.root_id ?? null) : []),
     [view, showUser, summary?.root_id])

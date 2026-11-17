@@ -3,6 +3,7 @@ import { listen } from '@/bridge/events'
 import { invoke } from '@/bridge/ipc'
 import { AGENT_ACTIVITY_EVENT, AGENT_VIEW_EVENT, type AgentActivitySnapshot, type AgentActivityUpdate } from '../../shared/agent-activity'
 import { settleExpanded } from './expansion'
+import { setFilmView } from '../state/compositionAnchorStore'
 
 /** The agent panel's tabs, in display order: Activity · Tacks · Changes. */
 export const AGENT_PANEL_TABS = ['activity', 'tacks', 'changes'] as const
@@ -53,6 +54,10 @@ export const useAgentActivity = create<AgentPanelState>((set) => ({
   }),
   toggle: (id, defaultValue = false) => set(s => ({ expanded: { ...s.expanded, [id]: !(s.expanded[id] ?? defaultValue) } })),
 }))
+
+// The agent view watches the film: the preview and the review's surfaces
+// read the root while it holds the window (`filmView`).
+useAgentActivity.subscribe((s, prev) => { if (s.mode !== prev.mode) setFilmView(s.mode === 'agent') })
 
 /** Subscribe before snapshot; late snapshots cannot overwrite newer events.
  * A low-frequency reconciliation also repairs dropped IPC notifications. */

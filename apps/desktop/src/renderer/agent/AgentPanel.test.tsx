@@ -364,7 +364,7 @@ describe('AgentPanel Tacks tab', () => {
     openTacks()
     const [here, elsewhere] = screen.getAllByRole('button', { name: 'Jump the preview here' })
     expect(elsewhere!.hasAttribute('disabled')).toBe(true)
-    expect(elsewhere!.getAttribute('title')).toBe('Not on the timeline the preview shows — locate it in the editor')
+    expect(elsewhere!.getAttribute('title')).toBe('Doesn\'t play in the film — locate it in the editor')
     fireEvent.click(here!)
     expect(mocks.seekLocal).toHaveBeenCalledWith('root', 2_000_000)
     expect(mocks.reveal).not.toHaveBeenCalled()

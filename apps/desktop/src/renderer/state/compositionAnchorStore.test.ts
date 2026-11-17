@@ -12,7 +12,9 @@ import {
   previewRenderTargetId,
   restoreCompositionTabs,
   setOrphanPlayheadUs,
+  setFilmView,
   setPreviewRenderTarget,
+  shownTimelineId,
   switchAnchor,
   syncOpenCompositions,
   useCompositionAnchorStore,
@@ -602,6 +604,23 @@ describe("the preview's render target", () => {
     setPreviewRenderTarget(G2);
 
     expect(pathToComposition(G2)).toEqual(anchorPath(G2));
+  });
+
+  // The agent view watches the film and has no tabs nor lock of its own; the
+  // editor's are left as they were for its return.
+  it("is the film while the agent view holds the window", () => {
+    openComposition(G1, "ref-g1");
+    setPreviewRenderTarget(G2);
+    setFilmView(true);
+    try {
+      expect(previewRenderTargetId()).toBe(ROOT_ID);
+      expect(shownTimelineId()).toBe(ROOT_ID);
+    } finally {
+      setFilmView(false);
+    }
+    expect(focusedCompositionId()).toBe(G1);
+    expect(previewRenderTargetId()).toBe(G2);
+    expect(shownTimelineId()).toBe(G1);
   });
 
   it("releases the lock when the composition it names disappears", () => {

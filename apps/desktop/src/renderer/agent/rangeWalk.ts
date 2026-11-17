@@ -1,7 +1,7 @@
 // Walking and playing the changed ranges (ADR 0169): the keyboard's way
 // through "where should I watch again". Both read the ranges of the
-// composition the editor (or the agent view's mini timeline) shows, in the
-// list its bands paint — the Review view's, or a selected call's — so a key
+// timeline on screen (`shownTimelineId`: the editor's focused timeline, the
+// film in the agent view), in the list its bands paint — the Review view's, or a selected call's — so a key
 // walks what the user sees.
 //
 // A walk is an explicit move, so unlike a focus it seeks: it parks the
@@ -10,8 +10,9 @@
 // (`playRootSpan`), which any later transport action drops.
 import type { ChangedRange } from '../../shared/review'
 import { displayedFrameStartUs } from '../frames'
-import { focusedPlayheadUs, focusedRootUs, rootUsOf } from '../state/playheadProjection'
-import { currentOpenComposition } from '../state/projectStore'
+import { shownTimelineId } from '../state/compositionAnchorStore'
+import { playheadClockUs, rootUsOf } from '../state/playheadProjection'
+import { useProjectStore } from '../state/projectStore'
 import { playRootSpan, seekToClamped } from '../state/navigation'
 import { compositionChangeRanges, rangesShowUser, selectHighlight, useReview } from './reviewStore'
 import { rangeKey, selectRange, useReviewFocus } from './reviewFocus'
@@ -30,11 +31,11 @@ export const PLAY_CUT_SIDE_US = 2_000_000
 
 const byTime = (a: ChangedRange, b: ChangedRange) => a.t_start_us - b.t_start_us || a.t_end_us - b.t_end_us
 
-/** The ranges a walk steps through: the open composition's, as its bands
+/** The ranges a walk steps through: the timeline on screen's, as its bands
  *  paint them, in time order. */
 export function walkableRanges(): ChangedRange[] {
   const s = useReview.getState()
-  const marks = compositionChangeRanges(selectHighlight(s).ranges, currentOpenComposition()?.id ?? null, rangesShowUser(s))
+  const marks = compositionChangeRanges(selectHighlight(s).ranges, shownTimelineId(), rangesShowUser(s))
   return marks.map(m => m.range).sort(byTime)
 }
 
@@ -77,10 +78,11 @@ export function nextRange(
  *  panel closed: which range it landed on and what it is, or that there is
  *  none further that way. Never opens the panel nor turns its tab. */
 export function walkChangedRange(dir: 1 | -1): CommandOutcome | undefined {
-  const comp = currentOpenComposition()
-  if (comp === null) return undefined
+  const id = shownTimelineId()
+  const comp = id === null ? undefined : useProjectStore.getState().summary?.compositions[id]
+  if (id === null || comp === undefined) return undefined
   const { focus, range } = useReviewFocus.getState()
-  const from = focus?.kind === 'range' && range !== null && range.composition_id === comp.id ? { range } : { playheadUs: focusedPlayheadUs() }
+  const from = focus?.kind === 'range' && range !== null && range.composition_id === id ? { range } : { playheadUs: playheadClockUs(id) }
   const ranges = walkableRanges()
   const next = nextRange(ranges, from, dir, (us) => displayedFrameStartUs(us, comp.fps_num, comp.fps_den))
   if (next === null) {
@@ -90,7 +92,7 @@ export function walkChangedRange(dir: 1 | -1): CommandOutcome | undefined {
   }
   // Seek first: the focus's reveal then scrolls to the range the playhead is on.
   // The panel keeps its tab: the status line is the walk's answer.
-  seekToClamped(focusedRootUs(next.t_start_us))
+  seekToClamped(rootUsOf(id, next.t_start_us) ?? next.t_start_us)
   selectRange(next, null, false)
   const index = ranges.findIndex(r => rangeKey(r) === rangeKey(next)) + 1
   const line = rangeLine(next, i18n.t.bind(i18n) as unknown as Translate)
@@ -115,12 +117,20 @@ export function rangeAtOrAfter(ranges: readonly ChangedRange[], tUs: number): Ch
   return ranges.find(r => (r.t_end_us > r.t_start_us ? r.t_end_us > tUs : r.t_start_us >= tUs)) ?? null
 }
 
-/** Play the focused range — else the one under or after the playhead — and
- *  pause after it. The in and out points are left alone. */
+/** Play the focused range and pause after it. With none focused, the one
+ *  under or after the playhead — past the last, the first — is focused and
+ *  played: reviewing starts wherever the user is. The in and out points are
+ *  left alone. */
 export function playChangedRange(): void {
   const { focus, range } = useReviewFocus.getState()
-  const target = focus?.kind === 'range' && range !== null ? range : rangeAtOrAfter(walkableRanges(), focusedPlayheadUs())
-  if (target === null) return
+  let target = focus?.kind === 'range' && range !== null ? range : null
+  if (target === null) {
+    const ranges = walkableRanges()
+    const id = shownTimelineId()
+    target = rangeAtOrAfter(ranges, id === null ? 0 : playheadClockUs(id)) ?? ranges[0] ?? null
+    if (target === null) return
+    selectRange(target, null, false)
+  }
   const span = rangePlaySpan(target)
   const from = rootUsOf(target.composition_id, span.fromUs)
   const stop = rootUsOf(target.composition_id, span.stopUs)

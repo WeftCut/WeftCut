@@ -180,18 +180,21 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-tack.unplaced:not([data-selected="true"]) { opacity: .7; }
 /* A compute refusal's Settings button and details, under the row's error line. */
 .agent-activity .compute-refusal-actions { margin: 0 calc(7 * var(--ui-px)) calc(3 * var(--ui-px)) calc(27 * var(--ui-px)); }
-/* The focused changed range (RangeBar): one flat row on the panel's ground —
-   play named first, the range's line, which of the timeline's ranges it is
-   between the walk to its neighbours, close. No hue of its own: the ruler and
-   the framed rows already carry the class. */
+/* The changed ranges (RangeBar): one flat row on the panel's ground — play
+   named first, a line (the total, or the focused range), a Group's way out
+   to the film, and the walk around the focused range's count, which goes
+   back to all of them. No hue of its own: the ruler and the
+   framed rows already carry the class. */
 .agent-range-bar { display: flex; align-items: center; gap: calc(2 * var(--ui-px)); margin: 0 calc(10 * var(--ui-px)) calc(6 * var(--ui-px)); padding: calc(2 * var(--ui-px)); background: var(--background); border-radius: var(--radius-control); font-size: var(--font-size-caption); }
 .agent-range-bar-line { flex: 1; min-width: 0; padding-inline: calc(4 * var(--ui-px)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-range-bar-spots { display: flex; align-items: center; flex: none; }
-.agent-range-bar-spot { padding-inline: calc(2 * var(--ui-px)); font-variant-numeric: tabular-nums; color: var(--muted-foreground); white-space: nowrap; }
+.agent-activity-panel .agent-range-bar .agent-range-bar-spot { padding-inline: calc(4 * var(--ui-px)); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.agent-activity-panel .agent-range-bar .agent-range-bar-spot:hover { background: var(--hover-neutral); }
 .agent-activity-panel .agent-range-bar button { flex: none; display: inline-flex; align-items: center; gap: calc(4 * var(--ui-px)); padding: calc(3 * var(--ui-px)); border-radius: var(--radius-control); color: var(--muted-foreground); }
 .agent-activity-panel .agent-range-bar button:hover:not([aria-disabled]) { color: var(--foreground); }
 .agent-activity-panel .agent-range-bar button[aria-disabled="true"] { opacity: .4; cursor: default; background: none; }
 .agent-activity-panel .agent-range-bar .agent-range-bar-play { padding-inline: calc(6 * var(--ui-px)); color: var(--foreground); }
+.agent-activity-panel .agent-range-bar .agent-range-bar-film { padding-inline: calc(6 * var(--ui-px)); font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* Its changes' rows framed as one group — one neutral ground, joined where
    they follow each other — and the rest stepped back. */
 .agent-changes[data-range-focus] .agent-change:not([data-in-range]) { opacity: .5; }

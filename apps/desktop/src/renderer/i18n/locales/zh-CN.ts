@@ -1284,7 +1284,7 @@ const zhCN: Resources = {
   },
   agent_panel: {
   "jump": "预览跳到这里",
-  "jump_elsewhere": "不在预览显示的时间线上，请在编辑器里定位",
+  "jump_elsewhere": "没有在片中播放，请在编辑器里定位",
   "service_unknown": "MCP 状态暂不可用",
   "service_ready": "MCP 服务可用",
   "service_offline": "MCP 服务已关闭",
@@ -1493,14 +1493,30 @@ const zhCN: Resources = {
   },
   changes: {
     subtitle: "自上次批准以来代理所做的变更",
-    // 聚焦一个变化区间时列表上方的条：区间的一句话、逐项切换、播放、
-    // 前后区间、关闭。
+    // 列表上方的条：未聚焦时是区间总数与总时长和进入复看的入口（复看、
+    // 组内跳到全片）；聚焦一个区间时是它的一句话、逐项切换、播放、
+    // 前后区间，以及可点回全部区间的计数。
     range_bar: {
       label: "变化区间",
+      review: "复看",
+      total_one: "{{count}} 处 · {{duration}}",
+      total_other: "{{count}} 处 · {{duration}}",
+      total_full_one: "{{count}} 处播放有变化，共 {{duration}}",
+      total_full_other: "{{count}} 处播放有变化，共 {{duration}}",
+      total_cuts_one: "{{count}} 处删除点",
+      total_cuts_other: "{{count}} 处删除点",
+      group_total: "本组 {{total}}",
+      group_none: "本组没有变化区间",
+      film_one: "全片 {{count}} 处",
+      film_other: "全片 {{count}} 处",
+      film_hint: "打开主时间线，复看全片的变化区间",
       play: "播放",
       spot: "第 {{index}}/{{count}} 处",
       step: "第 {{index}}/{{count}} 项",
-      close: "取消聚焦此区间",
+      all_one: "全部 {{count}} 处",
+      all_other: "全部 {{count}} 处",
+      back_one: "回到全部 {{count}} 处 (Esc)",
+      back_other: "回到全部 {{count}} 处 (Esc)",
     },
     approve_all: "全部批准",
     approve_all_hint: "将项目当前状态作为新的审阅基线，包括你自己的变更",
@@ -1539,12 +1555,6 @@ const zhCN: Resources = {
       added: "新增 {{count}} 项",
       removed: "删除 {{count}} 项",
       modified: "修改 {{count}} 项",
-      ranges_points_short_one: "{{count}} 处",
-      ranges_points_short_other: "{{count}} 处",
-      ranges_short_one: "{{count}} 处 · {{duration}}",
-      ranges_short_other: "{{count}} 处 · {{duration}}",
-      ranges_one: "{{count}} 处播放有变化，需复看 {{duration}}",
-      ranges_other: "{{count}} 处播放有变化，需复看 {{duration}}",
     },
     range: {
       added: "新增 · {{duration}}",

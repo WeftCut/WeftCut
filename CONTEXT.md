@@ -868,7 +868,8 @@ each commit by its own changes it shares (its layers and transitions), stays
 while the timeline on screen paints it whichever tab the panel shows, and can
 point at one of its changes while staying the context. Walking to a range
 (Alt+↑/↓) is a move, not a focus: it seeks, then focuses, and leaves the panel
-as it is. Runtime-only.
+as it is. The timeline on screen is the editor's focused timeline, and the
+film (root) in the agent view, which watches the film. Runtime-only.
 _Avoid_: selection (clips'), highlight (per-activity)
 
 ## Agent harness

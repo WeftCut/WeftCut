@@ -7,7 +7,7 @@ import type { TackView } from "../../shared/agent-activity";
 import type { ReviewRangeMark } from "./reviewHighlight";
 import { hitBand, rangeKey, type BandItem, type ReviewTarget } from "./reviewFocus";
 import { tackCoverage } from "./tackModel";
-import { useFocusedPlayheadUs } from "../state/playheadProjection";
+import { usePlayheadTimeUs } from "../state/playheadStore";
 import { usePointerGesture } from "../hooks/usePointerGesture";
 import { uiPixels } from "../settings/layoutTheme";
 import { UI_METRICS } from "../settings/uiMetrics";
@@ -160,10 +160,9 @@ export function MiniTimeline({
   const { t } = useTranslation();
   // Frame-rate playhead subscription (tier 4, playheadStore.ts): the
   // agent-mode progress strip is a tiny leaf subtree, so per-frame React
-  // updates here are cheap and keep the playhead butter-smooth. Projected —
-  // the strip's ticks are the open composition's own, so the moment has to be
-  // read on that composition's clock.
-  const currentTimeUs = useFocusedPlayheadUs();
+  // updates here are cheap and keep the playhead butter-smooth. The strip is
+  // the film's (`filmView`), so the moment is read on the root's clock as is.
+  const currentTimeUs = usePlayheadTimeUs();
   const stripRef = useRef<HTMLDivElement | null>(null);
   // Strip width drives tick density. ResizeObserver writes into
   // state so the next render picks up the new tick set; the setter
