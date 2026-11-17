@@ -13,7 +13,9 @@ function fakePort() {
   return { port, replies, send: (data: unknown) => listeners.message!({ data }), close: () => listeners.close!() }
 }
 
-const settle = () => new Promise(resolve => setTimeout(resolve, 0))
+/** After every write already queued has run. The writes here resolve without
+ * timers, so one turn of the event loop runs the whole chain; not a time wait. */
+const queuedWorkDone = () => new Promise(resolve => setImmediate(resolve))
 
 describe('serveSinkPort', () => {
   it('writes frames in arrival order even when an earlier write is slower', async () => {
@@ -27,7 +29,7 @@ describe('serveSinkPort', () => {
       order.push(frame[0]!)
     })
     for (let i = 0; i < 4; i++) send(new Uint8Array([i, 9, 9]))
-    await settle()
+    await queuedWorkDone()
     expect(order).toEqual([])
     releaseFirst()
     await vi.waitFor(() => expect(replies).toHaveLength(4))
@@ -40,8 +42,7 @@ describe('serveSinkPort', () => {
     const seen: number[][] = []
     serveSinkPort(port, async frame => { seen.push([...frame]) })
     send(new Uint8Array([7, 1, 2, 3, 7]).subarray(1, 4))
-    await settle()
-    expect(seen).toEqual([[1, 2, 3]])
+    await vi.waitFor(() => expect(seen).toEqual([[1, 2, 3]]))
   })
 
   it('answers the first failure once and writes nothing after it', async () => {
@@ -52,7 +53,7 @@ describe('serveSinkPort', () => {
       written.push(frame[0]!)
     })
     for (let i = 0; i < 4; i++) send(new Uint8Array([i]))
-    await settle(); await settle()
+    await queuedWorkDone()
     expect(written).toEqual([0])
     expect(replies).toEqual([{ written: 1 }, { error: 'ffmpeg stdin: broken pipe' }])
   })
@@ -63,7 +64,7 @@ describe('serveSinkPort', () => {
     serveSinkPort(port, async frame => { written.push(frame) })
     send({ not: 'bytes' })
     send(new Uint8Array([1]))
-    await settle()
+    await queuedWorkDone()
     expect(written).toEqual([])
     expect(replies).toEqual([{ error: 'A sink frame must be bytes' }])
   })
@@ -74,7 +75,7 @@ describe('serveSinkPort', () => {
     serveSinkPort(port, async frame => { written.push(frame[0]!) })
     close()
     send(new Uint8Array([5]))
-    await settle()
+    await queuedWorkDone()
     expect(written).toEqual([])
   })
 })
