@@ -1750,6 +1750,8 @@ const enUS = {
       only_audio: "audio only",
       only_picture: "picture only",
       sync: "picture and sound {{offset}} apart",
+      sync_picture: "picture layers {{offset}} apart",
+      sync_sound: "sound layers {{offset}} apart",
       out_of_sync: "Out of sync · {{duration}}",
       sound_later: "{{sound}} {{lag}} later than picture",
       sound_earlier: "{{sound}} {{lag}} earlier than picture",

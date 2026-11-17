@@ -6,10 +6,13 @@ import { useAgentActivity } from './activityStore'
 import type { AgentActivitySnapshot, AgentWorkSession } from '../../shared/agent-activity'
 import { resetReviewForTests, useReview } from './reviewStore'
 import {
-  EMPTY_FOCUS_PAINT, buildFocusPaint, escapeFocus, focusRevealScrollLeft, hitBand, orderSteps, rangeKey, resolveRange, selectChange, selectRange, selectTack,
+  EMPTY_FOCUS_PAINT, buildFocusPaint, escapeFocus, focusRevealScrollLeft, hitBand, orderSteps, rangeKey, rangeStepsIn, resolveRange, selectChange, selectRange, selectTack,
   setReviewFocus, setReviewHover, stepRangeTo, useFocusPaint, useReviewFocus,
 } from './reviewFocus'
 import { EMPTY_HIGHLIGHT, rangeMarks } from './reviewHighlight'
+import { useProjectStore } from '../state/projectStore'
+import { useCompositionAnchorStore } from '../state/compositionAnchorStore'
+import { compositionFixture, summaryFixture } from '../testing/summaryFixture'
 import { tackGroupKey, tackRowKey } from './expansion'
 
 const S = 1_000_000
@@ -311,13 +314,22 @@ describe('a changed range as the focus', () => {
   const pair = R({ change_ids: ['Layer:a', 'Layer:b'] })
   const focus = () => useReviewFocus.getState().focus
   const range = () => useReviewFocus.getState().range
+  // The root on screen: a range is the film's, there while its timeline is.
+  let summaryBefore: ReturnType<typeof useProjectStore.getState>['summary']
   beforeEach(() => {
+    summaryBefore = useProjectStore.getState().summary
+    useProjectStore.setState({ summary: summaryFixture({ root: { id: 'root' }, groups: [compositionFixture({ id: 'grp' })] }) })
+    useCompositionAnchorStore.setState({ focusedId: null })
     resetReviewForTests()
     useAgentActivity.setState({ snapshot: null, tab: 'activity', expanded: {} })
     useReviewFocus.setState({ focus: null, hover: null, range: null })
     useReview.getState().apply(view([pair, R({ change_ids: ['Layer:c'], t_start_us: 6 * S, t_end_us: 7 * S })], 1))
   })
-  afterEach(() => resetReviewForTests())
+  afterEach(() => {
+    resetReviewForTests()
+    useCompositionAnchorStore.setState({ focusedId: null })
+    useProjectStore.setState({ summary: summaryBefore })
+  })
 
   describe('resolveRange', () => {
     it('finds the range sharing the most of its changes, in its composition only', () => {
@@ -332,6 +344,38 @@ describe('a changed range as the focus', () => {
       expect(resolveRange(pair, [far, near])).toBe(near)
       expect(resolveRange(pair, [R({ change_ids: ['Layer:c'] })])).toBeNull()
     })
+    it('never finds it again by a change every range of its composition lists', () => {
+      // Track order and a role's gain are listed by each range they play in:
+      // the one left after an undo shares those, not the range's own changes.
+      const seen = R({ change_ids: ['Layer:a', 'Composition:root', 'AudioRole:music'] })
+      const other = R({ change_ids: ['Layer:c', 'Composition:root', 'AudioRole:music'], t_start_us: 6 * S, t_end_us: 7 * S })
+      expect(resolveRange(seen, [other])).toBeNull()
+      // A range of nothing else is found by what it lists.
+      const order = R({ change_ids: ['Composition:root'] })
+      expect(resolveRange(order, [R({ change_ids: ['Composition:root'], t_start_us: 0 })])).not.toBeNull()
+    })
+  })
+
+  it('steps through its own changes that have a row, in row order', () => {
+    const r = R({ change_ids: ['Layer:c', 'Composition:root', 'Layer:a', 'Layer:u'] })
+    // Layer:u is the user's own, not listed with the switch off.
+    expect(rangeStepsIn(r, 'review', ['Layer:a', 'Layer:b', 'Layer:c'])).toEqual(['Layer:a', 'Layer:c'])
+    expect(rangeStepsIn(r, 'activity', [])).toEqual(['Layer:c', 'Layer:a', 'Layer:u'])
+  })
+
+  it('stays focused under a walk whichever tab the panel shows, and through a tab switch', () => {
+    useAgentActivity.setState({ tab: 'tacks' })
+    selectRange(pair, null, false)
+    expect(useAgentActivity.getState().tab).toBe('tacks')
+    expect(focus()).toMatchObject({ kind: 'range', source: 'review' })
+    useAgentActivity.setState({ tab: 'activity' })
+    expect(focus()).toMatchObject({ kind: 'range', source: 'review' })
+  })
+
+  it('goes when the timeline on screen is another composition', () => {
+    selectRange(pair)
+    useCompositionAnchorStore.setState({ focusedId: 'grp' })
+    expect([focus(), range()]).toEqual([null, null])
   })
 
   it('is focused from its list and shown in the Changes tab, never seeking', () => {

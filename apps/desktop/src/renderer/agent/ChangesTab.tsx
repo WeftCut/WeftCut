@@ -12,7 +12,7 @@ import { JumpButton } from './JumpButton'
 import { useAgentActivity } from './activityStore'
 import { changeStats } from './changeStats'
 import { ChangeStatsBar } from './ChangeStatsBar'
-import { setReviewFocus, setReviewHover, stepRangeTo, useReviewFocus } from './reviewFocus'
+import { rangeOwnChanges, setReviewFocus, setReviewHover, stepRangeTo, useReviewFocus } from './reviewFocus'
 import { RangeBar } from './RangeBar'
 
 /** The Changes tab of the shared agent panel (ADR 0115): what differs from the
@@ -61,14 +61,14 @@ export function ChangesTab({ editor }: { editor: boolean }) {
   const range = useReviewFocus(s => s.range)
   const rangeFocus = focus?.kind === 'range' && focus.source === 'review' ? focus : null
   const selected = focus?.kind === 'change' && focus.source === 'review' ? focus.id : rangeFocus?.step ?? null
-  const framed = useMemo(() => (rangeFocus !== null && range !== null ? new Set<string>(range.change_ids) : null), [rangeFocus, range])
+  const framed = useMemo(() => (rangeFocus !== null && range !== null ? new Set<string>(rangeOwnChanges(range)) : null), [rangeFocus, range])
   const list = useRef<HTMLDivElement>(null)
   const activity = useAgentActivity(s => s.snapshot)
   const reasons = useMemo(() => sessionReasonIndex(activity), [activity])
   const words = useChangeWords({ frame: 'review' })
   const weights = useChangeWeights()
   const unreviewed = view?.unreviewed ?? []
-  const stats = useMemo(() => changeStats({ unreviewed: view?.unreviewed ?? [], ranges: view?.ranges ?? [] }), [view?.unreviewed, view?.ranges])
+  const stats = useMemo(() => changeStats({ unreviewed: view?.unreviewed ?? [], ranges: view?.ranges ?? [], filmId: summary?.root_id ?? null }), [view?.unreviewed, view?.ranges, summary?.root_id])
   const groups = useMemo(
     () => (view ? groupChanges(view.unreviewed, showUser ? view.user : [], summary?.root_id ?? null) : []),
     [view, showUser, summary?.root_id])

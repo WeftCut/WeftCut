@@ -1557,6 +1557,8 @@ const zhCN: Resources = {
       only_audio: "仅音频",
       only_picture: "仅画面",
       sync: "音画错位 {{offset}}",
+      sync_picture: "画面之间错位 {{offset}}",
+      sync_sound: "声音之间错位 {{offset}}",
       out_of_sync: "不同步 · {{duration}}",
       sound_later: "{{sound}}比画面晚 {{lag}}",
       sound_earlier: "{{sound}}比画面早 {{lag}}",

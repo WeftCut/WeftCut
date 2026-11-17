@@ -490,11 +490,12 @@ const SYNCED_KINDS: ReadonlySet<Layer['params']['kind']> = new Set(['VideoClip',
 /** What a modified stretch says about sync, before its range is joined with
  *  its neighbours. */
 interface SyncFacts {
-  /** As `ChangedRange.sync_offset_us`, `sound_lag_us`, `sound_role` and
-   *  `sync_bound`; absent unless two displacements differ. */
+  /** As `ChangedRange.sync_offset_us`, `sound_lag_us`, `sound_role`,
+   *  `sync_between` and `sync_bound`; absent unless two displacements differ. */
   offset?: number
   lag?: number
   role?: AudioRole
+  between?: 'picture' | 'sound'
   bound?: true
   /** Every layer playing on either side is the same layer playing the same
    *  content with the same values elsewhere on the other side, and so is
@@ -593,6 +594,8 @@ function syncFacts(A: Side, ca: Composition, b: number, b1: number, B: Side, cb:
     }
     if (p.kind === 'Audio') roles.add(p.role)
   }
+  if (sound.size === 0) facts.between = 'picture'
+  else if (picture.size === 0) facts.between = 'sound'
   if (sound.size === 1 && picture.size === 1) {
     facts.lag = [...sound][0]! - [...picture][0]!
     if (roles.size === 1) facts.role = [...roles][0]!
@@ -613,7 +616,7 @@ const goneAtOnset = (f: SyncFacts, beforeStart: number) => f.goneUntil <= before
 /** Whether two adjacent ranges state the same sync. */
 function sameSync(a: ChangedRange, b: ChangedRange): boolean {
   return a.sync_offset_us === b.sync_offset_us && a.sound_lag_us === b.sound_lag_us && a.sound_role === b.sound_role
-    && a.sync_bound === b.sync_bound && (a.only === 'sync') === (b.only === 'sync')
+    && a.sync_between === b.sync_between && a.sync_bound === b.sync_bound && (a.only === 'sync') === (b.only === 'sync')
 }
 
 /** Which list each changed entity is on, and whether it plays: a
@@ -733,6 +736,7 @@ export function diffRanges(baseline: Project, current: Project, lists: ChangeLis
           range.sync_offset_us = f.offset
           if (f.lag !== undefined) range.sound_lag_us = f.lag
           if (f.role !== undefined) range.sound_role = f.role
+          if (f.between !== undefined) range.sync_between = f.between
           if (f.bound) range.sync_bound = true
           if (f.same && goneAtOnset(f, b)) { range.only = 'sync'; facts.set(range, f) }
         }

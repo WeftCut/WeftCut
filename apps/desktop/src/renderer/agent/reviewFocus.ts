@@ -9,9 +9,11 @@
 // One rule decides when the focus and the hover go: an item stays only while
 // the list it came from shows it — a tack in the Tacks tab, a change of the
 // Review view in the Changes tab, a change of a selected call in the Activity
-// tab while that call's highlight is up, a changed range in the ranges of
-// either. Deleted, approved, undone, filtered out, another tab, another row,
-// another project: each is that rule failing. Gestures that let go on purpose
+// tab while that call's highlight is up. A changed range is the film's, not a
+// row's: it stays while the review bands of the timeline on screen paint it,
+// whichever tab the panel shows. Deleted, approved, undone, filtered out,
+// another tab, another row, another timeline, another project: each is that
+// rule failing. Gestures that let go on purpose
 // (Esc, a press on bare lanes) call `releaseFocus`.
 //
 // A changed range is recomputed on every commit, so its times are not its
@@ -24,8 +26,9 @@
 import { useMemo } from 'react'
 import { create } from 'zustand'
 import type { TackView } from '../../shared/agent-activity'
-import type { Change, ChangedRange, EntityKey, ReviewView } from '../../shared/review'
-import { useProjectStore } from '../state/projectStore'
+import { parseEntityKey, type Change, type ChangedRange, type EntityKey, type EntityKind, type ReviewView } from '../../shared/review'
+import { currentOpenComposition, useProjectStore } from '../state/projectStore'
+import { useCompositionAnchorStore } from '../state/compositionAnchorStore'
 import { useAgentActivity } from './activityStore'
 import { tackClosedKey, tackGroupKey, tackRowKey } from './expansion'
 import { entityIdOf, groupChanges } from './changeModel'
@@ -76,17 +79,30 @@ const sameItem = (a: ReviewItem | null, b: ReviewItem | null) =>
 export const rangeKey = (r: ChangedRange): string =>
   `${r.composition_id}@${r.t_start_us}-${r.t_end_us}<${r.before_start_us}-${r.before_end_us}`
 
+/** Kinds a range lists for attribution though they tell it from no other: a
+ *  composition's track order and a role's gain are listed by every range they
+ *  play in (ADR 0169). */
+const SHARED_KINDS: ReadonlySet<EntityKind> = new Set(['Composition', 'AudioRole'])
+
+/** Range `r`'s own changes — its layers and transitions, what tells it from
+ *  the ranges beside it. What it is found again by, what its rows frame and
+ *  what a step walks. A range of nothing else keeps all it lists. */
+export function rangeOwnChanges(r: ChangedRange): readonly EntityKey[] {
+  const own = r.change_ids.filter(id => !SHARED_KINDS.has(parseEntityKey(id).kind))
+  return own.length > 0 ? own : r.change_ids
+}
+
 /** `seen` found again among `ranges` after a recompute: in its composition,
- *  the range sharing the most of its changes, the nearest span on a tie.
+ *  the range sharing the most of its own changes, the nearest span on a tie.
  *  Null when none shares one — its changes are gone, and so is it. */
 export function resolveRange(seen: ChangedRange, ranges: readonly ChangedRange[]): ChangedRange | null {
-  const ids = new Set<string>(seen.change_ids)
+  const ids = new Set<string>(rangeOwnChanges(seen))
   let best: ChangedRange | null = null
   let bestShared = 0
   let bestDistance = Infinity
   for (const r of ranges) {
     if (r.composition_id !== seen.composition_id) continue
-    const shared = r.change_ids.reduce((n, id) => n + (ids.has(id) ? 1 : 0), 0)
+    const shared = rangeOwnChanges(r).reduce((n, id) => n + (ids.has(id) ? 1 : 0), 0)
     if (shared === 0) continue
     const distance = Math.abs(r.t_start_us - seen.t_start_us) + Math.abs(r.t_end_us - seen.t_end_us)
     if (shared > bestShared || (shared === bestShared && distance < bestDistance)) { best = r; bestShared = shared; bestDistance = distance }
@@ -94,19 +110,22 @@ export function resolveRange(seen: ChangedRange, ranges: readonly ChangedRange[]
   return best
 }
 
-/** The ranges a range of `source` is listed among now: the Changes tab's
- *  (the user's own while its switch is on), or the selected call's. Null
- *  while that list is not fetched — it names nothing, so it drops nothing. */
+/** The ranges a range of `source` is among now: what the review bands of the
+ *  timeline on screen paint — a selected call's while its highlight is up,
+ *  else the Review view's (the user's own while its switch is on) — whichever
+ *  tab the panel shows. Null while that list is not fetched — it names
+ *  nothing, so it drops nothing. */
 function rangeList(source: ChangeSource): readonly ChangedRange[] | null {
-  const a = useAgentActivity.getState()
   const r = useReview.getState()
+  const open = currentOpenComposition()?.id ?? null
+  const onScreen = (x: ChangedRange) => x.composition_id === open
   if (source === 'activity') {
-    if (a.tab !== 'activity' || r.activity === null) return []
-    return r.activity.status === 'ready' ? r.activity.highlight.ranges.map(m => m.range) : null
+    if (r.activity === null) return []
+    return r.activity.status === 'ready' ? r.activity.highlight.ranges.map(m => m.range).filter(onScreen) : null
   }
-  if (a.tab !== 'changes') return []
+  if (r.activity?.status === 'ready') return []
   if (r.view === null) return null
-  return r.view.ranges.filter(x => r.showUser || x.source !== 'user')
+  return r.view.ranges.filter(x => onScreen(x) && (r.showUser || x.source !== 'user'))
 }
 
 /** Where range `item`, last seen as `seen`, is now: undefined while its list
@@ -177,14 +196,15 @@ export function selectChange(id: string): void {
 }
 
 /** Focus changed range `range` in the list it was named from: the selected
- *  call's while its highlight is up and draws it, else the Review view's,
- *  shown in the Changes tab. Like any focus, never a seek. */
-export function selectRange(range: ChangedRange, step: EntityKey | null = null): void {
+ *  call's while its highlight is up and draws it, else the Review view's.
+ *  `show`: a press also turns the panel to the Changes tab, where the
+ *  Review view's rows are; a walk leaves the panel as it is. Like any focus,
+ *  never a seek. */
+export function selectRange(range: ChangedRange, step: EntityKey | null = null, show = true): void {
   const activity = useReview.getState().activity
   const key = rangeKey(range)
-  const own = useAgentActivity.getState().tab === 'activity' && activity?.status === 'ready' &&
-    activity.highlight.ranges.some(m => rangeKey(m.range) === key)
-  if (!own) useAgentActivity.setState({ tab: 'changes' })
+  const own = activity?.status === 'ready' && activity.highlight.ranges.some(m => rangeKey(m.range) === key)
+  if (!own && show) useAgentActivity.setState({ tab: 'changes' })
   setReviewFocus({ kind: 'range', source: own ? 'activity' : 'review', id: key, range, step })
 }
 
@@ -202,11 +222,16 @@ export function listedOrder(view: ReviewView | null, showUser: boolean, rootId: 
   return groupChanges(view.unreviewed, showUser ? view.user : [], rootId).flatMap(g => g.rows.map(row => row.change.id))
 }
 
-/** A range's changes in stepping order: the Changes tab's row order (`listed`)
- *  for a range of the Review view; a call's changes have no rows, so the
- *  range's own order. */
+/** A range's own changes (`rangeOwnChanges`) in stepping order: for a range
+ *  of the Review view, those with a row, in the Changes tab's row order
+ *  (`listed`) — a change it does not list, as the user's own with the switch
+ *  off, is no step; a call's changes have no rows, so the range's order. */
 export function rangeStepsIn(range: ChangedRange, source: ChangeSource, listed: readonly string[]): EntityKey[] {
-  return source === 'activity' ? [...range.change_ids] : orderSteps(range.change_ids, listed)
+  const own = rangeOwnChanges(range)
+  if (source === 'activity') return [...own]
+  const rows = new Set(listed)
+  const shown = own.filter(id => rows.has(id))
+  return orderSteps(shown.length > 0 ? shown : own, listed)
 }
 
 
@@ -253,6 +278,8 @@ useAgentActivity.subscribe((s, prev) => {
 useReview.subscribe((s, prev) => {
   if (s.view !== prev.view || s.showUser !== prev.showUser || s.activity !== prev.activity) reconcile(false)
 })
+// Another timeline on screen paints other ranges.
+useCompositionAnchorStore.subscribe((s, prev) => { if (s.focusedId !== prev.focusedId) reconcile(false) })
 
 /** How a clip is outlined for the focus: the focused tack follows it, the
  *  focused change or range covers it, or the hovered change row does. */
@@ -309,7 +336,7 @@ function tackWash(t: TackView): FocusWash | null {
  *  washes its baseline footprint as historical. Historical footprints of a
  *  modified entity are shown as separate baseline frames. A changed range
  *  (`range`, where the focused one is now) washes its own span and outlines
- *  every change it lists; stepped to one of them, it paints that change as a
+ *  its own changes (`rangeOwnChanges`); stepped to one of them, it paints that change as a
  *  focused change does over a fainter wash of the range. Other entities are
  *  never selected through spatial or causal relationships. */
 export function buildFocusPaint(
@@ -368,7 +395,7 @@ export function buildFocusPaint(
       focusChange(stepped)
     } else {
       washes.push(span)
-      for (const id of range.change_ids) {
+      for (const id of rangeOwnChanges(range)) {
         spotlit.add(id)
         const c = changeOf({ kind: 'change', source: focus.source, id })
         if (c) outline(c, 'change')

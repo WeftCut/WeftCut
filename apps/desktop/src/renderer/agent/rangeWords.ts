@@ -26,7 +26,11 @@ export function rangeLine(r: ChangedRange, t: Translate): string {
     const sound = r.sound_role ? t(`audio_roles.${r.sound_role}`, {}) : t('changes.range.sound', {})
     const key = r.sound_lag_us >= 0 ? 'changes.range.sound_later' : 'changes.range.sound_earlier'
     notes.push(t(key, { sound, lag: seconds(Math.abs(r.sound_lag_us), t) }))
-  } else if (r.sync_offset_us !== undefined) notes.push(t('changes.range.sync', { offset: seconds(r.sync_offset_us, t) }))
+  } else if (r.sync_offset_us !== undefined) {
+    // Say who plays apart: picture and sound only when both are in it.
+    const key = r.sync_between === undefined ? 'changes.range.sync' : `changes.range.sync_${r.sync_between}`
+    notes.push(t(key, { offset: seconds(r.sync_offset_us, t) }))
+  }
   else if (r.only === 'audio' || r.only === 'picture') notes.push(t(`changes.range.only_${r.only}`, {}))
   if (r.source === 'user') notes.push(t('changes.range.user', {}))
   else if (r.includes_user) notes.push(t('changes.range.includes_user', {}))

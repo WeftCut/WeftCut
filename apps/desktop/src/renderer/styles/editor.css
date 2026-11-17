@@ -294,7 +294,8 @@
 .ruler-range-added { --range-hue: var(--review-added); }
 .ruler-range-removed { --range-hue: var(--review-removed); }
 .ruler-range[data-user] { --range-hue: var(--muted-foreground); opacity: 0.6; }
-.ruler-range[data-hovered] { background: color-mix(in srgb, var(--range-hue) 22%, transparent); }
+/* Raised by its panel row under the pointer, or by the pointer itself. */
+.ruler-range[data-hovered], .ruler-range:hover { background: color-mix(in srgb, var(--range-hue) 22%, transparent); }
 .ruler-range[data-selected] { opacity: 1; background: color-mix(in srgb, var(--range-hue) 30%, transparent); }
 /* Out of sync (`data-sync`, RulerRanges): a tick at the onset, where the
    eye should land, and ⇄ beside it when the range has room. Only out of
@@ -327,7 +328,7 @@
     repeating-linear-gradient(90deg, var(--range-hue) 0 calc(4 * var(--ui-px)), transparent 0 calc(7 * var(--ui-px))) left bottom / 100% calc(2 * var(--ui-px)) no-repeat,
     color-mix(in srgb, var(--range-hue) var(--wash), transparent);
 }
-.ruler-range[data-sync="loose"][data-hovered] { --wash: 8%; }
+.ruler-range[data-sync="loose"][data-hovered], .ruler-range[data-sync="loose"]:hover { --wash: 8%; }
 .ruler-range[data-sync="loose"][data-selected] { --wash: 14%; }
 .ruler-range[data-cut] {
   top: auto;

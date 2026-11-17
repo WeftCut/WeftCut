@@ -41,7 +41,8 @@ relative timing.
 - **A modified range qualifies its sync.** Where the layers playing in it
   moved by different amounts, it states the largest spread, the sound's lag
   against the picture when all sound moved as one and all picture as one, and
-  that sound's role. Bound sync is broken (`sync_bound`) when members of one
+  that sound's role; when what plays apart is all picture or all sound, it
+  says which, so it never speaks of sound where none is. Bound sync is broken (`sync_bound`) when members of one
   link, or dialogue and picture, play apart. It is *out of sync* only
   (`only: 'sync'`) when every layer playing on either side is the same layer
   playing the same content with the same values elsewhere on the other side,
@@ -66,15 +67,20 @@ relative timing.
   every modified range alike. A press there still scrubs; the hover names the range.
 - **A range is reviewed as a whole.** A double press on the ruler, or a press
   on the mini timeline's band, focuses the range itself, not one of its
-  changes; after every recompute it is found again by the changes it shares
-  (most shared, then nearest span) and goes when none is left. The panel heads
+  changes; after every recompute it is found again by the changes of its own
+  it shares (its layers and transitions, never a composition's track order or
+  a role's gain, which every range they play in lists; most shared, then
+  nearest span) and goes when none is left. It is the film's, not a row's: it
+  stays while the bands of the timeline on screen paint it, whichever tab the
+  panel shows, and goes with another timeline. The panel heads
   its framed rows with one flat bar: play, the range's line, which of the
   timeline's ranges it is between the way to its neighbours, close. A press on
   a framed row points at that change with the range kept as context; Esc
   steps back, then lets go. Alt+↑/↓ walk the ranges of the timeline on
   screen without wrapping, and unlike a focus they seek: the playhead parks on
   the range's start, a cut point on the cut. A walk names where it landed (or
-  that none is left that way) in the status line and never opens the panel. Shift+Space plays the focused
+  that none is left that way) in the status line and leaves the panel as it
+  is. Shift+Space plays the focused
   range, else the one under or after the playhead, from 1 s before it to
   0.5 s after (a cut point 2 s either side); the transport pauses there, any
   play, pause, seek or scrub drops that stop, and in and out points are left
@@ -87,7 +93,8 @@ relative timing.
   modified change ("out of sync only"): the clip itself plays what it did, and
   the ruler already marks the relation. Weight is read from `change_ids`,
   never from time overlap, and never hides, reorders or counts a change. The
-  stat gains how many ranges there are to review and how long they run. Removed clips keep a track ghost only where
+  stat gains how many ranges of the film there are to review and how long
+  they run: the root's, which already hold what each Group shows. Removed clips keep a track ghost only where
   their track is empty now. A selected activity's ranges are found between its
   own snapshots and placed where that content plays now.
 - Not on MCP yet.

@@ -116,6 +116,9 @@ export interface ChangedRange {
   sound_lag_us?: number
   /** The audio role of that sound when it is one role. */
   sound_role?: 'dialogue' | 'music' | 'sfx' | 'voiceover'
+  /** The layers apart are all of one kind: pictures against pictures, or
+   *  sounds against sounds. Absent when picture and sound play apart. */
+  sync_between?: 'picture' | 'sound'
   /** Bound sync is broken: members of one link (`Composition.links`) play
    *  apart, or dialogue-role audio plays apart from picture. */
   sync_bound?: true

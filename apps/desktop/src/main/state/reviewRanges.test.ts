@@ -105,6 +105,17 @@ describe('diffRanges', () => {
       expect(sync(rs)).toEqual([[2, 8, 'sync', 2 * S, 2 * S, 'music', undefined]])
     })
 
+    it('says which kind plays apart when it is one kind, and only then', () => {
+      const s = setupD()
+      // The bed becomes a B-roll over all four clips: picture against picture.
+      const broll = produce(s.p, d => { layer(d, s.bed).params = videoClipParams(VIDEO, 40 * S, 48 * S) })
+      const pictures = ranges(broll, produce(broll, d => rippleB(d, s)))
+      expect(sync(pictures)).toEqual([[2, 8, 'sync', 2 * S, undefined, undefined, undefined]])
+      expect(pictures[0]!.sync_between).toBe('picture')
+      // Picture against the music bed names neither kind alone.
+      expect(ranges(s.p, produce(s.p, d => rippleB(d, s)))[0]!.sync_between).toBeUndefined()
+    })
+
     it('marks the sync bound when linked layers play apart', () => {
       const s = setupD()
       applyLinksCreate(s.p, s.ids, [s.c, s.d, s.bed], false)

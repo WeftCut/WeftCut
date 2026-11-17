@@ -75,7 +75,7 @@ export function nextRange(
  *
  *  It answers with the status line's words, as a walk usually runs with the
  *  panel closed: which range it landed on and what it is, or that there is
- *  none further that way. Never opens the panel. */
+ *  none further that way. Never opens the panel nor turns its tab. */
 export function walkChangedRange(dir: 1 | -1): CommandOutcome | undefined {
   const comp = currentOpenComposition()
   if (comp === null) return undefined
@@ -89,8 +89,9 @@ export function walkChangedRange(dir: 1 | -1): CommandOutcome | undefined {
     return { message: dir === 1 ? 'No later changed range' : 'No earlier changed range', i18n_key: key }
   }
   // Seek first: the focus's reveal then scrolls to the range the playhead is on.
+  // The panel keeps its tab: the status line is the walk's answer.
   seekToClamped(focusedRootUs(next.t_start_us))
-  selectRange(next)
+  selectRange(next, null, false)
   const index = ranges.findIndex(r => rangeKey(r) === rangeKey(next)) + 1
   const line = rangeLine(next, i18n.t.bind(i18n) as unknown as Translate)
   return {
