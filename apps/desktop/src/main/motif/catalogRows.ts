@@ -8,7 +8,7 @@ import { listMotifsInner, motifRevision, motifToPayload, type BuiltinMotif } fro
 import { normalize } from './motifPackage'
 import { type LibraryPackage, type ProjectMotifStore } from './projectStore'
 import type { UserMotifStore } from './store'
-import { effectiveState, type MotifTrustView } from './trust'
+import { effectiveState, type ProjectTrustView } from './trust'
 
 export type MotifGroup = 'project' | 'library'
 
@@ -70,9 +70,9 @@ export function projectMotifState(entry: ProjectMotifEntry, revision: string | n
  *  manifest, page and revision like an `ok` one, with its `diagnostic`:
  *  it is listed, never rendered. */
 export function projectRows(project: ProjectMotifStore, table: Readonly<ProjectMotifs>, store: UserMotifStore,
-  builtins: readonly BuiltinMotif[], trust: MotifTrustView): Record<string, unknown>[] {
+  builtins: readonly BuiltinMotif[], trust: ProjectTrustView): Record<string, unknown>[] {
   return Object.entries(table).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([id, entry]) => {
-    const folder = effectiveState(project.status(id), trust)
+    const folder = effectiveState(id, project.status(id), trust)
     const library = libraryHeadOfLineage(store, builtins, entry.uid)
     const revision = folder.revision ?? entry.revision
     const state = projectMotifState(entry, revision, library, () => project.packageFiles(id))

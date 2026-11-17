@@ -116,6 +116,9 @@ describe('what seeing a revision earns', () => {
     expect(trustOnSeen(r, 'created', null, known([]))).toBe('trust')
     expect(trustOnSeen(r, 'created', null, known([], [r]))).toBeNull()
     expect(trustOnSeen(r, 'imported', null, known([]))).toBeNull()
+    expect(trustOnSeen(r, 'imported', base, known([]))).toBeNull()
+    expect(trustOnSeen(r, 'imported', base, known([base]))).toBe('trust')
+    expect(trustOnSeen(r, 'imported', base, known([base], [r]))).toBeNull()
     expect(trustOnSeen(r, 'edited-while-open', base, known([base]))).toBe('trust')
     expect(trustOnSeen(r, 'edited-while-open', base, known([]))).toBeNull()
     expect(trustOnSeen(r, 'edited-while-open', base, known([base], [r]))).toBeNull()
@@ -152,6 +155,36 @@ describe('what seeing a revision earns', () => {
     // An untrusted revision never has a trusted child.
     const edited = project.applyChanges(fromZip.id, fromZip.entry.revision!, new Map([['a.txt', Buffer.from('a')]]))
     expect(trust.trusted(edited)).toBe(false)
+  })
+
+  it('trusts a ZIP this library exported, under its own id and under another when the project holds its own', () => {
+    install('lower')
+    const pkg = libraryPackage(library, [], 'lower')!
+    const zip = path.join(root, 'lower.zip')
+    writeFileSync(zip, encodeMotifZip('lower', pkg.files, pkg.uid))
+    const first = project.create({ kind: 'zip', path: zip }, {})
+    expect(first.id).toBe('lower')
+    expect(trust.trusted(first.entry.revision!)).toBe(true)
+    // Renamed beside it, the copy's manifest names its new id: other bytes,
+    // trusted for the bytes it came as.
+    const beside = project.create({ kind: 'zip', path: zip }, { [first.id]: first.entry })
+    expect(beside.id).not.toBe('lower')
+    expect(beside.entry.revision).not.toBe(first.entry.revision)
+    expect(trust.trusted(beside.entry.revision!)).toBe(true)
+    trust.flush()
+    expect(JSON.parse(readFileSync(file(), 'utf8')).revisions[beside.entry.revision!][1], 'recorded as this library\'s').toBe('placed')
+  })
+
+  it('trusts a library version folder brought in as a directory beside its placed copy, and no folder of other bytes', () => {
+    install('lower')
+    const placed = project.place(libraryPackage(library, [], 'lower')!, {})
+    const fromLibrary = project.create({ kind: 'directory', path: path.join(root, 'library', 'lower', 'v1') }, { [placed.id]: placed.entry })
+    expect(fromLibrary.id).not.toBe(placed.id)
+    expect(trust.trusted(fromLibrary.entry.revision!)).toBe(true)
+    const outside = path.join(root, 'Downloads', 'lower')
+    received(outside, 'Lower', 'not the library\'s')
+    const foreign = project.create({ kind: 'directory', path: outside }, { [placed.id]: placed.entry, [fromLibrary.id]: fromLibrary.entry })
+    expect(trust.trusted(foreign.entry.revision!)).toBe(false)
   })
 
   it('hears a kept folder holding other bytes than the copy as found, not placed', () => {

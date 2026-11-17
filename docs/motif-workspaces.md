@@ -75,7 +75,8 @@ The id is made from the Motif's name and numbered when the project holds it.
 - zip: an exported package. It keeps the id and the lineage it carries; an id
   the project holds gets the lineage suffix instead of a number. It is
   untrusted until the user trusts it, unless this machine already trusts
-  those exact bytes.
+  those exact bytes, as it does a ZIP exported from this library, under
+  whichever id the copy takes.
 - directory: copies a package folder once; later edits to the source folder
   do not reach the project, and the copy is untrusted like a ZIP. A folder you
   wrote under the project's `Motifs/` yourself is adopted in place instead,

@@ -37,7 +37,7 @@ import type { BuiltinMotif } from '../motif/authoring'
 import type { MotifResolver } from '../motif/resolver'
 import { libraryPackage, libraryPackageOfLineage, type MotifState } from '../motif/projectStore'
 import { ProjectMotifRecords, projectMotifAccess } from '../motif/projectRecords'
-import { ALL_TRUSTED, effectiveState, type MotifTrust } from '../motif/trust'
+import { ALL_TRUSTED, effectiveState, type MotifTrust, type ProjectTrustView } from '../motif/trust'
 import { motifTrustSummary } from '../motif/trustSummary'
 import { revisionConflict } from '../motif/refusal'
 import type { MediaItem } from './model'
@@ -679,7 +679,15 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     },
   }
 
-  const motifTrust = deps.motifTrust ?? ALL_TRUSTED
+  // One judge for every surface: the resolver's, which reads an edit made on
+  // disk while open against the revision this table records.
+  resolver?.recordedBy((id) => {
+    const motifs = actor.snapshot().motifs
+    return Object.hasOwn(motifs, id) ? motifs[id]!.revision : null
+  })
+  const motifTrust: ProjectTrustView = resolver
+    ? { trusted: (revision, id) => resolver.projectTrusted(id, revision) }
+    : deps.motifTrust ?? ALL_TRUSTED
 
   /** The open project's Motif `id` the user is looking at in the Motifs
    *  panel: its store and the files its folder holds now. */
@@ -697,7 +705,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     const { id, project } = trustSubject(args)
     const snapshot = project.snapshot(id)
     if (!snapshot) throw new Error(`Motif '${id}' has no folder in this project`)
-    return { motif_id: id, revision: snapshot.revision, trusted: motifTrust.trusted(snapshot.revision),
+    return { motif_id: id, revision: snapshot.revision, trusted: motifTrust.trusted(snapshot.revision, id),
       summary: motifTrustSummary(snapshot.revision, () => snapshot.files) }
   }
 
@@ -745,7 +753,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     if (!project) return []
     const out: UnavailableMotif[] = []
     for (const id of Object.keys(actor.snapshot().motifs).sort()) {
-      const state = effectiveState(project.status(id), motifTrust)
+      const state = effectiveState(id, project.status(id), motifTrust)
       if (state.status === 'untrusted') out.push({ motif_id: id, status: state.status, diagnostic: state.diagnostic!, revision: state.revision! })
       else if (state.status !== 'ok') out.push({ motif_id: id, status: state.status, diagnostic: state.diagnostic ?? `Motifs/${id}/ is missing` })
     }

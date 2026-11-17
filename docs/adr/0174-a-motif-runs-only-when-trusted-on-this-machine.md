@@ -43,8 +43,8 @@ ships with it.
   | --- | --- | --- |
   | `placed` | a library Motif is copied in | trusted, recorded even though the library holds it, so it stays trusted after that library version is deleted |
   | `created` | `create_motif` empty, a copy of a trusted Motif, or a folder under `Motifs/` adopted in place | trusted, unless these bytes were found untrusted at an open |
-  | `imported` | `create_motif` from a ZIP or a directory outside `Motifs/` (the panel's Import Motif too) | nothing: trusted only if these bytes already are |
-  | `edited-while-open` | the watcher, the source panel or `update_motif_files` records a new revision of a tabled Motif | trusted when the revision it was made from is, and the result was not found untrusted at an open |
+  | `imported` | `create_motif` from a ZIP or a directory outside `Motifs/` (the panel's Import Motif too) | trusted when the files as they came (their revision under the id they carry) are, as a ZIP this library exported is even when the project holds that id and the copy takes another; otherwise nothing |
+  | `edited-while-open` | the watcher, the source panel or `update_motif_files` records a new revision of a tabled Motif, or any surface reads one the watcher has not heard yet (`MotifResolver.projectTrusted`, from the revision the table records) | trusted when the revision it was made from is, and the result was not found untrusted at an open |
   | `opened` | the project becomes the open one | remembered as found when not trusted |
 
   A materialization that kept a folder holding other bytes than it was given
@@ -59,7 +59,8 @@ ships with it.
   trusted as `untrusted`, with its manifest and revision, and the protocol
   (`params.html` included), capture hosts, previews, bakes, covers and pins
   all resolve through it, so none loads one. Every surface that lists Motifs
-  overlays the same state (`effectiveState`): `list_motifs` rows,
+  overlays the same state (`effectiveState`, judged by the resolver's
+  `projectTrusted`): `list_motifs` rows,
   `project://session` (`motifs.untrusted`, each with the revision to trust),
   the export refusal (`MotifUnavailable` naming it). `preview_motif`,
   `create_motif` `copy`, `install_motif` and the user's Save to library refuse

@@ -26,7 +26,7 @@ import { libraryPackage, type CreateSource, type ProjectMotifStore } from './pro
 import { LibraryPublications, type Fork, type PublicationSource } from './publications'
 import { MotifRefusal, revisionConflict } from './refusal'
 import type { UserMotifStore } from './store'
-import { effectiveState, UNTRUSTED_DIAGNOSTIC, type MotifTrustView } from './trust'
+import { effectiveState, UNTRUSTED_DIAGNOSTIC, type ProjectTrustView } from './trust'
 
 export interface MotifToolDeps {
   store: UserMotifStore
@@ -34,7 +34,7 @@ export interface MotifToolDeps {
   /** The open project's Motifs; null with none open. */
   project: () => ProjectMotifStore | null
   /** Which project revisions may run on this machine. */
-  trust: MotifTrustView
+  trust: ProjectTrustView
   /** The open project's recorded state: its Motif table, and the commits
    *  that change it. */
   actor: Pick<ActorHandle, 'snapshot' | 'dispatch'>
@@ -98,7 +98,7 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
     const snapshot = state.status === 'ok' ? project.snapshot(id) : null
     if (!snapshot)
       throw new MotifRefusal(`Motif '${id}' is ${state.status}: ${state.diagnostic ?? `Motifs/${id}/ is gone`}`, { error: 'MotifUnavailable', id, status: state.status })
-    if (untrusted === 'refuse' && !deps.trust.trusted(snapshot.revision)) throw untrustedRefusal(id, snapshot.revision)
+    if (untrusted === 'refuse' && !deps.trust.trusted(snapshot.revision, id)) throw untrustedRefusal(id, snapshot.revision)
     return { project, entry, snapshot }
   }
   const libraryMotif = (id: string) => {
@@ -155,7 +155,7 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
         const { project, entry } = projectMotif(id)
         // An untrusted Motif is read too: its text is how an agent looks
         // before the user trusts it, and nothing read here runs.
-        const state = effectiveState(project.status(id), deps.trust)
+        const state = effectiveState(id, project.status(id), deps.trust)
         const extra = { group: 'project', status: state.status, from: entry.from, path: project.folder(id), ...(state.diagnostic ? { diagnostic: state.diagnostic } : {}) }
         if (state.status === 'missing') throw new MotifRefusal(`Motif '${id}' has no folder in this project (Motifs/${id}/)`, { error: 'MotifUnavailable', id, status: 'missing' })
         // An invalid folder is read too: its files are how it gets fixed.

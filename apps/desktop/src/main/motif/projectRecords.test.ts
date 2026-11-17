@@ -361,12 +361,13 @@ describe('Motif trust across an open', () => {
     const trust = new MotifTrust(path.join(root, 'trust.json'), () => [])
     const resolver = new MotifResolver(library, [], trust)
     resolver.onRevisionSeen((_id, revision, cause, base) => trust.seen(revision, cause, base))
+    resolver.recordedBy(id => Object.hasOwn(entries(), id) ? entries()[id]!.revision : null)
     const reopen = () => {
       project = new ProjectMotifStore(projectDir)
       resolver.setProject(project)
     }
     reopen()
-    return { trust, reopen }
+    return { trust, reopen, resolver }
   }
   afterEach(() => { trusted?.flush(); trusted = null })
   let trusted: MotifTrust | null = null
@@ -417,6 +418,51 @@ describe('Motif trust across an open', () => {
     records.folderChanged('lower', project.status('lower'))
     expect(entries().lower!.revision).toBe(project.status('lower').revision)
     expect(trust.trusted(entries().lower!.revision!)).toBe(true)
+  })
+
+  it('trusts an edit on disk made while the project is open when it is read, before the watcher hears it', () => {
+    const { trust, resolver } = trusting(); trusted = trust
+    install('lower', 'v1')
+    place('lower')
+    records.opened()
+    edit('lower', 'while open')
+    const written = project.status('lower').revision!
+    expect(resolver.resolve('lower')).toMatchObject({ status: 'ok', revision: written })
+    expect(trust.trusted(written)).toBe(true)
+  })
+
+  it('keeps an edit made while the project was closed untrusted when it is read before the open records it', () => {
+    const { trust, reopen, resolver } = trusting(); trusted = trust
+    install('lower', 'v1')
+    place('lower')
+    edit('lower', 'while closed')
+    reopen()
+    // The table still records the trusted placed revision.
+    expect(resolver.resolve('lower').status).toBe('untrusted')
+    records.opened()
+    expect(resolver.resolve('lower').status).toBe('untrusted')
+  })
+
+  it('keeps an edit made while open from an untrusted revision untrusted when it is read', () => {
+    const { trust, reopen, resolver } = trusting(); trusted = trust
+    install('lower', 'v1')
+    place('lower')
+    edit('lower', 'while closed')
+    reopen()
+    records.opened()
+    edit('lower', 'while open')
+    expect(resolver.resolve('lower').status).toBe('untrusted')
+    expect(trust.trusted(project.status('lower').revision!)).toBe(false)
+  })
+
+  it('trusts no folder the table does not record when it is read', () => {
+    const { trust, resolver } = trusting(); trusted = trust
+    install('lower', 'v1')
+    place('lower')
+    records.opened()
+    mkdirSync(folder('stray'), { recursive: true })
+    edit('stray', 'arrived while open')
+    expect(resolver.resolve('stray').status).toBe('untrusted')
   })
 
   it('keeps a folder found under Motifs/ at the open untrusted when it is adopted', () => {

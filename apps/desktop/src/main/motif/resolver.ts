@@ -60,6 +60,7 @@ const builtinFiles = (b: BuiltinMotif) => b.files ?? [{ path: 'index.html', byte
 
 export class MotifResolver {
   private projectStore: ProjectMotifStore | null = null
+  private recorded: ((id: string) => string | null) | null = null
   /** Revision snapshots by `<scope>/<id>/<revision>`, oldest first, with
    *  their holders. The key carries no project: a revision is its bytes. */
   private readonly pinned = new Map<string, { files: Map<string, Buffer>; holders: number }>()
@@ -110,6 +111,26 @@ export class MotifResolver {
   }
   project(): ProjectMotifStore | null { return this.projectStore }
 
+  /** Where `projectTrusted` reads the revision the open project's table
+   *  records for Motif `id` (null when it records none): the actor's. */
+  recordedBy(read: (id: string) => string | null): void { this.recorded = read }
+
+  /** Whether the open project's Motif `id` may run at `revision`, its folder's
+   *  revision now. A revision not trusted yet that differs from the one the
+   *  table records is an edit made on disk while the project is open, read
+   *  before the watcher has heard it: it is judged as the watcher judges it
+   *  (`edited-while-open` from the recorded revision), so an agent's write
+   *  is never refused while the watcher waits for quiet. A revision found at
+   *  the open, an untabled folder and an untrusted base still earn nothing. */
+  projectTrusted(id: string, revision: string): boolean {
+    if (this.trust.trusted(revision)) return true
+    const base = this.recorded?.(id) ?? null
+    const project = this.projectStore
+    if (!project || base === null || base === revision || !this.trust.trusted(base)) return false
+    project.seen(id, 'edited-while-open', base)
+    return this.trust.trusted(revision)
+  }
+
   /** Listens for every revision a project store this app made sees: the open
    *  project's, and the copies an upgrade places before it opens
    *  (`legacyMigration`). Answers the unsubscribe. */
@@ -150,7 +171,7 @@ export class MotifResolver {
     try {
       const found = reader.describe(route.id)
       if (!found) return absent(missingText(route))
-      if (route.scope === 'project' && !this.trust.trusted(found.revision))
+      if (route.scope === 'project' && !this.projectTrusted(route.id, found.revision))
         return { ...route, status: 'untrusted', revision: found.revision, manifest: found.manifest, diagnostic: `Motif '${route.id}' is ${UNTRUSTED_DIAGNOSTIC}` }
       return { ...route, status: 'ok', revision: found.revision, manifest: found.manifest }
     } catch (error) {

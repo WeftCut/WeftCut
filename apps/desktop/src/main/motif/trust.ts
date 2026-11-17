@@ -37,11 +37,17 @@ export interface MotifTrustView { trusted(revision: string): boolean }
 /** Trusts everything: for a resolver or host whose test is not about trust. */
 export const ALL_TRUSTED: MotifTrustView = { trusted: () => true }
 
-/** What a project Motif's state is once trust is applied: a folder that
+/** Whether the open project's Motif `id` may run at `revision`. The app's is
+ *  `MotifResolver.projectTrusted`, which also judges an edit made while the
+ *  project is open that the watcher has not heard yet; a `MotifTrustView`
+ *  is one that ignores the id. */
+export interface ProjectTrustView { trusted(revision: string, id: string): boolean }
+
+/** What project Motif `id`'s state is once trust is applied: a folder that
  *  makes a package of an untrusted revision is `untrusted`, its revision
  *  kept. Folder states other than `ok` pass through. */
-export function effectiveState(state: MotifState, trust: MotifTrustView): MotifState {
-  if (state.status !== 'ok' || state.revision === null || trust.trusted(state.revision)) return state
+export function effectiveState(id: string, state: MotifState, trust: ProjectTrustView): MotifState {
+  if (state.status !== 'ok' || state.revision === null || trust.trusted(state.revision, id)) return state
   return { status: 'untrusted', revision: state.revision, diagnostic: UNTRUSTED_DIAGNOSTIC }
 }
 
@@ -55,7 +61,11 @@ export const UNTRUSTED_DIAGNOSTIC = 'not trusted on this machine'
  *  - `placed`: trusted, its bytes came from this machine's library.
  *  - `created`: trusted, unless the same bytes were found untrusted at an
  *    open (adopting a received folder in place makes nothing new).
- *  - `imported`: nothing; trusted only if these bytes already are.
+ *  - `imported`: trusted when the files as they came (`base`, the revision
+ *    they make under the id they carry) are, and the copy was not found
+ *    untrusted at an open: a ZIP this library exported, taken in under
+ *    another id because the project holds its own. Otherwise nothing:
+ *    trusted only if these bytes already are.
  *  - `edited-while-open`: trusted when the revision it was made from
  *    (`base`) is, and the result was not found untrusted at an open (an edit
  *    made while the project was closed, recorded late, is no edit made here).
@@ -65,7 +75,7 @@ export function trustOnSeen(revision: string, cause: RevisionCause, base: string
   switch (cause) {
     case 'placed': return 'trust'
     case 'created': return known.found.has(revision) ? null : 'trust'
-    case 'imported': return null
+    case 'imported': return base !== null && known.trusted(base) && !known.found.has(revision) ? 'trust' : null
     case 'edited-while-open': return base !== null && known.trusted(base) && !known.found.has(revision) ? 'trust' : null
     case 'opened': return known.trusted(revision) ? null : 'found'
   }
@@ -114,7 +124,8 @@ export class MotifTrust implements MotifTrustView {
   /** Applies `trustOnSeen` to a revision the open project saw. */
   seen(revision: string, cause: RevisionCause, base: string | null): void {
     const decision = trustOnSeen(revision, cause, base, { trusted: (r) => this.trusted(r), found: this.found })
-    if (decision === 'trust') this.add(revision, cause as TrustCause)
+    // An import trusted for its source's bytes is this library's, placed.
+    if (decision === 'trust') this.add(revision, cause === 'imported' ? 'placed' : cause as TrustCause)
     else if (decision === 'found') {
       this.found.delete(revision)
       this.found.add(revision)

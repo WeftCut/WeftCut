@@ -1564,6 +1564,24 @@ describe('createTsActorHost — persistence-route integration', () => {
       } finally { m.close() }
     })
 
+    it('reads an edit made on disk while the project is open as trusted on every surface, before the watcher hears it', async () => {
+      const m = motifHost({ trust: true })
+      m.host.start()
+      try {
+        await m.host.handleInvoke('project_new_workspace', publicationProject)
+        expect(m.host.actor.command('add_motif', { motifId: 'lower', tStartUs: 0 }).ok).toBe(true)
+        // An agent's own file write; `motifFolderChanged` has not run.
+        writeFileSync(nodePath.join(m.project.folder('lower'), 'index.html'), page('Lower', 'edited'))
+        const written = m.project.status('lower').revision!
+        expect(m.host.actor.snapshot().motifs.lower!.revision).not.toBe(written)
+        const rows = await m.host.handleInvoke('list_motifs', { group: 'project' }) as Array<Record<string, unknown>>
+        expect(rows.find((r) => r.id === 'lower')).toMatchObject({ status: 'ok', revision: written })
+        expect(await m.host.handleInvoke('read_motif', { motif_id: 'lower' })).toMatchObject({ status: 'ok', revision: written })
+        expect(m.host.unavailableMotifs()).toEqual([])
+        expect(m.motifResolver.gate('lower').revision).toBe(written)
+      } finally { m.close() }
+    })
+
     it('tells the renderer the catalog changed with each commit that changes the Motif table', async () => {
       const m = motifHost()
       m.host.start()

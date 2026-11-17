@@ -25,8 +25,9 @@ export const PROJECT_MOTIFS_DIR = 'Motifs'
  *  the project's `Motifs/`, changed while the project was open here, or
  *  found when it was opened (Motif trust, `trust.ts`). */
 export type RevisionCause = 'placed' | 'created' | 'imported' | 'edited-while-open' | 'opened'
-/** `base` is the revision an edit was made from (`edited-while-open`); null
- *  for every other cause. */
+/** `base` is the revision an edit was made from (`edited-while-open`), or
+ *  the one an import's files made as they came, under the id they carried
+ *  (`imported`); null for every other cause. */
 export type RevisionListener = (id: string, revision: string, cause: RevisionCause, base: string | null) => void
 
 /** A project Motif's folder as it stands. */
@@ -191,8 +192,9 @@ export class ProjectMotifStore {
    *  `cause`. An existing folder that makes a package is kept as it is, so
    *  copying again changes nothing; one that makes none is never written
    *  over, and its diagnostic is thrown. A kept folder holding other bytes
-   *  than `files` is heard as `opened`: it was not made by this call. */
-  materialize(id: string, files: readonly MotifFile[], cause: RevisionCause): string {
+   *  than `files` is heard as `opened`: it was not made by this call.
+   *  `base` goes to the listeners with `cause` (`RevisionListener`). */
+  materialize(id: string, files: readonly MotifFile[], cause: RevisionCause, base: string | null = null): string {
     const dir = this.folder(id)
     let wrote = false
     if (!this.present(id)) {
@@ -212,7 +214,8 @@ export class ProjectMotifStore {
       }
     }
     const revision = this.source.snapshot(dir).revision
-    this.emit(id, revision, wrote || revision === revisionOf(files, id) ? cause : 'opened')
+    const made = wrote || revision === revisionOf(files, id)
+    this.emit(id, revision, made ? cause : 'opened', made ? base : null)
     return revision
   }
 
@@ -257,11 +260,14 @@ export class ProjectMotifStore {
    *  id it carries and a taken one becomes `collisionId`. A directory that
    *  is one of this project's own Motif folders is adopted in place
    *  (`adopt`). A ZIP or another directory is heard as `imported`: its bytes
-   *  were not made here. */
+   *  were not made here. With it goes the revision its files made as they
+   *  came, under the id they carried (a directory's own name when they carry
+   *  none), so a copy of trusted bytes renamed here is judged by them. */
   create(source: CreateSource, table: Readonly<ProjectMotifs>): Placement & { path: string } {
     let files: readonly MotifFile[]
     let uid = newLineage()
     let carried: string | null = null
+    let came: string | null = null
     switch (source.kind) {
       case 'empty': files = emptyPackageFiles(source.name); break
       case 'copy': files = source.files; break
@@ -271,6 +277,7 @@ export class ProjectMotifStore {
         const own = this.ownFolder(real)
         if (own !== null) return this.adopt(own, table)
         files = readMotifDirectory(real)
+        came = revisionOf(files, declaredId(files) ?? path.basename(real))
         break
       }
       case 'zip': {
@@ -280,6 +287,7 @@ export class ProjectMotifStore {
         // A lineage the project holds already forks, as a publication does.
         if (archive.lineage && !Object.values(table).some(e => e.uid === archive.lineage)) uid = archive.lineage
         carried = declaredManifest(files).input.id ?? null
+        if (carried !== null) came = revisionOf(files, carried)
         break
       }
       default: throw new Error('Unknown Motif source kind')
@@ -294,7 +302,8 @@ export class ProjectMotifStore {
       if (isTaken(id)) throw new Error(`Motif id '${id}' is taken in this project`)
     } else id = assignUniqueId(name, uid, taken.map(t => t.toLowerCase()))
     const pkg = normalize(files, id, 'own')
-    const revision = this.materialize(id, pkg.files, source.kind === 'zip' || source.kind === 'directory' ? 'imported' : 'created')
+    const imported = source.kind === 'zip' || source.kind === 'directory'
+    const revision = this.materialize(id, pkg.files, imported ? 'imported' : 'created', imported ? came : null)
     return { id, entry: { uid, revision, from: null }, copied: true, path: this.folder(id) }
   }
 
@@ -366,4 +375,10 @@ export class ProjectMotifStore {
 /** The revision `files` make under `id`; null when they make no package. */
 function revisionOf(files: readonly MotifFile[], id: string): string | null {
   try { return declaredPackage(files, id).revision } catch { return null }
+}
+
+/** The id `files`' manifest carries; null when they carry none or make no
+ *  package. */
+function declaredId(files: readonly MotifFile[]): string | null {
+  try { return declaredManifest(files).input.id ?? null } catch { return null }
 }

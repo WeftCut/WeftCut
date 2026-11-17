@@ -1,78 +1,32 @@
 // e2e gate: the project folder holds what it renders (ADR 0173, spec
 // § Project Motifs). Each test is one acceptance line of the cutover:
 //   - a project copied to a profile whose library holds none of its Motifs
-//     plays and exports as it did where it was made;
+//     plays and exports as it did where it was made, once that profile
+//     trusts them (motif-trust.spec.ts has trust itself);
 //   - a library Motif replaced changes no project that copied it, and that
 //     project's row says an update is available;
 //   - an edit under Motifs/<id>/ re-renders that Motif's frames and no other's;
 //   - a Motif whose folder is gone shows the error placeholder, and an export
 //     that renders it is refused, naming it.
 
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect } from '@playwright/test'
 import { cpSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { analyze } from '../lib/analyze.mjs'
 import { readMotifDirectory } from '../../src/main/motif/packageFiles'
 import type { MotifBakeSnapshot } from '../../src/shared/motifs/baking'
 import { hashCacheKey } from '../../src/shared/motifs/cacheKey'
 import { driveExport, invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
-import { createMotif, motifPage, saveMotifToLibrary, seedLibraryMotif } from './helpers/motif'
+import {
+  addLayer, connectMcp, createMotif, fillBody, fillPage, motifPage, projectRow, projectRows, reopen, rgb,
+  saveMotifToLibrary, seedLibraryMotif, settledSamples, trustMotif, type Sample,
+} from './helpers/motif'
 
-interface Sample { r: number; g: number; b: number; a: number }
-interface ProjectRow { id: string; status: string; state: string; path: string; revision: string | null; from: { version: number } | null }
 interface CaptureDiagnostics { lanes: { motifId: string; captures: number }[] }
 
-const seek = (page: Page, us: number) => page.evaluate(us => (window as any).__weftcutTest.weftcutSeekUs(us), us)
-const sampleAt = (page: Page, x: number, y: number) =>
-  page.evaluate(([x, y]) => (window as any).__weftcutTest.weftcutSampleComposite(x, y), [x, y] as const) as Promise<Sample>
-const rgb = (s: Sample) => [s.r, s.g, s.b]
-
-/** The composite at `points` once the preview shows `want` there (the preview
- *  mounts and captures asynchronously); seeks to `us` on every try. */
-async function settledSamples(page: Page, us: number, points: readonly (readonly [number, number])[],
-  want: (samples: Sample[]) => boolean, label: string): Promise<Sample[]> {
-  let last = 'no sample' as Sample[] | string
-  await expect.poll(async () => {
-    try {
-      await seek(page, us)
-      last = await Promise.all(points.map(([x, y]) => sampleAt(page, x, y)))
-      return want(last)
-    } catch (error) { last = String(error); return false }
-  }, { timeout: 60_000, message: `${label}: ${JSON.stringify(last)}` }).toBe(true)
-  return last as Sample[]
-}
-
-/** The open project's Motif rows. */
-const projectRows = (page: Page) => invokeCmd<ProjectRow[]>(page, 'list_motifs', { group: 'project' })
-const projectRow = async (page: Page, id: string) => (await projectRows(page)).find(row => row.id === id)
 /** A Motif folder's files and their bytes. */
 const contents = (dir: string) => readMotifDirectory(dir).map(f => [f.path, f.bytes.toString('base64')])
-
-async function reopen(page: Page, projectPath: string): Promise<void> {
-  await waitForHook(page, 'motifReopenProject')
-  await page.evaluate(p => (window as any).__weftcutTest.motifReopenProject({ path: p }), projectPath)
-}
-
-const addLayer = (page: Page, motifId: string, durationUs: number) =>
-  page.evaluate(a => (window as any).__weftcutTest.addMotifLayer(a), { motifId, durationUs }) as Promise<string>
-
-/** A Motif body that fills `rect` ([x, y, w, h]) of its canvas with `color`
- *  and leaves the rest transparent: whole-pixel edges, so a sample inside
- *  reads the colour exactly. */
-const fillBody = (rect: readonly [number, number, number, number], color: string) =>
-  `<div style="position:absolute;left:${rect[0]}px;top:${rect[1]}px;width:${rect[2]}px;height:${rect[3]}px;background:${color}"></div>`
-  + `<script>motif.define({ frame() {} })</script>`
-const fillPage = (rect: readonly [number, number, number, number], color: string) =>
-  `<!doctype html><html><body style="margin:0;background:transparent">${fillBody(rect, color)}</body></html>`
-
-async function connectMcp(page: Page): Promise<Client> {
-  const info = await page.evaluate(() => (window as any).api.mcp.getInfo())
-  const client = new Client({ name: 'e2e-project-motifs', version: '0' }, { capabilities: {} })
-  await client.connect(new StreamableHTTPClientTransport(new URL(info.url), { requestInit: { headers: { Authorization: `Bearer ${info.bearer_token}` } } }))
-  return client
-}
 
 test('a project copied to a profile whose library lacks its Motifs plays and exports identically @serial', async () => {
   test.skip(process.env.WEFTCUT_E2E_NO_EXPORT === '1', 'Video encoding unavailable on this runner')
@@ -126,7 +80,12 @@ test('a project copied to a profile whose library lacks its Motifs plays and exp
     await reopen(running.page, copy)
     const rows = await projectRows(running.page)
     expect(rows.map(row => row.id).sort()).toEqual(ids)
-    expect(rows.filter(row => row.status !== 'ok'), 'every Motif renders from the copied folder').toEqual([])
+    // This machine trusts the built-in's bytes; the two made on the first
+    // profile wait for the user's Trust (ADR 0174), then render.
+    expect(rows.filter(row => row.status !== 'ok').map(row => [row.id, row.status]).sort(),
+      'only the Motifs made elsewhere ask for trust').toEqual(ids.filter(id => id !== 'countdown').map(id => [id, 'untrusted']))
+    for (const row of rows.filter(row => row.status === 'untrusted')) await trustMotif(running.page, row.id)
+    expect((await projectRows(running.page)).filter(row => row.status !== 'ok'), 'every Motif renders from the copied folder').toEqual([])
     const played = await settledSamples(running.page, 500_000, points, columns, 'the copy shows both columns')
     expect(played).toEqual(made)
     const exported = await driveExport(running.page, { outputAbsPath: path.join(out, 'copied.mp4') }, { hook: 'exportTimeline', timeout: 240_000 })
@@ -272,7 +231,7 @@ test('a Motif whose folder is gone shows the error placeholder, and an export th
     await settledSamples(page, 500_000, inDisc, ([s]) => s!.r > 200 && s!.g < 150 && s!.b < 150 && s!.a === 255,
       'the missing Motif shows the error placeholder')
 
-    client = await connectMcp(page)
+    client = await connectMcp(page, 'e2e-project-motifs')
     const session = await client.readResource({ uri: 'project://session' })
     const missing = JSON.parse((session.contents[0] as { text: string }).text).motifs.missing as Array<{ motif_id: string }>
     expect(missing.map(m => m.motif_id)).toEqual([id])
