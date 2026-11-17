@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { BUILTIN_MANIFESTS, builtinLineage, composeMotifHtml, type Manifest } from '../../shared/motifs/catalog'
@@ -281,6 +281,38 @@ describe('revisions seen', () => {
       ['note', note, 'edited-while-open', null],
       ['restored', restored, 'edited-while-open', null],
       ['written', written, 'created', null],
+    ])
+  })
+
+  it('hears a copy or move of a folder found untrusted as found, under any name, and new content as made here', () => {
+    const seen: [string, RevisionCause][] = []
+    project.onRevisionSeen((id, _revision, cause) => seen.push([id, cause]))
+    for (const [id, name] of [['received', 'Received'], ['Evil', 'Evil'], ['lower', 'Lower']]) {
+      mkdirSync(folder(id), { recursive: true })
+      writeFileSync(path.join(folder(id), 'index.html'), page(name))
+    }
+    // Only `lower` holds a revision trusted here.
+    const lower = project.status('lower').revision!
+    project.open(revision => revision === lower)
+    seen.length = 0
+    renameSync(folder('Evil'), folder('evil'))
+    cpSync(folder('received'), folder('received-2'), { recursive: true })
+    cpSync(folder('lower'), folder('lower-2'), { recursive: true })
+    cpSync(folder('received'), folder('tweaked'), { recursive: true })
+    writeFileSync(path.join(folder('tweaked'), 'index.html'), page('Received', 'motif.define({frame(t){ }})'))
+    mkdirSync(folder('fresh'))
+    writeFileSync(path.join(folder('fresh'), 'index.html'), page('Fresh'))
+    for (const id of ['evil', 'received-2', 'lower-2', 'tweaked', 'fresh']) project.observe(id)
+    // Moved on again, a copy is still the content found.
+    renameSync(folder('received-2'), folder('received-3'))
+    project.observe('received-3')
+    expect(seen).toEqual([
+      ['evil', 'opened'],
+      ['received-2', 'opened'],
+      ['lower-2', 'created'],
+      ['tweaked', 'created'],
+      ['fresh', 'created'],
+      ['received-3', 'opened'],
     ])
   })
 

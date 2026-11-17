@@ -83,7 +83,7 @@ The id is made from the Motif's name and numbered when the project holds it.
   wrote under the project's `Motifs/` yourself is adopted in place instead,
   under its own name, which must be lowercase letters, digits and single
   dashes; written while the project is open, it was made here and is
-  trusted.
+  trusted, unless it is a copy or move of a Motif found untrusted.
 
 A package folder contains index.html and a manifest.json (authoritative when
 present), or an HTML manifest island, plus all runtime assets. Use a

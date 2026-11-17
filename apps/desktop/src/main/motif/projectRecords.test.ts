@@ -489,6 +489,43 @@ describe('Motif trust across an open', () => {
     expect(trust.trusted(adopted.entry.revision!)).toBe(true)
   })
 
+  it('keeps a copy or move of a folder found untrusted at the open untrusted, whatever it is named', () => {
+    mkdirSync(folder('received'), { recursive: true })
+    edit('received', 'from another machine')
+    mkdirSync(folder('Evil'), { recursive: true })
+    edit('Evil', 'from another machine')
+    const { trust, resolver } = trusting(); trusted = trust
+    records.opened()
+    renameSync(folder('Evil'), folder('evil'))
+    expect(resolver.resolve('evil').status).toBe('untrusted')
+    cpSync(folder('received'), folder('received-2'), { recursive: true })
+    expect(resolver.resolve('received-2').status).toBe('untrusted')
+    // Moved again, the copy is still the bytes found.
+    renameSync(folder('received-2'), folder('received-3'))
+    expect(resolver.resolve('received-3').status).toBe('untrusted')
+    expect(trust.trusted(project.status('received-3').revision!)).toBe(false)
+  })
+
+  it('trusts a new folder, a copy of a trusted one, and a copy that differs by one byte when first seen', () => {
+    mkdirSync(folder('received'), { recursive: true })
+    edit('received', 'from another machine')
+    const { trust, resolver } = trusting(); trusted = trust
+    install('lower', 'v1')
+    place('lower')
+    records.opened()
+    mkdirSync(folder('fresh'), { recursive: true })
+    edit('fresh', 'written while open')
+    expect(resolver.resolve('fresh').status).toBe('ok')
+    cpSync(folder('lower'), folder('lower-2'), { recursive: true })
+    expect(resolver.resolve('lower-2').status).toBe('ok')
+    // Accepted: a local writer that changes a copy before the app sees it
+    // makes new bytes here, as an agent copying text it read does (ADR 0174).
+    cpSync(folder('received'), folder('tweaked'), { recursive: true })
+    const page = path.join(folder('tweaked'), 'index.html')
+    writeFileSync(page, readFileSync(page, 'utf8').replace('from another machine', 'from another machinf'))
+    expect(resolver.resolve('tweaked').status).toBe('ok')
+  })
+
   it('judges a folder found at the open, removed and written again, from what this session saw in it', () => {
     mkdirSync(folder('found'), { recursive: true })
     edit('found', 'from another machine')

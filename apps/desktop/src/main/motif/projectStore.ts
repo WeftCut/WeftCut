@@ -138,6 +138,13 @@ export class ProjectMotifStore {
    *  bytes may have come with the project. Null until `open`: a store not
    *  opened makes nothing it observes. */
   private foundIds: Set<string> | null = null
+  /** The content (`contentKey`) of each folder found here whose revision was
+   *  not trusted when it was found, under whatever name: a folder that first
+   *  appears holding the same content is a copy or move of found bytes, never
+   *  made here. */
+  private readonly foundContent = new Set<string>()
+  /** Whether a revision was trusted when its folder was found (`open`). */
+  private trustedWhenFound: (revision: string) => boolean = () => false
 
   constructor(projectDir: string, options: { revisions?: PackageRevisions } = {}) {
     this.dir = path.join(projectDir, PROJECT_MOTIFS_DIR)
@@ -396,8 +403,12 @@ export class ProjectMotifStore {
 
   /** The project becomes the open one: every folder under `Motifs/` is
    *  `found`, and every name there, folder or not, is one whose bytes came
-   *  with the project. */
-  open(): void {
+   *  with the project. `trusted` answers whether a revision may run here: a
+   *  folder found holding one keeps no content key, as a copy of it would
+   *  be trusted anyway, so an open reads in full only the folders it finds
+   *  untrusted or broken. */
+  open(trusted: (revision: string) => boolean = () => false): void {
+    this.trustedWhenFound = trusted
     let names: string[] = []
     try { names = readdirSync(this.dir) } catch { /* no Motifs/ yet */ }
     this.foundIds = new Set(names)
@@ -411,7 +422,23 @@ export class ProjectMotifStore {
     this.foundIds?.add(id)
     const state = this.status(id)
     if (state.revision) this.emit(id, state.revision, 'opened')
+    if (state.revision === null || !this.trustedWhenFound(state.revision)) {
+      const key = this.contentKey(id)
+      if (key !== null) this.foundContent.add(key)
+    }
     return state
+  }
+
+  /** What the folder named `name` holds, whatever it is named: the revision
+   *  its files make under one fixed id, the folder's name entering a
+   *  revision only as its manifest's id (`declaredPackage`). Null when it
+   *  holds no package. Read under the exact name, a name that is no table key
+   *  included: `Motifs/Evil/` renamed `evil` holds the same content. */
+  private contentKey(name: string): string | null {
+    try {
+      if (!this.present(name)) return null
+      return revisionOf(readMotifDirectory(path.join(this.dir, name)), CONTENT_KEY_ID)
+    } catch { return null }
   }
 
   /** `id`'s folder as it stands. A package other than the one this store
@@ -419,14 +446,18 @@ export class ProjectMotifStore {
    *  (`edited-while-open`, without a base when it observed none); a folder
    *  that first appeared after the open, and was never put back from a
    *  backup, is heard as `created`: received bytes cannot arrive in a new
-   *  folder while the project is open. These are the ways a write made
-   *  while the project is open earns trust. The watcher, a read that finds
-   *  an untrusted revision, and adopting the folder observe it. */
+   *  folder while the project is open, except as a copy or move of a folder
+   *  found here, which is heard as found (`opened`) when its content is one
+   *  found untrusted. These are the ways a write made while the project is
+   *  open earns trust. The watcher, a read that finds an untrusted revision,
+   *  and adopting the folder observe it. */
   observe(id: string): MotifState {
     const state = this.status(id)
     if (!state.revision) return state
-    if (!this.observed.has(id) && this.foundIds !== null && !this.foundIds.has(id)) this.emit(id, state.revision, 'created')
-    else this.saw(id, state.revision)
+    if (!this.observed.has(id) && this.foundIds !== null && !this.foundIds.has(id)) {
+      const key = this.foundContent.size > 0 ? this.contentKey(id) : null
+      this.emit(id, state.revision, key !== null && this.foundContent.has(key) ? 'opened' : 'created')
+    } else this.saw(id, state.revision)
     return state
   }
 
@@ -451,6 +482,10 @@ export class ProjectMotifStore {
     for (const listener of this.listeners) listener(id, revision, cause, base)
   }
 }
+
+/** The id a folder's content is hashed under for `contentKey`: any fixed
+ *  one, as `declaredPackage` checks no id. */
+const CONTENT_KEY_ID = 'content'
 
 /** The revision `files` make under `id`; null when they make no package. */
 function revisionOf(files: readonly MotifFile[], id: string): string | null {

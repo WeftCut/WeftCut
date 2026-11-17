@@ -112,7 +112,7 @@ export class MotifResolver {
     this.trust.projectOpened?.()
     if (!project) return
     this.hear(project)
-    project.open()
+    project.open(revision => this.trust.trusted(revision))
   }
   project(): ProjectMotifStore | null { return this.projectStore }
 

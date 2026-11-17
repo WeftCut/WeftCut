@@ -77,7 +77,8 @@ trust is earned only from positive evidence: an edit is judged from the
 revision this session itself last observed in the folder, never from the one
 the table records, and reads apply that rule alone; a folder whose name was
 not under `Motifs/` at the open, and that no backup was put back in, was made
-here. A backup is put back only
+here, unless it holds what a folder found untrusted held (a copy or a move,
+recognised under any name). A backup is put back only
 when its files make the revision it names, and bytes put back count as found
 at an open, never as an edit. A folder is read only under its exact name,
 which must be a table key, so a case-insensitive file system cannot read
