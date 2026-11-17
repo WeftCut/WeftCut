@@ -16,10 +16,10 @@ import { UI_METRICS } from "../settings/uiMetrics";
 /// row + project marker pips + timecode readout. No track lanes — the
 /// human is supposed to be watching the preview, not editing.
 ///
-/// Layout inside the 80-px-tall pane allocated by `.agent-mini-timeline`:
-///   row 1 — tick marks (scale-adaptive)         ~14 px
-///   row 2 — scrub bar with playhead + markers   ~36 px
-///   row 3 — timecode readout                    ~14 px
+/// Three rows, and `.agent-mini-timeline` is as tall as they are (all themed):
+///   row 1 — tick marks (scale-adaptive)         14 ui-px
+///   row 2 — scrub bar with playhead + markers   36 ui-px
+///   row 3 — timecode readout                    one caption line
 interface MiniTimelineProps {
   durationUs: number;
   markers: MarkerSummary[];
