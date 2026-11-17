@@ -18,14 +18,9 @@ type Squirrel = {
 }
 
 /**
- * macOS installs differently, and only in when the install becomes final.
- * Windows and Linux decide at each exit: the final quit event runs the
- * downloaded installer, or does not. On macOS electron-updater hands the
- * downloaded zip straight to Squirrel.Mac, which checks the new app's signature
- * against this one's and unpacks it beside it ("stages" it); from then on its
- * ShipIt helper replaces the app after any exit, and nothing can withdraw it.
- * So a staged update is `committed`, and the update restart hands the process's
- * last step to Squirrel so that ShipIt also reopens the app.
+ * macOS differs only in when an install becomes final: Squirrel.Mac stages the
+ * download, then installs it after any exit and cannot withdraw it, so a staged
+ * update is `committed` (ADR 0170).
  */
 export type MacInstall = {
   squirrel: Squirrel

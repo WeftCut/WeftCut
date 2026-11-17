@@ -67,7 +67,8 @@ export async function setVersion(version, root = ROOT) {
 // One update manifest per OS, and the installers it must reference: the
 // version-less names electron-builder.yml's artifactName produces (the why lives
 // there). macOS lists two: the DMG people download, and the zip of the same
-// signed app that electron-updater hands to Squirrel.Mac (DMGs cannot update). electron-builder expands `${arch}` per target: `x64` on Windows and
+// signed app that electron-updater hands to Squirrel.Mac (DMGs cannot update).
+// electron-builder expands `${arch}` per target: `x64` on Windows and
 // `arm64` on macOS (the Apple Silicon runner's host arch; there is no Intel
 // build), but the Linux targets keep their packaging conventions — `x86_64` for
 // AppImage and `amd64` for deb — even though both build with arch=x64.
