@@ -49,7 +49,24 @@ export interface MigrationContext {
   sampleScalar?: (track: unknown, times: readonly number[], fallback: number) => number[]
   samplePosition?: (position: unknown, times: readonly number[]) => { x: number; y: number }[]
   onBake?: (report: PositionBakeReport) => void
+  /** v5 → v6: the package a v5 project's Motif id rendered (`main/motif/
+   *  legacyResolve.ts`), with the lineage and library source its table entry
+   *  takes; null when none did. */
+  legacyMotif?: (id: string) => LegacyMotif | null
+  /** v5 → v6: a package the table now says is in `Motifs/<id>/`. The step
+   *  only plans it; the open copies it once the upgraded project validates. */
+  onMotifCopy?: (copy: MotifCopy) => void
+  /** v5 → v6: a new lineage uid for a Motif nothing resolved. */
+  newUid?: () => string
 }
+
+export interface LegacyMotif {
+  uid: string
+  revision: string
+  from: { uid: string; version: number; revision: string } | null
+}
+
+export interface MotifCopy { id: string; revision: string }
 
 export interface PositionBakeReport {
   compositionId: string
@@ -295,6 +312,36 @@ export const STEPS: readonly MigrationStep[] = [{
         }
       }
     }
+  },
+}, {
+  from: 5,
+  apply(wire, context = {}) {
+    // v6 renders each Motif from the project's own copy, named in a table.
+    // Every id a Motif layer of any composition references gets an entry: the
+    // package v5 rendered for it, planned as a copy, or a missing entry with a
+    // lineage of its own when nothing resolved. An open is never refused for
+    // a Motif.
+    type Entry = { uid: string; revision: string | null; from: LegacyMotif['from'] }
+    const compositions = wire.compositions as Record<string, { tracks?: unknown }> | undefined
+    const ids = new Set<string>()
+    for (const composition of Object.values(compositions ?? {})) {
+      if (!Array.isArray(composition?.tracks)) continue
+      for (const track of composition.tracks) {
+        if (!Array.isArray(track?.layers)) continue
+        for (const layer of track.layers) {
+          if (layer?.params?.kind === 'Motif' && typeof layer.params.motif_id === 'string') ids.add(layer.params.motif_id)
+        }
+      }
+    }
+    const newUid = context.newUid ?? (() => globalThis.crypto.randomUUID())
+    const motifs: Record<string, Entry> = {}
+    for (const id of [...ids].sort()) {
+      const found = context.legacyMotif?.(id) ?? null
+      if (!found) { motifs[id] = { uid: newUid(), revision: null, from: null }; continue }
+      motifs[id] = { uid: found.uid, revision: found.revision, from: found.from }
+      context.onMotifCopy?.({ id, revision: found.revision })
+    }
+    wire.motifs = motifs
   },
 }]
 

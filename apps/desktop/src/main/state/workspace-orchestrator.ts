@@ -17,7 +17,7 @@ import { blankProject, rootComposition } from './model'
 import { loadProjectFromJson, serializeProjectToJson, PROJECT_FILE, preUpgradeBackupFile } from './persistence'
 import { relinkMissingMedia, type RelinkDeps, type RelinkReport } from './relink'
 import { serializeProject, type GridRepair } from './serialize'
-import type { MigrationContext, PositionBakeReport } from './migrate'
+import type { MigrationContext, MotifCopy, PositionBakeReport } from './migrate'
 
 /** The Rust-native workspace bookkeeping, exposed over napi (Backend methods
  *  commit_workspace / push_recent / set_last_new_project_parent). */
@@ -50,8 +50,17 @@ export interface OrchestratorFs {
   rm(path: string): void
 }
 
+/** What copying one planned Motif into `Motifs/<id>/` came to: the revision
+ *  its folder holds, or null and why it holds none. */
+export interface MotifCopyOutcome { id: string; revision: string | null; diagnostic?: string }
+
 export interface OrchestratorDeps {
-  migration?: MigrationContext
+  /** The facts an upgrade of the project in `dir` may need. */
+  migration?: (dir: string) => MigrationContext
+  /** Copies the Motif packages an upgrade recorded into `<dir>/Motifs/`
+   *  (`main/motif/legacyResolve.ts`). Never throws: a copy that fails answers
+   *  a null revision. Without it every planned copy stays missing. */
+  placeMigratedMotifs?: (dir: string, copies: readonly MotifCopy[]) => MotifCopyOutcome[]
   actor: Pick<ActorHandle, 'replaceState' | 'snapshot'>
   napi: WorkspaceNapi
   fs: OrchestratorFs
@@ -87,10 +96,30 @@ export interface SchemaUpgradeReport {
   to: number
   /** Verified byte-for-byte backup; opening is refused if preservation fails. */
   backupFile: string
+  /** Table entries left without a folder: nothing resolved them, or their
+   *  copy failed (`diagnostic`). Absent when every Motif was copied. */
+  missingMotifs?: { id: string; diagnostic?: string }[]
+}
+
+/** The project with each planned copy's outcome in its Motif table: an entry
+ *  whose copy failed, or that nothing copied, holds no revision. Answers the
+ *  entries left without one. */
+function settleMotifCopies(project: Project, copies: readonly MotifCopy[], outcomes: readonly MotifCopyOutcome[]): { project: Project; missing: { id: string; diagnostic?: string }[] } {
+  const motifs = { ...project.motifs }
+  const diagnostics = new Map<string, string>()
+  for (const { id } of copies) {
+    const outcome = outcomes.find(o => o.id === id)
+    if (!motifs[id]) continue
+    motifs[id] = { ...motifs[id], revision: outcome?.revision ?? null }
+    if (!outcome?.revision) diagnostics.set(id, outcome?.diagnostic ?? 'The Motif was not copied into the project')
+  }
+  const missing = Object.entries(motifs).filter(([, entry]) => entry.revision === null)
+    .map(([id]) => diagnostics.has(id) ? { id, diagnostic: diagnostics.get(id)! } : { id })
+  return { project: { ...project, motifs }, missing }
 }
 
 /** project_open. Pre-checks → load (schema gate + migration chain) →
- *  preserve pre-upgrade bytes → relink heal →
+ *  preserve pre-upgrade bytes → validate → copy migrated Motifs → relink heal →
  *  commit_workspace (pre-broadcast) → onGridRepair + onSchemaUpgrade reports →
  *  replace_state → onRelink report → push_recent → (deferred) derivative
  *  re-fan-out. All three reports sit after commit_workspace because it rotates
@@ -119,7 +148,7 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   // left to say, so it rides along as `detail` rather than being discarded.
   let loaded: ReturnType<typeof loadProjectFromJson>
   try {
-    loaded = loadProjectFromJson(text, { dir, join, onGridRepair: (r) => { gridRepairs = r }, migration: deps.migration })
+    loaded = loadProjectFromJson(text, { dir, join, onGridRepair: (r) => { gridRepairs = r }, migration: deps.migration?.(dir) })
   } catch (e) {
     if (isWorkspaceFailure(e)) throw e
     throw new WorkspaceFailure({ error: 'ProjectFileUnreadable', detail: String(e) })
@@ -158,6 +187,16 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   catch (e) {
     throw new WorkspaceFailure({ error: 'ProjectInvalid', detail: e instanceof ValidationFailure
       ? JSON.stringify({ error: 'ValidationFailed', detail: e.err }) : String(e) })
+  }
+
+  // The upgrade only planned its Motif copies: they are written once the
+  // original is preserved and the upgraded project is known to open, and
+  // before it is installed, so the table never names a copy that was not made.
+  if (schemaUpgrade) {
+    const outcomes = loaded.motifCopies.length ? deps.placeMigratedMotifs?.(dir, loaded.motifCopies) ?? [] : []
+    const settled = settleMotifCopies(project, loaded.motifCopies, outcomes)
+    project = settled.project
+    if (settled.missing.length) schemaUpgrade.missingMotifs = settled.missing
   }
 
   // Re-point cache + workspace BEFORE the state swap, so project:changed

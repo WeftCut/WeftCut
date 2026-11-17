@@ -30,6 +30,7 @@ import { createPoolFiles, type PoolFiles, type PoolFilesFs } from './poolFiles'
 import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
 import type { UserMotifStore } from '../motif/store'
 import { runMotifTool, type MotifToolDeps } from '../motif/motifTools'
+import { legacyMigration } from '../motif/legacyResolve'
 import type { BuiltinMotif, MotifLayerRef } from '../motif/authoring'
 import type { MediaItem, MotifParams, MotifRebindEntry } from './model'
 import type { AppSettingsStore } from '../app-settings'
@@ -427,19 +428,24 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
         category: { kind: 'Project' },
         source: { kind: 'System' },
         message: `Project upgraded from schema v${report.from} to v${report.to}; the original is kept as ${report.backupFile}` +
-          (report.bakedPositions?.length ? `; ${report.bakedPositions.length} clip(s) converted to frame-sampled position keys. Existing frame appearance is preserved; interpolation between samples and future retiming may differ.` : ''),
+          (report.bakedPositions?.length ? `; ${report.bakedPositions.length} clip(s) converted to frame-sampled position keys. Existing frame appearance is preserved; interpolation between samples and future retiming may differ.` : '') +
+          (report.missingMotifs?.length ? `; ${report.missingMotifs.length} Motif(s) could not be copied into the project's Motifs folder: ${report.missingMotifs.map(m => m.id).join(', ')}` : ''),
         details: { kind: 'SchemaUpgrade', from: report.from, to: report.to, backup: report.backupFile,
-          ...(report.bakedPositions?.length ? { bakedPositions: report.bakedPositions } : {}) },
+          ...(report.bakedPositions?.length ? { bakedPositions: report.bakedPositions } : {}),
+          ...(report.missingMotifs?.length ? { missingMotifs: report.missingMotifs } : {}) },
       })
     } catch (err) { console.warn('[ts-actor-host] emitLog failed (schema upgrade)', err) }
   }
   const relink = deps.relinkFs
     ? { fs: deps.relinkFs, join: deps.join, hashFile: (p: string) => deps.compute.hashMediaSource(p) }
     : undefined
-  const migration = { motifSize: (id: string, version: number) => {
-    const manifest = motifCatalog.get(id)
-    return manifest?.version === version ? manifest.size : null
-  } }
+  // Without a store the upgrade sizes Motifs from the catalog and copies none.
+  const { migration, placeMigratedMotifs } = store && deps.motifBuiltins
+    ? legacyMigration(store, deps.motifBuiltins)
+    : { migration: () => ({ motifSize: (id: string, version: number) => {
+      const manifest = motifCatalog.get(id)
+      return manifest?.version === version ? manifest.size : null
+    } }), placeMigratedMotifs: undefined }
   const swapActor: Pick<ActorHandle, 'replaceState' | 'snapshot'> = {
     snapshot: () => actor.snapshot(),
     replaceState: (next) => {
@@ -447,7 +453,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       try { actor.replaceState(next) } finally { swapping = false }
     },
   }
-  const orchestratorDeps = { actor: swapActor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink, onGridRepair, onSchemaUpgrade, migration }
+  const orchestratorDeps = { actor: swapActor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink, onGridRepair, onSchemaUpgrade, migration, placeMigratedMotifs }
 
   // Hybrid orchestrator deps (native-compute → TS-write). enqueueDerivatives here
   // takes the inserted ITEMS (vs the orchestrator's whole-Project variant) and

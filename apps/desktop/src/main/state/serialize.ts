@@ -500,6 +500,7 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
   requireObject('media_pool')
   requireObject('audio_roles')
   requireObject('settings')
+  requireObject('motifs')
   // The composition container. REQUIRED, no default: a file without it is the
   // flat pre-container shape and must fail here, loudly, rather than open as an
   // empty project (spec § Cut-over). `id === key`, fps and the lattice are

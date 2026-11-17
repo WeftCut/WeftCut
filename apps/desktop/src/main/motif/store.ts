@@ -5,21 +5,18 @@ import {
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { parseManifestIsland, type Manifest } from "../../shared/motifs/catalog";
-import { hasMotifFile, motifFileSegments, readMotifFile, readMotifDirectory, sameStamp, stampMotifFile, type MotifFile } from './packageFiles';
+import { hasMotifFile, motifFileSegments, readMotifFile, readMotifDirectory, stampMotifFile, type MotifFile } from './packageFiles';
 import { packageContentHash } from './contentHash';
-import { PackageRevisions, type PackageStamp } from './packageRevisions';
+import { PackageRevisions } from './packageRevisions';
+import { PackageSource, type PackageListing, type PackageSnapshot, type PinnedPackage } from './packageSource';
 import { LINEAGE_FILE, MotifLineage } from './lineage';
 import { MotifError } from '../../shared/motifs/errors';
+import { isProposalPreviewId, proposalOfHost } from '../../shared/motifs/projectMotifs';
 
 export const DRAFTS_DIR = "drafts";
-/** Frozen packages of pending publications, one per draft (`workspace.ts`). */
+/** Frozen packages of pending publications, one per draft (`workspace.ts`),
+ *  served under `proposalPreviewId(<draft id>)`. */
 export const PROPOSALS_DIR = ".proposals";
-/** The id a pending publication's frozen package is served and captured
- *  under: `<draft id>--proposal`. `idFromName` never emits `--`, so no
- *  library or draft id can take this form. */
-const PROPOSAL_SUFFIX = "--proposal";
-export function proposalPreviewId(draftId: string): string { return draftId + PROPOSAL_SUFFIX; }
-export function isProposalPreviewId(id: string): boolean { return id.endsWith(PROPOSAL_SUFFIX); }
 
 /** Reject an id segment that could traverse or escape. */
 function safeSeg(seg: string): string {
@@ -30,13 +27,6 @@ function safeSeg(seg: string): string {
 }
 
 type MotifSource = { manifest: Manifest; html: string };
-
-/** One package as the catalog lists it: its page, its revision and the paths
- *  of its files. */
-export interface PackageListing { html: string; revision: string; paths: string[] }
-
-/** A capture host's hold on a pinned revision snapshot; `release` is idempotent. */
-export interface PinnedPackage { release(): void }
 
 /** The store layout this build writes, recorded in `<root>/.format`: 1 has no
  *  private file in any package (ADR 0171); 2 keeps every installed version in
@@ -58,15 +48,11 @@ export interface MotifVersion { version: number; revision: string; saved_at: str
 /** Moves a file or folder to the system trash; rejects when it cannot. */
 export type Trash = (absPath: string) => Promise<void>;
 
-/** Snapshots no host holds that stay for reuse; held ones never leave. */
-const UNHELD_SNAPSHOTS = 2;
-
 /** On-disk store of user Motifs rooted at `<userData>/motifs/`. */
 export class UserMotifStore {
-  /** Revision snapshots by `id/revision`, oldest first, with their holders. */
-  private pinned = new Map<string, { files: Map<string, Buffer>; holders: number }>();
   /** Also keeps the linked directories' records (`workspace.ts`). */
   readonly revisions: PackageRevisions;
+  private readonly source: PackageSource;
   readonly lineage: MotifLineage;
   private readonly trash: Trash;
   /** Without `trash`, nothing can be deleted: a delete never falls back to
@@ -76,6 +62,7 @@ export class UserMotifStore {
     options: { revisions?: PackageRevisions; lineage?: MotifLineage; trash?: Trash } = {},
   ) {
     this.revisions = options.revisions ?? new PackageRevisions();
+    this.source = new PackageSource(this.revisions, files => packageContentHash(files));
     this.lineage = options.lineage ?? new MotifLineage(path.join(_root, LINEAGE_FILE));
     this.trash = options.trash ?? (async () => { throw new Error('No system trash is available'); });
   }
@@ -94,8 +81,9 @@ export class UserMotifStore {
   /** Choose one complete package; never fill missing published assets from a draft. */
   private packageRel(id: string): string | null {
     if (id === DRAFTS_DIR || motifFileSegments(id)?.length !== 1) return null;
-    if (isProposalPreviewId(id)) {
-      const rel = `${PROPOSALS_DIR}/${id.slice(0, -PROPOSAL_SUFFIX.length)}`;
+    const proposal = proposalOfHost(id);
+    if (proposal !== null) {
+      const rel = `${PROPOSALS_DIR}/${proposal}`;
       return hasMotifFile(this._root, `${rel}/index.html`) ? rel : null;
     }
     const current = this.currentRel(id);
@@ -128,39 +116,24 @@ export class UserMotifStore {
   lineageOf(id: string): string | null {
     const rel = this.packageRel(id);
     if (!rel) return null;
-    if (isProposalPreviewId(id)) return this.lineage.of(`${DRAFTS_DIR}/${id.slice(0, -PROPOSAL_SUFFIX.length)}`);
+    if (isProposalPreviewId(id)) return this.lineage.of(`${DRAFTS_DIR}/${proposalOfHost(id)}`);
     return this.lineage.of(rel === `${DRAFTS_DIR}/${id}` ? rel : id);
   }
 
   /** The selected package's files from one read, with their revision; null
    *  when `id` has no package. */
-  packageSnapshot(id: string): { files: MotifFile[]; revision: string } | null {
+  packageSnapshot(id: string): PackageSnapshot | null {
     const rel = this.packageRel(id);
-    return rel ? this.snapshot(path.join(this._root, rel)) : null;
+    return rel ? this.source.snapshot(path.join(this._root, rel)) : null;
   }
 
-  /** The bytes are hashed only when their stamp has no record; a read that a
-   *  write crossed is hashed and not recorded. */
-  private snapshot(dir: string, taken?: PackageStamp): { files: MotifFile[]; revision: string } {
-    const { files, stamp } = this.revisions.read(dir, taken);
-    const known = stamp && this.revisions.lookup(dir, stamp);
-    if (known && 'revision' in known) return { files, revision: known.revision };
-    const revision = packageContentHash(files);
-    if (stamp) this.revisions.record(dir, stamp, { revision });
-    return { files, revision };
-  }
-
-  private listing(dir: string): PackageListing {
-    const stamp = this.revisions.stamp(dir);
-    const known = this.revisions.lookup(dir, stamp);
-    if (known && 'revision' in known) {
-      const html = readMotifFile(dir, 'index.html');
-      // The page is the stamped one only if it did not move while it was read.
-      if (html && sameStamp(stamp.files.find(f => f.path === 'index.html'), stampMotifFile(dir, 'index.html')))
-        return { html: html.toString('utf8'), revision: known.revision, paths: stamp.files.map(f => f.path) };
-    }
-    const { files, revision } = this.snapshot(dir, stamp);
-    return { html: files.find(f => f.path === 'index.html')!.bytes.toString('utf8'), revision, paths: files.map(f => f.path) };
+  /** The current version of installed `id` from one read: its files,
+   *  revision and version; null when `id` is not installed. Drafts and
+   *  proposals are not the library. */
+  installedSnapshot(id: string): (PackageSnapshot & { version: number }) | null {
+    if (id === DRAFTS_DIR || motifFileSegments(id)?.length !== 1) return null;
+    const rel = this.currentRel(id);
+    return rel ? { ...this.source.snapshot(path.join(this._root, rel)), version: versionOfDir(rel.slice(id.length + 1))! } : null;
   }
 
   /** The selected package of `id`, read in full only when its files changed
@@ -168,7 +141,9 @@ export class UserMotifStore {
    *  its directory or its manifest island is not a package's. */
   describe(id: string): PackageListing | null {
     const rel = this.packageRel(id);
-    return rel ? this.listing(path.join(this._root, rel)) : null;
+    if (!rel) return null;
+    const { html, revision, paths } = this.source.listing(path.join(this._root, rel));
+    return { html, revision, paths };
   }
 
   /** The revision of the draft package itself, whatever is published under
@@ -176,57 +151,23 @@ export class UserMotifStore {
   draftRevision(draftId: string): string | null {
     try {
       const dir = path.join(this.draftsRoot(), safeSeg(draftId));
-      return hasMotifFile(dir, 'index.html') ? this.listing(dir).revision : null;
+      return hasMotifFile(dir, 'index.html') ? this.source.listing(dir).revision : null;
     } catch { return null; }
   }
 
   readFile(id: string, rel: string): Buffer | null {
     const revision = /^\.revisions\/([0-9a-f]{64})\/(.+)$/.exec(rel);
-    if (revision) return this.pinned.get(`${id}/${revision[1]}`)?.files.get(revision[2]!) ?? null;
+    if (revision) return this.source.pinnedFile(id, revision[1]!, revision[2]!);
     if (!motifFileSegments(rel)) return null;
     const pkg = this.packageRel(id);
     return pkg ? readMotifFile(this._root, `${pkg}/${rel}`) : null;
   }
 
   /** Pins the revision's files for a capture host, which serves its page and
-   * companion URLs from the revision directory, so a source save cannot mix
-   * old HTML with new assets. A held snapshot stays until every host holding
-   * it releases it: a host still loading its page must not lose it to a later
-   * pin. Null when the Motif is gone. */
+   * companion URLs from the revision directory (`PackageSource.pin`). Null
+   * when the Motif is gone. */
   pinPackage(id: string, revision: string): PinnedPackage | null {
-    const key = `${id}/${revision}`;
-    let snapshot = this.pinned.get(key);
-    if (snapshot) this.pinned.delete(key);
-    else {
-      if (!this.getMotif(id)) return null;
-      const read = this.snapshot(path.join(this._root, this.packageRel(id)!));
-      if (read.revision !== revision) throw new Error('Motif revision changed before capture; refresh the catalog');
-      snapshot = { files: new Map(read.files.map(f => [f.path, f.bytes])), holders: 0 };
-    }
-    snapshot.holders++;
-    // Most recently pinned last.
-    this.pinned.set(key, snapshot);
-    const held = snapshot;
-    let released = false;
-    return {
-      release: () => {
-        if (released) return;
-        released = true;
-        held.holders--;
-        this.trimPinned();
-      },
-    };
-  }
-
-  private trimPinned(): void {
-    let unheld = 0;
-    for (const s of this.pinned.values()) if (s.holders === 0) unheld++;
-    for (const [key, s] of this.pinned) {
-      if (unheld <= UNHELD_SNAPSHOTS) return;
-      if (s.holders > 0) continue;
-      this.pinned.delete(key);
-      unheld--;
-    }
+    return this.source.pin(id, revision, () => this.getMotif(id) ? path.join(this._root, this.packageRel(id)!) : null);
   }
 
   packageFiles(id: string): MotifFile[] {
@@ -437,7 +378,7 @@ export class UserMotifStore {
       const page = hasMotifFile(this._root, `${id}/${versionDirName(version)}/index.html`) ? stampMotifFile(dir, 'index.html') : null;
       if (!page) continue;
       try {
-        out.push({ version, revision: this.listing(dir).revision, saved_at: new Date(Number(BigInt(page.mtimeNs) / 1_000_000n)).toISOString() });
+        out.push({ version, revision: this.source.listing(dir).revision, saved_at: new Date(Number(BigInt(page.mtimeNs) / 1_000_000n)).toISOString() });
       } catch { /* not a package */ }
     }
     return out;

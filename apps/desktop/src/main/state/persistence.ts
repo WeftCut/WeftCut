@@ -8,7 +8,7 @@
 import { WorkspaceFailure } from '../../shared/workspaceErrors'
 import { SCHEMA_VERSION, type MediaItem, type Project } from './model'
 import { migrationEvaluation } from './migrationEvaluation'
-import { upgradeWire, type MigrationContext, type PositionBakeReport } from './migrate'
+import { upgradeWire, type MigrationContext, type MotifCopy, type PositionBakeReport } from './migrate'
 import { serializeProject, parseProject, type GridRepair, type ParseProjectOptions } from './serialize'
 
 /** The on-disk project file name inside a workspace folder. */
@@ -67,6 +67,9 @@ export interface ParsedProjectFile {
    *  this — see `openProject`. */
   upgradedFrom: number | null
   bakedPositions: PositionBakeReport[]
+  /** Motif packages the upgrade recorded in `Motifs/` that the open still
+   *  has to copy there (`openProject`). */
+  motifCopies: MotifCopy[]
 }
 
 /** Deserialize project.json text → Project: parse → gate → upgrade → cast.
@@ -77,9 +80,10 @@ export function parseProjectJson(text: string, opts: ParseProjectOptions & { mig
   const json: unknown = JSON.parse(text)
   const version = schemaGate(json)
   const bakedPositions: PositionBakeReport[] = []
+  const motifCopies: MotifCopy[] = []
   const { wire } = upgradeWire(json as Record<string, unknown>, version, SCHEMA_VERSION, undefined,
-    { ...migrationEvaluation, ...opts.migration, onBake: report => bakedPositions.push(report) })
-  return { project: parseProject(wire, opts), upgradedFrom: version === SCHEMA_VERSION ? null : version, bakedPositions }
+    { ...migrationEvaluation, ...opts.migration, onBake: report => bakedPositions.push(report), onMotifCopy: copy => motifCopies.push(copy) })
+  return { project: parseProject(wire, opts), upgradedFrom: version === SCHEMA_VERSION ? null : version, bakedPositions, motifCopies }
 }
 
 /** On load, an item whose `path_rel` is populated has its in-memory `path_abs`
@@ -104,7 +108,6 @@ export function reconcileMediaPaths(p: Project, dir: string, join: (...parts: st
 export function loadProjectFromJson(text: string, opts: { dir: string; join: (...parts: string[]) => string; onGridRepair?: (repairs: readonly GridRepair[]) => void; migration?: MigrationContext }): ParsedProjectFile {
   // Omitting the hook (tests) leaves `onGridRepair: undefined`, which parseProject
   // falls back to its console default for — the reporting default is unchanged.
-  const { project, upgradedFrom, bakedPositions } = parseProjectJson(text, { onGridRepair: opts.onGridRepair, migration: opts.migration })
-  const reconciled = reconcileMediaPaths(project, opts.dir, opts.join)
-  return { project: reconciled, upgradedFrom, bakedPositions }
+  const { project, ...loaded } = parseProjectJson(text, { onGridRepair: opts.onGridRepair, migration: opts.migration })
+  return { ...loaded, project: reconcileMediaPaths(project, opts.dir, opts.join) }
 }

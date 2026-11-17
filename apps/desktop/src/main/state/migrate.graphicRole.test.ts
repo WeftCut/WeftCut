@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { upgradeWire } from './migrate'
 import { parseProjectJson, serializeProjectToJson } from './persistence'
 import { validate } from './validate'
+import { SCHEMA_VERSION } from './model'
 
 describe('v4 → v5 graphic role migration', () => {
   it('sets graphic_role null on every Text, Motif and ImageOverlay layer in every composition', () => {
@@ -39,7 +40,7 @@ describe('v4 → v5 graphic role migration', () => {
     expect(text.length).toBeGreaterThan(0)
     for (const l of text) expect(l.params).toMatchObject({ kind: 'Text', graphic_role: null })
     const saved = serializeProjectToJson(project)
-    expect(JSON.parse(saved).schema_version).toBe(5)
+    expect(JSON.parse(saved).schema_version).toBe(SCHEMA_VERSION)
     const reopened = parseProjectJson(saved)
     expect(reopened.upgradedFrom).toBeNull()
     expect(serializeProjectToJson(reopened.project)).toBe(saved)

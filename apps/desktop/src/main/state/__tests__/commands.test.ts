@@ -315,6 +315,7 @@ function makeProject(overrides?: Partial<Project> & { tracks?: Composition['trac
     settings: { preview_width: 1280, preview_height: 720, autosave_interval_secs: 60,
       history_capacity: 200, auto_pair_audio_on_import: true,
       prefer_proxies: false, proxy_overrides: {}, shot_review: null, pause_review: null },
+    motifs: {},
     ...projectOverrides,
   }
   return base

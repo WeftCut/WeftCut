@@ -17,9 +17,14 @@ inputs and nested compositions are exercised by `migrate.clipMute.test.ts`.
 
 `v3.json` freezes the affine time-map generation. `v4.json` freezes the
 anchor-position generation: media Position is (320,180), the Group Position is
-(960,540), and Text is unchanged. `v5.json` is the current graphic-role
+(960,540), and Text is unchanged. `v5.json` freezes the graphic-role
 generation: v4 plus `graphic_role: null` at the end of the Text layer's params
-(the step appends it there on Text, Motif and ImageOverlay layers alike). The old synthetic media has no video metadata;
+(the step appends it there on Text, Motif and ImageOverlay layers alike).
+`v6.json` is the current project-Motif generation: v5 plus a `motifs` table
+after `settings` (where the step appends it), holding one entry copied from the
+library (`from` set) and one missing entry (`revision` and `from` null). v5 has
+no Motif layer, so the step writes an empty table for it; the entries are
+written in by hand for breadth. The old synthetic media has no video metadata;
 chain tests explicitly supply its 640×360 source extent as migration context.
 Production reads original metadata and refuses unknown source dimensions.
 Existing v1–v3 files remain byte-for-byte unchanged. Animated migration cases,

@@ -1,15 +1,17 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync, realpathSync, lstatSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
-import { type Manifest, parseManifestIsland, composeMotifHtml, validateManifest, assignUniqueId, idFromName, BUILTIN_IDS, builtinLineage, isBuiltinLineage } from '../../shared/motifs/catalog';
+import { type Manifest, assignUniqueId, idFromName, BUILTIN_IDS, builtinLineage, isBuiltinLineage } from '../../shared/motifs/catalog';
 import type { MotifRebindEntry } from '../state/model';
 import { type BuiltinMotif, getMotifSource, motifRevision, motifSourceFiles, listMotifsInner, buildRebindUpdates, type MotifLayerRef } from './authoring';
-import { type MotifFile, motifFileSegments, readMotifDirectory, sameStamps, stampMotifDirectory } from './packageFiles';
+import { type MotifFile, motifFileSegments, readMotifDirectory } from './packageFiles';
 import type { PackageOutcome } from './packageRevisions';
-import { motifContentHash } from './contentHash';
+import { emptyPackageFiles, normalize, replacePackage } from './motifPackage';
+import { writeThrough } from './projectStore';
 import { readMotifZip } from './archive';
 import { newLineage } from './lineage';
-import { DRAFTS_DIR, PROPOSALS_DIR, isProposalPreviewId, proposalPreviewId, type MotifVersion, type UserMotifStore } from './store';
+import { DRAFTS_DIR, PROPOSALS_DIR, type MotifVersion, type UserMotifStore } from './store';
+import { isProposalPreviewId, proposalPreviewId } from '../../shared/motifs/projectMotifs';
 import { MotifRefusal, revisionConflict } from './refusal';
 /** Where a draft comes from. `motif` resumes a draft id and copies any other
  *  Motif (recording it as the source); `copy` always makes an independent copy. */
@@ -29,8 +31,6 @@ export type DraftSource = {
     kind: 'empty';
     name?: string;
 };
-/** What an `empty` source starts as. */
-export const EMPTY_DRAFT = { name: 'Untitled Motif', size: [960, 540] as [number, number], default_duration_s: 5 };
 export type PublicationState = 'awaiting_approval' | 'approved' | 'rejected';
 /** An update replaces `id` at `version`; a first publication takes `new_id`. */
 export type ProposalTarget = { id: string; version: number } | { new_id: string };
@@ -162,73 +162,6 @@ function safeId(id: string): string {
     if (typeof id !== 'string' || motifFileSegments(id)?.length !== 1 || id.startsWith('.') || isProposalPreviewId(id))
         throw new Error('Invalid Motif id');
     return id;
-}
-export function validateFiles(files: readonly MotifFile[]): void {
-    const nodes = new Map<string, string>();
-    let total = 0;
-    for (const file of files) {
-        const parts = motifFileSegments(file.path);
-        if (!parts || parts[0].toLowerCase() === '.revisions')
-            throw new Error('Invalid Motif file path: ' + file.path);
-        for (let i = 1; i <= parts.length; i++) {
-            const prefix = parts.slice(0, i).join('/'), key = prefix.toLowerCase(), kind = i === parts.length ? 'file' : 'dir';
-            const value = kind + ':' + prefix, previous = nodes.get(key);
-            if (previous && (previous !== value || kind === 'file'))
-                throw new Error('Conflicting Motif file path: ' + file.path);
-            nodes.set(key, value);
-        }
-        total += file.bytes.length;
-    }
-    if (files.length > 10000 || total > 256 * 1024 * 1024)
-        throw new Error('Motif package exceeds 256 MiB / 10000 files');
-}
-function normalize(files: readonly MotifFile[], id: string, version = 1) {
-    validateFiles(files);
-    const html = files.find(f => f.path === 'index.html')?.bytes.toString('utf8');
-    if (html === undefined)
-        throw new Error('A Motif folder must contain index.html');
-    const json = files.find(f => f.path === 'manifest.json');
-    const input = json ? JSON.parse(json.bytes.toString('utf8')) : parseManifestIsland(html);
-    const manifest = { ...input, id, version } as Manifest;
-    validateManifest(manifest);
-    const composed = composeMotifHtml(manifest, html);
-    const normalized = [...files.filter(f => f.path !== 'index.html' && f.path !== 'manifest.json'),
-        { path: 'index.html', bytes: Buffer.from(composed) }, { path: 'manifest.json', bytes: Buffer.from(JSON.stringify(manifest, null, 2)) }];
-    validateFiles(normalized);
-    return { manifest, html: composed, files: normalized, revision: motifContentHash(manifest, composed, normalized) };
-}
-/** Replace a whole app-owned draft or proposal package. A failed rename
- *  restores the old package. Installed Motifs are never replaced: each
- *  publication adds a version (`UserMotifStore.addVersion`). */
-export function replacePackage(directory: string, files: readonly MotifFile[]): void {
-    validateFiles(files);
-    mkdirSync(path.dirname(directory), { recursive: true });
-    const staging = directory + '.stage-' + randomUUID(), backup = directory + '.backup-' + randomUUID();
-    mkdirSync(staging);
-    try {
-        for (const file of files) {
-            const dest = path.join(staging, ...file.path.split('/'));
-            mkdirSync(path.dirname(dest), { recursive: true });
-            writeFileSync(dest, file.bytes);
-        }
-        if (existsSync(directory)) {
-            if (lstatSync(directory).isSymbolicLink())
-                throw new Error('Motif package cannot be a link');
-            renameSync(directory, backup);
-        }
-        try {
-            renameSync(staging, directory);
-        }
-        catch (error) {
-            if (existsSync(backup))
-                renameSync(backup, directory);
-            throw error;
-        }
-        rmSync(backup, { recursive: true, force: true });
-    }
-    finally {
-        rmSync(staging, { recursive: true, force: true });
-    }
 }
 /** One authoring interface for linked directories and app-owned drafts. Rendering
  * reads only committed app-owned snapshots; author files never become protocol roots.
@@ -366,8 +299,7 @@ export class MotifWorkspace {
             files = [...motifSourceFiles(this.store, this.builtins, source.motif_id).filter(f => f.path !== 'index.html'), { path: 'index.html', bytes: Buffer.from(src.html) }];
         }
         else if (source.kind === 'empty')
-            files = [{ path: 'index.html', bytes: Buffer.from('<!doctype html><html><body><script>motif.define({frame(t){}})</script></body></html>') },
-                { path: 'manifest.json', bytes: Buffer.from(JSON.stringify({ ...EMPTY_DRAFT, name: source.name || EMPTY_DRAFT.name, props_schema: {} })) }];
+            files = emptyPackageFiles(source.name);
         else
             throw new Error('Unknown Motif source kind');
         const opened = this.openFiles(files, directory, lineage);
@@ -471,44 +403,9 @@ export class MotifWorkspace {
         }
         const next = [...files].map(([path, bytes]) => ({ path, bytes }));
         normalize(next, id); // validate the complete transaction before changing anything
-        if (state.directory) {
-            // The renderer observes only the committed mirror. Roll back source writes
-            // on filesystem failure; never replace/move the author's directory itself.
-            if (!linked?.stamp || !sameStamps(linked.stamp.files, stampMotifDirectory(state.directory)))
-                throw new Error('Working directory changed during update');
-            const applied: string[] = [];
-            try {
-                for (const change of changes) {
-                    const dest = path.join(state.directory, ...change.path.split('/'));
-                    const bytes = files.get(change.path);
-                    if (bytes) {
-                        mkdirSync(path.dirname(dest), { recursive: true });
-                        const temp = dest + '.motif-' + randomUUID();
-                        try {
-                            writeFileSync(temp, bytes);
-                            renameSync(temp, dest);
-                        }
-                        finally {
-                            rmSync(temp, { force: true });
-                        }
-                    }
-                    else
-                        rmSync(dest, { force: true });
-                    applied.push(change.path);
-                }
-                this.commit(id, next);
-            }
-            catch (error) {
-                for (const name of applied.reverse()) {
-                    const dest = path.join(state.directory, ...name.split('/')), old = original.find(f => f.path === name);
-                    if (old)
-                        writeFileSync(dest, old.bytes);
-                    else
-                        rmSync(dest, { force: true });
-                }
-                throw error;
-            }
-        }
+        if (state.directory)
+            // The renderer observes only the committed mirror.
+            writeThrough(state.directory, linked?.stamp ?? null, original, new Map(changes.map(c => [c.path, files.get(c.path) ?? null])), () => this.commit(id, next));
         else
             this.commit(id, next);
         if (state.diagnostic) {
