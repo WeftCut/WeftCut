@@ -39,16 +39,21 @@ export function sinkBytesPerPixel(pixFmt: SinkPixFmt): number {
   return pixFmt.endsWith('10le') ? samples * 2 : samples;
 }
 
+/** Packed bytes one readback batch holds at most: four 1080p frames. Copying a
+ * larger batch out holds up the frames behind it (4K: two frames per batch
+ * beat four), docs/notes/export-pipeline-2026-11.md. */
+const READBACK_BATCH_BYTES = 32 * 1048576;
+
 /** Packed frames a native-sink export reads back per GPU wait, and at most in
- * flight to the encoder. Two hide the wait behind the next frame's work; four
- * added about 5% at 1080p and lost at 4K (docs/notes/export-pipeline-2026-11.md).
+ * flight to the encoder; a plan with less memory reads back fewer.
  *
  * LANDMINE: with Motif layers, frames left unread on the GPU stall the next
  * Motif frames on Windows (warm 1080p export: 65 fps at 1, 38 at 2, 21 at 4).
  * The stall is inside Chromium's GPU scheduling and was not isolated; read
  * every frame back before the next one while a Motif plays. */
-export function exportReadbackFrames(hasMotifs: boolean): number {
-  return hasMotifs ? 1 : 2;
+export function exportReadbackFrames(input: { hasMotifs: boolean; frameBytes: number }): number {
+  if (input.hasMotifs) return 1;
+  return Math.min(4, Math.max(1, Math.floor(READBACK_BATCH_BYTES / input.frameBytes)));
 }
 
 export const EXPORT_FRAME_WINDOW = 24;

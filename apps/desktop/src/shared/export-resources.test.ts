@@ -10,8 +10,16 @@ describe('native sink frames', () => {
     expect(w * h * sinkBytesPerPixel('yuv422p10le')).toBe(2 * (w * h + 2 * (w / 2) * h));
   });
 
-  it('reads every frame back before the next while a Motif plays, and batches otherwise', () => {
-    expect(exportReadbackFrames(true)).toBe(1);
-    expect(exportReadbackFrames(false)).toBeGreaterThan(1);
+  it('reads every frame back before the next while a Motif plays', () => {
+    expect(exportReadbackFrames({ hasMotifs: true, frameBytes: 64 * 64 * 1.5 })).toBe(1);
+  });
+
+  it('batches fewer frames as they grow, and always at least one', () => {
+    const depth = (w: number, h: number, pixFmt: Parameters<typeof sinkBytesPerPixel>[0]) =>
+      exportReadbackFrames({ hasMotifs: false, frameBytes: w * h * sinkBytesPerPixel(pixFmt) });
+    expect(depth(1920, 1080, 'yuv420p')).toBeGreaterThan(1);
+    expect(depth(3840, 2160, 'yuv420p')).toBeLessThan(depth(1920, 1080, 'yuv420p'));
+    expect(depth(3840, 2160, 'yuv422p10le')).toBeLessThanOrEqual(depth(3840, 2160, 'yuv420p'));
+    expect(depth(7680, 4320, 'yuv422p10le')).toBe(1);
   });
 });

@@ -9,7 +9,7 @@ describe('export working-set plans', () => {
   it('fits the real 2304 MiB Main10 target by reducing dispatch, retaining private surfaces and quality', () => {
     const minimumFrames=minimumExportFrames({codec:'avc1.6e0028',codedWidth:1920,codedHeight:1080});
     expect(minimumFrames).toBe(12);
-    const plans=buildExportResourcePlans({readbackFrames:1,sources:{a:{width:1920,height:1080,tenBit:true,minimumFrames}},
+    const plans=buildExportResourcePlans({readbackFrames:1,readbackFrameBytes:0,sources:{a:{width:1920,height:1080,tenBit:true,minimumFrames}},
       clips:[{key:'a',mediaId:'a',start:0,end:100}],workerMiB:191,encoderMiB:192,motifBufferBytes:0});
     expect(plans[0]!.memoryMiB).toBeGreaterThan(921);
     expect(plans.at(-1)!.memoryMiB).toBeLessThanOrEqual(921);
@@ -29,7 +29,7 @@ describe('export working-set plans', () => {
     expect(peakDecoderMiB([a,{key:'b',mediaId:'b',start:5,end:15}],{a:381,b:500})).toBe(881);
   });
   it('reduces Motif concurrency and buffering without reducing per-frame working memory', () => {
-    const plans=buildExportResourcePlans({readbackFrames:1,sources:{},clips:[],workerMiB:335,encoderMiB:192,
+    const plans=buildExportResourcePlans({readbackFrames:1,readbackFrameBytes:0,sources:{},clips:[],workerMiB:335,encoderMiB:192,
       motifBufferBytes:144*1048576,motifFrameBytes:16*1048576,captureMiB:175});
     expect(plans[0]!.memoryMiB).toBeGreaterThan(921);
     const minimum=plans.at(-1)!;
@@ -38,20 +38,24 @@ describe('export working-set plans', () => {
     expect(minimum.memoryMiB).toBe(207+192+175);
   });
   it('uses native metadata estimates and keeps an admitted tail for source-free exports', () => {
-    expect(buildExportResourcePlans({readbackFrames:1,sources:{},clips:[],workerMiB:32,encoderMiB:0,motifBufferBytes:0})[0]!.memoryMiB).toBe(64);
+    expect(buildExportResourcePlans({readbackFrames:1,readbackFrameBytes:0,sources:{},clips:[],workerMiB:32,encoderMiB:0,motifBufferBytes:0})[0]!.memoryMiB).toBe(64);
     // The audio mix runs beside the video, so the plan holds both at once.
-    expect(buildExportResourcePlans({readbackFrames:1,sources:{},clips:[],workerMiB:32,encoderMiB:0,motifBufferBytes:0,audioMiB:128})[0]!.memoryMiB).toBe(160);
-    expect(buildExportResourcePlans({readbackFrames:1,sources:{},clips:[],workerMiB:300,encoderMiB:0,motifBufferBytes:0,audioMiB:128})[0]!.memoryMiB).toBe(428);
-    const plan=buildExportResourcePlans({readbackFrames:1,sources:{a:{width:1,height:1,tenBit:false,minimumFrames:24,nativeMiB:456}},
+    expect(buildExportResourcePlans({readbackFrames:1,readbackFrameBytes:0,sources:{},clips:[],workerMiB:32,encoderMiB:0,motifBufferBytes:0,audioMiB:128})[0]!.memoryMiB).toBe(160);
+    expect(buildExportResourcePlans({readbackFrames:1,readbackFrameBytes:0,sources:{},clips:[],workerMiB:300,encoderMiB:0,motifBufferBytes:0,audioMiB:128})[0]!.memoryMiB).toBe(428);
+    const plan=buildExportResourcePlans({readbackFrames:1,readbackFrameBytes:0,sources:{a:{width:1,height:1,tenBit:false,minimumFrames:24,nativeMiB:456}},
       clips:[{key:'a',mediaId:'a',start:0,end:1}],workerMiB:100,encoderMiB:200,motifBufferBytes:0});
     expect(plan).toHaveLength(1); expect(plan[0]!.memoryMiB).toBe(756);
   });
 
-  it("gives every plan the export's readback depth", () => {
-    const plans=buildExportResourcePlans({readbackFrames:2,sources:{a:{width:1920,height:1080,tenBit:false,minimumFrames:4}},
-      clips:[{key:'a',mediaId:'a',start:0,end:1}],workerMiB:100,encoderMiB:200,motifBufferBytes:0});
-    expect(plans.length).toBeGreaterThan(1);
-    for (const plan of plans) expect(plan.readbackFrames).toBe(2);
+  it("reads back the export's full depth in the fullest plan and one frame at a time in the leanest", () => {
+    const demand={sources:{a:{width:1920,height:1080,tenBit:false,minimumFrames:4}},
+      clips:[{key:'a',mediaId:'a',start:0,end:1}],workerMiB:100,encoderMiB:200,motifBufferBytes:0};
+    const plans=buildExportResourcePlans({...demand,readbackFrames:4,readbackFrameBytes:1920*1080*3/2});
+    expect(plans[0]!.readbackFrames).toBe(4);
+    expect(plans.at(-1)!.readbackFrames).toBe(1);
+    // The ring is part of the plan: the same export without one plans less.
+    const unread=buildExportResourcePlans({...demand,readbackFrames:4,readbackFrameBytes:0});
+    for (const [i,plan] of plans.entries()) expect(plan.memoryMiB).toBeGreaterThan(unread[i]!.memoryMiB);
   });
 });
 

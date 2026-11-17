@@ -14,8 +14,8 @@ the Worker's export ring. The WebCodecs engine (in-Worker `VideoDecoder`;
    otherwise); a GPU pack pass (`PackYuvPlanar`, or the parity-gated
    `PackYuv420p10`) writes the rawvideo bytes into a ring of
    pixel-pack buffers (`PboFrameReader`), as many as the plan's
-   `readbackFrames` (`exportReadbackFrames`: one while a Motif plays, two
-   otherwise). When the ring is full, `drain()` reads every pending frame in order, so one wait
+   `readbackFrames` (`exportReadbackFrames`: one while a Motif plays,
+   otherwise up to four frames and 32 MiB; leaner plans read back fewer). When the ring is full, `drain()` reads every pending frame in order, so one wait
    for the GPU serves the batch. There is no fence: Chromium updates a
    fence's status only at frame boundaries, so polling one costs up to a
    display frame per readback.
