@@ -9,7 +9,8 @@ import { formatTimecode } from '../frames';
 import { MenuItem, contextMenuFinalFocus } from '../menu/Menu';
 import { useCloseOnAnchorMove, useCursorAnchor } from '../timeline/contextMenuAnchor';
 import { AppIcon } from "@/components/AppIcon";
-import { canSaveToLibrary, libraryTake, projectRowBadge, rowHost, rowName, type MotifRow } from './motifRows';
+import { MotifProblemLead } from './MotifProblem';
+import { canSaveToLibrary, libraryTake, projectRowBadge, rowHost, rowName, type MotifRow, type ProjectCopy } from './motifRows';
 
 /** What a card's actions do; each is offered only where it applies
  *  (`motifRows.ts`). */
@@ -28,8 +29,9 @@ export interface MotifCardActions {
   onRemove: () => void;
 }
 
-export function MotifCard({ row, selected, fpsNum, fpsDen, ...actions }: MotifCardActions & {
-  row: MotifRow; selected: boolean; fpsNum: number; fpsDen: number;
+/** `projectCopy`: a library row's project copy (`projectCopyOf`). */
+export function MotifCard({ row, selected, fpsNum, fpsDen, projectCopy = null, ...actions }: MotifCardActions & {
+  row: MotifRow; selected: boolean; fpsNum: number; fpsDen: number; projectCopy?: ProjectCopy;
 }) {
   const { t } = useTranslation();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -39,6 +41,9 @@ export function MotifCard({ row, selected, fpsNum, fpsDen, ...actions }: MotifCa
   const badge = row.group === 'project' ? projectRowBadge(row) : row.status;
   const take = row.group === 'project' ? libraryTake(row) : null;
   const unavailable = row.group === 'project' && row.status !== 'ok';
+  const meta = row.motif
+    ? `${row.motif.size[0]}×${row.motif.size[1]} · ${formatTimecode(Math.round(row.motif.default_duration_s * 1_000_000), fpsNum, fpsDen)}`
+    : row.id;
   return (
     <div ref={card} className={`motif-card${selected ? ' motif-card-selected' : ''}${unavailable ? ' is-unavailable' : ''}`}
       onContextMenu={e => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY }); }}
@@ -52,23 +57,22 @@ export function MotifCard({ row, selected, fpsNum, fpsDen, ...actions }: MotifCa
         {row.motif
           ? <MotifCover key={`${rowHost(row)}:${row.motif.content_hash}`} host={rowHost(row)} contentHash={row.motif.content_hash ?? ''} />
           : <div className="motif-preview-host motif-card-unavailable" style={{ maxWidth: "calc(240 * var(--ui-px))" }}>
-            <span className="settings-error">{row.group === 'project' ? row.diagnostic : null}</span>
+            {row.group === 'project' && row.status !== 'ok' &&
+              <span className="settings-error"><MotifProblemLead id={row.id} status={row.status} /></span>}
           </div>}
         <span className="motif-card-title">
           <span className="motif-card-name">{rowName(row)}</span>
           {badge && <span className={`motif-card-status status-${badge}`}>{t(`motif_picker.status.${badge}`)}</span>}
         </span>
       </button>
+      {/* One line whatever the row offers, so cards keep one height: the
+          take button carries its short label, the full one is its name. */}
       <div className="motif-card-footer">
-        <span className="motif-card-meta">
-          {row.motif
-            ? `${row.motif.size[0]}×${row.motif.size[1]} · ${formatTimecode(Math.round(row.motif.default_duration_s * 1_000_000), fpsNum, fpsDen)}`
-            : row.id}
-          {row.group === 'library' && row.in_project ? ` · ${t('motif_picker.in_project')}` : ''}
-        </span>
+        <span className="motif-card-meta" title={row.motif ? meta : undefined}>{meta}</span>
         {take && (
-          <Button variant="ghost" size="xs" title={t(`motif_picker.${take}_hint`)} onClick={actions.onTakeLibrary}>
-            {t(`motif_picker.${take}_button`)}
+          <Button variant="ghost" size="xs" title={t(`motif_picker.${take}_hint`)}
+            aria-label={t(`motif_picker.${take}_button`)} onClick={actions.onTakeLibrary}>
+            {t(`motif_picker.${take}_short`)}
           </Button>
         )}
         {row.motif && (
@@ -78,6 +82,11 @@ export function MotifCard({ row, selected, fpsNum, fpsDen, ...actions }: MotifCa
           </Button>
         )}
       </div>
+      {projectCopy && (
+        <span className="motif-card-meta">
+          {t(projectCopy === 'ok' ? 'motif_picker.in_project' : `motif_picker.in_project_${projectCopy}`)}
+        </span>
+      )}
       {menu && <MotifCardMenu row={row} {...menu} onClose={closeMenu} {...actions} />}
     </div>
   );

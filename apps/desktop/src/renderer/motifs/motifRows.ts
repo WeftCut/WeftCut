@@ -1,6 +1,6 @@
 // The Motifs panel's rows: the open project's Motifs and the library's, what
 // each shows and offers. Pure, so the rules read and test apart from React.
-import { libraryHost } from "../../shared/motifs/projectMotifs";
+import { libraryHost, type MotifStatus } from "../../shared/motifs/projectMotifs";
 import type { LibraryMotifRow, MotifSummary, ProjectMotifRow } from "../ipc";
 
 export type MotifRow = ProjectMotifRow | LibraryMotifRow;
@@ -42,6 +42,16 @@ export function libraryTake(row: ProjectMotifRow): LibraryTake {
   if (row.state === "project_only") return null;
   if (row.status !== "ok") return "restore";
   return row.state === "in_sync" ? null : "update";
+}
+
+/** The state of the project's copy of a library row's lineage: whether it
+ *  renders, or null when the project holds none. `project` is the whole
+ *  group, not a filtered view of it. */
+export type ProjectCopy = MotifStatus | null;
+
+export function projectCopyOf(row: LibraryMotifRow, project: readonly ProjectMotifRow[]): ProjectCopy {
+  if (row.in_project === null) return null;
+  return project.find((p) => p.id === row.in_project)?.status ?? "ok";
 }
 
 /** Whether "Save to library" has something to save: a project Motif that

@@ -1747,6 +1747,7 @@ export class CompositionNode {
       fpsDen: this.host.fpsDen(),
       onLoaded: () => this.host.scheduleRepaint(),
       scaleDiv: () => this.host.motifScaleDiv(),
+      canvasSize: () => ({ width: this.width, height: this.height }),
     });
     const tmpl: ActiveMotif = { layerId: layer.id, motifId, sprite, effects: new EffectChain() };
     this.activeMotifs.set(layer.id, tmpl);

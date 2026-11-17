@@ -136,6 +136,18 @@ describe('opening a v5 project', () => {
     expect(copied!.uid).toBe(library.lineage.peek(key))
   })
 
+  it("records an installed Motif's lineage only once its copy is made", () => {
+    const { migration, placeMigratedMotifs } = legacyMigration(library, builtins)
+    const planned = migration(projectDir).legacyMotif!('lower')!
+    // A refused open stops here: the library's lineage record is unchanged.
+    expect(library.lineage.peek('lower')).toBeNull()
+    expect(planned.from).toMatchObject({ version: 1, revision: library.installedListing('lower')!.revision })
+    const [copied] = placeMigratedMotifs(projectDir, [{ id: 'lower', revision: planned.revision }])
+    const uid = library.lineage.peek('lower')
+    expect(uid).not.toBeNull()
+    expect(copied).toMatchObject({ uid, from: { uid } })
+  })
+
   it('opens when a copy fails, leaving that Motif missing and its folder untouched', async () => {
     mkdirSync(path.join(motifsDir(), 'lower'), { recursive: true })
     writeFileSync(path.join(motifsDir(), 'lower', 'readme.txt'), 'not a Motif')

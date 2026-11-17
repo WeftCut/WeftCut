@@ -18,8 +18,11 @@ describe('the Motif panel speaks the project/library channels', () => {
 
   it('updates, removes and imports project Motifs on their own channels', async () => {
     invoke.mockResolvedValue({ motif_id: 'scene', revision: 'r' });
-    await updateProjectMotif('lower');
+    expect(await updateProjectMotif('lower')).toEqual({ unfinished: null });
     expect(invoke).toHaveBeenLastCalledWith('update_project_motif', { motif_id: 'lower' });
+    // Files that made no package were moved aside: where, for the panel to say.
+    invoke.mockResolvedValueOnce({ motif_id: 'lower', revision: 'r', unfinished: 'Backups/motifs/unfinished/lower-1' });
+    expect(await updateProjectMotif('lower')).toEqual({ unfinished: 'Backups/motifs/unfinished/lower-1' });
     await removeProjectMotif('lower');
     expect(invoke).toHaveBeenLastCalledWith('delete_motif', { motif_id: 'lower' });
     expect(await importMotif('C:/scene.zip')).toBe('scene');
@@ -41,12 +44,13 @@ describe('the Motif panel speaks the project/library channels', () => {
       { group: 'library', id: 'lower', name: 'Lower', version: 2, size: [64, 64], default_duration_s: 1, props_schema: {}, status: 'installed', content_hash: 'L', revision: 'L', in_project: 'lower', html: '<x>' },
       { group: 'project', id: 'lower', name: 'Lower', version: 1, size: [64, 64], default_duration_s: 1, props_schema: {}, status: 'ok', state: 'update_available',
         uid: 'u', from: { uid: 'u', version: 1, revision: 'P' }, path: '/home/u/Film/Motifs/lower', content_hash: 'P', revision: 'P', html: '<x>' },
-      { group: 'project', id: 'gone', uid: 'v', status: 'missing', state: 'project_only', from: null, path: '/home/u/Film/Motifs/gone', revision: null, diagnostic: 'Motifs/gone/ is missing' },
+      { group: 'project', id: 'gone', uid: 'v', status: 'missing', state: 'project_only', from: null, path: '/home/u/Film/Motifs/gone', revision: null },
+      { group: 'project', id: 'torn', uid: 'w', status: 'invalid', state: 'project_only', from: null, path: '/home/u/Film/Motifs/torn', revision: null, diagnostic: 'index.html is missing' },
     ]);
     const catalog = await listMotifCatalog();
     expect(catalog.library).toEqual([{ group: 'library', id: 'lower', status: 'installed', revision: 'L', in_project: 'lower',
       motif: { id: 'lower', name: 'Lower', version: 2, size: [64, 64], default_duration_s: 1, props_schema: {}, content_hash: 'L' } }]);
     expect(catalog.project.map(r => [r.id, r.state, r.motif?.content_hash ?? null, r.diagnostic ?? null]))
-      .toEqual([['lower', 'update_available', 'P', null], ['gone', 'project_only', null, 'Motifs/gone/ is missing']]);
+      .toEqual([['lower', 'update_available', 'P', null], ['gone', 'project_only', null, null], ['torn', 'project_only', null, 'index.html is missing']]);
   });
 });

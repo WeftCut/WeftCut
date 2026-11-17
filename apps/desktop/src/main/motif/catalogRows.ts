@@ -63,7 +63,9 @@ export function projectMotifState(entry: ProjectMotifEntry, revision: string | n
 
 /** The open project's Motif rows, by id. A row whose folder makes
  *  a package carries its manifest and page; one that does not carries its
- *  `status` and why. */
+ *  `status`, and an `invalid` one the package error as `diagnostic`. A
+ *  `missing` row needs no text: the status and `path` say it, and each
+ *  reader words it in its own language. */
 export function projectRows(project: ProjectMotifStore, table: Readonly<ProjectMotifs>, store: UserMotifStore,
   builtins: readonly BuiltinMotif[]): Record<string, unknown>[] {
   return Object.entries(table).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([id, entry]) => {
@@ -72,7 +74,7 @@ export function projectRows(project: ProjectMotifStore, table: Readonly<ProjectM
     const revision = folder.revision ?? entry.revision
     const state = projectMotifState(entry, revision, library, () => project.packageFiles(id))
     const base = { group: 'project', id, uid: entry.uid, status: folder.status, state, from: entry.from, path: project.folder(id) }
-    if (folder.status !== 'ok') return { ...base, revision: null, ...(folder.diagnostic ? { diagnostic: folder.diagnostic } : { diagnostic: `Motifs/${id}/ is missing` }) }
+    if (folder.status !== 'ok') return { ...base, revision: null, ...(folder.diagnostic ? { diagnostic: folder.diagnostic } : {}) }
     try {
       const pkg = project.describe(id)!
       return { ...motifToPayload(pkg.manifest, pkg.html, folder.status, pkg.revision, pkg.paths.includes(PARAMS_PAGE_FILE)), ...base, revision: pkg.revision }

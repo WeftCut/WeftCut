@@ -3363,8 +3363,9 @@ export async function updateMotifSource(id: string, source: string, expectedRevi
 
 /// Replaces project Motif `id`'s copy with the library's current version of
 /// its lineage, rebinding its clips; one undo step takes it back.
-export async function updateProjectMotif(id: string): Promise<void> {
-  await invoke("update_project_motif", { motif_id: id });
+export async function updateProjectMotif(id: string): Promise<{ unfinished: string | null }> {
+  const answer = await invoke<{ unfinished?: string } | undefined>("update_project_motif", { motif_id: id });
+  return { unfinished: answer?.unfinished ?? null };
 }
 
 /// Removes project Motif `id` from the project's table; refused (MotifInUse)

@@ -3,6 +3,7 @@ import { formatTimecode } from "../frames";
 import { layerDisplayName } from "../lib/layerName";
 import { trackDisplayName } from "../lib/trackName";
 import { audioUnits, formatAudioTime } from "../state/audioUnitsStore";
+import { getMotif } from "../render/motifs/catalog";
 import { currentOpenComposition, useProjectStore } from "../state/projectStore";
 import type {
   CommandError,
@@ -59,6 +60,9 @@ export interface RefusalContext {
   /// look for.
   link(id: string): string;
   media(id: string): string;
+  /// A project Motif by its manifest name; its id when the render catalog
+  /// holds none that renders.
+  motif(id: string): string;
   timecode(us: number): string;
   seconds(us: number): string;
   fps(r: Rational): string;
@@ -112,6 +116,9 @@ export function liveRefusalContext(
       const media = useProjectStore.getState().mediaById.get(id);
       const label = media?.label.trim();
       return label ? label : shortId(id);
+    },
+    motif(id) {
+      return getMotif(id)?.manifest.name ?? id;
     },
     timecode(us) {
       const comp = currentOpenComposition();
@@ -230,7 +237,7 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
   MotifInUse: {
     tier: "curated",
     key: "errors.motif_in_use",
-    args: (e) => ({ motif: e.motif_id, count: e.referenced_by.length }),
+    args: (e, ctx) => ({ motif: ctx.motif(e.motif_id), count: e.referenced_by.length }),
   },
   TrackPositionOutOfRange: { tier: "generic" },
   // The timeline offers no drag for a reserved lane (canReorderTrack).

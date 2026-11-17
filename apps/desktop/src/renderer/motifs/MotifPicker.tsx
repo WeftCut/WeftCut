@@ -11,7 +11,8 @@ import { MotifCard } from './MotifCard';
 import { MotifProposalList, useMotifProposals } from './MotifProposalCard';
 import { MotifVersionHistory } from './MotifVersionHistory';
 import { useSaveToLibrary } from './SaveToLibrary';
-import { matchRows, previewMotif, rowKey, rowName, type MotifRow } from './motifRows';
+import { MotifProblem } from './MotifProblem';
+import { matchRows, previewMotif, projectCopyOf, rowKey, rowName, type MotifRow } from './motifRows';
 import { listen } from "@/bridge/events";
 import { open as openDialog, save as saveDialog } from "@/bridge/dialog";
 import { formatTimecode } from "../frames";
@@ -93,6 +94,9 @@ export function MotifPicker({
   const { t } = useTranslation();
   const [catalog, setCatalog] = useState<MotifCatalog | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /// What the last row action left for the user to find (unfinished files
+  /// moved aside); cleared by the next action.
+  const [notice, setNotice] = useState<string | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [deleting, setDeleting] = useState<LibraryMotifRow | null>(null);
@@ -159,8 +163,14 @@ export function MotifPicker({
   /// Runs a row action; its refusal shows in the panel's error line.
   const act = (fn: () => Promise<unknown>) => async () => {
     setError(null);
+    setNotice(null);
     try { await fn(); } catch (e) { setError(refusalText(e)); }
   };
+
+  const takeLibrary = (id: string) => act(async () => {
+    const { unfinished } = await updateProjectMotif(id);
+    if (unfinished) setNotice(t("motif_picker.unfinished_moved", { path: unfinished }));
+  });
 
   /// A placement lands a layer on a Motif the render catalog may not hold
   /// yet (a library copy): pull it before the App looks.
@@ -223,11 +233,12 @@ export function MotifPicker({
       row={row}
       selected={rowKey(row) === selectedKey}
       fpsNum={fpsNum} fpsDen={fpsDen}
+      projectCopy={row.group === "library" && catalog ? projectCopyOf(row, catalog.project) : null}
       onSelect={() => setSelectedKey(rowKey(row))}
       onExport={() => void exportItem(row)()}
       onHistory={() => row.group === "library" && setHistory(row)}
       onDelete={() => { if (row.group === "library") { setDeleteError(null); setDeleting(row); } }}
-      onTakeLibrary={() => void act(() => updateProjectMotif(row.id))()}
+      onTakeLibrary={() => void takeLibrary(row.id)()}
       onSave={() => void act(() => save.start(row.id))()}
       onRemove={() => void act(() => removeProjectMotif(row.id))()}
     />
@@ -245,7 +256,8 @@ export function MotifPicker({
       onClose={onClose}
       panelClassName="motif-picker"
     >
-        {error && <p className="settings-error" role="alert">{error}</p>}
+        {error && <p className="settings-error motif-picker-message" role="alert">{error}</p>}
+        {notice && <p className="settings-status motif-picker-message" role="status">{notice}</p>}
         {proposals && <MotifProposalList proposals={proposals} />}
 
         {catalog === null || projectRows === null || libraryRows === null ? (
@@ -343,7 +355,7 @@ export function MotifPicker({
               ) : selected?.group === "project" ? (
                 <div className="motif-picker-unavailable">
                   <h3>{t("motif_picker.unavailable_title", { name: rowName(selected) })}</h3>
-                  <p className="settings-error">{selected.diagnostic}</p>
+                  {selected.status !== "ok" && <MotifProblem id={selected.id} status={selected.status} diagnostic={selected.diagnostic} />}
                   <p className="settings-status">{t("motif_picker.unavailable_hint", { id: selected.id })}</p>
                 </div>
               ) : (

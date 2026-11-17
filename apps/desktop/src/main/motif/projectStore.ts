@@ -45,8 +45,11 @@ export type CreateSource =
 export interface Placement { id: string; entry: ProjectMotifEntry; copied: boolean }
 
 /** The package library Motif `id` places: a built-in, else the installed
- *  Motif's current version; null when the library has neither. */
-export function libraryPackage(store: UserMotifStore, builtins: readonly BuiltinMotif[], id: string): LibraryPackage | null {
+ *  Motif's current version; null when the library has neither. An installed
+ *  Motif without a recorded lineage gets one recorded only with `mint`;
+ *  without it, one that lasts the call, so a plan never carried out writes
+ *  nothing to the library. */
+export function libraryPackage(store: UserMotifStore, builtins: readonly BuiltinMotif[], id: string, mint = true): LibraryPackage | null {
   const builtin = builtins.find(b => b.id === id)
   if (builtin) {
     const uid = builtinLineage(id)
@@ -56,7 +59,8 @@ export function libraryPackage(store: UserMotifStore, builtins: readonly Builtin
   }
   const installed = store.installedSnapshot(id)
   if (!installed) return null
-  return { id, uid: store.lineage.of(id), version: installed.version, revision: installed.revision, files: installed.files }
+  const uid = mint ? store.lineage.of(id) : store.lineage.peek(id) ?? newLineage()
+  return { id, uid, version: installed.version, revision: installed.revision, files: installed.files }
 }
 
 /** The library's current package of lineage `uid`: the built-in of that

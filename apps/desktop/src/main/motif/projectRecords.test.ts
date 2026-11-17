@@ -282,15 +282,16 @@ describe('updating a folder whose files make no package', () => {
     breakFolder()
     install('lower', 'v2')
     const updated = records.updateFromLibrary('lower')
-    expect(path.dirname(updated.unfinished!)).toBe(path.join(projectDir, 'Backups', 'motifs', 'unfinished'))
-    expect(path.basename(updated.unfinished!).startsWith('lower-')).toBe(true)
-    expect(readFileSync(path.join(updated.unfinished!, 'notes.txt'), 'utf8')).toBe('half done')
-    expect(existsSync(path.join(updated.unfinished!, 'index.old'))).toBe(true)
+    // Answered relative to the project folder, as the panel shows it.
+    expect(updated.unfinished).toMatch(/^Backups\/motifs\/unfinished\/lower-/)
+    const aside = path.join(projectDir, ...updated.unfinished!.split('/'))
+    expect(readFileSync(path.join(aside, 'notes.txt'), 'utf8')).toBe('half done')
+    expect(existsSync(path.join(aside, 'index.old'))).toBe(true)
     expect(project.status('lower')).toMatchObject({ status: 'ok', revision: updated.revision })
-    expect(warned.some(m => m.includes(updated.unfinished!))).toBe(true)
+    expect(warned.some(m => m.includes(aside))).toBe(true)
     // A later open collects backups, never what was set aside.
     records.opened()
-    expect(existsSync(path.join(updated.unfinished!, 'notes.txt'))).toBe(true)
+    expect(existsSync(path.join(aside, 'notes.txt'))).toBe(true)
   })
 
   it('puts the unfinished files back when the update is refused', () => {

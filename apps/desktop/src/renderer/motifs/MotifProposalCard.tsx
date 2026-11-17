@@ -71,8 +71,8 @@ export function MotifDiffLines({ diff }: { diff: MotifDiff | null }) {
   const none = t("motif_proposal.diff_empty_list");
   const unchanged = diff !== null && [...Object.values(diff.files), ...Object.values(diff.props)].every((l) => l.length === 0);
   return (
-    <>
-      <h4>{t("motif_proposal.diff_heading")}</h4>
+    <div className="motif-diff">
+      <h4 className="motif-diff-heading">{t("motif_proposal.diff_heading")}</h4>
       {diff === null ? (
         <p className="motif-proposal-detail">{t("motif_proposal.diff_new")}</p>
       ) : unchanged ? (
@@ -87,7 +87,7 @@ export function MotifDiffLines({ diff }: { diff: MotifDiff | null }) {
           </p>
         </>
       )}
-    </>
+    </div>
   );
 }
 

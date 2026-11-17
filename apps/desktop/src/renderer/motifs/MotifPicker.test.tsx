@@ -54,10 +54,12 @@ vi.mock("../render/motifs/host", () => ({ captureMotifFramePngBlob: capture }));
 
 import { MotifPicker } from "./MotifPicker";
 import { open, save } from "@/bridge/dialog";
+import { setProjectMotifs } from "../render/motifs/catalog";
 
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  setProjectMotifs();
 });
 
 const MOTIF: MotifSummary = {
@@ -134,7 +136,8 @@ describe("two groups: this project and the library", () => {
         proj({ id: "behind", state: "update_available" }),
         proj({ id: "edited", state: "modified" }),
         proj({ id: "mine", state: "project_only" }),
-        proj({ id: "gone", status: "missing", diagnostic: "Motifs/gone/ is missing" }),
+        proj({ id: "gone", status: "missing" }),
+        proj({ id: "torn", status: "invalid", diagnostic: "manifest.json: Unexpected token" }),
       ],
       library: [lib({ status: "builtin", id: "countdown", in_project: "same" })],
     });
@@ -145,12 +148,27 @@ describe("two groups: this project and the library", () => {
     expect(badge("mine")).toBe("Project only");
     expect(badge("gone")).toBe("Missing");
     expect(within(cardOf("gone", "This project")).getByText("Motifs/gone/ is missing")).toBeTruthy();
+    expect(within(cardOf("torn", "This project")).getByText("Motifs/torn/ is not a valid Motif")).toBeTruthy();
     // The library row says the project holds its lineage.
-    expect(within(cardOf("countdown", "Library")).getByText(/In this project/)).toBeTruthy();
+    expect(within(cardOf("countdown", "Library")).getByText("In this project")).toBeTruthy();
     // A broken project Motif cannot be placed: selecting it explains instead.
     fireEvent.click(within(group("This project")).getByTitle("gone"));
-    expect(await screen.findByText("“gone” can't render")).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "“gone” can't render" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Add to timeline" })).toBeNull();
+    // An invalid package's own error stays, under the localized lead.
+    fireEvent.click(within(group("This project")).getByTitle("torn"));
+    const pane = (await screen.findByRole("heading", { name: "“torn” can't render" })).parentElement!;
+    expect(within(pane).getByText("Motifs/torn/ is not a valid Motif")).toBeTruthy();
+    expect(within(pane).getByText("manifest.json: Unexpected token")).toBeTruthy();
+  });
+
+  it("says when the project's copy of a library Motif cannot render", async () => {
+    await renderPicker({
+      project: [proj({ id: "gone", status: "missing" }), proj({ id: "torn", status: "invalid", diagnostic: "bad" })],
+      library: [lib({ id: "badge", in_project: "gone" }), lib({ id: "other", in_project: "torn" })],
+    });
+    expect(within(cardOf("badge", "Library")).getByText("In this project · missing")).toBeTruthy();
+    expect(within(cardOf("other", "Library")).getByText("In this project · invalid")).toBeTruthy();
   });
 
   it("places a library Motif as a copy (fromLibrary) and a project Motif as itself; previews capture each from its own scope", async () => {
@@ -173,27 +191,39 @@ describe("two groups: this project and the library", () => {
 
 describe("project row actions", () => {
   it("updates a copy the library moved past, and restores a missing one from the library", async () => {
-    ipcMocks.updateProjectMotif.mockResolvedValue(undefined);
+    ipcMocks.updateProjectMotif.mockResolvedValue({ unfinished: null });
     await renderPicker({
-      project: [proj({ id: "behind", state: "update_available" }), proj({ id: "gone", status: "missing", state: "in_sync", diagnostic: "Motifs/gone/ is missing" }),
+      project: [proj({ id: "behind", state: "update_available" }), proj({ id: "gone", status: "missing", state: "in_sync" }),
         proj({ id: "mine", state: "project_only" }), proj({ id: "same" })],
       library: [lib()],
     });
-    fireEvent.click(within(cardOf("behind", "This project")).getByRole("button", { name: "Update project copy" }));
+    // The card shows the short label beside its one-line meta; the name is the whole one.
+    const update = within(cardOf("behind", "This project")).getByRole("button", { name: "Update project copy" });
+    expect(update.textContent).toBe("Update");
+    fireEvent.click(update);
     await waitFor(() => expect(ipcMocks.updateProjectMotif).toHaveBeenCalledWith("behind"));
     fireEvent.click(within(cardOf("gone", "This project")).getByRole("button", { name: "Restore from library" }));
     await waitFor(() => expect(ipcMocks.updateProjectMotif).toHaveBeenLastCalledWith("gone"));
+    expect(screen.queryByText(/Unfinished files/)).toBeNull();
     // Nothing to take: a Motif the library lacks, or one already the same.
     expect(within(cardOf("mine", "This project")).queryByRole("button", { name: /Update|Restore/ })).toBeNull();
     expect(within(cardOf("same", "This project")).queryByRole("button", { name: /Update|Restore/ })).toBeNull();
   });
 
-  it("shows the refusal when a Motif still in use is removed from the project", async () => {
+  it("says where a broken copy's unfinished files went when the library's version replaces it", async () => {
+    ipcMocks.updateProjectMotif.mockResolvedValue({ unfinished: "Backups/motifs/unfinished/torn-2026-01-02T03-04-05-000Z" });
+    await renderPicker({ project: [proj({ id: "torn", status: "invalid", diagnostic: "bad" })], library: [lib()] });
+    fireEvent.click(within(cardOf("torn", "This project")).getByRole("button", { name: "Restore from library" }));
+    expect(await screen.findByText("Unfinished files moved to Backups/motifs/unfinished/torn-2026-01-02T03-04-05-000Z.")).toBeTruthy();
+  });
+
+  it("shows the refusal when a Motif still in use is removed from the project, naming it as the panel does", async () => {
     ipcMocks.removeProjectMotif.mockRejectedValue(new Error(
       `Error invoking remote method 'backend:invoke': Error: ${JSON.stringify({ error: "MotifInUse", motif_id: "lower", referenced_by: ["l1", "l2"] })}`));
-    await renderPicker({ project: [proj({ id: "lower" })], library: [] });
+    setProjectMotifs([{ ...MOTIF, id: "lower", name: "Lower Third" }]);
+    await renderPicker({ project: [proj({ id: "lower", name: "Lower Third" })], library: [] });
     fireEvent.click(await menuItem(cardOf("lower", "This project"), "Remove from project"));
-    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Motif “lower” is used by 2 clips. Remove those clips first.");
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Motif “Lower Third” is used by 2 clips. Remove those clips first.");
     expect(ipcMocks.removeProjectMotif).toHaveBeenCalledWith("lower");
   });
 

@@ -17,13 +17,13 @@ describe("syncProjectMotifsFromBackend", () => {
   it("fills the catalog from the project group only, with its broken Motifs as unavailable", async () => {
     bridge.invoke.mockResolvedValue([
       { ...manifest("lower", [320, 240]), group: "project", uid: "u1", status: "ok", state: "in_sync", from: null, path: "/home/u/Film/Motifs/lower", revision: "r" },
-      { group: "project", id: "gone", uid: "u2", status: "missing", state: "project_only", from: null, path: "/home/u/Film/Motifs/gone", revision: null, diagnostic: "Motifs/gone/ is missing" },
+      { group: "project", id: "gone", uid: "u2", status: "missing", state: "project_only", from: null, path: "/home/u/Film/Motifs/gone", revision: null },
     ]);
     await syncProjectMotifsFromBackend();
     expect(bridge.invoke).toHaveBeenCalledWith("list_motifs", { group: "project" });
     expect(getMotif("lower")?.manifest.size).toEqual([320, 240]);
     expect(getMotif("gone")).toBeNull();
-    expect(motifUnavailable("gone")).toMatchObject({ status: "missing", diagnostic: "Motifs/gone/ is missing" });
+    expect(motifUnavailable("gone")).toMatchObject({ status: "missing", diagnostic: "" });
   });
 
   it("re-pulls on motifs:changed, so a Motif placed by the commit that sent it resolves", async () => {

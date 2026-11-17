@@ -44,12 +44,12 @@ export function legacyDraftsNotice(store: UserMotifStore): AppNotice | null {
 }
 
 /** The package v5 rendered for Motif `id`; null when nothing did. A built-in
- *  id resolves to the built-in or to nothing, as in v5. A draft without a
- *  recorded lineage gets one recorded only with `mint`; without it, one that
- *  lasts the call: an open the upgrade refuses writes nothing to the
- *  library. */
+ *  id resolves to the built-in or to nothing, as in v5. An installed Motif or
+ *  a draft without a recorded lineage gets one recorded only with `mint`;
+ *  without it, one that lasts the call: an open the upgrade refuses writes
+ *  nothing to the library. */
 export function resolveLegacyMotif(store: UserMotifStore, builtins: readonly BuiltinMotif[], id: string, mint = true): LegacyPackage | null {
-  const library = libraryPackage(store, builtins, id)
+  const library = libraryPackage(store, builtins, id, mint)
   if (library) {
     const from = { uid: library.uid, version: library.version, revision: library.revision }
     return { uid: library.uid, revision: library.revision, from, files: library.files }
@@ -90,13 +90,16 @@ function legacyManifest(store: UserMotifStore, id: string): Manifest | null {
  *  is kept (an upgrade run again changes nothing, an earlier one unsaved
  *  included): its source is the library version holding its revision
  *  (`versionOf`), else the one resolved now. A package that is gone or
- *  cannot be copied leaves its entry without a revision, and says why. */
+ *  cannot be copied leaves its entry without a revision, and says why; one
+ *  that resolved still answers the lineage now recorded for it, so the entry
+ *  can be restored from the library. */
 export function placeMigratedMotifs(project: ProjectMotifStore, copies: readonly MotifCopy[],
   resolve: (id: string) => LegacyPackage | null,
   versionOf: (id: string, revision: string) => number | null = () => null): MotifCopyOutcome[] {
   return copies.map(({ id, source }) => {
+    let pkg: LegacyPackage | null = null
     try {
-      const pkg = resolve(source ?? id)
+      pkg = resolve(source ?? id)
       if (!pkg) return { id, revision: null, diagnostic: 'The Motif is no longer in the library' }
       const kept = project.status(id).status === 'ok'
       const revision = project.materialize(id, pkg.files, 'placed')
@@ -107,7 +110,7 @@ export function placeMigratedMotifs(project: ProjectMotifStore, copies: readonly
       }
       return { id, revision, uid: pkg.uid, from }
     } catch (error) {
-      return { id, revision: null, diagnostic: error instanceof Error ? error.message : String(error) }
+      return { id, revision: null, ...(pkg ? { uid: pkg.uid, from: pkg.from } : {}), diagnostic: error instanceof Error ? error.message : String(error) }
     }
   })
 }
@@ -137,7 +140,7 @@ export function legacyMigration(store: UserMotifStore, builtins: readonly Builti
         if (manifest?.version !== version) manifest = legacyManifest(store, id)
         return manifest?.version === version ? manifest.size : null
       },
-      // Parsing only plans: a draft's lineage is recorded once its copy is made.
+      // Parsing only plans: a lineage is recorded once its copy is made.
       legacyMotif: id => {
         const found = resolveLegacyMotif(store, builtins, id, false)
         return found && { uid: found.uid, revision: found.revision, from: found.from }

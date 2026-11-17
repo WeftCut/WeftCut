@@ -110,8 +110,9 @@ export interface SchemaUpgradeReport {
 }
 
 /** The project with each planned copy's outcome in its Motif table: an entry
- *  whose copy failed, or that nothing copied, holds no revision. Answers the
- *  entries left without one. */
+ *  whose copy failed, or that nothing copied, holds no revision, and takes
+ *  the lineage and source the outcome answers. Answers the entries left
+ *  without a revision. */
 function settleMotifCopies(project: Project, copies: readonly MotifCopy[], outcomes: readonly MotifCopyOutcome[]): { project: Project; missing: { id: string; diagnostic?: string }[] } {
   const motifs = { ...project.motifs }
   const diagnostics = new Map<string, string>()
@@ -119,9 +120,11 @@ function settleMotifCopies(project: Project, copies: readonly MotifCopy[], outco
     const outcome = outcomes.find(o => o.id === id)
     const entry = motifEntry(motifs, id)
     if (!entry) continue
-    motifs[id] = outcome?.revision
-      ? { uid: outcome.uid ?? entry.uid, revision: outcome.revision, from: outcome.from !== undefined ? outcome.from : entry.from }
-      : { ...entry, revision: null }
+    motifs[id] = {
+      uid: outcome?.uid ?? entry.uid,
+      revision: outcome?.revision ?? null,
+      from: outcome?.from !== undefined ? outcome.from : entry.from,
+    }
     if (!outcome?.revision) diagnostics.set(id, outcome?.diagnostic ?? 'The Motif was not copied into the project')
   }
   const missing = Object.entries(motifs).filter(([, entry]) => entry.revision === null)

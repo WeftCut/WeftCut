@@ -843,17 +843,36 @@ describe("MotifSprite error placeholder", () => {
   beforeEach(() => {
     vi.stubGlobal("document", { createElement: () => ({ width: 0, height: 0, getContext: () => context }) });
     getMotifMock.mockReset().mockReturnValue(null);
-    setProjectMotifs([], [{ motif_id: "gone", status: "missing", diagnostic: "Motifs/gone/ is missing" }]);
+    setProjectMotifs([], [{ motif_id: "gone", status: "missing", diagnostic: "" }]);
   });
   afterEach(() => { vi.unstubAllGlobals(); setProjectMotifs(); });
 
-  it("draws an error placeholder where the project records a Motif it cannot render", () => {
-    const sprite = new MotifSprite({ layerId: "L", motifId: "gone", fpsNum: 30, fpsDen: 1 });
+  it("draws an error placeholder over the canvas where the project records a Motif it cannot render", () => {
+    const canvas = { width: 1080, height: 1920 };
+    const sprite = new MotifSprite({ layerId: "L", motifId: "gone", fpsNum: 30, fpsDen: 1, canvasSize: () => canvas });
     try {
       sprite.update(view, 0, 5_000_000);
       expect(sprite.showsUnavailable).toBe(true);
       expect(sprite.stageReady).toBe(true);
-      expect(sprite.sprite.texture.source?.resource).toMatchObject({ width: 480, height: 270 });
+      // It covers the canvas the layer draws into, whatever its shape...
+      expect(sprite.sprite.texture.orig).toMatchObject(canvas);
+      // ...from a bitmap of the same shape, never larger than it.
+      const bitmap = sprite.sprite.texture.source!.resource as { width: number; height: number };
+      expect(bitmap.width / bitmap.height).toBeCloseTo(canvas.width / canvas.height, 2);
+      expect(bitmap.height).toBeLessThanOrEqual(canvas.height);
+    } finally { sprite.dispose(); }
+  });
+
+  it("follows the canvas when it is resized under the placeholder", () => {
+    let canvas = { width: 1920, height: 1080 };
+    const sprite = new MotifSprite({ layerId: "L", motifId: "gone", fpsNum: 30, fpsDen: 1, canvasSize: () => canvas });
+    try {
+      sprite.update(view, 0, 5_000_000);
+      expect(sprite.sprite.texture.orig).toMatchObject({ width: 1920, height: 1080 });
+      canvas = { width: 1280, height: 1280 };
+      sprite.update(view, 0, 5_000_000);
+      expect(sprite.showsUnavailable).toBe(true);
+      expect(sprite.sprite.texture.orig).toMatchObject({ width: 1280, height: 1280 });
     } finally { sprite.dispose(); }
   });
 

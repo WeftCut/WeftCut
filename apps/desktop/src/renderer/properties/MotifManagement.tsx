@@ -14,6 +14,7 @@ import {
   updateProjectMotif,
   type MotifCatalog,
 } from "../ipc";
+import { MotifProblem } from "../motifs/MotifProblem";
 import { canSaveToLibrary, libraryTake } from "../motifs/motifRows";
 import { useSaveToLibrary } from "../motifs/SaveToLibrary";
 import { motifCatalogRevision, subscribeMotifCatalog } from "../render/motifs/catalog";
@@ -38,6 +39,7 @@ export function MotifManagementRow({ motifId }: { motifId: string }) {
   const catalog = useMotifCatalog();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const save = useSaveToLibrary((id) => catalog?.library.find((r) => r.id === id)?.motif.name);
   const row = catalog?.project.find((r) => r.id === motifId);
   if (!row) return null;
@@ -45,6 +47,7 @@ export function MotifManagementRow({ motifId }: { motifId: string }) {
   const run = (fn: () => Promise<unknown>) => async () => {
     setBusy(true);
     setErr(null);
+    setNotice(null);
     try {
       await fn();
     } catch (e) {
@@ -60,7 +63,10 @@ export function MotifManagementRow({ motifId }: { motifId: string }) {
     <div className="prop-motif-lifecycle">
       <span className={`motif-card-status status-${state}`}>{t(`motif_picker.status.${state}`)}</span>
       {take && (
-        <Button size="sm" disabled={busy} title={t(`motif_picker.${take}_hint`)} onClick={run(() => updateProjectMotif(motifId))}>
+        <Button size="sm" disabled={busy} title={t(`motif_picker.${take}_hint`)} onClick={run(async () => {
+          const { unfinished } = await updateProjectMotif(motifId);
+          if (unfinished) setNotice(t("motif_picker.unfinished_moved", { path: unfinished }));
+        })}>
           {t(`motif_picker.${take}_button`)}
         </Button>
       )}
@@ -69,8 +75,9 @@ export function MotifManagementRow({ motifId }: { motifId: string }) {
           {t("motif_picker.save_button")}
         </Button>
       )}
-      {row.diagnostic && <p className="settings-error">{row.diagnostic}</p>}
+      {row.status !== "ok" && <MotifProblem id={row.id} status={row.status} diagnostic={row.diagnostic} />}
       {err && <p className="settings-error">{err}</p>}
+      {notice && <p className="prop-hint" role="status">{notice}</p>}
       {save.dialog}
     </div>
   );

@@ -182,7 +182,9 @@ describe("MotifFields form generation", () => {
       />,
     );
     const view = panel("gone");
-    expect(screen.getByText("Motif “gone” can't render: index.html is missing")).toBeTruthy();
+    // A localized lead naming the folder; the package error under it as main wrote it.
+    expect(screen.getByText("Motifs/gone/ is not a valid Motif")).toBeTruthy();
+    expect(screen.getByText("index.html is missing")).toBeTruthy();
     expect(screen.queryByRole("region", { name: "Props" })).toBeNull();
     view.unmount();
     panel("not-synced");

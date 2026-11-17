@@ -45,7 +45,7 @@ export interface MotifBakeSpec {
 export class MotifUnavailableError extends Error {
   constructor(readonly motifId: string, readonly problem: UnavailableMotif | null) {
     super(problem
-      ? `Motif '${motifId}' is ${problem.status} (${problem.diagnostic}); a layer in the export uses it, so nothing was exported`
+      ? `Motif '${motifId}' is ${problem.status}${problem.diagnostic ? ` (${problem.diagnostic})` : ""}; a layer in the export uses it, so nothing was exported`
       : `Motif '${motifId}' is not in this project; a layer in the export uses it, so nothing was exported`);
     this.name = "MotifUnavailableError";
   }

@@ -64,6 +64,7 @@ import { useTextFit } from "./useTextFit";
 // `updateLayerParams`.
 import { getMotif, motifUnavailable, subscribeMotifCatalog, motifCatalogRevision } from "../render/motifs/catalog";
 import { MotifManagementRow, MotifSourcePanel } from "./MotifManagement";
+import { MotifProblem } from "../motifs/MotifProblem";
 import {
   useCompositionRefCounts,
   useGroupOrdinals,
@@ -1216,7 +1217,7 @@ function MotifFields({
       <BakeStatusLine layerId={layer.id} />
       {motif === null ? (
         unavailable
-          ? <p className="settings-error">{t("property_panel.motif_unavailable", { id: v.motif_id, diagnostic: unavailable.diagnostic })}</p>
+          ? <MotifProblem id={v.motif_id} status={unavailable.status} diagnostic={unavailable.diagnostic} />
           : <p className="prop-hint">{t("property_panel.unknown_motif")}</p>
       ) : motif.hasParamsUi ? (
         // The Motif ships its own page — it owns the whole props surface,

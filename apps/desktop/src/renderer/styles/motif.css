@@ -20,14 +20,15 @@
   overflow: hidden;
 }
 
-.motif-picker header {
+/* The dialog's own header only: a card inside (a proposal's) has its own. */
+.motif-picker > header {
   display: flex;
   align-items: center;
   padding: calc(12 * var(--ui-px)) calc(16 * var(--ui-px));
   border-bottom: 1px solid var(--border-soft);
 }
 
-.motif-picker header h2 {
+.motif-picker > header h2 {
   margin: 0;
   font-size: var(--font-size-title);
   font-weight: 600;
@@ -192,6 +193,12 @@
   justify-content: space-between;
   gap: calc(6 * var(--ui-px));
 }
+.motif-card-footer .motif-card-meta { flex: 1 1 auto; }
+
+/* The panel's error and notice lines, above the catalog: the header's inset. */
+.motif-picker > .motif-picker-message {
+  margin: calc(8 * var(--ui-px)) calc(16 * var(--ui-px)) 0;
+}
 
 .motif-delete-dialog { width: min(var(--dialog-width-compact), 90vw); }
 
@@ -245,7 +252,12 @@
   color: var(--foreground);
 }
 
+/* One line: a narrow card ellipsizes it (its title holds the whole). */
 .motif-card-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--font-size-caption);
   color: var(--muted-foreground);
 }
@@ -284,6 +296,14 @@
 }
 .motif-card-unavailable .settings-error { margin: 0; font-size: var(--font-size-caption); }
 
+/* An invalid package's error under the localized lead (MotifProblem). */
+.motif-problem-detail {
+  display: block;
+  margin-top: calc(2 * var(--ui-px));
+  font-size: var(--font-size-caption);
+  overflow-wrap: anywhere;
+}
+
 .motif-save-dialog { width: min(var(--dialog-width-compact), 90vw); }
 
 .motif-picker-form {
@@ -302,6 +322,14 @@
   color: var(--muted-foreground);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+/* A broken row's pane names the Motif as a title, not a section label. */
+.motif-picker-form .motif-picker-unavailable h3 {
+  font-size: var(--font-size-label);
+  color: var(--foreground);
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 .motif-picker-field {
@@ -382,16 +410,26 @@
 
 /* An agent's proposed publication, waiting for the user (MotifProposalCard). */
 .motif-proposals {
+  --motif-proposal-pad: calc(10 * var(--ui-px));
   display: flex;
   flex-direction: column;
   gap: calc(8 * var(--ui-px));
+  padding: calc(8 * var(--ui-px)) calc(16 * var(--ui-px)) 0;
   margin-bottom: calc(12 * var(--ui-px));
+}
+/* Starts where the cards' content does: their padding and border in. */
+.motif-proposals > h3 {
+  margin: 0;
+  padding-inline: calc(var(--motif-proposal-pad) + 1px);
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  color: var(--muted-foreground);
 }
 .motif-proposal-card {
   display: flex;
   flex-direction: column;
   gap: calc(6 * var(--ui-px));
-  padding: calc(10 * var(--ui-px));
+  padding: var(--motif-proposal-pad);
   border: 1px solid var(--border);
   border-radius: calc(6 * var(--ui-px));
 }
@@ -404,6 +442,25 @@
 .motif-proposal-detail {
   font-size: var(--font-size-caption);
   color: var(--muted-foreground);
+}
+
+/* A package's change against the library (MotifDiffLines), in the proposal
+   card and the Save to library confirm: a small section label over its
+   lines. */
+.motif-diff {
+  display: flex;
+  flex-direction: column;
+  gap: calc(4 * var(--ui-px));
+  margin: calc(4 * var(--ui-px)) 0 calc(8 * var(--ui-px));
+}
+.motif-diff .motif-proposal-detail { margin: 0; }
+.motif-diff-heading {
+  margin: 0 0 calc(2 * var(--ui-px));
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 .motif-proposal-note {
   display: flex;

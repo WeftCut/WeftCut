@@ -231,8 +231,9 @@ export class ProjectMotifRecords {
    *  version of its lineage: the folder is replaced, then one commit records
    *  the new revision and source and rebinds every layer on it to the new
    *  props schema. The replaced revision stays in the backups; files that
-   *  made no package are moved under `Backups/motifs/unfinished/`, the path
-   *  answered as `unfinished`. A refused commit puts the folder back as it
+   *  made no package are moved under `Backups/motifs/unfinished/`, answered
+   *  as `unfinished`: that folder relative to the project's, `/`-separated,
+   *  for the panel to show. A refused commit puts the folder back as it
    *  was. */
   updateFromLibrary(id: string): { motif_id: string; revision: string; from: ProjectMotifSource; unfinished?: string } {
     const project = this.deps.project()
@@ -268,7 +269,8 @@ export class ProjectMotifRecords {
       throw error
     }
     if (unfinished) this.warn(`The unfinished files of Motif '${id}' were moved to ${unfinished}`, { motif_id: id, unfinished })
-    return { motif_id: id, revision, from, ...(unfinished ? { unfinished } : {}) }
+    const shown = unfinished && path.relative(path.dirname(project.root()), unfinished).split(path.sep).join('/')
+    return { motif_id: id, revision, from, ...(shown ? { unfinished: shown } : {}) }
   }
 
   private warn(message: string, details: Record<string, unknown>): void {

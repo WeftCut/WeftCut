@@ -198,11 +198,12 @@ describe("motifLayersToBake", () => {
 
   test("refuses the export, naming the Motif, when a layer in range uses one the project cannot render", () => {
     const missing = motifLayer("broken", 0, 5_000_000, { motif_id: "gone" } as Partial<MotifView>);
-    setProjectMotifs([...BUILTIN_MANIFESTS.values()], [{ motif_id: "gone", status: "missing", diagnostic: "Motifs/gone/ is missing" }]);
+    setProjectMotifs([...BUILTIN_MANIFESTS.values()], [{ motif_id: "gone", status: "missing", diagnostic: "" }]);
     try {
       const refuse = () => motifLayersToBake(summaryWith([motifLayer("known", 0, 5_000_000), missing]), 0, 5_000_000, 30, 1);
       expect(refuse).toThrow(MotifUnavailableError);
-      expect(refuse).toThrow("Motif 'gone' is missing (Motifs/gone/ is missing)");
+      // A missing Motif carries no diagnostic: the status says it all.
+      expect(refuse).toThrow("Motif 'gone' is missing; a layer in the export uses it");
       // Out of the range it draws nothing, so nothing is refused.
       expect(motifLayersToBake(summaryWith([motifLayer("known", 0, 5_000_000), { ...missing, t_start_us: 6_000_000, t_end_us: 7_000_000 }]), 0, 5_000_000, 30, 1)
         .map((s) => s.layerId)).toEqual(["known"]);

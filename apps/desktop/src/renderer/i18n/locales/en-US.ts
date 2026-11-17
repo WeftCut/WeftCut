@@ -2769,7 +2769,6 @@ const enUS = {
     bake_pause_disk: "Waiting for writable cache storage",
     bake_baking: "Pre-baking… {{done}}/{{total}}",
     bake_error: "Pre-bake failed",
-    motif_unavailable: "Motif “{{id}}” can't render: {{diagnostic}}",
     motif_source: "Source",
     motif_source_apply: "Apply",
     motif_source_applying: "Applying…",
@@ -2943,11 +2942,16 @@ const enUS = {
     group_library: "Library",
     project_empty: "No Motifs in this project yet. Add one from the library.",
     in_project: "In this project",
+    in_project_missing: "In this project · missing",
+    in_project_invalid: "In this project · invalid",
     place_copy_hint: "Adding copies it into this project.",
     update_button: "Update project copy",
+    update_short: "Update",
     update_hint: "Replace this project's copy with the library's version. Undo brings it back.",
     restore_button: "Restore from library",
+    restore_short: "Restore",
     restore_hint: "Put the library's version back in this project's Motifs folder. Undo brings the broken copy back.",
+    unfinished_moved: "Unfinished files moved to {{path}}.",
     save_button: "Save to library",
     save_confirm_title: "Replace “{{name}}” in the library?",
     save_confirm_body: "This project's copy becomes version {{to}} of “{{name}}”. Projects that use it keep their own copies and show an update.",
@@ -2957,6 +2961,12 @@ const enUS = {
     remove_button: "Remove from project",
     unavailable_title: "“{{name}}” can't render",
     unavailable_hint: "Restore its folder under Motifs/{{id}}/, fix its files, or restore it from the library.",
+    // A project Motif that cannot render (motifs/MotifProblem.tsx); an
+    // invalid one's package error follows on its own line, untranslated.
+    problem: {
+      missing: "Motifs/{{id}}/ is missing",
+      invalid: "Motifs/{{id}}/ is not a valid Motif",
+    },
   },
   motif_proposal: {
     heading_one: "1 Motif awaiting your approval",
