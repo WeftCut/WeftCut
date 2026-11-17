@@ -43,6 +43,7 @@
     "mcp:catalog:snapshot": "node scripts/snapshot-mcp-catalog.mjs",
     "mcp:catalog:check": "node scripts/snapshot-mcp-catalog.mjs && git diff --exit-code fixtures/mcp/rust-catalog-snapshot.json",
     "e2e": "node scripts/run-e2e.mjs",
+    "shots": "node scripts/shots/shots.mjs",
     "e2e:timings": "node scripts/e2e-timings-snapshot.mjs",
     "ffmpeg:fetch": "node scripts/fetch-ffmpeg.mjs",
     "ffmpeg:fetch-lgpl": "node scripts/fetch-ffmpeg-lgpl.mjs",

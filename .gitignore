@@ -73,3 +73,6 @@ apps/desktop/e2e/bench-results/
 
 # Local spec-related docs
 .scratch/
+
+# PR screenshot output (docs/agents/screenshots.md)
+shots-out/

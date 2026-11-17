@@ -34,6 +34,10 @@ Tests are grouped by runner, not one directory: colocated Vitest unit tests in `
 
 A test asserts the property it is about (order, cause, ownership, a bound the product enforces), never a number measured on one machine. Before writing or rewriting a test, read `docs/agents/testing.md` § Assert the intent, not a measurement.
 
+### PR screenshots
+
+Before capturing screenshots for a PR, read `docs/agents/screenshots.md`: one shot file and `npm run shots` produce the before/after images and their PR-body section.
+
 ### Code comments
 
 Before writing or editing a comment, read `docs/comment-style.md`.
