@@ -3500,10 +3500,22 @@ export function exportVideoSinkCancel(): Promise<void> {
   return invoke("export_video_sink_cancel");
 }
 
-/// Stream a raw encoded chunk to the native sink. The bytes are forwarded
-/// to ffmpeg's input pipe; call in sequence to preserve muxer order.
-export function exportVideoSinkWrite(bytes: Uint8Array): Promise<void> {
-  return window.api.videoSinkWrite(bytes);
+/// The native sink's frame port (main/exportSinkPort.ts). Open it after
+/// `exportVideoSinkStart`; each export takes its own.
+export function openVideoSinkPort(): Promise<MessagePort> {
+  return new Promise((resolve, reject) => {
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { weftcutVideoSinkPort?: unknown } | null;
+      if (event.source !== window || data?.weftcutVideoSinkPort !== true || !event.ports[0]) return;
+      window.removeEventListener("message", onMessage);
+      resolve(event.ports[0]);
+    };
+    window.addEventListener("message", onMessage);
+    window.api.videoSinkPort().catch((error: unknown) => {
+      window.removeEventListener("message", onMessage);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    });
+  });
 }
 
 /// Caption restyle patch. Fields are snake_case to match the actor

@@ -12,7 +12,7 @@ import { tenBitExportCapable } from './exportSettings';
 import { forEachLayerInTime, instanceKey } from './compositionWalk';
 import { motifLayersToBake } from './exportBake';
 import { admitExportMetadata, exportBufferBytes } from './resourceClient';
-import { EXPORT_AUDIO_MIX_MIB, EXPORT_FRAME_WINDOW, EXPORT_MIN_FRAMES, exportDecoderMiB, minimumExportFrames, type ExportResourcePlan } from '../../shared/export-resources';
+import { EXPORT_AUDIO_MIX_MIB, exportReadbackFrames, sinkBytesPerPixel, type SinkPixFmt, EXPORT_FRAME_WINDOW, EXPORT_MIN_FRAMES, exportDecoderMiB, minimumExportFrames, type ExportResourcePlan } from '../../shared/export-resources';
 
 export interface ExportSourceDemand { width: number; height: number; tenBit: boolean; minimumFrames: number; nativeMiB?: number }
 export interface ExportActiveDemand { key: string; mediaId: string; start: number; end: number }
@@ -36,8 +36,11 @@ export function peakDecoderMiB(clips: ExportActiveDemand[], memory: Record<strin
 export function buildExportResourcePlans(input: {
   sources: Record<string, ExportSourceDemand>; clips: ExportActiveDemand[];
   workerMiB: number; encoderMiB: number; motifBufferBytes: number; captureMiB?: number; motifFrameBytes?: number;
-  /** The audio mix's working memory. It runs under the plan before any video
-   * child exists, so it is a floor, not an addend. */
+  /** The fullest plan's readback depth (`exportReadbackFrames`) and one packed
+   * frame's bytes, 0 when no native sink reads frames back. */
+  readbackFrames: number; readbackFrameBytes: number;
+  /** The audio mix's working memory. It runs under the plan while the video
+   * renders. */
   audioMiB?: number;
 }): ExportResourcePlan[] {
   const plans: ExportResourcePlan[]=[];
@@ -50,9 +53,12 @@ export function buildExportResourcePlans(input: {
     }
     const motifFrames = 3 - fraction * 2;
     const motifBufferBytes = Math.ceil(input.motifBufferBytes * (1-fraction) + (input.motifFrameBytes ?? input.motifBufferBytes) * fraction);
-    const workerMiB = Math.ceil(input.workerMiB + (motifBufferBytes-input.motifBufferBytes)/1048576);
-    const memoryMiB=Math.max(64, input.audioMiB ?? 0, workerMiB+input.encoderMiB+motifFrames*(input.captureMiB ?? 0)+peakDecoderMiB(input.clips,memory));
-    if (!plans.some(p => p.memoryMiB === memoryMiB)) plans.push({ memoryMiB, workerMiB, motifBufferBytes, motifFrames, frameWindows });
+    const readbackFrames = Math.max(1, Math.ceil(input.readbackFrames * (1-fraction)));
+    // A readback batch, plus as many frames on their way to the sink.
+    const readbackBytes = 2 * readbackFrames * input.readbackFrameBytes;
+    const workerMiB = Math.ceil(input.workerMiB + (motifBufferBytes-input.motifBufferBytes+readbackBytes)/1048576);
+    const memoryMiB=Math.max(64, (input.audioMiB ?? 0)+workerMiB+input.encoderMiB+motifFrames*(input.captureMiB ?? 0)+peakDecoderMiB(input.clips,memory));
+    if (!plans.some(p => p.memoryMiB === memoryMiB)) plans.push({ memoryMiB, workerMiB, motifBufferBytes, motifFrames, frameWindows, readbackFrames });
   }
   return plans;
 }
@@ -64,7 +70,9 @@ export function buildExportResourcePlans(input: {
  * cancelled (`waiting` sees each block), never failing busy. */
 export async function prepareExportResourcePlans(input: {
   summary: ProjectSummary; media: ReadonlyMap<string, MediaSummary>; routing?: ExportDecodeRouting | undefined;
-  startUs: number; endUs: number; bitDepth: 8|10; nativeEncoder: boolean;
+  startUs: number; endUs: number; bitDepth: 8|10;
+  /** The native sink's frame layout; null when WebCodecs encodes. */
+  sinkPixFmt: SinkPixFmt | null;
   outputWidth: number; outputHeight: number; signal: AbortSignal;
   /** The export mixes audio under this plan (`EXPORT_AUDIO_MIX_MIB`). */
   audio?: boolean;
@@ -78,6 +86,8 @@ export async function prepareExportResourcePlans(input: {
   const pixels=comp.width*comp.height*(input.bitDepth===10?8:4);
   const motifs=motifLayersToBake(input.summary,input.startUs,input.endUs,comp.fps_num,comp.fps_den);
   const hasMotifs=motifs.length>0;
+  const readbackFrameBytes=input.sinkPixFmt?input.outputWidth*input.outputHeight*sinkBytesPerPixel(input.sinkPixFmt):0;
+  const readbackFrames=readbackFrameBytes?exportReadbackFrames({hasMotifs,frameBytes:readbackFrameBytes}):1;
   // Each producer frame has at most one capture in flight plus one GPU lane,
   // whose upload pool holds a staging texture as large as its slot.
   const captureMiB=Math.max(0,...motifs.map(m => {
@@ -95,9 +105,9 @@ export async function prepareExportResourcePlans(input: {
   /** The plans for `sources`; refuses at once when even the smallest exceeds
    * the working-memory allowance, which no wait can change. */
   const plansFor=(sources: Record<string,ExportSourceDemand>): ExportResourcePlan[] => {
-    const plans=buildExportResourcePlans({ sources,clips,motifBufferBytes,captureMiB,motifFrameBytes,
+    const plans=buildExportResourcePlans({ sources,clips,motifBufferBytes,captureMiB,motifFrameBytes,readbackFrames,readbackFrameBytes,
       workerMiB:Math.ceil(64+(pixels*8+motifBufferBytes)/1048576),
-      encoderMiB:input.nativeEncoder?128+Math.ceil(input.outputWidth*input.outputHeight*32/1048576):0,
+      encoderMiB:input.sinkPixFmt?128+Math.ceil(input.outputWidth*input.outputHeight*32/1048576):0,
       ...(input.audio ? { audioMiB: EXPORT_AUDIO_MIX_MIB } : {}),
     });
     const minimum=Math.min(...plans.map(p => p.memoryMiB)), work=resourceAllocation().work_mib;

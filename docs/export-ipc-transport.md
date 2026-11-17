@@ -1,9 +1,9 @@
 # Export frame transport (native engines)
 
-Raw frames cross the Electron process boundary in both export directions over
-classic main↔renderer IPC. **Encode-out:** the export Worker packs each
-composited frame to the sink's rawvideo format (yuv420p, yuv422p,
-yuv420p10le, yuv422p10le) and streams it to a native `ffmpeg` encode.
+Raw frames cross the Electron process boundary in both export directions.
+**Encode-out:** the export Worker packs each composited frame to the sink's
+rawvideo format (yuv420p, yuv422p, yuv420p10le, yuv422p10le) and streams it
+over a frame port to a native `ffmpeg` encode.
 **Decode-in:** the native `export_sw` session streams NV12/I420P10 frames into
 the Worker's export ring. The WebCodecs engine (in-Worker `VideoDecoder`;
 `VideoEncoder` → mediabunny fMP4) uses neither.
@@ -12,19 +12,31 @@ the Worker's export ring. The WebCodecs engine (in-Worker `VideoDecoder`;
 
 1. The Worker composites (`rgba16float` target for yuv420p10le, `rgba8unorm`
    otherwise); a GPU pack pass (`PackYuvPlanar`, or the parity-gated
-   `PackYuv420p10`) writes the rawvideo bytes. Readback is PBO + fence
-   (`PboFrameReader`): submit frame N, retrieve frame N−1, so the CPU never
-   waits on the GPU.
-2. The Worker posts the frame buffer (transferred) to the renderer main thread
-   as an export `chunk`. `chunk-ack` is the backpressure: one frame in flight,
-   with the Worker compositing the next frame while the ack is pending.
-3. Renderer → `window.api.videoSinkWrite` → `ipcMain.handle('export:videosink_write')`
-   → `video_sink_write`, which writes to ffmpeg's stdin on a blocking thread.
-4. `export_video_sink_start` spawns ffmpeg and holds stdin;
-   `export_video_sink_finish` drops stdin (EOF) and reaps the child;
-   `export_video_sink_cancel` kills, then drops stdin.
+   `PackYuv420p10`) writes the rawvideo bytes into a ring of
+   pixel-pack buffers (`PboFrameReader`), as many as the plan's
+   `readbackFrames` (`exportReadbackFrames`: one while a Motif plays,
+   otherwise up to four frames and 32 MiB; leaner plans read back fewer). When the ring is full, `drain()` reads every pending frame in order, so one wait
+   for the GPU serves the batch. There is no fence: Chromium updates a
+   fence's status only at frame boundaries, so polling one costs up to a
+   display frame per readback.
+2. After `export_video_sink_start` spawns ffmpeg, `runExport` asks main for a
+   frame port (`export:videosink_port`, main window's top frame only), which
+   reaches the page as a window message (a port cannot cross
+   `contextBridge`). It hands the port to a sender worker
+   (`worker/sinkSender.ts`) and joins the sender to the export Worker with a
+   `MessageChannel`.
+3. The export Worker transfers each frame to the sender (same process, no
+   copy); the sender posts it to main, the one cross-process copy, off the
+   compositing thread. Main (`main/exportSinkPort.ts`) writes frames to
+   ffmpeg's stdin in arrival order and answers each with the count written,
+   or once with the error that ends the stream; no frame is written after a
+   failed one. The Worker keeps at most `readbackFrames` frames
+   unanswered (`SinkFrameStream`) and settles them all before posting `done`.
+4. `export_video_sink_finish` drops stdin (EOF) and reaps the child;
+   `export_video_sink_cancel` kills, then drops stdin. Terminating the sender
+   closes the port, and main stops writing.
 
-There is no socket, port or token.
+The renderer main thread never touches a frame.
 
 ## Decode-in
 
@@ -59,14 +71,19 @@ consumption: [`render.md`](render.md) § Export decode pipelines):
   cannot carry the 10-bit lanes; it would add a native dependency without
   retiring this transport.
 
-Classic IPC measured about 1 GB/s; there is no cross-process CPU zero-copy, so
-the budget is one copy per frame per hop.
+- **`ipcRenderer.invoke` per frame** (the earlier encode-out path): the frame
+  crossed the renderer main thread and `contextBridge`, a copy each, and
+  invocations ran one at a time; a 4K frame took ~32 ms there.
+- **A custom-protocol `fetch` upload** from the Worker: measured ~35 MB/s.
+
+There is no cross-process CPU zero-copy, so the budget is one copy per frame
+per hop. Measurements: [`notes/export-pipeline-2026-11.md`](notes/export-pipeline-2026-11.md).
 
 ## Known copy
 
 The napi layer copies each frame into an owned `Vec<u8>` because the
 `spawn_blocking` write needs a `'static` buffer. It is not a measured hotspot
-(export is offline and IPC serialization costs more). The sink logs
+(export is offline and the cross-process copy costs more). The sink logs
 `video sink finished: … copy N ms, write N ms (… MB/s stdin)` at finish; read
 that from a real 4K export before changing it. If it matters, spawn ffmpeg via
 `tokio::process` so stdin is `AsyncWrite` (no copy, no blocked worker).

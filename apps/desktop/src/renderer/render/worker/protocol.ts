@@ -3,12 +3,14 @@
 // See docs/render.md — "Export Worker".
 //
 // The Worker is constructed once per export, receives one `start` request,
-// streams `progress` + `chunk` events, posts a final `done` with counters
+// streams `progress` events (and `chunk` slices on the WebCodecs path; a
+// native sink's frames leave on its own port), posts a final `done` with counters
 // or `error`, then terminates. The main-thread shell `terminate()`s the
 // worker after `done` to release its heap.
 
 import type { ExportTransportFormat } from "../exportDecodeRouting";
 import type { MotifFramePacket } from "./motifStream";
+import type { SinkPixFmt } from "../../../shared/export-resources";
 
 /// Snapshot of project state needed to render the export. The Worker
 /// receives this as a structured-clone of the live `ProjectSummary`,
@@ -127,10 +129,11 @@ export type ExportRequest =
       /// sink is `nativeSink` below — the two are independent (8-bit native
       /// composites RGBA8 but still packs + streams).
       bitDepth?: 8 | 10;
-      /// Present ⇒ pack each frame to `pixFmt` and stream raw frames over the
-      /// chunk/ack channel to the ffmpeg video sink (no WebCodecs encoder).
+      /// Present ⇒ pack each frame to `pixFmt` and stream raw frames on
+      /// `frames` to the ffmpeg video sink (no WebCodecs encoder): the export's
+      /// sender worker forwards them to main (docs/export-ipc-transport.md).
       /// Absent ⇒ the WebCodecs EncoderSink/fMP4 path.
-      nativeSink?: { pixFmt: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le" };
+      nativeSink?: { pixFmt: SinkPixFmt; frames: MessagePort; readbackFrames: number };
       /// Present ⇒ no encoder at all: every rendered frame is posted as a JPEG
       /// still (`still` events) at `width` px wide — what `render_frames` shows
       /// an agent, composited exactly as export would. Excludes `nativeSink`.
@@ -226,11 +229,8 @@ export type ExportEvent =
   | { type: "ready" }
   | { type: "motif:consumed"; index: number }
   | { type: "progress"; framesEncoded: number; totalFrames: number }
-  /// Keyed on `nativeSink`, not bit depth: absent ⇒ one sequential slice of the
-  /// output file (fMP4, append-only) from the WebCodecs path; present ⇒ one raw
-  /// packed frame in the sink's `pixFmt` (any bit depth). The main thread
-  /// appends fMP4 slices to the temp file and forwards raw frames to
-  /// export_video_sink_write. Replies with chunk-ack in both cases.
+  /// One sequential slice of the output file (fMP4, append-only) from the
+  /// WebCodecs path; the main thread appends it and replies with chunk-ack.
   | { type: "chunk"; data: ArrayBuffer }
   /// Stills mode: one rendered frame as a JPEG, at output-grid index `index`.
   | { type: "still"; index: number; tUs: number; width: number; height: number; jpeg: ArrayBuffer }

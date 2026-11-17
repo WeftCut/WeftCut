@@ -300,8 +300,8 @@ test('background export keeps review available and preserves output across Previ
     // A real native encode waits for its first frame acknowledgment. Inject a
     // capacity refusal for editor decoder opens while leaving export leases
     // attached to their admitted plan.
-    await app.evaluate(({ ipcMain }) => {
-      const write = ipcMain._invokeHandlers.get('export:videosink_write')!
+    await app.evaluate(({ ipcMain, MessageChannelMain }) => {
+      const openPort = ipcMain._invokeHandlers.get('export:videosink_port')!
       const acquire = ipcMain._invokeHandlers.get('resources:acquire')!
       let barrier: Promise<void> | undefined
       let release: (() => void) | undefined
@@ -314,9 +314,24 @@ test('background export keeps review available and preserves output across Previ
         refusePreviewResources: () => { refusePreview = true; },
         allowPreviewResources: () => { refusePreview = false; },
       })
-      ipcMain._invokeHandlers.set('export:videosink_write', async (event, frame) => {
-        if (barrier) { frameHeld = true; await barrier; }
-        return write(event, frame)
+      // Frames reach main on a port the handler posts to the page: hand the
+      // page a relay instead, which holds frames while the barrier stands.
+      ipcMain._invokeHandlers.set('export:videosink_port', (event, ...args) => {
+        const sender = event.sender
+        const post = sender.postMessage
+        sender.postMessage = (channel: string, message: unknown, transfer?: Electron.MessagePortMain[]) => {
+          sender.postMessage = post
+          const sink = transfer![0]!
+          const relay = new MessageChannelMain()
+          relay.port1.on('message', async ({ data }) => {
+            if (barrier) { frameHeld = true; await barrier }
+            sink.postMessage(data)
+          })
+          sink.on('message', ({ data }) => relay.port1.postMessage(data))
+          relay.port1.start(); sink.start()
+          post.call(sender, channel, message, [relay.port2])
+        }
+        return openPort(event, ...args)
       })
       ipcMain._invokeHandlers.set('resources:acquire', (event, request) => {
         if (refusePreview && !request.finalizationToken) throw new Error('resource-capacity-exceeded: synthetic preview refusal')

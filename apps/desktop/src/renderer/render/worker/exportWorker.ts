@@ -37,6 +37,8 @@ import { webgpuDeviceOf } from "../webgpuDevice";
 import { loadFontsIntoFaceSet } from "../fonts/loadFontsIntoFaceSet";
 import { initEval } from "@/eval";
 import { MotifFrameInbox, closeMotifPacket } from "./motifStream";
+import { paceSystemTicker } from "../pixiSystemTicker";
+import { SinkFrameStream } from "./sinkFrameStream";
 import { cannotDraw, cannotDrawMessage, capabilityOf, drawNeeds, rendererNameOf } from "../rendererCapability";
 
 // PixiJS defaults to `BrowserAdapter`, which calls `document.*`
@@ -44,6 +46,7 @@ import { cannotDraw, cannotDrawMessage, capabilityOf, drawNeeds, rendererNameOf 
 // init throws "document is not defined". Swap to `WebWorkerAdapter`
 // BEFORE `new Application()`.
 DOMAdapter.set(WebWorkerAdapter);
+paceSystemTicker();
 
 function post(ev: ExportEvent, transfer: Transferable[] = []): void {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -322,8 +325,8 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     });
     pack =
       sinkFmt === "yuv420p10le"
-        ? new PackYuv420p10(app.renderer as WebGLRenderer, outWidth, outHeight)
-        : new PackYuvPlanar(app.renderer as WebGLRenderer, outWidth, outHeight, sinkFmt!);
+        ? new PackYuv420p10(app.renderer as WebGLRenderer, outWidth, outHeight, req.nativeSink!.readbackFrames)
+        : new PackYuvPlanar(app.renderer as WebGLRenderer, outWidth, outHeight, sinkFmt!, req.nativeSink!.readbackFrames);
   }
 
   // 5. Frame grid — driven by OUTPUT fps. The grid is time-based, so a lower
@@ -376,12 +379,9 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     evictMs: 0,
   };
 
-  // Native-sink pipelining: the PREVIOUS frame's transport round-trip
-  // (worker → renderer → main → ffmpeg stdin → ack), still in flight while
-  // this frame composites + packs. Awaited before posting the next chunk, so
-  // exactly one postChunk is ever outstanding — the single `pendingChunkAck`
-  // resolver slot requires that.
-  let inflightAck: Promise<void> | null = null;
+  // Native-sink frames leave on their own port; as many as one readback batch
+  // are on their way while the next batch composites.
+  const sinkFrames = req.nativeSink ? new SinkFrameStream(req.nativeSink.frames, req.nativeSink.readbackFrames) : null;
 
   // 6. Bounded decode producer + consuming compositor/encoder. Planning chunks
   // do not join producers: a GOP can extend far beyond the current chunk.
@@ -533,33 +533,22 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
           if (nativeSink) {
             // Native-sink path: render into the composite RenderTexture (rgba16float
             // for the 10-bit precision lane, rgba8unorm otherwise), pack to `sinkFmt`,
-            // then stream to the Rust sink over the chunk/ack IPC channel.
+            // then stream to the Rust sink on the frame port.
             app.renderer.render({ container: app.stage, target: compositeRT! });
             compositeMs += performance.now() - compT0;
 
-            // Two-deep readback pipelining: submit frame i's pack passes + async
-            // PBO readback (non-blocking), then retrieve frame i-1 — its fence has
-            // had a full frame of wait/composite/pack behind it, so the retrieve
-            // is normally a straight CPU copy out of the PBO rather than a GPU
-            // sync stall.
+            // Readback runs a batch behind: frames queue on the GPU until the
+            // ring is full, then all of them are read with one wait for the GPU.
             const capT0 = performance.now();
             pack!.submit(compositeRT!);
-            const bytes = pack!.pending > 1 ? await pack!.retrieve() : null;
+            const batch = pack!.full ? pack!.drain() : [];
             captureMs += performance.now() - capT0;
 
-            if (bytes) {
-              const encT0 = performance.now();
-              // Native-sink frames go to the main thread over the chunk/ack
-              // channel, which forwards them to export_video_sink_write.
-              // Await the PREVIOUS frame's ack, not this one's: the ~10 ms/frame
-              // transport round-trip then overlaps the next frame's composite+pack
-              // instead of serializing after it. `encodeMs` therefore measures the
-              // stall blocked on transport, not the transport itself. retrieve()
-              // hands over a frame-owned buffer, so postChunk transfers it as-is.
-              if (inflightAck) await inflightAck;
-              inflightAck = postChunk(bytes);
-              encodeMs += performance.now() - encT0;
-            }
+            // `encodeMs` is the stall waiting for the sink to take frames,
+            // not the transport itself.
+            const encT0 = performance.now();
+            for (const bytes of batch) await sinkFrames!.send(bytes);
+            encodeMs += performance.now() - encT0;
           } else if (stills) {
             // Stills: the same composite, scaled down and posted as a JPEG. A
             // still is the first frame its sprites ever composite, and a
@@ -684,18 +673,12 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
       chunkStart = chunkEnd;
     }
 
-    // Drain the native-sink pipeline tails BEFORE posting `done` — the last
-    // frame's readback was submitted but never retrieved (the loop retrieves
-    // one frame behind), and the main thread calls exportVideoSinkFinish on
-    // `done`, so an unsent/unacked final frame would race the sink's finish.
-    while (pack && pack.pending > 0) {
-      const bytes = await pack.retrieve();
-      if (inflightAck) await inflightAck;
-      inflightAck = postChunk(bytes);
-    }
-    if (inflightAck) {
-      await inflightAck;
-      inflightAck = null;
+    // Send and settle the native sink's last batch BEFORE posting `done`: the
+    // main thread finishes the sink on `done`, so a frame still unread or
+    // unwritten would race ffmpeg's end of input.
+    if (pack && sinkFrames) {
+      for (const bytes of pack.drain()) await sinkFrames.send(bytes);
+      await sinkFrames.settle();
     }
 
     const totalMs = performance.now() - startedAtMs;

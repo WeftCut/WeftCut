@@ -6,6 +6,8 @@ export interface ExportResourcePlan {
   motifBufferBytes: number;
   motifFrames?: number;
   frameWindows: Record<string, number>;
+  /** `exportReadbackFrames` for this export; it sizes the readback ring. */
+  readbackFrames: number;
 }
 export type ResourceWaitReason = 'busy' | 'pressure' | 'host-pressure' | 'budget-too-small';
 export interface ExportResourceBlock {
@@ -25,8 +27,34 @@ export function resourceFailureReason(error: unknown): ResourceWaitReason | unde
 
 /** Working memory of the audio mix + encode tail. It runs under its export's
  * admitted plan and borrows from it (native `resources::EXPORT_AUDIO_MIX_MIB`),
- * so every plan of an export with audio is at least this large. */
+ * alongside the video, so every plan of an export with audio adds it. */
 export const EXPORT_AUDIO_MIX_MIB = 128;
+
+/** The rawvideo layouts the native sink takes from the pack passes. */
+export type SinkPixFmt = 'yuv420p' | 'yuv420p10le' | 'yuv422p' | 'yuv422p10le';
+
+/** Bytes of one packed frame per output pixel. */
+export function sinkBytesPerPixel(pixFmt: SinkPixFmt): number {
+  const samples = pixFmt.startsWith('yuv422') ? 2 : 1.5;
+  return pixFmt.endsWith('10le') ? samples * 2 : samples;
+}
+
+/** Packed bytes one readback batch holds at most: four 1080p frames. Copying a
+ * larger batch out holds up the frames behind it (4K: two frames per batch
+ * beat four), docs/notes/export-pipeline-2026-11.md. */
+const READBACK_BATCH_BYTES = 32 * 1048576;
+
+/** Packed frames a native-sink export reads back per GPU wait, and at most in
+ * flight to the encoder; a plan with less memory reads back fewer.
+ *
+ * LANDMINE: with Motif layers, frames left unread on the GPU stall the next
+ * Motif frames on Windows (warm 1080p export: 65 fps at 1, 38 at 2, 21 at 4).
+ * The stall is inside Chromium's GPU scheduling and was not isolated; read
+ * every frame back before the next one while a Motif plays. */
+export function exportReadbackFrames(input: { hasMotifs: boolean; frameBytes: number }): number {
+  if (input.hasMotifs) return 1;
+  return Math.min(4, Math.max(1, Math.floor(READBACK_BATCH_BYTES / input.frameBytes)));
+}
 
 export const EXPORT_FRAME_WINDOW = 24;
 export const EXPORT_PRIVATE_FRAMES = 16;

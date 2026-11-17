@@ -1776,7 +1776,6 @@ const zhCN: Resources = {
     phase_finalize: "正在完成导出",
     finalize_sink: "正在保存已编码的视频…",
     finalize_audio: "正在渲染音频…",
-    prepare_audio: "音频",
     retry_finalize: "重试完成导出",
     discard_pending: "放弃导出",
     retry_hint: "可重试完成导出，无需重新编码。关闭项目或放弃导出将删除临时文件。",

@@ -120,6 +120,8 @@ export class PackYuvPlanar {
     private outW: number,
     private outH: number,
     private pixFmt: PackablePixFmt,
+    /// Frames read back per batch (the plan's `readbackFrames`).
+    private readbackFrames: number,
   ) {
     this.layout = yuvPlaneLayout(pixFmt, outW, outH); // throws on odd dims
   }
@@ -147,9 +149,8 @@ export class PackYuvPlanar {
     return { rt, mesh: new Mesh<MeshGeometry, Shader>({ geometry, shader }), plane };
   }
 
-  /// Render the three pack passes off `composite` and queue their async GPU
-  /// readback (PBO + fence) — non-blocking. Pair every submit() with one
-  /// retrieve(); at most two frames may be in flight.
+  /// Render the three pack passes off `composite` and queue their GPU
+  /// readback without waiting for it. When `full`, drain() first.
   submit(composite: Texture): void {
     if (this.boundSource === null) {
       this.boundSource = composite.source;
@@ -167,20 +168,20 @@ export class PackYuvPlanar {
     this.reader ??= new PboFrameReader(
       this.renderer.gl,
       passes.map((p) => ({ w: p.plane.passW, h: p.plane.passH, dstRowBytes: p.plane.rowBytes })),
+      this.readbackFrames,
     );
     this.reader.submit((i) => this.renderer.renderTarget.bind({ target: passes[i]!.rt, clear: false }));
   }
 
-  /// Frames submitted but not yet retrieved.
-  get pending(): number {
-    return this.reader?.pending ?? 0;
+  /// Every frame's buffer is pending: drain() before the next submit().
+  get full(): boolean {
+    return this.reader?.full ?? false;
   }
 
-  /// Resolve the OLDEST submitted frame into one frame-owned buffer in planar
-  /// order (Y, Cb, Cr) — safe to transfer.
-  retrieve(): Promise<Uint8Array> {
-    if (!this.reader) throw new Error("PackYuvPlanar: retrieve() before submit()");
-    return this.reader.retrieve();
+  /// Every submitted frame, oldest first, each one frame-owned buffer in
+  /// planar (Y, Cb, Cr) plane order — safe to transfer.
+  drain(): Uint8Array[] {
+    return this.reader?.drain() ?? [];
   }
 
   dispose(): void {

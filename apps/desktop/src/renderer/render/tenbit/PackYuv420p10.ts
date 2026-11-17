@@ -1,6 +1,6 @@
 // f16 composite → yuv420p10le bytes via three byte-pack fragment passes into
-// RGBA8 targets (each texel = two u16LE samples) + async PBO readback
-// (submit/retrieve, see PboFrameReader — byte-exact). The pass samples the
+// RGBA8 targets (each texel = two u16LE samples) + batched PBO readback
+// (submit/drain, see PboFrameReader — byte-exact). The pass samples the
 // composite BILINEARLY at output resolution, so encoder downscale folds in
 // here. Chroma = one bilinear tap at each 2×2 block midpoint (an exact box
 // average). Readback needs no CPU row flip — see `PACK_ROW_FLIP`.
@@ -84,6 +84,8 @@ export class PackYuv420p10 {
     private renderer: WebGLRenderer,
     private outW: number,
     private outH: number,
+    /// Frames read back per batch (the plan's `readbackFrames`).
+    private readbackFrames: number,
   ) {
     if (outW % 4 !== 0 || outH % 2 !== 0) {
       throw new Error(`PackYuv420p10: width%4==0 and height%2==0 required, got ${outW}x${outH}`);
@@ -112,8 +114,7 @@ export class PackYuv420p10 {
   }
 
   /// Render the three pack passes off `composite` and queue their async GPU
-  /// readback (PBO + fence) — non-blocking. Pair every submit() with one
-  /// retrieve(); at most two frames may be in flight.
+  /// readback without waiting for it. When `full`, drain() first.
   submit(composite: Texture): void {
     if (this.boundSource === null) {
       this.boundSource = composite.source;
@@ -131,20 +132,20 @@ export class PackYuv420p10 {
     this.reader ??= new PboFrameReader(
       this.renderer.gl,
       passes.map((p) => ({ w: p.w, h: p.h, dstRowBytes: p.w * 4, flipRows: PACK_ROW_FLIP })),
+      this.readbackFrames,
     );
     this.reader.submit((i) => this.renderer.renderTarget.bind({ target: passes[i]!.rt, clear: false }));
   }
 
-  /// Frames submitted but not yet retrieved.
-  get pending(): number {
-    return this.reader?.pending ?? 0;
+  /// Every frame's buffer is pending: drain() before the next submit().
+  get full(): boolean {
+    return this.reader?.full ?? false;
   }
 
-  /// Resolve the OLDEST submitted frame into one frame-owned buffer in
+  /// Every submitted frame, oldest first, each one frame-owned buffer in
   /// yuv420p10le plane order — safe to transfer.
-  retrieve(): Promise<Uint8Array> {
-    if (!this.reader) throw new Error("PackYuv420p10: retrieve() before submit()");
-    return this.reader.retrieve();
+  drain(): Uint8Array[] {
+    return this.reader?.drain() ?? [];
   }
 
   dispose(): void {

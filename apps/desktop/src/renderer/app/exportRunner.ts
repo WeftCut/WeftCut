@@ -12,7 +12,6 @@ import {
   exportVideoSinkCancel,
   exportVideoSinkFinish,
   exportVideoSinkStart,
-  exportVideoSinkWrite,
   MEDIA_JOB_EVENTS,
   muxExport,
   EXPORT_MUX_WAIT,
@@ -326,7 +325,7 @@ export function createExportRunner(deps: {
         const range = { startUs: t, endUs: t + frameUs };
         const plans = await prepareExportResourcePlans({
           summary, media: useProjectStore.getState().mediaById, routing: gate.decodeRouting, ...range,
-          bitDepth: 8, nativeEncoder: false, outputWidth: comp.width, outputHeight: comp.height, signal,
+          bitDepth: 8, sinkPixFmt: null, outputWidth: comp.width, outputHeight: comp.height, signal,
         });
         const reservation = await admitExportResources(plans, false, signal, () => { });
         try {
@@ -365,6 +364,9 @@ export function createExportRunner(deps: {
     runningRef.current = true;
     let cleanup: (() => Promise<void>) | undefined;
     let retained = false;
+    // The audio mix writes into a temp file `cleanup` removes: it is awaited
+    // (it never rejects) before cleanup on every path.
+    let audioJob: Promise<boolean> = Promise.resolve(false);
     exportController = controller;
     const onCancel = deps.cancel;
     // Admission (the audio-only export's plan; else the metadata preflight's,
@@ -486,7 +488,7 @@ export function createExportRunner(deps: {
         }
         let audioPlan: { token: string; release: () => void } | undefined;
         try {
-          audioPlan = await admitExportResources([{ memoryMiB: EXPORT_AUDIO_MIX_MIB, workerMiB: 0, motifBufferBytes: 0, frameWindows: {} }],
+          audioPlan = await admitExportResources([{ memoryMiB: EXPORT_AUDIO_MIX_MIB, workerMiB: 0, motifBufferBytes: 0, frameWindows: {}, readbackFrames: 0 }],
             false, exportController.signal, onQueued);
           if (background) resumePreview();
           setExportState({ kind: "starting" });
@@ -672,7 +674,7 @@ export function createExportRunner(deps: {
       setExportState({ kind: "preparing", labels: [t("export.plan_resources")], message: t("export.plan_resources"), onCancel });
       const resourcePlans = await prepareExportResourcePlans({
         summary, media: useProjectStore.getState().mediaById,
-        routing: decodeRouting, ...exportRange, bitDepth: compositeBitDepth(settings), nativeEncoder: nativeSink,
+        routing: decodeRouting, ...exportRange, bitDepth: compositeBitDepth(settings), sinkPixFmt: sinkTarget?.pixFmt ?? null,
         outputWidth: dims.width, outputHeight: dims.height, signal: exportController.signal, waiting: onQueued,
         audio: settings.audio.include,
       });
@@ -682,17 +684,21 @@ export function createExportRunner(deps: {
       if (queued) setExportState({ kind: "preparing", labels: [], onCancel });
 
       let audioProduced = false;
-      // Finish audio before video production, under the admitted plan: no
-      // video child exists yet, so the mix borrows the plan's memory instead of
-      // a fresh claim that a running derivative could refuse. Once encoding
-      // completes, retry needs only immutable files and cannot accidentally mix
-      // a newer timeline.
+      // The mix runs beside the video, under the admitted plan, which counts
+      // both (`buildExportResourcePlans`). A failed mix stops the video. Both
+      // finish before mux, so a retry needs only immutable files and cannot
+      // mix a newer timeline.
+      let audioError: unknown = null;
+      const audioFailed = new AbortController();
       if (settings.audio.include) {
-        setExportState({ kind: "preparing", labels: [t("export.prepare_audio")], message: t("export.finalize_audio") });
-        audioProduced = await exportProjectAudioOnly(tempAudioPath, {
+        audioJob = exportProjectAudioOnly(tempAudioPath, {
           codec: settings.audio.codec, bitrate: settings.audio.bitrate,
           sampleRate: settings.audio.sampleRate, channels: settings.audio.channels,
-        }, exportRange, finalizationReservation.token);
+        }, exportRange, finalizationReservation.token).catch((error: unknown) => {
+          audioError = error;
+          audioFailed.abort();
+          return false;
+        });
       }
 
       // Native-sink path: start the native-encode video sink (ffmpeg, frames
@@ -824,21 +830,17 @@ export function createExportRunner(deps: {
         });
       };
 
-      // Stream the worker's output to the temp file: it emits the MP4 in
-      // sequential slices (fMP4) which we append here, so the whole file is never
-      // held in one ArrayBuffer (V8's ~2GB cap OOM'd long exports). `writeFile`
-      // with `append` is used instead of an open FileHandle because the fs bridge
-      // exposes append-write but no open-handle API. The temp path is a fresh
-      // UUID, so the first append creates it (create defaults true).
-      // On the native-sink path the Worker streams raw packed frames via the
-      // chunk/ack channel; the main thread forwards them to export_video_sink_write.
-      const writeChunk = nativeSink
-        ? async (data: ArrayBuffer): Promise<void> => {
-          await exportVideoSinkWrite(new Uint8Array(data));
-        }
-        : async (data: ArrayBuffer): Promise<void> => {
-          await writeFile(tempVideoPath, new Uint8Array(data), { append: true });
-        };
+      // WebCodecs path: stream the worker's output to the temp file. It emits
+      // the MP4 in sequential slices (fMP4) which we append here, so the whole
+      // file is never held in one ArrayBuffer (V8's ~2GB cap OOM'd long
+      // exports). `writeFile` with `append` is used instead of an open
+      // FileHandle because the fs bridge exposes append-write but no
+      // open-handle API. The temp path is a fresh UUID, so the first append
+      // creates it (create defaults true). A native sink's frames leave on
+      // its own port (`runExport`) and never come through here.
+      const writeChunk = async (data: ArrayBuffer): Promise<void> => {
+        await writeFile(tempVideoPath, new Uint8Array(data), { append: true });
+      };
 
       if (background) resumePreview();
       onProgress(0, 1);
@@ -855,20 +857,22 @@ export function createExportRunner(deps: {
           endUs: exportRange.endUs,
           keyframeIntervalSec: settings.keyframeIntervalSec,
           writeChunk,
-          signal: exportController.signal,
+          signal: AbortSignal.any([exportController.signal, audioFailed.signal]),
           bitDepth: compositeBitDepth(settings),
           ...(nativeSink && sinkTarget ? { nativeSinkPixFmt: sinkTarget.pixFmt } : {}),
           ...(decodeRouting ? { decodeRouting } : {}),
         });
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
         if (nativeSink) await exportVideoSinkCancel().catch(() => { });
         if (exportController.signal.aborted) {
           setExportState(null);
           return;
         }
-        console.error("[weftcut/pixi] export failed:", e);
-        setExportState({ kind: "error", detail: msg });
+        // A failed mix stops the video; its error is the one to report.
+        await audioJob;
+        const failure = audioError ?? e;
+        console.error("[weftcut/pixi] export failed:", failure);
+        setExportState({ kind: "error", detail: failure instanceof Error ? failure.message : String(failure) });
         return;
       }
 
@@ -888,12 +892,18 @@ export function createExportRunner(deps: {
         }
       }
 
+      audioProduced = await audioJob;
+      if (audioError) {
+        if (exportController.signal.aborted) { setExportState(null); return; }
+        throw audioError;
+      }
       const durationUs = Math.round((result.totalFrames * 1_000_000 * fpsDen) / fpsNum);
       retained = true;
       await finalize(() => muxExport(tempVideoPath, tempAudioPath, path, { token: finalizationReservation.token, audioRequired: audioProduced, stagingOutput: true }), cleanup, durationUs);
     } catch (error) {
       setExportState({ kind: "error", detail: error instanceof Error ? error.message : String(error) });
     } finally {
+      await audioJob;
       if (!retained) await cleanup?.();
       resumePreview();
       runningRef.current = false;

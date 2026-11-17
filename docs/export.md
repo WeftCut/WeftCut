@@ -22,13 +22,15 @@ runs, in order:
    ([`audio.md`](audio.md#readiness-and-errors)).
 3. **Encode target** — `resolveEncodeTarget` (render.md § Encode exits);
    resource plans from `prepareExportResourcePlans`.
-4. **Audio** — `exportProjectAudioOnly` writes the encoded audio file before
-   any video resource is reserved.
-5. **Admission** — `admitExportResources` reserves one working set
+4. **Admission** — `admitExportResources` reserves one working set, the
+   audio mix included
    ([ADR 0104](adr/0104-export-finalization-retains-admission-and-encoded-files.md)).
-6. **Video** — the Worker renders the half-open range into the native sink or
-   the WebCodecs fMP4 path.
-7. **Finalization** — stream-copy mux into the staging file, then publication.
+5. **Audio and video together** — `exportProjectAudioOnly` writes the encoded
+   audio file while the Worker renders the half-open range into the native
+   sink or the WebCodecs fMP4 path. A failed mix stops the video and is the
+   failure reported; both finish before mux, and temp files are removed only
+   once the mix has settled.
+6. **Finalization** — stream-copy mux into the staging file, then publication.
 
 Audio-only (`includeVideo: false`) skips the video stages and writes the audio
 straight to the staging path. Video-only keeps the full pipeline and omits the
