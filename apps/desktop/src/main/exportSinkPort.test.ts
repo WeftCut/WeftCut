@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { serveSinkPort, type SinkPort } from './exportSinkPort'
 import type { SinkPortReply } from '../shared/exportSinkPort'
 
@@ -19,13 +19,18 @@ describe('serveSinkPort', () => {
   it('writes frames in arrival order even when an earlier write is slower', async () => {
     const { port, replies, send } = fakePort()
     const order: number[] = []
+    let releaseFirst!: () => void
+    const firstHeld = new Promise<void>(resolve => { releaseFirst = resolve })
     serveSinkPort(port, async frame => {
-      // The first frame takes longest; it must still land first.
-      await new Promise(resolve => setTimeout(resolve, frame[0] === 0 ? 20 : 0))
+      // The first frame's write is held; the later ones must wait behind it.
+      if (frame[0] === 0) await firstHeld
       order.push(frame[0]!)
     })
     for (let i = 0; i < 4; i++) send(new Uint8Array([i, 9, 9]))
-    await new Promise(resolve => setTimeout(resolve, 40))
+    await settle()
+    expect(order).toEqual([])
+    releaseFirst()
+    await vi.waitFor(() => expect(replies).toHaveLength(4))
     expect(order).toEqual([0, 1, 2, 3])
     expect(replies).toEqual([{ written: 1 }, { written: 2 }, { written: 3 }, { written: 4 }])
   })
