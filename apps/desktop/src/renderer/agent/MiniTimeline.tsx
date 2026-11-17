@@ -24,8 +24,8 @@ interface MiniTimelineProps {
   durationUs: number;
   markers: MarkerSummary[];
   /// Open tacks placed on this composition (`paintableTacks`), painted as a
-  /// band along the strip's foot — a separate row of ink from the marker pips,
-  /// which run the strip's full height. The band is too thin to pack, so it
+  /// band along the strip's foot — a separate row of ink from the markers'
+  /// row through the strip's middle. The band is too thin to pack, so it
   /// paints the tacks' UNION (`tackCoverage`) at one opacity: overlapping
   /// tacks must not darken into what reads as a different mark.
   tacks?: readonly TackView[];

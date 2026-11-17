@@ -75,26 +75,32 @@
   user-select: none;
 }
 
+/* Markers: one thin row through the strip's middle, between the change band
+   at its head and the tack band at its foot — the editor's order (ruler with
+   its ranges, marker lane, Review lane). The lightest ink on the strip: the
+   bands are what agent mode is for, so a region is a line, never a fill, and
+   a point a short tick on that line, never the strip's full height. */
 .mini-marker-pip {
   position: absolute;
-  top: 0;
-  bottom: 0;
+  top: calc(50% - 6 * var(--ui-px));
+  height: calc(12 * var(--ui-px));
   width: 2px; /* fixed-px: marker line weight */
+  margin-left: -1px; /* fixed-px: centres the tick on its frame */
   pointer-events: none;
-  opacity: 0.85;
+  opacity: 0.6;
 }
 
 .mini-marker-region {
   position: absolute;
-  top: calc(4 * var(--ui-px));
-  bottom: calc(4 * var(--ui-px));
-  opacity: 0.35;
-  border-radius: 2px;
+  top: calc(50% - 1px); /* fixed-px: centres the line */
+  height: 2px; /* fixed-px: marker line weight */
+  opacity: 0.5;
+  border-radius: 1px;
   pointer-events: none;
 }
 
-/* Tacks (ADR 0115): a band along the strip's foot, below the marker pips'
-   full-height lines and region fills, in the one tack hue. The ranges arrive
+/* Tacks (ADR 0115): a band along the strip's foot, below the marker row, in
+   the one tack hue. The ranges arrive
    merged (`tackCoverage`), so one opacity covers the band and an overlap never
    darkens into a second shade. */
 .mini-tack {
