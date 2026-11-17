@@ -563,35 +563,56 @@ state. One Motif draws one element ([motif-authoring.md](docs/motif-authoring.md
 See [motifs.md](docs/motifs.md), ADR 0017.
 _Avoid_: template, overlay, animation preset
 
-**Motif draft**: A retained, editable package, optionally linked to a working directory.
-Agents reach its files by path or inline in `update_motif_files` (text, or base64 up to 256 KiB); there are no file handles.
-_Avoid_: upload, file transfer
+**Project Motif**: A Motif a project renders: its own folder `Motifs/<id>/`, named in the project's
+Motif table. Placing a library Motif copies it in; agents and the user edit it in place, without
+approval, and each new revision is an edit in the undo history. A project renders nothing else. See
+ADR 0173, [motif-workspaces.md](docs/motif-workspaces.md).
+_Avoid_: Motif draft, working copy, linked directory, local Motif
+
+**Motif table**: The `motifs` map in `project.json`: for each project Motif id, its lineage, the
+revision the project last recorded for its folder, and the library version it was copied from.
+Recorded state; a Motif layer must name an entry.
+_Avoid_: Motif manifest (the package's own), catalog (what `list_motifs` answers)
+
+**Motif library**: The app-wide Motifs a project places from and saves to: built-ins and installed
+Motifs. Never rendered from directly; placing copies. UI group: *Library*, beside *This project*.
+_Avoid_: Motif store (the code's class), global Motifs
 
 **Motif revision**: The content hash of a complete validated package; stale writes are rejected by it.
 
-**Motif lineage**: Which Motif a package is a version of: an app-minted uid apart from its id, kept
-beside the package, carried by a working copy, an update and an exported ZIP; a copy or a
-publication anew from a working copy starts its own. A claim, never a trust signal. See ADR 0171.
+**Motif lineage**: Which Motif a package is a version of: an app-minted uid apart from its id. A
+project keeps it in its Motif table, the library beside its packages, a ZIP in a metadata entry.
+Placing and updating keep it; a copy starts its own. A claim, never a trust signal. See ADR 0171.
 _Avoid_: Motif uuid, global id, identity (the id's word)
 
-**Installed Motif**: A published copy with its own identity and version; publishing keeps the draft.
-See [motif-workspaces.md](docs/motif-workspaces.md).
+**Installed Motif**: A Motif the user saved to the library, directly or by approving a proposal, with
+its versions. Saving one changes no project.
+
+**Motif row state**: A project Motif against the library Motif of its lineage: *In sync*;
+*Modified*, changed since it was copied; *Update available*, an unchanged copy the library has
+moved past; *Project only*, a lineage the library does not hold. Derived on every read, never stored.
+_Avoid_: stale, outdated, out of date
+
+**Update the project copy**: The user's replacement of a project Motif's folder with the library's
+current version of its lineage, clips rebound to the new props schema, in one undo step.
+_Avoid_: sync, pull, reinstall
 
 **Motif version**: One saved state of an installed Motif, in its own library folder `<id>/v<n>/` and
-never written over; the highest is the current one. Publishing or restoring an older one adds a
+never written over; the highest is the current one. Saving or restoring an older one adds a
 version. See ADR 0172.
 _Avoid_: revision (the content hash's word), history entry
 
-**Motif proposal**: An agent's request to publish one revision of a draft (`install_motif`), frozen
-when made and pending until the user decides. It replaces an installed Motif at a stated version, or
-takes a new id from the draft's name; a taken id is refused, never numbered. A newer proposal from
-the same draft supersedes it. Its state rides the draft row as `publication` (a Motif field, not the
-export sense of *Publication*). See ADR 0046.
+**Motif proposal**: An agent's request to save one revision of a project Motif to the library
+(`install_motif`), frozen when made and pending until the user decides. It adds a version to the
+library Motif of the same lineage, or to a stated one at a stated version, or takes a new id from
+the manifest name; a taken id is refused, never numbered. A newer proposal from the same Motif
+supersedes it. Its state rides the project row as `publication` (a Motif field, not the export
+sense of *Publication*). See ADR 0046.
 _Avoid_: install request, pending install, publish request
 
 **Approval**: The user's decision on a Motif proposal, made on its card in the Motifs panel:
-approve publishes the frozen revision and rebinds the trial layers; reject keeps the draft with the
-user's note. Only the app decides; no MCP tool approves. UI word: Approve / 批准, Reject / 拒绝.
+approve adds the frozen revision to the library; reject stores the user's note. Neither changes a
+project. Only the app decides; no MCP tool approves. UI word: Approve / 批准, Reject / 拒绝.
 _Avoid_: confirm, accept, review (a review is the tacks' word)
 
 **Motif preparation**:

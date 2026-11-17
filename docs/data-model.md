@@ -344,10 +344,15 @@ pivot or source window.
 caller names one. Roles are described in [mcp.md](mcp.md). A caption cue's is
 always `null`.
 
-**Motif.** `props` are checked against the manifest's `props_schema` at write
-(add and patch; a patch merges into existing props, a rebind starts from the
-patch alone); a Motif the catalog does not know stays permissive. `src_in_us` is
-the offset into the Motif's intrinsic content.
+**Motif.** `motif_id` names an entry of the project's Motif table
+(`MotifNotInProject` otherwise): the top-level `motifs` map of id →
+`{ uid, revision, from }`, whose ids are folders under `Motifs/` and are
+lowercase host labels with no `--` (`InvalidMotifKey`); see
+[motifs.md](motifs.md#project-motifs-and-the-library). `props` are checked
+against the manifest's `props_schema` at write (add and patch; a patch merges
+into existing props, a rebind starts from the patch alone); a Motif whose
+folder holds no package stays permissive. `src_in_us` is the offset into the
+Motif's intrinsic content.
 
 **Audio.** `role` is the mix-bus tag (`dialogue` | `music` | `sfx` |
 `voiceover`, default `dialogue`); the mixer groups by role, not track. `pan` is
@@ -669,12 +674,15 @@ The workspace folder **is** the project; originals are copied in on import.
 ├── project.pre-v{n}.json  pre-upgrade bytes (see Versioning)
 ├── view.json           UI view state for this project
 ├── Media/              imported originals (workspace owns the bytes)
+├── Motifs/<id>/        the Motifs the project renders, named in project.json's
+│                       motifs table; edited in place (see motifs.md)
 ├── Cache/              derivatives, regenerable: proxies, thumbnails, filmstrip,
 │                       waveforms, audio (48 kHz conform), frames, raster (Motif
 │                       frames <hash>/<frame>.wfrm, see motifs.md#frame-cache),
 │                       transcribe-audio, descriptions, shots,
 │                       shot-stats, voiceover, inline-subs (reserved)
-├── Backups/            project.json copy every 50 commits or 5 min; newest 20 kept
+├── Backups/            project.json copy every 50 commits or 5 min; newest 20 kept;
+│                       motifs/: every Motif revision the table records, for undo
 └── Renders/            default export destination
 ```
 
@@ -779,7 +787,7 @@ renderer's `fs:*` allow-list.
 
 ```
 <dataRoot>/
-├── motifs/      user-authored Motifs — user content
+├── motifs/      the Motif library: saved Motifs, one folder per version — user content
 ├── cache/       app-level backend cache — regenerable (not <workspace>/Cache)
 └── downloads/   downloaded engines and models — <itemId>/<version>/…, manifest.json written last
 ```
@@ -811,7 +819,7 @@ after relaunch — copy mode only, explicit confirm, never `userData` itself.
 ## Versioning
 
 `project.json` carries `schema_version`. `SCHEMA_VERSION` (`state/model.ts`,
-currently **5**) is the only home of the number; Rust round-trips the field and
+currently **6**) is the only home of the number; Rust round-trips the field and
 never gates on it.
 
 The load path is a **version-keyed upgrade chain** ([ADR 0047](adr/0047-project-schema-upgrades-are-a-version-keyed-chain.md)):
@@ -872,6 +880,19 @@ without its step cannot be repaired later.
   change may differ.
 - **v4 → v5**: `graphic_role: null` on every Text, Motif and ImageOverlay; a
   Motif's manifest role is not back-filled.
+- **v5 → v6**: the project renders its own Motifs (ADR 0173). Every `motif_id`
+  a Motif layer of any composition names gets a `motifs` table entry for the
+  package v5 rendered for it: a built-in, else the installed Motif's current
+  version, else the app-wide draft (a linked directory's mirror included),
+  found through `main/motif/legacyResolve.ts`. An id that is not a valid key is
+  rekeyed (lowercased, other characters to dashes; a clash takes the lineage
+  suffix) and its layers follow. Layers drop `motif_version`. The step only
+  plans the copies: the open path writes them into `Motifs/` after the
+  pre-upgrade backup is preserved and before the project is installed. An id
+  nothing resolves, or a copy that fails, stays in the table with
+  `revision: null`, shown as missing; the open is never refused for a Motif. A
+  folder already holding a package is kept, so a repeated upgrade changes
+  nothing. The v3 → v4 step reads Motif sizes from `Motifs/` first.
 
 ## Time mapping (schema 3)
 

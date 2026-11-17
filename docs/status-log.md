@@ -109,7 +109,8 @@ or per chunk — the ring is 1000 entries.
   workspace commit), schema upgrade, saving failing (`Warn` `"SaveFailing"`) and
   recovering (`Info` `"SaveRecovered"`) — one row per turn, never per failed
   attempt — checkpoint create/delete/restore,
-  `TransitionPlacementBounce` and `MarkerReconcileDrop` (actor), motif staleness,
+  `TransitionPlacementBounce` and `MarkerReconcileDrop` (actor), project Motif
+  folders the app could not keep in step with the table (`Warn` `"ProjectMotifs"`),
   and the cross-composition Alt-drag refusal
   (`renderer/timeline/crossCompositionRefusal.ts`).
 - **System**: `tracing` errors (above) and startup capability notices, mirrored

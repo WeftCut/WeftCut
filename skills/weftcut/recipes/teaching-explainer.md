@@ -61,8 +61,8 @@ timetable says.
    - Set `duration_s` to the layer's length.
    - Move and size the layer with `update_layer_params`. Its x and y are
      where its anchor lands.
-   - To change an example, fork it into a draft, edit it, and place the
-     draft.
+   - To change an example, copy it with `create_motif`, edit the copy's
+     folder, and place the copy.
 4. **Build an animation** as one frame-sized Motif (*A process is an
    animation* in `motif-authoring.md`).
    - Set its `cue_<step>_s` props from the word times.

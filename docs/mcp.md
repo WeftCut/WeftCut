@@ -518,7 +518,7 @@ path nodes keep their stored `id` (`get_param_track` answers them as
 | `project://transitions` | a composition's transitions as transition records (`transition_id`, `from_layer_id`, `to_layer_id`) |
 | `project://settings` | editing preferences, `audio_roles` (role gain / mute / solo) and `metadata`; `modified_at` moves on every recorded edit and is restored by undo/redo/restore — compare for change, not order |
 | `project://taste` | the merged style (`extends` in `TASTE.md`, else `weftcut-default`) + overrides: roles, tokens, example `motifs` per role, `fonts` resolved against installed families, provenance, diagnostics, revision. Pixel tokens are for a 1080-px frame. Read fresh every call; the app never writes `TASTE.md` |
-| `project://session` | active work session (or null), recent sessions, history lock, `project`, `recent_projects`, `default_parent_folder` |
+| `project://session` | active work session (or null), recent sessions, history lock, `project`, `recent_projects`, `default_parent_folder`, `motifs: {missing, invalid}` (the open project's Motifs that cannot render, each with `motif_id` and `diagnostic`) |
 | `project://tacks` | the opening's tacks, oldest first (see *Tacks*) |
 | `project://playhead` | where the user is in the editor, asked of the editor window at read time (see below) |
 | `project://history` | recent ops and checkpoints (no snapshots); see below |
@@ -1048,8 +1048,11 @@ Motifs ([motif-workspaces.md](motif-workspaces.md)) take paths, not file
 handles, and name their subject `motif_id` on every tool. A project renders
 its own Motifs, each a folder `Motifs/<id>/` recorded in the project's Motif
 table; the library (built-ins and saved Motifs) is what Motifs are placed and
-copied from. Tools name a project Motif by default and a library Motif with
-`group: "library"`. `list_motifs` (both groups unless `group` names one; rows
+copied from. `add_layers` places a project Motif by its id, or copies a
+library Motif in first, in the same commit; a lineage the project holds is
+placed under its existing id, and `from_library: true` places the library's
+Motif of an id the project uses for another. Tools name a project Motif by
+default and a library Motif with `group: "library"`. `list_motifs` (both groups unless `group` names one; rows
 without HTML or `content_hash`): project rows carry `status` ok | missing |
 invalid (with `diagnostic`), `state` in_sync | modified | update_available |
 project_only against the library Motif of the same lineage (derived, never
@@ -1058,10 +1061,11 @@ carry `status` builtin | installed, `version` and `in_project` (the project id
 holding that lineage, or null). `create_motif { source }` makes a Motif in the
 open project and answers `{motif_id, revision, path}`: `empty` (960×540, 5 s,
 no props), `copy` (a project Motif, or a library one with `group: "library"`),
-`zip` (keeps the lineage the archive carries) or `directory` (copied; a folder
-written under the project's `Motifs/` that the table does not hold is adopted
-in place). Each is a new Motif of a new lineage, its id made from its name and
-numbered when taken; the commit is the agent's. `read_motif` (a path answers
+`zip` (keeps the id and lineage the archive carries; a taken id gets
+`-<8 hex of the lineage>`) or `directory` (copied; a folder written under the
+project's `Motifs/` that the table does not hold is adopted in place). Every
+other source starts a new lineage, its id made from its name and numbered when
+taken; the commit is the agent's. `read_motif` (a path answers
 UTF-8 text ≤ 256 KiB, or `{size, sha256}` for a binary file; a folder whose
 files make no package is still read, with its diagnostic), `update_motif_files`
 (revision-checked batch; exact-match `edits`; the one inline binary form is an

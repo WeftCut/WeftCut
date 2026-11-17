@@ -51,3 +51,14 @@ path when a user mentions a file.
 - `resources/list` grows with the pool.
 - The folder rule costs initialize-instruction characters; without it an agent
   in the folder edits `project.json` while the app autosaves.
+
+## Note (2026-11-17): `Motifs/` is edited in place, beside TASTE.md
+
+A project now holds the Motifs it renders, each in `Motifs/<id>/`
+([ADR 0173](0173-the-project-folder-holds-what-it-renders.md)). Those folders
+are the second hand-edited place in the project: an agent edits a project
+Motif's files with its own file tools, without approval. The app watches
+`Motifs/` and records each new revision of a Motif the project's table names as
+a commit in the undo history. A folder written under `Motifs/` that the table
+does not name renders nothing until `create_motif` with a `directory` source
+adopts it. `project.json`, `Media/` and `Backups/` stay as above.
