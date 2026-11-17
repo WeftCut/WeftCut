@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { FolderInputIcon, PlusIcon } from "lucide-react";
 import { MotifCard } from './MotifCard';
 import { MotifProposalList, useMotifProposals } from './MotifProposalCard';
+import { MotifVersionHistory } from './MotifVersionHistory';
 import { listen } from "@/bridge/events";
 import { open as openDialog, save as saveDialog } from "@/bridge/dialog";
 import { formatTimecode } from "../frames";
@@ -85,6 +86,7 @@ export function MotifPicker({
   const [deleting, setDeleting] = useState<MotifSummary | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [history, setHistory] = useState<MotifSummary | null>(null);
   // An agent's proposed publications, each a card the user approves or
   // rejects here (ADR 0046). They sit above the catalog, where the status
   // bar's notice sends the user.
@@ -290,6 +292,7 @@ export function MotifPicker({
                     fpsNum={fpsNum} fpsDen={fpsDen}
                     onSelect={() => setSelectedId(tpl.id)}
                     onExport={() => void exportItem(tpl.id)}
+                    onHistory={() => setHistory(tpl)}
                     onDelete={() => { setDeleteError(null); setDeleting(tpl); }}
                   />
                 ))}
@@ -330,6 +333,7 @@ export function MotifPicker({
             </div>
           </div>
         )}
+        {history && <MotifVersionHistory motif={history} onClose={() => setHistory(null)} />}
         {deleting && (
           <AppDialog
             title={t("motif_picker.delete_button")}

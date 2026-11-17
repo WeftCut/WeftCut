@@ -10,9 +10,9 @@ import { MenuItem, contextMenuFinalFocus } from '../menu/Menu';
 import { useCloseOnAnchorMove, useCursorAnchor } from '../timeline/contextMenuAnchor';
 import { AppIcon } from "@/components/AppIcon";
 
-export function MotifCard({ motif, selected, fpsNum, fpsDen, onSelect, onExport, onDelete }: {
+export function MotifCard({ motif, selected, fpsNum, fpsDen, onSelect, onExport, onHistory, onDelete }: {
   motif: MotifSummary; selected: boolean; fpsNum: number; fpsDen: number;
-  onSelect: () => void; onExport: () => void; onDelete: () => void;
+  onSelect: () => void; onExport: () => void; onHistory: () => void; onDelete: () => void;
 }) {
   const { t } = useTranslation();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -44,14 +44,14 @@ export function MotifCard({ motif, selected, fpsNum, fpsDen, onSelect, onExport,
           <AppIcon icon={FolderOutputIcon} size="title" aria-hidden />
         </Button>
       </div>
-      {menu && <MotifCardMenu motif={motif} {...menu} onClose={closeMenu} onExport={onExport} onDelete={onDelete} />}
+      {menu && <MotifCardMenu motif={motif} {...menu} onClose={closeMenu} onExport={onExport} onHistory={onHistory} onDelete={onDelete} />}
     </div>
   );
 }
 
-function MotifCardMenu({ motif, x, y, onClose, onExport, onDelete }: {
+function MotifCardMenu({ motif, x, y, onClose, onExport, onHistory, onDelete }: {
   motif: MotifSummary; x: number; y: number;
-  onClose: () => void; onExport: () => void; onDelete: () => void;
+  onClose: () => void; onExport: () => void; onHistory: () => void; onDelete: () => void;
 }) {
   const { t } = useTranslation();
   const anchor = useCursorAnchor(x, y);
@@ -60,6 +60,8 @@ function MotifCardMenu({ motif, x, y, onClose, onExport, onDelete }: {
       <AppMenuPositioner anchor={anchor} side="bottom" align="start" sideOffset={0} className="app-popup-positioner">
         <MenuPrimitive.Popup className="app-menu-list" finalFocus={contextMenuFinalFocus} aria-label={motif.name}>
           <MenuItem label={t('motif_picker.export_button')} onSelect={onExport} />
+          {motif.status === 'installed' &&
+            <MenuItem label={t('motif_picker.history_button')} onSelect={onHistory} />}
           {(motif.status === 'draft' || motif.status === 'installed') &&
             <MenuItem label={t('motif_picker.delete_button')} onSelect={onDelete} />}
         </MenuPrimitive.Popup>

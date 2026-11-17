@@ -32,7 +32,7 @@ describe('getMotifSource', () => {
   })
   it('returns an installed user motif', () => {
     const man = m('Foo', 'foo')
-    store.writeDraft('foo', doc(man, 'FOO')); store.installDraft('foo', 'foo')
+    store.addVersion('foo', 1, [{ path: 'index.html', bytes: Buffer.from(doc(man, 'FOO')) }])
     const s = getMotifSource(store, BUILTINS, 'foo')
     expect(s.manifest.id).toBe('foo'); expect(s.html).toContain('FOO')
   })
@@ -71,9 +71,9 @@ describe('listMotifsInner', () => {
   })
   it("an entry's content_hash covers its page, island included, and every companion's bytes", () => {
     const man = m('Foo', 'foo'), html = doc(man, 'FOO'), mesh = Buffer.from([0, 255, 17])
-    store.writeDraft('foo', html); store.installDraft('foo', 'foo')
-    mkdirSync(path.join(root, 'foo', 'assets'))
-    writeFileSync(path.join(root, 'foo', 'assets', 'mesh.bin'), mesh)
+    store.addVersion('foo', 1, [{ path: 'index.html', bytes: Buffer.from(html) }])
+    mkdirSync(path.join(root, 'foo', 'v1', 'assets'))
+    writeFileSync(path.join(root, 'foo', 'v1', 'assets', 'mesh.bin'), mesh)
     const builtin = BUILTINS[0]!
     const list = listMotifsInner(store, BUILTINS)
     expect(list.find(e => e.id === 'foo')!.content_hash).toBe(motifContentHash(man, html, [{ path: 'assets/mesh.bin', bytes: mesh }]))
@@ -81,7 +81,7 @@ describe('listMotifsInner', () => {
   })
   it('lists builtins, then installed, then drafts (id-unique, draft shadowed by published)', () => {
     // installed "foo"
-    store.writeDraft('foo', doc(m('Foo', 'foo'))); store.installDraft('foo', 'foo')
+    store.addVersion('foo', 1, [{ path: 'index.html', bytes: Buffer.from(doc(m('Foo', 'foo'))) }])
     // a separate draft "bar"
     store.writeDraft('bar', doc(m('Bar', 'bar')))
     const list = listMotifsInner(store, BUILTINS)
@@ -93,7 +93,7 @@ describe('listMotifsInner', () => {
     for (const e of list) { expect(typeof e.html).toBe('string'); expect(typeof e.content_hash).toBe('string') }
   })
   it('a draft sharing a published id is skipped (published wins)', () => {
-    store.writeDraft('foo', doc(m('Foo', 'foo'))); store.installDraft('foo', 'foo')
+    store.addVersion('foo', 1, [{ path: 'index.html', bytes: Buffer.from(doc(m('Foo', 'foo'))) }])
     store.writeDraft('foo', doc(m('Foo', 'foo'))) // a new draft re-using the published id
     const list = listMotifsInner(store, BUILTINS)
     expect(list.filter((e) => e.id === 'foo').length).toBe(1)
@@ -103,9 +103,9 @@ describe('listMotifsInner', () => {
     // built-in: carried on the BuiltinMotif (stat'd once at load).
     const builtins: BuiltinMotif[] = [{ ...BUILTINS[0]!, hasParamsUi: true }]
     // installed "foo" WITH a params page, installed "bare" without.
-    store.writeDraft('foo', doc(m('Foo', 'foo'))); store.installDraft('foo', 'foo')
-    writeFileSync(path.join(root, 'foo', 'params.html'), '<html>p</html>')
-    store.writeDraft('bare', doc(m('Bare', 'bare'))); store.installDraft('bare', 'bare')
+    store.addVersion('foo', 1, [{ path: 'index.html', bytes: Buffer.from(doc(m('Foo', 'foo'))) }])
+    writeFileSync(path.join(root, 'foo', 'v1', 'params.html'), '<html>p</html>')
+    store.addVersion('bare', 1, [{ path: 'index.html', bytes: Buffer.from(doc(m('Bare', 'bare'))) }])
     // draft "d2" WITH a params page written next to its draft index.html.
     store.writeDraft('d2', doc(m('D2', 'd2')))
     writeFileSync(path.join(root, 'drafts', 'd2', 'params.html'), '<html>p</html>')
@@ -118,13 +118,13 @@ describe('listMotifsInner', () => {
     expect(flag('d2')).toBe(true)
   })
   it('hot-updates has_params_ui when the file appears and vanishes', () => {
-    store.writeDraft('foo', doc(m('Foo', 'foo'))); store.installDraft('foo', 'foo')
+    store.addVersion('foo', 1, [{ path: 'index.html', bytes: Buffer.from(doc(m('Foo', 'foo'))) }])
     const flag = () => listMotifsInner(store, BUILTINS).find((e) => e.id === 'foo')!.has_params_ui
     expect(flag()).toBe(false)
     // The watcher re-runs this list on any disk change; nothing is cached.
-    writeFileSync(path.join(root, 'foo', 'params.html'), '<html>p</html>')
+    writeFileSync(path.join(root, 'foo', 'v1', 'params.html'), '<html>p</html>')
     expect(flag()).toBe(true)
-    rmSync(path.join(root, 'foo', 'params.html'))
+    rmSync(path.join(root, 'foo', 'v1', 'params.html'))
     expect(flag()).toBe(false)
   })
 })

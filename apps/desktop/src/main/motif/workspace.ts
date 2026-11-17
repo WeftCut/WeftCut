@@ -9,7 +9,7 @@ import type { PackageOutcome } from './packageRevisions';
 import { motifContentHash } from './contentHash';
 import { readMotifZip } from './archive';
 import { newLineage } from './lineage';
-import { DRAFTS_DIR, PROPOSALS_DIR, isProposalPreviewId, proposalPreviewId, type UserMotifStore } from './store';
+import { DRAFTS_DIR, PROPOSALS_DIR, isProposalPreviewId, proposalPreviewId, type MotifVersion, type UserMotifStore } from './store';
 import { MotifRefusal, revisionConflict } from './refusal';
 /** Where a draft comes from. `motif` resumes a draft id and copies any other
  *  Motif (recording it as the source); `copy` always makes an independent copy. */
@@ -197,7 +197,9 @@ function normalize(files: readonly MotifFile[], id: string, version = 1) {
     validateFiles(normalized);
     return { manifest, html: composed, files: normalized, revision: motifContentHash(manifest, composed, normalized) };
 }
-/** Replace a whole app-owned package. A failed rename restores the old package. */
+/** Replace a whole app-owned draft or proposal package. A failed rename
+ *  restores the old package. Installed Motifs are never replaced: each
+ *  publication adds a version (`UserMotifStore.addVersion`). */
 export function replacePackage(directory: string, files: readonly MotifFile[]): void {
     validateFiles(files);
     mkdirSync(path.dirname(directory), { recursive: true });
@@ -593,15 +595,23 @@ export class MotifWorkspace {
             throw revisionConflict(info.revision, 'preview the current revision, then send it');
         return { info, state };
     }
-    /** Write version `version` of `finalId` from `files` and record it on the
-     *  draft; the rebind updates for the open project's layers come back. */
-    private writePublication(id: string, state: DraftState, files: readonly MotifFile[], revision: string, finalId: string, version: number, layers: MotifLayerRef[]) {
+    /** Add `files` as the next version of installed `finalId`; the rebind
+     *  updates for the open project's layers on `workingId` or `finalId` come
+     *  back. Every publication and restore goes through here. */
+    private addLibraryVersion(workingId: string, finalId: string, files: readonly MotifFile[], layers: MotifLayerRef[]) {
+        const version = this.store.nextVersion(safeId(finalId));
         const pkg = normalize(files, finalId, version);
-        replacePackage(path.join(this.store.root(), safeId(finalId)), pkg.files);
-        state.publication = { id: finalId, revision, version };
-        const updates = buildRebindUpdates(layers, id, pkg.manifest);
+        this.store.addVersion(finalId, version, pkg.files);
+        const updates = buildRebindUpdates(layers, workingId, pkg.manifest);
         const rebound = updates.map(u => ({ layer_id: u.layer_id, dropped_props: droppedProps(layers.find(l => l.layerId === u.layer_id)?.props ?? {}, pkg.manifest) }));
-        return { updates, rebound };
+        return { version, revision: pkg.revision, updates, rebound };
+    }
+    /** Publish draft `id`'s `files` as the next version of `finalId` and
+     *  record it on the draft. */
+    private writePublication(id: string, state: DraftState, files: readonly MotifFile[], revision: string, finalId: string, layers: MotifLayerRef[]) {
+        const added = this.addLibraryVersion(id, finalId, files, layers);
+        state.publication = { id: finalId, revision, version: added.version };
+        return added;
     }
     /** An agent's `install_motif`: freeze `expected` as a pending publication.
      *  The library is not touched; a newer proposal supersedes the older one. */
@@ -634,13 +644,12 @@ export class MotifWorkspace {
         const { state, proposal } = this.pending(id, proposalId);
         if (!existsSync(this.proposalDir(id)))
             throw new MotifRefusal('The proposed package is gone; ask for a new proposal', { error: 'ProposalNotFound', proposal_id: proposalId });
-        let finalId: string, version: number, draftId = id, lineage: string | null = null;
+        let finalId: string, draftId = id, lineage: string | null = null;
         if ('new_id' in proposal.target) {
             finalId = proposal.target.new_id;
             const legacy = finalId === id;
             if (this.store.publishedIds().includes(finalId) || BUILTIN_IDS.includes(finalId) || (!legacy && this.store.listDraftIds().includes(finalId)))
                 throw new MotifRefusal(`'${finalId}' was published by someone else since this proposal; reject it and ask for a new one`, { error: 'MotifIdTaken', id: finalId });
-            version = 1;
             if (legacy)
                 draftId = this.rekey(id, state);
             lineage = this.newPublicationLineage(draftId, proposal.lineage);
@@ -650,12 +659,11 @@ export class MotifWorkspace {
             const prev = this.store.listManifests().find(m => m.id === finalId);
             if (!prev || prev.version !== proposal.target.version)
                 throw new MotifRefusal(`'${finalId}' changed since this proposal (now ${prev ? `version ${prev.version}` : 'deleted'}); reject it and ask for a new one`, { error: 'VersionConflict', id: finalId, current_version: prev?.version ?? null });
-            version = prev.version + 1;
         }
         const dir = this.proposalDir(draftId);
         // Trial layers on the draft — under its old id when it was just moved,
         // which is the publication's id now — rebind to the publication.
-        const { updates, rebound } = this.writePublication(draftId, state, readMotifDirectory(dir), proposal.revision, finalId, version, layers);
+        const { version, updates, rebound } = this.writePublication(draftId, state, readMotifDirectory(dir), proposal.revision, finalId, layers);
         this.recordPublication(draftId, finalId, lineage);
         state.proposal = { ...proposal, state: 'approved', decided_at: new Date().toISOString(), version, rebound,
             ...(draftId !== id ? { renamed_draft: { from: id, to: draftId } } : {}) };
@@ -705,8 +713,7 @@ export class MotifWorkspace {
         }
         const lineage = replaces ? null : this.newPublicationLineage(id);
         const finalId = replaces?.id ?? assignUniqueId(info.manifest.name, lineage!, [...this.allIds(), ...this.pendingNewIds(id).keys()]);
-        const version = replaces ? replaces.version + 1 : 1;
-        const { updates } = this.writePublication(id, state, this.store.packageFiles(id), expected, finalId, version, layers);
+        const { version, updates } = this.writePublication(id, state, this.store.packageFiles(id), expected, finalId, layers);
         this.recordPublication(id, finalId, lineage);
         this.save(id, state);
         return { motif_id: finalId, version, revision: expected, updates };
@@ -753,14 +760,40 @@ export class MotifWorkspace {
                 changed: keys(next.props_schema).filter(k => k in was && JSON.stringify(was[k]) !== JSON.stringify(next.props_schema[k])) },
         };
     }
-    delete(id: string) {
+    /** The saved versions of installed `id`, newest first; the first is the
+     *  current one. Built-ins and drafts have none. */
+    listVersions(id: string): MotifVersion[] {
+        safeId(id);
+        return BUILTIN_IDS.includes(id) ? [] : this.store.versions(id);
+    }
+    /** The user's restore of an older version of installed `id`: its files
+     *  publish again as the newest version, and the open project's layers on
+     *  `id` rebind as an approval rebinds them. */
+    restore(id: string, version: number, layers: MotifLayerRef[] = []) {
+        safeId(id);
+        if (BUILTIN_IDS.includes(id))
+            throw new Error('Built-in Motifs have no version history');
+        const current = this.store.versions(id)[0];
+        if (!current)
+            throw new Error('Unknown Motif: ' + id);
+        if (version === current.version)
+            throw new Error(`Version ${version} is already the current version of '${id}'`);
+        const files = Number.isSafeInteger(version) ? this.store.versionFiles(id, version) : null;
+        if (!files)
+            throw new Error(`'${id}' has no version ${version}`);
+        const { updates, ...added } = this.addLibraryVersion(id, id, files, layers);
+        return { motif_id: id, version: added.version, revision: added.revision, updates };
+    }
+    /** Moves the Motif's folders to the system trash; refuses, changing
+     *  nothing, when the trash refuses its library folder. */
+    async delete(id: string) {
         safeId(id);
         if (BUILTIN_IDS.includes(id))
             throw new Error('Cannot delete a built-in Motif');
         if (!this.store.getMotif(id) && !this.store.getDraft(id))
             throw new Error('Unknown Motif: ' + id);
         const { directory } = this.state(id);
-        this.store.deleteUserMotif(id);
+        await this.store.trashMotif(id);
         rmSync(this.proposalDir(id), { recursive: true, force: true });
         rmSync(this.stateFile(id), { force: true });
         this.store.revisions.forget(this.proposalDir(id));

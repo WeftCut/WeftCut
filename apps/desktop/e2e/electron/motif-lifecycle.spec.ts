@@ -77,7 +77,8 @@ function writeUserMotifAt(
   motifsRoot: string,
   opts: { id: string; version: number; color: string },
 ): void {
-  const dir = path.join(motifsRoot, opts.id)
+  // An installed Motif's version `n` lives in `<id>/v<n>/` (ADR 0172).
+  const dir = path.join(motifsRoot, opts.id, `v${opts.version}`)
   mkdirSync(dir, { recursive: true })
   writeFileSync(path.join(dir, 'index.html'), motifHtml(opts))
 }

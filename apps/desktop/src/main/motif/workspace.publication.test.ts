@@ -7,7 +7,7 @@
 // note; a newer proposal supersedes the older; a taken id refuses with the
 // ways forward, never numbered; pending proposals survive a restart.
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { UserMotifStore, proposalPreviewId } from './store'
@@ -22,8 +22,15 @@ function temp() { const root = mkdtempSync(path.join(tmpdir(), 'motif-publicatio
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 
 function world(builtins: Array<{ id: string; manifest: Manifest; html: string; hasParamsUi: boolean }> = []) {
-  const root = temp()
-  const store = new UserMotifStore(root)
+  const root = temp(), bin = temp()
+  // The system trash: folders move out of the store, or it refuses.
+  const trashed: string[] = []
+  let trashFails = false
+  const store = new UserMotifStore(root, { trash: async (target) => {
+    if (trashFails) throw new Error('the trash is unavailable')
+    trashed.push(target)
+    renameSync(target, path.join(bin, String(trashed.length)))
+  } })
   let layers: MotifLayerRef[] = []
   const rebinds: unknown[][] = []
   let changed = 0, notified = 0
@@ -33,7 +40,8 @@ function world(builtins: Array<{ id: string; manifest: Manifest; html: string; h
   })
   const call = (name: string, args: Record<string, unknown> = {}) => runMotifTool(name, args, deps()) as any
   return {
-    root, store, call, rebinds,
+    root, store, call, rebinds, trashed,
+    failTrash: () => { trashFails = true },
     setLayers: (l: MotifLayerRef[]) => { layers = l },
     counts: () => ({ changed, notified }),
     // A second workspace over the same store: the app after a restart.
@@ -168,11 +176,11 @@ describe('install_motif proposes; the library waits for the user', () => {
     expect(() => w.call('approve_motif_proposal', { motif_id: d.motif_id, proposal_id: p.proposal_id })).toThrow(/changed since this proposal/)
   })
 
-  it('deleting the draft drops its proposal', () => {
+  it('deleting the draft drops its proposal', async () => {
     const w = world()
     const d = draft(w, 'Card')
     w.call('install_motif', { motif_id: d.motif_id, expected_revision: d.revision })
-    w.call('delete_motif', { motif_id: d.motif_id })
+    await w.call('delete_motif', { motif_id: d.motif_id })
     expect(w.call('list_motif_proposals')).toEqual([])
     expect(w.store.getMotif(proposalPreviewId(d.motif_id))).toBeNull()
   })
@@ -189,7 +197,7 @@ describe('install_motif proposes; the library waits for the user', () => {
 })
 
 describe('the proposal preview id', () => {
-  it('serves the frozen package to the preview player, and no tool reads or deletes through it', () => {
+  it('serves the frozen package to the preview player, and no tool reads or deletes through it', async () => {
     const w = world()
     const d = draft(w, 'Card')
     w.call('install_motif', { motif_id: d.motif_id, expected_revision: d.revision })
@@ -197,7 +205,7 @@ describe('the proposal preview id', () => {
     expect(w.store.getMotif(id)).not.toBeNull()
     expect(w.store.pinPackage(id, d.revision)).not.toBeNull()
     expect(() => w.call('read_motif', { motif_id: id })).toThrow(/Invalid Motif id/)
-    expect(() => w.call('delete_motif', { motif_id: id })).toThrow(/Invalid Motif id/)
+    await expect(w.call('delete_motif', { motif_id: id })).rejects.toThrow(/Invalid Motif id/)
   })
 })
 
@@ -357,13 +365,89 @@ describe('a Motif lineage', () => {
     expect(w.store.lineageOf(copy.motif_id)).toBe(builtinLineage('countdown'))
   })
 
-  it('a deleted Motif and its draft leave the record', () => {
+  it('a deleted Motif and its draft leave the record', async () => {
     const w = world()
     const d = draft(w, 'Card')
     const lineage = w.store.lineageOf(d.motif_id)!
     const id = proposeAndApprove(w, d)
-    w.call('delete_motif', { motif_id: id })
-    w.call('delete_motif', { motif_id: d.motif_id })
+    await w.call('delete_motif', { motif_id: id })
+    await w.call('delete_motif', { motif_id: d.motif_id })
     expect(w.store.lineage.holders(lineage)).toEqual([])
+  })
+})
+
+// ADR 0172: the library keeps every version; delete goes to the system trash.
+describe('library versions', () => {
+  function approve(w: ReturnType<typeof world>, d: { motif_id: string; revision: string }, args: Record<string, unknown> = {}) {
+    const p = w.call('install_motif', { motif_id: d.motif_id, expected_revision: d.revision, ...args })
+    return w.call('approve_motif_proposal', { motif_id: d.motif_id, proposal_id: p.proposal_id }).motif_id as string
+  }
+  /** Card at version 1 with a `title` prop, replaced by version 2 with `subtitle`. */
+  function replaced(w: ReturnType<typeof world>) {
+    const d = draft(w, 'Card', 'first', { title: { type: 'string', default: 'Hi' } })
+    const id = approve(w, d)
+    const next = w.call('update_motif_files', { motif_id: d.motif_id, expected_revision: d.revision, files: [
+      { path: 'manifest.json', text: JSON.stringify({ name: 'Card', size: [64, 64], default_duration_s: 1, props_schema: { subtitle: { type: 'string', default: 'Lo' } } }) },
+      { path: 'index.html', text: '<html><body>second</body></html>' },
+      { path: 'scene.js', text: 'second only' },
+    ] })
+    approve(w, next, { target_id: id, expected_version: 1 })
+    return id
+  }
+  const filesOf = (w: ReturnType<typeof world>, id: string, version: number) =>
+    new Map(w.store.versionFiles(id, version)!.map(f => [f.path, f.bytes]))
+
+  it('approving a replacement keeps the previous version, which restores as the newest', () => {
+    const w = world()
+    const id = replaced(w)
+    expect(w.call('list_motif_versions', { motif_id: id }).map((v: { version: number }) => v.version)).toEqual([2, 1])
+    expect(w.store.readHtml(id)).toContain('second')
+    const v1 = filesOf(w, id, 1)
+    // The open project's clip sits on version 2, with version 2's prop.
+    w.setLayers([{ layerId: 'L1', motifId: id, version: 2, props: { subtitle: 'Ada' } }])
+    const restored = w.call('restore_motif_version', { motif_id: id, version: 1 })
+    expect(restored).toMatchObject({ motif_id: id, version: 3 })
+    const versions = w.call('list_motif_versions', { motif_id: id })
+    expect(versions.map((v: { version: number }) => v.version)).toEqual([3, 2, 1])
+    expect(versions[0].revision).toBe(restored.revision)
+    // Version 3 is version 1's files; only the manifest's version differs.
+    const v3 = filesOf(w, id, 3)
+    expect([...v3.keys()].sort()).toEqual([...v1.keys()].sort())
+    for (const [file, bytes] of v1) if (file !== 'index.html' && file !== 'manifest.json') expect(v3.get(file)).toEqual(bytes)
+    const manifest = (files: Map<string, Buffer>) => JSON.parse(files.get('manifest.json')!.toString())
+    expect(manifest(v3)).toEqual({ ...manifest(v1), version: 3 })
+    expect(w.store.readHtml(id)).toContain('first')
+    expect(w.store.readFile(id, 'scene.js')).toBeNull()
+    // The clip rebinds as an approval rebinds it: to the new version, its props migrated.
+    expect(w.rebinds.at(-1)).toEqual([{ layer_id: 'L1', motif_id: id, motif_version: 3, props: { title: 'Hi' } }])
+  })
+
+  it('restores only an older version of an installed Motif', () => {
+    const manifest = { id: 'countdown', name: 'Countdown', version: 1, size: [64, 64], default_duration_s: 1, fonts: [], props_schema: {} } as Manifest
+    const w = world([{ id: 'countdown', manifest, html: composeMotifHtml(manifest, '<body>3 2 1</body>'), hasParamsUi: false }])
+    const id = replaced(w)
+    expect(() => w.call('restore_motif_version', { motif_id: id, version: 2 })).toThrow(/already the current/)
+    expect(() => w.call('restore_motif_version', { motif_id: id, version: 7 })).toThrow(/no version 7/)
+    expect(() => w.call('restore_motif_version', { motif_id: 'countdown', version: 1 })).toThrow(/Built-in/)
+    expect(w.call('list_motif_versions', { motif_id: 'countdown' })).toEqual([])
+    expect(w.call('list_motif_versions', { motif_id: id }).map((v: { version: number }) => v.version)).toEqual([2, 1])
+  })
+
+  it('deleting a Motif puts its folder, every version, in the trash', async () => {
+    const w = world()
+    const id = replaced(w)
+    await w.call('delete_motif', { motif_id: id })
+    expect(w.trashed).toEqual([path.join(w.root, id)])
+    expect(installedIds(w)).toEqual([])
+  })
+
+  it('a delete the trash refuses leaves the Motif installed and throws', async () => {
+    const w = world()
+    const id = replaced(w)
+    w.failTrash()
+    await expect(w.call('delete_motif', { motif_id: id })).rejects.toThrow(/trash/)
+    expect(installedIds(w)).toEqual([id])
+    expect(existsSync(path.join(w.root, id, 'v1', 'index.html'))).toBe(true)
+    expect(w.store.readHtml(id)).toContain('second')
   })
 })

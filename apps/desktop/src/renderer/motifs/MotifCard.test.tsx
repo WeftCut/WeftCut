@@ -10,7 +10,7 @@ import { MotifCard } from './MotifCard';
 const motif: MotifSummary = { id: 'badge', name: 'Badge', version: 1, size: [640, 360],
   default_duration_s: 5, props_schema: {}, status: 'installed', content_hash: 'first' };
 const card = (entry = motif) => <MotifCard motif={entry} selected={false} fpsNum={60} fpsDen={1}
-  onSelect={() => {}} onExport={() => {}} onDelete={() => {}} />;
+  onSelect={() => {}} onExport={() => {}} onHistory={() => {}} onDelete={() => {}} />;
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); getCover.mockReset(); });
 
 describe('Motif card cover lifecycle', () => {

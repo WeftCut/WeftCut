@@ -619,12 +619,15 @@ failure fails the export. Cancelling stops admission and keeps completed cache f
 ## User Motifs
 
 User Motifs live under `<dataRoot>/motifs/`, shared by all projects, and render
-through the same path as built-ins. Lifecycle in the property panel:
+through the same path as built-ins. Each installed version keeps its own folder,
+`<id>/v<n>/`; the highest is the current one, and no version is written over
+([ADR 0172](adr/0172-the-motif-library-keeps-every-version.md)). Lifecycle in
+the property panel:
 
 - **Built-in** → "Duplicate & edit" forks a draft (built-ins cannot be
   overwritten). **Installed** → Edit opens a working draft targeting it, and the
   selected layer swaps onto the draft.
-- **Update** republishes the draft over its target and bumps the version; every
+- **Update** publishes the draft as its target's next version; every
   placement in every project re-renders (the key is source-derived). Layers in
   this project that referenced the draft rebind to the target with props
   lenient-migrated, in one undo step. **Save as new** publishes a separate id;
@@ -650,8 +653,13 @@ read ([ADR 0164](adr/0164-a-motif-package-revision-is-remembered-by-its-file-sta
 
 **Import Motif** takes a `.zip`; **Export Motif ZIP** writes `<motif-id>/` with
 every companion file (private draft metadata omitted). Library cards offer
-Export, and Delete in the context menu (not for built-ins). Limits and
-directory workspaces: [`motif-workspaces.md`](motif-workspaces.md).
+Export, and in the context menu Delete and, for an installed Motif, Version
+history (not for built-ins). Version history lists the saved versions, newest
+first; Restore saves an older one again as the newest version, and this
+project's clips of it rebind as an Update rebinds them. Delete moves the Motif's
+folder, every version with it, to the system trash; when the trash refuses,
+nothing is deleted. Limits and directory workspaces:
+[`motif-workspaces.md`](motif-workspaces.md).
 
 Library **covers** are default-props PNGs captured at the poster time at 30 fps,
 scaled to fit 480×270, cached under `<dataRoot>/cache/motif-covers/` and

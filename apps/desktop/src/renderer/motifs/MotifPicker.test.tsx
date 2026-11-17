@@ -21,6 +21,8 @@ const ipcMocks = vi.hoisted(() => ({
   importMotif: vi.fn(),
   exportMotif: vi.fn(),
   deleteMotif: vi.fn(),
+  listMotifVersions: vi.fn(),
+  restoreMotifVersion: vi.fn(),
   getMotifCover: vi.fn(() => new Promise(() => {})),
 }));
 
@@ -113,11 +115,32 @@ describe('Motif package actions', () => {
     expect(ipcMocks.exportMotif).toHaveBeenLastCalledWith('other', '/shared/other.zip');
   });
 
-  it('hides delete for built-ins while retaining export and keyboard menu access', async () => {
+  it('hides delete and version history for built-ins while retaining export and keyboard menu access', async () => {
     await renderPicker([{ ...MOTIF, status: 'builtin' }]);
     fireEvent.keyDown(screen.getByTitle('badge'), { key: 'F10', shiftKey: true });
     expect(await screen.findByRole('menuitem', { name: 'Export Motif ZIP' })).toBeTruthy();
     expect(screen.queryByRole('menuitem', { name: 'Delete Motif' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Version history' })).toBeNull();
+  });
+
+  it('lists an installed Motif\'s versions with the newest as current, and restores an older one', async () => {
+    const at = (version: number) => ({ version, revision: `r${version}`, saved_at: new Date(2026, 0, version).toISOString() });
+    ipcMocks.listMotifVersions.mockResolvedValueOnce([at(2), at(1)]).mockResolvedValueOnce([at(3), at(2), at(1)]);
+    ipcMocks.restoreMotifVersion.mockResolvedValue(undefined);
+    await renderPicker();
+    fireEvent.contextMenu(screen.getByTitle('badge'), { clientX: 30, clientY: 30 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Version history' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Versions of “Badge”' });
+    expect(ipcMocks.listMotifVersions).toHaveBeenCalledWith('badge');
+    const rows = () => within(dialog).getAllByRole('listitem');
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    // The current version offers no restore; only the older one does.
+    expect(within(rows()[0]!).getByText('Current')).toBeTruthy();
+    expect(within(rows()[0]!).queryByRole('button')).toBeNull();
+    fireEvent.click(within(rows()[1]!).getByRole('button', { name: 'Restore version 1' }));
+    await waitFor(() => expect(rows()).toHaveLength(3));
+    expect(ipcMocks.restoreMotifVersion).toHaveBeenCalledExactlyOnceWith('badge', 1);
+    expect(within(rows()[0]!).getByText('Version 3')).toBeTruthy();
   });
 
   it('keeps the card menu open on a stationary scroll so Escape dismisses only the menu', async () => {

@@ -837,10 +837,13 @@ app.whenReady().then(async () => {
   // Construct the motif store + resolve the built-in dir once at boot.
   // Both are passed to the protocol handler and the capturer so neither
   // needs the backend.
-  const motifStore = new UserMotifStore(dataRoot.motifsDir,
-    new PackageRevisions(path.join(dataRoot.cacheDir, 'motif-revisions.json'), app.getVersion()))
+  const motifStore = new UserMotifStore(dataRoot.motifsDir, {
+    revisions: new PackageRevisions(path.join(dataRoot.cacheDir, 'motif-revisions.json'), app.getVersion()),
+    trash: (target) => shell.trashItem(target),
+  })
   // Before anything lists or hashes a package: a legacy `target` file is a
-  // package file once the store no longer hides it.
+  // package file once the store no longer hides it, and an installed Motif
+  // is read only from its version folders.
   motifStore.upgrade()
   const motifBuiltinDir = builtinAssetDir()
   // `media` props resolve against the open project's pool; video frames are kept here.

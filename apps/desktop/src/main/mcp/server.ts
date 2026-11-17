@@ -670,7 +670,7 @@ async function dispatchTool(
       // is shaped to the Rust-faithful ToolResult (list_motifs strips html, etc.).
       const refused = await refuseBadArgs(backend, name, args)
       if (refused) return refused
-      const raw = tsHost.motifTool(name, args)
+      const raw = await tsHost.motifTool(name, args)
       return shapeMotifMcpResult(name, raw, args) as unknown as ServerResult
     }
     // Clip compute routes to 'rust', but the Rust core holds no state — the

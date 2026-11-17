@@ -40,7 +40,7 @@ beforeEach(() => {
 describe('project Motif staleness',()=>{
   it('motif_staleness_report returns [] when nothing is stale', () => {
     const v2 = { ...m('Foo', 'foo'), version: 2 }
-    store.writeDraft('foo', doc(v2)); store.installDraft('foo', 'foo')
+    store.addVersion('foo', 2, [{ path: 'index.html', bytes: Buffer.from(doc(v2)) }])
     layers = [{ layerId: 'la', motifId: 'foo', version: 2, props: {} }]
     expect(runMotifTool('motif_staleness_report', {}, deps)).toEqual([])
     expect(logs).toEqual([])
@@ -48,7 +48,7 @@ describe('project Motif staleness',()=>{
 
   it('motif_staleness_report rows a v1 layer against a v2 published motif + logs a warn', () => {
     const v2 = { ...m('Foo', 'foo'), version: 2 }
-    store.writeDraft('foo', doc(v2)); store.installDraft('foo', 'foo')
+    store.addVersion('foo', 2, [{ path: 'index.html', bytes: Buffer.from(doc(v2)) }])
     layers = [{ layerId: 'la', motifId: 'foo', version: 1, props: { a: 1 } }]
     const report = runMotifTool('motif_staleness_report', {}, deps)
     expect(report).toEqual([{ motif_id: 'foo', name: 'Foo', placed_version: 1, current_version: 2, layer_count: 1 }])
@@ -58,7 +58,7 @@ describe('project Motif staleness',()=>{
 
   it('acknowledge_motif_staleness dispatches a rebind for stale layers, returns the count, refreshes', () => {
     const v2 = { ...m('Foo', 'foo'), version: 2 }
-    store.writeDraft('foo', doc(v2)); store.installDraft('foo', 'foo')
+    store.addVersion('foo', 2, [{ path: 'index.html', bytes: Buffer.from(doc(v2)) }])
     layers = [{ layerId: 'la', motifId: 'foo', version: 1, props: { a: 1 } }]
     const count = runMotifTool('acknowledge_motif_staleness', {}, deps) as number
     expect(count).toBe(1)
@@ -69,7 +69,7 @@ describe('project Motif staleness',()=>{
 
   it('acknowledge_motif_staleness returns 0 + dispatches nothing when nothing is stale', () => {
     const v2 = { ...m('Foo', 'foo'), version: 2 }
-    store.writeDraft('foo', doc(v2)); store.installDraft('foo', 'foo')
+    store.addVersion('foo', 2, [{ path: 'index.html', bytes: Buffer.from(doc(v2)) }])
     layers = [{ layerId: 'la', motifId: 'foo', version: 2, props: {} }]
     expect(runMotifTool('acknowledge_motif_staleness', {}, deps)).toBe(0)
     expect(rebinds).toEqual([])
