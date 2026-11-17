@@ -91,3 +91,22 @@ per output frame (20 fps).
 - The audio mix ran before the video: 0.33–0.5 s per 20 s of timeline.
 - The first export of a session probes the encoder: 0.73–0.88 s on Windows,
   0.15 s on the Mac; cached afterwards.
+
+## Result (base vs. the changes, whole export loop, fps)
+
+Interleaved runs: base four on Windows and on the Mac, the changes two on
+each (Mac memory target 6 GiB so 4K is admitted). Raw-frame hashes were
+identical on both machines for 1080p, the edited timeline and Motif exports
+(1200 of 1200 frames each), and the export E2E gates passed on both.
+
+| scenario | Windows base | Windows new | Mac base | Mac new |
+|---|---|---|---|---|
+| 1080p | 82.5 | 132.6 (+61 %) | 117.6 | 159.9 (+36 %) |
+| edited 1080p timeline | 80.4 | 119.3 (+48 %) | 77.4 | 86.5 (+12 %) |
+| Motif 1080p, cold cache | 17.2 | 20.5 (+19 %) | 45.0 | 48.8 (+8 %) |
+| Motif 1080p, warm cache | 44.1 | 63.2 (+43 %) | 59.6 | 64.4 (+8 %) |
+| 4K | 38.8 | 47.1 (+21 %) | 31.6 | 40.1 (+27 %) |
+
+A remote-desktop session on the Windows machine encodes the screen on the
+same GPU; a run taken while one was active lost about a third of its speed,
+so Windows comparisons need interleaved runs.
