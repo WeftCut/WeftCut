@@ -4,7 +4,7 @@
 // that Trust names the revision the user was shown, never a later one.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import "../i18n";
+import i18n from "../i18n";
 import type { MotifTrustCard, MotifTrustSummary } from "../ipc";
 
 const bridge = vi.hoisted(() => ({ invoke: vi.fn() }));
@@ -12,7 +12,7 @@ vi.mock("@/bridge/ipc", () => ({ invoke: (cmd: string, args?: unknown) => bridge
 
 import { TrustCard } from "./TrustCard";
 
-afterEach(() => { cleanup(); bridge.invoke.mockReset(); });
+afterEach(async () => { cleanup(); bridge.invoke.mockReset(); await i18n.changeLanguage("en-US"); });
 
 const SEEN = "a".repeat(64);
 const CHANGED = "b".repeat(64);
@@ -48,6 +48,34 @@ describe("the trust card", () => {
     expect(within(summary).getByText(/^lib\/run\.js \(48,213 characters\)$/)).toBeTruthy();
     expect(screen.getByText(/read_motif reads its files as text and never runs them/)).toBeTruthy();
     expect(bridge.invoke).toHaveBeenCalledWith("motif_trust_summary", { motif_id: "received" });
+  });
+
+  it("offers Trust right after the findings it acts on, with its hint below", async () => {
+    backend([card(SEEN, { scripts: [{ path: "index.html", bytes: 900 }] })]);
+    render(<TrustCard motifId="received" />);
+    await waitFor(() => expect(labels()).toEqual(["Files", "Scripts"]));
+    const summary = document.querySelector(".motif-trust-summary")!;
+    const hint = screen.getByText(/read_motif reads its files as text/);
+    const follows = (a: Node, b: Node) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    expect(follows(summary, trustButton())).toBe(true);
+    expect(follows(trustButton(), hint)).toBe(true);
+    // Nothing else stands between the findings and Trust.
+    expect(summary.nextElementSibling).toBe(trustButton().parentElement);
+  });
+
+  it("counts a long line's characters in the user's language, set off from the path as the script sizes are", async () => {
+    await i18n.changeLanguage("zh-CN");
+    backend([card(SEEN, {
+      scripts: [{ path: "particles.js", bytes: 2048 }],
+      minified: [{ path: "particles.js", longest_line: 2334 }],
+    })]);
+    render(<TrustCard motifId="received" />);
+    await waitFor(() => expect(labels()).toEqual(["文件", "脚本", "超长压缩行"]));
+    const [, scripts, minified] = [...document.querySelectorAll(".motif-trust-summary dd")].map((dd) => dd.textContent);
+    const count = new Intl.NumberFormat("zh-CN").format(2334);
+    expect(minified).toBe(`particles.js (${count} 个字符)`);
+    // The same separator between a path and its parenthesis as the line above.
+    expect(scripts!.slice("particles.js".length, "particles.js".length + 2)).toBe(minified!.slice("particles.js".length, "particles.js".length + 2));
   });
 
   it("lists Worker, WebAssembly and unscanned findings when the files show them", async () => {

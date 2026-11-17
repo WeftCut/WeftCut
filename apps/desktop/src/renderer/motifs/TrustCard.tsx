@@ -57,8 +57,8 @@ export function TrustCard({ motifId }: { motifId: string }) {
       {card ? <TrustSummary summary={card.summary} /> : !error && <p className="settings-status">{t("motif_trust.loading")}</p>}
       {changed && <p className="settings-status" role="status">{t("motif_trust.changed")}</p>}
       {error && <p className="settings-error" role="alert">{error}</p>}
-      <div className="motif-picker-actions">
-        <Button variant="default" size="lg" disabled={!card || busy} onClick={() => void trust()}>
+      <div className="motif-trust-actions">
+        <Button variant="default" size="sm" disabled={!card || busy} onClick={() => void trust()}>
           {busy ? t("motif_trust.trusting") : t("motif_trust.trust")}
         </Button>
       </div>
@@ -70,6 +70,7 @@ export function TrustCard({ motifId }: { motifId: string }) {
 /** One line per finding; a finding the files do not show has no line. */
 function TrustSummary({ summary }: { summary: MotifTrustSummary }) {
   const { t, i18n } = useTranslation();
+  const chars = new Intl.NumberFormat(i18n.language);
   const listed = (items: string[]) => items.length > LISTED
     ? `${items.slice(0, LISTED).join(", ")} ${t("motif_trust.more", { count: items.length - LISTED })}`
     : items.join(", ");
@@ -81,7 +82,7 @@ function TrustSummary({ summary }: { summary: MotifTrustSummary }) {
   if (summary.workers.length) lines.push(["workers", listed(summary.workers)]);
   if (summary.wasm.length) lines.push(["wasm", listed(summary.wasm)]);
   if (summary.minified.length) lines.push(["minified", listed(summary.minified.map((m) =>
-    t("motif_trust.minified_item", { path: m.path, chars: m.longest_line.toLocaleString(i18n.language) })))]);
+    t("motif_trust.minified_item", { path: m.path, chars: chars.format(m.longest_line) })))]);
   if (summary.unscanned.length) lines.push(["unscanned", listed(summary.unscanned)]);
   return (
     <dl className="motif-trust-summary">

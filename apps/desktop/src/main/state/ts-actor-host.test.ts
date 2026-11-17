@@ -1533,11 +1533,13 @@ describe('createTsActorHost — persistence-route integration', () => {
       m.host.start()
       try {
         await m.host.handleInvoke('project_new_workspace', publicationProject)
-        // A Motif folder and table entry as another machine's project holds them.
+        // A Motif folder and table entry as another machine's project holds
+        // them, found as the project becomes the open one.
         mkdirSync(m.project.folder('card'), { recursive: true })
         writeFileSync(nodePath.join(m.project.folder('card'), 'index.html'), page('Card', 'received'))
         const revision = m.project.status('card').revision!
         expect(m.host.actor.dispatch('set_project_motif', { motif_id: 'card', uid: newLineage(), revision, from: null }).ok).toBe(true)
+        m.motifResolver.setProject(new ProjectMotifStore(nodePath.join(m.root, 'Film')))
 
         const untrusted = { motif_id: 'card', status: 'untrusted', revision, diagnostic: 'not trusted on this machine' }
         expect(m.host.unavailableMotifs()).toEqual([untrusted])

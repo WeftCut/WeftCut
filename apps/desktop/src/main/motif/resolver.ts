@@ -100,7 +100,7 @@ export class MotifResolver {
   /** The open project's Motifs; null when no project is open, and every
    *  project host is then missing. Its revisions reach `onRevisionSeen`,
    *  each folder's as it stands now first, as found when opened
-   *  (`ProjectMotifStore.found`).
+   *  (`ProjectMotifStore.open`).
    *
    *  LANDMINE: this runs before the actor takes the project's table
    *  (`commitWorkspace` precedes `replaceState`) and before its watcher
@@ -112,7 +112,7 @@ export class MotifResolver {
     this.trust.projectOpened?.()
     if (!project) return
     this.hear(project)
-    for (const id of project.ids()) project.found(id)
+    project.open()
   }
   project(): ProjectMotifStore | null { return this.projectStore }
 

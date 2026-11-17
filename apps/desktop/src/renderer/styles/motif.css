@@ -399,6 +399,12 @@
 .motif-trust-summary > div { display: contents; }
 .motif-trust-summary dt { color: var(--muted-foreground); }
 .motif-trust-summary dd { margin: 0; overflow-wrap: anywhere; }
+/* Trust sits under the findings it acts on, aligned with them, its hint
+   below: an inline pane action, not a dialog footer. */
+.motif-trust-actions {
+  display: flex;
+  margin-top: calc(12 * var(--ui-px));
+}
 
 .motif-bake-dot {
   position: absolute;

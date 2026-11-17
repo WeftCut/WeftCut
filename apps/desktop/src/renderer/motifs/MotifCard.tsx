@@ -10,7 +10,7 @@ import { MenuItem, contextMenuFinalFocus } from '../menu/Menu';
 import { useCloseOnAnchorMove, useCursorAnchor } from '../timeline/contextMenuAnchor';
 import { AppIcon } from "@/components/AppIcon";
 import { MotifProblemLead } from './MotifProblem';
-import { canSaveToLibrary, libraryTake, previewMotif, projectRowBadge, rowName, type MotifRow, type ProjectCopy } from './motifRows';
+import { canSaveToLibrary, libraryTake, previewMotif, projectRowBadge, rowName, rowRenders, type MotifRow, type ProjectCopy } from './motifRows';
 
 /** What a card's actions do; each is offered only where it applies
  *  (`motifRows.ts`). */
@@ -42,6 +42,9 @@ export function MotifCard({ row, selected, fpsNum, fpsDen, projectCopy = null, .
   const take = row.group === 'project' ? libraryTake(row) : null;
   const unavailable = row.group === 'project' && row.status !== 'ok';
   const cover = previewMotif(row);
+  // An untrusted row's manifest names and sizes it; its actions wait for
+  // Trust like its cover.
+  const exportable = rowRenders(row);
   const meta = row.motif
     ? `${row.motif.size[0]}×${row.motif.size[1]} · ${formatTimecode(Math.round(row.motif.default_duration_s * 1_000_000), fpsNum, fpsDen)}`
     : row.id;
@@ -76,7 +79,7 @@ export function MotifCard({ row, selected, fpsNum, fpsDen, projectCopy = null, .
             {t(`motif_picker.${take}_short`)}
           </Button>
         )}
-        {row.motif && (
+        {exportable && (
           <Button variant="ghost" size="icon-xs" title={t('motif_picker.export_button')}
             aria-label={t('motif_picker.export_button')} onClick={actions.onExport}>
             <AppIcon icon={FolderOutputIcon} size="title" aria-hidden />
@@ -106,7 +109,7 @@ function MotifCardMenu({ row, x, y, onClose, onExport, onHistory, onDelete, onTa
           {take && <MenuItem label={t(`motif_picker.${take}_button`)} onSelect={onTakeLibrary} />}
           {row.group === 'project' && canSaveToLibrary(row) &&
             <MenuItem label={t('motif_picker.save_button')} onSelect={onSave} />}
-          {row.motif && <MenuItem label={t('motif_picker.export_button')} onSelect={onExport} />}
+          {rowRenders(row) && <MenuItem label={t('motif_picker.export_button')} onSelect={onExport} />}
           {row.group === 'library' && row.status === 'installed' &&
             <MenuItem label={t('motif_picker.history_button')} onSelect={onHistory} />}
           {row.group === 'library' && row.status === 'installed' &&

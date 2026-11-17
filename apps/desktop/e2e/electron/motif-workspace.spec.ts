@@ -75,14 +75,10 @@ test('MCP project Motifs: folder copies and edits, binary round-trip, revision c
         expect((await preview(made.motif_id)).color).toEqual([0, 0, 255, 255]);
 
         // A folder the agent writes under Motifs/ is adopted where it stands.
-        // Adopting makes none of its bytes here: it waits for the user's Trust.
         const handMade = path.join(path.dirname(made.path), 'hand-made');
         writePackage(handMade, 'Hand made', 'yellow');
         const adopted = await call('create_motif', { source: { kind: 'directory', path: handMade } });
         expect(adopted).toMatchObject({ motif_id: 'hand-made', path: handMade });
-        const asks = await client.callTool({ name: 'preview_motif', arguments: { motif_id: 'hand-made', local_t_s: [0], width: 64 } });
-        expect(asks.structuredContent).toMatchObject({ error: 'MotifUntrusted', id: 'hand-made' });
-        await trustMotif(page, 'hand-made');
         expect((await preview('hand-made')).color).toEqual([255, 255, 0, 255]);
 
         // install_motif proposes; the library waits for the user (ADR 0046).

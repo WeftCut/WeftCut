@@ -102,11 +102,11 @@ const proj = (over: Partial<ProjectMotifRow> & { name?: string } = {}): ProjectM
   const row: ProjectMotifRow = { group: "project", id, uid: `uid-${id}`, status: "ok", state: "in_sync", from: null,
     path: `/home/u/Film/Motifs/${id}`, revision: "proj-rev",
     motif: { ...MOTIF, id, name: name ?? id, content_hash: "proj-rev" }, ...rest };
-  // As `listMotifCatalog` reads the wire: only an ok row carries its Motif,
-  // and an untrusted one keeps the revision the trust card trusts.
-  return row.status === "ok" ? row : { ...row, motif: null, revision: row.status === "untrusted" ? row.revision : null };
+  // As `listMotifCatalog` reads the wire: an ok or untrusted row carries its
+  // Motif, and an untrusted one keeps the revision the trust card trusts.
+  return row.status === "ok" || row.status === "untrusted" ? row : { ...row, motif: null, revision: null };
 };
-const untrusted = (id: string, over: Partial<ProjectMotifRow> = {}) =>
+const untrusted = (id: string, over: Partial<ProjectMotifRow> & { name?: string } = {}) =>
   proj({ id, status: "untrusted", state: "modified", revision: "c".repeat(64), diagnostic: "not trusted on this machine", ...over });
 
 const onClose = vi.fn();
@@ -185,11 +185,18 @@ describe("two groups: this project and the library", () => {
     expect(within(cardOf("other", "Library")).getByText("In this project · invalid")).toBeTruthy();
   });
 
-  it("says an untrusted Motif waits for Trust before its state, with no cover, preview or placement", async () => {
+  it("says an untrusted Motif waits for Trust before its state, with no cover, preview, export or placement", async () => {
     ipcMocks.motifTrustSummary.mockResolvedValue({ motif_id: "received", revision: "c".repeat(64), trusted: false,
       summary: { files: 2, bytes: 4096, binary: 0, scripts: [], workers: [], wasm: [], minified: [], unscanned: [] } });
-    await renderPicker({ project: [proj({ id: "lower" }), untrusted("received")], library: [lib({ id: "other", in_project: "received" })] });
+    // Listed first, it is still not what the panel opens on.
+    await renderPicker({ project: [untrusted("received", { name: "Particle Field" }), proj({ id: "lower" })], library: [lib({ id: "other", in_project: "received" })] });
+    await waitFor(() => expect(capture.mock.calls.some((c) => c[0] === "lower")).toBe(true));
+    expect(ipcMocks.motifTrustSummary).not.toHaveBeenCalled();
     const card = cardOf("received", "This project");
+    // Its manifest names and sizes it, as a renderable row's does.
+    expect(within(card).getByText("Particle Field")).toBeTruthy();
+    expect(within(card).getByText("640×360 · 00:00:05:00")).toBeTruthy();
+    expect(within(card).queryByRole("button", { name: "Export Motif ZIP" })).toBeNull();
     // The state (modified) stays behind the badge; the library's take still follows it.
     expect(card.querySelector(".motif-card-status")?.textContent).toBe("Not trusted");
     expect(within(card).getByText("Not trusted on this machine")).toBeTruthy();

@@ -16,8 +16,9 @@ export function rowHost(row: MotifRow): string {
 }
 
 /** Whether the row's Motif may run here for a preview, a cover or a
- *  placement: every library row, a project row only when `ok` (an untrusted
- *  one's code has not run on this machine, ADR 0174). */
+ *  placement, and is offered for export: every library row, a project row
+ *  only when `ok` (an untrusted one's code has not run on this machine, ADR
+ *  0174, though its row carries its manifest). */
 export function rowRenders(row: MotifRow): boolean {
   return row.group === "library" || row.status === "ok";
 }

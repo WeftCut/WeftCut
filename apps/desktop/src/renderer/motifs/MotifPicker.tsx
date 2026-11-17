@@ -14,7 +14,7 @@ import { useSaveToLibrary } from './SaveToLibrary';
 import { MotifProblem } from './MotifProblem';
 import { TrustCard } from './TrustCard';
 import { takeMotifsPanelRow } from './openMotifsPanel';
-import { matchRows, previewMotif, projectCopyOf, rowKey, rowName, type MotifRow } from './motifRows';
+import { matchRows, previewMotif, projectCopyOf, rowKey, rowName, rowRenders, type MotifRow } from './motifRows';
 import { listen } from "@/bridge/events";
 import { open as openDialog, save as saveDialog } from "@/bridge/dialog";
 import { formatTimecode } from "../frames";
@@ -121,7 +121,7 @@ export function MotifPicker({
         setCatalog(next);
         const rows: MotifRow[] = [...next.project, ...next.library];
         setSelectedKey((prev) => rows.some((r) => rowKey(r) === prev) ? prev
-          : rowKey(rows.find((r) => r.motif) ?? rows[0] ?? { group: "library", id: "" }));
+          : rowKey(rows.find(rowRenders) ?? rows[0] ?? { group: "library", id: "" }));
       },
       (e) => {
         if (aliveRef.current && generation === reloadGeneration.current) setError(refusalText(e));

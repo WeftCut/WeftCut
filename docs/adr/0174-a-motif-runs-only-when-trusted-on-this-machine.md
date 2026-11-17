@@ -42,7 +42,7 @@ ships with it.
   | Cause | Seen when | Earns |
   | --- | --- | --- |
   | `placed` | a library Motif is copied in | trusted, recorded even though the library holds it, so it stays trusted after that library version is deleted |
-  | `created` | `create_motif` empty, or a copy of a trusted Motif | trusted, unless these bytes were found untrusted at an open |
+  | `created` | `create_motif` empty, or a copy of a trusted Motif; a folder that first appears under `Motifs/` while the project is open, when the store observes it (adopting it included) | trusted, unless these bytes were found untrusted at an open |
   | `imported` | `create_motif` from a ZIP or a directory outside `Motifs/` (the panel's Import Motif too) | trusted when the files as they came (their revision under the id they carry) are, as a ZIP this library exported is even when the project holds that id and the copy takes another; otherwise nothing |
   | `edited-while-open` | the store observes a folder holding another revision than it last observed there: the watcher, the source panel's and `update_motif_files`' writes, adopting a folder under `Motifs/` in place, and any surface reading a revision not trusted yet (`MotifResolver.projectTrusted`) | trusted when the revision last observed in that folder is, and the result was not found untrusted at an open; nothing when the store observed none |
   | `opened` | the project becomes the open one, or a backup is put back in a folder (undo, redo, Review's revert) | remembered as found when not trusted |
@@ -54,10 +54,14 @@ ships with it.
   open session) remembers the revision it last observed in each folder, set
   when the project opens and with each write, observation and put-back here.
   The revision the project's table records is never a base, nor is a folder
-  that differs from it: whoever sent the project wrote the table. Reading
-  surfaces (`list_motifs`, `read_motif`, `project://session`, export,
-  resolving a host) apply this rule and nothing else, so a read grants no
-  trust it would not grant the watcher.
+  that differs from it: whoever sent the project wrote the table. A folder
+  that first appears while the project is open was made here: every name
+  under `Motifs/` at the open is remembered, by its exact name, and received
+  bytes reach a folder after that only through a backup put back, whose
+  folder is remembered with them. Reading surfaces (`list_motifs`,
+  `read_motif`, `project://session`, export, resolving a host) apply this
+  rule and nothing else, so a read grants no trust it would not grant the
+  watcher.
 - **Found at open, before anything can hear an edit.** `MotifResolver.setProject`
   sees every folder under `Motifs/` (tabled or not) as `opened` as the project
   becomes the open one, before the actor takes its table, before its watcher
@@ -108,8 +112,12 @@ ships with it.
   untrusted Motif into a trusted one makes that code trusted: trust guards
   against code arriving in folders, not against what a local agent chooses
   to write.
-- A folder an agent writes under `Motifs/` and then adopts asks for Trust:
-  adopting makes none of its bytes here.
+- A folder an agent writes under `Motifs/` while the project is open runs
+  without asking, adopted or not. So does a copy or rename to a new name of
+  a folder found at the open, untrusted ones included (`Motifs/Evil/` renamed
+  `evil` as its diagnostic asks, too): a revision hashes the id, so it is new
+  bytes. So does a folder a sync service first writes there while the
+  project is open.
 - A ZIP import asks, the user's own included, unless it holds bytes this
   machine already trusts (one exported from this library does).
 - Edits the user makes by hand while the app is closed are found at the next

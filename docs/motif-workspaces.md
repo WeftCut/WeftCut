@@ -42,8 +42,9 @@ project rows.
 ## Trust
 
 A Motif runs only when this machine trusts its revision (ADR 0174). One placed
-from this library, made in the project here, or edited from a trusted revision
-while the project is open here is trusted without asking. One found when a project is opened (a
+from this library, made in the project here (a folder first written under
+`Motifs/` while the project is open included), or edited from a trusted
+revision while the project is open here is trusted without asking. One found when a project is opened (a
 project received from someone else), or brought in from a ZIP or a folder
 outside the project's `Motifs/`, is untrusted: it renders nothing, the
 picture shows an error placeholder, and preview_motif, a copy and
@@ -81,8 +82,8 @@ The id is made from the Motif's name and numbered when the project holds it.
   do not reach the project, and the copy is untrusted like a ZIP. A folder you
   wrote under the project's `Motifs/` yourself is adopted in place instead,
   under its own name, which must be lowercase letters, digits and single
-  dashes; it is untrusted until the user trusts it, unless it holds bytes
-  this machine already trusts.
+  dashes; written while the project is open, it was made here and is
+  trusted.
 
 A package folder contains index.html and a manifest.json (authoritative when
 present), or an HTML manifest island, plus all runtime assets. Use a

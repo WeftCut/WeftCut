@@ -2707,7 +2707,7 @@ const zhCN: Resources = {
     workers: "Worker",
     wasm: "WebAssembly",
     minified: "超长压缩行",
-    minified_item: "{{path}}（{{chars}} 个字符）",
+    minified_item: "{{path}} ({{chars}} 个字符)",
     unscanned: "过大，未扫描",
     more: "另有 {{count}} 个",
     trust: "信任",

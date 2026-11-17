@@ -228,7 +228,8 @@ describe('revisions seen', () => {
     project.onRevisionSeen((id, revision, cause, base) => seen.push([id, revision, cause, base]))
     mkdirSync(folder('card'), { recursive: true })
     writeFileSync(path.join(folder('card'), 'index.html'), page('Found'))
-    const found = project.found('card').revision!
+    project.open()
+    const found = project.status('card').revision!
     writeFileSync(path.join(folder('card'), 'index.html'), page('Edited on disk'))
     const edited = project.observe('card').revision!
     // Observed again unchanged, it is heard no more.
@@ -245,7 +246,50 @@ describe('revisions seen', () => {
       ['card', edited, 'edited-while-open', found],
       ['card', again, 'edited-while-open', edited],
       ['card', updated, 'edited-while-open', again],
-      ['fresh', fresh, 'edited-while-open', null],
+      ['fresh', fresh, 'created', null],
     ])
+  })
+
+  it('hears a folder first written after the open as made here, and no folder whose name was there at the open or a backup put back', () => {
+    const seen: [string, string, RevisionCause, string | null][] = []
+    project.onRevisionSeen((id, revision, cause, base) => seen.push([id, revision, cause, base]))
+    // At the open: one folder whose files make no package, and a file.
+    mkdirSync(folder('broken'), { recursive: true })
+    writeFileSync(path.join(folder('broken'), 'index.html'), 'no manifest')
+    writeFileSync(folder('note'), 'a file')
+    project.open()
+    expect(seen).toEqual([])
+    // Fixed while open, it is an edit of bytes this session never made.
+    writeFileSync(path.join(folder('broken'), 'index.html'), page('Fixed'))
+    const fixed = project.observe('broken').revision!
+    // A folder takes the file's name.
+    rmSync(folder('note'))
+    mkdirSync(folder('note'))
+    writeFileSync(path.join(folder('note'), 'index.html'), page('Note'))
+    const note = project.observe('note').revision!
+    // A backup put back in a folder the open did not find.
+    mkdirSync(folder('restored'))
+    writeFileSync(path.join(folder('restored'), 'index.html'), 'unfinished')
+    project.found('restored')
+    writeFileSync(path.join(folder('restored'), 'index.html'), page('Restored'))
+    const restored = project.observe('restored').revision!
+    mkdirSync(folder('written'))
+    writeFileSync(path.join(folder('written'), 'index.html'), page('Written'))
+    const written = project.observe('written').revision!
+    expect(seen).toEqual([
+      ['broken', fixed, 'edited-while-open', null],
+      ['note', note, 'edited-while-open', null],
+      ['restored', restored, 'edited-while-open', null],
+      ['written', written, 'created', null],
+    ])
+  })
+
+  it('hears nothing as made here before the project is opened', () => {
+    const seen: RevisionCause[] = []
+    project.onRevisionSeen((_id, _revision, cause) => seen.push(cause))
+    mkdirSync(folder('written'), { recursive: true })
+    writeFileSync(path.join(folder('written'), 'index.html'), page('Written'))
+    project.observe('written')
+    expect(seen).toEqual(['edited-while-open'])
   })
 })

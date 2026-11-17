@@ -3210,10 +3210,11 @@ export interface MotifPublication {
   version?: number;
 }
 
-/// One Motif of the open project (`Motifs/<id>/`). `motif` is null unless it
-/// renders (`status: "ok"`): its folder is missing, makes no package, or holds
-/// a revision not trusted on this machine; `diagnostic` says why. An untrusted
-/// row keeps its `revision`.
+/// One Motif of the open project (`Motifs/<id>/`). `motif` is its manifest
+/// when its folder makes a package, `ok` or `untrusted`, and null when the
+/// folder is missing or makes none; `diagnostic` says why it does not render.
+/// An untrusted row keeps its `revision`, and its manifest names and sizes it
+/// in the panel only: what runs it asks `rowRenders` (`motifs/motifRows.ts`).
 export interface ProjectMotifRow {
   group: "project";
   id: string;
@@ -3267,7 +3268,7 @@ export async function listMotifCatalog(group?: "project" | "library"): Promise<M
         path: row.path as string, revision: (row.revision ?? null) as string | null,
         ...(typeof row.diagnostic === "string" ? { diagnostic: row.diagnostic } : {}),
         ...(row.publication ? { publication: row.publication as MotifPublication } : {}),
-        motif: row.status === "ok" ? wireMotif(row) : null,
+        motif: row.status === "ok" || row.status === "untrusted" ? wireMotif(row) : null,
       });
     } else {
       const motif = wireMotif(row);

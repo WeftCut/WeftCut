@@ -133,6 +133,11 @@ export class ProjectMotifStore {
   /** The revision each folder held when this store last saw it, by id: as
    *  found at the open, then as each write or read of it here found it. */
   private readonly observed = new Map<string, string>()
+  /** Every name under `Motifs/` when the project opened (`open`), by exact
+   *  name, and each id a backup was put back in (`found`): the folders whose
+   *  bytes may have come with the project. Null until `open`: a store not
+   *  opened makes nothing it observes. */
+  private foundIds: Set<string> | null = null
 
   constructor(projectDir: string, options: { revisions?: PackageRevisions } = {}) {
     this.dir = path.join(projectDir, PROJECT_MOTIFS_DIR)
@@ -350,9 +355,9 @@ export class ProjectMotifStore {
 
   /** A folder written under `Motifs/` becomes a Motif of a new lineage under
    *  its own name, its files as they stand; one the table holds is answered
-   *  as it is. Adopting makes no bytes: the folder is observed (`observe`),
-   *  never heard as `created`, so it is trusted only when what it holds
-   *  already is, or is an edit made here of what was. */
+   *  as it is. Adopting writes nothing: the folder is observed (`observe`),
+   *  so it is trusted as the watcher would judge it, made here only when it
+   *  first appeared while the project was open. */
   private adopt(id: string, table: Readonly<ProjectMotifs>): Placement & { path: string } {
     const held = Object.hasOwn(table, id) ? table[id] : undefined
     if (held) return { id, entry: held, copied: false, path: this.folder(id) }
@@ -389,10 +394,21 @@ export class ProjectMotifStore {
     return after
   }
 
+  /** The project becomes the open one: every folder under `Motifs/` is
+   *  `found`, and every name there, folder or not, is one whose bytes came
+   *  with the project. */
+  open(): void {
+    let names: string[] = []
+    try { names = readdirSync(this.dir) } catch { /* no Motifs/ yet */ }
+    this.foundIds = new Set(names)
+    for (const id of this.ids()) this.found(id)
+  }
+
   /** `id`'s folder as it stands, heard as `opened` when it holds a package:
    *  bytes this session finds without having made them, as the project
    *  opens or as a backup is put back. */
   found(id: string): MotifState {
+    this.foundIds?.add(id)
     const state = this.status(id)
     if (state.revision) this.emit(id, state.revision, 'opened')
     return state
@@ -400,13 +416,17 @@ export class ProjectMotifStore {
 
   /** `id`'s folder as it stands. A package other than the one this store
    *  last observed in it is heard as an edit made here of that one
-   *  (`edited-while-open`, without a base when it observed none): the one
-   *  way a write made while the project is open earns trust. The watcher, a
-   *  read that finds an untrusted revision, and adopting the folder observe
-   *  it. */
+   *  (`edited-while-open`, without a base when it observed none); a folder
+   *  that first appeared after the open, and was never put back from a
+   *  backup, is heard as `created`: received bytes cannot arrive in a new
+   *  folder while the project is open. These are the ways a write made
+   *  while the project is open earns trust. The watcher, a read that finds
+   *  an untrusted revision, and adopting the folder observe it. */
   observe(id: string): MotifState {
     const state = this.status(id)
-    if (state.revision) this.saw(id, state.revision)
+    if (!state.revision) return state
+    if (!this.observed.has(id) && this.foundIds !== null && !this.foundIds.has(id)) this.emit(id, state.revision, 'created')
+    else this.saw(id, state.revision)
     return state
   }
 

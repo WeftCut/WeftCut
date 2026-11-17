@@ -458,14 +458,14 @@ describe('Motif trust across an open', () => {
     expect(trust.trusted(project.status('lower').revision!)).toBe(false)
   })
 
-  it('trusts no folder the table does not record when it is read', () => {
+  it('trusts a folder first written while the project is open when it is read: it was made here', () => {
     const { trust, resolver } = trusting(); trusted = trust
     install('lower', 'v1')
     place('lower')
     records.opened()
     mkdirSync(folder('stray'), { recursive: true })
     edit('stray', 'arrived while open')
-    expect(resolver.resolve('stray').status).toBe('untrusted')
+    expect(resolver.resolve('stray').status).toBe('ok')
   })
 
   it('keeps a folder found under Motifs/ at the open untrusted when it is adopted, however many others were found', () => {
@@ -480,13 +480,54 @@ describe('Motif trust across an open', () => {
     expect(trust.trusted(adopted.entry.revision!)).toBe(false)
   })
 
-  it('adopts a folder written under Motifs/ while the project is open as untrusted: adopting makes nothing', () => {
+  it('adopts a folder first written under Motifs/ while the project is open as trusted: it was made here', () => {
     const { trust } = trusting(); trusted = trust
     records.opened()
     mkdirSync(folder('written'), { recursive: true })
     edit('written', 'arrived while open')
     const adopted = project.create({ kind: 'directory', path: folder('written') }, entries())
+    expect(trust.trusted(adopted.entry.revision!)).toBe(true)
+  })
+
+  it('judges a folder found at the open, removed and written again, from what this session saw in it', () => {
+    mkdirSync(folder('found'), { recursive: true })
+    edit('found', 'from another machine')
+    const { trust } = trusting(); trusted = trust
+    records.opened()
+    rmSync(folder('found'), { recursive: true })
+    mkdirSync(folder('found'))
+    edit('found', 'written while open')
+    const adopted = project.create({ kind: 'directory', path: folder('found') }, entries())
     expect(trust.trusted(adopted.entry.revision!)).toBe(false)
+  })
+
+  it('keeps a folder untrusted that was there at the open without making a package, once it makes one', () => {
+    mkdirSync(folder('found'), { recursive: true })
+    writeFileSync(path.join(folder('found'), 'index.html'), 'no manifest yet')
+    const { trust, resolver } = trusting(); trusted = trust
+    records.opened()
+    edit('found', 'manifest added while open')
+    expect(resolver.resolve('found').status).toBe('untrusted')
+    expect(trust.trusted(project.status('found').revision!)).toBe(false)
+  })
+
+  it('puts back a backup the received project planted for a folder the open did not find as found, never as made here', () => {
+    // The received table records 'ghost', its folder gone, its revision
+    // backed up.
+    mkdirSync(folder('ghost'), { recursive: true })
+    edit('ghost', 'from another machine')
+    const ghost = project.status('ghost').revision!
+    expect(actor.dispatch('set_project_motif', { motif_id: 'ghost', uid: newLineage(), revision: ghost, from: null }).ok).toBe(true)
+    expect(backups().has('ghost', ghost)).toBe(true)
+    rmSync(folder('ghost'), { recursive: true })
+    const { trust, resolver } = trusting(); trusted = trust
+    records.opened()
+    install('lower', 'v1')
+    place('lower')
+    actor.dispatch('undo', {})
+    expect(project.status('ghost').revision).toBe(ghost)
+    expect(resolver.resolve('ghost').status).toBe('untrusted')
+    expect(trust.trusted(ghost)).toBe(false)
   })
 
   it('keeps every revision found at the open untrusted when a later write brings it back, however many were found', () => {
