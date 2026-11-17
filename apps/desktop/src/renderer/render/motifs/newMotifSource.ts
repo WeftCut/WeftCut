@@ -1,13 +1,13 @@
 import type { MotifManifest } from "./catalog";
 
-/// The `{ manifest, html }` for a brand-new draft created from the picker's
+/// The `{ manifest, html }` for a brand-new project Motif made by the picker's
 /// "New" action — a minimal, valid, animate-in title overlay the user then edits.
-/// `id`/`version` are placeholders; the backend assigns the
-/// final-ready id + version on write/install. No manifest island in the html
+/// `id` is a placeholder: the project assigns the id from the name
+/// when it creates the folder. No manifest island in the html
 /// (the backend injects the canonical one via `compose_motif_html`).
-export function newDraftSource(name: string): { manifest: MotifManifest; html: string } {
+export function newMotifSource(name: string): { manifest: MotifManifest; html: string } {
   const manifest: MotifManifest = {
-    id: "draft",
+    id: "new",
     name,
     version: 1,
     size: [1280, 320],

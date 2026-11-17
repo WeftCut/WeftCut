@@ -344,6 +344,21 @@ describe("the user's own Save to library", () => {
     expect(w.call('publish_motif', { motif_id: 'lower', expected_version: 1 }, undefined)).toMatchObject({ motif_id: 'lower', version: 2 })
     expect(w.store.installedFile('lower', 'index.html')!.toString()).toContain('mine')
   })
+
+  it('a dry run names the Motif it would replace and the change, writing nothing; a Motif of no library lineage replaces none', () => {
+    const w = world()
+    w.install('lower'); w.place('lower'); w.edit('lower', 'mine')
+    const library = tree(w.store.root())
+    const revision = w.call('read_motif', { motif_id: 'lower' }).revision
+    expect(w.call('publish_motif', { motif_id: 'lower', dry_run: true }, undefined)).toEqual({
+      revision,
+      replaces: { id: 'lower', version: 1 },
+      diff: { files: { added: [], removed: [], changed: ['index.html'] }, props: { added: [], removed: [], changed: [] } },
+    })
+    expect(tree(w.store.root())).toEqual(library)
+    w.call('create_motif', { source: { kind: 'empty', name: 'Badge' } })
+    expect(w.call('publish_motif', { motif_id: 'badge', dry_run: true }, undefined)).toMatchObject({ replaces: null, diff: null })
+  })
 })
 
 describe('library versions and delete', () => {

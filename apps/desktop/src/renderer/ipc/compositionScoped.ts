@@ -158,9 +158,12 @@ export async function addGroupLayerIn(args: {
 
 /// `add_motif`. Without a `trackId` the actor spawns a fresh overlay track in
 /// `compositionId`, which is the path that needs the id to route at all.
+/// `fromLibrary` places the library Motif `motifId`, copied into the project
+/// in the same undo step; absent, `motifId` is the project's own.
 export async function addMotifIn(args: {
   compositionId: string | null;
   motifId: string;
+  fromLibrary?: boolean;
   tStartUs: number;
   tEndUs?: number;
   trackId?: string | undefined;
@@ -168,6 +171,7 @@ export async function addMotifIn(args: {
 }): Promise<string> {
   return invoke<string>("add_motif", {
     motifId: args.motifId,
+    ...(args.fromLibrary ? { fromLibrary: true } : {}),
     tStartUs: args.tStartUs,
     tEndUs: args.tEndUs,
     trackId: args.trackId,

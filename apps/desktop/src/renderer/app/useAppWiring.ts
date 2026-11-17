@@ -19,6 +19,7 @@ import { useProjectStore, wireProjectStore } from "../state/projectStore";
 import { wireProxyPrefStore } from "../state/proxyPreferenceStore";
 import { wireSaveStatus } from "../state/saveStatusStore";
 import { wireDecodeComponent } from "../settings/decodeComponentStore";
+import { clearProjectMotifs, syncProjectMotifsFromBackend } from "../render/motifs/syncCatalog";
 
 /// Owns the App-root backend wiring: the pong healthcheck, keybindings +
 /// agent activity snapshots and independent view selection, and the
@@ -45,6 +46,14 @@ export function useAppWiring(): {
   useEffect(() => {
     ping().then(setPong).catch((e) => setPong(`error: ${String(e)}`));
     keybindingsGet().then(setKeybindings).catch(() => {});
+  }, []);
+
+  // App mounts once per opened project. The render catalog holds only this
+  // project's Motifs: one project's catalog must never resolve another's
+  // layers, so it is pulled here and emptied when the project goes.
+  useEffect(() => {
+    void syncProjectMotifsFromBackend();
+    return clearProjectMotifs;
   }, []);
 
   useEffect(() => {

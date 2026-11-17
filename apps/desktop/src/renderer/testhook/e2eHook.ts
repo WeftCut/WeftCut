@@ -31,6 +31,7 @@ import {
   type ProjectSummary,
 } from "../ipc";
 import { captureMotifFrame } from "../render/motifs/host";
+import { syncProjectMotifsFromBackend } from "../render/motifs/syncCatalog";
 import { hashCacheKey } from "../render/motifs/frameCache";
 import { sharedMotifFrameCache, sharedBakedKeyIndex } from "../render/motifs/motifFrameSource";
 import { motifFrameDescriptor } from "../render/motifs/motifFrameDescriptor";
@@ -207,7 +208,8 @@ export interface E2EHook {
     windowMs?: number;
     timeoutMs?: number;
   }): Promise<{ peaksPerSecond: number; rms: number[] }>;
-  /// Add a built-in Motif layer at t=0 (default duration) and export to
+  /// Place a Motif (a library one is copied into the project) at t=0
+  /// (default duration) and export to
   /// `outputAbsPath`. No video clip is needed — the export composites the
   /// motif-only timeline, driving the FULL real export path: main-thread
   /// `exportMotifSource` → bounded transfer → Worker `MotifSprite`.
@@ -220,7 +222,8 @@ export interface E2EHook {
     props?: Record<string, unknown>;
     settings?: Partial<ExportSettings>;
   }): Promise<void>;
-  /// Drive the REAL `MotifSprite` over a built-in motif at two
+  /// Drive the REAL `MotifSprite` over a Motif of the open project (place it
+  /// first, e.g. `addMotifLayer`) at two
   /// layer-relative times and read back the interior pixel of each bound
   /// raster. Exercises the full sprite chain in real Electron renderer:
   /// `update(view, tInLayerUs, durationUs)` → frame index → `frameTimeSec` →
@@ -338,8 +341,8 @@ export interface E2EHook {
   motifProposals(): Promise<MotifProposal[]>;
   /// Decide a pending proposal as the card's Approve / Reject buttons do, so
   /// an operator (or a spec) can approve without clicking. `motifId` is the
-  /// draft; omit `proposalId` for that draft's pending one. Approve returns
-  /// the published id; reject returns null. Dev/e2e only.
+  /// project Motif it was proposed from; omit `proposalId` for its pending
+  /// one. Approve returns the library id; reject returns null. Dev/e2e only.
   motifDecideProposal(args: { motifId: string; proposalId?: string; approve: boolean; note?: string }): Promise<string | null>;
   /// Drive the live preview to composition-time `us`. Delegates to the active
   /// PlaybackEngine's `seek`, which sets the clock + re-composites the frame
@@ -818,6 +821,15 @@ export function installPlaybackBenchHooks(): void {
   hookSlot().derivativeJobCount = () => Object.keys(useDerivativeJobsStore.getState().jobs).length;
 }
 
+/// `addMotif`, then the render catalog pulled: a library Motif is copied into
+/// the project by the placement, and nothing renders it until the catalog
+/// holds the copy.
+async function placeMotif(args: Parameters<typeof addMotif>[0]): Promise<string> {
+  const layerId = await addMotif(args);
+  await syncProjectMotifsFromBackend();
+  return layerId;
+}
+
 /// Root-side: install Motif test hooks (prebake, cache ops, sprite frames,
 /// add/patch/clear/baked-index). Lives at Root level; called once on boot.
 export function installMotifTestHooks(): void {
@@ -829,6 +841,9 @@ export function installMotifTestHooks(): void {
     times,
     props,
   }) => {
+    // A sprite renders the project's Motifs only.
+    await syncProjectMotifsFromBackend();
+    if (!getMotif(motifId)) throw new Error(`renderMotifSpriteFrames: no Motif '${motifId}' in this project; place it first (addMotifLayer)`);
     const out: Array<{
       tInLayerUs: number;
       width: number;
@@ -1039,7 +1054,7 @@ export function installMotifTestHooks(): void {
   };
 
   hookSlot().addMotifLayer = async ({ motifId, durationUs, props }) => {
-    return addMotif({ motifId, tStartUs: 0, tEndUs: durationUs, ...(props !== undefined ? { props } : {}) });
+    return placeMotif({ motifId, tStartUs: 0, tEndUs: durationUs, ...(props !== undefined ? { props } : {}) });
   };
 
   hookSlot().patchMotifLayerProps = async ({ layerId, props }) => {
@@ -1135,7 +1150,7 @@ export function installMotifHook(): void {
     return null;
   };
   hookSlot().motifAddCountdown = async () => {
-    return addMotif({
+    return placeMotif({
       motifId: "countdown",
       tStartUs: 0,
       tEndUs: 5_000_000,
@@ -1411,7 +1426,7 @@ export function installExportHook(
   }) => {
     // Add a Motif layer at t=0. `add_motif` auto-creates / reuses a track
     // and defaults t_end to the motif's default duration unless overridden.
-    await addMotif({
+    await placeMotif({
       motifId,
       tStartUs: 0,
       ...(durationUs != null ? { tEndUs: durationUs } : {}),

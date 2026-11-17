@@ -3151,8 +3151,8 @@ export type PropSpec =
   | { type: "enum"; default: string; options: string[] }
   | { type: "media"; default: "" };
 
-/// One catalog entry from `list_motifs()`. Mirrors the MCP `list_motifs`
-/// manifest payload.
+/// A Motif that can render: its manifest as `list_motifs` reports it, keyed by
+/// the id its scope serves it under.
 export interface MotifSummary {
   id: string;
   name: string;
@@ -3171,25 +3171,12 @@ export interface MotifSummary {
   /// falls back to `max_duration_s` when the prop is missing/invalid.
   max_duration_prop?: string;
   /// Fixed bake duration of the animation sequence in seconds (does not
-  /// include the holdable tail). When present, `syncCatalog` can forward it
-  /// to `MotifManifest` without a double-cast.
+  /// include the holdable tail).
   content_duration_s?: number;
   /// The graphic role a placed layer defaults to; absent = untagged.
   graphic_role?: string | null;
-  status?: "builtin" | "installed" | "draft";
+  /// The package revision; part of every capture and cover key.
   content_hash?: string;
-  /// The installed Motif last published from this retained draft.
-  target_id?: string;
-  source_id?: string;
-  diagnostic?: string;
-  /// A draft's latest proposed publication (an agent's `install_motif`).
-  publication?: {
-    state: "awaiting_approval" | "approved" | "rejected";
-    proposal_id: string;
-    revision: string;
-    note?: string;
-    version?: number;
-  };
   /// True when a `params.html` sits next to this Motif's `index.html`, i.e. the
   /// Motif owns its parameter UI and the property panel embeds that page
   /// instead of generating the fallback form. Presence of the file is the whole
@@ -3202,17 +3189,106 @@ export interface MotifSummary {
   props_schema: Record<string, PropSpec>;
 }
 
-export async function listMotifs(): Promise<MotifSummary[]> {
-  return invoke<MotifSummary[]>("list_motifs");
+/// Mirrors `ProjectMotifState` in `src/main/motif/catalogRows.ts`: a project
+/// Motif against the library Motif of its lineage, derived on every read.
+export type ProjectMotifState = "in_sync" | "modified" | "update_available" | "project_only";
+
+/// An update adds a version to library Motif `id`, seen at `version`; a first
+/// publication takes `new_id`.
+export type MotifPublicationTarget = { id: string; version: number } | { new_id: string };
+
+/// An agent's proposed publication as the project row it came from carries
+/// it. Mirrors `PublicationView` in `src/main/motif/publications.ts`.
+export interface MotifPublication {
+  state: "awaiting_approval" | "approved" | "rejected";
+  proposal_id: string;
+  revision: string;
+  target: MotifPublicationTarget;
+  note?: string;
+  library_id?: string;
+  version?: number;
 }
 
-/** Default-props catalog cover, persisted by main across app openings. */
-export async function getMotifCover(id: string, contentHash: string): Promise<Blob> {
-  const bytes = await invoke<Uint8Array>("motif_get_cover", { id, contentHash });
+/// One Motif of the open project (`Motifs/<id>/`). `motif` is null when its
+/// folder is missing or makes no package; `diagnostic` says why.
+export interface ProjectMotifRow {
+  group: "project";
+  id: string;
+  uid: string;
+  status: "ok" | "missing" | "invalid";
+  state: ProjectMotifState;
+  /// The library package it was copied from; null for one made in the project.
+  from: { uid: string; version: number; revision: string } | null;
+  path: string;
+  revision: string | null;
+  diagnostic?: string;
+  publication?: MotifPublication;
+  motif: MotifSummary | null;
+}
+
+/// One library Motif: a built-in or one the user saved. `in_project` is the
+/// id the open project holds its lineage under, null when it holds none.
+export interface LibraryMotifRow {
+  group: "library";
+  id: string;
+  status: "builtin" | "installed";
+  revision: string;
+  in_project: string | null;
+  motif: MotifSummary;
+}
+
+export interface MotifCatalog {
+  project: ProjectMotifRow[];
+  library: LibraryMotifRow[];
+}
+
+type WireMotifRow = Record<string, unknown> & { group: "project" | "library"; id: string };
+
+/// The wire row's manifest fields, when it carries a manifest.
+function wireMotif(row: WireMotifRow): MotifSummary | null {
+  if (!Array.isArray(row.size)) return null;
+  const { group: _g, uid: _u, status: _s, state: _st, from: _f, path: _p, revision: _r, diagnostic: _d,
+    publication: _pub, in_project: _ip, html: _h, ...manifest } = row;
+  return { ...(manifest as unknown as MotifSummary), id: row.id };
+}
+
+/// `list_motifs`, split into its two groups. `group` asks for one of them.
+export async function listMotifCatalog(group?: "project" | "library"): Promise<MotifCatalog> {
+  const rows = await invoke<WireMotifRow[]>("list_motifs", group ? { group } : {});
+  const out: MotifCatalog = { project: [], library: [] };
+  for (const row of rows) {
+    if (row.group === "project") {
+      out.project.push({
+        group: "project", id: row.id, uid: row.uid as string, status: row.status as ProjectMotifRow["status"],
+        state: row.state as ProjectMotifState, from: (row.from ?? null) as ProjectMotifRow["from"],
+        path: row.path as string, revision: (row.revision ?? null) as string | null,
+        ...(typeof row.diagnostic === "string" ? { diagnostic: row.diagnostic } : {}),
+        ...(row.publication ? { publication: row.publication as MotifPublication } : {}),
+        motif: row.status === "ok" ? wireMotif(row) : null,
+      });
+    } else {
+      const motif = wireMotif(row);
+      if (!motif) continue;
+      out.library.push({
+        group: "library", id: row.id, status: row.status as LibraryMotifRow["status"],
+        revision: row.revision as string, in_project: (row.in_project ?? null) as string | null, motif,
+      });
+    }
+  }
+  return out;
+}
+
+/** Default-props catalog cover, persisted by main across app openings. `host`
+ *  names the Motif's scope: its bare id for the project's, `libraryHost(id)`
+ *  for the library's. */
+export async function getMotifCover(host: string, contentHash: string): Promise<Blob> {
+  const bytes = await invoke<Uint8Array>("motif_get_cover", { id: host, contentHash });
   return new Blob([bytes as BlobPart], { type: "image/png" });
 }
 
 /// Add a motif layer (the UI twin of `add_layers` kind `motif`):
+/// - `motifId` names a project Motif, or with `fromLibrary` a library one,
+///   copied into the project in the same undo step.
 /// - `t_end_us` defaults to `t_start_us + default_duration_s * 1e6`.
 /// - `track_id` defaults to first existing Video track or auto-creates
 ///   one labeled "Motifs".
@@ -3220,6 +3296,7 @@ export async function getMotifCover(id: string, contentHash: string): Promise<Bl
 ///   keys reject, missing keys fall back to defaults.
 export async function addMotif(args: {
   motifId: string;
+  fromLibrary?: boolean;
   tStartUs: number;
   tEndUs?: number;
   // Explicit `| undefined` so callers can pass an "auto track" undefined
@@ -3229,6 +3306,7 @@ export async function addMotif(args: {
 }): Promise<string> {
   return invoke<string>("add_motif", {
     motifId: args.motifId,
+    ...(args.fromLibrary ? { fromLibrary: true } : {}),
     tStartUs: args.tStartUs,
     tEndUs: args.tEndUs,
     trackId: args.trackId,
@@ -3240,8 +3318,9 @@ export async function addMotif(args: {
 // Motif lifecycle IPC wrappers
 // ============================================================
 
-/// The event the backend emits after a user-Motif lifecycle mutation (emit
-/// sites: `src/main/state/ts-actor-host.ts`, `src/main/motif/watcher.ts`).
+/// The event the backend emits after a Motif changes in the project or the
+/// library (emit sites: `src/main/state/ts-actor-host.ts`,
+/// `src/main/motif/watcher.ts`, `src/main/index.ts`).
 export const MOTIFS_CHANGED_EVENT = "motifs:changed";
 
 export interface MotifSource {
@@ -3250,38 +3329,89 @@ export interface MotifSource {
   html: string;
 }
 
+/// Project Motif `id`'s page, with the revision an edit must name.
 export async function getMotifSource(id: string): Promise<MotifSource> {
-  const file=await invoke<{manifest:MotifManifest;revision:string;text:string}>('read_motif',{motif_id:id,path:'index.html'});
-  return {manifest:file.manifest,revision:file.revision,html:file.text};
+  const file = await invoke<{ manifest: MotifManifest; revision: string; text: string }>("read_motif", { motif_id: id, path: "index.html" });
+  return { manifest: file.manifest, revision: file.revision, html: file.text };
 }
 
-/// Write a draft from authored `{ manifest, html }`. Returns the assigned draft id.
-export async function writeMotifDraft(manifest: MotifManifest, html: string): Promise<string> {
-  const draft = await invoke<{motif_id:string;revision:string}>('create_motif', {source:{kind:'empty',name:manifest.name}});
-  await invoke('update_motif_files',{motif_id:draft.motif_id,expected_revision:draft.revision,files:[{path:'manifest.json',text:JSON.stringify(manifest)},{path:'index.html',text:html}]});
-  return draft.motif_id;
+/// Makes a new project Motif from authored `{ manifest, html }`. Returns its id.
+export async function createProjectMotif(manifest: MotifManifest, html: string): Promise<string> {
+  const made = await invoke<{ motif_id: string; revision: string }>("create_motif", { source: { kind: "empty", name: manifest.name } });
+  await invoke("update_motif_files", {
+    motif_id: made.motif_id, expected_revision: made.revision,
+    files: [{ path: "manifest.json", text: JSON.stringify(manifest) }, { path: "index.html", text: html }],
+  });
+  return made.motif_id;
 }
 
-/// The user's own Install / Update: publishes directly (`publish_motif`, the
-/// renderer-only channel). An agent's `install_motif` only proposes; the
-/// user approves it on the Motif panel's card (`approveMotifProposal`).
-/// `mode` is `{ kind: "new" }` or `{ kind: "update", target_id }`.
-export async function installMotif(
-  draftId: string,
-  mode: { kind: "new" } | { kind: "update"; target_id: string },
-  expectedRevision?: string,
-  expectedTargetVersion?: number,
-): Promise<string> {
-  const draft=await invoke<{revision:string}>('read_motif',{motif_id:draftId});
-  const target=mode.kind==='update'?await invoke<{manifest:MotifManifest}>('read_motif',{motif_id:mode.target_id,group:'library'}):null;
-  const result=await invoke<{motif_id:string}>('publish_motif',{motif_id:draftId,expected_revision:expectedRevision??draft.revision,
-    ...(mode.kind==='update'?{target_id:mode.target_id,expected_version:expectedTargetVersion??target!.manifest.version}:{as_new:true})});
+/// Imports a Motif ZIP into the project. Returns the id it took there.
+export async function importMotif(path: string): Promise<string> {
+  return (await invoke<{ motif_id: string }>("create_motif", { source: { kind: "zip", path } })).motif_id;
+}
+
+/// Rewrites project Motif `id` from its full edited page (in-app source
+/// panel): every clip of it changes, with no approval. Refused when the
+/// folder no longer holds `expectedRevision`. Returns the new revision.
+export async function updateMotifSource(id: string, source: string, expectedRevision: string): Promise<string> {
+  const result = await invoke<{ revision: string }>("update_motif_files", {
+    motif_id: id, expected_revision: expectedRevision,
+    files: [{ path: "index.html", text: source }, { path: "manifest.json", text: JSON.stringify(parseManifestIsland(source)) }],
+  });
+  return result.revision;
+}
+
+/// Replaces project Motif `id`'s copy with the library's current version of
+/// its lineage, rebinding its clips; one undo step takes it back.
+export async function updateProjectMotif(id: string): Promise<void> {
+  await invoke("update_project_motif", { motif_id: id });
+}
+
+/// Removes project Motif `id` from the project's table; refused (MotifInUse)
+/// while a clip uses it.
+export async function removeProjectMotif(id: string): Promise<void> {
+  await invoke("delete_motif", { motif_id: id });
+}
+
+/// Files and props schema of a package against the library version it
+/// replaces. Mirrors `ProposalDiff` in `src/main/motif/publications.ts`.
+export interface MotifDiff {
+  files: { added: string[]; removed: string[]; changed: string[] };
+  props: { added: string[]; removed: string[]; changed: string[] };
+}
+
+/// What "Save to library" of project Motif `id` would write: the library
+/// Motif it replaces and the change against it, or `replaces: null` when it
+/// makes a new one (a built-in is never replaced). Mirrors `PublishPlan` in
+/// `src/main/motif/publications.ts`.
+export interface MotifPublishPlan {
+  /// The project Motif's revision the plan was made from; the save sends it,
+  /// so content edited since is refused rather than saved unseen.
+  revision: string;
+  replaces: { id: string; version: number } | null;
+  diff: MotifDiff | null;
+}
+
+export async function planSaveToLibrary(id: string): Promise<MotifPublishPlan> {
+  return invoke<MotifPublishPlan>("publish_motif", { motif_id: id, dry_run: true });
+}
+
+/// The user's own "Save to library" of project Motif `id` at `revision`,
+/// published directly (an agent's `install_motif` only proposes). `replace`
+/// is the library Motif and the version the user confirmed replacing; absent,
+/// a new library Motif is made. Returns the library id.
+export async function saveToLibrary(id: string, revision: string, replace?: { id: string; version: number }): Promise<string> {
+  const result = await invoke<{ motif_id: string }>("publish_motif", {
+    motif_id: id,
+    expected_revision: revision,
+    ...(replace ? { target_id: replace.id, expected_version: replace.version } : { as_new: true }),
+  });
   return result.motif_id;
 }
 
-/// Moves the Motif's folders to the system trash; rejects, deleting nothing,
-/// when the trash refuses.
-export async function deleteMotif(id: string): Promise<void> {
+/// Moves library Motif `id`'s folders to the system trash; rejects, deleting
+/// nothing, when the trash refuses. No project changes: projects hold copies.
+export async function deleteLibraryMotif(id: string): Promise<void> {
   await invoke("delete_library_motif", { motif_id: id });
 }
 
@@ -3294,47 +3424,20 @@ export interface MotifVersion {
 }
 
 /// The installed Motif's saved versions, newest (current) first; none for a
-/// built-in or a draft.
+/// built-in.
 export async function listMotifVersions(id: string): Promise<MotifVersion[]> {
   return invoke<MotifVersion[]>("list_motif_versions", { motif_id: id });
 }
 
-/// Saves version `version` again as the Motif's newest version; this
-/// project's clips of it rebind as an Update rebinds them.
+/// Saves version `version` again as the library Motif's newest version.
 export async function restoreMotifVersion(id: string, version: number): Promise<void> {
   await invoke("restore_motif_version", { motif_id: id, version });
 }
 
-/// Overwrite an existing draft from its full edited source (in-app source panel).
-/// Keeps the draft id stable; the backend re-parses the manifest island, forces
-/// id/version, re-composes, and emits `motifs:changed`.
-export async function amendMotifDraft(draftId:string,source:string,expectedRevision:string):Promise<string> {
-  const result=await invoke<{revision:string}>('update_motif_files',{motif_id:draftId,expected_revision:expectedRevision,
-    files:[{path:'index.html',text:source},{path:'manifest.json',text:JSON.stringify(parseManifestIsland(source))}]});
-  return result.revision;
-}
-
-/// Open a working draft seeded from an installed/built-in Motif (Edit). Built-in
-/// → forced fork (no Update target). Returns the working draft id.
-export async function createEditDraft(sourceId: string): Promise<string> {
-  return (await invoke<{motif_id:string}>('create_motif',{source:{kind:'copy',motif_id:sourceId}})).motif_id;
-}
-
-/** Explicit independent copy of any Motif, drafts included (opening a draft id
- *  with `kind: 'motif'` resumes that draft instead). One main-process copy. */
-export async function copyMotifDraft(id:string):Promise<string> {
-  return (await invoke<{motif_id:string}>('create_motif',{source:{kind:'copy',motif_id:id}})).motif_id;
-}
-
-/// Import a Motif ZIP package from the OS dialog.
-/// Copies a snapshot into a new draft and returns its id.
-export async function importMotif(path: string): Promise<string> {
-  return (await invoke<{motif_id:string}>('create_motif',{source:{kind:'zip',path}})).motif_id;
-}
-
-/// Export the complete package (built-in, installed or draft) as one ZIP folder.
-export async function exportMotif(id: string, path: string): Promise<void> {
-  await invoke("export_motif", { motif_id: id, path });
+/// Exports the complete package as one ZIP. `group: "library"` names a
+/// library Motif; absent, the project's.
+export async function exportMotif(id: string, path: string, group?: "library"): Promise<void> {
+  await invoke("export_motif", { motif_id: id, path, ...(group ? { group } : {}) });
 }
 
 /// An agent's proposed publication (`install_motif`), waiting for the user's
@@ -3346,33 +3449,29 @@ export interface MotifProposal {
   proposal_id: string;
   state: "awaiting_approval";
   revision: string;
-  target: { id: string; version: number } | { new_id: string };
+  target: MotifPublicationTarget;
   proposed_at: string;
   /// The id the frozen package previews under.
   preview_id: string;
   manifest: MotifManifest;
   /// Against the current published version; null for a first publication.
-  diff: {
-    files: { added: string[]; removed: string[]; changed: string[] };
-    props: { added: string[]; removed: string[]; changed: string[] };
-  } | null;
+  diff: MotifDiff | null;
 }
 
 export async function listMotifProposals(): Promise<MotifProposal[]> {
   return invoke<MotifProposal[]>("list_motif_proposals");
 }
 
-/// Approve: the proposed revision becomes a library version; no project
-/// changes. Returns the library id.
-export async function approveMotifProposal(proposalId: string): Promise<string> {
-  return (await invoke<{ motif_id: string }>("approve_motif_proposal", { proposal_id: proposalId })).motif_id;
+/// Approve: the proposed revision becomes a library version, of its target or,
+/// `asNew`, of a new library Motif; no project changes. Returns the library id.
+export async function approveMotifProposal(proposalId: string, asNew = false): Promise<string> {
+  return (await invoke<{ motif_id: string }>("approve_motif_proposal", { proposal_id: proposalId, ...(asNew ? { as_new: true } : {}) })).motif_id;
 }
 
 /// Reject: the note reaches the agent through list_motifs.
 export async function rejectMotifProposal(proposalId: string, note?: string): Promise<void> {
   await invoke("reject_motif_proposal", { proposal_id: proposalId, ...(note ? { note } : {}) });
 }
-
 
 // ============================================================
 // Status / log surface (see `docs/status-log.md`)

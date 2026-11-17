@@ -10,6 +10,10 @@ import type { DecoderPool } from "./decoder/session";
 import { getMotif } from "./motifs/catalog";
 import { motifFrameDescriptor } from "./motifs/motifFrameDescriptor";
 import { sharedMotifFrameCache } from "./motifs/motifFrameSource";
+import { holdBuiltinMotifs } from "../testing/projectMotifs";
+
+// The project these tests render holds the built-ins.
+holdBuiltinMotifs();
 
 afterEach(() => {
   sharedMotifFrameCache.clearAll();

@@ -96,7 +96,7 @@ export function MotifPreview({
       cancelled = true;
     };
     // MotifForm debounces props, so capture fires per settled edit.
-    // `content_hash` is in the deps so a same-id draft edit (new content, same id)
+    // `content_hash` is in the deps so a same-id edit (new content, same id)
     // re-captures — the host reloads off the `?v=` cache-buster threaded above.
   }, [motif.id, motif.content_hash, tSec, props, w, h, fpsNum, fpsDen]);
 

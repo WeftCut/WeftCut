@@ -5,6 +5,10 @@ import { exportMotifPlanner, planExportMotifFrame } from "./exportMotifSource";
 import { acquireMotifFrame } from "./motifs/motifFrameSource";
 import { MotifTransportError } from "./motifs/frameTransport";
 import { timeUsAtFrame } from "../frames";
+import { holdBuiltinMotifs } from "../testing/projectMotifs";
+
+// The project these tests render holds the built-ins.
+holdBuiltinMotifs();
 
 vi.mock("./motifs/motifFrameSource", () => ({ acquireMotifFrame: vi.fn() }));
 

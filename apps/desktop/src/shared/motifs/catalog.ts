@@ -575,38 +575,7 @@ export function motifCtxDurationS(manifest: Manifest, props: Record<string, unkn
   return manifest.default_duration_s;
 }
 
-// ---------------------------------------------------------------------------
-// MotifCatalog class
-// ---------------------------------------------------------------------------
-
 /** Motif manifests by id, as a reader of layers' `motif_id` looks them up. */
 export interface MotifManifests {
   get(id: string): Manifest | undefined;
-}
-
-/**
- * Motif catalog with a built-in layer (always present) and a settable user
- * layer. Built-ins win on id collision so an uploaded motif can never shadow
- * a built-in.
- */
-export class MotifCatalog implements MotifManifests {
-  private _user: Map<string, Manifest> = new Map();
-
-  get(id: string): Manifest | undefined {
-    return BUILTIN_MANIFESTS.get(id) ?? this._user.get(id) ?? undefined;
-  }
-
-  setUserManifests(ms: Manifest[]): void {
-    this._user = new Map(ms.map((m) => [m.id, m]));
-  }
-
-  list(): Manifest[] {
-    const out: Manifest[] = [...BUILTIN_MANIFESTS.values()];
-    for (const [id, m] of this._user) {
-      if (!BUILTIN_MANIFESTS.has(id)) {
-        out.push(m);
-      }
-    }
-    return out;
-  }
 }

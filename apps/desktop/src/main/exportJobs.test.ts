@@ -4,8 +4,10 @@ import { afterEach, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { ExportJobs, exportBasename, exportPathExists, suggestExportName } from './exportJobs';
+import { ExportJobs, exportBasename, exportedMotifIds, exportPathExists, suggestExportName } from './exportJobs';
 import { blankProject, rootComposition } from './state/model';
+import { seededGen } from './state/ids';
+import { withGroup } from './state/__tests__/fixtures/project';
 import type { TsActorHost } from './state/ts-actor-host';
 import type { ExportRun } from '../shared/exportJob';
 import type { UnavailableMotif } from '../shared/motifs/projectMotifs';
@@ -251,6 +253,34 @@ it('refuses, before a job exists, while a layer uses a Motif that cannot render,
   // A Motif no layer uses does not stop an export.
   held = unavailable.slice(1);
   await expect(jobs.start({ settings: { include_audio: false } })).resolves.toMatchObject({ state: expect.any(String) });
+});
+
+it('refuses only for a Motif the export draws: outside its range, on a disabled layer or in an unplaced Group it does not count', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'weftcut-export-scope-')); cleanup.push(dir);
+  const idGen = seededGen();
+  const motifLayer = (motifId: string, start: number, end: number, enabled = true) => ({ id: idGen(), label: null, t_start_us: start, t_end_us: end,
+    enabled, locked: false, metadata: {}, params: motifLayerParams(motifId, {}, [64, 64]), effects: [] }) as never;
+  // A Group placed at [0, 1 s) holding Motif 'nested'; a second Group placed
+  // nowhere, holding 'unplaced'.
+  const { p: project, groupId } = withGroup(blankProject(idGen, 'Project'), idGen);
+  project.compositions[groupId]!.tracks[0]!.layers.push(motifLayer('nested', 0, 500_000));
+  const { p: spare, groupId: spareId } = withGroup(blankProject(idGen, 'Spare'), idGen);
+  project.compositions[spareId] = spare.compositions[spareId]!;
+  project.compositions[spareId]!.tracks[0]!.layers.push(motifLayer('unplaced', 0, 500_000));
+  const r = rootComposition(project);
+  r.duration_us = 3_000_000;
+  r.tracks[0]!.layers.push(motifLayer('late', 2_000_000, 3_000_000), motifLayer('off', 0, 1_000_000, false));
+
+  expect([...exportedMotifIds(project, { startUs: 0, endUs: 1_000_000 })]).toEqual(['nested']);
+  expect([...exportedMotifIds(project, { startUs: 0, endUs: 3_000_000 })].sort()).toEqual(['late', 'nested']);
+
+  const unavailable: UnavailableMotif[] = ['nested', 'unplaced', 'late', 'off'].map(motif_id => ({ motif_id, status: 'missing', diagnostic: `Motifs/${motif_id}/ is missing` }));
+  const host = { actor: { snapshot: () => project }, openedProject: () => ({ dir }), handleInvoke: async () => null, unavailableMotifs: () => unavailable } as unknown as TsActorHost;
+  const jobs = new ExportJobs({ host: () => host, send: vi.fn(), native: vi.fn(async () => null), readyTimeoutMs: 40 });
+  await expect(jobs.start({ settings: { include_audio: false }, range: { t_start_us: 0, t_end_us: 1_000_000 } }))
+    .rejects.toMatchObject({ code: 'motif_unavailable', data: { motif_ids: ['nested'] } });
+  await expect(jobs.start({ settings: { include_audio: false }, range: { t_start_us: 1_000_000, t_end_us: 2_000_000 } }))
+    .resolves.toMatchObject({ state: expect.any(String) });
 });
 
 it('the UI\'s strict conflict still fails in view, and the latest job outlives its end (ME11)', async () => {

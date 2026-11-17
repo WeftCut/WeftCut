@@ -26,12 +26,6 @@ import {
   updateLayerParams,
   moveLayer,
   trimLayer,
-  installMotif,
-  deleteMotif,
-  getMotifSource,
-  amendMotifDraft,
-  createEditDraft,
-  copyMotifDraft,
   AUDIO_ROLES,
   type AudioRole,
   type CompositionSummary,
@@ -44,7 +38,7 @@ import {
 import { ROTATION, ANCHOR_X, ANCHOR_Y, OPACITY, GAIN_DB, PAN, COLOR_TEXT, COLOR_FILL, type RgbaParamDescriptor } from "../keyframe/descriptors";
 import { groupDisplayName, layerDisplayName } from "../lib/layerName";
 import { trackDisplayName } from "../lib/trackName";
-import { refusalText, tryMutate } from "../errors/tryMutate";
+import { tryMutate } from "../errors/tryMutate";
 import { getGizmoProbe } from "../preview/gizmoProbeRegistry";
 import { linkFanoutActive } from "../timeline/linkEligibility";
 import {
@@ -68,7 +62,8 @@ import { useTextFit } from "./useTextFit";
 // `InspectorAnimField`, the two colours via `InspectorColorField`. Every other
 // row (fades/flip/mute/content/font, Motif props) commits scalars through
 // `updateLayerParams`.
-import { getMotif, subscribeMotifCatalog, motifCatalogRevision } from "../render/motifs/catalog";
+import { getMotif, motifUnavailable, subscribeMotifCatalog, motifCatalogRevision } from "../render/motifs/catalog";
+import { MotifManagementRow, MotifSourcePanel } from "./MotifManagement";
 import {
   useCompositionRefCounts,
   useGroupOrdinals,
@@ -694,7 +689,7 @@ function KindFields({
         </>
       );
     case "Motif":
-      return <MotifFields layer={layer} v={layer.params} commit={commit} onMutated={onMutated} />;
+      return <MotifFields layer={layer} v={layer.params} commit={commit} />;
     case "CompositionRef":
       return <GroupFields layer={layer} v={layer.params} onMutated={onMutated} fpsNum={fpsNum} fpsDen={fpsDen} />;
   }
@@ -1186,27 +1181,25 @@ function MotifFields({
   layer,
   v,
   commit,
-  onMutated,
 }: {
   layer: LayerSummary;
   v: Extract<LayerSummary["params"], { kind: "Motif" }>;
   commit: Commit;
-  onMutated: () => Promise<void>;
 }) {
   const { t } = useTranslation();
 
   const debouncedCommit = useDebouncedCommit<LayerParamsPatch>(commit);
 
-  // Re-resolve the motif when the runtime catalog changes (e.g. deleting this
-  // motif from its management section) so the props schema /
-  // unknown-note stay in sync with `merged`, not a stale snapshot from mount.
-  // Same notifier the lifecycle row rides.
+  // Re-resolve the Motif when the render catalog changes (an edit, an update
+  // from the library, its folder gone) so the props schema / unavailable note
+  // stay in sync, not a stale snapshot from mount.
   useSyncExternalStore(subscribeMotifCatalog, motifCatalogRevision);
-  // The motif's prop schema drives the props section. A null lookup means
-  // the placed motif_id isn't in the catalog (e.g. a removed built-in) — we
-  // can still edit transform/opacity, but render a note instead of guessing
-  // prop inputs.
+  // The Motif's prop schema drives the props section. A null lookup is a
+  // project Motif that cannot render (its folder missing or invalid), or a
+  // catalog sync still in flight — transform/opacity stay editable, and a
+  // note stands in for the prop inputs.
   const motif = getMotif(v.motif_id);
+  const unavailable = motif ? null : motifUnavailable(v.motif_id);
   const propEntries = motif
     ? Object.entries(motif.manifest.props_schema)
     : [];
@@ -1222,7 +1215,9 @@ function MotifFields({
     <>
       <BakeStatusLine layerId={layer.id} />
       {motif === null ? (
-        <p className="prop-hint">{t("property_panel.unknown_motif")}</p>
+        unavailable
+          ? <p className="settings-error">{t("property_panel.motif_unavailable", { id: v.motif_id, diagnostic: unavailable.diagnostic })}</p>
+          : <p className="prop-hint">{t("property_panel.unknown_motif")}</p>
       ) : motif.hasParamsUi ? (
         // The Motif ships its own page — it owns the whole props surface,
         // including labels, grouping and order. The fallback form below stays
@@ -1255,290 +1250,14 @@ function MotifFields({
         </PropSection>
       ) : null}
       <PropSection layerKind={layer.kind} sectionId="motif_management" title={t("property_panel.motif_management")} defaultCollapsed>
-        <MotifLifecycleRow motifId={v.motif_id} layerId={layer.id} onMutated={onMutated} />
+        <MotifManagementRow motifId={v.motif_id} />
       </PropSection>
-      {motif?.manifest.status === "draft" ? (
-        // Entering a draft is intent to edit, so the source Section defaults
-        // expanded.
-        <PropSection layerKind={layer.kind} sectionId="motif_source" title={t("property_panel.motif_source")}>
+      {motif ? (
+        <PropSection layerKind={layer.kind} sectionId="motif_source" title={t("property_panel.motif_source")} defaultCollapsed>
           <MotifSourcePanel motifId={v.motif_id} />
         </PropSection>
       ) : null}
     </>
-  );
-}
-
-/// Full Motif edit lifecycle for the placed layer. State machine on the resolved
-/// Motif's `status` (+ `target_id` for drafts):
-///   - builtin   → "Duplicate & edit" (Edit forks an untargeted draft).
-///   - installed → "Edit" (seeds a targeted draft) + Delete.
-///   - draft, no target → Install(new) + Delete  (from-scratch authoring).
-///   - draft, target=X  → "Update X" (blast-radius confirm) + "Save as new" + Discard.
-/// "Edit" creates a working draft via `createEditDraft`, then swaps THIS layer
-/// onto it (`updateLayerParams … motif_id: draftId`) so the
-/// source panel previews the editable copy. "Discard" swaps the layer back
-/// to the target + deletes the draft. The backend emits `motifs:changed`, which
-/// resyncs the catalog so the layer keeps rendering.
-function MotifLifecycleRow({
-  motifId,
-  layerId,
-  onMutated,
-}: {
-  motifId: string;
-  layerId: string;
-  onMutated: () => Promise<void>;
-}) {
-  const { t } = useTranslation();
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  // Inline confirm (replaces native window.confirm): a pending destructive action
-  // + its prompt. While set, the row shows the prompt + Confirm/Cancel instead of
-  // firing the action immediately.
-  const [pending, setPending] = useState<{ message: string; action: () => Promise<unknown> } | null>(null);
-  // Re-render when the runtime catalog changes (install/delete/edit →
-  // motifs:changed → syncUserMotifsFromBackend → setUserMotifs → this fires),
-  // so status + target stay fresh. Hook runs before any early return.
-  useSyncExternalStore(subscribeMotifCatalog, motifCatalogRevision);
-  const manifest = getMotif(motifId)?.manifest;
-  const status = manifest?.status;
-  if (!status) return null; // unknown motif
-
-  const run = (fn: () => Promise<unknown>) => async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await fn();
-    } catch (e) {
-      setErr(refusalText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // A destructive action is awaiting inline confirmation — show the prompt +
-  // Confirm/Cancel instead of the normal buttons. Runs AFTER all hooks (rules-of-
-  // hooks-safe). On action error, `err` shows and the prompt stays so the failure
-  // is visible; `setPending(null)` only fires after the action resolves.
-  if (pending) {
-    return (
-      <div className="prop-motif-lifecycle">
-        <p className="prop-hint">{pending.message}</p>
-        <Button size="sm" disabled={busy} onClick={run(async () => { await pending.action(); setPending(null); })}>
-          {t("property_panel.motif_confirm")}
-        </Button>
-        <Button size="sm" disabled={busy} onClick={() => setPending(null)}>
-          {t("property_panel.motif_cancel")}
-        </Button>
-        {err && <p className="settings-error">{err}</p>}
-      </div>
-    );
-  }
-
-  // Edit: fork a working draft and swap this layer onto it (forced version 1 —
-  // a fresh draft always starts at v1). The source panel then previews it.
-  const edit = run(async () => {
-    const draftId = await createEditDraft(motifId);
-    await updateLayerParams(layerId, { kind: "Motif", motif_id: draftId });
-    await onMutated();
-  });
-
-  if (status === "builtin") {
-    return (
-      <div className="prop-motif-lifecycle">
-        <span className="motif-card-status status-builtin">
-          {t("property_panel.motif_status.builtin")}
-        </span>
-        <Button size="sm" disabled={busy} onClick={edit}>{t("property_panel.motif_edit_fork")}</Button>
-        {err && <p className="settings-error">{err}</p>}
-      </div>
-    );
-  }
-
-  if (status === "installed") {
-    return (
-      <div className="prop-motif-lifecycle">
-        <span className="motif-card-status status-installed">
-          {t("property_panel.motif_status.installed")}
-        </span>
-        <Button size="sm" disabled={busy} onClick={edit}>{t("property_panel.motif_edit")}</Button>
-        <Button
-          size="sm"
-          disabled={busy}
-          onClick={() => setPending({
-            message: t("property_panel.motif_delete_confirm", { id: motifId }),
-            action: async () => { await deleteMotif(motifId); await onMutated(); },
-          })}
-        >
-          {t("property_panel.motif_delete")}
-        </Button>
-        {err && <p className="settings-error">{err}</p>}
-      </div>
-    );
-  }
-
-  // status === "draft"
-  const sourceTarget = manifest?.source_id;
-  const target = manifest?.target_id ?? (sourceTarget && getMotif(sourceTarget)?.manifest.status === 'installed' ? sourceTarget : undefined);
-  // Non-hook read inside the click handler (NOT a top-level hook). Blast radius
-  // of an Update = every layer in THIS project that will change: those still on
-  // the target id PLUS those swapped onto this working draft (they rebind to the
-  // target on Update). Counting both fixes the common single-edit case (the one
-  // edited layer is on the draft, so a target-only count would read "0 layers").
-  const updateBlastRadius = (targetId: string) => {
-    let count = 0;
-    // Every composition: a motif placed inside a Group is still this project's.
-    const compositions = useProjectStore.getState().summary?.compositions ?? {};
-    for (const track of Object.values(compositions).flatMap((c) => c.tracks)) {
-      for (const l of track.layers) {
-        if (l.kind !== "Motif") continue;
-        const mid = (l.params as { motif_id?: string }).motif_id;
-        if (mid === targetId || mid === motifId) count++;
-      }
-    }
-    return count;
-  };
-
-  return (
-    <div className="prop-motif-lifecycle">
-      <span className="motif-card-status status-draft">
-        {t("property_panel.motif_status.draft")}
-      </span>
-      {manifest?.diagnostic && <p className="settings-error">{manifest.diagnostic}</p>}
-      {target ? (
-        <>
-          <Button
-            size="sm"
-            disabled={busy}
-            onClick={() => {
-              const n = updateBlastRadius(target);
-              const targetVersion = getMotif(target)?.manifest.version;
-              const message = n === 1
-                ? t("property_panel.motif_update_confirm_one")
-                : t("property_panel.motif_update_confirm_many", { count: n });
-              setPending({
-                message,
-                action: async () => {
-                  await installMotif(motifId, { kind: "update", target_id: target }, manifest?.content_hash, targetVersion);
-                  await onMutated();
-                },
-              });
-            }}
-          >
-            {t("property_panel.motif_update")}
-          </Button>
-          <Button
-            size="sm"
-            disabled={busy}
-            onClick={run(async () => {
-              const copy = await copyMotifDraft(motifId);
-              const published = await installMotif(copy, { kind: "new" });
-              await updateLayerParams(layerId, {kind:'Motif',motif_id:published});
-              await onMutated();
-            })}
-          >
-            {t("property_panel.motif_save_as_new")}
-          </Button>
-          <Button
-            size="sm"
-            disabled={busy}
-            onClick={run(async () => {
-              await updateLayerParams(layerId, { kind: "Motif", motif_id: target });
-              await deleteMotif(motifId);
-              await onMutated();
-            })}
-          >
-            {t("property_panel.motif_discard")}
-          </Button>
-        </>
-      ) : (
-        <>
-          <Button
-            size="sm"
-            disabled={busy}
-            onClick={run(async () => {
-              await installMotif(motifId, { kind: "new" }, manifest?.content_hash);
-              await onMutated();
-            })}
-          >
-            {t("property_panel.motif_install")}
-          </Button>
-          <Button
-            size="sm"
-            disabled={busy}
-            onClick={run(async () => {
-              await deleteMotif(motifId);
-              await onMutated();
-            })}
-          >
-            {t("property_panel.motif_delete")}
-          </Button>
-        </>
-      )}
-      {err && <p className="settings-error">{err}</p>}
-    </div>
-  );
-}
-
-/// In-app source editor for a selected DRAFT Motif layer. See docs/motifs.md.
-/// Deliberately minimal: a plain textarea of the draft's full composed source
-/// (manifest island + body). "Apply" funnels through `amendMotifDraft`, which
-/// re-parses the island, forces the stable id, re-composes, and emits
-/// `motifs:changed` → the catalog resyncs (new content_hash) → the canvas
-/// preview re-captures. Only shown for drafts — editing an installed Motif goes
-/// through `MotifLifecycleRow`, which seeds a draft and swaps the layer onto it.
-function MotifSourcePanel({ motifId }: { motifId: string }) {
-  const { t } = useTranslation();
-  // Re-resolve status reactively (same notifier the lifecycle row uses) so this
-  // unmounts the instant the draft is installed/deleted.
-  useSyncExternalStore(subscribeMotifCatalog, motifCatalogRevision);
-  const status = getMotif(motifId)?.manifest.status;
-  const [source, setSource] = useState<string | null>(null);
-  const [revision, setRevision] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  // Seed the textarea from disk whenever the selected draft changes.
-  useEffect(() => {
-    let alive = true;
-    setErr(null);
-    setSource(null);
-    getMotifSource(motifId)
-      .then((s) => { if (alive) { setSource(s.html); setRevision(s.revision); } })
-      .catch((e) => { if (alive) setErr(String(e)); });
-    return () => { alive = false; };
-  }, [motifId]);
-
-  if (status !== "draft") return null;
-
-  const apply = async () => {
-    if (source == null) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      setRevision(await amendMotifDraft(motifId, source, revision));
-    } catch (e) {
-      setErr(refusalText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="prop-motif-source">
-      <p className="prop-hint">{t("property_panel.motif_source_hint")}</p>
-      <textarea
-        className="prop-motif-source-text"
-        aria-label={t("property_panel.motif_source")}
-        spellCheck={false}
-        value={source ?? ""}
-        disabled={source == null || busy}
-        onChange={(e) => setSource(e.target.value)}
-      />
-      <Button size="sm" disabled={busy || source == null} onClick={apply}>
-        {busy ? t("property_panel.motif_source_applying") : t("property_panel.motif_source_apply")}
-      </Button>
-      {err && <p className="settings-error">{err}</p>}
-    </div>
   );
 }
 

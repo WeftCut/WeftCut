@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { getMotif, type Motif } from "./catalog";
 import { collectLiveRasterKeys } from "./liveRasterKeys";
+import { holdBuiltinMotifs } from "../../testing/projectMotifs";
+
+// The project these tests render holds the built-ins.
+holdBuiltinMotifs();
 
 function motifLayer(motifId: string, tStart = 0, tEnd = 5_000_000): any {
   return {

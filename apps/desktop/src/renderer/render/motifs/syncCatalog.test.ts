@@ -1,31 +1,44 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../ipc", () => ({
-  listMotifs: vi.fn(),
-}));
+const bridge = vi.hoisted(() => ({ invoke: vi.fn() }));
+vi.mock("@/bridge/ipc", () => ({ invoke: (cmd: string, args?: unknown) => bridge.invoke(cmd, args) }));
+vi.mock("@/bridge/events", () => ({ listen: vi.fn(async () => () => {}) }));
 
-import { listMotifs as ipcListMotifs } from "../../ipc";
-import { syncUserMotifsFromBackend } from "./syncCatalog";
-import { getMotif, setUserMotifs } from "./catalog";
+import { clearProjectMotifs, syncProjectMotifsFromBackend } from "./syncCatalog";
+import { getMotif, motifUnavailable, setProjectMotifs } from "./catalog";
 
-describe("syncUserMotifsFromBackend", () => {
-  beforeEach(() => setUserMotifs([]));
+const manifest = (id: string, size: [number, number]) =>
+  ({ id, name: id, version: 1, size, default_duration_s: 2, props_schema: {}, html: "<html></html>", content_hash: "r" });
 
-  it("registers backend user motifs into the runtime catalog", async () => {
-    (ipcListMotifs as ReturnType<typeof vi.fn>).mockResolvedValue([
-      // The IPC payload carries manifest fields + an extra `html` field.
-      { id: "from-backend", name: "BE", version: 1, size: [320, 240], default_duration_s: 2, props_schema: {}, html: "<html></html>" },
-      { id: "countdown", name: "Countdown", version: 1, size: [99, 99], default_duration_s: 5, props_schema: {}, html: "x" },
+describe("syncProjectMotifsFromBackend", () => {
+  beforeEach(() => { setProjectMotifs(); bridge.invoke.mockReset(); });
+
+  it("fills the catalog from the project group only, with its broken Motifs as unavailable", async () => {
+    bridge.invoke.mockResolvedValue([
+      { ...manifest("lower", [320, 240]), group: "project", uid: "u1", status: "ok", state: "in_sync", from: null, path: "/home/u/Film/Motifs/lower", revision: "r" },
+      { group: "project", id: "gone", uid: "u2", status: "missing", state: "project_only", from: null, path: "/home/u/Film/Motifs/gone", revision: null, diagnostic: "Motifs/gone/ is missing" },
     ]);
-    await syncUserMotifsFromBackend();
-    expect(getMotif("from-backend")?.manifest.size).toEqual([320, 240]);
-    // Built-in still authoritative (size unchanged by the backend echo).
-    expect(getMotif("countdown")?.manifest.size).toEqual([480, 480]);
+    await syncProjectMotifsFromBackend();
+    expect(bridge.invoke).toHaveBeenCalledWith("list_motifs", { group: "project" });
+    expect(getMotif("lower")?.manifest.size).toEqual([320, 240]);
+    expect(getMotif("gone")).toBeNull();
+    expect(motifUnavailable("gone")).toMatchObject({ status: "missing", diagnostic: "Motifs/gone/ is missing" });
   });
 
-  it("swallows IPC errors (catalog stays built-in-only)", async () => {
-    (ipcListMotifs as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("ipc down"));
-    await expect(syncUserMotifsFromBackend()).resolves.toBeUndefined();
-    expect(getMotif("from-backend")).toBeNull();
+  it("keeps the last catalog when the IPC fails", async () => {
+    setProjectMotifs([manifest("kept", [10, 10])]);
+    bridge.invoke.mockRejectedValue(new Error("ipc down"));
+    await expect(syncProjectMotifsFromBackend()).resolves.toBeUndefined();
+    expect(getMotif("kept")).not.toBeNull();
+  });
+
+  it("drops a pull still in flight when the project goes", async () => {
+    let answer!: (rows: unknown[]) => void;
+    bridge.invoke.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    const pull = syncProjectMotifsFromBackend();
+    clearProjectMotifs();
+    answer([{ ...manifest("old", [10, 10]), group: "project", uid: "u", status: "ok", state: "in_sync", from: null, path: "/p", revision: "r" }]);
+    await pull;
+    expect(getMotif("old")).toBeNull();
   });
 });

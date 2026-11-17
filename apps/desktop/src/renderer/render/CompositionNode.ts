@@ -1732,8 +1732,8 @@ export class CompositionNode {
     const existing = this.activeMotifs.get(layer.id);
     if (existing) {
       if (existing.motifId === motifId) return existing;
-      // The layer was retargeted to a different Motif (Edit-swap / Discard /
-      // Update rebind) — dispose the stale sprite so a fresh one re-fetches
+      // The layer was retargeted to a different Motif (a props rebind onto
+      // another id) — dispose the stale sprite so a fresh one re-fetches
       // getMotif(motifId) and re-captures. Keyed by layer.id, so the map slot
       // is replaced below.
       existing.sprite.dispose();

@@ -226,7 +226,12 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
   // means some other path tripped it — generic is the honest fallback.
   MediaInUse: { tier: "generic" },
   MotifNotFound: { tier: "generic" },
-  MotifInUse: { tier: "generic" },
+  // Remove from project in the Motifs panel; the clips are what to remove.
+  MotifInUse: {
+    tier: "curated",
+    key: "errors.motif_in_use",
+    args: (e) => ({ motif: e.motif_id, count: e.referenced_by.length }),
+  },
   TrackPositionOutOfRange: { tier: "generic" },
   // The timeline offers no drag for a reserved lane (canReorderTrack).
   TrackReserved: { tier: "generic" },

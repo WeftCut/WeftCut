@@ -81,8 +81,8 @@ export function tInLayerUsForLayerLocalFrame(
 export interface MotifFrameCacheKeyInput {
   motifId: string;
   version: number;
-  /// blake3 source hash — makes the key source-derived for drafts so a live
-  /// edit busts the cache even though `version` stays 1. Absent for built-ins.
+  /// The package revision — makes the key source-derived, so an edit of a
+  /// project Motif busts the cache even though `version` stays the same.
   contentHash?: string;
   canonicalProps: Record<string, unknown>;
   renderW: number;

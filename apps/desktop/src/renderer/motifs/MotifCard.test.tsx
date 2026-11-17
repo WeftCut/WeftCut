@@ -2,15 +2,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import '../i18n';
-import type { MotifSummary } from '../ipc';
+import type { LibraryMotifRow, ProjectMotifRow } from '../ipc';
 const getCover = vi.hoisted(() => vi.fn());
 vi.mock('../ipc', () => ({ getMotifCover: getCover }));
 import { MotifCard } from './MotifCard';
 
-const motif: MotifSummary = { id: 'badge', name: 'Badge', version: 1, size: [640, 360],
-  default_duration_s: 5, props_schema: {}, status: 'installed', content_hash: 'first' };
-const card = (entry = motif) => <MotifCard motif={entry} selected={false} fpsNum={60} fpsDen={1}
-  onSelect={() => {}} onExport={() => {}} onHistory={() => {}} onDelete={() => {}} />;
+const motif = { id: 'badge', name: 'Badge', version: 1, size: [640, 360] as [number, number],
+  default_duration_s: 5, props_schema: {}, content_hash: 'first' };
+const libraryRow = (content_hash = 'first'): LibraryMotifRow => ({ group: 'library', id: 'badge', status: 'installed', revision: content_hash, in_project: null, motif: { ...motif, content_hash } });
+const noop = () => {};
+const card = (row: LibraryMotifRow | ProjectMotifRow = libraryRow()) => <MotifCard row={row} selected={false} fpsNum={60} fpsDen={1}
+  onSelect={noop} onExport={noop} onHistory={noop} onDelete={noop} onTakeLibrary={noop} onSave={noop} onRemove={noop} />;
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); getCover.mockReset(); });
 
 describe('Motif card cover lifecycle', () => {
@@ -31,7 +33,8 @@ describe('Motif card cover lifecycle', () => {
     expect(getCover).not.toHaveBeenCalled();
     act(() => enter());
     await screen.findByRole('img');
-    expect(getCover).toHaveBeenCalledExactlyOnceWith('badge', 'first');
+    // A library Motif's cover is captured from the library, not the project.
+    expect(getCover).toHaveBeenCalledExactlyOnceWith('badge--library', 'first');
     expect(disconnect).toHaveBeenCalled();
     expect(create).toHaveBeenCalledOnce();
     view.unmount();
@@ -55,11 +58,11 @@ describe('Motif card cover lifecycle', () => {
     getCover.mockResolvedValueOnce(new Blob(['png'])).mockRejectedValueOnce(new Error('unavailable'));
     const view = render(card());
     await screen.findByRole('img');
-    view.rerender(card({ ...motif, content_hash: 'second' }));
+    view.rerender(card(libraryRow('second')));
     await screen.findByText('Cover unavailable');
     expect(screen.queryByRole('img')).toBeNull();
     expect(revoke).toHaveBeenCalledWith('blob:first');
-    expect(getCover).toHaveBeenLastCalledWith('badge', 'second');
+    expect(getCover).toHaveBeenLastCalledWith('badge--library', 'second');
     expect(screen.getByRole('button', { name: 'Export Motif ZIP' })).toBeTruthy();
   });
 });

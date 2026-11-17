@@ -1,15 +1,15 @@
 // @vitest-environment jsdom
 //
 // ADR 0046's gate in the panel: an agent's `install_motif` shows up as a card
-// in the Motifs panel, with the frozen package in the preview player, the
-// change against the installed version; no project changes.
+// in the Motifs panel, with the frozen package in the preview player and the
+// change against the library version; approval changes the library only.
 // Approve publishes it through the renderer-only `approve_motif_proposal`
 // channel; Reject sends the note through `reject_motif_proposal`. The real
 // IPC wrappers run; only the bridge is stubbed.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "../i18n";
-import type { MotifProposal, MotifSummary } from "../ipc";
+import type { MotifProposal } from "../ipc";
 
 const bridge = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -26,7 +26,6 @@ vi.mock("@/bridge/dialog", () => ({ open: vi.fn(), save: vi.fn() }));
 const capture = vi.hoisted(() => vi.fn((..._args: unknown[]) => new Promise<Blob>(() => {})));
 vi.mock("../render/motifs/host", () => ({ captureMotifFramePngBlob: capture }));
 
-import { setUserMotifs } from "../render/motifs/catalog";
 import { MotifPicker } from "./MotifPicker";
 import { MotifProposalIndicator } from "./MotifProposalIndicator";
 
@@ -34,12 +33,12 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   bridge.changed.length = 0;
-  setUserMotifs([]);
 });
 
-const INSTALLED: MotifSummary = {
-  id: "badge", name: "Badge", version: 1, size: [640, 360], default_duration_s: 5, status: "installed",
-  props_schema: { title: { type: "string", default: "Hello" } },
+/** `list_motifs` as the wire carries it: one library row. */
+const INSTALLED = {
+  group: "library", id: "badge", name: "Badge", version: 1, size: [640, 360], default_duration_s: 5, status: "installed",
+  revision: "lib-1", content_hash: "lib-1", in_project: null, props_schema: { title: { type: "string", default: "Hello" } },
 };
 const PROPOSAL: MotifProposal = {
   source: { project: "/home/u/Film", motif_id: "badge" }, proposal_id: "p-1", state: "awaiting_approval", revision: "rev-9",
@@ -65,7 +64,7 @@ const emitChanged = () => { for (const h of bridge.changed) h(); };
 function renderPanel() {
   render(
     <MotifPicker
-      onClose={vi.fn()} onAdded={vi.fn()} onDraftPlaced={vi.fn()} compositionId="comp"
+      onClose={vi.fn()} onAdded={vi.fn()} onNewPlaced={vi.fn()} compositionId="comp"
       currentTimeUs={0} tracks={[]} fpsNum={30} fpsDen={1} compWidth={1920} compHeight={1080}
     />,
   );
@@ -79,7 +78,7 @@ describe("the Motifs panel's approval card", () => {
     expect(within(card).getByText("Replaces “badge” version 1 → 2")).toBeTruthy();
     expect(within(card).getByText(/Files — added: logo\.png · removed: none · changed: index\.html/)).toBeTruthy();
     expect(within(card).getByText(/Props — added: tagline/)).toBeTruthy();
-    expect(within(card).getByText("No clips in this project change.")).toBeTruthy();
+    expect(within(card).getByText("Approving changes the library only. No project changes.")).toBeTruthy();
     // The preview player captures the frozen package, at the proposed revision.
     await waitFor(() => expect(capture.mock.calls.some((c) => c[0] === "p-1--proposal" && c[5] === "rev-9")).toBe(true));
   });
@@ -93,6 +92,14 @@ describe("the Motifs panel's approval card", () => {
     expect(bridge.invoke).not.toHaveBeenCalledWith("install_motif", expect.anything());
     emitChanged(); // main emits motifs:changed after the publication
     await waitFor(() => expect(screen.queryByRole("article", { name: "Proposed publication: Badge" })).toBeNull());
+  });
+
+  it("a replacement can be approved as a new library Motif instead", async () => {
+    serve();
+    renderPanel();
+    const card = await screen.findByRole("article", { name: "Proposed publication: Badge" });
+    fireEvent.click(within(card).getByRole("button", { name: "Approve as a new Motif" }));
+    await waitFor(() => expect(bridge.invoke).toHaveBeenCalledWith("approve_motif_proposal", { proposal_id: "p-1", as_new: true }));
   });
 
   it("Reject sends the user's note", async () => {

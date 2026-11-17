@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import type { TsActorHost } from './state/ts-actor-host';
-import { eachLayer, rootComposition } from './state/model';
+import { rootComposition, type Project } from './state/model';
 import type { UnavailableMotif } from '../shared/motifs/projectMotifs';
 import { snapFrameRound } from './state/snap';
 import { resolveExportRequest, resolveExportOptions, EXPORT_COMPATIBILITY, ExportValidationError } from '../shared/exportValidation';
@@ -57,14 +57,39 @@ function exportQueued(value: unknown): NonNullable<ExportJob['queued']> {
   return { reason, holders };
 }
 
-/** The project's Motifs that cannot render and that a layer uses: an export
- *  would draw nothing where they play (spec § Project Motifs). */
-function unrenderableMotifs(h: TsActorHost): UnavailableMotif[] {
+/** The Motifs an export of `range` draws: those of the enabled layers on
+ *  enabled root tracks that `range` overlaps, and those of every enabled layer
+ *  inside a Group so placed. A Group's own timing (windows, retiming) is not
+ *  followed, so it counts whole: a superset of what the renderer bakes
+ *  (`renderer/render/exportBake.ts`), never less. */
+export function exportedMotifIds(p: Pick<Project, 'compositions' | 'root_id'>, range: { startUs: number; endUs: number }): Set<string> {
+  const ids = new Set<string>();
+  const entered = new Set<string>();
+  const walk = (compositionId: string, within: { startUs: number; endUs: number } | null) => {
+    for (const track of p.compositions[compositionId]?.tracks ?? []) {
+      if (!track.enabled) continue;
+      for (const layer of track.layers) {
+        if (!layer.enabled) continue;
+        if (within && (layer.t_end_us <= within.startUs || layer.t_start_us >= within.endUs)) continue;
+        if (layer.params.kind === 'Motif') ids.add(layer.params.motif_id);
+        else if (layer.params.kind === 'CompositionRef' && !entered.has(layer.params.composition)) {
+          entered.add(layer.params.composition);
+          walk(layer.params.composition, null);
+        }
+      }
+    }
+  };
+  walk(p.root_id, range);
+  return ids;
+}
+
+/** The project's Motifs that cannot render and that the export of `range`
+ *  draws: it would draw nothing where they play (spec § Project Motifs). */
+function unrenderableMotifs(h: TsActorHost, range: { startUs: number; endUs: number }): UnavailableMotif[] {
   const unavailable = h.unavailableMotifs?.() ?? [];
   if (!unavailable.length) return [];
-  const used = new Set<string>();
-  for (const { layer } of eachLayer(h.actor.snapshot())) if (layer.params.kind === 'Motif') used.add(layer.params.motif_id);
-  return unavailable.filter(m => used.has(m.motif_id));
+  const drawn = exportedMotifIds(h.actor.snapshot(), range);
+  return unavailable.filter(m => drawn.has(m.motif_id));
 }
 
 /** Suggest only: the UI adopts the name explicitly and publication rechecks it. */
@@ -289,14 +314,14 @@ export class ExportJobs {
    *  its extension the one the settings write (`get_export_options`), and no
    *  file there under `on_conflict: fail`. */
   private async plan(h: TsActorHost, preset: ExportPreset | undefined, a: Record<string, unknown>, agent: boolean, policy: Entry['policy']) {
-    const motifs = unrenderableMotifs(h);
-    if (motifs.length) {
-      const ids = motifs.map(m => m.motif_id);
-      throw new ExportJobError('motif_unavailable', `${motifs.map(m => `Motif '${m.motif_id}' is ${m.status} (${m.diagnostic})`).join('; ')}; a layer uses ${ids.length > 1 ? 'them' : 'it'}, so nothing was exported — restore its folder under Motifs/, fix its files, or remove the layers that use it`,
-        { error: 'MotifUnavailable', motif_ids: ids, motifs });
-    }
     const resolved = resolveExportRequest(await this.savedSettings(h, preset), agent ? exportWire(a.settings, false) : a.settings,
       this.composition(h), (agent ? exportWire(a.range, false) : a.range) as ExportJob['range'] | undefined, !agent || a.allow_experimental_10bit === true, snapFrameRound);
+    const motifs = unrenderableMotifs(h, resolved.range);
+    if (motifs.length) {
+      const ids = motifs.map(m => m.motif_id);
+      throw new ExportJobError('motif_unavailable', `${motifs.map(m => `Motif '${m.motif_id}' is ${m.status} (${m.diagnostic})`).join('; ')}; a layer in the export uses ${ids.length > 1 ? 'them' : 'it'}, so nothing was exported — restore its folder under Motifs/, fix its files, or remove the layers that use it`,
+        { error: 'MotifUnavailable', motif_ids: ids, motifs });
+    }
     let destination: string;
     if (a.output_path === undefined) {
       const dir = path.join(h.openedProject()!.dir, 'output');

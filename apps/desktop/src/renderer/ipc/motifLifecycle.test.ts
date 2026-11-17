@@ -3,46 +3,50 @@ import { composeMotifHtml } from '../../shared/motifs/catalog';
 const invoke = vi.fn();
 vi.mock('@/bridge/ipc', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 vi.mock('@/bridge/events', () => ({ listen: vi.fn() }));
-import { getMotifSource, amendMotifDraft, createEditDraft, copyMotifDraft, importMotif, installMotif } from './index';
+import { getMotifSource, importMotif, listMotifCatalog, removeProjectMotif, saveToLibrary, updateMotifSource, updateProjectMotif } from './index';
 beforeEach(() => invoke.mockReset());
-describe('Motif editor uses the public file contracts', () => {
-    it('retains the target version observed before update confirmation', async () => {
-        invoke.mockResolvedValueOnce({ manifest: { version: 1 }, text: '', revision: 'reviewed' })
-            .mockResolvedValueOnce({ manifest: { version: 5 }, text: '', revision: 'target' })
-            .mockResolvedValueOnce({ motif_id: 'published' });
-        await installMotif('draft', { kind: 'update', target_id: 'published' }, 'reviewed', 4);
-        // The user's own Update publishes directly; MCP's install_motif only proposes.
-        expect(invoke).toHaveBeenLastCalledWith('publish_motif', { motif_id: 'draft', expected_revision: 'reviewed', target_id: 'published', expected_version: 4 });
-    });
-    it('opens both a copied Motif and ZIP through one entry point', async () => {
-        invoke.mockResolvedValue({ motif_id: 'draft', revision: 'r' });
-        expect(await createEditDraft('source')).toBe('draft');
-        expect(invoke).toHaveBeenLastCalledWith('create_motif', { source: { kind: 'copy', motif_id: 'source' } });
-        await importMotif('C:/scene.zip');
-        expect(invoke).toHaveBeenLastCalledWith('create_motif', { source: { kind: 'zip', path: 'C:/scene.zip' } });
-    });
-    it('copies a draft in one call, the copy source MCP clients use too', async () => {
-        invoke.mockResolvedValue({ motif_id: 'copy', revision: 'r' });
-        expect(await copyMotifDraft('draft')).toBe('copy');
-        expect(invoke).toHaveBeenCalledTimes(1);
-        expect(invoke).toHaveBeenLastCalledWith('create_motif', { source: { kind: 'copy', motif_id: 'draft' } });
-    });
-    it('retains the read revision and submits one manifest/HTML transaction', async () => {
-        const manifest = { id: 'a', name: 'A', version: 1, size: [64, 64] as [
-                number,
-                number
-            ], default_duration_s: 1, props_schema: {} };
-        const html = composeMotifHtml(manifest, '<body>hello</body>');
-        invoke.mockResolvedValueOnce({ manifest, text: html, revision: 'old' }).mockResolvedValueOnce({ revision: 'new' });
-        const source = await getMotifSource('a');
-        expect(invoke).toHaveBeenNthCalledWith(1, 'read_motif', { motif_id: 'a', path: 'index.html' });
-        expect(await amendMotifDraft('a', source.html, source.revision)).toBe('new');
-        expect(invoke).toHaveBeenLastCalledWith('update_motif_files', expect.objectContaining({ motif_id: 'a', expected_revision: 'old', files: expect.arrayContaining([{ path: 'index.html', text: html }]) }));
-    });
-    it('publishes the revision shown by the UI, not an unreviewed later revision', async () => {
-        invoke.mockResolvedValueOnce({ manifest: { version: 1 }, text: '', revision: 'newer' }).mockResolvedValueOnce({ motif_id: 'published' });
-        await installMotif('draft', { kind: 'new' }, 'reviewed');
-        expect(invoke).toHaveBeenNthCalledWith(1, 'read_motif', { motif_id: 'draft' });
-        expect(invoke).toHaveBeenLastCalledWith('publish_motif', { motif_id: 'draft', expected_revision: 'reviewed', as_new: true });
-    });
+
+describe('the Motif panel speaks the project/library channels', () => {
+  it('saves to the library at the revision the user saw: replacing the confirmed version, or as a new Motif', async () => {
+    invoke.mockResolvedValue({ motif_id: 'lower' });
+    await saveToLibrary('lower', 'reviewed', { id: 'lower', version: 4 });
+    // The user's own save publishes directly; MCP's install_motif only proposes.
+    expect(invoke).toHaveBeenLastCalledWith('publish_motif', { motif_id: 'lower', expected_revision: 'reviewed', target_id: 'lower', expected_version: 4 });
+    await saveToLibrary('badge', 'reviewed');
+    expect(invoke).toHaveBeenLastCalledWith('publish_motif', { motif_id: 'badge', expected_revision: 'reviewed', as_new: true });
+  });
+
+  it('updates, removes and imports project Motifs on their own channels', async () => {
+    invoke.mockResolvedValue({ motif_id: 'scene', revision: 'r' });
+    await updateProjectMotif('lower');
+    expect(invoke).toHaveBeenLastCalledWith('update_project_motif', { motif_id: 'lower' });
+    await removeProjectMotif('lower');
+    expect(invoke).toHaveBeenLastCalledWith('delete_motif', { motif_id: 'lower' });
+    expect(await importMotif('C:/scene.zip')).toBe('scene');
+    expect(invoke).toHaveBeenLastCalledWith('create_motif', { source: { kind: 'zip', path: 'C:/scene.zip' } });
+  });
+
+  it('edits a project Motif in place from the revision it read, in one manifest/HTML transaction', async () => {
+    const manifest = { id: 'a', name: 'A', version: 1, size: [64, 64] as [number, number], default_duration_s: 1, props_schema: {} };
+    const html = composeMotifHtml(manifest, '<body>hello</body>');
+    invoke.mockResolvedValueOnce({ manifest, text: html, revision: 'old' }).mockResolvedValueOnce({ revision: 'new' });
+    const source = await getMotifSource('a');
+    expect(invoke).toHaveBeenNthCalledWith(1, 'read_motif', { motif_id: 'a', path: 'index.html' });
+    expect(await updateMotifSource('a', source.html, source.revision)).toBe('new');
+    expect(invoke).toHaveBeenLastCalledWith('update_motif_files', expect.objectContaining({ motif_id: 'a', expected_revision: 'old', files: expect.arrayContaining([{ path: 'index.html', text: html }]) }));
+  });
+
+  it('splits list_motifs into its groups; a broken project Motif carries no manifest', async () => {
+    invoke.mockResolvedValue([
+      { group: 'library', id: 'lower', name: 'Lower', version: 2, size: [64, 64], default_duration_s: 1, props_schema: {}, status: 'installed', content_hash: 'L', revision: 'L', in_project: 'lower', html: '<x>' },
+      { group: 'project', id: 'lower', name: 'Lower', version: 1, size: [64, 64], default_duration_s: 1, props_schema: {}, status: 'ok', state: 'update_available',
+        uid: 'u', from: { uid: 'u', version: 1, revision: 'P' }, path: '/home/u/Film/Motifs/lower', content_hash: 'P', revision: 'P', html: '<x>' },
+      { group: 'project', id: 'gone', uid: 'v', status: 'missing', state: 'project_only', from: null, path: '/home/u/Film/Motifs/gone', revision: null, diagnostic: 'Motifs/gone/ is missing' },
+    ]);
+    const catalog = await listMotifCatalog();
+    expect(catalog.library).toEqual([{ group: 'library', id: 'lower', status: 'installed', revision: 'L', in_project: 'lower',
+      motif: { id: 'lower', name: 'Lower', version: 2, size: [64, 64], default_duration_s: 1, props_schema: {}, content_hash: 'L' } }]);
+    expect(catalog.project.map(r => [r.id, r.state, r.motif?.content_hash ?? null, r.diagnostic ?? null]))
+      .toEqual([['lower', 'update_available', 'P', null], ['gone', 'project_only', null, 'Motifs/gone/ is missing']]);
+  });
 });

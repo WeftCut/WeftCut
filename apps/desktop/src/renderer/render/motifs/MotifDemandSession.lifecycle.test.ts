@@ -7,6 +7,10 @@ import { captureMotif, type MotifCaptureReply } from './frameTransport';
 import { acquireMotifFrame, bindMotifFrameWorkspace } from './motifFrameSource';
 import { installMotifFrameWorkspaceListener } from './motifFrameWorkspace';
 import { requestPrebake } from './prebakeIntents';
+import { holdBuiltinMotifs } from '../../testing/projectMotifs';
+
+// The project these tests render holds the built-ins.
+holdBuiltinMotifs();
 
 const h = vi.hoisted(() => ({
   warm: vi.fn(), invoke: vi.fn(), listeners: new Map<string, Set<(event: { payload: unknown }) => void>>(),

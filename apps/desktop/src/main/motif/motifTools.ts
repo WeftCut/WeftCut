@@ -233,7 +233,9 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
     }
     // ── Renderer-only channels (router MOTIF_CHANNELS, never MOTIF_TOOLS) ──
     case 'publish_motif': {
-      // The user's own "Save to library": published directly.
+      // The user's own "Save to library": published directly. `dry_run`
+      // answers what it would replace, for the panel's confirm card.
+      if (a.dry_run === true) return publications.plan(publicationSource(subject(a)), a.target_id as string | undefined)
       const { fork, ...published } = publications.publish(publicationSource(subject(a)),
         { targetId: a.target_id as string | undefined, expectedVersion: a.expected_version as number | undefined, asNew: a.as_new === true })
       follow(fork)

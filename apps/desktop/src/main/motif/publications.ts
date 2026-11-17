@@ -86,6 +86,11 @@ export interface ProposalCard extends PublicationView {
   diff: ProposalDiff | null
 }
 
+/** What a "Save to library" of the source at `revision` would write
+ *  (`plan`): the library Motif it replaces with the change against it, or
+ *  `replaces: null` for a new one. */
+export interface PublishPlan { revision: string; replaces: { id: string; version: number } | null; diff: ProposalDiff | null }
+
 /** A publication whose library Motif took another lineage than its source
  *  ("save as new"): the source's entry follows it when its project is open. */
 export interface Fork { project: string; motif_id: string; uid: string; from: ProjectMotifSource }
@@ -313,6 +318,16 @@ export class LibraryPublications {
     return view(decided)
   }
 
+  /** What `publish` of `source` with no `asNew` would write, without writing
+   *  it: the library Motif it replaces (`targetId`, else the one of its
+   *  lineage) at its current version, with the change against it; or
+   *  `replaces: null` when it makes a new one. The panel confirms a
+   *  replacement on this before sending `expectedVersion`. */
+  plan(source: PublicationSource, targetId?: string): PublishPlan {
+    const replaces = this.replaceTarget(source.uid, targetId, undefined, false)
+    return { revision: source.revision, replaces, diff: replaces && this.diff(source.files, replaces) }
+  }
+
   /** The user's own "Save to library": publishes `source` directly. The
    *  default target is the library Motif of its lineage, replaced only at
    *  `expectedVersion`; `asNew` makes a new library Motif. */
@@ -332,21 +347,22 @@ export class LibraryPublications {
       let manifest: Manifest
       try { manifest = normalize(readMotifDirectory(this.packageDir(p.proposal_id)), p.source.motif_id, 'own').manifest } catch { continue }
       out.push({ ...view(p), source: { project: p.source.project, motif_id: p.source.motif_id }, proposed_at: p.proposed_at,
-        preview_id: proposalPreviewId(p.proposal_id), manifest, diff: 'id' in p.target ? this.diff(p.proposal_id, p.target) : null })
+        preview_id: proposalPreviewId(p.proposal_id), manifest,
+        diff: 'id' in p.target ? this.diff(readMotifDirectory(this.packageDir(p.proposal_id)), p.target) : null })
     }
     return out
   }
 
-  /** Files and props schema of a proposal against the version it replaces.
+  /** Files and props schema of `files` against the version they replace.
    *  Both sides are normalised under the target's id and version, so only a
    *  real change differs. */
-  private diff(proposalId: string, target: { id: string; version: number }): ProposalDiff | null {
+  private diff(files: readonly MotifFile[], target: { id: string; version: number }): ProposalDiff | null {
     const current = this.store.versionFiles(target.id, target.version)
     if (!current) return null
     let before: ReturnType<typeof normalize>, after: ReturnType<typeof normalize>
     try {
       before = normalize(current, target.id, target.version)
-      after = normalize(readMotifDirectory(this.packageDir(proposalId)), target.id, target.version)
+      after = normalize(files, target.id, target.version)
     } catch {
       return null
     }

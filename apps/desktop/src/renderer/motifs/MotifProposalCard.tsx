@@ -3,12 +3,10 @@
 // An agent's proposed Motif publication, waiting for the user (ADR 0046:
 // "Motif install waits for the user's approval in the app preview"). The
 // card shows what approval would publish: the frozen package in the preview
-// player with editable props, the change against the installed version, and
-// the clips of this project that would rebind. Approve publishes; Reject
-// keeps the draft and hands the note back to the agent through list_motifs.
-//
-// Other projects that use the target are not counted: no index of them
-// exists, and opening every project to count would cost more than the card.
+// player with editable props and the change against the library version.
+// Approve adds it to the library, as a version of its target or as a new
+// Motif; no project changes, as projects hold copies. Reject hands the note
+// back to the agent through list_motifs.
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -19,9 +17,11 @@ import {
   listMotifProposals,
   MOTIFS_CHANGED_EVENT,
   rejectMotifProposal,
+  type MotifDiff,
   type MotifProposal,
   type MotifSummary,
 } from "../ipc";
+import { refusalText } from "../errors/tryMutate";
 import { MotifPropField } from "../properties/MotifPropFields";
 import { defaultPropsFor, MotifPreview, useDebounced } from "./MotifPreview";
 
@@ -63,6 +63,34 @@ export function MotifProposalList({ proposals }: { proposals: MotifProposal[] })
 
 const names = (list: string[], none: string) => (list.length ? list.join(", ") : none);
 
+/// The change a package makes to the library version it replaces: shared by
+/// the proposal card and the Save to library confirm. Null is a first
+/// publication.
+export function MotifDiffLines({ diff }: { diff: MotifDiff | null }) {
+  const { t } = useTranslation();
+  const none = t("motif_proposal.diff_empty_list");
+  const unchanged = diff !== null && [...Object.values(diff.files), ...Object.values(diff.props)].every((l) => l.length === 0);
+  return (
+    <>
+      <h4>{t("motif_proposal.diff_heading")}</h4>
+      {diff === null ? (
+        <p className="motif-proposal-detail">{t("motif_proposal.diff_new")}</p>
+      ) : unchanged ? (
+        <p className="motif-proposal-detail">{t("motif_proposal.diff_none")}</p>
+      ) : (
+        <>
+          <p className="motif-proposal-detail">
+            {t("motif_proposal.diff_files", { added: names(diff.files.added, none), removed: names(diff.files.removed, none), changed: names(diff.files.changed, none) })}
+          </p>
+          <p className="motif-proposal-detail">
+            {t("motif_proposal.diff_props", { added: names(diff.props.added, none), removed: names(diff.props.removed, none), changed: names(diff.props.changed, none) })}
+          </p>
+        </>
+      )}
+    </>
+  );
+}
+
 export function MotifProposalCard({ proposal }: { proposal: MotifProposal }) {
   const { t } = useTranslation();
   // The frozen package previews under its own id, at the proposed revision.
@@ -80,23 +108,20 @@ export function MotifProposalCard({ proposal }: { proposal: MotifProposal }) {
     ? t("motif_proposal.target_new", { id: proposal.target.new_id })
     : t("motif_proposal.target_update", { id: proposal.target.id, from: proposal.target.version, to: proposal.target.version + 1 });
 
-  const decide = async (approve: boolean) => {
+  const decide = async (approve: boolean, asNew = false) => {
     setBusy(true);
     setError(null);
     try {
-      if (approve) await approveMotifProposal(proposal.proposal_id);
+      if (approve) await approveMotifProposal(proposal.proposal_id, asNew);
       else await rejectMotifProposal(proposal.proposal_id, note.trim() || undefined);
       // motifs:changed reloads the list; this card unmounts with it.
     } catch (e) {
-      setError(String(e));
+      setError(refusalText(e));
     } finally {
       setBusy(false);
     }
   };
 
-  const none = t("motif_proposal.diff_empty_list");
-  const diff = proposal.diff;
-  const unchanged = diff !== null && [...Object.values(diff.files), ...Object.values(diff.props)].every((l) => l.length === 0);
   const propKeys = Object.keys(motif.props_schema);
 
   return (
@@ -115,22 +140,8 @@ export function MotifProposalCard({ proposal }: { proposal: MotifProposal }) {
           commit={{ mode: "buffer", onChange: (v) => setProps((prev) => ({ ...prev, [key]: v })) }}
         />
       ))}
-      <h4>{t("motif_proposal.diff_heading")}</h4>
-      {diff === null ? (
-        <p className="motif-proposal-detail">{t("motif_proposal.diff_new")}</p>
-      ) : unchanged ? (
-        <p className="motif-proposal-detail">{t("motif_proposal.diff_none")}</p>
-      ) : (
-        <>
-          <p className="motif-proposal-detail">
-            {t("motif_proposal.diff_files", { added: names(diff.files.added, none), removed: names(diff.files.removed, none), changed: names(diff.files.changed, none) })}
-          </p>
-          <p className="motif-proposal-detail">
-            {t("motif_proposal.diff_props", { added: names(diff.props.added, none), removed: names(diff.props.removed, none), changed: names(diff.props.changed, none) })}
-          </p>
-        </>
-      )}
-      <p className="motif-proposal-detail">{t("motif_proposal.rebinds_none")}</p>
+      <MotifDiffLines diff={proposal.diff} />
+      <p className="motif-proposal-detail">{t("motif_proposal.approval_effect")}</p>
       <label className="motif-proposal-note">
         <span>{t("motif_proposal.note_label")}</span>
         <AppInput
@@ -145,6 +156,12 @@ export function MotifProposalCard({ proposal }: { proposal: MotifProposal }) {
         <Button size="sm" disabled={busy} onClick={() => void decide(false)}>
           {t("motif_proposal.reject")}
         </Button>
+        {"id" in proposal.target && (
+          // A replacement may go in as a library Motif of its own instead.
+          <Button size="sm" disabled={busy} onClick={() => void decide(true, true)}>
+            {t("motif_proposal.approve_as_new")}
+          </Button>
+        )}
         <Button size="sm" variant="default" disabled={busy} onClick={() => void decide(true)}>
           {busy ? t("motif_proposal.deciding") : t("motif_proposal.approve")}
         </Button>
