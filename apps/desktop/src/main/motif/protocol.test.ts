@@ -86,11 +86,9 @@ describe('registerMotifProtocol responses', () => {
     expect(await model.text()).toBe('glTF')
   })
 
-  it('refuses encoded path escapes and private draft metadata', async () => {
-    installUserMotif('scene', { 'index.html': '<html/>', 'target': 'private' })
+  it('refuses encoded path escapes', async () => {
+    installUserMotif('scene', { 'index.html': '<html/>' })
     expect((await serve('scene', '%2e%2e%2fsecret')).status).toBe(404)
-    expect((await serve('scene', 'target')).status).toBe(404)
-    expect((await serve('scene', 'TARGET')).status).toBe(404)
     expect((await serve('scene', '%zz')).status).toBe(400)
   })
   it('serves a user motif params.html with the params CSP', async () => {

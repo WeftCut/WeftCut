@@ -20,7 +20,7 @@ export function motifFileSegments(rel: string): string[] | null {
  * every level, including the package root. */
 function confinedFile(root: string, rel: string): string | null {
   const parts = motifFileSegments(rel)
-  if (!parts || rel.toLowerCase() === 'target') return null // private draft metadata
+  if (!parts) return null
   try {
     if (lstatSync(root).isSymbolicLink()) return null
     let file = root
@@ -51,8 +51,7 @@ const PACKAGE_FILES = 10_000
 export interface FileStamp { path: string; size: number; mtimeNs: string; ctimeNs: string; ino: string }
 
 /** A package's files in path order: no links at any level, portable paths,
- * regular files only, within the package limits. `target` is the store's
- * private Update metadata, never a package asset. Reads no file's bytes. */
+ * regular files only, within the package limits. Reads no file's bytes. */
 export function stampMotifDirectory(root: string): FileStamp[] {
   const files: FileStamp[] = []
   let total = 0
@@ -62,7 +61,6 @@ export function stampMotifDirectory(root: string): FileStamp[] {
   function visit(dir: string, prefix: string): void {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const rel = prefix + entry.name
-      if (prefix === '' && rel.toLowerCase() === 'target') continue
       if (!portableSegment(entry.name)) throw new Error(`Invalid Motif asset path: ${rel}`)
       if (entry.isSymbolicLink()) throw new Error(`Motif assets cannot be symbolic links: ${rel}`)
       const file = dir + path.sep + entry.name

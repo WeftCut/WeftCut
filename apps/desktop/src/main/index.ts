@@ -838,6 +838,9 @@ app.whenReady().then(async () => {
   // needs the backend.
   const motifStore = new UserMotifStore(dataRoot.motifsDir,
     new PackageRevisions(path.join(dataRoot.cacheDir, 'motif-revisions.json'), app.getVersion()))
+  // Before anything lists or hashes a package: a legacy `target` file is a
+  // package file once the store no longer hides it.
+  motifStore.upgrade()
   const motifBuiltinDir = builtinAssetDir()
   // `media` props resolve against the open project's pool; video frames are kept here.
   setMotifMediaSource(() => (tsHost?.actor.snapshot().media_pool ?? null) as never, path.join(dataRoot.cacheDir, 'motif-media'))

@@ -287,7 +287,7 @@ The document renders in an offline, isolated capture host. Hard limits:
   local ES modules work. Use relative URLs: the app assigns the package's id,
   including when forking or publishing. Bare imports such as `three` need a
   local import map or a bundle produced before import; the app does not
-  resolve npm packages. Root `target` and `.revisions` are reserved paths.
+  resolve npm packages. Root `.revisions` is a reserved path.
 - **Local resource loading.** Render pages may fetch their own `motif://<id>/`
   files and `data:` / `blob:` URLs. Images may use those same sources; fonts may
   use local files or `data:` URLs. Other Motifs, `file:`, project-media schemes,
@@ -301,11 +301,12 @@ The document renders in an offline, isolated capture host. Hard limits:
   at most 256 MiB compressed or expanded and 10,000 entries; symbolic
   links, escaping paths, ambiguous paths and case collisions are rejected.
   **Import Motif** in the app takes a `.zip` (a single-file Motif goes in as
-  `index.html`) and copies it into a new draft with a new identity; editing
-  the original folder later does not edit that copy. **Export Motif ZIP**
-  writes `<motif-id>/index.html` and every companion, including `params.html`,
-  without private `target` metadata. Keep only distributable assets in the
-  folder.
+  `index.html`) and copies it into a new draft with a new id; editing the
+  original folder later does not edit that copy. **Export Motif ZIP** writes
+  `<motif-id>/index.html` and every companion, including `params.html`, with
+  a `weftcut-lineage.json` entry beside the folder naming which Motif it is;
+  a draft imported from that ZIP keeps it. Keep only distributable assets in
+  the folder.
 - **Edits invalidate frames.** Companion file names and bytes enter the
   content hash, just like HTML edits. Edit/fork and publish preserve the
   complete directory. The source panel edits `index.html`; companion files are

@@ -55,7 +55,6 @@ export function resolveMotifFile(
     // Built-in branch is TERMINAL: a built-in id always wins and never falls
     // through to the user store — a missing/unsafe read returns null rather than
     // letting a same-id user file shadow a built-in.
-    if (rest.toLowerCase() === 'target') return null;
     const bytes = readMotifFile(builtinDir, `${id}/${rest}`);
     return bytes ? { bytes, contentType: contentTypeFor(rest) } : null;
   }

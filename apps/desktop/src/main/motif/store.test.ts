@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { UserMotifStore } from "./store";
-import { composeMotifHtml, type Manifest } from "../../shared/motifs/catalog";
+import { composeMotifHtml, parseManifestIsland, type Manifest } from "../../shared/motifs/catalog";
 import { motifContentHash } from "./contentHash";
 
 let root: string;
@@ -139,14 +139,52 @@ describe("UserMotifStore reads", () => {
     expect(s.readFile('foo', 'secret.bin')).toBeNull();
     expect(s.packageFiles('foo').map(f => f.path)).toEqual(['index.html']);
   });
-  it("draft target sidecar round-trips and defaults absent", () => {
+});
+
+describe("UserMotifStore legacy Update targets", () => {
+  const html = composeMotifHtml(man("d1", "D1", 1), body);
+  const stateOf = (id: string) => JSON.parse(readFileSync(path.join(root, ".workspaces", `${id}.json`), "utf8"));
+
+  it("turns a draft's target file into its source and takes the file out of every package", () => {
     const s = new UserMotifStore(root);
-    s.writeDraft("d1", "<html>x</html>");
-    expect(s.readDraftTarget("d1")).toBeNull();
-    s.writeDraftTarget("d1", "lower-third");
-    expect(s.readDraftTarget("d1")).toBe("lower-third");
-    s.deleteUserMotif("d1");
-    expect(s.readDraftTarget("d1")).toBeNull();
+    s.writeDraft("d1", html);
+    writeFileSync(path.join(root, "drafts", "d1", "target"), "lower-third\n");
+    s.writeDraft("foo", composeMotifHtml(man("foo", "Foo", 1), body));
+    s.installDraft("foo", "foo");
+    writeFileSync(path.join(root, "foo", "target"), "foo");
+    s.upgrade();
+    expect(existsSync(path.join(root, "drafts", "d1", "target"))).toBe(false);
+    expect(existsSync(path.join(root, "foo", "target"))).toBe(false);
+    expect(stateOf("d1")).toEqual({ source_id: "lower-third" });
+    // The revision is what it was while the store hid the file.
+    expect(s.describe("d1")!.revision).toBe(motifContentHash(parseManifestIsland(html), html));
+  });
+
+  it("keeps a draft's own source or publication, and never records an unsafe id", () => {
+    const s = new UserMotifStore(root);
+    for (const id of ["kept", "published", "unsafe"]) {
+      s.writeDraft(id, html);
+      writeFileSync(path.join(root, "drafts", id, "target"), id === "unsafe" ? "../escape" : "lower-third");
+    }
+    mkdirSync(path.join(root, ".workspaces"), { recursive: true });
+    writeFileSync(path.join(root, ".workspaces", "kept.json"), JSON.stringify({ source_id: "countdown" }));
+    writeFileSync(path.join(root, ".workspaces", "published.json"), JSON.stringify({ publication: { id: "p", revision: "r", version: 1 } }));
+    s.upgrade();
+    expect(stateOf("kept")).toEqual({ source_id: "countdown" });
+    expect(stateOf("published")).toEqual({ publication: { id: "p", revision: "r", version: 1 } });
+    expect(existsSync(path.join(root, ".workspaces", "unsafe.json"))).toBe(false);
+    for (const id of ["kept", "published", "unsafe"]) expect(existsSync(path.join(root, "drafts", id, "target"))).toBe(false);
+  });
+
+  it("upgrades once: a package's own target file outlives later launches", () => {
+    new UserMotifStore(root).upgrade();
+    const s = new UserMotifStore(root);
+    s.writeDraft("d1", html);
+    writeFileSync(path.join(root, "drafts", "d1", "target"), "an author's file");
+    s.upgrade();
+    new UserMotifStore(root).upgrade();
+    expect(readFileSync(path.join(root, "drafts", "d1", "target"), "utf8")).toBe("an author's file");
+    expect(existsSync(path.join(root, ".workspaces", "d1.json"))).toBe(false);
   });
 });
 

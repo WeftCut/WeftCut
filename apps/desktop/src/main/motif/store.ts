@@ -7,13 +7,14 @@ import { parseManifestIsland, type Manifest } from "../../shared/motifs/catalog"
 import { hasMotifFile, motifFileSegments, readMotifFile, readMotifDirectory, sameStamp, stampMotifFile, type MotifFile } from './packageFiles';
 import { packageContentHash } from './contentHash';
 import { PackageRevisions, type PackageStamp } from './packageRevisions';
+import { LINEAGE_FILE, MotifLineage } from './lineage';
 import { MotifError } from '../../shared/motifs/errors';
 
 export const DRAFTS_DIR = "drafts";
 /** Frozen packages of pending publications, one per draft (`workspace.ts`). */
 export const PROPOSALS_DIR = ".proposals";
 /** The id a pending publication's frozen package is served and captured
- *  under: `<draft id>--proposal`. `sanitizeId` never emits `--`, so no
+ *  under: `<draft id>--proposal`. `idFromName` never emits `--`, so no
  *  library or draft id can take this form. */
 const PROPOSAL_SUFFIX = "--proposal";
 export function proposalPreviewId(draftId: string): string { return draftId + PROPOSAL_SUFFIX; }
@@ -36,6 +37,11 @@ export interface PackageListing { html: string; revision: string; paths: string[
 /** A capture host's hold on a pinned revision snapshot; `release` is idempotent. */
 export interface PinnedPackage { release(): void }
 
+/** The store layout this build writes, recorded in `<root>/.format` (ADR 0171):
+ *  1 has no private file in any package. */
+const STORE_FORMAT = 1;
+const FORMAT_FILE = ".format";
+
 /** Snapshots no host holds that stay for reuse; held ones never leave. */
 const UNHELD_SNAPSHOTS = 2;
 
@@ -44,7 +50,11 @@ export class UserMotifStore {
   /** Revision snapshots by `id/revision`, oldest first, with their holders. */
   private pinned = new Map<string, { files: Map<string, Buffer>; holders: number }>();
   /** `revisions` also keeps the linked directories' records (`workspace.ts`). */
-  constructor(private readonly _root: string, readonly revisions = new PackageRevisions()) {}
+  constructor(
+    private readonly _root: string,
+    readonly revisions = new PackageRevisions(),
+    readonly lineage = new MotifLineage(path.join(_root, LINEAGE_FILE)),
+  ) {}
 
   root(): string { return this._root; }
   assertRenderable(id:string):void {
@@ -68,6 +78,14 @@ export class UserMotifStore {
       if (hasMotifFile(this._root, `${rel}/index.html`)) return rel;
     }
     return null;
+  }
+
+  /** The lineage of the package `id` selects, as `read` and `export` see it
+   *  (a proposal's preview is its draft's); null when `id` has none. */
+  lineageOf(id: string): string | null {
+    const rel = this.packageRel(id);
+    if (!rel) return null;
+    return this.lineage.of(isProposalPreviewId(id) ? `${DRAFTS_DIR}/${id.slice(0, -PROPOSAL_SUFFIX.length)}` : rel);
   }
 
   /** The selected package's files from one read, with their revision; null
@@ -121,7 +139,7 @@ export class UserMotifStore {
   readFile(id: string, rel: string): Buffer | null {
     const revision = /^\.revisions\/([0-9a-f]{64})\/(.+)$/.exec(rel);
     if (revision) return this.pinned.get(`${id}/${revision[1]}`)?.files.get(revision[2]!) ?? null;
-    if (!motifFileSegments(rel) || rel.toLowerCase() === 'target') return null;
+    if (!motifFileSegments(rel)) return null;
     const pkg = this.packageRel(id);
     return pkg ? readMotifFile(this._root, `${pkg}/${rel}`) : null;
   }
@@ -205,7 +223,7 @@ export class UserMotifStore {
     try {
       this.writeDraft(draftId, html);
       for (const file of files) {
-        if (file.path === 'index.html' || file.path.toLowerCase() === 'target') continue;
+        if (file.path === 'index.html') continue;
         const dest = path.join(dir, ...file.path.split('/'));
         mkdirSync(path.dirname(dest), { recursive: true });
         writeFileSync(dest, file.bytes);
@@ -216,19 +234,51 @@ export class UserMotifStore {
     }
   }
 
-  writeDraftTarget(draftId: string, targetId: string): void {
-    const dir = path.join(this.draftsRoot(), safeSeg(draftId));
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(path.join(dir, "target"), targetId);
+  /** Brings a store an older release wrote to this build's layout, once: the
+   *  marker keeps a later launch from treating files written since as old. */
+  upgrade(): void {
+    const marker = path.join(this._root, FORMAT_FILE);
+    let format = 0;
+    try { format = Number(readFileSync(marker, "utf8").trim()) || 0; } catch { /* format 0 */ }
+    if (format >= STORE_FORMAT) return;
+    this.adoptLegacyTargets();
+    try {
+      mkdirSync(this._root, { recursive: true });
+      writeFileSync(marker, String(STORE_FORMAT));
+    } catch { /* upgraded again at the next launch */ }
   }
 
-  readDraftTarget(draftId: string): string | null {
-    let seg: string;
-    try { seg = safeSeg(draftId); } catch { return null; }
-    try {
-      const t = readFileSync(path.join(this.draftsRoot(), seg, "target"), "utf8").trim();
-      return t === "" ? null : t;
-    } catch { return null; }
+  /** Format 0 kept a draft's Update target as a `target` file inside its
+   *  package, hidden from every read. A draft's file becomes its `source_id`
+   *  (the Motif its Update button offers) unless it has one or a publication;
+   *  the file leaves every package, so a package holds only its own files. A
+   *  file that cannot be removed stays, as an ordinary file of its package. */
+  private adoptLegacyTargets(): void {
+    const packages = [
+      ...this.listDraftIds().map(id => ({ dir: path.join(this.draftsRoot(), id), draft: id })),
+      ...this.packageDirNames().map(name => ({ dir: path.join(this._root, name), draft: null })),
+    ];
+    for (const { dir, draft } of packages) {
+      const file = path.join(dir, "target");
+      let target: string;
+      try {
+        if (!statSync(file).isFile()) continue;
+        target = readFileSync(file, "utf8").trim();
+      } catch { continue; }
+      try {
+        if (draft && target && motifFileSegments(target)?.length === 1) {
+          const stateFile = path.join(this._root, ".workspaces", `${draft}.json`);
+          const state = existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, "utf8")) : {};
+          if (!state.source_id && !state.publication) {
+            mkdirSync(path.dirname(stateFile), { recursive: true });
+            writeFileSync(stateFile + ".tmp", JSON.stringify({ ...state, source_id: target }));
+            renameSync(stateFile + ".tmp", stateFile);
+          }
+        }
+        rmSync(file);
+        this.revisions.forget(dir);
+      } catch { /* left in place: see above */ }
+    }
   }
 
   listDraftIds(): string[] {
@@ -287,21 +337,29 @@ export class UserMotifStore {
     if (existsSync(draft)) rmSync(draft, { recursive: true, force: true });
     this.revisions.forget(published);
     this.revisions.forget(draft);
+    this.lineage.forget(safeId, `${DRAFTS_DIR}/${safeId}`);
   }
 
   publishedIds(): string[] {
     return this.listManifests().map((m) => m.id);
   }
 
-  /** Every installed user manifest, id-sorted; skips drafts + broken. */
-  listManifests(): Manifest[] {
+  /** The root's directories that may hold an installed package: not the
+   *  drafts directory, nor the store's own dot-directories. */
+  private packageDirNames(): string[] {
     let entries: string[];
     try { entries = readdirSync(this._root); } catch { return []; }
+    return entries.filter(name => {
+      if (name === DRAFTS_DIR || name.startsWith(".")) return false;
+      try { return statSync(path.join(this._root, name)).isDirectory(); } catch { return false; }
+    });
+  }
+
+  /** Every installed user manifest, id-sorted; skips drafts + broken. */
+  listManifests(): Manifest[] {
     const out: Manifest[] = [];
-    for (const name of entries) {
+    for (const name of this.packageDirNames()) {
       const p = path.join(this._root, name);
-      try { if (!statSync(p).isDirectory()) continue; } catch { continue; }
-      if (name === DRAFTS_DIR) continue;
       let html: string;
       try { html = readFileSync(path.join(p, "index.html"), "utf8"); } catch { continue; }
       try { out.push(parseManifestIsland(html)); }

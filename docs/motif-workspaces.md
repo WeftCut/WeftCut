@@ -119,7 +119,9 @@ catalog's list-changed notification fires on every change. Proposing again
 from the same draft supersedes the older proposal; the same revision and
 target again is the same proposal.
 
-A first publication takes its id from the manifest name. If an installed
+A first publication takes its id from the manifest name; a name with no
+ASCII letter or digit gives `motif-` and hex digits of the Motif's lineage
+(ADR 0171), so names in any script publish. If an installed
 Motif, a built-in, a draft or another pending proposal holds that id, the
 proposal is refused with the holder and the ways forward: rename the draft, or
 replace the installed Motif with target_id and expected_version from

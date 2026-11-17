@@ -1,10 +1,26 @@
 import { readFileSync, statSync } from 'node:fs'
 import { unzipSync, zipSync, type Zippable } from 'fflate'
 import { motifFileSegments, type MotifFile } from './packageFiles'
+import { isLineageUid } from './lineage'
+
+/** The archive entry beside the Motif folder that names its lineage
+ *  (ADR 0171): outside the package, so it reserves no package path. */
+export const LINEAGE_ENTRY = 'weftcut-lineage.json'
+
+/** A Motif package as an archive carries it. `lineage` is a claim the
+ *  archive makes, never a reason to trust it; null when it makes none. */
+export interface MotifArchive { files: MotifFile[]; lineage: string | null }
+
+function lineageOf(bytes: Uint8Array): string | null {
+  try {
+    const value = (JSON.parse(Buffer.from(bytes).toString('utf8')) as { lineage?: unknown }).lineage
+    return isLineageUid(value) ? value : null
+  } catch { return null }
+}
 
 // Bound both the archive read and the expanded snapshot before writing a draft.
 const MAX_BYTES = 256 * 1024 * 1024
-const MAX_ENTRIES = 10_000
+export const MAX_ENTRIES = 10_000
 
 /** ZIP paths must also be unambiguous on case-insensitive filesystems. */
 function pathValidator(): (name: string, directory: boolean) => void {
@@ -28,16 +44,18 @@ function pathValidator(): (name: string, directory: boolean) => void {
   }
 }
 
-/** Accept index.html at ZIP root or inside exactly one enclosing folder.
- * Entries become bytes only: ZIP attributes never create symlinks on disk. */
-export function decodeMotifZip(bytes: Uint8Array): MotifFile[] {
+/** Accept index.html at ZIP root or inside exactly one enclosing folder, which
+ * may have the lineage entry beside it. Entries become bytes only: ZIP
+ * attributes never create symlinks on disk. */
+export function decodeMotifZip(bytes: Uint8Array): MotifArchive {
   if (bytes.length < 22 || bytes.length > MAX_BYTES) throw new Error('Invalid Motif ZIP size (maximum 256 MiB)')
   const validate = pathValidator()
   let total = 0
   let count = 0
   const expected = new Map<string, number>()
   const entries = unzipSync(bytes, { filter(entry) {
-    if (++count > MAX_ENTRIES) throw new Error('Motif ZIP has too many entries')
+    // The lineage entry rides beside a package that may hold the most files.
+    if (entry.name !== LINEAGE_ENTRY && ++count > MAX_ENTRIES) throw new Error('Motif ZIP has too many entries')
     const directory = entry.name.endsWith('/')
     validate(directory ? entry.name.slice(0, -1) : entry.name, directory)
     total += Math.max(entry.originalSize, entry.size)
@@ -46,8 +64,12 @@ export function decodeMotifZip(bytes: Uint8Array): MotifFile[] {
     expected.set(entry.name, entry.originalSize)
     return true
   } })
-  const names = Object.keys(entries)
-  if (names.length !== expected.size) throw new Error('Invalid Motif ZIP entries')
+  if (Object.keys(entries).length !== expected.size) throw new Error('Invalid Motif ZIP entries')
+  for (const [name, data] of Object.entries(entries))
+    if (data.length !== expected.get(name)) throw new Error(`Invalid Motif ZIP entry: ${name}`)
+  // At the root of a root-style package the name is one of its files.
+  const beside = !('index.html' in entries) && LINEAGE_ENTRY in entries
+  const names = Object.keys(entries).filter(name => !beside || name !== LINEAGE_ENTRY)
   let prefix = ''
   if (!names.includes('index.html')) {
     const root = names[0]?.split('/')[0]
@@ -56,35 +78,36 @@ export function decodeMotifZip(bytes: Uint8Array): MotifFile[] {
     }
     prefix = `${root}/`
   }
-  return names.flatMap(name => {
-    if (entries[name].length !== expected.get(name)) throw new Error(`Invalid Motif ZIP entry: ${name}`)
-    const rel = name.slice(prefix.length)
-    // Never accept an imported Update target (or a directory hiding under it).
-    if (rel.split('/')[0].toLowerCase() === 'target') return []
-    return [{ path: rel, bytes: Buffer.from(entries[name]) }]
-  })
+  return {
+    files: names.map(name => ({ path: name.slice(prefix.length), bytes: Buffer.from(entries[name]) })),
+    lineage: beside ? lineageOf(entries[LINEAGE_ENTRY]) : null,
+  }
 }
 
-export function readMotifZip(file: string): MotifFile[] {
+export function readMotifZip(file: string): MotifArchive {
   if (statSync(file).size > MAX_BYTES) throw new Error('Motif ZIP exceeds 256 MiB')
   return decodeMotifZip(readFileSync(file))
 }
 
-/** Always export one named folder, retaining relative resource URLs. */
-export function encodeMotifZip(id: string, files: readonly MotifFile[]): Uint8Array {
-  if (motifFileSegments(id)?.length !== 1) throw new Error('Invalid Motif folder name')
+/** Always export one named folder, retaining relative resource URLs, with the
+ * lineage entry beside it. */
+export function encodeMotifZip(id: string, files: readonly MotifFile[], lineage: string): Uint8Array {
+  if (motifFileSegments(id)?.length !== 1 || id.toLowerCase() === LINEAGE_ENTRY) throw new Error('Invalid Motif folder name')
+  if (!isLineageUid(lineage)) throw new Error(`Invalid Motif lineage: ${lineage}`)
   const entries: Zippable = Object.create(null)
   const validate = pathValidator()
   let total = 0
   let count = 0
   for (const file of files) {
-    if (file.path.split('/')[0].toLowerCase() === 'target') continue
     validate(file.path, false)
     total += file.bytes.length
     if (++count > MAX_ENTRIES || total > MAX_BYTES) throw new Error('Motif package exceeds ZIP limits (256 MiB / 10000 files)')
     entries[`${id}/${file.path}`] = file.bytes
   }
   if (!files.some(f => f.path === 'index.html')) throw new Error('A Motif package must contain index.html')
+  entries[LINEAGE_ENTRY] = Buffer.from(JSON.stringify({ lineage }))
+  // What exports must import: the entry's bytes count toward the expanded size.
+  if (total + entries[LINEAGE_ENTRY].length > MAX_BYTES) throw new Error('Motif package exceeds ZIP limits (256 MiB / 10000 files)')
   const bytes = zipSync(entries, { level: 6 })
   if (bytes.length > MAX_BYTES) throw new Error('Motif ZIP exceeds 256 MiB')
   return bytes

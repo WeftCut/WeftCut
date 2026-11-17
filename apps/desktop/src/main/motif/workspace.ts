@@ -1,13 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync, realpathSync, lstatSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
-import { type Manifest, parseManifestIsland, composeMotifHtml, validateManifest, assignUniqueId, sanitizeId, BUILTIN_IDS } from '../../shared/motifs/catalog';
+import { type Manifest, parseManifestIsland, composeMotifHtml, validateManifest, assignUniqueId, idFromName, BUILTIN_IDS, builtinLineage, isBuiltinLineage } from '../../shared/motifs/catalog';
 import type { MotifRebindEntry } from '../state/model';
 import { type BuiltinMotif, getMotifSource, motifRevision, motifSourceFiles, listMotifsInner, buildRebindUpdates, type MotifLayerRef } from './authoring';
 import { type MotifFile, motifFileSegments, readMotifDirectory, sameStamps, stampMotifDirectory } from './packageFiles';
 import type { PackageOutcome } from './packageRevisions';
 import { motifContentHash } from './contentHash';
 import { readMotifZip } from './archive';
+import { newLineage } from './lineage';
 import { DRAFTS_DIR, PROPOSALS_DIR, isProposalPreviewId, proposalPreviewId, type UserMotifStore } from './store';
 import { MotifRefusal, revisionConflict } from './refusal';
 /** Where a draft comes from. `motif` resumes a draft id and copies any other
@@ -51,6 +52,9 @@ export interface Proposal {
     /** A draft from before draft ids carried `-draft` holds its name's id;
      *  approving its first publication moves it to `<id>-draft`. */
     renamed_draft?: { from: string; to: string };
+    /** The lineage a first publication takes, planned when proposed so the
+     *  new id it shows is made from it (ADR 0171). Never shown. */
+    lineage?: string;
 }
 /** The answer `install_motif` gives, and the `publication` a draft row carries. */
 export interface PublicationView {
@@ -164,7 +168,7 @@ export function validateFiles(files: readonly MotifFile[]): void {
     let total = 0;
     for (const file of files) {
         const parts = motifFileSegments(file.path);
-        if (!parts || ['target', '.revisions'].includes(parts[0].toLowerCase()))
+        if (!parts || parts[0].toLowerCase() === '.revisions')
             throw new Error('Invalid Motif file path: ' + file.path);
         for (let i = 1; i <= parts.length; i++) {
             const prefix = parts.slice(0, i).join('/'), key = prefix.toLowerCase(), kind = i === parts.length ? 'file' : 'dir';
@@ -243,11 +247,13 @@ export class MotifWorkspace {
         renameSync(temp, file);
     }
     private draftDir(id: string) { return path.join(this.store.root(), 'drafts', safeId(id)); }
+    /** A draft's key in the store's lineage record. */
+    private draftKey(id: string) { return `${DRAFTS_DIR}/${safeId(id)}`; }
     private proposalDir(id: string) { return path.join(this.store.root(), PROPOSALS_DIR, safeId(id)); }
     private allIds() { return [...this.store.publishedIds(), ...this.store.listDraftIds()]; }
     /** Draft ids carry a `-draft` suffix, so the name's own id stays free for
      *  the draft's first publication. */
-    private freshDraftId(name: string) { return assignUniqueId(`${name} draft`, [...this.allIds(), ...this.pendingNewIds('').keys()]); }
+    private freshDraftId(name: string, lineage: string) { return assignUniqueId(name, lineage, [...this.allIds(), ...this.pendingNewIds('').keys()], '-draft'); }
     private commit(id: string, files: readonly MotifFile[]) {
         const pkg = normalize(files, id);
         this.put(id, pkg);
@@ -325,7 +331,7 @@ export class MotifWorkspace {
             throw new Error('Source path must be absolute');
         if (source.kind === 'copy')
             return this.copy(source.motif_id);
-        let files: MotifFile[], directory: string | undefined;
+        let files: MotifFile[], directory: string | undefined, lineage: string | undefined;
         if (source.kind === 'directory') {
             if (!path.isAbsolute(source.path) || lstatSync(source.path).isSymbolicLink())
                 throw new Error('Use an absolute, non-link Motif directory');
@@ -341,8 +347,11 @@ export class MotifWorkspace {
                 }
             files = readMotifDirectory(directory);
         }
-        else if (source.kind === 'zip')
-            files = readMotifZip(source.path);
+        else if (source.kind === 'zip') {
+            const archive = readMotifZip(source.path);
+            files = archive.files;
+            lineage = archive.lineage ?? undefined;
+        }
         else if (source.kind === 'motif') {
             // A draft id resumes that draft; any other id copies.
             if (this.store.getDraft(source.motif_id)) {
@@ -350,6 +359,8 @@ export class MotifWorkspace {
                 return { motif_id: source.motif_id, revision: info.revision };
             }
             const src = getMotifSource(this.store, this.builtins, source.motif_id);
+            // A working copy of the Motif: of its lineage until it publishes anew.
+            lineage = builtinLineage(source.motif_id) ?? this.store.lineageOf(source.motif_id) ?? undefined;
             files = [...motifSourceFiles(this.store, this.builtins, source.motif_id).filter(f => f.path !== 'index.html'), { path: 'index.html', bytes: Buffer.from(src.html) }];
         }
         else if (source.kind === 'empty')
@@ -357,7 +368,7 @@ export class MotifWorkspace {
                 { path: 'manifest.json', bytes: Buffer.from(JSON.stringify({ ...EMPTY_DRAFT, name: source.name || EMPTY_DRAFT.name, props_schema: {} })) }];
         else
             throw new Error('Unknown Motif source kind');
-        const opened = this.openFiles(files, directory);
+        const opened = this.openFiles(files, directory, lineage);
         if (source.kind === 'motif') {
             const state = this.state(opened.motif_id);
             state.source_id = source.motif_id;
@@ -373,13 +384,15 @@ export class MotifWorkspace {
         const info = this.read(id);
         if (info.diagnostic)
             throw new Error(info.diagnostic);
-        const files = motifSourceFiles(this.store, this.builtins, id).filter(f => f.path !== 'index.html' && f.path.split('/')[0].toLowerCase() !== 'target');
+        const files = motifSourceFiles(this.store, this.builtins, id).filter(f => f.path !== 'index.html');
         return { ...this.openFiles([{ path: 'index.html', bytes: Buffer.from(info.html) }, ...files]), source: { id, version: info.manifest.version } };
     }
-    openFiles(files: MotifFile[], directory?: string) {
+    /** A new draft of lineage `lineage`, a new lineage when none is given. */
+    openFiles(files: MotifFile[], directory?: string, lineage = newLineage()) {
         const preliminary = normalize(files, 'draft');
-        const id = this.freshDraftId(preliminary.manifest.name);
+        const id = this.freshDraftId(preliminary.manifest.name, lineage);
         const pkg = this.commit(id, files);
+        this.store.lineage.set(this.draftKey(id), lineage);
         this.save(id, directory ? { directory } : {});
         return { motif_id: id, revision: pkg.revision };
     }
@@ -431,7 +444,7 @@ export class MotifWorkspace {
             const unknown = Object.keys(change).find(k => !CHANGE_KEYS.has(k));
             if (unknown !== undefined)
                 throw new Error(`${String(change.path)}: a file change takes path plus one of text, base64, edits or delete:true, not ${unknown}`);
-            if (typeof change.path !== 'string' || !motifFileSegments(change.path) || change.path.split('/')[0].toLowerCase() === 'target')
+            if (typeof change.path !== 'string' || !motifFileSegments(change.path))
                 throw new Error('Invalid file path');
             if (touched.has(change.path.toLowerCase()))
                 throw new Error('Duplicate file change: ' + change.path);
@@ -522,6 +535,26 @@ export class MotifWorkspace {
             throw new MotifRefusal(`Published version conflict: '${target}' is at version ${prev.version}; send expected_version ${prev.version} to replace it`, { error: 'VersionConflict', id: target, current_version: prev.version });
         return { id: target, version: prev.version };
     }
+    /** The lineage a first publication from `draftId` would take: `planned`
+     *  (its proposal's) or the draft's own, unless an installed or built-in
+     *  Motif already is of it; then a new one, as publishing anew from a
+     *  working copy forks it. Nothing is recorded until the publication is
+     *  written (`recordPublication`), so a refused or abandoned one leaves
+     *  the draft's lineage alone. */
+    private newPublicationLineage(draftId: string, planned?: string): string {
+        const installed = new Set(this.store.publishedIds());
+        const free = (uid: string) => !isBuiltinLineage(uid) && !this.store.lineage.holders(uid).some(k => installed.has(k));
+        if (planned && free(planned))
+            return planned;
+        const own = this.store.lineage.of(this.draftKey(draftId));
+        return free(own) ? own : newLineage();
+    }
+    /** After a publication: the installed Motif's lineage, which the draft
+     *  takes. A replaced Motif keeps its own; a new one takes `lineage`. */
+    private recordPublication(draftId: string, finalId: string, lineage: string | null): void {
+        if (lineage) this.store.lineage.set(finalId, lineage);
+        this.store.lineage.set(this.draftKey(draftId), this.store.lineage.of(finalId));
+    }
     /** New ids other drafts' pending proposals hold. */
     private pendingNewIds(except: string): Map<string, string> {
         const out = new Map<string, string>();
@@ -534,8 +567,8 @@ export class MotifWorkspace {
     }
     /** The id a draft's first publication takes: its manifest name's. A name
      *  someone holds refuses with the ways forward; it is never numbered. */
-    private newPublicationId(draftId: string, name: string): string {
-        const id = sanitizeId(name);
+    private newPublicationId(draftId: string, name: string, lineage: string): string {
+        const id = idFromName(name, lineage);
         const installed = this.store.listManifests().find(m => m.id === id);
         const pending = this.pendingNewIds(draftId).get(id);
         const rename = "rename the draft's manifest name (the new id is made from it)";
@@ -577,12 +610,14 @@ export class MotifWorkspace {
         const replaces = this.replaceTarget(state, targetId, expectedVersion);
         if (replaces && state.publication?.id === replaces.id && state.publication.revision === expected && state.publication.version === replaces.version)
             return { state: 'approved', proposal_id: state.proposal?.proposal_id ?? '', revision: expected, target: replaces, version: replaces.version };
-        const target: ProposalTarget = replaces ?? { new_id: this.newPublicationId(id, info.manifest.name) };
         const old = state.proposal;
+        const lineage = replaces ? null : this.newPublicationLineage(id, old?.state === 'awaiting_approval' ? old.lineage : undefined);
+        const target: ProposalTarget = replaces ?? { new_id: this.newPublicationId(id, info.manifest.name, lineage!) };
         if (old?.state === 'awaiting_approval' && old.revision === expected && sameTarget(old.target, target))
             return view(old);
         replacePackage(this.proposalDir(id), this.store.packageFiles(id));
-        state.proposal = { proposal_id: randomUUID(), state: 'awaiting_approval', revision: expected, target, proposed_at: new Date().toISOString() };
+        state.proposal = { proposal_id: randomUUID(), state: 'awaiting_approval', revision: expected, target, proposed_at: new Date().toISOString(),
+            ...(lineage ? { lineage } : {}) };
         this.save(id, state);
         return { ...view(state.proposal), ...(old?.state === 'awaiting_approval' ? { superseded_proposal_id: old.proposal_id } : {}) };
     }
@@ -599,7 +634,7 @@ export class MotifWorkspace {
         const { state, proposal } = this.pending(id, proposalId);
         if (!existsSync(this.proposalDir(id)))
             throw new MotifRefusal('The proposed package is gone; ask for a new proposal', { error: 'ProposalNotFound', proposal_id: proposalId });
-        let finalId: string, version: number, draftId = id;
+        let finalId: string, version: number, draftId = id, lineage: string | null = null;
         if ('new_id' in proposal.target) {
             finalId = proposal.target.new_id;
             const legacy = finalId === id;
@@ -608,6 +643,7 @@ export class MotifWorkspace {
             version = 1;
             if (legacy)
                 draftId = this.rekey(id, state);
+            lineage = this.newPublicationLineage(draftId, proposal.lineage);
         }
         else {
             finalId = proposal.target.id;
@@ -620,6 +656,7 @@ export class MotifWorkspace {
         // Trial layers on the draft — under its old id when it was just moved,
         // which is the publication's id now — rebind to the publication.
         const { updates, rebound } = this.writePublication(draftId, state, readMotifDirectory(dir), proposal.revision, finalId, version, layers);
+        this.recordPublication(draftId, finalId, lineage);
         state.proposal = { ...proposal, state: 'approved', decided_at: new Date().toISOString(), version, rebound,
             ...(draftId !== id ? { renamed_draft: { from: id, to: draftId } } : {}) };
         this.save(draftId, state);
@@ -644,6 +681,7 @@ export class MotifWorkspace {
         this.save(next, state);
         rmSync(this.draftDir(id), { recursive: true, force: true });
         this.store.revisions.forget(this.draftDir(id));
+        this.store.lineage.move(this.draftKey(id), this.draftKey(next));
         rmSync(this.stateFile(id), { force: true });
         return next;
     }
@@ -665,9 +703,11 @@ export class MotifWorkspace {
             const manifest = this.store.listManifests().find(m => m.id === replaces.id)!;
             return { motif_id: replaces.id, version: replaces.version, revision: expected, updates: buildRebindUpdates(layers, id, manifest) };
         }
-        const finalId = replaces?.id ?? assignUniqueId(info.manifest.name, [...this.allIds(), ...this.pendingNewIds(id).keys()]);
+        const lineage = replaces ? null : this.newPublicationLineage(id);
+        const finalId = replaces?.id ?? assignUniqueId(info.manifest.name, lineage!, [...this.allIds(), ...this.pendingNewIds(id).keys()]);
         const version = replaces ? replaces.version + 1 : 1;
         const { updates } = this.writePublication(id, state, this.store.packageFiles(id), expected, finalId, version, layers);
+        this.recordPublication(id, finalId, lineage);
         this.save(id, state);
         return { motif_id: finalId, version, revision: expected, updates };
     }

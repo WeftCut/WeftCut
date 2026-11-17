@@ -42,3 +42,11 @@ and edits/forks that copied only HTML would lose assets.
 - npm resolution and CDNs are never supplied by the host; packages bring their
   own modules or import maps.
 - Worker/WASM decoders are a separate grant ([motifs.md § Security](../motifs.md#security)).
+
+## Note (2026-11-17): no private package path; a ZIP names its lineage
+
+[ADR 0171](0171-a-motif-lineage-is-apart-from-its-id.md) removed the private
+`target` file: every file a package holds is hashed and served, and only
+`.revisions` stays reserved. Import still mints a new id, but a ZIP the app
+exports names its Motif's lineage in a `weftcut-lineage.json` entry beside the
+folder, and the imported draft keeps it.

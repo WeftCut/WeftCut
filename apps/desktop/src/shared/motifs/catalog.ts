@@ -302,12 +302,39 @@ export function resolveMotifContentDurationUs(
   return null;
 }
 
+/** Built-in Motifs by id, each with the lineage uid it has on every install
+ *  (ADR 0171): fixed, so an app update reads as a new version of the same
+ *  Motif. Never change a value. */
+const BUILTIN_LINEAGE: Readonly<Record<string, string>> = {
+  "countdown": "697b544c-7aa2-460a-87cd-8e646bdaa149",
+  "lower-third": "1b9ea545-6ccf-42e4-b476-7720eb254d87",
+  "text-fx": "a24aa1d8-6f92-485c-9e7b-141e606f4d6c",
+  "clipping-headline": "bcfc7533-19b1-498a-a244-950e2936d1f1",
+  "clipping-stamp": "49367aa3-daf2-483b-93e5-107d4aa7ad3b",
+  "clipping-paper": "9c46c851-46f6-4a86-9518-8a0a118dbc69",
+  "clipping-sticker": "0c2d37ff-1142-4c61-bb63-6856ddfd80c0",
+};
+
 /** Reserved built-in ids; a user/uploaded Motif may never take one. */
-export const BUILTIN_IDS: readonly string[] = ["countdown", "lower-third", "text-fx", "clipping-headline", "clipping-stamp", "clipping-paper", "clipping-sticker"];
+export const BUILTIN_IDS: readonly string[] = Object.keys(BUILTIN_LINEAGE);
+
+/** A built-in's lineage uid; null for any other id. */
+export function builtinLineage(id: string): string | null {
+  return Object.hasOwn(BUILTIN_LINEAGE, id) ? BUILTIN_LINEAGE[id]! : null;
+}
+
+/** Whether a built-in Motif is of lineage `uid`. */
+export function isBuiltinLineage(uid: string): boolean {
+  return Object.values(BUILTIN_LINEAGE).includes(uid);
+}
+
 const DRAFTS_DIR = "drafts";
 
-/** Slugify a name → safe single path-segment id. */
-export function sanitizeId(name: string): string {
+/** Hex digits of the lineage uid in an id made for a name with no slug. */
+const UID_ID_DIGITS = 8;
+
+/** A name's ASCII slug; "" when it has no ASCII letter or digit. */
+function slug(name: string): string {
   let out = "";
   let prevDash = false;
   for (const c of name) {
@@ -319,13 +346,26 @@ export function sanitizeId(name: string): string {
       prevDash = true;
     }
   }
-  const trimmed = out.replace(/^-+|-+$/g, "");
-  return trimmed === "" ? "motif" : trimmed;
+  return out.replace(/^-+|-+$/g, "");
 }
 
-/** Unique id from `name`, avoiding `taken`, built-ins, and `drafts`. */
-export function assignUniqueId(name: string, taken: string[]): string {
-  const base = sanitizeId(name);
+/** Names Windows reserves for devices: no file or folder may take one. */
+const DEVICE_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
+
+/** The id a name gives a Motif of lineage `uid`: the name's slug, else
+ *  `motif-` and the uid's first hex digits. An id is a `motif://` host, so
+ *  ASCII; without the uid every name in another script would be `motif`. An
+ *  id is also a folder, so a device name is prefixed. */
+export function idFromName(name: string, uid: string): string {
+  const s = slug(name);
+  if (!s) return `motif-${uid.replace(/-/g, "").slice(0, UID_ID_DIGITS)}`;
+  return DEVICE_NAME.test(s) ? `motif-${s}` : s;
+}
+
+/** `idFromName` plus `suffix`, numbered until free of `taken`, built-ins and
+ *  `drafts`. */
+export function assignUniqueId(name: string, uid: string, taken: readonly string[], suffix = ""): string {
+  const base = idFromName(name, uid) + suffix;
   const reserved = (id: string): boolean =>
     BUILTIN_IDS.includes(id) || id === DRAFTS_DIR || taken.includes(id);
   if (!reserved(base)) return base;

@@ -99,11 +99,6 @@ describe('listMotifsInner', () => {
     expect(list.filter((e) => e.id === 'foo').length).toBe(1)
     expect(list.find((e) => e.id === 'foo')!.status).toBe('installed')
   })
-  it('attaches target_id to a draft with a recorded Update target', () => {
-    store.writeDraft('d1', doc(m('D1', 'd1'))); store.writeDraftTarget('d1', 'countdown')
-    const list = listMotifsInner(store, BUILTINS)
-    expect(list.find((e) => e.id === 'd1')!.target_id).toBe('countdown')
-  })
   it('reports has_params_ui per entry for builtin, installed and draft', () => {
     // built-in: carried on the BuiltinMotif (stat'd once at load).
     const builtins: BuiltinMotif[] = [{ ...BUILTINS[0]!, hasParamsUi: true }]

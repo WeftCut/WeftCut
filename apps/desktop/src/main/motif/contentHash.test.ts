@@ -13,7 +13,8 @@ describe("motifContentHash", () => {
     expect(motifContentHash(m, '<html/>', [a])).not.toBe(hash);
     expect(motifContentHash(m, '<html/>', [a, { ...b, path: 'other.js' }])).not.toBe(hash);
     expect(motifContentHash(m, '<html/>', [{ ...a, bytes: Buffer.from([0, 254]) }, b])).not.toBe(hash);
-    expect(motifContentHash(m, '<html/>', [a, b, { path: 'target', bytes: Buffer.from('private') }])).toBe(hash);
+    // No path is private: every file a package holds is hashed.
+    expect(motifContentHash(m, '<html/>', [a, b, { path: 'target', bytes: Buffer.from('a file') }])).not.toBe(hash);
   });
   it("is a 64-char lowercase hex sha256", () => {
     const h = motifContentHash(m, "<html></html>");

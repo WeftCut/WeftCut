@@ -1075,7 +1075,8 @@ note?, version?, rebound?: [{layer_id, dropped_props}]}` reports the outcome,
 and every transition sends `notifications/resources/list_changed`; there is no
 blocking wait, so an agent tells the user to review and does not poll. A newer
 proposal from the same draft supersedes the older (`superseded_proposal_id`).
-A first publication takes its id from the manifest name; an id someone holds
+A first publication takes its id from the manifest name (a name with no ASCII
+letter or digit gives `motif-` and lineage hex digits, ADR 0171); an id someone holds
 refuses `MotifIdTaken {id, holder, options}` (rename the draft, or replace with
 `target_id` + `expected_version`), never a numbered `-2`. Draft ids carry a
 `-draft` suffix so the name's own id stays free; a draft from an earlier
