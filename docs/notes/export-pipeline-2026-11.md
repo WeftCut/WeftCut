@@ -36,6 +36,18 @@ per output frame (20 fps).
   full ring at once shares that wait: with the rAF loop running, 1080p
   59 → 115 fps with four frames per batch; eight frames gave no more.
   Raw-frame hashes were identical (4 projects × 1200 frames, both machines).
+- With the rAF loops paced away (Windows, fps):
+
+  | frames per batch | 1080p | 4K | Motif 1080p cold | Motif 1080p warm |
+  |---|---|---|---|---|
+  | 1 | 104–107 | 47 | 20 | 65 |
+  | 2 | 124 | 48 | 21 | 38 |
+  | 4 | 130 | 44 | 19–20 | 21 |
+
+  With Motif layers, frames left unread on the GPU stall the next Motif
+  frames (a warm export's Motif wait 6 s at one frame per batch, 52 s at
+  four). The mechanism inside Chromium was not isolated. Exports with Motif
+  layers read each frame back before the next; others batch two.
 - A fence's status in Chromium changes only at frame boundaries, so polling
   one costs a display frame however early the GPU finished.
 - 4K: reading back four 12.4 MB frames costs about 26 ms per frame

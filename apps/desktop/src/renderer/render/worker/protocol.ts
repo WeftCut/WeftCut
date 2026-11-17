@@ -10,6 +10,7 @@
 
 import type { ExportTransportFormat } from "../exportDecodeRouting";
 import type { MotifFramePacket } from "./motifStream";
+import type { SinkPixFmt } from "../../../shared/export-resources";
 
 /// Snapshot of project state needed to render the export. The Worker
 /// receives this as a structured-clone of the live `ProjectSummary`,
@@ -132,7 +133,7 @@ export type ExportRequest =
       /// `frames` to the ffmpeg video sink (no WebCodecs encoder): the export's
       /// sender worker forwards them to main (docs/export-ipc-transport.md).
       /// Absent ⇒ the WebCodecs EncoderSink/fMP4 path.
-      nativeSink?: { pixFmt: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le"; frames: MessagePort };
+      nativeSink?: { pixFmt: SinkPixFmt; frames: MessagePort; readbackFrames: number };
       /// Present ⇒ no encoder at all: every rendered frame is posted as a JPEG
       /// still (`still` events) at `width` px wide — what `render_frames` shows
       /// an agent, composited exactly as export would. Excludes `nativeSink`.

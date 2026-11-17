@@ -26,7 +26,7 @@ export class PboFrameReader {
   private readonly pboOffsets: number[] = [];
   private readonly dstOffsets: number[] = [];
 
-  /// `depth` frames may be submitted before a drain (`EXPORT_READBACK_FRAMES`).
+  /// `depth` frames may be submitted before a drain (the plan's `readbackFrames`).
   constructor(
     private gl: WebGL2RenderingContext,
     private planes: PboPlane[],

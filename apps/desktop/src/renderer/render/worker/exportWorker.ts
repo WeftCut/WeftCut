@@ -38,7 +38,6 @@ import { loadFontsIntoFaceSet } from "../fonts/loadFontsIntoFaceSet";
 import { initEval } from "@/eval";
 import { MotifFrameInbox, closeMotifPacket } from "./motifStream";
 import { paceSystemTicker } from "../pixiSystemTicker";
-import { EXPORT_READBACK_FRAMES } from "../../../shared/export-resources";
 import { SinkFrameStream } from "./sinkFrameStream";
 import { cannotDraw, cannotDrawMessage, capabilityOf, drawNeeds, rendererNameOf } from "../rendererCapability";
 
@@ -326,8 +325,8 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     });
     pack =
       sinkFmt === "yuv420p10le"
-        ? new PackYuv420p10(app.renderer as WebGLRenderer, outWidth, outHeight, EXPORT_READBACK_FRAMES)
-        : new PackYuvPlanar(app.renderer as WebGLRenderer, outWidth, outHeight, sinkFmt!, EXPORT_READBACK_FRAMES);
+        ? new PackYuv420p10(app.renderer as WebGLRenderer, outWidth, outHeight, req.nativeSink!.readbackFrames)
+        : new PackYuvPlanar(app.renderer as WebGLRenderer, outWidth, outHeight, sinkFmt!, req.nativeSink!.readbackFrames);
   }
 
   // 5. Frame grid — driven by OUTPUT fps. The grid is time-based, so a lower
@@ -382,7 +381,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
 
   // Native-sink frames leave on their own port; as many as one readback batch
   // are on their way while the next batch composites.
-  const sinkFrames = req.nativeSink ? new SinkFrameStream(req.nativeSink.frames, EXPORT_READBACK_FRAMES) : null;
+  const sinkFrames = req.nativeSink ? new SinkFrameStream(req.nativeSink.frames, req.nativeSink.readbackFrames) : null;
 
   // 6. Bounded decode producer + consuming compositor/encoder. Planning chunks
   // do not join producers: a GOP can extend far beyond the current chunk.

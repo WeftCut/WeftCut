@@ -84,7 +84,7 @@ export class PackYuv420p10 {
     private renderer: WebGLRenderer,
     private outW: number,
     private outH: number,
-    /// Frames read back per batch (`EXPORT_READBACK_FRAMES`).
+    /// Frames read back per batch (the plan's `readbackFrames`).
     private readbackFrames: number,
   ) {
     if (outW % 4 !== 0 || outH % 2 !== 0) {

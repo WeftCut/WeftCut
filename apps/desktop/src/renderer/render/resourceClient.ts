@@ -75,6 +75,6 @@ export async function admitExportResources(plans: import('../../shared/export-re
  * (64 MiB, the plan floor), queued like the export's and with no deadline. */
 export async function admitExportMetadata(signal: AbortSignal, waiting: (block: import('../../shared/export-resources').ExportResourceBlock) => void): Promise<() => void> {
   if (typeof window === 'undefined' || !window.api?.resources) return () => {};
-  const reservation = await admitExportResources([{ memoryMiB: 64, workerMiB: 0, motifBufferBytes: 0, frameWindows: {} }], false, signal, waiting);
+  const reservation = await admitExportResources([{ memoryMiB: 64, workerMiB: 0, motifBufferBytes: 0, frameWindows: {}, readbackFrames: 0 }], false, signal, waiting);
   return reservation.release;
 }

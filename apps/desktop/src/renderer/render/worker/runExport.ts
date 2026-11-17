@@ -27,6 +27,7 @@ import { exportFrameCount } from "./frameGrid";
 import { ffprobeColorToWebCodecs } from "../decoder/ffprobeColorSpace";
 import { hwExportDecodeAllowed, type ExportDecodeRouting } from "../exportDecodeRouting";
 import { tenBitExportCapable } from "../exportSettings";
+import type { SinkPixFmt } from "../../../shared/export-resources";
 import type {
   ExportEvent,
   ExportProjectSnapshot,
@@ -71,7 +72,7 @@ export interface RunExportInit {
   bitDepth?: 8 | 10;
   /// Present ⇒ the worker packs frames to this format and streams them to the
   /// native ffmpeg sink instead of WebCodecs-encoding.
-  nativeSinkPixFmt?: "yuv420p" | "yuv420p10le" | "yuv422p" | "yuv422p10le";
+  nativeSinkPixFmt?: SinkPixFmt;
   /// Present ⇒ no encoder: every frame in the range comes back through
   /// `onStill` as a JPEG `width` px wide (`render_frames`). `writeChunk` is
   /// never called. `effects: false` composites with clip effects skipped
@@ -290,7 +291,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     // Platform gate for the 8-bit WebCodecs decode lane (the Worker can't
     // read the OS itself) — see hwExportDecodeAllowed for the allowlist.
     allowHwExportDecode: hwExportDecodeAllowed(rendererOS),
-    ...(init.nativeSinkPixFmt && frames ? { nativeSink: { pixFmt: init.nativeSinkPixFmt, frames } } : {}),
+    ...(init.nativeSinkPixFmt && frames ? { nativeSink: { pixFmt: init.nativeSinkPixFmt, frames, readbackFrames: init.resourcePlan.readbackFrames } } : {}),
     ...(init.stills ? { stills: { width: init.stills.width, quality: init.stills.quality ?? 0.85, ...(init.stills.effects === false ? { effects: false } : {}) } } : {}),
     ...(Object.keys(tenBitMedia).length > 0 ? { tenBitMedia } : {}),
     // The routing table's native slice (see above); absent when nothing

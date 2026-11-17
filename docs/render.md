@@ -453,7 +453,7 @@ shows a quiet status note while one is in view.
 **Native (default).** The Worker forces WebGL2 (the pack shaders need GL; the
 WebCodecs exit prefers WebGPU). A GPU pack pass — `PackYuvPlanar` for
 yuv420p / yuv422p / yuv422p10le, `PackYuv420p10` for yuv420p10le — writes
-rawvideo, read back in batches of `EXPORT_READBACK_FRAMES`
+rawvideo, read back in batches of the plan's `readbackFrames`
 (`yuv/pboReadback.ts` `PboFrameReader`), and streams on the frame port to the
 native ffmpeg sink (`native/src/export/videosink.rs`;
 [`export-ipc-transport.md`](export-ipc-transport.md)). The sink runs one `EncoderPlan` from

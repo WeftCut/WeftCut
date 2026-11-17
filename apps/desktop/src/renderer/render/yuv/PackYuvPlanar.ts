@@ -120,7 +120,7 @@ export class PackYuvPlanar {
     private outW: number,
     private outH: number,
     private pixFmt: PackablePixFmt,
-    /// Frames read back per batch (`EXPORT_READBACK_FRAMES`).
+    /// Frames read back per batch (the plan's `readbackFrames`).
     private readbackFrames: number,
   ) {
     this.layout = yuvPlaneLayout(pixFmt, outW, outH); // throws on odd dims

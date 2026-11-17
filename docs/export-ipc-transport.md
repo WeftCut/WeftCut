@@ -13,8 +13,9 @@ the Worker's export ring. The WebCodecs engine (in-Worker `VideoDecoder`;
 1. The Worker composites (`rgba16float` target for yuv420p10le, `rgba8unorm`
    otherwise); a GPU pack pass (`PackYuvPlanar`, or the parity-gated
    `PackYuv420p10`) writes the rawvideo bytes into a ring of
-   `EXPORT_READBACK_FRAMES` pixel-pack buffers (`PboFrameReader`). When the
-   ring is full, `drain()` reads every pending frame in order, so one wait
+   pixel-pack buffers (`PboFrameReader`), as many as the plan's
+   `readbackFrames` (`exportReadbackFrames`: one while a Motif plays, two
+   otherwise). When the ring is full, `drain()` reads every pending frame in order, so one wait
    for the GPU serves the batch. There is no fence: Chromium updates a
    fence's status only at frame boundaries, so polling one costs up to a
    display frame per readback.
@@ -29,7 +30,7 @@ the Worker's export ring. The WebCodecs engine (in-Worker `VideoDecoder`;
    compositing thread. Main (`main/exportSinkPort.ts`) writes frames to
    ffmpeg's stdin in arrival order and answers each with the count written,
    or once with the error that ends the stream; no frame is written after a
-   failed one. The Worker keeps at most `EXPORT_READBACK_FRAMES` frames
+   failed one. The Worker keeps at most `readbackFrames` frames
    unanswered (`SinkFrameStream`) and settles them all before posting `done`.
 4. `export_video_sink_finish` drops stdin (EOF) and reaps the child;
    `export_video_sink_cancel` kills, then drops stdin. Terminating the sender

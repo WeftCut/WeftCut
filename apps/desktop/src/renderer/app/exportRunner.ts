@@ -325,7 +325,7 @@ export function createExportRunner(deps: {
         const range = { startUs: t, endUs: t + frameUs };
         const plans = await prepareExportResourcePlans({
           summary, media: useProjectStore.getState().mediaById, routing: gate.decodeRouting, ...range,
-          bitDepth: 8, nativeEncoder: false, outputWidth: comp.width, outputHeight: comp.height, signal,
+          bitDepth: 8, sinkPixFmt: null, outputWidth: comp.width, outputHeight: comp.height, signal,
         });
         const reservation = await admitExportResources(plans, false, signal, () => { });
         try {
@@ -488,7 +488,7 @@ export function createExportRunner(deps: {
         }
         let audioPlan: { token: string; release: () => void } | undefined;
         try {
-          audioPlan = await admitExportResources([{ memoryMiB: EXPORT_AUDIO_MIX_MIB, workerMiB: 0, motifBufferBytes: 0, frameWindows: {} }],
+          audioPlan = await admitExportResources([{ memoryMiB: EXPORT_AUDIO_MIX_MIB, workerMiB: 0, motifBufferBytes: 0, frameWindows: {}, readbackFrames: 0 }],
             false, exportController.signal, onQueued);
           if (background) resumePreview();
           setExportState({ kind: "starting" });
@@ -674,7 +674,7 @@ export function createExportRunner(deps: {
       setExportState({ kind: "preparing", labels: [t("export.plan_resources")], message: t("export.plan_resources"), onCancel });
       const resourcePlans = await prepareExportResourcePlans({
         summary, media: useProjectStore.getState().mediaById,
-        routing: decodeRouting, ...exportRange, bitDepth: compositeBitDepth(settings), nativeEncoder: nativeSink,
+        routing: decodeRouting, ...exportRange, bitDepth: compositeBitDepth(settings), sinkPixFmt: sinkTarget?.pixFmt ?? null,
         outputWidth: dims.width, outputHeight: dims.height, signal: exportController.signal, waiting: onQueued,
         audio: settings.audio.include,
       });
