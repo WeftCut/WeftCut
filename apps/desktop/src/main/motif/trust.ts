@@ -19,8 +19,10 @@ export const TRUST_FILE = '.trust.json'
 export const TRUST_CORRUPT_SUFFIX = '.corrupt'
 /** Revisions kept in the record; past it the oldest trusted leave first. */
 export const TRUST_KEPT = 20_000
-/** Revisions remembered as found untrusted at an open; past it the oldest
- *  leave first. */
+/** Revisions remembered as found untrusted at the opens of projects no
+ *  longer open; past it the oldest leave first. The open project's are all
+ *  kept: a project shipping more folders than this must not push its own
+ *  out. */
 export const FOUND_KEPT = 20_000
 
 const FORMAT = 1
@@ -39,8 +41,9 @@ export const ALL_TRUSTED: MotifTrustView = { trusted: () => true }
 
 /** Whether the open project's Motif `id` may run at `revision`. The app's is
  *  `MotifResolver.projectTrusted`, which also judges an edit made while the
- *  project is open that the watcher has not heard yet; a `MotifTrustView`
- *  is one that ignores the id. */
+ *  project is open that the watcher has not heard yet, from the revision the
+ *  open project last observed in the folder; a `MotifTrustView` is one that
+ *  ignores the id. */
 export interface ProjectTrustView { trusted(revision: string, id: string): boolean }
 
 /** What project Motif `id`'s state is once trust is applied: a folder that
@@ -60,18 +63,19 @@ export const UNTRUSTED_DIAGNOSTIC = 'not trusted on this machine'
  *
  *  - `placed`: trusted, its bytes came from this machine's library.
  *  - `created`: trusted, unless the same bytes were found untrusted at an
- *    open (adopting a received folder in place makes nothing new).
+ *    open.
  *  - `imported`: trusted when the files as they came (`base`, the revision
  *    they make under the id they carry) are, and the copy was not found
  *    untrusted at an open: a ZIP this library exported, taken in under
  *    another id because the project holds its own. Otherwise nothing:
  *    trusted only if these bytes already are.
- *  - `edited-while-open`: trusted when the revision it was made from
- *    (`base`) is, and the result was not found untrusted at an open (an edit
- *    made while the project was closed, recorded late, is no edit made here).
+ *  - `edited-while-open`: trusted when the revision this session last
+ *    observed in the folder (`base`) is, and the result was not found
+ *    untrusted at an open. Never the revision a project's table records: the
+ *    sender of a project writes that.
  *  - `opened`: remembered as found when not trusted. */
 export function trustOnSeen(revision: string, cause: RevisionCause, base: string | null,
-  known: { trusted(revision: string): boolean; found: ReadonlySet<string> }): 'trust' | 'found' | null {
+  known: { trusted(revision: string): boolean; found: { has(revision: string): boolean } }): 'trust' | 'found' | null {
   switch (cause) {
     case 'placed': return 'trust'
     case 'created': return known.found.has(revision) ? null : 'trust'
@@ -105,10 +109,14 @@ export class MotifTrust implements MotifTrustView {
   /** Trusted revisions, oldest first. */
   private record: Map<string, [number, TrustCause]> | null = null
   private library: Set<string> | null = null
-  /** Revisions found untrusted at an open, oldest first. Kept for the app's
-   *  life, never per project: they are bytes, and the same bytes found
-   *  elsewhere are as foreign. */
+  /** Revisions found untrusted at the opens of projects no longer open,
+   *  oldest first, at most `FOUND_KEPT`. Kept for the app's life, never per
+   *  project: they are bytes, and the same bytes found elsewhere are as
+   *  foreign. */
   private readonly found = new Set<string>()
+  /** Revisions found untrusted since the open project became the open one
+   *  (`projectOpened`), every one kept. */
+  private foundNow = new Set<string>()
   private dirty = false
   private scheduled = false
 
@@ -123,14 +131,22 @@ export class MotifTrust implements MotifTrustView {
 
   /** Applies `trustOnSeen` to a revision the open project saw. */
   seen(revision: string, cause: RevisionCause, base: string | null): void {
-    const decision = trustOnSeen(revision, cause, base, { trusted: (r) => this.trusted(r), found: this.found })
+    const found = { has: (r: string) => this.foundNow.has(r) || this.found.has(r) }
+    const decision = trustOnSeen(revision, cause, base, { trusted: (r) => this.trusted(r), found })
     // An import trusted for its source's bytes is this library's, placed.
     if (decision === 'trust') this.add(revision, cause === 'imported' ? 'placed' : cause as TrustCause)
-    else if (decision === 'found') {
+    else if (decision === 'found') this.foundNow.add(revision)
+  }
+
+  /** Another project becomes the open one: what the last one found joins
+   *  the revisions kept from earlier opens. */
+  projectOpened(): void {
+    for (const revision of this.foundNow) {
       this.found.delete(revision)
       this.found.add(revision)
       if (this.found.size > FOUND_KEPT) this.found.delete(this.found.values().next().value!)
     }
+    this.foundNow = new Set()
   }
 
   /** The user's Trust: recorded and written before it returns. */

@@ -71,7 +71,17 @@ by derivation. Only the user trusts, on the Motifs panel's trust card, from a
 summary read as text without running anything; its channels are renderer-only
 and no MCP tool can trust. Trust guards against code arriving in a folder, not
 against a local agent writing code: edits made while a project is open, from a
-trusted revision, are trusted.
+trusted revision, are trusted. Everything a received project folder holds is
+its sender's, `project.json`'s Motif table and `Backups/motifs/` included, so
+trust is earned only from positive evidence: an edit is judged from the
+revision this session itself last observed in the folder, never from the one
+the table records, and reads apply that rule alone. A backup is put back only
+when its files make the revision it names, and bytes put back count as found
+at an open, never as an edit. A folder is read only under its exact name,
+which must be a table key, so a case-insensitive file system cannot read
+`Motifs/Evil/` as `evil`. An agent that copies text it read from an untrusted
+Motif into a trusted one makes that code trusted: trust protects against code
+arriving in folders, not against what a local agent chooses to write.
 
 Serving rules: the file resolver (`main/motif/packageFiles.ts`) rejects
 traversal and symbolic links; packages hold no private files (ADR 0171).

@@ -42,19 +42,38 @@ ships with it.
   | Cause | Seen when | Earns |
   | --- | --- | --- |
   | `placed` | a library Motif is copied in | trusted, recorded even though the library holds it, so it stays trusted after that library version is deleted |
-  | `created` | `create_motif` empty, a copy of a trusted Motif, or a folder under `Motifs/` adopted in place | trusted, unless these bytes were found untrusted at an open |
+  | `created` | `create_motif` empty, or a copy of a trusted Motif | trusted, unless these bytes were found untrusted at an open |
   | `imported` | `create_motif` from a ZIP or a directory outside `Motifs/` (the panel's Import Motif too) | trusted when the files as they came (their revision under the id they carry) are, as a ZIP this library exported is even when the project holds that id and the copy takes another; otherwise nothing |
-  | `edited-while-open` | the watcher, the source panel or `update_motif_files` records a new revision of a tabled Motif, or any surface reads one the watcher has not heard yet (`MotifResolver.projectTrusted`, from the revision the table records) | trusted when the revision it was made from is, and the result was not found untrusted at an open |
-  | `opened` | the project becomes the open one | remembered as found when not trusted |
+  | `edited-while-open` | the store observes a folder holding another revision than it last observed there: the watcher, the source panel's and `update_motif_files`' writes, adopting a folder under `Motifs/` in place, and any surface reading a revision not trusted yet (`MotifResolver.projectTrusted`) | trusted when the revision last observed in that folder is, and the result was not found untrusted at an open; nothing when the store observed none |
+  | `opened` | the project becomes the open one, or a backup is put back in a folder (undo, redo, Review's revert) | remembered as found when not trusted |
 
   A materialization that kept a folder holding other bytes than it was given
   reports `opened`, not its own cause: it made nothing.
+- **Positive evidence only.** An edit earns trust only from bytes this
+  session itself saw in that folder: the store (`ProjectMotifStore`, one per
+  open session) remembers the revision it last observed in each folder, set
+  when the project opens and with each write, observation and put-back here.
+  The revision the project's table records is never a base, nor is a folder
+  that differs from it: whoever sent the project wrote the table. Reading
+  surfaces (`list_motifs`, `read_motif`, `project://session`, export,
+  resolving a host) apply this rule and nothing else, so a read grants no
+  trust it would not grant the watcher.
 - **Found at open, before anything can hear an edit.** `MotifResolver.setProject`
   sees every folder under `Motifs/` (tabled or not) as `opened` as the project
-  becomes the open one, before its watcher starts and before the open records
-  a folder changed while it was closed. The found set is kept for the app's
-  session, not per project, and holds at most 20,000 revisions: the same bytes
-  found in a second project are as foreign.
+  becomes the open one, before the actor takes its table, before its watcher
+  starts and before the open records a folder changed while it was closed.
+  The open project's found revisions are all kept, however many folders it
+  ships; those of projects opened before stay for the app's session, at most
+  20,000: the same bytes found in a second project are as foreign.
+- **A backup puts back only the revision it names.** `Backups/motifs/` comes
+  with the project, so a record is checked against the files it maps: they
+  must make the revision it is named for, or nothing is put back. Backing up
+  a revision writes over a record that names other files. Bytes put back are
+  heard as `opened`: an undo never makes an edit.
+- **A folder is read under its exact name.** Only a folder whose name is a
+  table key (lowercase letters, digits, single dashes) holds a package; any
+  other is `invalid`, and a key is never read from a folder named in another
+  case, as a case-insensitive file system would otherwise answer it.
 - **One gate.** The resolver answers a project host whose revision is not
   trusted as `untrusted`, with its manifest and revision, and the protocol
   (`params.html` included), capture hosts, previews, bakes, covers and pins
@@ -85,7 +104,12 @@ ships with it.
   It does not protect against a local agent writing code: an agent editing an
   open project's Motifs writes trusted revisions, as its own tools already run
   on this machine. A sync service writing into `Motifs/` while the project is
-  open reads as an edit made here.
+  open reads as an edit made here. An agent that copies text it read from an
+  untrusted Motif into a trusted one makes that code trusted: trust guards
+  against code arriving in folders, not against what a local agent chooses
+  to write.
+- A folder an agent writes under `Motifs/` and then adopts asks for Trust:
+  adopting makes none of its bytes here.
 - A ZIP import asks, the user's own included, unless it holds bytes this
   machine already trusts (one exported from this library does).
 - Edits the user makes by hand while the app is closed are found at the next
@@ -100,6 +124,7 @@ ships with it.
 
 Rejected: trust by lineage (a ZIP claims any lineage it likes, ADR 0171);
 trust recorded in the project (whoever sends the project would write it);
-trust per project (the same bytes are the same risk anywhere); an MCP tool
+judging an edit from the revision the table records, or from its backups
+(the same writer); trust per project (the same bytes are the same risk anywhere); an MCP tool
 that trusts (an agent could approve code it was handed); running an untrusted
 Motif in a stricter sandbox instead (the sandbox is what is not hardened).

@@ -680,11 +680,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   }
 
   // One judge for every surface: the resolver's, which reads an edit made on
-  // disk while open against the revision this table records.
-  resolver?.recordedBy((id) => {
-    const motifs = actor.snapshot().motifs
-    return Object.hasOwn(motifs, id) ? motifs[id]!.revision : null
-  })
+  // disk while open against what the open project last observed in the
+  // folder, never against this table.
   const motifTrust: ProjectTrustView = resolver
     ? { trusted: (revision, id) => resolver.projectTrusted(id, revision) }
     : deps.motifTrust ?? ALL_TRUSTED
@@ -700,13 +697,19 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   }
 
   /** The renderer's `motif_trust_summary`: what the trust card shows, read
-   *  without running anything. */
+   *  without running anything. The folder's files are read only for a
+   *  revision not summarised yet. */
   function motifTrustCard(args: Record<string, unknown>) {
     const { id, project } = trustSubject(args)
-    const snapshot = project.snapshot(id)
-    if (!snapshot) throw new Error(`Motif '${id}' has no folder in this project`)
-    return { motif_id: id, revision: snapshot.revision, trusted: motifTrust.trusted(snapshot.revision, id),
-      summary: motifTrustSummary(snapshot.revision, () => snapshot.files) }
+    const { status, revision, diagnostic } = project.status(id)
+    if (status === 'missing') throw new Error(`Motif '${id}' has no folder in this project`)
+    if (!revision) throw new Error(diagnostic ?? `Motifs/${id}/ holds no Motif package`)
+    const files = () => {
+      const snapshot = project.snapshot(id)
+      if (snapshot?.revision !== revision) throw revisionConflict(snapshot?.revision ?? 'none', 'look at the Motif again')
+      return snapshot.files
+    }
+    return { motif_id: id, revision, trusted: motifTrust.trusted(revision, id), summary: motifTrustSummary(revision, files) }
   }
 
   /** The renderer's `trust_motif`: the user trusts the revision the card

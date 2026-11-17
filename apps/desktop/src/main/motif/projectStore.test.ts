@@ -211,15 +211,41 @@ describe('revisions seen', () => {
     const placed = project.place(libraryPackage(library, [], 'lower')!, {})
     const made = project.create({ kind: 'empty', name: 'Mine' }, { lower: placed.entry })
     const edited = project.applyChanges(made.id, made.entry.revision!, new Map([['a.txt', Buffer.from('a')]]))
-    project.seen('lower', 'opened')
-    project.seen('gone', 'opened')
+    project.found('lower')
+    project.found('gone')
     stop()
-    project.seen('lower', 'opened')
+    project.found('lower')
     expect(seen).toEqual([
       ['lower', placed.entry.revision, 'placed'],
       [made.id, made.entry.revision, 'created'],
       [made.id, edited, 'edited-while-open'],
       ['lower', placed.entry.revision, 'opened'],
+    ])
+  })
+
+  it('hears a folder changed on disk as an edit of the revision it last observed there, never of another', () => {
+    const seen: [string, string, RevisionCause, string | null][] = []
+    project.onRevisionSeen((id, revision, cause, base) => seen.push([id, revision, cause, base]))
+    mkdirSync(folder('card'), { recursive: true })
+    writeFileSync(path.join(folder('card'), 'index.html'), page('Found'))
+    const found = project.found('card').revision!
+    writeFileSync(path.join(folder('card'), 'index.html'), page('Edited on disk'))
+    const edited = project.observe('card').revision!
+    // Observed again unchanged, it is heard no more.
+    project.observe('card')
+    writeFileSync(path.join(folder('card'), 'index.html'), page('Edited again'))
+    // An update made from the revision read is heard from that one, observed first.
+    const again = project.status('card').revision!
+    const updated = project.applyChanges('card', again, new Map([['a.txt', Buffer.from('a')]]))
+    mkdirSync(folder('fresh'), { recursive: true })
+    writeFileSync(path.join(folder('fresh'), 'index.html'), page('Fresh'))
+    const fresh = project.observe('fresh').revision!
+    expect(seen).toEqual([
+      ['card', found, 'opened', null],
+      ['card', edited, 'edited-while-open', found],
+      ['card', again, 'edited-while-open', edited],
+      ['card', updated, 'edited-while-open', again],
+      ['fresh', fresh, 'edited-while-open', null],
     ])
   })
 })

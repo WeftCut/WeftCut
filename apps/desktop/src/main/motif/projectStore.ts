@@ -23,10 +23,12 @@ export const PROJECT_MOTIFS_DIR = 'Motifs'
 /** How a project Motif's revision came to be seen: copied in from the
  *  library, made in the project, brought in from a ZIP or a folder outside
  *  the project's `Motifs/`, changed while the project was open here, or
- *  found when it was opened (Motif trust, `trust.ts`). */
+ *  found in a folder without being made here: when the project was opened,
+ *  or put back from a backup (Motif trust, `trust.ts`). */
 export type RevisionCause = 'placed' | 'created' | 'imported' | 'edited-while-open' | 'opened'
-/** `base` is the revision an edit was made from (`edited-while-open`), or
- *  the one an import's files made as they came, under the id they carried
+/** `base` is the revision the store last observed in the folder an edit was
+ *  made in (`edited-while-open`), null when it observed none; or the one an
+ *  import's files made as they came, under the id they carried
  *  (`imported`); null for every other cause. */
 export type RevisionListener = (id: string, revision: string, cause: RevisionCause, base: string | null) => void
 
@@ -117,11 +119,20 @@ export function writeThrough(dir: string, stamp: PackageStamp | null, original: 
 
 /** The Motifs of the project in one folder. A folder's revision is its files'
  *  as they stand (`declaredPackage`), remembered by their stamps (ADR 0164):
- *  the app never rewrites a folder an author edits. */
+ *  the app never rewrites a folder an author edits. A folder is read only
+ *  under its exact name, and only a name that is a table key
+ *  (`isProjectMotifKey`) holds a package.
+ *
+ *  One store serves one open session of its project: it remembers the
+ *  revision it last observed in each folder, which is what an edit made
+ *  while the project is open is judged from (`observe`). */
 export class ProjectMotifStore {
   private readonly dir: string
   private readonly source: PackageSource
   private readonly listeners = new Set<RevisionListener>()
+  /** The revision each folder held when this store last saw it, by id: as
+   *  found at the open, then as each write or read of it here found it. */
+  private readonly observed = new Map<string, string>()
 
   constructor(projectDir: string, options: { revisions?: PackageRevisions } = {}) {
     this.dir = path.join(projectDir, PROJECT_MOTIFS_DIR)
@@ -148,15 +159,32 @@ export class ProjectMotifStore {
     }).sort()
   }
 
-  /** Whether `id`'s folder exists, as a folder or anything else. */
+  /** Whether an entry named exactly `id` is under `Motifs/`, a folder or
+   *  anything else.
+   *
+   *  LANDMINE: by name, never by `lstat`: on a case-insensitive file system
+   *  (macOS, Windows) `Motifs/evil` reaches `Motifs/Evil/`, whose bytes
+   *  would then be read and hashed under a key the open never found them
+   *  under (Motif trust). */
   private present(id: string): boolean {
-    try { lstatSync(this.folder(id)); return true } catch { return false }
+    try { this.folder(id) } catch { return false }
+    try { return readdirSync(this.dir).includes(id) } catch { return false }
+  }
+
+  /** `id`'s folder when it is there; null when it is gone. Throws when its
+   *  name is no table key: no package is read under it. */
+  private packageFolder(id: string): string | null {
+    if (!this.present(id)) return null
+    if (!isProjectMotifKey(id))
+      throw new Error(`The folder name must be lowercase letters, digits and single dashes: rename Motifs/${id}/`)
+    return this.folder(id)
   }
 
   status(id: string): MotifState {
     try {
-      if (!this.present(id)) return { status: 'missing', revision: null }
-      return { status: 'ok', revision: this.source.listing(this.folder(id)).revision }
+      const dir = this.packageFolder(id)
+      if (!dir) return { status: 'missing', revision: null }
+      return { status: 'ok', revision: this.source.listing(dir).revision }
     } catch (error) {
       return { status: 'invalid', revision: null, diagnostic: error instanceof Error ? error.message : String(error) }
     }
@@ -165,8 +193,9 @@ export class ProjectMotifStore {
   /** The package of `id` and the manifest it declares; null when its folder
    *  is gone, throws when its files make no package. */
   describe(id: string): (PackageListing & { manifest: Manifest }) | null {
-    if (!this.present(id)) return null
-    const { html, revision, paths, read } = this.source.listing(this.folder(id), ['manifest.json'])
+    const dir = this.packageFolder(id)
+    if (!dir) return null
+    const { html, revision, paths, read } = this.source.listing(dir, ['manifest.json'])
     const json = read.get('manifest.json')
     const declared = json ? JSON.parse(json.toString('utf8')) as Manifest : parseManifestIsland(html)
     return { html, revision, paths, manifest: { ...declared, id } }
@@ -175,7 +204,8 @@ export class ProjectMotifStore {
   /** `id`'s files from one read, with their revision; null when its folder
    *  is gone, throws when they make no package. */
   snapshot(id: string): PackageSnapshot | null {
-    return this.present(id) ? this.source.snapshot(this.folder(id)) : null
+    const dir = this.packageFolder(id)
+    return dir ? this.source.snapshot(dir) : null
   }
 
   packageFiles(id: string): MotifFile[] {
@@ -184,7 +214,10 @@ export class ProjectMotifStore {
 
   /** A file of `id`'s package. */
   readFile(id: string, rel: string): Buffer | null {
-    try { return readMotifFile(this.folder(id), rel) } catch { return null }
+    try {
+      const dir = this.packageFolder(id)
+      return dir === null ? null : readMotifFile(dir, rel)
+    } catch { return null }
   }
 
   /** Copies `files` into `id`'s folder, written aside and renamed into place
@@ -317,13 +350,15 @@ export class ProjectMotifStore {
 
   /** A folder written under `Motifs/` becomes a Motif of a new lineage under
    *  its own name, its files as they stand; one the table holds is answered
-   *  as it is. */
+   *  as it is. Adopting makes no bytes: the folder is observed (`observe`),
+   *  never heard as `created`, so it is trusted only when what it holds
+   *  already is, or is an edit made here of what was. */
   private adopt(id: string, table: Readonly<ProjectMotifs>): Placement & { path: string } {
     const held = Object.hasOwn(table, id) ? table[id] : undefined
     if (held) return { id, entry: held, copied: false, path: this.folder(id) }
     if (!isProjectMotifKey(id))
       throw new Error(`Motifs/${id} cannot be a Motif id: rename the folder to lowercase letters, digits and single dashes`)
-    const state = this.seen(id, 'created')
+    const state = this.observe(id)
     if (!state.revision) throw new Error(state.diagnostic ?? `Motifs/${id} holds no Motif package`)
     return { id, entry: { uid: newLineage(), revision: state.revision, from: null }, copied: false, path: this.folder(id) }
   }
@@ -332,14 +367,16 @@ export class ProjectMotifStore {
    *  whose revision must be `expected`; a function makes them from the files
    *  the folder holds. The whole result must make a package before any file
    *  is written; the files are written one by one (`writeThrough`). Answers
-   *  the new revision. */
+   *  the new revision, heard as an edit of the one read, which is observed
+   *  first when this store last saw another. */
   applyChanges(id: string, expected: string,
     changes: ReadonlyMap<string, Buffer | null> | ((files: readonly MotifFile[]) => ReadonlyMap<string, Buffer | null>)): string {
-    const dir = this.folder(id)
-    if (!this.present(id)) throw new Error(`Motif '${id}' has no folder in this project`)
+    const dir = this.packageFolder(id)
+    if (!dir) throw new Error(`Motif '${id}' has no folder in this project`)
     const { files, revision, stamp } = this.source.read(dir)
     if (!stamp) throw new Error('The Motif folder changed while it was read; read it again')
     if (revision !== expected) throw revisionConflict(revision, 'read the Motif again and merge')
+    this.saw(id, revision)
     if (typeof changes === 'function') changes = changes(files)
     const next = new Map(files.map(f => [f.path, f.bytes]))
     for (const [rel, bytes] of changes) {
@@ -352,12 +389,32 @@ export class ProjectMotifStore {
     return after
   }
 
-  /** `id`'s folder as it stands; tells the listeners when it holds a
-   *  package. `base` is the revision an edit was made from. */
-  seen(id: string, cause: RevisionCause, base: string | null = null): MotifState {
+  /** `id`'s folder as it stands, heard as `opened` when it holds a package:
+   *  bytes this session finds without having made them, as the project
+   *  opens or as a backup is put back. */
+  found(id: string): MotifState {
     const state = this.status(id)
-    if (state.revision) this.emit(id, state.revision, cause, base)
+    if (state.revision) this.emit(id, state.revision, 'opened')
     return state
+  }
+
+  /** `id`'s folder as it stands. A package other than the one this store
+   *  last observed in it is heard as an edit made here of that one
+   *  (`edited-while-open`, without a base when it observed none): the one
+   *  way a write made while the project is open earns trust. The watcher, a
+   *  read that finds an untrusted revision, and adopting the folder observe
+   *  it. */
+  observe(id: string): MotifState {
+    const state = this.status(id)
+    if (state.revision) this.saw(id, state.revision)
+    return state
+  }
+
+  /** Hears `revision` as an edit of what `id`'s folder last held here, when
+   *  it is not that. */
+  private saw(id: string, revision: string): void {
+    const base = this.observed.get(id) ?? null
+    if (revision !== base) this.emit(id, revision, 'edited-while-open', base)
   }
 
   /** Listens for every revision the store writes or is told it saw;
@@ -367,7 +424,10 @@ export class ProjectMotifStore {
     return () => { this.listeners.delete(listener) }
   }
 
+  /** Tells the listeners, and observes `revision` as what `id`'s folder
+   *  holds. */
   private emit(id: string, revision: string, cause: RevisionCause, base: string | null = null): void {
+    this.observed.set(id, revision)
     for (const listener of this.listeners) listener(id, revision, cause, base)
   }
 }

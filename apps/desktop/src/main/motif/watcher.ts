@@ -69,9 +69,10 @@ export interface ProjectMotifWatcher extends MotifWatcher {
 }
 
 /** Watches `<project>/Motifs/` recursively and, once per quiet window, tells
- *  `onChanged` of each Motif whose folder an event touched, its state read
- *  through `project` (which records its new revision). A Motif is told again
- *  only when its state differs from the last one told. A project without
+ *  `onChanged` of each Motif whose folder an event touched, its state
+ *  observed through `project` (`ProjectMotifStore.observe`, which judges a
+ *  new revision as an edit made while the project is open). A Motif is told
+ *  again only when its state differs from the last one told. A project without
  *  `Motifs/` is watched for the folder to appear; a Motif written before the
  *  watch attached is told then. The app's own writes are told like any other:
  *  the listener compares against what it recorded. */
@@ -86,7 +87,7 @@ export function watchProjectMotifs(project: ProjectMotifStore, onChanged: Projec
     const folders = new Set(project.ids())
     for (const id of ids) {
       if (!folders.has(id) && !told.has(id)) continue
-      const state = project.status(id)
+      const state = project.observe(id)
       const seen = JSON.stringify([state.status, state.revision, state.diagnostic])
       if (told.get(id) === seen) continue
       told.set(id, seen)

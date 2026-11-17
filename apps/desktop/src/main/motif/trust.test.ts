@@ -13,7 +13,7 @@ import { newLineage } from './lineage'
 import { normalize } from './motifPackage'
 import { libraryPackage, ProjectMotifStore } from './projectStore'
 import { UserMotifStore } from './store'
-import { libraryRevisions, MotifTrust, TRUST_CORRUPT_SUFFIX, TRUST_FILE, TRUST_KEPT, trustOnSeen } from './trust'
+import { FOUND_KEPT, libraryRevisions, MotifTrust, TRUST_CORRUPT_SUFFIX, TRUST_FILE, TRUST_KEPT, trustOnSeen } from './trust'
 
 const BUILTINS = builtinMotifs(path.resolve(__dirname, '../../shared/motifs/builtin'))
 
@@ -125,6 +125,18 @@ describe('what seeing a revision earns', () => {
     expect(trustOnSeen(r, 'edited-while-open', null, known([]))).toBeNull()
     expect(trustOnSeen(r, 'opened', null, known([]))).toBe('found')
     expect(trustOnSeen(r, 'opened', null, known([r]))).toBeNull()
+  })
+
+  it('remembers every revision the open project found, and the newest of projects opened before', () => {
+    trust.projectOpened()
+    for (let n = 0; n <= FOUND_KEPT; n++) trust.seen(rev(n), 'opened', null)
+    trust.seen(rev(0), 'created', null)
+    expect(trust.trusted(rev(0)), 'found by the open project, past the cap').toBe(false)
+    trust.projectOpened()
+    trust.seen(rev(1), 'created', null)
+    expect(trust.trusted(rev(1)), 'found by the project before, within the cap').toBe(false)
+    trust.seen(rev(0), 'created', null)
+    expect(trust.trusted(rev(0)), 'found by the project before, past the cap').toBe(true)
   })
 
   it('trusts a library Motif placed in the project, and keeps trusting it once the library version is gone', () => {

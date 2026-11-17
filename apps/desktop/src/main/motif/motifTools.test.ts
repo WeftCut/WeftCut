@@ -155,7 +155,9 @@ describe('create_motif', () => {
     expect(adopted).toEqual({ motif_id: 'hand-made', revision: expect.any(String), path: written })
     expect(tree(written)).toEqual(before)
     expect(w.entries()['hand-made']).toMatchObject({ revision: adopted.revision, from: null })
-    expect(w.seen).toContainEqual(['hand-made', 'created'])
+    // Adopting makes no bytes (Motif trust): the folder is observed as it stands.
+    expect(w.seen).toContainEqual(['hand-made', 'edited-while-open'])
+    expect(w.seen).not.toContainEqual(['hand-made', 'created'])
     // Adopting it again records nothing.
     const len = w.historyLen()
     expect(w.call('create_motif', { source: { kind: 'directory', path: written } }).motif_id).toBe('hand-made')

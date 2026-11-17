@@ -22,7 +22,7 @@ import { ExportJobError, ExportJobs } from '../exportJobs'
 import { normalize } from '../motif/motifPackage'
 import { ProjectMotifStore } from '../motif/projectStore'
 import { MotifResolver } from '../motif/resolver'
-import { ALL_TRUSTED, libraryRevisions, MotifTrust, TRUST_FILE } from '../motif/trust'
+import { ALL_TRUSTED, FOUND_KEPT, libraryRevisions, MotifTrust, TRUST_FILE } from '../motif/trust'
 import { newLineage } from '../motif/lineage'
 import { sessionView } from '../mcp/server'
 import { autosaveMaxWaitMs } from './autosave'
@@ -1519,7 +1519,7 @@ describe('createTsActorHost — persistence-route integration', () => {
       const host = createTsActorHost({ ...fixture.deps, motifStore, motifBuiltins: [], motifResolver, exportJobs,
         ...(motifTrust ? { motifTrust } : {}), mcpResourcesChanged: () => { agentsTold++ } })
       return {
-        ...fixture, host, project, root, motifResolver, trustFile,
+        ...fixture, host, project, root, motifResolver, motifTrust, trustFile,
         setBusy: (value: boolean) => { busy = value },
         exportEnds: () => { busy = false; for (const listener of idle) listener() },
         told: () => fixture.sent.filter((s) => s.event === 'motifs:changed').length,
@@ -1579,6 +1579,48 @@ describe('createTsActorHost — persistence-route integration', () => {
         expect(await m.host.handleInvoke('read_motif', { motif_id: 'lower' })).toMatchObject({ status: 'ok', revision: written })
         expect(m.host.unavailableMotifs()).toEqual([])
         expect(m.motifResolver.gate('lower').revision).toBe(written)
+      } finally { m.close() }
+    })
+
+    it('grants no trust from a read: a folder found at the open stays untrusted on every surface while the table records a trusted revision', async () => {
+      const m = motifHost({ trust: true })
+      m.host.start()
+      try {
+        await m.host.handleInvoke('project_new_workspace', publicationProject)
+        expect(m.host.actor.command('add_motif', { motifId: 'lower', tStartUs: 0 }).ok).toBe(true)
+        const placed = m.host.actor.snapshot().motifs.lower!.revision!
+        // The project as received: its table records the trusted placed
+        // revision, its folder other bytes.
+        writeFileSync(nodePath.join(m.project.folder('lower'), 'index.html'), page('Lower', 'received'))
+        const received = new ProjectMotifStore(nodePath.join(m.root, 'Film'))
+        m.motifResolver.setProject(received)
+        const revision = received.status('lower').revision!
+        // As many other folders found at the open as the found set keeps.
+        for (let n = 0; n < FOUND_KEPT; n++) m.motifTrust!.seen(`${n}`.padStart(64, '0'), 'opened', null)
+        expect(m.host.actor.snapshot().motifs.lower!.revision).toBe(placed)
+        const rows = await m.host.handleInvoke('list_motifs', { group: 'project' }) as Array<Record<string, unknown>>
+        expect(rows.find((r) => r.id === 'lower')).toMatchObject({ status: 'untrusted', revision })
+        expect(await m.host.handleInvoke('read_motif', { motif_id: 'lower' })).toMatchObject({ status: 'untrusted', revision })
+        expect(sessionView(m.host).motifs).toMatchObject({ untrusted: [{ motif_id: 'lower', revision }] })
+        expect(m.host.unavailableMotifs()).toEqual([expect.objectContaining({ motif_id: 'lower', status: 'untrusted' })])
+        expect(m.motifResolver.resolve('lower').status).toBe('untrusted')
+        expect(m.motifTrust!.trusted(revision)).toBe(false)
+      } finally { m.close() }
+    })
+
+    it('reads the trust card\'s summary of a revision once', async () => {
+      const m = motifHost({ trust: true })
+      m.host.start()
+      try {
+        await m.host.handleInvoke('project_new_workspace', publicationProject)
+        mkdirSync(m.project.folder('card'), { recursive: true })
+        writeFileSync(nodePath.join(m.project.folder('card'), 'index.html'), page('Card', 'summarised once'))
+        const revision = m.project.status('card').revision!
+        expect(m.host.actor.dispatch('set_project_motif', { motif_id: 'card', uid: newLineage(), revision, from: null }).ok).toBe(true)
+        const first = await m.host.handleInvoke('motif_trust_summary', { motif_id: 'card' })
+        const snapshot = vi.spyOn(m.project, 'snapshot')
+        expect(await m.host.handleInvoke('motif_trust_summary', { motif_id: 'card' })).toEqual(first)
+        expect(snapshot).not.toHaveBeenCalled()
       } finally { m.close() }
     })
 

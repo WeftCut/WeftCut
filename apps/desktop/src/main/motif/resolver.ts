@@ -60,7 +60,6 @@ const builtinFiles = (b: BuiltinMotif) => b.files ?? [{ path: 'index.html', byte
 
 export class MotifResolver {
   private projectStore: ProjectMotifStore | null = null
-  private recorded: ((id: string) => string | null) | null = null
   /** Revision snapshots by `<scope>/<id>/<revision>`, oldest first, with
    *  their holders. The key carries no project: a revision is its bytes. */
   private readonly pinned = new Map<string, { files: Map<string, Buffer>; holders: number }>()
@@ -69,9 +68,11 @@ export class MotifResolver {
   private readonly proposals: ScopeReader
 
   /** `trust` decides which project revisions may run; the library's and
-   *  proposals' are never asked about. */
+   *  proposals' are never asked about. Its `projectOpened`, when it has one,
+   *  hears each project become the open one before any folder of it is
+   *  seen (`MotifTrust`). */
   constructor(private readonly store: UserMotifStore, private readonly builtins: readonly BuiltinMotif[],
-    private readonly trust: MotifTrustView) {
+    private readonly trust: MotifTrustView & { projectOpened?(): void }) {
     this.library = {
       describe: id => {
         const builtin = builtins.find(b => b.id === id)
@@ -98,36 +99,33 @@ export class MotifResolver {
 
   /** The open project's Motifs; null when no project is open, and every
    *  project host is then missing. Its revisions reach `onRevisionSeen`,
-   *  each folder's as it stands now first, as found when opened: before its
-   *  watcher or any record of it can hear one as an edit made here (Motif
-   *  trust). */
+   *  each folder's as it stands now first, as found when opened
+   *  (`ProjectMotifStore.found`).
+   *
+   *  LANDMINE: this runs before the actor takes the project's table
+   *  (`commitWorkspace` precedes `replaceState`) and before its watcher
+   *  starts, so every read of the new table already finds each folder
+   *  observed as found: one ordered after could hear the received bytes as
+   *  an edit made here. */
   setProject(project: ProjectMotifStore | null): void {
     this.projectStore = project
+    this.trust.projectOpened?.()
     if (!project) return
     this.hear(project)
-    for (const id of project.ids()) {
-      try { project.seen(id, 'opened') } catch { /* no Motif id: nothing to find */ }
-    }
+    for (const id of project.ids()) project.found(id)
   }
   project(): ProjectMotifStore | null { return this.projectStore }
 
-  /** Where `projectTrusted` reads the revision the open project's table
-   *  records for Motif `id` (null when it records none): the actor's. */
-  recordedBy(read: (id: string) => string | null): void { this.recorded = read }
-
   /** Whether the open project's Motif `id` may run at `revision`, its folder's
-   *  revision now. A revision not trusted yet that differs from the one the
-   *  table records is an edit made on disk while the project is open, read
-   *  before the watcher has heard it: it is judged as the watcher judges it
-   *  (`edited-while-open` from the recorded revision), so an agent's write
-   *  is never refused while the watcher waits for quiet. A revision found at
-   *  the open, an untabled folder and an untrusted base still earn nothing. */
+   *  revision now. A revision not trusted yet is observed
+   *  (`ProjectMotifStore.observe`) before it is answered: an edit made on
+   *  disk while the project is open, read before the watcher has heard it,
+   *  is judged as the watcher judges it, so an agent's write is never
+   *  refused while the watcher waits for quiet. Nothing else is inferred
+   *  here: the revision the table records is never a base. */
   projectTrusted(id: string, revision: string): boolean {
     if (this.trust.trusted(revision)) return true
-    const base = this.recorded?.(id) ?? null
-    const project = this.projectStore
-    if (!project || base === null || base === revision || !this.trust.trusted(base)) return false
-    project.seen(id, 'edited-while-open', base)
+    this.projectStore?.observe(id)
     return this.trust.trusted(revision)
   }
 

@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { composeMotifHtml } from '../../shared/motifs/catalog'
 import { MotifBackups } from './backups'
+import { declaredPackage } from './motifPackage'
 import { copyProjectMotifs } from './projectCopy'
 
 const roots: string[] = []
@@ -87,10 +89,12 @@ describe('the Motif backups', () => {
   it('go with the folders, so undo in the copy can put a folder back', () => {
     const from = project(), to = project()
     write(from, 'Motifs/title-card/index.html', '<p>title</p>')
-    const revision = 'a'.repeat(64)
-    new MotifBackups(from).backup('title-card', [{ path: 'index.html', bytes: Buffer.from('<p>before</p>') }], revision)
+    const before = [{ path: 'index.html', bytes: Buffer.from(composeMotifHtml({ id: 'title-card', name: 'Before', version: 1, size: [64, 64], default_duration_s: 1, props_schema: {} },
+      '<html><head></head><body><script>motif.define({frame(t){}})</script></body></html>')) }]
+    const { revision } = declaredPackage(before, 'title-card')
+    new MotifBackups(from).backup('title-card', before, revision)
     copyProjectMotifs(from, to, ['title-card'])
     new MotifBackups(to).restore('title-card', revision)
-    expect(readFileSync(path.join(to, 'Motifs/title-card/index.html'), 'utf8')).toBe('<p>before</p>')
+    expect(readFileSync(path.join(to, 'Motifs/title-card/index.html'))).toEqual(before[0]!.bytes)
   })
 })
