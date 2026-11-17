@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { collisionId, isNewMotifId, libraryHost, libraryIdOfHost, MOTIF_HOST_LABEL_CHARS, proposalOfHost, proposalPreviewId } from './projectMotifs'
+import { collisionId, isNewMotifId, isProjectMotifKey, libraryHost, libraryIdOfHost, motifEntry, MOTIF_HOST_LABEL_CHARS, projectMotifKey, proposalOfHost, proposalPreviewId } from './projectMotifs'
 
 const UID = '9c46c851-46f6-4a86-9518-8a0a118dbc69'
 
@@ -18,5 +18,22 @@ describe('project Motif ids and hosts', () => {
     expect(libraryIdOfHost('lower')).toBeNull()
     expect(isNewMotifId(libraryHost('lower'))).toBe(false)
     expect(isNewMotifId(proposalPreviewId('lower'))).toBe(false)
+  })
+})
+
+describe('project Motif table keys', () => {
+  it('are never a name Object.prototype answers', () => {
+    for (const id of ['constructor', '__proto__', 'prototype']) {
+      expect(isProjectMotifKey(id), id).toBe(false)
+      expect(motifEntry({}, id), id).toBeUndefined()
+    }
+    expect(isProjectMotifKey('lower-third')).toBe(true)
+  })
+
+  it('are derived from a library id that is none: its letters and digits, lowercased', () => {
+    expect(projectMotifKey('lower-third')).toBe('lower-third')
+    expect(projectMotifKey('MyMotif')).toBe('mymotif')
+    expect(projectMotifKey('Lower Third!')).toBe('lower-third')
+    for (const id of ['constructor', '__proto__', '***']) expect(isProjectMotifKey(projectMotifKey(id)), id).toBe(true)
   })
 })

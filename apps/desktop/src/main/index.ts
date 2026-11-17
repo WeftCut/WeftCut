@@ -57,7 +57,7 @@ import { MotifBakeWorkspace, validateBakePlan } from './motif/bakeWorkspace.js'
 import { motifColdStart } from './motif/coldStart.js'
 import { MOTIF_BAKE_READY_EVENT, type MotifBakePlan } from '../shared/motifs/baking.js'
 import { MotifGpuTransport } from './motif/gpuTransport.js'
-import { spawnMotifWatcher, watchProjectMotifs, type MotifWatcher } from './motif/watcher.js'
+import { spawnMotifWatcher, watchProjectMotifs, type MotifWatcher, type ProjectMotifWatcher } from './motif/watcher.js'
 import { MotifResolver } from './motif/resolver.js'
 import { ProjectMotifStore, type MotifState } from './motif/projectStore.js'
 import { builtinAssetDir } from './motif/builtinAssets.js'
@@ -178,7 +178,7 @@ let computeJobs: ComputeJobs | null = null
 let audioFxBaker: AudioFxBaker | null = null
 let motifWatcher: MotifWatcher | null = null
 // The open project's `Motifs/` watch, attached again on every project switch.
-let projectMotifWatcher: MotifWatcher | null = null
+let projectMotifWatcher: ProjectMotifWatcher | null = null
 // Built in whenReady once the native readers exist; module-scoped for the MCP
 // host, which starts before it, and for before-quit. `motifCaptureClosed`
 // records a before-quit that ran first, so a capturer built after it is shut
@@ -1213,6 +1213,7 @@ app.whenReady().then(async () => {
     workspaceDir: () => wsCache,
     emitLog: (entry) => { void backend!.invoke('log_emit', JSON.stringify({ input: entry })) },
     motifResolver,
+    rewatchProjectMotif: (id) => projectMotifWatcher?.forget(id),
     motifStore,
     motifBuiltins,
     appSettings,

@@ -232,6 +232,15 @@ describe('list_motifs', () => {
     expect(row(w, 'lower')).toMatchObject({ status: 'ok', path: w.folder('lower'), from: { version: 1 } })
   })
 
+  it('offers no preview of a library Motif whose folder name cannot be its host, saying to rename it', () => {
+    const w = world()
+    w.install('MyMotif')
+    const diagnostic = expect.stringMatching(/must be lowercase/)
+    // No manifest: nothing previews or places it from the row.
+    expect(row(w, 'MyMotif', 'library')).toEqual({ group: 'library', id: 'MyMotif', status: 'invalid', diagnostic, revision: expect.any(String), in_project: null })
+    expect(w.call('read_motif', { motif_id: 'MyMotif', group: 'library' })).toMatchObject({ status: 'invalid', diagnostic })
+  })
+
   it('names a missing or invalid project Motif, and lists only the library with no project open', () => {
     const w = world()
     w.install('gone'); w.place('gone')

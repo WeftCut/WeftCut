@@ -22,6 +22,7 @@ export function libraryMotifs(manifests: Iterable<Manifest> = BUILTIN_MANIFESTS.
   return {
     folders,
     manifest: (id) => folders.get(id) ?? null,
+    status: (id) => folders.has(id) ? 'ok' : 'missing',
     place(id, table) {
       const m = library.get(id)
       if (!m) return null

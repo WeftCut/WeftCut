@@ -18,7 +18,10 @@ import { DEFAULT_CAPTION_FONT_FAMILY } from '../../shared/fonts'
 import { EDIT_TRACE_ARG, EDIT_TRACE_PREFIX } from '../../shared/editTrace'
 import { applyDerivativesEvent } from './jobs-writeback'
 import { mediaItemTemplate } from './mutations/media'
-import { ExportJobs } from '../exportJobs'
+import { ExportJobError, ExportJobs } from '../exportJobs'
+import { normalize } from '../motif/motifPackage'
+import { ProjectMotifStore } from '../motif/projectStore'
+import { MotifResolver } from '../motif/resolver'
 import { autosaveMaxWaitMs } from './autosave'
 import { rootComposition } from './model'
 import { errno } from './__tests__/fixtures/memAtomicIo'
@@ -1481,5 +1484,70 @@ describe('createTsActorHost — persistence-route integration', () => {
     expect(got.length).toBe(1)
     expect(got[0]!.name).toBe('b')
     host.stop()
+  })
+
+  describe('createTsActorHost — project Motifs', () => {
+    const page = (name: string, body: string) => Buffer.from(composeMotifHtml({ id: 'lower', name, version: 1, size: [10, 10], default_duration_s: 1, props_schema: {} },
+      `<html><head></head><body><script>motif.define({frame(t){ /* ${body} */ }})</script></body></html>`))
+
+    /** A host whose open project's Motifs are in a temp folder, with library
+     *  Motif `lower`; `busy` refuses writes as an export does, and `exportEnds`
+     *  plays an export's end. */
+    function motifHost() {
+      const fixture = makeInMemoryDeps()
+      const root = mkdtempSync(nodePath.join(tmpdir(), 'host-project-motifs-'))
+      const motifStore = new UserMotifStore(nodePath.join(root, 'library'))
+      motifStore.addVersion('lower', 1, normalize([{ path: 'index.html', bytes: page('Lower', 'v1') }], 'lower', 1).files)
+      const project = new ProjectMotifStore(nodePath.join(root, 'Film'), { revisions: motifStore.revisions })
+      const motifResolver = new MotifResolver(motifStore, [])
+      motifResolver.setProject(project)
+      let busy = false
+      const idle: Array<() => void> = []
+      const exportJobs = {
+        assertWritable: () => { if (busy) throw new ExportJobError('export_busy', 'An export is active') },
+        onIdle: (listener: () => void) => { idle.push(listener); return () => {} },
+        workspaceSettled: () => {},
+      } as unknown as ExportJobs
+      const host = createTsActorHost({ ...fixture.deps, motifStore, motifBuiltins: [], motifResolver, exportJobs })
+      return {
+        ...fixture, host, project, root,
+        setBusy: (value: boolean) => { busy = value },
+        exportEnds: () => { busy = false; for (const listener of idle) listener() },
+        told: () => fixture.sent.filter((s) => s.event === 'motifs:changed').length,
+        close: () => { host.stop(); rmSync(root, { recursive: true, force: true }) },
+      }
+    }
+
+    it('tells the renderer the catalog changed with each commit that changes the Motif table', async () => {
+      const m = motifHost()
+      m.host.start()
+      try {
+        const before = m.told()
+        const r = m.host.actor.mcpCall('add_layers', JSON.stringify({ layers: [{ t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'motif', motif_id: 'lower' } }] }))
+        expect(r.ok).toBe(true)
+        // The placing commit: the renderer re-pulls its catalog and finds `lower`.
+        expect(m.told()).toBe(before + 1)
+        expect(m.host.actor.dispatch('undo', {}).ok).toBe(true)
+        expect(m.told()).toBe(before + 2)
+        // A commit that leaves the table as it is tells nothing.
+        await m.host.handleInvoke('add_marker', { tUs: 0 })
+        expect(m.told()).toBe(before + 2)
+      } finally { m.close() }
+    })
+
+    it('records a Motif folder edited during an export once the export ends', () => {
+      const m = motifHost()
+      m.host.start()
+      try {
+        expect(m.host.actor.command('add_motif', { motifId: 'lower', tStartUs: 0 }).ok).toBe(true)
+        writeFileSync(nodePath.join(m.project.folder('lower'), 'index.html'), page('Lower', 'edited'))
+        const edited = m.project.status('lower')
+        m.setBusy(true)
+        m.host.motifFolderChanged('lower', edited)
+        expect(m.host.actor.snapshot().motifs.lower!.revision).not.toBe(edited.revision)
+        m.exportEnds()
+        expect(m.host.actor.snapshot().motifs.lower!.revision).toBe(edited.revision)
+      } finally { m.close() }
+    })
   })
 })

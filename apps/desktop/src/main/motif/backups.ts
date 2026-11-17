@@ -1,10 +1,12 @@
 // Revisions of a project's Motifs kept under `<project>/Backups/motifs/`, so
 // a folder can be put back as a revision the project recorded (undo, "update
 // the project copy"). Content-addressed: `.blobs/<sha256>` holds each file's
-// bytes once, `<id>/<revision>.json` maps a revision's paths to them. Owns
-// the backup folder; when to back up, restore or collect is the caller's.
+// bytes once, `<id>/<revision>.json` maps a revision's paths to them. A folder
+// whose files make no package, which no revision can hold, is moved whole to
+// `unfinished/` before the app replaces it. Owns the backup folder; when to
+// back up, restore or collect is the caller's.
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { motifFileSegments, type MotifFile } from './packageFiles'
 import { replacePackage } from './motifPackage'
@@ -15,6 +17,10 @@ export const MOTIF_BACKUPS_DIR = path.join('Backups', 'motifs')
 /** Dot-named: a Motif id never starts with a dot, so no Motif's records can
  *  take this folder. */
 const BLOBS_DIR = '.blobs'
+/** Where a replaced folder's unfinished files are kept, for a person to find.
+ *  Not dot-named, so a Motif `unfinished` shares it with its records: `gc`
+ *  removes no folder, so neither touches the other's entries. */
+export const UNFINISHED_DIR = 'unfinished'
 
 const REVISION = /^[0-9a-f]{64}$/
 
@@ -32,8 +38,14 @@ export class MotifBackups {
     this.motifs = path.join(projectDir, PROJECT_MOTIFS_DIR)
   }
 
-  private recordFile(id: string, revision: string): string {
+  /** `id`, checked to name one folder. */
+  private id(id: string): string {
     if (motifFileSegments(id)?.length !== 1 || id.startsWith('.')) throw new Error(`Invalid Motif id: ${JSON.stringify(id)}`)
+    return id
+  }
+
+  private recordFile(id: string, revision: string): string {
+    this.id(id)
     if (!REVISION.test(revision)) throw new Error(`Invalid Motif revision: ${revision}`)
     return path.join(this.root, id, `${revision}.json`)
   }
@@ -91,6 +103,28 @@ export class MotifBackups {
     replacePackage(path.join(this.motifs, id), files)
   }
 
+  /** Moves `id`'s folder under `unfinished/` as `<id>-<UTC time>` and
+   *  answers where it went. Nothing is ever removed from there. */
+  setAside(id: string): string {
+    this.id(id)
+    // The ISO time with `:` and `.` as `-`: Windows refuses `:` in a name.
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const parent = path.join(this.root, UNFINISHED_DIR)
+    mkdirSync(parent, { recursive: true })
+    let aside = path.join(parent, `${id}-${stamp}`)
+    for (let n = 2; existsSync(aside); n++) aside = path.join(parent, `${id}-${stamp}-${n}`)
+    renameSync(path.join(this.motifs, id), aside)
+    return aside
+  }
+
+  /** Puts a folder `setAside` moved back as `id`'s, replacing what the
+   *  folder holds now. */
+  putBack(id: string, aside: string): void {
+    const folder = path.join(this.motifs, this.id(id))
+    rmSync(folder, { recursive: true, force: true })
+    renameSync(aside, folder)
+  }
+
   /** Removes every backed-up revision not in `keep` (pairs of id and
    *  revision), then every blob no kept revision names. A kept record that
    *  cannot be read leaves every blob in place. */
@@ -105,6 +139,8 @@ export class MotifBackups {
       try { names = readdirSync(path.join(this.root, id)) } catch { continue }
       for (const name of names) {
         const file = path.join(this.root, id, name)
+        // `unfinished/` holds folders kept for a person, never collected.
+        try { if (lstatSync(file).isDirectory()) continue } catch { continue }
         const revision = name.endsWith('.json') ? name.slice(0, -'.json'.length) : ''
         if (!kept.has(`${id}/${revision}`)) { rmSync(file, { force: true }); continue }
         try {

@@ -109,6 +109,7 @@ export class ExportJobs {
   private active?: Entry;
   private ready?: { token: string; session: string };
   private idleWaiters = new Set<() => void>();
+  private idleListeners = new Set<() => void>();
   private stopping = false;
   private stills = new Map<string, { token: string; resolve: (v: StillsResult) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   constructor(private deps: Deps) { }
@@ -146,6 +147,12 @@ export class ExportJobs {
     else pending.resolve({ frames: p.frames ?? [], ...(p.sheet ? { sheet: p.sheet } : {}) });
   }
   isActive() { return !!this.active; }
+  /** Hears each end of the active export, when edits are taken again;
+   *  answers the unsubscribe. */
+  onIdle(listener: () => void): () => void {
+    this.idleListeners.add(listener);
+    return () => { this.idleListeners.delete(listener); };
+  }
   assertWritable() {
     if (this.active) throw new ExportJobError('export_busy', 'An export is active; finish or discard it before editing or switching projects', this.status());
   }
@@ -431,7 +438,10 @@ export class ExportJobs {
       j.view.phase = j.view.state;
       if (message && !j.published) j.view.error = { ...fault, code, message };
       else delete j.view.error;
-      if (this.active === j) { this.active = undefined; this.idleWaiters.forEach(resolve => resolve()); this.idleWaiters.clear(); }
+      if (this.active === j) {
+        this.active = undefined; this.idleWaiters.forEach(resolve => resolve()); this.idleWaiters.clear();
+        for (const listener of [...this.idleListeners]) { try { listener(); } catch (error) { console.warn('[exportJobs] idle listener failed', error); } }
+      }
       this.notify(j);
     })().catch(error => {
       j.finishing = undefined;

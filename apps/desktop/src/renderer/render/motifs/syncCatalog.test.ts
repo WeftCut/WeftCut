@@ -4,7 +4,8 @@ const bridge = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@/bridge/ipc", () => ({ invoke: (cmd: string, args?: unknown) => bridge.invoke(cmd, args) }));
 vi.mock("@/bridge/events", () => ({ listen: vi.fn(async () => () => {}) }));
 
-import { clearProjectMotifs, syncProjectMotifsFromBackend } from "./syncCatalog";
+import { listen } from "@/bridge/events";
+import { clearProjectMotifs, installMotifsChangedListener, syncProjectMotifsFromBackend } from "./syncCatalog";
 import { getMotif, motifUnavailable, setProjectMotifs } from "./catalog";
 
 const manifest = (id: string, size: [number, number]) =>
@@ -23,6 +24,17 @@ describe("syncProjectMotifsFromBackend", () => {
     expect(getMotif("lower")?.manifest.size).toEqual([320, 240]);
     expect(getMotif("gone")).toBeNull();
     expect(motifUnavailable("gone")).toMatchObject({ status: "missing", diagnostic: "Motifs/gone/ is missing" });
+  });
+
+  it("re-pulls on motifs:changed, so a Motif placed by the commit that sent it resolves", async () => {
+    await installMotifsChangedListener();
+    const onChanged = vi.mocked(listen).mock.calls.at(-1)![1] as () => void;
+    bridge.invoke.mockResolvedValue([
+      { ...manifest("lower", [320, 240]), group: "project", uid: "u1", status: "ok", state: "in_sync", from: null, path: "/home/u/Film/Motifs/lower", revision: "r" },
+    ]);
+    expect(getMotif("lower")).toBeNull();
+    onChanged();
+    await vi.waitFor(() => expect(getMotif("lower")).not.toBeNull());
   });
 
   it("keeps the last catalog when the IPC fails", async () => {

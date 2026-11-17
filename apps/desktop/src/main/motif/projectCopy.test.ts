@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { MotifBackups } from './backups'
 import { copyProjectMotifs } from './projectCopy'
 
 const roots: string[] = []
@@ -50,5 +51,46 @@ describe('copyProjectMotifs', () => {
     write(dir, 'Motifs/title-card/index.html', '<p>title</p>')
     copyProjectMotifs(dir, dir, ['title-card'])
     expect(readFileSync(path.join(dir, 'Motifs/title-card/index.html'), 'utf8')).toBe('<p>title</p>')
+  })
+})
+
+describe('copyProjectMotifs onto the same folder under another name', () => {
+  it('leaves the folders alone when the target is a link to the original', () => {
+    const dir = project()
+    write(dir, 'Motifs/title-card/index.html', '<p>title</p>')
+    const link = path.join(project(), 'Film')
+    symlinkSync(dir, link, 'junction')
+    const folder = statSync(path.join(dir, 'Motifs/title-card')).ino
+    copyProjectMotifs(dir, link, ['title-card'])
+    expect(readFileSync(path.join(dir, 'Motifs/title-card/index.html'), 'utf8')).toBe('<p>title</p>')
+    // Not copied over itself: the folder is the one that was there.
+    expect(statSync(path.join(dir, 'Motifs/title-card')).ino).toBe(folder)
+  })
+})
+
+// Unreadable by the owner only where the owner is not exempt from modes.
+const modesBind = process.platform !== 'win32' && process.getuid?.() !== 0
+
+describe('a copy that fails', () => {
+  it.runIf(modesBind)('keeps the folder the target held', () => {
+    const from = project(), to = project()
+    write(from, 'Motifs/title-card/index.html', '<p>new</p>')
+    write(from, 'Motifs/title-card/locked.js', 'secret()')
+    chmodSync(path.join(from, 'Motifs/title-card/locked.js'), 0o000)
+    write(to, 'Motifs/title-card/index.html', '<p>old</p>')
+    expect(() => copyProjectMotifs(from, to, ['title-card'])).toThrow()
+    expect(readFileSync(path.join(to, 'Motifs/title-card/index.html'), 'utf8')).toBe('<p>old</p>')
+  })
+})
+
+describe('the Motif backups', () => {
+  it('go with the folders, so undo in the copy can put a folder back', () => {
+    const from = project(), to = project()
+    write(from, 'Motifs/title-card/index.html', '<p>title</p>')
+    const revision = 'a'.repeat(64)
+    new MotifBackups(from).backup('title-card', [{ path: 'index.html', bytes: Buffer.from('<p>before</p>') }], revision)
+    copyProjectMotifs(from, to, ['title-card'])
+    new MotifBackups(to).restore('title-card', revision)
+    expect(readFileSync(path.join(to, 'Motifs/title-card/index.html'), 'utf8')).toBe('<p>before</p>')
   })
 })

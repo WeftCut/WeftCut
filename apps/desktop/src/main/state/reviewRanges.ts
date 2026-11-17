@@ -9,6 +9,7 @@
 import type { Change, ChangeClass, ChangedRange, EntityKey } from '../../shared/review'
 import { entityKey } from '../../shared/review'
 import { keyTimeUs } from '../../shared/keyframe'
+import { motifEntry } from '../../shared/motifs/projectMotifs'
 import { localAtContent } from '../../renderer/layerTiming'
 import { addTime, approximateTime, exactTime, ZERO_TIME } from '../../renderer/timeMapping'
 import { playbackValues } from '../agent/playbackValues'
@@ -52,7 +53,7 @@ function itemKey(project: Project, l: Layer): string {
   switch (p.kind) {
     case 'VideoClip': case 'Audio': case 'ImageOverlay': return `${p.kind}:${p.media}`
     case 'CompositionRef': return `${p.kind}:${p.composition}`
-    case 'Motif': return `${p.kind}:${p.motif_id}@${project.motifs[p.motif_id]?.revision ?? ''}`
+    case 'Motif': return `${p.kind}:${p.motif_id}@${motifEntry(project.motifs, p.motif_id)?.revision ?? ''}`
     case 'Text': case 'Color': return p.kind
   }
 }
@@ -102,7 +103,7 @@ const kept = new WeakMap<Composition, Kept>()
 /** The table revisions of the Motifs `c`'s layers play, as one string. */
 function motifRevisions(p: Project, c: Composition): string {
   let out = ''
-  for (const t of c.tracks) for (const l of t.layers) if (l.params.kind === 'Motif') out += `${l.params.motif_id}@${p.motifs[l.params.motif_id]?.revision ?? ''}|`
+  for (const t of c.tracks) for (const l of t.layers) if (l.params.kind === 'Motif') out += `${l.params.motif_id}@${motifEntry(p.motifs, l.params.motif_id)?.revision ?? ''}|`
   return out
 }
 

@@ -1,6 +1,7 @@
 // Internal entity comparison shared by history and diff.
 import type { AudioRole, Composition, Layer, Link, Marker, MediaItem, Project, Track, TrackRole, Transition, Uuid } from './model'
 import { entityKey, type EntityKey, type EntityKind } from '../../shared/review'
+import { motifEntry } from '../../shared/motifs/projectMotifs'
 
 // ── Entities ──────────────────────────────────────────────────────────────────
 
@@ -64,7 +65,7 @@ function projectEntities(p: Project): EntityValue[] {
 /** Whether Motif `id` plays differently: both sides hold it, at different
  *  revisions. */
 export function motifChanged(before: Project, after: Project, id: string): boolean {
-  const a = before.motifs[id], b = after.motifs[id]
+  const a = motifEntry(before.motifs, id), b = motifEntry(after.motifs, id)
   return a !== undefined && b !== undefined && a.revision !== b.revision
 }
 /** Every compared entity of `p`, by key. Memoized on project identity. */

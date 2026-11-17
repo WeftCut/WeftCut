@@ -49,8 +49,10 @@ too, the link an absolute path.
   plays). An invalid folder is status only, never recorded.
 - **Recorded revisions are backed up** in `Backups/motifs/`, content-addressed.
   Undo, redo and a checkpoint restore put each folder back to the revision the
-  restored state records; a folder holding an unfinished edit is left alone.
-  Updating the project copy from the library is one undo step.
+  restored state records when it holds the one recorded before; a folder
+  holding any other edit is left alone, and recorded when it makes a package.
+  Updating the project copy from the library is one undo step; files there
+  that make no package are first moved to `Backups/motifs/unfinished/`.
 - **Missing is visible.** A Motif that cannot render is listed in
   `project://session`, draws an error placeholder in the picture, and export
   refuses `MotifUnavailable` naming it while a layer uses it.

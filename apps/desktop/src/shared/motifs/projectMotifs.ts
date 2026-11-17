@@ -15,6 +15,13 @@ export interface ProjectMotifEntry { uid: string; revision: string | null; from:
 /** Keyed by id, which is also the entry's folder name under `Motifs/`. */
 export type ProjectMotifs = Record<string, ProjectMotifEntry>
 
+/** The entry `table` holds for `id`; undefined when it holds none, whatever
+ *  `id` names on `Object.prototype`. Every lookup by an id from outside the
+ *  table goes through it. */
+export function motifEntry(table: Readonly<ProjectMotifs>, id: string): ProjectMotifEntry | undefined {
+  return Object.hasOwn(table, id) ? table[id] : undefined
+}
+
 /** Whether a project Motif can render: `missing` when its folder is gone,
  *  `invalid` when its files make no package. Derived from the folder, never
  *  stored. */
@@ -39,10 +46,23 @@ export function isNewMotifId(id: string): boolean {
 /** Whether `id` can key the project's Motif table: a folder name under
  *  `Motifs/` on every system and the `motif://` host that serves it. URL
  *  parsing lowercases a host and `--` marks the library and proposal hosts,
- *  so a key holds neither. */
+ *  so a key holds neither. A name `Object.prototype` answers (`constructor`,
+ *  `__proto__`) is no key: the table is a plain object.
+ *
+ *  LANDMINE: the v5 → v6 step in `main/state/migrate.ts` keeps a frozen twin
+ *  of this and of `projectMotifKey` (it may import nothing); change both. */
 export function isProjectMotifKey(id: string): boolean {
   return id.length <= MOTIF_HOST_LABEL_CHARS && /^[a-z0-9_]+(?:-[a-z0-9_]+)*$/.test(id)
-    && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(id)
+    && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(id) && !(id in Object.prototype) && id !== 'prototype'
+}
+
+/** The table key a library Motif `id` is placed under: `id` itself when it
+ *  is one, else its letters and digits lowercased and joined by single
+ *  dashes, `motif` when none are left. */
+export function projectMotifKey(id: string): string {
+  if (isProjectMotifKey(id)) return id
+  const key = id.toLowerCase().replace(/[^a-z0-9_]+/g, '-').slice(0, MOTIF_HOST_LABEL_CHARS).replace(/^-+|-+$/g, '')
+  return isProjectMotifKey(key) ? key : 'motif'
 }
 
 /** A host names a project Motif by its bare id; the other scopes add a

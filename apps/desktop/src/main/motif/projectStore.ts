@@ -6,7 +6,7 @@ import { lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, wr
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { assignUniqueId, builtinLineage, idFromName, parseManifestIsland, type Manifest } from '../../shared/motifs/catalog'
-import { collisionId, isNewMotifId, isProjectMotifKey, type MotifStatus, type ProjectMotifEntry, type ProjectMotifs } from '../../shared/motifs/projectMotifs'
+import { collisionId, isNewMotifId, isProjectMotifKey, projectMotifKey, type MotifStatus, type ProjectMotifEntry, type ProjectMotifs } from '../../shared/motifs/projectMotifs'
 import { motifRevision, type BuiltinMotif } from './authoring'
 import { readMotifZip } from './archive'
 import { newLineage } from './lineage'
@@ -220,8 +220,9 @@ export class ProjectMotifStore {
 
   /** Copies a library or built-in package into the project. A lineage the
    *  table holds is placed again under its id: its folder is copied only when
-   *  gone. Another lineage on the package's id, or a folder holding other
-   *  files, sends the copy to `collisionId`. */
+   *  gone. Otherwise the copy is keyed by the library id (`projectMotifKey`,
+   *  as the v5 upgrade keys one); another lineage on that key, or a folder
+   *  holding other files, sends it to `collisionId`. */
   place(pkg: LibraryPackage, table: Readonly<ProjectMotifs>): Placement {
     const from = { uid: pkg.uid, version: pkg.version, revision: pkg.revision }
     const held = Object.entries(table).find(([, entry]) => entry.uid === pkg.uid)
@@ -232,8 +233,9 @@ export class ProjectMotifStore {
       return { id, entry: { ...entry, revision }, copied: true }
     }
     const free = (id: string) => !Object.hasOwn(table, id) && (!this.present(id) || this.status(id).revision === pkg.revision)
-    const id = [pkg.id, collisionId(pkg.id, pkg.uid)].find(free)
-    if (!id) throw new Error(`Motif id '${collisionId(pkg.id, pkg.uid)}' is taken in this project`)
+    const key = projectMotifKey(pkg.id)
+    const id = [key, collisionId(key, pkg.uid)].find(free)
+    if (!id) throw new Error(`Motif id '${collisionId(key, pkg.uid)}' is taken in this project`)
     const copied = !this.present(id)
     const revision = this.materialize(id, pkg.files, 'placed')
     return { id, entry: { uid: pkg.uid, revision, from }, copied }

@@ -366,3 +366,14 @@ it('snapshots a selected preset before awaits and replays the job after that pre
   expect(await s.jobs.start(request)).toMatchObject({ job_id: job.job_id, state: 'completed', settings: { customBitrate: 7_000_000 } });
   await expect(s.jobs.start({ ...request, preset_id: 'builtin:hd' })).rejects.toMatchObject({ code: 'request_id_conflict' });
 });
+
+it('tells its idle listeners when the active export ends, once edits are taken again', async () => {
+  const s = await setup(); s.ready();
+  const writable: boolean[] = [];
+  s.jobs.onIdle(() => { try { s.jobs.assertWritable(); writable.push(true); } catch { writable.push(false); } });
+  const job = await s.jobs.start({});
+  await s.jobs.update(job.job_id, 'renderer', { state: 'rendering', progress: 0.1 });
+  expect(writable).toEqual([]);
+  await s.jobs.cancel(job.job_id, USER); await s.jobs.update(job.job_id, 'renderer', { state: 'cancelled' });
+  expect(writable).toEqual([true]);
+});

@@ -61,6 +61,13 @@ export function spawnMotifWatcher(root: string, onChange: () => void): MotifWatc
 /** Hears a project Motif whose folder changed, with what it now holds. */
 export type ProjectMotifListener = (id: string, state: MotifState) => void
 
+export interface ProjectMotifWatcher extends MotifWatcher {
+  /** Forgets the state last told of `id`: its next change is told even when
+   *  it ends in that same state, for a listener that could not act on it or
+   *  has since changed the folder itself. */
+  forget(id: string): void
+}
+
 /** Watches `<project>/Motifs/` recursively and, once per quiet window, tells
  *  `onChanged` of each Motif whose folder an event touched, its state read
  *  through `project` (which records its new revision). A Motif is told again
@@ -68,7 +75,7 @@ export type ProjectMotifListener = (id: string, state: MotifState) => void
  *  `Motifs/` is watched for the folder to appear; a Motif written before the
  *  watch attached is told then. The app's own writes are told like any other:
  *  the listener compares against what it recorded. */
-export function watchProjectMotifs(project: ProjectMotifStore, onChanged: ProjectMotifListener): MotifWatcher {
+export function watchProjectMotifs(project: ProjectMotifStore, onChanged: ProjectMotifListener): ProjectMotifWatcher {
   const root = project.root()
   const pending = new Set<string>()
   const told = new Map<string, string>()
@@ -128,6 +135,7 @@ export function watchProjectMotifs(project: ProjectMotifStore, onChanged: Projec
   } catch { /* the project folder is gone */ }
   attach(false)
   return {
+    forget(id) { told.delete(id) },
     close() {
       closed = true
       deb.cancel()

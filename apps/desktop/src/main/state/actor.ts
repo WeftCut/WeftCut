@@ -51,7 +51,7 @@ import type { MediaItem } from './model'
 import { applyParamsPatch, applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
 import { applySetScaleLinked, copyTrackFreshIds, enforceScaleLinkInvariant, transformOf } from './mutations/scaleLink'
 import type { Manifest, MotifManifests } from '../../shared/motifs/catalog'
-import type { ProjectMotifEntry, ProjectMotifs } from '../../shared/motifs/projectMotifs'
+import { isProjectMotifKey, motifEntry, type MotifStatus, type ProjectMotifEntry, type ProjectMotifs } from '../../shared/motifs/projectMotifs'
 import { applyAddCaptionTrack, applyRestyleCaptions, captionTracks, type Cue, type CaptionStylePatch, applyMergeCaptions, type MergeCaptionsResult } from './mutations/captions'
 import { applyRebindMotif, motifLayerParams } from './mutations/motif'
 import { canonicalizeProps, resolveMotifMaxDurUs, resolveMotifTEndUs, MotifPropError } from '../../shared/motifs/catalog'
@@ -85,6 +85,8 @@ export interface ProjectMotifAccess {
   /** The manifest `Motifs/<id>/` declares; null when the folder makes no
    *  package. */
   manifest(id: string): Manifest | null
+  /** Whether `Motifs/<id>/` is there and makes a package. */
+  status(id: string): MotifStatus
   /** Library Motif `id` (a built-in included) copied into `Motifs/` for a
    *  project whose table is `table`, before the commit that records it: the
    *  id it is placed under (a lineage the table holds keeps its id, another
@@ -281,7 +283,11 @@ export function createActor(opts: ActorOptions): ActorHandle {
     const table = current().motifs
     if (!fromLibrary && Object.hasOwn(table, requested)) {
       const manifest = opts.motifs?.manifest(requested) ?? null
-      if (!manifest) throw new McpArgError(`${field}: Motif '${requested}' is in this project but Motifs/${requested}/ holds no package; restore its files, or place the library's copy with from_library: true`, field)
+      // `from_library` copies only into a folder that is gone: one holding
+      // files is never written over.
+      if (!manifest) throw new McpArgError(opts.motifs?.status(requested) === 'invalid'
+        ? `${field}: Motif '${requested}' is in this project but the files in Motifs/${requested}/ make no package; fix them (read_motif lists them and says what is wrong), or have the user take the library's copy with Restore from library in the Motifs panel`
+        : `${field}: Motif '${requested}' is in this project but Motifs/${requested}/ is gone; restore its files, or place the library's copy with from_library: true`, field)
       return { id: requested, manifest, entry: null }
     }
     let placed: ReturnType<ProjectMotifAccess['place']>
@@ -1650,7 +1656,10 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // folder the host has already written: these record what it holds.
         case 'set_project_motif': {
           const id = parseStr(a.motif_id, 'motif_id')
-          const held = current().motifs[id]
+          // Before the draft is written: `__proto__` would set its prototype,
+          // a change validation cannot see.
+          if (!isProjectMotifKey(id)) throw new CommandFailure({ error: 'ValidationFailed', detail: { rule: 'InvalidMotifKey', motif_id: id } })
+          const held = motifEntry(current().motifs, id)
           const entry: ProjectMotifEntry = {
             uid: held && a.uid === undefined ? held.uid : parseStr(a.uid, 'uid'),
             revision: parseRevision(a.revision, 'revision'),
@@ -1672,7 +1681,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         // new props schema (`buildRebindUpdates`), in one commit.
         case 'update_project_motif': {
           const id = parseStr(a.motif_id, 'motif_id')
-          const held = current().motifs[id]
+          const held = motifEntry(current().motifs, id)
           if (!held) throw new CommandFailure({ error: 'MotifNotFound', motif_id: id })
           const entry: ProjectMotifEntry = { uid: held.uid, revision: parseRevision(a.revision, 'revision'), from: parseMotifSource(a.from, 'from') }
           const updates = (a.updates ?? []) as MotifRebindEntry[]

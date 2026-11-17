@@ -28,7 +28,7 @@ import { recoverInterruptedImports } from './importRecovery'
 import { captureImportSession, createMediaImporter, type MediaImporter } from './mediaImport'
 import { createPoolFiles, type PoolFiles, type PoolFilesFs } from './poolFiles'
 import { BUILTIN_MANIFESTS, type Manifest } from '../../shared/motifs/catalog'
-import { libraryHost, type UnavailableMotif } from '../../shared/motifs/projectMotifs'
+import { libraryHost, type ProjectMotifs, type UnavailableMotif } from '../../shared/motifs/projectMotifs'
 import type { UserMotifStore } from '../motif/store'
 import { runMotifTool } from '../motif/motifTools'
 import { legacyMigration } from '../motif/legacyResolve'
@@ -116,6 +116,10 @@ export interface TsActorHostDeps {
    *  `project()`, the one store whose revision listeners hear everything.
    *  Absent (tests) → no Motif folder is readable. */
   motifResolver?: MotifResolver
+  /** Makes the open project's `Motifs/` watcher tell Motif `id`'s next
+   *  change even when it ends in the state last told
+   *  (`ProjectMotifWatcher.forget`). Absent (tests) → nothing watches. */
+  rewatchProjectMotif?: (id: string) => void
   /** On-disk user Motif store (the TS authoring/read/install surface).
    *  Optional → guard in runMotif throws if absent. Tests that don't exercise
    *  motif tools omit this so they don't need a real temp-dir store. */
@@ -268,6 +272,12 @@ export function mapChangeEvent(e: ChangeEvent): { op_id: string; actor_kind: 'us
   return { op_id: e.op_id, actor_kind, client, summary: e.summary, timestamp: e.timestamp, affected: e.affected }
 }
 
+/** Whether two Motif tables hold the same entries. */
+function sameMotifTable(a: Readonly<ProjectMotifs>, b: Readonly<ProjectMotifs>): boolean {
+  const ids = Object.keys(a)
+  return ids.length === Object.keys(b).length && ids.every((id) => Object.hasOwn(b, id) && JSON.stringify(a[id]) === JSON.stringify(b[id]))
+}
+
 /** The pool as `resources/list` names it (`mediaResourceDefs`): ids, labels
  *  and paths, so a change to any of them is a change to the list. */
 function mediaListKey(pool: Record<string, MediaItem>): string {
@@ -324,6 +334,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   const motifRecords = new ProjectMotifRecords({
     actor, project: projectMotifs,
     libraryOfLineage: (uid) => store ? libraryPackageOfLineage(store, builtins, uid) : null,
+    rewatch: (id) => deps.rewatchProjectMotif?.(id),
     warn: (message, details) => {
       try { deps.emitLog?.({ level: 'warn', category: { kind: 'Project' }, source: { kind: 'System' }, message, details: { kind: 'ProjectMotifs', ...details } }) }
       catch (err) { console.warn('[ts-actor-host] emitLog failed (project Motifs)', err) }
@@ -586,7 +597,10 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     })
     const settled = next.finally(() => {
       workspaceTransitions--
-      if (workspaceTransitions === 0) deps.exportJobs?.workspaceSettled()
+      if (workspaceTransitions === 0) {
+        deps.exportJobs?.workspaceSettled()
+        motifRecords.retry()
+      }
     })
     persistenceTail = settled.catch(() => {})
     return settled
@@ -661,9 +675,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     if (!["list_motifs", "read_motif", "list_motif_proposals", "list_motif_versions"].includes(name)) deps.exportJobs?.assertWritable()
     if (name === 'update_project_motif') {
       if (typeof args.motif_id !== 'string') throw new Error('motif_id is required')
-      const updated = motifRecords.updateFromLibrary(args.motif_id)
-      deps.send('motifs:changed', {})
-      return updated
+      return motifRecords.updateFromLibrary(args.motif_id)
     }
     if (!deps.motifStore) throw new Error('motifTool: motifStore not configured')
     return runMotifTool(name, args, {
@@ -711,6 +723,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
 
   // What `resources/list` says of the pool: each file's id and name.
   let listedMedia = ''
+  // The Motif table the renderer's catalog was last told of.
+  let toldMotifs = actor.snapshot().motifs
   function emitChange(e: ChangeEvent): void {
     const traceId = currentEditTrace()?.id
     if (replacing) {
@@ -721,6 +735,13 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     if (listed !== listedMedia) {
       listedMedia = listed
       if (emitting) deps.mcpResourcesChanged?.()
+    }
+    // A Motif placed, recorded, taken back by undo or removed: the catalog
+    // re-pulls its rows, or a layer on it cannot draw or export.
+    const motifs = e.new_snapshot.motifs
+    if (motifs !== toldMotifs && !sameMotifTable(motifs, toldMotifs)) {
+      toldMotifs = motifs
+      if (emitting) deps.send('motifs:changed', {})
     }
   }
 
@@ -1067,6 +1088,8 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   // Observation belongs to the host lifetime, not to renderer connectivity.
   // Stopping outbound notifications must not reset or lose the version clock.
   actor.subscribe(emitChange)
+  // A Motif folder edit the export refused to record is recorded after it.
+  deps.exportJobs?.onIdle(() => motifRecords.retry())
   return {
     actor,
     agent,

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { composeMotifHtml, type Manifest } from '../../shared/motifs/catalog'
@@ -19,16 +19,29 @@ let projectDir: string
 let actor: ActorHandle
 let records: ProjectMotifRecords
 let seen: Array<[string, string, RevisionCause]>
+let warned: string[]
+let rewatched: string[]
+/** While set, the project refuses every write, as during an export. */
+let busy: boolean
 beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), 'project-records-'))
   library = new UserMotifStore(path.join(root, 'library'))
   projectDir = path.join(root, 'Film')
   project = new ProjectMotifStore(projectDir)
   seen = []
+  warned = []
+  rewatched = []
+  busy = false
   project.onRevisionSeen((id, revision, cause) => seen.push([id, revision, cause]))
   const idGen = seededGen()
-  actor = createActor({ initial: blankProject(idGen, 'Film'), idGen, motifs: projectMotifAccess(() => project, id => libraryPackage(library, [], id)) })
-  records = new ProjectMotifRecords({ actor, project: () => project, libraryOfLineage: uid => libraryPackageOfLineage(library, [], uid) })
+  actor = createActor({
+    initial: blankProject(idGen, 'Film'), idGen, motifs: projectMotifAccess(() => project, id => libraryPackage(library, [], id)),
+    assertWritable: () => { if (busy) throw new Error('An export is active') },
+  })
+  records = new ProjectMotifRecords({
+    actor, project: () => project, libraryOfLineage: uid => libraryPackageOfLineage(library, [], uid),
+    warn: message => warned.push(message), rewatch: id => rewatched.push(id),
+  })
 })
 afterEach(() => { rmSync(root, { recursive: true, force: true }) })
 
@@ -184,5 +197,156 @@ describe('opening a project', () => {
     expect(seen.filter(([, , cause]) => cause === 'opened')).toEqual([['lower', entries().lower!.revision, 'opened']])
     expect(seen.some(([, , cause]) => cause === 'edited-while-open')).toBe(false)
     expect(existsSync(folder('lower'))).toBe(true)
+  })
+})
+
+describe('a move through history', () => {
+  it('leaves a folder holding an edit not recorded yet, and records it', async () => {
+    install('lower', 'v1')
+    place('lower')
+    edit('lower', 'recorded')
+    records.folderChanged('lower', project.status('lower'))
+    // Written after the last record, before the watcher told it.
+    const unrecorded = edit('lower', 'not told yet')
+    const revision = project.status('lower').revision!
+    actor.dispatch('undo', {})
+    expect(pageOf('lower')).toBe(unrecorded)
+    expect(warned.some(m => m.includes("Motif 'lower' was not put back"))).toBe(true)
+    // Recorded once the undo's broadcast is over.
+    await Promise.resolve()
+    expect(entries().lower!.revision).toBe(revision)
+    expect(lastOp().actor).toEqual(FILE_EDITS)
+  })
+
+  it('makes the watcher tell the next change of each folder it puts back', () => {
+    install('lower', 'v1')
+    install('card', 'v1')
+    place('lower')
+    place('card')
+    edit('lower', 'edited')
+    records.folderChanged('lower', project.status('lower'))
+    actor.dispatch('undo', {})
+    // An agent writing the undone revision again lands on the state the
+    // watcher last told: unless forgotten, that write would go unrecorded.
+    expect(rewatched).toEqual(['lower'])
+  })
+
+  it('puts back every folder it can when one cannot be', () => {
+    install('card', 'v1')
+    install('lower', 'v1')
+    place('card')
+    place('lower')
+    const at = actor.historyStatus().cursor
+    const card = pageOf('card'), lower = pageOf('lower')
+    const placedCard = entries().card!.revision!
+    edit('card', 'edited')
+    records.folderChanged('card', project.status('card'))
+    edit('lower', 'edited')
+    records.folderChanged('lower', project.status('lower'))
+    // The card's placed revision can no longer be read back.
+    writeFileSync(path.join(projectDir, 'Backups', 'motifs', 'card', `${placedCard}.json`), 'damaged')
+    actor.dispatch('jump_to', { index: at })
+    expect(pageOf('card')).not.toBe(card)
+    expect(pageOf('lower')).toBe(lower)
+    expect(warned.some(m => m.includes("Motif 'card' could not be put back"))).toBe(true)
+  })
+})
+
+describe('an edit the project refuses to record', () => {
+  it('waits, is told again by the watcher, and is recorded once writes are taken', () => {
+    install('lower', 'v1')
+    place('lower')
+    const len = historyLen()
+    edit('lower', 'during export')
+    busy = true
+    records.folderChanged('lower', project.status('lower'))
+    expect(historyLen()).toBe(len)
+    expect(rewatched).toContain('lower')
+    busy = false
+    records.retry()
+    expect(historyLen()).toBe(len + 1)
+    expect(entries().lower!.revision).toBe(project.status('lower').revision)
+  })
+})
+
+describe('updating a folder whose files make no package', () => {
+  /** Leaves `lower`'s folder mid-edit: its page renamed, a note beside it. */
+  function breakFolder(): void {
+    renameSync(path.join(folder('lower'), 'index.html'), path.join(folder('lower'), 'index.old'))
+    writeFileSync(path.join(folder('lower'), 'notes.txt'), 'half done')
+  }
+
+  it('moves the unfinished files under Backups/motifs/unfinished and says where', () => {
+    install('lower', 'v1')
+    place('lower')
+    breakFolder()
+    install('lower', 'v2')
+    const updated = records.updateFromLibrary('lower')
+    expect(path.dirname(updated.unfinished!)).toBe(path.join(projectDir, 'Backups', 'motifs', 'unfinished'))
+    expect(path.basename(updated.unfinished!).startsWith('lower-')).toBe(true)
+    expect(readFileSync(path.join(updated.unfinished!, 'notes.txt'), 'utf8')).toBe('half done')
+    expect(existsSync(path.join(updated.unfinished!, 'index.old'))).toBe(true)
+    expect(project.status('lower')).toMatchObject({ status: 'ok', revision: updated.revision })
+    expect(warned.some(m => m.includes(updated.unfinished!))).toBe(true)
+    // A later open collects backups, never what was set aside.
+    records.opened()
+    expect(existsSync(path.join(updated.unfinished!, 'notes.txt'))).toBe(true)
+  })
+
+  it('puts the unfinished files back when the update is refused', () => {
+    install('lower', 'v1')
+    place('lower')
+    breakFolder()
+    install('lower', 'v2')
+    busy = true
+    expect(() => records.updateFromLibrary('lower')).toThrow()
+    expect(readFileSync(path.join(folder('lower'), 'notes.txt'), 'utf8')).toBe('half done')
+    expect(existsSync(path.join(folder('lower'), 'index.old'))).toBe(true)
+    expect(existsSync(path.join(projectDir, 'Backups', 'motifs', 'unfinished'))
+      && readdirSync(path.join(projectDir, 'Backups', 'motifs', 'unfinished')).length).toBeFalsy()
+  })
+})
+
+describe('placing a Motif the project holds but cannot render', () => {
+  const refusal = () => {
+    const r = actor.command('add_motif', { motifId: 'lower', tStartUs: 0 })
+    if (r.ok) throw new Error('placed')
+    return JSON.stringify(r.error)
+  }
+
+  it('asks for the library copy only when the folder is gone', () => {
+    install('lower', 'v1')
+    place('lower')
+    rmSync(folder('lower'), { recursive: true })
+    expect(refusal()).toContain('from_library: true')
+  })
+
+  it('asks for the files fixed, or Restore from library, when they make no package', () => {
+    install('lower', 'v1')
+    place('lower')
+    renameSync(path.join(folder('lower'), 'index.html'), path.join(folder('lower'), 'index.old'))
+    expect(refusal()).not.toContain('from_library')
+    expect(refusal()).toContain('Restore from library')
+  })
+})
+
+describe('a library id that is no project key', () => {
+  it('is placed under the key the v5 upgrade would give it', () => {
+    install('Lower Third', 'v1')
+    place('Lower Third')
+    expect(Object.keys(entries())).toEqual(['lower-third'])
+    expect(project.status('lower-third').status).toBe('ok')
+  })
+})
+
+describe('an id Object.prototype answers', () => {
+  it('names no Motif of the table: its folder is never recorded', () => {
+    install('lower', 'v1')
+    place('lower')
+    cpSync(folder('lower'), folder('constructor'), { recursive: true })
+    const len = historyLen()
+    records.folderChanged('constructor', project.status('constructor'))
+    expect(historyLen()).toBe(len)
+    expect(Object.keys(entries())).toEqual(['lower'])
   })
 })

@@ -118,6 +118,24 @@ describe('opening a v5 project', () => {
     for (const id of ['countdown', 'sketch-draft']) expect(second.project.motifs[id]).toEqual(first.project.motifs[id])
   })
 
+  it('opened again unsaved after the library moved on, takes as source the version its kept folder holds', async () => {
+    const first = await open()
+    library.addVersion('lower', 2, normalize([{ path: 'index.html', bytes: page('Lower v2') }], 'lower', 2).files)
+    const second = await open()
+    expect(second.project.motifs.lower).toEqual(first.project.motifs.lower)
+    expect(second.project.motifs.lower!.from!.version).toBe(1)
+  })
+
+  it("records a draft's lineage only once its copy is made", () => {
+    const key = `${DRAFTS_DIR}/sketch-draft`
+    const { migration, placeMigratedMotifs } = legacyMigration(library, builtins)
+    const planned = migration(projectDir).legacyMotif!('sketch-draft')!
+    // A refused open stops here: the library's lineage record is unchanged.
+    expect(library.lineage.peek(key)).toBeNull()
+    const [copied] = placeMigratedMotifs(projectDir, [{ id: 'sketch-draft', revision: planned.revision }])
+    expect(copied!.uid).toBe(library.lineage.peek(key))
+  })
+
   it('opens when a copy fails, leaving that Motif missing and its folder untouched', async () => {
     mkdirSync(path.join(motifsDir(), 'lower'), { recursive: true })
     writeFileSync(path.join(motifsDir(), 'lower', 'readme.txt'), 'not a Motif')

@@ -343,7 +343,11 @@ export const STEPS: readonly MigrationStep[] = [{
     // lowercased and joined by single dashes, and their layers follow. A key
     // two ids come to takes the later one's lineage prefix, as an automatic
     // copy does. Ids already in key form go first, so none is displaced.
+    // LANDMINE: the frozen twin of `isProjectMotifKey` and `projectMotifKey`
+    // (shared/motifs/projectMotifs.ts), which placement keys by; a key one
+    // rejects fails validation, refusing the open. Change both.
     const isKey = (id: string) => id.length <= 63 && /^[a-z0-9_]+(?:-[a-z0-9_]+)*$/.test(id) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(id)
+      && !(id in Object.prototype) && id !== 'prototype'
     const keyFor = (id: string) => {
       if (isKey(id)) return id
       const key = id.toLowerCase().replace(/[^a-z0-9_]+/g, '-').slice(0, 63).replace(/^-+|-+$/g, '')

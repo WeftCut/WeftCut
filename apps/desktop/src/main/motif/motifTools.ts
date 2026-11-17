@@ -19,7 +19,7 @@ import type { ActorHandle } from '../state/actor'
 import type { Actor } from '../state/history'
 import { encodeMotifZip } from './archive'
 import type { BuiltinMotif } from './authoring'
-import { libraryRows, projectDirOf, projectRows, type MotifGroup } from './catalogRows'
+import { libraryIdDiagnostic, libraryRows, projectDirOf, projectRows, type MotifGroup } from './catalogRows'
 import { fileChanges } from './fileChanges'
 import { readMotifDirectory, type MotifFile } from './packageFiles'
 import { libraryPackage, type CreateSource, type ProjectMotifStore } from './projectStore'
@@ -142,8 +142,9 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
       let read: { manifest: Manifest | null; revision: string | null; files: () => MotifFile[]; file: (rel: string) => Buffer | null; extra: Record<string, unknown> }
       if (groupOf(a) === 'library') {
         const { pkg, manifest } = libraryMotif(id)
+        const diagnostic = libraryIdDiagnostic(id)
         read = { manifest, revision: pkg.revision, files: () => [...pkg.files], file: rel => pkg.files.find(f => f.path === rel)?.bytes ?? null,
-          extra: { group: 'library', status: builtinLineage(id) ? 'builtin' : 'installed', version: pkg.version } }
+          extra: { group: 'library', status: diagnostic ? 'invalid' : builtinLineage(id) ? 'builtin' : 'installed', version: pkg.version, ...(diagnostic ? { diagnostic } : {}) } }
       } else {
         const { project, entry } = projectMotif(id)
         const state = project.status(id)

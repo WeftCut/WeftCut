@@ -127,3 +127,39 @@ describe('watchProjectMotifs', () => {
     }
   }, 2 * WATCH_REPORTS_MS)
 })
+
+describe('watchProjectMotifs forget', () => {
+  const page = (id: string) => composeMotifHtml(
+    { id, name: id, version: 1, size: [320, 180], default_duration_s: 2, props_schema: {} },
+    '<html><head></head><body><script>motif.define({frame(t){}})</script></body></html>')
+  let dir: string
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
+
+  it('tells a Motif again in the state last told once that is forgotten', async () => {
+    dir = mkdtempSync(path.join(tmpdir(), 'project-watch-'))
+    const project = new ProjectMotifStore(dir)
+    const write = () => {
+      mkdirSync(path.join(project.root(), 'lower'), { recursive: true })
+      writeFileSync(path.join(project.root(), 'lower', 'index.html'), page('lower'))
+    }
+    write()
+    const told: MotifState[] = []
+    const w = watchProjectMotifs(project, (_id, state) => told.push(state))
+    try {
+      await vi.waitFor(() => {
+        if (told.length === 0) write()
+        expect(told.length).toBeGreaterThan(0)
+      }, { timeout: WATCH_REPORTS_MS, interval: 2 * DEBOUNCE_QUIET_MS })
+      const first = told.length
+      w.forget('lower')
+      // The same bytes again: the same state as told.
+      await vi.waitFor(() => {
+        if (told.length === first) write()
+        expect(told.length).toBeGreaterThan(first)
+      }, { timeout: WATCH_REPORTS_MS, interval: 2 * DEBOUNCE_QUIET_MS })
+      expect(told.at(-1)).toEqual(told[first - 1])
+    } finally {
+      w.close()
+    }
+  }, 3 * WATCH_REPORTS_MS)
+})

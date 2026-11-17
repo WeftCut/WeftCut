@@ -3,7 +3,7 @@
 // is derived on every read, never stored (spec § Project Motifs).
 import path from 'node:path'
 import { builtinLineage, PARAMS_PAGE_FILE } from '../../shared/motifs/catalog'
-import type { ProjectMotifEntry, ProjectMotifs } from '../../shared/motifs/projectMotifs'
+import { isProjectMotifKey, type ProjectMotifEntry, type ProjectMotifs } from '../../shared/motifs/projectMotifs'
 import { listMotifsInner, motifRevision, motifToPayload, type BuiltinMotif } from './authoring'
 import { normalize } from './motifPackage'
 import { type LibraryPackage, type ProjectMotifStore } from './projectStore'
@@ -82,14 +82,27 @@ export function projectRows(project: ProjectMotifStore, table: Readonly<ProjectM
   })
 }
 
+/** Why library Motif `id` cannot be previewed or placed as it is named;
+ *  null when it can. Its host, `<id>--library`, is one host label, which URL
+ *  parsing lowercases. */
+export function libraryIdDiagnostic(id: string): string | null {
+  return isProjectMotifKey(id) ? null
+    : `The folder name must be lowercase letters, digits and single dashes: rename the library folder '${id}' to preview or place it`
+}
+
 /** The library's rows: built-ins, then installed Motifs, each with the id
- *  the open project holds it under (`in_project`), null when it does not. */
+ *  the open project holds it under (`in_project`), null when it does not.
+ *  One whose id cannot name its host is `invalid`, with no manifest, so it
+ *  is offered for nothing until renamed. */
 export function libraryRows(store: UserMotifStore, builtins: BuiltinMotif[], table: Readonly<ProjectMotifs> | null): Record<string, unknown>[] {
   const byLineage = new Map(Object.entries(table ?? {}).map(([id, entry]) => [entry.uid, id]))
   return listMotifsInner(store, builtins).map(row => {
     const id = row.id as string
     const uid = builtinLineage(id) ?? store.lineage.peek(id)
-    return { ...row, group: 'library', revision: row.content_hash, in_project: (uid && byLineage.get(uid)) ?? null }
+    const in_project = (uid && byLineage.get(uid)) ?? null
+    const diagnostic = libraryIdDiagnostic(id)
+    if (diagnostic) return { group: 'library', id, status: 'invalid', diagnostic, revision: row.content_hash, in_project }
+    return { ...row, group: 'library', revision: row.content_hash, in_project }
   })
 }
 

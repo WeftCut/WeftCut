@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { projectMotifKey } from '../../shared/motifs/projectMotifs'
 import { upgradeWire, type LegacyMotif, type MotifCopy } from './migrate'
 
 const layer = (id: string, motifId: string) => ({ id, params: { kind: 'Motif', motif_id: motifId, motif_version: 1, props: {} } })
@@ -72,5 +73,15 @@ describe('v5 → v6 project Motif table', () => {
     expect(Object.keys(motifs).sort()).toEqual(['countdown', 'gone', 'lower', 'sketch-draft'])
     for (const entry of Object.values(motifs)) expect(entry).toMatchObject({ revision: null, from: null })
     expect(new Set(Object.values(motifs).map(e => e.uid)).size).toBe(4)
+  })
+})
+
+describe('v5 → v6 keys', () => {
+  // The step keeps a frozen twin of `projectMotifKey`, which placement keys by.
+  it('are the ones placement derives', () => {
+    for (const id of ['lower', 'MyMotif', 'Lower Third', '__proto__']) {
+      const { wire } = upgradeWire({ schema_version: 5, compositions: { root: { tracks: [{ layers: [layer('a', id)] }] } } }, 5, 6)
+      expect(Object.keys(wire.motifs as object), id).toEqual([projectMotifKey(id)])
+    }
   })
 })

@@ -5,8 +5,9 @@
 // history puts each folder back as its table says. Owns none of the three:
 // the folders are `ProjectMotifStore`'s, the backups `MotifBackups`', the
 // table the actor's.
+import { rmSync } from 'node:fs'
 import path from 'node:path'
-import type { ProjectMotifs, ProjectMotifSource } from '../../shared/motifs/projectMotifs'
+import { motifEntry, type ProjectMotifs, type ProjectMotifSource } from '../../shared/motifs/projectMotifs'
 import type { ActorHandle, ChangeEvent, ProjectMotifAccess } from '../state/actor'
 import type { Actor } from '../state/history'
 import { eachLayer, type Project } from '../state/model'
@@ -26,6 +27,7 @@ export function projectMotifAccess(project: () => ProjectMotifStore | null, libr
     manifest: (id) => {
       try { return project()?.describe(id)?.manifest ?? null } catch { return null }
     },
+    status: (id) => project()?.status(id).status ?? 'missing',
     place: (id, table) => {
       const pkg = library(id)
       if (!pkg) return null
@@ -47,14 +49,24 @@ export interface ProjectMotifRecordsDeps {
   libraryOfLineage: (uid: string) => LibraryPackage | null
   /** A best-effort status-log row for what could not be kept in step. */
   warn?: (message: string, details: Record<string, unknown>) => void
+  /** Makes the `Motifs/` watcher tell `id`'s next change even when it ends
+   *  in the state it last told (`ProjectMotifWatcher.forget`). */
+  rewatch?: (id: string) => void
 }
 
 export class ProjectMotifRecords {
   /** `<project>\0<id>\0<revision>` known to be backed up, so a commit reads
    *  no folder whose recorded revision is already kept. */
   private readonly kept = new Set<string>()
+  /** The table as the last recorded state left it: what a move through
+   *  history moves away from. */
+  private table: Readonly<ProjectMotifs>
+  /** Motifs whose folder holds a package the table does not record yet, and
+   *  that could not be recorded when it was seen (`retry`). */
+  private readonly unrecorded = new Set<string>()
 
   constructor(private readonly deps: ProjectMotifRecordsDeps) {
+    this.table = deps.actor.snapshot().motifs
     deps.actor.subscribe((e) => this.changed(e))
   }
 
@@ -65,15 +77,13 @@ export class ProjectMotifRecords {
   /** Every recorded state: its revisions are backed up; one taken back from
    *  history first has its folders put back to match it. */
   private changed(e: ChangeEvent): void {
+    const before = this.table
+    this.table = e.new_snapshot.motifs
+    if (e.replaced) { this.kept.clear(); this.unrecorded.clear() }
     const project = this.deps.project()
     if (!project) return
-    try {
-      if (e.replaced) this.kept.clear()
-      if (e.from_history) this.reconcile(project, e.new_snapshot.motifs)
-      this.backUp(project, e.new_snapshot.motifs)
-    } catch (error) {
-      this.warn('Motif backups could not be kept in step with the project', { error: String(error) })
-    }
+    if (e.from_history) this.reconcile(project, before, e.new_snapshot.motifs)
+    this.backUp(project, e.new_snapshot.motifs)
   }
 
   /** Backs up each revision `motifs` records whose folder holds it. */
@@ -83,55 +93,94 @@ export class ProjectMotifRecords {
       if (!entry.revision) continue
       const key = `${project.root()}\0${id}\0${entry.revision}`
       if (this.kept.has(key)) continue
-      if (!backups.has(id, entry.revision)) {
-        // The stamp-remembered revision first: a folder ahead of its record
-        // is read whole only once it is recorded.
-        if (project.status(id).revision !== entry.revision) continue
-        let snapshot
-        try { snapshot = project.snapshot(id) } catch { continue }
-        if (snapshot?.revision !== entry.revision) continue
-        backups.backup(id, snapshot.files, snapshot.revision)
+      try {
+        if (!backups.has(id, entry.revision)) {
+          // The stamp-remembered revision first: a folder ahead of its record
+          // is read whole only once it is recorded.
+          if (project.status(id).revision !== entry.revision) continue
+          let snapshot
+          try { snapshot = project.snapshot(id) } catch { continue }
+          if (snapshot?.revision !== entry.revision) continue
+          backups.backup(id, snapshot.files, snapshot.revision)
+        }
+        this.kept.add(key)
+      } catch (error) {
+        this.warn(`Revision ${entry.revision} of Motif '${id}' could not be backed up`, { motif_id: id, revision: entry.revision, error: String(error) })
       }
-      this.kept.add(key)
     }
   }
 
-  /** Puts back each folder whose revision is not the one `motifs` records,
-   *  from its backup, after backing up what the folder holds. A folder whose
-   *  files make no package is left as it is: they are an edit in progress,
-   *  which no backup could hold. */
-  private reconcile(project: ProjectMotifStore, motifs: Readonly<ProjectMotifs>): void {
+  /** Puts back, from its backup, each folder that holds the revision
+   *  `before` recorded but not the one `after` does, after backing up what
+   *  it holds. A gone folder is put back too. Any other folder holds an edit
+   *  not recorded yet and is left as it is: one whose files make no package
+   *  is unfinished, one that makes a package is recorded next. */
+  private reconcile(project: ProjectMotifStore, before: Readonly<ProjectMotifs>, after: Readonly<ProjectMotifs>): void {
     const backups = this.backups(project)
-    for (const [id, entry] of Object.entries(motifs)) {
+    for (const [id, entry] of Object.entries(after)) {
       if (!entry.revision) continue
-      const state = project.status(id)
-      if (state.revision === entry.revision) continue
-      if (state.status === 'invalid') {
-        this.warn(`Motif '${id}' was not put back: its folder holds an unfinished edit`, { motif_id: id, diagnostic: state.diagnostic })
-        continue
+      try {
+        const state = project.status(id)
+        if (state.revision === entry.revision) continue
+        if (state.status === 'invalid') {
+          this.warn(`Motif '${id}' was not put back: its folder holds an unfinished edit`, { motif_id: id, diagnostic: state.diagnostic })
+          continue
+        }
+        if (state.status === 'ok' && state.revision !== (motifEntry(before, id)?.revision ?? null)) {
+          this.warn(`Motif '${id}' was not put back: its folder holds an edit not recorded yet, which is recorded now`, { motif_id: id, revision: state.revision })
+          this.unrecorded.add(id)
+          continue
+        }
+        if (!backups.has(id, entry.revision)) {
+          this.warn(`Motif '${id}' was not put back: revision ${entry.revision} has no backup`, { motif_id: id, revision: entry.revision })
+          continue
+        }
+        const current = state.status === 'ok' ? project.snapshot(id) : null
+        if (current) backups.backup(id, current.files, current.revision)
+        backups.restore(id, entry.revision)
+        // An edit landing again on the revision the watcher last told is
+        // still an edit of the folder just put back.
+        this.deps.rewatch?.(id)
+      } catch (error) {
+        this.warn(`Motif '${id}' could not be put back`, { motif_id: id, revision: entry.revision, error: String(error) })
       }
-      if (!backups.has(id, entry.revision)) {
-        this.warn(`Motif '${id}' was not put back: revision ${entry.revision} has no backup`, { motif_id: id, revision: entry.revision })
-        continue
-      }
-      const current = project.snapshot(id)
-      if (current) backups.backup(id, current.files, current.revision)
-      backups.restore(id, entry.revision)
     }
+    // Not from inside this broadcast: a commit now would reach the
+    // remaining listeners before the state they are about to hear.
+    if (this.unrecorded.size) queueMicrotask(() => this.retry())
   }
 
   /** A folder the watcher saw change. One the table records and that makes
    *  a package becomes a `set_project_motif` commit (`FILE_EDITS`), its
-   *  revision backed up first; any other change is status alone. */
+   *  revision backed up first; any other change is status alone. One the
+   *  project refuses to record now (an export or a project switch under way)
+   *  waits for `retry`. */
   folderChanged(id: string, state: MotifState): void {
     const project = this.deps.project()
-    const entry = this.deps.actor.snapshot().motifs[id]
+    const entry = motifEntry(this.deps.actor.snapshot().motifs, id)
     if (!project || !entry || state.status !== 'ok') return
-    // Called from the watcher's timer, where a throw would escape the app: a
-    // write the project refuses now (an export or a project switch under
-    // way) is told and left for the next change or open to record.
+    // Called from the watcher's timer, where a throw would escape the app.
     try { if (this.record(project, id, entry.revision)) project.seen(id, 'edited-while-open') }
-    catch (error) { this.warn(`The edit to Motif '${id}' could not be recorded`, { motif_id: id, error: String(error) }) }
+    catch (error) {
+      this.notRecorded(id)
+      this.warn(`The edit to Motif '${id}' could not be recorded`, { motif_id: id, error: String(error) })
+    }
+  }
+
+  /** Records the folders whose edit could not be recorded when it was seen;
+   *  the host calls it when the project takes writes again. */
+  retry(): void {
+    const project = this.deps.project()
+    if (!project) return
+    const ids = [...this.unrecorded]
+    this.unrecorded.clear()
+    for (const id of ids) this.folderChanged(id, project.status(id))
+  }
+
+  /** `id` waits for `retry`, and the watcher tells its next change. */
+  private notRecorded(id: string): void {
+    this.unrecorded.add(id)
+    this.deps.rewatch?.(id)
   }
 
   /** Records what `id`'s folder holds when it is not `recorded`; answers
@@ -142,7 +191,10 @@ export class ProjectMotifRecords {
     if (!snapshot || snapshot.revision === recorded) return false
     this.backups(project).backup(id, snapshot.files, snapshot.revision)
     const result = this.deps.actor.dispatch('set_project_motif', { motif_id: id, revision: snapshot.revision }, FILE_EDITS)
-    if (!result.ok) this.warn(`The edit to Motif '${id}' could not be recorded`, { motif_id: id, error: result.error })
+    if (!result.ok) {
+      this.notRecorded(id)
+      this.warn(`The edit to Motif '${id}' could not be recorded`, { motif_id: id, error: result.error })
+    }
     return result.ok
   }
 
@@ -153,6 +205,7 @@ export class ProjectMotifRecords {
   opened(): void {
     const project = this.deps.project()
     if (!project) return
+    this.unrecorded.clear()
     const keep: [string, string][] = []
     const kept = () => { for (const [id, entry] of Object.entries(this.deps.actor.snapshot().motifs)) if (entry.revision) keep.push([id, entry.revision]) }
     kept()
@@ -168,40 +221,54 @@ export class ProjectMotifRecords {
     try {
       this.backups(project).gc(keep)
       this.kept.clear()
-      this.backUp(project, this.deps.actor.snapshot().motifs)
     } catch (error) {
       this.warn('The project\'s Motif backups could not be collected', { error: String(error) })
     }
+    this.backUp(project, this.deps.actor.snapshot().motifs)
   }
 
   /** The user's update of the project copy of `id` to the library's current
    *  version of its lineage: the folder is replaced, then one commit records
    *  the new revision and source and rebinds every layer on it to the new
-   *  props schema. The replaced revision stays in the backups; a refused
-   *  commit puts the folder back. */
-  updateFromLibrary(id: string): { motif_id: string; revision: string; from: ProjectMotifSource } {
+   *  props schema. The replaced revision stays in the backups; files that
+   *  made no package are moved under `Backups/motifs/unfinished/`, the path
+   *  answered as `unfinished`. A refused commit puts the folder back as it
+   *  was. */
+  updateFromLibrary(id: string): { motif_id: string; revision: string; from: ProjectMotifSource; unfinished?: string } {
     const project = this.deps.project()
     if (!project) throw new Error('No project is open')
     const snapshot = this.deps.actor.snapshot()
-    const entry = snapshot.motifs[id]
+    const entry = motifEntry(snapshot.motifs, id)
     if (!entry) throw new Error(`No Motif '${id}' in this project`)
     const pkg = this.deps.libraryOfLineage(entry.uid)
     if (!pkg) throw new Error(`The library holds no version of Motif '${id}'`)
     const backups = this.backups(project)
-    let before: ReturnType<ProjectMotifStore['snapshot']> = null
-    try { before = project.snapshot(id) } catch { /* an unfinished edit: replaced */ }
+    const state = project.status(id)
+    const before = state.status === 'ok' ? project.snapshot(id) : null
     if (before) backups.backup(id, before.files, before.revision)
-    const revision = project.replace(id, pkg.files, 'placed')
-    const after = project.snapshot(id)!
-    backups.backup(id, after.files, after.revision)
-    const manifest = project.describe(id)!.manifest
-    const from: ProjectMotifSource = { uid: pkg.uid, version: pkg.version, revision: pkg.revision }
-    const result = this.deps.actor.dispatch('update_project_motif', { motif_id: id, revision, from, updates: buildRebindUpdates(motifLayers(snapshot, id), id, manifest) })
-    if (!result.ok) {
+    // Files that make no package are an edit in progress: kept, never replaced.
+    const unfinished = state.status === 'invalid' ? backups.setAside(id) : null
+    const putBack = () => {
       if (before) backups.restore(id, before.revision)
-      throw new Error(JSON.stringify(result.error))
+      else if (unfinished) backups.putBack(id, unfinished)
+      else rmSync(project.folder(id), { recursive: true, force: true })
     }
-    return { motif_id: id, revision, from }
+    let revision: string
+    const from: ProjectMotifSource = { uid: pkg.uid, version: pkg.version, revision: pkg.revision }
+    try {
+      revision = project.replace(id, pkg.files, 'placed')
+      const after = project.snapshot(id)!
+      backups.backup(id, after.files, after.revision)
+      const manifest = project.describe(id)!.manifest
+      const result = this.deps.actor.dispatch('update_project_motif', { motif_id: id, revision, from, updates: buildRebindUpdates(motifLayers(snapshot, id), id, manifest) })
+      if (!result.ok) throw new Error(JSON.stringify(result.error))
+    } catch (error) {
+      try { putBack() }
+      catch (undo) { this.warn(`Motif '${id}' could not be put back as it was`, { motif_id: id, error: String(undo), ...(unfinished ? { unfinished } : {}) }) }
+      throw error
+    }
+    if (unfinished) this.warn(`The unfinished files of Motif '${id}' were moved to ${unfinished}`, { motif_id: id, unfinished })
+    return { motif_id: id, revision, from, ...(unfinished ? { unfinished } : {}) }
   }
 
   private warn(message: string, details: Record<string, unknown>): void {

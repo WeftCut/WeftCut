@@ -15,6 +15,7 @@ import type { BuiltinMotif } from './authoring'
 import { packageContentHash } from './contentHash'
 import { hasMotifFile, motifFileSegments, readMotifFile, type MotifFile } from './packageFiles'
 import { PackageSource } from './packageSource'
+import { newLineage } from './lineage'
 import { libraryPackage, ProjectMotifStore } from './projectStore'
 import { DRAFTS_DIR, type UserMotifStore } from './store'
 
@@ -43,8 +44,11 @@ export function legacyDraftsNotice(store: UserMotifStore): AppNotice | null {
 }
 
 /** The package v5 rendered for Motif `id`; null when nothing did. A built-in
- *  id resolves to the built-in or to nothing, as in v5. */
-export function resolveLegacyMotif(store: UserMotifStore, builtins: readonly BuiltinMotif[], id: string): LegacyPackage | null {
+ *  id resolves to the built-in or to nothing, as in v5. A draft without a
+ *  recorded lineage gets one recorded only with `mint`; without it, one that
+ *  lasts the call: an open the upgrade refuses writes nothing to the
+ *  library. */
+export function resolveLegacyMotif(store: UserMotifStore, builtins: readonly BuiltinMotif[], id: string, mint = true): LegacyPackage | null {
   const library = libraryPackage(store, builtins, id)
   if (library) {
     const from = { uid: library.uid, version: library.version, revision: library.revision }
@@ -55,7 +59,9 @@ export function resolveLegacyMotif(store: UserMotifStore, builtins: readonly Bui
   if (!dir || linkedDiagnostic(store, id)) return null
   try { parseManifestIsland(readFileSync(path.join(dir, 'index.html'), 'utf8')) } catch { return null }
   const draft = new PackageSource(store.revisions, files => packageContentHash(files)).snapshot(dir)
-  return { uid: store.lineage.of(`${DRAFTS_DIR}/${id}`), revision: draft.revision, from: null, files: draft.files }
+  const key = `${DRAFTS_DIR}/${id}`
+  const uid = mint ? store.lineage.of(key) : store.lineage.peek(key) ?? newLineage()
+  return { uid, revision: draft.revision, from: null, files: draft.files }
 }
 
 /** Why draft `id`'s linked directory was invalid, as its working state
@@ -79,17 +85,27 @@ function legacyManifest(store: UserMotifStore, id: string): Manifest | null {
   try { return page ? parseManifestIsland(page.toString('utf8')) : null } catch { return null }
 }
 
-/** Copies each planned package into the project's `Motifs/`. A folder that
- *  makes a package already is kept (an upgrade run again changes nothing);
- *  a package that is gone or cannot be copied leaves its entry without a
- *  revision, and says why. */
+/** Copies each planned package into the project's `Motifs/`, answering the
+ *  lineage and source its entry takes. A folder that makes a package already
+ *  is kept (an upgrade run again changes nothing, an earlier one unsaved
+ *  included): its source is the library version holding its revision
+ *  (`versionOf`), else the one resolved now. A package that is gone or
+ *  cannot be copied leaves its entry without a revision, and says why. */
 export function placeMigratedMotifs(project: ProjectMotifStore, copies: readonly MotifCopy[],
-  resolve: (id: string) => LegacyPackage | null): MotifCopyOutcome[] {
+  resolve: (id: string) => LegacyPackage | null,
+  versionOf: (id: string, revision: string) => number | null = () => null): MotifCopyOutcome[] {
   return copies.map(({ id, source }) => {
     try {
       const pkg = resolve(source ?? id)
       if (!pkg) return { id, revision: null, diagnostic: 'The Motif is no longer in the library' }
-      return { id, revision: project.materialize(id, pkg.files, 'placed') }
+      const kept = project.status(id).status === 'ok'
+      const revision = project.materialize(id, pkg.files, 'placed')
+      let from = pkg.from
+      if (from && kept && revision !== from.revision) {
+        const version = versionOf(source ?? id, revision)
+        if (version !== null) from = { uid: from.uid, version, revision }
+      }
+      return { id, revision, uid: pkg.uid, from }
     } catch (error) {
       return { id, revision: null, diagnostic: error instanceof Error ? error.message : String(error) }
     }
@@ -109,6 +125,10 @@ export function legacyMigration(store: UserMotifStore, builtins: readonly Builti
     return project
   }
   const resolve = (id: string) => resolveLegacyMotif(store, builtins, id)
+  /** The installed version of `id` whose package is `revision`. */
+  const versionOf = (id: string, revision: string): number | null => {
+    try { return store.versions(id).find(v => v.revision === revision)?.version ?? null } catch { return null }
+  }
   return {
     migration: (dir: string): MigrationContext => ({
       motifSize: (id, version) => {
@@ -117,11 +137,12 @@ export function legacyMigration(store: UserMotifStore, builtins: readonly Builti
         if (manifest?.version !== version) manifest = legacyManifest(store, id)
         return manifest?.version === version ? manifest.size : null
       },
+      // Parsing only plans: a draft's lineage is recorded once its copy is made.
       legacyMotif: id => {
-        const found = resolve(id)
+        const found = resolveLegacyMotif(store, builtins, id, false)
         return found && { uid: found.uid, revision: found.revision, from: found.from }
       },
     }),
-    placeMigratedMotifs: (dir: string, copies: readonly MotifCopy[]) => placeMigratedMotifs(projectStore(dir), copies, resolve),
+    placeMigratedMotifs: (dir: string, copies: readonly MotifCopy[]) => placeMigratedMotifs(projectStore(dir), copies, resolve, versionOf),
   }
 }

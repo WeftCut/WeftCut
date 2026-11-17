@@ -8,6 +8,7 @@
 // agent-end→LogBus, inside commitWorkspace) BEFORE replace_state; recents AFTER
 // a successful swap/write.
 import { WorkspaceFailure, isWorkspaceFailure } from '../../shared/workspaceErrors'
+import { motifEntry, type ProjectMotifEntry } from '../../shared/motifs/projectMotifs'
 import type { ActorHandle } from './actor'
 import { isCommandFailure, ValidationFailure } from './errors'
 import { validate } from './validate'
@@ -51,8 +52,11 @@ export interface OrchestratorFs {
 }
 
 /** What copying one planned Motif into `Motifs/<id>/` came to: the revision
- *  its folder holds, or null and why it holds none. */
-export interface MotifCopyOutcome { id: string; revision: string | null; diagnostic?: string }
+ *  its folder holds, or null and why it holds none; with a copy, the lineage
+ *  and source its entry takes when they differ from what the upgrade
+ *  planned (a draft's lineage recorded only now, a folder kept from an
+ *  earlier copy). */
+export interface MotifCopyOutcome { id: string; revision: string | null; diagnostic?: string; uid?: string; from?: ProjectMotifEntry['from'] }
 
 export interface OrchestratorDeps {
   /** The facts an upgrade of the project in `dir` may need. */
@@ -113,8 +117,11 @@ function settleMotifCopies(project: Project, copies: readonly MotifCopy[], outco
   const diagnostics = new Map<string, string>()
   for (const { id } of copies) {
     const outcome = outcomes.find(o => o.id === id)
-    if (!motifs[id]) continue
-    motifs[id] = { ...motifs[id], revision: outcome?.revision ?? null }
+    const entry = motifEntry(motifs, id)
+    if (!entry) continue
+    motifs[id] = outcome?.revision
+      ? { uid: outcome.uid ?? entry.uid, revision: outcome.revision, from: outcome.from !== undefined ? outcome.from : entry.from }
+      : { ...entry, revision: null }
     if (!outcome?.revision) diagnostics.set(id, outcome?.diagnostic ?? 'The Motif was not copied into the project')
   }
   const missing = Object.entries(motifs).filter(([, entry]) => entry.revision === null)
