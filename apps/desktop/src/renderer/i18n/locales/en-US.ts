@@ -1474,7 +1474,7 @@ const enUS = {
   agent_panel: {
   // The agent view's Jump: the preview's time only, never a selection.
   "jump": "Jump the preview here",
-  "jump_elsewhere": "Not on the timeline the preview shows — locate it in the editor",
+  "jump_elsewhere": "Doesn't play in the film — locate it in the editor",
   "service_unknown": "MCP status unavailable",
   "service_ready": "MCP service ready",
   "service_offline": "MCP service offline",

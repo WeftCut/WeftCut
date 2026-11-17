@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { TackView } from '../../shared/agent-activity'
 import type { Change } from '../../shared/review'
 import { ROOT_ID, compositionFixture, summaryFixture } from '../testing/summaryFixture'
-import { locateTarget, placeOn, type LocateIndex } from './locate'
+import type { AnchorFrame } from '../render/timeProjection'
+import { filmPlace, locateTarget, placeOn, type LocateIndex } from './locate'
 
 const S = 1_000_000
 /** The root and Group `grp`; clip `v` on the root, `inner` in `grp`; track `t1` on the root. */
@@ -68,6 +69,35 @@ describe('placeOn — where the agent view jumps', () => {
   it('has no time for a track or a composition as a whole', () => {
     expect(on(change({ id: 'Track:t1' }), ROOT_ID)).toBeNull()
     expect(on(change({ id: 'Composition:grp', composition_id: null }), 'grp')).toBeNull()
+  })
+})
+
+describe('filmPlace — where the agent view jumps in the film', () => {
+  // `grp` plays from 10 s in the film, its own 0..4 s shown (window 10..14 s).
+  const placed: AnchorFrame = { offsetUs: 10 * S, windowStartUs: 10 * S, windowEndUs: 14 * S, fpsNum: 0, fpsDen: 0 }
+  const frameOf = (id: string) => (id === 'grp' ? placed : null)
+  const film = (item: Change | TackView, frames = frameOf) =>
+    filmPlace('class' in item ? { kind: 'change', change: item } : { kind: 'tack', tack: item }, index, frames)
+  const span = (t0: number, t1: number) => [{ composition_id: 'grp', track_id: null, t_start_us: t0, t_end_us: t1 }]
+
+  it('is the item’s place on the root as is', () => {
+    expect(film(change({ id: 'Layer:v', ranges: at(ROOT_ID, 3 * S) }))).toBe(3 * S)
+  })
+
+  it('carries a Group’s item out through the placement that plays it', () => {
+    expect(film(change({ id: 'Layer:inner', ranges: span(S, 2 * S) }))).toBe(11 * S)
+    expect(film(tack({ composition_id: 'grp', t_us: 2 * S }))).toBe(12 * S)
+  })
+
+  it('lands on the first moment the placement shows of it', () => {
+    // Starts before the window opens and runs into it.
+    expect(film(change({ id: 'Layer:inner', ranges: span(-2 * S, 2 * S) }))).toBe(10 * S)
+  })
+
+  it('is nowhere when the placement shows none of it, or nothing places the Group', () => {
+    expect(film(change({ id: 'Layer:inner', ranges: span(5 * S, 6 * S) }))).toBeNull()
+    expect(film(tack({ composition_id: 'grp', t_us: 4 * S }))).toBeNull()
+    expect(film(change({ id: 'Layer:inner', ranges: span(S, 2 * S) }), () => null)).toBeNull()
   })
 })
 

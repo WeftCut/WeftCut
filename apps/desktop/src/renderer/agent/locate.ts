@@ -1,8 +1,9 @@
 // Locating a review item — a change or a tack — on the editor timeline
 // (ADR 0115). Object navigation is the editor's alone
 // (docs/mcp.md#agent-panel-and-lifecycle). The agent view, which is for
-// watching, only jumps its preview to the item's time (`jump`): no selection,
-// no composition entered, no other timeline opened.
+// watching, only jumps its preview to where the item plays in the film
+// (`jump`), through any Group holding it: no selection, no composition
+// entered, no other timeline opened.
 //
 // One pure resolver says where an item can be found in the project as it is
 // now (`locateTarget`); whether Locate or Jump is offered and what it does
@@ -10,10 +11,11 @@
 // press cannot reach.
 import type { TackView } from '../../shared/agent-activity'
 import type { Change } from '../../shared/review'
-import { openComposition, useCompositionAnchorStore } from '../state/compositionAnchorStore'
+import { openComposition, pathToComposition, shownTimelineId, useCompositionAnchorStore } from '../state/compositionAnchorStore'
+import { anchorFrame, localToRootIn, type AnchorFrame } from '../render/timeProjection'
 import { jumpToTimeUs, revealLayerWithoutSeek, revealTrackWithoutSelection } from '../state/navigation'
 import { focusedRootUs, seekLocalUs } from '../state/playheadProjection'
-import { compositionOrRoot, useProjectStore, type ProjectStoreState } from '../state/projectStore'
+import { useProjectStore, type ProjectStoreState } from '../state/projectStore'
 import { entityIdOf } from './changeModel'
 
 export type LocateItem = { kind: 'change'; change: Change } | { kind: 'tack'; tack: TackView }
@@ -106,24 +108,69 @@ export function placeOn(item: LocateItem, index: LocateIndex, compositionId: str
   return null
 }
 
-/** The composition the preview shows: the open one. */
-function shown(): string | null {
-  return compositionOrRoot(useProjectStore.getState().summary, useCompositionAnchorStore.getState().focusedId)?.id ?? null
+/** Where `item` plays in the film, on the root's clock: its place on the
+ *  root, else its footprint on the Group holding it, carried out through that
+ *  Group's placement (`frameOf`) to the first moment the placement shows any
+ *  of it. Null when it shows none — trimmed away, or nothing places the
+ *  Group. Pure. */
+export function filmPlace(item: LocateItem, index: LocateIndex, frameOf: (compositionId: string) => AnchorFrame | null): number | null {
+  const root = index.summary?.root_id
+  if (root === undefined) return null
+  const own = placeOn(item, index, root)
+  if (own !== null) return own
+  const span = spanOf(item, index)
+  const frame = span === null ? null : frameOf(span.compositionId)
+  if (span === null || frame === null) return null
+  const start = localToRootIn(frame, span.startUs)
+  const end = localToRootIn(frame, span.endUs)
+  const from = Math.max(start, frame.windowStartUs)
+  const shows = end > start ? from < Math.min(end, frame.windowEndUs) : from === start && start < frame.windowEndUs
+  return shows ? from : null
 }
 
-/** Whether the agent view can jump its preview to `item`: it sits on the
- *  composition shown. */
+/** The stretch `item` covers on the composition holding its place, from that
+ *  place: a change's footprint there, a tack's span, else a point. */
+function spanOf(item: LocateItem, index: LocateIndex): { compositionId: string; startUs: number; endUs: number } | null {
+  const target = locateTarget(item, index)
+  const compositionId = target?.kind === 'layer' ? index.compositionIdByLayerId.get(target.layer_id)
+    : target?.kind === 'time' ? target.composition_id : undefined
+  if (compositionId === undefined || target === null || !('t_us' in target) || target.t_us === null) return null
+  const startUs = target.t_us
+  let endUs = startUs
+  if (item.kind === 'change') {
+    const c = item.change
+    const r = (c.ranges.length ? c.ranges : c.before_ranges ?? []).find(x => x.composition_id === compositionId && x.t_start_us === startUs)
+    if (r) endUs = r.t_end_us
+  } else if (item.tack.end_t_us !== null) endUs = item.tack.end_t_us
+  return { compositionId, startUs, endUs }
+}
+
+/** Where the preview shows `item`, on the clock of the timeline on screen:
+ *  in the film (the agent view's), through any Group holding it. */
+function shownPlace(item: LocateItem): { compositionId: string; tUs: number } | null {
+  const compositionId = shownTimelineId()
+  const index = useProjectStore.getState()
+  if (compositionId === null || index.summary === null) return null
+  const summary = index.summary
+  const tUs = compositionId === summary.root_id
+    ? filmPlace(item, index, (id) => {
+      const path = pathToComposition(id)
+      return path === null ? null : anchorFrame(summary, path)
+    })
+    : placeOn(item, index, compositionId)
+  return tUs === null ? null : { compositionId, tUs }
+}
+
+/** Whether the agent view can jump its preview to `item`: it plays there. */
 export function canJump(item: LocateItem): boolean {
-  const c = shown()
-  return c !== null && placeOn(item, useProjectStore.getState(), c) !== null
+  return shownPlace(item) !== null
 }
 
-/** Move the preview to `item`'s time on the composition shown, and nothing
- *  else; playback does not start. False when it has no place there. */
+/** Move the preview to where `item` plays, and nothing else; playback does
+ *  not start. False when it plays nowhere the preview shows. */
 export function jump(item: LocateItem): boolean {
-  const c = shown()
-  const t = c === null ? null : placeOn(item, useProjectStore.getState(), c)
-  if (t === null) return false
-  seekLocalUs(c, t)
+  const place = shownPlace(item)
+  if (place === null) return false
+  seekLocalUs(place.compositionId, place.tUs)
   return true
 }

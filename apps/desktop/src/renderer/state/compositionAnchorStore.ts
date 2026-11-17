@@ -80,6 +80,12 @@ interface State {
   /// IS placed never has an entry: its position is a projection, not a second
   /// number. Never persisted.
   orphanPlayheads: ReadonlyMap<string, number>;
+  /// The agent view holds the window. It watches the film, with no timeline
+  /// tabs nor preview lock of its own, so while this holds the preview draws
+  /// the root and `shownTimelineId` is the root, whatever the editor's tabs
+  /// focus or lock. Neither is touched: leaving the agent view finds them as
+  /// they were. A window fact, so it outlives a project switch.
+  filmView: boolean;
 }
 
 const INITIAL: State = {
@@ -88,6 +94,7 @@ const INITIAL: State = {
   focusedId: null,
   previewTargetId: null,
   orphanPlayheads: new Map(),
+  filmView: false,
 };
 
 export const useCompositionAnchorStore = create<State>(() => INITIAL);
@@ -329,7 +336,7 @@ export function syncOpenCompositions(compositionIds: readonly string[]): void {
 /// anchor-first rule keeps the user as close as possible to where they were.
 export function reconcileCompositionAnchors(summary: ProjectSummary | null): void {
   if (!summary) {
-    useCompositionAnchorStore.setState(INITIAL);
+    useCompositionAnchorStore.setState({ ...INITIAL, filmView: useCompositionAnchorStore.getState().filmView });
     forgetProjectView();
     return;
   }
@@ -489,18 +496,44 @@ function searchPathFromRoot(
   return path;
 }
 
-/// The composition the preview DRAWS: the locked one while the project still
-/// carries it, and the editing target otherwise. Every surface that describes
+/// The composition the preview DRAWS: the root while the agent view holds the
+/// window (`filmView`), else the locked one while the project still carries
+/// it, and the editing target otherwise. Every surface that describes
 /// what is on the canvas — its size, its clock, its transport — reads this, and
 /// nothing else resolves the pair on its own.
 export function previewRenderTargetId(): string | null {
   const { summary } = useProjectStore.getState();
-  const { previewTargetId, focusedId } = useCompositionAnchorStore.getState();
+  const { previewTargetId, focusedId, filmView } = useCompositionAnchorStore.getState();
+  if (filmView) return summary?.root_id ?? null;
   if (previewTargetId !== null && summary?.compositions[previewTargetId]) {
     return previewTargetId;
   }
   return compositionOrRoot(summary, focusedId)?.id ?? null;
 }
+
+/// Hand the window to the agent view (`filmView`), or back to the editor.
+export function setFilmView(on: boolean): void {
+  if (useCompositionAnchorStore.getState().filmView === on) return;
+  useCompositionAnchorStore.setState({ filmView: on });
+}
+
+/// The timeline on screen, whose review bands the user sees and walks: the
+/// film while the agent view holds the window, the focused Panel's composition
+/// otherwise.
+export function shownTimelineId(): string | null {
+  const { focusedId, filmView } = useCompositionAnchorStore.getState();
+  const summary = useProjectStore.getState().summary;
+  return filmView ? (summary?.root_id ?? null) : (compositionOrRoot(summary, focusedId)?.id ?? null);
+}
+
+/// `shownTimelineId` for React.
+export const useShownTimelineId = (): string | null => {
+  const focusedId = useCompositionAnchorStore((s) => s.focusedId);
+  const filmView = useCompositionAnchorStore((s) => s.filmView);
+  return useProjectStore((s) =>
+    filmView ? (s.summary?.root_id ?? null) : (compositionOrRoot(s.summary, focusedId)?.id ?? null),
+  );
+};
 
 /// Where an ORPHAN composition's Panel is parked, on its own clock. 0 until it
 /// is scrubbed — an axis nothing places has no other opening position.
@@ -608,14 +641,17 @@ export const usePreviewTargetChoice = (): string | null =>
   useCompositionAnchorStore((s) => s.previewTargetId);
 
 /// The composition the preview draws, for React — `previewRenderTargetId` with
-/// a subscription. Three ATOMIC selectors rather than one composite: each
+/// a subscription. Four ATOMIC selectors rather than one composite: each
 /// yields a primitive, so an unrelated tick in either store bails out instead
 /// of re-rendering the canvas host.
 export const usePreviewRenderTargetId = (): string | null => {
   const previewTargetId = useCompositionAnchorStore((s) => s.previewTargetId);
   const focusedId = useCompositionAnchorStore((s) => s.focusedId);
+  const filmView = useCompositionAnchorStore((s) => s.filmView);
   return useProjectStore((s) =>
-    previewTargetId !== null && s.summary?.compositions[previewTargetId]
+    filmView
+      ? (s.summary?.root_id ?? null)
+      : previewTargetId !== null && s.summary?.compositions[previewTargetId]
       ? previewTargetId
       : (compositionOrRoot(s.summary, focusedId)?.id ?? null),
   );

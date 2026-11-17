@@ -27,8 +27,8 @@ import { useMemo } from 'react'
 import { create } from 'zustand'
 import type { TackView } from '../../shared/agent-activity'
 import { parseEntityKey, type Change, type ChangedRange, type EntityKey, type EntityKind, type ReviewView } from '../../shared/review'
-import { currentOpenComposition, useProjectStore } from '../state/projectStore'
-import { useCompositionAnchorStore } from '../state/compositionAnchorStore'
+import { useProjectStore } from '../state/projectStore'
+import { shownTimelineId, useCompositionAnchorStore } from '../state/compositionAnchorStore'
 import { useAgentActivity } from './activityStore'
 import { tackClosedKey, tackGroupKey, tackRowKey } from './expansion'
 import { entityIdOf, groupChanges } from './changeModel'
@@ -117,7 +117,7 @@ export function resolveRange(seen: ChangedRange, ranges: readonly ChangedRange[]
  *  nothing, so it drops nothing. */
 function rangeList(source: ChangeSource): readonly ChangedRange[] | null {
   const r = useReview.getState()
-  const open = currentOpenComposition()?.id ?? null
+  const open = shownTimelineId()
   const onScreen = (x: ChangedRange) => x.composition_id === open
   if (source === 'activity') {
     if (r.activity === null) return []
@@ -279,7 +279,7 @@ useReview.subscribe((s, prev) => {
   if (s.view !== prev.view || s.showUser !== prev.showUser || s.activity !== prev.activity) reconcile(false)
 })
 // Another timeline on screen paints other ranges.
-useCompositionAnchorStore.subscribe((s, prev) => { if (s.focusedId !== prev.focusedId) reconcile(false) })
+useCompositionAnchorStore.subscribe((s, prev) => { if (s.focusedId !== prev.focusedId || s.filmView !== prev.filmView) reconcile(false) })
 
 /** How a clip is outlined for the focus: the focused tack follows it, the
  *  focused change or range covers it, or the hovered change row does. */
