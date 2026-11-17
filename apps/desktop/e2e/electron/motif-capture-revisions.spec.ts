@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { PNG } from 'pngjs'
-import { launchApp } from './helpers/driver'
-import { createMotifDraft, publishMotifDraft } from './helpers/motif'
+import { launchApp, newProject, tmpDir } from './helpers/driver'
+import { createMotif, motifContentHash } from './helpers/motif'
 
 // Each capture host loads its Motif from a pinned revision snapshot. Four user
 // Motifs opening hosts at once must each load their own page: before, only two
@@ -12,18 +12,16 @@ test('captures of four user Motifs at once each render their own page', async ()
   test.setTimeout(180_000)
   const { app, page } = await launchApp({ env: { WEFTCUT_MOTIF_TUNING: 'captureHosts=4' } })
   try {
+    await newProject(page, { parentFolder: tmpDir('weftcut-revision-pins-'), name: 'Revision pins',
+      canvas: { width: 64, height: 64, fpsNum: 30, fpsDen: 1 } })
     const colors = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0]] as const
     const ids: string[] = []
     for (const [i, [r, g, b]] of colors.entries()) {
-      const draft = await createMotifDraft(page, { name: `Revision pin ${i}`, size: [64, 64], default_duration_s: 2, props_schema: {} },
+      ids.push(await createMotif(page, { name: `Revision pin ${i}`, size: [64, 64], default_duration_s: 2, props_schema: {} },
         `<!doctype html><html><body style="margin:0;background:transparent"><div style="width:64px;height:64px;background:rgb(${r},${g},${b})"></div>`
-        + `<script>motif.define({ frame() {} })</script></body></html>`)
-      ids.push(await publishMotifDraft(page, draft))
+        + `<script>motif.define({ frame() {} })</script></body></html>`))
     }
-    const hashes = await page.evaluate(async (ids) => {
-      const list = await (window as any).api.backend.invoke('list_motifs') as Array<{ id: string; content_hash: string }>
-      return ids.map(id => list.find(m => m.id === id)!.content_hash)
-    }, ids)
+    const hashes = await Promise.all(ids.map(id => motifContentHash(page, id)))
     expect(hashes.every(h => /^[0-9a-f]{64}$/.test(h))).toBe(true)
 
     const captureAll = (tSec: number) => page.evaluate(async ({ ids, hashes, tSec }) => Promise.all(ids.map((motifId, i) =>

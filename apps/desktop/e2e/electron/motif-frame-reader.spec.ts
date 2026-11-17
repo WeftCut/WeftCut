@@ -5,7 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers/driver'
 import { supportsMotifSharedTextures } from './helpers/motif-gpu'
-import { createMotifDraft, publishMotifDraft } from './helpers/motif'
+import { createMotif } from './helpers/motif'
 import { hashCacheKey } from '../../src/shared/motifs/cacheKey'
 import type { MotifBakeSnapshot } from '../../src/shared/motifs/baking'
 import { VECTORS_PATH, compareReadback, downscaleReference, syntheticFrame } from '../lib/motif-downscale.mjs'
@@ -196,13 +196,15 @@ async function reopen(page: Page, projectPath: string): Promise<void> {
  */
 async function openWorkspace(
   app: ElectronApplication, page: Page, lane: Lane, name: string,
-  options: { motifId?: string; files?: Record<number, Buffer> } = {},
+  options: { files?: Record<number, Buffer> } = {},
 ): Promise<Workspace> {
   await newProject(page, { parentFolder: tmpDir('weftcut-motif-reader-'), name, canvas: { width: 64, height: 64, fpsNum: 30, fpsDen: 1 } })
   // Before the layer exists, so the preview's first read already falls back.
   if (lane === 'fallback') await forceUtilityFallback(app)
   await invokeCmd(page, 'app_settings_set', { patch: { prebake_motifs: true } })
-  const motifId = options.motifId ?? await publishMotifDraft(page, await createMotifDraft(page, MOTIF, MOTIF_HTML))
+  // Made from the same files in every project: the same id and revision,
+  // and so the same frame addresses.
+  const motifId = await createMotif(page, MOTIF, MOTIF_HTML)
   await waitForHook(page, 'addMotifLayer')
   const layerId = await page.evaluate(id => (window as any).__weftcutTest.addMotifLayer({ motifId: id, durationUs: 1_000_000 }), motifId) as string
   const cacheKey = await eventually(() => page.evaluate(id => (window as any).__weftcutTest.cacheKeyForLayer(id) as Promise<string | null>, layerId),
@@ -524,7 +526,7 @@ for (const lane of LANES) {
       // The new workspace holds a valid HOLD frame and a corrupt SENTINEL; the
       // old one a corrupt HOLD frame.
       const next = await openWorkspace(app, page, lane, 'Reader generation new', { files: { [HOLD]: valid!, [SENTINEL]: corrupt(valid!) } })
-      const old = await openWorkspace(app, page, lane, 'Reader generation old', { motifId: next.motifId, files: { [HOLD]: corrupt(valid!) } })
+      const old = await openWorkspace(app, page, lane, 'Reader generation old', { files: { [HOLD]: corrupt(valid!) } })
       expect(old.hash, 'both projects must address the same Motif content').toBe(next.hash)
       const oldGeneration = (await bakeSnapshot(page)).generation
 

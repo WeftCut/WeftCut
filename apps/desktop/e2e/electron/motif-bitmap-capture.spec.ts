@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver';
-import { createMotifDraft, publishMotifDraft } from './helpers/motif';
+import { createMotif } from './helpers/motif';
 
 /// The two Windows OSR regressions this guards: an accelerated 2D canvas layer
 /// omitted after navigation (bitmapCanvasRuntime.ts), and a scaled capture
@@ -30,8 +30,8 @@ test('bitmap capture preserves canvas pixels across Motif navigation', async ({}
       canvas: { width: 1920, height: 1080, fpsNum: 25, fpsDen: 1 } });
     // Frame i is captured at tSec = 2 + i/25; the solid canvas paints green =
     // (i * 5) % 256 so a capture can tell "previous frame" from "no frame".
-    const draft = await createMotifDraft(page, {
-      id: 'capture-solid', name: 'Capture solid', version: 1,
+    const solid = await createMotif(page, {
+      name: 'Capture solid', version: 1,
       size: [1920, 1080], default_duration_s: 20, props_schema: {},
     }, `<!doctype html><html><body style="margin:0;background:transparent">
       <canvas id="c" width="1920" height="1080"></canvas><script>
@@ -39,14 +39,12 @@ test('bitmap capture preserves canvas pixels across Motif navigation', async ({}
         const i=Math.round((t-2)*25);const g=(i*5)%256;
         c.fillStyle='rgb(224,'+g+',128)';c.fillRect(0,0,1920,1080);}});
       </script></body></html>`);
-    const solid = await publishMotifDraft(page, draft);
     // Pin the canvas that reproduced the OSR failure without depending on the
     // harness branch's built-in Motif catalog or future design changes.
-    const networkDraft = await createMotifDraft(page, {
-      id: 'capture-network', name: 'Capture network', version: 1,
+    const networkId = await createMotif(page, {
+      name: 'Capture network', version: 1,
       size: [1920, 1080], default_duration_s: 20, props_schema: {},
     }, readFileSync(new URL('./fixtures/png-capture-network.html', import.meta.url), 'utf8'));
-    const networkId = await publishMotifDraft(page, networkDraft);
     // Phase 1 alternates the two Motifs (48 navigations); phase 2 repeats the
     // solid one (24 captures on one document).
     const plan = [

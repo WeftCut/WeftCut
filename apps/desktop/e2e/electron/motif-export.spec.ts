@@ -29,8 +29,9 @@ for (const source of ['builtin', 'installed'] as const) {
     const userDataDir = tmpDir('weftcut-e2e-motif-profile-')
     const motifId = source === 'builtin' ? 'countdown' : 'e2e-user-countdown'
     if (source === 'installed') {
-      // Same animation, but resolved through the runtime user catalog. The
-      // export Worker has only built-in manifests: baked pixels must suffice.
+      // Same animation, saved in the user's library: placing it copies it
+      // into the project's Motifs/. The export Worker has only built-in
+      // manifests: baked pixels must suffice.
       const builtinDir = path.join(__dirname, '../../src/shared/motifs/builtin/countdown')
       const manifest = { ...JSON.parse(readFileSync(path.join(builtinDir, 'manifest.json'), 'utf8')), id: motifId }
       const motifDir = path.join(userDataDir, 'data', 'motifs', motifId, `v${manifest.version}`)

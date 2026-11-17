@@ -1,7 +1,7 @@
 // e2e gate: the L2 raster GC must NEVER delete on-disk motif frames while a
 // motif layer is unresolvable (catalog sync lost the race with project open /
-// transient list_motifs failure / draft temporarily missing) — "can't
-// resolve" is not "orphaned". Path under test: the renderer's bake plan
+// transient list_motifs failure / its folder under Motifs/ temporarily
+// missing) — "can't resolve" is not "orphaned". Path under test: the renderer's bake plan
 // (`planMotifPreparation`) sets `collect` false whenever `collectLiveRasterKeys`
 // reports an unresolved Motif; main's `MotifBakeCoordinator` removes
 // unreferenced `Cache/raster/<hash>` dirs only for a `collect` plan, after
@@ -14,27 +14,15 @@ import { test, expect } from '@playwright/test'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { launchApp, newProject, waitForHook, tmpDir } from './helpers/driver'
+import { createMotif } from './helpers/motif'
 
-const MOTIF_ID = 'e2e-raster-gc-motif'
-
-function motifHtml(): string {
-  const manifest = {
-    id: MOTIF_ID,
-    name: 'E2E Raster GC Motif',
-    version: 1,
-    size: [320, 320],
-    default_duration_s: 4,
-    props_schema: {},
-  }
-  return (
-    `<!doctype html><html><head><meta charset="utf-8">` +
-    `<script type="application/json" id="motif-manifest">${JSON.stringify(manifest)}</script>` +
-    `<style>html,body{margin:0;background:transparent}#box{width:320px;height:320px;background:#8866cc}</style>` +
-    `</head><body><div id="box"></div>` +
-    `<script>motif.define({ setup() {} });</script>` +
-    `</body></html>`
-  )
-}
+const MANIFEST = { name: 'E2E Raster GC Motif', version: 1, size: [320, 320], default_duration_s: 4, props_schema: {} }
+const MOTIF_HTML =
+  `<!doctype html><html><head><meta charset="utf-8">` +
+  `<style>html,body{margin:0;background:transparent}#box{width:320px;height:320px;background:#8866cc}</style>` +
+  `</head><body><div id="box"></div>` +
+  `<script>motif.define({ setup() {} });</script>` +
+  `</body></html>`
 
 function invoke(page: import('@playwright/test').Page, channel: string, args: unknown) {
   return page.evaluate(
@@ -58,13 +46,8 @@ async function reopen(page: import('@playwright/test').Page, projectPath: string
 test('@serial raster GC keeps frames when a motif is unresolvable, reclaims true orphans', async () => {
   test.setTimeout(180_000)
   const userData = tmpDir('weftcut-e2e-raster-gc-userdata-')
-  const motifsRoot = path.join(userData, 'data', 'motifs')
   let { app, page } = await launchApp({ userDataDir: userData })
   try {
-    // The user Motif exists on disk BEFORE the project references it.
-    mkdirSync(path.join(motifsRoot, MOTIF_ID, 'v1'), { recursive: true })
-    writeFileSync(path.join(motifsRoot, MOTIF_ID, 'v1', 'index.html'), motifHtml())
-
     await newProject(page, {
       parentFolder: tmpDir('weftcut-e2e-raster-gc-proj-'),
       name: 'raster-gc',
@@ -74,19 +57,14 @@ test('@serial raster GC keeps frames when a motif is unresolvable, reclaims true
     await waitForHook(page, 'motifReopenProject')
     const projectPath = (await invoke(page, 'workspace_dir', {})) as string
 
-    // Wait until the catalog can resolve the draft, then place a layer of it.
-    await expect
-      .poll(async () =>
-        ((await invoke(page, 'list_motifs', {})) as Array<{ id: string }>).some((m) => m.id === MOTIF_ID),
-      )
-      .toBe(true)
+    const motifId = await createMotif(page, MANIFEST, MOTIF_HTML)
     const added = await page.evaluate(
       (id) =>
         (window as any).__weftcutTest
           .addMotifLayer({ motifId: id, durationUs: 2_000_000 })
           .then((layerId: string) => ({ ok: true, layerId }))
           .catch((e: unknown) => ({ ok: false, error: String(e) })),
-      MOTIF_ID,
+      motifId,
     )
     if (!added.ok) throw new Error('addMotifLayer failed: ' + added.error)
 
@@ -102,15 +80,15 @@ test('@serial raster GC keeps frames when a motif is unresolvable, reclaims true
     await reopen(page, projectPath)
     await expect.poll(() => existsSync(orphanDir), { timeout: 15_000 }).toBe(false)
 
-    // The motif becomes UNRESOLVABLE (draft deleted from the data root —
-    // models any transient catalog gap at open). Reopen: GC must skip, and
+    // The motif becomes UNRESOLVABLE (its folder gone from the project's
+    // Motifs/ — models any transient catalog gap at open). Reopen: GC must skip, and
     // even a dir it would otherwise collect must survive.
     // Stop the previous session before seeding: its still-valid GC may run
     // again after the control's first deletion and reclaim our new sentinel
     // while its catalog still resolves the motif. That is not the reopen
     // behavior this test measures.
     await app.close()
-    rmSync(path.join(motifsRoot, MOTIF_ID), { recursive: true, force: true })
+    rmSync(path.join(projectPath, 'Motifs', motifId), { recursive: true, force: true })
     seedOrphan()
     ;({ app, page } = await launchApp({ userDataDir: userData }))
     await waitForHook(page, 'motifReopenProject')

@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { invokeCmd, launchApp, newProject, tmpDir } from './helpers/driver';
-import { createMotifDraft, publishMotifDraft } from './helpers/motif';
+import { createMotif, motifContentHash } from './helpers/motif';
 
 /// The first frame a new capture host renders, for Motifs that draw only into
 /// canvases: a new window's first commit can carry the frame id with every
@@ -71,11 +71,10 @@ for (const backend of ['default', 'bitmap'] as const) {
       for (let i = 0; i < MOTIFS; i++) {
         const kind = i % 4 === 3 ? 'webgl' : '2d';
         const id = `first-frame-${kind}-${i}`;
-        const motifId = await publishMotifDraft(page, await createMotifDraft(page, {
-          id, name: id, version: 1, size: [1920, 1080], default_duration_s: 20, props_schema: {},
-        }, kind === 'webgl' ? CANVAS_WEBGL(id) : CANVAS_2D(id)));
-        const list = await invokeCmd<Array<{ id: string; content_hash?: string }>>(page, 'list_motifs');
-        lanes.push({ motifId, contentHash: list.find(m => m.id === motifId)!.content_hash!, kind });
+        const motifId = await createMotif(page, {
+          name: id, version: 1, size: [1920, 1080], default_duration_s: 20, props_schema: {},
+        }, kind === 'webgl' ? CANVAS_WEBGL(id) : CANVAS_2D(id));
+        lanes.push({ motifId, contentHash: await motifContentHash(page, motifId), kind });
       }
       const misses: string[] = [];
       for (const lane of lanes) {

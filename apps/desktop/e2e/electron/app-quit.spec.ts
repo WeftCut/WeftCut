@@ -38,10 +38,11 @@ test('closing the window quits the app after a Motif has been rendered', async (
 
     // One frame of a builtin Motif is enough to build the offscreen host. The
     // renderer registered the clock-takeover runtime at boot (main.tsx).
+    // No project is open, so the built-in renders from the library's host.
     // The channel returns the PNG BYTES (Uint8Array) — check the magic in-page.
     const isPng = await page.evaluate(async () => {
       const bytes = (await (window as any).api.backend.invoke('motif_capture_frame', {
-        motifId: 'lower-third',
+        motifId: 'lower-third--library',
         tSec: 0.5,
         propsJson: '{}',
         width: 320,

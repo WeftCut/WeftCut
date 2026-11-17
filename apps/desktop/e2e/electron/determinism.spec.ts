@@ -1,4 +1,5 @@
-import {createMotifDraft,publishMotifDraft} from './helpers/motif'
+import { createMotif } from './helpers/motif'
+import { libraryHost } from '../../src/shared/motifs/projectMotifs'
 // e2e gate: determinism capture harness.
 //
 // Captures fixed frames from built-in motifs (positive cases) and a synthetic
@@ -23,7 +24,7 @@ import { test } from '@playwright/test'
 import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { launchApp } from './helpers/driver'
+import { launchApp, newProject, tmpDir } from './helpers/driver'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -92,9 +93,11 @@ test('capture fixed motif frames for cross-OS comparison @serial', async () => {
     // First capture uses capWithRetry to absorb any runtime-registration delay.
     let firstPositive = true
     for (const c of POSITIVE) {
+      // No project is open yet: a built-in renders from the library's host.
+      const host = libraryHost(c.id)
       const b64 = firstPositive
-        ? await capWithRetry(c.id, c.t, c.w, c.h)
-        : await cap(c.id, c.t, c.w, c.h)
+        ? await capWithRetry(host, c.t, c.w, c.h)
+        : await cap(host, c.t, c.w, c.h)
       firstPositive = false
       if (!b64 || b64.length < 1000) {
         throw new Error(`motif_capture_frame returned an empty/short result for ${c.id}: length=${b64?.length}`)
@@ -135,29 +138,19 @@ motif.define({
       default_duration_s: 2,
       props_schema: {},
     }
-    const draftId = await createMotifDraft(page, manifest, jitterHtml)
-    console.log('[det] jitter draft id:', draftId)
+    // A Motif made here lives in a project's folder; the project goes with
+    // the driver's temporary directories.
+    await newProject(page, { parentFolder: tmpDir('weftcut-det-'), name: 'Determinism',
+      canvas: { width: 480, height: 480, fpsNum: 30, fpsDen: 1 } })
+    const jitterId = await createMotif(page, manifest, jitterHtml)
+    console.log('[det] jitter Motif id:', jitterId)
 
-    const publishedId = await publishMotifDraft(page, draftId)
-    console.log('[det] jitter published id:', publishedId)
-
-    const jb64 = await cap(publishedId, 0.5, 480, 480)
+    const jb64 = await cap(jitterId, 0.5, 480, 480)
     if (!jb64 || jb64.length < 1000) {
       throw new Error(`motif_capture_frame returned an empty/short result for jitter: length=${jb64?.length}`)
     }
     fs.writeFileSync(path.join(outDir, 'NEG-det-jitter.png'), Buffer.from(jb64, 'base64'))
     console.log(`[det] captured NEG-det-jitter.png (b64 len=${jb64.length})`)
-
-    // Clean up jitter motif to avoid accumulation across repeated local/CI runs.
-    try {
-      await page.evaluate(
-        ([ch, a]) => (window as any).api.backend.invoke(ch, a),
-        ['delete_motif', { motif_id: publishedId }] as const,
-      )
-      console.log('[det] jitter motif deleted:', publishedId)
-    } catch (e) {
-      console.warn('[det] delete_motif failed (non-fatal):', e)
-    }
 
     // Confirm all expected files exist.
     const expected = [...POSITIVE.map((c) => `${c.id}.png`), 'NEG-det-jitter.png']
