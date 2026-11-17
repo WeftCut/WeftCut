@@ -144,8 +144,8 @@ export class PackYuv420p10 {
 
   /// Every submitted frame, oldest first, each one frame-owned buffer in
   /// yuv420p10le plane order — safe to transfer.
-  drain(): Uint8Array[] {
-    return this.reader?.drain() ?? [];
+  drain(buffer?: (bytes: number) => Uint8Array): Uint8Array[] {
+    return this.reader?.drain(buffer) ?? [];
   }
 
   dispose(): void {
