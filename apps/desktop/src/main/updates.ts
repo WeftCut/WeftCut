@@ -33,12 +33,13 @@ export type MacInstall = {
  *  to Applications), or in a folder the user cannot write cannot update. */
 export function macSelfUpdateBlocked(exe: string, access: (file: string) => void = file =>
   fs.accessSync(file, fs.constants.W_OK)): 'location' | null {
-  // <bundle>.app/Contents/MacOS/<executable>
-  const bundle = path.resolve(exe, '../../..')
+  // <bundle>.app/Contents/MacOS/<executable>; POSIX paths whatever the host,
+  // so the unit tests read a macOS path the same on Windows CI.
+  const bundle = path.posix.resolve(exe, '../../..')
   if (bundle.includes('/AppTranslocation/')) return 'location'
   try {
     access(bundle)
-    access(path.dirname(bundle))
+    access(path.posix.dirname(bundle))
   } catch {
     return 'location'
   }
