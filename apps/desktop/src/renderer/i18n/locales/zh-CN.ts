@@ -2073,6 +2073,7 @@ const zhCN: Resources = {
   settings: {
     auto_install_updates_on_quit: '关闭应用时自动安装可用更新',
     auto_install_updates_on_quit_hint: '开启后后台下载更新，关闭应用时安装；关闭后仅检查新版本，点击“下载并安装”才会下载。',
+    auto_install_updates_on_quit_hint_mac: '开启后后台下载更新，关闭应用时安装；关闭后仅检查新版本，点击“下载并安装”才会下载。已下载好的更新仍会在关闭应用时安装。',
     layout_theme: '布局主题',
     layout_theme_hint: '统一应用预设字号和对话框尺寸。宽松主题提供更多横向空间，文字略大。',
     layout_theme_recommended: '推荐',

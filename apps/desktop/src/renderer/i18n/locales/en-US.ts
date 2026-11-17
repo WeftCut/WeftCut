@@ -2319,6 +2319,7 @@ const enUS = {
   settings: {
     auto_install_updates_on_quit: 'Automatically install available updates when closing the app',
     auto_install_updates_on_quit_hint: 'When enabled, updates download in the background and install on exit. When disabled, updates only download when you choose Download and install.',
+    auto_install_updates_on_quit_hint_mac: 'When enabled, updates download in the background and install on exit. When disabled, updates only download when you choose Download and install. An update that has already downloaded still installs when you close the app.',
     layout_theme: 'Layout theme',
     layout_theme_hint: 'Apply preset text sizes and dialog dimensions. Relaxed layouts provide more horizontal room and slightly larger text.',
     layout_theme_recommended: 'Recommended',
