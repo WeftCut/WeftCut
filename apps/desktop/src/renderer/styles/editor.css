@@ -73,18 +73,23 @@
   cursor: pointer;
   overflow: hidden;
   user-select: none;
+  /* Two weights of ink across the strip, themed with it. The change and tack
+     bands are the review's and share one; markers are context and take half,
+     since a marker's colour is the user's and may be a band's hue, which
+     leaves the row and this weight to tell them apart. */
+  --mini-band: calc(4 * var(--ui-px));
+  --mini-marker-line: calc(2 * var(--ui-px));
 }
 
 /* Markers: one thin row through the strip's middle, between the change band
    at its head and the tack band at its foot — the editor's order (ruler with
-   its ranges, marker lane, Review lane). The lightest ink on the strip: the
-   bands are what agent mode is for, so a region is a line, never a fill, and
-   a point a short tick on that line, never the strip's full height. */
+   its ranges, marker lane, Review lane). A region is a line, never a fill,
+   and a point a short tick on that line, never the strip's full height. */
 .mini-marker-pip {
   position: absolute;
   top: calc(50% - 6 * var(--ui-px));
   height: calc(12 * var(--ui-px));
-  width: 2px; /* fixed-px: marker line weight */
+  width: 2px; /* fixed-px: time-axis tick weight */
   margin-left: -1px; /* fixed-px: centres the tick on its frame */
   pointer-events: none;
   opacity: 0.6;
@@ -92,21 +97,20 @@
 
 .mini-marker-region {
   position: absolute;
-  top: calc(50% - 1px); /* fixed-px: centres the line */
-  height: 2px; /* fixed-px: marker line weight */
+  top: calc(50% - var(--mini-marker-line) / 2);
+  height: var(--mini-marker-line);
   opacity: 0.5;
   border-radius: 1px;
   pointer-events: none;
 }
 
 /* Tacks (ADR 0115): a band along the strip's foot, below the marker row, in
-   the one tack hue. The ranges arrive
-   merged (`tackCoverage`), so one opacity covers the band and an overlap never
-   darkens into a second shade. */
+   the one tack hue. The ranges arrive merged (`tackCoverage`), so one opacity
+   covers the band and an overlap never darkens into a second shade. */
 .mini-tack {
   position: absolute;
   bottom: 0;
-  height: calc(5 * var(--ui-px));
+  height: var(--mini-band);
   background: var(--tack);
   pointer-events: none;
   border-radius: 1px;
@@ -129,7 +133,7 @@
 .mini-change {
   position: absolute;
   top: 0;
-  height: calc(4 * var(--ui-px));
+  height: var(--mini-band);
   min-width: 2px; /* fixed-px: time-axis tick weight */
   pointer-events: none;
   border-radius: 1px;
