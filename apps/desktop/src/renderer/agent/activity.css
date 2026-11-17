@@ -132,8 +132,9 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-changes-actions { display: flex; flex: none; gap: calc(3 * var(--ui-px)); margin-left: auto; }
 .agent-changes-actions button.agent-changes-approve-all:last-child { margin-left: 0; }
 /* The diff stat (ChangeStatsBar) at the toolbar's start: signed figures in their
-   class hue, a zero one stepped back so the stat keeps its shape. */
-.agent-changes-stats { display: flex; flex: none; align-items: baseline; gap: calc(10 * var(--ui-px)); margin: 0 calc(6 * var(--ui-px)) 0 calc(2 * var(--ui-px)); font-size: var(--font-size-heading); line-height: 1; font-variant-numeric: tabular-nums; font-weight: 600; }
+   class hue, a zero one stepped back so the stat keeps its shape. A step under
+   the tab labels above it: the panel's summary, not its heading. */
+.agent-changes-stats { display: flex; flex: none; align-items: baseline; gap: calc(8 * var(--ui-px)); margin: 0 calc(6 * var(--ui-px)) 0 calc(2 * var(--ui-px)); font-size: var(--font-size-label); line-height: 1; font-variant-numeric: tabular-nums; font-weight: 600; }
 .agent-changes-stat.class-added { color: var(--review-added); }
 .agent-changes-stat.class-removed { color: var(--review-removed); }
 .agent-changes-stat.class-modified { color: var(--review-modified); }
@@ -160,6 +161,10 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 /* The work session that made the change. */
 .agent-change-copy small.agent-change-from { color: var(--muted-foreground); font-size: var(--font-size-micro); }
 .agent-change.source-user { opacity: .7; }
+/* How little the film shows of the change (`ReviewWeight`): a note after the
+   line; quiet, the badge steps back too, its order and class unchanged. */
+.agent-change-weight { color: var(--muted-foreground); }
+.agent-change[data-review-weight="quiet"] .agent-change-badge { opacity: .6; }
 .agent-change.source-user .agent-change-badge { border-style: dashed; }
 .agent-change-mine { flex: none; color: var(--muted-foreground); font-size: var(--font-size-micro); white-space: nowrap; }
 /* The review focus (shared with the timelines): a change row selects as a tack
@@ -175,3 +180,23 @@ p.agent-activity-error { margin: calc(5 * var(--ui-px)) calc(7 * var(--ui-px)) c
 .agent-tack.unplaced:not([data-selected="true"]) { opacity: .7; }
 /* A compute refusal's Settings button and details, under the row's error line. */
 .agent-activity .compute-refusal-actions { margin: 0 calc(7 * var(--ui-px)) calc(3 * var(--ui-px)) calc(27 * var(--ui-px)); }
+/* The focused changed range (RangeBar): one flat row on the panel's ground —
+   play named first, the range's line, which of the timeline's ranges it is
+   between the walk to its neighbours, close. No hue of its own: the ruler and
+   the framed rows already carry the class. */
+.agent-range-bar { display: flex; align-items: center; gap: calc(2 * var(--ui-px)); margin: 0 calc(10 * var(--ui-px)) calc(6 * var(--ui-px)); padding: calc(2 * var(--ui-px)); background: var(--background); border-radius: var(--radius-control); font-size: var(--font-size-caption); }
+.agent-range-bar-line { flex: 1; min-width: 0; padding-inline: calc(4 * var(--ui-px)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-range-bar-spots { display: flex; align-items: center; flex: none; }
+.agent-range-bar-spot { padding-inline: calc(2 * var(--ui-px)); font-variant-numeric: tabular-nums; color: var(--muted-foreground); white-space: nowrap; }
+.agent-activity-panel .agent-range-bar button { flex: none; display: inline-flex; align-items: center; gap: calc(4 * var(--ui-px)); padding: calc(3 * var(--ui-px)); border-radius: var(--radius-control); color: var(--muted-foreground); }
+.agent-activity-panel .agent-range-bar button:hover:not([aria-disabled]) { color: var(--foreground); }
+.agent-activity-panel .agent-range-bar button[aria-disabled="true"] { opacity: .4; cursor: default; background: none; }
+.agent-activity-panel .agent-range-bar .agent-range-bar-play { padding-inline: calc(6 * var(--ui-px)); color: var(--foreground); }
+/* Its changes' rows framed as one group — one neutral ground, joined where
+   they follow each other — and the rest stepped back. */
+.agent-changes[data-range-focus] .agent-change:not([data-in-range]) { opacity: .5; }
+.agent-change[data-in-range] { background: color-mix(in srgb, var(--hover-neutral) 60%, transparent); }
+.agent-change[data-in-range]:hover { background: var(--hover-neutral); }
+.agent-change[data-in-range][data-selected="true"] { background: var(--selection-bg); }
+.agent-change[data-in-range]:has(+ .agent-change[data-in-range]) { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.agent-change[data-in-range] + .agent-change[data-in-range] { border-top-left-radius: 0; border-top-right-radius: 0; }

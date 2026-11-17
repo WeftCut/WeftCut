@@ -429,6 +429,23 @@ describe("useShortcuts — NLE-style global accelerators", () => {
   });
 });
 
+describe("runWithLogging — a command's own outcome", () => {
+  it("a handler that answers with what it did logs that, still as one Shortcut row", async () => {
+    const { logEmit } = await import("../ipc");
+    const logEmitMock = vi.mocked(logEmit);
+    logEmitMock.mockClear();
+
+    runWithLogging("seekNextChangedRange", () => ({ message: "Landed", i18n_key: "log.landed", i18n_args: { index: 2 } }));
+
+    expect(logEmitMock).toHaveBeenCalledTimes(1);
+    const entry = logEmitMock.mock.calls[0]![0];
+    expect(entry.category).toEqual({ kind: "Shortcut" });
+    expect(entry.message).toBe("Landed");
+    expect(entry.i18n_key).toBe("log.landed");
+    expect(entry.i18n_args).toMatchObject({ actionId: "seekNextChangedRange", index: 2 });
+  });
+});
+
 describe("runWithLogging — refusal rendering", () => {
   const wire = (err: Record<string, unknown>) =>
     new Error(

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, type CSSProperties } from "react";
+import { Fragment, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { GitCompareArrows } from "lucide-react";
 import { AppIcon } from "@/components/AppIcon";
@@ -9,16 +9,17 @@ import {
   useHighlightedChanges,
   useLayerReviewChange,
   useLayerReviewMark,
+  useLayerReviewWeight,
   useTrackReviewCuts,
   useTrackReviewGhosts,
 } from "../agent/reviewStore";
-import type { ReviewClipMark, ReviewCut } from "../agent/reviewHighlight";
+import type { ReviewCut } from "../agent/reviewHighlight";
 import {
   useCompositionFocusWashes,
-  useFocusedChangeId,
   useGhostFocus,
   useLayerFocusMark,
   useReviewMarksRecede,
+  useSpotlitChanges,
   useTrackFocusWas,
   useFocusPaint,
   releaseFocus,
@@ -39,25 +40,20 @@ import { layerSliceRect } from "./geometry";
 /// What they paint comes from `reviewStore`'s highlight reads, the seam a
 /// per-activity highlight later feeds a different change set through.
 
-const EDGE: Record<ReviewClipMark, CSSProperties> = {
-  // A coloured edge: green for what is new, amber for what differs — a move
-  // to another track or time included. What it differs in is the panel's
-  // to say, in words, not one more hue here.
-  added: { boxShadow: "inset 0 0 0 2px var(--review-added)" },
-  modified: { boxShadow: "inset 0 0 0 2px var(--review-modified)" },
-};
-
 /// A clip's review mark: drawn over the clip's body, under its selection
 /// outline (`z-[3]`), in the clip's own rounded box. And the review focus's
 /// outline (`agent/reviewFocus.ts`), inside that box too, so it never leaves
 /// the lane or lands on a neighbour: one neutral hairline inside the mark's own
 /// edge, whatever is focused (`.review-focus-outline`). While a change is
-/// focused, the marks of the others step back.
+/// focused, the marks of the others step back. The edge is as loud as the
+/// film difference its change plays in (`ReviewWeight`, `.review-clip-mark`).
 export function ReviewClipMarkLayer({ layerId }: { layerId: string }) {
   const { t } = useTranslation();
   const mark = useLayerReviewMark(layerId);
+  const weight = useLayerReviewWeight(layerId);
   const focus = useLayerFocusMark(layerId);
-  // While a change is focused every other clip dims (`ReviewFocusExit` ends it).
+  // While a change or range is focused every clip it does not name dims
+  // (`ReviewFocusExit` ends it).
   const dim = useReviewMarksRecede() && focus !== "change";
   const recede = dim;
   if (mark === null && focus === null && !dim) return null;
@@ -74,11 +70,12 @@ export function ReviewClipMarkLayer({ layerId }: { layerId: string }) {
         <span
           data-testid="review-clip-mark"
           data-review-mark={mark}
+          data-review-weight={weight ?? "full"}
+          data-pointed={focus === "change" || focus === "hover" || undefined}
           data-recede={recede || undefined}
-          aria-label={t(`changes.class_${mark}`)}
+          aria-label={weight === null || weight === "full" ? t(`changes.class_${mark}`) : `${t(`changes.class_${mark}`)} · ${t(`changes.weight_${weight}`)}`}
           role="img"
           className="review-clip-mark pointer-events-none absolute inset-0 z-[2] rounded-[inherit]"
-          style={EDGE[mark]}
         />
       )}
       {focus !== null && (
@@ -94,13 +91,20 @@ export function ReviewClipMarkLayer({ layerId }: { layerId: string }) {
 }
 
 /// The words a clip's tooltip adds for its review mark: its change's line
-/// (`changeLine`) — the panel row's words, so a clip reads the same pointed at
-/// from either side. The project is read only for a marked clip, so an
-/// unmarked block hears nothing of a publication from here.
+/// (`changeLine`), plus how little the film shows of it below a full weight —
+/// the panel row's words, so a clip reads the same pointed at from either side.
+/// The project is read only for a marked clip, so an unmarked block hears
+/// nothing of a publication from here.
 export function useLayerReviewTitle(layerId: string | null): string | null {
+  const { t } = useTranslation();
   const change = useLayerReviewChange(layerId);
+  const weight = useLayerReviewWeight(layerId);
   const words = useChangeWords({ active: change !== null });
-  return useMemo(() => (change === null || change.class === "removed" ? null : changeLine(change, words)), [change, words]);
+  return useMemo(() => {
+    if (change === null || change.class === "removed") return null;
+    const line = changeLine(change, words);
+    return weight === null || weight === "full" ? line : `${line} · ${t(`changes.weight_${weight}`)}`;
+  }, [change, weight, words, t]);
 }
 
 /// The "contains changes" badge on a Group clip: how many highlighted changes
@@ -237,9 +241,11 @@ export function ReviewGhosts({
 /// over the lane's own background and under everything the lane draws — gap,
 /// ghosts, clips. Paint only: no pointer events, no box of its own in the
 /// flow, so the focus moving never reflows or re-hits anything. The tack hue
-/// for a tack, the neutral review-focus hue for a change; a removal's baseline
-/// footprint hatched in the removed hue — where it was, not what is there —
-/// unless it is a clip whose lane survives, which its raised ghost shows.
+/// for a tack, the neutral review-focus hue for a change or a changed range
+/// (fainter as the context of a change stepped to inside it); a removal's
+/// baseline footprint hatched in the removed hue — where it was, not what is
+/// there — unless it is a clip whose lane survives, which its raised ghost
+/// shows.
 export function ReviewFocusWash({
   compositionId,
   pxPerSec,
@@ -260,6 +266,7 @@ export function ReviewFocusWash({
             data-kind={w.kind}
             data-point={point || undefined}
             data-historical={w.historical || undefined}
+            data-context={w.context || undefined}
             aria-hidden="true"
             className="review-focus-wash pointer-events-none absolute inset-y-0 z-[2]"
             style={{
@@ -320,9 +327,9 @@ export function ReviewWasFrames({
   );
 }
 
-/// A focused change dims the rest of the timeline, so the focus ends with the
-/// look: a press on the lanes anywhere but a clip of the focused change lets
-/// it go (approving it already does). A press on the focused clip keeps it, so
+/// A focused change or range dims the rest of the timeline, so the focus ends
+/// with the look: a press on the lanes anywhere but a clip it names lets it go
+/// (approving it already does). A press on the focused clip keeps it, so
 /// it can still be selected and trimmed. Not Esc — on the timeline Esc already
 /// ends blade and region arms, and one key ending two things is a surprise.
 export function ReviewFocusExit() {
@@ -381,7 +388,7 @@ export function ReviewCuts({ trackId, pxPerSec }: { trackId: string; pxPerSec: n
   const changes = useHighlightedChanges();
   const words = useChangeWords({ active: cuts.length > 0 });
   const recede = useReviewMarksRecede();
-  const focused = useFocusedChangeId();
+  const spotlit = useSpotlitChanges();
   if (cuts.length === 0) return null;
   const metrics = UI_METRICS.timeline.review.cutMark;
   const [width, height] = [uiPixels(metrics.width), uiPixels(metrics.height)];
@@ -398,7 +405,7 @@ export function ReviewCuts({ trackId, pxPerSec }: { trackId: string; pxPerSec: n
         }
         const label = lines.join("\n");
         const first = g.cuts[0]!;
-        const mine = focused !== null && seen.has(focused);
+        const mine = [...seen].some((id) => spotlit.has(id));
         return (
           <span
             key={`${first.changeId}:${first.kind}:${first.tUs}`}

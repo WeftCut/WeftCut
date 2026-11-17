@@ -7,6 +7,7 @@ import { seededGen } from './ids'
 import { applyAddGroupLayer, applyAddLayer, applyAddTrack, colorParams } from './mutations/add'
 import { audioParams, mediaItemTemplate, videoClipParams } from './mutations/media'
 import { applySplitLayer } from './mutations/split'
+import { applyLinksCreate } from './mutations/links'
 import type { Change, ChangedRange } from '../../shared/review'
 
 const VIDEO = '00000000-0000-0000-0000-0000000000aa'
@@ -87,6 +88,88 @@ describe('diffRanges', () => {
     // later than before: one range to the end, its offset stated.
     expect(brief(rs)).toEqual([['modified', 2, 6, 2, 6]])
     expect(rs[0]!.sync_offset_us).toBe(2 * S)
+  })
+
+  describe('sync', () => {
+    /** Ripple-delete B from `setupD`: the picture closes up, the bed stays. */
+    const rippleB = (d: Project, s: ReturnType<typeof setupD>) => { remove(d, s.b); shift(d, s.c, -2 * S); shift(d, s.d, -2 * S) }
+    const sync = (rs: readonly ChangedRange[]) =>
+      rs.map(r => [r.t_start_us / S, r.t_end_us / S, r.only, r.sync_offset_us, r.sound_lag_us, r.sound_role, r.sync_bound])
+
+    it('reads a bed under a rippled hole as only out of sync, the music late against the picture', () => {
+      const s = setupD()
+      const rs = ranges(s.p, produce(s.p, d => rippleB(d, s)))
+      // The removed clip's hole is the range's onset; everything after it
+      // is the same picture and the same music, two seconds apart.
+      expect(brief(rs)).toEqual([['modified', 2, 8, 2, 8]])
+      expect(sync(rs)).toEqual([[2, 8, 'sync', 2 * S, 2 * S, 'music', undefined]])
+    })
+
+    it('says which kind plays apart when it is one kind, and only then', () => {
+      const s = setupD()
+      // The bed becomes a B-roll over all four clips: picture against picture.
+      const broll = produce(s.p, d => { layer(d, s.bed).params = videoClipParams(VIDEO, 40 * S, 48 * S) })
+      const pictures = ranges(broll, produce(broll, d => rippleB(d, s)))
+      expect(sync(pictures)).toEqual([[2, 8, 'sync', 2 * S, undefined, undefined, undefined]])
+      expect(pictures[0]!.sync_between).toBe('picture')
+      // Picture against the music bed names neither kind alone.
+      expect(ranges(s.p, produce(s.p, d => rippleB(d, s)))[0]!.sync_between).toBeUndefined()
+    })
+
+    it('marks the sync bound when linked layers play apart', () => {
+      const s = setupD()
+      applyLinksCreate(s.p, s.ids, [s.c, s.d, s.bed], false)
+      const rs = ranges(s.p, produce(s.p, d => rippleB(d, s)))
+      expect(sync(rs)).toEqual([[2, 8, 'sync', 2 * S, 2 * S, 'music', true]])
+    })
+
+    it('marks the sync bound when dialogue plays apart from the picture', () => {
+      const s = setupD()
+      ;(layer(s.p, s.bed).params as AudioParams).role = 'dialogue'
+      const rs = ranges(s.p, produce(s.p, d => rippleB(d, s)))
+      expect(sync(rs)).toEqual([[2, 8, 'sync', 2 * S, 2 * S, 'dialogue', true]])
+    })
+
+    it('keeps the offset but not sync-only where something also plays differently', () => {
+      const s = setupD()
+      const after = produce(s.p, d => {
+        rippleB(d, s)
+        ;(layer(d, s.c).params as { opacity: unknown }).opacity = { mode: 'Static', value: 0.5 }
+      })
+      // The dimmed C plays at 2-4 s now and played at 4-6 s: only past both
+      // is the stretch the same content out of sync.
+      expect(ranges(s.p, after).map(r => [r.t_start_us / S, r.t_end_us / S, r.only, r.sync_offset_us]))
+        .toEqual([[2, 6, undefined, 2 * S], [6, 8, 'sync', 2 * S]])
+    })
+
+    it('reads content removed further into the stretch as more than out of sync', () => {
+      const s = setupD()
+      const titles = applyAddTrack(s.p, s.ids, 'Titles')
+      applyAddLayer(s.p, s.ids, titles, colorParams({ r: 1, g: 2, b: 3, a: 255 }, 64, 64), 5 * S, 6 * S)
+      const title = rootComposition(s.p).tracks.find(t => t.id === titles)!.layers[0]!.id
+      const rs = ranges(s.p, produce(s.p, d => { rippleB(d, s); remove(d, title) }))
+      // The hole at the onset is the cut the stretch starts at; the title
+      // gone at 5 s is a removal of its own.
+      expect(rs.map(r => [r.t_start_us / S, r.t_end_us / S, r.only])).toEqual([[2, 5, 'sync'], [5, 6, undefined], [6, 8, 'sync']])
+    })
+
+    it('states no sync where every track moved alike', () => {
+      const s = setup()
+      const after = produce(s.p, d => { remove(d, s.b); shift(d, s.c, -2 * S); closeBed(d, s, 2 * S, 4 * S) })
+      expect(ranges(s.p, after).map(r => [r.class, r.sync_offset_us, r.only])).toEqual([['removed', undefined, undefined]])
+    })
+
+    it('states each stretch\'s own offset where the displacements change along one residual', () => {
+      const s = setupD()
+      const after = produce(s.p, d => { remove(d, s.b); shift(d, s.c, -2 * S); shift(d, s.d, -S) })
+      // C plays 2 s early against the bed, D 1 s; where both stand against
+      // it the picture parts disagree, so no one lag is true there.
+      expect(sync(ranges(s.p, after))).toEqual([
+        [2, 5, 'sync', 2 * S, 2 * S, 'music', undefined],
+        [5, 6, 'sync', 2 * S, undefined, undefined, undefined],
+        [6, 8, 'sync', S, S, 'music', undefined],
+      ])
+    })
   })
 
   it('reads a lift as a removal with its width, and an insert as an addition', () => {

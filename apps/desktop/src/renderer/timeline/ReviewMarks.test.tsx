@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import "../i18n";
-import type { Change, ReviewView } from "../../shared/review";
+import type { Change, ChangedRange, ReviewView } from "../../shared/review";
 import type { LayerSummary, TrackSummary } from "../ipc";
 import { useAppSettingsStore } from "../settings/appSettingsStore";
 import { useAgentActivity } from "../agent/activityStore";
@@ -17,7 +17,7 @@ import { Timeline } from "./Timeline";
 import { mergeCuts } from "./ReviewMarks";
 import { uiPixels } from "../settings/layoutTheme";
 import { UI_METRICS } from "../settings/uiMetrics";
-import { selectChange, selectTack, setReviewFocus, setReviewHover, useReviewFocus } from "../agent/reviewFocus";
+import { rangeKey, selectChange, selectTack, setReviewFocus, setReviewHover, useReviewFocus } from "../agent/reviewFocus";
 
 // The Review overlay's clip decorations (ADR 0115) are paint inside boxes that
 // already exist: turning them on must not move or size a clip or a lane, and
@@ -144,6 +144,43 @@ describe("Review overlay clip decorations", () => {
     const { container } = renderTimeline();
     act(() => { useReview.getState().apply({ ...view, version: { ...view.version, baseline_revision: 2 }, unreviewed: [] }); });
     expect(q(container, '[data-testid="review-clip-mark"], [data-testid="review-ghost"], [data-testid="review-group-badge"]')).toHaveLength(0);
+  });
+
+  describe("a mark is as loud as the film difference it plays in", () => {
+    const range = (ids: string[], patch: Partial<ChangedRange> = {}): ChangedRange => ({
+      composition_id: ROOT_ID, class: "modified", t_start_us: 0, t_end_us: 5 * S, before_start_us: 0, before_end_us: 5 * S,
+      source: "review", change_ids: ids as ChangedRange["change_ids"], ...patch,
+    });
+    // "shifted" slid with a ripple: the range over its stretch names others.
+    const weighed: ReviewView = { ...view, version: { ...view.version, revision: 2 }, ranges: [
+      range(["Layer:added"], { class: "added" }), range(["Layer:edited"]), range(["Layer:moved"], { only: "sync", sync_offset_us: 2 * S }),
+    ] };
+    const weights = (c: HTMLElement) => Object.fromEntries(q(c, '[data-testid="review-clip-mark"]').map((m) => [m.closest<HTMLElement>("[data-layer-id]")!.dataset.layerId, m.dataset.reviewWeight]));
+    const block = (c: HTMLElement, id: string) => c.querySelector<HTMLElement>(`[data-layer-id="${id}"]`)!;
+
+    it("is full where a range lists its change, soft where only a loose sync range does, quiet where none does", () => {
+      act(() => { useReview.getState().apply(weighed); });
+      const { container } = renderTimeline();
+      expect(weights(container)).toEqual({ added: "full", edited: "full", moved: "soft", shifted: "quiet" });
+    });
+
+    it("its clip's tooltip says how little plays differently, a full one nothing more", () => {
+      act(() => { useReview.getState().apply(weighed); });
+      const { container } = renderTimeline();
+      expect(block(container, "shifted").title).toContain("plays the same");
+      expect(block(container, "moved").title).toContain("out of sync only");
+      expect(block(container, "edited").title).not.toMatch(/plays the same|out of sync only/);
+    });
+
+    it("a quiet clip focused is still the one pointed at, and the others still step back", () => {
+      act(() => { useReview.getState().apply(weighed); });
+      const { container } = renderTimeline();
+      act(() => selectChange("Layer:shifted"));
+      const mark = (id: string) => block(container, id).querySelector<HTMLElement>('[data-testid="review-clip-mark"]')!;
+      expect(block(container, "shifted").querySelector('[data-testid="review-focus-outline"]')).not.toBeNull();
+      expect([mark("shifted").dataset.reviewWeight, mark("shifted").dataset.pointed, mark("shifted").dataset.recede]).toEqual(["quiet", "true", undefined]);
+      expect(mark("edited").dataset.recede).toBe("true");
+    });
   });
 });
 
@@ -350,7 +387,7 @@ describe("Changed ranges on the ruler", () => {
     expect(painted(container)).toHaveLength(0);
   });
 
-  it("a press on a range scrubs as the bare ruler does and focuses nothing; a double press focuses its change", () => {
+  it("a press on a range scrubs as the bare ruler does and focuses nothing; a double press focuses the range", () => {
     const onSeek = vi.fn();
     const { container } = render(
       <Timeline compositionId={null} tracks={[track, other]} links={[]} transitions={[]} durationUs={10 * S} keybindings={{}}
@@ -364,7 +401,36 @@ describe("Changed ranges on the ruler", () => {
     expect(onSeek).toHaveBeenCalled();
     expect(useReviewFocus.getState().focus).toBeNull();
     fireEvent.doubleClick(range!);
-    expect(useReviewFocus.getState().focus).toMatchObject({ kind: "change", id: "Layer:edited" });
+    expect(useReviewFocus.getState().focus).toMatchObject({ kind: "range", id: rangeKey(ranged.ranges[0]!), step: null });
+    // Selected as itself; its clips outlined, the rest receding.
+    expect(painted(container).map((r) => r.dataset.selected ?? null)).toEqual(["true", null]);
+    const outlined = q(container, '[data-testid="review-focus-outline"]').map((o) => o.closest<HTMLElement>("[data-layer-id]")?.dataset.layerId);
+    expect(outlined).toEqual(["edited"]);
+  });
+
+  it("a right press focuses the range before the ruler's menu opens, so its rows act on it", () => {
+    const { container } = renderTimeline();
+    const cut = painted(container)[1]!;
+    fireEvent.contextMenu(cut, { clientX: 300, clientY: 10 });
+    expect(useReviewFocus.getState().focus).toMatchObject({ kind: "range", id: rangeKey(ranged.ranges[1]!) });
+  });
+
+  it("marks a range out of sync by how it reads, its onset glyph only where it has room", () => {
+    const sync = { class: "modified", source: "review", sync_offset_us: 2 * S, sound_lag_us: 2 * S, sound_role: "music" } as const;
+    useReview.getState().apply({
+      ...ranged, version: { ...ranged.version, revision: 4 }, content_revision: 4,
+      ranges: [
+        { ...sync, change_ids: ["Layer:edited"], composition_id: ROOT_ID, t_start_us: 2 * S, t_end_us: 6 * S, before_start_us: 2 * S, before_end_us: 6 * S, only: "sync" },
+        { ...sync, change_ids: ["Layer:edited"], composition_id: ROOT_ID, t_start_us: 7 * S, t_end_us: 7 * S + 1, before_start_us: 7 * S, before_end_us: 7 * S + 1, only: "sync", sync_bound: true },
+        { ...sync, change_ids: ["Layer:edited"], composition_id: ROOT_ID, t_start_us: 8 * S, t_end_us: 9 * S, before_start_us: 8 * S, before_end_us: 9 * S },
+      ],
+    });
+    const { container } = renderTimeline();
+    const ranges = painted(container);
+    expect(ranges.map((r) => [r.dataset.sync, r.querySelector(".ruler-range-sync-glyph") !== null])).toEqual([
+      ["loose", true], ["bound", false], ["mixed", true],
+    ]);
+    expect(ranges[0]!.title).toBe("Out of sync · 4.0 s · Music 2.0 s later than picture");
   });
 });
 

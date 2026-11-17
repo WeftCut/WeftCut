@@ -22,7 +22,7 @@ import { useAgentActivity } from './activityStore'
 import type { AgentActivity } from '../../shared/agent-activity'
 import { changeWordsContext, type ChangeFrame, type ChangeWordsContext, type Translate } from './changeWords'
 import { rangeLine } from './rangeWords'
-import { buildReviewHighlight, EMPTY_HIGHLIGHT, rangeMarks, type ReviewClipMark, type ReviewCut, type ReviewGhost, type ReviewMarkerGhost, type ReviewHighlight, type ReviewRangeMark } from './reviewHighlight'
+import { buildReviewHighlight, changeWeights, EMPTY_HIGHLIGHT, rangeMarks, type ReviewClipMark, type ReviewWeight, type ReviewCut, type ReviewGhost, type ReviewMarkerGhost, type ReviewHighlight, type ReviewRangeMark } from './reviewHighlight'
 
 /** One activity row's own changes (spec Part B, per-activity highlight):
  *  what that call did, shown on the timelines in place of the unreviewed
@@ -112,8 +112,9 @@ export const useReview = create<ReviewState>((set, get) => ({
     const held = get()
     const fillsUser = listsUser && !held.viewListsUser && held.view !== null && sameVersion(next.version, held.view.version)
     if (!fillsUser && !isNewerReviewView(next.version, held.view?.version ?? null)) return false
-    // Filling in the user's list keeps the clip marks (they show the
-    // unreviewed changes alone) but takes the ranges, which now hold theirs.
+    // Filling in the user's list keeps the clip marks and their weights (they
+    // show the unreviewed changes alone, which the same ranges list either
+    // way) but takes the ranges, which now hold theirs.
     const highlight = fillsUser ? { ...held.highlight, ranges: rangeMarks(next.ranges) } : buildReviewHighlight(next.unreviewed, next.decorations, next.ranges)
     set({ view: next, viewListsUser: listsUser, highlight, ...noUserLeft(next) })
     return true
@@ -238,6 +239,19 @@ export function useLayerReviewMark(layerId: string): ReviewClipMark | null {
   return useReview(s => (overlay ? selectHighlight(s).layers.get(layerId) ?? null : null))
 }
 
+/** How loud a clip's review mark is (`ReviewWeight`), or null unmarked. */
+export function useLayerReviewWeight(layerId: string | null): ReviewWeight | null {
+  const overlay = useOverlay()
+  return useReview(s => (overlay && layerId !== null ? selectHighlight(s).layerWeights.get(layerId) ?? null : null))
+}
+
+/** Each change of the Review view by the weight its ranges give it
+ *  (`changeWeights`): the Changes tab's rows. */
+export function useChangeWeights(): ReadonlyMap<string, Exclude<ReviewWeight, 'quiet'>> {
+  const ranges = useReview(s => s.view?.ranges)
+  return useMemo(() => changeWeights(ranges ?? []), [ranges])
+}
+
 /** The change that marks a clip on the editor timeline, or null — what its
  *  tooltip words. Null `layerId` (a duplicate's in-flight clone) reads none. */
 export function useLayerReviewChange(layerId: string | null): Change | null {
@@ -343,17 +357,27 @@ export function useTrackReviewCuts(trackId: string): readonly ReviewCut[] {
   }, [overlay, cuts, trackId])
 }
 
-/** Changed ranges on one composition — the review bands. The user's own
- *  show only while the user-changes switch is on. Not gated by the overlay:
- *  the agent view has no overlay switch. */
+/** Changed ranges on one composition as the review bands paint them: the
+ *  user's own only while the user-changes switch is on, or within a selected
+ *  call's. The one reading the bands and the range walk share. */
+export function compositionChangeRanges(
+  ranges: readonly ReviewRangeMark[], compositionId: string | null, showUser: boolean,
+): readonly ReviewRangeMark[] {
+  if (compositionId === null || ranges.length === 0) return NO_RANGES
+  const mine = ranges.filter(r => r.compositionId === compositionId && (showUser || !r.user))
+  return mine.length === 0 ? NO_RANGES : mine
+}
+
+/** Whether the user's own ranges are on the bands: the switch, or a call's. */
+export const rangesShowUser = (s: Pick<ReviewState, 'showUser' | 'activity'>): boolean =>
+  s.showUser || s.activity?.status === 'ready'
+
+/** Changed ranges on one composition — the review bands. Not gated by the
+ *  overlay: the agent view has no overlay switch. */
 export function useCompositionChangeRanges(compositionId: string | null): readonly ReviewRangeMark[] {
   const ranges = useReview(s => selectHighlight(s).ranges)
-  const showUser = useReview(s => s.showUser || s.activity?.status === 'ready')
-  return useMemo(() => {
-    if (compositionId === null || ranges.length === 0) return NO_RANGES
-    const mine = ranges.filter(r => r.compositionId === compositionId && (showUser || !r.user))
-    return mine.length === 0 ? NO_RANGES : mine
-  }, [ranges, compositionId, showUser])
+  const showUser = useReview(rangesShowUser)
+  return useMemo(() => compositionChangeRanges(ranges, compositionId, showUser), [ranges, compositionId, showUser])
 }
 
 // ── Approve all / revert all ──────────────────────────────────────────────────

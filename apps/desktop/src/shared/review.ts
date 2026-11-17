@@ -101,13 +101,40 @@ export interface ChangedRange {
   change_ids: EntityKey[]
   /** A range to review that also holds the user's own changes. */
   includes_user?: true
-  /** Only the audio, or only the picture, plays differently. */
-  only?: 'audio' | 'picture'
+  /** Only the audio, or only the picture, plays differently — or (`sync`)
+   *  nothing plays differently on its own: every layer playing on either side
+   *  is the same layer playing the same content with the same values, only
+   *  moved by different amounts. */
+  only?: 'audio' | 'picture' | 'sync'
   /** Layers that play here moved by different amounts: they are out of sync
-   *  with each other by this much, in µs. */
+   *  with each other by this much, in µs — the largest spread over the
+   *  range's stretches. */
   sync_offset_us?: number
+  /** Sound against picture, when every sound layer apart moved as one and
+   *  every picture layer as one: positive when the sound now plays later
+   *  against the picture than in the baseline, in µs. */
+  sound_lag_us?: number
+  /** The audio role of that sound when it is one role. */
+  sound_role?: 'dialogue' | 'music' | 'sfx' | 'voiceover'
+  /** The layers apart are all of one kind: pictures against pictures, or
+   *  sounds against sounds. Absent when picture and sound play apart. */
+  sync_between?: 'picture' | 'sound'
+  /** Bound sync is broken: members of one link (`Composition.links`) play
+   *  apart, or dialogue-role audio plays apart from picture. */
+  sync_bound?: true
   /** Silence lengthened (`added`) or shortened (`removed`), nothing else. */
   gap?: true
+}
+
+/** How a changed range's sync reads: `loose` when it is only out of sync and
+ *  no bound sync is broken — one fact, drawn quietly; `bound` when linked
+ *  layers or dialogue play apart; `mixed` when it is out of sync and plays
+ *  differently besides; undefined when nothing moved apart. */
+export type RangeSync = 'loose' | 'bound' | 'mixed'
+export function rangeSync(r: ChangedRange): RangeSync | undefined {
+  if (r.sync_offset_us === undefined) return undefined
+  if (r.sync_bound) return 'bound'
+  return r.only === 'sync' ? 'loose' : 'mixed'
 }
 
 /** The kind of entity a change describes. */

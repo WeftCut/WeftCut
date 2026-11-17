@@ -833,9 +833,18 @@ _Avoid_: diff entry, hunk, carried change; shifted / moved as classes
 A stretch of a composition that plays differently from the review baseline:
 stretches that play the same are matched wherever each side has them, so
 content only displaced is in none. Added, removed or modified by what each side
-holds there; borrows its list from the unreviewed changes playing in it. UI
-word: Changed range / 变化区间. See ADR 0169.
-_Avoid_: diff hunk, region, shifted range
+holds there; borrows its list from the unreviewed changes playing in it. A
+modified range whose layers moved apart states the offset; it is *out of
+sync* (不同步) when nothing else plays differently there. UI word: Changed
+range / 变化区间. See ADR 0169.
+_Avoid_: diff hunk, region, shifted range; desync as a class
+
+**Review weight**:
+How loud an unreviewed change shows on its clip and row: full, soft (listed
+only by loose out-of-sync ranges) or quiet (listed by no changed range, so the
+film plays the same there). Soft and quiet draw alike and differ in their
+words. Not a class and not a stat. See ADR 0169.
+_Avoid_: moved only, shifted
 
 **Cut point**:
 A changed range removed with no width now: baseline content stopped there and
@@ -853,8 +862,13 @@ UI word: Revert all / 全部撤回.
 _Avoid_: reject, discard, rollback
 
 **Review focus**:
-The one tack or change the agent panel and timelines point at together; scrolls
-into view, never seeks. Runtime-only.
+The one tack, change or changed range the agent panel and timelines point at
+together; scrolls into view, never seeks. A focused range is found again after
+each commit by its own changes it shares (its layers and transitions), stays
+while the timeline on screen paints it whichever tab the panel shows, and can
+point at one of its changes while staying the context. Walking to a range
+(Alt+↑/↓) is a move, not a focus: it seeks, then focuses, and leaves the panel
+as it is. Runtime-only.
 _Avoid_: selection (clips'), highlight (per-activity)
 
 ## Agent harness

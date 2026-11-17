@@ -11,7 +11,7 @@ import {
   LAYER_MENU_COMMAND_IDS,
   VIDEO_MENU_COMMAND_IDS,
 } from "../timeline/LayerContextMenu";
-import { RULER_MENU_COMMAND_IDS } from "../timeline/RulerContextMenu";
+import { RULER_MENU_COMMAND_IDS, RULER_RANGE_COMMAND_IDS } from "../timeline/RulerContextMenu";
 import en from "../i18n/locales/en-US";
 
 // `CommandContextItem` takes an untyped `id` on purpose (its docstring says
@@ -82,6 +82,8 @@ const MENUS = {
   // And the narrowest tier — the rows only a picture clip gets.
   "layer context menu (video tier)": VIDEO_MENU_COMMAND_IDS,
   "ruler context menu": RULER_MENU_COMMAND_IDS,
+  // The changed-range rows the same menu adds while a range is focused.
+  "ruler context menu (changed range tier)": RULER_RANGE_COMMAND_IDS,
 } as const;
 
 describe.each(Object.entries(MENUS))("%s", (_name, entries) => {

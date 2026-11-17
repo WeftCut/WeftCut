@@ -1095,6 +1095,9 @@ const enUS = {
     // objects here, so a translation must keep them apart.
     seek_prev_marker: "Go to previous marker",
     seek_next_marker: "Go to next marker",
+    seek_prev_changed_range: "Go to previous changed range",
+    seek_next_changed_range: "Go to next changed range",
+    play_changed_range: "Play changed range",
     clear_range: "Clear in/out points",
     open_search: "Search everything…",
     search: "Search",
@@ -1682,6 +1685,15 @@ const enUS = {
   },
   changes: {
     subtitle: "What agents changed since you last approved",
+    // The bar over the list while a changed range is focused: its line, a
+    // stepper through its changes, play, the neighbouring ranges, close.
+    range_bar: {
+      label: "Changed range",
+      play: "Play",
+      spot: "{{index}} of {{count}}",
+      step: "change {{index}} of {{count}}",
+      close: "Let go of this range",
+    },
     approve_all: "Approve all",
     approve_all_hint: "Make the project as it is now the new review baseline — your own changes included",
     revert_all: "Revert all",
@@ -1710,6 +1722,10 @@ const enUS = {
     class_added: "Added",
     class_removed: "Removed",
     class_modified: "Modified",
+    // After a change's line, where the film shows the change less loudly
+    // than its class says (ADR 0169).
+    weight_quiet: "plays the same",
+    weight_soft: "out of sync only",
     // The diff stat at the start of the Changes toolbar (+ − ~).
     stats: {
       label: "Unreviewed changes:",
@@ -1734,6 +1750,12 @@ const enUS = {
       only_audio: "audio only",
       only_picture: "picture only",
       sync: "picture and sound {{offset}} apart",
+      sync_picture: "picture layers {{offset}} apart",
+      sync_sound: "sound layers {{offset}} apart",
+      out_of_sync: "Out of sync · {{duration}}",
+      sound_later: "{{sound}} {{lag}} later than picture",
+      sound_earlier: "{{sound}} {{lag}} earlier than picture",
+      sound: "Sound",
       includes_user: "includes your edits",
       user: "your edit",
       seconds: "{{value}} s",
@@ -3007,6 +3029,9 @@ const enUS = {
     update_body_error: "Open the update to try again.",
   },
   log: {
+    changed_range_at: "Changed range {{index}} of {{count}} · {{line}}",
+    changed_range_last: "No later changed range",
+    changed_range_first: "No earlier changed range",
     save_failing: "Save failed: project.json cannot be written",
     save_recovered: "Project saved again",
     level_filter: "Severity filter",

@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import i18n from '../i18n'
-import type { Change, ReviewView } from '../../shared/review'
+import type { Change, ChangedRange, ReviewView } from '../../shared/review'
 import type { LayerSummary, TrackSummary } from '../ipc'
 import type { AgentActivitySnapshot } from '../../shared/agent-activity'
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), jump: vi.fn(), reveal: vi.fn(() => true), listeners: new Map<string, (e: { payload: unknown }) => void>() }))
@@ -17,7 +17,7 @@ import { useAgentActivity } from './activityStore'
 import { resetReviewForTests, useReview } from './reviewStore'
 import { useProjectStore } from '../state/projectStore'
 import { ROOT_ID, compositionFixture, summaryFixture } from '../testing/summaryFixture'
-import { selectChange, useReviewFocus } from './reviewFocus'
+import { selectChange, selectRange, useReviewFocus } from './reviewFocus'
 
 const S = 1_000_000
 const clip = (id: string, label: string, s: number, e: number): LayerSummary => ({
@@ -246,7 +246,10 @@ describe('AgentPanel Changes tab', () => {
       change({ id: 'Layer:trimmed', class: 'modified', ranges: range(2.5 * S, 4 * S),
         details: [{ type: 'time', field: 'start', from_us: 2 * S, to_us: 2.5 * S }, { type: 'trim', side: 'start', delta_us: -0.5 * S }] }),
     ]
-    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_view' ? view(1, list, []) : { available: true, url: '', connections: [] })
+    // Both edited clips play differently: their lines carry no weight note.
+    const plays: ChangedRange = { composition_id: ROOT_ID, class: 'modified', t_start_us: S, t_end_us: 4 * S, before_start_us: 2 * S, before_end_us: 4 * S,
+      source: 'review', change_ids: ['Layer:early', 'Layer:trimmed'] }
+    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_view' ? { ...view(1, list, []), ranges: [plays] } : { available: true, url: '', connections: [] })
     render(<AgentPanel editor />)
     await flush()
     const row = (id: string) => document.querySelector<HTMLElement>(`[data-change-id="${id}"]`)!
@@ -312,6 +315,22 @@ describe('AgentPanel Changes tab', () => {
   })
 
 
+  it('a row the film shows less loudly says so after its line, in the entity diff\'s order', async () => {
+    const changed = (ids: string[], only?: 'sync'): ChangedRange => ({ composition_id: ROOT_ID, class: 'modified', t_start_us: 0, t_end_us: 9 * S,
+      before_start_us: 0, before_end_us: 9 * S, source: 'review', change_ids: ids as ChangedRange['change_ids'], ...(only ? { only, sync_offset_us: 2 * S } : {}) })
+    mocks.invoke.mockImplementation(async (channel: string) => channel === 'review_view'
+      ? { ...view(1, unreviewed, []), ranges: [changed(['Layer:early', 'Layer:inner']), changed(['Layer:late'], 'sync')] }
+      : { available: true, url: '', connections: [] })
+    render(<AgentPanel editor />)
+    await flush()
+    expect(rows().map(r => r.dataset.changeId)).toEqual(['Layer:early', 'Layer:a', 'Layer:late', 'Layer:inner'])
+    const notes = Object.fromEntries(rows().map(r => [r.dataset.changeId, [r.dataset.reviewWeight, r.querySelector('.agent-change-weight')?.textContent ?? null]]))
+    expect(notes).toEqual({
+      'Layer:early': ['full', null], 'Layer:inner': ['full', null],
+      'Layer:a': ['quiet', ' · plays the same'], 'Layer:late': ['soft', ' · out of sync only'],
+    })
+  })
+
   it('an agent row names the work session that last edited it; a user row does not', async () => {
     useReview.setState({ showUser: true })
     const op = (id: string, session_id: string, started_at: string, ids: string[]) => ({
@@ -343,6 +362,39 @@ describe('AgentPanel Changes tab', () => {
       await flush()
       expect(screen.getByRole('tab', { name: /Changes/ }).getAttribute('aria-selected')).toBe('true')
       expect(scrolled).toContain('Layer:late')
+    } finally { delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView }
+  })
+
+  it('a focused range frames its rows under a bar that names it; a framed row steps to it, Esc steps back, then lets go', async () => {
+    const pair: ChangedRange = { composition_id: ROOT_ID, class: 'modified', t_start_us: S, t_end_us: 9 * S, before_start_us: S, before_end_us: 9 * S,
+      source: 'review', change_ids: ['Layer:late', 'Layer:early'] }
+    mocks.invoke.mockImplementation(async (channel: string, args?: { include_user?: boolean }) =>
+      channel === 'review_view' ? served({ ...view(1), ranges: [pair] }, args) : { available: true, url: '', connections: [] })
+    const scrolled: string[] = []
+    HTMLElement.prototype.scrollIntoView = function (this: HTMLElement) { scrolled.push(this.dataset.changeId ?? '') }
+    try {
+      render(<AgentPanel editor />)
+      await flush()
+      act(() => selectRange(pair))
+      const framed = () => rows().filter(r => r.dataset.inRange).map(r => r.dataset.changeId)
+      expect(framed()).toEqual(['Layer:early', 'Layer:late'])
+      expect(scrolled.at(-1)).toBe('Layer:early')
+      const bar = screen.getByRole('group', { name: 'Changed range' })
+      // Which of the timeline's ranges it is; which change only once one is pointed at.
+      expect(bar.textContent).toContain('1 of 1')
+      expect(bar.textContent).not.toContain('change 2 of 2')
+      // A framed row's click steps to it, keeping the range; the line says which, in row order.
+      fireEvent.click(within(rows().find(r => r.dataset.changeId === 'Layer:late')!).getByRole('button', { name: /Late clip/ }))
+      expect(useReviewFocus.getState().focus).toMatchObject({ kind: 'range', step: 'Layer:late' })
+      expect(rows().find(r => r.dataset.changeId === 'Layer:late')!.dataset.selected).toBe('true')
+      expect(bar.textContent).toContain('change 2 of 2')
+      const close = within(bar).getByRole('button', { name: 'Let go of this range' })
+      fireEvent.keyDown(close, { key: 'Escape' })
+      expect(useReviewFocus.getState().focus).toMatchObject({ kind: 'range', step: null })
+      fireEvent.keyDown(close, { key: 'Escape' })
+      expect(useReviewFocus.getState().focus).toBeNull()
+      expect(screen.queryByRole('group', { name: 'Changed range' })).toBeNull()
+      expect(framed()).toEqual([])
     } finally { delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView }
   })
 })

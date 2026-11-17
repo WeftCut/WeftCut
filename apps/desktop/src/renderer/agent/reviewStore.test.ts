@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Change, ReviewView } from '../../shared/review'
+import type { Change, ChangedRange, ReviewView } from '../../shared/review'
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), listeners: new Map<string, (e: { payload: unknown }) => void>() }))
 vi.mock('@/bridge/ipc', () => ({ invoke: mocks.invoke }))
 vi.mock('@/bridge/events', () => ({ listen: vi.fn(async (name: string, fn: (e: { payload: unknown }) => void) => { mocks.listeners.set(name, fn); return () => { mocks.listeners.delete(name) } }) }))
@@ -8,7 +8,7 @@ import { act, renderHook } from '@testing-library/react'
 import { acquireReview, approveAllChanges, clearActivityChanges, isNewerReviewView, refreshReview, resetReviewForTests, revertAllChanges, selectHighlight, setShowUser, showActivityChanges, useCompositionChangeRanges, useLayerReviewMark, useReview } from './reviewStore'
 import { useAgentActivity } from './activityStore'
 import type { AgentActivity, AgentActivitySnapshot } from '../../shared/agent-activity'
-import { buildReviewHighlight } from './reviewHighlight'
+import { buildReviewHighlight, changeWeight, changeWeights } from './reviewHighlight'
 import { useProjectStore } from '../state/projectStore'
 import { summaryFixture } from '../testing/summaryFixture'
 
@@ -234,6 +234,73 @@ describe('buildReviewHighlight', () => {
     expect([...h.markers]).toEqual([['a', 'added'], ['e', 'modified']])
     expect(h.markerGhosts).toEqual([{ changeId: 'Marker:g', markerId: 'g', compositionId: 'root', tUs: 2, endUs: 4, label: 'Beat' }])
     expect(h.layers.size).toBe(0)
+  })
+})
+
+// A clip mark is as loud as the film difference its change plays in
+// (ADR 0169): by the ranges that list the change, never by time overlap.
+describe('review mark weight', () => {
+  const range = (ids: string[], patch: Partial<ChangedRange> = {}): ChangedRange => ({
+    composition_id: 'root', class: 'modified', t_start_us: 0, t_end_us: 1_000_000, before_start_us: 0, before_end_us: 1_000_000,
+    source: 'review', change_ids: ids as ChangedRange['change_ids'], ...patch,
+  })
+  const loose = (ids: string[]) => range(ids, { only: 'sync', sync_offset_us: 2_000_000 })
+  const bound = (ids: string[]) => range(ids, { only: 'sync', sync_offset_us: 2_000_000, sync_bound: true })
+  const layer = (id: string) => change({ id: `Layer:${id}`, class: 'modified' })
+  const weightOf = (id: string, ranges: ChangedRange[]) =>
+    buildReviewHighlight([layer(id)], [], ranges).layerWeights.get(id)
+
+  it('a clip whose change no range lists — only displaced — is quiet, even where a range covers its time', () => {
+    // The range spans the clip's footprint but names another change.
+    expect(weightOf('slid', [range(['Layer:other'])])).toBe('quiet')
+    expect(weightOf('slid', [])).toBe('quiet')
+  })
+
+  it('a clip listed in a modified range is full; listed only in a loose sync range, soft', () => {
+    expect(weightOf('c', [range(['Layer:c'])])).toBe('full')
+    expect(weightOf('c', [loose(['Layer:c'])])).toBe('soft')
+  })
+
+  it('a bound sync range is full', () => {
+    expect(weightOf('c', [bound(['Layer:c'])])).toBe('full')
+  })
+
+  it('the loudest range listing it wins, in either order', () => {
+    expect(weightOf('c', [loose(['Layer:c']), range(['Layer:c'])])).toBe('full')
+    expect(weightOf('c', [range(['Layer:c']), loose(['Layer:c'])])).toBe('full')
+  })
+
+  it('the user-changes switch promotes no clip: a range it brings in lists only the user\'s changes', () => {
+    const mine = layer('mine')
+    useReview.getState().apply({ ...view(1, 1, [layer('c')]), user_count: 1, ranges: [loose(['Layer:c'])] })
+    expect(selectHighlight(useReview.getState()).layerWeights.get('c')).toBe('soft')
+    // Same version with the user's list: their modified range over the same
+    // stretch is now held, and names their change alone.
+    useReview.getState().apply({ ...view(1, 1, [layer('c')]), user: [mine], user_count: 1,
+      ranges: [loose(['Layer:c']), range(['Layer:mine'], { source: 'user' })] }, true)
+    expect(useReview.getState().viewListsUser).toBe(true)
+    expect(selectHighlight(useReview.getState()).layerWeights.get('c')).toBe('soft')
+  })
+
+  it('applies to an activity\'s own changes and ranges alike', () => {
+    const h = buildReviewHighlight([layer('a'), layer('b')], [], [loose(['Layer:a'])])
+    expect(Object.fromEntries(h.layerWeights)).toEqual({ a: 'soft', b: 'quiet' })
+  })
+
+  it('gives no weight to a kind no range can list', () => {
+    const weights = changeWeights([range(['Marker:m', 'Layer:c'])])
+    expect(changeWeight({ id: 'Marker:m', class: 'modified' }, weights)).toBeNull()
+    expect(changeWeight({ id: 'Track:t', class: 'modified' }, weights)).toBeNull()
+    expect(changeWeight({ id: 'Layer:c', class: 'modified' }, weights)).toBe('full')
+    expect(changeWeight({ id: 'Transition:x', class: 'modified' }, weights)).toBe('quiet')
+  })
+
+  it('never calls a removal a loose sync range opens over "out of sync only"', () => {
+    // The clip rippled out where the bed ran on: the range lists it, but it is
+    // the content the rest moved apart over, not content playing the same.
+    const weights = changeWeights([loose(['Layer:gone', 'Layer:moved'])])
+    expect(changeWeight({ id: 'Layer:gone', class: 'removed' }, weights)).toBe('full')
+    expect(changeWeight({ id: 'Layer:moved', class: 'modified' }, weights)).toBe('soft')
   })
 })
 

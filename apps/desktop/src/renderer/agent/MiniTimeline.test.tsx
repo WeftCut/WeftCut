@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "../i18n";
 import { MiniTimeline } from "./MiniTimeline";
 import { rangeMarks, type ReviewRangeMark } from "./reviewHighlight";
+import { rangeKey } from "./reviewFocus";
 import type { ChangeClass, ChangedRange, EntityKey } from "../../shared/review";
 import type { TackView } from "../../shared/agent-activity";
 
@@ -160,7 +161,7 @@ describe("review focus on the strip", () => {
     expect(onSeek).not.toHaveBeenCalled();
   });
 
-  it("a cut point says how much was removed under the pointer, and a press focuses its change", () => {
+  it("a cut point says how much was removed under the pointer, and a press focuses it", () => {
     const withCut = marks(
       ["added", 0, 1_000_000, ["Layer:a"]],
       ["removed", 3_000_000, 3_000_000, ["Layer:r"], { before_start_us: 3_000_000, before_end_us: 5_000_000 }],
@@ -171,18 +172,35 @@ describe("review focus on the strip", () => {
     fireEvent.pointerMove(band("mini-change-band"), { clientX: 151 }); // a pixel off 3 s
     expect(band("mini-change-band").title).toBe("removed 2");
     fireEvent.pointerDown(band("mini-change-band"), { button: 0, pointerId: 1, clientX: 151 });
-    expect(onFocus).toHaveBeenCalledWith({ kind: "change", id: "Layer:r" });
+    expect(onFocus).toHaveBeenCalledWith({ kind: "range", id: rangeKey(withCut[1]!.range) });
     expect(onSeek).not.toHaveBeenCalled();
   });
 
-  it("a press on a changed range focuses the first change playing in it", () => {
+  it("a press on a changed range focuses the range itself, not one of its changes", () => {
     const { band, onSeek, onFocus } = strip();
     fireEvent.pointerDown(band("mini-change-band"), { button: 0, pointerId: 1, clientX: 300 }); // 6 s
-    expect(onFocus).toHaveBeenCalledWith({ kind: "change", id: "Layer:m" });
+    expect(onFocus).toHaveBeenCalledWith({ kind: "range", id: rangeKey(changes[1]!.range) });
     expect(onSeek).not.toHaveBeenCalled();
     fireEvent.pointerDown(band("mini-change-band"), { button: 0, pointerId: 1, clientX: 425 }); // 8.5 s: bare band
     expect(onFocus).toHaveBeenCalledTimes(1);
     expect(onSeek).toHaveBeenLastCalledWith(8_500_000);
+  });
+
+  it("a press on ranges painted as one block focuses the one under it", () => {
+    const touching = marks(["modified", 1_000_000, 2_000_000, ["Layer:a"]], ["modified", 2_000_000, 3_000_000, ["Layer:b"]]);
+    const { band, onFocus } = strip({ changes: touching });
+    fireEvent.pointerDown(band("mini-change-band"), { button: 0, pointerId: 1, clientX: 125 }); // 2.5 s
+    expect(onFocus).toHaveBeenLastCalledWith({ kind: "range", id: rangeKey(touching[1]!.range) });
+    fireEvent.pointerDown(band("mini-change-band"), { button: 0, pointerId: 1, clientX: 75 }); // 1.5 s
+    expect(onFocus).toHaveBeenLastCalledWith({ kind: "range", id: rangeKey(touching[0]!.range) });
+  });
+
+  it("a focused range fills its own mark and washes its span", () => {
+    const { container } = strip({ focus: { kind: "range", id: rangeKey(changes[1]!.range) } });
+    const painted = [...container.querySelectorAll<HTMLElement>("[data-testid='mini-change']")];
+    expect(painted.map((m) => m.classList.contains("mini-change-selected"))).toEqual([false, true]);
+    const washes = [...container.querySelectorAll<HTMLElement>("[data-testid='mini-focus-wash']")].map((w) => [w.style.left, w.style.width]);
+    expect(washes).toEqual([["50%", "20%"]]);
   });
 
   it("a double press on a band item jumps to its start, a press beyond the film's end to the end", () => {

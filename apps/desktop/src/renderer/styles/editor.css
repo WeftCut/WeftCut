@@ -75,34 +75,44 @@
   cursor: pointer;
   overflow: hidden;
   user-select: none;
+  /* Two weights of ink across the strip, themed with it. The change and tack
+     bands are the review's and share one; markers are context and take half,
+     since a marker's colour is the user's and may be a band's hue, which
+     leaves the row and this weight to tell them apart. */
+  --mini-band: calc(4 * var(--ui-px));
+  --mini-marker-line: calc(2 * var(--ui-px));
 }
 
+/* Markers: one thin row through the strip's middle, between the change band
+   at its head and the tack band at its foot — the editor's order (ruler with
+   its ranges, marker lane, Review lane). A region is a line, never a fill,
+   and a point a short tick on that line, never the strip's full height. */
 .mini-marker-pip {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2px; /* fixed-px: marker line weight */
+  top: calc(50% - 6 * var(--ui-px));
+  height: calc(12 * var(--ui-px));
+  width: 2px; /* fixed-px: time-axis tick weight */
+  margin-left: -1px; /* fixed-px: centres the tick on its frame */
   pointer-events: none;
-  opacity: 0.85;
+  opacity: 0.6;
 }
 
 .mini-marker-region {
   position: absolute;
-  top: calc(4 * var(--ui-px));
-  bottom: calc(4 * var(--ui-px));
-  opacity: 0.35;
-  border-radius: 2px;
+  top: calc(50% - var(--mini-marker-line) / 2);
+  height: var(--mini-marker-line);
+  opacity: 0.5;
+  border-radius: 1px;
   pointer-events: none;
 }
 
-/* Tacks (ADR 0115): a band along the strip's foot, below the marker pips'
-   full-height lines and region fills, in the one tack hue. The ranges arrive
-   merged (`tackCoverage`), so one opacity covers the band and an overlap never
-   darkens into a second shade. */
+/* Tacks (ADR 0115): a band along the strip's foot, below the marker row, in
+   the one tack hue. The ranges arrive merged (`tackCoverage`), so one opacity
+   covers the band and an overlap never darkens into a second shade. */
 .mini-tack {
   position: absolute;
   bottom: 0;
-  height: calc(5 * var(--ui-px));
+  height: var(--mini-band);
   background: var(--tack);
   pointer-events: none;
   border-radius: 1px;
@@ -125,7 +135,7 @@
 .mini-change {
   position: absolute;
   top: 0;
-  height: calc(4 * var(--ui-px));
+  height: var(--mini-band);
   min-width: 2px; /* fixed-px: time-axis tick weight */
   pointer-events: none;
   border-radius: 1px;
@@ -154,6 +164,7 @@
 /* The user's own ranges, shown with the user-changes switch: never to
    review, so stepped back to the muted ink. */
 .mini-change-user { background: var(--muted-foreground); opacity: 0.45; }
+
 .mini-change-cut.mini-change-user { background: transparent; border-top-color: var(--muted-foreground); }
 
 /* The review focus on the strip (agent/reviewFocus.ts), as the editor
@@ -285,8 +296,42 @@
 .ruler-range-added { --range-hue: var(--review-added); }
 .ruler-range-removed { --range-hue: var(--review-removed); }
 .ruler-range[data-user] { --range-hue: var(--muted-foreground); opacity: 0.6; }
-.ruler-range[data-hovered] { background: color-mix(in srgb, var(--range-hue) 22%, transparent); }
+/* Raised by its panel row under the pointer, or by the pointer itself. */
+.ruler-range[data-hovered], .ruler-range:hover { background: color-mix(in srgb, var(--range-hue) 22%, transparent); }
 .ruler-range[data-selected] { opacity: 1; background: color-mix(in srgb, var(--range-hue) 30%, transparent); }
+/* Out of sync (`data-sync`, RulerRanges): a tick at the onset, where the
+   eye should land, and ⇄ beside it when the range has room. Only out of
+   sync, with no bound sync broken (`loose`), the range is that one fact and
+   leaves the ruler's body to its ticks and timecodes: only a dashed foot
+   marks how far it runs, and a light wash comes up under the pointer or the
+   focus. The ⇄ sits in the lower half, under the timecode labels' row. */
+.ruler-range[data-sync]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 2px; /* fixed-px: time-axis tick weight */
+  height: calc(10 * var(--ui-px));
+  background: var(--range-hue);
+}
+.ruler-range-sync-glyph {
+  position: absolute;
+  left: calc(4 * var(--ui-px));
+  bottom: calc(2 * var(--ui-px));
+  font-size: calc(7 * var(--ui-px));
+  line-height: 1;
+  color: var(--range-hue);
+  pointer-events: none;
+}
+.ruler-range[data-sync="loose"] {
+  --wash: 0%;
+  box-shadow: none;
+  background:
+    repeating-linear-gradient(90deg, var(--range-hue) 0 calc(4 * var(--ui-px)), transparent 0 calc(7 * var(--ui-px))) left bottom / 100% calc(2 * var(--ui-px)) no-repeat,
+    color-mix(in srgb, var(--range-hue) var(--wash), transparent);
+}
+.ruler-range[data-sync="loose"][data-hovered], .ruler-range[data-sync="loose"]:hover { --wash: 8%; }
+.ruler-range[data-sync="loose"][data-selected] { --wash: 14%; }
 .ruler-range[data-cut] {
   top: auto;
   width: 0;
@@ -358,11 +403,24 @@
   background: color-mix(in srgb, var(--review-focus-hue) 9%, transparent);
 }
 
+/* A changed range around the change stepped to inside it: still there, as
+   context, under that change's own wash. */
+.review-focus-wash[data-context] {
+  background: color-mix(in srgb, var(--review-focus-hue) 4%, transparent);
+  box-shadow:
+    inset 1px 0 0 color-mix(in srgb, var(--review-focus-hue) 30%, transparent),
+    inset -1px 0 0 color-mix(in srgb, var(--review-focus-hue) 30%, transparent);
+}
+
 .review-focus-wash[data-point] {
   width: 2px; /* fixed-px: time-axis line weight */
   margin-left: -1px; /* fixed-px: centres the line on its frame */
   background: color-mix(in srgb, var(--review-focus-hue) 75%, transparent);
   box-shadow: none;
+}
+
+.review-focus-wash[data-point][data-context] {
+  background: color-mix(in srgb, var(--review-focus-hue) 35%, transparent);
 }
 
 /* A removal's baseline footprint (ADR 0116): where it was, which the content
@@ -386,6 +444,32 @@
     color-mix(in srgb, var(--review-focus-hue) 85%, transparent) 0 3px,
     transparent 3px 6px
   );
+}
+
+/* A clip's review mark, inside its rounded box: green for what is new, amber
+   for what differs — a move to another track or time included; what it
+   differs in is the panel's to say, in words, not one more hue. The edge is
+   as loud as the film difference its change plays in (`ReviewWeight`): solid
+   where a changed range lists it, a faint hairline where none does or only
+   a loose sync range does — never hidden, since Revert all moves that clip
+   too (ADR 0116). */
+.review-clip-mark[data-review-mark="added"] { --review-mark: var(--review-added); }
+.review-clip-mark[data-review-mark="modified"] { --review-mark: var(--review-modified); }
+.review-clip-mark[data-review-weight="full"] {
+  box-shadow: inset 0 0 0 2px var(--review-mark);
+}
+/* Soft and quiet look the same: the clip itself plays what it did. A soft
+   one is out of sync only, and the ruler already marks that relation; its
+   words ("out of sync only") are what set it apart. */
+.review-clip-mark[data-review-weight="soft"],
+.review-clip-mark[data-review-weight="quiet"] {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--review-mark) 50%, transparent);
+}
+/* Pointed at, a faint edge takes its full hue, so the one clip left
+   undimmed still says its class. */
+.review-clip-mark[data-review-weight="soft"][data-pointed],
+.review-clip-mark[data-review-weight="quiet"][data-pointed] {
+  box-shadow: inset 0 0 0 1px var(--review-mark);
 }
 
 /* A clip the focus names: one neutral hairline INSIDE its own box, just

@@ -20,6 +20,7 @@ import { getGizmoProbe } from "../preview/gizmoProbeRegistry";
 import { resolveAnimated } from "../render/animated";
 import type { HandlerMap } from "../shortcuts";
 import { ACTION_DEFS, type ActionId } from "../shortcuts/defs";
+import { hasChangedRanges } from "../agent/rangeWalk";
 import {
   followPlayheadEnabled,
   markersVisible,
@@ -464,6 +465,11 @@ export function buildAppCommands(
     // description reads FRAMES, so an Audio layer the two rows above accept is
     // the wrong kind here (`describe/describeEligibility.ts`).
     describeSelected: canDescribeSelection,
+    // Live-read for `clearRange`'s reason: the ranges move with every commit
+    // and App re-renders on none of them.
+    seekPrevChangedRange: hasChangedRanges,
+    seekNextChangedRange: hasChangedRanges,
+    playChangedRange: hasChangedRanges,
   };
 
   // The armed modal tool, read straight from `toolStore` for the same

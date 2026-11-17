@@ -21,7 +21,8 @@ import {
 import { MiniTimeline } from "./MiniTimeline";
 import { AgentPanel } from "./AgentPanel";
 import { useCompositionTacks } from "./tackModel";
-import { selectChange, selectTack, useReviewFocus, type ReviewTarget } from "./reviewFocus";
+import { rangeKey, selectChange, selectRange, selectTack, useReviewFocus, type ReviewTarget } from "./reviewFocus";
+import type { ReviewRangeMark } from "./reviewHighlight";
 import { useCompositionChangeRanges, useRangeMarkLabel, useReviewConsumer } from "./reviewStore";
 import { Button } from "@/components/ui/button";
 import { WindowControls } from "../components/WindowControls";
@@ -54,9 +55,15 @@ interface AgentModeProps {
 /// Record-panel width bounds, in baseline units (UI_METRICS.agent).
 const AGENT = UI_METRICS.agent;
 
-const focusReviewItem = (item: ReviewTarget) => {
+/// Focus what a band press named; a changed range by its key among the
+/// strip's own ranges.
+const focusReviewItem = (item: ReviewTarget, ranges: readonly ReviewRangeMark[]) => {
   if (item.kind === "tack") selectTack(item.id);
-  else selectChange(item.id);
+  else if (item.kind === "change") selectChange(item.id);
+  else {
+    const mark = ranges.find((m) => rangeKey(m.range) === item.id);
+    if (mark) selectRange(mark.range);
+  }
 };
 
 function clampRecordWidth(width: number, viewportWidth: number, scale: number): number {
@@ -84,7 +91,12 @@ export const AgentMode = forwardRef(function AgentMode(
   // project-wide fields (layer_count, history).
   const comp = useOpenComposition();
   const tacks = useCompositionTacks(comp?.id ?? null);
+  // A focused range is drawn where it is now, by its key there.
   const focus = useReviewFocus((s) => s.focus);
+  const focusedRange = useReviewFocus((s) => (s.focus?.kind === "range" && s.range !== null ? rangeKey(s.range) : null));
+  const focusTarget: ReviewTarget | null = focus?.kind === "range"
+    ? (focusedRange === null ? null : { kind: "range", id: focusedRange })
+    : focus;
   const hover = useReviewFocus((s) => s.hover);
   // The mini timeline's change band is a review surface: keep the view fresh.
   useReviewConsumer();
@@ -176,13 +188,13 @@ export const AgentMode = forwardRef(function AgentMode(
           durationUs={comp?.duration_us ?? 0}
           markers={comp?.markers ?? []}
           tacks={tacks}
-          focus={focus}
+          focus={focusTarget}
           hover={hover}
           changes={changes}
           changeLabel={changeLabel}
           // A band press focuses its item and shows its row in the panel
           // beside the strip (tab, group and row opened; the tab scrolls to it).
-          onFocus={focusReviewItem}
+          onFocus={(item) => focusReviewItem(item, changes)}
           // The strip is the open composition's own clock, as its ticks and
           // playhead are: a press there names that composition's moment.
           onSeek={(t) => seekLocalUs(comp?.id ?? null, t)}

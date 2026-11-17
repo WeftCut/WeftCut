@@ -1,7 +1,7 @@
 import { displayedFrameStartUs, lastFrameAnchorUs } from "../frames";
 import type { MarkerSummary } from "../ipc";
 import { openComposition, useCompositionAnchorStore } from "./compositionAnchorStore";
-import { transportSeek } from "./playbackStore";
+import { transportPlay, transportSeek } from "./playbackStore";
 import {
   focusedPlayheadUs,
   focusedRootUs,
@@ -126,6 +126,15 @@ function seekExact(clampedUs: number): void {
 /// (`state/playheadProjection.ts`).
 export function seekToClamped(tUs: number): void {
   seekExact(clampSeekUs(tUs));
+}
+
+/// Play the film from `fromUs` and pause on the last frame before `stopUs`,
+/// both ROOT time: the stop is the transport's own (`TransportHandle.play`),
+/// so any play, pause, seek or scrub after this one drops it. `fromUs` is
+/// clamped like every seek.
+export function playRootSpan(fromUs: number, stopUs: number): void {
+  seekExact(clampSeekUs(fromUs));
+  transportPlay(previewLocalUs(stopUs));
 }
 
 /// ROOT time, and it scrolls the timeline it lands in to match.

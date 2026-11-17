@@ -978,6 +978,9 @@ const zhCN: Resources = {
     // 在这里却是两种对象，译名必须分开。
     seek_prev_marker: "跳到上一个标记",
     seek_next_marker: "跳到下一个标记",
+    seek_prev_changed_range: "跳到上一个变化区间",
+    seek_next_changed_range: "跳到下一个变化区间",
+    play_changed_range: "播放变化区间",
     clear_range: "清除入出点",
     open_search: "全局搜索…",
     search: "搜索",
@@ -1490,6 +1493,15 @@ const zhCN: Resources = {
   },
   changes: {
     subtitle: "自上次批准以来代理所做的变更",
+    // 聚焦一个变化区间时列表上方的条：区间的一句话、逐项切换、播放、
+    // 前后区间、关闭。
+    range_bar: {
+      label: "变化区间",
+      play: "播放",
+      spot: "第 {{index}}/{{count}} 处",
+      step: "第 {{index}}/{{count}} 项",
+      close: "取消聚焦此区间",
+    },
     approve_all: "全部批准",
     approve_all_hint: "将项目当前状态作为新的审阅基线，包括你自己的变更",
     revert_all: "全部撤回",
@@ -1518,6 +1530,10 @@ const zhCN: Resources = {
     class_added: "新增",
     class_removed: "删除",
     class_modified: "修改",
+    // After a change's line, where the film shows the change less loudly
+    // than its class says (ADR 0169).
+    weight_quiet: "播放内容不变",
+    weight_soft: "仅不同步",
     stats: {
       label: "待审阅变更：",
       added: "新增 {{count}} 项",
@@ -1541,6 +1557,12 @@ const zhCN: Resources = {
       only_audio: "仅音频",
       only_picture: "仅画面",
       sync: "音画错位 {{offset}}",
+      sync_picture: "画面之间错位 {{offset}}",
+      sync_sound: "声音之间错位 {{offset}}",
+      out_of_sync: "不同步 · {{duration}}",
+      sound_later: "{{sound}}比画面晚 {{lag}}",
+      sound_earlier: "{{sound}}比画面早 {{lag}}",
+      sound: "声音",
       includes_user: "含你的修改",
       user: "你的修改",
       seconds: "{{value}} 秒",
@@ -2731,6 +2753,9 @@ const zhCN: Resources = {
     update_body_error: "打开更新窗口重试。",
   },
   log: {
+    changed_range_at: "变化区间 第 {{index}}/{{count}} 处 · {{line}}",
+    changed_range_last: "已是最后一处变化区间",
+    changed_range_first: "已是第一处变化区间",
     save_failing: "保存失败：无法写入 project.json",
     save_recovered: "项目已重新保存",
     level_filter: "严重程度筛选",
