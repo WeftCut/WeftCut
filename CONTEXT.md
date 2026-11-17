@@ -569,6 +569,11 @@ _Avoid_: upload, file transfer
 
 **Motif revision**: The content hash of a complete validated package; stale writes are rejected by it.
 
+**Motif lineage**: Which Motif a package is a version of: an app-minted uid apart from its id, kept
+beside the package, carried by a working copy, an update and an exported ZIP; a copy or a
+publication anew from a working copy starts its own. A claim, never a trust signal. See ADR 0171.
+_Avoid_: Motif uuid, global id, identity (the id's word)
+
 **Installed Motif**: A published copy with its own identity and version; publishing keeps the draft.
 See [motif-workspaces.md](docs/motif-workspaces.md).
 

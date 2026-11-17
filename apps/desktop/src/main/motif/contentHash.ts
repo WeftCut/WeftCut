@@ -16,8 +16,8 @@ export function motifContentHash(manifest: Manifest, html: string, files: readon
   hasher.update(Buffer.from(html, "utf8"));
   hasher.update(Buffer.from([0]));
   // Length-framed paths + bytes: edits, additions, removals and renames all
-  // invalidate captures. index.html is already hashed above; target is private.
-  for (const file of [...files].filter(f => f.path !== 'index.html' && f.path.toLowerCase() !== 'target')
+  // invalidate captures. index.html is already hashed above.
+  for (const file of [...files].filter(f => f.path !== 'index.html')
     .sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)) {
     hasher.update(JSON.stringify([file.path, file.bytes.length]));
     hasher.update(file.bytes);

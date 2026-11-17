@@ -98,8 +98,8 @@ const KNOWN_NON_TOOLS = new Set([
   'min', 'max', 'options',
   // motif-authoring.md — lifecycle / code identifiers
   'motif', 'setup', 'ctx', 't', 'duration', 'await', 'bg_color',
-  // motif-authoring.md — npm package example and private draft metadata file
-  'three', 'target', 'model', 'eval',
+  // motif-authoring.md — npm package example
+  'three', 'model', 'eval',
   // motif-authoring.md — the Style Motif props a leaving Motif declares (ADR 0126)
   'duration_s', 'exit',
   // The `media` prop variant and its frame time (ADR 0132).

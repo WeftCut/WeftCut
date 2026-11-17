@@ -3,9 +3,11 @@ import {
   parseManifestIsland,
   stripManifestIsland,
   composeMotifHtml,
-  sanitizeId,
+  idFromName,
   assignUniqueId,
   BUILTIN_IDS,
+  builtinLineage,
+  isBuiltinLineage,
   validateManifest,
   validateDefaultFor,
   motifCtxDurationS,
@@ -82,21 +84,59 @@ describe("composeMotifHtml", () => {
   });
 });
 
-describe("sanitizeId", () => {
-  it("slugifies display names", () => {
-    expect(sanitizeId("My Cool Motif!")).toBe("my-cool-motif");
-    expect(sanitizeId("  Trailing--dashes  ")).toBe("trailing-dashes");
-    expect(sanitizeId("___")).toBe("motif");
-    expect(sanitizeId("Lower/Third")).toBe("lower-third");
+const LINEAGE_A = "3f9a2c1d-0b4e-4c5a-9d7e-2a6b8c0d1e2f";
+const LINEAGE_B = "8e7d6c5b-4a39-4281-b706-f5e4d3c2b1a0";
+
+describe("idFromName", () => {
+  it("slugifies display names, whatever the lineage", () => {
+    expect(idFromName("My Cool Motif!", LINEAGE_A)).toBe("my-cool-motif");
+    expect(idFromName("  Trailing--dashes  ", LINEAGE_A)).toBe("trailing-dashes");
+    expect(idFromName("Lower/Third", LINEAGE_B)).toBe("lower-third");
+  });
+
+  it("gives a name with no ASCII letter or digit an ASCII id of its own lineage", () => {
+    const a = idFromName("标题卡", LINEAGE_A);
+    const b = idFromName("歌词条", LINEAGE_B);
+    // A `motif://` host, and one path segment the proposal suffix cannot mimic.
+    for (const id of [a, b, idFromName("___", LINEAGE_A)]) {
+      expect(id).toMatch(/^motif-[0-9a-f]+$/);
+      expect(id).not.toContain("--");
+    }
+    expect(a).not.toBe(b);
+    expect(idFromName("另一个名字", LINEAGE_A)).toBe(a);
+  });
+
+  it("never gives an id Windows reserves for a device, which no folder may take", () => {
+    for (const name of ["Con", "nul", "COM1", "Lpt9"])
+      expect(idFromName(name, LINEAGE_A)).not.toMatch(/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/);
+    expect(idFromName("Console", LINEAGE_A)).toBe("console");
   });
 });
 
 describe("assignUniqueId", () => {
   it("avoids collisions, built-ins, and the reserved drafts dir", () => {
-    expect(assignUniqueId("My Motif", ["my-motif", "my-motif-2"])).toBe("my-motif-3");
-    expect(assignUniqueId("countdown", [])).toBe("countdown-2");
-    expect(assignUniqueId("Drafts", [])).toBe("drafts-2");
-    expect(assignUniqueId("Fresh", ["my-motif", "my-motif-2"])).toBe("fresh");
+    expect(assignUniqueId("My Motif", LINEAGE_A, ["my-motif", "my-motif-2"])).toBe("my-motif-3");
+    expect(assignUniqueId("countdown", LINEAGE_A, [])).toBe("countdown-2");
+    expect(assignUniqueId("Drafts", LINEAGE_A, [])).toBe("drafts-2");
+    expect(assignUniqueId("Fresh", LINEAGE_A, ["my-motif", "my-motif-2"])).toBe("fresh");
+  });
+
+  it("puts the suffix after the name's id", () => {
+    expect(assignUniqueId("My Motif", LINEAGE_A, [], "-draft")).toBe("my-motif-draft");
+    expect(assignUniqueId("My Motif", LINEAGE_A, ["my-motif-draft"], "-draft")).toBe("my-motif-draft-2");
+    expect(assignUniqueId("标题卡", LINEAGE_A, [], "-draft")).toBe(`${idFromName("标题卡", LINEAGE_A)}-draft`);
+  });
+});
+
+describe("built-in lineage", () => {
+  it("gives every built-in its own lineage, the same on every install", () => {
+    const lineages = BUILTIN_IDS.map((id) => builtinLineage(id));
+    expect(lineages.every((uid) => uid !== null && isBuiltinLineage(uid))).toBe(true);
+    expect(new Set(lineages).size).toBe(BUILTIN_IDS.length);
+    // A fixed value: changing one makes every copy of that built-in a stranger.
+    expect(builtinLineage("countdown")).toBe("697b544c-7aa2-460a-87cd-8e646bdaa149");
+    expect(builtinLineage("my-motif")).toBeNull();
+    expect(isBuiltinLineage(LINEAGE_A)).toBe(false);
   });
 });
 

@@ -15,7 +15,7 @@ import { MotifWorkspace } from './workspace'
 import { runMotifTool, type MotifToolDeps } from './motifTools'
 import type { MotifLayerRef } from './authoring'
 import { MotifRefusal } from './refusal'
-import { composeMotifHtml, type Manifest } from '../../shared/motifs/catalog'
+import { builtinLineage, composeMotifHtml, idFromName, type Manifest } from '../../shared/motifs/catalog'
 
 const roots: string[] = []
 function temp() { const root = mkdtempSync(path.join(tmpdir(), 'motif-publication-')); roots.push(root); return root }
@@ -256,5 +256,114 @@ describe('a draft from before draft ids carried -draft', () => {
     expect(installedIds(w)).toEqual([])
     expect(w.store.getDraft('card')).not.toBeNull()
     expect(w.call('list_motif_proposals').map((c: { proposal_id: string }) => c.proposal_id)).toEqual([p.proposal_id])
+  })
+})
+
+// ADR 0171: a Motif's lineage is a uid apart from its id. Pinned here: names in
+// another script publish as distinct Motifs; a lineage survives edits,
+// proposals, approval and a restart; a copy starts one, a working copy keeps
+// its Motif's until it publishes anew; an archive carries it; no package
+// holds it.
+describe('a Motif lineage', () => {
+  function proposeAndApprove(w: ReturnType<typeof world>, d: { motif_id: string; revision: string }, args: Record<string, unknown> = {}) {
+    const p = w.call('install_motif', { motif_id: d.motif_id, expected_revision: d.revision, ...args })
+    expect(p.state).toBe('awaiting_approval')
+    return w.call('approve_motif_proposal', { motif_id: d.motif_id, proposal_id: p.proposal_id }).motif_id as string
+  }
+
+  it('publishes Motifs named without ASCII letters as distinct Motifs with ASCII ids', () => {
+    const w = world()
+    const ids = ['标题卡', '歌词条'].map(name => proposeAndApprove(w, draft(w, name)))
+    expect(new Set(ids).size).toBe(2)
+    for (const id of ids) {
+      expect(id).toMatch(/^motif-[0-9a-f]+$/)
+      expect(w.call('read_motif', { motif_id: id }).status).toBe('installed')
+    }
+  })
+
+  it('survives edits, a proposal, approval and a restart, and no package holds it', () => {
+    const w = world()
+    const d = draft(w, 'Name strap')
+    const lineage = w.store.lineageOf(d.motif_id)
+    const edited = w.call('update_motif_files', { motif_id: d.motif_id, expected_revision: d.revision, files: [{ path: 'scene.js', text: 'x' }] })
+    expect(w.store.lineageOf(d.motif_id)).toBe(lineage)
+    const id = proposeAndApprove(w, edited)
+    expect(w.store.lineageOf(id)).toBe(lineage)
+    expect(new UserMotifStore(w.root).lineageOf(id)).toBe(lineage)
+    const files: string[] = w.call('read_motif', { motif_id: id }).files.map((f: { path: string }) => f.path)
+    expect(files.some(p => p.includes('lineage'))).toBe(false)
+  })
+
+  it('starts anew for a copy; a working copy keeps its Motif\'s until it publishes anew', () => {
+    const w = world()
+    const id = proposeAndApprove(w, draft(w, 'Card'))
+    const lineage = w.store.lineageOf(id)
+    expect(w.store.lineageOf(w.call('open_motif_draft', { source: { kind: 'copy', motif_id: id } }).motif_id)).not.toBe(lineage)
+    // A working copy that replaces its Motif stays of its lineage.
+    const update = w.call('open_motif_draft', { source: { kind: 'motif', motif_id: id } })
+    expect(w.store.lineageOf(update.motif_id)).toBe(lineage)
+    expect(proposeAndApprove(w, update, { target_id: id, expected_version: 1 })).toBe(id)
+    expect(w.store.lineageOf(id)).toBe(lineage)
+    // One published as a new Motif forks, and its draft follows the fork.
+    const fork = w.call('open_motif_draft', { source: { kind: 'motif', motif_id: id } })
+    const renamed = w.call('update_motif_files', { motif_id: fork.motif_id, expected_revision: fork.revision, files: [
+      { path: 'manifest.json', text: JSON.stringify({ name: 'Card two', size: [64, 64], default_duration_s: 1, props_schema: {} }) },
+    ] })
+    const forked = proposeAndApprove(w, renamed)
+    expect(forked).toBe('card-two')
+    expect(w.store.lineageOf(forked)).not.toBe(lineage)
+    expect(w.store.lineageOf(fork.motif_id)).toBe(w.store.lineageOf(forked))
+    expect(w.store.lineageOf(id)).toBe(lineage)
+  })
+
+  it('is left alone by a refused proposal', () => {
+    const w = world()
+    const id = proposeAndApprove(w, draft(w, 'Card'))
+    const update = w.call('open_motif_draft', { source: { kind: 'motif', motif_id: id } })
+    const lineage = w.store.lineageOf(update.motif_id)
+    // Proposed anew under the name its Motif holds: refused, nothing proposed.
+    expect(() => w.call('install_motif', { motif_id: update.motif_id, expected_revision: update.revision })).toThrow(/MotifIdTaken|taken/)
+    expect(w.store.lineageOf(update.motif_id)).toBe(lineage)
+  })
+
+  it('publishes a fork under the id its proposal showed', () => {
+    const w = world()
+    const id = proposeAndApprove(w, draft(w, '标题卡'))
+    const copy = w.call('open_motif_draft', { source: { kind: 'motif', motif_id: id } })
+    const p = w.call('install_motif', { motif_id: copy.motif_id, expected_revision: copy.revision })
+    // The same proposal again is the same proposal: the planned fork holds.
+    expect(w.call('install_motif', { motif_id: copy.motif_id, expected_revision: copy.revision }).proposal_id).toBe(p.proposal_id)
+    expect(w.store.lineageOf(copy.motif_id)).toBe(w.store.lineageOf(id))
+    const approved = w.call('approve_motif_proposal', { motif_id: copy.motif_id, proposal_id: p.proposal_id }).motif_id
+    expect(approved).toBe(p.target.new_id)
+    expect(approved).toBe(idFromName('标题卡', w.store.lineageOf(approved)!))
+    expect(w.store.lineageOf(approved)).not.toBe(w.store.lineageOf(id))
+  })
+
+  it('travels in an exported archive to the draft it is imported as', () => {
+    const w = world()
+    const id = proposeAndApprove(w, draft(w, 'Card'))
+    const zip = path.join(temp(), 'card.zip')
+    w.call('export_motif', { motif_id: id, path: zip })
+    const imported = w.call('open_motif_draft', { source: { kind: 'zip', path: zip } })
+    expect(imported.motif_id).not.toBe(id)
+    expect(w.store.lineageOf(imported.motif_id)).toBe(w.store.lineageOf(id))
+  })
+
+  it('is the built-in\'s for a working copy of a built-in', () => {
+    const manifest = { id: 'countdown', name: 'Countdown', version: 1, size: [64, 64], default_duration_s: 1, fonts: [], props_schema: {} } as Manifest
+    const w = world([{ id: 'countdown', manifest, html: composeMotifHtml(manifest, '<body>3 2 1</body>'), hasParamsUi: false }])
+    const copy = w.call('open_motif_draft', { source: { kind: 'motif', motif_id: 'countdown' } })
+    expect(w.store.lineageOf(copy.motif_id)).toBe(builtinLineage('countdown'))
+  })
+
+  it('a deleted Motif and its draft leave the record', () => {
+    const w = world()
+    const d = draft(w, 'Card')
+    const lineage = w.store.lineageOf(d.motif_id)!
+    const id = proposeAndApprove(w, d)
+    w.call('delete_motif', { motif_id: id })
+    w.call('delete_motif', { motif_id: d.motif_id })
+    expect(w.store.lineage.holders(lineage)).toEqual([])
   })
 })

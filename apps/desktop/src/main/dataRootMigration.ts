@@ -285,7 +285,7 @@ function motifValueAt(dir: string, fs: MigrationFs, join: Join): string | null {
       const p = join(folder, name)
       const rel = prefix + name
       if (fs.isDirectory(p)) visit(p, rel + '/')
-      else if (rel !== 'index.html' && rel !== 'target') files.push({ path: rel, bytes: fs.readFileBytes(p) })
+      else if (rel !== 'index.html') files.push({ path: rel, bytes: fs.readFileBytes(p) })
     }
   }
   // A failed binary read must fail verification, never fall back to HTML-only.

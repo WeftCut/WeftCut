@@ -98,7 +98,6 @@ function userMotifPayload(store: UserMotifStore, id: string, status: string): Re
 
 /** UI catalog: builtins, then installed, then drafts (id-unique; a draft whose id
  *  is already published/built-in is skipped — published wins).
- *  A draft with a recorded Update target carries `target_id`.
  *  Params-page presence is re-stat'd per call (published-then-draft for user
  *  Motifs, mirroring `store.readFile`), so the watcher's catalog refresh is all
  *  it takes for a hand-authored `params.html` to appear or vanish. */
@@ -115,8 +114,6 @@ export function listMotifsInner(store: UserMotifStore, builtins: BuiltinMotif[])
     if (seen.has(draftId)) continue
     const entry = userMotifPayload(store, draftId, 'draft')
     if (!entry) continue
-    const target = store.readDraftTarget(draftId)
-    if (target) entry.target_id = target
     out.push(entry)
   }
   return out

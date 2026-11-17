@@ -9,6 +9,7 @@ import path from 'node:path';
 import { isUtf8 } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { encodeMotifZip } from './archive';
+import { builtinLineage } from '../../shared/motifs/catalog';
 import type { MotifRebindEntry } from '../state/model';
 import type { UserMotifStore } from './store';
 import { type BuiltinMotif, type MotifLayerRef, motifSourceFiles } from './authoring';
@@ -95,7 +96,10 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
             if (a.expected_revision !== undefined && a.expected_revision !== info.revision)
                 throw revisionConflict(info.revision, 'export it without expected_revision, or read it again');
             const files = motifSourceFiles(deps.store, deps.builtins, id);
-            const bytes = Buffer.from(encodeMotifZip(id, [{ path: 'index.html', bytes: Buffer.from(info.html) }, ...files.filter(f => f.path !== 'index.html')]));
+            const lineage = builtinLineage(id) ?? deps.store.lineageOf(id);
+            if (!lineage)
+                throw new Error('Unknown Motif: ' + id);
+            const bytes = Buffer.from(encodeMotifZip(id, [{ path: 'index.html', bytes: Buffer.from(info.html) }, ...files.filter(f => f.path !== 'index.html')], lineage));
             if (typeof a.path !== 'string' || !path.isAbsolute(a.path))
                 throw new Error('export_motif needs path: an absolute app-machine .zip path in an existing folder');
             if (path.extname(a.path).toLowerCase() !== '.zip')

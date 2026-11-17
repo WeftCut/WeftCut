@@ -157,7 +157,7 @@ it('reports invalid linked edits without losing the draft, blocks publication an
 it('refuses escaping paths, path collisions and directory junctions before modifying files', () => {
     const workspace = new MotifWorkspace(new UserMotifStore(temp()), []), directory = folder();
     const draft = workspace.open({ kind: 'directory', path: directory });
-    for (const name of ['../escape', 'C:/escape', 'target', 'a\\b'])
+    for (const name of ['../escape', 'C:/escape', 'a\\b'])
         expect(() => workspace.update(draft.motif_id, draft.revision, [{ path: name, text: 'bad' }])).toThrow();
     expect(() => workspace.update(draft.motif_id, draft.revision, [{ path: 'Asset/a', text: 'x' }, { path: 'asset/b', text: 'x' }])).toThrow(/Conflicting/);
     const outside = temp();
@@ -182,7 +182,7 @@ it('requires an explicit target version and rejects a second editor overwriting 
     const store = new UserMotifStore(temp()), workspace = new MotifWorkspace(store, []);
     const draft = workspace.open({ kind: 'empty', name: 'Original' }), pub = workspace.publish(draft.motif_id, draft.revision);
     const copy = workspace.open({ kind: 'motif', motif_id: pub.motif_id });
-    expect(store.readDraftTarget(copy.motif_id)).toBeNull();
+    expect(workspace.read(copy.motif_id)).not.toHaveProperty('target_id');
     expect(() => workspace.publish(copy.motif_id, copy.revision, pub.motif_id)).toThrow(/version conflict/);
     expect(workspace.publish(copy.motif_id, copy.revision, pub.motif_id, 1).version).toBe(2);
     const edited = workspace.update(draft.motif_id, draft.revision, [{ path: 'scene.js', text: 'new' }]);

@@ -9,15 +9,15 @@ beforeEach(() => { root = mkdtempSync(path.join(tmpdir(), 'motif-package-')) })
 afterEach(() => { rmSync(root, { recursive: true, force: true }) })
 
 describe('Motif package boundary', () => {
-  it('snapshots binary assets in stable path order and omits private metadata', () => {
+  it('snapshots binary assets in stable path order, every file its own', () => {
     mkdirSync(path.join(root, 'assets'))
     writeFileSync(path.join(root, 'assets', 'mesh.bin'), Buffer.from([0, 255, 17]))
     writeFileSync(path.join(root, 'index.html'), '<html/>')
-    writeFileSync(path.join(root, 'target'), 'private')
+    writeFileSync(path.join(root, 'target'), 'a file')
     const files = readMotifDirectory(root)
-    expect(files.map(f => f.path)).toEqual(['assets/mesh.bin', 'index.html'])
+    expect(files.map(f => f.path)).toEqual(['assets/mesh.bin', 'index.html', 'target'])
     expect(files[0]!.bytes).toEqual(Buffer.from([0, 255, 17]))
-    expect(readMotifFile(root, 'target')).toBeNull()
+    expect(readMotifFile(root, 'target')?.toString()).toBe('a file')
   })
 
   it('blocks traversal, absolute paths, Windows streams and aliases', () => {
@@ -42,7 +42,6 @@ describe('Motif package boundary', () => {
     mkdirSync(path.join(root, 'assets'))
     writeFileSync(path.join(root, 'assets', 'mesh.bin'), Buffer.from([0, 255, 17]))
     writeFileSync(path.join(root, 'index.html'), '<html/>')
-    writeFileSync(path.join(root, 'target'), 'private')
     const stamps = stampMotifDirectory(root)
     expect(stamps.map(f => f.path)).toEqual(readMotifDirectory(root).map(f => f.path))
     expect(stamps.map(f => f.size)).toEqual([3, 7])
@@ -73,11 +72,10 @@ describe('Motif package boundary', () => {
     const outside = path.join(root, 'outside')
     mkdirSync(pkg); mkdirSync(outside)
     writeFileSync(path.join(pkg, 'index.html'), 'valid')
-    writeFileSync(path.join(pkg, 'target'), 'private')
     writeFileSync(path.join(outside, 'secret.txt'), 'outside')
     symlinkSync(outside, path.join(pkg, 'assets'), process.platform === 'win32' ? 'junction' : 'dir')
     expect(hasMotifFile(pkg, 'index.html')).toBe(true)
-    for (const rel of ['missing.js', 'target', '../outside/secret.txt', 'assets/secret.txt', 'assets'])
+    for (const rel of ['missing.js', '../outside/secret.txt', 'assets/secret.txt', 'assets'])
       expect(hasMotifFile(pkg, rel), rel).toBe(false)
   })
 })
