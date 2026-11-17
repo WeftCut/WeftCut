@@ -92,6 +92,7 @@ import { installPreviewGpuIpc } from './previewGpuIpc.js'
 import { recordFrameReadySent } from './previewGpuTiming.js'
 import { openPreviewSw, requestFrameAtPreviewSw, closePreviewSw, consumePreviewSw } from './previewSw.js'
 import { openExportSw, decodeRangeExportSw, returnCreditExportSw, closeExportSw, closeAllExportSw } from './exportSw.js'
+import { serveSinkPort } from './exportSinkPort.js'
 import { loadNativeDecode } from './native-decode.js'
 import { mainWindowGeometryDefaults, MAIN_WINDOW_LABEL } from './mainWindowConfig.js'
 import { DEFAULT_LAYOUT_THEME, layoutThemeArgument, readLayoutTheme } from '../shared/layout-theme.js'
@@ -2944,11 +2945,14 @@ app.whenReady().then(async () => {
     return resolveSystemFont(family.trim())
   })
 
-  // Native IPC video-sink write. Binary frame in (ArrayBuffer/typed array),
-  // forwarded straight to the napi backend's ffmpeg stdin. No JSON.
-  ipcMain.handle('export:videosink_write', async (_e, ab: ArrayBuffer | Uint8Array) => {
-    const buf = Buffer.isBuffer(ab) ? ab : Buffer.from(ab as ArrayBuffer)
-    await backend!.exportVideoSinkWrite(buf)
+  // One frame port per native-sink export: the page passes it on to the
+  // export's sender worker, and every frame it carries goes to ffmpeg's stdin.
+  ipcMain.handle('export:videosink_port', (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame)
+      throw new Error('Untrusted video sink port request')
+    const { port1, port2 } = new MessageChannelMain()
+    serveSinkPort(port1, frame => backend!.exportVideoSinkWrite(frame))
+    event.sender.postMessage('export:videosink_port', null, [port2])
   })
   ipcMain.handle('fs:remove', async (_e, { path: p }: { path: string }) => {
     fs.rmSync(await guardFsPath(p), { force: true, recursive: true })

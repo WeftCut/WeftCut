@@ -82,6 +82,7 @@ import { PlaybackEngine } from "./PlaybackEngine";
 import { UnsupportedClipCard } from "./UnsupportedClipCard";
 import type { PixiPreviewHandle } from "./pixiPreviewFlag";
 import { useExportPreviewSuspension } from "./exportPreviewSuspension";
+import { paceSystemTicker } from "./pixiSystemTicker";
 import { webgpuDeviceOf } from "./webgpuDevice";
 import {
   setPixiPresentationVisible,
@@ -105,8 +106,17 @@ const LOG = "[weftcut/pixi]";
 // own controls. Set as the default rather than an <Application> prop: @pixi/react
 // types its props from a frozen key list that lacks `accessibilityOptions`.
 AccessibilitySystem.defaultOptions.activateOnTab = false;
+paceSystemTicker();
 
 let previewResourceSequence = 0;
+
+/// A suspended preview draws nothing, so its ticker stops with it: a ticker
+/// left running is a rAF loop, which on Windows makes every synchronous GPU
+/// call of the export Worker wait for a display frame (`paceSystemTicker`).
+function holdTickerWhileSuspended(app: Application, suspended: boolean): void {
+  if (suspended) app.ticker.stop();
+  else app.ticker.start();
+}
 
 /// The render-target half of Playback Resolution, with the display fit folded
 /// in: rasterize at `composition × fraction`, the fraction being the smaller of
@@ -211,6 +221,8 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
   // admission. Async onInit reads the same hold before starting its ticker.
   useLayoutEffect(() => useExportPreviewSuspension.subscribe(({ by }) => {
     compositorRef.current?.setSuspended(by !== null);
+    const app = applicationRef.current;
+    if (app) holdTickerWhileSuspended(app, by !== null);
   }), []);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
@@ -476,6 +488,7 @@ export const PixiPreview = forwardRef<PixiPreviewHandle, Props>(function PixiPre
       );
       // Export can start while PIXI Application is still initializing.
       compositor.setSuspended(useExportPreviewSuspension.getState().by !== null);
+      holdTickerWhileSuspended(app, useExportPreviewSuspension.getState().by !== null);
       compositor.setPresentationVisible(visibleRef.current);
       // Shared initialization above installs the timed present even when this
       // visibility call early-returns for the already-visible initial state.

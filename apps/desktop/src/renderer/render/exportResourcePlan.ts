@@ -12,7 +12,7 @@ import { tenBitExportCapable } from './exportSettings';
 import { forEachLayerInTime, instanceKey } from './compositionWalk';
 import { motifLayersToBake } from './exportBake';
 import { admitExportMetadata, exportBufferBytes } from './resourceClient';
-import { EXPORT_AUDIO_MIX_MIB, EXPORT_FRAME_WINDOW, EXPORT_MIN_FRAMES, exportDecoderMiB, minimumExportFrames, type ExportResourcePlan } from '../../shared/export-resources';
+import { EXPORT_AUDIO_MIX_MIB, EXPORT_READBACK_FRAMES, packedBytesPerPixel, EXPORT_FRAME_WINDOW, EXPORT_MIN_FRAMES, exportDecoderMiB, minimumExportFrames, type ExportResourcePlan } from '../../shared/export-resources';
 
 export interface ExportSourceDemand { width: number; height: number; tenBit: boolean; minimumFrames: number; nativeMiB?: number }
 export interface ExportActiveDemand { key: string; mediaId: string; start: number; end: number }
@@ -36,8 +36,8 @@ export function peakDecoderMiB(clips: ExportActiveDemand[], memory: Record<strin
 export function buildExportResourcePlans(input: {
   sources: Record<string, ExportSourceDemand>; clips: ExportActiveDemand[];
   workerMiB: number; encoderMiB: number; motifBufferBytes: number; captureMiB?: number; motifFrameBytes?: number;
-  /** The audio mix's working memory. It runs under the plan before any video
-   * child exists, so it is a floor, not an addend. */
+  /** The audio mix's working memory. It runs under the plan while the video
+   * renders. */
   audioMiB?: number;
 }): ExportResourcePlan[] {
   const plans: ExportResourcePlan[]=[];
@@ -51,7 +51,7 @@ export function buildExportResourcePlans(input: {
     const motifFrames = 3 - fraction * 2;
     const motifBufferBytes = Math.ceil(input.motifBufferBytes * (1-fraction) + (input.motifFrameBytes ?? input.motifBufferBytes) * fraction);
     const workerMiB = Math.ceil(input.workerMiB + (motifBufferBytes-input.motifBufferBytes)/1048576);
-    const memoryMiB=Math.max(64, input.audioMiB ?? 0, workerMiB+input.encoderMiB+motifFrames*(input.captureMiB ?? 0)+peakDecoderMiB(input.clips,memory));
+    const memoryMiB=Math.max(64, (input.audioMiB ?? 0)+workerMiB+input.encoderMiB+motifFrames*(input.captureMiB ?? 0)+peakDecoderMiB(input.clips,memory));
     if (!plans.some(p => p.memoryMiB === memoryMiB)) plans.push({ memoryMiB, workerMiB, motifBufferBytes, motifFrames, frameWindows });
   }
   return plans;
@@ -96,7 +96,9 @@ export async function prepareExportResourcePlans(input: {
    * the working-memory allowance, which no wait can change. */
   const plansFor=(sources: Record<string,ExportSourceDemand>): ExportResourcePlan[] => {
     const plans=buildExportResourcePlans({ sources,clips,motifBufferBytes,captureMiB,motifFrameBytes,
-      workerMiB:Math.ceil(64+(pixels*8+motifBufferBytes)/1048576),
+      // A native sink's readback batch, plus as many frames on their way to it.
+      workerMiB:Math.ceil(64+(pixels*8+motifBufferBytes
+        +(input.nativeEncoder?2*EXPORT_READBACK_FRAMES*input.outputWidth*input.outputHeight*packedBytesPerPixel(input.bitDepth):0))/1048576),
       encoderMiB:input.nativeEncoder?128+Math.ceil(input.outputWidth*input.outputHeight*32/1048576):0,
       ...(input.audio ? { audioMiB: EXPORT_AUDIO_MIX_MIB } : {}),
     });

@@ -10,6 +10,7 @@
 // this resolves.
 
 import { convertFileSrc } from "@/bridge/ipc";
+import { openVideoSinkPort } from "../../ipc";
 import { loadBundledFontBytes, resolveFontsForFamilies } from "../fonts/registry";
 
 import type { MediaSummary, ProjectSummary } from "../../ipc";
@@ -213,13 +214,28 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
   // The composition/encoder working frames and the motif stream buffer are
   // borrowed from the admitted plan, which sized them, before either the
   // canvas or worker allocates its buffers.
+  // A native sink's frames reach main on their own port, through a sender
+  // worker that does the cross-process copy off the compositing thread
+  // (docs/export-ipc-transport.md). Terminating the sender closes the port.
+  // Opened before the export Worker exists, whose `ready` must not be missed.
+  let sender: Worker | null = null;
+  let frames: MessagePort | undefined;
+  if (init.nativeSinkPixFmt) {
+    const sink = await openVideoSinkPort();
+    const channel = new MessageChannel();
+    sender = new Worker(new URL("./sinkSender.ts", import.meta.url), { type: "module" });
+    sender.postMessage({ frames: channel.port2, sink }, [channel.port2, sink]);
+    frames = channel.port1;
+  }
   const motifBufferBytes = init.resourcePlan.motifBufferBytes;
-  const releaseResources = await acquireExportResources(init.resourcePlan.workerMiB, 0, init.finalizationToken, init.signal);
+  let releaseResources: () => void;
+  try { releaseResources = await acquireExportResources(init.resourcePlan.workerMiB, 0, init.finalizationToken, init.signal); }
+  catch (error) { sender?.terminate(); throw error; }
   let worker: Worker;
   try { init.signal?.throwIfAborted(); worker = new Worker(
     new URL("./exportWorker.ts", import.meta.url),
     { type: "module" },
-  ); } catch (error) { releaseResources(); throw error; }
+  ); } catch (error) { releaseResources(); sender?.terminate(); throw error; }
   try {
   const offscreen = new OffscreenCanvas(comp.width, comp.height);
   // Attach immediately: a warm worker can report ready as soon as this turn
@@ -274,7 +290,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
     // Platform gate for the 8-bit WebCodecs decode lane (the Worker can't
     // read the OS itself) — see hwExportDecodeAllowed for the allowlist.
     allowHwExportDecode: hwExportDecodeAllowed(rendererOS),
-    ...(init.nativeSinkPixFmt ? { nativeSink: { pixFmt: init.nativeSinkPixFmt } } : {}),
+    ...(init.nativeSinkPixFmt && frames ? { nativeSink: { pixFmt: init.nativeSinkPixFmt, frames } } : {}),
     ...(init.stills ? { stills: { width: init.stills.width, quality: init.stills.quality ?? 0.85, ...(init.stills.effects === false ? { effects: false } : {}) } } : {}),
     ...(Object.keys(tenBitMedia).length > 0 ? { tenBitMedia } : {}),
     // The routing table's native slice (see above); absent when nothing
@@ -389,6 +405,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
       // here — on every terminal path — or the native decode threads leak.
       if (nativeDecodeMediaIds.length > 0) window.api.exportSw.closeAll();
       worker.terminate();
+      sender?.terminate();
       for (const release of workerResources.values()) release();
       workerResources.clear();
       releaseResources();
@@ -413,7 +430,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
       () => {
         if (disposed) return;
         try {
-          worker.postMessage(startReq, [offscreen, ...Object.values(fontBytes)]);
+          worker.postMessage(startReq, [offscreen, ...Object.values(fontBytes), ...(frames ? [frames] : [])]);
           motifProducer?.start();
         } catch (error) { cleanup(); reject(error); }
       },
@@ -506,7 +523,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
       }
     };
   });
-  } finally { worker.terminate(); releaseResources(); }
+  } finally { worker.terminate(); sender?.terminate(); releaseResources(); }
 }
 
 /// Collect distinct font_family strings from every Text layer the export can

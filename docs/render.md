@@ -357,10 +357,12 @@ export mode on the **root** composition, installs the fonts, awaits
 (`worker/frameGrid.ts`) so trims and 29.97-style rates neither drift nor
 over-count. Motif frames arrive as bounded
 `motif:frame` packets from the renderer and are credited back after use.
-Output streams to the main thread as `chunk` events, each awaiting a
-`chunk-ack`, so no export is bounded by a single `ArrayBuffer`; `done` carries
-only perf counters. The main thread then runs the audio export and mux
-([`export.md`](export.md)).
+A native sink's frames leave on its frame port
+([`export-ipc-transport.md`](export-ipc-transport.md)); the WebCodecs path's
+fMP4 slices stream to the main thread as `chunk` events, each awaiting a
+`chunk-ack`, so no export is bounded by a single `ArrayBuffer`. `done` carries
+only perf counters; the main thread then finishes the sink and muxes with the
+audio it mixed alongside ([`export.md`](export.md)).
 
 ### Export decode pipelines (one per media × phase)
 
@@ -451,9 +453,10 @@ shows a quiet status note while one is in view.
 **Native (default).** The Worker forces WebGL2 (the pack shaders need GL; the
 WebCodecs exit prefers WebGPU). A GPU pack pass — `PackYuvPlanar` for
 yuv420p / yuv422p / yuv422p10le, `PackYuv420p10` for yuv420p10le — writes
-rawvideo, read back asynchronously two frames deep (`yuv/pboReadback.ts`
-`PboFrameReader`), and streams over `chunk`/`chunk-ack` to the native ffmpeg
-sink (`native/src/export/videosink.rs`). The sink runs one `EncoderPlan` from
+rawvideo, read back in batches of `EXPORT_READBACK_FRAMES`
+(`yuv/pboReadback.ts` `PboFrameReader`), and streams on the frame port to the
+native ffmpeg sink (`native/src/export/videosink.rs`;
+[`export-ipc-transport.md`](export-ipc-transport.md)). The sink runs one `EncoderPlan` from
 `export/encoder_registry.rs`, which maps codec intent to an adapter that
 passed a real one-frame probe and owns every output argument (rate control,
 GOP, pixel format/profile, `bt709`/`limited` tags). A missing encoder yields

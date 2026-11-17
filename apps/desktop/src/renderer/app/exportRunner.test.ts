@@ -367,7 +367,7 @@ describe("exportRunner", () => {
     expect(remove).toHaveBeenCalledTimes(2);
   });
 
-  it("prepares audio once before video and preserves it through repeated mux failures and discard", async () => {
+  it("prepares audio once beside the video and preserves it through repeated mux failures and discard", async () => {
     const project = summary([track("track-v", "Video", [COLOR_LAYER]), track("track-a", "Audio", [AUDIO_LAYER])]);
     const { useProjectStore } = await import("../state/projectStore");
     const { remove } = await import("@/bridge/fs");
@@ -405,6 +405,36 @@ describe("exportRunner", () => {
     expect(result.current.exportState).toBeNull();
     await act(async () => { await failed.onRetry!(); });
     expect(mux).toHaveBeenCalledTimes(2);
+  });
+
+  it("a failed audio mix stops the video it runs beside and is the failure reported", async () => {
+    const project = summary([track("track-v", "Video", [COLOR_LAYER]), track("track-a", "Audio", [AUDIO_LAYER])]);
+    const { useProjectStore } = await import("../state/projectStore");
+    const { remove } = await import("@/bridge/fs");
+    vi.mocked(remove).mockClear();
+    act(() => useProjectStore.getState().apply(project));
+    bridge.answers.set("project_summary", () => project);
+    bridge.answers.set("ensure_export_audio_fx", () => ({ waiting: [], failed: [] }));
+    let failAudio: (() => void) | undefined;
+    bridge.answers.set("export_project_audio_only", () => new Promise((_, reject) => { failAudio = () => reject(new Error("audio encoder failed")); }));
+    const mux = vi.fn();
+    bridge.answers.set("mux_export", mux);
+    // The video renders until its signal stops it.
+    const render = vi.fn((init: { signal: AbortSignal }) => new Promise((_, reject) => {
+      init.signal.addEventListener("abort", () => reject(new Error("export cancelled")), { once: true });
+      failAudio!();
+    }));
+    const pipeline = createRef<ExportHarness>();
+    pipeline.current = { suspendPreview: () => () => { }, render } as unknown as ExportHarness;
+    const { result } = mount(pipeline);
+    await act(async () => result.current.runExportWithSettings({
+      ...DEFAULT_EXPORT_SETTINGS, encoderEngine: "native", includeVideo: true,
+      audio: { ...DEFAULT_EXPORT_SETTINGS.audio, include: true },
+    }, "/out/movie.mp4"));
+    expect(render).toHaveBeenCalledOnce();
+    expect(result.current.exportState).toMatchObject({ kind: "error", detail: "audio encoder failed" });
+    expect(mux).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledTimes(2);
   });
 
   it("gates the audio-only export and names the layer and the effect", async () => {

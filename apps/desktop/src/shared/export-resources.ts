@@ -25,8 +25,19 @@ export function resourceFailureReason(error: unknown): ResourceWaitReason | unde
 
 /** Working memory of the audio mix + encode tail. It runs under its export's
  * admitted plan and borrows from it (native `resources::EXPORT_AUDIO_MIX_MIB`),
- * so every plan of an export with audio is at least this large. */
+ * alongside the video, so every plan of an export with audio adds it. */
 export const EXPORT_AUDIO_MIX_MIB = 128;
+
+/** Packed frames the native-sink export reads back in one batch, and at most
+ * in flight to the encoder. A readback waits for the GPU once per batch, so a
+ * batch of N costs about one wait for N frames; four keeps that wait below the
+ * rest of a frame's work at every size measured (docs/notes/export-pipeline-2026-11.md). */
+export const EXPORT_READBACK_FRAMES = 4;
+
+/** Packed bytes per output pixel, at most: 4:2:2 at the bit depth. */
+export function packedBytesPerPixel(bitDepth: 8 | 10): number {
+  return bitDepth === 10 ? 4 : 2;
+}
 
 export const EXPORT_FRAME_WINDOW = 24;
 export const EXPORT_PRIVATE_FRAMES = 16;

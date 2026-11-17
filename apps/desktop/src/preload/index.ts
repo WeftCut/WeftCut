@@ -227,9 +227,20 @@ const api: WeftcutApi = {
     return ipcRenderer.invoke('app:emit', { event, payload }) as Promise<void>
   },
 
-  // Stream one raw frame to the native video sink over IPC.
-  videoSinkWrite(bytes: ArrayBuffer | ArrayBufferView): Promise<void> {
-    return ipcRenderer.invoke('export:videosink_write', bytes) as Promise<void>
+  // The native video sink's frame port. A port cannot cross contextBridge, so
+  // it reaches the page as a window message (`openVideoSinkPort`).
+  videoSinkPort(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const onPort = (event: Electron.IpcRendererEvent) => {
+        window.postMessage({ weftcutVideoSinkPort: true }, '*', event.ports)
+        resolve()
+      }
+      ipcRenderer.once('export:videosink_port', onPort)
+      ipcRenderer.invoke('export:videosink_port').catch((error: unknown) => {
+        ipcRenderer.removeListener('export:videosink_port', onPort)
+        reject(error)
+      })
+    })
   },
 
   // Native GPU-decode preview (Windows). The three session commands are plain

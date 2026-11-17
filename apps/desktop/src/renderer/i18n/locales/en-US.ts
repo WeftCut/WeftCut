@@ -1994,7 +1994,6 @@ const enUS = {
     phase_finalize: "Finalizing",
     finalize_sink: "Flushing the encoder…",
     finalize_audio: "Rendering audio…",
-    prepare_audio: "Audio",
     retry_finalize: "Retry finishing export",
     discard_pending: "Discard export",
     retry_hint: "Retry finishing the export without encoding again. Closing the project or discarding this export deletes its temporary files.",

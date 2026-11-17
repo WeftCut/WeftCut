@@ -661,5 +661,7 @@ export interface WeftcutApi {
   /// Broadcast an event to every app window (delivered to `on()` subscribers as
   /// `evt:<event>`). Backs the renderer's cross-window `emit()` (bridge/events.ts).
   emit(event: string, payload?: unknown): Promise<void>
-  videoSinkWrite(bytes: ArrayBuffer | ArrayBufferView): Promise<void>
+  /// Asks main for the native sink's frame port; it arrives as a window
+  /// message (`openVideoSinkPort` in the renderer).
+  videoSinkPort(): Promise<void>
 }
