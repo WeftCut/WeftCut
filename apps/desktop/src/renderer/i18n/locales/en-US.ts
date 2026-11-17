@@ -1685,10 +1685,24 @@ const enUS = {
   },
   changes: {
     subtitle: "What agents changed since you last approved",
-    // The bar over the list while a changed range is focused: its line, a
-    // stepper through its changes, play, the neighbouring ranges, close.
+    // The bar over the list: with no range focused, how many there are and
+    // how long, and the way into them (review, a Group's way out to the
+    // film); with one focused, its line, a stepper through its changes,
+    // play, the neighbouring ranges, close.
     range_bar: {
       label: "Changed range",
+      review: "Review",
+      total_one: "{{count}} spot · {{duration}}",
+      total_other: "{{count}} spots · {{duration}}",
+      total_full_one: "{{count}} stretch plays differently, {{duration}} in all",
+      total_full_other: "{{count}} stretches play differently, {{duration}} in all",
+      total_cuts_one: "{{count}} cut point",
+      total_cuts_other: "{{count}} cut points",
+      group_total: "This Group: {{total}}",
+      group_none: "No changed ranges in this Group",
+      film_one: "Film: {{count}}",
+      film_other: "Film: {{count}}",
+      film_hint: "Open the main timeline to review the whole film's ranges",
       play: "Play",
       spot: "{{index}} of {{count}}",
       step: "change {{index}} of {{count}}",
@@ -1732,12 +1746,6 @@ const enUS = {
       added: "{{count}} added",
       removed: "{{count}} removed",
       modified: "{{count}} modified",
-      ranges_points_short_one: "{{count}} spot",
-      ranges_points_short_other: "{{count}} spots",
-      ranges_short_one: "{{count}} spot · {{duration}}",
-      ranges_short_other: "{{count}} spots · {{duration}}",
-      ranges_one: "{{count}} stretch plays differently, {{duration}} to watch",
-      ranges_other: "{{count}} stretches play differently, {{duration}} to watch",
     },
     range: {
       added: "Added · {{duration}}",

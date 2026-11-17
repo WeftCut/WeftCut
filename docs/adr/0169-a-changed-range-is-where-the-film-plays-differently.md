@@ -74,17 +74,31 @@ relative timing.
   stays while the bands of the timeline on screen paint it, whichever tab the
   panel shows, and goes with another timeline. The panel heads
   its framed rows with one flat bar: play, the range's line, which of the
-  timeline's ranges it is between the way to its neighbours, close. A press on
+  timeline's ranges it is between the way to its neighbours, close. With no
+  range focused the bar stays, in the tab whose list the bands paint: how
+  many ranges the timeline on screen has and how long they run now (a cut
+  point counts and adds no time; cut points alone are named as such), Review
+  to start, and the walk from the playhead. It is the one place that count
+  and length are told, and they are the walk's own list. In a Group's
+  timeline it names the Group's own and offers the film's, which opens the
+  root timeline: the root's ranges hold what every Group shows. A press on
   a framed row points at that change with the range kept as context; Esc
   steps back, then lets go. Alt+↑/↓ walk the ranges of the timeline on
   screen without wrapping, and unlike a focus they seek: the playhead parks on
   the range's start, a cut point on the cut. A walk names where it landed (or
   that none is left that way) in the status line and leaves the panel as it
-  is. Shift+Space plays the focused
-  range, else the one under or after the playhead, from 1 s before it to
+  is. Shift+Space (and the bar's play or Review) plays the focused
+  range; with none focused it focuses and plays the one under or after the
+  playhead, past the last the first. A play runs from 1 s before the range to
   0.5 s after (a cut point 2 s either side); the transport pauses there, any
   play, pause, seek or scrub drops that stop, and in and out points are left
   alone.
+- **The agent view watches the film.** It has no timeline tabs nor preview
+  lock, so while it holds the window its preview, mini timeline, bands and
+  walk are the root's, whatever the editor focused or locked; leaving it
+  finds the editor as it was. Its Jump carries an item inside a Group out
+  through the placement that plays it, to the first moment the film shows any
+  of it; an item the film shows none of has no Jump.
 - Clip marks, the change list and the entity stat stay with the entity diff:
   every change keeps its mark, its row and its class. A mark and a row are as
   loud as the ranges that list the change: a solid edge where a changed range
@@ -93,8 +107,8 @@ relative timing.
   modified change ("out of sync only"): the clip itself plays what it did, and
   the ruler already marks the relation. Weight is read from `change_ids`,
   never from time overlap, and never hides, reorders or counts a change. The
-  stat gains how many ranges of the film there are to review and how long
-  they run: the root's, which already hold what each Group shows. Removed clips keep a track ghost only where
+  stat counts entities only, like the list under it; ranges are counted on
+  the range bar. Removed clips keep a track ghost only where
   their track is empty now. A selected activity's ranges are found between its
   own snapshots and placed where that content plays now.
 - Not on MCP yet.
@@ -130,4 +144,5 @@ defined only once the alignment has fixed both sides of a range, by following
 each layer's identity to where the other side plays its content; the two
 sides alone do not give it); a range focus that points at its first change
 (a range of five changes named one); aligning each track on its own (hides a picture
-rippled without its sound).
+rippled without its sound); the range count beside the entity stat (two units
+in one row read as related figures, and it repeated the bar's "3 of 15").

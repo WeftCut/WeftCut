@@ -36,3 +36,25 @@ export function rangeLine(r: ChangedRange, t: Translate): string {
   else if (r.includes_user) notes.push(t('changes.range.includes_user', {}))
   return [head, ...notes].join(' · ')
 }
+
+/** A length to watch: seconds to one decimal under a minute, `m:ss` from
+ *  one, where a decimal stops being read. */
+function watchLength(us: number, t: Translate): string {
+  if (us < 60_000_000) return seconds(us, t)
+  const s = Math.round(us / 1_000_000)
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+/** How many `ranges` there are and how long they run now: `short` for the
+ *  range bar, `full` for its title. A cut point counts and adds no time;
+ *  with nothing but cut points there is no length to tell. */
+export function rangesTotal(ranges: readonly ChangedRange[], t: Translate): { short: string; full: string } {
+  const count = ranges.length
+  const us = ranges.reduce((sum, r) => sum + Math.max(0, r.t_end_us - r.t_start_us), 0)
+  if (us === 0) {
+    const cuts = t('changes.range_bar.total_cuts', { count })
+    return { short: cuts, full: cuts }
+  }
+  const duration = watchLength(us, t)
+  return { short: t('changes.range_bar.total', { count, duration }), full: t('changes.range_bar.total_full', { count, duration }) }
+}
