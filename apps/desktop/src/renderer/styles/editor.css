@@ -27,12 +27,13 @@
   display: flex;
   flex-direction: column;
   gap: calc(4 * var(--ui-px));
-  height: 100%;
-  justify-content: center;
 }
 
+/* The tick row and the strip keep their themed heights: the pane is sized
+   from them (agent.css), so neither is ever squeezed to fit. */
 .mini-timeline-ticks {
   position: relative;
+  flex: none;
   height: calc(14 * var(--ui-px));
   border-bottom: 1px solid var(--border-soft);
 }
@@ -67,6 +68,7 @@
 
 .mini-timeline-strip-real {
   position: relative;
+  flex: none;
   height: calc(36 * var(--ui-px));
   background: var(--popover);
   border-radius: var(--radius-control);
@@ -526,8 +528,9 @@
   color: var(--muted-foreground);
   letter-spacing: 0.04em;
   text-align: right;
-  /* The pane is a fixed 80 px tall: never let the readout wrap onto a
-     second line — ellipsize instead (the full value is on `title`). */
+  line-height: var(--line-height-tight);
+  /* One line, which the pane's height is made of: never wrap onto a second
+     line — ellipsize instead (the full value is on `title`). */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -3,7 +3,7 @@
 /* ============================================================
    Agent mode shell — 3-pane layout:
      preview top-left (expanding), mini timeline bottom-left
-     (~80 px tall), record panel right (~360 px wide).
+     (as tall as its rows), record panel right (~360 px wide).
    Replaces the editor body when agent view is selected. Work
    sessions have an independent lifecycle.
 
@@ -32,8 +32,11 @@
      row-gap: the gap has to separate the PANES without also cutting a black
      strip between the caption bar and the panes it sits on. The titlebar is
      window chrome, not a pane — it belongs against them, the way .app-header
-     meets .dock-workspace in the editor. */
-  grid-template-rows: var(--app-chrome-height) 1fr calc(6 * var(--ui-px)) calc(80 * var(--ui-px));
+     meets .dock-workspace in the editor.
+     The last row is the mini timeline's own height: its rows are all themed
+     (ui-px and text roles), so a fixed track here would either clip them or
+     squeeze the strip whenever a preset or a row changes. */
+  grid-template-rows: var(--app-chrome-height) 1fr calc(6 * var(--ui-px)) auto;
   grid-template-areas:
     "titlebar titlebar"
     "preview  record"
