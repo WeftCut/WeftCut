@@ -211,6 +211,7 @@
   min-height: calc(32 * var(--ui-px));
 }
 .motif-history-row + .motif-history-row { border-top: 1px solid var(--border); }
+.motif-history-version { font-size: var(--font-size-body); }
 .motif-history-date {
   flex: 1 1 auto;
   font-size: var(--font-size-caption);

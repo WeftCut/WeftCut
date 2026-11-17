@@ -7,7 +7,7 @@ import { listMotifVersions, restoreMotifVersion, type MotifSummary, type MotifVe
 /// An installed Motif's saved versions, newest first (ADR 0172). The newest is
 /// the current one; restoring an older one saves it again as the newest.
 export function MotifVersionHistory({ motif, onClose }: { motif: MotifSummary; onClose: () => void }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [versions, setVersions] = useState<MotifVersion[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +49,7 @@ export function MotifVersionHistory({ motif, onClose }: { motif: MotifSummary; o
               {versions.map((v, i) => (
                 <li key={v.version} className="motif-history-row">
                   <span className="motif-history-version">{t("motif_picker.history_version", { version: v.version })}</span>
-                  <span className="motif-history-date">{new Date(v.saved_at).toLocaleString()}</span>
+                  <span className="motif-history-date">{new Date(v.saved_at).toLocaleString(i18n.language, { dateStyle: "medium", timeStyle: "short" })}</span>
                   {i === 0
                     ? <span className="motif-history-current">{t("motif_picker.history_current")}</span>
                     : <Button size="sm" disabled={busy} onClick={() => void restore(v.version)}
