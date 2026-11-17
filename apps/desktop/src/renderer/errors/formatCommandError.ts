@@ -225,6 +225,8 @@ const COMMAND_COPY: { [C in CommandCode]: Spec<CommandOf<C>> } = {
   // this into a confirm flow with the reference list. Reaching the formatter
   // means some other path tripped it — generic is the honest fallback.
   MediaInUse: { tier: "generic" },
+  MotifNotFound: { tier: "generic" },
+  MotifInUse: { tier: "generic" },
   TrackPositionOutOfRange: { tier: "generic" },
   // The timeline offers no drag for a reserved lane (canReorderTrack).
   TrackReserved: { tier: "generic" },
@@ -397,6 +399,10 @@ const VALIDATION_COPY: { [R in ValidationRule]: Spec<ValidationOf<R>> } = {
   // offers the user no anchor a live selection could not satisfy.
   MarkerAnchorNotInComposition: { tier: "generic" },
   MarkerAnchorLayerHasNoSourceWindow: { tier: "generic" },
+  // Project Motifs: placement records the table entry with the layer, so only
+  // a hand-edited project or a rebind to an id it lacks can raise either.
+  MotifNotInProject: { tier: "generic" },
+  InvalidMotifKey: { tier: "generic" },
 };
 
 // ── Composition ─────────────────────────────────────────────────────────────

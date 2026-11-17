@@ -83,7 +83,6 @@ import {
 } from "./settings/SettingsPanel";
 import { MotifPicker } from "./motifs/MotifPicker";
 import { tenBitExportCapable } from "./render/exportSettings";
-import { MotifStaleDialog } from "./panels/MotifStaleDialog";
 import { noticeLogMessage, useAppNotices, type NoticeSettingsPage } from "./notifications/appNotices";
 import type { SaveFailureActions } from "./components/SaveFailedPill";
 import { useDerivativeJobEvents } from "./state/derivativeJobsStore";
@@ -492,8 +491,6 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
     agentMode,
     exitAgentMode,
     enterAgentMode,
-    staleMotifs,
-    setStaleMotifs,
   } = useAppWiring();
   useWindowTitle(summary?.name);
 
@@ -1316,12 +1313,6 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
         />
       )}
       {!backgroundExportActive && !settingsOpen && exportPanel}
-      {staleMotifs.length > 0 && (
-        <MotifStaleDialog
-          entries={staleMotifs}
-          onDone={() => setStaleMotifs([])}
-        />
-      )}
       <PickOverlayHost />
       {settingsOpen && (
         <SettingsPanel

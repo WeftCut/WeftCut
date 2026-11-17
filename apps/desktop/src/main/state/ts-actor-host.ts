@@ -3,7 +3,7 @@ import { resolve as resolvePath } from 'node:path'
 import { createActor, type ActorHandle, type ChangeEvent } from './actor'
 import type { EntityRef } from './history'
 import { uuidV7Gen } from './ids'
-import { blankProject, eachLayer, rootComposition } from './model'
+import { blankProject, rootComposition } from './model'
 import { buildProjectSummary } from './summary'
 import { routeChannel } from './router'
 import { CommandFailure } from './errors'
@@ -27,12 +27,16 @@ import { runHybrid, type ComputeNapi, type HybridDeps } from './hybrids'
 import { recoverInterruptedImports } from './importRecovery'
 import { captureImportSession, createMediaImporter, type MediaImporter } from './mediaImport'
 import { createPoolFiles, type PoolFiles, type PoolFilesFs } from './poolFiles'
-import { MotifCatalog, type Manifest } from '../../shared/motifs/catalog'
+import { BUILTIN_MANIFESTS, type Manifest } from '../../shared/motifs/catalog'
+import { libraryHost } from '../../shared/motifs/projectMotifs'
 import type { UserMotifStore } from '../motif/store'
 import { runMotifTool, type MotifToolDeps } from '../motif/motifTools'
 import { legacyMigration } from '../motif/legacyResolve'
-import type { BuiltinMotif, MotifLayerRef } from '../motif/authoring'
-import type { MediaItem, MotifParams, MotifRebindEntry } from './model'
+import type { BuiltinMotif } from '../motif/authoring'
+import type { MotifResolver } from '../motif/resolver'
+import { libraryPackage, libraryPackageOfLineage, type MotifState } from '../motif/projectStore'
+import { ProjectMotifRecords, projectMotifAccess } from '../motif/projectRecords'
+import type { MediaItem, MotifRebindEntry } from './model'
 import type { AppSettingsStore } from '../app-settings'
 import type { AppSettingsPatch } from '../../shared/app-settings'
 import type { ViewStateStore } from '../view-state'
@@ -106,10 +110,11 @@ export interface TsActorHostDeps {
     i18n_args?: Record<string, unknown>
     details?: Record<string, unknown>
   }) => void
-  /** list_motifs JSON from the backend — used to hydrate the actor's motif catalog
-   *  after start() and after motif-store-mutating operations (install/delete/write/
-   *  import/amend/create_edit). Optional → no-op when absent (tests). */
-  listMotifs?: () => Promise<string>
+  /** What every `motif://` host serves, its project following the open
+   *  workspace: the actor reads and places the project's Motifs through
+   *  `project()`, the one store whose revision listeners hear everything.
+   *  Absent (tests) → no Motif folder is readable. */
+  motifResolver?: MotifResolver
   /** On-disk user Motif store (the TS authoring/read/install surface).
    *  Optional → guard in runMotif throws if absent. Tests that don't exercise
    *  motif tools omit this so they don't need a real temp-dir store. */
@@ -224,10 +229,10 @@ export interface TsActorHost {
   /** Host-level Motif tool dispatch (catalog read + authoring + install). Both
    *  the renderer `handleInvoke('motif')` and the MCP `route==='motif'` path use it. */
   motifTool: (name: string, args: Record<string, unknown>) => unknown
-  /** Re-pull list_motifs → actor.setUserMotifManifests. Exposed so the file
-   *  watcher can refresh the actor catalog when a Motif appears on disk with no
-   *  store-mutating tool call (otherwise add_motif rejects it). */
-  refreshMotifCatalog: () => void
+  /** The open project's `Motifs/<id>/` changed on disk (`watchProjectMotifs`):
+   *  a new revision of a Motif the project records becomes a recorded edit
+   *  (`ProjectMotifRecords.folderChanged`). */
+  motifFolderChanged: (id: string, state: MotifState) => void
   /** The quit path's close: nothing can be opened from the call on, the
    *  project is flushed, and a write after the flush is refused instead of
    *  answered and then lost. A failed flush rejects with the project, and
@@ -257,23 +262,6 @@ export function mapChangeEvent(e: ChangeEvent): { op_id: string; actor_kind: 'us
   return { op_id: e.op_id, actor_kind, client, summary: e.summary, timestamp: e.timestamp, affected: e.affected }
 }
 
-/** Extract Manifest-shaped entries from a `list_motifs` JSON array.
- *  list_motifs returns every manifest field plus `html`/`status`/`content_hash`;
- *  we keep only non-builtin entries (installed + draft) — built-ins are already
- *  in the catalog's built-in layer and built-ins always win on id collision. */
-function manifestsFromList(entries: unknown[]): Manifest[] {
-  const out: Manifest[] = []
-  for (const e of entries) {
-    if (e == null || typeof e !== 'object') continue
-    const entry = e as Record<string, unknown>
-    if (entry['status'] === 'builtin') continue
-    // Keep only entries that have at minimum the required Manifest fields.
-    if (typeof entry['id'] !== 'string' || typeof entry['name'] !== 'string') continue
-    out.push(entry as unknown as Manifest)
-  }
-  return out
-}
-
 /** The pool as `resources/list` names it (`mediaResourceDefs`): ids, labels
  *  and paths, so a change to any of them is a change to the list. */
 function mediaListKey(pool: Record<string, MediaItem>): string {
@@ -283,22 +271,28 @@ function mediaListKey(pool: Record<string, MediaItem>): string {
 export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   // Single shared idGen: used for blankProject, createActor, and orchestratorDeps.
   const idGen = uuidV7Gen()
-  // The actor catalog's user layer is a watcher-refreshed cache. Back it with a
-  // store fallback so add_motif resolves a disk-written Motif the instant
-  // list_motifs (disk-backed) sees it, without waiting for the debounced refresh.
   const store = deps.motifStore
-  const motifCatalog = new MotifCatalog(store ? (id) => store.getMotif(id)?.manifest ?? null : undefined)
+  const builtins = deps.motifBuiltins ?? []
+  const resolver = deps.motifResolver
+  const projectMotifs = () => resolver?.project() ?? null
+  const motifs = projectMotifAccess(projectMotifs, (id) => store ? libraryPackage(store, builtins, id) : null)
+  /** A Motif a style names (TASTE.md `motifs`) is one to place: the library's. */
+  const libraryManifest = (id: string): Manifest | null =>
+    resolver ? resolver.resolve(libraryHost(id)).manifest : BUILTIN_MANIFESTS.get(id) ?? null
+  /** A Motif a layer names: the project's own. */
+  const projectManifest = (id: string): Manifest | null =>
+    Object.hasOwn(actor.snapshot().motifs, id) ? motifs.manifest(id) : null
   const actor = createActor({
     assertWritable: () => {
       deps.exportJobs?.assertWritable()
       if (replacing && !swapping) throw new ExportJobError('project_busy', 'Wait for the project operation to finish')
     },
-    initial: blankProject(idGen, 'untitled'), idGen, clock: () => new Date().toISOString(), motifCatalog,
+    initial: blankProject(idGen, 'untitled'), idGen, clock: () => new Date().toISOString(), motifs,
     autoDeleteEmptyTracks: () => deps.appSettings?.get().auto_delete_empty_tracks ?? true,
     defaultTextFont: () => deps.appSettings?.get().default_text_font,
     // Read at each creation, so an edit to TASTE.md reaches the next layer
     // without a reload. `opened` is assigned below; this runs only later.
-    tasteTokens: () => (deps.styleDirs ? tasteView(deps.styleDirs, opened?.dir ?? null, { motif: (id) => motifCatalog.get(id) ?? null }).tokens : null),
+    tasteTokens: () => (deps.styleDirs ? tasteView(deps.styleDirs, opened?.dir ?? null, { motif: libraryManifest }).tokens : null),
     installedFonts: () => deps.installedFonts?.() ?? null,
     // Reconcile-dropped-transition rows ride the same log_emit seam as the
     // relink/checkpoint pin-rows.
@@ -319,6 +313,16 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   let replacementOccurred = false
   let deferredChange: { event: ChangeEvent; traceId?: string } | null = null
   const agent = new AgentActivityService(actor, deps.send)
+  // Subscribed before the publication below, so a state taken from history
+  // has its Motif folders put back before anyone reads them.
+  const motifRecords = new ProjectMotifRecords({
+    actor, project: projectMotifs,
+    libraryOfLineage: (uid) => store ? libraryPackageOfLineage(store, builtins, uid) : null,
+    warn: (message, details) => {
+      try { deps.emitLog?.({ level: 'warn', category: { kind: 'Project' }, source: { kind: 'System' }, message, details: { kind: 'ProjectMotifs', ...details } }) }
+      catch (err) { console.warn('[ts-actor-host] emitLog failed (project Motifs)', err) }
+    },
+  })
 
   let saveStatus: SaveStatus = { state: 'ok', revision: 0 }
   /** Publishes autosave's state, and logs the transitions a user would look
@@ -439,11 +443,11 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
   const relink = deps.relinkFs
     ? { fs: deps.relinkFs, join: deps.join, hashFile: (p: string) => deps.compute.hashMediaSource(p) }
     : undefined
-  // Without a store the upgrade sizes Motifs from the catalog and copies none.
+  // Without a store the upgrade sizes Motifs from the built-ins and copies none.
   const { migration, placeMigratedMotifs } = store && deps.motifBuiltins
     ? legacyMigration(store, deps.motifBuiltins)
     : { migration: () => ({ motifSize: (id: string, version: number) => {
-      const manifest = motifCatalog.get(id)
+      const manifest = BUILTIN_MANIFESTS.get(id)
       return manifest?.version === version ? manifest.size : null
     } }), placeMigratedMotifs: undefined }
   const swapActor: Pick<ActorHandle, 'replaceState' | 'snapshot'> = {
@@ -592,7 +596,12 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     if (!quitting) { opened = { dir }; deps.onWorkspaceOpened?.() }
   }
   const persistence: PersistenceHandlers = {
-    open: (dir) => replaceWorkspace(async () => { await openProject(orchestratorDeps, dir); opens(dir) }),
+    // The Motif records after the open settles: an edit made while the
+    // project was closed is a commit, which the swap would refuse.
+    open: async (dir) => {
+      await replaceWorkspace(async () => { await openProject(orchestratorDeps, dir); opens(dir) })
+      motifRecords.opened()
+    },
     saveAs: (dir) => replaceWorkspace(async () => {
       try { await saveProjectAs(orchestratorDeps, dir) }
       finally {
@@ -641,35 +650,24 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     },
   }
 
-  /** Best-effort refresh the actor's user motif layer from list_motifs.
-   *  Called on start() and after motif-store-mutating hybrid channels
-   *  (install_motif, delete_motif, open_motif_draft, update_motif_files).
-   *  A refresh failure must never abort. */
-  function refreshMotifCatalog(): void {
-    deps.listMotifs?.().then((j) => {
-      actor.setUserMotifManifests(manifestsFromList(JSON.parse(j) as unknown[]))
-    }).catch(() => {})
-  }
-
   function runMotif(name: string, args: Record<string, unknown>): unknown {
-    if (!["list_motifs", "read_motif", "list_motif_proposals", "list_motif_versions", "motif_staleness_report"].includes(name)) deps.exportJobs?.assertWritable()
+    if (!["list_motifs", "read_motif", "list_motif_proposals", "list_motif_versions"].includes(name)) deps.exportJobs?.assertWritable()
+    if (name === 'update_project_motif') {
+      if (typeof args.motif_id !== 'string') throw new Error('motif_id is required')
+      const updated = motifRecords.updateFromLibrary(args.motif_id)
+      deps.send('motifs:changed', {})
+      return updated
+    }
     if (!deps.motifStore) throw new Error('motifTool: motifStore not configured')
     const motifToolDeps: MotifToolDeps = {
       store: deps.motifStore,
-      builtins: deps.motifBuiltins ?? [],
-      // With no project open the actor holds a placeholder or the project the
-      // user closed: an update-mode install then touches only the library.
-      motifLayers: () => opened === null ? [] :
-        [...eachLayer(actor.snapshot())].flatMap(({ layer: l }) => {
-          if (l.params.kind !== 'Motif') return []
-          const p = l.params as MotifParams
-          return [{ layerId: l.id, motifId: p.motif_id, version: p.motif_version, props: p.props } satisfies MotifLayerRef]
-        }),
+      builtins,
+      // A library publication changes no project: a project renders its own
+      // copies (spec § Library), so no layer is rebound.
+      motifLayers: () => [],
       dispatchRebind: (updates: MotifRebindEntry[]) => { const r = actor.dispatch('rebind_motif', { updates }); if (!r.ok) throw new Error(JSON.stringify(r.error)) },
       emitChanged: () => deps.send('motifs:changed', {}),
-      refreshCatalog: () => refreshMotifCatalog(),
       notifyAgents: () => deps.mcpResourcesChanged?.(),
-      emitLog: (entry) => { try { deps.emitLog?.(entry) } catch (err) { console.warn('[ts-actor-host] emitLog failed (motif)', err) } },
     }
     return runMotifTool(name, args, motifToolDeps)
   }
@@ -1077,11 +1075,11 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       if (opened === null || replacing || !autosave.unsaved()) return
       autosave.forceFlush()
     },
-    ...(deps.styleDirs ? { taste: () => tasteView(deps.styleDirs!, opened?.dir ?? null, { motif: (id) => motifCatalog.get(id) ?? null, fonts: deps.installedFonts?.() ?? null }) } : {}),
+    ...(deps.styleDirs ? { taste: () => tasteView(deps.styleDirs!, opened?.dir ?? null, { motif: libraryManifest, fonts: deps.installedFonts?.() ?? null }) } : {}),
     // The project is read once the editor has answered: an edit made while the
     // question was out is in both halves of the answer, not only the editor's.
     ...(deps.readEditorPlayhead ? { playhead: async () => { const report = await deps.readEditorPlayhead!(); return playheadView(actor.snapshot(), report) } } : {}),
-    audits: new AuditStore((id) => motifCatalog.get(id) ?? null),
+    audits: new AuditStore(projectManifest),
     projectStatus: () => ({
       project: opened === null ? null : { name: actor.snapshot().metadata.name, dir: opened.dir },
       recent_projects: (deps.recents?.list() ?? []).map((e) => ({ name: e.name, path: e.path })),
@@ -1096,12 +1094,11 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     mediaImporter,
     poolFiles,
     motifTool: runMotif,
-    refreshMotifCatalog,
+    motifFolderChanged: (id, state) => motifRecords.folderChanged(id, state),
     start() {
       agent.start()
       emitting = true
       autosave.start()
-      refreshMotifCatalog()
     },
     stop() {
       importGeneration++

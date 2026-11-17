@@ -51,9 +51,9 @@ function legacyManifest(store: UserMotifStore, id: string): Manifest | null {
  *  revision, and says why. */
 export function placeMigratedMotifs(project: ProjectMotifStore, copies: readonly MotifCopy[],
   resolve: (id: string) => LegacyPackage | null): MotifCopyOutcome[] {
-  return copies.map(({ id }) => {
+  return copies.map(({ id, source }) => {
     try {
-      const pkg = resolve(id)
+      const pkg = resolve(source ?? id)
       if (!pkg) return { id, revision: null, diagnostic: 'The Motif is no longer in the library' }
       return { id, revision: project.materialize(id, pkg.files, 'placed') }
     } catch (error) {

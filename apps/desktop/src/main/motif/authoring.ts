@@ -125,12 +125,12 @@ export function motifSourceFiles(store: UserMotifStore, builtins: BuiltinMotif[]
   return builtin ? builtin.files ?? [] : store.packageFiles(id)
 }
 
-export interface MotifLayerRef { layerId: string; motifId: string; version: number; props: Record<string, unknown> }
+export interface MotifLayerRef { layerId: string; motifId: string; props: Record<string, unknown> }
 
-/** Per-layer rebind updates for an Update: every layer whose motif_id is the
- *  working draft id OR the target id ends up on the target id, at the new version,
- *  with props lenient-migrated to the new schema (drop unknown, fill new defaults,
- *  fall back invalid values). Pure. */
+/** Per-layer rebind updates for a new version of a Motif: every layer whose
+ *  motif_id is `workingId` OR the target's id ends up on the target's id,
+ *  with props lenient-migrated to the new schema (drop unknown, fill new
+ *  defaults, fall back invalid values). Pure. */
 export function buildRebindUpdates(layers: MotifLayerRef[], workingId: string, target: Manifest): MotifRebindEntry[] {
   const updates: MotifRebindEntry[] = []
   for (const l of layers) {
@@ -138,7 +138,6 @@ export function buildRebindUpdates(layers: MotifLayerRef[], workingId: string, t
     updates.push({
       layer_id: l.layerId,
       motif_id: target.id,
-      motif_version: target.version,
       props: canonicalizePropsLenient(target, l.props),
     })
   }

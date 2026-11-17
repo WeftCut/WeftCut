@@ -41,6 +41,31 @@ describe('v5 → v6 project Motif table', () => {
     expect(original).toEqual(before)
   })
 
+  it('drops motif_version from every Motif layer: the table says what it renders', () => {
+    const { wire } = upgradeWire(wireAt5(), 5, 6, undefined, { legacyMotif: id => resolved[id] ?? null })
+    const motifParams = JSON.stringify(wire.compositions)
+    expect(motifParams).not.toContain('motif_version')
+    expect(motifParams).toContain('"motif_id":"lower"')
+  })
+
+  it('keys an id URL parsing would lowercase by its lowercase form, and its layers follow', () => {
+    const original = { schema_version: 5, compositions: { root: { tracks: [{ layers: [layer('a', 'Lower'), layer('b', 'lower'), layer('c', 'Lower')] }] } } }
+    const copies: MotifCopy[] = []
+    const LOWER: LegacyMotif = { ...LIBRARY, uid: '5f4e3d2c-1b0a-4f9e-8d7c-6b5a4f3e2d1c' }
+    const { wire } = upgradeWire(original, 5, 6, undefined, {
+      legacyMotif: id => id === 'Lower' ? LOWER : resolved[id] ?? null,
+      onMotifCopy: copy => copies.push(copy),
+    })
+    const keys = Object.keys(wire.motifs as object)
+    // The id already in key form keeps it; the other takes its lineage prefix.
+    expect(keys.sort()).toEqual(['lower', 'lower-5f4e3d2c'])
+    const ids = (wire.compositions as { root: { tracks: [{ layers: Array<{ id: string; params: { motif_id: string } }> }] } })
+      .root.tracks[0].layers.map(l => [l.id, l.params.motif_id])
+    expect(ids).toEqual([['a', 'lower-5f4e3d2c'], ['b', 'lower'], ['c', 'lower-5f4e3d2c']])
+    // The copy is read from the id v5 resolved, into the key's folder.
+    expect(copies).toContainEqual({ id: 'lower-5f4e3d2c', source: 'Lower', revision: LOWER.revision })
+  })
+
   it('opens without a resolver: every Motif is a missing entry of its own lineage', () => {
     const { wire } = upgradeWire(wireAt5(), 5, 6)
     const motifs = wire.motifs as Record<string, { uid: string; revision: string | null; from: unknown }>

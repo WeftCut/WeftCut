@@ -349,7 +349,7 @@ export const ADD_LAYER_KINDS = ['video', 'image', 'audio', 'text', 'color', 'mot
 export type AddLayerKind = (typeof ADD_LAYER_KINDS)[number]
 const ADD_LAYER_CONTENT_KEYS: Record<AddLayerKind, readonly string[]> = {
   video: ['media_id', 'src_in_us', 'audio'], image: ['media_id', 'graphic_role'], audio: ['media_id', 'src_in_us', 'role'],
-  text: ['content', 'graphic_role'], color: ['color'], motif: ['motif_id', 'props', 'graphic_role'], group: ['composition_id'],
+  text: ['content', 'graphic_role'], color: ['color'], motif: ['motif_id', 'from_library', 'props', 'graphic_role'], group: ['composition_id'],
 }
 export const ADD_LAYERS_MAX = 50
 /** `remove_pauses { pauses }`: one detection's worth of reviewed ranges. */
@@ -391,7 +391,7 @@ export type AddLayerContent =
   | { kind: 'audio'; media: string; src_in_us: number; role: string | null }
   | { kind: 'text'; content: string; graphic_role: string | undefined }
   | { kind: 'color'; color: Rgba }
-  | { kind: 'motif'; motif_id: string; props: Record<string, unknown> | null; graphic_role: string | undefined }
+  | { kind: 'motif'; motif_id: string; from_library: boolean; props: Record<string, unknown> | null; graphic_role: string | undefined }
   | { kind: 'group'; composition: string }
 export interface AddLayerTransform { x?: number; y?: number; scale?: number; rotation_deg?: number; opacity?: number }
 export interface AddLayerSpec {
@@ -432,7 +432,7 @@ function parseAddLayerContent(v: unknown, at: string): AddLayerContent {
       role: c.role === undefined ? null : parseOneOf(c.role, [...AUDIO_ROLES], f('role')) }
     case 'text': return { kind, content: parseStr(c.content, f('content')), graphic_role: parseContentRole(c.graphic_role, f('graphic_role')) }
     case 'color': return { kind, color: parseRgba(c.color, f('color')) }
-    case 'motif': return { kind, motif_id: parseStr(c.motif_id, f('motif_id')), props: c.props === undefined ? null : parseObj(c.props, f('props')), graphic_role: parseContentRole(c.graphic_role, f('graphic_role')) }
+    case 'motif': return { kind, motif_id: parseStr(c.motif_id, f('motif_id')), from_library: parseBoolOpt(c.from_library, f('from_library'), false), props: c.props === undefined ? null : parseObj(c.props, f('props')), graphic_role: parseContentRole(c.graphic_role, f('graphic_role')) }
     case 'group': return { kind, composition: parseUuid(c.composition_id, f('composition_id')) }
   }
 }
@@ -496,7 +496,7 @@ export const LAYER_PARAMS_KEYS: Readonly<Record<string, readonly string[]>> = {
   Text: keysOf('Text', { content: true, font_family: true, font_size_px: true, font_weight: true, italic: true, color: true, x: true, y: true, opacity: true, rotation_deg: true, anchor_x: true, anchor_y: true, align: true, valign: true, box_w: true, box_h: true, line_height: true, letter_spacing: true, outline_width: true, outline_color: true, shadow: true, graphic_role: true, intro: true, outro: true }),
   VideoClip: keysOf('VideoClip', { crop: true, src_in_us: true, src_out_us: true, x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, flip_h: true, flip_v: true, fade_in_us: true, fade_out_us: true }),
   ImageOverlay: keysOf('ImageOverlay', { x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, fade_in_us: true, fade_out_us: true, graphic_role: true }),
-  Motif: keysOf('Motif', { x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, src_in_us: true, motif_id: true, motif_version: true, props: true, graphic_role: true }),
+  Motif: keysOf('Motif', { x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true, src_in_us: true, motif_id: true, props: true, graphic_role: true }),
   Color: keysOf('Color', { color: true, width: true, height: true }),
   Audio: keysOf('Audio', { src_in_us: true, src_out_us: true, gain_db: true, pan: true, fade_in_us: true, fade_out_us: true, mute: true, role: true }),
   CompositionRef: keysOf('CompositionRef', { src_in_us: true, src_out_us: true, x: true, y: true, scale_x: true, scale_y: true, rotation_deg: true, anchor_x: true, anchor_y: true, opacity: true }),
@@ -552,7 +552,7 @@ function parseLayerParamValue(k: string, v: unknown): unknown {
     case 'valign': return parseOneOf(v, VALIGN_OPTIONS, field)
     case 'role': return parseRole(v)
     case 'props': return parseObj(v, field)
-    case 'src_in_us': case 'src_out_us': case 'fade_in_us': case 'fade_out_us': case 'motif_version': return parseIntNum(v, field)
+    case 'src_in_us': case 'src_out_us': case 'fade_in_us': case 'fade_out_us': return parseIntNum(v, field)
     default: return parseNum(v, field) // x, y, scale_x, scale_y, opacity, speed, font_size_px, line_height, letter_spacing, outline_width, gain_db, pan, width, height, box_w, box_h
   }
 }
@@ -1606,8 +1606,7 @@ const LAYER_PARAM_FIELD_SCHEMAS: Readonly<Record<string, Record<string, unknown>
   role: { type: 'string', enum: ['dialogue', 'music', 'sfx', 'voiceover'], description: 'Audio role, whose gain and flags fold into the mix.' },
   width: { type: 'integer', description: 'Colour block width, px.' },
   height: { type: 'integer', description: 'Colour block height, px.' },
-  motif_id: { type: 'string', description: 'Motif id from list_motifs.' },
-  motif_version: { type: 'integer', description: 'Motif version to bind.' },
+  motif_id: { type: 'string', description: "A Motif id of this project's (list_motifs)." },
   props: { type: 'object', description: "Motif props, matched against its props_schema." },
   graphic_role: { ...GRAPHIC_ROLE_SCHEMA, type: ['string', 'null'], description: 'Graphic role; null clears.' },
   intro: { type: ['string', 'null'], enum: [...TEXT_INTROS, null], description: 'Entrance played from the layer start (400 ms, or a third of a short layer); null: none.' },
@@ -1645,8 +1644,9 @@ const ADD_LAYER_CONTENT_SCHEMA = {
       content: { type: 'string', description: 'The text; newlines are honoured.' }, graphic_role: GRAPHIC_ROLE_SCHEMA,
     }, ['content']),
     addLayerArm('color', "A solid block the composition's size.", { color: { ...RGBA_SCHEMA, description: 'Fill colour.' } }, ['color']),
-    addLayerArm('motif', "A Motif. Omitted props take the style's tokens, then the manifest's defaults; unknown props refuse.", {
-      motif_id: { type: 'string', description: 'Motif id from `list_motifs`.' },
+    addLayerArm('motif', "A Motif. A library Motif the project lacks is copied into its Motifs folder first (one undo removes both). Omitted props take the style's tokens, then the manifest's defaults; unknown props refuse.", {
+      motif_id: { type: 'string', description: "Motif id from `list_motifs`: the project's own, else the library's." },
+      from_library: { type: 'boolean', description: "Place the library's Motif of this id though the project holds another Motif under it; it lands under a new id, the answer's motif_id." },
       props: { type: 'object', description: "Props matched against the Motif's `props_schema`." },
       graphic_role: { ...GRAPHIC_ROLE_SCHEMA, description: `${GRAPHIC_ROLE_SCHEMA.description} Omitted: the manifest's.` },
     }, ['motif_id']),

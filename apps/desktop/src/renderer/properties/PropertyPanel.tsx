@@ -1275,7 +1275,7 @@ function MotifFields({
 ///   - draft, no target → Install(new) + Delete  (from-scratch authoring).
 ///   - draft, target=X  → "Update X" (blast-radius confirm) + "Save as new" + Discard.
 /// "Edit" creates a working draft via `createEditDraft`, then swaps THIS layer
-/// onto it (`updateLayerParams … motif_id: draftId, motif_version: 1`) so the
+/// onto it (`updateLayerParams … motif_id: draftId`) so the
 /// source panel previews the editable copy. "Discard" swaps the layer back
 /// to the target + deletes the draft. The backend emits `motifs:changed`, which
 /// resyncs the catalog so the layer keeps rendering.
@@ -1338,7 +1338,7 @@ function MotifLifecycleRow({
   // a fresh draft always starts at v1). The source panel then previews it.
   const edit = run(async () => {
     const draftId = await createEditDraft(motifId);
-    await updateLayerParams(layerId, { kind: "Motif", motif_id: draftId, motif_version: 1 });
+    await updateLayerParams(layerId, { kind: "Motif", motif_id: draftId });
     await onMutated();
   });
 
@@ -1432,7 +1432,7 @@ function MotifLifecycleRow({
             onClick={run(async () => {
               const copy = await copyMotifDraft(motifId);
               const published = await installMotif(copy, { kind: "new" });
-              await updateLayerParams(layerId, {kind:'Motif',motif_id:published,motif_version:1});
+              await updateLayerParams(layerId, {kind:'Motif',motif_id:published});
               await onMutated();
             })}
           >

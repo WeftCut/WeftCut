@@ -162,14 +162,14 @@ describe('buildRebindUpdates', () => {
       props_schema: { title: { kind: 'String', default: 'Hi' } } as any,
     }
     const layers: MotifLayerRef[] = [
-      { layerId: 'la', motifId: 'wip', version: 1, props: { old: 1 } },
-      { layerId: 'lb', motifId: 'foo', version: 1, props: { old: 2 } },
-      { layerId: 'lc', motifId: 'other', version: 1, props: {} }, // untouched
+      { layerId: 'la', motifId: 'wip', props: { old: 1 } },
+      { layerId: 'lb', motifId: 'foo', props: { old: 2 } },
+      { layerId: 'lc', motifId: 'other', props: {} }, // untouched
     ]
     const updates = buildRebindUpdates(layers, 'wip', target)
     expect(updates.length).toBe(2)
     for (const u of updates) {
-      expect(u.motif_id).toBe('foo'); expect(u.motif_version).toBe(2)
+      expect(u.motif_id).toBe('foo')
       expect(u.props.old).toBeUndefined()      // dropped (lenient)
       expect(u.props.title).toBe('Hi')         // filled default
     }

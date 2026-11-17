@@ -31,10 +31,10 @@ const ALL_CHANNELS: readonly string[] = [
   'project_new_workspace', 'project_save', 'project_save_status', 'agent_session_end', 'agent_session_begin',
   'review_view', 'review_activity_view', 'review_approve_all', 'review_revert_all',
   'agent_tacks_set_status', 'agent_tacks_delete',
-  // motif route (TS authoring + read + install + staleness)
+  // motif route (TS authoring + read + install + project copy update)
   'list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif',
   'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal',
-  'list_motif_versions', 'restore_motif_version', 'motif_staleness_report', 'acknowledge_motif_staleness',
+  'list_motif_versions', 'restore_motif_version', 'update_project_motif',
   // pure native (no project actor)
   'ping', 'mux_export', 'export_video_sink_start', 'export_video_sink_finish',
   'export_video_sink_cancel', 'import_cancel', 'import_queue_list', 'report_audio_meter',
@@ -265,8 +265,8 @@ describe('routeChannel', () => {
       expect(PURE_NATIVE.has(ch), ch).toBe(true)
     }
   })
-  it('routes motif authoring/read/install/staleness channels to the motif route', () => {
-    for (const ch of ['list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal', 'list_motif_versions', 'restore_motif_version', 'motif_staleness_report', 'acknowledge_motif_staleness'])
+  it('routes motif authoring/read/install/project-copy channels to the motif route', () => {
+    for (const ch of ['list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal', 'list_motif_versions', 'restore_motif_version', 'update_project_motif'])
       expect(routeChannel(ch).kind, ch).toBe('motif')
   })
   it('never routes a category-A state mutation to rust', () => {

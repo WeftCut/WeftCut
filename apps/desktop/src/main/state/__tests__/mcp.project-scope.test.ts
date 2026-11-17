@@ -92,9 +92,9 @@ describe('no project open: every other tool refuses and commits nothing', () => 
     const checkpoints = ts.actor.listCheckpoints().length
     const gated = merged.map((t) => t.name).filter((n) => !APP_SCOPE_TOOLS.has(n))
     expect(gated.length).toBeGreaterThan(50)
-    // The staleness and approval channels are the renderer's: over MCP they
+    // The approval and project-copy channels are the renderer's: over MCP they
     // are unknown tools (ME8), on the start screen as anywhere else.
-    for (const name of ['motif_staleness_report', 'acknowledge_motif_staleness', 'approve_motif_proposal', 'publish_motif'])
+    for (const name of ['update_project_motif', 'approve_motif_proposal', 'publish_motif'])
       await expect(call(ts, name, {}), name).rejects.toBeInstanceOf(UnknownToolError)
     for (const name of gated) {
       const out = await call(ts, name, { reason: 'x', label: 'x', layer_id: 'x' })

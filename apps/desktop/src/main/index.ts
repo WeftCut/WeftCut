@@ -855,8 +855,10 @@ app.whenReady().then(async () => {
   // (`setMotifProject`).
   const motifResolver = new MotifResolver(motifStore, motifBuiltins)
   let motifProjectDir: string | null = null
-  /** A project Motif's folder changed on disk. */
-  const projectMotifChanged = (_id: string, _state: MotifState): void => {
+  /** A project Motif's folder changed on disk: a new revision of one the
+   *  project records is a recorded edit; anything else is its status alone. */
+  const projectMotifChanged = (id: string, state: MotifState): void => {
+    tsHost?.motifFolderChanged(id, state)
     emitToRenderer('motifs:changed', {})
   }
   /** Points the resolver and the `Motifs/` watch at the workspace in `dir`. */
@@ -1205,7 +1207,7 @@ app.whenReady().then(async () => {
     },
     workspaceDir: () => wsCache,
     emitLog: (entry) => { void backend!.invoke('log_emit', JSON.stringify({ input: entry })) },
-    listMotifs: () => backend!.invoke('list_motifs', '{}'),
+    motifResolver,
     motifStore,
     motifBuiltins,
     appSettings,
@@ -1245,14 +1247,13 @@ app.whenReady().then(async () => {
     emit: (event, payload) => emitToRenderer(event, payload),
   })
 
-  // Motif file watch: on any disk change under <dataRoot>/motifs/, refresh
-  // the actor catalog (so a disk-written Motif is placeable via add_layers)
-  // AND emit motifs:changed (renderer resync → ?v= host buster).
+  // Library file watch: on any disk change under <dataRoot>/motifs/, emit
+  // motifs:changed (renderer resync → ?v= host buster). Placement reads the
+  // library from disk, so nothing else needs refreshing.
   // The MCP file-transfer tools are gone; releases up to 0.5.6 left their
   // temporary uploads (up to 512 MiB) under `.transfers/`. Nothing reads it.
   fs.rm(path.join(motifStore.root(), '.transfers'), { recursive: true, force: true }, () => {})
   motifWatcher = spawnMotifWatcher(dataRoot.motifsDir, () => {
-    tsHost?.refreshMotifCatalog()
     emitToRenderer('motifs:changed', {})
   })
 

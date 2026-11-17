@@ -1,6 +1,6 @@
 import {createMotifDraft,publishMotifDraft} from './helpers/motif'
-// e2e gate: motif authoring lifecycle + staleness + file-watch hot-reload —
-// sections A, B and C below, in that order.
+// e2e gate: motif authoring lifecycle + file-watch hot-reload — sections A
+// and C below, in that order.
 //
 // userData path: minted per test via tmpDir() and handed to launchApp as an
 // explicit userDataDir — user motifs live under the default data root of that
@@ -164,109 +164,6 @@ test('motif authoring: open_motif_draft → install → list → delete', async 
     console.log('[lifecycle] deleted; catalog size:', catalogAfter.length)
   } finally {
     await closeAppRobustly(app)
-  }
-})
-
-// ── Section B: staleness notice ─────────────────────────────────────────────────
-
-test('motif staleness: v1→v2 reopen surfaces a row; acknowledge clears it', async () => {
-  test.setTimeout(120_000)
-  const STALE_ID = 'e2e-stale-' + Date.now()
-  const PROJECT_PARENT = tmpDir('weftcut-e2e-stale-proj-')
-  const userData = tmpDir('weftcut-e2e-stale-userdata-')
-
-  const { app: appHandle, page } = await launchApp({ userDataDir: userData })
-  const motifsRoot = path.join(userData, 'data', 'motifs')
-  console.log('[stale] motifsRoot:', motifsRoot)
-
-  try {
-    // Write v1 of the user Motif directly to disk.
-    writeUserMotifAt(motifsRoot, { id: STALE_ID, version: 1, color: '#e02424' })
-
-    // Create a project + enter the editor.
-    await newProject(page, {
-      parentFolder: PROJECT_PARENT,
-      name: 'e2e-stale-' + Date.now(),
-      canvas: { width: 320, height: 320, fpsNum: 30, fpsDen: 1 },
-    })
-    await waitForHook(page, 'addMotifLayer')
-    await waitForHook(page, 'motifReopenProject')
-
-    // Retrieve the actual workspace path that the hook created.
-    const projectPath = await invoke(page, 'workspace_dir', {})
-    console.log('[stale] workspace dir:', projectPath)
-    expect(typeof projectPath).toBe('string')
-
-    // Wait for the motif to appear in the catalog (it re-reads disk on each call).
-    await waitForMotifInCatalog(page, STALE_ID)
-
-    // Place two layers at v1.
-    for (let i = 0; i < 2; i++) {
-      const r = await page.evaluate(
-        (id) =>
-          (window as any).__weftcutTest
-            .addMotifLayer({ motifId: id, durationUs: 2_000_000 })
-            .then((layerId: string) => ({ ok: true, layerId }))
-            .catch((e: unknown) => ({ ok: false, error: String(e) })),
-        STALE_ID,
-      )
-      if (!r.ok) throw new Error('addMotifLayer failed: ' + r.error)
-    }
-
-    // Freshly placed = no stale entry now (placed version matches current).
-    const reportBefore = (await invoke(page, 'motif_staleness_report', {})) as Array<{
-      motif_id: string
-    }>
-    expect(reportBefore.find((e) => e.motif_id === STALE_ID)).toBeUndefined()
-
-    // "Another project updated it": bump v2 on disk.
-    writeUserMotifAt(motifsRoot, { id: STALE_ID, version: 2, color: '#1ea64a' })
-
-    // Reopen the project — the on-mount staleness check fires.
-    const rr = await page.evaluate(
-      (p) =>
-        (window as any).__weftcutTest
-          .motifReopenProject({ path: p })
-          .then(() => ({ ok: true }))
-          .catch((e: unknown) => ({ ok: false, error: String(e) })),
-      projectPath as string,
-    )
-    if (!rr.ok) throw new Error('motifReopenProject failed: ' + rr.error)
-    await waitForHook(page, 'addMotifLayer')
-    // Poll motif_staleness_report until it returns a non-empty array (or ~10s deadline).
-    // The report is pull-based (computes from current snapshot + disk catalog on each call),
-    // so polling is safe and idempotent — no race condition from a fixed wall-clock wait.
-    let reportAfter: Array<{
-      motif_id: string
-      placed_version: number
-      current_version: number
-      layer_count: number
-    }> = []
-    {
-      const deadline = Date.now() + 10_000
-      while (Date.now() < deadline) {
-        reportAfter = (await invoke(page, 'motif_staleness_report', {})) as typeof reportAfter
-        if (reportAfter.length > 0) break
-        await page.waitForTimeout(300)
-      }
-      // If still empty after deadline, fall through so the existing assertion fails with context.
-    }
-
-    // motif_staleness_report must now show the stale row.
-    console.log('[stale] report after reopen:', JSON.stringify(reportAfter))
-    const row = reportAfter.find((e) => e.motif_id === STALE_ID)
-    expect(row).toBeDefined()
-    expect(row!.placed_version).toBe(1)
-    expect(row!.current_version).toBe(2)
-    expect(row!.layer_count).toBe(2)
-
-    // acknowledge_motif_staleness returns the count of markers bumped (≥ 1).
-    const ackCount = (await invoke(page, 'acknowledge_motif_staleness', {})) as number
-    console.log('[stale] ack count:', ackCount)
-    expect(ackCount).toBeGreaterThanOrEqual(1)
-  } finally {
-    await closeAppRobustly(appHandle)
-    removeUserMotifAt(motifsRoot, STALE_ID)
   }
 })
 

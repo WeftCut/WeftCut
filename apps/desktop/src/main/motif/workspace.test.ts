@@ -73,7 +73,7 @@ it('refuses an edit that does not match exactly once, and changes nothing in the
     expect(workspace.read(draft.motif_id).revision).toBe(draft.revision);
 });
 function tools(store: UserMotifStore) {
-    return (name: string, args: Record<string, unknown> = {}) => runMotifTool(name, args, { store, builtins: [], motifLayers: () => [], dispatchRebind: () => { }, emitChanged: () => { }, refreshCatalog: () => { }, emitLog: () => { } }) as any;
+    return (name: string, args: Record<string, unknown> = {}) => runMotifTool(name, args, { store, builtins: [], motifLayers: () => [], dispatchRebind: () => { }, emitChanged: () => { } }) as any;
 }
 it('writes, reads and exports binary companions through public tools without a shared folder', () => {
     const store = new UserMotifStore(temp()), call = tools(store);
@@ -180,7 +180,7 @@ it('requires an explicit target version and rejects a second editor overwriting 
 it('export_motif with a path writes a new .zip only: an existing file, another extension or a missing folder is refused (ME1)', () => {
     const store = new UserMotifStore(temp()), workspace = new MotifWorkspace(store, []);
     const draft = workspace.open({ kind: 'directory', path: folder() });
-    const call = (args: Record<string, unknown>) => runMotifTool('export_motif', { motif_id: draft.motif_id, ...args }, { store, builtins: [], motifLayers: () => [], dispatchRebind: () => { }, emitChanged: () => { }, refreshCatalog: () => { }, emitLog: () => { } }) as any;
+    const call = (args: Record<string, unknown>) => runMotifTool('export_motif', { motif_id: draft.motif_id, ...args }, { store, builtins: [], motifLayers: () => [], dispatchRebind: () => { }, emitChanged: () => { } }) as any;
     const out = temp();
     const target = path.join(out, 'card.zip');
     expect(call({ path: target }).path).toBe(target);

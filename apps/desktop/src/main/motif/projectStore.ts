@@ -10,7 +10,7 @@ import { collisionId, isNewMotifId, type MotifStatus, type ProjectMotifEntry, ty
 import { motifRevision, type BuiltinMotif } from './authoring'
 import { readMotifZip } from './archive'
 import { newLineage } from './lineage'
-import { declaredManifest, declaredPackage, emptyPackageFiles, normalize, validateFiles } from './motifPackage'
+import { declaredManifest, declaredPackage, emptyPackageFiles, normalize, replacePackage, validateFiles } from './motifPackage'
 import { motifFileSegments, readMotifDirectory, readMotifFile, sameStamps, stampMotifDirectory, type MotifFile } from './packageFiles'
 import { PackageRevisions, type PackageStamp } from './packageRevisions'
 import { PackageSource, type PackageListing, type PackageSnapshot } from './packageSource'
@@ -57,6 +57,17 @@ export function libraryPackage(store: UserMotifStore, builtins: readonly Builtin
   const installed = store.installedSnapshot(id)
   if (!installed) return null
   return { id, uid: store.lineage.of(id), version: installed.version, revision: installed.revision, files: installed.files }
+}
+
+/** The library's current package of lineage `uid`: the built-in of that
+ *  lineage, else the installed Motif recorded with it; null when the library
+ *  holds none. */
+export function libraryPackageOfLineage(store: UserMotifStore, builtins: readonly BuiltinMotif[], uid: string): LibraryPackage | null {
+  const builtin = builtins.find(b => builtinLineage(b.id) === uid)
+  if (builtin) return libraryPackage(store, builtins, builtin.id)
+  const installed = new Set(store.publishedIds())
+  const id = store.lineage.holders(uid).find(key => installed.has(key))
+  return id === undefined ? null : libraryPackage(store, builtins, id)
 }
 
 /** Writes `changed` (path to bytes, null to delete) into the author's folder
@@ -190,6 +201,18 @@ export class ProjectMotifStore {
         rmSync(staging, { recursive: true, force: true })
       }
     }
+    const revision = this.source.snapshot(dir).revision
+    this.emit(id, revision, cause)
+    return revision
+  }
+
+  /** Replaces `id`'s folder whole with `files` and answers the revision it
+   *  then holds, which the listeners hear with `cause`. For a copy the app
+   *  writes over the author's (updating it from the library); an author's
+   *  own edits go through `applyChanges`. */
+  replace(id: string, files: readonly MotifFile[], cause: RevisionCause): string {
+    const dir = this.folder(id)
+    replacePackage(dir, files)
     const revision = this.source.snapshot(dir).revision
     this.emit(id, revision, cause)
     return revision

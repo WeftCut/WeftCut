@@ -16,7 +16,7 @@ import { positionTrack, setPositionTrack } from '../../../shared/position'
 // parser read the same predicate and neither depends on the other.
 import { isColorParam, MAX_RESIDENT_KEYFRAMES, type TrackValue } from '../../../shared/keyframe'
 import { effectParamDefault } from '../../../shared/effects/params'
-import type { MotifCatalog } from '../../../shared/motifs/catalog'
+import type { MotifManifests } from '../../../shared/motifs/catalog'
 import { canonicalizeProps, MotifPropError, resolveMotifMaxDurUs } from '../../../shared/motifs/catalog'
 import { mediaPropProblem } from '../../../shared/motifs/mediaProp'
 import { graphicRoleProblem } from '../../../shared/graphicRole'
@@ -33,7 +33,7 @@ export type LayerParamsPatch =
   | { kind: 'Text'; content?: string; font_family?: string; font_size_px?: number; font_weight?: number; italic?: boolean; shadow?: Shadow | null; color?: Rgba; x?: number; y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; align?: TextAlign; valign?: VAlign; box_w?: number | null; box_h?: number | null; line_height?: number; letter_spacing?: number; outline_width?: number; outline_color?: Rgba; graphic_role?: string | null; intro?: TextAnimPreset | null; outro?: TextAnimPreset | null }
   | { kind: 'VideoClip'; crop?: CropRect | null; src_in_us?: number; src_out_us?: number; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; flip_h?: boolean; flip_v?: boolean; fade_in_us?: number; fade_out_us?: number }
   | { kind: 'ImageOverlay'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; fade_in_us?: number; fade_out_us?: number; graphic_role?: string | null }
-  | { kind: 'Motif'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; src_in_us?: number; motif_id?: string; motif_version?: number; props?: Record<string, unknown>; graphic_role?: string | null }
+  | { kind: 'Motif'; x?: number; y?: number; scale_x?: number; scale_y?: number; opacity?: number; rotation_deg?: number; anchor_x?: number; anchor_y?: number; src_in_us?: number; motif_id?: string; props?: Record<string, unknown>; graphic_role?: string | null }
   | { kind: 'Color'; color?: Rgba; width?: number; height?: number }
   | { kind: 'Audio'; src_in_us?: number; src_out_us?: number; gain_db?: number; pan?: number; fade_in_us?: number; fade_out_us?: number; mute?: boolean; role?: AudioRole }
   /** A Group layer (ADR 0052 §4). The media-bearing set minus what v1 leaves
@@ -354,7 +354,6 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
       // A rebind starts the props over (the caller's, canonicalised upstream
       // when the manifest is known): the old motif's props are not the new one's.
       if (patch.motif_id !== undefined && patch.motif_id !== m.motif_id) { m.motif_id = patch.motif_id; m.props = {} }
-      if (patch.motif_version !== undefined) m.motif_version = patch.motif_version
       if (patch.props !== undefined) for (const k of Object.keys(patch.props)) m.props[k] = patch.props[k]
       // A rebind keeps the layer's role: the manifest's applies at placement only.
       if (patch.graphic_role !== undefined) m.graphic_role = patch.graphic_role
@@ -417,7 +416,7 @@ export function applyParamsPatch(layer: Layer, patch: LayerParamsPatch): void {
  *  LANDMINE: JS numbers are exact to 2^53 µs — consistent with the
  *  resolveMotifTEndUs twin note in catalog.ts — diverges from Rust saturating
  *  arithmetic only for absurd timestamps far beyond realistic use. */
-export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsPatch, catalog: MotifCatalog): void {
+export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsPatch, catalog: MotifManifests): void {
   const { comp: c, layer } = checkLayerEditable(p, id) // LayerNotFound / TrackLocked
   if (layer.params.kind !== 'Color' && layer.params.kind !== 'Text') {
     const pa = layer.params;
@@ -431,9 +430,9 @@ export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsP
   // key or a wrong type is refused naming the schema, rather than stored for a
   // render that ignores it. The manifest is the motif the layer will NAME once
   // the patch lands: a rebind (a new `motif_id`) starts from the patch's props
-  // alone, canonicalised with the new manifest's defaults and version, because
-  // the old motif's props are not the new one's. A motif the catalog does not
-  // know stays permissive — the project may come from a build that knows it.
+  // alone, canonicalised with the new manifest's defaults, because the old
+  // motif's props are not the new one's. A Motif whose folder makes no
+  // package stays permissive: its manifest is unknown until it does.
   if (patch.kind === 'Motif' && layer.params.kind === 'Motif') {
     const rebinds = patch.motif_id !== undefined && patch.motif_id !== layer.params.motif_id
     if (rebinds || patch.props !== undefined) {
@@ -443,7 +442,7 @@ export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsP
           const canonical = canonicalizeProps(manifest, rebinds ? (patch.props ?? {}) : { ...layer.params.props, ...patch.props })
           const media = mediaPropProblem(manifest.props_schema, canonical, p.media_pool)
           if (media) throw new MotifPropError(media)
-          if (rebinds) patch = { ...patch, props: canonical, motif_version: patch.motif_version ?? manifest.version }
+          if (rebinds) patch = { ...patch, props: canonical }
         } catch (e) {
           if (e instanceof MotifPropError) throw new CommandFailure({ error: 'InvalidArgument', field: 'props', detail: `${e.detail} — list_motifs reports this motif's props_schema` })
           throw e
@@ -458,10 +457,6 @@ export function applyUpdateLayerParams(p: Project, id: Uuid, patch: LayerParamsP
   // geometry. Growing never resizes.
   if (layer.params.kind === 'Motif') {
     const params = layer.params as MotifParams
-    // INTENTIONAL: the clamp cap is resolved from this `catalog` — the actor's full
-    // MotifCatalog (built-ins + user layer) — so a USER motif with a cap clamps here too,
-    // not just built-ins. Clamping user motifs is the desired behavior; do NOT narrow this
-    // to built-ins-only.
     const manifest = catalog.get(params.motif_id)
     if (manifest === undefined) return // unknown motif → no clamp
     const contentDur = resolveMotifMaxDurUs(manifest, params.props)

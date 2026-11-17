@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { launchApp, tmpDir } from './helpers/driver'
 
 // Native-compute gate. The write hybrids (import_media, apply_subtitles,
-// install_motif, acknowledge_motif_staleness, synthesize_speech) route
+// install_motif, synthesize_speech) route
 // Rust-compute → TS-write, and the broad-state compute calls take their state
 // slice as a call argument: export_project_audio_only / ensure_export_audio_conform
 // take a `project` the TS host injects from actor.snapshot() (Rust is

@@ -32,6 +32,15 @@ export function isNewMotifId(id: string): boolean {
     && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(id)
 }
 
+/** Whether `id` can key the project's Motif table: a folder name under
+ *  `Motifs/` on every system and the `motif://` host that serves it. URL
+ *  parsing lowercases a host and `--` marks the library and proposal hosts,
+ *  so a key holds neither. */
+export function isProjectMotifKey(id: string): boolean {
+  return id.length <= MOTIF_HOST_LABEL_CHARS && /^[a-z0-9_]+(?:-[a-z0-9_]+)*$/.test(id)
+    && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(id)
+}
+
 /** A host names a project Motif by its bare id; the other scopes add a
  *  suffix. `idFromName` never emits `--`, so no id can take either form. */
 const LIBRARY_SUFFIX = '--library'

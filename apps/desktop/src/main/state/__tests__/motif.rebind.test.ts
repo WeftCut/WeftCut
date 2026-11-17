@@ -4,22 +4,31 @@ import { blankProject } from '../model'
 import { createActor } from '../actor'
 import type { MotifParams } from '../model'
 import { root } from './fixtures/project'
+import { fakeRevision, libraryMotifs } from './fixtures/motifs'
+
+/** The project holds every Motif the layers name and are rebound to. */
+const IDS = ['motif-x', 'motif-y', 'mx', 'my']
 
 function setup() {
   const idGen = seededGen()
   const initial = blankProject(idGen, 't') // mints A#1, B#2, project#3
-  const actor = createActor({ initial, idGen, clock: () => '<TS>' })
+  const motifs = libraryMotifs()
+  IDS.forEach((id, i) => {
+    initial.motifs[id] = { uid: `${i}0000000-0000-4000-8000-000000000000`, revision: fakeRevision(id), from: null }
+    motifs.folders.set(id, { id, name: id, version: 1, size: [100, 100], default_duration_s: 1, fonts: [], props_schema: {} })
+  })
+  const actor = createActor({ initial, idGen, clock: () => '<TS>', motifs })
   const aRoll = root(initial).tracks[0].id
   return { actor, aRoll }
 }
 
 describe('rebind_motif dispatch', () => {
-  it('rebinds a single motif layer to a new motif_id/version/props', () => {
+  it('rebinds a single motif layer to a new motif_id/props', () => {
     const { actor, aRoll } = setup()
 
     // add a Motif layer — needs the Motif kind arm in add_layer
     const addR = actor.dispatch('add_layer', {
-      track: aRoll, kind: 'Motif', motif_id: 'motif-x', motif_version: 1,
+      track: aRoll, kind: 'Motif', motif_id: 'motif-x',
       props: { a: 1 }, t_start_us: 0, t_end_us: 1_000_000,
     })
     expect(addR.ok, 'add_layer Motif should succeed').toBe(true)
@@ -27,7 +36,7 @@ describe('rebind_motif dispatch', () => {
     const layerId = addR.value as string
 
     const r = actor.dispatch('rebind_motif', {
-      updates: [{ layer_id: layerId, motif_id: 'motif-y', motif_version: 2, props: { b: 2 } }],
+      updates: [{ layer_id: layerId, motif_id: 'motif-y', props: { b: 2 } }],
     })
     expect(r.ok, 'rebind_motif should succeed').toBe(true)
 
@@ -38,7 +47,6 @@ describe('rebind_motif dispatch', () => {
     const p = layer!.params as MotifParams
     expect(p.kind).toBe('Motif')
     expect(p.motif_id).toBe('motif-y')
-    expect(p.motif_version).toBe(2)
     expect(p.props).toEqual({ b: 2 })
 
     // one history entry was recorded for rebind_motif
@@ -58,7 +66,7 @@ describe('rebind_motif dispatch', () => {
 
     // rebind pointing at a color layer — should succeed (skip silently)
     const r = actor.dispatch('rebind_motif', {
-      updates: [{ layer_id: colorId, motif_id: 'motif-y', motif_version: 2, props: {} }],
+      updates: [{ layer_id: colorId, motif_id: 'motif-y', props: {} }],
     })
     expect(r.ok).toBe(true)
 
@@ -71,11 +79,11 @@ describe('rebind_motif dispatch', () => {
     const { actor, aRoll } = setup()
 
     const r1 = actor.dispatch('add_layer', {
-      track: aRoll, kind: 'Motif', motif_id: 'mx', motif_version: 1,
+      track: aRoll, kind: 'Motif', motif_id: 'mx',
       props: {}, t_start_us: 0, t_end_us: 1_000_000,
     })
     const r2 = actor.dispatch('add_layer', {
-      track: aRoll, kind: 'Motif', motif_id: 'mx', motif_version: 1,
+      track: aRoll, kind: 'Motif', motif_id: 'mx',
       props: {}, t_start_us: 2_000_000, t_end_us: 3_000_000,
     })
     if (!r1.ok) throw new Error(JSON.stringify(r1.error))
@@ -85,8 +93,8 @@ describe('rebind_motif dispatch', () => {
 
     const r = actor.dispatch('rebind_motif', {
       updates: [
-        { layer_id: id1, motif_id: 'my', motif_version: 2, props: { x: 1 } },
-        { layer_id: id2, motif_id: 'my', motif_version: 2, props: { x: 2 } },
+        { layer_id: id1, motif_id: 'my', props: { x: 1 } },
+        { layer_id: id2, motif_id: 'my', props: { x: 2 } },
       ],
     })
     expect(r.ok).toBe(true)

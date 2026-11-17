@@ -136,8 +136,7 @@ export interface E2EHook {
     canvas: CanvasPreset;
   }): Promise<void>;
   /// Save, hop Root back to the StartupScreen (unmounting App), reopen the
-  /// project at `path`, and re-enter the editor. Remounting App re-runs its
-  /// on-open Motif staleness check — this mirrors the real close-and-reopen
+  /// project at `path`, and re-enter the editor — the real close-and-reopen
   /// flow (the only in-session way to switch projects). Dev/e2e only.
   motifReopenProject(args: { path: string }): Promise<void>;
   /// Import `mediaAbsPath`, place it 1:1 at t=0 on a fresh video track, and

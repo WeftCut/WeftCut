@@ -23,7 +23,7 @@ import { compareEntities, trackOrderEqual, linkLabel, entitiesEqual, entityKey, 
 
 // ── Changes ───────────────────────────────────────────────────────────────────
 
-const ASPECT_ORDER: readonly ChangeAspect[] = ['placement', 'timing', 'retime', 'params', 'keyframes', 'effects', 'label', 'flags']
+const ASPECT_ORDER: readonly ChangeAspect[] = ['placement', 'timing', 'retime', 'params', 'keyframes', 'effects', 'label', 'flags', 'content']
 function orderedAspects(s: ReadonlySet<ChangeAspect>): ChangeAspect[] { return ASPECT_ORDER.filter((a) => s.has(a)) }
 
 // Params keys that are timing rather than appearance: the source window and its
@@ -138,6 +138,7 @@ function compareOther(a: EntityValue, b: EntityValue): Set<ChangeAspect> {
   const out = new Set<ChangeAspect>()
   switch (a.kind) {
     case 'AudioRole': if (a.gain_db !== (b as typeof a).gain_db) out.add('params'); break
+    case 'Motif': if (a.revision !== (b as typeof a).revision) out.add('content'); break
     case 'Composition': {
       const c = b as typeof a
       if (!trackOrderEqual(a.track_order, c.track_order)) out.add('placement')
@@ -174,7 +175,7 @@ function compareOther(a: EntityValue, b: EntityValue): Set<ChangeAspect> {
 /** Where an entity lives: its composition and, for a layer, its track. Null
  *  for project-level entities. */
 function locationOf(v: EntityValue): { composition_id: Uuid; track_id: Uuid | null } | null {
-  if (v.kind === 'Composition' || v.kind === 'AudioRole' || v.kind === 'Media') return null
+  if (v.kind === 'Composition' || v.kind === 'AudioRole' || v.kind === 'Media' || v.kind === 'Motif') return null
   return { composition_id: v.composition_id, track_id: v.kind === 'Layer' ? v.track_id : null }
 }
 

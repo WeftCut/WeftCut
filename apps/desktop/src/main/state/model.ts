@@ -98,14 +98,17 @@ export interface TextParams {
   graphic_role: string | null
 }
 export interface MotifParams extends TimingFields {
-  kind: 'Motif'; motif_id: string; motif_version: number; props: Record<string, unknown>
+  kind: 'Motif'
+  /** A key of `Project.motifs`: what the layer renders is that entry's folder. */
+  motif_id: string
+  props: Record<string, unknown>
   src_in_us: TimeUs; transform: Transform; opacity: Animated<number>
   /** What the layer is for (`shared/graphicRole.ts`); born from the manifest's
    *  `graphic_role` unless the caller names one; null = untagged. */
   graphic_role: string | null
 }
 export interface MotifRebindEntry {
-  layer_id: string; motif_id: string; motif_version: number; props: Record<string, unknown>
+  layer_id: string; motif_id: string; props: Record<string, unknown>
 }
 export interface AudioParams extends TimingFields {
   kind: 'Audio'; media: Uuid; src_in_us: TimeUs; src_out_us: TimeUs

@@ -18,6 +18,7 @@ const stat = <T,>(value: T) => ({ mode: 'Static' as const, value })
 
 function project(): Project {
   const p = blankProject(seededGen(), 't')
+  p.motifs.m = { uid: '00000000-0000-4000-8000-000000000001', revision: null, from: null }
   p.media_pool[MEDIA] = { id: MEDIA, label: null, path_abs: '/x', path_rel: null, kind: 'Video', metadata: { duration_us: MEDIA_US }, file_hash_blake3: '', file_size: 0, file_mtime: 0, imported_at: '<TS>', decode_route: { route: 'bypass' }, conform_path: null, waveform_path: null, thumbnails_dir: null }
   return p
 }
@@ -28,7 +29,7 @@ const visualFields = () => ({ transform: defaultTransform(), opacity: stat(1) })
 const colorParams = (over: object = {}) => ({ kind: 'Color', color: stat({ r: 0, g: 0, b: 0, a: 255 }), width: 1, height: 1, ...over })
 const textParams = (over: object = {}) => ({ ...textParamsDefault('hello', { width: 1920, height: 1080 }), graphic_role: null, ...over })
 const imageParams = (over: object = {}) => ({ kind: 'ImageOverlay', media: MEDIA, ...visualFields(), graphic_role: null, ...over })
-const motifParams = (over: object = {}) => ({ kind: 'Motif', ...visualFields(), graphic_role: null, ...over })
+const motifParams = (over: object = {}) => ({ kind: 'Motif', motif_id: 'm', props: {}, src_in_us: 0, ...visualFields(), graphic_role: null, ...over })
 const videoParams = (over: object = {}) => ({ kind: 'VideoClip', media: MEDIA, src_in_us: 0, src_out_us: 1_000_000, ...visualFields(), crop: null, flip_h: false, flip_v: false, blend_mode: 'Normal', fade_in_us: 0, fade_out_us: 0, ...over })
 const audioParams = (over: object = {}) => ({ kind: 'Audio', media: MEDIA, src_in_us: 0, src_out_us: 1_000_000, gain_db: stat(0), pan: stat(0), fade_in_us: 0, fade_out_us: 0, mute: false, role: 'music', ...over })
 const color = (id: string, t0: number, t1: number) => layer(id, t0, t1, colorParams())

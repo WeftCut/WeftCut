@@ -9,8 +9,9 @@ import { blankProject, type Layer, type Project } from '../model'
 import { mediaItemTemplate } from '../mutations/media'
 import { layerParamsView } from '../summary'
 import { layerEnvelope } from '../resource-views'
-import { MotifCatalog, type Manifest } from '../../../shared/motifs/catalog'
+import { BUILTIN_MANIFESTS, type Manifest } from '../../../shared/motifs/catalog'
 import { root } from './fixtures/project'
+import { libraryMotifs } from './fixtures/motifs'
 
 const IMAGE = '00000000-0000-0000-0000-0000000000a3'
 const VIDEO = '00000000-0000-0000-0000-0000000000a5'
@@ -24,9 +25,7 @@ function actor() {
   const p: Project = blankProject(gen, 'graphic-role')
   p.media_pool[IMAGE] = mediaItemTemplate(IMAGE, 'Image', null)
   p.media_pool[VIDEO] = mediaItemTemplate(VIDEO, 'Video', 10_000_000)
-  const motifCatalog = new MotifCatalog()
-  motifCatalog.setUserManifests([TAGGED])
-  return createActor({ initial: p, idGen: gen, clock: () => '<TS>', motifCatalog })
+  return createActor({ initial: p, idGen: gen, clock: () => '<TS>', motifs: libraryMotifs([...BUILTIN_MANIFESTS.values(), TAGGED]) })
 }
 type Actor = ReturnType<typeof actor>
 
@@ -124,6 +123,8 @@ describe('graphic_role through update_layer_params', () => {
   it('a Motif rebind keeps the layer role', () => {
     const a = actor()
     const id = record(call(a, 'add_layers', { layers: [{ t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'motif', motif_id: TAGGED.id } }] })).layer_id
+    // A rebind names a Motif the project holds.
+    record(call(a, 'add_layers', { layers: [{ t_start_us: 0, t_end_us: 1_000_000, content: { kind: 'motif', motif_id: 'countdown' } }] }))
     record(call(a, 'update_layer_params', { layer_id: id, patch: { kind: 'Motif', motif_id: 'countdown' } }))
     expect(roleOf(a, id)).toBe('lower_third')
   })

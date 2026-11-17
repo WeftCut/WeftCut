@@ -80,9 +80,9 @@ export const rangeKey = (r: ChangedRange): string =>
   `${r.composition_id}@${r.t_start_us}-${r.t_end_us}<${r.before_start_us}-${r.before_end_us}`
 
 /** Kinds a range lists for attribution though they tell it from no other: a
- *  composition's track order and a role's gain are listed by every range they
- *  play in (ADR 0169). */
-const SHARED_KINDS: ReadonlySet<EntityKind> = new Set(['Composition', 'AudioRole'])
+ *  composition's track order, a role's gain and a Motif's files are listed by
+ *  every range they play in (ADR 0169). */
+const SHARED_KINDS: ReadonlySet<EntityKind> = new Set(['Composition', 'AudioRole', 'Motif'])
 
 /** Range `r`'s own changes — its layers and transitions, what tells it from
  *  the ranges beside it. What it is found again by, what its rows frame and

@@ -7,8 +7,6 @@ import {
   keybindingsGet,
   type AudioFxStatusEvent,
   type KeybindingsMap,
-  motifStalenessReport,
-  type MotifStaleEntry,
   ping,
 } from "../ipc";
 import { useAgentActivity, wireAgentActivity } from "../agent/activityStore";
@@ -23,7 +21,7 @@ import { wireSaveStatus } from "../state/saveStatusStore";
 import { wireDecodeComponent } from "../settings/decodeComponentStore";
 
 /// Owns the App-root backend wiring: the pong healthcheck, keybindings +
-/// agent activity snapshots and independent view selection, the on-open stale-motifs pull, and the
+/// agent activity snapshots and independent view selection, and the
 /// stream-wiring effects (status log, project-state mirror, app-settings,
 /// and the single project-state subscription shared by App and preview).
 export function useAppWiring(): {
@@ -33,8 +31,6 @@ export function useAppWiring(): {
   agentMode: boolean;
   exitAgentMode: () => Promise<void>;
   enterAgentMode: () => Promise<void>;
-  staleMotifs: MotifStaleEntry[];
-  setStaleMotifs: React.Dispatch<React.SetStateAction<MotifStaleEntry[]>>;
 } {
   const [pong, setPong] = useState<string>("…");
   // User shortcut overrides. Loaded once on mount; refreshed when the
@@ -45,22 +41,6 @@ export function useAppWiring(): {
   // the file are silently ignored at dispatch time.
   const [keybindings, setKeybindings] = useState<KeybindingsMap>({});
   const agentMode = useAgentActivity(s => s.mode === "agent");
-
-  // §7-B on-open staleness: App mounts exactly once per successful project
-  // open (every open path remounts it), so a mount-time pull IS the
-  // once-per-open check. Read-only; the ack happens on dismiss.
-  const [staleMotifs, setStaleMotifs] = useState<MotifStaleEntry[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    void motifStalenessReport()
-      .then((r) => {
-        if (!cancelled && r.length > 0) setStaleMotifs(r);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     ping().then(setPong).catch((e) => setPong(`error: ${String(e)}`));
@@ -202,8 +182,6 @@ export function useAppWiring(): {
     agentMode,
     exitAgentMode,
     enterAgentMode,
-    staleMotifs,
-    setStaleMotifs,
   };
 }
 

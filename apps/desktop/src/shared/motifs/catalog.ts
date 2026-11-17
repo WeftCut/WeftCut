@@ -559,29 +559,21 @@ export function motifCtxDurationS(manifest: Manifest, props: Record<string, unkn
 // MotifCatalog class
 // ---------------------------------------------------------------------------
 
+/** Motif manifests by id, as a reader of layers' `motif_id` looks them up. */
+export interface MotifManifests {
+  get(id: string): Manifest | undefined;
+}
+
 /**
  * Motif catalog with a built-in layer (always present) and a settable user
  * layer. Built-ins win on id collision so an uploaded motif can never shadow
  * a built-in.
  */
-export class MotifCatalog {
+export class MotifCatalog implements MotifManifests {
   private _user: Map<string, Manifest> = new Map();
 
-  /**
-   * @param resolveMissing optional source-of-truth fallback for a cache miss.
-   *   The in-memory user layer is a cache refreshed asynchronously by the file
-   *   watcher (debounced); a Motif written to disk is visible to the disk-backed
-   *   `list_motifs` before that refresh lands. Wiring this to the store
-   *   (`store.getMotif(id)?.manifest`) lets `add_motif` resolve such a Motif
-   *   without losing the watcher race. Omitted in tests/renderer → cache-only.
-   *   Called SYNCHRONOUSLY on the main thread and only on a cache MISS (the `??`
-   *   chain short-circuits on builtins/cache) — a mutation-time slow path
-   *   (add_motif / the content-window clamp), never the per-frame render path.
-   */
-  constructor(private readonly resolveMissing?: (id: string) => Manifest | null) {}
-
   get(id: string): Manifest | undefined {
-    return BUILTIN_MANIFESTS.get(id) ?? this._user.get(id) ?? this.resolveMissing?.(id) ?? undefined;
+    return BUILTIN_MANIFESTS.get(id) ?? this._user.get(id) ?? undefined;
   }
 
   setUserManifests(ms: Manifest[]): void {

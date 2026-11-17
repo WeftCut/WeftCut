@@ -1779,6 +1779,8 @@ const enUS = {
     kind_AudioRole: "Audio role",
     kind_Media: "Media",
     role_title: "{{name}} mix",
+    kind_Motif: "Motif",
+    motif_title: "Motif {{name}}",
     kind_Track: "Track",
     kind_Composition: "Group",
     aspect_placement: "Placement",
@@ -1789,6 +1791,7 @@ const enUS = {
     aspect_effects: "Effects",
     aspect_label: "Name",
     aspect_flags: "Enabled / locked",
+    aspect_content: "Files",
     // Snapshot facts, with explicit before/after timing values (ADR 0116).
     detail: {
       length_added: "{{s}} s long",
@@ -2196,12 +2199,6 @@ const enUS = {
     reason_bridged: "{{codec}} · usable now, optimizing scroll in background",
     failed: "Preparation failed — re-import to retry",
     failed_log: "Optimizing “{{label}}” failed — re-import it to retry.",
-  },
-  motif_stale: {
-    title: "Motifs changed since you placed them",
-    entry: "v{{from}} → v{{to}} ({{n}} clips)",
-    note: "These clips already render with the current version — this is just a heads-up.",
-    dismiss: "Got it",
   },
   connect: {
     blurb:
@@ -3269,6 +3266,12 @@ const enUS = {
         "Removed media {{media}} and {{count}} referencing clip(s)",
     },
     audio: { set_role_gain: "Set {{role}} role gain" },
+    motif: {
+      add: "Added Motif {{motif}}",
+      edit: "Edited Motif {{motif}}",
+      remove: "Removed Motif {{motif}}",
+      update: "Updated Motif {{motif}} from the library",
+    },
     checkpoint: { restore: "Restored to checkpoint “{{label}}”" },
     review: { revert: "Reverted unreviewed changes" },
   },

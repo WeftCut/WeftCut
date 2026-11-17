@@ -6,17 +6,20 @@ import { describe, it, expect } from 'vitest'
 import { createActor } from '../actor'
 import { seededGen } from '../ids'
 import { blankProject, type MotifParams } from '../model'
-import { MotifCatalog } from '../../../shared/motifs/catalog'
+import { BUILTIN_MANIFESTS } from '../../../shared/motifs/catalog'
 import { root } from './fixtures/project'
+import { libraryMotifs } from './fixtures/motifs'
 
 function placed() {
   const idGen = seededGen()
-  const catalog = new MotifCatalog()
-  const actor = createActor({ initial: blankProject(idGen, 'motif'), idGen, motifCatalog: catalog, clock: () => '<TS>' })
+  const actor = createActor({ initial: blankProject(idGen, 'motif'), idGen, motifs: libraryMotifs(), clock: () => '<TS>' })
   const r = actor.command('add_motif', { motifId: 'countdown', tStartUs: 0 })
   if (!r.ok) throw new Error(JSON.stringify(r.error))
   const layerId = r.value as string
-  const schema = catalog.get('countdown')!.props_schema as Record<string, { type: string; default: unknown }>
+  // A rebind names a Motif the project holds: place the one rebinds go to.
+  const other = actor.command('add_motif', { motifId: 'lower-third', tStartUs: 0 })
+  if (!other.ok) throw new Error(JSON.stringify(other.error))
+  const schema = BUILTIN_MANIFESTS.get('countdown')!.props_schema as Record<string, { type: string; default: unknown }>
   const params = () => root(actor.snapshot()).tracks.flatMap((t) => t.layers).find((l) => l.id === layerId)!.params as MotifParams
   return { actor, layerId, schema, params }
 }

@@ -32,7 +32,7 @@ function v5Project(ids: string[]): string {
   const root = project.compositions[project.root_id]
   const layers: Layer[] = ids.map((id, i) => ({
     id: `00000000-0000-4000-8000-00000000010${i}`, label: null, t_start_us: i * 1_000_000, t_end_us: (i + 1) * 1_000_000,
-    enabled: true, locked: false, metadata: {}, params: motifLayerParams(id, 1, {}, [320, 180]), effects: [],
+    enabled: true, locked: false, metadata: {}, params: motifLayerParams(id, {}, [320, 180]), effects: [],
   }))
   root.tracks.push({ id: '00000000-0000-4000-8000-000000000200', label: null, enabled: true, locked: false, muted: false, solo: false,
     removable: true, role: null, transient: false, height_px: 64, layers })

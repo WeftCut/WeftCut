@@ -1585,6 +1585,8 @@ const zhCN: Resources = {
     kind_AudioRole: "音频角色",
     kind_Media: "媒体",
     role_title: "{{name}}混音",
+    kind_Motif: "Motif",
+    motif_title: "Motif {{name}}",
     kind_Track: "轨道",
     kind_Composition: "组",
     aspect_placement: "位置",
@@ -1595,6 +1597,7 @@ const zhCN: Resources = {
     aspect_effects: "效果",
     aspect_label: "名称",
     aspect_flags: "启用 / 锁定",
+    aspect_content: "文件",
     // 两个状态之间的事实，明确展示时间字段的前后值（ADR 0116）。
     detail: {
       length_added: "时长 {{s}} 秒",
@@ -1966,12 +1969,6 @@ const zhCN: Resources = {
     reason_bridged: "{{codec}} · 可即时预览,后台优化滚动",
     failed: "准备失败,请重新导入",
     failed_log: "「{{label}}」优化失败 —— 请重新导入后重试。",
-  },
-  motif_stale: {
-    title: "Motif 在放置后已更新",
-    entry: "v{{from}} → v{{to}}（{{n}} 个片段）",
-    note: "这些片段已按当前版本渲染——这只是一个提示。",
-    dismiss: "知道了",
   },
   connect: {
     blurb: "将外部 Agent 接入 WeftCut 的本地 MCP 服务，让它直接读取和编辑你的项目。",
@@ -2958,6 +2955,12 @@ const zhCN: Resources = {
     style: { restyle: "按项目样式重设" },
     media: { remove_cascade: "删除素材 {{media}} 及其 {{count}} 个引用片段" },
     audio: { set_role_gain: "设置{{role}}角色增益" },
+    motif: {
+      add: "添加 Motif {{motif}}",
+      edit: "编辑 Motif {{motif}}",
+      remove: "移除 Motif {{motif}}",
+      update: "从 Motif 库更新 Motif {{motif}}",
+    },
     checkpoint: { restore: "恢复到检查点“{{label}}”" },
     review: { revert: "撤回未审阅的变更" },
   },

@@ -124,7 +124,7 @@ describe('check_composition v1', () => {
 
 describe('check_composition over Motif layers (H2)', () => {
   const motif = (text: ReturnType<typeof setup>['text'], motif_id: string, graphic_role: string | null) =>
-    ({ kind: 'Motif', motif_id, motif_version: 1, props: {}, src_in_us: 0, transform: text('x').transform, opacity: { mode: 'Static', value: 1 }, graphic_role }) as LayerParams
+    ({ kind: 'Motif', motif_id, props: {}, src_in_us: 0, transform: text('x').transform, opacity: { mode: 'Static', value: 1 }, graphic_role }) as LayerParams
   const styled = () => taste('---\nmotifs: { title: paper-title, lower_third: paper-label }\n---\n')
 
   it('holds Motif titles and lower thirds to the craft numbers, without asking a Motif for intro or outro', () => {
@@ -215,7 +215,7 @@ describe('check_composition over Groups and full-frame layers (H3)', () => {
     const cid = idGen()
     const child = newComposition(cid, idGen, 'scene', 1, { width: 1920, height: 1080, fps: { num: 25, den: 1 }, sample_rate: 48000, channels: 2, color_space: p.compositions[p.root_id]!.color_space, background: p.compositions[p.root_id]!.background } as never)
     p.compositions[cid] = child
-    const m = { kind: 'Motif', motif_id: 'headline', motif_version: 1, props: {}, src_in_us: 0, transform: { ...text('x').transform, position: { mode: 'XY', x: stat(x), y: stat(y) } }, opacity: stat(1), graphic_role: 'title' } as LayerParams
+    const m = { kind: 'Motif', motif_id: 'headline', props: {}, src_in_us: 0, transform: { ...text('x').transform, position: { mode: 'XY', x: stat(x), y: stat(y) } }, opacity: stat(1), graphic_role: 'title' } as LayerParams
     const inner: Layer = { id: idGen(), label: null, t_start_us: 0.5 * S, t_end_us: 4.5 * S, enabled: true, locked: false, metadata: {}, params: m, effects: [] }
     child.tracks[0]!.layers.push(inner)
     const g = put(bRoll, { kind: 'CompositionRef', composition: cid, src_in_us: 0, src_out_us: 6 * S, transform: { ...text('x').transform, position: { mode: 'XY', x: stat(960), y: stat(540) }, ...groupOver }, opacity: stat(1), blend_mode: 'Normal' } as LayerParams, t0, t0 + 6)
@@ -255,7 +255,7 @@ describe('check_composition over Groups and full-frame layers (H3)', () => {
   }
   const manifests = (id: string) => (MANIFESTS[id] ?? null) as never
   const motifAt = (motif_id: string, props: Record<string, unknown> = {}, graphic_role: string | null = null) =>
-    ({ kind: 'Motif', motif_id, motif_version: 1, props, src_in_us: 0, transform: textParamsDefault('x', { width: 1920, height: 1080 } as never).transform, opacity: stat(1), graphic_role }) as unknown as LayerParams
+    ({ kind: 'Motif', motif_id, props, src_in_us: 0, transform: textParamsDefault('x', { width: 1920, height: 1080 } as never).transform, opacity: stat(1), graphic_role }) as unknown as LayerParams
   const audit = (p: Project, rule: string) => checkComposition(p, p.root_id, null, undefined, { motif: manifests }).findings.filter((f) => f.rule === rule)
 
   it('reports a scene or plate on a track above the captions', () => {

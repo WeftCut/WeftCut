@@ -38,7 +38,7 @@ function world(builtins: Array<{ id: string; manifest: Manifest; html: string; h
   let changed = 0, notified = 0
   const deps = (): MotifToolDeps => ({
     store, builtins, motifLayers: () => layers, dispatchRebind: (u) => { rebinds.push(u) },
-    emitChanged: () => { changed++ }, refreshCatalog: () => {}, emitLog: () => {}, notifyAgents: () => { notified++ },
+    emitChanged: () => { changed++ }, notifyAgents: () => { notified++ },
   })
   const call = (name: string, args: Record<string, unknown> = {}) => runMotifTool(name, args, deps()) as any
   return {
@@ -85,13 +85,13 @@ describe('install_motif proposes; the library waits for the user', () => {
     // The agent keeps editing after proposing; approval still publishes what was proposed.
     w.call('update_motif_files', { motif_id: d.motif_id, expected_revision: d.revision, files: [{ path: 'index.html', text: '<html><body>later</body></html>' }] })
     expect(w.store.readHtml(proposalPreviewId(d.motif_id))).toContain('proposed')
-    w.setLayers([{ layerId: 'L1', motifId: d.motif_id, version: 1, props: { title: 'Ada', stale: 1 } }, { layerId: 'L2', motifId: 'other', version: 1, props: {} }])
+    w.setLayers([{ layerId: 'L1', motifId: d.motif_id, props: { title: 'Ada', stale: 1 } }, { layerId: 'L2', motifId: 'other', props: {} }])
     expect(w.call('list_motif_proposals')[0]).toMatchObject({ motif_id: d.motif_id, preview_id: proposalPreviewId(d.motif_id), diff: null, rebinds: ['L1'] })
     const approved = w.call('approve_motif_proposal', { motif_id: d.motif_id, proposal_id: p.proposal_id })
     expect(approved.motif_id).toBe('name-strap')
     expect(approved.publication).toMatchObject({ state: 'approved', version: 1, rebound: [{ layer_id: 'L1', dropped_props: ['stale'] }] })
     expect(w.store.readHtml('name-strap')).toContain('proposed')
-    expect(w.rebinds).toEqual([[expect.objectContaining({ layer_id: 'L1', motif_id: 'name-strap', motif_version: 1 })]])
+    expect(w.rebinds).toEqual([[expect.objectContaining({ layer_id: 'L1', motif_id: 'name-strap' })]])
     expect(w.call('list_motifs', { status: 'draft' })[0].publication).toMatchObject({ state: 'approved', version: 1, rebound: [{ layer_id: 'L1', dropped_props: ['stale'] }] })
     expect(w.call('list_motif_proposals')).toEqual([])
     // A proposal is decided once.
@@ -232,7 +232,7 @@ describe('a draft from before draft ids carried -draft', () => {
     // Its own id is not a collision for its own proposal.
     const p = w.call('install_motif', { motif_id: 'card', expected_revision: before.revision })
     expect(p).toMatchObject({ state: 'awaiting_approval', target: { new_id: 'card' } })
-    w.setLayers([{ layerId: 'L1', motifId: 'card', version: 1, props: { title: 'Ada' } }])
+    w.setLayers([{ layerId: 'L1', motifId: 'card', props: { title: 'Ada' } }])
     expect(w.call('list_motif_proposals')[0].rebinds).toEqual(['L1'])
     const approved = w.call('approve_motif_proposal', { motif_id: 'card', proposal_id: p.proposal_id })
     expect(approved.motif_id).toBe('card')
@@ -245,7 +245,7 @@ describe('a draft from before draft ids carried -draft', () => {
     expect(w.call('list_motifs', { status: 'draft' }).map((m: { id: string }) => m.id)).toEqual(['card-draft'])
     expect(w.call('read_motif', { motif_id: 'card' }).status).toBe('installed')
     expect(readFileSync(path.join(dir, 'index.html'), 'utf8')).toContain('linked')
-    expect(w.rebinds).toEqual([[expect.objectContaining({ layer_id: 'L1', motif_id: 'card', motif_version: 1, props: { title: 'Ada' } })]])
+    expect(w.rebinds).toEqual([[expect.objectContaining({ layer_id: 'L1', motif_id: 'card', props: { title: 'Ada' } })]])
     // The moved draft keeps following its folder, and its next proposal updates the publication.
     writeFileSync(path.join(dir, 'index.html'), '<html><body>v2</body></html>')
     const next = w.call('read_motif', { motif_id: 'card-draft' })
@@ -406,7 +406,7 @@ describe('library versions', () => {
     expect(w.store.readHtml(id)).toContain('second')
     const v1 = filesOf(w, id, 1)
     // The open project's clip sits on version 2, with version 2's prop.
-    w.setLayers([{ layerId: 'L1', motifId: id, version: 2, props: { subtitle: 'Ada' } }])
+    w.setLayers([{ layerId: 'L1', motifId: id, props: { subtitle: 'Ada' } }])
     const restored = w.call('restore_motif_version', { motif_id: id, version: 1 })
     expect(restored).toMatchObject({ motif_id: id, version: 3 })
     const versions = w.call('list_motif_versions', { motif_id: id })
@@ -421,7 +421,7 @@ describe('library versions', () => {
     expect(w.store.readHtml(id)).toContain('first')
     expect(w.store.readFile(id, 'scene.js')).toBeNull()
     // The clip rebinds as an approval rebinds it: to the new version, its props migrated.
-    expect(w.rebinds.at(-1)).toEqual([{ layer_id: 'L1', motif_id: id, motif_version: 3, props: { title: 'Hi' } }])
+    expect(w.rebinds.at(-1)).toEqual([{ layer_id: 'L1', motif_id: id, props: { title: 'Hi' } }])
   })
 
   it('restores only an older version of an installed Motif', () => {

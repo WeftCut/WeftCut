@@ -5,6 +5,7 @@ import { forEachAnimatedF64, forEachAnimatedRgba } from './mutations/animated'
 import { TimeMappingError } from '../../shared/timeMapping'
 import { cropProblem } from '../../shared/crop'
 import { graphicRoleProblem } from '../../shared/graphicRole'
+import { isProjectMotifKey } from '../../shared/motifs/projectMotifs'
 import { CommandFailure } from './errors'
 // apps/desktop/src/main/state/validate.ts
 import type { Composition, Layer, LayerParams, Project, Track, Transition, Uuid } from './model'
@@ -35,6 +36,7 @@ function pairKey(a: Uuid, b: Uuid): string { return a < b ? `${a}|${b}` : `${b}|
 
 export function validate(project: Project): void {
   validateProjectShape(project)
+  for (const id of Object.keys(project.motifs)) if (!isProjectMotifKey(id)) fail({ rule: 'InvalidMotifKey', motif_id: id })
   const root = project.compositions[project.root_id]
   // PROJECT-wide: a layer id names one layer in the whole project (every
   // layer-addressed op derives its composition from the id), so the duplicate
@@ -443,6 +445,8 @@ function validateLayerParams(p: Project, layer: Layer): void {
   }
   if ((pa.kind === 'VideoClip' || pa.kind === 'Audio' || pa.kind === 'ImageOverlay') && !(pa.media in p.media_pool))
     fail({ rule: 'MissingMedia', layer: layer.id, media: pa.media })
+  if (pa.kind === 'Motif' && !Object.hasOwn(p.motifs, pa.motif_id))
+    fail({ rule: 'MotifNotInProject', layer: layer.id, motif_id: pa.motif_id })
   // A CompositionRef's window has only the lower checks above and NO upper bound:
   // `src_out_us` past the referenced composition's `duration_us` is tolerated in
   // state and clamped at the gesture (ADR 0052 §6), or deleting a layer INSIDE a

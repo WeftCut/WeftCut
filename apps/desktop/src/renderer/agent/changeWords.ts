@@ -123,7 +123,7 @@ export const DETAIL_KEYS: Record<ChangeDetail['type'], readonly string[]> = {
   label: ['changes.detail.label'],
   enabled: ['changes.detail.enabled', 'changes.detail.disabled'],
   locked: ['changes.detail.locked', 'changes.detail.unlocked'],
-  aspect: (['placement', 'timing', 'retime', 'params', 'effects', 'keyframes', 'label', 'flags'] satisfies ChangeAspect[]).map(a => `changes.aspect_${a}`),
+  aspect: (['placement', 'timing', 'retime', 'params', 'effects', 'keyframes', 'label', 'flags', 'content'] satisfies ChangeAspect[]).map(a => `changes.aspect_${a}`),
 }
 
 // ---- param names -----------------------------------------------------------
@@ -322,6 +322,7 @@ export function changeTitle(c: Change, ctx: ChangeWordsContext): string {
   switch (kind) {
     case 'AudioRole': return t('changes.role_title', { name: t(`audio_roles.${id}`, {}) })
     case 'Media': return ctx.mediaName(id) ?? fallback
+    case 'Motif': return t('changes.motif_title', { name: id })
     case 'Layer': return ctx.layerName(id) ?? fallback
     case 'Marker': return (c.composition_id ? ctx.markerLabel(c.composition_id, id) : null) || fallback
     case 'Track': { const name = ctx.trackName(id, c.composition_id); return name ? t('changes.track_title', { name }) : fallback }

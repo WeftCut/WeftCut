@@ -17,9 +17,9 @@ export const HYBRID_TOOLS: ReadonlySet<string> = new Set([
 
 /** Motif catalog-read + authoring + proposal tools, served in TS by
  *  runMotifTool, with their defs in TS MOTIF_TOOL_DEFS (mcpCatalog dedups by
- *  name). The Rust catalog carries no motif arms. The approval and staleness
- *  channels are the renderer's alone (router `MOTIF_CHANNELS`): no MCP
- *  client can approve its own proposal (ADR 0046). */
+ *  name). The Rust catalog carries no motif arms. The approval and
+ *  project-copy update channels are the renderer's alone (router
+ *  `MOTIF_CHANNELS`): no MCP client can approve its own proposal (ADR 0046). */
 export const MOTIF_TOOLS: ReadonlySet<string> = new Set(['list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif'])
 
 /** The tools that answer while no project is open — default-deny: every tool

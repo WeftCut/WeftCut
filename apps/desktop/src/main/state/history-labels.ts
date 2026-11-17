@@ -115,6 +115,21 @@ export function removedMediaSummary(media: Uuid, referencingCount: number): Hist
     label_args: { media, count: referencingCount },
   }
 }
+/** `set_project_motif` — a Motif the project now holds a revision of: `added`
+ *  when the table had no entry for it, else an edit of its folder. */
+export function projectMotifSummary(motif: string, added: boolean): HistorySummary {
+  return added
+    ? { key: 'history.motif.add', text: `Added Motif ${motif}`, label_args: { motif } }
+    : { key: 'history.motif.edit', text: `Edited Motif ${motif}`, label_args: { motif } }
+}
+/** `remove_project_motif` — the table entry goes; the folder stays on disk. */
+export function removedProjectMotifSummary(motif: string): HistorySummary {
+  return { key: 'history.motif.remove', text: `Removed Motif ${motif}`, label_args: { motif } }
+}
+/** `update_project_motif` — the project copy replaced by the library's. */
+export function updatedProjectMotifSummary(motif: string): HistorySummary {
+  return { key: 'history.motif.update', text: `Updated Motif ${motif} from the library`, label_args: { motif } }
+}
 /** `set_role_gain` — the summary names the audio role. */
 export function roleGainSummary(role: string): HistorySummary {
   return { key: 'history.audio.set_role_gain', text: `Set ${role} role gain`, label_args: { role } }
@@ -168,6 +183,10 @@ export const HISTORY_SUMMARY_KEYS: readonly string[] = [
   ...Object.values(HISTORY_SUMMARY).map((s) => s.key),
   removedMediaSummary('', 0).key,
   roleGainSummary('').key,
+  projectMotifSummary('', true).key,
+  projectMotifSummary('', false).key,
+  removedProjectMotifSummary('').key,
+  updatedProjectMotifSummary('').key,
   restoredCheckpointSummary('').key,
   addedLayersSummary(0).key,
   pastedLayersSummary(0).key,

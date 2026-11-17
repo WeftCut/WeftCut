@@ -13,6 +13,7 @@ import { entityKey, type EntityKey, type EntityKind } from '../../shared/review'
 export type EntityValue =
   | { kind: 'AudioRole'; id: AudioRole; gain_db: number }
   | { kind: 'Media'; id: Uuid; media: MediaItem }
+  | { kind: 'Motif'; id: string; revision: string | null }
   | { kind: 'Composition'; id: Uuid; label: string | null; track_order: readonly Uuid[] }
   | { kind: 'Track'; id: Uuid; composition_id: Uuid; label: string | null; role: TrackRole | null }
   | { kind: 'Layer'; id: Uuid; composition_id: Uuid; track_id: Uuid; layer: Layer }
@@ -48,12 +49,23 @@ const AUDIO_ROLES = ['dialogue', 'music', 'sfx', 'voiceover'] as const satisfies
 /** Recorded project fields outside compositions. Media compares membership
  *  only: imports and derivative/path/hash updates patch every snapshot, while
  *  force-removal is recorded with its deleted clips. Missing role rows mean
- *  the same default 0 dB bus, not an added or removed bus. */
+ *  the same default 0 dB bus, not an added or removed bus. A Motif compares
+ *  the revision its folder holds, which is what its layers play; an entry
+ *  comes and goes with the layers placing or dropping it, which tell that
+ *  themselves (`motifChanged`). */
 function projectEntities(p: Project): EntityValue[] {
   return [
     ...AUDIO_ROLES.map(id => ({ kind: 'AudioRole' as const, id, gain_db: p.audio_roles[id]?.gain_db ?? 0 })),
     ...Object.values(p.media_pool).map(media => ({ kind: 'Media' as const, id: media.id, media })),
+    ...Object.entries(p.motifs).map(([id, entry]) => ({ kind: 'Motif' as const, id, revision: entry.revision })),
   ]
+}
+
+/** Whether Motif `id` plays differently: both sides hold it, at different
+ *  revisions. */
+export function motifChanged(before: Project, after: Project, id: string): boolean {
+  const a = before.motifs[id], b = after.motifs[id]
+  return a !== undefined && b !== undefined && a.revision !== b.revision
 }
 /** Every compared entity of `p`, by key. Memoized on project identity. */
 export function extractEntities(p: Project): EntityIndex {
@@ -113,6 +125,7 @@ export function entitiesEqual(a: EntityValue | undefined, b: EntityValue | undef
   switch (a.kind) {
     case 'AudioRole': return a.gain_db === (b as typeof a).gain_db
     case 'Media': return true // pool membership, not derived resource metadata
+    case 'Motif': return a.revision === (b as typeof a).revision
     case 'Composition': { const c = b as typeof a; return a.label === c.label && trackOrderEqual(a.track_order, c.track_order) }
     case 'Track': { const t = b as typeof a; return a.composition_id === t.composition_id && a.label === t.label && a.role === t.role }
     case 'Layer': { const l = b as typeof a; return a.composition_id === l.composition_id && a.track_id === l.track_id && jsonEqual(a.layer, l.layer) }
@@ -139,6 +152,8 @@ export function touchedEntityKeys(before: Project, after: Project): Set<EntityKe
     if ((before.audio_roles[id]?.gain_db ?? 0) !== (after.audio_roles[id]?.gain_db ?? 0)) out.add(entityKey('AudioRole', id))
   if (before.media_pool !== after.media_pool) for (const id of new Set([...Object.keys(before.media_pool), ...Object.keys(after.media_pool)]))
     if ((before.media_pool[id] === undefined) !== (after.media_pool[id] === undefined)) out.add(entityKey('Media', id))
+  if (before.motifs !== after.motifs) for (const id of Object.keys(after.motifs))
+    if (motifChanged(before, after, id)) out.add(entityKey('Motif', id))
   if (before.compositions === after.compositions) return out
   for (const id of new Set([...Object.keys(before.compositions), ...Object.keys(after.compositions)])) {
     const a = before.compositions[id], b = after.compositions[id]
@@ -218,6 +233,8 @@ export function compareEntities(baseline: Project, current: Project): { before: 
   if (baseline.audio_roles !== current.audio_roles) for (const id of AUDIO_ROLES) keys.add(entityKey('AudioRole', id))
   if (baseline.media_pool !== current.media_pool) for (const p of [baseline, current])
     for (const id of Object.keys(p.media_pool)) keys.add(entityKey('Media', id))
+  if (baseline.motifs !== current.motifs) for (const id of Object.keys(current.motifs))
+    if (motifChanged(baseline, current, id)) keys.add(entityKey('Motif', id))
   for (const p of [baseline, current])
     for (const c of Object.values(p.compositions)) if (current.compositions[c.id] !== baseline.compositions[c.id]) for (const k of compositionKeys(c)) keys.add(k)
   return { before, after, keys }

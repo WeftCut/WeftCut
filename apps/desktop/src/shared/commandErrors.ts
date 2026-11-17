@@ -94,6 +94,11 @@ export type ValidationError =
   // CompositionRef) — the derivation reads `params.src_in_us`. `kind` names
   // what was found, because the fix is a different layer, not a different time.
   | { rule: 'MarkerAnchorLayerHasNoSourceWindow'; marker: Uuid; layer: Uuid; kind: string }
+  // ── Project Motifs: a Motif layer renders the project's own copy, so its
+  // `motif_id` is a key of the project's Motif table; a key is a folder name
+  // and a `motif://` host (`isProjectMotifKey`).
+  | { rule: 'MotifNotInProject'; layer: Uuid; motif_id: string }
+  | { rule: 'InvalidMotifKey'; motif_id: string }
 
 // ── CommandError — the full mutation-error vocabulary. Individual dispatch
 // arms construct only the variants they need. ──
@@ -132,6 +137,8 @@ export type CommandError =
   | { error: 'CheckpointNotFound'; checkpoint: Uuid }
   | { error: 'MediaNotFound'; media: Uuid }
   | { error: 'MediaInUse'; media: Uuid; referenced_by: Uuid[] }
+  | { error: 'MotifNotFound'; motif_id: string }
+  | { error: 'MotifInUse'; motif_id: string; referenced_by: Uuid[] }
   | { error: 'TrackPositionOutOfRange'; position: number; len: number }
   | { error: 'TrackNotEmpty'; track: Uuid }
   | { error: 'TrackNotRemovable'; track: Uuid }

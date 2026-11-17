@@ -16,7 +16,6 @@ import type { UserMotifStore } from './store';
 import { type BuiltinMotif, type MotifLayerRef, motifSourceFiles } from './authoring';
 import { MotifWorkspace, type DraftSource, type FileChange } from './workspace';
 import { revisionConflict } from './refusal';
-import { type MotifStaleEntry, currentVersions, buildStalenessReport, buildAckEntries } from './staleness';
 export interface MotifToolDeps {
     store: UserMotifStore;
     builtins: BuiltinMotif[];
@@ -26,23 +25,9 @@ export interface MotifToolDeps {
     dispatchRebind: (updates: MotifRebindEntry[]) => void;
     /** Emit `motifs:changed` to the renderer (picker re-pull + host buster). */
     emitChanged: () => void;
-    /** Re-pull list_motifs → actor.setUserMotifManifests (content-window clamp). */
-    refreshCatalog: () => void;
     /** Tell connected agents the catalog changed (MCP resources list_changed):
      *  a publication was proposed, approved or rejected. */
     notifyAgents?: () => void;
-    /** Emit a record-panel LogBus warn row (the on-open staleness summary).
-     *  Best-effort; the host wraps the underlying emit in try/catch. */
-    emitLog: (entry: {
-        level: 'warn';
-        category: {
-            kind: 'Project';
-        };
-        source: {
-            kind: 'System';
-        };
-        message: string;
-    }) => void;
 }
 /** read_motif's text bound; a larger text file is refused, not truncated. */
 const TEXT_READ_BYTES = 256 * 1024;
@@ -55,7 +40,7 @@ function subject(a: Record<string, unknown>): string {
 export function runMotifTool(name: string, rawArgs: Record<string, unknown>, deps: MotifToolDeps): unknown {
     const a = rawArgs;
     const workspace = new MotifWorkspace(deps.store, deps.builtins);
-    const changed = () => { deps.emitChanged(); deps.refreshCatalog(); };
+    const changed = () => { deps.emitChanged(); };
     // A publication's state moved: the renderer's card and every agent's catalog.
     const transitioned = () => { changed(); deps.notifyAgents?.(); };
     switch (name) {
@@ -155,29 +140,6 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
             const rejected = workspace.reject(subject(a), a.proposal_id as string, a.note as string | undefined);
             transitioned();
             return rejected;
-        }
-        case 'motif_staleness_report': {
-            const current = currentVersions(deps.builtins, deps.store.listManifests());
-            const layers = deps.motifLayers().map((l) => ({ motifId: l.motifId, placedVersion: l.version }));
-            const report: MotifStaleEntry[] = buildStalenessReport(layers, current);
-            if (report.length) {
-                const summary = report
-                    .map((e) => `${e.motif_id} v${e.placed_version}→v${e.current_version} (${e.layer_count} layer(s))`)
-                    .join(', ');
-                deps.emitLog({ level: 'warn', category: { kind: 'Project' }, source: { kind: 'System' }, message: `Motifs changed since placement: ${summary}` });
-            }
-            return report;
-        }
-        case 'acknowledge_motif_staleness': {
-            const current = currentVersions(deps.builtins, deps.store.listManifests());
-            const layers = deps.motifLayers().map((l) => ({ layerId: l.layerId, motifId: l.motifId, placedVersion: l.version, props: l.props }));
-            const updates = buildAckEntries(layers, current);
-            if (updates.length)
-                deps.dispatchRebind(updates);
-            // Refresh so applyUpdateLayerParams' content-window clamp sees the
-            // current manifests. Cheap + idempotent.
-            deps.refreshCatalog();
-            return updates.length;
         }
         default:
             throw new Error(`runMotifTool: unhandled tool ${name}`);

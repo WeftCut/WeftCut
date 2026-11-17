@@ -12,6 +12,7 @@ import { seededGen } from '../ids'
 import { blankProject, type Layer, type Project } from '../model'
 import { mediaItemTemplate } from '../mutations/media'
 import { root } from './fixtures/project'
+import { libraryMotifs } from './fixtures/motifs'
 
 const AUDIO = '00000000-0000-0000-0000-0000000000a1'
 const VIDEO_WITH_SOUND = '00000000-0000-0000-0000-0000000000a2'
@@ -31,7 +32,7 @@ function actorWithPool() {
   p.media_pool[SILENT_IMAGE] = mediaItemTemplate(SILENT_IMAGE, 'Image', null)
   p.media_pool[SUBTITLE] = mediaItemTemplate(SUBTITLE, 'Subtitle', null)
   p.media_pool[SILENT_VIDEO] = mediaItemTemplate(SILENT_VIDEO, 'Video', 10_000_000)
-  return createActor({ initial: p, idGen: gen, clock: () => '<TS>' })
+  return createActor({ initial: p, idGen: gen, clock: () => '<TS>', motifs: libraryMotifs() })
 }
 
 type Actor = ReturnType<typeof actorWithPool>
