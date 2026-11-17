@@ -65,6 +65,7 @@ import { useTextFit } from "./useTextFit";
 import { getMotif, motifUnavailable, subscribeMotifCatalog, motifCatalogRevision } from "../render/motifs/catalog";
 import { MotifManagementRow, MotifSourcePanel } from "./MotifManagement";
 import { MotifProblem } from "../motifs/MotifProblem";
+import { openMotifsPanelAt } from "../motifs/openMotifsPanel";
 import {
   useCompositionRefCounts,
   useGroupOrdinals,
@@ -1196,7 +1197,8 @@ function MotifFields({
   // stay in sync, not a stale snapshot from mount.
   useSyncExternalStore(subscribeMotifCatalog, motifCatalogRevision);
   // The Motif's prop schema drives the props section. A null lookup is a
-  // project Motif that cannot render (its folder missing or invalid), or a
+  // project Motif that cannot render (its folder missing, invalid or not
+  // trusted on this machine), or a
   // catalog sync still in flight — transform/opacity stay editable, and a
   // note stands in for the prop inputs.
   const motif = getMotif(v.motif_id);
@@ -1216,7 +1218,15 @@ function MotifFields({
     <>
       <BakeStatusLine layerId={layer.id} />
       {motif === null ? (
-        unavailable
+        unavailable?.status === "untrusted" ? (
+          // Only the user trusts, and the Motifs panel's trust card is where.
+          <>
+            <MotifProblem id={v.motif_id} status="untrusted" />
+            <Button size="sm" onClick={() => openMotifsPanelAt({ group: "project", id: v.motif_id })}>
+              {t("property_panel.motif_review_trust")}
+            </Button>
+          </>
+        ) : unavailable
           ? <MotifProblem id={v.motif_id} status={unavailable.status} diagnostic={unavailable.diagnostic} />
           : <p className="prop-hint">{t("property_panel.unknown_motif")}</p>
       ) : motif.hasParamsUi ? (

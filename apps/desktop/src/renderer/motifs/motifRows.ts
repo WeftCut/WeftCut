@@ -15,18 +15,25 @@ export function rowHost(row: MotifRow): string {
   return row.group === "library" ? libraryHost(row.id) : row.id;
 }
 
+/** Whether the row's Motif may run here for a preview, a cover or a
+ *  placement: every library row, a project row only when `ok` (an untrusted
+ *  one's code has not run on this machine, ADR 0174). */
+export function rowRenders(row: MotifRow): boolean {
+  return row.group === "library" || row.status === "ok";
+}
+
 /** The row's Motif as its previews capture it: under its host. */
 export function previewMotif(row: MotifRow): MotifSummary | null {
-  return row.motif && { ...row.motif, id: rowHost(row) };
+  return rowRenders(row) && row.motif ? { ...row.motif, id: rowHost(row) } : null;
 }
 
 export function rowName(row: MotifRow): string {
   return row.motif?.name ?? row.id;
 }
 
-/** What a project row says about itself, most pressing first. A Motif that
- *  cannot render says only that; an untrusted one (ticket 05) slots in next. */
-export type ProjectRowBadge = "missing" | "invalid" | "update_available" | "modified" | "project_only";
+/** What a project row says about itself, most pressing first: a Motif that
+ *  cannot render says only why (missing, invalid, then untrusted). */
+export type ProjectRowBadge = "missing" | "invalid" | "untrusted" | "update_available" | "modified" | "project_only";
 
 export function projectRowBadge(row: ProjectMotifRow): ProjectRowBadge | null {
   if (row.status !== "ok") return row.status;
@@ -34,13 +41,14 @@ export function projectRowBadge(row: ProjectMotifRow): ProjectRowBadge | null {
 }
 
 /** Whether the library holds a version of the row's lineage to take: an
- *  update of a copy the library moved past or one edited here, or the
+ *  update of a copy the library moved past or one edited here (an untrusted
+ *  copy too: its state says how it stands against the library), or the
  *  restore of a folder gone or broken. */
 export type LibraryTake = "update" | "restore" | null;
 
 export function libraryTake(row: ProjectMotifRow): LibraryTake {
   if (row.state === "project_only") return null;
-  if (row.status !== "ok") return "restore";
+  if (row.status === "missing" || row.status === "invalid") return "restore";
   return row.state === "in_sync" ? null : "update";
 }
 

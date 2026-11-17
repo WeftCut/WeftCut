@@ -10,7 +10,7 @@ import { MenuItem, contextMenuFinalFocus } from '../menu/Menu';
 import { useCloseOnAnchorMove, useCursorAnchor } from '../timeline/contextMenuAnchor';
 import { AppIcon } from "@/components/AppIcon";
 import { MotifProblemLead } from './MotifProblem';
-import { canSaveToLibrary, libraryTake, projectRowBadge, rowHost, rowName, type MotifRow, type ProjectCopy } from './motifRows';
+import { canSaveToLibrary, libraryTake, previewMotif, projectRowBadge, rowName, type MotifRow, type ProjectCopy } from './motifRows';
 
 /** What a card's actions do; each is offered only where it applies
  *  (`motifRows.ts`). */
@@ -41,6 +41,7 @@ export function MotifCard({ row, selected, fpsNum, fpsDen, projectCopy = null, .
   const badge = row.group === 'project' ? projectRowBadge(row) : row.status;
   const take = row.group === 'project' ? libraryTake(row) : null;
   const unavailable = row.group === 'project' && row.status !== 'ok';
+  const cover = previewMotif(row);
   const meta = row.motif
     ? `${row.motif.size[0]}×${row.motif.size[1]} · ${formatTimecode(Math.round(row.motif.default_duration_s * 1_000_000), fpsNum, fpsDen)}`
     : row.id;
@@ -54,8 +55,8 @@ export function MotifCard({ row, selected, fpsNum, fpsDen, projectCopy = null, .
         setMenu({ x: rect.left + 12, y: rect.top + 12 });
       }}>
       <button type="button" className="motif-card-select" title={row.id} aria-pressed={selected} onClick={actions.onSelect}>
-        {row.motif
-          ? <MotifCover key={`${rowHost(row)}:${row.motif.content_hash}`} host={rowHost(row)} contentHash={row.motif.content_hash ?? ''} />
+        {cover
+          ? <MotifCover key={`${cover.id}:${cover.content_hash}`} host={cover.id} contentHash={cover.content_hash ?? ''} />
           : <div className="motif-preview-host motif-card-unavailable" style={{ maxWidth: "calc(240 * var(--ui-px))" }}>
             {row.group === 'project' && row.status !== 'ok' &&
               <span className="settings-error"><MotifProblemLead id={row.id} status={row.status} /></span>}

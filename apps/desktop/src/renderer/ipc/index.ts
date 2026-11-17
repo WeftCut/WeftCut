@@ -1,4 +1,5 @@
 import { parseManifestIsland } from '../../shared/motifs/catalog';
+import type { MotifStatus } from '../../shared/motifs/projectMotifs';
 import type { TimingFields } from '../../shared/timeMapping'
 import type { CropRect } from '../../shared/crop';
 // Renderer-side IPC surface: typed `invoke` wrappers plus the wire shapes the
@@ -3209,13 +3210,15 @@ export interface MotifPublication {
   version?: number;
 }
 
-/// One Motif of the open project (`Motifs/<id>/`). `motif` is null when its
-/// folder is missing or makes no package; `diagnostic` says why.
+/// One Motif of the open project (`Motifs/<id>/`). `motif` is null unless it
+/// renders (`status: "ok"`): its folder is missing, makes no package, or holds
+/// a revision not trusted on this machine; `diagnostic` says why. An untrusted
+/// row keeps its `revision`.
 export interface ProjectMotifRow {
   group: "project";
   id: string;
   uid: string;
-  status: "ok" | "missing" | "invalid";
+  status: MotifStatus;
   state: ProjectMotifState;
   /// The library package it was copied from; null for one made in the project.
   from: { uid: string; version: number; revision: string } | null;
@@ -3276,6 +3279,40 @@ export async function listMotifCatalog(group?: "project" | "library"): Promise<M
     }
   }
   return out;
+}
+
+/// What the trust card shows of an untrusted project Motif's files, read as
+/// text in main and never run. Mirrors `MotifTrustSummary` in
+/// `src/main/motif/trustSummary.ts`.
+export interface MotifTrustSummary {
+  files: number;
+  bytes: number;
+  binary: number;
+  scripts: { path: string; bytes: number }[];
+  workers: string[];
+  wasm: string[];
+  minified: { path: string; longest_line: number }[];
+  unscanned: string[];
+}
+
+export interface MotifTrustCard {
+  motif_id: string;
+  /// The revision the summary was read from: the one Trust names.
+  revision: string;
+  trusted: boolean;
+  summary: MotifTrustSummary;
+}
+
+/// The trust card's summary of project Motif `id` as its folder holds it now.
+export async function motifTrustSummary(id: string): Promise<MotifTrustCard> {
+  return invoke<MotifTrustCard>("motif_trust_summary", { motif_id: id });
+}
+
+/// The user's Trust of project Motif `id` at `revision`, the one the card
+/// showed; refused when the folder holds another by now. Renderer-only: no
+/// MCP tool trusts (ADR 0174).
+export async function trustMotif(id: string, revision: string): Promise<void> {
+  await invoke("trust_motif", { motif_id: id, revision });
 }
 
 /** Default-props catalog cover, persisted by main across app openings. `host`

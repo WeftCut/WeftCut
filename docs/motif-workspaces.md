@@ -26,8 +26,9 @@ the project uses for a different one, pass from_library: true.
 
 list_motifs answers both groups, or the one group names. A project row has:
 
-- status: ok, missing (no folder) or invalid (its files make no package), with
-  a diagnostic;
+- status: ok, missing (no folder), invalid (its files make no package) or
+  untrusted (a package this machine has not trusted, below), with a
+  diagnostic;
 - state against the library Motif of the same lineage: in_sync, modified
   (changed since it was copied), update_available (an unchanged copy the
   library has moved past) or project_only (the library holds no such
@@ -37,6 +38,21 @@ list_motifs answers both groups, or the one group names. A project row has:
 A library row has status builtin or installed, its version, and in_project:
 the id the open project holds it under, or null. `motifs://current` lists the
 project rows.
+
+## Trust
+
+A Motif runs only when this machine trusts its revision (ADR 0174). One placed
+from this library, made in the project here, or edited from a trusted revision
+while the project is open here is trusted without asking. One found when a project is opened (a
+project received from someone else), or brought in from a ZIP or a folder
+outside the project's `Motifs/`, is untrusted: it renders nothing, the
+picture shows an error placeholder, and preview_motif, a copy and
+install_motif refuse it. read_motif reads its files as text and export_motif
+writes them out; neither runs it.
+
+Only the user trusts a Motif, on its card in the app's Motifs panel. When a
+received project lists untrusted Motifs, read them with read_motif if the user
+asks what they do, say what you found, and leave the decision to the user.
 
 ## Making a Motif
 
@@ -57,11 +73,14 @@ The id is made from the Motif's name and numbered when the project holds it.
   so it reads as project only. Copy a Motif to change it for some clips while
   the others keep the original.
 - zip: an exported package. It keeps the id and the lineage it carries; an id
-  the project holds gets the lineage suffix instead of a number.
+  the project holds gets the lineage suffix instead of a number. It is
+  untrusted until the user trusts it, unless this machine already trusts
+  those exact bytes.
 - directory: copies a package folder once; later edits to the source folder
-  do not reach the project. A folder you wrote under the project's `Motifs/`
-  yourself is adopted in place instead, under its own name, which must be
-  lowercase letters, digits and single dashes.
+  do not reach the project, and the copy is untrusted like a ZIP. A folder you
+  wrote under the project's `Motifs/` yourself is adopted in place instead,
+  under its own name, which must be lowercase letters, digits and single
+  dashes.
 
 A package folder contains index.html and a manifest.json (authoritative when
 present), or an HTML manifest island, plus all runtime assets. Use a

@@ -31,6 +31,8 @@ const ipcMocks = vi.hoisted(() => ({
   saveToLibrary: vi.fn(),
   listMotifProposals: vi.fn(async () => []),
   getMotifCover: vi.fn(() => new Promise(() => {})),
+  motifTrustSummary: vi.fn(),
+  trustMotif: vi.fn(),
 }));
 
 vi.mock("../ipc", async (importActual) => {
@@ -52,7 +54,15 @@ vi.mock("@/bridge/dialog", () => ({ open: vi.fn(), save: vi.fn() }));
 const capture = vi.hoisted(() => vi.fn((..._args: unknown[]) => new Promise<Blob>(() => {})));
 vi.mock("../render/motifs/host", () => ({ captureMotifFramePngBlob: capture }));
 
+// The App's command that mounts the panel; the panel itself is rendered here.
+const openPicker = vi.hoisted(() => vi.fn());
+vi.mock("../commands/registry", async (importActual) => ({
+  ...(await importActual<typeof import("../commands/registry")>()),
+  getCommand: (id: string) => (id === "openMotifPicker" ? { id, run: openPicker } : undefined),
+}));
+
 import { MotifPicker } from "./MotifPicker";
+import { openMotifsPanelAt } from "./openMotifsPanel";
 import { open, save } from "@/bridge/dialog";
 import { setProjectMotifs } from "../render/motifs/catalog";
 
@@ -92,8 +102,12 @@ const proj = (over: Partial<ProjectMotifRow> & { name?: string } = {}): ProjectM
   const row: ProjectMotifRow = { group: "project", id, uid: `uid-${id}`, status: "ok", state: "in_sync", from: null,
     path: `/home/u/Film/Motifs/${id}`, revision: "proj-rev",
     motif: { ...MOTIF, id, name: name ?? id, content_hash: "proj-rev" }, ...rest };
-  return row.status === "ok" ? row : { ...row, motif: null, revision: null };
+  // As `listMotifCatalog` reads the wire: only an ok row carries its Motif,
+  // and an untrusted one keeps the revision the trust card trusts.
+  return row.status === "ok" ? row : { ...row, motif: null, revision: row.status === "untrusted" ? row.revision : null };
 };
+const untrusted = (id: string, over: Partial<ProjectMotifRow> = {}) =>
+  proj({ id, status: "untrusted", state: "modified", revision: "c".repeat(64), diagnostic: "not trusted on this machine", ...over });
 
 const onClose = vi.fn();
 const onAdded = vi.fn().mockResolvedValue(undefined);
@@ -169,6 +183,40 @@ describe("two groups: this project and the library", () => {
     });
     expect(within(cardOf("badge", "Library")).getByText("In this project · missing")).toBeTruthy();
     expect(within(cardOf("other", "Library")).getByText("In this project · invalid")).toBeTruthy();
+  });
+
+  it("says an untrusted Motif waits for Trust before its state, with no cover, preview or placement", async () => {
+    ipcMocks.motifTrustSummary.mockResolvedValue({ motif_id: "received", revision: "c".repeat(64), trusted: false,
+      summary: { files: 2, bytes: 4096, binary: 0, scripts: [], workers: [], wasm: [], minified: [], unscanned: [] } });
+    await renderPicker({ project: [proj({ id: "lower" }), untrusted("received")], library: [lib({ id: "other", in_project: "received" })] });
+    const card = cardOf("received", "This project");
+    // The state (modified) stays behind the badge; the library's take still follows it.
+    expect(card.querySelector(".motif-card-status")?.textContent).toBe("Not trusted");
+    expect(within(card).getByText("Not trusted on this machine")).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "Update project copy" })).toBeTruthy();
+    expect(within(card).queryByRole("button", { name: "Restore from library" })).toBeNull();
+    expect(within(cardOf("other", "Library")).getByText("In this project · not trusted")).toBeTruthy();
+
+    fireEvent.click(within(group("This project")).getByTitle("received"));
+    const trust = await screen.findByRole("region", { name: "Not trusted on this machine" });
+    await waitFor(() => expect(within(trust).getByText("2 files · 4.0 KB")).toBeTruthy());
+    expect(ipcMocks.motifTrustSummary).toHaveBeenCalledWith("received");
+    expect(within(trust).getByRole("button", { name: "Trust" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add to timeline" })).toBeNull();
+    expect((ipcMocks.getMotifCover.mock.calls as unknown[][]).some((c) => c[0] === "received")).toBe(false);
+    expect(capture.mock.calls.some((c) => c[0] === "received")).toBe(false);
+  });
+
+  it("opens on the row a surface outside the panel asked for", async () => {
+    ipcMocks.motifTrustSummary.mockResolvedValue({ motif_id: "received", revision: "c".repeat(64), trusted: false,
+      summary: { files: 1, bytes: 10, binary: 0, scripts: [], workers: [], wasm: [], minified: [], unscanned: [] } });
+    ipcMocks.listMotifCatalog.mockResolvedValue({ project: [proj({ id: "lower" }), untrusted("received")], library: [lib()] });
+    openMotifsPanelAt({ group: "project", id: "received" });
+    expect(openPicker).toHaveBeenCalledOnce();
+    render(<MotifPicker onClose={onClose} onAdded={onAdded} onNewPlaced={vi.fn()} compositionId="comp-focused"
+      currentTimeUs={0} tracks={[]} fpsNum={30} fpsDen={1} compWidth={1920} compHeight={1080} />);
+    expect(await screen.findByRole("region", { name: "Not trusted on this machine" })).toBeTruthy();
+    expect(within(group("This project")).getByTitle("received").getAttribute("aria-pressed")).toBe("true");
   });
 
   it("places a library Motif as a copy (fromLibrary) and a project Motif as itself; previews capture each from its own scope", async () => {

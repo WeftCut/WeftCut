@@ -57,6 +57,22 @@ capture frames ([motifs.md](motifs.md)). Two orthogonal axes bound it:
 The sandbox does not restrict the network and the CSP does not stop a renderer
 exploit reaching the OS, so both axes are load-bearing.
 
+**Trust decides whether a project Motif runs at all**
+([ADR 0174](adr/0174-a-motif-runs-only-when-trusted-on-this-machine.md)).
+A project carries its Motifs' code (ADR 0173), and the sandbox above is not
+hardened against a renderer exploit, so a revision this machine has not trusted
+never runs: one found when a project opens, or brought in from a ZIP or an
+outside folder. The gate is one place, `MotifResolver` (`main/motif/resolver.ts`),
+which answers such a project host `untrusted`; the protocol (`params.html`
+included), capture hosts, previews, bakes and covers all resolve through it.
+The record (`<dataRoot>/motifs/.trust.json`, `main/motif/trust.ts`) is keyed by
+revision, never by lineage or project, and the library's revisions are trusted
+by derivation. Only the user trusts, on the Motifs panel's trust card, from a
+summary read as text without running anything; its channels are renderer-only
+and no MCP tool can trust. Trust guards against code arriving in a folder, not
+against a local agent writing code: edits made while a project is open, from a
+trusted revision, are trusted.
+
 Serving rules: the file resolver (`main/motif/packageFiles.ts`) rejects
 traversal and symbolic links; packages hold no private files (ADR 0171).
 A Motif's lineage is a claim a ZIP can make freely, never a reason to trust

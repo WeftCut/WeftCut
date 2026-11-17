@@ -2,7 +2,7 @@
 // groups (spec § Project Motifs, "Panel"). Placing a library Motif copies it
 // into the project in the same undo step; there is no separate "add to
 // project". A project row says what it needs (an update, edits not in the
-// library, a broken folder) and offers it; library rows keep placing, ZIP
+// library, a broken folder, the user's Trust) and offers it; library rows keep placing, ZIP
 // export, version history and the trash. An agent's proposals sit on top.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -12,6 +12,8 @@ import { MotifProposalList, useMotifProposals } from './MotifProposalCard';
 import { MotifVersionHistory } from './MotifVersionHistory';
 import { useSaveToLibrary } from './SaveToLibrary';
 import { MotifProblem } from './MotifProblem';
+import { TrustCard } from './TrustCard';
+import { takeMotifsPanelRow } from './openMotifsPanel';
 import { matchRows, previewMotif, projectCopyOf, rowKey, rowName, type MotifRow } from './motifRows';
 import { listen } from "@/bridge/events";
 import { open as openDialog, save as saveDialog } from "@/bridge/dialog";
@@ -128,6 +130,10 @@ export function MotifPicker({
   };
   useEffect(() => {
     aliveRef.current = true;
+    // Opened on a row by a surface outside the panel: that row is selected,
+    // and the first catalog keeps it.
+    const requested = takeMotifsPanelRow();
+    if (requested) setSelectedKey(requested);
     reload();
     let un: (() => void) | undefined;
     let cleaned = false;
@@ -151,6 +157,7 @@ export function MotifPicker({
     () => catalog && [...catalog.project, ...catalog.library].find((r) => rowKey(r) === selectedKey) || null,
     [catalog, selectedKey],
   );
+  const selectedPreview = selected && previewMotif(selected);
 
   const videoTracks = useMemo(
     () => tracks.filter((tr) => tr.kind === "Video"),
@@ -322,11 +329,11 @@ export function MotifPicker({
             </div>
 
             <div className="motif-picker-form">
-              {selected?.motif ? (
+              {selectedPreview && selected?.motif ? (
                 <MotifForm
                   key={rowKey(selected)}
                   motif={selected.motif}
-                  preview={previewMotif(selected)!}
+                  preview={selectedPreview}
                   fromLibrary={selected.group === "library"}
                   currentTimeUs={currentTimeUs}
                   tracks={videoTracks}
@@ -352,6 +359,9 @@ export function MotifPicker({
                     }
                   }}
                 />
+              ) : selected?.group === "project" && selected.status === "untrusted" ? (
+                // Keyed by revision: files changed under the card are read again.
+                <TrustCard key={`${rowKey(selected)}:${selected.revision}`} motifId={selected.id} />
               ) : selected?.group === "project" ? (
                 <div className="motif-picker-unavailable">
                   <h3>{t("motif_picker.unavailable_title", { name: rowName(selected) })}</h3>
