@@ -21,10 +21,13 @@ import type { UserMotifStore } from './store'
 export const PROJECT_MOTIFS_DIR = 'Motifs'
 
 /** How a project Motif's revision came to be seen: copied in from the
- *  library, made in the project, changed while the project was open here, or
- *  found when it was opened. */
-export type RevisionCause = 'placed' | 'created' | 'edited-while-open' | 'opened'
-export type RevisionListener = (id: string, revision: string, cause: RevisionCause) => void
+ *  library, made in the project, brought in from a ZIP or a folder outside
+ *  the project's `Motifs/`, changed while the project was open here, or
+ *  found when it was opened (Motif trust, `trust.ts`). */
+export type RevisionCause = 'placed' | 'created' | 'imported' | 'edited-while-open' | 'opened'
+/** `base` is the revision an edit was made from (`edited-while-open`); null
+ *  for every other cause. */
+export type RevisionListener = (id: string, revision: string, cause: RevisionCause, base: string | null) => void
 
 /** A project Motif's folder as it stands. */
 export interface MotifState { status: MotifStatus; revision: string | null; diagnostic?: string }
@@ -187,9 +190,11 @@ export class ProjectMotifStore {
    *  whole, and answers the folder's revision, which the listeners hear with
    *  `cause`. An existing folder that makes a package is kept as it is, so
    *  copying again changes nothing; one that makes none is never written
-   *  over, and its diagnostic is thrown. */
+   *  over, and its diagnostic is thrown. A kept folder holding other bytes
+   *  than `files` is heard as `opened`: it was not made by this call. */
   materialize(id: string, files: readonly MotifFile[], cause: RevisionCause): string {
     const dir = this.folder(id)
+    let wrote = false
     if (!this.present(id)) {
       validateFiles(files)
       mkdirSync(this.dir, { recursive: true })
@@ -201,12 +206,13 @@ export class ProjectMotifStore {
           writeFileSync(dest, file.bytes)
         }
         renameSync(staging, dir)
+        wrote = true
       } finally {
         rmSync(staging, { recursive: true, force: true })
       }
     }
     const revision = this.source.snapshot(dir).revision
-    this.emit(id, revision, cause)
+    this.emit(id, revision, wrote || revision === revisionOf(files, id) ? cause : 'opened')
     return revision
   }
 
@@ -250,7 +256,8 @@ export class ProjectMotifStore {
    *  table or a folder holds it; a ZIP is an automatic copy, so it keeps the
    *  id it carries and a taken one becomes `collisionId`. A directory that
    *  is one of this project's own Motif folders is adopted in place
-   *  (`adopt`). */
+   *  (`adopt`). A ZIP or another directory is heard as `imported`: its bytes
+   *  were not made here. */
   create(source: CreateSource, table: Readonly<ProjectMotifs>): Placement & { path: string } {
     let files: readonly MotifFile[]
     let uid = newLineage()
@@ -287,7 +294,7 @@ export class ProjectMotifStore {
       if (isTaken(id)) throw new Error(`Motif id '${id}' is taken in this project`)
     } else id = assignUniqueId(name, uid, taken.map(t => t.toLowerCase()))
     const pkg = normalize(files, id, 'own')
-    const revision = this.materialize(id, pkg.files, 'created')
+    const revision = this.materialize(id, pkg.files, source.kind === 'zip' || source.kind === 'directory' ? 'imported' : 'created')
     return { id, entry: { uid, revision, from: null }, copied: true, path: this.folder(id) }
   }
 
@@ -332,15 +339,15 @@ export class ProjectMotifStore {
     }
     const { revision: after } = declaredPackage([...next].map(([p, bytes]) => ({ path: p, bytes })), id)
     writeThrough(dir, stamp, files, changes)
-    this.emit(id, after, 'edited-while-open')
+    this.emit(id, after, 'edited-while-open', revision)
     return after
   }
 
   /** `id`'s folder as it stands; tells the listeners when it holds a
-   *  package. */
-  seen(id: string, cause: RevisionCause): MotifState {
+   *  package. `base` is the revision an edit was made from. */
+  seen(id: string, cause: RevisionCause, base: string | null = null): MotifState {
     const state = this.status(id)
-    if (state.revision) this.emit(id, state.revision, cause)
+    if (state.revision) this.emit(id, state.revision, cause, base)
     return state
   }
 
@@ -351,7 +358,12 @@ export class ProjectMotifStore {
     return () => { this.listeners.delete(listener) }
   }
 
-  private emit(id: string, revision: string, cause: RevisionCause): void {
-    for (const listener of this.listeners) listener(id, revision, cause)
+  private emit(id: string, revision: string, cause: RevisionCause, base: string | null = null): void {
+    for (const listener of this.listeners) listener(id, revision, cause, base)
   }
+}
+
+/** The revision `files` make under `id`; null when they make no package. */
+function revisionOf(files: readonly MotifFile[], id: string): string | null {
+  try { return declaredPackage(files, id).revision } catch { return null }
 }

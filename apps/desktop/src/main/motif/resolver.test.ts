@@ -10,16 +10,21 @@ import { normalize } from './motifPackage'
 import { ProjectMotifStore } from './projectStore'
 import { MotifResolver, routeOfHost } from './resolver'
 import { PROPOSALS_DIR, UserMotifStore } from './store'
+import type { MotifTrustView } from './trust'
 
 const BUILTINS = builtinMotifs(path.resolve(__dirname, '../../shared/motifs/builtin'))
 
 let root: string
 let library: UserMotifStore
 let resolver: MotifResolver
+/** Revisions this machine does not trust; every other one is trusted. */
+let untrusted: Set<string>
 beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), 'motif-resolver-'))
   library = new UserMotifStore(path.join(root, 'library'))
-  resolver = new MotifResolver(library, BUILTINS)
+  untrusted = new Set()
+  const trust: MotifTrustView = { trusted: revision => !untrusted.has(revision) }
+  resolver = new MotifResolver(library, BUILTINS, trust)
 })
 afterEach(() => { rmSync(root, { recursive: true, force: true }) })
 
@@ -74,6 +79,33 @@ describe('resolving a host', () => {
     expect(resolver.readFile('broken', 'art.svg')).toBeNull()
     expect(() => resolver.gate('broken')).toThrow(expect.objectContaining({ code: 'content' }))
     expect(() => resolver.pin('broken', 'a'.repeat(64))).toThrow(expect.objectContaining({ code: 'content' }))
+  })
+
+  it('refuses a project Motif whose revision is not trusted here, keeping its manifest, and serves none of its files', () => {
+    const project = openProject('Film')
+    projectMotif(project, 'received', { 'params.html': '<html>p</html>', 'art.svg': '<svg/>' })
+    const revision = project.status('received').revision!
+    untrusted.add(revision)
+    expect(resolver.resolve('received')).toEqual({ scope: 'project', id: 'received', status: 'untrusted', revision,
+      manifest: expect.objectContaining({ id: 'received' }), diagnostic: expect.stringMatching(/not trusted on this machine/) })
+    for (const file of ['index.html', 'params.html', 'art.svg']) expect(resolver.readFile('received', file), file).toBeNull()
+    expect(() => resolver.gate('received')).toThrow(expect.objectContaining({ code: 'content', message: expect.stringMatching(/not trusted/) }))
+    expect(() => resolver.pin('received', revision)).toThrow(expect.objectContaining({ code: 'content' }))
+    untrusted.delete(revision)
+    expect(resolver.gate('received').revision).toBe(revision)
+    resolver.pin('received', revision).release()
+  })
+
+  it('never asks about the library or a pending publication', () => {
+    install('badge')
+    untrusted.add(library.installedListing('badge')!.revision)
+    expect(resolver.resolve('badge--library').status).toBe('ok')
+    expect(resolver.readFile('badge--library', 'index.html')).not.toBeNull()
+    const frozen = path.join(library.root(), PROPOSALS_DIR, 'card')
+    mkdirSync(frozen, { recursive: true })
+    writeFileSync(path.join(frozen, 'index.html'), page('card'))
+    untrusted.add(resolver.resolve('card--proposal').revision!)
+    expect(resolver.resolve('card--proposal').status).toBe('ok')
   })
 
   it('serves a library Motif from its current version, never the project copy of its id', () => {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { composeMotifHtml, type Manifest } from '../../shared/motifs/catalog'
@@ -11,6 +11,8 @@ import { normalize } from './motifPackage'
 import { FILE_EDITS, ProjectMotifRecords, projectMotifAccess } from './projectRecords'
 import { libraryPackage, libraryPackageOfLineage, ProjectMotifStore, type RevisionCause } from './projectStore'
 import { UserMotifStore } from './store'
+import { MotifResolver } from './resolver'
+import { MotifTrust } from './trust'
 
 let root: string
 let library: UserMotifStore
@@ -193,8 +195,7 @@ describe('opening a project', () => {
     records.opened()
     expect(historyLen()).toBe(len + 1)
     expect(entries().lower!.revision).toBe(project.status('lower').revision)
-    // Found at the open, not edited here: Motif trust tells the two apart.
-    expect(seen.filter(([, , cause]) => cause === 'opened')).toEqual([['lower', entries().lower!.revision, 'opened']])
+    // Recorded, never heard as an edit made here: Motif trust tells the two apart.
     expect(seen.some(([, , cause]) => cause === 'edited-while-open')).toBe(false)
     expect(existsSync(folder('lower'))).toBe(true)
   })
@@ -349,5 +350,82 @@ describe('an id Object.prototype answers', () => {
     records.folderChanged('constructor', project.status('constructor'))
     expect(historyLen()).toBe(len)
     expect(Object.keys(entries())).toEqual(['lower'])
+  })
+})
+
+describe('Motif trust across an open', () => {
+  /** The machine's trust record and the resolver hearing the open project,
+   *  as the app wires them; `reopen` makes the project folder the open one
+   *  again, as a project open does before its records settle. */
+  function trusting() {
+    const trust = new MotifTrust(path.join(root, 'trust.json'), () => [])
+    const resolver = new MotifResolver(library, [], trust)
+    resolver.onRevisionSeen((_id, revision, cause, base) => trust.seen(revision, cause, base))
+    const reopen = () => {
+      project = new ProjectMotifStore(projectDir)
+      resolver.setProject(project)
+    }
+    reopen()
+    return { trust, reopen }
+  }
+  afterEach(() => { trusted?.flush(); trusted = null })
+  let trusted: MotifTrust | null = null
+
+  it('never trusts an edit made while the project was closed', () => {
+    const { trust, reopen } = trusting(); trusted = trust
+    install('lower', 'v1')
+    place('lower')
+    expect(trust.trusted(entries().lower!.revision!)).toBe(true)
+    edit('lower', 'while closed')
+    reopen()
+    records.opened()
+    expect(entries().lower!.revision).toBe(project.status('lower').revision)
+    expect(trust.trusted(entries().lower!.revision!)).toBe(false)
+  })
+
+  it('never trusts it when it is heard as an edit before the open settles, and recorded late', () => {
+    const { trust, reopen } = trusting(); trusted = trust
+    install('lower', 'v1')
+    place('lower')
+    const placed = entries().lower!.revision!
+    edit('lower', 'while closed')
+    const closedEdit = project.status('lower').revision!
+    reopen()
+    // The watcher tells the folder while the open still refuses writes: it
+    // waits for `retry`, which hears it as an edit made from the trusted
+    // revision the table records.
+    busy = true
+    records.folderChanged('lower', project.status('lower'))
+    expect(entries().lower!.revision).toBe(placed)
+    busy = false
+    records.retry()
+    expect(entries().lower!.revision).toBe(closedEdit)
+    expect(trust.trusted(closedEdit)).toBe(false)
+    // An edit made from it while open stays untrusted too.
+    edit('lower', 'while open')
+    records.folderChanged('lower', project.status('lower'))
+    expect(entries().lower!.revision).toBe(project.status('lower').revision)
+    expect(trust.trusted(entries().lower!.revision!)).toBe(false)
+  })
+
+  it('trusts an edit on disk made while the project is open, from a trusted revision', () => {
+    const { trust } = trusting(); trusted = trust
+    install('lower', 'v1')
+    place('lower')
+    records.opened()
+    edit('lower', 'while open')
+    records.folderChanged('lower', project.status('lower'))
+    expect(entries().lower!.revision).toBe(project.status('lower').revision)
+    expect(trust.trusted(entries().lower!.revision!)).toBe(true)
+  })
+
+  it('keeps a folder found under Motifs/ at the open untrusted when it is adopted', () => {
+    mkdirSync(folder('found'), { recursive: true })
+    edit('found', 'from another machine')
+    const { trust } = trusting(); trusted = trust
+    records.opened()
+    const adopted = project.create({ kind: 'directory', path: folder('found') }, entries())
+    expect(adopted.entry.revision).toBe(project.status('found').revision)
+    expect(trust.trusted(adopted.entry.revision!)).toBe(false)
   })
 })

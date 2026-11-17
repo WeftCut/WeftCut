@@ -326,7 +326,8 @@ export class ExportJobs {
     const motifs = unrenderableMotifs(h, resolved.range);
     if (motifs.length) {
       const ids = motifs.map(m => m.motif_id);
-      throw new ExportJobError('motif_unavailable', `${motifs.map(m => `Motif '${m.motif_id}' is ${m.status} (${m.diagnostic})`).join('; ')}; a layer in the export uses ${ids.length > 1 ? 'them' : 'it'}, so nothing was exported — restore its folder under Motifs/, fix its files, or remove the layers that use it`,
+      const trust = motifs.some(m => m.status === 'untrusted') ? 'the user trusts an untrusted one in the Motifs panel; ' : ''
+      throw new ExportJobError('motif_unavailable', `${motifs.map(m => `Motif '${m.motif_id}' is ${m.status} (${m.diagnostic})`).join('; ')}; a layer in the export uses ${ids.length > 1 ? 'them' : 'it'}, so nothing was exported — ${trust}restore its folder under Motifs/, fix its files, or remove the layers that use it`,
         { error: 'MotifUnavailable', motif_ids: ids, motifs });
     }
     let destination: string;

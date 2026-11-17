@@ -160,7 +160,8 @@ export class ProjectMotifRecords {
     const entry = motifEntry(this.deps.actor.snapshot().motifs, id)
     if (!project || !entry || state.status !== 'ok') return
     // Called from the watcher's timer, where a throw would escape the app.
-    try { if (this.record(project, id, entry.revision)) project.seen(id, 'edited-while-open') }
+    // The edit was made from the revision the table recorded.
+    try { if (this.record(project, id, entry.revision)) project.seen(id, 'edited-while-open', entry.revision) }
     catch (error) {
       this.notRecorded(id)
       this.warn(`The edit to Motif '${id}' could not be recorded`, { motif_id: id, error: String(error) })
@@ -198,10 +199,12 @@ export class ProjectMotifRecords {
     return result.ok
   }
 
-  /** A project open settled: each Motif's revision is seen as found, one
-   *  changed while the project was closed is recorded like an edit, and the
-   *  backups keep only what the table records (undo history starts empty at
-   *  an open, and is never stored). */
+  /** A project open settled: a Motif changed while the project was closed
+   *  is recorded like an edit, and the backups keep only what the table
+   *  records (undo history starts empty at an open, and is never stored).
+   *  Its folders were seen as found when the project became the open one
+   *  (`MotifResolver.setProject`), so recording one here makes no edit made
+   *  here (Motif trust). */
   opened(): void {
     const project = this.deps.project()
     if (!project) return
@@ -211,8 +214,7 @@ export class ProjectMotifRecords {
     kept()
     for (const [id, entry] of Object.entries(this.deps.actor.snapshot().motifs)) {
       try {
-        // Seen as found at the open, never as an edit made here (Motif trust).
-        if (project.seen(id, 'opened').status === 'ok') this.record(project, id, entry.revision)
+        if (project.status(id).status === 'ok') this.record(project, id, entry.revision)
       } catch (error) {
         this.warn(`Motif '${id}' could not be checked`, { motif_id: id, error: String(error) })
       }

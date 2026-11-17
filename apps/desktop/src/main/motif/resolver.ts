@@ -2,7 +2,9 @@
 // project's `Motifs/<id>/`; `<id>--library` is the library's current version
 // of `id`, a built-in's bundled package included; `<key>--proposal` is a
 // pending publication's frozen package. The protocol handler, capture and
-// covers resolve and pin through here, never through a store.
+// covers resolve and pin through here, never through a store, so a project
+// Motif whose revision is not trusted on this machine (`trust.ts`) is served
+// to none of them.
 import { parseManifestIsland, type Manifest } from '../../shared/motifs/catalog'
 import { MotifError } from '../../shared/motifs/errors'
 import { libraryHost, libraryIdOfHost, proposalOfHost, type MotifStatus } from '../../shared/motifs/projectMotifs'
@@ -10,6 +12,7 @@ import { motifRevision, type BuiltinMotif } from './authoring'
 import { motifFileSegments, type MotifFile } from './packageFiles'
 import { libraryPackage, type ProjectMotifStore, type RevisionListener } from './projectStore'
 import type { UserMotifStore } from './store'
+import { UNTRUSTED_DIAGNOSTIC, type MotifTrustView } from './trust'
 
 export type MotifScope = 'project' | 'library' | 'proposal'
 
@@ -25,8 +28,8 @@ export function routeOfHost(host: string): MotifRoute {
   return { scope: 'project', id: host }
 }
 
-/** A host's package as it stands: its manifest and revision when `ok`, why
- *  not otherwise. */
+/** A host's package as it stands: its manifest and revision when `ok` or
+ *  `untrusted`, why not otherwise. */
 export interface ResolvedMotif extends MotifRoute {
   status: MotifStatus
   revision: string | null
@@ -64,7 +67,10 @@ export class MotifResolver {
   private readonly library: ScopeReader
   private readonly proposals: ScopeReader
 
-  constructor(private readonly store: UserMotifStore, private readonly builtins: readonly BuiltinMotif[]) {
+  /** `trust` decides which project revisions may run; the library's and
+   *  proposals' are never asked about. */
+  constructor(private readonly store: UserMotifStore, private readonly builtins: readonly BuiltinMotif[],
+    private readonly trust: MotifTrustView) {
     this.library = {
       describe: id => {
         const builtin = builtins.find(b => b.id === id)
@@ -90,10 +96,17 @@ export class MotifResolver {
   }
 
   /** The open project's Motifs; null when no project is open, and every
-   *  project host is then missing. Its revisions reach `onRevisionSeen`. */
+   *  project host is then missing. Its revisions reach `onRevisionSeen`,
+   *  each folder's as it stands now first, as found when opened: before its
+   *  watcher or any record of it can hear one as an edit made here (Motif
+   *  trust). */
   setProject(project: ProjectMotifStore | null): void {
     this.projectStore = project
-    if (project) this.hear(project)
+    if (!project) return
+    this.hear(project)
+    for (const id of project.ids()) {
+      try { project.seen(id, 'opened') } catch { /* no Motif id: nothing to find */ }
+    }
   }
   project(): ProjectMotifStore | null { return this.projectStore }
 
@@ -107,8 +120,8 @@ export class MotifResolver {
 
   /** Passes the revisions `project` sees to `onRevisionSeen`'s listeners. */
   hear(project: ProjectMotifStore): void {
-    project.onRevisionSeen((id, revision, cause) => {
-      for (const listener of this.revisionListeners) listener(id, revision, cause)
+    project.onRevisionSeen((id, revision, cause, base) => {
+      for (const listener of this.revisionListeners) listener(id, revision, cause, base)
     })
   }
 
@@ -137,6 +150,8 @@ export class MotifResolver {
     try {
       const found = reader.describe(route.id)
       if (!found) return absent(missingText(route))
+      if (route.scope === 'project' && !this.trust.trusted(found.revision))
+        return { ...route, status: 'untrusted', revision: found.revision, manifest: found.manifest, diagnostic: `Motif '${route.id}' is ${UNTRUSTED_DIAGNOSTIC}` }
       return { ...route, status: 'ok', revision: found.revision, manifest: found.manifest }
     } catch (error) {
       return { ...route, status: 'invalid', revision: null, manifest: null, diagnostic: error instanceof Error ? error.message : String(error) }

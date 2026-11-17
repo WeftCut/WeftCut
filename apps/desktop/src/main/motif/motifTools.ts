@@ -26,12 +26,15 @@ import { libraryPackage, type CreateSource, type ProjectMotifStore } from './pro
 import { LibraryPublications, type Fork, type PublicationSource } from './publications'
 import { MotifRefusal, revisionConflict } from './refusal'
 import type { UserMotifStore } from './store'
+import { effectiveState, UNTRUSTED_DIAGNOSTIC, type MotifTrustView } from './trust'
 
 export interface MotifToolDeps {
   store: UserMotifStore
   builtins: BuiltinMotif[]
   /** The open project's Motifs; null with none open. */
   project: () => ProjectMotifStore | null
+  /** Which project revisions may run on this machine. */
+  trust: MotifTrustView
   /** The open project's recorded state: its Motif table, and the commits
    *  that change it. */
   actor: Pick<ActorHandle, 'snapshot' | 'dispatch'>
@@ -86,13 +89,16 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
     if (!entry) throw new MotifRefusal(`No Motif '${id}' in this project — list_motifs lists its Motifs; group: "library" reads the library's`, { error: 'MotifNotFound', id })
     return { project, entry }
   }
-  /** Project Motif `id` as its folder holds it now; refuses one that cannot render. */
-  const projectPackage = (id: string) => {
+  /** Project Motif `id` as its folder holds it now; refuses one that cannot
+   *  render, and an untrusted one unless `untrusted` lets its files be
+   *  written out as they are. */
+  const projectPackage = (id: string, untrusted: 'refuse' | 'allow' = 'refuse') => {
     const { project, entry } = projectMotif(id)
     const state = project.status(id)
     const snapshot = state.status === 'ok' ? project.snapshot(id) : null
     if (!snapshot)
       throw new MotifRefusal(`Motif '${id}' is ${state.status}: ${state.diagnostic ?? `Motifs/${id}/ is gone`}`, { error: 'MotifUnavailable', id, status: state.status })
+    if (untrusted === 'refuse' && !deps.trust.trusted(snapshot.revision)) throw untrustedRefusal(id, snapshot.revision)
     return { project, entry, snapshot }
   }
   const libraryMotif = (id: string) => {
@@ -129,7 +135,7 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
       // project's Motif is the one its layers render.
       return [
         ...(group !== 'project' ? libraryRows(deps.store, deps.builtins, motifs) : []),
-        ...(proposed ? projectRows(project!, motifs!, deps.store, deps.builtins).map(row => {
+        ...(proposed ? projectRows(project!, motifs!, deps.store, deps.builtins, deps.trust).map(row => {
           const publication = proposed.get(row.id as string)
           return publication ? { ...row, publication } : row
         }) : []),
@@ -147,11 +153,13 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
           extra: { group: 'library', status: diagnostic ? 'invalid' : builtinLineage(id) ? 'builtin' : 'installed', version: pkg.version, ...(diagnostic ? { diagnostic } : {}) } }
       } else {
         const { project, entry } = projectMotif(id)
-        const state = project.status(id)
+        // An untrusted Motif is read too: its text is how an agent looks
+        // before the user trusts it, and nothing read here runs.
+        const state = effectiveState(project.status(id), deps.trust)
         const extra = { group: 'project', status: state.status, from: entry.from, path: project.folder(id), ...(state.diagnostic ? { diagnostic: state.diagnostic } : {}) }
         if (state.status === 'missing') throw new MotifRefusal(`Motif '${id}' has no folder in this project (Motifs/${id}/)`, { error: 'MotifUnavailable', id, status: 'missing' })
         // An invalid folder is read too: its files are how it gets fixed.
-        const described = state.status === 'ok' ? project.describe(id) : null
+        const described = state.status === 'ok' || state.status === 'untrusted' ? project.describe(id) : null
         read = { manifest: described?.manifest ?? null, revision: state.revision, files: () => readMotifDirectory(project.folder(id)),
           file: rel => project.readFile(id, rel), extra }
       }
@@ -210,7 +218,8 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
         const { pkg } = libraryMotif(id)
         files = pkg.files; revision = pkg.revision; lineage = pkg.uid
       } else {
-        const { entry, snapshot } = projectPackage(id)
+        // Written out as they are, never run: an untrusted Motif exports.
+        const { entry, snapshot } = projectPackage(id, 'allow')
         files = snapshot.files; revision = snapshot.revision; lineage = entry.uid
       }
       if (a.expected_revision !== undefined && a.expected_revision !== revision)
@@ -272,6 +281,12 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
     default:
       throw new Error(`runMotifTool: unhandled tool ${name}`)
   }
+}
+
+/** A project Motif refused because its revision is not trusted here. */
+export function untrustedRefusal(id: string, revision: string): MotifRefusal {
+  return new MotifRefusal(`Motif '${id}' is ${UNTRUSTED_DIAGNOSTIC}: the user trusts it in the Motifs panel; read_motif reads it as text`,
+    { error: 'MotifUntrusted', id, revision })
 }
 
 const SOURCE_KEYS: Record<string, readonly string[]> = {

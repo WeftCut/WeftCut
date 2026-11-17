@@ -37,6 +37,9 @@ import type { BuiltinMotif } from '../motif/authoring'
 import type { MotifResolver } from '../motif/resolver'
 import { libraryPackage, libraryPackageOfLineage, type MotifState } from '../motif/projectStore'
 import { ProjectMotifRecords, projectMotifAccess } from '../motif/projectRecords'
+import { ALL_TRUSTED, effectiveState, type MotifTrust } from '../motif/trust'
+import { motifTrustSummary } from '../motif/trustSummary'
+import { revisionConflict } from '../motif/refusal'
 import type { MediaItem } from './model'
 import type { AppSettingsStore } from '../app-settings'
 import type { AppSettingsPatch } from '../../shared/app-settings'
@@ -116,6 +119,10 @@ export interface TsActorHostDeps {
    *  `project()`, the one store whose revision listeners hear everything.
    *  Absent (tests) → no Motif folder is readable. */
   motifResolver?: MotifResolver
+  /** Which project Motif revisions may run on this machine, and the user's
+   *  Trust (`trust_motif`); the resolver gates rendering on the same record.
+   *  Absent (tests) → every revision is trusted and `trust_motif` refuses. */
+  motifTrust?: Pick<MotifTrust, 'trusted' | 'trustNow'>
   /** Makes the open project's `Motifs/` watcher tell Motif `id`'s next
    *  change even when it ends in the state last told
    *  (`ProjectMotifWatcher.forget`). Absent (tests) → nothing watches. */
@@ -237,7 +244,8 @@ export interface TsActorHost {
    *  agent), the instance actor without it. */
   motifTool: (name: string, args: Record<string, unknown>, by?: Actor) => unknown
   /** The open project's Motifs that cannot render, by id: a folder that is
-   *  gone, or whose files make no package. Empty with no project open. */
+   *  gone, whose files make no package, or whose revision is not trusted on
+   *  this machine. Empty with no project open. */
   unavailableMotifs: () => UnavailableMotif[]
   /** The open project's `Motifs/<id>/` changed on disk (`watchProjectMotifs`):
    *  a new revision of a Motif the project records becomes a recorded edit
@@ -671,12 +679,53 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     },
   }
 
+  const motifTrust = deps.motifTrust ?? ALL_TRUSTED
+
+  /** The open project's Motif `id` the user is looking at in the Motifs
+   *  panel: its store and the files its folder holds now. */
+  function trustSubject(args: Record<string, unknown>) {
+    if (typeof args.motif_id !== 'string') throw new Error('motif_id is required')
+    const project = opened ? projectMotifs() : null
+    if (!project) throw new Error('No project is open')
+    if (!Object.hasOwn(actor.snapshot().motifs, args.motif_id)) throw new Error(`No Motif '${args.motif_id}' in this project`)
+    return { id: args.motif_id, project }
+  }
+
+  /** The renderer's `motif_trust_summary`: what the trust card shows, read
+   *  without running anything. */
+  function motifTrustCard(args: Record<string, unknown>) {
+    const { id, project } = trustSubject(args)
+    const snapshot = project.snapshot(id)
+    if (!snapshot) throw new Error(`Motif '${id}' has no folder in this project`)
+    return { motif_id: id, revision: snapshot.revision, trusted: motifTrust.trusted(snapshot.revision),
+      summary: motifTrustSummary(snapshot.revision, () => snapshot.files) }
+  }
+
+  /** The renderer's `trust_motif`: the user trusts the revision the card
+   *  showed, refused when the folder holds another by now. Never an MCP
+   *  tool: only the user trusts. */
+  function trustMotif(args: Record<string, unknown>) {
+    const { id, project } = trustSubject(args)
+    if (!deps.motifTrust) throw new Error('motifTool: trust record not configured')
+    const current = project.status(id).revision
+    if (typeof args.revision !== 'string' || current !== args.revision)
+      throw revisionConflict(current ?? 'none', 'look at the Motif again before trusting it')
+    deps.motifTrust.trustNow(current)
+    deps.send('motifs:changed', {})
+    deps.mcpResourcesChanged?.()
+    return { motif_id: id, revision: current, trusted: true }
+  }
+
   function runMotif(name: string, args: Record<string, unknown>, by?: Actor): unknown {
-    if (!["list_motifs", "read_motif", "list_motif_proposals", "list_motif_versions"].includes(name)) deps.exportJobs?.assertWritable()
+    // Trust changes this machine's record, never the project: it runs during
+    // an export too.
+    if (!["list_motifs", "read_motif", "list_motif_proposals", "list_motif_versions", "motif_trust_summary", "trust_motif"].includes(name)) deps.exportJobs?.assertWritable()
     if (name === 'update_project_motif') {
       if (typeof args.motif_id !== 'string') throw new Error('motif_id is required')
       return motifRecords.updateFromLibrary(args.motif_id)
     }
+    if (name === 'motif_trust_summary') return motifTrustCard(args)
+    if (name === 'trust_motif') return trustMotif(args)
     if (!deps.motifStore) throw new Error('motifTool: motifStore not configured')
     return runMotifTool(name, args, {
       store: deps.motifStore,
@@ -684,6 +733,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       // The project open to agents: none on the start screen, even while the
       // actor still holds a closed one.
       project: () => (opened ? projectMotifs() : null),
+      trust: motifTrust,
       actor,
       emitChanged: () => deps.send('motifs:changed', {}),
       notifyAgents: () => deps.mcpResourcesChanged?.(),
@@ -695,8 +745,9 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     if (!project) return []
     const out: UnavailableMotif[] = []
     for (const id of Object.keys(actor.snapshot().motifs).sort()) {
-      const state = project.status(id)
-      if (state.status !== 'ok') out.push({ motif_id: id, status: state.status, diagnostic: state.diagnostic ?? `Motifs/${id}/ is missing` })
+      const state = effectiveState(project.status(id), motifTrust)
+      if (state.status === 'untrusted') out.push({ motif_id: id, status: state.status, diagnostic: state.diagnostic!, revision: state.revision! })
+      else if (state.status !== 'ok') out.push({ motif_id: id, status: state.status, diagnostic: state.diagnostic ?? `Motifs/${id}/ is missing` })
     }
     return out
   }

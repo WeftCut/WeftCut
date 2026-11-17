@@ -22,6 +22,9 @@ import { ExportJobError, ExportJobs } from '../exportJobs'
 import { normalize } from '../motif/motifPackage'
 import { ProjectMotifStore } from '../motif/projectStore'
 import { MotifResolver } from '../motif/resolver'
+import { ALL_TRUSTED, libraryRevisions, MotifTrust, TRUST_FILE } from '../motif/trust'
+import { newLineage } from '../motif/lineage'
+import { sessionView } from '../mcp/server'
 import { autosaveMaxWaitMs } from './autosave'
 import { rootComposition } from './model'
 import { errno } from './__tests__/fixtures/memAtomicIo'
@@ -1492,15 +1495,20 @@ describe('createTsActorHost — persistence-route integration', () => {
 
     /** A host whose open project's Motifs are in a temp folder, with library
      *  Motif `lower`; `busy` refuses writes as an export does, and `exportEnds`
-     *  plays an export's end. */
-    function motifHost() {
+     *  plays an export's end. With `trust`, the machine's trust record is
+     *  wired as the app wires it; without, every revision is trusted. */
+    function motifHost(options: { trust?: boolean } = {}) {
       const fixture = makeInMemoryDeps()
       const root = mkdtempSync(nodePath.join(tmpdir(), 'host-project-motifs-'))
       const motifStore = new UserMotifStore(nodePath.join(root, 'library'))
       motifStore.addVersion('lower', 1, normalize([{ path: 'index.html', bytes: page('Lower', 'v1') }], 'lower', 1).files)
       const project = new ProjectMotifStore(nodePath.join(root, 'Film'), { revisions: motifStore.revisions })
-      const motifResolver = new MotifResolver(motifStore, [])
+      const trustFile = nodePath.join(motifStore.root(), TRUST_FILE)
+      const motifTrust = options.trust ? new MotifTrust(trustFile, () => libraryRevisions(motifStore, [])) : undefined
+      const motifResolver = new MotifResolver(motifStore, [], motifTrust ?? ALL_TRUSTED)
+      if (motifTrust) motifResolver.onRevisionSeen((_id, revision, cause, base) => motifTrust.seen(revision, cause, base))
       motifResolver.setProject(project)
+      let agentsTold = 0
       let busy = false
       const idle: Array<() => void> = []
       const exportJobs = {
@@ -1508,15 +1516,53 @@ describe('createTsActorHost — persistence-route integration', () => {
         onIdle: (listener: () => void) => { idle.push(listener); return () => {} },
         workspaceSettled: () => {},
       } as unknown as ExportJobs
-      const host = createTsActorHost({ ...fixture.deps, motifStore, motifBuiltins: [], motifResolver, exportJobs })
+      const host = createTsActorHost({ ...fixture.deps, motifStore, motifBuiltins: [], motifResolver, exportJobs,
+        ...(motifTrust ? { motifTrust } : {}), mcpResourcesChanged: () => { agentsTold++ } })
       return {
-        ...fixture, host, project, root,
+        ...fixture, host, project, root, motifResolver, trustFile,
         setBusy: (value: boolean) => { busy = value },
         exportEnds: () => { busy = false; for (const listener of idle) listener() },
         told: () => fixture.sent.filter((s) => s.event === 'motifs:changed').length,
-        close: () => { host.stop(); rmSync(root, { recursive: true, force: true }) },
+        agentsTold: () => agentsTold,
+        close: () => { host.stop(); motifTrust?.flush(); rmSync(root, { recursive: true, force: true }) },
       }
     }
+
+    it('runs a Motif received from another machine only once the user trusts the revision they looked at', async () => {
+      const m = motifHost({ trust: true })
+      m.host.start()
+      try {
+        await m.host.handleInvoke('project_new_workspace', publicationProject)
+        // A Motif folder and table entry as another machine's project holds them.
+        mkdirSync(m.project.folder('card'), { recursive: true })
+        writeFileSync(nodePath.join(m.project.folder('card'), 'index.html'), page('Card', 'received'))
+        const revision = m.project.status('card').revision!
+        expect(m.host.actor.dispatch('set_project_motif', { motif_id: 'card', uid: newLineage(), revision, from: null }).ok).toBe(true)
+
+        const untrusted = { motif_id: 'card', status: 'untrusted', revision, diagnostic: 'not trusted on this machine' }
+        expect(m.host.unavailableMotifs()).toEqual([untrusted])
+        expect(sessionView(m.host).motifs).toMatchObject({ untrusted: [{ motif_id: 'card', revision }] })
+        const rows = await m.host.handleInvoke('list_motifs', { group: 'project' }) as Array<Record<string, unknown>>
+        expect(rows.find((r) => r.id === 'card')).toMatchObject({ status: 'untrusted', revision })
+        expect(() => m.motifResolver.gate('card')).toThrow(/not trusted/)
+        expect(await m.host.handleInvoke('motif_trust_summary', { motif_id: 'card' })).toMatchObject({
+          motif_id: 'card', revision, trusted: false, summary: { files: 1, scripts: [{ path: 'index.html' }] } })
+
+        // A revision the folder no longer holds is refused, trusting nothing.
+        await expect(m.host.handleInvoke('trust_motif', { motif_id: 'card', revision: 'f'.repeat(64) })).rejects.toThrow(/revision conflict/)
+        expect(m.host.unavailableMotifs()).toEqual([untrusted])
+
+        // Trust is the machine's, not the project's: it is taken during an export.
+        m.setBusy(true)
+        const [told, agentsTold] = [m.told(), m.agentsTold()]
+        expect(await m.host.handleInvoke('trust_motif', { motif_id: 'card', revision })).toEqual({ motif_id: 'card', revision, trusted: true })
+        expect(m.told()).toBe(told + 1)
+        expect(m.agentsTold()).toBe(agentsTold + 1)
+        expect(m.motifResolver.gate('card').revision).toBe(revision)
+        expect(m.host.unavailableMotifs()).toEqual([])
+        expect(new MotifTrust(m.trustFile, () => []).trusted(revision)).toBe(true)
+      } finally { m.close() }
+    })
 
     it('tells the renderer the catalog changed with each commit that changes the Motif table', async () => {
       const m = motifHost()
