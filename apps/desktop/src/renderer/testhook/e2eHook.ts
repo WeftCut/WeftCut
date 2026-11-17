@@ -1128,10 +1128,10 @@ export function installMotifHook(): void {
 
   hookSlot().motifProposals = () => listMotifProposals();
   hookSlot().motifDecideProposal = async ({ motifId, proposalId, approve, note }) => {
-    const id = proposalId ?? (await listMotifProposals()).find((p) => p.motif_id === motifId)?.proposal_id;
-    if (!id) throw new Error(`motifDecideProposal: no pending proposal from the draft '${motifId}'`);
-    if (approve) return approveMotifProposal(motifId, id);
-    await rejectMotifProposal(motifId, id, note);
+    const id = proposalId ?? (await listMotifProposals()).find((p) => p.source.motif_id === motifId)?.proposal_id;
+    if (!id) throw new Error(`motifDecideProposal: no pending proposal from the Motif '${motifId}'`);
+    if (approve) return approveMotifProposal(id);
+    await rejectMotifProposal(id, note);
     return null;
   };
   hookSlot().motifAddCountdown = async () => {

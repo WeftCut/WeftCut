@@ -14,8 +14,9 @@ export async function syncUserMotifsFromBackend(): Promise<void> {
     // The IPC payload is a manifest superset (adds `html`); MotifSummary
     // declares content_duration_s, so it structurally satisfies
     // MotifManifest. The extra `html` field on live wire values is harmless —
-    // setUserMotifs only reads manifest fields. Strip nothing.
-    setUserMotifs(payload as MotifManifest[]);
+    // setUserMotifs only reads manifest fields. A project Motif whose folder
+    // is missing or invalid has no manifest, so it is not in the catalog.
+    setUserMotifs(payload.filter((m) => Array.isArray(m.size)) as MotifManifest[]);
   } catch (e) {
     // Leave the built-in-only catalog in place; a transient IPC failure must
     // not blank the picker or the frame-math.

@@ -45,6 +45,7 @@ import { MCP_TOOL_DEFS, MCP_TOOLS, McpArgError, mcpDef, type McpErrorCode, type 
 import { NO_PROJECT_OPEN_MESSAGE, noProjectOpenResult, toolErrorResult, thrownToToolError, UnknownToolError } from './toolResult.js'
 import { toolRecord } from '../state/mcp-results.js'
 import { mcpActor, normalizeClientName } from '../state/mcp-actor.js'
+import { libraryHost } from '../../shared/motifs/projectMotifs.js'
 import { argProblemMessage } from './argCheck.js'
 import { importRecord, shapeHybridResult } from './hybridResult.js'
 import { PROJECT_TOOLS, runProjectTool } from './projectTools.js'
@@ -429,7 +430,7 @@ export async function handleCallTool(
     if (e instanceof ComputeCancelledError) return cancelledToolResult(e)
     if (e instanceof ExportValidationError || e instanceof ExportJobError) return toolErrorResult(exportRefusal(e))
     if (e instanceof UnknownToolError) throw e
-    // The motif store's failures are the caller's — an unknown draft, an id
+    // The motif store's failures are the caller's — an unknown Motif, an id
     // already installed — so a plain message there is `invalid_params`. A
     // compute or hybrid failure is not, unless it reads like an argument fault,
     // which `thrownToToolError` tells apart.
@@ -668,9 +669,10 @@ async function dispatchTool(
     if (route === 'motif') {
       // Catalog-read + authoring + install, served in TS. The raw value
       // is shaped to the Rust-faithful ToolResult (list_motifs strips html, etc.).
+      // Its project commits record as this call's agent.
       const refused = await refuseBadArgs(backend, name, args)
       if (refused) return refused
-      const raw = await tsHost.motifTool(name, args)
+      const raw = await tsHost.motifTool(name, args, mcpActor(client))
       return shapeMotifMcpResult(name, raw, args) as unknown as ServerResult
     }
     // Clip compute routes to 'rust', but the Rust core holds no state — the
@@ -712,30 +714,30 @@ async function dispatchTool(
     // route === 'rust' → fall through (other reads are served by the backend).
   }
   if (name === 'preview_motif') {
-    const a = args as { motif_id: string; local_t_s: number[]; props?: unknown; expected_revision?: string; width?: number | null; height?: number | null }
+    const a = args as { motif_id: string; local_t_s: number[]; props?: unknown; expected_revision?: string; width?: number | null; height?: number | null; group?: 'project' | 'library' }
     // The schema check every motif tool runs: `motif_id` and 1–24 times
     // present and typed, an argument it does not take named, all together.
     const unknown = Object.keys(args).filter((k) => !PREVIEW_MOTIF_ARGS.has(k))
-    if (unknown.length) return toolErrorResult({ code: 'invalid_params', message: `preview_motif does not take ${unknown.join(', ')}; it takes motif_id and local_t_s (1–24 seconds from the Motif's start), with optional props, width, height and expected_revision`, data: { field: unknown[0] } })
+    if (unknown.length) return toolErrorResult({ code: 'invalid_params', message: `preview_motif does not take ${unknown.join(', ')}; it takes motif_id and local_t_s (1–24 seconds from the Motif's start), with optional group, props, width, height and expected_revision`, data: { field: unknown[0] } })
     const refused = await refuseBadArgs(backend, name, args)
     if (refused) return refused
     if (a.local_t_s.length < 1 || a.local_t_s.length > PREVIEW_MAX_FRAMES || a.local_t_s.some((t) => typeof t !== 'number' || !Number.isFinite(t) || t < 0))
       return toolErrorResult({ code: 'invalid_params', message: `preview_motif: local_t_s must be 1–${PREVIEW_MAX_FRAMES} non-negative seconds from the Motif's start, got ${JSON.stringify(a.local_t_s).slice(0, 80)}`, data: { field: 'local_t_s' } })
     const motifId = a.motif_id
+    // The host the capture loads: the project's Motif by its id, the
+    // library's under its library host.
+    const host = a.group === 'library' ? libraryHost(motifId) : motifId
     // One Motif read: its manifest serves the canvas size and the props
-    // defaults, and only this draft's linked folder is synced (not every
-    // linked draft's, as a catalog listing would). A bare-core call (no host)
-    // has no store to ask: 480 is its floor and the props go through as sent.
-    let entry: { manifest: Manifest; revision: string; diagnostic?: string } | undefined
+    // defaults; an unknown id or one that cannot render is refused there,
+    // naming it. A bare-core call (no host) has no store to ask: 480 is its
+    // floor and the props go through as sent.
+    let entry: { manifest: Manifest; revision: string } | undefined
     if (tsHost) {
-      try { entry = tsHost.motifTool('read_motif', { motif_id: motifId }) as typeof entry }
-      catch (e) {
-        if (/unknown motif id/i.test(String(e))) return toolErrorResult({ code: 'invalid_params', message: `unknown Motif id '${motifId}' — list_motifs reports the built-in, installed and draft ids`, data: { error: 'MotifNotFound', id: motifId } })
-        throw e
-      }
-      if (!entry) return toolErrorResult({ code: 'invalid_params', message: `unknown Motif id '${motifId}' — list_motifs reports the built-in, installed and draft ids`, data: { error: 'MotifNotFound', id: motifId } })
-      if (entry.diagnostic) return toolErrorResult({ code: 'invalid_params', message: entry.diagnostic })
-      if (a.expected_revision && a.expected_revision !== entry.revision) return toolErrorResult({ code: 'invalid_params', message: `Motif revision conflict: the current revision is ${entry.revision}; preview without expected_revision, or read it again`, data: { error: 'RevisionConflict', current_revision: entry.revision } })
+      const read = tsHost.motifTool('read_motif', { motif_id: motifId, ...(a.group ? { group: a.group } : {}) }) as { manifest: Manifest | null; revision: string | null; diagnostic?: string } | undefined
+      if (!read) return toolErrorResult({ code: 'invalid_params', message: `unknown Motif id '${motifId}' — list_motifs reports the project's and the library's ids`, data: { error: 'MotifNotFound', id: motifId } })
+      if (read.diagnostic || !read.manifest || !read.revision) return toolErrorResult({ code: 'invalid_params', message: read.diagnostic ?? `Motif '${motifId}' cannot render`, data: { error: 'MotifUnavailable', id: motifId } })
+      if (a.expected_revision && a.expected_revision !== read.revision) return toolErrorResult({ code: 'invalid_params', message: `Motif revision conflict: the current revision is ${read.revision}; preview without expected_revision, or read it again`, data: { error: 'RevisionConflict', current_revision: read.revision } })
+      entry = { manifest: read.manifest, revision: read.revision }
     }
     // Props canonicalised against the manifest exactly as `add_layers` does:
     // missing keys take the schema defaults (a lower third previews WITH its
@@ -766,7 +768,7 @@ async function dispatchTool(
     const frames: Array<{ tSec: number; png: Uint8Array }> = []
     for (const tSec of a.local_t_s) {
       const b64 = await captureMotifPng({
-        motifId, tSec, propsJson: JSON.stringify(props),
+        motifId: host, tSec, propsJson: JSON.stringify(props),
         width: canvasW, height: canvasH, scale, contentHash: entry?.revision ?? '',
         ...(rootFps ? { fpsNum: rootFps.num, fpsDen: rootFps.den } : {}),
       }, { priority: 'background' })
@@ -818,12 +820,16 @@ function historyLockedRefusal(err: McpToolErrorJson, tsHost: TsActorHost): McpTo
  *  recent history the panel keeps; `lock_reason` is the history lock. `project`
  *  is the project the user has open (null on the start screen), with the Recents
  *  list and default parent folder `open_project` / `create_project` draw on.
- *  The resource defs themselves live in `hostResources.ts`. */
-export function sessionView(host: Pick<TsActorHost, 'agent'> & Partial<Pick<TsActorHost, 'projectStatus'>>): Record<string, unknown> {
+ *  `motifs` names the open project's Motifs that cannot render. The resource
+ *  defs themselves live in `hostResources.ts`. */
+export function sessionView(host: Pick<TsActorHost, 'agent'> & Partial<Pick<TsActorHost, 'projectStatus' | 'unavailableMotifs'>>): Record<string, unknown> {
   const snap = host.agent.snapshot()
+  const unavailable = host.unavailableMotifs?.() ?? []
+  const motifs = (status: 'missing' | 'invalid') => unavailable.filter(m => m.status === status).map(({ motif_id, diagnostic }) => ({ motif_id, diagnostic }))
   return {
     active: snap.session, sessions: snap.sessions.slice(-10), lock_reason: snap.lock_reason,
     ...(host.projectStatus ? host.projectStatus() : {}),
+    motifs: { missing: motifs('missing'), invalid: motifs('invalid') },
   }
 }
 
@@ -869,7 +875,7 @@ export async function handleReadResource(
       return { contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(effectsCatalogView(), null, 2) }] } as unknown as ServerResult
     }
     if (uri === 'motifs://current') {
-      const raw = tsHost.motifTool('list_motifs', {}) as Array<Record<string, unknown>>
+      const raw = tsHost.motifTool('list_motifs', { group: 'project' }) as Array<Record<string, unknown>>
       const list = raw.map(agentMotifRow)
       return { contents: [{ uri: 'motifs://current', mimeType: 'application/json', text: JSON.stringify(list) }] } as unknown as ServerResult
     }

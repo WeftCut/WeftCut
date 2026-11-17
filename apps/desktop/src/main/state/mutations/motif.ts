@@ -17,8 +17,8 @@ export function motifLayerParams(motifId: string, canonicalProps: Record<string,
   }
 }
 
-/** rebind_motif: set motif_id/props on the named Motif-param layers;
- *  non-Motif or missing layers are skipped. */
+/** A new Motif version's rebind (`update_project_motif`): set motif_id/props
+ *  on the named Motif-param layers; non-Motif or missing layers are skipped. */
 export function applyRebindMotif(draft: Project, updates: MotifRebindEntry[]): void {
   for (const u of updates) {
     for (const { layer } of eachLayer(draft)) {

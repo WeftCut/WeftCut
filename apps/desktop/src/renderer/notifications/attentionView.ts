@@ -17,7 +17,7 @@ export type AttentionItem =
   /// Unreviewed agent changes (ADR 0115). Gone once reviewed; never dismissed.
   | { kind: "review"; key: "review"; level: "info"; count: number }
   /// An environment notice from main (`app:notices`), at its own level.
-  | { kind: "notice"; key: string; level: AttentionLevel; code: AppNoticeCode }
+  | { kind: "notice"; key: string; level: AttentionLevel; code: AppNoticeCode; args?: AppNotice["args"] }
   /// An offered update the user has not skipped.
   | { kind: "update"; key: "update"; level: "info"; update: UpdateStatus & { version: string } };
 
@@ -45,7 +45,7 @@ export function attentionView(input: AttentionInput): AttentionView {
   const active: AttentionItem[] = [];
   for (const notice of input.notices) {
     if (input.dismissedNotices.includes(notice.code)) continue;
-    active.push({ kind: "notice", key: `notice:${notice.code}`, level: notice.level, code: notice.code });
+    active.push({ kind: "notice", key: `notice:${notice.code}`, level: notice.level, code: notice.code, ...(notice.args ? { args: notice.args } : {}) });
   }
   if (input.unreviewed > 0) {
     active.push({ kind: "review", key: "review", level: "info", count: input.unreviewed });

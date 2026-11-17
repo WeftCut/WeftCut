@@ -17,20 +17,21 @@ export const HYBRID_TOOLS: ReadonlySet<string> = new Set([
 
 /** Motif catalog-read + authoring + proposal tools, served in TS by
  *  runMotifTool, with their defs in TS MOTIF_TOOL_DEFS (mcpCatalog dedups by
- *  name). The Rust catalog carries no motif arms. The approval and
- *  project-copy update channels are the renderer's alone (router
- *  `MOTIF_CHANNELS`): no MCP client can approve its own proposal (ADR 0046). */
-export const MOTIF_TOOLS: ReadonlySet<string> = new Set(['list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif'])
+ *  name). The Rust catalog carries no motif arms. The publication, approval,
+ *  library delete and project-copy update channels are the renderer's alone
+ *  (router `MOTIF_CHANNELS`): no MCP client can approve its own proposal or
+ *  change the library itself (ADR 0046). */
+export const MOTIF_TOOLS: ReadonlySet<string> = new Set(['list_motifs', 'read_motif', 'create_motif', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif'])
 
 /** The tools that answer while no project is open — default-deny: every tool
  *  NOT named here is refused with `NoProjectOpen` on the start screen, so a new
  *  tool cannot leak into a project the user cannot see. Pinned by
  *  `mcp.project-scope.test.ts`; widening it is an edit there too.
  *
- *  Liveness, the Motif LIBRARY (its store, not placed layers — `install_motif`
- *  rebinds nothing while no project is open), the two ways INTO a project, and
- *  the companion page's link (the page itself says no project is open). */
-export const APP_SCOPE_TOOLS: ReadonlySet<string> = new Set([...EXPORT_PRESET_TOOLS, 'get_export_status', 'cancel_export', 'retry_export', 'list_motifs', 'read_motif', 'open_motif_draft', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif', 'preview_motif', 'open_project', 'create_project', 'open_side_preview'])
+ *  Liveness, the Motif reads that can name the LIBRARY (`group: "library"`;
+ *  a project Motif read refuses with none open), the two ways INTO a project,
+ *  and the companion page's link (the page itself says no project is open). */
+export const APP_SCOPE_TOOLS: ReadonlySet<string> = new Set([...EXPORT_PRESET_TOOLS, 'get_export_status', 'cancel_export', 'retry_export', 'list_motifs', 'read_motif', 'export_motif', 'preview_motif', 'open_project', 'create_project', 'open_side_preview'])
 
 /** `read_project` views the host answers without the actor's project. */
 const APP_SCOPE_VIEWS: ReadonlySet<string> = new Set(['session', 'effects', 'taste', 'skill'])

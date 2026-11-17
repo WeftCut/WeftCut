@@ -23,7 +23,6 @@ import {
   type MotifSummary,
 } from "../ipc";
 import { MotifPropField } from "../properties/MotifPropFields";
-import { useProjectStore } from "../state/projectStore";
 import { defaultPropsFor, MotifPreview, useDebounced } from "./MotifPreview";
 
 /// The pending proposals, refreshed on every `motifs:changed` (a proposal,
@@ -77,14 +76,6 @@ export function MotifProposalCard({ proposal }: { proposal: MotifProposal }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const summary = useProjectStore((s) => s.summary);
-  const rebindNames = useMemo(() => {
-    const labels = new Map<string, string>();
-    for (const comp of Object.values(summary?.compositions ?? {}))
-      for (const track of comp.tracks) for (const l of track.layers) labels.set(l.id, l.label ?? proposal.manifest.name);
-    return proposal.rebinds.map((id) => labels.get(id) ?? id);
-  }, [summary, proposal.rebinds, proposal.manifest.name]);
-
   const target = "new_id" in proposal.target
     ? t("motif_proposal.target_new", { id: proposal.target.new_id })
     : t("motif_proposal.target_update", { id: proposal.target.id, from: proposal.target.version, to: proposal.target.version + 1 });
@@ -93,8 +84,8 @@ export function MotifProposalCard({ proposal }: { proposal: MotifProposal }) {
     setBusy(true);
     setError(null);
     try {
-      if (approve) await approveMotifProposal(proposal.motif_id, proposal.proposal_id);
-      else await rejectMotifProposal(proposal.motif_id, proposal.proposal_id, note.trim() || undefined);
+      if (approve) await approveMotifProposal(proposal.proposal_id);
+      else await rejectMotifProposal(proposal.proposal_id, note.trim() || undefined);
       // motifs:changed reloads the list; this card unmounts with it.
     } catch (e) {
       setError(String(e));
@@ -139,13 +130,7 @@ export function MotifProposalCard({ proposal }: { proposal: MotifProposal }) {
           </p>
         </>
       )}
-      <p className="motif-proposal-detail">
-        {rebindNames.length === 0
-          ? t("motif_proposal.rebinds_none")
-          : rebindNames.length === 1
-            ? t("motif_proposal.rebinds_one", { names: rebindNames[0] })
-            : t("motif_proposal.rebinds_many", { count: rebindNames.length, names: rebindNames.join(", ") })}
-      </p>
+      <p className="motif-proposal-detail">{t("motif_proposal.rebinds_none")}</p>
       <label className="motif-proposal-note">
         <span>{t("motif_proposal.note_label")}</span>
         <AppInput

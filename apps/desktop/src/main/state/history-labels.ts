@@ -59,7 +59,6 @@ export const HISTORY_SUMMARY = {
   layerScaleUnlink: { key: 'history.layer.scale_unlink', text: 'Unlinked scale' },
   layerSeparateAudio: { key: 'history.layer.separate_audio', text: 'Separated audio' },
   layerAddAvPair: { key: 'history.layer.add_av_pair', text: 'Added A/V pair' },
-  layerRebindMotif: { key: 'history.layer.rebind_motif', text: 'Rebound motif clips' },
 
   trackAdd: { key: 'history.track.add', text: 'Added track' },
   trackDelete: { key: 'history.track.delete', text: 'Deleted track' },

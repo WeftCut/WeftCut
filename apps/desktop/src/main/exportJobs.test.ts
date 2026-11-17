@@ -8,6 +8,8 @@ import { ExportJobs, exportBasename, exportPathExists, suggestExportName } from 
 import { blankProject, rootComposition } from './state/model';
 import type { TsActorHost } from './state/ts-actor-host';
 import type { ExportRun } from '../shared/exportJob';
+import type { UnavailableMotif } from '../shared/motifs/projectMotifs';
+import { motifLayerParams } from './state/mutations/motif';
 
 const cleanup: string[] = [];
 const USER = { kind: 'user' } as const;
@@ -226,6 +228,29 @@ it('refuses an agent request that cannot run before a job exists: strict conflic
   await expect(s.jobs.start({ output_path: 'relative/cut.mp4' })).rejects.toMatchObject({ code: 'invalid_params' });
   expect(s.native.mock.calls.some(([c]) => c === 'export_begin' || c === 'export_prepare_output')).toBe(false);
   expect(s.jobs.latest()).toBeNull();
+});
+
+it('refuses, before a job exists, while a layer uses a Motif that cannot render, naming it', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'weftcut-export-motif-')); cleanup.push(dir);
+  const project = blankProject(() => crypto.randomUUID(), 'Project');
+  rootComposition(project).duration_us = 1_000_000;
+  rootComposition(project).tracks[0]!.layers.push({ id: crypto.randomUUID(), label: null, t_start_us: 0, t_end_us: 1_000_000, enabled: true, locked: false,
+    metadata: {}, params: motifLayerParams('gone', {}, [64, 64]), effects: [] } as never);
+  const unavailable: UnavailableMotif[] = [
+    { motif_id: 'gone', status: 'missing', diagnostic: 'Motifs/gone/ is missing' },
+    { motif_id: 'spare', status: 'invalid', diagnostic: 'index.html is missing' },
+  ];
+  let held = unavailable;
+  const host = { actor: { snapshot: () => project }, openedProject: () => ({ dir }), handleInvoke: async () => null, unavailableMotifs: () => held } as unknown as TsActorHost;
+  const native = vi.fn(async () => null);
+  const jobs = new ExportJobs({ host: () => host, send: vi.fn(), native, readyTimeoutMs: 40 });
+  const refused = jobs.start({ settings: { include_audio: false } });
+  await expect(refused).rejects.toMatchObject({ code: 'motif_unavailable', data: { error: 'MotifUnavailable', motif_ids: ['gone'] } });
+  await expect(refused).rejects.toThrow(/Motif 'gone' is missing/);
+  expect(native).not.toHaveBeenCalled();
+  // A Motif no layer uses does not stop an export.
+  held = unavailable.slice(1);
+  await expect(jobs.start({ settings: { include_audio: false } })).resolves.toMatchObject({ state: expect.any(String) });
 });
 
 it('the UI\'s strict conflict still fails in view, and the latest job outlives its end (ME11)', async () => {

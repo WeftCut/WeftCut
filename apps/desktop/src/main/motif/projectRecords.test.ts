@@ -145,7 +145,7 @@ describe('updating the project copy from the library', () => {
     const len = historyLen()
     const updated = records.updateFromLibrary('lower')
     expect(historyLen()).toBe(len + 1)
-    expect(entries().lower).toEqual({ uid: replaced.uid, revision: updated.revision, from: { uid: replaced.uid, version: 2, revision: library.describe('lower')!.revision } })
+    expect(entries().lower).toEqual({ uid: replaced.uid, revision: updated.revision, from: { uid: replaced.uid, version: 2, revision: library.installedListing('lower')!.revision } })
     const props = () => [...eachLayer(actor.snapshot())].find(({ layer }) => layer.id === layerId)!.layer.params as { props: Record<string, unknown> }
     expect(props().props).toEqual({ headline: 'B' })
     expect(backups().has('lower', replaced.revision!)).toBe(true)

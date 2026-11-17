@@ -1646,11 +1646,6 @@ export function createActor(opts: ActorOptions): ActorHandle {
           const value = commit(HISTORY_SUMMARY.captionMerge, (res: MergeCaptionsResult) => layerRefs([res.layer, ...res.removed]), { kind: 'Coarse' }, (d) => applyMergeCaptions(d, a.layers as Uuid[]))
           return { ok: true, value }
         }
-        case 'rebind_motif': {
-          const updates = a.updates as MotifRebindEntry[]
-          const affected: EntityRef[] = updates.map((u) => ({ kind: 'Layer', id: u.layer_id }))
-          return { ok: true, value: commit(HISTORY_SUMMARY.layerRebindMotif, affected, { kind: 'Coarse' }, (d) => applyRebindMotif(d, updates)) }
-        }
         // The project's Motif table (spec § Project Motifs). Each entry is a
         // folder the host has already written: these record what it holds.
         case 'set_project_motif': {

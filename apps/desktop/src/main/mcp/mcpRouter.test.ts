@@ -14,12 +14,12 @@ describe('routeMcpTool', () => {
     expect(routeMcpTool('apply_subtitles')).toBe('hybrid')
     expect(routeMcpTool('synthesize_speech')).toBe('hybrid')
   })
-  it('routes the 5 MCP motif tools to the motif route', () => {
-    for (const t of ['list_motifs', 'read_motif', 'open_motif_draft', 'delete_motif', 'install_motif'])
+  it('routes the MCP motif tools to the motif route', () => {
+    for (const t of ['list_motifs', 'read_motif', 'create_motif', 'update_motif_files', 'export_motif', 'delete_motif', 'install_motif'])
       expect(routeMcpTool(t), t).toBe('motif')
   })
   it('the approval and project-copy channels are the renderer\'s, never MCP motif tools (ME8, ADR 0046)', () => {
-    for (const t of ['update_project_motif', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal', 'list_motif_versions', 'restore_motif_version']) {
+    for (const t of ['update_project_motif', 'publish_motif', 'list_motif_proposals', 'approve_motif_proposal', 'reject_motif_proposal', 'list_motif_versions', 'restore_motif_version', 'delete_library_motif']) {
       expect(MOTIF_TOOLS.has(t), t).toBe(false)
       expect(routeMcpTool(t), t).not.toBe('motif')
     }

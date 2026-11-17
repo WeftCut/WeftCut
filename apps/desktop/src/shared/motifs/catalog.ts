@@ -470,14 +470,34 @@ export function coreManifestForHash(m: Manifest): Record<string, unknown> {
   };
 }
 
+/** The page `composeMotifHtml` was given, when `html` is its output: the
+ *  island and the newlines it wrote around it removed. Null when the island
+ *  is not where it puts one. */
+function uncomposed(html: string): string | null {
+  const idMarker = html.indexOf(ISLAND_MARKER);
+  if (idMarker < 0) return null;
+  const open = html.lastIndexOf("<script", idMarker);
+  const closeRel = html.indexOf("</script>", idMarker);
+  if (open < 0 || closeRel < 0) return null;
+  const close = closeRel + "</script>".length;
+  if (html[close] !== "\n") return null;
+  const headPos = findCi(html, "<head>");
+  const after = headPos >= 0 ? headPos + "<head>".length : -1;
+  if (headPos >= 0 && headPos < open && open === after + 1 && html[after] === "\n")
+    return html.slice(0, after) + html.slice(close + 1);
+  if (open === 0 && (headPos < 0 || headPos > close)) return html.slice(close + 1);
+  return null;
+}
+
 /**
  * Compose the canonical single-file Motif HTML: strip any existing island, then
  * inject a fresh pretty-JSON island (with `<` escaped as < so a string
  * field can't close the island early) right after the opening <head> (or at the
- * top if none). Round-trips through `parseManifestIsland`.
+ * top if none). Round-trips through `parseManifestIsland`. Composing a composed
+ * page changes only its island: a package normalised again keeps its bytes.
  */
 export function composeMotifHtml(manifest: Manifest, html: string): string {
-  const stripped = stripManifestIsland(html);
+  const stripped = uncomposed(html) ?? stripManifestIsland(html);
   const json = JSON.stringify(coreManifestForHash(manifest), null, 2).replaceAll("<", "\\u003c");
   const island = `<script type="application/json" id="motif-manifest">\n${json}\n</script>\n`;
   const headPos = findCi(stripped, "<head>");

@@ -1443,12 +1443,12 @@ const zhCN: Resources = {
     // Motif 创作工具（`main/mcp/motifToolDefs.ts`）。
     "list_motifs": "列出 Motif",
     "read_motif": "读取 Motif 源码",
-    "open_motif_draft": "打开 Motif 草稿",
+    "create_motif": "新建 Motif",
     "update_motif_files": "编辑 Motif 文件",
     "export_motif": "导出 Motif",
-    "preview_motif": "预览 Motif 草稿",
-    "install_motif": "安装 Motif",
-    "delete_motif": "删除 Motif"
+    "preview_motif": "预览 Motif",
+    "install_motif": "提议存入 Motif 库",
+    "delete_motif": "从项目移除 Motif"
   }
 },
   // Tacks (ADR 0115): agent review marks. English says Tack; Chinese says
@@ -1958,6 +1958,11 @@ const zhCN: Resources = {
       title: "代理 Skill 未更新",
       action: "打开代理设置",
       body: "WeftCut 无法刷新自带的代理 Skill，当前提供的是旧版本留下的副本。使用它的代理可能会调用本版本已经没有的工具。",
+    },
+    motif_drafts_left: {
+      title: "{{count}} 个 Motif 草稿未显示",
+      action: "打开代理设置",
+      body: "旧版本的 Motif 草稿仍在 {{folder}}。要使用其中一个，请让代理对它的文件夹运行 create_motif（directory 来源）。",
     },
   },
   // 素材优化原因，显示在媒体池 badge 的 tooltip 中。
@@ -2681,8 +2686,6 @@ const zhCN: Resources = {
     diff_props: "参数 — 新增：{{added}} · 删除：{{removed}} · 修改：{{changed}}",
     diff_empty_list: "无",
     rebinds_none: "本项目没有片段会改变。",
-    rebinds_one: "本项目有 1 个片段会更新：{{names}}",
-    rebinds_many: "本项目有 {{count}} 个片段会更新：{{names}}",
     note_label: "给代理的备注（可选）",
     note_placeholder: "原因，或需要修改什么",
     approve: "批准",
@@ -2906,7 +2909,6 @@ const zhCN: Resources = {
       scale_unlink: "解除缩放锁定",
       separate_audio: "分离音频",
       add_av_pair: "添加音视频对",
-      rebind_motif: "重绑定 Motif 片段",
     },
     // 闭合选中的间隙（docs/features.md#ripple-delete）：动作的对象是间隙，没有片段被删。
     gap: {

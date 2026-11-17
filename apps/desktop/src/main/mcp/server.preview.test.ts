@@ -4,7 +4,7 @@
 // takes its manifest default (a lower third previews WITH its text), and an
 // unknown id or prop is refused before any capture. Every requested time
 // comes back on one labelled contact sheet (ME6), and only the requested Motif
-// is read (ME18: no catalog listing, so no sync of every linked draft).
+// is read (ME18: no catalog listing).
 import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { decodePng, encodePng } from './motifSheet'
@@ -17,6 +17,7 @@ function frame(args: { width: number; height: number; scale?: number }): string 
 const capture = vi.fn(async (args: { width: number; height: number; scale?: number }) => frame(args))
 
 import { handleCallTool } from './server'
+import { MotifRefusal } from '../motif/refusal'
 import { createActor } from '../state/actor'
 import { uuidV7Gen } from '../state/ids'
 import { blankProject } from '../state/model'
@@ -38,7 +39,7 @@ function host() {
     motifTool: (name: string, args: { motif_id?: string }) => {
       reads.push(name)
       if (name !== 'read_motif') return null
-      if (args.motif_id !== 'lower-third') throw new Error(`unknown motif id '${args.motif_id}'`)
+      if (args.motif_id !== 'lower-third') throw new MotifRefusal(`No Motif '${args.motif_id}' in this project — list_motifs lists its Motifs`, { error: 'MotifNotFound', id: args.motif_id! })
       return { manifest: MANIFEST, revision: 'rev-1', status: 'builtin' }
     },
     handleInvoke: async () => null, start: () => {}, stop: () => {},
@@ -62,7 +63,7 @@ describe('preview_motif renders what add_layers would place', () => {
       propsJson: JSON.stringify({ subtitle: 'Role', title: 'Name Surname' }),
     }))
     expect(record(out)).toMatchObject({ motif_id: 'lower-third', revision: 'rev-1', canvas: [1920, 1080], image: [640, 360], local_t_s: [1], sheet: { width: 640, height: 386, columns: 1 } })
-    // ME18: no catalog listing (which syncs every linked draft), one read.
+    // ME18: no catalog listing, one read.
     expect(reads).toEqual(['read_motif'])
   })
 
@@ -116,6 +117,14 @@ describe('preview_motif renders what add_layers would place', () => {
     expect(out.content[0].text).toContain("'title-card'")
     expect(out.content[0].text).toContain('list_motifs')
     expect(capture).not.toHaveBeenCalled()
+  })
+
+  it('group "library" reads and captures the library Motif, under its library host', async () => {
+    capture.mockClear(); reads.length = 0
+    const out = await preview({ motif_id: 'lower-third', group: 'library', local_t_s: [0] }) as Res
+    expect(out.isError).toBeFalsy()
+    expect(capture).toHaveBeenCalledWith(expect.objectContaining({ motifId: 'lower-third--library' }))
+    expect(record(out)).toMatchObject({ motif_id: 'lower-third' })
   })
 
   it('a stale expected_revision names the current one, before any capture (ME19)', async () => {

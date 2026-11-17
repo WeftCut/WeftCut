@@ -168,20 +168,22 @@ independent element, and at most a few interaction Motifs (*Scope* in
 `motif-authoring.md`). A still from the media pool goes in through a `media`
 prop; moving footage stays a video layer.
 
-1. Prefer a self-contained folder inside your working directory (for example
-   motifs/<name>/) and one `open_motif_draft` with its absolute path; keep
-   editing the folder with your normal file tools. Only when the app refuses
-   it, work through `read_motif` and `update_motif_files`
+1. A project renders its own Motifs, in its `Motifs/<id>/` folders. Make one
+   with `create_motif` (empty, a copy of a project or library Motif, a ZIP,
+   or a package folder) and edit the folder its answer names with your normal
+   file tools; a Motif placed from the library is edited the same way. Edits
+   need no approval and land in the user's undo history. When you cannot reach
+   the folder, work through `read_motif` and `update_motif_files`
    (`motif-workspaces.md`, *Without a shared folder*).
 2. `preview_motif` the start, middle and near the end in one call, then once
-   more with non-default props. Fix invalid sources before proposing.
-3. **Motif publication waits for the user's approval in the app.** Place the
-   draft with `add_layers` when useful, then `install_motif` the reviewed
-   revision: it only proposes. Tell the user to approve it in WeftCut's Motifs
-   panel and stop; do not poll and do not report it published. `list_motifs`
-   shows the outcome and any note. Remove trial layers afterwards unless the
-   user wants them kept.
-4. `export_motif` and `delete_motif` only when the user asks.
+   more with non-default props. Fix invalid sources before placing it.
+3. Place it with `add_layers`. **Saving a Motif to the library waits for the
+   user's approval in the app**: `install_motif` only proposes, and no project
+   changes. Tell the user to approve it in WeftCut's Motifs panel and stop; do
+   not poll and do not report it saved. `list_motifs` shows the outcome and any
+   note.
+4. `export_motif` and `delete_motif` (removes it from the project) only when
+   the user asks.
 
 **Three.js Motifs**: read `motif-three-model.md` and start from
 `templates/three-model.zip` beside this file.

@@ -5,10 +5,10 @@
 // covers resolve and pin through here, never through a store.
 import { parseManifestIsland, type Manifest } from '../../shared/motifs/catalog'
 import { MotifError } from '../../shared/motifs/errors'
-import { libraryHost, libraryIdOfHost, proposalOfHost, proposalPreviewId, type MotifStatus } from '../../shared/motifs/projectMotifs'
+import { libraryHost, libraryIdOfHost, proposalOfHost, type MotifStatus } from '../../shared/motifs/projectMotifs'
 import { motifRevision, type BuiltinMotif } from './authoring'
 import { motifFileSegments, type MotifFile } from './packageFiles'
-import { libraryPackage, type ProjectMotifStore } from './projectStore'
+import { libraryPackage, type ProjectMotifStore, type RevisionListener } from './projectStore'
 import type { UserMotifStore } from './store'
 
 export type MotifScope = 'project' | 'library' | 'proposal'
@@ -60,6 +60,7 @@ export class MotifResolver {
   /** Revision snapshots by `<scope>/<id>/<revision>`, oldest first, with
    *  their holders. The key carries no project: a revision is its bytes. */
   private readonly pinned = new Map<string, { files: Map<string, Buffer>; holders: number }>()
+  private readonly revisionListeners = new Set<RevisionListener>()
   private readonly library: ScopeReader
   private readonly proposals: ScopeReader
 
@@ -80,18 +81,36 @@ export class MotifResolver {
     }
     this.proposals = {
       describe: key => {
-        const listing = store.describe(proposalPreviewId(key))
+        const listing = store.proposalListing(key)
         return listing && { manifest: parseManifestIsland(listing.html), revision: listing.revision }
       },
-      file: (key, rel) => store.readFile(proposalPreviewId(key), rel),
-      snapshot: key => store.packageSnapshot(proposalPreviewId(key)),
+      file: (key, rel) => store.proposalFile(key, rel),
+      snapshot: key => store.proposalSnapshot(key),
     }
   }
 
   /** The open project's Motifs; null when no project is open, and every
-   *  project host is then missing. */
-  setProject(project: ProjectMotifStore | null): void { this.projectStore = project }
+   *  project host is then missing. Its revisions reach `onRevisionSeen`. */
+  setProject(project: ProjectMotifStore | null): void {
+    this.projectStore = project
+    if (project) this.hear(project)
+  }
   project(): ProjectMotifStore | null { return this.projectStore }
+
+  /** Listens for every revision a project store this app made sees: the open
+   *  project's, and the copies an upgrade places before it opens
+   *  (`legacyMigration`). Answers the unsubscribe. */
+  onRevisionSeen(listener: RevisionListener): () => void {
+    this.revisionListeners.add(listener)
+    return () => { this.revisionListeners.delete(listener) }
+  }
+
+  /** Passes the revisions `project` sees to `onRevisionSeen`'s listeners. */
+  hear(project: ProjectMotifStore): void {
+    project.onRevisionSeen((id, revision, cause) => {
+      for (const listener of this.revisionListeners) listener(id, revision, cause)
+    })
+  }
 
   private reader(scope: MotifScope): ScopeReader | null {
     if (scope === 'library') return this.library

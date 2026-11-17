@@ -45,6 +45,7 @@ import { setMotifMediaSource } from './motif/mediaProps.js'
 import { rasterizeSvg } from './svgRaster.js'
 import { MotifCaptureService, parseMotifCaptureControl, parseMotifCaptureRequest, parseMotifPresence } from './motif/captureService.js'
 import { UserMotifStore } from './motif/store.js'
+import { legacyDraftsNotice } from './motif/legacyResolve.js'
 import { PackageRevisions } from './motif/packageRevisions.js'
 import { MotifFrameStore } from './motif/frameStore.js'
 import { createMotifConsumers } from './motif/consumers.js'
@@ -848,6 +849,10 @@ app.whenReady().then(async () => {
   // package file once the store no longer hides it, and an installed Motif
   // is read only from its version folders.
   motifStore.upgrade()
+  // An older release's drafts stay where they were, listed nowhere: one
+  // notice says so and how to bring one into a project.
+  const draftsNotice = legacyDraftsNotice(motifStore)
+  if (draftsNotice) startupNotices.push(draftsNotice)
   const motifBuiltinDir = builtinAssetDir()
   // Built-in Motif sources, loaded once (manifest, page and files).
   const motifBuiltins = builtinMotifs(motifBuiltinDir)

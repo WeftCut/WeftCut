@@ -369,10 +369,10 @@ with the rest of its files.
 ## Authoring over MCP
 
 Use the directory/file workflow in [motif-workspaces.md](motif-workspaces.md):
-`open_motif_draft` takes a linked directory, a ZIP, an existing Motif or an
-empty package; clients without filesystem access use `read_motif` and
-`update_motif_files`. A read returns a revision; pass it to file updates and,
-after reviewing `preview_motif`, to `install_motif`, which proposes the
-publication for the user to approve in the app. The app never rewrites a
-linked directory to assign ids, and copying a Motif never selects an
-overwrite target — name one explicitly when publishing an update.
+`create_motif` makes a Motif in the open project from a package folder, a ZIP,
+a copy of a project or library Motif, or an empty package, and answers the
+folder under the project's `Motifs/` that holds it; edit that folder in place.
+Clients without filesystem access use `read_motif` and `update_motif_files`.
+A read returns a revision; pass it to file updates. `install_motif` proposes a
+project Motif to the library for the user to approve in the app; it targets the
+library Motif of the same lineage, and no project changes when it is approved.

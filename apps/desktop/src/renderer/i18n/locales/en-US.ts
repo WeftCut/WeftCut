@@ -1634,12 +1634,12 @@ const enUS = {
     // Motif authoring tools (`main/mcp/motifToolDefs.ts`).
     "list_motifs": "List motifs",
     "read_motif": "Read motif source",
-    "open_motif_draft": "Open Motif draft",
+    "create_motif": "Create Motif",
     "update_motif_files": "Edit Motif files",
     "export_motif": "Export Motif",
-    "preview_motif": "Preview motif draft",
-    "install_motif": "Install motif",
-    "delete_motif": "Delete motif"
+    "preview_motif": "Preview Motif",
+    "install_motif": "Propose Motif to library",
+    "delete_motif": "Remove Motif from project"
   }
 },
   // Tacks (ADR 0115): agent review marks. English says Tack; Chinese says
@@ -2188,6 +2188,11 @@ const enUS = {
       title: "Agent Skill not up to date",
       action: "Open agent settings",
       body: "WeftCut could not refresh its agent Skill, so the copy on offer is one an earlier version left behind. An agent using it may call tools this version no longer has.",
+    },
+    motif_drafts_left: {
+      title: "{{count}} Motif drafts not shown",
+      action: "Open agent settings",
+      body: "Motif drafts from an earlier version are still in {{folder}}. To use one, ask an agent to run create_motif with a directory source on its folder.",
     },
   },
   // Codec-named optimization reasons, shown in Media Pool badge tooltips.
@@ -2956,8 +2961,6 @@ const enUS = {
     diff_props: "Props — added: {{added}} · removed: {{removed}} · changed: {{changed}}",
     diff_empty_list: "none",
     rebinds_none: "No clips in this project change.",
-    rebinds_one: "1 clip in this project will update: {{names}}",
-    rebinds_many: "{{count}} clips in this project will update: {{names}}",
     note_label: "Note for the agent (optional)",
     note_placeholder: "Why, or what to change",
     approve: "Approve",
@@ -3213,7 +3216,6 @@ const enUS = {
       scale_unlink: "Unlinked scale",
       separate_audio: "Separated audio",
       add_av_pair: "Added A/V pair",
-      rebind_motif: "Rebound motif clips",
     },
     // A selected gap closed (docs/features.md#ripple-delete): the subject is
     // the gap, no clip went.

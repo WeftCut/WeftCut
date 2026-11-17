@@ -80,7 +80,7 @@ describe('resolving a host', () => {
     install('badge', { 'art.svg': 'library' })
     const project = openProject('Film')
     projectMotif(project, 'badge', { 'art.svg': 'project' })
-    expect(resolver.resolve('badge--library')).toMatchObject({ scope: 'library', status: 'ok', revision: library.describe('badge')!.revision })
+    expect(resolver.resolve('badge--library')).toMatchObject({ scope: 'library', status: 'ok', revision: library.installedListing('badge')!.revision })
     expect(text(resolver.readFile('badge--library', 'art.svg'))).toBe('library')
     expect(text(resolver.readFile('badge', 'art.svg'))).toBe('project')
     expect(resolver.resolve('gone--library')).toMatchObject({ status: 'missing', diagnostic: expect.stringMatching(/not in the library/) })

@@ -43,7 +43,7 @@ describe('placing a library Motif', () => {
   it('copies it with its revision and lineage, so its stored frames keep their keys', () => {
     install('lower', 'Lower', [{ path: 'art.svg', bytes: Buffer.from('<svg/>') }])
     const placed = project.place(libraryPackage(library, [], 'lower')!, {})
-    const source = library.describe('lower')!
+    const source = library.installedListing('lower')!
     expect(placed).toMatchObject({ id: 'lower', copied: true })
     expect(placed.entry).toEqual({ uid: library.lineage.of('lower'), revision: source.revision,
       from: { uid: library.lineage.of('lower'), version: 1, revision: source.revision } })

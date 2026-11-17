@@ -129,3 +129,20 @@ describe('the work session names its holder and can be taken over', () => {
     expect(agent.snapshot().session).toBeNull()
   })
 })
+
+describe('the session view names the Motifs that cannot render', () => {
+  it('lists missing and invalid project Motifs apart, each with why', async () => {
+    const { ts, backend } = host()
+    ts.unavailableMotifs = () => [
+      { motif_id: 'gone', status: 'missing', diagnostic: 'Motifs/gone/ is missing' },
+      { motif_id: 'broken', status: 'invalid', diagnostic: 'index.html is missing' },
+    ]
+    const res = await handleReadResource(backend, () => ts, 'project://session') as { contents: Array<{ text: string }> }
+    expect(JSON.parse(res.contents[0]!.text).motifs).toEqual({
+      missing: [{ motif_id: 'gone', diagnostic: 'Motifs/gone/ is missing' }],
+      invalid: [{ motif_id: 'broken', diagnostic: 'index.html is missing' }],
+    })
+    ts.unavailableMotifs = () => []
+    expect(sessionView(ts).motifs).toEqual({ missing: [], invalid: [] })
+  })
+})

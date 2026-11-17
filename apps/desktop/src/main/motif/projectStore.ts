@@ -6,7 +6,7 @@ import { lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, wr
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { assignUniqueId, builtinLineage, idFromName, parseManifestIsland, type Manifest } from '../../shared/motifs/catalog'
-import { collisionId, isNewMotifId, type MotifStatus, type ProjectMotifEntry, type ProjectMotifs } from '../../shared/motifs/projectMotifs'
+import { collisionId, isNewMotifId, isProjectMotifKey, type MotifStatus, type ProjectMotifEntry, type ProjectMotifs } from '../../shared/motifs/projectMotifs'
 import { motifRevision, type BuiltinMotif } from './authoring'
 import { readMotifZip } from './archive'
 import { newLineage } from './lineage'
@@ -242,7 +242,9 @@ export class ProjectMotifStore {
   /** Makes a new Motif in the project, of a new lineage, its files normalised
    *  under the id it takes. The id comes from its name, numbered when the
    *  table or a folder holds it; a ZIP is an automatic copy, so it keeps the
-   *  id it carries and a taken one becomes `collisionId`. */
+   *  id it carries and a taken one becomes `collisionId`. A directory that
+   *  is one of this project's own Motif folders is adopted in place
+   *  (`adopt`). */
   create(source: CreateSource, table: Readonly<ProjectMotifs>): Placement & { path: string } {
     let files: readonly MotifFile[]
     let uid = newLineage()
@@ -252,7 +254,10 @@ export class ProjectMotifStore {
       case 'copy': files = source.files; break
       case 'directory': {
         if (!path.isAbsolute(source.path)) throw new Error('Source path must be absolute')
-        files = readMotifDirectory(realpathSync.native(source.path))
+        const real = realpathSync.native(source.path)
+        const own = this.ownFolder(real)
+        if (own !== null) return this.adopt(own, table)
+        files = readMotifDirectory(real)
         break
       }
       case 'zip': {
@@ -280,16 +285,40 @@ export class ProjectMotifStore {
     return { id, entry: { uid, revision, from: null }, copied: true, path: this.folder(id) }
   }
 
+  /** The name of the folder `real` (a resolved path) when it is one of this
+   *  project's Motif folders; null otherwise. */
+  private ownFolder(real: string): string | null {
+    let root: string
+    try { root = realpathSync.native(this.dir) } catch { return null }
+    return path.dirname(real) === root ? path.basename(real) : null
+  }
+
+  /** A folder written under `Motifs/` becomes a Motif of a new lineage under
+   *  its own name, its files as they stand; one the table holds is answered
+   *  as it is. */
+  private adopt(id: string, table: Readonly<ProjectMotifs>): Placement & { path: string } {
+    const held = Object.hasOwn(table, id) ? table[id] : undefined
+    if (held) return { id, entry: held, copied: false, path: this.folder(id) }
+    if (!isProjectMotifKey(id))
+      throw new Error(`Motifs/${id} cannot be a Motif id: rename the folder to lowercase letters, digits and single dashes`)
+    const state = this.seen(id, 'created')
+    if (!state.revision) throw new Error(state.diagnostic ?? `Motifs/${id} holds no Motif package`)
+    return { id, entry: { uid: newLineage(), revision: state.revision, from: null }, copied: false, path: this.folder(id) }
+  }
+
   /** Applies `changes` (path to bytes, null to delete) to `id`'s folder,
-   *  whose revision must be `expected`. The whole result must make a package
-   *  before any file is written; the files are written one by one
-   *  (`writeThrough`). Answers the new revision. */
-  applyChanges(id: string, expected: string, changes: ReadonlyMap<string, Buffer | null>): string {
+   *  whose revision must be `expected`; a function makes them from the files
+   *  the folder holds. The whole result must make a package before any file
+   *  is written; the files are written one by one (`writeThrough`). Answers
+   *  the new revision. */
+  applyChanges(id: string, expected: string,
+    changes: ReadonlyMap<string, Buffer | null> | ((files: readonly MotifFile[]) => ReadonlyMap<string, Buffer | null>)): string {
     const dir = this.folder(id)
     if (!this.present(id)) throw new Error(`Motif '${id}' has no folder in this project`)
     const { files, revision, stamp } = this.source.read(dir)
     if (!stamp) throw new Error('The Motif folder changed while it was read; read it again')
     if (revision !== expected) throw revisionConflict(revision, 'read the Motif again and merge')
+    if (typeof changes === 'function') changes = changes(files)
     const next = new Map(files.map(f => [f.path, f.bytes]))
     for (const [rel, bytes] of changes) {
       if (bytes) next.set(rel, bytes)

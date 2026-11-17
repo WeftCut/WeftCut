@@ -79,7 +79,7 @@ The paper feel is static: a slight tilt, one shared soft shadow, torn edges and
 grain.
 
 **The Motifs below are examples, not a template.** They show the vocabulary in
-use. Use one as it is, fork it (`open_motif_draft` from a copy) and change what
+use. Use one as it is, fork it (`create_motif` from a copy) and change what
 the video needs, or write a new Motif in the same vocabulary: the palette and
 fonts through the shared props (`ink`, `paper`, `accent`, `highlight`,
 `font_<slot>`), the spring, the tilt and shadow, torn paper. A fork keeps those

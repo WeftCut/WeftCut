@@ -50,11 +50,8 @@ export function declaredManifest(files: readonly MotifFile[]): { input: Manifest
 
 /** The package the app writes for `files` under `id`: the page's island and
  *  `manifest.json` are composed from the declared manifest. `version` 'own'
- *  keeps the manifest's version (1 when it declares none).
- *
- *  Not idempotent: composing a composed page adds a line, so normalising a
- *  normalised package changes its revision. A package the app reads back is
- *  hashed as it is (`declaredPackage`), never normalised again. */
+ *  keeps the manifest's version (1 when it declares none). Normalising a
+ *  normalised package under the same id and version changes no byte. */
 export function normalize(files: readonly MotifFile[], id: string, version: number | 'own' = 1) {
   validateFiles(files)
   const { input, html } = declaredManifest(files)
@@ -70,7 +67,7 @@ export function normalize(files: readonly MotifFile[], id: string, version: numb
 
 /** The package a folder named `id` holds, read as its files stand: the
  *  declared manifest under the folder's id, with the bytes hashed unchanged.
- *  The files of a library version, a built-in or a draft keep their revision
+ *  The files of a library version or a built-in keep their revision
  *  when copied under the same id; a folder an author edits is never
  *  rewritten. Throws what makes the files no package. */
 export function declaredPackage(files: readonly MotifFile[], id: string): { manifest: Manifest; html: string; revision: string } {

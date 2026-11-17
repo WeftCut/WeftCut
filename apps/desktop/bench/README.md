@@ -271,7 +271,7 @@ bench did not start is stopped.
 ### The path proxy
 
 The agent writes Motif working folders in its local working directory and
-passes their paths to tools such as `open_motif_draft`; the app can only open
+passes their paths to tools such as `create_motif`; the app can only open
 paths on its own disk. `proxy/proxy.ts` sits between them: an MCP SDK server
 facing the agent and an SDK client facing the app, both streamable HTTP, one
 upstream session per agent session, opened with the agent's own `clientInfo`

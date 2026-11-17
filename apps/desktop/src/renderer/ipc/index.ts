@@ -3257,7 +3257,7 @@ export async function getMotifSource(id: string): Promise<MotifSource> {
 
 /// Write a draft from authored `{ manifest, html }`. Returns the assigned draft id.
 export async function writeMotifDraft(manifest: MotifManifest, html: string): Promise<string> {
-  const draft = await invoke<{motif_id:string;revision:string}>('open_motif_draft', {source:{kind:'empty',name:manifest.name}});
+  const draft = await invoke<{motif_id:string;revision:string}>('create_motif', {source:{kind:'empty',name:manifest.name}});
   await invoke('update_motif_files',{motif_id:draft.motif_id,expected_revision:draft.revision,files:[{path:'manifest.json',text:JSON.stringify(manifest)},{path:'index.html',text:html}]});
   return draft.motif_id;
 }
@@ -3273,16 +3273,16 @@ export async function installMotif(
   expectedTargetVersion?: number,
 ): Promise<string> {
   const draft=await invoke<{revision:string}>('read_motif',{motif_id:draftId});
-  const target=mode.kind==='update'?await invoke<{manifest:MotifManifest}>('read_motif',{motif_id:mode.target_id}):null;
+  const target=mode.kind==='update'?await invoke<{manifest:MotifManifest}>('read_motif',{motif_id:mode.target_id,group:'library'}):null;
   const result=await invoke<{motif_id:string}>('publish_motif',{motif_id:draftId,expected_revision:expectedRevision??draft.revision,
-    ...(mode.kind==='update'?{target_id:mode.target_id,expected_version:expectedTargetVersion??target!.manifest.version}:{})});
+    ...(mode.kind==='update'?{target_id:mode.target_id,expected_version:expectedTargetVersion??target!.manifest.version}:{as_new:true})});
   return result.motif_id;
 }
 
 /// Moves the Motif's folders to the system trash; rejects, deleting nothing,
 /// when the trash refuses.
 export async function deleteMotif(id: string): Promise<void> {
-  await invoke("delete_motif", { motif_id: id });
+  await invoke("delete_library_motif", { motif_id: id });
 }
 
 /// One saved version of an installed Motif (ADR 0172). Mirrors
@@ -3317,19 +3317,19 @@ export async function amendMotifDraft(draftId:string,source:string,expectedRevis
 /// Open a working draft seeded from an installed/built-in Motif (Edit). Built-in
 /// → forced fork (no Update target). Returns the working draft id.
 export async function createEditDraft(sourceId: string): Promise<string> {
-  return (await invoke<{motif_id:string}>('open_motif_draft',{source:{kind:'motif',motif_id:sourceId}})).motif_id;
+  return (await invoke<{motif_id:string}>('create_motif',{source:{kind:'copy',motif_id:sourceId}})).motif_id;
 }
 
 /** Explicit independent copy of any Motif, drafts included (opening a draft id
  *  with `kind: 'motif'` resumes that draft instead). One main-process copy. */
 export async function copyMotifDraft(id:string):Promise<string> {
-  return (await invoke<{motif_id:string}>('open_motif_draft',{source:{kind:'copy',motif_id:id}})).motif_id;
+  return (await invoke<{motif_id:string}>('create_motif',{source:{kind:'copy',motif_id:id}})).motif_id;
 }
 
 /// Import a Motif ZIP package from the OS dialog.
 /// Copies a snapshot into a new draft and returns its id.
 export async function importMotif(path: string): Promise<string> {
-  return (await invoke<{motif_id:string}>('open_motif_draft',{source:{kind:'zip',path}})).motif_id;
+  return (await invoke<{motif_id:string}>('create_motif',{source:{kind:'zip',path}})).motif_id;
 }
 
 /// Export the complete package (built-in, installed or draft) as one ZIP folder.
@@ -3339,10 +3339,10 @@ export async function exportMotif(id: string, path: string): Promise<void> {
 
 /// An agent's proposed publication (`install_motif`), waiting for the user's
 /// approval on the Motif panel (ADR 0046). Mirrors `ProposalCard` in
-/// `src/main/motif/workspace.ts`.
+/// `src/main/motif/publications.ts`.
 export interface MotifProposal {
-  /// The draft it was proposed from.
-  motif_id: string;
+  /// The project Motif it was proposed from.
+  source: { project: string; motif_id: string };
   proposal_id: string;
   state: "awaiting_approval";
   revision: string;
@@ -3356,23 +3356,21 @@ export interface MotifProposal {
     files: { added: string[]; removed: string[]; changed: string[] };
     props: { added: string[]; removed: string[]; changed: string[] };
   } | null;
-  /// Layer ids of this project that approval rebinds.
-  rebinds: string[];
 }
 
 export async function listMotifProposals(): Promise<MotifProposal[]> {
   return invoke<MotifProposal[]>("list_motif_proposals");
 }
 
-/// Approve: publishes the proposed revision and rebinds the trial layers.
-/// Returns the published id.
-export async function approveMotifProposal(draftId: string, proposalId: string): Promise<string> {
-  return (await invoke<{ motif_id: string }>("approve_motif_proposal", { motif_id: draftId, proposal_id: proposalId })).motif_id;
+/// Approve: the proposed revision becomes a library version; no project
+/// changes. Returns the library id.
+export async function approveMotifProposal(proposalId: string): Promise<string> {
+  return (await invoke<{ motif_id: string }>("approve_motif_proposal", { proposal_id: proposalId })).motif_id;
 }
 
-/// Reject: the draft stays; the note reaches the agent through list_motifs.
-export async function rejectMotifProposal(draftId: string, proposalId: string, note?: string): Promise<void> {
-  await invoke("reject_motif_proposal", { motif_id: draftId, proposal_id: proposalId, ...(note ? { note } : {}) });
+/// Reject: the note reaches the agent through list_motifs.
+export async function rejectMotifProposal(proposalId: string, note?: string): Promise<void> {
+  await invoke("reject_motif_proposal", { proposal_id: proposalId, ...(note ? { note } : {}) });
 }
 
 

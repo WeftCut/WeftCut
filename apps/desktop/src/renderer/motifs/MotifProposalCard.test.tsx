@@ -2,7 +2,7 @@
 //
 // ADR 0046's gate in the panel: an agent's `install_motif` shows up as a card
 // in the Motifs panel, with the frozen package in the preview player, the
-// change against the installed version and the clips that will rebind.
+// change against the installed version; no project changes.
 // Approve publishes it through the renderer-only `approve_motif_proposal`
 // channel; Reject sends the note through `reject_motif_proposal`. The real
 // IPC wrappers run; only the bridge is stubbed.
@@ -42,11 +42,10 @@ const INSTALLED: MotifSummary = {
   props_schema: { title: { type: "string", default: "Hello" } },
 };
 const PROPOSAL: MotifProposal = {
-  motif_id: "badge-draft", proposal_id: "p-1", state: "awaiting_approval", revision: "rev-9",
-  target: { id: "badge", version: 1 }, proposed_at: "2026-11-01T00:00:00.000Z", preview_id: "badge-draft--proposal",
+  source: { project: "/home/u/Film", motif_id: "badge" }, proposal_id: "p-1", state: "awaiting_approval", revision: "rev-9",
+  target: { id: "badge", version: 1 }, proposed_at: "2026-11-01T00:00:00.000Z", preview_id: "p-1--proposal",
   manifest: { id: "badge-draft", name: "Badge", version: 1, size: [640, 360], default_duration_s: 5, fonts: [], props_schema: { title: { type: "string", default: "Hello" }, tagline: { type: "string", default: "New" } } } as never,
   diff: { files: { added: ["logo.png"], removed: [], changed: ["index.html"] }, props: { added: ["tagline"], removed: [], changed: [] } },
-  rebinds: [],
 };
 
 /** The main process as the panel sees it: one pending proposal until approved. */
@@ -82,7 +81,7 @@ describe("the Motifs panel's approval card", () => {
     expect(within(card).getByText(/Props — added: tagline/)).toBeTruthy();
     expect(within(card).getByText("No clips in this project change.")).toBeTruthy();
     // The preview player captures the frozen package, at the proposed revision.
-    await waitFor(() => expect(capture.mock.calls.some((c) => c[0] === "badge-draft--proposal" && c[5] === "rev-9")).toBe(true));
+    await waitFor(() => expect(capture.mock.calls.some((c) => c[0] === "p-1--proposal" && c[5] === "rev-9")).toBe(true));
   });
 
   it("Approve publishes through the renderer-only channel, and the card goes", async () => {
@@ -90,7 +89,7 @@ describe("the Motifs panel's approval card", () => {
     renderPanel();
     const card = await screen.findByRole("article", { name: "Proposed publication: Badge" });
     fireEvent.click(within(card).getByRole("button", { name: "Approve" }));
-    await waitFor(() => expect(bridge.invoke).toHaveBeenCalledWith("approve_motif_proposal", { motif_id: "badge-draft", proposal_id: "p-1" }));
+    await waitFor(() => expect(bridge.invoke).toHaveBeenCalledWith("approve_motif_proposal", { proposal_id: "p-1" }));
     expect(bridge.invoke).not.toHaveBeenCalledWith("install_motif", expect.anything());
     emitChanged(); // main emits motifs:changed after the publication
     await waitFor(() => expect(screen.queryByRole("article", { name: "Proposed publication: Badge" })).toBeNull());
@@ -102,7 +101,7 @@ describe("the Motifs panel's approval card", () => {
     const card = await screen.findByRole("article", { name: "Proposed publication: Badge" });
     fireEvent.change(within(card).getByRole("textbox", { name: "Note for the agent (optional)" }), { target: { value: "bigger title" } });
     fireEvent.click(within(card).getByRole("button", { name: "Reject" }));
-    await waitFor(() => expect(bridge.invoke).toHaveBeenCalledWith("reject_motif_proposal", { motif_id: "badge-draft", proposal_id: "p-1", note: "bigger title" }));
+    await waitFor(() => expect(bridge.invoke).toHaveBeenCalledWith("reject_motif_proposal", { proposal_id: "p-1", note: "bigger title" }));
   });
 
   it("the status-bar note shows only while a proposal waits", async () => {

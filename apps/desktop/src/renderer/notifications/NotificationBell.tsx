@@ -177,8 +177,8 @@ function rowText(t: TFunction, item: AttentionItem): {
     }
     case "notice":
       return {
-        title: t(`app_notice.${item.code}.title`),
-        body: t(`app_notice.${item.code}.body`),
+        title: t(`app_notice.${item.code}.title`, item.args ?? {}),
+        body: t(`app_notice.${item.code}.body`, item.args ?? {}),
         // Named for where it leads, as the notice's home page is.
         action: t(`app_notice.${item.code}.action`),
         dismiss: t("app_notice.dismiss"),

@@ -20,6 +20,10 @@ export type ProjectMotifs = Record<string, ProjectMotifEntry>
  *  stored. */
 export type MotifStatus = 'ok' | 'missing' | 'invalid'
 
+/** A project Motif that cannot render, and why: what `project://session`
+ *  lists and an export refuses. */
+export interface UnavailableMotif { motif_id: string; status: Exclude<MotifStatus, 'ok'>; diagnostic: string }
+
 /** A Motif's id is the label of its `motif://` host. */
 export const MOTIF_HOST_LABEL_CHARS = 63
 

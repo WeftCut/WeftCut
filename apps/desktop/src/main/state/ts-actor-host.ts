@@ -1,7 +1,7 @@
 // apps/desktop/src/main/state/ts-actor-host.ts
 import { resolve as resolvePath } from 'node:path'
 import { createActor, type ActorHandle, type ChangeEvent } from './actor'
-import type { EntityRef } from './history'
+import type { Actor, EntityRef } from './history'
 import { uuidV7Gen } from './ids'
 import { blankProject, rootComposition } from './model'
 import { buildProjectSummary } from './summary'
@@ -28,15 +28,15 @@ import { recoverInterruptedImports } from './importRecovery'
 import { captureImportSession, createMediaImporter, type MediaImporter } from './mediaImport'
 import { createPoolFiles, type PoolFiles, type PoolFilesFs } from './poolFiles'
 import { BUILTIN_MANIFESTS, type Manifest } from '../../shared/motifs/catalog'
-import { libraryHost } from '../../shared/motifs/projectMotifs'
+import { libraryHost, type UnavailableMotif } from '../../shared/motifs/projectMotifs'
 import type { UserMotifStore } from '../motif/store'
-import { runMotifTool, type MotifToolDeps } from '../motif/motifTools'
+import { runMotifTool } from '../motif/motifTools'
 import { legacyMigration } from '../motif/legacyResolve'
 import type { BuiltinMotif } from '../motif/authoring'
 import type { MotifResolver } from '../motif/resolver'
 import { libraryPackage, libraryPackageOfLineage, type MotifState } from '../motif/projectStore'
 import { ProjectMotifRecords, projectMotifAccess } from '../motif/projectRecords'
-import type { MediaItem, MotifRebindEntry } from './model'
+import type { MediaItem } from './model'
 import type { AppSettingsStore } from '../app-settings'
 import type { AppSettingsPatch } from '../../shared/app-settings'
 import type { ViewStateStore } from '../view-state'
@@ -227,8 +227,13 @@ export interface TsActorHost {
    *  by a refresh, recheck or settle republishes. */
   poolFiles: PoolFiles
   /** Host-level Motif tool dispatch (catalog read + authoring + install). Both
-   *  the renderer `handleInvoke('motif')` and the MCP `route==='motif'` path use it. */
-  motifTool: (name: string, args: Record<string, unknown>) => unknown
+   *  the renderer `handleInvoke('motif')` and the MCP `route==='motif'` path
+   *  use it; `by` attributes the call's project commits (the MCP caller's
+   *  agent), the instance actor without it. */
+  motifTool: (name: string, args: Record<string, unknown>, by?: Actor) => unknown
+  /** The open project's Motifs that cannot render, by id: a folder that is
+   *  gone, or whose files make no package. Empty with no project open. */
+  unavailableMotifs: () => UnavailableMotif[]
   /** The open project's `Motifs/<id>/` changed on disk (`watchProjectMotifs`):
    *  a new revision of a Motif the project records becomes a recorded edit
    *  (`ProjectMotifRecords.folderChanged`). */
@@ -444,8 +449,9 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     ? { fs: deps.relinkFs, join: deps.join, hashFile: (p: string) => deps.compute.hashMediaSource(p) }
     : undefined
   // Without a store the upgrade sizes Motifs from the built-ins and copies none.
+  // Its copies are heard where the open project's revisions are (Motif trust).
   const { migration, placeMigratedMotifs } = store && deps.motifBuiltins
-    ? legacyMigration(store, deps.motifBuiltins)
+    ? legacyMigration(store, deps.motifBuiltins, (project) => resolver?.hear(project))
     : { migration: () => ({ motifSize: (id: string, version: number) => {
       const manifest = BUILTIN_MANIFESTS.get(id)
       return manifest?.version === version ? manifest.size : null
@@ -650,7 +656,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     },
   }
 
-  function runMotif(name: string, args: Record<string, unknown>): unknown {
+  function runMotif(name: string, args: Record<string, unknown>, by?: Actor): unknown {
     if (!["list_motifs", "read_motif", "list_motif_proposals", "list_motif_versions"].includes(name)) deps.exportJobs?.assertWritable()
     if (name === 'update_project_motif') {
       if (typeof args.motif_id !== 'string') throw new Error('motif_id is required')
@@ -659,17 +665,27 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       return updated
     }
     if (!deps.motifStore) throw new Error('motifTool: motifStore not configured')
-    const motifToolDeps: MotifToolDeps = {
+    return runMotifTool(name, args, {
       store: deps.motifStore,
       builtins,
-      // A library publication changes no project: a project renders its own
-      // copies (spec § Library), so no layer is rebound.
-      motifLayers: () => [],
-      dispatchRebind: (updates: MotifRebindEntry[]) => { const r = actor.dispatch('rebind_motif', { updates }); if (!r.ok) throw new Error(JSON.stringify(r.error)) },
+      // The project open to agents: none on the start screen, even while the
+      // actor still holds a closed one.
+      project: () => (opened ? projectMotifs() : null),
+      actor,
       emitChanged: () => deps.send('motifs:changed', {}),
       notifyAgents: () => deps.mcpResourcesChanged?.(),
+    }, by)
+  }
+
+  function unavailableMotifs(): UnavailableMotif[] {
+    const project = opened ? projectMotifs() : null
+    if (!project) return []
+    const out: UnavailableMotif[] = []
+    for (const id of Object.keys(actor.snapshot().motifs).sort()) {
+      const state = project.status(id)
+      if (state.status !== 'ok') out.push({ motif_id: id, status: state.status, diagnostic: state.diagnostic ?? `Motifs/${id}/ is missing` })
     }
-    return runMotifTool(name, args, motifToolDeps)
+    return out
   }
 
   function publishChange(e?: ChangeEvent, traceId?: string, newSession = false, settledWorkspace = false): void {
@@ -1094,6 +1110,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     mediaImporter,
     poolFiles,
     motifTool: runMotif,
+    unavailableMotifs,
     motifFolderChanged: (id, state) => motifRecords.folderChanged(id, state),
     start() {
       agent.start()

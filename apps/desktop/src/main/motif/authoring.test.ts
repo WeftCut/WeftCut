@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { UserMotifStore } from './store'
 import { composeMotifHtml, type Manifest } from '../../shared/motifs/catalog'
-import { builtinMotifs, getMotifSource, motifToPayload, listMotifsInner, type BuiltinMotif } from './authoring'
+import { builtinMotifs, motifToPayload, listMotifsInner, type BuiltinMotif } from './authoring'
 import { motifContentHash } from './contentHash'
 
 
@@ -23,23 +23,6 @@ beforeEach(() => { root = mkdtempSync(path.join(tmpdir(), 'motif-auth-')); store
 
 // A synthetic built-in (avoids depending on disk-relocated assets in this unit).
 const BUILTINS: BuiltinMotif[] = [{ id: 'countdown', manifest: m('Countdown', 'countdown'), html: doc(m('Countdown', 'countdown'), 'CD'), hasParamsUi: false }]
-
-describe('getMotifSource', () => {
-  it('returns a built-in by id (built-in wins)', () => {
-    const s = getMotifSource(store, BUILTINS, 'countdown')
-    expect(s.manifest.id).toBe('countdown')
-    expect(s.html).toContain('CD')
-  })
-  it('returns an installed user motif', () => {
-    const man = m('Foo', 'foo')
-    store.addVersion('foo', 1, [{ path: 'index.html', bytes: Buffer.from(doc(man, 'FOO')) }])
-    const s = getMotifSource(store, BUILTINS, 'foo')
-    expect(s.manifest.id).toBe('foo'); expect(s.html).toContain('FOO')
-  })
-  it('throws on unknown id', () => {
-    expect(() => getMotifSource(store, BUILTINS, 'nope')).toThrow(/unknown motif id/)
-  })
-})
 
 describe('motifToPayload', () => {
   it('emits manifest fields + html + status, with the revision as content_hash', () => {
@@ -60,12 +43,12 @@ describe('motifToPayload', () => {
 
 describe('listMotifsInner', () => {
   it('isolates an unreadable package without dropping healthy entries', () => {
-    store.writeDraft('broken', doc(m('Broken', 'broken')))
-    store.writeDraft('healthy', doc(m('Healthy', 'healthy')))
-    const describePackage = store.describe.bind(store)
-    vi.spyOn(store, 'describe').mockImplementation(id => {
+    store.addVersion('broken', 1, [{ path: 'index.html', bytes: Buffer.from(doc(m('Broken', 'broken'))) }])
+    store.addVersion('healthy', 1, [{ path: 'index.html', bytes: Buffer.from(doc(m('Healthy', 'healthy'))) }])
+    const listing = store.installedListing.bind(store)
+    vi.spyOn(store, 'installedListing').mockImplementation(id => {
       if (id === 'broken') throw new Error('resource vanished during external save')
-      return describePackage(id)
+      return listing(id)
     })
     expect(listMotifsInner(store, BUILTINS).map(e => e.id)).toEqual(['countdown', 'healthy'])
   })
@@ -79,43 +62,28 @@ describe('listMotifsInner', () => {
     expect(list.find(e => e.id === 'foo')!.content_hash).toBe(motifContentHash(man, html, [{ path: 'assets/mesh.bin', bytes: mesh }]))
     expect(list.find(e => e.id === 'countdown')!.content_hash).toBe(motifContentHash(builtin.manifest, builtin.html))
   })
-  it('lists builtins, then installed, then drafts (id-unique, draft shadowed by published)', () => {
-    // installed "foo"
+  it('lists builtins, then installed Motifs; an older release\'s drafts are not the library', () => {
     store.addVersion('foo', 1, [{ path: 'index.html', bytes: Buffer.from(doc(m('Foo', 'foo'))) }])
-    // a separate draft "bar"
-    store.writeDraft('bar', doc(m('Bar', 'bar')))
+    mkdirSync(path.join(root, 'drafts', 'bar'), { recursive: true })
+    writeFileSync(path.join(root, 'drafts', 'bar', 'index.html'), doc(m('Bar', 'bar')))
     const list = listMotifsInner(store, BUILTINS)
-    const byId = (id: string) => list.find((e) => e.id === id)
-    expect(byId('countdown')!.status).toBe('builtin')
-    expect(byId('foo')!.status).toBe('installed')
-    expect(byId('bar')!.status).toBe('draft')
+    expect(list.map(e => [e.id, e.status])).toEqual([['countdown', 'builtin'], ['foo', 'installed']])
     // every entry carries html + content_hash
     for (const e of list) { expect(typeof e.html).toBe('string'); expect(typeof e.content_hash).toBe('string') }
   })
-  it('a draft sharing a published id is skipped (published wins)', () => {
-    store.addVersion('foo', 1, [{ path: 'index.html', bytes: Buffer.from(doc(m('Foo', 'foo'))) }])
-    store.writeDraft('foo', doc(m('Foo', 'foo'))) // a new draft re-using the published id
-    const list = listMotifsInner(store, BUILTINS)
-    expect(list.filter((e) => e.id === 'foo').length).toBe(1)
-    expect(list.find((e) => e.id === 'foo')!.status).toBe('installed')
-  })
-  it('reports has_params_ui per entry for builtin, installed and draft', () => {
+  it('reports has_params_ui per entry for builtin and installed', () => {
     // built-in: carried on the BuiltinMotif (stat'd once at load).
     const builtins: BuiltinMotif[] = [{ ...BUILTINS[0]!, hasParamsUi: true }]
     // installed "foo" WITH a params page, installed "bare" without.
     store.addVersion('foo', 1, [{ path: 'index.html', bytes: Buffer.from(doc(m('Foo', 'foo'))) }])
     writeFileSync(path.join(root, 'foo', 'v1', 'params.html'), '<html>p</html>')
     store.addVersion('bare', 1, [{ path: 'index.html', bytes: Buffer.from(doc(m('Bare', 'bare'))) }])
-    // draft "d2" WITH a params page written next to its draft index.html.
-    store.writeDraft('d2', doc(m('D2', 'd2')))
-    writeFileSync(path.join(root, 'drafts', 'd2', 'params.html'), '<html>p</html>')
 
     const list = listMotifsInner(store, builtins)
     const flag = (id: string) => list.find((e) => e.id === id)!.has_params_ui
     expect(flag('countdown')).toBe(true)
     expect(flag('foo')).toBe(true)
     expect(flag('bare')).toBe(false)
-    expect(flag('d2')).toBe(true)
   })
   it('hot-updates has_params_ui when the file appears and vanishes', () => {
     store.addVersion('foo', 1, [{ path: 'index.html', bytes: Buffer.from(doc(m('Foo', 'foo'))) }])

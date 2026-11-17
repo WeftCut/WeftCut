@@ -1,6 +1,6 @@
 # Motif workspaces
 
-The Motif tools are list_motifs, open_motif_draft, read_motif,
+The Motif tools are list_motifs, create_motif, read_motif,
 update_motif_files, preview_motif, install_motif, export_motif and
 delete_motif. They take paths and inline text; no tool is specific to a file
 format or model type. Every one names its subject Motif motif_id.
@@ -11,7 +11,7 @@ format or model type. Every one names its subject Motif motif_id.
 {"source":{"kind":"directory","path":"C:/work/title-overlay"}}
 ```
 
-Pass this to open_motif_draft. The directory contains index.html and a
+Pass this to create_motif. The directory contains index.html and a
 manifest.json (authoritative when present), or an HTML manifest island, plus
 all runtime assets. Use a package/output folder, not an entire repository with
 node_modules. Paths must be portable; links/junctions are refused. The package

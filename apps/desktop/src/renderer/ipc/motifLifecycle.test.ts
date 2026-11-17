@@ -17,15 +17,15 @@ describe('Motif editor uses the public file contracts', () => {
     it('opens both a copied Motif and ZIP through one entry point', async () => {
         invoke.mockResolvedValue({ motif_id: 'draft', revision: 'r' });
         expect(await createEditDraft('source')).toBe('draft');
-        expect(invoke).toHaveBeenLastCalledWith('open_motif_draft', { source: { kind: 'motif', motif_id: 'source' } });
+        expect(invoke).toHaveBeenLastCalledWith('create_motif', { source: { kind: 'copy', motif_id: 'source' } });
         await importMotif('C:/scene.zip');
-        expect(invoke).toHaveBeenLastCalledWith('open_motif_draft', { source: { kind: 'zip', path: 'C:/scene.zip' } });
+        expect(invoke).toHaveBeenLastCalledWith('create_motif', { source: { kind: 'zip', path: 'C:/scene.zip' } });
     });
     it('copies a draft in one call, the copy source MCP clients use too', async () => {
         invoke.mockResolvedValue({ motif_id: 'copy', revision: 'r' });
         expect(await copyMotifDraft('draft')).toBe('copy');
         expect(invoke).toHaveBeenCalledTimes(1);
-        expect(invoke).toHaveBeenLastCalledWith('open_motif_draft', { source: { kind: 'copy', motif_id: 'draft' } });
+        expect(invoke).toHaveBeenLastCalledWith('create_motif', { source: { kind: 'copy', motif_id: 'draft' } });
     });
     it('retains the read revision and submits one manifest/HTML transaction', async () => {
         const manifest = { id: 'a', name: 'A', version: 1, size: [64, 64] as [
@@ -43,6 +43,6 @@ describe('Motif editor uses the public file contracts', () => {
         invoke.mockResolvedValueOnce({ manifest: { version: 1 }, text: '', revision: 'newer' }).mockResolvedValueOnce({ motif_id: 'published' });
         await installMotif('draft', { kind: 'new' }, 'reviewed');
         expect(invoke).toHaveBeenNthCalledWith(1, 'read_motif', { motif_id: 'draft' });
-        expect(invoke).toHaveBeenLastCalledWith('publish_motif', { motif_id: 'draft', expected_revision: 'reviewed' });
+        expect(invoke).toHaveBeenLastCalledWith('publish_motif', { motif_id: 'draft', expected_revision: 'reviewed', as_new: true });
     });
 });

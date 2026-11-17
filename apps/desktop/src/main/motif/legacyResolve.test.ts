@@ -11,7 +11,9 @@ import { motifLayerParams } from '../state/mutations/motif'
 import { serializeProject } from '../state/serialize'
 import { openProject, type OrchestratorDeps, type OrchestratorFs, type SchemaUpgradeReport } from '../state/workspace-orchestrator'
 import { builtinMotifs, motifRevision } from './authoring'
-import { legacyMigration } from './legacyResolve'
+import { legacyDraftIds, legacyDraftsNotice, legacyMigration, resolveLegacyMotif } from './legacyResolve'
+import { packageContentHash } from './contentHash'
+import { MotifResolver } from './resolver'
 import { normalize } from './motifPackage'
 import { readMotifDirectory } from './packageFiles'
 import { ProjectMotifStore } from './projectStore'
@@ -65,13 +67,22 @@ async function open(): Promise<{ project: Project; report: SchemaUpgradeReport }
 }
 
 const motifsDir = () => path.join(projectDir, 'Motifs')
+const draftDir = (id: string) => path.join(library.root(), DRAFTS_DIR, id)
+/** Writes a draft as an older release left it in the library folder. */
+function writeDraft(id: string, files: readonly { path: string; bytes: Buffer }[]): void {
+  for (const file of files) {
+    mkdirSync(path.dirname(path.join(draftDir(id), file.path)), { recursive: true })
+    writeFileSync(path.join(draftDir(id), file.path), file.bytes)
+  }
+}
+const draftFiles = (id: string) => readMotifDirectory(draftDir(id))
 
 beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), 'legacy-motifs-'))
   library = new UserMotifStore(path.join(root, 'library'))
   library.addVersion('lower', 1, normalize([{ path: 'index.html', bytes: page('Lower') }, { path: 'art.svg', bytes: Buffer.from('<svg/>') }], 'lower', 1).files)
   const draft = normalize([{ path: 'index.html', bytes: page('Sketch') }], 'sketch-draft', 1)
-  library.writeDraftPackage('sketch-draft', draft.html, draft.files)
+  writeDraft('sketch-draft', draft.files)
   projectDir = path.join(root, 'Film')
   mkdirSync(projectDir)
   writeFileSync(path.join(projectDir, 'project.json'), v5Project(['countdown', 'lower', 'sketch-draft', 'gone']))
@@ -81,12 +92,12 @@ afterEach(() => { rmSync(root, { recursive: true, force: true }) })
 describe('opening a v5 project', () => {
   it('copies what each Motif rendered into Motifs/, keeping its revision and lineage', async () => {
     const { project, report } = await open()
-    const libraryRevision = library.describe('lower')!.revision
+    const libraryRevision = library.installedListing('lower')!.revision
     expect(project.motifs).toEqual({
       countdown: { uid: builtinLineage('countdown'), revision: motifRevision(library, builtins, 'countdown'),
         from: { uid: builtinLineage('countdown'), version: 1, revision: motifRevision(library, builtins, 'countdown') } },
       lower: { uid: library.lineage.of('lower'), revision: libraryRevision, from: { uid: library.lineage.of('lower'), version: 1, revision: libraryRevision } },
-      'sketch-draft': { uid: library.lineage.of(`${DRAFTS_DIR}/sketch-draft`), revision: library.describe('sketch-draft')!.revision, from: null },
+      'sketch-draft': { uid: library.lineage.of(`${DRAFTS_DIR}/sketch-draft`), revision: packageContentHash(draftFiles('sketch-draft')), from: null },
       gone: { uid: expect.any(String), revision: null, from: null },
     })
     // Each copy's folder hashes to its source's revision, so its stored frames keep their keys.
@@ -117,11 +128,47 @@ describe('opening a v5 project', () => {
     expect(project.motifs.countdown!.revision).not.toBeNull()
   })
 
-  it('sizes a Motif for the v3 → v4 step from the project folder first', () => {
+  it("hears each copy where the open project's revisions are heard, as placed", async () => {
+    const resolver = new MotifResolver(library, builtins)
+    const heard: Array<[string, string]> = []
+    resolver.onRevisionSeen((id, _revision, cause) => heard.push([id, cause]))
+    const placeMigratedMotifs = legacyMigration(library, builtins, project => resolver.hear(project)).placeMigratedMotifs
+    const copy = (id: string) => ({ id, revision: resolveLegacyMotif(library, builtins, id)!.revision })
+    const outcomes = placeMigratedMotifs(projectDir, [copy('lower'), copy('sketch-draft')])
+    expect(outcomes.every(o => o.revision !== null)).toBe(true)
+    expect(heard).toEqual([['lower', 'placed'], ['sketch-draft', 'placed']])
+  })
+
+  it("sizes a Motif for the v3 → v4 step from the project folder first", () => {
     const own = normalize([{ path: 'index.html', bytes: page('Lower', [640, 360]) }], 'lower', 7).files
     new ProjectMotifStore(projectDir).materialize('lower', own, 'placed')
     const { migration } = legacyMigration(library, builtins)
     expect(migration(projectDir).motifSize!('lower', 7)).toEqual([640, 360])
     expect(migration(projectDir).motifSize!('lower', 1)).toEqual([320, 180])
+  })
+})
+
+describe("an older release's drafts", () => {
+  it('resolve as v5 rendered them: a draft, a linked mirror, and not a linked directory that was invalid', () => {
+    const linked = normalize([{ path: 'index.html', bytes: page('Linked') }], 'linked-draft', 1)
+    writeDraft('linked-draft', linked.files)
+    writeDraft('broken-link', normalize([{ path: 'index.html', bytes: page('Broken') }], 'broken-link', 1).files)
+    mkdirSync(path.join(library.root(), '.workspaces'), { recursive: true })
+    writeFileSync(path.join(library.root(), '.workspaces', 'linked-draft.json'), JSON.stringify({ directory: '/home/u/work/linked' }))
+    writeFileSync(path.join(library.root(), '.workspaces', 'broken-link.json'), JSON.stringify({ directory: '/home/u/work/broken', diagnostic: 'index.html is missing' }))
+    expect(resolveLegacyMotif(library, builtins, 'sketch-draft')).toMatchObject({ revision: packageContentHash(draftFiles('sketch-draft')), from: null })
+    expect(resolveLegacyMotif(library, builtins, 'linked-draft')).toMatchObject({ revision: packageContentHash(linked.files), from: null })
+    expect(resolveLegacyMotif(library, builtins, 'broken-link')).toBeNull()
+  })
+
+  it('make one notice naming how many and where, and nothing lists or moves them', () => {
+    writeDraft('second-draft', normalize([{ path: 'index.html', bytes: page('Second') }], 'second-draft', 1).files)
+    mkdirSync(draftDir('empty-folder'))
+    const before = draftFiles('sketch-draft')
+    expect(legacyDraftIds(library)).toEqual(['second-draft', 'sketch-draft'])
+    expect(legacyDraftsNotice(library)).toEqual({ level: 'info', code: 'motif_drafts_left', args: { count: 2, folder: path.join(library.root(), DRAFTS_DIR) } })
+    expect(library.listManifests().map(m => m.id)).toEqual(['lower'])
+    expect(draftFiles('sketch-draft')).toEqual(before)
+    expect(legacyDraftsNotice(new UserMotifStore(path.join(root, 'empty-library')))).toBeNull()
   })
 })

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import nodePath from 'node:path'
 import { mapChangeEvent, createTsActorHost } from './ts-actor-host'
 import { UserMotifStore } from '../motif/store'
+import { composeMotifHtml } from '../../shared/motifs/catalog'
 import { createAppSettingsStore } from '../app-settings'
 import { createViewStateStore } from '../view-state'
 import { viewStateDefaults, type ViewState } from '../../shared/view-state'
@@ -1230,16 +1231,18 @@ describe('createTsActorHost — persistence-route integration', () => {
     host.stop()
   })
 
-  it('handleInvoke routes a motif channel through runMotifTool (open_motif_draft)', async () => {
+  it('handleInvoke routes a motif channel through runMotifTool (restore_motif_version)', async () => {
     const { deps, sent } = makeInMemoryDeps()
     const motifStore = new UserMotifStore(mkdtempSync(nodePath.join(tmpdir(), 'host-motif-')))
+    const page = (name: string) => Buffer.from(composeMotifHtml({ id: 'foo', name, version: 1, size: [10, 10], default_duration_s: 1, props_schema: {} }, '<head></head><body></body>'))
+    motifStore.addVersion('foo', 1, [{ path: 'index.html', bytes: page('Foo v1') }])
+    motifStore.addVersion('foo', 2, [{ path: 'index.html', bytes: page('Foo v2') }])
     const host = createTsActorHost({ ...deps, motifStore, motifBuiltins: [] })
     host.start()
-    const manifest = { id: 'x', name: 'Foo', version: 1, size: [10, 10], default_duration_s: 1, fonts: [], props_schema: {} }
-    const {motif_id:id} = await host.handleInvoke('open_motif_draft', { source:{kind:'empty',name:manifest.name} }) as {motif_id:string}
-    expect(typeof id).toBe('string')
-    expect(motifStore.getDraft(id)).not.toBeNull()
+    expect(await host.handleInvoke('restore_motif_version', { motif_id: 'foo', version: 1 })).toMatchObject({ motif_id: 'foo', version: 3 })
     expect(sent.some((s) => s.event === 'motifs:changed')).toBe(true)
+    // A project Motif needs a project: the start screen has none.
+    await expect(host.handleInvoke('create_motif', { source: { kind: 'empty', name: 'Foo' } })).rejects.toThrow(/No project is open/)
     host.stop()
   })
 
