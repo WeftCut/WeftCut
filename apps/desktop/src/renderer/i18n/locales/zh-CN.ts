@@ -490,6 +490,7 @@ const zhCN: Resources = {
     current: '当前已是最新版本。',
     downloading: '正在下载 {{version}}… {{percent}}%',
     error: '检查或下载更新失败，请重试或前往发版页面手动下载。',
+    error_location: 'WeftCut 在当前位置无法自动更新。请把它移到“应用程序”文件夹后从那里打开，或前往发版页面下载 {{version}}。',
     releases: '查看发版页面',
     skip: '跳过此版本',
     indicator_available: '新版本 {{version}} 可用',

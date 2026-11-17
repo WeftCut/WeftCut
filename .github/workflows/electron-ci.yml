@@ -646,6 +646,7 @@ jobs:
             apps/desktop/release/*.AppImage
             apps/desktop/release/*.deb
             apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
             apps/desktop/release/*.blockmap
             apps/desktop/release/latest*.yml
 
@@ -787,6 +788,8 @@ jobs:
           if-no-files-found: error
           path: |
             apps/desktop/release/WeftCut-mac-arm64.dmg
+            apps/desktop/release/WeftCut-mac-arm64.zip
+            apps/desktop/release/WeftCut-mac-arm64.zip.blockmap
             apps/desktop/release/latest-mac.yml
             apps/desktop/release/notary-submission.json
 
@@ -798,6 +801,8 @@ jobs:
           if-no-files-found: error
           path: |
             apps/desktop/release/WeftCut-mac-arm64.dmg
+            apps/desktop/release/WeftCut-mac-arm64.zip
+            apps/desktop/release/WeftCut-mac-arm64.zip.blockmap
             apps/desktop/release/latest-mac.yml
 
   release:

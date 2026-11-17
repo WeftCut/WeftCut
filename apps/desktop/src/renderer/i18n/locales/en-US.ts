@@ -507,6 +507,7 @@ const enUS = {
     current: 'You are up to date.',
     downloading: 'Downloading {{version}}… {{percent}}%',
     error: 'Could not check for or download the update. Try again, or download it from the releases page.',
+    error_location: 'WeftCut cannot update itself where it is now. Move it to the Applications folder and open it from there, or download {{version}} from the releases page.',
     releases: 'View Releases',
     skip: 'Skip this version',
     indicator_available: '{{version}} is available',

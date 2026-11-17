@@ -133,6 +133,26 @@ describe('update dialog', () => {
     expect(screen.getByRole('button', { name: 'View Releases' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Skip this version' })).toBeNull()
   })
+
+  it('says a committed macOS update installs on close, even with automatic install off, and offers no skip', async () => {
+    const api = setup(false)
+    const committed = { phase: 'ready', version: '1.2.0', committed: true }
+    api.check.mockResolvedValue(committed)
+    api.status.mockResolvedValue(committed)
+    render(<UpdateDialog onClose={vi.fn()} />)
+    await screen.findByText(/will install when you close the app/)
+    expect(screen.queryByRole('button', { name: 'Skip this version' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Update and restart app' })).toBeTruthy()
+  })
+
+  it('tells a copy that cannot update where it runs how to get the version', async () => {
+    const api = setup()
+    api.check.mockResolvedValue({ phase: 'error', version: '1.2.0', reason: 'location' })
+    render(<UpdateDialog onClose={vi.fn()} />)
+    await screen.findByText(/Move it to the Applications folder/)
+    expect(screen.getByText(/download 1\.2\.0 from the releases page/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'View Releases' })).toBeTruthy()
+  })
 })
 
 describe('start-screen update icon', () => {

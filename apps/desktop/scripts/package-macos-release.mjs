@@ -2,9 +2,10 @@
 // One command per workflow step, so a notarization that outlasts its wait is
 // resumed from the submitted DMG instead of rebuilt and submitted again:
 //
-//   build   sign the app and the DMG with the Developer ID; no notarization
+//   build   sign the app, the DMG and the update zip with the Developer ID; no notarization
 //   submit  hand the DMG to Apple's notary service and record the submission
-//   finish  wait for the verdict, staple the DMG, verify it, re-stamp latest-mac.yml
+//   finish  wait for the verdict, staple the DMG, verify it and the zip's app,
+//           re-stamp latest-mac.yml
 //
 // Usage (from apps/desktop): node scripts/package-macos-release.mjs <command>
 import { spawnSync } from 'node:child_process'
@@ -17,6 +18,8 @@ import { fileURLToPath } from 'node:url'
 const DESKTOP = fileURLToPath(new URL('../', import.meta.url))
 const RELEASE = path.join(DESKTOP, 'release')
 export const DMG = 'WeftCut-mac-arm64.dmg'
+/// What electron-updater downloads and hands to Squirrel.Mac (docs/releases.md).
+export const ZIP = 'WeftCut-mac-arm64.zip'
 export const MANIFEST = 'latest-mac.yml'
 export const SUBMISSION = 'notary-submission.json'
 
@@ -91,6 +94,24 @@ export function verifyNotarizedDmg(dmgPath, teamId, execute = run) {
   } finally {
     execute('hdiutil', ['detach', mount, '-force'])
     fs.rmSync(mount, { recursive: true, force: true })
+  }
+}
+
+/// The update zip holds the same signed app as the DMG, from the same build, so
+/// the DMG's notarization covers it: Apple records the app's code hash, and
+/// Gatekeeper finds it online even though only the DMG carries a stapled
+/// ticket. Squirrel installs an update without quarantine, so Gatekeeper never
+/// assesses it on a user's Mac; this check is what proves the zip is the
+/// notarized app rather than some other build.
+export function verifyZipApp(zipPath, teamId, execute = run) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'weftcut-zip-'))
+  try {
+    execute('ditto', ['-x', '-k', zipPath, dir])
+    const app = path.join(dir, 'WeftCut.app')
+    verifyDeveloperId(app, teamId, execute)
+    execute('spctl', ['--assess', '--type', 'execute', '--verbose=2', app])
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
   }
 }
 
@@ -171,7 +192,7 @@ async function main(command) {
     const { build, Platform, Arch } = await import('electron-builder')
     await build({
       projectDir: DESKTOP,
-      targets: Platform.MAC.createTarget('dmg', Arch.arm64),
+      targets: Platform.MAC.createTarget(['dmg', 'zip'], Arch.arm64),
       publish: 'never',
       config: signingConfig(env.APPLE_TEAM_ID),
     })
@@ -188,8 +209,9 @@ async function main(command) {
     }
     run('xcrun', ['stapler', 'staple', path.join(RELEASE, DMG)])
     verifyNotarizedDmg(path.join(RELEASE, DMG), env.APPLE_TEAM_ID)
+    verifyZipApp(path.join(RELEASE, ZIP), env.APPLE_TEAM_ID)
     await restampManifest(RELEASE)
-    console.log('macOS release: notarized, stapled and Gatekeeper-accepted')
+    console.log('macOS release: notarized, stapled and Gatekeeper-accepted, update zip covered')
   }
 }
 

@@ -9,7 +9,8 @@ executableName: WeftCut
 # <asset>), and electron-updater derives the previous blockmap URL by swapping the
 # version inside that tag segment, so differential Windows updates still work.
 # Expands to WeftCut-win-x64.exe, WeftCut-linux-x86_64.AppImage,
-# WeftCut-linux-amd64.deb and WeftCut-mac-arm64.dmg; release.mjs pins that set.
+# WeftCut-linux-amd64.deb, WeftCut-mac-arm64.dmg and WeftCut-mac-arm64.zip;
+# release.mjs pins that set.
 artifactName: ${productName}-${os}-${arch}.${ext}
 publish:
   provider: github
@@ -177,9 +178,10 @@ deb:
 mac:
   # DMG only, arm64 only: the CI runner, the bundled ffmpeg sidecar
   # (fetch-ffmpeg.mjs §mac) and the from-source LGPL libraries are all Apple
-  # Silicon, so there is no Intel build to offer. No zip target either — macOS
-  # auto-update is disabled (docs/releases.md).
-  target: [dmg]
+  # Silicon, so there is no Intel build to offer. The DMG is what people
+  # download; the zip of the same app is what electron-updater hands to
+  # Squirrel.Mac, which cannot update from a DMG (docs/releases.md).
+  target: [dmg, zip]
   category: public.app-category.video
   icon: build/icon.png
   # Electron 44 dropped macOS 12; the bundled runtime will not start below 13,

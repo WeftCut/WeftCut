@@ -20,7 +20,8 @@ PRs, scheduled and manual runs never publish, and a published version is never
 overwritten.
 
 The packaging leg (`e2e-2`) builds NSIS (.exe) on Windows, AppImage + .deb on
-Linux and an arm64 DMG on macOS, plus update manifests and blockmaps. The
+Linux and an arm64 DMG + update zip on macOS, plus update manifests and
+blockmaps. The
 `release` job waits for every E2E leg, `checks`, `rust-test` and the
 determinism `compare`; it alone has `contents: write` and uses the built-in
 `GITHUB_TOKEN`. Publish runs queue (never cancel), so two pushes cannot
@@ -42,11 +43,12 @@ lower versions; never replace installers under a published version.
 
 Assets carry OS and architecture, no version: `WeftCut-win-x64.exe`,
 `WeftCut-linux-x86_64.AppImage`, `WeftCut-linux-amd64.deb`,
-`WeftCut-mac-arm64.dmg`. So
+`WeftCut-mac-arm64.dmg` (and `WeftCut-mac-arm64.zip`, the update payload). So
 `https://github.com/WeftCut/WeftCut/releases/latest/download/<asset>` is a
 permanent link to the current build, and `releases/download/v<version>/<asset>`
 addresses one build. electron-updater finds the previous blockmap by swapping
-the version in the tag segment, so differential Windows updates still work.
+the version in the tag segment, so differential Windows and macOS updates
+still work.
 
 ## macOS signing
 
@@ -55,17 +57,21 @@ notarization ticket stapled to the DMG. The `package-macos` job in
 `electron-ci` makes them, after the e2e, checks and rust-test gates pass, with
 `scripts/package-macos-release.mjs` in three steps:
 
-1. **build** signs the app and the DMG (no notarization) and checks the app's
+1. **build** signs the app, the DMG and the update zip (no notarization) and checks the app's
    signature, Developer ID authority and Team ID. The packaged-app checks the
    e2e leg ran on the unsigned build run again on the signed one.
 2. **submit** hands the DMG to Apple's notary service and records the
    submission id.
 3. **finish** waits up to 40 minutes for Apple's verdict, staples the ticket to
    the DMG, checks the ticket and Gatekeeper on the image and on the app inside
-   it, then rewrites `latest-mac.yml`, because stapling changes the DMG's bytes.
+   it, checks that Gatekeeper finds the zip's app notarized too, then rewrites
+   `latest-mac.yml`, because stapling changes the DMG's bytes.
 
 The DMG is notarized rather than the app alone because it is what users
-download: one submission covers the image and the code inside it.
+download: one submission covers the image and the code inside it. The zip holds
+the same signed app from the same build, so that submission covers it too;
+Gatekeeper finds its ticket online. Squirrel installs updates without
+quarantine, so a user's Mac never assesses the zip itself.
 
 A submission still in progress after the wait fails the job and leaves the
 submitted DMG as the `macos-notary-pending` artifact. **Re-run failed jobs** on
@@ -75,12 +81,13 @@ build. A refusal (`Invalid`) prints Apple's log and is not resumable; fix the
 cause and ship it as a new commit.
 
 Only arm64 ships: the runner, ffmpeg sidecar and from-source LGPL libraries
-are Apple Silicon. macOS self-update remains disabled in main; adding it also
-requires a ZIP target, release asset validation and installed-app upgrade tests.
+are Apple Silicon.
 
 Local and PR packages use the base config's ad-hoc signature (`identity: "-"`)
 without notarization. Re-signing keeps Electron's rewritten bundle seal valid;
 these test packages require a manual Gatekeeper exception and are not releases.
+They still check for updates, and Squirrel refuses to install one into them:
+an ad-hoc signature's designated requirement is its own code hash.
 
 ### Credentials
 
@@ -133,10 +140,10 @@ Reference: [Developer ID certificates](https://developer.apple.com/help/account/
 [notarizing before distribution](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution),
 [GitHub deployment environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments).
 
-## Auto-update (Windows and Linux)
+## Auto-update
 
-Packaged Windows/Linux builds use electron-updater against the public GitHub
-Release feed (`src/main/updates.ts`); dev, E2E and macOS builds do not check.
+Packaged builds use electron-updater against the public GitHub Release feed
+(`src/main/updates.ts`, ADR 0170); dev and E2E builds do not check.
 Prereleases and downgrades are off. Checks run 5 s after startup and every six
 hours. An available update shows as a start-screen button and a row in the
 editor's notification center (the status bar's bell); neither interrupts work,
@@ -164,6 +171,30 @@ Windows updates show the NSIS progress page without location or mode choices
 and close on success; only update-and-restart relaunches. File replacement is
 not atomic, and shortcuts keep targeting the installed exe.
 
+### macOS
+
+The same rules decide when to download; installing differs (ADR 0170).
+electron-updater downloads `WeftCut-mac-arm64.zip` (differentially, over its
+blockmap) and hands it to Squirrel.Mac, which checks that the new app satisfies
+the running app's designated requirement (same Developer ID team) and stages
+it. Only then is the update ready, and it is **committed**: ShipIt replaces the
+app after the next exit of any kind, and a later preference change or skip
+cannot withdraw it, so the dialog says it installs on close and offers no skip.
+
+- Install on close: quit as usual; ShipIt swaps the bundle once the process has
+  ended and does not reopen it.
+- Update and restart: the normal quit runs (save, confirm, windows, teardown),
+  then `will-quit` hands the last step to Squirrel, which records the relaunch
+  and terminates. If Squirrel refuses or takes over 15 s the app exits on its
+  own: the update still installs, without reopening.
+- A copy running from the disk image, translocated (opened where it was
+  downloaded) or in a folder the user cannot write is still told about a new
+  version but downloads nothing; the dialog says to move WeftCut to
+  Applications or download the release.
+
+0.8.0 had no macOS updater: Mac users install the first release that has one
+from its DMG, and that release's upgrade notes (`docs/release-notes/`) say so.
+
 ## Windows AppUserModelID
 
 Taskbar icon and grouping come from the AppUserModelID stamped onto the Start
@@ -182,7 +213,9 @@ shortcut on every update, and the app stamps it back at launch (ADR 0163).
 ## Manual release check
 
 Unit tests and manifest checks do not cover the installed-app path. When the
-updater changes, install the current Windows/Linux packages (AppImage and
-.deb), publish a higher patch, and exercise check, download and exit install,
-including network failure/retry and an export running during download; confirm
-the project reopens and the new version reports.
+updater changes, install the current packages (Windows, AppImage, .deb, and the
+macOS DMG copied to Applications), publish a higher patch, and exercise check,
+download and exit install, including network failure/retry and an export
+running during download; confirm the project reopens and the new version
+reports. On macOS also run update-and-restart (it must reopen) and a copy
+started from the mounted DMG (it must report its location).

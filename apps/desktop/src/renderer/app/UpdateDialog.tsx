@@ -30,8 +30,10 @@ export function UpdateDialog({ onClose }: { onClose: () => void }) {
     </Button>
   )
   // Skipping silences the passive entries and main's unattended download for
-  // this version only. An error keeps the releases link its copy points to.
-  const skip = (
+  // this version only. An error keeps the releases link its copy points to. A
+  // committed (macOS staged) update installs at the next exit regardless, so
+  // it offers no skip.
+  const skip = status.committed ? undefined : (
     <Button variant="ghost" size="lg" className="mr-auto" disabled={status.phase === 'restarting'}
       onClick={() => {
         if (!status.version) return
@@ -49,8 +51,9 @@ export function UpdateDialog({ onClose }: { onClose: () => void }) {
               "read this before you continue"; every other phase is plain blurb. */}
           <p id={statusId} role="status" className={status.phase === 'error' ? 'settings-warn' : 'settings-blurb'}>
             {status.phase === 'ready'
-              ? <>{t('updates.version', { version: status.version })} {t(autoInstall ? 'updates.ready_auto' : 'updates.ready_manual')}</>
-              : t(status.phase === 'available' ? 'updates.available_manual' : `updates.${status.phase}`, { version: status.version, percent })}
+              ? <>{t('updates.version', { version: status.version })} {t(autoInstall || status.committed ? 'updates.ready_auto' : 'updates.ready_manual')}</>
+              : t(status.phase === 'available' ? 'updates.available_manual'
+                : status.reason ? `updates.error_${status.reason}` : `updates.${status.phase}`, { version: status.version, percent })}
           </p>
           {status.phase === 'downloading' && (
             <div

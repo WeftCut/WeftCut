@@ -66,14 +66,15 @@ export async function setVersion(version, root = ROOT) {
 
 // One update manifest per OS, and the installers it must reference: the
 // version-less names electron-builder.yml's artifactName produces (the why lives
-// there). electron-builder expands `${arch}` per target: `x64` on Windows and
+// there). macOS lists two: the DMG people download, and the zip of the same
+// signed app that electron-updater hands to Squirrel.Mac (DMGs cannot update). electron-builder expands `${arch}` per target: `x64` on Windows and
 // `arm64` on macOS (the Apple Silicon runner's host arch; there is no Intel
 // build), but the Linux targets keep their packaging conventions — `x86_64` for
 // AppImage and `amd64` for deb — even though both build with arch=x64.
-const INSTALLERS = {
+export const INSTALLERS = {
   'latest.yml': ['WeftCut-win-x64.exe'],
   'latest-linux.yml': ['WeftCut-linux-x86_64.AppImage', 'WeftCut-linux-amd64.deb'],
-  'latest-mac.yml': ['WeftCut-mac-arm64.dmg'],
+  'latest-mac.yml': ['WeftCut-mac-arm64.zip', 'WeftCut-mac-arm64.dmg'],
 }
 
 // Refuse a partial or stale release BEFORE creating/uploading a draft. Stream
@@ -81,15 +82,16 @@ const INSTALLERS = {
 export async function validateAssets(directory, version) {
   validateVersion(version)
   const { parse } = await import('yaml')
-  // The NSIS blockmap drives differential Windows updates, so it is required.
-  // The AppImage has no sidecar blockmap to require: electron-builder appends
-  // its blockmap to the artifact itself, followed by a 4-byte big-endian length
-  // that latest-linux.yml reports as blockMapSize — that embedded map is what
-  // electron-updater ranges over for differential Linux updates, and the
-  // AppImage's own sha512/size check below covers it. Only the DMG gets a
-  // blockmap file nothing consumes (macOS does not self-update).
+  // The NSIS and zip blockmaps drive differential Windows and macOS updates,
+  // so they are required. The AppImage has no sidecar blockmap to require:
+  // electron-builder appends its blockmap to the artifact itself, followed by a
+  // 4-byte big-endian length that latest-linux.yml reports as blockMapSize —
+  // that embedded map is what electron-updater ranges over for differential
+  // Linux updates, and the AppImage's own sha512/size check below covers it.
+  // Only the DMG gets a blockmap file nothing consumes.
   const required = [
-    ...Object.values(INSTALLERS).flat(), 'WeftCut-win-x64.exe.blockmap', ...Object.keys(INSTALLERS),
+    ...Object.values(INSTALLERS).flat(), 'WeftCut-win-x64.exe.blockmap', 'WeftCut-mac-arm64.zip.blockmap',
+    ...Object.keys(INSTALLERS),
   ]
   const names = await fs.readdir(directory)
   for (const file of required) {
@@ -133,7 +135,7 @@ export async function readUpgradeNotes(version, root = ROOT) {
 // Prepended to every release's generated changelog (gh puts --notes ahead of
 // the notes it generates), after the version's upgrade notes when it has any.
 export function releaseNotes(upgrade = null) {
-  const { 'latest.yml': [exe], 'latest-linux.yml': [appImage, deb], 'latest-mac.yml': [dmg] } = INSTALLERS
+  const { 'latest.yml': [exe], 'latest-linux.yml': [appImage, deb], 'latest-mac.yml': [, dmg] } = INSTALLERS
   const code = text => '`' + text + '`'
   return [
     ...(upgrade ? [upgrade, ''] : []),
@@ -142,7 +144,7 @@ export function releaseNotes(upgrade = null) {
     `- **Windows** — run ${code(exe)}. The app keeps itself current: new versions download in the background and install when you quit.`,
     `- **Linux** — ${code(appImage)} (mark it executable first) or ${code(deb)}. Self-updates like Windows.`,
     `- **macOS (Apple Silicon, macOS 13 or newer)** — open ${code(dmg)} and drag WeftCut into Applications. ` +
-      'The app is signed with Developer ID and notarized by Apple. macOS builds do not self-update; download new versions from this page.',
+      'The app is signed with Developer ID and notarized by Apple, and self-updates like Windows once it runs from Applications.',
     '',
   ].join('\n')
 }
