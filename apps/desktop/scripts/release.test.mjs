@@ -52,10 +52,11 @@ async function assets(t) {
   const data = Buffer.from('installer fixture')
   const sha512 = createHash('sha512').update(data).digest('base64')
   // Per-target os/arch names, as electron-builder writes them (release.mjs INSTALLERS).
-  const files = [['win', 'x64', 'exe'], ['linux', 'x86_64', 'AppImage'], ['linux', 'amd64', 'deb'], ['mac', 'arm64', 'dmg']].map(([os, arch, ext]) => ({ url: `WeftCut-${os}-${arch}.${ext}`, size: data.length, sha512 }))
+  const files = [['win', 'x64', 'exe'], ['linux', 'x86_64', 'AppImage'], ['linux', 'amd64', 'deb'], ['mac', 'arm64', 'zip'], ['mac', 'arm64', 'dmg']].map(([os, arch, ext]) => ({ url: `WeftCut-${os}-${arch}.${ext}`, size: data.length, sha512 }))
   for (const file of files) await fs.writeFile(path.join(dir, file.url), data)
   await fs.writeFile(path.join(dir, 'WeftCut-win-x64.exe.blockmap'), 'blockmap fixture')
   await fs.writeFile(path.join(dir, 'WeftCut-mac-arm64.dmg.blockmap'), 'blockmap fixture')
+  await fs.writeFile(path.join(dir, 'WeftCut-mac-arm64.zip.blockmap'), 'blockmap fixture')
   for (const [name, subset] of [['latest.yml', files.slice(0, 1)], ['latest-linux.yml', files.slice(1, 3)], ['latest-mac.yml', files.slice(3)]]) {
     await fs.writeFile(path.join(dir, name), JSON.stringify({ version: '0.1.1', files: subset }))
   }
@@ -63,7 +64,8 @@ async function assets(t) {
 }
 
 test('release validation accepts complete Windows/Linux/macOS output', async t => {
-  assert.equal((await validateAssets(await assets(t), '0.1.1')).length, 9)
+  const dir = await assets(t)
+  assert.deepEqual((await validateAssets(dir, '0.1.1')).sort(), (await fs.readdir(dir)).map(name => path.join(dir, name)).sort())
 })
 test('release validation refuses missing Linux output', async t => {
   const dir = await assets(t)
@@ -81,6 +83,20 @@ test('release validation refuses missing macOS output', async t => {
   await fs.unlink(path.join(withoutManifest, 'latest-mac.yml'))
   await assert.rejects(validateAssets(withoutManifest, '0.1.1'), /Missing release asset: latest-mac.yml/)
 })
+test('a macOS release carries what its self-update downloads', async t => {
+  // Squirrel.Mac updates from the zip, never the DMG, and electron-updater
+  // ranges over the zip's blockmap for a differential download.
+  for (const file of ['WeftCut-mac-arm64.zip', 'WeftCut-mac-arm64.zip.blockmap']) {
+    const dir = await assets(t)
+    await fs.unlink(path.join(dir, file))
+    await assert.rejects(validateAssets(dir, '0.1.1'), new RegExp(`Missing release asset: ${file.replaceAll('.', '\\.')}`))
+  }
+  const unlisted = await assets(t)
+  const manifest = JSON.parse(await fs.readFile(path.join(unlisted, 'latest-mac.yml'), 'utf8'))
+  manifest.files = manifest.files.filter(file => !file.url.endsWith('.zip'))
+  await fs.writeFile(path.join(unlisted, 'latest-mac.yml'), JSON.stringify(manifest))
+  await assert.rejects(validateAssets(unlisted, '0.1.1'), /Incomplete latest-mac.yml/)
+})
 test('release notes name every installer the validator requires', () => {
   const notes = releaseNotes()
   // Version-less on purpose: releases/latest/download/<asset> must stay a stable
@@ -91,7 +107,7 @@ test('release notes name every installer the validator requires', () => {
   }
   assert.doesNotMatch(notes, /WeftCut-\d+\.\d+\.\d+/)
   assert.match(notes, /signed with Developer ID and notarized by Apple/)
-  assert.doesNotMatch(notes, /xattr|Open Anyway|ad-hoc/)
+  assert.doesNotMatch(notes, /xattr|Open Anyway|ad-hoc|do not self-update/)
 })
 test('a version\'s upgrade notes come first, and a version without them gets the install steps alone', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'release-notes-'))

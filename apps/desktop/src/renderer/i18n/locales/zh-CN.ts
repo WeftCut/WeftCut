@@ -490,6 +490,7 @@ const zhCN: Resources = {
     current: '当前已是最新版本。',
     downloading: '正在下载 {{version}}… {{percent}}%',
     error: '检查或下载更新失败，请重试或前往发版页面手动下载。',
+    error_location: 'WeftCut 在当前位置无法自动更新。请把它移到“应用程序”文件夹后从那里打开，或前往发版页面下载 {{version}}。',
     releases: '查看发版页面',
     skip: '跳过此版本',
     indicator_available: '新版本 {{version}} 可用',
@@ -2072,6 +2073,7 @@ const zhCN: Resources = {
   settings: {
     auto_install_updates_on_quit: '关闭应用时自动安装可用更新',
     auto_install_updates_on_quit_hint: '开启后后台下载更新，关闭应用时安装；关闭后仅检查新版本，点击“下载并安装”才会下载。',
+    auto_install_updates_on_quit_hint_mac: '开启后后台下载更新，关闭应用时安装；关闭后仅检查新版本，点击“下载并安装”才会下载。已下载好的更新仍会在关闭应用时安装。',
     layout_theme: '布局主题',
     layout_theme_hint: '统一应用预设字号和对话框尺寸。宽松主题提供更多横向空间，文字略大。',
     layout_theme_recommended: '推荐',

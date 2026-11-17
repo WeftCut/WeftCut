@@ -27,7 +27,7 @@ import { AppSelect } from "../components/AppSelect";
 import { AppSlider } from "../components/AppSlider";
 import { AppSwitch } from "../components/AppSwitch";
 import { Button } from "@/components/ui/button";
-import { modKeyLabel } from "@/platform";
+import { isMac, modKeyLabel } from "@/platform";
 import { KeybindingPanel } from "./KeybindingPanel";
 import { LayoutThemeControl } from "./LayoutThemeControl";
 import { AgentSection } from "./AgentSection";
@@ -293,7 +293,10 @@ export function SettingsPanel({
                 }} />
                 <span>
                   <span className="settings-toggle-label">{t("settings.auto_install_updates_on_quit")}</span>
-                  <span className="settings-toggle-hint">{t("settings.auto_install_updates_on_quit_hint")}</span>
+                  {/* macOS cannot withdraw an update once Squirrel has staged it
+                      (ADR 0170), so turning this off there leaves one that has
+                      already downloaded to install on close. */}
+                  <span className="settings-toggle-hint">{t(isMac ? "settings.auto_install_updates_on_quit_hint_mac" : "settings.auto_install_updates_on_quit_hint")}</span>
                 </span>
               </label>
               <LayoutThemeControl onError={setError} />

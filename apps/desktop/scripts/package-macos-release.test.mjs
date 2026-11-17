@@ -7,9 +7,10 @@ import path from 'node:path'
 import { parse, stringify } from 'yaml'
 import { fileURLToPath } from 'node:url'
 import {
-  CREDENTIALS, DMG, MANIFEST, SUBMISSION, awaitVerdict, requireCredentials, restampManifest, signingConfig, submit,
-  verifyDeveloperId, verifyNotarizedDmg,
+  CREDENTIALS, DMG, MANIFEST, SUBMISSION, ZIP, awaitVerdict, requireCredentials, restampManifest, signingConfig, submit,
+  verifyDeveloperId, verifyNotarizedDmg, verifyZipApp,
 } from './package-macos-release.mjs'
+import { INSTALLERS } from './release.mjs'
 
 const env = {
   CSC_LINK: 'certificate fixture', CSC_KEY_PASSWORD: 'export password fixture', APPLE_TEAM_ID: 'ABCD123456',
@@ -81,6 +82,26 @@ test('a DMG ships only with a ticket, Gatekeeper acceptance of image and app, an
     const attached = calls.some(args => args[0] === 'attach')
     const detached = calls.some(args => args[0] === 'detach')
     assert.equal(detached, attached && failure !== 'attach', `mount left behind after ${failure}`)
+  }
+})
+
+test('the update zip ships only when its app is the team\'s and Gatekeeper finds it notarized', () => {
+  for (const failure of ['ditto', 'codesign', 'execute', null]) {
+    const calls = []
+    let extracted
+    const execute = (command, args) => {
+      calls.push([command, ...args])
+      if (command === 'ditto') extracted = args[3]
+      const step = command === 'spctl' ? args[2] : command
+      if (step === failure) throw new Error(`${step} rejected fixture`)
+      return signed
+    }
+    if (failure) assert.throws(() => verifyZipApp('Fixture.zip', env.APPLE_TEAM_ID, execute), /rejected fixture/)
+    else verifyZipApp('Fixture.zip', env.APPLE_TEAM_ID, execute)
+    assert.equal(fs.existsSync(extracted), false, `extraction left behind after ${failure}`)
+    if (!failure) {
+      assert.ok(calls.some(([command, ...args]) => command === 'spctl' && args.at(-1) === path.join(extracted, 'WeftCut.app')))
+    }
   }
 })
 
@@ -175,4 +196,14 @@ test('only the release job on main receives Apple credentials, after the test ga
     () => true, { part: 'e2e-2' }, { event_name: 'push' }, {}, { 'release-plan': { outputs: { publish: 'true' } } }, { os })
   assert.equal(uploads('macOS'), false)
   assert.equal(uploads('Windows'), true)
+
+  // What release.mjs requires of macOS reaches the release, and a resumed
+  // notarization finds every file the release needs without rebuilding.
+  const macAssets = [...INSTALLERS['latest-mac.yml'], `${ZIP}.blockmap`, MANIFEST]
+  const uploaded = name => job.steps.find(step => step.with?.name === name).with.path.split('\n')
+    .map(line => line.trim()).filter(Boolean).map(file => path.basename(file))
+  for (const artifact of ['installer-macos-signed', 'macos-notary-pending']) {
+    for (const asset of macAssets) assert.ok(uploaded(artifact).includes(asset), `${artifact} lacks ${asset}`)
+  }
+  assert.ok(INSTALLERS['latest-mac.yml'].includes(DMG) && INSTALLERS['latest-mac.yml'].includes(ZIP))
 })

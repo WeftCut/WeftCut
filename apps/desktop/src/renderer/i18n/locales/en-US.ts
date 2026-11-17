@@ -507,6 +507,7 @@ const enUS = {
     current: 'You are up to date.',
     downloading: 'Downloading {{version}}… {{percent}}%',
     error: 'Could not check for or download the update. Try again, or download it from the releases page.',
+    error_location: 'WeftCut cannot update itself where it is now. Move it to the Applications folder and open it from there, or download {{version}} from the releases page.',
     releases: 'View Releases',
     skip: 'Skip this version',
     indicator_available: '{{version}} is available',
@@ -2318,6 +2319,7 @@ const enUS = {
   settings: {
     auto_install_updates_on_quit: 'Automatically install available updates when closing the app',
     auto_install_updates_on_quit_hint: 'When enabled, updates download in the background and install on exit. When disabled, updates only download when you choose Download and install.',
+    auto_install_updates_on_quit_hint_mac: 'When enabled, updates download in the background and install on exit. When disabled, updates only download when you choose Download and install. An update that has already downloaded still installs when you close the app.',
     layout_theme: 'Layout theme',
     layout_theme_hint: 'Apply preset text sizes and dialog dimensions. Relaxed layouts provide more horizontal room and slightly larger text.',
     layout_theme_recommended: 'Recommended',

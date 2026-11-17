@@ -2,6 +2,12 @@ export type UpdateStatus = {
   phase: 'disabled' | 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'ready' | 'restarting' | 'error'
   version?: string
   percent?: number
+  /** macOS: Squirrel has staged this update, and it installs at the next exit
+   *  whatever the preferences now say (main/updates.ts MacInstall). */
+  committed?: boolean
+  /** Why an offered update cannot be downloaded: `location`, a macOS copy
+   *  that cannot replace itself where it runs. */
+  reason?: 'location'
 }
 
 export type UpdateRestartResult = 'restarting' | 'not-ready' | 'save-failed'

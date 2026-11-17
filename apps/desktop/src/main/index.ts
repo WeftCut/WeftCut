@@ -21,14 +21,14 @@ import { createMacDecodeProbe } from './macDecodeProbe.js'
 import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
 import { execFile } from 'node:child_process'
-import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, Menu, nativeImage, nativeTheme, net, Notification, protocol, screen, shell, utilityProcess } from 'electron'
+import { app, autoUpdater, BrowserWindow, dialog, ipcMain, MessageChannelMain, Menu, nativeImage, nativeTheme, net, Notification, protocol, screen, shell, utilityProcess } from 'electron'
 import { createHash } from 'node:crypto'
 import { MotifCovers } from './motif/covers.js'
 import { BITMAP_CANVAS_RUNTIME_SOURCE } from './motif/bitmapCanvasRuntime.js'
 import { builtinMotifs, getMotifSource, motifRevision } from './motif/authoring.js'
 import { loadAllKeys, setKey, clearKey } from './keys.js'
 import electronUpdater from 'electron-updater'
-import { createUpdates } from './updates.js'
+import { createUpdates, macSelfUpdateBlocked } from './updates.js'
 import { createUpdateResume } from './updateResume.js'
 import { mediaMimeForExt } from './mediaMime.js'
 import { nodeAtomicWriteIo, writeFileAtomic } from './atomicWrite.js'
@@ -1469,12 +1469,11 @@ app.whenReady().then(async () => {
     platform: process.platform,
     arch: process.arch,
   }))
-  // Unpackaged dev/E2E runs never contact the release provider, and neither
-  // does macOS: its build is ad-hoc signed (electron-builder.yml §mac), and
+  // Unpackaged dev/E2E runs never contact the release provider. On macOS
   // Squirrel.Mac installs only an update whose signature satisfies the running
-  // app's designated requirement — for ad-hoc that is this build's own code
-  // hash, so no later build can. The Help dialog says so and links the releases
-  // page.
+  // app's designated requirement: Developer ID releases accept their team's
+  // next release, while an ad-hoc local or PR package (its own code hash) can
+  // never be updated and reports the failure (docs/releases.md).
   const resumePath = path.join(app.getPath('userData'), 'update-resume.json')
   const updateResume = createUpdateResume({
     version: app.getVersion(),
@@ -1483,8 +1482,7 @@ app.whenReady().then(async () => {
     clear: () => fs.rmSync(resumePath, { force: true }),
   })
   const resumeAfterUpdate = updateResume.take()
-  const updates = createUpdates(app.isPackaged && process.platform !== 'darwin'
-    ? electronUpdater.autoUpdater : null, {
+  const updates = createUpdates(app.isPackaged ? electronUpdater.autoUpdater : null, {
     installOnQuit: () => appSettings.get().auto_install_updates_on_quit !== false,
     skippedVersion: () => appSettings.get().skipped_update_version,
     prepareRestart: async version => {
@@ -1504,7 +1502,10 @@ app.whenReady().then(async () => {
       }
     },
     quit: () => app.quit(),
-  })
+    exit: () => app.exit(0),
+  }, process.platform === 'darwin'
+    ? { squirrel: autoUpdater, blocked: () => macSelfUpdateBlocked(app.getPath('exe')) }
+    : undefined)
   ipcMain.handle('updates:status', () => updates.status())
   updatePreferenceChanged = () => updates.preferenceChanged()
   ipcMain.handle('updates:check', () => {
@@ -1514,6 +1515,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('updates:restart', () => updates.restart())
   ipcMain.handle('updates:download', () => updates.download())
   ipcMain.handle('updates:resume', () => resumeAfterUpdate)
+  app.on('will-quit', event => updates.handOffQuit(event))
   app.once('quit', (_event, exitCode) => updates.installOnQuit(exitCode))
   app.once('will-quit', () => updates.stop())
 

@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createUpdates } from './updates.js'
+import { createUpdates, macSelfUpdateBlocked, SQUIRREL_HANDOFF_MS } from './updates.js'
 
 function setup(lifecycle?: Parameters<typeof createUpdates>[1]) {
   const engine = Object.assign(new EventEmitter(), {
@@ -316,5 +316,142 @@ describe('application updates', () => {
     updates.stop()
     await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000)
     expect(engine.checkForUpdates).toHaveBeenCalledTimes(2)
+  })
+})
+
+function setupMac(lifecycle: Parameters<typeof createUpdates>[1], blocked: () => 'location' | null = () => null) {
+  const engine = Object.assign(new EventEmitter(), {
+    checkForUpdates: vi.fn(), downloadUpdate: vi.fn(), autoDownload: true, autoInstallOnAppQuit: false, disableWebInstaller: false,
+    allowPrerelease: true, allowDowngrade: true, logger: null, quitAndInstall: vi.fn(),
+  })
+  const squirrel = Object.assign(new EventEmitter(), { quitAndInstall: vi.fn() })
+  const updates = createUpdates(engine as unknown as NonNullable<Parameters<typeof createUpdates>[0]>, lifecycle, { squirrel, blocked })
+  // electron-updater's MacUpdater: its download settles once Squirrel has read
+  // the zip, and announces the download before Squirrel has checked it.
+  engine.checkForUpdates.mockImplementation(async () => {
+    engine.emit('update-available', { version: '0.2.0' })
+    return {}
+  })
+  engine.downloadUpdate.mockImplementation(async () => {
+    engine.emit('update-downloaded', { version: '0.2.0' })
+    return ['update.zip']
+  })
+  return { engine, squirrel, updates }
+}
+const lifecycleOf = (overrides: Partial<NonNullable<Parameters<typeof createUpdates>[1]>> = {}) =>
+  ({ installOnQuit: () => true, prepareRestart: vi.fn(async () => {}), quit: vi.fn(), exit: vi.fn(), ...overrides })
+
+describe('macOS updates (Squirrel stages the install)', () => {
+  it('is ready only once Squirrel has staged the download, and then committed', async () => {
+    const { engine, squirrel, updates } = setupMac(lifecycleOf())
+    expect(engine.autoInstallOnAppQuit).toBe(true) // hand the zip to Squirrel right after download
+    const check = updates.check()
+    await vi.waitFor(() => expect(engine.downloadUpdate).toHaveBeenCalledOnce())
+    await Promise.resolve()
+    expect(updates.status().phase).toBe('downloading')
+    squirrel.emit('update-downloaded')
+    await check
+    expect(updates.status()).toEqual({ phase: 'ready', version: '0.2.0', committed: true })
+  })
+
+  it('leaves the install to the exit: no installer call, and later preferences cannot withdraw it', async () => {
+    let enabled = true
+    let skipped: string | undefined
+    const { engine, squirrel, updates } = setupMac(lifecycleOf({ installOnQuit: () => enabled, skippedVersion: () => skipped }))
+    const check = updates.check()
+    await vi.waitFor(() => expect(engine.downloadUpdate).toHaveBeenCalledOnce())
+    squirrel.emit('update-downloaded')
+    await check
+    enabled = false
+    skipped = '0.2.0'
+    updates.preferenceChanged()
+    engine.emit('error', new Error('late'))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    updates.installOnQuit(0)
+    expect(engine.quitAndInstall).not.toHaveBeenCalled()
+    expect(updates.status()).toEqual({ phase: 'ready', version: '0.2.0', committed: true })
+  })
+
+  it('hands the restart\'s final exit to Squirrel once, after the normal quit has run', async () => {
+    const lifecycle = lifecycleOf()
+    const { engine, squirrel, updates } = setupMac(lifecycle)
+    const normalQuit = { preventDefault: vi.fn() }
+    updates.handOffQuit(normalQuit)
+    expect(normalQuit.preventDefault).not.toHaveBeenCalled()
+    engine.emit('update-available', { version: '0.2.0' })
+    const download = updates.download()
+    await vi.waitFor(() => expect(engine.downloadUpdate).toHaveBeenCalledOnce())
+    squirrel.emit('update-downloaded')
+    expect(await download).toBe('ready')
+    expect(await updates.restart()).toBe('restarting')
+    expect(lifecycle.quit).toHaveBeenCalledOnce()
+    expect(squirrel.quitAndInstall).not.toHaveBeenCalled()
+    const willQuit = { preventDefault: vi.fn() }
+    updates.handOffQuit(willQuit)
+    expect(willQuit.preventDefault).toHaveBeenCalledOnce()
+    expect(squirrel.quitAndInstall).toHaveBeenCalledOnce()
+    // Squirrel ends the process through another quit round, which must pass.
+    const again = { preventDefault: vi.fn() }
+    updates.handOffQuit(again)
+    expect(again.preventDefault).not.toHaveBeenCalled()
+    expect(squirrel.quitAndInstall).toHaveBeenCalledOnce()
+    expect(lifecycle.exit).not.toHaveBeenCalled()
+  })
+
+  it('exits without reopening when Squirrel refuses or stalls the handoff', async () => {
+    vi.useFakeTimers()
+    for (const ending of ['refuses', 'stalls'] as const) {
+      const lifecycle = lifecycleOf()
+      const { engine, squirrel, updates } = setupMac(lifecycle)
+      engine.emit('update-available', { version: '0.2.0' })
+      const download = updates.download()
+      await vi.waitFor(() => expect(engine.downloadUpdate).toHaveBeenCalledOnce())
+      squirrel.emit('update-downloaded')
+      await download
+      await updates.restart()
+      updates.handOffQuit({ preventDefault: vi.fn() })
+      if (ending === 'refuses') squirrel.emit('error', new Error('relaunch failed'))
+      else await vi.advanceTimersByTimeAsync(SQUIRREL_HANDOFF_MS)
+      expect(lifecycle.exit, ending).toHaveBeenCalled()
+    }
+  })
+
+  it('fails the download when Squirrel refuses the update, and allows a retry', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { engine, squirrel, updates } = setupMac(lifecycleOf({ installOnQuit: () => false }))
+    engine.emit('update-available', { version: '0.2.0' })
+    const first = updates.download()
+    await vi.waitFor(() => expect(engine.downloadUpdate).toHaveBeenCalledOnce())
+    squirrel.emit('error', new Error('code signature does not satisfy the designated requirement'))
+    expect(await first).toBe('download-failed')
+    expect(updates.status()).toEqual({ phase: 'error', version: '0.2.0' })
+    const second = updates.download()
+    await vi.waitFor(() => expect(engine.downloadUpdate).toHaveBeenCalledTimes(2))
+    squirrel.emit('update-downloaded')
+    expect(await second).toBe('ready')
+  })
+
+  it('offers an update it cannot install where it runs, and never downloads it', async () => {
+    const { engine, updates } = setupMac(lifecycleOf(), () => 'location')
+    await updates.check()
+    expect(updates.status()).toEqual({ phase: 'error', version: '0.2.0', reason: 'location' })
+    expect(await updates.download()).toBe('download-failed')
+    expect(engine.downloadUpdate).not.toHaveBeenCalled()
+  })
+})
+
+describe('macSelfUpdateBlocked', () => {
+  const exe = '/Applications/WeftCut.app/Contents/MacOS/WeftCut'
+  it('accepts a bundle it can replace in a folder it can write', () => {
+    const access = vi.fn()
+    expect(macSelfUpdateBlocked(exe, access)).toBeNull()
+    expect(access.mock.calls.map(([file]) => file)).toEqual(['/Applications/WeftCut.app', '/Applications'])
+  })
+  it('refuses a translocated copy, a read-only volume and a folder it cannot write', () => {
+    expect(macSelfUpdateBlocked('/private/var/folders/x/T/AppTranslocation/ABC/d/WeftCut.app/Contents/MacOS/WeftCut', () => {})).toBe('location')
+    const readOnly = () => { throw Object.assign(new Error('EROFS'), { code: 'EROFS' }) }
+    expect(macSelfUpdateBlocked('/Volumes/WeftCut/WeftCut.app/Contents/MacOS/WeftCut', readOnly)).toBe('location')
+    const parentDenied = (file: string) => { if (file === '/Applications') throw new Error('EACCES') }
+    expect(macSelfUpdateBlocked(exe, parentDenied)).toBe('location')
   })
 })
