@@ -32,6 +32,7 @@ import { libraryHost, type UnavailableMotif } from '../../shared/motifs/projectM
 import type { UserMotifStore } from '../motif/store'
 import { runMotifTool } from '../motif/motifTools'
 import { legacyMigration } from '../motif/legacyResolve'
+import { copyProjectMotifs } from '../motif/projectCopy'
 import type { BuiltinMotif } from '../motif/authoring'
 import type { MotifResolver } from '../motif/resolver'
 import { libraryPackage, libraryPackageOfLineage, type MotifState } from '../motif/projectStore'
@@ -463,7 +464,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       try { actor.replaceState(next) } finally { swapping = false }
     },
   }
-  const orchestratorDeps = { actor: swapActor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink, onGridRepair, onSchemaUpgrade, migration, placeMigratedMotifs }
+  const orchestratorDeps = { actor: swapActor, napi: deps.napi, fs: deps.fs, join: deps.join, idGen, enqueueDerivatives, relink, onRelink, onGridRepair, onSchemaUpgrade, migration, placeMigratedMotifs, copyMotifs: copyProjectMotifs }
 
   // Hybrid orchestrator deps (native-compute → TS-write). enqueueDerivatives here
   // takes the inserted ITEMS (vs the orchestrator's whole-Project variant) and
@@ -609,7 +610,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
       motifRecords.opened()
     },
     saveAs: (dir) => replaceWorkspace(async () => {
-      try { await saveProjectAs(orchestratorDeps, dir) }
+      try { await saveProjectAs(orchestratorDeps, dir, deps.workspaceDir()) }
       finally {
         // Save As changes the workspace without replacing actor state. A
         // failure in recent-list bookkeeping after commitWorkspace still leaves

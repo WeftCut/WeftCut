@@ -61,6 +61,10 @@ export interface OrchestratorDeps {
    *  (`main/motif/legacyResolve.ts`). Never throws: a copy that fails answers
    *  a null revision. Without it every planned copy stays missing. */
   placeMigratedMotifs?: (dir: string, copies: readonly MotifCopy[]) => MotifCopyOutcome[]
+  /** Copies the open project's Motif folders that `ids` names from `from` to
+   *  `to` for Save As (`main/motif/projectCopy.ts`); throws when one fails.
+   *  Without it the saved copy holds no Motif folder. */
+  copyMotifs?: (from: string, to: string, ids: readonly string[]) => void
   actor: Pick<ActorHandle, 'replaceState' | 'snapshot'>
   napi: WorkspaceNapi
   fs: OrchestratorFs
@@ -243,12 +247,15 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   deps.enqueueDerivatives?.(project)
 }
 
-/** project_save_as. snapshot → write project.json →
- *  commit_workspace → push_recent. Never swaps state (the actor already holds it). */
-export async function saveProjectAs(deps: OrchestratorDeps, dir: string): Promise<void> {
+/** project_save_as. snapshot → copy the Motif folders from `from` → write
+ *  project.json → commit_workspace → push_recent. Never swaps state (the actor
+ *  already holds it). A failed Motif copy fails the save before project.json
+ *  names it. */
+export async function saveProjectAs(deps: OrchestratorDeps, dir: string, from?: string | null): Promise<void> {
   const { actor, napi, fs, join } = deps
   const snap = actor.snapshot()
   fs.mkdirp(dir)                                              // save_to_dir's create_dir_all
+  if (from) deps.copyMotifs?.(from, dir, Object.keys(snap.motifs))
   fs.writeFile(join(dir, PROJECT_FILE), serializeProjectToJson(snap))
   await napi.commitWorkspace(dir)
   await napi.pushRecent(dir, snap.metadata.name)
