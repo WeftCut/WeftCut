@@ -106,6 +106,7 @@ import {
   type OverrideMap,
 } from "./shortcuts/useShortcuts";
 import { useNativeMenu } from "./menu/nativeMenu";
+import { useTimelineImportFlow } from "./startup/useTimelineImportFlow";
 import { StatusBar } from "./logs/StatusBar";
 import { LogConsole, type LogConsoleHandle } from "./logs/LogConsole";
 import { useLogStore } from "./logs/store";
@@ -193,6 +194,7 @@ interface AppProps {
 
 export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
   const { t } = useTranslation();
+  const timelineImport = useTimelineImportFlow({ fromStartup: false, onWorkspaceReady });
   const summary = useProjectSummary();
   // The timeline the panels, the shortcuts and the Insert menu act on. Export
   // and Settings read the root below regardless (compositionAnchorStore.ts
@@ -1052,6 +1054,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
       // latent and pop the palette open when the user returns to the editor.
       if (!agentMode) setPaletteOpen(true);
     },
+    importTimeline: () => void timelineImport.begin(),
     openSettings: () => openSettings("general"),
   };
   // Memoised so `useShortcuts`'s `useMemo(entries)` doesn't churn each
@@ -1153,7 +1156,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
         openVoiceoverDialog: openVoiceoverPrompt,
       },
       {
-        busy,
+        busy: busy || timelineImport.busy,
         canUndo: !!summary?.history.can_undo,
         canRedo: !!summary?.history.can_redo,
         exportLocked: busy || exportEditLocked,
@@ -1271,6 +1274,7 @@ export function App({ onCloseProject, onWorkspaceReady }: AppProps) {
           renders nothing until something calls `openCheckpointPrompt()`. */}
       <CheckpointPromptDialog />
       <MarkerRenameDialog />
+      {timelineImport.dialogs}
 
       {/* The clip-analysis dialogs, owned here for the same reason: every one
           of their commands reaches the Edit menu and the palette, which must

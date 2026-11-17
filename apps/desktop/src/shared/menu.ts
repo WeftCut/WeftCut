@@ -24,6 +24,7 @@
 /// full parity would buy.
 export const MENU_ACTION_IDS = [
   'importMedia',
+  'importTimeline',
   'save',
   'saveAs',
   'closeProject',

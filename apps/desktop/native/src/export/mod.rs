@@ -115,6 +115,8 @@ async fn mix_and_encode(
     }
 
     cancellation.check()?;
+    // The retime pass runs before the mix and uses the same admitted memory.
+    let _resources = crate::resources::export_audio(resource_plan).map_err(anyhow::Error::msg)?;
     let plan = if crate::audio::retime::needed(project) {
         let empty = HashMap::new();
         let retime_cancel = cancellation.clone();
@@ -123,6 +125,7 @@ async fn mix_and_encode(
             project.root_id,
             layer_audio_sources.unwrap_or(&empty),
             Some(std::sync::Arc::new(move || retime_cancel.is_cancelled())),
+            &_resources,
         )
         .await?;
         crate::audio::retime::stem_plan(project, stems, window_us)
@@ -155,10 +158,6 @@ async fn mix_and_encode(
         }
     }
 
-    // Borrowed from the export's admitted plan, never a fresh claim: a fresh
-    // one queued behind a running derivative and failed busy after 15 s,
-    // while the export itself already held its admission.
-    let _resources = crate::resources::export_audio(resource_plan).map_err(anyhow::Error::msg)?;
     let mut cmd = crate::ffmpeg::command(Bound::watchdog());
     cmd.args(["-y", "-hide_banner", "-nostats"])
         .args(["-f", "f32le", "-ar", "48000", "-ac", "2", "-i", "-"])

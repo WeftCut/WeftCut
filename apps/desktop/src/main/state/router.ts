@@ -17,7 +17,7 @@ export type Route =
   | { kind: 'tacks' }         // the user's tack actions from the agent panel (ADR 0115) — never a project write
   | { kind: 'projectSettings' } // actor.snapshot().settings
   | { kind: 'saveStatus' }    // whether project.json is reaching disk (shared/save-status.ts) — READ-only
-  | { kind: 'open' } | { kind: 'saveAs' } | { kind: 'newWorkspace' } | { kind: 'save' } | { kind: 'close' }
+  | { kind: 'open' } | { kind: 'saveAs' } | { kind: 'newWorkspace' } | { kind: 'listTimelineSequences' } | { kind: 'importTimeline' } | { kind: 'previewTimeline' } | { kind: 'discardTimelinePreview' } | { kind: 'save' } | { kind: 'close' }
   | { kind: 'agentSessionEnd' } // end work locally; release only its owned lock
   | { kind: 'agentSessionBegin' } // legacy local channel: request agent view only
   | { kind: 'appSettings' }   // app-level prefs store, owned in TS main (config-dir)
@@ -193,6 +193,10 @@ export function routeChannel(channel: string): Route {
     case 'project_open': return { kind: 'open' }
     case 'project_save_as': return { kind: 'saveAs' }
     case 'project_new_workspace': return { kind: 'newWorkspace' }
+    case 'project_list_timeline_sequences': return { kind: 'listTimelineSequences' }
+    case 'project_preview_timeline': return { kind: 'previewTimeline' }
+    case 'project_discard_timeline_preview': return { kind: 'discardTimelinePreview' }
+    case 'project_import_timeline': return { kind: 'importTimeline' }
     case 'project_save': return { kind: 'save' }
     case 'project_close': return { kind: 'close' }
     case 'agent_session_end': return { kind: 'agentSessionEnd' }

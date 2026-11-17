@@ -1,4 +1,5 @@
 import { parseManifestIsland } from '../../shared/motifs/catalog';
+import type { TimelineImportApprovals, TimelineMediaReplacement, TimelinePreflight, TimelineProjectDestination, TimelineSequenceList } from '../../shared/timelineImport'
 import type { TimingFields } from '../../shared/timeMapping'
 import type { CropRect } from '../../shared/crop';
 // Renderer-side IPC surface: typed `invoke` wrappers plus the wire shapes the
@@ -898,6 +899,30 @@ export const projectSaveStatus = (): Promise<SaveStatus> => invoke<SaveStatus>(S
 
 export async function projectSaveAs(path: string): Promise<void> {
   return invoke<void>("project_save_as", { path });
+}
+
+export function projectListTimelineSequences(path: string): Promise<TimelineSequenceList> {
+  return invoke<TimelineSequenceList>("project_list_timeline_sequences", { path });
+}
+
+export function projectPreviewTimeline(
+  path: string, relinkDirectory?: string, sequenceIndex?: number, newProject = false,
+  replacements?: TimelineMediaReplacement[], documentId?: string, omitEffects = false, leaveTitleGaps = false, revalidateReplacements = false, leaveMediaGaps?: string[],
+): Promise<TimelinePreflight> {
+  return invoke<TimelinePreflight>("project_preview_timeline", {
+    path, relinkDirectory, sequenceIndex, newProject, replacements, documentId, omitEffects, leaveTitleGaps, revalidateReplacements, leaveMediaGaps,
+  });
+}
+
+export function projectDiscardTimelinePreview(id: string): Promise<null> {
+  return invoke<null>("project_discard_timeline_preview", { id });
+}
+
+export function projectImportTimeline(
+  id: string, canvas: 'fit' | 'fill' | 'original' = 'fit', destination?: TimelineProjectDestination,
+  approvals?: TimelineImportApprovals,
+): Promise<string> {
+  return invoke<string>("project_import_timeline", { id, canvas, destination, ...approvals });
 }
 
 export async function projectOpen(path: string): Promise<void> {

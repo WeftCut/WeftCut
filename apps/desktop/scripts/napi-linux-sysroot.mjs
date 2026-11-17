@@ -34,7 +34,9 @@ export function linuxSysroot(env = process.env, { platform = process.platform, a
   const { version } = createRequire(cli)('@napi-rs/cross-toolchain')
   const bin = join(homedir(), '.napi-rs', 'cross-toolchain', version, LINUX_TRIPLE, 'bin')
   const suffix = LINUX_TRIPLE.replaceAll('-', '_')
-  const tools = {}
+  // pkg-config would resolve the host's liblzma and its newer glibc. Build
+  // the bundled lzma-sys source with the same compiler as the other C crates.
+  const tools = { LZMA_API_STATIC: '1' }
   for (const [name, exe] of [['CC', 'gcc'], ['CXX', 'g++'], ['AR', 'ar']]) {
     const key = `${name}_${suffix}`
     if (!env[key]) tools[key] = join(bin, `${LINUX_TRIPLE}-${exe}`)

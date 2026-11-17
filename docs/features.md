@@ -5,6 +5,57 @@ rules, and the edge cases. Subsystem mechanics live in the linked docs; the
 record shapes in [data-model.md](data-model.md); the agent surface in
 [mcp.md](mcp.md).
 
+## Timeline import
+
+Choose **Import timeline…** from startup to create a project from FCPXML, or
+**File → Import FCPXML…** (Mod+Shift+I) to add an editable Group after the
+current timeline. Review the sequence, sources and changes before confirming.
+If the XML or media changes after review, choose **Review timeline again…**
+from the dialog. The import is one Undo step. Cancel or failed preflight leaves the existing
+project and source files intact. Keep originals available until WeftCut has
+copied them to the workspace.
+
+Choose a local `.fcpxml` file or a `.fcpxmld` bundle with a regular
+`Info.fcpxml` at its root. Pick the sequence if the document contains more
+than one project. The importer supports the subset below with FCPXML headers
+1.6 through 1.14. The tests use fictional timelines and generated media.
+
+| Source edit or condition | What WeftCut does |
+| --- | --- |
+| Cuts, gaps and trims | Preserves supported placement and source ranges. When the XML lists too short a source duration, review can keep the original cut if every requested media stream covers it. Named gaps keep their span and the review reports that their names are left out. |
+| Video, stills and audio | Preserves enabled state, selected media components, linked A/V and supported track order. Connected clips keep their positions and become independently movable. |
+| Canvas and media size | Preserves the sequence canvas. Source media uses Fit by default or the authored Fill or None setting. When still-image dimensions are missing, review explains that WeftCut reads them from the file. When a declared size differs, review shows both, with a choice to use the file or replace it. |
+| Different destination frame rate | Choose **Review as a new project…** to keep the sequence rate. The current project is saved before switching. If rates match and canvases differ, choose Fit, Fill or Original size for the imported Group. |
+| Missing or unplayable media | Choose a replacement or review marked gaps for one or several sources when the affected edits have known timing. If the original files are restored while review is open, review the timeline again to check for them. After approval, WeftCut preserves other edits and adds a range marker to show where to add a replacement. The original clip's markers become independent. A source used in a transition needs a replacement or a rendered transition. |
+| Audio and video roles | Common audio roles map to WeftCut mixer roles. Review reports when a subrole is grouped under its main role, when a custom audio role uses Dialogue, and when a custom video role label is left out. Playback settings that depend on role-specific source routing still need to be rendered or flattened first. |
+| Source streams | Video and audio components can name the default stream explicitly. For an alternate stream WeftCut cannot select, export that stream to a separate file and update the source edit. |
+| Source frame rate | A rate difference can repeat or skip pictures. When an in-point misses the reported frame grid, WeftCut can check the file’s presentation timestamps. If a picture covers the requested time, review names the result and keeps the trim and cut timing. Otherwise, choose the original or a constant-frame-rate copy with the same timing. |
+| Audio and timecode | Audio-only placement uses the 48 kHz sample grid. Review reports sample rounding, resampling and downmixing. Nonzero origins and supported drop-frame display normalize to zero-based non-drop-frame without changing edit positions. |
+| Audio edits too short to play | When both timeline edges land on the same 48 kHz sample, review names the short edit and lets you approve leaving its sound out. The rest of the edit keeps its timing. Any markers on audio-only clips stay as timeline markers. Extend the audio trim in the source editor and re-export to keep the sound. |
+| Split audio edits | Linked picture and sound from a supported asset clip keep separate source trims and timeline positions. Overlapping split audio goes on separate tracks. Review reports audio before zero left out and any timeline extension to preserve a sound tail. |
+| Markers | Keeps text and notes for representable point, range, to-do and chapter markers. Review reports snapping, point conversion and any chapter, poster-frame or to-do settings left out. Stills retain markers at their timeline positions. A cue close to the end of a clip stays on its last frame. Review explains when a marker becomes independent to keep it at the reviewed frame. |
+| Static adjustments | Preserves supported position, scale, rotation, opacity and gain as editable values. |
+| Forward constant speed | Keeps a two-point linear speed map, when it covers the whole placement and has no markers or children. Supports frame sampling and the original audio pitch setting. |
+| Built-in Cross Dissolve | An explicit overlap between two enabled video-only clips can become an editable WeftCut crossfade. Review notes that the blend can differ. |
+| Clip filters | Where timing and structure can be preserved, **Review without these effects…** offers a version with the named filters left out. Confirm that change before importing. |
+| Color and scan | Rec. 601 footage stays editable and review explains its SDR Rec. 709 output. For missing source color tags, WeftCut uses its playback defaults and reports that choice when the XML declares Rec. 601. An HDR or wide-gamut source needs a tone-mapped copy tagged SDR Rec. 709. Interlaced media needs a progressive export. |
+| Still-image playback | Review checks whether the editor can decode a still. If it cannot display the file, choose a PNG replacement and keep the clip’s timing. Fit uses the displayed dimensions, with a review notice when they differ from the media probe. Review also explains when the image decoder uses the file’s color profile in place of an XML sRGB declaration. |
+| Missing or incompatible media | Choose a replacement for each timeline asset, even when two assets refer to the same file. Search a folder for exact filenames. Differences in letter case or Unicode spelling and ambiguous matches need a choice. Review also shows known differences and recoverable edits. Every replacement is checked again before confirmation. After re-export, a manual replacement can carry forward when the original has one unambiguous match across both versions. Review asks you to confirm the reused file and identifies prior choices that could not be matched. |
+| Proxy media | If the original is unavailable or incompatible, review can offer a local proxy listed by the XML. WeftCut checks the requested streams and trims. Approval uses the proxy for editing and export, with a possible quality loss. |
+| Source organization | Review reports when it leaves out clip notes, source metadata, collections, standalone browser clips, and Apple file access bookmarks. |
+| Compound clips | Supported same-rate primary compound clips become editable Groups. Repeated placements share the Group contents and keep their own trims. |
+| Multicam | Supported primary cuts import the explicitly selected picture and audio as editable Group clips. Review names the angles used. Switching angles remains available in the source editor. |
+| Synchronized clips | A primary synchronized clip with a supported internal storyline becomes an editable Group. Camera and recorder clips retain their own source ranges and relative timing. Review reports discarded display timecode and the conversion to a Group. Synchronized clips with audio role routing or unsupported effects need a flattened edit or a render from the source editor. |
+| Titles | **Review without these titles…** can leave out a presentation-only primary or connected title after approval. Review shows its frame range. A primary title leaves a gap and a connected title reveals the picture underneath. Other media and cut times are kept. Render a title in the source editor to keep its appearance. |
+| Other transitions, complex retimes, unsupported multicam, compound or synchronized clips, and unsupported adjustments | Review identifies the affected edit and explains how to render, flatten or simplify it. When edits block import, review can show independent clip-setting and timing problems together, alongside missing media. It includes frame ranges where the placement is known. Fix those paths while the edit still needs attention, then refresh the review after re-exporting. |
+
+The importer handles local Windows drive and POSIX file URLs. A path from
+another platform can be relinked. It does not fetch media over the network or
+resolve external XML entities or DTDs. It refuses XML references to UNC
+shares, devices and traversal paths, as well as unsafe bundle inputs. The
+review uses the existing media importer and the final edit goes through the
+project actor and normal save path.
+
 ## Undo-stack scope
 
 A state mutation records a `HistoryEntry` iff it changes the timeline

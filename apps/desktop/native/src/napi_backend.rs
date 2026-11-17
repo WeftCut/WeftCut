@@ -443,6 +443,48 @@ impl Backend {
         Ok(hash)
     }
 
+    /// Review sources with the bounded media probe. An open project supplies
+    /// its generation so a workspace change cancels the read. Startup has
+    /// no active workspace session to bind.
+    /// Stream durations travel beside the pool item for trim validation.
+    #[napi]
+    #[cfg(feature = "jobs")]
+    pub async fn inspect_timeline_media(
+        &self,
+        path: String,
+        hash_only: bool,
+        expected_generation: Option<u32>,
+    ) -> napi::Result<String> {
+        let result: anyhow::Result<String> = async {
+            let scope = match expected_generation {
+                Some(generation) => self.cache.snapshot_expected(Some(generation))?,
+                None => CacheLayout::new(std::env::temp_dir()),
+            };
+            let permit = tokio::select! {
+                permit = crate::resources::import_preparation() => permit?,
+                _ = scope.cancelled() => anyhow::bail!("workspace cancelled"),
+            };
+            let path = std::path::PathBuf::from(path);
+            if hash_only {
+                let facts = tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
+                    crate::io::probe::hash_and_stat_scoped(&path, Some(&scope))
+                })
+                .await??;
+                return Ok(facts.blake3_hex);
+            }
+            let _permit = permit;
+            let (metadata, streams) =
+                crate::io::probe::probe_timeline_media_scoped(&path, &scope).await?;
+            scope.check_active()?;
+            let item = crate::commands::media::media_item_from_metadata(path, metadata)
+                .map_err(anyhow::Error::msg)?;
+            Ok(serde_json::json!({ "item": item, "streams": streams }).to_string())
+        }
+        .await;
+        result.map_err(|e| Error::from_reason(format!("{e:#}")))
+    }
+
     /// auto_split_by_shot hybrid compute: the WHOLE-source shot report for
     /// `media` under `opts_json` detection settings, from the VSHOT cache
     /// (`jobs::shot::cached_source_report` — computed + written through on a

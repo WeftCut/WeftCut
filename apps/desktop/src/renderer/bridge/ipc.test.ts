@@ -72,3 +72,11 @@ it.each(['project_open', 'project_new_workspace', 'project_startup_open'])('allo
   vi.stubGlobal('window', { api: { backend: { invokePublished } } });
   expect(await invoke(command)).toBe('/synthetic/project');
 });
+
+it('allows a timeline to create a workspace before the mirror mounts, while an append requires the mirror', async () => {
+  const invokePublished = vi.fn().mockResolvedValue({ value: '/synthetic/project', publication: version });
+  vi.stubGlobal('window', { api: { backend: { invokePublished } } });
+  const destination = { parentFolder: '/synthetic', name: 'project' };
+  await expect(invoke('project_import_timeline', { destination })).resolves.toBe('/synthetic/project');
+  await expect(invoke('project_import_timeline')).rejects.toMatchObject({ accepted: true, command: 'project_import_timeline' });
+});

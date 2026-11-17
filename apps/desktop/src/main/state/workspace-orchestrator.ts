@@ -8,7 +8,7 @@
 // agent-end→LogBus, inside commitWorkspace) BEFORE replace_state; recents AFTER
 // a successful swap/write.
 import { WorkspaceFailure, isWorkspaceFailure } from '../../shared/workspaceErrors'
-import type { ActorHandle } from './actor'
+import type { ActorHandle, InitialProjectEdit } from './actor'
 import { isCommandFailure, ValidationFailure } from './errors'
 import { validate } from './validate'
 import type { IdGen } from './ids'
@@ -46,6 +46,8 @@ export interface OrchestratorFs {
   writeFile(path: string, text: string): void
   /** create_dir_all equivalent. */
   mkdirp(dir: string): void
+  /** Creates exactly this directory; refuses an occupied target atomically. */
+  mkdirExclusive?(dir: string): void
   /** Best-effort delete (stale quick proxies); must not throw on a missing file. */
   rm(path: string): void
 }
@@ -256,7 +258,9 @@ export function makeEnqueueDerivatives(
 /** project_new_workspace. Validate → blank project with
  *  the canvas preset → write → commit_workspace → replace_state → push_recent +
  *  set_last_new_project_parent. Returns the created workspace path. */
-export async function newWorkspace(deps: OrchestratorDeps, args: NewWorkspaceArgs): Promise<string> {
+export async function newWorkspace(
+  deps: OrchestratorDeps, args: NewWorkspaceArgs, prepareFirstEdit?: (blank: Project) => InitialProjectEdit,
+): Promise<string> {
   const { actor, napi, fs, join, idGen } = deps
   const trimmed = args.name.trim()
   if (trimmed.length === 0) throw new WorkspaceFailure({ error: 'ProjectNameRequired' })
@@ -275,10 +279,21 @@ export async function newWorkspace(deps: OrchestratorDeps, args: NewWorkspaceArg
   root.height = args.height
   root.fps = { num: args.fpsNum, den: args.fpsDen }
 
-  fs.mkdirp(target)
-  fs.writeFile(join(target, PROJECT_FILE), serializeProjectToJson(project))
+  // Stage and validate the first edit before touching the destination. It is
+  // already on disk when the actor publishes the new workspace and its undo.
+  const firstEdit = prepareFirstEdit?.(project)
+  if (firstEdit && fs.mkdirExclusive) {
+    try { fs.mkdirExclusive(target) }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new WorkspaceFailure({ error: 'ProjectFolderExists' })
+      throw error
+    }
+  } else {
+    fs.mkdirp(target)
+  }
+  fs.writeFile(join(target, PROJECT_FILE), serializeProjectToJson(firstEdit?.snapshot ?? project))
   await napi.commitWorkspace(target)
-  actor.replaceState(project)
+  actor.replaceState(project, firstEdit)
   await napi.pushRecent(target, project.metadata.name)
   await napi.setLastNewProjectParent(args.parentFolder)
   return target

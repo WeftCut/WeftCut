@@ -16,6 +16,7 @@ export type DialogOpenOpts = {
   title?: string
   multiple?: boolean
   directory?: boolean
+  treatPackageAsDirectory?: boolean
   filters?: { name: string; extensions: string[] }[]
   defaultPath?: string
 }
