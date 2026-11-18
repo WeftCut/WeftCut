@@ -42,8 +42,8 @@ pub(super) async fn run(
     generate: impl std::future::Future<Output = anyhow::Result<PathBuf>>,
 ) -> anyhow::Result<PathBuf> {
     let version = match kind {
-        JobKind::Proxy => super::proxy::PROXY_FORMAT_VERSION,
-        JobKind::QuickProxy => 4,
+        JobKind::Proxy => media.proxy_recipe().full_version(),
+        JobKind::QuickProxy => media.proxy_recipe().quick_version(),
         JobKind::Waveform => 4,
         JobKind::Conform => super::conform::CONFORM_FORMAT_VERSION,
         _ => 1,

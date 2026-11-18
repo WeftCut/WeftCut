@@ -17,7 +17,7 @@ const SRC = path.resolve(MEDIA, "test_1080p_gradient10.mp4");
 const PROXY = path.resolve(os.tmpdir(), "weftcut-probe-proxy.mp4");
 
 // proxy.rs scale/codec/GOP args only (proxy.rs also asserts the source's color
-// tags via `source_color_args` + `+write_colr`; this probe does not).
+// tags via `color_args` + `+write_colr`; this probe does not).
 // CAP = PROXY_HEIGHT_CAP (2160), GOP = PROXY_GOP_FRAMES (6).
 const CAP = 2160;
 const GOP = 6;

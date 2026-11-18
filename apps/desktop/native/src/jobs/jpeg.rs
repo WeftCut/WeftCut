@@ -11,9 +11,11 @@ use crate::state::VideoStreamMeta;
 /// matrix, so a BT.709 picture's pure red showed as about (229, 0, 0).
 ///
 /// `original` is the ORIGINAL's video stream even when the frame is read from
-/// a proxy: a proxy keeps its source's matrix and declares only what the
-/// source declared. For a source that declares none, ffmpeg would assume
-/// BT.601 at every size, so the rule's matrix is given explicitly.
+/// a proxy: a YCbCr source's proxy keeps its matrix and declares only what the
+/// source declared, and an RGB-coded source's proxy declares the matrix it was
+/// converted into (`proxy::color_args`). For a source that declares none,
+/// ffmpeg would assume BT.601 at every size, so the rule's matrix is given
+/// explicitly.
 pub fn scale_filter(scale: &str, original: Option<&VideoStreamMeta>) -> String {
     let input = original
         .and_then(VideoStreamMeta::undeclared_matrix)
@@ -164,10 +166,10 @@ mod tests {
         }
     }
 
-    /// The renderer's rule and this one must not drift: both read the same
+    /// The renderer's rules and these must not drift: both read the same
     /// cases (`ffprobeColorSpace.test.ts` is the other reader).
     #[test]
-    fn the_size_rule_matches_the_golden_the_renderer_reads() {
+    fn the_size_and_rgb_rules_match_the_golden_the_renderer_reads() {
         #[derive(serde::Deserialize)]
         struct Case {
             width: u32,
@@ -175,8 +177,15 @@ mod tests {
             hd: bool,
         }
         #[derive(serde::Deserialize)]
+        struct PixFmt {
+            pix_fmt: String,
+            rgb: bool,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
         struct Golden {
             cases: Vec<Case>,
+            pix_fmts: Vec<PixFmt>,
         }
         let golden: Golden = serde_json::from_str(include_str!(
             "../../../src/renderer/render/decoder/undeclaredColourGolden.fixture.json"
@@ -196,5 +205,14 @@ mod tests {
             VideoStreamMeta::undeclared_is_hd(0, 0),
             "an unknown size reads as HD"
         );
+        assert!(!golden.pix_fmts.is_empty());
+        for c in golden.pix_fmts {
+            assert_eq!(
+                VideoStreamMeta::is_rgb_pix_fmt(&c.pix_fmt),
+                c.rgb,
+                "{}",
+                c.pix_fmt
+            );
+        }
     }
 }

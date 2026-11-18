@@ -65,5 +65,103 @@
       "height": 2160,
       "hd": true
     }
+  ],
+  "pixFmts": [
+    {
+      "pix_fmt": "rgb24",
+      "rgb": true
+    },
+    {
+      "pix_fmt": "bgr24",
+      "rgb": true
+    },
+    {
+      "pix_fmt": "rgba",
+      "rgb": true
+    },
+    {
+      "pix_fmt": "bgra",
+      "rgb": true
+    },
+    {
+      "pix_fmt": "argb",
+      "rgb": true
+    },
+    {
+      "pix_fmt": "0rgb",
+      "rgb": true
+    },
+    {
+      "pix_fmt": "bgr0",
+      "rgb": true
+    },
+    {
+      "pix_fmt": "rgb48le",
+      "rgb": true
+    },
+    {
+      "pix_fmt": "rgba64le",
+      "rgb": true
+    },
+    {
+      "pix_fmt": "x2rgb10le",
+      "rgb": true
+    },
+    {
+      "pix_fmt": "gbrp",
+      "rgb": true
+    },
+    {
+      "pix_fmt": "gbrp10le",
+      "rgb": true
+    },
+    {
+      "pix_fmt": "gbrap",
+      "rgb": true
+    },
+    {
+      "pix_fmt": "gbrapf32le",
+      "rgb": true
+    },
+    {
+      "pix_fmt": "pal8",
+      "rgb": true
+    },
+    {
+      "pix_fmt": "yuv420p",
+      "rgb": false
+    },
+    {
+      "pix_fmt": "yuvj420p",
+      "rgb": false
+    },
+    {
+      "pix_fmt": "yuv422p10le",
+      "rgb": false
+    },
+    {
+      "pix_fmt": "yuv444p",
+      "rgb": false
+    },
+    {
+      "pix_fmt": "yuva444p10le",
+      "rgb": false
+    },
+    {
+      "pix_fmt": "nv12",
+      "rgb": false
+    },
+    {
+      "pix_fmt": "p010le",
+      "rgb": false
+    },
+    {
+      "pix_fmt": "gray",
+      "rgb": false
+    },
+    {
+      "pix_fmt": "gray10le",
+      "rgb": false
+    }
   ]
 }

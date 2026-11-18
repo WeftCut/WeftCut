@@ -27,7 +27,7 @@ type OnMsg = (err: Error | null, msg: DecodeMsg) => void
 function fakeBackend() {
   const callbacks = new Map<string, OnMsg>()
   const backend = {
-    previewDecodeOpen: vi.fn((id: string, _path: string, _options: unknown, onMsg: OnMsg) => {
+    previewDecodeOpen: vi.fn((id: string, _path: string, _options: unknown, _color: unknown, onMsg: OnMsg) => {
       callbacks.set(id, onMsg)
       return { width: 2, height: 2 }
     }),
@@ -40,7 +40,8 @@ function fakeBackend() {
 
 const contents = () => new EventEmitter() as unknown as WebContents
 const request = (sessionId: string): PreviewDecodeRequest =>
-  ({ sessionId, path: '/home/u/clip.mov', options: { lane: 'vaapi', device: '/dev/dri/renderD128', scaleDiv: 2 } })
+  ({ sessionId, path: '/home/u/clip.mov', color: { matrix: 'smpte170m', fullRange: true },
+    options: { lane: 'vaapi', device: '/dev/dri/renderD128', scaleDiv: 2 } })
 
 beforeEach(() => {
   resources.reserve.mockReset()
@@ -48,13 +49,14 @@ beforeEach(() => {
 })
 
 describe('openPreviewDecode', () => {
-  it('opens the native session with every open option, returns its shipped size, and closes it by its id', () => {
+  it('opens the native session with every open option and its plane colour, returns its shipped size, and closes it by its id', () => {
     const { backend, native } = fakeBackend()
     const { port, consumerCloses } = fakePort()
     const info = openPreviewDecode(native, contents(), port, request('opened'))
     expect(info).toEqual({ width: 2, height: 2 })
     expect(backend.previewDecodeOpen).toHaveBeenCalledWith(
-      'opened', '/home/u/clip.mov', { lane: 'vaapi', device: '/dev/dri/renderD128', scaleDiv: 2 }, expect.any(Function))
+      'opened', '/home/u/clip.mov', { lane: 'vaapi', device: '/dev/dri/renderD128', scaleDiv: 2 },
+      { matrix: 'smpte170m', fullRange: true }, expect.any(Function))
     expect(resources.reserve).toHaveBeenCalledWith('/home/u/clip.mov')
     consumerCloses()
     expect(backend.previewDecodeClose.mock.calls).toEqual([['opened']])

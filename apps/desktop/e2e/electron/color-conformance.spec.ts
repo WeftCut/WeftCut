@@ -120,10 +120,16 @@ test.describe('color round-trip conformance (Electron)', () => {
 // preview gates sample (preview-sw-color, preview-hw-color, preview-lite-color)
 // exported 1:1 through BOTH export decode engines must show the source's
 // colours. The charts carry no colour tag, so every lane fills the absence from
-// one rule (`resolveSourceColor`): BT.601 below 720 lines, BT.709 from 720 up.
-// Same metric and ceiling as the round-trip cases above; ffmpeg would read an
-// untagged source as BT.601 at every size, so the intended matrix is passed
-// explicitly.
+// one rule (`resolveSourceColor`): BT.601 for SD, BT.709 for HD, where 1280 wide
+// is HD at any height. Same metric and ceiling as the round-trip cases above;
+// ffmpeg would read an untagged source as BT.601 at every size, so the intended
+// matrix is passed explicitly.
+//
+// The RGB-coded charts run through both engines too: the ffmpeg engine's
+// session converts the RGB samples into the YCbCr its frames are read with
+// (`nativePlaneColor`), and the webcodecs engine decodes the full proxy, whose
+// recipe converts them and declares what it converted into. RGB samples have
+// no matrix to force, so the analyzer reads the source as it is.
 //
 // The two full-range charts run here through the ffmpeg engine only (the
 // round-trip cases above take them through webcodecs): the native decode
@@ -142,7 +148,8 @@ interface EngineChart {
   source: string
   manifest: string
   canvas: { width: number; height: number; fpsNum: number; fpsDen: number }
-  /// The matrix/range the chart was converted with (generate.mjs UNTAGGED_COLOR).
+  /// The matrix/range the chart was converted with (generate.mjs
+  /// UNTAGGED_COLOR); `auto` for an RGB chart, which has none.
   inMatrix: string
   inRange: string
 }
@@ -168,6 +175,29 @@ const ENGINE_CHARTS: readonly EngineChart[] = [
     inMatrix: 'bt709',
     inRange: 'tv',
   },
+  {
+    label: 'wide',
+    title: (engine) => `untagged cropped HD chart (1280x544) exports as BT.709 through the ${engine} decode engine`,
+    engines: ['webcodecs', 'ffmpeg'],
+    source: path.resolve(MEDIA_DIR, 'test_1280x544_color_709ltd_untagged.mp4'),
+    manifest: path.resolve(MEDIA_DIR, 'color_manifest_1280x544.json'),
+    canvas: { width: 1280, height: 544, fpsNum: 30, fpsDen: 1 },
+    inMatrix: 'bt709',
+    inRange: 'tv',
+  },
+  ...([
+    ['rgb-h264', 'gbr-tagged RGB H.264', 'test_1080p_color_rgb_h264.mp4'],
+    ['rgb-qtrle', 'untagged QuickTime Animation RGB', 'test_1080p_color_rgb_qtrle.mov'],
+  ] as const).map(([label, chart, file]): EngineChart => ({
+    label,
+    title: (engine) => `${chart} chart exports its RGB through the ${engine} decode engine`,
+    engines: ['webcodecs', 'ffmpeg'],
+    source: path.resolve(MEDIA_DIR, file),
+    manifest: MANIFEST,
+    canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
+    inMatrix: 'auto',
+    inRange: 'auto',
+  })),
   ...(['709full', '601full'] as const).map((enc): EngineChart => ({
     label: enc,
     title: (engine) => `${enc} chart keeps full-range levels through the ${engine} decode engine`,

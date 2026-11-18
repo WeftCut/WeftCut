@@ -7,7 +7,7 @@
 
 import type { WebContents } from 'electron'
 import type { NativeDecode } from '@weftcut/native-decode'
-import type { PreviewDecodeCommand, PreviewDecodeOpenInfo, PreviewDecodeOptions } from '../shared/frameCarrier/wire'
+import type { PlaneColor, PreviewDecodeCommand, PreviewDecodeOpenInfo, PreviewDecodeOptions } from '../shared/frameCarrier/wire'
 import { admitDecodeSession } from './frameCarrier/decodeSessionAdmission'
 import { parseRelease, type CarrierPort } from './frameCarrier/decodeSessionHost'
 import { reserveDecoderResources } from './resources'
@@ -15,6 +15,7 @@ import { reserveDecoderResources } from './resources'
 export interface PreviewDecodeRequest {
   sessionId: string
   path: string
+  color: PlaneColor
   options: PreviewDecodeOptions
 }
 
@@ -26,13 +27,13 @@ export function openPreviewDecode(
   port: CarrierPort,
   request: PreviewDecodeRequest,
 ): PreviewDecodeOpenInfo {
-  const { sessionId, path, options } = request
+  const { sessionId, path, color, options } = request
   return admitDecodeSession({
     sessionId,
     port,
     owner,
     reserve: () => reserveDecoderResources(path),
-    open: onMsg => backend.previewDecodeOpen(sessionId, path, options, (err, msg) => {
+    open: onMsg => backend.previewDecodeOpen(sessionId, path, options, color, (err, msg) => {
       // A frame the addon could not hand over keeps its lease in flight for
       // good, so the session is no longer whole: end it.
       onMsg(err ? { kind: 'error', message: err.message, terminal: true } : msg)

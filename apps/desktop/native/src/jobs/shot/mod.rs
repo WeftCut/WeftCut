@@ -292,8 +292,8 @@ const TIERS: [&str; 3] = ["quick", "full", "orig"];
 /// the proxies are cache entries that land after import and can be evicted.
 fn tier_path(cache: &CacheLayout, media: &MediaItem, tier: &str) -> std::path::PathBuf {
     match tier {
-        "quick" => cache.quick_proxy(&media.file_hash_blake3),
-        "full" => cache.proxy(&media.file_hash_blake3),
+        "quick" => cache.quick_proxy(&media.file_hash_blake3, media.proxy_recipe()),
+        "full" => cache.proxy(&media.file_hash_blake3, media.proxy_recipe()),
         _ => media.path_abs.clone(),
     }
 }
@@ -1415,7 +1415,11 @@ mod tests {
     /// Drop a non-empty quick proxy into the cache, the way the import's
     /// transcode does after it finishes — `pick_source` flips to `"quick"`.
     fn land_quick_proxy(cache: &CacheLayout, media: &MediaItem) {
-        std::fs::write(cache.quick_proxy(&media.file_hash_blake3), b"proxy").unwrap();
+        std::fs::write(
+            cache.quick_proxy(&media.file_hash_blake3, media.proxy_recipe()),
+            b"proxy",
+        )
+        .unwrap();
         assert_eq!(pick_source(cache, media).1, "quick");
     }
 
@@ -1545,7 +1549,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(report_source(&cache, &media).1, "quick");
-        std::fs::remove_file(cache.quick_proxy(&media.file_hash_blake3)).unwrap();
+        std::fs::remove_file(cache.quick_proxy(&media.file_hash_blake3, media.proxy_recipe()))
+            .unwrap();
         assert_eq!(
             report_source(&cache, &media),
             (media.path_abs.clone(), "orig")

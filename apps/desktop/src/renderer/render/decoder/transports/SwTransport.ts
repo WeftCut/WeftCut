@@ -15,7 +15,7 @@
 import type { DecodeWireFrame, DecodeWireMsg, PreviewDecodeCommand, PreviewDecodeOptions } from "../../../../shared/frameCarrier/wire";
 import { openDecodeSession } from "../../../ipc/decodeSession";
 import { cpuPlaneFrame } from "../../frameCarrier/cpuPlaneFrame";
-import type { SourceColor } from "../ffprobeColorSpace";
+import { nativePlaneColor, type SourceColor } from "../ffprobeColorSpace";
 import type { DecodeTransport, DecodeTransportOpen, TransportFrame } from "./DecodeTransport";
 
 /// The transport's end of its session port.
@@ -30,8 +30,9 @@ export class SwTransport implements DecodeTransport {
   /// late message of an earlier session can never reach this one.
   private streamId = "";
 
-  /// The colour stamped on every frame: the source's resolved colour from
-  /// `open()`. Frames carry none of their own.
+  /// The colour stamped on every frame: what the session's planes carry
+  /// (`nativePlaneColor` of the source's resolved colour), the same value the
+  /// session is opened with. Frames carry none of their own.
   private colorSpace!: SourceColor;
 
   private port: SessionPort | null = null;
@@ -86,9 +87,10 @@ export class SwTransport implements DecodeTransport {
   /// `onmessage` is set, and frames only follow a `request` anyway.
   async open(o: DecodeTransportOpen): Promise<void> {
     this.streamId = o.streamId;
-    this.colorSpace = o.sourceColor;
+    this.colorSpace = nativePlaneColor(o.sourceColor);
+    const color = { matrix: this.colorSpace.matrix, fullRange: this.colorSpace.fullRange };
     const { port } = await openDecodeSession(this.streamId, () =>
-      window.api.previewDecode.open({ sessionId: this.streamId, path: o.path, options: this.openOptions() }),
+      window.api.previewDecode.open({ sessionId: this.streamId, path: o.path, color, options: this.openOptions() }),
     );
     // Disposed while opening: the close already went out by session id.
     if (this._disposed) {

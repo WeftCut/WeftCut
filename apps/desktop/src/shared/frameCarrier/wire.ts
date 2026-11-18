@@ -6,6 +6,7 @@
 import type {
   DecodeMsg,
   ExportDecodeOpenInfo,
+  PlaneColorInit,
   PreviewDecodeOpenInfo,
   PreviewDecodeOptions,
 } from '@weftcut/native-decode'
@@ -26,6 +27,10 @@ export type { ExportDecodeOpenInfo }
 
 /** How a preview session decodes and what it ships, and its open reply. */
 export type { PreviewDecodeOpenInfo, PreviewDecodeOptions }
+
+/** The colour of the YCbCr planes a byte session ships: the renderer's
+ * `nativePlaneColor`, which it reads the planes back with. */
+export type PlaneColor = PlaneColorInit
 
 /** What a shared texture travels with from main to the preload's slot reader:
  * slot `slot` of producer `key` (a GPU session's id, or a Motif pool's key). */

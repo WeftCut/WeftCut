@@ -7,7 +7,6 @@
 //! the atomicity helpers at the bottom of this file (`cached_ok`,
 //! `claim_temp`, `promote_temp`).
 
-pub const FULL_PROXY_FORMAT_VERSION: u32 = 7;
 pub mod disk_lru;
 mod session;
 pub use session::Session;
@@ -307,20 +306,19 @@ impl CacheLayout {
         self.inline_subs_dir().join(format!("{hash}.{ext}"))
     }
 
-    /// MP4 proxy for a hashed media file.
-    pub fn proxy(&self, hash: &str) -> PathBuf {
+    /// MP4 export master for a hashed media file. The recipe's version is in
+    /// the name (`ProxyRecipe::full_version`), so a proxy of an older recipe is
+    /// never adopted.
+    pub fn proxy(&self, hash: &str, recipe: crate::state::ProxyRecipe) -> PathBuf {
         self.proxies_dir()
-            .join(format!("{hash}.full-p{FULL_PROXY_FORMAT_VERSION}.mp4"))
+            .join(format!("{hash}.full-p{}.mp4", recipe.full_version()))
     }
 
-    /// Fast preview-first proxy for a hashed media file. The `q4` segment is
-    /// the recipe version — bump it whenever the quick-proxy ffmpeg args
-    /// change, so stale cached proxies are regenerated rather than reused.
-    /// Current recipe: 720p cap, short scrub GOP (docs/preview.md §Proxies), and source color
-    /// tags asserted with the mp4 `colr` atom written so proxy decodes aren't
-    /// misread as bt709/limited.
-    pub fn quick_proxy(&self, hash: &str) -> PathBuf {
-        self.proxies_dir().join(format!("{hash}.quick-q4.mp4"))
+    /// Fast preview-first proxy for a hashed media file, versioned the same way
+    /// (`ProxyRecipe::quick_version`).
+    pub fn quick_proxy(&self, hash: &str, recipe: crate::state::ProxyRecipe) -> PathBuf {
+        self.proxies_dir()
+            .join(format!("{hash}.quick-q{}.mp4", recipe.quick_version()))
     }
 
     /// Per-media thumbnail directory; individual thumbnails sit inside as
@@ -738,12 +736,18 @@ mod tests {
         let second = TempDir::new().unwrap();
         let owner = CacheLayout::new(first.path().join("Cache"));
         let pending = owner.clone();
-        let old_path = pending.proxy("source");
+        let old_path = pending.proxy("source", crate::state::ProxyRecipe::Ycbcr);
         let old_generation = owner.generation();
         owner.set_workspace(second.path()).unwrap();
         assert!(pending.is_cancelled());
-        assert_eq!(pending.proxy("source"), old_path);
-        assert_ne!(owner.proxy("source"), old_path);
+        assert_eq!(
+            pending.proxy("source", crate::state::ProxyRecipe::Ycbcr),
+            old_path
+        );
+        assert_ne!(
+            owner.proxy("source", crate::state::ProxyRecipe::Ycbcr),
+            old_path
+        );
         assert!(owner.snapshot_expected(Some(old_generation)).is_err());
         assert!(!owner
             .snapshot_expected(Some(owner.generation()))
@@ -835,13 +839,24 @@ mod tests {
     fn layout_paths_are_content_addressable() {
         let tmp = TempDir::new().unwrap();
         let layout = CacheLayout::new(tmp.path().to_path_buf());
+        // Each recipe names its own versions: an RGB-coded source's proxies
+        // are never the files a YCbCr source's would be.
+        use crate::state::ProxyRecipe;
         assert_eq!(
-            layout.proxy("abc"),
+            layout.proxy("abc", ProxyRecipe::Ycbcr),
             tmp.path().join("proxies").join("abc.full-p7.mp4"),
         );
         assert_eq!(
-            layout.quick_proxy("abc"),
+            layout.quick_proxy("abc", ProxyRecipe::Ycbcr),
             tmp.path().join("proxies").join("abc.quick-q4.mp4"),
+        );
+        assert_eq!(
+            layout.proxy("abc", ProxyRecipe::Rgb),
+            tmp.path().join("proxies").join("abc.full-p8.mp4"),
+        );
+        assert_eq!(
+            layout.quick_proxy("abc", ProxyRecipe::Rgb),
+            tmp.path().join("proxies").join("abc.quick-q5.mp4"),
         );
         assert_eq!(
             layout.thumbnail("abc", 5),

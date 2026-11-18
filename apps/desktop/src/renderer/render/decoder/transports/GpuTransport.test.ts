@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PreviewGpuCommand, SlotSessionMsg } from "../../../../shared/frameCarrier/wire";
 import { GpuTransport } from "./GpuTransport";
-import { resolveSourceColor } from "../ffprobeColorSpace";
+import { nativePlaneColor, resolveSourceColor } from "../ffprobeColorSpace";
 import { hydratePerformanceSettings } from "../../../../shared/performance-settings";
 import { setSlotFenceBackend, sharedSlotFenceQueue, type SlotFenceBackend } from "./slotFenceQueue";
 
@@ -319,6 +319,25 @@ describe("GpuTransport", () => {
       colorSpace: { primaries: "bt709", transfer: "bt709", matrix: "smpte170m", range: "full" },
     }));
     await full.dispose();
+  });
+
+  it("opens an RGB-coded source with the YCbCr colour every native lane's planes carry", async () => {
+    // The native shader converts YCbCr; `rgb` is not a matrix it can be told.
+    const { api } = installApi();
+    const rgbColor = resolveSourceColor({ width: 1920, height: 1080, pix_fmt: "gbrp", color_matrix: "gbr" });
+    const rgb = new GpuTransport();
+    await rgb.open({ streamId: "rgb", path: "C:/rgb.mp4", sourceColor: rgbColor });
+    const planes = nativePlaneColor(rgbColor);
+    expect(planes.matrix).not.toBe("rgb");
+    expect(api.open).toHaveBeenLastCalledWith(expect.objectContaining({
+      colorSpace: {
+        primaries: planes.primaries,
+        transfer: planes.transfer,
+        matrix: planes.matrix,
+        range: planes.fullRange ? "full" : "limited",
+      },
+    }));
+    await rgb.dispose();
   });
 
   it("records each shown slot's read and completion cost, with no proof fallback under the fence", async () => {

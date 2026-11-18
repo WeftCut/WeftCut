@@ -102,13 +102,24 @@ const COLOR_ENCODINGS = {
   },
 }
 
-/// The untagged charts: one per side of the absent-tag rule's 720-line split
-/// (`resolveSourceColor`), each converted with the matrix that side resolves to,
-/// so a lane that reads the absence differently shows it on the saturated
-/// patches.
+/// The untagged charts: one per side of the absent-tag rule's SD/HD split
+/// (`undeclaredIsHd`), and a cropped HD picture that is HD by its width alone
+/// (`wide`), each converted with the matrix its size resolves to, so a lane
+/// that reads the absence differently shows it on the saturated patches.
 const UNTAGGED_COLOR = {
   sd: { width: 720, height: 480, matrix: 'smpte170m', name: 'test_480p_color_601ltd_untagged.mp4' },
   hd: { width: WIDTH, height: HEIGHT, matrix: 'bt709', name: 'test_1080p_color_709ltd_untagged.mp4' },
+  wide: { width: 1280, height: 544, matrix: 'bt709', name: 'test_1280x544_color_709ltd_untagged.mp4' },
+}
+
+/// The RGB-coded charts: the 1080p chart stored as RGB samples, so there is
+/// no YCbCr matrix to read and every lane converts the picture itself. `h264`
+/// is libx264rgb (High 4:4:4 Predictive, decoded as `gbrp`), whose encoder tags
+/// it `gbr`, full range; `qtrle` is QuickTime Animation (`rgb24`), which
+/// carries no colour tag.
+const RGB_COLOR = {
+  h264: { encoder: ['-c:v', 'libx264rgb', '-crf', '18', '-preset', 'medium'], name: 'test_1080p_color_rgb_h264.mp4' },
+  qtrle: { encoder: ['-c:v', 'qtrle'], name: 'test_1080p_color_rgb_qtrle.mov' },
 }
 
 /// `scale` stamps its output matrix and range on the frame and libx264 writes
@@ -132,6 +143,7 @@ export function outputName({
   audio,
   color,
   colorUntagged,
+  colorRgb,
   colorProres,
   colorProresEnc,
   gradient,
@@ -162,6 +174,7 @@ export function outputName({
   if (audioTimingLong) return 'test_audio_timing_long_125s.mkv'
   if (color) return `test_1080p_color_${color}.mp4`
   if (colorUntagged) return untaggedColorOf(colorUntagged).name
+  if (colorRgb) return rgbColorOf(colorRgb).name
   if (colorProres) return `test_1080p_color_${colorProresEnc ?? '709ltd'}_prores.mov`
   if (gradient) return 'test_1080p_gradient10.mp4'
   if (gradientH264) return 'test_1080p_gradient10_h264.mp4'
@@ -321,7 +334,13 @@ function writeColorChart(io, outputDir, width, height) {
 
 function untaggedColorOf(size) {
   const shape = UNTAGGED_COLOR[size]
-  if (!shape) throw new Error(`unknown --color-untagged ${JSON.stringify(size)} (sd|hd)`)
+  if (!shape) throw new Error(`unknown --color-untagged ${JSON.stringify(size)} (sd|hd|wide)`)
+  return shape
+}
+
+function rgbColorOf(codec) {
+  const shape = RGB_COLOR[codec]
+  if (!shape) throw new Error(`unknown --color-rgb ${JSON.stringify(codec)} (h264|qtrle)`)
   return shape
 }
 
@@ -652,6 +671,20 @@ function generateColorUntagged(entry, outputDir, run, io) {
   io.log(`Done: ${name}`)
 }
 
+function generateColorRgb(entry, outputDir, run, io) {
+  const { encoder, name } = rgbColorOf(entry.colorRgb)
+  const chart = writeColorChart(io, outputDir, WIDTH, HEIGHT)
+  const args = [
+    '-y', '-loop', '1', '-i', chart, '-t', '1', '-r', '30',
+    '-vf', 'format=rgb24', ...encoder,
+    '-an', name,
+  ]
+
+  io.log(`Generating ${name} (chart as RGB samples, ${entry.colorRgb})`)
+  run(args, { cwd: outputDir })
+  io.log(`Done: ${name}`)
+}
+
 function generateColorProres(entry, outputDir, run, io) {
   const encoding = entry.colorProresEnc ?? '709ltd'
   const matrix = encoding === '709ltd'
@@ -949,6 +982,7 @@ export function generateFixture(entry, {
   if (entry.noisySpeech) return generateNoisySpeech(outputDir, ffmpeg, io)
   if (entry.color) return generateColor(entry, outputDir, ffmpeg, io)
   if (entry.colorUntagged) return generateColorUntagged(entry, outputDir, ffmpeg, io)
+  if (entry.colorRgb) return generateColorRgb(entry, outputDir, ffmpeg, io)
   if (entry.colorProres) return generateColorProres(entry, outputDir, ffmpeg, io)
   if (entry.h264Interframe) return generateH264Interframe(outputDir, ffmpeg, io)
   if (entry.shotCuts) return generateShotCuts(outputDir, ffmpeg, io)
@@ -1024,6 +1058,7 @@ const VALUE_FLAGS = new Map([
   ['--pts-offset-ms', ['ptsOffsetMs', Number]],
   ['--color', ['color', String]],
   ['--color-untagged', ['colorUntagged', String]],
+  ['--color-rgb', ['colorRgb', String]],
   ['--color-prores-enc', ['colorProresEnc', String]],
 ])
 
@@ -1094,7 +1129,8 @@ Generate one deterministic fixture in the current directory.
   --audio-timing-long
   --noisy-speech
   --color 709ltd|601ltd|709full|601full
-  --color-untagged sd|hd
+  --color-untagged sd|hd|wide
+  --color-rgb h264|qtrle
   --color-prores [--color-prores-enc 709ltd|601ltd]
   --gradient | --gradient-h264 | --gradient-h264-bf
   --gradient-av1 | --gradient-h264-4k
