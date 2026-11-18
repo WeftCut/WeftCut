@@ -437,15 +437,34 @@ describe('weftcut mcp over real stdio + HTTP', () => {
       },
     )
 
-    it.skipIf(besideAnApp())('with no app recorded or beside it, says WeftCut must be opened once', async () => {
+    it.skipIf(besideAnApp())('with no app recorded or beside it, says to install WeftCut or open it once', async () => {
       const client = open(target, profile(await unusedPort()))
       await client.initialize()
       const answer = await callTool(client, 'launch_weftcut')
       expect(answer.result.isError).toBe(true)
       expect(textOf(answer)).toBe(
-        'This weftcut CLI does not know where the WeftCut app is installed. ' +
-          'Ask the user to open WeftCut once (the app records how to start it), ' +
-          'or set the WEFTCUT_APP environment variable to a launchable WeftCut executable.',
+        'This weftcut CLI does not know where WeftCut is installed. ' +
+          'Ask the user to install WeftCut (https://weftcut.com) or, if it is installed, to open it once.',
+      )
+    })
+
+    // The profile outlives an uninstall: its record still names the app.
+    it('with the recorded app gone, says it is not installed there, at once', async () => {
+      const userData = profile(await unusedPort())
+      const gone = path.join(userData, process.platform === 'win32' ? 'WeftCut.exe' : 'WeftCut')
+      installCli({
+        source: path.join(userData, 'no-binary'),
+        userDataDir: userData,
+        platform: process.platform,
+        launch: { exec: gone, args: [], version: target.stamp },
+      })
+      const client = open(target, userData)
+      await client.initialize()
+      const answer = await callTool(client, 'launch_weftcut')
+      expect(answer.result.isError).toBe(true)
+      expect(textOf(answer)).toBe(
+        `WeftCut is not installed at ${gone} any more. ` +
+          'Ask the user to install WeftCut (https://weftcut.com) or, if they moved it, to open it once from its new place.',
       )
     })
 
