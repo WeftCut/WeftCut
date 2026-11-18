@@ -9,9 +9,9 @@
 //! writer, driven by the TS persistence orchestrator; it's read wherever a job
 //! or command needs the workspace root (cache
 //! layout, import copies, fs-scope grants). Media paths themselves don't
-//! route through here: the TS project loader (`persistence.ts`) reconciles
-//! `MediaItem.path_abs` from the workspace-relative `path_rel` at load time,
-//! so consumers read `path_abs` directly.
+//! route through here: the TS project loader sets `MediaItem.path_abs` to the
+//! project path `path_rel` under the project folder (`toNative`) at load
+//! time, so consumers read `path_abs` directly.
 
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};

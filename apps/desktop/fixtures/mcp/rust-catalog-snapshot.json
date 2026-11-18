@@ -283,7 +283,7 @@
     },
     {
       "name": "synthesize_speech",
-      "description": "Synthesize speech with the configured cloud TTS provider (OpenAI tts-1; the text is uploaded) and place it as a voiceover Audio layer, one placement or none: a refused placement leaves nothing in the pool. `text` ≤ 4096 chars; `voice`; optional `speed` 0.25..4.0 (default ≈ 1.0); `composition_id` (default root); `t_start_us` (default: the composition's duration, so it appends); `target_track_id`, else the topmost unlocked track whose audio lane is free across the clip, else a new 'Voiceover' track. The MP3 is cached by `(model, voice, speed, text)`, so a repeat costs no API request. Returns `{ layer_id, media_id, track_id, t_start_us, t_end_us, cached }`.",
+      "description": "Synthesize speech with the configured cloud TTS provider (OpenAI tts-1; the text is uploaded) and place it as a voiceover Audio layer, one placement or none: a refused placement leaves nothing in the pool. `text` ≤ 4096 chars; `voice`; optional `speed` 0.25..4.0 (default ≈ 1.0); `composition_id` (default root); `t_start_us` (default: the composition's duration, so it appends); `target_track_id`, else the topmost unlocked track whose audio lane is free across the clip, else a new 'Voiceover' track. The MP3 is cached by `(model, voice, speed, text)`, so a repeat costs no API request; the pooled file is its copy in the project's Media/Voiceover/ folder, so a project must be open. Returns `{ layer_id, media_id, track_id, t_start_us, t_end_us, cached }`.",
       "inputSchema": {
         "properties": {
           "composition_id": {

@@ -8,14 +8,19 @@ use serde::{Deserialize, Serialize};
 
 use super::decode_route::DecodeRoute;
 use super::ids::MediaId;
+use super::project_path::ProjectRelPath;
 use super::time::TimeUs;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MediaItem {
     pub id: MediaId,
     pub label: Option<String>,
+    /// Where this process opens the file: `path_rel` under the project
+    /// folder when that is set, else the outside file it was imported from.
     pub path_abs: PathBuf,
-    pub path_rel: Option<PathBuf>,
+    /// The copy inside the project folder (`Media/...`), `None` while the
+    /// file is outside it or its copy is still pending.
+    pub path_rel: Option<ProjectRelPath>,
     pub kind: MediaKind,
     pub metadata: MediaMetadata,
     /// Where preview and export each decode this source from, plus the

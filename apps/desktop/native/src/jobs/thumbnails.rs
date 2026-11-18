@@ -15,7 +15,7 @@ use crate::cache::cached_ok;
 use crate::cache::CacheLayout;
 use crate::state::MediaItem;
 
-const THUMB_COUNT: usize = 10;
+pub(super) const THUMB_COUNT: usize = 10;
 const THUMB_WIDTH: u32 = 320;
 /// Below this, the fps filter pushes too high and ffmpeg refuses (or emits
 /// fewer than N frames). Skip thumbnail generation for these.

@@ -2710,7 +2710,9 @@ async fn describe_clip_job(
 }
 
 /// TTS compute half of the `synthesize_speech` hybrid. Does NOT write to the
-/// project actor — that is the TS host's job. Returns `(MediaItem, cached)`.
+/// project actor — that is the TS host's job. Returns `(MediaItem, cached)`:
+/// the item is the voiceover's copy in the project's `Media/Voiceover/`
+/// (`place_voiceover`); `cached` says the request cache answered.
 #[cfg(feature = "speech")]
 pub(crate) async fn synthesize_speech_audio(
     b: &Backend,
@@ -2723,6 +2725,12 @@ pub(crate) async fn synthesize_speech_audio(
     if args.text.trim().is_empty() {
         return Err(McpToolError::invalid_params("text is empty", None));
     }
+    let workspace = b.workspace.current().ok_or_else(|| {
+        McpToolError::invalid_request(
+            "no project is open: the voiceover is saved in the project's Media/Voiceover folder",
+            None,
+        )
+    })?;
 
     // `preferred: None` — TTS has one capable backend (OpenAI), so there is no
     // preference to honor; the resolver's availability walk suffices.
@@ -2756,12 +2764,11 @@ pub(crate) async fn synthesize_speech_audio(
             .map_err(|e| McpToolError::internal_error(format!("write voiceover: {e:#}"), None))?;
     }
 
-    // Probe the (now-existing) file on a blocking thread to get duration.
-    // ffprobe is required here — without duration we can't size the
-    // Audio layer correctly.
-    let probe_path = dest.clone();
-    let cache_key_clone = cache_key.clone();
+    // Place the copy and probe it on a blocking thread. ffprobe is required
+    // here — without duration we can't size the Audio layer correctly.
     let media_item = tokio::task::spawn_blocking(move || -> Result<MediaItem, String> {
+        let placed = place_voiceover(&dest, &workspace)?;
+        let probe_path = placed.rel.to_native(&workspace);
         let metadata = probe::probe_metadata(&probe_path);
         if metadata.duration_us.is_none() {
             return Err(
@@ -2773,16 +2780,16 @@ pub(crate) async fn synthesize_speech_audio(
         let stat = std::fs::metadata(&probe_path).map_err(|e| format!("stat voiceover: {e}"))?;
         Ok(MediaItem {
             id: new_id(),
-            label: Some(format!("voiceover-{}", &cache_key_clone[..8])),
+            label: Some(format!("voiceover-{}", &placed.hash[..8])),
             path_abs: probe_path,
-            path_rel: None,
+            path_rel: Some(placed.rel),
             kind: MediaKind::Audio,
             metadata,
             decode_route: DecodeRoute::Bypass,
             waveform_path: None,
             conform_path: None,
             thumbnails_dir: None,
-            file_hash_blake3: cache_key_clone,
+            file_hash_blake3: placed.hash,
             file_size: stat.len(),
             file_mtime: stat
                 .modified()
@@ -2798,6 +2805,54 @@ pub(crate) async fn synthesize_speech_audio(
     .map_err(|e| McpToolError::internal_error(e, None))?;
 
     Ok((media_item, cached))
+}
+
+/// A voiceover's copy inside the project folder.
+#[cfg(feature = "speech")]
+struct PlacedVoiceover {
+    rel: crate::state::project_path::ProjectRelPath,
+    /// blake3 of the bytes, the item's content hash.
+    hash: String,
+}
+
+/// Copy the cached voiceover `cached` into
+/// `<workspace>/Media/Voiceover/voiceover-<first 8 hex of its blake3>.mp3`,
+/// so the project folder holds every file it plays. A file already at that
+/// name with the same bytes is reused; one with other bytes passes the name on
+/// to the next `portable_file_name` suffix.
+#[cfg(feature = "speech")]
+fn place_voiceover(
+    cached: &std::path::Path,
+    workspace: &std::path::Path,
+) -> Result<PlacedVoiceover, String> {
+    use crate::state::project_path::{fold_case, portable_file_name, ProjectRelPath};
+
+    let bytes = std::fs::read(cached).map_err(|e| format!("read voiceover: {e}"))?;
+    let hash = blake3::hash(&bytes).to_hex().to_string();
+    let folder = ProjectRelPath::of(["Media", "Voiceover"]).expect("portable segments");
+    let dir = folder.to_native(workspace);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    // Folded name → the name on disk, to read the file a folded name stands for.
+    let listing: std::collections::HashMap<String, std::ffi::OsString> = std::fs::read_dir(&dir)
+        .map_err(|e| format!("list {}: {e}", dir.display()))?
+        .filter_map(|e| e.ok())
+        .map(|e| (fold_case(&e.file_name().to_string_lossy()), e.file_name()))
+        .collect();
+    let same_bytes = |name: &std::ffi::OsString| {
+        std::fs::read(dir.join(name)).is_ok_and(|on_disk| on_disk == bytes)
+    };
+    let name = portable_file_name(&format!("voiceover-{}.mp3", &hash[..8]), &|folded| {
+        listing.get(folded).is_some_and(|name| !same_bytes(name))
+    });
+    let rel = folder.join(&name).map_err(|e| e.to_string())?;
+    let dest = rel.to_native(workspace);
+    if !listing.contains_key(&fold_case(&name)) {
+        // `std::fs::copy` never reflinks; a voiceover is small enough not to care.
+        let tmp = crate::cache::temp_path(&dest);
+        std::fs::copy(cached, &tmp).map_err(|e| format!("copy voiceover: {e}"))?;
+        crate::cache::promote_temp(&dest).map_err(|e| format!("{e:#}"))?;
+    }
+    Ok(PlacedVoiceover { rel, hash })
 }
 
 /// `synthesize_speech` Rust handler is a stub — the tool routes through the
@@ -3331,5 +3386,83 @@ echo '[{"t_start": 0.5, "t_end": 1.5, "text": "a test pattern", "tags": ["patter
         assert!(message.contains("4000 frames"), "{message}");
         assert!(message.contains("at most 3600 s"), "{message}");
         assert_eq!(t.server.hits(), 0);
+    }
+}
+
+#[cfg(all(test, feature = "speech"))]
+mod voiceover_placement_tests {
+    use super::*;
+    use crate::mcp::wire::McpErrorCode;
+    use crate::state::project_path::ProjectRelPath;
+    use tempfile::TempDir;
+
+    fn cached(dir: &std::path::Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_voiceover_lands_in_media_voiceover_named_by_its_bytes() {
+        let ws = TempDir::new().unwrap();
+        let cache = TempDir::new().unwrap();
+        let source = cached(cache.path(), "request-key.mp3", b"spoken words");
+
+        let placed = place_voiceover(&source, ws.path()).unwrap();
+
+        let written = std::fs::read(placed.rel.to_native(ws.path())).unwrap();
+        assert_eq!(written, b"spoken words");
+        assert_eq!(placed.hash, blake3::hash(&written).to_hex().to_string());
+        let folder: ProjectRelPath = "Media/Voiceover".parse().unwrap();
+        assert_eq!(
+            placed.rel,
+            folder
+                .join(&format!("voiceover-{}.mp3", &placed.hash[..8]))
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn the_same_bytes_reuse_their_file_and_other_bytes_take_the_next_name() {
+        let ws = TempDir::new().unwrap();
+        let cache = TempDir::new().unwrap();
+        let source = cached(cache.path(), "a.mp3", b"spoken words");
+        let first = place_voiceover(&source, ws.path()).unwrap();
+        assert_eq!(place_voiceover(&source, ws.path()).unwrap().rel, first.rel);
+
+        // Another file already holds the name this voiceover would take.
+        let other = cached(cache.path(), "b.mp3", b"other words");
+        let other_hash = blake3::hash(b"other words").to_hex().to_string();
+        let squatter = ProjectRelPath::of([
+            "Media",
+            "Voiceover",
+            &format!("voiceover-{}.mp3", &other_hash[..8]),
+        ])
+        .unwrap();
+        std::fs::write(squatter.to_native(ws.path()), b"not these bytes").unwrap();
+
+        let placed = place_voiceover(&other, ws.path()).unwrap();
+        assert_eq!(
+            placed.rel.file_name(),
+            format!("voiceover-{}-2.mp3", &other_hash[..8])
+        );
+        assert_eq!(
+            std::fs::read(placed.rel.to_native(ws.path())).unwrap(),
+            b"other words"
+        );
+        assert_eq!(
+            std::fs::read(squatter.to_native(ws.path())).unwrap(),
+            b"not these bytes"
+        );
+    }
+
+    #[tokio::test]
+    async fn synthesis_without_an_open_project_is_refused() {
+        let b = Backend::new_for_test(std::sync::Arc::new(crate::events::VecEventSink::new()));
+        let args: SynthesizeSpeechArgs =
+            serde_json::from_value(serde_json::json!({ "text": "hello", "voice": "alloy" }))
+                .unwrap();
+        let err = synthesize_speech_audio(&b, &args).await.unwrap_err();
+        assert!(matches!(err.code, McpErrorCode::InvalidRequest), "{err:?}");
     }
 }

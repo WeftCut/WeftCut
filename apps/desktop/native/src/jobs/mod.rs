@@ -75,7 +75,7 @@ pub(crate) async fn commit_media_workspace_paths(
     events: &Arc<dyn EventSink>,
     media_id: MediaId,
     path_abs: std::path::PathBuf,
-    path_rel: std::path::PathBuf,
+    path_rel: crate::state::project_path::ProjectRelPath,
     file_hash_blake3: String,
     file_size: u64,
     file_mtime: u64,
@@ -85,7 +85,7 @@ pub(crate) async fn commit_media_workspace_paths(
         serde_json::json!({
             "media_id": media_id.to_string(),
             "path_abs": path_abs,
-            "path_rel": path_rel,
+            "path_rel": path_rel.as_str(),
             "file_hash_blake3": file_hash_blake3,
             "file_size": file_size,
             "file_mtime": file_mtime,
@@ -257,6 +257,44 @@ fn cached_derivative(
         JobKind::Proxy => proxy::cached_path(cache, media),
         JobKind::AudioFx | JobKind::ProxyBypass => None,
     }
+}
+
+/// The derivatives of `media` already in the cache, as the patch their jobs
+/// would commit. Reads the cache only: the source is never hashed, no job
+/// starts and no event is emitted, so a project can open with its
+/// derivatives in place before any job runs.
+///
+/// Kinds follow `enqueue_for_media`, except that the full master is looked
+/// up by the route's variant alone: a route read from a project file carries
+/// no proxy slots, so it would always look undecided.
+pub fn cached_patch(cache: &CacheLayout, media: &MediaItem) -> MediaDerivativesPatch {
+    let mut patch = MediaDerivativesPatch::default();
+    if media.file_hash_blake3.starts_with("pending-") {
+        return patch;
+    }
+    let video = matches!(media.kind, MediaKind::Video);
+    if video {
+        patch.thumbnails_dir = cached_derivative(cache, media, JobKind::Thumbnails);
+    }
+    if media.metadata.audio.is_some() {
+        patch.conform_path = cached_derivative(cache, media, JobKind::Conform);
+        patch.waveform_path = cached_derivative(cache, media, JobKind::Waveform);
+    }
+    if video && !matches!(media.decode_route, DecodeRoute::Bypass) {
+        patch.quick_proxy_landed = cached_derivative(cache, media, JobKind::QuickProxy).map(Some);
+    }
+    if matches!(
+        media.decode_route,
+        DecodeRoute::Proxied { .. } | DecodeRoute::NativeSw { .. }
+    ) {
+        patch.full_proxy_landed = cached_derivative(cache, media, JobKind::Proxy).map(|path| {
+            Some(FullProxyLanded {
+                path,
+                format_version: proxy::PROXY_FORMAT_VERSION,
+            })
+        });
+    }
+    patch
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Hash)]
@@ -1449,6 +1487,89 @@ mod tests {
             "imported_at": chrono::Utc::now(),
         }))
         .unwrap()
+    }
+
+    /// Opening a project folds in what the cache already holds: a Proxied
+    /// item read from a project file (route tag only, no slots) gets its
+    /// versioned master back, so the import decision does not run again.
+    #[test]
+    fn cached_patch_restores_a_reopened_proxied_item_without_redeciding() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CacheLayout::new(dir.path().to_path_buf());
+        cache.ensure_dirs().unwrap();
+        let mut media = media_named(None, "/nonexistent/source.mp4");
+        media.decode_route =
+            serde_json::from_value(serde_json::json!({ "route": "proxied" })).unwrap();
+        let hash = media.file_hash_blake3.clone();
+        assert!(proxy_decision::route_needs_decision(&media.decode_route));
+
+        std::fs::create_dir_all(cache.thumbnails(&hash)).unwrap();
+        for i in 0..thumbnails::THUMB_COUNT {
+            std::fs::write(
+                cache.thumbnail(&hash, i),
+                include_bytes!("../../../fixtures/media/tiny.jpg"),
+            )
+            .unwrap();
+        }
+        for path in [cache.quick_proxy(&hash), cache.proxy(&hash)] {
+            std::fs::write(path, include_bytes!("../../../fixtures/media/tiny.mp4")).unwrap();
+        }
+
+        let patch = cached_patch(&cache, &media);
+        assert_eq!(patch.set_route, None, "hydration never decides a route");
+        assert_eq!(patch.thumbnails_dir, Some(cache.thumbnails(&hash)));
+        assert_eq!(
+            patch.quick_proxy_landed,
+            Some(Some(cache.quick_proxy(&hash)))
+        );
+        let landed = patch.full_proxy_landed.clone().flatten().expect("master");
+        assert_eq!(landed.path, cache.proxy(&hash));
+        assert_eq!(landed.format_version, proxy::PROXY_FORMAT_VERSION);
+        // No audio stream: nothing to restore for the audio kinds.
+        assert_eq!(patch.conform_path, None);
+        assert_eq!(patch.waveform_path, None);
+
+        // The fold `applySetMediaDerivatives` makes of this patch.
+        let reopened = DecodeRoute::Proxied {
+            quick_proxy: patch.quick_proxy_landed.flatten(),
+            full_proxy: Some(landed.path),
+            format_version: landed.format_version,
+        };
+        assert!(!proxy_decision::route_needs_decision(&reopened));
+    }
+
+    /// A bypassed source has no proxy slot to fill, and a source whose hash is
+    /// still pending has no cache key yet.
+    #[test]
+    fn cached_patch_skips_kinds_the_item_does_not_take() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CacheLayout::new(dir.path().to_path_buf());
+        cache.ensure_dirs().unwrap();
+        let mut media = media_named(None, "/nonexistent/source.mp4");
+        let hash = media.file_hash_blake3.clone();
+        for path in [cache.quick_proxy(&hash), cache.proxy(&hash)] {
+            std::fs::write(path, include_bytes!("../../../fixtures/media/tiny.mp4")).unwrap();
+        }
+        let bypass = cached_patch(&cache, &media);
+        assert_eq!(bypass.quick_proxy_landed, None);
+        assert!(bypass.full_proxy_landed.is_none());
+
+        media.decode_route = DecodeRoute::Proxied {
+            quick_proxy: None,
+            full_proxy: None,
+            format_version: 0,
+        };
+        assert!(cached_patch(&cache, &media).full_proxy_landed.is_some());
+        media.file_hash_blake3 = format!("pending-{}", media.id);
+        for path in [
+            cache.quick_proxy(&media.file_hash_blake3),
+            cache.proxy(&media.file_hash_blake3),
+        ] {
+            std::fs::write(path, include_bytes!("../../../fixtures/media/tiny.mp4")).unwrap();
+        }
+        let pending = cached_patch(&cache, &media);
+        assert_eq!(pending.quick_proxy_landed, None);
+        assert!(pending.full_proxy_landed.is_none());
     }
 
     #[tokio::test]
