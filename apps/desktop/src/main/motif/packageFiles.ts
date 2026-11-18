@@ -1,19 +1,14 @@
 import { lstatSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
+import { isPortableSegment } from '../../shared/projectPath'
 
 export interface MotifFile { path: string; bytes: Buffer }
 
-/** One portable name: no traversal, Windows aliases or streams. */
-function portableSegment(p: string): boolean {
-  return p !== '' && p !== '.' && p !== '..'
-    && !/[\\/:\x00-\x1f<>"|?*]/.test(p) && !/[. ]$/.test(p)
-    && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(p)
-}
-
-/** One portable relative path, with no traversal, Windows aliases or streams. */
+/** One portable relative path. Motif files and project media share the name
+ *  rule of `isPortableSegment`. */
 export function motifFileSegments(rel: string): string[] | null {
   const parts = rel.split('/')
-  return parts.every(portableSegment) ? parts : null
+  return parts.every(isPortableSegment) ? parts : null
 }
 
 /** The file a package path names, or null: links and junctions are refused at
@@ -61,7 +56,7 @@ export function stampMotifDirectory(root: string): FileStamp[] {
   function visit(dir: string, prefix: string): void {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const rel = prefix + entry.name
-      if (!portableSegment(entry.name)) throw new Error(`Invalid Motif asset path: ${rel}`)
+      if (!isPortableSegment(entry.name)) throw new Error(`Invalid Motif asset path: ${rel}`)
       if (entry.isSymbolicLink()) throw new Error(`Motif assets cannot be symbolic links: ${rel}`)
       const file = dir + path.sep + entry.name
       if (entry.isDirectory()) visit(file, rel + '/')
