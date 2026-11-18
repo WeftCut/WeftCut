@@ -623,8 +623,12 @@ mod tests {
     enum Seen {
         Frame(Frame),
         End,
-        Error { message: String, terminal: bool },
-        Mark,
+        Error {
+            message: String,
+            terminal: bool,
+        },
+        /// A message this lane never sends.
+        Other,
     }
 
     #[derive(Debug, Clone, PartialEq)]
@@ -662,7 +666,7 @@ mod tests {
             }),
             DecodeMsg::End => Seen::End,
             DecodeMsg::Error { message, terminal } => Seen::Error { message, terminal },
-            DecodeMsg::Mark { .. } => Seen::Mark,
+            DecodeMsg::Mark { .. } | DecodeMsg::Slot { .. } => Seen::Other,
         }
     }
 

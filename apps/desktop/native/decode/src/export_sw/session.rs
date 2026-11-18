@@ -436,6 +436,9 @@ mod tests {
             }
             DecodeMsg::End => c.ended += 1,
             DecodeMsg::Error { message, terminal } => c.errors.push((message, terminal)),
+            DecodeMsg::Slot { .. } => c
+                .errors
+                .push(("an export session sent a slot".into(), true)),
         }
     }
 

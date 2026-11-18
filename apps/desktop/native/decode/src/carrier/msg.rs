@@ -56,6 +56,15 @@ pub enum DecodeMsg {
         /// answer ranges in order (export).
         request_id: Option<u32>,
     },
+    /// Pool slot `slot` now holds the frame at `pts_us`, for the consumer to
+    /// read and then release by `slot` and `gen`. `gen` is the slot's fill
+    /// generation: a release naming an older one frees nothing.
+    Slot {
+        slot: u32,
+        gen: u32,
+        pts_us: f64,
+        dur_us: f64,
+    },
     /// Every frame intersecting `[a_us, b_us]` (b inclusive) has been sent.
     Mark { a_us: f64, b_us: f64 },
     /// The stream reached its end; its final frames were sent before this.

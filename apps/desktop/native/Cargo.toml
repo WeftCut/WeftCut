@@ -1,8 +1,9 @@
 # The napi crate is the workspace root; members: the dependency-light
-# `weftcut-eval` leaf, offline `weftcut-conversion` (native + wasm32), and optional `weftcut-native-decode`
+# `weftcut-eval` leaf, offline `weftcut-conversion` (native + wasm32), the Windows-only
+# `weftcut-d3d` leaf both addons share, and optional `weftcut-native-decode`
 # component addon (the only ffmpeg-next consumer — see decode/Cargo.toml).
 [workspace]
-members = ["eval", "conversion", "decode", "reaper"]
+members = ["eval", "conversion", "decode", "reaper", "d3d"]
 
 [package]
 name = "weftcut"
@@ -118,6 +119,9 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 image-compare = "0.5"
 
 [target.'cfg(windows)'.dependencies]
+# Shared textures, their keyed mutex, handle bytes and the LUID string; the
+# decode addon's GPU preview uses the same crate (d3d/Cargo.toml).
+weftcut-d3d = { path = "d3d" }
 windows = { version = "0.62", features = [
   "Win32_Foundation", "Win32_Security", "Win32_Graphics_Direct3D", "Win32_Storage_FileSystem",
   "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common",
