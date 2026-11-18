@@ -70,10 +70,20 @@ describe('v6 → v7 project paths', () => {
 
   it('tells different paths that fold to one name apart, renaming none that was already valid', () => {
     expect(relOf([
-      item('fixed', { path_rel: 'Media/Clip?.mp4' }),
-      item('upper', { path_rel: 'Media/Clip_.mp4' }),
-      item('lower', { path_rel: 'Media/clip_.mp4' }),
+      item('fixed', { path_rel: 'Media/Clip?.mp4', file_hash_blake3: '01'.repeat(32) }),
+      item('upper', { path_rel: 'Media/Clip_.mp4', file_hash_blake3: '02'.repeat(32) }),
+      item('lower', { path_rel: 'Media/clip_.mp4', file_hash_blake3: '03'.repeat(32) }),
     ])).toEqual({ fixed: 'Media/Clip_-3.mp4', upper: 'Media/Clip_.mp4', lower: 'Media/clip_-2.mp4' })
+  })
+
+  it('keeps one file named in two letter cases with the same bytes on one name', () => {
+    // One file on Windows and macOS, which fold case: renaming one spelling
+    // would leave nothing on disk for relink to find under the new name.
+    expect(relOf([
+      item('a', { path_rel: 'Media/Clip.mp4' }),
+      item('b', { path_rel: 'Media/clip.mp4' }),
+      item('other', { path_rel: 'Media/CLIP.mp4', file_hash_blake3: '04'.repeat(32) }),
+    ])).toEqual({ a: 'Media/Clip.mp4', b: 'Media/Clip.mp4', other: 'Media/CLIP-2.mp4' })
   })
 
   it('keeps items that named one file on one file', () => {
@@ -113,7 +123,7 @@ describe('v6 → v7 project paths', () => {
     expect(pool.vo).toMatchObject({ path_rel: to, file_hash_blake3: 'pending-vo' })
     expect(pool.vo).not.toHaveProperty('path_abs')
     expect(pool.again).toMatchObject({ path_rel: to, file_hash_blake3: 'pending-again' })
-    expect(plans).toEqual([{ from: `Cache/voiceover/${VOICE}.mp3`, to, mode: 'copy' }])
+    expect(plans).toEqual([{ from: `Cache/voiceover/${VOICE}.mp3`, to, mode: 'copy', recorded: `C:\\Users\\u\\Film\\Cache\\voiceover\\${VOICE}.mp3` }])
   })
 
   it('leaves an external item that is not a voiceover where it is', () => {

@@ -70,7 +70,7 @@ it did not, for causes in this repo:
 - **Save As copies the project's content**: `Media/`, `TASTE.md`,
   `export.json`, `view.json`, beside the existing Motif copy; never `Cache/`,
   `Backups/` or logs. Each file is cloned where the filesystem can (APFS,
-  btrfs, XFS), else hard-linked on the same volume, else copied, and keeps its
+  btrfs, XFS), else, for a media file, hard-linked on the same volume (`TASTE.md` and the other files people edit are never linked), else copied, and keeps its
   modification time so the copy opens without re-hashing.
 - **Schema v7, one conversion.** The v6 → v7 step rewrites each stored
   `path_rel` once: `\` to `/`, NFC, names other OSes refuse cleaned, names that
@@ -90,7 +90,7 @@ it did not, for causes in this repo:
 - A file renamed by the step is still under its old name on disk; the open finds
   it by content and renames it, as for any renamed file.
 - Save As no longer shares the source folder's cache, so the copy rebuilds its
-  full proxies. A hard-linked copy shares bytes with the source folder until
+  full proxies. A hard-linked media file shares bytes with the source folder until
   either is rewritten; an in-place edit of one shows as a changed source in the
   other ([ADR 0153](0153-reuse-is-decided-in-one-place-from-current-facts.md)).
 - Motif package file names follow the same segment rule, so a package whose

@@ -748,7 +748,7 @@ Save As works out of a failing folder: it writes the whole project to the new
 one, so the old folder's failed flush does not stop it. It copies the project's
 content first (`state/projectContent.ts`: `Media/`, `TASTE.md`, `export.json`,
 `view.json`; Motifs through their own copy), cloning each file where the
-filesystem can, else hard-linking on one volume, else copying, and keeping
+filesystem can, else hard-linking a media file on one volume, else copying, and keeping
 modification times; `Cache/`, `Backups/` and logs stay behind, so the copy
 rebuilds its proxies. `project.json` is written last. The log gets one `Warn`
 row when the state turns and one `Info` row when a write succeeds again.

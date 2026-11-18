@@ -64,8 +64,10 @@ export interface MigrationContext {
 }
 
 /** A file to move or copy inside the project folder; both paths are
- *  `/`-separated and relative to it. */
-export interface FilePlan { from: string; to: string; mode: 'move' | 'copy' }
+ *  `/`-separated and relative to it. `recorded` is the absolute path the old
+ *  file named, for a copy whose source is not in the folder (a project copied
+ *  before its voiceover was). */
+export interface FilePlan { from: string; to: string; mode: 'move' | 'copy'; recorded?: string }
 
 export interface LegacyMotif {
   uid: string
@@ -408,7 +410,7 @@ export const STEPS: readonly MigrationStep[] = [{
     // holds it to the live parser.
     const utf8 = new TextEncoder()
     const bytes = (s: string) => utf8.encode(s).length
-    const device = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
+    const device = /^(con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])$/i
     const reserved = /[<>:"|?*\\/\x00-\x1f]/g
     const portable = (seg: string) => seg !== '' && seg !== '.' && seg !== '..' && !/[<>:"|?*\\/\x00-\x1f]/.test(seg)
       && !/[. ]$/.test(seg) && !device.test(seg.split('.')[0]!) && seg.normalize('NFC') === seg && bytes(seg) <= 255
@@ -437,15 +439,20 @@ export const STEPS: readonly MigrationStep[] = [{
     const fold = (s: string) => s.normalize('NFC').toLowerCase()
     const taken = new Set<string>()
     const chosen = new Map<string, string>()
-    // One output per input spelling: items that named one file still do.
-    const claim = (key: string, segments: string[]): string => {
-      const known = chosen.get(key)
-      if (known !== undefined) return known
+    // One output per input spelling: items that named one file still do. Two
+    // spellings equal but for case, with the same bytes, are one file on a
+    // volume that folds case (Windows, macOS), so they keep one name too.
+    const sameFile = new Map<string, string>()
+    const claim = (key: string, segments: string[], hash?: unknown): string => {
+      const twin = typeof hash === 'string' && /^[0-9a-f]{64}$/i.test(hash) ? `${fold(key)}\0${hash.toLowerCase()}` : null
+      const known = chosen.get(key) ?? (twin === null ? undefined : sameFile.get(twin))
+      if (known !== undefined) { chosen.set(key, known); return known }
       const dirs = segments.slice(0, -1).map(seg => named(seg, 1))
       let out = ''
       for (let n = 1; out === '' || taken.has(fold(out)); n++) out = [...dirs, named(segments[segments.length - 1]!, n)].join('/')
       taken.add(fold(out))
       chosen.set(key, out)
+      if (twin !== null) sameFile.set(twin, out)
       return out
     }
     const planned = new Set<string>()
@@ -486,15 +493,15 @@ export const STEPS: readonly MigrationStep[] = [{
     }
     const valid = (i: (typeof inside)[number]) => i.segments.every(portable)
     for (const { item, key, segments } of [...inside.filter(valid), ...inside.filter(i => !valid(i))]) {
-      item.path_rel = claim(key, segments)
+      item.path_rel = claim(key, segments, item.file_hash_blake3)
       delete item.path_abs
     }
     for (const { id, item, key } of voiceovers) {
       const to = claim(`\0voiceover:${key}`, ['Media', 'Voiceover', `voiceover-${key.slice(0, 8).toLowerCase()}.mp3`])
+      plan({ from: `Cache/voiceover/${key}.mp3`, to, mode: 'copy', recorded: item.path_abs as string })
       item.path_rel = to
       delete item.path_abs
       item.file_hash_blake3 = `pending-${id}`
-      plan({ from: `Cache/voiceover/${key}.mp3`, to, mode: 'copy' })
     }
   },
 }]

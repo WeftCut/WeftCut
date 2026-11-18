@@ -11,7 +11,10 @@
     "Media/COM10.wav",
     "Media/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.mp4",
     "Media/视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视视.mp",
-    "Media/a.b.c"
+    "Media/a.b.c",
+    "Media/COM⁴.wav",
+    "Media/CONIN.txt",
+    "Media/price$.csv"
   ],
   "invalid": [
     {
@@ -121,6 +124,22 @@
     {
       "path": "Media/café.mp4",
       "why": "not NFC"
+    },
+    {
+      "path": "Media/COM¹.wav",
+      "why": "device name, superscript digit"
+    },
+    {
+      "path": "Media/lpt³",
+      "why": "device name, superscript digit"
+    },
+    {
+      "path": "Media/conin$",
+      "why": "console device"
+    },
+    {
+      "path": "Media/CONOUT$.txt",
+      "why": "console device with extension"
     }
   ],
   "portableFileName": [
@@ -211,6 +230,16 @@
         "readme"
       ],
       "out": "README-2"
+    },
+    {
+      "name": "CONIN$.log",
+      "taken": [],
+      "out": "CONIN$_.log"
+    },
+    {
+      "name": "lpt².txt",
+      "taken": [],
+      "out": "lpt²_.txt"
     }
   ]
 }

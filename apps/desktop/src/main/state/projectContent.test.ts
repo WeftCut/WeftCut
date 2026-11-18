@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { copyProjectContent, placeFilePlans } from './projectContent'
+import { copyLateFiles, copyProjectContent, placeFilePlans, type ProjectContentFs } from './projectContent'
+import { parseProjectPath } from '../../shared/projectPath'
+import { errno } from './__tests__/fixtures/memAtomicIo'
 import { memDisk } from './__tests__/fixtures/memDisk'
 
 /** A project folder holding content and machine-local files alike. */
@@ -97,6 +99,78 @@ describe('copyProjectContent', () => {
   })
 })
 
+describe('copyProjectContent on volumes that refuse', () => {
+  /** NTFS: renaming a name of a file needs delete access against every open
+   *  handle of that file, across its links, and a decoder holds media open
+   *  without sharing delete. A name with another name linked to it is such a
+   *  file here. */
+  function windowsWhileDecoding(disk: ReturnType<typeof memDisk>): ProjectContentFs {
+    return {
+      ...disk.contentFs,
+      rename: async (a, b) => {
+        if (disk.files().some(f => f !== a && disk.linked(a, f))) throw errno('EPERM')
+        return disk.contentFs.rename(a, b)
+      },
+    }
+  }
+
+  it('links media where the volume makes no clone, even while the source is held open', async () => {
+    const { disk } = projectAt('/from')
+    disk.refuse.clone = 'ENOSYS'
+    await copyProjectContent('/from', '/to', windowsWhileDecoding(disk), 'linux')
+    expect(disk.linked('/from/Media/clip.mp4', '/to/Media/clip.mp4')).toBe(true)
+    expect(disk.files().filter(f => f.endsWith('.tmp'))).toEqual([])
+  })
+
+  it('never links the files people edit, so editing the copy leaves the source alone', async () => {
+    const { disk } = projectAt('/from')
+    disk.refuse.clone = 'ENOSYS'
+    await copyProjectContent('/from', '/to', disk.contentFs, 'linux')
+    for (const name of ['TASTE.md', 'export.json', 'view.json']) {
+      expect(disk.linked(`/from/${name}`, `/to/${name}`), name).toBe(false)
+      expect(disk.read(`/to/${name}`), name).toBe(disk.read(`/from/${name}`))
+    }
+  })
+
+  it('copies the bytes whatever error the link fails with', async () => {
+    const { disk } = projectAt('/from')
+    disk.refuse.clone = 'ENOSYS'
+    disk.refuse.link = 'EISDIR' // exFAT through libuv on Windows
+    await copyProjectContent('/from', '/to', disk.contentFs, 'linux')
+    expect(disk.read('/to/Media/sub/x.wav')).toBe('x')
+    expect(disk.linked('/from/Media/sub/x.wav', '/to/Media/sub/x.wav')).toBe(false)
+  })
+
+  it('leaves hidden and temporary files behind', async () => {
+    const { disk } = projectAt('/from')
+    disk.put('/from/Media/.DS_Store', 'finder')
+    disk.put('/from/Media/new.mp4.tmp', 'half an import')
+    await copyProjectContent('/from', '/to', disk.contentFs, 'linux')
+    expect(disk.read('/to/Media/.DS_Store')).toBeUndefined()
+    expect(disk.read('/to/Media/new.mp4.tmp')).toBeUndefined()
+  })
+})
+
+describe('copyLateFiles', () => {
+  it('copies a pooled file that reached the old folder after the content copy', async () => {
+    const { disk } = projectAt('/from')
+    await copyProjectContent('/from', '/to', disk.contentFs, 'linux')
+    disk.put('/from/Media/late.mp4', 'late')
+    await copyLateFiles('/from', '/to', [parseProjectPath('Media/late.mp4'), parseProjectPath('Media/clip.mp4')], disk.contentFs, 'linux')
+    expect(disk.read('/to/Media/late.mp4')).toBe('late')
+  })
+
+  it('does not throw when a file cannot be copied: the folders have already switched', async () => {
+    const { disk } = projectAt('/from')
+    disk.put('/from/Media/late.mp4', 'late')
+    disk.refuse.clone = 'ENOSYS'
+    disk.refuse.link = 'EXDEV'
+    disk.refuse.copy = () => 'ENOSPC'
+    await expect(copyLateFiles('/from', '/to', [parseProjectPath('Media/late.mp4')], disk.contentFs, 'linux')).resolves.toBeUndefined()
+    expect(disk.read('/to/Media/late.mp4')).toBeUndefined()
+  })
+})
+
 describe('placeFilePlans', () => {
   const HASH = 'a'.repeat(64)
 
@@ -147,5 +221,16 @@ describe('placeFilePlans', () => {
     ], disk.contentFs, 'linux')
     expect(missing).toEqual([])
     expect(disk.read('/ws/Media/Voiceover/voiceover-aaaaaaaa.mp3')).toBe('kept')
+  })
+  it('copies a voiceover from the path the old file recorded when the folder has no cache of it', async () => {
+    const disk = memDisk()
+    disk.put('/ws/project.json', '{}')
+    disk.put(`/elsewhere/Cache/voiceover/${HASH}.mp3`, 'voice')
+    const missing = await placeFilePlans('/ws', [{
+      from: `Cache/voiceover/${HASH}.mp3`, to: 'Media/Voiceover/voiceover-aaaaaaaa.mp3', mode: 'copy',
+      recorded: `/elsewhere/Cache/voiceover/${HASH}.mp3`,
+    }], disk.contentFs, 'linux')
+    expect(missing).toEqual([])
+    expect(disk.read('/ws/Media/Voiceover/voiceover-aaaaaaaa.mp3')).toBe('voice')
   })
 })

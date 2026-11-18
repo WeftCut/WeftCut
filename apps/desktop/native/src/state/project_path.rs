@@ -161,15 +161,22 @@ fn stem(segment: &str) -> &str {
     segment.split('.').next().unwrap_or(segment)
 }
 
+/// Windows also opens the console for `CONIN$`/`CONOUT$` and takes the
+/// superscript digits `¹²³` as port numbers.
 fn is_device_stem(stem: &str) -> bool {
     let upper = stem.to_ascii_uppercase();
-    match upper.as_str() {
-        "CON" | "PRN" | "AUX" | "NUL" => true,
-        _ => match upper.as_bytes() {
-            [b'C', b'O', b'M', d] | [b'L', b'P', b'T', d] => (b'1'..=b'9').contains(d),
-            _ => false,
-        },
-    }
+    matches!(
+        upper.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || ["COM", "LPT"].iter().any(|port| {
+        upper.strip_prefix(port).is_some_and(|n| {
+            let mut chars = n.chars();
+            matches!(
+                (chars.next(), chars.next()),
+                (Some('1'..='9' | '¹' | '²' | '³'), None)
+            )
+        })
+    })
 }
 
 /// The form two names are compared in for "already taken": a folder on

@@ -8,7 +8,8 @@
 // byte copy. A hard link shares its bytes with the source folder: an edit
 // made in place to one file changes the other too, and the folder that did
 // not make the edit then reports its file as changed (ADR 0153). Media files
-// are never edited in place by the app, so the link is safe for them.
+// are never edited in place by the app, so only files under `Media/` are
+// linked; `TASTE.md` and the other files people edit are always copied.
 import { constants } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
@@ -66,36 +67,33 @@ async function lstatOrNull(fs: ProjectContentFs, p: string) {
   }
 }
 
-/** Errors that say the volume makes no clone of this file. */
-const NO_CLONE = new Set(['ENOTSUP', 'ENOSYS', 'EXDEV', 'EINVAL'])
-/** Errors that say the volume makes no hard link of this file. */
-const NO_LINK = new Set(['EXDEV', 'EPERM', 'ENOTSUP'])
-
-/** Puts the bytes of `src` at the new path `dst`: a clone, a hard link when
- *  `link` allows one, a byte copy otherwise. Answers whether it linked. */
-async function cloneLinkOrCopy(fs: ProjectContentFs, src: string, dst: string, link: boolean): Promise<boolean> {
-  try { await fs.copyFile(src, dst, constants.COPYFILE_FICLONE_FORCE); return false } catch (error) {
-    if (!NO_CLONE.has(errorCode(error) ?? '')) throw error
-  }
-  await fs.rm(dst, { force: true })
-  if (link) {
-    try { await fs.link(src, dst); return true } catch (error) {
-      if (!NO_LINK.has(errorCode(error) ?? '')) throw error
-    }
-  }
-  await fs.copyFile(src, dst)
-  return false
-}
-
-/** Places a copy of the file `src` at `dst` with the source's times, so the
- *  next open finds it unchanged without reading it. Written under a temporary
- *  name and renamed over `dst`: a file already at `dst` may be a link into
- *  another folder, and writing into it would change that folder's file. */
+/** Places the bytes of the file `src` at `dst`, with the source's times so
+ *  the next open finds it unchanged without reading it: a clone where the
+ *  volume makes one; else, when `link` allows and nothing is at `dst` yet, a
+ *  hard link; else a byte copy. A clone or copy is written under a temporary
+ *  name and renamed over `dst`, never into it: a file already at `dst` may be
+ *  a link into another folder, and writing into it would change that
+ *  folder's file. Any failure to clone or link means the volume makes none
+ *  here (FAT and exFAT report a link refusal under several codes), so the
+ *  next way is tried. */
 async function placeFile(fs: ProjectContentFs, src: string, dst: string, times: { atimeMs: number; mtimeMs: number }, link: boolean): Promise<void> {
   const temp = path.join(path.dirname(dst), `.${path.basename(dst)}.${randomUUID()}.tmp`)
   try {
-    // A link is the source file itself, its times already the source's.
-    if (!(await cloneLinkOrCopy(fs, src, temp, link))) await fs.utimes(temp, times.atimeMs / 1000, times.mtimeMs / 1000)
+    let cloned = false
+    try { await fs.copyFile(src, temp, constants.COPYFILE_FICLONE_FORCE); cloned = true } catch {
+      await fs.rm(temp, { force: true })
+    }
+    if (!cloned && link && !(await lstatOrNull(fs, dst))) {
+      // LANDMINE: the link is made at `dst` itself, never at a temporary name
+      // renamed into place. On NTFS renaming any name of a file needs delete
+      // access against every open handle of that file, and a decoder holds the
+      // source open without FILE_SHARE_DELETE (cache/mod.rs), so the rename of
+      // a fresh link fails while the clip plays. A link is the source file
+      // itself: its times are already the source's.
+      try { await fs.link(src, dst); return } catch { /* no link on this volume: copy */ }
+    }
+    if (!cloned) await fs.copyFile(src, temp)
+    await fs.utimes(temp, times.atimeMs / 1000, times.mtimeMs / 1000)
     await fs.rename(temp, dst)
   } catch (error) {
     await fs.rm(temp, { force: true }).catch(() => {})
@@ -103,16 +101,24 @@ async function placeFile(fs: ProjectContentFs, src: string, dst: string, times: 
   }
 }
 
+/** Not project content: hidden files and the temporary files of an import or
+ *  a copy still running. The relink walk skips the same names. */
+function isScratchName(name: string): boolean {
+  return name.startsWith('.') || name.endsWith('.tmp')
+}
+
 /** Copies `src` to `dst`: a folder whole, a file, nothing for a symbolic link
- *  or a missing path. */
-async function copyEntry(fs: ProjectContentFs, src: string, dst: string): Promise<void> {
+ *  or a missing path. `link` allows hard links (media only). */
+async function copyEntry(fs: ProjectContentFs, src: string, dst: string, link: boolean): Promise<void> {
   const st = await lstatOrNull(fs, src)
   if (!st || st.isSymbolicLink()) return
   if (st.isDirectory()) {
     await fs.mkdir(dst, { recursive: true })
-    for (const name of await fs.readdir(src)) await copyEntry(fs, path.join(src, name), path.join(dst, name))
+    for (const name of await fs.readdir(src)) {
+      if (!isScratchName(name)) await copyEntry(fs, path.join(src, name), path.join(dst, name), link)
+    }
   } else if (st.isFile()) {
-    await placeFile(fs, src, dst, st, true)
+    await placeFile(fs, src, dst, st, link)
   }
 }
 
@@ -127,7 +133,27 @@ export async function copyProjectContent(from: string, to: string, fs: ProjectCo
   if (isInside(target, await realDir(fs, toNative(from, MEDIA, platform)))) {
     throw new Error("A project cannot be saved inside the Media folder of the project it is saved from")
   }
-  for (const entry of PROJECT_CONTENT) await copyEntry(fs, toNative(from, entry, platform), toNative(to, entry, platform))
+  for (const entry of PROJECT_CONTENT) await copyEntry(fs, toNative(from, entry, platform), toNative(to, entry, platform), entry === MEDIA)
+}
+
+/** After Save As switched folders: copies each of `paths` that is in `from`
+ *  but not in `to`. An import that finished while the content was being
+ *  copied put its file in `from` after the copy passed it. Never throws: the
+ *  folders have already switched, and a file that fails shows as missing. */
+export async function copyLateFiles(from: string, to: string, paths: readonly ProjectPath[], fs: ProjectContentFs, platform: PathPlatform = process.platform): Promise<void> {
+  for (const p of paths) {
+    try {
+      const dst = toNative(to, p, platform)
+      if (await lstatOrNull(fs, dst)) continue
+      const src = toNative(from, p, platform)
+      const st = await lstatOrNull(fs, src)
+      if (!st?.isFile()) continue
+      await fs.mkdir(path.dirname(dst), { recursive: true })
+      await placeFile(fs, src, dst, st, true)
+    } catch (error) {
+      console.warn('[project] a media file was not copied to the saved folder', p, error)
+    }
+  }
 }
 
 /** A planned copy that left its target without a file. */
@@ -141,10 +167,14 @@ export async function placeFilePlans(dir: string, plans: readonly FilePlan[], fs
   const missing: MissingFile[] = []
   for (const plan of plans) {
     try {
-      const from = toNative(dir, parseProjectPath(plan.from), platform)
+      let from = toNative(dir, parseProjectPath(plan.from), platform)
       const to = toNative(dir, parseProjectPath(plan.to), platform)
       if (await lstatOrNull(fs, to)) continue
-      const source = await lstatOrNull(fs, from)
+      let source = await lstatOrNull(fs, from)
+      if (!source?.isFile() && plan.mode === 'copy' && plan.recorded && path.isAbsolute(plan.recorded)) {
+        from = plan.recorded
+        source = await lstatOrNull(fs, from).catch(() => null)
+      }
       if (!source?.isFile()) {
         if (plan.mode === 'copy') missing.push({ path: plan.to, diagnostic: `${plan.from} is not in the project folder` })
         continue

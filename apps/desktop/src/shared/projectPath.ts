@@ -22,7 +22,7 @@ function segmentProblem(seg: string): string | null {
   if (/[<>:"|?*]/.test(seg)) return 'reserved character'
   if (/[. ]$/.test(seg)) return 'trailing dot or space'
   // Windows resolves these names to devices whatever the extension.
-  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(seg)) return 'device name'
+  if (/^(con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(seg)) return 'device name'
   if (/^[\x20-\x7e]*$/.test(seg)) return seg.length > MAX_SEGMENT_BYTES ? `segment over ${MAX_SEGMENT_BYTES} bytes` : null
   if (seg.normalize('NFC') !== seg) return 'not NFC'
   if (utf8.encode(seg).length > MAX_SEGMENT_BYTES) return `segment over ${MAX_SEGMENT_BYTES} bytes`

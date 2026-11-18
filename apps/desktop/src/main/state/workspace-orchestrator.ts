@@ -21,7 +21,7 @@ import { serializeProject, type GridRepair } from './serialize'
 import type { MigrationContext, MotifCopy, PositionBakeReport } from './migrate'
 import { foldDerivatives, type MediaDerivativesPatch } from './mutations/media'
 import { mediaAtFolder } from './projectFile'
-import { copyProjectContent, placeFilePlans, sameFolder, type MissingFile, type ProjectContentFs } from './projectContent'
+import { copyLateFiles, copyProjectContent, placeFilePlans, sameFolder, type MissingFile, type ProjectContentFs } from './projectContent'
 import type { PathPlatform } from './projectPathNative'
 
 /** The Rust-native workspace bookkeeping, exposed over napi (Backend methods
@@ -315,13 +315,18 @@ export async function saveProjectAs(deps: OrchestratorDeps, dir: string, from?: 
   fs.mkdirp(dir)                                              // save_to_dir's create_dir_all
   const moves = !!from && !(deps.contentFs && await sameFolder(deps.contentFs, from, dir))
   if (from) {
-    if (deps.contentFs) await copyProjectContent(from, dir, deps.contentFs)
+    if (deps.contentFs) await copyProjectContent(from, dir, deps.contentFs, deps.platform ?? process.platform)
     deps.copyMotifs?.(from, dir, Object.keys(snap.motifs))
   }
   fs.writeFile(join(dir, PROJECT_FILE), serializeProjectToJson(snap))
   await napi.commitWorkspace(dir)
   if (moves) {
-    const placed = mediaAtFolder(snap.media_pool, dir, deps.platform ?? process.platform)
+    // The committed workspace stops the old folder's imports; one that landed
+    // while the content was being copied put its file there after the copy.
+    const pool = actor.snapshot().media_pool
+    const pooled = Object.values(pool).flatMap(item => item.path_rel ? [item.path_rel] : [])
+    if (deps.contentFs) await copyLateFiles(from!, dir, pooled, deps.contentFs, deps.platform ?? process.platform)
+    const placed = mediaAtFolder(pool, dir, deps.platform ?? process.platform)
     const result = actor.dispatch('rebase_media', { project_dir: dir, derivatives: await cachedDerivatives(napi, placed) })
     if (!result.ok) throw new Error(`rebase_media: ${JSON.stringify(result.error)}`)
   }
