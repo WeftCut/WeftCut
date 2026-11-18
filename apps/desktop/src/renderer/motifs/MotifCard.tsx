@@ -9,7 +9,6 @@ import { formatTimecode } from '../frames';
 import { MenuItem, contextMenuFinalFocus } from '../menu/Menu';
 import { useCloseOnAnchorMove, useCursorAnchor } from '../timeline/contextMenuAnchor';
 import { AppIcon } from "@/components/AppIcon";
-import { MotifProblemLead } from './MotifProblem';
 import { canSaveToLibrary, libraryTake, previewMotif, projectRowBadge, rowName, rowRenders, type MotifRow, type ProjectCopy } from './motifRows';
 
 /** What a card's actions do; each is offered only where it applies
@@ -60,10 +59,7 @@ export function MotifCard({ row, selected, fpsNum, fpsDen, projectCopy = null, .
       <button type="button" className="motif-card-select" title={row.id} aria-pressed={selected} onClick={actions.onSelect}>
         {cover
           ? <MotifCover key={`${cover.id}:${cover.content_hash}`} host={cover.id} contentHash={cover.content_hash ?? ''} />
-          : <div className="motif-preview-host motif-card-unavailable" style={{ maxWidth: "calc(240 * var(--ui-px))" }}>
-            {row.group === 'project' && row.status !== 'ok' &&
-              <span className="settings-error"><MotifProblemLead id={row.id} status={row.status} /></span>}
-          </div>}
+          : <div className="motif-preview-host" style={{ maxWidth: "calc(240 * var(--ui-px))" }} />}
         <span className="motif-card-title">
           <span className="motif-card-name">{rowName(row)}</span>
           {badge && <span className={`motif-card-status status-${badge}`}>{t(`motif_picker.status.${badge}`)}</span>}

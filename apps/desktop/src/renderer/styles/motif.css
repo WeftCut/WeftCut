@@ -287,17 +287,6 @@
 }
 .motif-picker-group:first-child { margin-top: 0; }
 
-/* A project Motif that cannot render has no cover: its diagnostic sits where
-   the cover would. */
-.motif-card-unavailable {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: calc(8 * var(--ui-px));
-  overflow: hidden;
-}
-.motif-card-unavailable .settings-error { margin: 0; font-size: var(--font-size-caption); }
-
 /* An invalid package's error under the localized lead (MotifProblem). */
 .motif-problem-detail {
   display: block;
@@ -405,6 +394,7 @@
   display: flex;
   margin-top: calc(12 * var(--ui-px));
 }
+.motif-trust .motif-picker-hint { margin-top: calc(8 * var(--ui-px)); }
 
 .motif-bake-dot {
   position: absolute;
