@@ -599,7 +599,9 @@ export interface WeftcutApi {
     requestFrameAt(args: { streamId: string; targetUs: number; requestId?: number }): void
     consume(args: { streamId: string; receipt: number }): void
     close(args: { streamId: string }): void
-    onFrame(cb: (f: PreviewSwFrameMsg) => void): () => void
+    /// `cb` gets `streamId`'s frames only; a later call for the same stream
+    /// replaces the earlier subscriber.
+    onFrame(streamId: string, cb: (f: PreviewSwFrameMsg) => void): () => void
   }
   /// Native SOFTWARE export-decode relay (blind-spot originals: ProRes/DNxHD/
   /// MPEG-2/VC-1). The EXPORT-side mirror of `previewSw` and the reverse of the

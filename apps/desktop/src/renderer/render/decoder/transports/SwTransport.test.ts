@@ -26,7 +26,7 @@ function installApi(): { api: FakePreviewSwApi; emit: (f: unknown) => void } {
     requestFrameAt: vi.fn(() => {}),
     consume: vi.fn(),
     close: vi.fn(() => {}),
-    onFrame: vi.fn((cb: (f: unknown) => void) => { onFrameCb = cb; return () => {}; }),
+    onFrame: vi.fn((_streamId: string, cb: (f: unknown) => void) => { onFrameCb = cb; return () => {}; }),
   };
   (window as unknown as { api: { previewSw: FakePreviewSwApi } }).api = { previewSw: api };
   return { api, emit: (f) => onFrameCb!(f) };
@@ -58,6 +58,15 @@ describe("SwTransport", () => {
     expect(api.consume).toHaveBeenCalledTimes(4);
     t.dispose(); emit({ ...f, receipt: 6 });
     expect(api.consume).toHaveBeenCalledTimes(4);
+  });
+  // The bridge copies a frame's bytes into the page once per callback it
+  // calls, so each transport must ask for its own stream's frames only.
+  it("subscribes to its own stream's frames", async () => {
+    const { api } = installApi();
+    const t = new SwTransport();
+    await t.open({ streamId: "s-own", path: "C:/x.mov" });
+    expect(api.onFrame.mock.calls.map(([streamId]) => streamId)).toEqual(["s-own"]);
+    t.dispose();
   });
   it("keeps frames from an earlier forward refill, but discards them after a cache flush", async () => {
     const { api, emit } = installApi(); const t = new SwTransport();

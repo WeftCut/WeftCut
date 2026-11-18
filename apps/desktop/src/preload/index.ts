@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, sharedTexture, webUtils } from 'electron'
 import type { SharedTextureImported } from 'electron'
 import { installMotifFrames } from './motifFrames'
 import { MotifReadBarrier, completeMotifReadOnGpu } from './motifReadBarrier'
+import { createPreviewSwFrames } from './previewSwFrames'
 import { readLayoutThemeArgument } from '../shared/layout-theme'
 import { readMotifTuningArgument } from '../shared/motifs/tuning'
 import type {
@@ -39,6 +40,9 @@ import type { MenuProjection } from '../shared/menu'
 import type { UpdateDownloadResult, UpdateRestartResult, UpdateResume, UpdateStatus } from '../shared/updates'
 
 type Listener = (payload: unknown) => void
+
+const previewSwFrames = createPreviewSwFrames()
+ipcRenderer.on('previewSw:frame', (_e, frame: PreviewSwFrameMsg) => previewSwFrames.dispatch(frame))
 
 // The contextBridge surface — the COMPLETE set of things the (untrusted)
 // renderer can ask the main process to do. Grouped, named methods rather than a
@@ -303,10 +307,8 @@ const api: WeftcutApi = {
     close(args: { streamId: string }): void {
       ipcRenderer.send('previewSw:close', args)
     },
-    onFrame(cb: (f: PreviewSwFrameMsg) => void): () => void {
-      const h = (_e: unknown, f: PreviewSwFrameMsg) => cb(f)
-      ipcRenderer.on('previewSw:frame', h)
-      return () => { ipcRenderer.removeListener('previewSw:frame', h) }
+    onFrame(streamId: string, cb: (f: PreviewSwFrameMsg) => void): () => void {
+      return previewSwFrames.subscribe(streamId, cb)
     },
   },
 

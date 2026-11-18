@@ -87,7 +87,7 @@ export class SwTransport implements DecodeTransport {
     // Subscribe BEFORE open() — frames can start flowing as soon as the
     // native decode thread is up, so a listener attached after open() could
     // miss an early frame.
-    this.unsub = window.api.previewSw.onFrame((f) => this.handleFrame(f));
+    this.unsub = window.api.previewSw.onFrame(this.streamId, (f) => this.handleFrame(f));
     await window.api.previewSw.open({
       streamId: this.streamId,
       path: o.path,
