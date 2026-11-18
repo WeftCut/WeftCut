@@ -352,9 +352,9 @@ const LEASE_TIMEOUT: Duration = Duration::from_secs(3);
 /// windows-rs's generated safe wrapper (`HRESULT::ok`, `windows-result` crate,
 /// which treats any non-negative code as success) collapses a timeout to
 /// `Ok(())` — indistinguishable from actually holding the mutex. We therefore
-/// call the vtable function directly in `convert_frame_into_slot` and compare
-/// the raw `HRESULT` against this sentinel ourselves instead of trusting the
-/// safe wrapper's `Result`.
+/// call the vtable function directly in `convert_frame_into_slot` and classify
+/// the raw `HRESULT` with [`classify_acquire`] instead of trusting the safe
+/// wrapper's `Result`.
 const DXGI_KEYED_MUTEX_WAIT_TIMEOUT: i32 = 0x0000_0102;
 /// `DXGI_SHARED_RESOURCE_READ (0x80000000) | DXGI_SHARED_RESOURCE_WRITE (0x1)`.
 /// Raw u32 because the windows-crate newtype OR doesn't coerce to the method's
@@ -583,7 +583,17 @@ struct Session {
 struct PoolSlot {
     texture: ID3D11Texture2D,
     keyed_mutex: IDXGIKeyedMutex,
+    /// Closed only by `Drop`, so a pool dropped half-built by a failed
+    /// `init_session` closes exactly the handles it created.
     handle: HANDLE,
+}
+
+impl Drop for PoolSlot {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseHandle(self.handle);
+        }
+    }
 }
 
 /// Everything the session thread owns and mutates. Never leaves the thread, so
@@ -645,20 +655,6 @@ struct SessionState {
     /// event overwrites the prior, and the delta is the inter-event gap.
     last_emit_at: Option<Instant>,
     last_ack_at: Option<Instant>,
-}
-
-impl Drop for SessionState {
-    fn drop(&mut self) {
-        // Close each slot's NT handle before the textures (and device/decoder)
-        // release.
-        unsafe {
-            for slot in &self.pool {
-                let _ = CloseHandle(slot.handle);
-            }
-        }
-        // stream (decoder + hw_ctx), _device, context, and the pool textures
-        // drop here; COM refcounting makes the exact order safe.
-    }
 }
 
 impl SessionState {
@@ -996,6 +992,27 @@ enum CopyOutcome {
     AcquireFailed(String),
 }
 
+/// What a raw `IDXGIKeyedMutex::AcquireSync` return code means for the slot.
+#[derive(Debug, PartialEq, Eq)]
+enum AcquireResult {
+    Acquired,
+    Timeout,
+    /// Any other code, including the non-negative `WAIT_ABANDONED` (`0x80`):
+    /// DXGI leaves the surface and its mutex inconsistent then, so the slot is
+    /// neither written nor released.
+    Failed,
+}
+
+/// Only `S_OK` grants the mutex — see `DXGI_KEYED_MUTEX_WAIT_TIMEOUT` for why
+/// the sign bit cannot decide it.
+fn classify_acquire(hr: HRESULT) -> AcquireResult {
+    match hr.0 {
+        0 => AcquireResult::Acquired,
+        DXGI_KEYED_MUTEX_WAIT_TIMEOUT => AcquireResult::Timeout,
+        _ => AcquireResult::Failed,
+    }
+}
+
 /// Releases a slot's keyed mutex (key 0) on scope exit. One is constructed only
 /// after `AcquireSync` has succeeded, so `ReleaseSync` MUST run on every path out
 /// of the copy region — normal return, an early `?`, or a panic unwinding through
@@ -1063,15 +1080,18 @@ unsafe fn convert_frame_into_slot(
         0,
         ACQUIRE_TIMEOUT_MS,
     );
-    if acquire_hr.0 == DXGI_KEYED_MUTEX_WAIT_TIMEOUT {
-        return Ok(CopyOutcome::AcquireFailed(format!(
-            "AcquireSync timeout on slot after {ACQUIRE_TIMEOUT_MS}ms (slot stuck)"
-        )));
-    }
-    if let Err(e) = acquire_hr.ok() {
-        return Ok(CopyOutcome::AcquireFailed(format!(
-            "AcquireSync(slot) failed: {e}"
-        )));
+    match classify_acquire(acquire_hr) {
+        AcquireResult::Acquired => {}
+        AcquireResult::Timeout => {
+            return Ok(CopyOutcome::AcquireFailed(format!(
+                "AcquireSync timeout on slot after {ACQUIRE_TIMEOUT_MS}ms (slot stuck)"
+            )));
+        }
+        AcquireResult::Failed => {
+            return Ok(CopyOutcome::AcquireFailed(format!(
+                "AcquireSync(slot) failed: {acquire_hr:?}"
+            )));
+        }
     }
 
     // Mutex held from here — see `KeyedMutexRelease`.
@@ -1251,7 +1271,7 @@ fn session_thread(
         adapter: decoder_adapter(&state._device),
     };
     if init_tx.send(Ok(info)).is_err() {
-        // `open` gave up waiting; drop `state` (Drop closes the handles).
+        // `open` gave up waiting; drop `state` (each `PoolSlot` closes its handle).
         return;
     }
 
@@ -1749,6 +1769,21 @@ mod tests {
         // Out-of-range slot: never frees anything.
         assert!(!ack_frees_slot(&free, &gen, 3, 7));
         assert!(!ack_frees_slot(&free, &gen, usize::MAX, 7));
+    }
+
+    #[test]
+    fn acquire_grants_the_slot_only_on_s_ok() {
+        assert_eq!(classify_acquire(HRESULT(0)), AcquireResult::Acquired);
+        // WAIT_TIMEOUT: the consumer still holds the key; the frame is skipped.
+        assert_eq!(classify_acquire(HRESULT(0x102)), AcquireResult::Timeout);
+        // WAIT_ABANDONED is non-negative, yet the surface is inconsistent: never
+        // written, never released.
+        assert_eq!(classify_acquire(HRESULT(0x80)), AcquireResult::Failed);
+        // A genuine failure code (DXGI_ERROR_DEVICE_REMOVED).
+        assert_eq!(
+            classify_acquire(HRESULT(0x887A_0005_u32 as i32)),
+            AcquireResult::Failed
+        );
     }
 
     #[test]

@@ -96,39 +96,53 @@ pub fn decode_first_d3d11_frame(path: &str) -> Result<D3d11Frame, String> {
         (*raw).get_format = Some(get_format_d3d11);
     }
 
-    let mut decoder = codec_ctx.decoder().video().map_err(map)?;
+    // Until `D3d11Frame` owns `hw_ctx`, every failure below releases our ref
+    // itself; the codec context (or the decoder holding it) frees its own.
+    let mut decoder = match codec_ctx.decoder().video() {
+        Ok(d) => d,
+        Err(e) => {
+            unsafe {
+                ffs::av_buffer_unref(&mut hw_ctx);
+            }
+            return Err(map(e));
+        }
+    };
 
     let mut frame = VideoFrame::empty();
-    let got = loop {
+    let got: Result<bool, String> = loop {
         if decoder.receive_frame(&mut frame).is_ok() {
-            break true;
+            break Ok(true);
         }
         match ictx.packets().next() {
             Some((s, p)) => {
                 if s.index() == stream_index {
-                    decoder.send_packet(&p).map_err(map)?;
+                    if let Err(e) = decoder.send_packet(&p) {
+                        break Err(map(e));
+                    }
                 }
             }
             None => {
-                decoder.send_eof().map_err(map)?;
-                break decoder.receive_frame(&mut frame).is_ok();
+                if let Err(e) = decoder.send_eof() {
+                    break Err(map(e));
+                }
+                break Ok(decoder.receive_frame(&mut frame).is_ok());
             }
         }
     };
-    if !got {
-        unsafe {
-            ffs::av_buffer_unref(&mut hw_ctx);
-        }
-        return Err("no frame decoded".to_string());
-    }
-    if frame.format() != Pixel::D3D11 {
-        unsafe {
-            ffs::av_buffer_unref(&mut hw_ctx);
-        }
-        return Err(format!(
+    let failure = match got {
+        Err(e) => Some(e),
+        Ok(false) => Some("no frame decoded".to_string()),
+        Ok(true) if frame.format() != Pixel::D3D11 => Some(format!(
             "decoder produced {:?}, not D3D11 (hardware decode unavailable)",
             frame.format()
-        ));
+        )),
+        Ok(true) => None,
+    };
+    if let Some(e) = failure {
+        unsafe {
+            ffs::av_buffer_unref(&mut hw_ctx);
+        }
+        return Err(e);
     }
 
     Ok(D3d11Frame {
@@ -249,7 +263,17 @@ impl VideoStream {
             (*raw).get_format = Some(get_format_d3d11);
         }
 
-        let decoder = codec_ctx.decoder().video().map_err(map)?;
+        // The codec context frees its own ref when a failed open drops it; ours
+        // is released here, as in the software lane's open.
+        let decoder = match codec_ctx.decoder().video() {
+            Ok(d) => d,
+            Err(e) => {
+                unsafe {
+                    ffs::av_buffer_unref(&mut hw_ctx);
+                }
+                return Err(map(e));
+            }
+        };
         let width = decoder.width();
         let height = decoder.height();
 
