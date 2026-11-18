@@ -16,7 +16,7 @@ function fakePort() {
   return {
     port, posted, state, listeners,
     send: (data: unknown) => listeners.message!({ data }),
-    // The far end went away: its consumer closed the port, or the Worker
+    // The far end went away: its consumer closed the session, or the Worker
     // holding it was terminated, or its process is gone.
     farEndCloses: () => listeners.close!(),
   }
@@ -45,7 +45,7 @@ function hosted() {
   const commands: Go[] = []
   const close = vi.fn()
   let deliver!: (msg: DecodeMsg) => void
-  const info = hostDecodeSession({
+  const session = hostDecodeSession({
     port: port.port,
     owner: owner.owner,
     open: onMsg => { deliver = onMsg; return { width: 2 } },
@@ -53,13 +53,13 @@ function hosted() {
     command: cmd => { commands.push(cmd) },
     close,
   })
-  return { info, port, owner, commands, close, deliver: (msg: DecodeMsg) => deliver(msg) }
+  return { session, port, owner, commands, close, deliver: (msg: DecodeMsg) => deliver(msg) }
 }
 
 describe('hostDecodeSession', () => {
   it('returns the open info and starts serving its port', () => {
-    const { info, port } = hosted()
-    expect(info).toEqual({ width: 2 })
+    const { session, port } = hosted()
+    expect(session.info).toEqual({ width: 2 })
     expect(port.state.started).toBe(true)
   })
 
@@ -86,6 +86,7 @@ describe('hostDecodeSession', () => {
     port.send({ type: 'go', n: 'x' })
     port.send(null)
     port.send('close')
+    port.send({ type: 'close' })
     port.send({ type: 'go', n: 2 })
     expect(commands).toEqual([{ type: 'go', n: 1 }, { type: 'go', n: 2 }])
   })
@@ -108,23 +109,27 @@ describe('hostDecodeSession', () => {
     expect(() => port.send({ type: 'go', n: 0 })).not.toThrow()
   })
 
-  it('closes the session and its port once on a close command', () => {
+  it('closes the session and its port once when the far end closes it', () => {
+    // The preload closing the session by id, or a `MessagePortMain`'s far end
+    // going away.
     const { port, owner, close, commands } = hosted()
-    port.send({ type: 'close' })
-    port.send({ type: 'close' })
+    port.farEndCloses()
+    port.farEndCloses()
     port.send({ type: 'go', n: 0 })
+    owner.goes()
     expect(close).toHaveBeenCalledOnce()
     expect(port.state.closed).toBe(true)
-    expect(commands, 'close is the host\'s, not the session\'s').toEqual([])
+    expect(commands).toEqual([])
     expect(owner.subscribers.size, 'the owner no longer holds the closed session').toBe(0)
   })
 
-  it('closes the session once when the far end of its port closes', () => {
-    // A port main holds itself (`MessagePortMain`) reports its far end closing.
-    const { port, owner, close } = hosted()
+  it('closes the session and its port once when main closes it', () => {
+    const { session, port, owner, close } = hosted()
+    session.close()
+    session.close()
+    expect(close).toHaveBeenCalledOnce()
+    expect(port.state.closed).toBe(true)
     port.farEndCloses()
-    port.farEndCloses()
-    owner.goes()
     expect(close).toHaveBeenCalledOnce()
     expect(owner.subscribers.size, 'the owner no longer holds the closed session').toBe(0)
   })

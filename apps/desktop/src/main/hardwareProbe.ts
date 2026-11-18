@@ -35,7 +35,7 @@ export async function runHardwareProbe(request: HardwareProbeRequest,
   publish: (result: HardwareAccelerationDiagnostics) => void): Promise<HardwareAccelerationDiagnostics> {
   const result = { ...untestedAcceleration(), status: 'running' as HardwareAccelerationDiagnostics['status'], sampled_at: Date.now() };
   await fs.mkdir(request.directory, { recursive: true });
-  const native = loadNativeDecode(() => {});
+  const native = loadNativeDecode();
   const devices = request.devices;
   const nvidia = devices.filter(d => d.vendor_id === 0x10de);
   const lanes = native.lanes.filter(l => l === 'nvdec' || l === 'vaapi');

@@ -37,7 +37,6 @@ The bench drives the built bundle in `out/`, not the dev server: rebuild
 | `--tracks 1,3,5` | — | explicit list; disables the early stop |
 | `--window-s` / `--warmup-s` | 20 / 5 | measured window and warm-up |
 | `--replay-after-warmup` | off | pause, seek to 2 s, replay; counters reset only after every ring brackets the playhead for four 250 ms polls (30 s miss = invalid). Use for heavy spill cells |
-| `--barrier MODE` | shipped | hardware read barrier (`HwBarrierMode` in `src/shared/ipc.ts`) |
 | `--playback-resolution` | `full` | diagnostic only, never a comparison axis |
 | `--trace` / `--ui-probe` | off | Chromium trace (read with `trace-gaps.mjs`) / input-latency probe; perturb the cell, diagnostic only |
 | `--tag NAME` | — | suffixes the report file |
@@ -107,9 +106,13 @@ once `positionUs` is observed advancing, and counters reset after warm-up.
   baseline is `presented fps ÷ comp fps` (~50 % at 30 fps on 60 Hz).
 - **Conversion backlog** (WebCodecs): outputs awaiting `createImageBitmap`, each
   pinning a hardware decode-pool slot.
-- **Hardware read barrier**: p50/p95/max, sample count, thread-seconds per
-  wall-second, `fence forced waits` and spin cost. Do not difference a
-  `readback` p50 against a deferred mode's.
+- **Hardware read completion** (the `barrier` columns): the slot fence's
+  renderer-thread cost p50/p95/max, sample count, thread-seconds per
+  wall-second, and its health: deferred wait p50, queue peak, `fence forced
+  waits` and spin cost (both structurally zero for the signal-only fence).
+  A hardware clip whose frames fell back to the one-pixel proof
+  (`proofFallbacks`) invalidates the cell: it measured a read completion the
+  product does not run with a preview surface up.
 - **Resources**: per-process CPU/memory from `app.getAppMetrics()` at 2 Hz;
   Windows `typeperf` `VideoDecode`/`3D` engine counters at 1 Hz (machine-wide,
   empty off Windows).
@@ -155,9 +158,10 @@ Deeper fields (`ringAtEnd`, `perClip[].barrierN`, `longFrames.frames[]`,
 
 Traps that have produced wrong conclusions:
 
-- A green gate may not have exercised the variant; report what was *applied*.
-  A negative control must fail in the right shape (`--barrier none`: every Δ a
-  multiple of `pool_size`).
+- A green gate may not have exercised the path; report what *ran* (the
+  order spec checks that no frame fell back to the proof). A reorder from a
+  slot released too early has a known shape: every Δ a multiple of
+  `pool_size`.
 - A scripted play that no-ops reads as a perfect cell; assert the playhead moved.
 - Price minority-of-frames costs with a sum; any percentile hides them.
 - Renderer counters cannot see producer-side waste inside libavcodec; probe

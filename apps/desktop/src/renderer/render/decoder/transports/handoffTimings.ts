@@ -1,32 +1,26 @@
 // Rolling window over the per-frame handoff timings for the hardware lane: the
-// preload stamps every frame message with `gvfMs` / `cibMs` / `residentMs`, and
-// this window summarizes them.
+// preload stamps every slot it reads with `gvfMs` / `cibMs` / `residentMs`
+// (preload/decodeSessionPorts.ts), `GpuTransport` adds what its read
+// completion cost and the slot fence's health, and this window summarizes them.
 //
-// "Handoff" spans both sides of the port: under the shipped barrier the preload
-// runs none and the renderer takes the completion signal itself, so
-// `GpuTransport` records ITS OWN barrier stamps and fence health for those
-// frames. The fields mean the same thing either way — what ran, what it cost,
-// what it deferred — which is what lets one window compare the two.
-//
-// The number this exists for is `barrier`: the read-completion cost stamped
-// directly around whichever barrier ran before the slot is acked (the
-// subtraction in `record` is only a legacy fallback). A barrier is load-bearing
-// for cross-device read ordering — without one the lane presents frames
-// pool_size out of order — but it blocks a thread once per frame PER SESSION, so
-// with several hardware clips it is the prime suspect for presentation judder
-// that `lag`/dropped-frame counters cannot see.
+// The number this exists for is `barrier`: the read-completion cost on the
+// renderer thread before a slot can be released. Read completion is
+// load-bearing for cross-device read ordering — without it the lane presents
+// frames pool_size out of order (slotFenceQueue.ts) — so with several hardware
+// clips it is a suspect for presentation judder that `lag`/dropped-frame
+// counters cannot see.
 //
 // Pure and allocation-light: a fixed ring, sorted only when a summary is asked
 // for (the HUD polls at 2 Hz).
 
-import type { HwBarrierMode } from "../../../../shared/ipc";
+import type { SlotReadTiming } from "../../../../shared/frameCarrier/wire";
 
-/// Health of a deferred-ack fence queue, as the preload or renderer reports it
-/// per frame. `pendingPeak`/`forcedWaits`/`forcedWaitMsTotal` are cumulative
-/// counters (the window keeps the max, so they survive the ring); `waitMs` is
-/// one completed submit→ack and is absent until the first fence drains.
-/// Production `rendererFence` is signal-only, so its forced counters stay zero;
-/// non-zero renderer values identify explicit unsafe/legacy diagnostic data.
+/// Health of the slot fence queue, as `GpuTransport` reports it per frame.
+/// `pendingPeak`/`forcedWaits`/`forcedWaitMsTotal` are cumulative counters (the
+/// window keeps the max, so they survive the ring); `waitMs` is one completed
+/// submit→release and is absent until the first fence drains. The production
+/// queue is signal-only, so its forced counters stay zero; non-zero values come
+/// from the queue's explicit unsafe-deadline diagnostic policy.
 export interface FenceHandoffStats {
   waitMs?: number;
   pendingPeak: number;
@@ -38,64 +32,44 @@ export interface HandoffTimingSummary {
   slotTurnover?: { pending: number; oldestMs: number; completed: number; waitP95Ms: number | null } | null;
   /// Samples in the window.
   n: number;
-  /// The synchronous read-completion barrier, ms.
+  /// The read-completion cost on the renderer thread, ms.
   barrierP50: number;
   barrierP95: number;
   barrierMax: number;
   /// The barrier split into its two phases — the draw or submit, and the CPU
-  /// read. Under the readback barrier the draw is the wait for the GPU copy
-  /// (shared/readCompletion.ts); under the GPU-flush barrier the whole cost
-  /// lands in draw; with no barrier both are 0.
+  /// read. Under the fence the whole cost is the submit; under the one-pixel
+  /// proof the draw is the wait for the GPU copy (shared/readCompletion.ts).
   barrierDrawP50: number;
   barrierReadP50: number;
-  /// Which barrier the preload actually RAN, as opposed to the one the run was
-  /// configured for. It exists because the configured label can lie — the
-  /// preload falls back from a GPU path to `readback` when WebGL2 is missing,
-  /// and main resolves an unset or unrecognised mode to `rendererFence` — so a bench leg
-  /// that trusts its own `WEFTCUT_HW_BARRIER` label can report a barrier-less
-  /// result that in fact ran the full barrier. A measurement whose route drifted
-  /// is invalid, not slow; this is what makes the drift visible.
+  /// Frames whose read completion fell back to the one-pixel proof because no
+  /// device could take a fence — cumulative over the session. Zero when the
+  /// fence ran for every frame; a run that wants to certify the fence checks
+  /// this, since an order check passes under the proof just as well.
+  proofFallbacks: number;
+  /// The three health indicators for the slot fence, which trades a blocking
+  /// wait for a deferred one and therefore has failure modes the barrier
+  /// timings above cannot show.
   ///
-  /// Note the two fallbacks differ ON PURPOSE: main's unrecognised-mode default
-  /// is `rendererFence`, while the preload's fallback for a stream whose barrier
-  /// latch never arrived is `readback`. Because that differs from the default, an
-  /// unlatched frame reports a second applied mode and the session reads
-  /// `'mixed'` — a fallback that matched the default would blend in silently.
-  ///
-  /// Null when no frame carried the stamp (a non-instrumented preload) — the
-  /// same "don't answer what you didn't measure" rule the null summary follows.
-  /// `'mixed'` is the disagreement sentinel; see the latch in `record`.
-  barrierModeObserved: HwBarrierMode | "mixed" | null;
-  /// The three health indicators for deferred fence barriers, which trade a
-  /// blocking wait for a deferred one and therefore has failure modes the
-  /// barrier timings above cannot show.
-  ///
-  /// `fenceWaitP50` is the deferred wait itself (submit → ack), null until a
-  /// fence completes — it is NOT loop cost, and reading it as such is the
+  /// `fenceWaitP50` is the deferred wait itself (submit → release), null until
+  /// a fence completes — it is NOT loop cost, and reading it as such is the
   /// mistake this split exists to prevent. `fencePendingQueuePeak` is how deep
-  /// the un-acked queue ever got: approaching `poolSize` means the deferral is
+  /// the unreleased queue ever got: approaching `poolSize` means the deferral is
   /// starving the producer rather than freeing it. `fenceForcedWaits` counts
-  /// preload WebGL forced waits, plus explicit unsafe/legacy renderer deadline
-  /// releases. It stays zero for production's signal-only `rendererFence`.
+  /// releases the queue's unsafe-deadline diagnostic policy forced; it stays
+  /// zero for production's signal-only fence.
   fenceWaitP50: number | null;
   fencePendingQueuePeak: number;
   fenceForcedWaits: number;
-  /// Wall-clock ms burned inside forced spins, SUMMED over the session — the
-  /// preload fence's only blocking cost, and the one `barrierP50` cannot show,
-  /// since that stays submit-only there. A sum and not a percentile on purpose:
-  /// spins are a minority of frames, so every percentile reports them as zero.
-  /// That is how a cell doing 223 spins came back at 0.01 barrier thread-s/s and
-  /// passed an acceptance criterion while burning the main thread. Divide by the
-  /// measurement window to fold it back into a real thread-seconds figure.
-  ///
-  /// Structurally 0 under `rendererFence`: a promise-based completion signal has
-  /// nothing to poll, and production has no deadline release. A zero here means
-  /// no spin exists; `fencePendingQueuePeak`/`fenceWaitP50` carry its health.
+  /// Wall-clock ms burned inside forced spins, SUMMED over the session. A sum
+  /// and not a percentile on purpose: spins are a minority of frames, so every
+  /// percentile reports them as zero. Structurally 0 for the slot fence: a
+  /// promise-based completion signal has nothing to poll. A zero here means no
+  /// spin exists; `fencePendingQueuePeak`/`fenceWaitP50` carry its health.
   fenceForcedWaitMsTotal: number;
-  /// `createImageBitmap` — an enqueue, so cheap; it is the barrier that waits
+  /// `createImageBitmap` — an enqueue, so cheap; read completion is what waits
   /// for the copy this call schedules.
   cibP50: number;
-  /// Whole preload residency: getVideoFrame → barrier complete.
+  /// Whole preload residency: getVideoFrame → bitmap ready to post.
   residentP50: number;
 }
 
@@ -114,10 +88,9 @@ export class HandoffTimings {
   private readonly resident: number[] = [];
   private next = 0;
   private count = 0;
-  /// Latched applied barrier — NOT a ring entry. Deliberately outside the
-  /// window: a session's barrier is fixed at open, so a change is a defect, and
-  /// a defect that scrolls out of a 120-frame window is a defect nobody sees.
-  private observedMode: HwBarrierMode | "mixed" | null = null;
+  /// Cumulative, NOT a ring entry: a fallback that scrolls out of a 120-frame
+  /// window is a fallback nobody sees.
+  private proofs = 0;
   /// Deferred-fence waits get their OWN ring: they ride in on a frame message
   /// but only some frames carry one (none until the first fence drains), so
   /// indexing them alongside the per-frame stamps would pad the window with
@@ -125,54 +98,25 @@ export class HandoffTimings {
   private readonly fenceWait: number[] = [];
   private fenceNext = 0;
   private fenceCount = 0;
-  /// Cumulative counters from the preload, kept as maxima — the sender only ever
-  /// grows them, so max is last-known and survives the ring's eviction.
+  /// Cumulative counters from the fence queue, kept as maxima — the sender only
+  /// ever grows them, so max is last-known and survives the ring's eviction.
   private fencePendingPeak = 0;
   private fenceForced = 0;
   private fenceForcedMsTotal = 0;
 
   constructor(private readonly capacity = 120) {}
 
-  /// Record one frame's preload timings. A message without the (optional)
-  /// timing fields is ignored rather than recorded as zero — a
-  /// non-instrumented build must not read as "the barrier is free".
-  record(
-    gvfMs: number | undefined,
-    cibMs: number | undefined,
-    residentMs: number | undefined,
-    barrierMs?: number,
-    barrierDrawMs?: number,
-    barrierReadMs?: number,
-    barrierApplied?: HwBarrierMode,
-    fence?: FenceHandoffStats,
-  ): void {
-    if (gvfMs === undefined || cibMs === undefined || residentMs === undefined) return;
+  /// Record one slot: the preload's read stamps, what its read completion cost
+  /// here (`proof`: the one-pixel proof ran because no fence could), and the
+  /// fence queue's health after it.
+  record(read: SlotReadTiming, completion: { drawMs: number; readMs: number; proof: boolean }, fence?: FenceHandoffStats): void {
     const i = this.next % this.capacity;
-    // Prefer the directly-stamped barrier. The subtraction below is the legacy
-    // fallback and OVERSTATES the drain — it also absorbs `vf.close()` and any
-    // scheduling gap around the `createImageBitmap` await, so it reads several
-    // times the real cost and inverts with load. Clamped because
-    // `performance.now()` granularity can make the three stamps sum marginally
-    // past `residentMs`, and a negative barrier reads as nonsense.
-    this.barrier[i] = barrierMs ?? Math.max(0, residentMs - gvfMs - cibMs);
-    // The phase split is optional ON TOP of the optional total, and has no
-    // fallback: there is nothing to derive it from. A sender that omits it
-    // records 0, which reads as "unsplit", not as "the barrier is free" — the
-    // total above stays truthful either way. 0/0 with a non-zero total means an
-    // un-split sender; 0/0 with a zero total means no barrier ran at all.
-    this.barrierDraw[i] = barrierDrawMs ?? 0;
-    this.barrierRead[i] = barrierReadMs ?? 0;
-    this.cib[i] = cibMs;
-    this.resident[i] = residentMs;
-    // Latch the FIRST applied mode; any later disagreement sticks at 'mixed'
-    // and can never be latched back down. Last-wins would hide a mid-session
-    // change behind whichever frame happened to land last, and one number can't
-    // summarize two barriers anyway — the samples either describe one variant or
-    // they describe nothing usable. 'mixed' says which of those it is.
-    if (barrierApplied !== undefined) {
-      this.observedMode =
-        this.observedMode === null || this.observedMode === barrierApplied ? barrierApplied : "mixed";
-    }
+    this.barrier[i] = completion.drawMs + completion.readMs;
+    this.barrierDraw[i] = completion.drawMs;
+    this.barrierRead[i] = completion.readMs;
+    this.cib[i] = read.cibMs;
+    this.resident[i] = read.residentMs;
+    if (completion.proof) this.proofs += 1;
     if (fence) {
       this.fencePendingPeak = Math.max(this.fencePendingPeak, fence.pendingPeak);
       this.fenceForced = Math.max(this.fenceForced, fence.forcedWaits);
@@ -203,7 +147,7 @@ export class HandoffTimings {
       barrierMax: b[b.length - 1] ?? 0,
       barrierDrawP50: pct(bd, 0.5),
       barrierReadP50: pct(br, 0.5),
-      barrierModeObserved: this.observedMode,
+      proofFallbacks: this.proofs,
       fenceWaitP50: this.fenceCount === 0
         ? null
         : pct(this.fenceWait.slice(0, this.fenceCount).sort((x, y) => x - y), 0.5),

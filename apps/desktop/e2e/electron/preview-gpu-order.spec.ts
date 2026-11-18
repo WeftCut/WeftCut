@@ -27,7 +27,7 @@ import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers
 // are not the same test:
 //
 //   * shared-texture (Windows d3d11va) — `forceLane: 'hardware'`, the reorder
-//     race above, the slot-pool sweep, the barrier latch, and the previewGpu
+//     race above, the slot-pool sweep, the slot fence, and the previewGpu
 //     admission budget. All four are `GpuTransport` concepts and the whole
 //     `previewGpu*` napi surface is `#[cfg(windows)]` (decode/src/lib.rs), so
 //     off Windows every one of these cells could only ever fail.
@@ -35,7 +35,7 @@ import { invokeCmd, launchApp, newProject, tmpDir, waitForHook } from './helpers
 //     UNFORCED so `pickInitialLane`'s real probe resolves it, exactly as
 //     production does and exactly as decode-bench's `native-copyback` strategy
 //     already did (docs/decode-bench.md §Strategies). No slots, no
-//     barrier, no shared texture; the copy-back frame rides the same
+//     slot fence, no shared texture; the copy-back frame rides the same
 //     `SwTransport` the control does. That makes it a full-strength test of
 //     PRESENTATION ORDER on real hardware and no test at all of the
 //     shared-texture coherence race — which is the honest split.
@@ -67,13 +67,13 @@ const CLIP_PIX_FMT = 'yuv420p'
 /// Enter the editor so a PREVIEW SURFACE exists before any hardware session runs.
 ///
 /// A bare `launchApp()` sits on the project picker with zero canvases, so the
-/// Pixi Application — and therefore the device the shipped barrier takes its
+/// Pixi Application — and therefore the device the slot fence takes its
 /// completion signal on — never initializes. The probes below drive a PRIVATE
 /// decoder pool and do not need the Compositor, which is exactly how a run in
-/// that state used to pass: every session quietly took the readback fallback and
-/// the gate certified a barrier nobody had exercised. The product never decodes
+/// that state used to pass: every session quietly took the one-pixel proof and
+/// the gate certified a fence nobody had exercised. The product never decodes
 /// on the hardware lane without a preview surface up; this makes the gate run in
-/// that same state, and the per-session barrier assertion is what proves it.
+/// that same state, and the per-session fence assertion is what proves it.
 async function enterEditorWithPreview(page: Page): Promise<void> {
   await newProject(page, {
     parentFolder: tmpDir('weftcut-order-'),
@@ -108,7 +108,7 @@ interface OrderCheckResult {
   checked: number
   missing: number
   mismatches: OrderCheckMismatch[]
-  barrierApplied?: string | null
+  readCompletionProofs?: number | null
   /// Resolved lane. Informational for the forced shared-texture group; for the
   /// unforced copy-back group these ARE the engagement proof.
   lane?: string | null
@@ -116,23 +116,20 @@ interface OrderCheckResult {
   error?: string
 }
 
-/// The barrier a hardware-lane run must be able to prove it ran. A barcode check
-/// passes under every CORRECT barrier, so green says nothing about WHICH one was
-/// exercised: a variant that could not get the context it needs falls back — by
-/// design and without a word — and the run then certifies the fallback under the
-/// pinned variant's name. Held to the product default when the env is unset, so
-/// keep this in step with `HW_BARRIER_DEFAULT` in src/main/previewGpu.ts.
-const EXPECTED_BARRIER = process.env.WEFTCUT_HW_BARRIER ?? 'rendererFence'
-
-function expectBarrierRan(applied: string | null | undefined, where: string): void {
+/// A hardware-lane run must be able to prove the slot fence ran for its frames.
+/// A barcode check passes under the one-pixel proof just as well, and the
+/// transport falls back to it, by design and without a word, when no device can
+/// take a fence — so a green run proves nothing about the fence unless it read
+/// slots and no frame fell back.
+function expectFenceRan(proofs: number | null | undefined, where: string): void {
   expect(
-    applied,
-    `${where}: no barrier observed — the run cannot say which variant it exercised`,
+    proofs ?? null,
+    `${where}: no slot read observed — the run cannot say how its reads completed`,
   ).not.toBeNull()
   expect(
-    applied,
-    `${where}: ran the "${applied}" barrier, not the pinned "${EXPECTED_BARRIER}" — this run did not test the thing`,
-  ).toBe(EXPECTED_BARRIER)
+    proofs,
+    `${where}: ${proofs} frame(s) fell back to the one-pixel proof — this run did not test the slot fence`,
+  ).toBe(0)
 }
 
 async function runOrderCheck(
@@ -160,7 +157,7 @@ async function runOrderCheck(
 }
 
 function report(r: OrderCheckResult): string {
-  const head = `strategy=${r.strategy} lane=${r.lane ?? '—'} hwLane=${r.hwLane ?? '—'} pool=${r.poolSize} barrier=${r.barrierApplied ?? 'none-observed'} checked=${r.checked} missing=${r.missing} mismatches=${r.mismatches.length}${r.error ? ` error=${r.error}` : ''}`
+  const head = `strategy=${r.strategy} lane=${r.lane ?? '—'} hwLane=${r.hwLane ?? '—'} pool=${r.poolSize} proofs=${r.readCompletionProofs ?? 'no-slot-read'} checked=${r.checked} missing=${r.missing} mismatches=${r.mismatches.length}${r.error ? ` error=${r.error}` : ''}`
   const ex = r.mismatches
     .slice(0, 12)
     .map((m) => `  pts=${m.ptsUs} expected=${m.expectedIdx} decoded=${m.decodedIdx} (Δ=${m.decodedIdx - m.expectedIdx})`)
@@ -175,7 +172,7 @@ interface ConcurrentOrderSession {
   missing: number
   mismatches: OrderCheckMismatch[]
   timedOut: boolean
-  barrierApplied?: string | null
+  readCompletionProofs?: number | null
   error?: string
 }
 interface ConcurrentOrderResult {
@@ -196,7 +193,7 @@ async function runConcurrentOrderCheck(page: Page, sessions: number): Promise<Co
 }
 
 function reportSession(s: ConcurrentOrderSession): string {
-  const head = `  session ${s.index}: lane=${s.lane} barrier=${s.barrierApplied ?? 'none-observed'} checked=${s.checked} missing=${s.missing} mismatches=${s.mismatches.length}${s.timedOut ? ' TIMED-OUT' : ''}${s.error ? ` error=${s.error}` : ''}`
+  const head = `  session ${s.index}: lane=${s.lane} proofs=${s.readCompletionProofs ?? 'no-slot-read'} checked=${s.checked} missing=${s.missing} mismatches=${s.mismatches.length}${s.timedOut ? ' TIMED-OUT' : ''}${s.error ? ` error=${s.error}` : ''}`
   const ex = s.mismatches
     .slice(0, 6)
     .map((m) => `    pts=${m.ptsUs} expected=${m.expectedIdx} decoded=${m.decodedIdx} (Δ=${m.decodedIdx - m.expectedIdx})`)
@@ -223,9 +220,9 @@ function expectConcurrentRunInOrder(r: ConcurrentOrderResult, sessions: number):
       s.lane,
       `session ${s.index} ran on "${s.lane}", not hardware — this run did not test the thing:\n${reportConcurrent(r)}`,
     ).toBe('hardware')
-    // Per session: the barrier latch is per stream, so one session running a
-    // different variant than its siblings is drift this must not bury.
-    expectBarrierRan(s.barrierApplied, `session ${s.index}`)
+    // Per session: the fallback is per frame of each stream, so one session
+    // falling back while its siblings fenced is drift this must not bury.
+    expectFenceRan(s.readCompletionProofs, `session ${s.index}`)
     // Short `checked` under contention is a CAPACITY finding, not a reason
     // to lower the bar — the message carries every session's numbers so the
     // shortfall can be read directly.
@@ -340,7 +337,7 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
   // ── shared-texture transport (Windows d3d11va) ───────────────────────────
   // Every cell below forces the lane, and a forced hardware lane routes to
   // `GpuTransport`. That transport IS the subject here — the slot pool, the
-  // read/ack race, the read-completion barrier, and the previewGpu admission
+  // read/release race, the slot fence, and the previewGpu admission
   // budget are all its concepts and exist nowhere else. The addon builds it
   // only on Windows (`#[cfg(windows)] mod preview_gpu`, decode/src/lib.rs:11;
   // the non-Windows stub at backend.rs:638 returns "preview-gpu not built" from
@@ -373,7 +370,7 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
           // The clip has 300 frames; a functioning lane reads essentially all of
           // them. A near-empty run means decode failed, not that order is "fine".
           expect(r.checked, 'too few frames checked — hardware-lane decode did not run').toBeGreaterThan(200)
-          expectBarrierRan(r.barrierApplied, `hardware lane pool=${poolSize}`)
+          expectFenceRan(r.readCompletionProofs, `hardware lane pool=${poolSize}`)
           expect(
             r.mismatches.length,
             `hardware lane (pool=${poolSize}) presented ${r.mismatches.length} frame(s) whose pixels did not match their PTS (reorder):\n${report(r)}`,
@@ -385,18 +382,16 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
     }
 
     // The single-session sweep above cannot speak for the case we ship. Three
-    // concurrent hardware sessions is production's problem shape, and the barrier
-    // behaves differently there: the synchronous readback measures ~19ms of drain at
-    // one session but ~5ms at three, because the sessions share one flush and
-    // per-session slack collapses as sessions are added. Any strategy whose
-    // ordering depends on GPU command-queue depth when it submits can therefore
-    // pass alone and reorder in company — and would ship green, since every other
+    // concurrent hardware sessions is production's problem shape, and read
+    // completion behaves differently there: the sessions share one GPU command
+    // queue, so per-session slack collapses as sessions are added. Any strategy
+    // whose ordering depends on queue depth when it submits can therefore pass
+    // alone and reorder in company — and would ship green, since every other
     // gate in this repo drives one session.
     //
     // Each session is asserted on its own: a merged count would let two passes
     // bury one session's reorder, and "which session" is the first thing a
-    // failure has to answer. Barrier mode comes from WEFTCUT_HW_BARRIER, same as
-    // every test here.
+    // failure has to answer.
     test('ffmpeg hardware lane: 3 concurrent sessions each present frames in order (no reorder under contention)', async () => {
       test.setTimeout(240_000)
       const { app, page } = await launchApp()
@@ -414,7 +409,7 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
     // The same probe at the largest concurrent shape this fixture's live budget
     // admits. The fixed-three run
     // above is not superseded by this one: three sessions still leave the most
-    // barrier slack of any multi-session shape (see the drain numbers above), which
+    // read-completion slack of any multi-session shape, which
     // makes it the multi-session case most likely to HIDE a reorder. This run
     // covers the shape production actually ships once the cap moves past three,
     // where per-session slack is thinnest.
@@ -562,8 +557,8 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
   // Deliberately ONE cell, not a mirror of the seven above:
   //   * no pool sweep — a copy-back lane owns no slots to sweep, so poolSize is
   //     not a variable here;
-  //   * no barrier assertion — there is no read-completion barrier to observe,
-  //     and this asserts `barrierApplied` is null so a future change that routes
+  //   * no fence assertion — there is no slot read to complete, and this
+  //     asserts `readCompletionProofs` is null so a future change that routes
   //     this group through the shared-texture transport cannot pass unnoticed;
   //   * no budget/concurrency cells — `previewGpu:budget` is the shared-texture
   //     admission ledger, which a copy-back session never touches. Inventing a
@@ -600,11 +595,11 @@ test.describe('ffmpeg engine hardware lane preview presents frames in order (Ele
         // actually exercised (an operator can pin it with WEFTCUT_FORCE_HW_LANE).
         expect(r.hwLane, `lane reported hardware but named no HW lane:\n${report(r)}`).not.toBeNull()
         // The copy-back frame must NOT have come over the shared-texture
-        // transport — that has a barrier and this does not. A non-null barrier
-        // here means the group is silently testing the Windows path.
+        // transport — that reads slots and this does not. A non-null count here
+        // means the group is silently testing the Windows path.
         expect(
-          r.barrierApplied ?? null,
-          `copy-back run observed the "${r.barrierApplied}" shared-texture barrier — it did not run on the copy-back transport:\n${report(r)}`,
+          r.readCompletionProofs ?? null,
+          `copy-back run read shared-texture slots — it did not run on the copy-back transport:\n${report(r)}`,
         ).toBeNull()
         expect(r.checked, 'too few frames checked — copy-back decode did not run').toBeGreaterThan(200)
         expect(

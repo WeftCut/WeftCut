@@ -43,7 +43,7 @@ export function openPreviewDecode(
       else backend.previewDecodeRelease(sessionId, cmd.lease)
     },
     close: () => backend.previewDecodeClose(sessionId),
-  })
+  }).info
 }
 
 function previewCommand(data: Record<string, unknown>): PreviewDecodeCommand | null {

@@ -23,7 +23,7 @@ beforeAll(() => {
   let listener: ((event: { source: unknown; data: unknown; ports: MessagePort[] }) => void) | null = null
   const stub = { addEventListener: (_type: string, handler: typeof listener) => { listener = handler } }
   vi.stubGlobal('window', stub)
-  installMotifFrames(() => undefined, async bitmap => bitmap)
+  installMotifFrames(() => Promise.reject(new Error('no texture')), async bitmap => bitmap)
   const channel = new MessageChannel()
   page = channel.port1
   listener!({ source: stub, data: { type: 'weftcut:motif-frame-port' }, ports: [channel.port2] })

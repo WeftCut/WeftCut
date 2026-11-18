@@ -4,7 +4,7 @@
 
 import type { WebContents } from 'electron'
 import { documentOwner } from './documentOwner'
-import { hostDecodeSession, type DecodeSessionSpec } from './decodeSessionHost'
+import { hostDecodeSession, type DecodeSessionSpec, type HostedDecodeSession } from './decodeSessionHost'
 
 /** One session asking to be admitted: the host's spec, with the document that
  * asked as its `WebContents`. */
@@ -22,7 +22,7 @@ const sessions = new Set<string>()
 /** Admits and serves one session. Refuses an id that is already open before
  * reserving anything. The reservation is released once: when the session
  * closes, or when its open fails. A refused session closes its port. */
-export function admitDecodeSession<Info, Cmd extends { type: string }>(admission: DecodeSessionAdmission<Info, Cmd>): Info {
+export function admitDecodeSession<Info, Cmd extends { type: string }>(admission: DecodeSessionAdmission<Info, Cmd>): HostedDecodeSession<Info> {
   const { sessionId, port } = admission
   let forget = () => {}
   try {

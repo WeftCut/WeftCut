@@ -47,16 +47,10 @@ function tryLoadAddon(): typeof import('@weftcut/native-decode') | null {
 
 const addon = tryLoadAddon()
 
-interface EventEnvelope {
-  event: string
-  payload: { sessionId?: string; message?: string }
-}
-
-/** One test session: the shared backend, the shared-envelope capture, and each
- * session's ordered in-band message stream. */
+/** One test session: the shared backend and each session's ordered in-band
+ * message stream. */
 interface Ctx {
   backend: NativeDecode
-  events: EventEnvelope[]
   msgsById: Map<string, DecodeMsg[]>
 }
 
@@ -124,12 +118,9 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
   const openSessions = new Set<string>()
 
   beforeAll(() => {
-    const events: EventEnvelope[] = []
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const backend = new addon!.NativeDecode((err, json) => {
-      if (!err) events.push(JSON.parse(json) as EventEnvelope)
-    })
-    ctx = { backend, events, msgsById: new Map() }
+    const backend = new addon!.NativeDecode()
+    ctx = { backend, msgsById: new Map() }
   })
 
   afterAll(() => {
@@ -390,10 +381,4 @@ describe.skipIf(!addon)('native export-decode session (napi seam)', () => {
     expect(() => close('parked')).not.toThrow()
   })
 
-  it('the shared event envelope carries no export decode traffic', () => {
-    // Control signals ride in-band, so nothing export-shaped may appear on the
-    // `{event, payload}` envelope. Runs last: `ctx.events` has captured
-    // every envelope emission across the whole suite by now.
-    expect(ctx.events.filter((e) => e.event.startsWith('export'))).toEqual([])
-  })
 })

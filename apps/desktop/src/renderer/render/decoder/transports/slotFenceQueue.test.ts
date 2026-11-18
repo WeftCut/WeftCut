@@ -57,7 +57,7 @@ describe("SlotFenceQueue", () => {
     const ack = vi.fn();
 
     const r = q.submit("s1", 0, fakeBitmap(), ack);
-    expect(r.applied).toBe("rendererFence");
+    expect(r.applied).toBe("fence");
     // Deferred, not synchronous — the whole point of the mode.
     expect(ack).not.toHaveBeenCalled();
     expect(q.pendingCount()).toBe(1);
@@ -310,9 +310,29 @@ describe("SlotFenceQueue", () => {
     const q = new SlotFenceQueue();
     const ack = vi.fn();
     const r = q.submit("s1", 0, fakeBitmap(), ack);
-    expect(r.applied).not.toBe("rendererFence");
+    expect(r.applied).not.toBe("fence");
     expect(ack).not.toHaveBeenCalled();
     expect(q.pendingCount()).toBe(0);
+  });
+
+  it("releases at once after the one-pixel proof when no device can take a fence", async () => {
+    vi.resetModules();
+    vi.stubGlobal("OffscreenCanvas", class {
+      getContext() {
+        return { drawImage: () => {}, getImageData: () => {} };
+      }
+    });
+    try {
+      const { SlotFenceQueue: WithProof } = await import("./slotFenceQueue");
+      const q = new WithProof();
+      const ack = vi.fn();
+      const r = q.submit("s1", 0, fakeBitmap(), ack);
+      expect(r.applied).toBe("proof");
+      expect(ack).toHaveBeenCalledOnce();
+      expect(q.pendingCount()).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("falls back the same way when the device refuses the submit", () => {
@@ -320,7 +340,7 @@ describe("SlotFenceQueue", () => {
     q.setBackend({ submit: () => null });
     const ack = vi.fn();
     const r = q.submit("s1", 0, fakeBitmap(), ack);
-    expect(r.applied).not.toBe("rendererFence");
+    expect(r.applied).not.toBe("fence");
     expect(ack).not.toHaveBeenCalled();
   });
 

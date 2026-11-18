@@ -628,6 +628,23 @@ impl SessionState {
         }
     }
 
+    /// Handle a release of `slot` at generation `gen`. A duplicate, stale,
+    /// out-of-range or wrong-generation release is dropped whole (no free, no
+    /// coord-RTT record; see `ack_frees_slot`). Generation mismatches are
+    /// counted apart from silence: routine stale releases mean the consumer is
+    /// answering leases the owner already reclaimed (a latency finding).
+    fn on_release(&mut self, slot: u32, gen: u32) {
+        let slot = slot as usize;
+        if ack_frees_slot(&self.free, &self.slot_gen, slot, gen) {
+            self.record_ack(slot);
+            self.free[slot] = true;
+        } else if self.free.get(slot) == Some(&false) {
+            if let Ok(mut t) = self.timing.lock() {
+                t.note_stale_gen_ack();
+            }
+        }
+    }
+
     /// Handle a `request_frame_at`: set the anchor and, if `needs_seek` says the
     /// target left the reachable forward window, seek. Decision logic is the pure
     /// [`needs_seek`] (unit-gated); this method owns only the state transition.
@@ -1049,6 +1066,49 @@ fn init_session(
 /// The session's loop: serve each command, and pump on every idle tick so a
 /// freed slot is refilled and an expired lease reclaimed without a message,
 /// until close disconnects the channel.
+/// What one sweep of the mailbox held.
+struct Drained {
+    /// The newest request's target, if the sweep held a request.
+    newest: Option<i64>,
+    requests: u64,
+    releases: u64,
+}
+
+/// Takes `first` and everything already queued behind it off the mailbox.
+/// Every release goes to `release`, in order. Of the requests only the newest
+/// target is kept: the session chases one anchor, so a superseded target
+/// would cost a seek and a pool of frames nobody will show.
+///
+/// LANDMINE: without this sweep a scrub is served target by target. The
+/// consumer posts every distinct target; when main falls behind, a run of
+/// them lands at once, and each stale one can seek before the newest is seen.
+fn drain_mailbox(
+    first: GpuCmd,
+    rx: &Receiver<GpuCmd>,
+    mut release: impl FnMut(u32, u32),
+) -> Drained {
+    let mut drained = Drained {
+        newest: None,
+        requests: 0,
+        releases: 0,
+    };
+    let mut next = Some(first);
+    while let Some(cmd) = next {
+        match cmd {
+            GpuCmd::RequestFrameAt(t) => {
+                drained.newest = Some(t);
+                drained.requests += 1;
+            }
+            GpuCmd::Release { slot, gen } => {
+                release(slot, gen);
+                drained.releases += 1;
+            }
+        }
+        next = rx.try_recv().ok();
+    }
+    drained
+}
+
 fn run_session(mut state: SessionState, rx: Receiver<GpuCmd>, ctx: SessionCtx) {
     loop {
         // Thread time-budget probe: time the recv itself (0 when a message
@@ -1059,11 +1119,8 @@ fn run_session(mut state: SessionState, rx: Receiver<GpuCmd>, ctx: SessionCtx) {
         let block_ns = t_recv.elapsed().as_nanos() as u64;
         if let Ok(mut t) = state.timing.lock() {
             t.push_recv_block(block_ns);
-            match &msg {
-                Ok(GpuCmd::Release { .. }) => t.note_recv_ack(),
-                Ok(GpuCmd::RequestFrameAt(_)) => t.note_recv_req(),
-                Err(RecvTimeoutError::Timeout) => t.note_recv_timeout(),
-                Err(RecvTimeoutError::Disconnected) => {}
+            if matches!(msg, Err(RecvTimeoutError::Timeout)) {
+                t.note_recv_timeout();
             }
         }
         // Close sets the flag before it drops the channel; commands still
@@ -1072,24 +1129,20 @@ fn run_session(mut state: SessionState, rx: Receiver<GpuCmd>, ctx: SessionCtx) {
             break;
         }
         match msg {
-            Ok(GpuCmd::RequestFrameAt(t)) => {
-                state.on_request(t, &ctx);
-                state.pump(&ctx);
-            }
-            Ok(GpuCmd::Release { slot, gen }) => {
-                // A duplicate/stale/out-of-range/wrong-generation release is
-                // dropped whole — no free, no coord-RTT record — see
-                // `ack_frees_slot`. The pump still runs: the mailbox deserves
-                // service either way. Gen mismatches are counted apart from
-                // silence: routine stale releases mean the consumer is answering
-                // leases the owner already reclaimed (a latency finding).
-                if ack_frees_slot(&state.free, &state.slot_gen, slot as usize, gen) {
-                    state.record_ack(slot as usize);
-                    state.free[slot as usize] = true;
-                } else if state.free.get(slot as usize) == Some(&false) {
-                    if let Ok(mut t) = state.timing.lock() {
-                        t.note_stale_gen_ack();
+            Ok(first) => {
+                // The pump runs once for the whole drain, whatever it held: the
+                // mailbox deserves service either way.
+                let target = drain_mailbox(first, &rx, |slot, gen| state.on_release(slot, gen));
+                if let Ok(mut t) = state.timing.lock() {
+                    for _ in 0..target.requests {
+                        t.note_recv_req();
                     }
+                    for _ in 0..target.releases {
+                        t.note_recv_ack();
+                    }
+                }
+                if let Some(t) = target.newest {
+                    state.on_request(t, &ctx);
                 }
                 state.pump(&ctx);
             }
@@ -1477,6 +1530,35 @@ mod tests {
             anchor + LOOKAHEAD_US,
             3_000_000
         ));
+    }
+
+    #[test]
+    fn a_mailbox_sweep_keeps_every_release_in_order_and_only_the_newest_target() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        for cmd in [
+            GpuCmd::Release { slot: 1, gen: 4 },
+            GpuCmd::RequestFrameAt(200),
+            GpuCmd::Release { slot: 0, gen: 9 },
+            GpuCmd::RequestFrameAt(300),
+        ] {
+            tx.send(cmd).unwrap();
+        }
+        let mut released = Vec::new();
+        let drained = drain_mailbox(GpuCmd::RequestFrameAt(100), &rx, |slot, gen| {
+            released.push((slot, gen))
+        });
+        assert_eq!(drained.newest, Some(300), "superseded targets are skipped");
+        assert_eq!(
+            released,
+            [(1, 4), (0, 9)],
+            "no release is lost or reordered"
+        );
+        assert_eq!((drained.requests, drained.releases), (3, 2));
+        assert!(rx.try_recv().is_err(), "the sweep left nothing queued");
+
+        // A sweep of releases alone names no target: the anchor stays.
+        let only = drain_mailbox(GpuCmd::Release { slot: 2, gen: 1 }, &rx, |_, _| {});
+        assert_eq!(only.newest, None);
     }
 
     // --- A live session. `open` needs a d3d11va device and has no software

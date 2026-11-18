@@ -18,7 +18,7 @@ port.once('message', event => {
     return
   }
   try {
-    const native = loadNativeDecode(() => {})
+    const native = loadNativeDecode()
     if (!native.backend || !native.lanes.includes('videotoolbox')) {
       finish({ type: 'failed' }, 1)
       return

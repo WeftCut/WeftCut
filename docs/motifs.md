@@ -390,7 +390,11 @@ verifies the checksum as it goes) and downscales (alpha-weighted box, size
 rounded up). At most three reads are in flight per document.
 
 - **Windows — texture lane.** Main's `MotifGpuTransport` uploads the scaled
-  frame into a D3D11 slot sized for the divisor. Before acknowledging the slot,
+  frame into a D3D11 slot sized for the divisor. A new pool's texture reaches
+  the page once, through the same import and tagged send as GPU preview
+  sessions ([`preview.md`](preview.md#the-standard-engine-ffmpegsource)), keyed
+  by the pool's key; the reply to `motif:read` names that key, and the
+  preload's `SlotReader` reads it into a bitmap. Before acknowledging the slot,
   preload proves Chromium's copy out of it has run: it draws one pixel of the
   bitmap on an accelerated canvas and reads that pixel back
   (`motifReadBarrier.ts`). Both sides take the slot's keyed mutex with key 0,
