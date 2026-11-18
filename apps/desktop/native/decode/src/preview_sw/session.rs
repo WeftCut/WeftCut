@@ -1,47 +1,26 @@
-//! Per-source software-decode session thread + registry.
+//! Per-source preview decode session: the request driver ([`run_session`] and
+//! [`serve_request`]) run on the carrier's [`SessionRuntime`], one
+//! [`ByteWindow`] lease per frame.
 //!
-//! A strict simplification of `preview_gpu/session.rs`. Each preview session owns
-//! a dedicated OS thread that opens a [`SwVideoStream`] and runs a
-//! DECODE-ON-REQUEST loop: napi-side commands (`request_frame_at` / `close`) post
-//! messages over an mpsc channel; decoded frames leave the thread as owned
-//! [`SwFramePoke::Frame`] bytes (NV12, or tightly-packed I420P10 for a 10-bit
-//! session — the frame's `format` says which) through a shared sink.
+//! Owns: the session's thread body, which opens a [`SwVideoStream`] (software
+//! or a copy-back hardware lane), serves requests latest-wins with a forward
+//! cursor, and ships owned frame bytes (NV12, or I420P10 for a 10-bit
+//! session) as [`DecodeMsg`]s stamped with the request they answer.
 //!
-//! What this DROPS vs. the GPU mirror (and why): there is no D3D11 anywhere — no
-//! shared-texture pool, no keyed mutex, no slot free-list, no `ConsumeAck`
-//! round-trip, and none of the decode-bench timing probes. Software delivery has
-//! renderer receipts for flow control, independent of GPU ownership. The GPU path needs all
-//! of that because a decoded surface is a *borrowed* GPU texture valid only until
-//! the next `next_frame`, so the renderer must ack before the slot is reused. Here
-//! the frame bytes ARE the payload: [`SwFrame`] is fully owned and `Send`, so it
-//! travels through the sink and outlives the stream — no coherence protocol
-//! needed. Credits and cooperative slice wake-ups resume the forward cursor.
-//!
-//! Requests are served forward-continuing (a seek only when the target moves
-//! backward or lands too far ahead) and coalesced latest-wins at the loop top —
-//! see [`serve_request`], [`PumpCursor`] and the drain in [`session_thread`].
-//!
-//! Thread ownership: [`SwVideoStream`] is `!Send`-in-spirit (raw ffmpeg
-//! pointers; marked `Send` forward-compat) but it is created, driven, and
-//! dropped entirely on the session thread and never crosses a boundary, so
-//! that mark is never exercised here. Only plain `Send` data crosses: the
-//! command `Receiver`, the sink `Arc`, the path/id strings in, and the
-//! pokes out.
-//!
-//! The napi addon wires the registry + sink; from the plain-lib build's
-//! view the public API is `dead_code` (the unit test exercises it).
-#![allow(dead_code)]
+//! Does NOT own the decode surface (`decoder`), the session lifecycle or the
+//! panic boundary (`carrier::SessionRuntime`), or colour: frames carry none,
+//! the renderer stamps the source's resolved colour. See docs/preview.md
+//! § The Standard engine.
 
-use super::flow::PreviewFlow;
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use napi::bindgen_prelude::Buffer;
+
 use super::decoder::{DecodeAccel, OutScale, OutputCadence, SwFrame, SwOutFormat, SwVideoStream};
-use crate::recover::{panic_message, LockExt};
+use crate::carrier::{ByteWindow, DecodeMsg, SessionCtx, SessionRuntime, SessionShared, Sink};
 
 /// How far PAST the request target this lane keeps frames decoded before it
 /// stops. This — not a frame count — is the lane's flow control: during playback
@@ -76,6 +55,14 @@ const FORWARD_CONTINUE_US: i64 = 1_000_000;
 /// go. Steady playback never reaches it (one frame per request).
 const MAX_BURST_FRAMES: usize = 16;
 
+/// How long one request decodes before it yields to the command channel. A
+/// yield resumes the same cursor, so a long GOP walk is sliced, not restarted;
+/// it cannot interrupt a single blocking ffmpeg call.
+const WORK_SLICE: Duration = Duration::from_millis(8);
+
+/// How long a yielded request waits for a newer command before it resumes.
+const RESUME_POLL: Duration = Duration::from_millis(1);
+
 /// Largest number of backward re-seek attempts when a container's seek overshoots
 /// the target. Index-less MPEG-PS/TS estimate the seek byte-offset and can land
 /// AFTER the requested time; each retry steps the target back by a growing margin.
@@ -85,121 +72,98 @@ const MAX_SEEK_RETRIES: u32 = 6;
 /// ~1 s clears a typical (≤1 s) GOP overshoot in a single retry.
 const SEEK_RETRY_MARGIN_US: i64 = 1_000_000;
 
-/// How long `close` waits for the session thread to exit before DETACHING it.
-/// The healthy path clears this by orders of magnitude (the shutdown flag
-/// preempts the backlog; the thread bails at its next per-frame check), so the
-/// grace is only ever paid when the thread is wedged INSIDE a single ffmpeg
-/// call (dump-verified: d3d11va stuck under GPU contention). Bounded so the
-/// napi caller — Electron's main thread — sees a short blip, never an AppHang.
-const CLOSE_GRACE: Duration = Duration::from_millis(300);
+/// Frames a session may have in flight: emitted, not yet released by the
+/// renderer. A lease covers native -> napi -> IPC -> renderer acceptance; the
+/// frame cache has its own budget. The session cursor holds at most one more
+/// decoded frame of its own.
+pub(crate) const WINDOW_FRAMES: u32 = 8;
+/// Bytes a session may have in flight. A single larger frame still travels
+/// alone ([`ByteWindow::new`]), so a high resolution cannot deadlock.
+pub(crate) const WINDOW_BYTES: usize = 32 * 1024 * 1024;
 
 /// What `open` hands back once the session thread has opened its decoder: the
 /// dimensions frames will SHIP at — the session's [`OutScale`] already applied,
 /// so a downscaled preview reports the smaller size rather than the source's.
-/// Built from `SwVideoStream`'s public `out_width`/`out_height` fields (set at
-/// open) — no frame is decoded just to learn them. The addon maps this to a
-/// `#[napi(object)]`.
+/// Built from `SwVideoStream`'s `out_width`/`out_height` (set at open); no frame
+/// is decoded just to learn them.
 #[derive(Debug, Clone, Copy)]
-pub struct PreviewSwOpenInfo {
+pub struct PreviewOpenInfo {
     pub width: u32,
     pub height: u32,
 }
 
-/// Announced out of a session thread through the shared sink. `Send` (its only
-/// payload is the owned [`SwFrame`] + plain strings) so the addon can forward it
-/// to its event channel. Every variant carries `stream_id` so a single sink
-/// can route to the right per-stream callback.
-pub enum SwFramePoke {
-    /// A decoded frame, owned packed bytes (`frame.format` names the layout:
-    /// NV12 or I420P10) + timing/color. The consumer keeps or drops it freely —
-    /// nothing on the session thread references it after this.
-    Frame {
-        stream_id: String,
-        frame: SwFrame,
-        receipt: u32,
-        request_id: u32,
-    },
-    /// The stream reached its end; no more frames until a `request_frame_at` seeks
-    /// backward.
-    Eof { stream_id: String },
-    /// A non-fatal decode/seek failure. The session stays registered and can be
-    /// retried with another `request_frame_at`.
-    Error { stream_id: String, message: String },
+/// How a session decodes and what it ships. The default is the software lane,
+/// NV12, full size, every frame.
+#[derive(Debug, Clone)]
+pub struct PreviewOpenOptions {
+    /// Software, or a copy-back hardware lane; the shipped bytes are the same.
+    pub accel: DecodeAccel,
+    pub out_format: SwOutFormat,
+    /// Playback-resolution divisor, applied before the bytes are packed.
+    pub out_scale: OutScale,
+    /// Which decoded frames are packed and shipped; decode still sees every one.
+    pub output_cadence: OutputCadence,
 }
 
-/// Boxed sink shared with every session thread. `Mutex<Box<dyn Fn + Send>>` is
-/// `Send + Sync` (a `Mutex<T>` is `Sync` when `T: Send`), so an `Arc` of it clones
-/// into each thread and the mutex serialises concurrent sessions' calls — sound
-/// even though the closure is only `Send`, not `Sync`. Mirrors the GPU path's
-/// `PokeSink`.
-type FrameSink = Arc<Mutex<Option<Box<dyn Fn(SwFramePoke) + Send>>>>;
-
-/// Control messages posted to a session thread by the registry. Renderer
-/// receipts release byte credits and wake the cursor; no GPU slot is involved.
-enum SwSessionMsg {
-    /// Seek to this source-microsecond target and decode a bounded burst forward.
-    RequestFrameAt(i64, u32),
-    Wake,
-    /// Tear down and exit the thread.
-    Close,
-}
-
-/// The registry's per-session handle. The decoder lives on the thread, not here;
-/// this side keeps only the command channel + shutdown flag + done signal +
-/// join handle.
-struct Session {
-    flow: Arc<PreviewFlow>,
-    tx: Sender<SwSessionMsg>,
-    /// Set (Release) by `close` BEFORE its `Close` send; the thread checks it
-    /// (Acquire) on each message and inside a burst, and bails. The loop-top
-    /// latest-wins drain ALSO breaks on a drained `Close`, but this flag stays
-    /// the authority for teardown: it alone can abort a burst MID-decode, and
-    /// it holds even when the `Close` message is never received (thread busy
-    /// past the grace, registry gone). The drain's Close-wins is an
-    /// optimization on the same path, not a replacement.
-    shutdown: Arc<AtomicBool>,
-    /// Thread-exit signal: nothing is ever SENT — the paired `Sender` sits in
-    /// the session thread's closure frame, so `recv_timeout` observing
-    /// `Disconnected` means the thread body finished. Drop-based rather than an
-    /// explicit send-as-last-action because unwind drops the frame too: a
-    /// PANICKING thread releases the signal, where a final `send` would never
-    /// run and `close` would burn the full grace on every panic.
-    done_rx: Receiver<()>,
-    /// `Option` so `close` can `take()` it to join exactly once.
-    join: Option<JoinHandle<()>>,
-}
-
-/// Which teardown path [`PreviewSwRegistry::close`] took. Split out (rather
-/// than folded into the `Result`) so the unit tests can assert the healthy
-/// path really reaps — a plain `Ok` does not prove the thread exited.
-#[derive(Debug, PartialEq, Eq)]
-enum CloseOutcome {
-    /// The thread exited within the grace window and was joined.
-    Reaped,
-    /// The thread was still busy at the deadline; its handle was dropped. It
-    /// self-cleans when the blocking call returns and it sees the flag.
-    Detached,
-}
-
-/// Fire a poke through the shared sink if one is set. The mutex is held across the
-/// call so concurrent sessions serialise (the addon's sink is a non-blocking event
-/// enqueue, so this can't deadlock or stall).
-fn emit(sink: &FrameSink, poke: SwFramePoke) {
-    let guard = sink.lock_recover();
-    if let Some(f) = guard.as_ref() {
-        f(poke);
+impl Default for PreviewOpenOptions {
+    fn default() -> Self {
+        Self {
+            accel: DecodeAccel::Software,
+            out_format: SwOutFormat::Nv12,
+            out_scale: OutScale::FULL,
+            output_cadence: OutputCadence::FULL,
+        }
     }
 }
 
-/// Where the decoder is, carried ACROSS `request_frame_at` calls. This is the
-/// whole of the lane's flow control; without it every request is a fresh seek
-/// and a fixed burst, which starves long-GOP sources and floods intra ones.
-/// Owned by the session thread, never crosses a boundary.
+/// What a session's loop takes off its command channel. Lease returns do not
+/// travel here: they reach the [`ByteWindow`] directly and only queue a `Wake`.
+enum PreviewCmd {
+    /// Make every frame from `target_us` through its horizon delivered, in
+    /// answer to request `request_id`.
+    Request { target_us: i64, request_id: u32 },
+    /// A lease came back: resume a cursor that stopped on a full window.
+    Wake,
+}
+
+/// State a session shares with the calls that must not queue behind its loop.
+pub(crate) struct PreviewShared {
+    window: ByteWindow,
+    /// The newest request id, stored before the request is queued, so work for
+    /// a superseded request stops between frames instead of after the drain.
+    newest: AtomicU32,
+}
+
+impl PreviewShared {
+    fn new() -> Self {
+        Self {
+            window: ByteWindow::new(WINDOW_FRAMES, WINDOW_BYTES),
+            newest: AtomicU32::new(0),
+        }
+    }
+
+    fn current(&self, request_id: u32) -> bool {
+        self.newest.load(Ordering::Acquire) == request_id
+    }
+}
+
+impl SessionShared for PreviewShared {
+    fn on_close(&self) {
+        self.window.close();
+    }
+}
+
+/// Where the decoder is, carried ACROSS requests. This is the whole of the
+/// lane's flow control; without it every request is a fresh seek and a fixed
+/// burst, which starves long-GOP sources and floods intra ones. Owned by the
+/// session thread, never crosses a boundary.
 #[derive(Default)]
 struct PumpCursor {
+    /// The last request stopped on its work slice, not on its horizon.
     needs_resume: bool,
-    /// A frame decoded past the previous request's horizon, held so the next
-    /// forward request resumes ON it rather than decoding it a second time.
+    /// A frame decoded past the previous request's horizon (or held back by a
+    /// full window), so the next request resumes ON it rather than decoding it
+    /// a second time.
     pending: Option<SwFrame>,
     /// Target of the last request served. A request at or after it is FORWARD;
     /// anything earlier is a backward seek. `None` before the first request.
@@ -215,14 +179,30 @@ struct PumpCursor {
 
 impl PumpCursor {
     /// Forget where the decoder is, so the next request — forward or not — seeks
-    /// before it decodes. Used after a seek/decode failure: the stream's position
-    /// is undefined at that point, and continuing from it would deliver frames
-    /// from the wrong place.
+    /// before it decodes. Used after a seek/decode failure (the stream's position
+    /// is undefined then) and on a new request id (the renderer discarded what it
+    /// held, so resuming beyond those frames would leave a hole).
     fn invalidate(&mut self) {
         self.pending = None;
         self.last_target_us = None;
         self.ended = false;
     }
+}
+
+/// A seek or decode failure the session survives: the cursor is invalidated and
+/// the next request seeks again. Logged here as well, so a run of them is
+/// visible in the app log whatever the consumer does with it.
+fn recoverable(session: &str, ctx: &SessionCtx, message: String) {
+    tracing::warn!(%session, %message, "preview-sw decode error");
+    ctx.emit(DecodeMsg::Error {
+        message,
+        terminal: false,
+    });
+}
+
+fn end(session: &str, ctx: &SessionCtx) {
+    tracing::debug!(%session, "preview-sw eof");
+    ctx.emit(DecodeMsg::End);
 }
 
 /// Robustly seek to a keyframe at/before `target_us` and return the first frame
@@ -237,18 +217,18 @@ impl PumpCursor {
 /// `robust_seek_and_probe`.
 ///
 /// `Ok(None)` = the seek landed at EOF. Returns early with `Ok(None)` on
-/// teardown too; the caller checks `shutdown` itself before emitting anything.
+/// cancel too; the caller checks the flag itself before emitting anything.
 fn robust_seek_and_probe(
     stream: &mut SwVideoStream,
     target_us: i64,
-    shutdown: &AtomicBool,
+    ctx: &SessionCtx,
 ) -> Result<Option<SwFrame>, String> {
     let mut seek_target = target_us;
     let mut margin = SEEK_RETRY_MARGIN_US;
     let mut attempt = 0u32;
     loop {
         // Teardown preempts: each attempt is itself a seek + a decode probe.
-        if shutdown.load(Ordering::Acquire) {
+        if ctx.cancelled() {
             return Ok(None);
         }
         stream
@@ -270,8 +250,8 @@ fn robust_seek_and_probe(
     }
 }
 
-/// Service one `request_frame_at`: make sure everything from `target_us` to
-/// `target_us + LOOKAHEAD_HORIZON_US` has been poked, decoding only what is not
+/// Service one request: make sure everything from `target_us` to
+/// `target_us + LOOKAHEAD_HORIZON_US` has been sent, decoding only what is not
 /// already delivered.
 ///
 /// A FORWARD request (target at/after the last one, and no further than
@@ -282,27 +262,25 @@ fn robust_seek_and_probe(
 /// target and discards the GOP prefix as references.
 ///
 /// Stops on the horizon (stashing the frame that crossed it), on
-/// [`MAX_BURST_FRAMES`], on EOF (an `Eof` poke) or on a decode error (an `Error`
-/// poke). A seek failure is reported as `Error` and skips the burst — the session
-/// stays open for retry. Once `shutdown` is observed set, returns without
-/// emitting anything further — no `Error` poke, this is a normal teardown, not a
-/// failure.
-#[allow(clippy::too_many_arguments)]
+/// [`MAX_BURST_FRAMES`], on [`WORK_SLICE`] (to resume), on a full window
+/// (stashing the frame; the lease that comes back wakes it), on EOF (an `End`)
+/// or on a seek/decode failure (a non-terminal `Error`). Once the session is
+/// cancelled or the request superseded, returns without emitting anything
+/// further.
 fn serve_request(
+    session: &str,
     stream: &mut SwVideoStream,
     cursor: &mut PumpCursor,
     target_us: i64,
-    sink: &FrameSink,
-    stream_id: &str,
-    shutdown: &AtomicBool,
-    flow: &PreviewFlow,
     request_id: u32,
+    shared: &PreviewShared,
+    ctx: &SessionCtx,
 ) {
     cursor.needs_resume = false;
-    if !flow.current(request_id) {
+    if !shared.current(request_id) {
         return;
     }
-    let deadline = Instant::now() + Duration::from_millis(8);
+    let deadline = Instant::now() + WORK_SLICE;
     // Saturating, as the GPU twin is at every equivalent site: `target_us`
     // arrives as `f64 as i64` from napi, so an absurd JS value sits at the i64
     // extremes, where plain `-` panics in debug and wraps (misclassifying
@@ -323,7 +301,7 @@ fn serve_request(
     }
 
     if !forward {
-        match robust_seek_and_probe(stream, target_us, shutdown) {
+        match robust_seek_and_probe(stream, target_us, ctx) {
             Ok(Some(f)) => {
                 cursor.frontier_us = f.pts_us;
                 cursor.pending = Some(f);
@@ -331,7 +309,7 @@ fn serve_request(
             }
             Ok(None) => {
                 // Teardown wins silently; a real EOF landing is still an EOF.
-                if shutdown.load(Ordering::Acquire) {
+                if ctx.cancelled() {
                     return;
                 }
                 cursor.pending = None;
@@ -344,24 +322,13 @@ fn serve_request(
                 // FORWARD_CONTINUE_US of playhead advance — which doubles as
                 // self-heal for still-growing files.
                 cursor.frontier_us = cursor.frontier_us.max(target_us);
-                emit(
-                    sink,
-                    SwFramePoke::Eof {
-                        stream_id: stream_id.to_string(),
-                    },
-                );
+                end(session, ctx);
                 cursor.last_target_us = Some(target_us);
                 return;
             }
             Err(message) => {
                 cursor.invalidate();
-                emit(
-                    sink,
-                    SwFramePoke::Error {
-                        stream_id: stream_id.to_string(),
-                        message,
-                    },
-                );
+                recoverable(session, ctx, message);
                 return;
             }
         }
@@ -370,7 +337,7 @@ fn serve_request(
 
     let mut emitted = 0usize;
     loop {
-        if !flow.current(request_id) {
+        if !shared.current(request_id) {
             return;
         }
         if Instant::now() >= deadline {
@@ -382,7 +349,7 @@ fn serve_request(
             None => {
                 // Teardown preempts the (potentially slow) decode of the next
                 // frame; long-GOP discard loops pass through here every frame.
-                if shutdown.load(Ordering::Acquire) {
+                if ctx.cancelled() {
                     return;
                 }
                 match stream.next_frame() {
@@ -398,23 +365,12 @@ fn serve_request(
                         // the tail frame's pts — stale, every later tick past
                         // the continue-window would re-seek forever.
                         cursor.frontier_us = cursor.frontier_us.max(target_us);
-                        emit(
-                            sink,
-                            SwFramePoke::Eof {
-                                stream_id: stream_id.to_string(),
-                            },
-                        );
+                        end(session, ctx);
                         return;
                     }
                     Err(message) => {
                         cursor.invalidate();
-                        emit(
-                            sink,
-                            SwFramePoke::Error {
-                                stream_id: stream_id.to_string(),
-                                message,
-                            },
-                        );
+                        recoverable(session, ctx, message);
                         return;
                     }
                 }
@@ -433,25 +389,29 @@ fn serve_request(
             cursor.pending = Some(frame);
             return;
         }
-        // No Frame poke may fire once teardown is observed — the consumer side
-        // is being torn down and must not receive late frames.
-        if shutdown.load(Ordering::Acquire) || !flow.current(request_id) {
+        // No frame may go out once teardown is observed or the request is
+        // superseded.
+        if ctx.cancelled() || !shared.current(request_id) {
             cursor.pending = Some(frame);
             return;
         }
-        let Some(receipt) = flow.acquire(frame.data.len()) else {
+        // LANDMINE: `try_acquire`, never the parking `acquire`. A parked
+        // preview session cannot see a newer request, and the lease that wakes
+        // it would ship this superseded frame first.
+        let Some(lease) = shared.window.try_acquire(frame.data.len()) else {
             cursor.pending = Some(frame);
-            return; // the next real renderer receipt wakes this exact cursor
+            return;
         };
-        emit(
-            sink,
-            SwFramePoke::Frame {
-                stream_id: stream_id.to_string(),
-                frame,
-                receipt,
-                request_id,
-            },
-        );
+        ctx.emit(DecodeMsg::Bytes {
+            lease,
+            pts_us: frame.pts_us as f64,
+            dur_us: frame.dur_us as f64,
+            width: frame.width,
+            height: frame.height,
+            format: frame.format.into(),
+            data: Buffer::from(frame.data),
+            request_id: Some(request_id),
+        });
         emitted += 1;
         if emitted >= MAX_BURST_FRAMES {
             return;
@@ -459,458 +419,199 @@ fn serve_request(
     }
 }
 
-/// The session thread body: open the decoder, report the dimensions back to
-/// `open`, then run a blocking message loop until `Close`, the `shutdown` flag,
-/// or the sender drops.
+/// The session's loop: wait for a command, coalesce everything queued behind it
+/// latest-wins, serve the newest request, until close disconnects the channel.
 ///
-/// Idle/credit-blocked sessions sleep until a command or receipt. A work-slice
-/// yield uses a short timed wake-up to resume without waiting for a new target.
-/// Each wake-up drains commands and coalesces the newest target before serving.
-#[allow(clippy::too_many_arguments)]
-fn session_thread(
-    stream_id: String,
-    path: String,
-    accel: DecodeAccel,
-    out_format: SwOutFormat,
-    out_scale: OutScale,
-    output_cadence: OutputCadence,
-    rx: Receiver<SwSessionMsg>,
-    init_tx: Sender<Result<PreviewSwOpenInfo, String>>,
-    sink: FrameSink,
-    shutdown: Arc<AtomicBool>,
-    flow: Arc<PreviewFlow>,
+/// Idle and window-blocked sessions sleep until a command or a returned lease.
+/// A work-slice yield polls briefly and resumes without waiting for a new target.
+fn run_session(
+    session: String,
+    mut stream: SwVideoStream,
+    rx: Receiver<PreviewCmd>,
+    ctx: SessionCtx,
+    shared: Arc<PreviewShared>,
 ) {
-    let mut stream = match SwVideoStream::open_with_accel(&path, out_format, accel, out_scale) {
-        Ok(s) => s,
-        Err(e) => {
-            let _ = init_tx.send(Err(e));
-            return;
-        }
-    };
-    stream.set_output_cadence(output_cadence);
-    let info = PreviewSwOpenInfo {
-        width: stream.out_width,
-        height: stream.out_height,
-    };
-    if init_tx.send(Ok(info)).is_err() {
-        // `open` gave up waiting; drop `stream` and exit.
-        return;
-    }
-
     // Lives for the whole session, beside the stream it describes: it is what
     // lets consecutive requests share one forward decode pass.
     let mut cursor = PumpCursor::default();
-
     let mut demand = None;
-    let mut last_generation = None;
+    let mut last_request = None;
     loop {
         let first = if cursor.needs_resume {
-            match rx.recv_timeout(Duration::from_millis(1)) {
-                Ok(msg) => msg,
-                Err(mpsc::RecvTimeoutError::Timeout) => SwSessionMsg::Wake,
-                Err(_) => break,
+            match rx.recv_timeout(RESUME_POLL) {
+                Ok(cmd) => cmd,
+                Err(RecvTimeoutError::Timeout) => PreviewCmd::Wake,
+                Err(RecvTimeoutError::Disconnected) => break,
             }
         } else {
             match rx.recv() {
-                Ok(msg) => msg,
+                Ok(cmd) => cmd,
                 Err(_) => break,
             }
         };
-        // Teardown preempts the queued backlog: the channel is FIFO, so `Close`
-        // sits behind every pending `RequestFrameAt`; the flag doesn't.
-        if shutdown.load(Ordering::Acquire) {
+        // Close sets the flag before it drops the channel, and the flag is
+        // what preempts the queued backlog.
+        if ctx.cancelled() {
             break;
         }
-        // Latest-wins coalescing: drain everything already queued BEFORE
-        // serving. Only the newest scrub target matters for preview, so
-        // consecutive `RequestFrameAt` collapse to the last one drained —
-        // superseded targets never cost a seek+burst and never poke (the
-        // renderer keys frames by pts off a latest-target ring anchor, so a
-        // burst that never fires is indistinguishable from one it evicted). A
-        // drained `Close` wins outright: teardown is never postponed behind a
-        // request. The shutdown flag stays the teardown authority — see the
-        // `Session::shutdown` field. No timers, no extra threads — purely a
-        // non-blocking sweep of what recv() woke up to.
-        match first {
-            SwSessionMsg::RequestFrameAt(t, id) => demand = Some((t, id)),
-            SwSessionMsg::Wake => {}
-            SwSessionMsg::Close => break,
+        // Latest-wins: drain everything already queued BEFORE serving. Only the
+        // newest target matters for preview, so superseded targets never cost a
+        // seek or a burst. No timers, no extra threads — a non-blocking sweep of
+        // what recv() woke up to.
+        if let PreviewCmd::Request {
+            target_us,
+            request_id,
+        } = first
+        {
+            demand = Some((target_us, request_id));
         }
-        let mut close_drained = false;
-        loop {
-            match rx.try_recv() {
-                Ok(SwSessionMsg::RequestFrameAt(t, id)) => demand = Some((t, id)),
-                Ok(SwSessionMsg::Wake) => {}
-                Ok(SwSessionMsg::Close) => {
-                    close_drained = true;
-                    break;
-                }
-                // Empty = nothing else queued; Disconnected = registry gone.
-                // Either way the drain is over — serve what we have.
-                Err(_) => break,
+        while let Ok(cmd) = rx.try_recv() {
+            if let PreviewCmd::Request {
+                target_us,
+                request_id,
+            } = cmd
+            {
+                demand = Some((target_us, request_id));
             }
         }
-        // Re-check the flag after the drain: `close` sets it BEFORE its send,
-        // so a flag observed here means the `Close` is either drained above or
-        // in flight — never worth a burst first.
-        if close_drained || shutdown.load(Ordering::Acquire) {
+        if ctx.cancelled() {
             break;
         }
         let Some((target_us, request_id)) = demand else {
             continue;
         };
-        // Production ids represent discontinuities. A renderer cache flush
-        // must redeliver even the exact same target, while normal forward
-        // refills preserve the cursor and all useful in-flight frames.
-        if flow.enabled() && last_generation != Some(request_id) {
+        // A request id marks a discontinuity: a renderer cache flush must
+        // redeliver even the exact same target, while forward refills keep the
+        // id, the cursor and every useful frame in flight.
+        if last_request != Some(request_id) {
             cursor.invalidate();
         }
-        last_generation = Some(request_id);
-        // Catch a decode panic and surface it as an `Error` poke (see the
-        // `recover` module docs, hazard 2), then stop: the stream's libav state
-        // is suspect after an unwind, so we never touch it again — which is
-        // exactly what makes the `AssertUnwindSafe` (needed for the
-        // `&mut stream` capture) sound here.
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            serve_request(
-                &mut stream,
-                &mut cursor,
-                target_us,
-                &sink,
-                &stream_id,
-                &shutdown,
-                &flow,
-                request_id,
-            );
-        }));
-        if let Err(payload) = outcome {
-            emit(
-                &sink,
-                SwFramePoke::Error {
-                    stream_id: stream_id.clone(),
-                    message: format!("preview-sw decode panicked: {}", panic_message(&*payload)),
-                },
-            );
-            break;
-        }
+        last_request = Some(request_id);
+        serve_request(
+            &session,
+            &mut stream,
+            &mut cursor,
+            target_us,
+            request_id,
+            &shared,
+            &ctx,
+        );
     }
     // `stream` drops here: the decoder + format context release on this thread.
 }
 
-/// The set of live software preview sessions. `Send + Sync`, so the addon can
-/// hold it (e.g. behind an `Arc`) and drive it from napi calls.
-pub struct PreviewSwRegistry {
-    sessions: Mutex<HashMap<String, Session>>,
-    sink: FrameSink,
+/// The live preview decode sessions. `Send + Sync`, so the addon drives it from
+/// napi calls.
+pub struct PreviewSessions {
+    runtime: SessionRuntime<PreviewCmd, PreviewShared>,
 }
 
-impl Default for PreviewSwRegistry {
+impl Default for PreviewSessions {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl PreviewSwRegistry {
+impl PreviewSessions {
     pub fn new() -> Self {
         Self {
-            sessions: Mutex::new(HashMap::new()),
-            sink: Arc::new(Mutex::new(None)),
+            runtime: SessionRuntime::new("preview-sw"),
         }
     }
 
-    /// Install the sink every session emits pokes through. Set once by the addon
-    /// before any `open`; sessions share the same cell, so a later set is seen by
-    /// already-running threads too.
-    pub fn set_frame_sink(&self, sink: Box<dyn Fn(SwFramePoke) + Send>) {
-        *self.sink.lock_recover() = Some(sink);
-    }
-
-    /// Open `path` for software preview at full resolution: spawn its decode
-    /// thread and hand back the frame dimensions once the thread reports ready.
-    /// Blocks on the init handshake so a decoder-open failure surfaces
-    /// synchronously. Delegates to
-    /// [`open_with_accel`](Self::open_with_accel) on the software lane.
-    pub fn open(&self, stream_id: &str, path: &str) -> Result<PreviewSwOpenInfo, String> {
-        self.open_with_accel(stream_id, path, DecodeAccel::Software, OutScale::FULL)
-    }
-
-    /// Open `path` for preview on `accel` — the software lane (mirrors [`open`]) or
-    /// a copy-back hardware lane (`DecodeAccel::Nvdec`/`Vaapi`, issue #5 Block C;
-    /// `DecodeAccel::VideoToolbox`, issue #10): the session thread opens its
-    /// [`SwVideoStream`] via `open_with_accel` so hw frames are transferred back to
-    /// CPU NV12, feeding the SAME frame transport as software. Blocks on the init
-    /// handshake so a decoder-open failure (including a hw device that can't be
-    /// created) surfaces synchronously and falls back.
-    ///
-    /// `out_scale` is the playback-resolution divisor: the session ships every
-    /// frame at that fraction of the source size, so a 4K frame crosses IPC
-    /// smaller. Both lanes honor it — the copy-back lanes land a full-size CPU
-    /// frame first either way.
-    ///
-    /// [`open`]: Self::open
-    pub fn open_with_accel(
+    /// Open `path` for preview with every message going to `sink`. Blocks on the
+    /// decoder open, so a failure (a hardware device that cannot be created
+    /// included) surfaces here and the caller can fall back. Frames flow only
+    /// after the first request.
+    pub fn open(
         &self,
-        stream_id: &str,
+        session_id: &str,
         path: &str,
-        accel: DecodeAccel,
-        out_scale: OutScale,
-    ) -> Result<PreviewSwOpenInfo, String> {
-        self.open_with_accel_and_cadence(
-            stream_id,
-            path,
-            accel,
-            SwOutFormat::Nv12,
-            out_scale,
-            OutputCadence::FULL,
+        options: PreviewOpenOptions,
+        sink: Sink,
+    ) -> Result<PreviewOpenInfo, String> {
+        let shared = Arc::new(PreviewShared::new());
+        let thread_shared = Arc::clone(&shared);
+        let path = path.to_string();
+        let session = session_id.to_string();
+        let thread_limit = super::decoder::configured_decode_threads();
+        self.runtime.open(session_id, sink, shared, move |ctx, rx| {
+            super::decoder::set_session_threads(thread_limit);
+            let mut stream = SwVideoStream::open_with_accel(
+                &path,
+                options.out_format,
+                options.accel,
+                options.out_scale,
+            )?;
+            stream.set_output_cadence(options.output_cadence);
+            let info = PreviewOpenInfo {
+                width: stream.out_width,
+                height: stream.out_height,
+            };
+            Ok((info, move || {
+                run_session(session, stream, rx, ctx, thread_shared)
+            }))
+        })
+    }
+
+    /// Ask for every frame from `target_us` through its horizon, in answer to
+    /// `request_id`. A different id from the last one is a discontinuity: the
+    /// cursor re-seeks and frames of earlier requests stop at once. Fire-and-
+    /// forget: frames follow on the session's sink.
+    pub fn fill_from(
+        &self,
+        session_id: &str,
+        target_us: i64,
+        request_id: u32,
+    ) -> Result<(), String> {
+        self.runtime.with(session_id, |s| {
+            s.newest.store(request_id, Ordering::Release);
+        })?;
+        self.runtime.send(
+            session_id,
+            PreviewCmd::Request {
+                target_us,
+                request_id,
+            },
         )
     }
 
-    /// Preview-only extension of [`open_with_accel`](Self::open_with_accel):
-    /// `output_cadence` selects which decoded frames are packed and shipped,
-    /// and `out_format` the CPU transport format the session packs into —
-    /// NV12 (every existing caller), or I420P10 for a 10-bit source on the
-    /// VideoToolbox lane (issue #10), whose frame pokes then carry tightly-packed
-    /// u16LE planes into the renderer's ten-bit adapter. The identity cadence +
-    /// NV12 preserve every existing caller exactly.
-    pub fn open_with_accel_and_cadence(
-        &self,
-        stream_id: &str,
-        path: &str,
-        accel: DecodeAccel,
-        out_format: SwOutFormat,
-        out_scale: OutScale,
-        output_cadence: OutputCadence,
-    ) -> Result<PreviewSwOpenInfo, String> {
-        let mut sessions = self.sessions.lock_recover();
-        if sessions.contains_key(stream_id) {
-            return Err(format!("preview-sw session '{stream_id}' is already open"));
+    /// Hand a frame's lease back and wake a session that stopped on a full
+    /// window. `Ok(false)`: the lease was not in flight and changed nothing.
+    pub fn release(&self, session_id: &str, lease: u32) -> Result<bool, String> {
+        let released = self.runtime.with(session_id, |s| s.window.release(lease))?;
+        if released {
+            self.runtime.send(session_id, PreviewCmd::Wake)?;
         }
-
-        let (init_tx, init_rx) = mpsc::channel::<Result<PreviewSwOpenInfo, String>>();
-        let (cmd_tx, cmd_rx) = mpsc::channel::<SwSessionMsg>();
-        let (done_tx, done_rx) = mpsc::channel::<()>();
-        let sink = Arc::clone(&self.sink);
-        let sid = stream_id.to_string();
-        let path_owned = path.to_string();
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let shutdown_for_thread = Arc::clone(&shutdown);
-        let flow = Arc::new(PreviewFlow::default());
-        let flow_for_thread = Arc::clone(&flow);
-
-        let thread_limit = super::decoder::configured_decode_threads();
-        let join = thread::Builder::new()
-            .name(format!("preview-sw-{sid}"))
-            .spawn(move || {
-                super::decoder::set_session_threads(thread_limit);
-                // Held, never used: its drop — on return AND on panic unwind —
-                // is the done signal `close` bounds its wait on. Do NOT overload
-                // `init_tx` for this; it is consumed by the open handshake.
-                let _done_tx = done_tx;
-                session_thread(
-                    sid,
-                    path_owned,
-                    accel,
-                    out_format,
-                    out_scale,
-                    output_cadence,
-                    cmd_rx,
-                    init_tx,
-                    sink,
-                    shutdown_for_thread,
-                    flow_for_thread,
-                )
-            })
-            .map_err(|e| format!("spawn preview-sw session thread failed: {e}"))?;
-
-        match init_rx.recv() {
-            Ok(Ok(info)) => {
-                sessions.insert(
-                    stream_id.to_string(),
-                    Session {
-                        flow,
-                        tx: cmd_tx,
-                        shutdown,
-                        done_rx,
-                        join: Some(join),
-                    },
-                );
-                Ok(info)
-            }
-            Ok(Err(e)) => {
-                // Thread returned after sending the error; reap it.
-                let _ = join.join();
-                Err(e)
-            }
-            Err(_) => {
-                // Thread vanished before reporting (e.g. panicked in open).
-                let _ = join.join();
-                Err(format!(
-                    "preview-sw session '{stream_id}' thread exited before init"
-                ))
-            }
-        }
+        Ok(released)
     }
 
-    /// Ask a session to decode toward `target_us`. Fire-and-forget: the thread
-    /// seeks + decodes the burst and pokes each frame out through the sink.
-    pub fn request_frame_at(&self, stream_id: &str, target_us: i64) -> Result<(), String> {
-        self.request_frame_at_with_id(stream_id, target_us, None)
-    }
-
-    pub fn request_frame_at_with_id(
-        &self,
-        stream_id: &str,
-        target_us: i64,
-        request_id: Option<u32>,
-    ) -> Result<(), String> {
-        let sessions = self.sessions.lock_recover();
-        let session = sessions
-            .get(stream_id)
-            .ok_or_else(|| format!("no preview-sw session '{stream_id}'"))?;
-        let id = request_id.unwrap_or_else(|| {
-            session
-                .flow
-                .request_id
-                .load(Ordering::Acquire)
-                .wrapping_add(1)
-        });
-        session.flow.request_id.store(id, Ordering::Release);
-        session
-            .tx
-            .send(SwSessionMsg::RequestFrameAt(target_us, id))
-            .map_err(|_| format!("preview-sw session '{stream_id}' thread is gone"))
-    }
-
-    pub fn enable_flow(&self, stream_id: &str) -> Result<(), String> {
-        let sessions = self.sessions.lock_recover();
-        let s = sessions
-            .get(stream_id)
-            .ok_or_else(|| format!("no preview-sw session '{stream_id}'"))?;
-        s.flow.enable();
-        Ok(())
-    }
-
-    pub fn consume(&self, stream_id: &str, receipt: u32) {
-        if let Some(s) = self.sessions.lock_recover().get(stream_id) {
-            if s.flow.release(receipt) {
-                let _ = s.tx.send(SwSessionMsg::Wake);
-            }
-        }
-    }
-
-    /// Signal the session thread to tear down and wait a BOUNDED grace
-    /// ([`CLOSE_GRACE`]) for it to exit. The queued backlog is preempted by the
-    /// shutdown flag (set BEFORE the `Close` send) together with the thread's
-    /// loop-top drain — see the `Session::shutdown` field for that division.
-    /// On timely exit the thread is reaped (a panicked thread surfaces as
-    /// `Err`); if it is still wedged INSIDE a single decode call at the
-    /// deadline (the dump-verified d3d11va hang) it is DETACHED and `close`
-    /// returns `Ok` — the caller is the napi (Electron main) thread and must
-    /// never wait unboundedly. Landmine: on the detach path a straggler's panic
-    /// is unobservable (nothing ever joins it).
-    ///
-    /// Contract: `close` returns promptly; it does NOT guarantee the thread has
-    /// exited — only that no poke will be DELIVERED after the caller removes
-    /// its sink entry. A straggler checks `shutdown` before every `Frame` emit,
-    /// and the addon's single-sink router drops pokes whose `stream_id` is
-    /// unregistered (`Eof`/`Error` route to logs only). Re-opening the same id
-    /// is safe: the map entry is removed here, so `open`'s `contains_key` sees
-    /// a free id, and the straggler holds only the OLD session's flag + sink
-    /// clone — its frame emits stay suppressed. Guards against double-close /
-    /// missing id via the map removal.
-    pub fn close(&self, stream_id: &str) -> Result<(), String> {
-        self.close_with_grace(stream_id, CLOSE_GRACE).map(|_| ())
-    }
-
-    /// [`close`](Self::close) with the grace window explicit, reporting which
-    /// teardown path ran — the seam the unit tests drive to tell reap from
-    /// detach without waiting out production timings.
-    fn close_with_grace(&self, stream_id: &str, grace: Duration) -> Result<CloseOutcome, String> {
-        // Remove from the map (releasing the sessions lock) before waiting, so
-        // a slow teardown doesn't block registry ops on other sessions — and a
-        // re-open of this id never collides with the old session.
-        let session = self.sessions.lock_recover().remove(stream_id);
-        let Some(mut s) = session else {
-            return Err(format!("no preview-sw session '{stream_id}'"));
-        };
-        // Flag first, THEN the send: the send is just a wake-up for an idle
-        // thread — the flag is what actually stops a busy one. If the thread
-        // already exited the send fails, and the done signal below resolves
-        // immediately (`Disconnected`).
-        s.shutdown.store(true, Ordering::Release);
-        let _ = s.tx.send(SwSessionMsg::Close);
-        // Bound the wait on the done signal, never on `join()` (no timeout) —
-        // see the `done_rx` field.
-        match s.done_rx.recv_timeout(grace) {
-            Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => {
-                if let Some(join) = s.join.take() {
-                    // Non-blocking now: the body finished; only OS-thread
-                    // teardown remains. Err = the thread panicked.
-                    join.join().map_err(|_| {
-                        format!("preview-sw session '{stream_id}' thread panicked during teardown")
-                    })?;
-                }
-                Ok(CloseOutcome::Reaped)
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                tracing::warn!(
-                    %stream_id,
-                    grace_ms = grace.as_millis() as u64,
-                    "preview-sw close: session thread still inside a decode call after grace; detaching"
-                );
-                // Detach: drop the handle and return. The thread self-cleans
-                // once the blocking call returns and it sees the flag.
-                drop(s.join.take());
-                Ok(CloseOutcome::Detached)
-            }
-        }
-    }
-
-    /// Test-only seam for the detach path: register a session whose thread is
-    /// WEDGED — parked in one long sleep that ignores the shutdown flag and the
-    /// command channel, standing in for ffmpeg stuck inside a single decode
-    /// call. It wires a real `Session` (command channel, flag, done signal,
-    /// join handle), so `close` runs the exact production grace/detach code;
-    /// only the thread body is fake.
-    #[cfg(test)]
-    fn open_wedged_for_test(&self, stream_id: &str, wedge: Duration) {
-        let (cmd_tx, cmd_rx) = mpsc::channel::<SwSessionMsg>();
-        let (done_tx, done_rx) = mpsc::channel::<()>();
-        let join = thread::Builder::new()
-            .name(format!("preview-sw-wedged-{stream_id}"))
-            .spawn(move || {
-                let _done_tx = done_tx;
-                let _cmd_rx = cmd_rx; // held so close()'s Close send behaves as in prod
-                thread::sleep(wedge);
-            })
-            .expect("spawn wedged stub thread");
-        self.sessions.lock_recover().insert(
-            stream_id.to_string(),
-            Session {
-                flow: Arc::new(PreviewFlow::default()),
-                tx: cmd_tx,
-                shutdown: Arc::new(AtomicBool::new(false)),
-                done_rx,
-                join: Some(join),
-            },
-        );
+    /// Tear a session down: the request in progress stops at its next frame,
+    /// queued requests are dropped, and the call returns within the runtime's
+    /// close grace. Leases still in flight are forgiven with the session.
+    pub fn close(&self, session_id: &str) -> Result<(), String> {
+        self.runtime.close(session_id)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::carrier::PlaneFormat;
     use crate::test_wait::wait_for;
-    use std::sync::atomic::AtomicUsize;
-    use std::sync::{Arc, Mutex};
+    use std::sync::mpsc;
+    use std::sync::{Mutex, OnceLock, Weak};
+    use std::thread;
 
-    /// How long a test waits for something that must happen: a poke, a thread's
-    /// exit. A liveness bound like `wait_for`'s; reaching it means it is not
-    /// coming.
-    const MUST_HAPPEN: Duration = Duration::from_secs(30);
+    const PRORES: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/tiny_prores.mov"
+    );
+    const MPEG2: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_mpeg2.mpg");
 
-    /// How long a test watches for a poke that must not come. Only a negative
-    /// reads after it: a slower machine makes the check weaker, never red.
+    /// How long a test watches for a message that must not come. Only a
+    /// negative reads after it: a slower machine makes the check weaker, never
+    /// red.
     const QUIET: Duration = Duration::from_millis(100);
 
     /// Spacing between requests that should each be served on their own. The
@@ -918,93 +619,123 @@ mod tests {
     /// back to back collapse into the last one.
     const TICK: Duration = Duration::from_millis(120);
 
-    #[test]
-    fn credits_bound_real_decode_delivery_and_seek_survives_pending_receipts() {
-        let reg = PreviewSwRegistry::new();
-        let (tx, rx) = mpsc::channel();
-        reg.set_frame_sink(Box::new(move |poke| {
-            if let SwFramePoke::Frame {
-                receipt,
+    #[derive(Debug, Clone, PartialEq)]
+    enum Seen {
+        Frame(Frame),
+        End,
+        Error { message: String, terminal: bool },
+        Mark,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    struct Frame {
+        lease: u32,
+        request_id: Option<u32>,
+        pts: i64,
+        width: u32,
+        height: u32,
+        len: usize,
+        format: PlaneFormat,
+    }
+
+    type Log = Arc<Mutex<Vec<Seen>>>;
+
+    fn seen(msg: DecodeMsg) -> Seen {
+        match msg {
+            DecodeMsg::Bytes {
+                lease,
+                pts_us,
+                width,
+                height,
+                format,
+                data,
                 request_id,
-                frame,
                 ..
-            } = poke
-            {
-                let _ = tx.send((receipt, request_id, frame.pts_us));
+            } => Seen::Frame(Frame {
+                lease,
+                request_id,
+                pts: pts_us as i64,
+                width,
+                height,
+                len: data.len(),
+                format,
+            }),
+            DecodeMsg::End => Seen::End,
+            DecodeMsg::Error { message, terminal } => Seen::Error { message, terminal },
+            DecodeMsg::Mark { .. } => Seen::Mark,
+        }
+    }
+
+    /// Open `id` with a recording sink. With `keep_up`, the sink hands each
+    /// lease straight back, as a renderer that keeps up would; without it the
+    /// test returns leases itself.
+    fn open(
+        sessions: &Arc<PreviewSessions>,
+        id: &str,
+        path: &str,
+        options: PreviewOpenOptions,
+        keep_up: bool,
+    ) -> Result<(PreviewOpenInfo, Log), String> {
+        let log: Log = Arc::default();
+        let log2 = Arc::clone(&log);
+        let weak: Weak<PreviewSessions> = Arc::downgrade(sessions);
+        let sid = id.to_string();
+        let sink: Sink = Box::new(move |msg| {
+            let msg = seen(msg);
+            if let (true, Seen::Frame(f)) = (keep_up, &msg) {
+                if let Some(s) = weak.upgrade() {
+                    let _ = s.release(&sid, f.lease);
+                }
             }
-        }));
-        let p = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/tiny_prores.mov"
-        );
-        reg.open("credit", p).unwrap();
-        reg.enable_flow("credit").unwrap();
-        reg.request_frame_at_with_id("credit", 0, Some(1)).unwrap();
-        let mut receipts = Vec::new();
-        for _ in 0..5 {
-            receipts.push(rx.recv_timeout(MUST_HAPPEN).unwrap().0);
-        }
-        reg.request_frame_at_with_id("credit", 500_000, Some(2))
-            .unwrap();
-        for _ in 0..3 {
-            receipts.push(rx.recv_timeout(MUST_HAPPEN).unwrap().0);
-        }
-        assert!(
-            rx.recv_timeout(QUIET).is_err(),
-            "unreceived bytes must stop production"
-        );
-        reg.request_frame_at_with_id("credit", 0, Some(3)).unwrap();
-        assert!(
-            rx.recv_timeout(QUIET).is_err(),
-            "seek must not reset in-flight credit"
-        );
-        reg.consume("credit", receipts[0]);
-        reg.consume("credit", receipts[0]); // duplicate is not a second credit
-        let (_, id, pts) = rx.recv_timeout(MUST_HAPPEN).unwrap();
-        assert_eq!(id, 3);
-        assert_eq!(pts, 0);
-        assert!(rx.recv_timeout(QUIET).is_err());
-        // Cache invalidation at an identical target must redeliver its first
-        // frame, rather than resuming beyond pixels the renderer discarded.
-        reg.request_frame_at_with_id("credit", 0, Some(4)).unwrap();
-        reg.consume("credit", receipts[1]);
-        let (_, id, pts) = rx.recv_timeout(MUST_HAPPEN).unwrap();
-        assert_eq!(id, 4);
-        assert_eq!(pts, 0);
-        reg.close("credit").unwrap(); // close must not wait for missing receipts
+            log2.lock().unwrap().push(msg);
+        });
+        sessions
+            .open(id, path, options, sink)
+            .map(|info| (info, log))
+    }
+
+    fn open_keeping_up(sessions: &Arc<PreviewSessions>, id: &str, path: &str) -> Log {
+        open(sessions, id, path, PreviewOpenOptions::default(), true)
+            .expect("open")
+            .1
+    }
+
+    fn frames(log: &Log) -> Vec<Frame> {
+        log.lock()
+            .unwrap()
+            .iter()
+            .filter_map(|m| match m {
+                Seen::Frame(f) => Some(f.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn pts(log: &Log) -> Vec<i64> {
+        frames(log).iter().map(|f| f.pts).collect()
+    }
+
+    fn ends(log: &Log) -> usize {
+        log.lock()
+            .unwrap()
+            .iter()
+            .filter(|m| **m == Seen::End)
+            .count()
     }
 
     #[test]
     fn open_then_request_delivers_a_frame() {
-        // Each delivered Frame poke records (width, pts_us).
-        let got: Arc<Mutex<Vec<(u32, i64)>>> = Arc::new(Mutex::new(vec![]));
-        let g2 = got.clone();
-        let reg = PreviewSwRegistry::new();
-        reg.set_frame_sink(Box::new(move |poke| {
-            if let SwFramePoke::Frame { frame, .. } = poke {
-                g2.lock().unwrap().push((frame.width, frame.pts_us));
-            }
-        }));
-        let p = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/tiny_prores.mov"
-        );
-        let info = reg.open("s1", p).expect("open");
+        let s = Arc::new(PreviewSessions::new());
+        let (info, log) = open(&s, "s1", PRORES, PreviewOpenOptions::default(), true).unwrap();
         assert_eq!(info.width, 320);
-        let _ = reg.request_frame_at("s1", 0);
-        wait_for(|| !got.lock().unwrap().is_empty());
-        let _ = reg.close("s1");
-        let frames = got.lock().unwrap();
-        assert!(!frames.is_empty(), "expected at least one frame poke");
-        // The delivered frame carries a sensible pts_us (seek(0) -> first
-        // frame at/after container start, so >= 0). Do NOT assert color tags:
-        // the synthetic testsrc fixture may leave them unspecified (None valid).
-        assert_eq!(frames[0].0, 320, "frame width");
-        assert!(
-            frames[0].1 >= 0,
-            "expected pts_us >= 0, got {}",
-            frames[0].1
-        );
+        s.fill_from("s1", 0, 1).unwrap();
+        assert!(wait_for(|| !frames(&log).is_empty()), "no frame arrived");
+        s.close("s1").unwrap();
+        let first = &frames(&log)[0];
+        // Do NOT assert colour: frames carry none, and the synthetic fixture may
+        // leave its stream tags unspecified anyway.
+        assert_eq!(first.width, 320, "frame width");
+        assert!(first.pts >= 0, "expected pts_us >= 0, got {}", first.pts);
     }
 
     #[test]
@@ -1012,121 +743,79 @@ mod tests {
         // The 320x240 fixture is already at the floor, so even a ¼ request ships
         // full size — and `open`'s reply must agree with the frames, or the
         // renderer sizes its texture against a resolution that never arrives.
-        let got: Arc<Mutex<Vec<(u32, u32, usize)>>> = Arc::new(Mutex::new(vec![]));
-        let g2 = got.clone();
-        let reg = PreviewSwRegistry::new();
-        reg.set_frame_sink(Box::new(move |poke| {
-            if let SwFramePoke::Frame { frame, .. } = poke {
-                g2.lock()
-                    .unwrap()
-                    .push((frame.width, frame.height, frame.data.len()));
-            }
-        }));
-        let p = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/tiny_prores.mov"
-        );
-        let info = reg
-            .open_with_accel("sc1", p, DecodeAccel::Software, OutScale::from_divisor(4))
-            .expect("open");
+        let s = Arc::new(PreviewSessions::new());
+        let options = PreviewOpenOptions {
+            out_scale: OutScale::from_divisor(4),
+            ..PreviewOpenOptions::default()
+        };
+        let (info, log) = open(&s, "sc1", PRORES, options, true).unwrap();
         assert_eq!((info.width, info.height), (320, 240));
-        let _ = reg.request_frame_at("sc1", 0);
-        wait_for(|| !got.lock().unwrap().is_empty());
-        let _ = reg.close("sc1");
-        let frames = got.lock().unwrap();
-        assert!(!frames.is_empty(), "expected at least one frame poke");
-        assert_eq!(frames[0].0, info.width);
-        assert_eq!(frames[0].1, info.height);
-        assert_eq!(frames[0].2, (320 * 240) + (320 * 240 / 2));
+        s.fill_from("sc1", 0, 1).unwrap();
+        assert!(wait_for(|| !frames(&log).is_empty()), "no frame arrived");
+        s.close("sc1").unwrap();
+        let first = &frames(&log)[0];
+        assert_eq!((first.width, first.height), (info.width, info.height));
+        assert_eq!(first.len, (320 * 240) + (320 * 240 / 2));
     }
 
-    // The wired session path for the macOS copy-back lane (issue #10):
-    // `preview_sw_open("videotoolbox")` maps to `DecodeAccel::VideoToolbox` and
-    // lands here — the registry's session thread must open on that accel and
-    // deliver the SAME NV12 frame pokes the software lane does. Deterministic on
-    // any macOS host (VideoToolbox is an OS framework; see the decoder tests),
-    // unlike NVDEC/VAAPI whose registry-path proof stays manual/bench.
+    // The wired session path for the macOS copy-back lane (issue #10): the
+    // session must open on VideoToolbox and deliver the SAME NV12 frames the
+    // software lane does. Deterministic on any macOS host (VideoToolbox is an
+    // OS framework; see the decoder tests), unlike NVDEC/VAAPI whose session
+    // proof stays manual/bench.
     #[cfg(target_os = "macos")]
     #[test]
-    fn videotoolbox_session_delivers_nv12_frames_through_the_registry() {
-        let got: Arc<Mutex<Vec<(u32, u32, usize)>>> = Arc::new(Mutex::new(vec![]));
-        let g2 = got.clone();
-        let reg = PreviewSwRegistry::new();
-        reg.set_frame_sink(Box::new(move |poke| {
-            if let SwFramePoke::Frame { frame, .. } = poke {
-                g2.lock()
-                    .unwrap()
-                    .push((frame.width, frame.height, frame.data.len()));
-            }
-        }));
+    fn videotoolbox_session_delivers_nv12_frames() {
+        let s = Arc::new(PreviewSessions::new());
         let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_h264.mp4");
-        let info = reg
-            .open_with_accel("vt1", p, DecodeAccel::VideoToolbox, OutScale::FULL)
-            .expect("open on videotoolbox through the registry");
+        let options = PreviewOpenOptions {
+            accel: DecodeAccel::VideoToolbox,
+            ..PreviewOpenOptions::default()
+        };
+        let (info, log) = open(&s, "vt1", p, options, true).expect("open on videotoolbox");
         assert_eq!((info.width, info.height), (192, 144));
-        let _ = reg.request_frame_at("vt1", 0);
-        wait_for(|| !got.lock().unwrap().is_empty());
-        let _ = reg.close("vt1");
-        let frames = got.lock().unwrap();
-        assert!(!frames.is_empty(), "expected at least one frame poke");
+        s.fill_from("vt1", 0, 1).unwrap();
+        assert!(wait_for(|| !frames(&log).is_empty()), "no frame arrived");
+        s.close("vt1").unwrap();
+        let first = &frames(&log)[0];
         // Same ship-bytes NV12 shape as software (ADR 0029) — packed w*h*3/2.
-        assert_eq!(frames[0].0, 192);
-        assert_eq!(frames[0].1, 144);
-        assert_eq!(frames[0].2, (192 * 144) + (192 * 144 / 2));
+        assert_eq!(first.format, PlaneFormat::Nv12);
+        assert_eq!((first.width, first.height), (192, 144));
+        assert_eq!(first.len, (192 * 144) + (192 * 144 / 2));
     }
 
     // A 10-bit source on the VideoToolbox lane (issue #10) opens with I420P10
-    // output through the WIRED registry path — the session thread decodes on the
-    // OS media engine, copies back, and pokes tightly-packed u16LE I420P10
-    // frames whose byte length is exactly what the renderer's
-    // `tenBitFrameFromBytes` adapter expects (w*h*3 for even dims; a drift
-    // there throws, so the length IS the contract). HEVC Main10 rather than
-    // ProRes so the hw path truly engages on EVERY macOS host (the ProRes VT
-    // decoder needs a ProRes-engine chip — see the decoder tests).
+    // output — the session decodes on the OS media engine, copies back, and
+    // ships tightly-packed u16LE I420P10 frames whose byte length is exactly
+    // what the renderer's `tenBitFrameFromBytes` adapter expects (w*h*3 for
+    // even dims; a drift there throws, so the length IS the contract). HEVC
+    // Main10 rather than ProRes so the hw path truly engages on EVERY macOS host
+    // (the ProRes VT decoder needs a ProRes-engine chip — see the decoder tests).
     #[cfg(target_os = "macos")]
     #[test]
-    fn videotoolbox_session_delivers_i420p10_frames_through_the_registry() {
-        // (width, height, format, byte length) per delivered frame.
-        type Delivered = Arc<Mutex<Vec<(u32, u32, SwOutFormat, usize)>>>;
-        let got: Delivered = Arc::new(Mutex::new(vec![]));
-        let g2 = got.clone();
-        let reg = PreviewSwRegistry::new();
-        reg.set_frame_sink(Box::new(move |poke| {
-            if let SwFramePoke::Frame { frame, .. } = poke {
-                g2.lock().unwrap().push((
-                    frame.width,
-                    frame.height,
-                    frame.format,
-                    frame.data.len(),
-                ));
-            }
-        }));
+    fn videotoolbox_session_delivers_i420p10_frames() {
+        let s = Arc::new(PreviewSessions::new());
         let p = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/tiny_hevc10.mp4"
         );
-        let info = reg
-            .open_with_accel_and_cadence(
-                "vtp10",
-                p,
-                DecodeAccel::VideoToolbox,
-                SwOutFormat::I420p10,
-                OutScale::FULL,
-                OutputCadence::FULL,
-            )
-            .expect("open HEVC Main10 on videotoolbox with I420P10 output");
+        let options = PreviewOpenOptions {
+            accel: DecodeAccel::VideoToolbox,
+            out_format: SwOutFormat::I420p10,
+            ..PreviewOpenOptions::default()
+        };
+        let (info, log) =
+            open(&s, "vtp10", p, options, true).expect("open HEVC Main10 with I420P10 output");
         assert_eq!((info.width, info.height), (192, 144));
-        let _ = reg.request_frame_at("vtp10", 0);
-        wait_for(|| !got.lock().unwrap().is_empty());
-        let _ = reg.close("vtp10");
-        let frames = got.lock().unwrap();
-        assert!(!frames.is_empty(), "expected at least one frame poke");
-        assert_eq!(frames[0].2, SwOutFormat::I420p10, "frame format tag");
+        s.fill_from("vtp10", 0, 1).unwrap();
+        assert!(wait_for(|| !frames(&log).is_empty()), "no frame arrived");
+        s.close("vtp10").unwrap();
+        let first = &frames(&log)[0];
+        assert_eq!(first.format, PlaneFormat::I420p10, "frame format tag");
         // u16LE Y (w*h) + U + V at (w/2)*(h/2) → 3 bytes/px on even dims — the
         // exact `tenBitFrameFromBytes` layout.
-        assert_eq!(frames[0].0, 192);
-        assert_eq!(frames[0].1, 144);
-        assert_eq!(frames[0].3, 192 * 144 * 3);
+        assert_eq!((first.width, first.height), (192, 144));
+        assert_eq!(first.len, 192 * 144 * 3);
     }
 
     #[test]
@@ -1135,134 +824,117 @@ mod tests {
         // keyframe well before the target, so serve_request must decode-forward to
         // the frame COVERING the target. Without that it would deliver the
         // keyframe at ~0.5 s.
-        let got: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(vec![]));
-        let g2 = got.clone();
-        let reg = PreviewSwRegistry::new();
-        reg.set_frame_sink(Box::new(move |poke| {
-            if let SwFramePoke::Frame { frame, .. } = poke {
-                g2.lock().unwrap().push(frame.pts_us);
-            }
-        }));
-        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_mpeg2.mpg");
-        reg.open("m1", p).expect("open");
-        let _ = reg.request_frame_at("m1", 800_000); // ~frame 24, mid-GOP
-        wait_for(|| !got.lock().unwrap().is_empty());
-        let _ = reg.close("m1");
-        let pts = got.lock().unwrap();
-        assert!(!pts.is_empty(), "expected at least one frame poke");
-        // FIRST delivered frame covers target 800_000, NOT the keyframe at ~500_000.
+        let s = Arc::new(PreviewSessions::new());
+        let log = open_keeping_up(&s, "m1", MPEG2);
+        s.fill_from("m1", 800_000, 1).unwrap(); // ~frame 24, mid-GOP
+        assert!(wait_for(|| !frames(&log).is_empty()), "no frame arrived");
+        s.close("m1").unwrap();
+        let first = pts(&log)[0];
         assert!(
-            pts[0] >= 700_000,
-            "first delivered pts {} should cover target 800_000, not the keyframe (~500_000)",
-            pts[0]
-        );
-        assert!(
-            pts[0] <= 900_000,
-            "first delivered pts {} overshot the target",
-            pts[0]
+            (700_000..=900_000).contains(&first),
+            "first delivered pts {first} should cover target 800_000, not the keyframe (~500_000)"
         );
     }
 
     #[test]
-    fn decode_panic_surfaces_as_error_poke_and_leaves_registry_usable() {
-        // A panic on the session thread's decode path must NOT silently kill the
-        // thread (renderer waits forever) and must NOT cascade. The sink panics on
-        // its FIRST call — simulating a panic in the emit/routing path while the
-        // shared sink lock is held, which poisons that lock. This exercises both
-        // fixes at once: `serve_request`'s `catch_unwind` turns the panic into an
-        // `Error` poke, and the recovery `emit` only reaches the sink because
-        // `lock_recover` recovers the poisoned lock instead of re-panicking.
-        let calls = Arc::new(AtomicUsize::new(0));
-        let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
-        let calls2 = calls.clone();
-        let errors2 = errors.clone();
-        let reg = PreviewSwRegistry::new();
-        reg.set_frame_sink(Box::new(move |poke| {
-            if calls2.fetch_add(1, Ordering::SeqCst) == 0 {
+    fn a_panic_is_one_terminal_error_and_the_sessions_stay_usable() {
+        // A panic on the session thread must NOT silently kill the thread (the
+        // renderer would wait forever) and must NOT cascade. The sink panics on
+        // its FIRST call while the runtime holds its lock, which poisons it: the
+        // runtime still reports the panic in band and still closes.
+        let calls = Arc::new(Mutex::new(0usize));
+        let log: Log = Arc::default();
+        let (calls2, log2) = (Arc::clone(&calls), Arc::clone(&log));
+        let s = PreviewSessions::new();
+        let sink: Sink = Box::new(move |msg| {
+            let n = {
+                let mut c = calls2.lock().unwrap();
+                *c += 1;
+                *c
+            };
+            if n == 1 {
                 panic!("boom in preview-sw sink");
             }
-            if let SwFramePoke::Error { message, .. } = poke {
-                errors2.lock().unwrap().push(message);
-            }
-        }));
-        let p = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/tiny_prores.mov"
-        );
-        reg.open("s1", p).expect("open");
-        let _ = reg.request_frame_at("s1", 0);
-        let saw_panic_poke = wait_for(|| {
-            errors
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|m| m.contains("panicked"))
+            log2.lock().unwrap().push(seen(msg));
         });
-        let errs = errors.lock().unwrap();
+        s.open("p1", PRORES, PreviewOpenOptions::default(), sink)
+            .unwrap();
+        s.fill_from("p1", 0, 1).unwrap();
         assert!(
-            saw_panic_poke,
-            "expected a decode-panic Error poke, got: {errs:?}"
+            wait_for(|| !log.lock().unwrap().is_empty()),
+            "the panic never reached the sink"
         );
-        drop(errs);
-        // The poisoned sink lock did not cascade: the registry still tears down
-        // cleanly (join reaps the thread that broke out after the caught panic).
-        reg.close("s1")
-            .expect("registry usable after a caught decode panic");
+        s.close("p1")
+            .expect("the session closes after a caught panic");
+        let got = log.lock().unwrap().clone();
+        match got.as_slice() {
+            [Seen::Error { message, terminal }] => {
+                assert!(message.contains("panicked"), "{message}");
+                assert!(terminal, "a panic ends the session");
+            }
+            other => panic!("expected one terminal error, got {other:?}"),
+        }
+        let s = Arc::new(s);
+        let log = open_keeping_up(&s, "p1", PRORES);
+        s.fill_from("p1", 0, 1).unwrap();
+        assert!(
+            wait_for(|| !frames(&log).is_empty()),
+            "the id did not reopen"
+        );
+        s.close("p1").unwrap();
     }
 
     #[test]
-    fn close_preempts_queued_backlog() {
-        // A burst is in flight and requests are queued behind it when close
-        // arrives: the burst stops before its next frame and nothing queued is
-        // served. The sink holds the burst's first frame until close has raised
-        // the shutdown flag, so the frame count does not depend on which thread
-        // runs first.
-        let frames = Arc::new(AtomicUsize::new(0));
-        let f2 = frames.clone();
-        let (release, held) = mpsc::channel::<()>();
-        let reg = PreviewSwRegistry::new();
-        reg.set_frame_sink(Box::new(move |poke| {
-            if let SwFramePoke::Frame { .. } = poke {
-                f2.fetch_add(1, Ordering::SeqCst);
-                // Blocks until `release` is dropped, and never after that.
-                let _ = held.recv();
+    fn cancel_stops_the_request_in_progress_and_serves_nothing_queued() {
+        // Close sets the session's cancel flag before anything else (the
+        // runtime's tests show that). Here the flag goes up while the first
+        // frame of a burst is being delivered, with more requests queued behind
+        // it: the burst stops before its next frame and the queue is dropped.
+        let stream = SwVideoStream::open_with_accel(
+            MPEG2,
+            SwOutFormat::Nv12,
+            DecodeAccel::Software,
+            OutScale::FULL,
+        )
+        .unwrap();
+        let shared = Arc::new(PreviewShared::new());
+        let (tx, rx) = mpsc::channel();
+        let queued = Mutex::new(Some(tx.clone()));
+        let own: Arc<OnceLock<SessionCtx>> = Arc::default();
+        let own2 = Arc::clone(&own);
+        let delivered = Arc::new(Mutex::new(0usize));
+        let delivered2 = Arc::clone(&delivered);
+        let ctx = SessionCtx::for_test(Box::new(move |msg| {
+            if let DecodeMsg::Bytes { .. } = msg {
+                *delivered2.lock().unwrap() += 1;
+                if let Some(tx) = queued.lock().unwrap().take() {
+                    // Alternate targets so each request, if served, is a seek
+                    // and a burst that delivers frames.
+                    for i in 0..64u32 {
+                        let target_us = if i % 2 == 0 { 800_000 } else { 0 };
+                        tx.send(PreviewCmd::Request {
+                            target_us,
+                            request_id: i + 2,
+                        })
+                        .unwrap();
+                    }
+                    own2.get().unwrap().cancel();
+                }
             }
         }));
-        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_mpeg2.mpg");
-        reg.open("c1", p).expect("open");
-        reg.request_frame_at("c1", 0).expect("request");
-        assert!(
-            wait_for(|| frames.load(Ordering::SeqCst) == 1),
-            "the first burst delivered no frame"
-        );
-        for i in 0..64 {
-            // Alternate targets so each request, if served, is a seek and a
-            // forward decode that delivers frames.
-            let target = if i % 2 == 0 { 800_000 } else { 0 };
-            reg.request_frame_at("c1", target).expect("request");
-        }
-        let shutdown = Arc::clone(
-            &reg.sessions
-                .lock_recover()
-                .get("c1")
-                .expect("session")
-                .shutdown,
-        );
-        // With a grace this long `Reaped` would also come back after the queue
-        // had been served; the frame count is what shows it was skipped.
-        let outcome = thread::scope(|scope| {
-            let closing = scope.spawn(|| reg.close_with_grace("c1", MUST_HAPPEN));
-            let raised = wait_for(|| shutdown.load(Ordering::Acquire));
-            drop(release);
-            assert!(raised, "close never raised the shutdown flag");
-            closing.join().expect("close thread")
+        assert!(own.set(ctx.clone()).is_ok());
+        shared.newest.store(1, Ordering::Release);
+        tx.send(PreviewCmd::Request {
+            target_us: 0,
+            request_id: 1,
         })
-        .expect("close");
-        assert_eq!(outcome, CloseOutcome::Reaped);
+        .unwrap();
+        drop(tx);
+        run_session("c1".into(), stream, rx, ctx, shared);
         assert_eq!(
-            frames.load(Ordering::SeqCst),
+            *delivered.lock().unwrap(),
             1,
-            "close let the burst go on or served the queue behind it"
+            "the burst went on after cancel, or the queue behind it was served"
         );
     }
 
@@ -1273,36 +945,23 @@ mod tests {
         // "Exactly one burst" is not assertable — the session thread races the
         // send loop and may serve a few drain generations. The two invariants
         // that hold under every interleaving: (a) the LAST target's burst IS
-        // emitted, and (b) target 0 was served at most once (its low-pts pokes
+        // emitted, and (b) target 0 was served at most once (its low-pts frames
         // fit inside a single burst).
-        //
-        // Note the horizon backs the drain up here: a repeat of an
-        // already-served target finds the cursor's pending frame past
-        // `target + LOOKAHEAD_HORIZON_US` and emits nothing at all. Both
-        // mechanisms have to fail for this to trip.
-        let got: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(vec![]));
-        let g2 = got.clone();
-        let reg = PreviewSwRegistry::new();
-        reg.set_frame_sink(Box::new(move |poke| {
-            if let SwFramePoke::Frame { frame, .. } = poke {
-                g2.lock().unwrap().push(frame.pts_us);
-            }
-        }));
-        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_mpeg2.mpg");
-        reg.open("lw1", p).expect("open");
-        // N-1 superseded requests at target 0 (burst pts ~0..135_000), then
-        // ONE final request at 800_000 (burst pts >= 700_000, proven by
+        let s = Arc::new(PreviewSessions::new());
+        let log = open_keeping_up(&s, "lw1", MPEG2);
+        // N-1 superseded requests at target 0 (burst pts ~0..135_000), then ONE
+        // final request at 800_000 (burst pts >= 700_000, proven by
         // `long_gop_request_forward_decodes_to_target`). The two targets are
         // distinguishable by pts range with a wide dead zone between.
         const N: usize = 100;
         for _ in 0..(N - 1) {
-            reg.request_frame_at("lw1", 0).expect("request");
+            s.fill_from("lw1", 0, 1).unwrap();
         }
-        reg.request_frame_at("lw1", 800_000).expect("request");
+        s.fill_from("lw1", 800_000, 2).unwrap();
         // The wait only runs out if the final request is never served at all.
-        wait_for(|| got.lock().unwrap().iter().any(|&v| v >= 700_000));
-        let _ = reg.close("lw1");
-        let pts = got.lock().unwrap();
+        wait_for(|| pts(&log).iter().any(|&v| v >= 700_000));
+        s.close("lw1").unwrap();
+        let pts = pts(&log);
         assert!(
             pts.iter().any(|&v| (700_000..=900_000).contains(&v)),
             "final target's burst missing from {pts:?}"
@@ -1310,47 +969,39 @@ mod tests {
         let low = pts.iter().filter(|&&v| v < 500_000).count();
         assert!(
             low <= MAX_BURST_FRAMES,
-            "target 0 was served more than once ({low} low-pts pokes, one burst is at most {MAX_BURST_FRAMES}); the {} superseded requests are not being coalesced",
+            "target 0 was served more than once ({low} low-pts frames, one burst is at most {MAX_BURST_FRAMES}); the {} superseded requests are not being coalesced",
             N - 1
         );
     }
 
     #[test]
     fn forward_playback_never_re_emits_a_frame() {
-        // THE flow-control invariant (issue 04). Playback issues one request per
-        // tick with the target advancing one frame; each must continue the
-        // previous decode pass, never re-seek and re-deliver frames the consumer
-        // already holds.
+        // THE flow-control invariant. Playback issues one request per tick with
+        // the target advancing one frame and the request id unchanged; each must
+        // continue the previous decode pass, never re-seek and re-deliver frames
+        // the consumer already holds.
         //
         // Duplicates are the assertion because they are interleaving-proof: the
-        // latest-wins drain may skip targets (fewer pokes), but no scheduling can
-        // make a strictly-forward walk emit one PTS twice.
-        let got: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(vec![]));
-        let g2 = got.clone();
-        let reg = PreviewSwRegistry::new();
-        reg.set_frame_sink(Box::new(move |poke| {
-            if let SwFramePoke::Frame { frame, .. } = poke {
-                g2.lock().unwrap().push(frame.pts_us);
-            }
-        }));
-        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tiny_mpeg2.mpg");
-        reg.open("fw1", p).expect("open");
+        // latest-wins drain may skip targets (fewer frames), but no scheduling
+        // can make a strictly-forward walk emit one PTS twice.
+        let s = Arc::new(PreviewSessions::new());
+        let log = open_keeping_up(&s, "fw1", MPEG2);
         const TICKS: i64 = 30;
         const STEP_US: i64 = 1_000_000 / 30;
         for i in 0..TICKS {
-            reg.request_frame_at("fw1", i * STEP_US).expect("request");
+            s.fill_from("fw1", i * STEP_US, 1).unwrap();
             // Space the ticks so most are served rather than coalesced away —
             // this is a playback cadence, not a scrub storm.
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            thread::sleep(Duration::from_millis(5));
         }
         // The last request is always served (latest wins) and its horizon holds
         // frames past its target, so delivery gets past that target. The pause
         // is for a frame beyond the horizon to show.
         let last_target = (TICKS - 1) * STEP_US;
-        let reached = wait_for(|| got.lock().unwrap().last().is_some_and(|&v| v > last_target));
-        std::thread::sleep(QUIET);
-        let _ = reg.close("fw1");
-        let pts = got.lock().unwrap();
+        let reached = wait_for(|| pts(&log).last().is_some_and(|&v| v > last_target));
+        thread::sleep(QUIET);
+        s.close("fw1").unwrap();
+        let pts = pts(&log);
         assert!(reached, "delivery never got past the last target: {pts:?}");
         let mut sorted = pts.clone();
         sorted.sort_unstable();
@@ -1379,27 +1030,15 @@ mod tests {
         // The fixture is 8 frames at 8 fps (125 ms each), so a 500 ms horizon from
         // target 0 is frames 0..=4 and nothing more — an exact count, no timing
         // slack. Intra, so the seek lands on the covering frame with no prefix.
-        let got: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(vec![]));
-        let g2 = got.clone();
-        let reg = PreviewSwRegistry::new();
-        reg.set_frame_sink(Box::new(move |poke| {
-            if let SwFramePoke::Frame { frame, .. } = poke {
-                g2.lock().unwrap().push(frame.pts_us);
-            }
-        }));
-        let p = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/tiny_prores.mov"
-        );
-        reg.open("hz1", p).expect("open");
-        let _ = reg.request_frame_at("hz1", 0);
+        let s = Arc::new(PreviewSessions::new());
+        let log = open_keeping_up(&s, "hz1", PRORES);
+        s.fill_from("hz1", 0, 1).unwrap();
         // Wait for the five, then leave time for a sixth to show.
-        wait_for(|| got.lock().unwrap().len() >= 5);
-        std::thread::sleep(QUIET);
-        let _ = reg.close("hz1");
-        let pts = got.lock().unwrap();
+        wait_for(|| pts(&log).len() >= 5);
+        thread::sleep(QUIET);
+        s.close("hz1").unwrap();
         assert_eq!(
-            *pts,
+            pts(&log),
             vec![0, 125_000, 250_000, 375_000, 500_000],
             "one request must deliver exactly the horizon"
         );
@@ -1410,36 +1049,21 @@ mod tests {
         // The continuation must not swallow a backward scrub: a target behind the
         // last one re-seeks, and the earlier frames are delivered AGAIN (the
         // consumer's ring has evicted them by then — that is why it asked).
-        let got: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(vec![]));
-        let eofs = Arc::new(AtomicUsize::new(0));
-        let g2 = got.clone();
-        let e2 = eofs.clone();
-        let reg = PreviewSwRegistry::new();
-        reg.set_frame_sink(Box::new(move |poke| match poke {
-            SwFramePoke::Frame { frame, .. } => g2.lock().unwrap().push(frame.pts_us),
-            SwFramePoke::Eof { .. } => {
-                e2.fetch_add(1, Ordering::SeqCst);
-            }
-            SwFramePoke::Error { .. } => {}
-        }));
-        let p = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/tiny_prores.mov"
-        );
-        reg.open("bw1", p).expect("open");
+        let s = Arc::new(PreviewSessions::new());
+        let log = open_keeping_up(&s, "bw1", PRORES);
         // The horizon of 750_000 reaches past the end of the 1 s fixture, so the
-        // forward burst ends in an Eof: after it, every frame is the backward
+        // forward burst ends in an End: after it, every frame is the backward
         // request's.
-        let _ = reg.request_frame_at("bw1", 750_000);
+        s.fill_from("bw1", 750_000, 1).unwrap();
         assert!(
-            wait_for(|| eofs.load(Ordering::SeqCst) == 1),
+            wait_for(|| ends(&log) == 1),
             "the forward burst never reached the end of the material"
         );
-        let after_forward = got.lock().unwrap().len();
-        let _ = reg.request_frame_at("bw1", 0);
-        wait_for(|| got.lock().unwrap().len() > after_forward);
-        let _ = reg.close("bw1");
-        let pts = got.lock().unwrap();
+        let after_forward = pts(&log).len();
+        s.fill_from("bw1", 0, 2).unwrap();
+        wait_for(|| pts(&log).len() > after_forward);
+        s.close("bw1").unwrap();
+        let pts = pts(&log);
         assert_eq!(
             pts[..after_forward].first().copied(),
             Some(750_000),
@@ -1453,51 +1077,61 @@ mod tests {
     }
 
     #[test]
-    fn ticking_past_eof_stays_quiet() {
-        // Past the end of the material the renderer keeps ticking (it has no eof
-        // signal on this transport). The drained cursor absorbs those ticks —
-        // one Eof, and no repeat of the last frame.
-        let frames: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(vec![]));
-        let eofs = Arc::new(AtomicUsize::new(0));
-        let f2 = frames.clone();
-        let e2 = eofs.clone();
-        let reg = PreviewSwRegistry::new();
-        reg.set_frame_sink(Box::new(move |poke| match poke {
-            SwFramePoke::Frame { frame, .. } => f2.lock().unwrap().push(frame.pts_us),
-            SwFramePoke::Eof { .. } => {
-                e2.fetch_add(1, Ordering::SeqCst);
-            }
-            SwFramePoke::Error { .. } => {}
-        }));
-        let p = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/tiny_prores.mov"
+    fn the_end_follows_the_last_frame_in_band() {
+        // Frames and the end share one channel in the order the session produced
+        // them, so the consumer never sees the end before the frames it closes.
+        let s = Arc::new(PreviewSessions::new());
+        let log = open_keeping_up(&s, "e1", PRORES);
+        s.fill_from("e1", 750_000, 1).unwrap();
+        assert!(wait_for(|| ends(&log) == 1), "no end arrived");
+        s.close("e1").unwrap();
+        let got = log.lock().unwrap().clone();
+        let tail: Vec<_> = got
+            .iter()
+            .map(|m| match m {
+                Seen::Frame(f) => Some(f.pts),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            tail,
+            vec![Some(750_000), Some(875_000), None],
+            "expected the two tail frames, then the end: {got:?}"
         );
-        reg.open("eof1", p).expect("open");
+        assert_eq!(got.last(), Some(&Seen::End));
+    }
+
+    #[test]
+    fn ticking_past_eof_stays_quiet() {
+        // Past the end of the material the renderer keeps ticking with the same
+        // request id. The drained cursor absorbs those ticks — one End, and no
+        // repeat of the last frame.
+        let s = Arc::new(PreviewSessions::new());
+        let log = open_keeping_up(&s, "eof1", PRORES);
         // 875_000 is the last frame of the 1 s fixture; the three ticks after it
         // are past the material.
-        let _ = reg.request_frame_at("eof1", 875_000);
+        s.fill_from("eof1", 875_000, 1).unwrap();
         assert!(
-            wait_for(|| eofs.load(Ordering::SeqCst) == 1),
+            wait_for(|| ends(&log) == 1),
             "the tail request never reached the end of the material"
         );
         for t in [908_000, 941_000, 974_000] {
-            let _ = reg.request_frame_at("eof1", t);
-            std::thread::sleep(TICK);
+            s.fill_from("eof1", t, 1).unwrap();
+            thread::sleep(TICK);
         }
         // The channel is served in order, so a frame of this backward request
         // means every tick before it has been taken.
-        let _ = reg.request_frame_at("eof1", 0);
-        wait_for(|| frames.lock().unwrap().contains(&0));
-        let _ = reg.close("eof1");
-        let pts = frames.lock().unwrap();
+        s.fill_from("eof1", 0, 2).unwrap();
+        wait_for(|| pts(&log).contains(&0));
+        s.close("eof1").unwrap();
+        let pts = pts(&log);
         assert_eq!(
             pts.get(..2),
             Some(&[875_000, 0][..]),
             "the tail frame was re-delivered: {pts:?}"
         );
         assert_eq!(
-            eofs.load(Ordering::SeqCst),
+            ends(&log),
             1,
             "each post-eof tick re-discovered eof instead of short-circuiting"
         );
@@ -1509,95 +1143,162 @@ mod tests {
         // playhead parked way past a short clip): the seek lands at the tail
         // and EOF is rediscovered — once. The EOF arms advance the frontier to
         // the target, which keeps every later tick inside the continue window.
-        let frames: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(vec![]));
-        let eofs = Arc::new(AtomicUsize::new(0));
-        let f2 = frames.clone();
-        let e2 = eofs.clone();
-        let reg = PreviewSwRegistry::new();
-        reg.set_frame_sink(Box::new(move |poke| match poke {
-            SwFramePoke::Frame { frame, .. } => f2.lock().unwrap().push(frame.pts_us),
-            SwFramePoke::Eof { .. } => {
-                e2.fetch_add(1, Ordering::SeqCst);
-            }
-            SwFramePoke::Error { .. } => {}
-        }));
-        let p = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/tiny_prores.mov"
-        );
-        reg.open("feof1", p).expect("open");
+        let s = Arc::new(PreviewSessions::new());
+        let log = open_keeping_up(&s, "feof1", PRORES);
         // The fixture is 1 s; 5 s is > FORWARD_CONTINUE_US past its tail, and
         // the tail frame itself is past-discarded — the request yields only an
-        // Eof poke. The +33 ms ticks after it stay within the continue window
-        // of the advanced frontier, so the drained cursor must absorb them.
-        let _ = reg.request_frame_at("feof1", 5_000_000);
+        // End. The +33 ms ticks after it stay within the continue window of the
+        // advanced frontier, so the drained cursor must absorb them.
+        s.fill_from("feof1", 5_000_000, 1).unwrap();
         assert!(
-            wait_for(|| eofs.load(Ordering::SeqCst) == 1),
+            wait_for(|| ends(&log) == 1),
             "the far-past-EOF request never reported the end of the material"
         );
         for t in [5_033_000, 5_066_000, 5_099_000] {
-            let _ = reg.request_frame_at("feof1", t);
-            std::thread::sleep(TICK);
+            s.fill_from("feof1", t, 1).unwrap();
+            thread::sleep(TICK);
         }
         // The channel is served in order, so a frame of this backward request
         // means every tick before it has been taken.
-        let _ = reg.request_frame_at("feof1", 0);
-        wait_for(|| !frames.lock().unwrap().is_empty());
-        let _ = reg.close("feof1");
-        let pts = frames.lock().unwrap();
+        s.fill_from("feof1", 0, 2).unwrap();
+        wait_for(|| !pts(&log).is_empty());
+        s.close("feof1").unwrap();
+        let pts = pts(&log);
         assert_eq!(
             pts.first().copied(),
             Some(0),
             "a far-past-EOF target must deliver no frames: {pts:?}"
         );
         assert_eq!(
-            eofs.load(Ordering::SeqCst),
+            ends(&log),
             1,
             "each far-past-eof tick re-seeked and re-discovered eof instead of going quiet"
         );
     }
 
-    #[test]
-    fn wedged_thread_close_detaches_within_grace_and_id_reopens() {
-        // The dump-verified hang shape: a thread stuck INSIDE one decode call
-        // sees neither the flag nor the channel. close() must give up at the
-        // grace bound and detach — never propagate an unbounded join to the
-        // napi caller.
-        let reg = PreviewSwRegistry::new();
-        reg.set_frame_sink(Box::new(|_| {}));
-        reg.open_wedged_for_test("w1", std::time::Duration::from_secs(10));
-        // `Detached` is reached only from the grace running out: a close that
-        // waited for the wedged thread would see it exit and report `Reaped`.
-        let outcome = reg
-            .close_with_grace("w1", std::time::Duration::from_millis(250))
-            .expect("close must return Ok on the detach path");
-        assert_eq!(outcome, CloseOutcome::Detached);
-        // Reuse safety: the map entry went with close(), so the same id opens
-        // fresh while the detached straggler is still sleeping.
-        let p = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/tiny_prores.mov"
+    /// Open `id` on the 1 s ProRes fixture with leases left to the test, and
+    /// fill its window: request 1 at 0 takes the five frames of its horizon,
+    /// request 2 at 500 ms the rest of the window. Returns the log.
+    fn open_with_a_full_window(s: &Arc<PreviewSessions>, id: &str) -> Log {
+        let (_, log) = open(s, id, PRORES, PreviewOpenOptions::default(), false).unwrap();
+        s.fill_from(id, 0, 1).unwrap();
+        assert!(wait_for(|| frames(&log).len() == 5), "request 1's horizon");
+        s.fill_from(id, 500_000, 2).unwrap();
+        assert!(
+            wait_for(|| frames(&log).len() == WINDOW_FRAMES as usize),
+            "request 2 never filled the window"
         );
-        reg.open("w1", p)
-            .expect("re-open of a detached id must succeed");
-        reg.close("w1").expect("close the re-opened session");
+        thread::sleep(QUIET);
+        assert_eq!(
+            frames(&log).len(),
+            WINDOW_FRAMES as usize,
+            "frames went out beyond the window"
+        );
+        log
     }
 
     #[test]
-    fn normal_close_reaps_the_thread() {
-        // Healthy-path close must NOT detach: the thread sees the teardown, its
-        // done signal fires (sender drop in the thread's closure frame), and it
-        // is joined. The grace here is a liveness bound; how fast a healthy
-        // thread exits is the machine's business.
-        let reg = PreviewSwRegistry::new();
-        reg.set_frame_sink(Box::new(|_| {}));
-        let p = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/tiny_prores.mov"
+    fn a_full_window_holds_production_and_a_new_request_does_not_forgive_it() {
+        let s = Arc::new(PreviewSessions::new());
+        let log = open_with_a_full_window(&s, "w1");
+        // A seek changes the request but forgives no lease still in flight.
+        s.fill_from("w1", 0, 3).unwrap();
+        thread::sleep(QUIET);
+        assert_eq!(
+            frames(&log).len(),
+            WINDOW_FRAMES as usize,
+            "a new request widened a full window"
         );
-        reg.open("r1", p).expect("open");
-        let _ = reg.request_frame_at("r1", 0);
-        let outcome = reg.close_with_grace("r1", MUST_HAPPEN).expect("close");
-        assert_eq!(outcome, CloseOutcome::Reaped);
+        assert_eq!(ends(&log), 0, "the held frame was skipped");
+        // Close does not wait for the leases.
+        s.close("w1").unwrap();
+    }
+
+    #[test]
+    fn a_full_window_never_parks_the_session() {
+        // The window is full while request 2 still has a frame to send. A
+        // newer request arrives, then one lease comes back: the one free place
+        // goes to the newer request's first frame. A session parked on the
+        // window would have woken on that lease and shipped request 2's frame.
+        let s = Arc::new(PreviewSessions::new());
+        let log = open_with_a_full_window(&s, "np1");
+        s.fill_from("np1", 0, 3).unwrap();
+        let first_lease = frames(&log)[0].lease;
+        assert!(s.release("np1", first_lease).unwrap());
+        assert!(
+            wait_for(|| frames(&log).len() > WINDOW_FRAMES as usize),
+            "the returned lease was not used"
+        );
+        thread::sleep(QUIET);
+        s.close("np1").unwrap();
+        let after: Vec<_> = frames(&log)[WINDOW_FRAMES as usize..]
+            .iter()
+            .map(|f| (f.request_id, f.pts))
+            .collect();
+        assert_eq!(
+            after,
+            vec![(Some(3), 0)],
+            "one lease back must send exactly the newest request's first frame"
+        );
+    }
+
+    #[test]
+    fn leases_return_by_id_once() {
+        let s = Arc::new(PreviewSessions::new());
+        let log = open_with_a_full_window(&s, "l1");
+        let leases: Vec<u32> = frames(&log).iter().map(|f| f.lease).collect();
+        let mut distinct = leases.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), leases.len(), "two frames share a lease");
+        s.fill_from("l1", 0, 3).unwrap();
+        assert!(s.release("l1", leases[0]).unwrap(), "an in-flight lease");
+        assert!(!s.release("l1", leases[0]).unwrap(), "a lease returns once");
+        assert!(
+            !s.release("l1", leases.iter().max().unwrap() + 1000)
+                .unwrap(),
+            "a lease never granted"
+        );
+        assert!(
+            s.release("l1", leases[1]).unwrap(),
+            "another in-flight lease is still its own"
+        );
+        // Two leases came back, so exactly two more frames go out.
+        assert!(wait_for(|| frames(&log).len() == WINDOW_FRAMES as usize + 2));
+        thread::sleep(QUIET);
+        assert_eq!(
+            frames(&log).len(),
+            WINDOW_FRAMES as usize + 2,
+            "the ignored returns widened the window"
+        );
+        s.close("l1").unwrap();
+        assert!(
+            s.release("l1", leases[2]).is_err(),
+            "no session after close"
+        );
+    }
+
+    #[test]
+    fn frames_carry_the_request_they_answer() {
+        let s = Arc::new(PreviewSessions::new());
+        let log = open_keeping_up(&s, "r1", PRORES);
+        s.fill_from("r1", 0, 7).unwrap();
+        assert!(wait_for(|| frames(&log).len() == 5), "request 7's horizon");
+        s.fill_from("r1", 250_000, 8).unwrap();
+        assert!(
+            wait_for(|| frames(&log).iter().any(|f| f.request_id == Some(8))),
+            "request 8 delivered nothing"
+        );
+        thread::sleep(QUIET);
+        s.close("r1").unwrap();
+        let ids: Vec<_> = frames(&log).iter().map(|f| f.request_id).collect();
+        let split = ids.iter().position(|id| *id == Some(8)).unwrap();
+        assert!(
+            ids[..split].iter().all(|id| *id == Some(7))
+                && ids[split..].iter().all(|id| *id == Some(8)),
+            "each frame names the request it answers: {ids:?}"
+        );
+        // A new id re-seeks: request 8 starts again at its own target.
+        assert_eq!(frames(&log)[split].pts, 250_000);
     }
 }

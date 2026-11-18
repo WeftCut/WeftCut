@@ -6,9 +6,9 @@
 //! to a frame in its native pixel format (e.g. ProRes' `yuv422p10le`) and swscale
 //! packs it to the stream's target format in one pass.
 //!
-//! The `session` module consumes `seek`, the color tags, and the per-frame
-//! timestamps; they are defined here so the streaming surface is complete in
-//! one place.
+//! The sessions consume `seek`, the stream's color tags (export's open info)
+//! and the per-frame timestamps; they are defined here so the streaming surface
+//! is complete in one place.
 #![allow(dead_code)]
 
 use ffmpeg_next::ffi as ffs;
@@ -291,7 +291,7 @@ unsafe fn attach_hw_device(
     Ok(hw_ctx)
 }
 
-/// FFmpeg color metadata carried alongside each decoded frame, as canonical
+/// FFmpeg color metadata of a stream, read once at open, as canonical
 /// FFmpeg string names (`bt709`, `bt470bg`, `smpte170m`, `tv`/`pc`, …) so they
 /// match the ffprobe-sourced tags the rest of the app uses (single color model,
 /// ADR 0014). `None` where the stream leaves the value unspecified.
@@ -305,9 +305,9 @@ pub struct SwColorTags {
 
 /// Target pixel format a stream packs decoded frames into. Both lanes pick per
 /// session: export via `export_sw::ExportOutFormat`, preview via
-/// `preview_sw_open`'s `out_format` (NV12 default; I420P10 for a 10-bit source
-/// on the VideoToolbox lane — issue #10). `wire_name` is the tag JS sees on
-/// the frame wire structs.
+/// `previewDecodeOpen`'s `outFormat` (NV12 default; I420P10 for a 10-bit source
+/// on the VideoToolbox lane — issue #10). JS sees it as the frame's
+/// `PlaneFormat`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SwOutFormat {
     /// 8-bit: `Y` plane `w*h` bytes, then interleaved `UV` `w*h/2` bytes.
@@ -317,15 +317,6 @@ pub enum SwOutFormat {
     /// `(w>>1) × (h>>1)`. Byte-matches the renderer's `copyToTenBit` layout
     /// (`render/decoder/tenBitFrame.ts`) including its floor chroma rounding.
     I420p10,
-}
-
-impl SwOutFormat {
-    pub fn wire_name(self) -> &'static str {
-        match self {
-            SwOutFormat::Nv12 => "NV12",
-            SwOutFormat::I420p10 => "I420P10",
-        }
-    }
 }
 
 /// Smallest long edge (px) a downscaled frame may ship at. Without it, ¼ of an
@@ -446,7 +437,8 @@ impl OutputCadence {
 }
 
 /// One software-decoded frame, tightly packed per `format` (layouts on
-/// [`SwOutFormat`]) plus its source-normalized timing and color tags. Fully
+/// [`SwOutFormat`]) plus its source-normalized timing. No colour: that is the
+/// stream's ([`SwVideoStream::color`]), and consumers resolve their own. Fully
 /// owned (unlike the GPU path's borrowed texture handle), so it can outlive
 /// the stream and cross threads freely.
 #[derive(Debug)]
@@ -461,7 +453,6 @@ pub struct SwFrame {
     pub pts_us: i64,
     /// Frame duration in microseconds (a delta, not a timestamp).
     pub dur_us: i64,
-    pub color: SwColorTags,
 }
 
 /// An open decode session (software or a copy-back hardware lane) that yields
@@ -771,7 +762,6 @@ impl SwVideoStream {
                     height: self.out_height,
                     pts_us,
                     dur_us,
-                    color: self.color.clone(),
                 }));
             }
 

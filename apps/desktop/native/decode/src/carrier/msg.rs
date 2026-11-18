@@ -51,6 +51,10 @@ pub enum DecodeMsg {
         #[napi(ts_type = "'NV12' | 'I420P10'")]
         format: PlaneFormat,
         data: Buffer,
+        /// The request this frame answers, for a pipeline whose consumer
+        /// drops frames of a superseded request (preview). `None` where frames
+        /// answer ranges in order (export).
+        request_id: Option<u32>,
     },
     /// Every frame intersecting `[a_us, b_us]` (b inclusive) has been sent.
     Mark { a_us: f64, b_us: f64 },

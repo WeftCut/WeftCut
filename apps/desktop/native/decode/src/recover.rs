@@ -2,15 +2,14 @@
 //!
 //! Two related hazards live in this component, both rooted in the fact that each
 //! preview/export session runs on its OWN spawned OS thread and fans frames out
-//! through cross-session shared state (the registry `sink` cell, the backend's
-//! per-stream `*_sinks` maps, the credit window):
+//! through shared state (the GPU registry's `sink` cell, each carrier session's
+//! sink, the byte window):
 //!
 //! 1. **Poison cascade.** `std::sync::Mutex` poisons when a thread panics while
-//!    holding the guard. `emit()` holds the `sink` lock ACROSS the routing
-//!    closure, which in turn locks a `*_sinks` map — so one panicking decode
-//!    thread can poison locks that EVERY other session (and every `open`/`close`)
-//!    then hits with `.lock().unwrap()`, turning a single-session failure into an
-//!    addon-wide meltdown. [`LockExt::lock_recover`] recovers the guard instead of
+//!    holding the guard. `emit()` holds the `sink` lock ACROSS the sink
+//!    closure — so one panicking decode thread can poison a lock that other
+//!    sessions (and every `open`/`close`) then hit with `.lock().unwrap()`,
+//!    turning a single-session failure into an addon-wide meltdown. [`LockExt::lock_recover`] recovers the guard instead of
 //!    re-panicking on poison — the same policy `parking_lot::Mutex` applies by
 //!    default. The data behind these locks (a `HashMap`, an `Option<Box<..>>`, a
 //!    credit counter) has no cross-field invariant a mid-panic guard could leave
@@ -19,9 +18,10 @@
 //!
 //! 2. **Silent decode-thread death.** A panic inside the ffmpeg decode path
 //!    unwinds the session thread with no signal; the renderer just waits forever
-//!    on frames that never arrive. The session loops wrap each service call in
-//!    `catch_unwind` and turn a caught panic into a normal `Error` poke (via
-//!    [`panic_message`]) so JS learns the session failed and can tear it down.
+//!    on frames that never arrive. The carrier's session runtime and the GPU
+//!    session loop wrap their work in `catch_unwind` and turn a caught panic
+//!    into an `Error` message (via [`panic_message`]) so JS learns the session
+//!    failed and can tear it down.
 
 use std::any::Any;
 use std::sync::{Mutex, MutexGuard};

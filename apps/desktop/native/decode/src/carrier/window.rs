@@ -44,13 +44,6 @@ impl ByteWindow {
 
     /// A lease for a frame of `bytes`, or `None` when the window is full or
     /// closed. Never blocks.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "only the parking producer (export_sw) runs on the window today"
-        )
-    )]
     pub fn try_acquire(&self, bytes: usize) -> Option<u32> {
         let mut st = self.state.lock_recover();
         if st.closed || !self.fits(&st, bytes) {

@@ -3,7 +3,8 @@
 //! and the registry + thread host it runs on ([`SessionRuntime`]).
 //!
 //! Owns no decoding and no pipeline policy: a pipeline supplies the driver
-//! that runs on the session thread (`export_sw/session.rs` is one).
+//! that runs on the session thread (`export_sw/session.rs`,
+//! `preview_sw/session.rs`).
 
 mod msg;
 mod runtime;
@@ -12,5 +13,5 @@ mod window;
 pub use msg::DecodeMsg;
 #[cfg(test)]
 pub(crate) use msg::PlaneFormat;
-pub(crate) use runtime::{SessionCtx, SessionRuntime, Sink};
+pub(crate) use runtime::{SessionCtx, SessionRuntime, SessionShared, Sink};
 pub(crate) use window::ByteWindow;

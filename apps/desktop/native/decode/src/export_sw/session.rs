@@ -279,6 +279,7 @@ fn serve_range(
             height: frame.height,
             format: frame.format.into(),
             data: Buffer::from(frame.data),
+            request_id: None,
         });
     }
 }
@@ -416,8 +417,13 @@ mod tests {
                 dur_us,
                 format,
                 data,
+                request_id,
                 ..
             } => {
+                assert_eq!(
+                    request_id, None,
+                    "an export frame answers a range, not a request"
+                );
                 c.leases.push(lease);
                 c.pts.push(pts_us as i64);
                 c.durs.push(dur_us as i64);
