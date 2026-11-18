@@ -2,7 +2,9 @@
 // project's `Motifs/<id>/`; `<id>--library` is the library's current version
 // of `id`, a built-in's bundled package included; `<key>--proposal` is a
 // pending publication's frozen package. The protocol handler, capture and
-// covers resolve and pin through here, never through a store.
+// covers resolve and pin through here, never through a store, so a project
+// Motif whose revision is not trusted on this machine (`trust.ts`) is served
+// to none of them.
 import { parseManifestIsland, type Manifest } from '../../shared/motifs/catalog'
 import { MotifError } from '../../shared/motifs/errors'
 import { libraryHost, libraryIdOfHost, proposalOfHost, type MotifStatus } from '../../shared/motifs/projectMotifs'
@@ -10,6 +12,7 @@ import { motifRevision, type BuiltinMotif } from './authoring'
 import { motifFileSegments, type MotifFile } from './packageFiles'
 import { libraryPackage, type ProjectMotifStore, type RevisionListener } from './projectStore'
 import type { UserMotifStore } from './store'
+import { UNTRUSTED_DIAGNOSTIC, type MotifTrustView } from './trust'
 
 export type MotifScope = 'project' | 'library' | 'proposal'
 
@@ -25,8 +28,8 @@ export function routeOfHost(host: string): MotifRoute {
   return { scope: 'project', id: host }
 }
 
-/** A host's package as it stands: its manifest and revision when `ok`, why
- *  not otherwise. */
+/** A host's package as it stands: its manifest and revision when `ok` or
+ *  `untrusted`, why not otherwise. */
 export interface ResolvedMotif extends MotifRoute {
   status: MotifStatus
   revision: string | null
@@ -64,7 +67,12 @@ export class MotifResolver {
   private readonly library: ScopeReader
   private readonly proposals: ScopeReader
 
-  constructor(private readonly store: UserMotifStore, private readonly builtins: readonly BuiltinMotif[]) {
+  /** `trust` decides which project revisions may run; the library's and
+   *  proposals' are never asked about. Its `projectOpened`, when it has one,
+   *  hears each project become the open one before any folder of it is
+   *  seen (`MotifTrust`). */
+  constructor(private readonly store: UserMotifStore, private readonly builtins: readonly BuiltinMotif[],
+    private readonly trust: MotifTrustView & { projectOpened?(): void }) {
     this.library = {
       describe: id => {
         const builtin = builtins.find(b => b.id === id)
@@ -90,12 +98,36 @@ export class MotifResolver {
   }
 
   /** The open project's Motifs; null when no project is open, and every
-   *  project host is then missing. Its revisions reach `onRevisionSeen`. */
+   *  project host is then missing. Its revisions reach `onRevisionSeen`,
+   *  each folder's as it stands now first, as found when opened
+   *  (`ProjectMotifStore.open`).
+   *
+   *  LANDMINE: this runs before the actor takes the project's table
+   *  (`commitWorkspace` precedes `replaceState`) and before its watcher
+   *  starts, so every read of the new table already finds each folder
+   *  observed as found: one ordered after could hear the received bytes as
+   *  an edit made here. */
   setProject(project: ProjectMotifStore | null): void {
     this.projectStore = project
-    if (project) this.hear(project)
+    this.trust.projectOpened?.()
+    if (!project) return
+    this.hear(project)
+    project.open(revision => this.trust.trusted(revision))
   }
   project(): ProjectMotifStore | null { return this.projectStore }
+
+  /** Whether the open project's Motif `id` may run at `revision`, its folder's
+   *  revision now. A revision not trusted yet is observed
+   *  (`ProjectMotifStore.observe`) before it is answered: an edit made on
+   *  disk while the project is open, read before the watcher has heard it,
+   *  is judged as the watcher judges it, so an agent's write is never
+   *  refused while the watcher waits for quiet. Nothing else is inferred
+   *  here: the revision the table records is never a base. */
+  projectTrusted(id: string, revision: string): boolean {
+    if (this.trust.trusted(revision)) return true
+    this.projectStore?.observe(id)
+    return this.trust.trusted(revision)
+  }
 
   /** Listens for every revision a project store this app made sees: the open
    *  project's, and the copies an upgrade places before it opens
@@ -107,8 +139,8 @@ export class MotifResolver {
 
   /** Passes the revisions `project` sees to `onRevisionSeen`'s listeners. */
   hear(project: ProjectMotifStore): void {
-    project.onRevisionSeen((id, revision, cause) => {
-      for (const listener of this.revisionListeners) listener(id, revision, cause)
+    project.onRevisionSeen((id, revision, cause, base) => {
+      for (const listener of this.revisionListeners) listener(id, revision, cause, base)
     })
   }
 
@@ -137,6 +169,8 @@ export class MotifResolver {
     try {
       const found = reader.describe(route.id)
       if (!found) return absent(missingText(route))
+      if (route.scope === 'project' && !this.projectTrusted(route.id, found.revision))
+        return { ...route, status: 'untrusted', revision: found.revision, manifest: found.manifest, diagnostic: `Motif '${route.id}' is ${UNTRUSTED_DIAGNOSTIC}` }
       return { ...route, status: 'ok', revision: found.revision, manifest: found.manifest }
     } catch (error) {
       return { ...route, status: 'invalid', revision: null, manifest: null, diagnostic: error instanceof Error ? error.message : String(error) }

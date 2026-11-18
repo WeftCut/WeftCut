@@ -8,7 +8,7 @@ import { zipSync } from 'fflate'
 import { readMotifDirectory } from '../../src/main/motif/packageFiles'
 import { libraryHost } from '../../src/shared/motifs/projectMotifs'
 import { launchApp, newProject, tmpDir } from './helpers/driver'
-import { motifContentHash, saveMotifToLibrary } from './helpers/motif'
+import { motifContentHash, saveMotifToLibrary, trustMotif } from './helpers/motif'
 
 const require = createRequire(import.meta.url)
 
@@ -106,10 +106,12 @@ test('@serial Three.js Motif ZIP round-trip loads local modules, GLB and texture
       async ({ command, args }) => (window as any).api.backend.invoke(command, args), { command, args },
     ) as Promise<T>
     const sourceId = (await invoke<{motif_id:string}>('create_motif', { source:{kind:'zip',path:sourceZip} })).motif_id
+    // A ZIP's code runs once the user trusts it (ADR 0174).
+    await trustMotif(page, sourceId)
     const archive = path.join(tmpDir('motif-zip-'), 'scene.zip')
     await invoke('export_motif', { motif_id: sourceId, path: archive })
     // The archive carries the lineage the project holds: the import is a
-    // copy beside it, under another id.
+    // copy beside it, under another id, trusted for the bytes it came as.
     const made = await invoke<{motif_id:string; path:string}>('create_motif', { source:{kind:'zip',path:archive} })
     const id = made.motif_id
     expect(id).not.toBe(sourceId)

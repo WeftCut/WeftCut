@@ -520,7 +520,7 @@ path nodes keep their stored `id` (`get_param_track` answers them as
 | `project://transitions` | a composition's transitions as transition records (`transition_id`, `from_layer_id`, `to_layer_id`) |
 | `project://settings` | editing preferences, `audio_roles` (role gain / mute / solo) and `metadata`; `modified_at` moves on every recorded edit and is restored by undo/redo/restore — compare for change, not order |
 | `project://taste` | the merged style (`extends` in `TASTE.md`, else `weftcut-default`) + overrides: roles, tokens, example `motifs` per role, `fonts` resolved against installed families, provenance, diagnostics, revision. Pixel tokens are for a 1080-px frame. Read fresh every call; the app never writes `TASTE.md` |
-| `project://session` | active work session (or null), recent sessions, history lock, `project`, `recent_projects`, `default_parent_folder`, `motifs: {missing, invalid}` (the open project's Motifs that cannot render, each with `motif_id` and `diagnostic`) |
+| `project://session` | active work session (or null), recent sessions, history lock, `project`, `recent_projects`, `default_parent_folder`, `motifs: {missing, invalid, untrusted}` (the open project's Motifs that cannot render, each with `motif_id` and `diagnostic`; an untrusted one also with the `revision` the user would trust, ADR 0174) |
 | `project://tacks` | the opening's tacks, oldest first (see *Tacks*) |
 | `project://playhead` | where the user is in the editor, asked of the editor window at read time (see below) |
 | `project://history` | recent ops and checkpoints (no snapshots); see below |
@@ -1056,7 +1056,7 @@ placed under its existing id, and `from_library: true` places the library's
 Motif of an id the project uses for another. Tools name a project Motif by
 default and a library Motif with `group: "library"`. `list_motifs` (both groups unless `group` names one; rows
 without HTML or `content_hash`): project rows carry `status` ok | missing |
-invalid (with `diagnostic`), `state` in_sync | modified | update_available |
+invalid | untrusted (with `diagnostic`), `state` in_sync | modified | update_available |
 project_only against the library Motif of the same lineage (derived, never
 stored), `from`, `path` and the latest proposal's `publication`; library rows
 carry `status` builtin | installed, `version` and `in_project` (the project id
@@ -1081,9 +1081,19 @@ required: an absolute `.zip` in an existing folder; an existing file is
 (removes the Motif from the project, its folder kept; `MotifInUse` while a
 layer uses it). A stale `expected_revision` on any of them refuses
 `RevisionConflict` with `current_revision`. A Motif that cannot render is
-named in `project://session` (`motifs: {missing, invalid}`), and
+named in `project://session` (`motifs: {missing, invalid, untrusted}`), and
 `start_export` refuses `MotifUnavailable` with its `motif_ids` while a layer
 uses one.
+
+**A Motif runs only when trusted on this machine (ADR 0174).** A project
+Motif whose revision this machine has not trusted (one that came with a
+received project, a ZIP, or a folder from outside the project) is `untrusted`:
+it draws the error placeholder, has no cover, and `preview_motif`,
+`create_motif` `copy` and `install_motif` refuse `MotifUntrusted` with its `id`
+and `revision`. `read_motif` reads it and `export_motif` writes it out, since
+neither runs it. Only the user trusts it, in the app's Motifs panel; no tool
+can, so an agent says what it found with `read_motif` and leaves the decision
+to the user.
 
 **Saving to the library waits for the user (ADR 0046).** `install_motif`
 freezes a project Motif's files as a proposal and answers `{state:

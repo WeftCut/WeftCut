@@ -89,11 +89,14 @@ describe('watchProjectMotifs', () => {
   let dir: string
   afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
 
-  it('tells only the Motif whose folder was edited, with its new revision', async () => {
+  it('tells only the Motif whose folder was edited, with its new revision, observed as an edit of what it held', async () => {
     dir = mkdtempSync(path.join(tmpdir(), 'project-watch-'))
     const project = new ProjectMotifStore(dir)
     write(project, 'edited', 0)
     write(project, 'untouched', 0)
+    const found = project.found('edited').revision
+    const heard: Array<[string, string, string | null]> = []
+    project.onRevisionSeen((id, revision, cause, base) => { if (cause === 'edited-while-open') heard.push([id, revision, base]) })
     const told: Array<[string, MotifState]> = []
     const w = watchProjectMotifs(project, (id, state) => told.push([id, state]))
     try {
@@ -106,6 +109,8 @@ describe('watchProjectMotifs', () => {
       expect(told.map(([id]) => id).every(id => id === 'edited')).toBe(true)
       expect(told.at(-1)![1]).toEqual(project.status('edited'))
       expect(told.at(-1)![1].status).toBe('ok')
+      // The first edit told is heard from the revision found before it.
+      expect(heard[0]).toEqual(['edited', told[0]![1].revision, found])
     } finally {
       w.close()
     }

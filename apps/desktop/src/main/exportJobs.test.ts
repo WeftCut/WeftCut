@@ -250,6 +250,12 @@ it('refuses, before a job exists, while a layer uses a Motif that cannot render,
   await expect(refused).rejects.toMatchObject({ code: 'motif_unavailable', data: { error: 'MotifUnavailable', motif_ids: ['gone'] } });
   await expect(refused).rejects.toThrow(/Motif 'gone' is missing/);
   expect(native).not.toHaveBeenCalled();
+  // An untrusted Motif is refused the same way, named as untrusted.
+  held = [{ motif_id: 'gone', status: 'untrusted', diagnostic: 'not trusted on this machine', revision: 'a'.repeat(64) }];
+  const untrusted = jobs.start({ settings: { include_audio: false } });
+  await expect(untrusted).rejects.toMatchObject({ code: 'motif_unavailable', data: { error: 'MotifUnavailable', motif_ids: ['gone'] } });
+  await expect(untrusted).rejects.toThrow(/Motif 'gone' is untrusted \(not trusted on this machine\).*trusts an untrusted one in the Motifs panel/);
+  expect(native).not.toHaveBeenCalled();
   // A Motif no layer uses does not stop an export.
   held = unavailable.slice(1);
   await expect(jobs.start({ settings: { include_audio: false } })).resolves.toMatchObject({ state: expect.any(String) });
