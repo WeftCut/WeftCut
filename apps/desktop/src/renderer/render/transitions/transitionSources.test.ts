@@ -32,7 +32,7 @@ describe("transition shader sources", () => {
 
   it("WGSL sources keep the mesh-pipe binding conventions", () => {
     // globalUniforms@group(0) / localUniforms@group(1) — those exact variable
-    // names are how Pixi's mesh pipe auto-assigns bind groups (Nv12Ingest).
+    // names are how Pixi's mesh pipe auto-assigns bind groups (PlaneIngest).
     for (const [kind, src] of Object.entries(TRANSITION_SOURCES)) {
       expect(src.wgsl, kind).toContain("var<uniform> globalUniforms");
       expect(src.wgsl, kind).toContain("var<uniform> localUniforms");

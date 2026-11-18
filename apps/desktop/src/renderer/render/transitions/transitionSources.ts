@@ -12,7 +12,7 @@
 import type { TransitionSummary } from "../../ipc";
 
 /// Mesh vertex — Pixi v8 mesh conventions (uProjectionMatrix /
-/// uWorldTransformMatrix / uTransformMatrix), mirroring Nv12Ingest's VERT.
+/// uWorldTransformMatrix / uTransformMatrix), mirroring PlaneIngest's GL_VERT.
 export const TRANSITION_GL_VERT = `#version 300 es
 precision highp float;
 in vec2 aPosition;
@@ -42,7 +42,7 @@ ${body}
 }`;
 
 // WGSL shell. Groups follow Pixi v8's mesh-shader convention (see
-// Nv12Ingest's WGSL): globalUniforms@group(0) / localUniforms@group(1) are
+// PlaneIngest's WGSL): globalUniforms@group(0) / localUniforms@group(1) are
 // auto-bound by the mesh pipe via those exact variable names; our resources
 // live in group(2), matched to the `resources` keys by name. Uniform order
 // in `TransitionUniforms` must match the UniformGroup declaration order.
