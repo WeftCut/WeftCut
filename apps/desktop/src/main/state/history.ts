@@ -541,6 +541,23 @@ export class History {
     if (this.review) this.review.base = { ...this.review.base, media_pool: pool }
   }
 
+  /** Run `transform` over the media pool of EVERY snapshot + checkpoint, each
+   *  its own: a snapshot before a forced `remove_media` still holds the item
+   *  the current pool dropped, and it must come back right on undo. A pool
+   *  shared by several snapshots is transformed once and stays shared. Cursor
+   *  unchanged; never recorded. */
+  mapMediaPoolEverywhere(transform: (pool: Record<string, MediaItem>) => Record<string, MediaItem>): void {
+    const done = new Map<Record<string, MediaItem>, Record<string, MediaItem>>()
+    const apply = (p: Project): Project => {
+      let pool = done.get(p.media_pool)
+      if (!pool) { pool = transform(p.media_pool); done.set(p.media_pool, pool) }
+      return { ...p, media_pool: pool }
+    }
+    for (const e of this.snapshots) e.snapshot = apply(e.snapshot)
+    for (const cp of this.checkpoints.values()) cp.snapshot = apply(cp.snapshot)
+    if (this.review) this.review.base = apply(this.review.base)
+  }
+
   /** The WHOLE composition envelope is preference-shaped (docs/features.md
    *  #undo-stack-scope), so `set_composition` never records and instead runs its
    *  patch over EVERY snapshot + checkpoint (cursor unchanged).

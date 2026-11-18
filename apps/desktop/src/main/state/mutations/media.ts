@@ -6,6 +6,7 @@ import { CommandFailure } from '../errors'
 import { defaultTransform } from './add'
 import { pruneEmptiedTrack, requireLayer } from './helpers'
 import { eachLayer } from '../model'
+import { mediaAtFolder } from '../projectFile'
 
 /** The canonical VideoClip layer shape. blend_mode
  *  default = Normal, transform default per defaultTransform. */
@@ -106,6 +107,24 @@ export function applySetMediaWorkspacePaths(pool: Record<string, MediaItem>, id:
   if (!item) throw new CommandFailure({ error: 'MediaNotFound', media: id })
   return { ...pool, [id]: { ...item, path_abs: paths.path_abs, path_rel: paths.path_rel,
     file_hash_blake3: paths.file_hash_blake3, file_size: paths.file_size, file_mtime: paths.file_mtime } }
+}
+
+/** rebase_media — the pool of the project now in `projectDir` (Save As):
+ *  each item inside the folder at its path there, an external one where it
+ *  was, and the derivatives `derivatives` holds for it as the only ready
+ *  ones: a derivative of the old folder's cache is not this folder's. */
+export function applyRebaseMedia(pool: Record<string, MediaItem>, projectDir: string, derivatives: Record<string, MediaDerivativesPatch>): Record<string, MediaItem> {
+  return foldDerivatives(mediaAtFolder(pool, projectDir, process.platform), derivatives)
+}
+
+/** `pool` with each patch of `derivatives` folded in as `set_media_derivatives`
+ *  would; an entry for an id the pool does not hold is ignored. */
+export function foldDerivatives(pool: Record<string, MediaItem>, derivatives: Record<string, MediaDerivativesPatch>): Record<string, MediaItem> {
+  const next = { ...pool }
+  for (const [id, patch] of Object.entries(derivatives)) {
+    if (Object.hasOwn(next, id)) next[id] = applySetMediaDerivatives({ [id]: next[id]! }, id, patch)[id]!
+  }
+  return next
 }
 
 /** Set ONLY the source content hash on a pool item — used by the hash-first

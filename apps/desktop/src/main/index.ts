@@ -962,6 +962,7 @@ app.whenReady().then(async () => {
     pushRecent: (p: string, n: string) => recents.push(p, n),
     setLastNewProjectParent: (p: string) => recents.setLastNewProjectParent(p),
     enqueueJobsForMedia: (j: string) => backend!.enqueueJobsForMedia(j, workspaceEvents.requireCurrent()),
+    hydrateDerivatives: (j: string) => backend!.hydrateDerivatives(j, workspaceEvents.requireCurrent()),
   }
 
   // Workspace dir cache — seeded once at boot; refreshed after each persistence call
@@ -1207,6 +1208,7 @@ app.whenReady().then(async () => {
     poolFs,
     fs: nodeFs,
     relinkFs,
+    contentFs: fs.promises,
     join: path.join,
     napi: napiFacadeWithCache,
     compute: computeFacade,

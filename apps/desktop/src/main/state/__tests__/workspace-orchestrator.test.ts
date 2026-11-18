@@ -41,6 +41,7 @@ function deps(over: Partial<OrchestratorDeps> = {}): OrchestratorDeps & { calls:
   const actor = {
     replaceState: vi.fn((_p: unknown) => { calls.push('replaceState') }),
     snapshot: vi.fn(() => blankProject(seededGen(), 'snap')),
+    dispatch: vi.fn(() => ({ ok: true as const, value: null })),
   }
   return { actor, napi, fs: memFs(), join: posixJoin, idGen: seededGen(), calls, ...over } as OrchestratorDeps & { calls: string[] }
 }
@@ -259,7 +260,7 @@ describe('saveProjectAs', () => {
     const writeFile = fs.writeFile
     fs.writeFile = (p, t) => { order.push(`write:${p}`); writeFile(p, t) }
     const copyMotifs = vi.fn((from: string, to: string, ids: readonly string[]) => { order.push(`copy:${from}->${to}:${ids.join(',')}`) })
-    const d = deps({ fs, copyMotifs, actor: { replaceState: vi.fn(), snapshot: vi.fn(withMotifs) } })
+    const d = deps({ fs, copyMotifs, actor: { replaceState: vi.fn(), snapshot: vi.fn(withMotifs), dispatch: vi.fn(() => ({ ok: true as const, value: null })) } })
     await saveProjectAs(d, '/out', '/ws')
     expect(order).toEqual(['copy:/ws->/out:lower-third,title-card', `write:/out/${PROJECT_FILE}`])
   })
@@ -267,7 +268,7 @@ describe('saveProjectAs', () => {
   it('fails without writing project.json when a Motif folder cannot be copied', async () => {
     const fs = memFs()
     const copyMotifs = vi.fn(() => { throw new Error('EACCES') })
-    const d = deps({ fs, copyMotifs, actor: { replaceState: vi.fn(), snapshot: vi.fn(withMotifs) } })
+    const d = deps({ fs, copyMotifs, actor: { replaceState: vi.fn(), snapshot: vi.fn(withMotifs), dispatch: vi.fn(() => ({ ok: true as const, value: null })) } })
     await expect(saveProjectAs(d, '/out', '/ws')).rejects.toThrow('EACCES')
     expect(fs.files.has(`/out/${PROJECT_FILE}`)).toBe(false)
     expect(d.calls).toEqual([])

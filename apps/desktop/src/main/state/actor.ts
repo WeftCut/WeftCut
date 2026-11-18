@@ -45,7 +45,7 @@ import { applyDeleteTrack, applyMoveTrack, applyRenameTrack } from './mutations/
 import { applyAddEffect, applyUpdateEffect, applyMoveEffect, applyRemoveEffect, type EffectPatch } from './mutations/effects'
 import { applyAddTransition, applyRemoveTransition, applyUpdateTransition, type TransitionBounce } from './mutations/transitions'
 import { videoClipParams, audioParams, imageOverlayParams, mediaExtent, applySeparateAudio, mediaItemTemplate,
-  applySetMediaDerivatives, applySetMediaWorkspacePaths, applySetMediaHash, referencingLayers,
+  applySetMediaDerivatives, applySetMediaWorkspacePaths, applySetMediaHash, applyRebaseMedia, referencingLayers,
   type MediaDerivativesPatch, type WorkspacePaths } from './mutations/media'
 import type { MediaItem } from './model'
 import { isProjectPath } from '../../shared/projectPath'
@@ -857,6 +857,17 @@ export function createActor(opts: ActorOptions): ActorHandle {
     history.replaceMediaPoolEverywhere(nextPool)
     broadcastUnrecorded('Updated media hash', current())
   }
+  // ── rebase_media — UNRECORDED. Save As moved the project to another
+  //    folder: every snapshot's pool is placed there, so an undo after the
+  //    save names the copied files, never the old folder's. Each snapshot
+  //    keeps its own pool (History.mapMediaPoolEverywhere). Broadcast as a
+  //    replacement: the workspace is another one, and nothing the save wrote
+  //    is owed again (autosave). Internal: in no router or MCP list,
+  //    dispatched by the Save As path alone. ──
+  function rebaseMedia(projectDir: string, derivatives: Record<Uuid, MediaDerivativesPatch>): void {
+    history.mapMediaPoolEverywhere((pool) => applyRebaseMedia(pool, projectDir, derivatives))
+    broadcastUnrecorded('Moved media to the saved project', current(), { kind: 'Coarse' }, undefined, 'replaced')
+  }
   // ── remove_media — HYBRID. MediaNotFound → MediaInUse
   //    (when referenced && !force) → unused path (validate probe BEFORE broadcast,
   //    durable, 1 broadcast id) | force-cascade (applyDeleteLayer per referencing
@@ -1611,6 +1622,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
         case 'set_media_derivatives': setMediaDerivatives(a.media as Uuid, a.patch as MediaDerivativesPatch); return { ok: true, value: null }
         case 'set_media_workspace_paths': setMediaWorkspacePaths(a.media as Uuid, a.paths as WorkspacePaths); return { ok: true, value: null }
         case 'set_media_hash': setMediaHash(a.media as Uuid, a.file_hash_blake3 as string); return { ok: true, value: null }
+        case 'rebase_media': rebaseMedia(a.project_dir as string, a.derivatives as Record<Uuid, MediaDerivativesPatch>); return { ok: true, value: null }
         case 'remove_media': removeMedia(a.media as Uuid, (a.force as boolean) ?? false); return { ok: true, value: null }
         case 'set_role_gain': setRoleGain(a.role as string, parseNum(a.gain_db, 'gain_db')); return { ok: true, value: null }
         case 'update_role_flags': updateRoleFlags(a.role as string, a.patch as RoleFlagsPatch); return { ok: true, value: null }
