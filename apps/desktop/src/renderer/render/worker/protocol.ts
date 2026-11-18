@@ -194,6 +194,9 @@ export type ExportEvent =
   | { type: "done"; perf?: ExportPerf }
   | { type: "error"; message: string }
   /// Asks the page to open a native export decode session; answered by
-  /// `nd:openResult` with the same `reqId`. Nothing else about the session
-  /// passes the page.
-  | { type: "nd:open"; reqId: number; sessionId: string; path: string; outFormat: ExportTransportFormat; window: number };
+  /// `nd:openResult` with the same `reqId`. No frame and no per-frame message
+  /// of the session passes the page.
+  | { type: "nd:open"; reqId: number; sessionId: string; path: string; outFormat: ExportTransportFormat; window: number }
+  /// Asks the page to end a session. It travels where `nd:open` travels, so a
+  /// close reaches main before any open the Worker asks for after it.
+  | { type: "nd:close"; sessionId: string };

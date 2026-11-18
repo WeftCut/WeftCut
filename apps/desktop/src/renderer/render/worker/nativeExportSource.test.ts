@@ -9,10 +9,10 @@
 //      window), and mark / end / error reach the ring in port order.
 import { describe, expect, it } from "vitest";
 import {
-  createNativeDecodeOpener,
+  createNativeDecodeSessions,
   NativeExportSourceHandle,
   type DecodePort,
-  type OpenNativeDecode,
+  type NativeDecodeSessions,
   type OpenScope,
 } from "./nativeExportSource";
 import type { DecodeCommand, DecodeWireFrame, DecodeWireMsg } from "../../../shared/frameCarrier/wire";
@@ -27,13 +27,16 @@ import { isTenBitFrame, tenBitFrameFromBytes, type TenBitFrame } from "../decode
 // buffer-defined NV12 `VideoFrame` as BT.601 regardless of its stamped
 // colorSpace. A test that reintroduces `new VideoFrame` here is a regression.
 
+type PortCommand = Exclude<DecodeCommand, { type: "close" }>;
+
 /// The handle's end of a session port. Records what the handle posts and
 /// delivers the session's messages synchronously, in the order given.
 class FakePort implements DecodePort {
   onmessage: ((event: MessageEvent<DecodeWireMsg>) => void) | null = null;
-  /// Commands and the close, in the order the handle issued them.
-  log: Array<DecodeCommand | "close"> = [];
-  postMessage(cmd: DecodeCommand): void {
+  /// What the handle did with its session, in order: the commands it posted,
+  /// "end" when it asked main to end the session, "close" when it closed the port.
+  log: Array<PortCommand | "end" | "close"> = [];
+  postMessage(cmd: PortCommand): void {
     this.log.push(cmd);
   }
   close(): void {
@@ -46,10 +49,10 @@ class FakePort implements DecodePort {
     this.onmessage?.({ data: msg } as MessageEvent<DecodeWireMsg>);
   }
   released(): number[] {
-    return this.log.flatMap((c) => (c !== "close" && c.type === "release" ? [c.lease] : []));
+    return this.log.flatMap((c) => (typeof c === "object" && c.type === "release" ? [c.lease] : []));
   }
   ranges(): Array<{ aUs: number; bUs: number }> {
-    return this.log.flatMap((c) => (c !== "close" && c.type === "range" ? [{ aUs: c.aUs, bUs: c.bUs }] : []));
+    return this.log.flatMap((c) => (typeof c === "object" && c.type === "range" ? [{ aUs: c.aUs, bUs: c.bUs }] : []));
   }
 }
 
@@ -67,13 +70,22 @@ function makeHandle(
 ): {
   handle: NativeExportSourceHandle;
   port: FakePort;
-  opens: Array<Parameters<OpenNativeDecode>[0]>;
+  opens: Array<Parameters<NativeDecodeSessions["open"]>[0]>;
+  /// The session ids the handle asked main to end.
+  ended: string[];
 } {
   const port = new FakePort();
-  const opens: Array<Parameters<OpenNativeDecode>[0]> = [];
-  const open: OpenNativeDecode = (request) => {
-    opens.push(request);
-    return Promise.resolve({ info: { width: W, height: H, startPtsUs: 0 }, port });
+  const opens: Array<Parameters<NativeDecodeSessions["open"]>[0]> = [];
+  const ended: string[] = [];
+  const sessions: NativeDecodeSessions = {
+    open: (request) => {
+      opens.push(request);
+      return Promise.resolve({ info: { width: W, height: H, startPtsUs: 0 }, port });
+    },
+    close: (sessionId) => {
+      ended.push(sessionId);
+      port.log.push("end");
+    },
   };
   const init: SourceHandleInit = {
     layerId: "L0",
@@ -83,7 +95,7 @@ function makeHandle(
     nativeExport: { sourcePath: "C:/orig/tiny.mov", outFormat, window: WINDOW },
     sourceColor,
   };
-  return { handle: new NativeExportSourceHandle(init, open), port, opens };
+  return { handle: new NativeExportSourceHandle(init, sessions), port, opens, ended };
 }
 
 /// Frame `ptsUs` carries lease `lease` (default: its index on the 33 ms grid).
@@ -213,7 +225,7 @@ describe("NativeExportSourceHandle", () => {
   });
 
   it("dispose releases every frame still held, then ends the session and closes the port, once", async () => {
-    const { handle, port } = makeHandle();
+    const { handle, port, opens, ended } = makeHandle();
     await handle.ensureReady();
     for (let i = 0; i < 3; i++) port.deliver(frameMsg(i * DUR));
     handle.evictBefore(DUR);
@@ -224,21 +236,32 @@ describe("NativeExportSourceHandle", () => {
       { type: "release", lease: 0 },
       { type: "release", lease: 1 },
       { type: "release", lease: 2 },
-      { type: "close" },
+      "end",
       "close",
     ]);
+    expect(ended).toEqual([opens[0]!.sessionId]);
     // Nothing the session still had in flight reaches the disposed handle.
     port.deliver(frameMsg(5 * DUR));
     expect(handle.ring.size()).toBe(0);
   });
 
-  it("a handle disposed while its session opens ends the session as soon as its port arrives", async () => {
-    const { handle, port } = makeHandle();
+  it("a handle disposed while its session opens ends the session at once, and only closes the port that arrives", async () => {
+    const { handle, port, opens, ended } = makeHandle();
     const ready = handle.ensureReady();
     handle.dispose();
+    // The end is asked for behind the open, not held until the open answers:
+    // main must have the session gone before a later open asks for its memory.
+    expect(ended).toEqual([opens[0]!.sessionId]);
     await ready;
-    expect(port.log).toEqual([{ type: "close" }, "close"]);
+    expect(port.log).toEqual(["end", "close"]);
     expect(port.onmessage).toBeNull();
+  });
+
+  it("a handle that never asked for its session has nothing to end", () => {
+    const { handle, opens, ended } = makeHandle();
+    handle.dispose();
+    expect(opens).toEqual([]);
+    expect(ended).toEqual([]);
   });
 
   it("hands back the lease of a frame it cannot use, and fails the ring", async () => {
@@ -262,10 +285,13 @@ describe("NativeExportSourceHandle", () => {
         nativeExport: { sourcePath: "C:/orig/tiny.mov", outFormat: "NV12", window: WINDOW },
         sourceColor: BT470BG_FULL,
       },
-      () => Promise.resolve({
-        info: { width: W, height: H, startPtsUs: 0, colorMatrix: "bt2020nc", colorPrimaries: "bt2020", colorTransfer: "smpte2084", colorRange: "tv" },
-        port,
-      }),
+      {
+        open: () => Promise.resolve({
+          info: { width: W, height: H, startPtsUs: 0, colorMatrix: "bt2020nc", colorPrimaries: "bt2020", colorTransfer: "smpte2084", colorRange: "tv" },
+          port,
+        }),
+        close: () => {},
+      },
     );
     await handle.ensureReady();
     port.deliver(frameMsg(0));
@@ -360,7 +386,7 @@ describe("NativeExportSourceHandle", () => {
   });
 
   it("a terminal error fails the export and ends the session: its port closes, nothing more is posted", async () => {
-    const { handle, port } = makeHandle();
+    const { handle, port, ended } = makeHandle();
     await handle.decodeRange(0, 100_000);
     port.deliver(frameMsg(0));
     port.deliver({ kind: "error", message: "decode panicked", terminal: true });
@@ -370,10 +396,11 @@ describe("NativeExportSourceHandle", () => {
     await handle.decodeRange(200_000, 300_000);
     handle.dispose();
     expect(port.log.length, "no command reaches a session that is gone").toBe(posted);
+    expect(ended, "ended once, by the error").toHaveLength(1);
   });
 });
 
-describe("createNativeDecodeOpener", () => {
+describe("createNativeDecodeSessions", () => {
   /// The Worker global's part of the handshake: what it posts, and a way to
   /// play the page's replies into its listener.
   function scope() {
@@ -389,7 +416,7 @@ describe("createNativeDecodeOpener", () => {
 
   it("posts nd:open with the request and answers each by its reqId, in any order", async () => {
     const { s, posted, reply } = scope();
-    const open = createNativeDecodeOpener(s);
+    const { open } = createNativeDecodeSessions(s);
     const a = open({ sessionId: "a", path: "C:/orig/a.mov", outFormat: "NV12", window: 6 });
     const b = open({ sessionId: "b", path: "C:/orig/b.mov", outFormat: "I420P10", window: 3 });
     expect(posted).toEqual([
@@ -407,9 +434,22 @@ describe("createNativeDecodeOpener", () => {
     await expect(a).rejects.toThrow("no decoder");
   });
 
+  it("asks the page to end a session in the order the Worker asked, between the opens around it", () => {
+    const { s, posted } = scope();
+    const sessions = createNativeDecodeSessions(s);
+    void sessions.open({ sessionId: "a", path: "C:/orig/a.mov", outFormat: "NV12", window: 6 });
+    sessions.close("a");
+    void sessions.open({ sessionId: "b", path: "C:/orig/a.mov", outFormat: "NV12", window: 6 });
+    expect(posted.map((m) => [m.type, (m as { sessionId: string }).sessionId])).toEqual([
+      ["nd:open", "a"],
+      ["nd:close", "a"],
+      ["nd:open", "b"],
+    ]);
+  });
+
   it("ignores the Worker's own protocol and replies it is not waiting for", () => {
     const { s, reply } = scope();
-    createNativeDecodeOpener(s);
+    createNativeDecodeSessions(s);
     expect(() => {
       reply({ type: "cancel" });
       reply({ type: "chunk-ack" });

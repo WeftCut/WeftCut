@@ -437,6 +437,9 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
             } satisfies ExportRequest);
           },
         );
+      } else if (ev.type === "nd:close") {
+        window.api.exportDecode.close({ sessionId: ev.sessionId });
+        decodeSessions.delete(ev.sessionId);
       } else if (ev.type === 'resource:acquire') {
         void acquireExportResources(ev.memoryMiB, ev.threads, init.finalizationToken, resourceWaits.signal).then(release => {
           if (disposed) { release(); return; }
