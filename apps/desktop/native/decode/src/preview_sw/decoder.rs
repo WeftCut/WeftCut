@@ -923,6 +923,51 @@ fn ensure_scratch(scratch: &mut VideoFrame, fmt: Pixel, w: u32, h: u32) {
     }
 }
 
+/// A swscale context that converts format and size but never levels.
+///
+/// LANDMINE: swscale reads a full-range "J" source format (`yuvj420p`, what
+/// libavcodec gives for full-range H.264 and MJPEG) as full range and squeezes
+/// it into the limited range its destination format defaults to. The frame's
+/// range travels separately, as the media's resolved colour the renderer's
+/// ingest shader applies, so squeezed bytes under a full-range label read
+/// washed out (red 255 shown as 238). The destination therefore takes the
+/// source's range, which makes the pass levels-neutral.
+fn levels_neutral_sws(
+    src_fmt: Pixel,
+    src_w: u32,
+    src_h: u32,
+    dst_fmt: Pixel,
+    dst_w: u32,
+    dst_h: u32,
+    flags: Flags,
+) -> Result<SwsContext, ffmpeg_next::Error> {
+    let mut sws = SwsContext::get(src_fmt, src_w, src_h, dst_fmt, dst_w, dst_h, flags)?;
+    let (mut inv_table, mut table) = (ptr::null_mut(), ptr::null_mut());
+    let (mut src_range, mut dst_range) = (0, 0);
+    let (mut brightness, mut contrast, mut saturation) = (0, 0, 0);
+    // SAFETY: `sws` is a live context; the out-pointers are valid for the call
+    // and the tables it returns are owned by the context they go back into.
+    unsafe {
+        let ctx = sws.as_mut_ptr();
+        let known = ffs::sws_getColorspaceDetails(
+            ctx,
+            &mut inv_table,
+            &mut src_range,
+            &mut table,
+            &mut dst_range,
+            &mut brightness,
+            &mut contrast,
+            &mut saturation,
+        ) >= 0;
+        if known && src_range != dst_range {
+            ffs::sws_setColorspaceDetails(
+                ctx, inv_table, src_range, table, src_range, brightness, contrast, saturation,
+            );
+        }
+    }
+    Ok(sws)
+}
+
 /// Convert a decoded `VideoFrame` of `(src_w, src_h)` to tightly-packed NV12
 /// bytes at `(dst_w, dst_h)`. If it is already NV12 AND no resize is asked for
 /// (e.g. a codec that decodes to NV12 directly, at full playback resolution) pack
@@ -948,7 +993,7 @@ fn frame_to_nv12(
         // BILINEAR); same-size conversion keeps BILINEAR, which is what full
         // resolution has always used.
         let flags = if resize { Flags::AREA } else { Flags::BILINEAR };
-        let mut sws = SwsContext::get(
+        let mut sws = levels_neutral_sws(
             frame.format(),
             src_w,
             src_h,
@@ -1005,7 +1050,7 @@ fn frame_to_i420p10(
         Ok(extract_i420p10_planes(frame))
     } else {
         let flags = if resize { Flags::AREA } else { Flags::BILINEAR };
-        let mut sws = SwsContext::get(
+        let mut sws = levels_neutral_sws(
             frame.format(),
             src_w,
             src_h,
@@ -1312,6 +1357,48 @@ mod tests {
             0,
             "the swscale destination was allocated — the fast path did not fire"
         );
+    }
+
+    #[test]
+    fn a_full_range_source_keeps_its_levels_through_the_pack() {
+        // libavcodec hands full-range H.264 and MJPEG over as a "J" format.
+        // The pack converts format and size only: black stays at 0 and white
+        // at the top of the range, because the range is applied later from the
+        // media's resolved colour. A range-converting pack gives 16 and 235.
+        use ffmpeg_next::format::Pixel;
+        use ffmpeg_next::util::frame::video::Video as VideoFrame;
+        const W: u32 = 64;
+        const H: u32 = 48;
+        let mut src = VideoFrame::new(Pixel::YUVJ420P, W, H);
+        let stride = src.stride(0);
+        for (i, b) in src.data_mut(0).iter_mut().enumerate() {
+            *b = if i % stride < (W / 2) as usize {
+                0
+            } else {
+                255
+            };
+        }
+        for p in 1..3 {
+            src.data_mut(p).fill(128);
+        }
+        for (dw, dh) in [(W, H), (W / 2, H / 2)] {
+            let last = dw as usize - 2;
+            let mut scratch = VideoFrame::empty();
+            let nv12 = super::frame_to_nv12(&src, W, H, dw, dh, &mut scratch).unwrap();
+            assert_eq!(nv12[1], 0, "black was lifted at {dw}x{dh}");
+            assert_eq!(nv12[last], 255, "white was lowered at {dw}x{dh}");
+            let mut scratch = VideoFrame::empty();
+            let p10 = super::frame_to_i420p10(&src, W, H, dw, dh, &mut scratch).unwrap();
+            let y = |x: usize| u16::from_le_bytes([p10[2 * x], p10[2 * x + 1]]);
+            assert_eq!(y(1), 0, "10-bit black was lifted at {dw}x{dh}");
+            // 8-bit 255 widened to 10 bits is 1020 or 1023 by the scaler's
+            // rounding; a limited-range white is 940.
+            assert!(
+                y(last) >= 1020,
+                "10-bit white was lowered at {dw}x{dh}: {}",
+                y(last)
+            );
+        }
     }
 
     #[test]
