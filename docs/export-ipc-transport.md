@@ -81,10 +81,15 @@ natively decoded frames to the export compositor (routing:
    that frame leaves the ring (consumed, evicted or freed). Commands go up
    the port and on to main as `decodeSession:cmd`; main hands a release to
    the session directly, so it lands mid-range.
-5. A `close` command ends the session. The handle posts it on dispose and on
-   a terminal error; when an export ends, the page closes every session it
-   opened, which covers a Worker terminated before its handles disposed. Main
-   also closes a session when its document goes (reload, crash, destroy).
+5. A `close` by session id ends the session. The handle asks for it on
+   dispose and on a terminal error as `nd:close`, which the page passes to
+   `exportDecode.close`. It does not go up the session's port: the export
+   releases one phase's handle and opens the next phase's in the same turn,
+   and only the route `nd:open` takes keeps that close ahead of that open in
+   main, where the old session still holds its decoder memory. When an export
+   ends, the page closes every session it opened, which covers a Worker
+   terminated before its handles disposed. Main also closes a session when its
+   document goes (reload, crash, destroy).
 
 ## Why IPC
 
