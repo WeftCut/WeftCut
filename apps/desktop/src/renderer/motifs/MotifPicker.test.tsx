@@ -111,6 +111,7 @@ const untrusted = (id: string, over: Partial<ProjectMotifRow> & { name?: string 
 
 const onClose = vi.fn();
 const onAdded = vi.fn().mockResolvedValue(undefined);
+const onPlaced = vi.fn();
 
 async function renderPicker(catalog: MotifCatalog = { project: [], library: [lib()] }) {
   ipcMocks.listMotifCatalog.mockResolvedValue(catalog);
@@ -119,7 +120,7 @@ async function renderPicker(catalog: MotifCatalog = { project: [], library: [lib
     <MotifPicker
       onClose={onClose}
       onAdded={onAdded}
-      onNewPlaced={vi.fn()}
+      onPlaced={onPlaced}
       compositionId="comp-focused"
       currentTimeUs={1_000_000}
       tracks={[]}
@@ -161,13 +162,15 @@ describe("two groups: this project and the library", () => {
     expect(badge("edited")).toBe("Modified");
     expect(badge("mine")).toBe("Project only");
     expect(badge("gone")).toBe("Missing");
-    expect(within(cardOf("gone", "This project")).getByText("Motifs/gone/ is missing")).toBeTruthy();
-    expect(within(cardOf("torn", "This project")).getByText("Motifs/torn/ is not a valid Motif")).toBeTruthy();
+    expect(badge("torn")).toBe("Invalid");
+    // The card says its status once; the explanation is the selected pane's.
+    expect(within(cardOf("gone", "This project")).queryByText("Motifs/gone/ is missing")).toBeNull();
     // The library row says the project holds its lineage.
     expect(within(cardOf("countdown", "Library")).getByText("In this project")).toBeTruthy();
     // A broken project Motif cannot be placed: selecting it explains instead.
     fireEvent.click(within(group("This project")).getByTitle("gone"));
-    expect(await screen.findByRole("heading", { name: "“gone” can't render" })).toBeTruthy();
+    const gonePane = (await screen.findByRole("heading", { name: "“gone” can't render" })).parentElement!;
+    expect(within(gonePane).getByText("Motifs/gone/ is missing")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Add to timeline" })).toBeNull();
     // An invalid package's own error stays, under the localized lead.
     fireEvent.click(within(group("This project")).getByTitle("torn"));
@@ -199,7 +202,7 @@ describe("two groups: this project and the library", () => {
     expect(within(card).queryByRole("button", { name: "Export Motif ZIP" })).toBeNull();
     // The state (modified) stays behind the badge; the library's take still follows it.
     expect(card.querySelector(".motif-card-status")?.textContent).toBe("Not trusted");
-    expect(within(card).getByText("Not trusted on this machine")).toBeTruthy();
+    expect(within(card).queryByText("Not trusted on this machine")).toBeNull();
     expect(within(card).getByRole("button", { name: "Update project copy" })).toBeTruthy();
     expect(within(card).queryByRole("button", { name: "Restore from library" })).toBeNull();
     expect(within(cardOf("other", "Library")).getByText("In this project · not trusted")).toBeTruthy();
@@ -220,7 +223,7 @@ describe("two groups: this project and the library", () => {
     ipcMocks.listMotifCatalog.mockResolvedValue({ project: [proj({ id: "lower" }), untrusted("received")], library: [lib()] });
     openMotifsPanelAt({ group: "project", id: "received" });
     expect(openPicker).toHaveBeenCalledOnce();
-    render(<MotifPicker onClose={onClose} onAdded={onAdded} onNewPlaced={vi.fn()} compositionId="comp-focused"
+    render(<MotifPicker onClose={onClose} onAdded={onAdded} onPlaced={vi.fn()} compositionId="comp-focused"
       currentTimeUs={0} tracks={[]} fpsNum={30} fpsDen={1} compWidth={1920} compHeight={1080} />);
     expect(await screen.findByRole("region", { name: "Not trusted on this machine" })).toBeTruthy();
     expect(within(group("This project")).getByTitle("received").getAttribute("aria-pressed")).toBe("true");
@@ -234,6 +237,9 @@ describe("two groups: this project and the library", () => {
     await waitFor(() => expect(ipcMocks.addMotif).toHaveBeenCalledTimes(1));
     expect(ipcMocks.addMotif.mock.calls[0]![0]).not.toHaveProperty("fromLibrary");
     expect(ipcMocks.addMotif.mock.calls[0]![0]).toMatchObject({ motifId: "lower" });
+    // The App reveals the placed layer's track: an auto-created one has no
+    // role, and A/B Roll hides it otherwise.
+    await waitFor(() => expect(onPlaced).toHaveBeenCalledWith("layer-new"));
 
     fireEvent.click(within(group("Library")).getByTitle("badge"));
     await waitFor(() => expect(capture.mock.calls.some((c) => c[0] === "badge--library")).toBe(true));

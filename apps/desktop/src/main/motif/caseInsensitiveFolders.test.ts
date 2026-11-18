@@ -4,11 +4,13 @@
 // each entry as it was written. A folder answers only to its exact name, so a
 // table key never reads a folder written in another case (Motif trust).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { composeMotifHtml } from '../../shared/motifs/catalog'
+import { newLineage } from './lineage'
 import { ProjectMotifStore } from './projectStore'
+import { MotifRefusal } from './refusal'
 import { MotifResolver } from './resolver'
 import { UserMotifStore } from './store'
 import { MotifTrust } from './trust'
@@ -84,5 +86,16 @@ describe('a Motif folder named in another case than its key', () => {
     expect(resolver.resolve('Evil')).toMatchObject({ status: 'invalid', revision: null })
     expect(resolver.readFile('evil', 'index.html')).toBeNull()
     expect(resolver.readFile('Evil', 'index.html')).toBeNull()
+  })
+
+  it('refuses a library Motif placed under its name, naming the folder to rename, and writes nothing', () => {
+    const project = received()
+    const pkg = { id: 'evil', uid: newLineage(), version: 1, revision: 'library', files: [{ path: 'index.html', bytes: Buffer.from(page('library')) }] }
+    let refusal: unknown
+    try { project.place(pkg, {}) } catch (error) { refusal = error }
+    expect(refusal).toBeInstanceOf(MotifRefusal)
+    expect((refusal as MotifRefusal).data).toEqual({ error: 'MotifFolderCaseAlias', id: 'evil', folder: 'Evil' })
+    expect((refusal as MotifRefusal).message).toMatch(/Motifs\/Evil differs only in case from evil/)
+    expect(readdirSync(project.root())).toEqual(['Evil'])
   })
 })

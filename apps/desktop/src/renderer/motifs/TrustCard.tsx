@@ -58,7 +58,7 @@ export function TrustCard({ motifId }: { motifId: string }) {
       {changed && <p className="settings-status" role="status">{t("motif_trust.changed")}</p>}
       {error && <p className="settings-error" role="alert">{error}</p>}
       <div className="motif-trust-actions">
-        <Button variant="default" size="sm" disabled={!card || busy} onClick={() => void trust()}>
+        <Button variant="default" size="lg" disabled={!card || busy} onClick={() => void trust()}>
           {busy ? t("motif_trust.trusting") : t("motif_trust.trust")}
         </Button>
       </div>

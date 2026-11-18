@@ -42,7 +42,7 @@ async function recordCoverRequests(app: ElectronApplication): Promise<void> {
   await app.evaluate(({ ipcMain }) => {
     const g = globalThis as any
     g.__coverRequests = []
-    const handlers = (ipcMain as any)._invokeHandlers as Map<string, (event: unknown, request: any) => unknown>
+    const handlers = ipcMain._invokeHandlers
     for (const channel of ['backend:invoke', 'backend:invokePublished']) {
       const handler = handlers.get(channel)!
       handlers.set(channel, (event, request) => {

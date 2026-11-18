@@ -22,6 +22,7 @@ import type { BuiltinMotif } from './authoring'
 import { libraryIdDiagnostic, libraryRows, projectDirOf, projectRows, type MotifGroup } from './catalogRows'
 import { fileChanges } from './fileChanges'
 import { readMotifDirectory, type MotifFile } from './packageFiles'
+import { emptyPackageFiles } from './motifPackage'
 import { libraryPackage, type CreateSource, type ProjectMotifStore } from './projectStore'
 import { LibraryPublications, type Fork, type PublicationSource } from './publications'
 import { MotifRefusal, revisionConflict } from './refusal'
@@ -197,8 +198,9 @@ export function runMotifTool(name: string, rawArgs: Record<string, unknown>, dep
     case 'update_motif_files': {
       const id = subject(a)
       const { project } = projectMotif(id)
-      if (typeof a.expected_revision !== 'string' || !a.expected_revision)
-        throw revisionConflict(project.status(id).revision ?? 'none', 'send the revision read_motif answers as expected_revision')
+      // null repairs a folder whose files make no package (`applyChanges`).
+      if (a.expected_revision !== null && (typeof a.expected_revision !== 'string' || !a.expected_revision))
+        throw revisionConflict(project.status(id).revision, 'send the revision read_motif answers as expected_revision, or null when it answers none')
       const revision = project.applyChanges(id, a.expected_revision, files => fileChanges(files, a.files))
       commit(deps, 'set_project_motif', { motif_id: id, revision }, by)
       changed()
@@ -290,7 +292,7 @@ export function untrustedRefusal(id: string, revision: string): MotifRefusal {
 }
 
 const SOURCE_KEYS: Record<string, readonly string[]> = {
-  empty: ['kind', 'name'], copy: ['kind', 'motif_id', 'group'], zip: ['kind', 'path'], directory: ['kind', 'path'],
+  empty: ['kind', 'name', 'files'], copy: ['kind', 'motif_id', 'group'], zip: ['kind', 'path'], directory: ['kind', 'path'],
 }
 
 /** `create_motif`'s source, checked; `copied` reads the files a copy names. */
@@ -298,15 +300,20 @@ function createSource(raw: unknown, copied: (source: Record<string, unknown>) =>
   const source = raw as Record<string, unknown> | null
   const kind = source && typeof source === 'object' ? source.kind : undefined
   if (typeof kind !== 'string' || !Object.hasOwn(SOURCE_KEYS, kind))
-    throw new Error("source must be one of {kind:'empty', name}, {kind:'copy', motif_id, group?}, {kind:'zip', path}, {kind:'directory', path}")
+    throw new Error("source must be one of {kind:'empty', name?, files?}, {kind:'copy', motif_id, group?}, {kind:'zip', path}, {kind:'directory', path}")
   if (kind === 'zip' && 'file_id' in source!)
     throw new Error("A ZIP source is {kind:'zip', path} with an absolute app-machine path; file_id uploads are gone")
   const extra = Object.keys(source!).filter(k => !SOURCE_KEYS[kind]!.includes(k))
   if (extra.length) throw new Error(`A ${kind} source takes ${SOURCE_KEYS[kind]!.slice(1).join(', ')} only, not ${extra.join(', ')}`)
   switch (kind) {
-    case 'empty':
+    case 'empty': {
       if (source!.name !== undefined && typeof source!.name !== 'string') throw new Error('name must be a string')
-      return { kind, ...(typeof source!.name === 'string' ? { name: source!.name } : {}) }
+      const name = typeof source!.name === 'string' ? source!.name : undefined
+      // The first files, in update_motif_files' form, laid over the empty
+      // package: the Motif is made with them in one commit.
+      const changes = source!.files === undefined ? undefined : fileChanges(emptyPackageFiles(name), source!.files)
+      return { kind, ...(name !== undefined ? { name } : {}), ...(changes ? { changes } : {}) }
+    }
     case 'copy': return { kind, files: copied(source!) }
     default:
       if (typeof source!.path !== 'string' || !path.isAbsolute(source!.path)) throw new Error('Source path must be absolute')

@@ -110,7 +110,7 @@ test('Motif compressed models: Draco, ETC1S and UASTC render, seek and rebuild t
       const workerState = () => app.evaluate(async ({ webContents }, id) => {
         const host = webContents.getAllWebContents().find(w => w.getURL().startsWith('motif://' + id + '/'))!
         // The Motif runs in the capture host page's frame.
-        return host.mainFrame.frames[0]!.executeJavaScript('window.codecWorkers')
+        return host.mainFrame.frames[0]!.executeJavaScript('window.codecWorkers') as Promise<{ created: number; live: number }>
       }, id)
       const initialWorkers = await workerState()
       expect(initialWorkers.created).toBeGreaterThanOrEqual(texture ? 2 : 1)

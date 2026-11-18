@@ -2,13 +2,15 @@
 // external-editor saves included, coalesce through a quiet-window debounce
 // into ONE onChange call; the caller (index.ts) refreshes the actor catalog and
 // emits motifs:changed, and the renderer resync does the rest, so there is no
-// per-file dispatch and no filtering of the app's own writes. The open
+// per-file dispatch and no filtering of the app's own writes, bar the trust
+// record kept beside the library (`spawnMotifWatcher`). The open
 // project's `Motifs/`: a recursive watch that tells which Motif changed and
 // what its folder now holds (`watchProjectMotifs`). The debounce is
 // unit-tested independently of the OS watch.
 import { existsSync, mkdirSync, realpathSync, watch, type FSWatcher } from 'node:fs'
 import path from 'node:path'
 import type { MotifState, ProjectMotifStore } from './projectStore'
+import { TRUST_FILES } from './trust'
 
 /** Quiet window (ms): after a change, wait until this long passes with no
  *  further event, then fire once. Absorbs editor write bursts + multi-file writes. */
@@ -48,12 +50,16 @@ function canonicalDir(dir: string): string {
  *  no user Motifs yet, but the watcher must still attach) and fire `onChange`
  *  once per debounced burst. Errors are forwarded as change signals too: a
  *  watch error means "something may have changed that we missed" — a spurious
- *  resync is harmless, a missed one isn't. */
+ *  resync is harmless, a missed one isn't. The trust record's files
+ *  (`TRUST_FILES`) are no library change: every trust given writes them, and
+ *  each change re-reads every library revision. */
 export function spawnMotifWatcher(root: string, onChange: () => void): MotifWatcher {
   mkdirSync(root, { recursive: true })
   const deb = new Debouncer(DEBOUNCE_QUIET_MS, onChange)
   const watcher = watch(canonicalDir(root), { recursive: true })
-  watcher.on('change', () => deb.signal())
+  watcher.on('change', (_event, name) => {
+    if (name === null || !TRUST_FILES.includes(String(name))) deb.signal()
+  })
   watcher.on('error', () => deb.signal())
   return { close() { deb.cancel(); watcher.close() } }
 }

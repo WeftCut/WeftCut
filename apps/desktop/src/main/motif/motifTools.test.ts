@@ -15,6 +15,7 @@ import { normalize } from './motifPackage'
 import { runMotifTool, type MotifToolDeps } from './motifTools'
 import { projectMotifAccess } from './projectRecords'
 import { libraryPackage, ProjectMotifStore, type RevisionCause } from './projectStore'
+import { MotifRefusal } from './refusal'
 import { UserMotifStore } from './store'
 import { ALL_TRUSTED, type MotifTrustView } from './trust'
 
@@ -169,6 +170,32 @@ describe('create_motif', () => {
     w.close()
     expect(() => w.call('create_motif', { source: { kind: 'empty', name: 'X' } })).toThrow(/No project is open/)
   })
+
+  it('makes an empty Motif with its first files in one commit, so one undo takes it out', () => {
+    const w = world()
+    const before = w.historyLen()
+    const made = w.call('create_motif', { source: { kind: 'empty', name: 'Untitled', files: [
+      { path: 'manifest.json', text: JSON.stringify(manifest('Title Card')) },
+      { path: 'index.html', text: '<html><body><script>motif.define({frame(t){ /* first */ }})</script></body></html>' },
+      { path: 'notes.txt', text: 'hello' },
+    ] } })
+    // The manifest among the files names it.
+    expect(made.motif_id).toBe('title-card')
+    expect(readFileSync(path.join(made.path, 'index.html'), 'utf8')).toContain('/* first */')
+    expect(readFileSync(path.join(made.path, 'notes.txt'), 'utf8')).toBe('hello')
+    expect(w.entries()['title-card']).toMatchObject({ revision: made.revision })
+    expect(w.historyLen()).toBe(before + 1)
+    w.actor.dispatch('undo', {})
+    expect(w.entries()).not.toHaveProperty('title-card')
+  })
+
+  it('refuses first files that make no package, recording nothing', () => {
+    const w = world()
+    const before = w.historyLen()
+    expect(() => w.call('create_motif', { source: { kind: 'empty', name: 'Card', files: [{ path: 'manifest.json', text: '{broken' }] } })).toThrow(/JSON/)
+    expect(w.historyLen()).toBe(before)
+    expect(existsSync(w.folder('card'))).toBe(false)
+  })
 })
 
 describe('update_motif_files', () => {
@@ -196,7 +223,48 @@ describe('update_motif_files', () => {
     w.call('update_motif_files', { motif_id: 'card', expected_revision: added.revision, files: [{ path: 'a.txt', edits: [{ old: 'two', new: '2' }] }] })
     expect(readFileSync(path.join(w.folder('card'), 'a.txt'), 'utf8')).toBe('one 2 one')
   })
+
+  it('repairs a folder whose files make no package with expected_revision null, as one commit', () => {
+    const w = world()
+    w.call('create_motif', { source: { kind: 'empty', name: 'Card' } })
+    const manifestPath = path.join(w.folder('card'), 'manifest.json')
+    const repair = JSON.stringify({ ...JSON.parse(readFileSync(manifestPath, 'utf8')), default_duration_s: 2 })
+    writeFileSync(manifestPath, '{broken')
+    const before = w.historyLen()
+    // A revision names no folder that has none: the refusal says so.
+    const refusal = catchError(() => w.call('update_motif_files', { motif_id: 'card', expected_revision: 'stale', files: [{ path: 'manifest.json', text: repair }] }))
+    expect(refusal).toBeInstanceOf(MotifRefusal)
+    expect((refusal as MotifRefusal).data).toEqual({ error: 'RevisionConflict', current_revision: null })
+    // A batch that leaves it invalid writes nothing.
+    expect(() => w.call('update_motif_files', { motif_id: 'card', expected_revision: null, files: [{ path: 'notes.txt', text: 'x' }] })).toThrow(/JSON/)
+    expect(existsSync(path.join(w.folder('card'), 'notes.txt'))).toBe(false)
+    expect(w.historyLen()).toBe(before)
+
+    const repaired = w.call('update_motif_files', { motif_id: 'card', expected_revision: null, files: [{ path: 'manifest.json', text: repair }] })
+    expect(w.historyLen()).toBe(before + 1)
+    expect(w.lastOp().actor).toEqual(AGENT)
+    expect(w.entries().card!.revision).toBe(repaired.revision)
+    expect(w.call('read_motif', { motif_id: 'card' })).toMatchObject({ status: 'ok', revision: repaired.revision })
+  })
+
+  it('refuses expected_revision null for a folder that makes a package, naming its revision', () => {
+    const w = world()
+    const made = w.call('create_motif', { source: { kind: 'empty', name: 'Card' } })
+    const files = tree(w.folder('card'))
+    const before = w.historyLen()
+    const refusal = catchError(() => w.call('update_motif_files', { motif_id: 'card', expected_revision: null, files: [{ path: 'notes.txt', text: 'x' }] }))
+    expect(refusal).toBeInstanceOf(MotifRefusal)
+    expect((refusal as MotifRefusal).data).toEqual({ error: 'RevisionConflict', current_revision: made.revision })
+    expect(tree(w.folder('card'))).toEqual(files)
+    expect(w.historyLen()).toBe(before)
+  })
 })
+
+/** What `fn` throws; fails the test when it returns. */
+function catchError(fn: () => unknown): unknown {
+  try { fn() } catch (error) { return error }
+  throw new Error('expected a throw')
+}
 
 describe('delete_motif', () => {
   it('removes a Motif no layer uses from the project, keeping its folder; one in use is refused', () => {
