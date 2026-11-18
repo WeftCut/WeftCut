@@ -9,15 +9,6 @@ import { describe, expect, it } from 'vitest'
 const ROOTS = ['src/main', 'src/shared', 'src/preload']
 const OWNERS = new Set(['src/shared/projectPath.ts', 'src/main/state/projectPathNative.ts'])
 
-/** Files that still convert by hand. The path-hygiene work packages remove
- *  each entry as its file moves onto projectPath; the last test below fails
- *  on an entry that no longer violates, so the list only shrinks. */
-const PENDING = [
-  'src/main/state/importSource.ts',
-  'src/main/state/mediaImport.ts',
-  'src/main/state/relink.ts',
-]
-
 /** Comments talk about the rule on purpose; only code is under it. */
 function code(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
@@ -84,11 +75,6 @@ describe('project paths convert only through projectPathNative', () => {
   })
 
   it('no file outside the owners joins or splits a path_rel by hand', () => {
-    const unexpected = Object.fromEntries([...VIOLATIONS].filter(([f]) => !PENDING.includes(f)))
-    expect(unexpected).toEqual({})
-  })
-
-  it('every PENDING file still violates', () => {
-    expect(PENDING.filter((f) => !VIOLATIONS.has(f))).toEqual([])
+    expect(Object.fromEntries(VIOLATIONS)).toEqual({})
   })
 })

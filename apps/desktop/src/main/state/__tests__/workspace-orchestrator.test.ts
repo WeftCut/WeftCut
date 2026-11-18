@@ -163,12 +163,13 @@ describe('openProject', () => {
     const relink = {
       fs: {
         exists: (p: string) => disk.has(p),
-        listDir: (d: string) => [...disk.keys()].filter((p) => p.startsWith(d + '/')).map((p) => p.slice(d.length + 1)),
+        walk: (d: string) => [...disk.keys()].filter((p) => p.startsWith(d + '/'))
+          .map((p) => ({ segments: p.slice(d.length + 1).split('/'), abs: p, size: disk.get(p)!.length })),
         statFile: (p: string) => (disk.has(p) ? { size: disk.get(p)!.length, mtimeSecs: 9 } : null),
         rename: (from: string, to: string) => { disk.set(to, disk.get(from)!); disk.delete(from) },
       },
-      join: posixJoin,
       hashFile: async (p: string) => `b3:${disk.get(p) ?? ''}`,
+      platform: 'linux' as const,
     }
     const reports: unknown[] = []
     let swapped: any
@@ -190,12 +191,13 @@ describe('openProject', () => {
     const relink = {
       fs: {
         exists: (p: string) => disk.has(p),
-        listDir: (d: string) => [...disk.keys()].filter((p) => p.startsWith(d + '/')).map((p) => p.slice(d.length + 1)),
+        walk: (d: string) => [...disk.keys()].filter((p) => p.startsWith(d + '/'))
+          .map((p) => ({ segments: p.slice(d.length + 1).split('/'), abs: p, size: disk.get(p)!.length })),
         statFile: (p: string) => (disk.has(p) ? { size: disk.get(p)!.length, mtimeSecs: 9 } : null),
         rename: (from: string, to: string) => { disk.set(to, disk.get(from)!); disk.delete(from) },
       },
-      join: posixJoin,
       hashFile: async (p: string) => `b3:${disk.get(p) ?? ''}`,
+      platform: 'linux' as const,
     }
     const d = deps({ fs, relink, onRelink: () => { throw new Error('emit failed') } })
     await openProject(d, '/ws')
@@ -206,8 +208,7 @@ describe('openProject', () => {
   it('opens the un-healed project when the relink pass itself throws', async () => {
     const fs = memFs({ [`/ws/${PROJECT_FILE}`]: managedJson }); fs.dirs.add('/ws')
     const relink = {
-      fs: { exists: (): boolean => { throw new Error('boom') }, listDir: () => [], statFile: () => null, rename: () => {} },
-      join: posixJoin,
+      fs: { exists: (): boolean => { throw new Error('boom') }, walk: () => [], statFile: () => null, rename: () => {} },
       hashFile: async () => '',
     }
     const reports: unknown[] = []

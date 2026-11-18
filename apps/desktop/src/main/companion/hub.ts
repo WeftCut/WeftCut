@@ -10,6 +10,7 @@ import path from 'node:path'
 import type { TsActorHost } from '../state/ts-actor-host.js'
 import type { Layer, Project } from '../state/model.js'
 import { rootComposition } from '../state/model.js'
+import { projectPathBase } from '../../shared/projectPath.js'
 import { exportTerminal, type ExportJob, type ExportJobState } from '../../shared/exportJob.js'
 import { AGENT_ACTIVITY_EVENT, type AgentActivityUpdate } from '../../shared/agent-activity.js'
 import {
@@ -300,7 +301,7 @@ function clip(layer: Layer, p: Project): CompanionClip {
 function shown(params: ShownParams, p: Project): string {
   if (params.kind === 'Text' && params.content !== undefined) return params.content.split('\n')[0]!
   const media = params.media === undefined ? undefined : p.media_pool[params.media]
-  if (media !== undefined) return media.label ?? path.basename(media.path_rel ?? media.path_abs)
+  if (media !== undefined) return media.label ?? (media.path_rel ? projectPathBase(media.path_rel) : path.basename(media.path_abs))
   if (params.composition !== undefined) return p.compositions[params.composition]?.label ?? ''
   return params.motif_id ?? ''
 }

@@ -199,8 +199,10 @@ describe('runHybrid: apply_subtitles', () => {
 const AUDIO_MID = '00000000-0000-0000-0000-0000000000bb'
 const DURATION_US = 2_000_000
 
+const VOICEOVER_HASH = 'b3-voiceover-bytes'
+
 function audioMediaItem(): import('../model').MediaItem {
-  return mediaItemTemplate(AUDIO_MID, 'Audio', DURATION_US)
+  return { ...mediaItemTemplate(AUDIO_MID, 'Audio', DURATION_US), file_hash_blake3: VOICEOVER_HASH }
 }
 
 /** Fake synthesizeSpeechCompute payload: {media_item, duration_us, cached}. */
@@ -336,6 +338,33 @@ describe('runHybrid: synthesize_speech (MCP hybrid)', () => {
     await expect(runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, target_track_id: track, t_start_us: 1_000_000 }, deps)).rejects.toThrow()
     expect(actor.snapshot().media_pool[AUDIO_MID]).toBeUndefined()
     expect(deps._enqueueDerivatives).not.toHaveBeenCalled()
+  })
+
+  it('places the pooled item that already holds the voiceover bytes instead of adding another (ADR 0151)', async () => {
+    const actor = freshActor()
+    const deps = makeDeps(actor)
+    const POOLED = '00000000-0000-0000-0000-0000000000cc'
+    expect(actor.dispatch('add_media_item', { media: { ...audioMediaItem(), id: POOLED } }).ok).toBe(true)
+    deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload(true))
+    const parsed = JSON.parse(await runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1 }, deps) as string) as { layer_id: string; media_id: string }
+    expect(parsed.media_id).toBe(POOLED)
+    expect(Object.keys(actor.snapshot().media_pool)).toEqual([POOLED])
+    const placed = root(actor.snapshot()).tracks.flatMap((t) => t.layers).find((l) => l.id === parsed.layer_id)!
+    expect((placed.params as import('../model').AudioParams).media).toBe(POOLED)
+  })
+
+  it('a refused placement keeps the pooled item it would have reused', async () => {
+    const actor = freshActor()
+    const deps = makeDeps(actor)
+    const track = root(actor.snapshot()).tracks[1].id
+    const POOLED = '00000000-0000-0000-0000-0000000000cc'
+    expect(actor.dispatch('add_media_item', { media: { ...audioMediaItem(), id: POOLED } }).ok).toBe(true)
+    const BUSY = '00000000-0000-0000-0000-0000000000ee'
+    actor.dispatch('add_media', { id: BUSY, kind: 'Audio', duration_us: 4_000_000 })
+    expect(actor.dispatch('add_layer', { track, kind: 'audio', media: BUSY, src_in_us: 0, src_out_us: 4_000_000, t_start_us: 0, t_end_us: 4_000_000 }).ok).toBe(true)
+    deps.compute.synthesizeSpeechCompute = vi.fn(async () => fakeSpeechComputePayload())
+    await expect(runHybrid('synthesize_speech', { text: 'hi', voice: 'alloy', speed: 1, target_track_id: track, t_start_us: 1_000_000 }, deps)).rejects.toThrow()
+    expect(actor.snapshot().media_pool[POOLED]).toBeTruthy()
   })
 
   it('names the voiceover lane rule: a busy audio lane is skipped', () => {

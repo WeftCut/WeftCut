@@ -1,9 +1,10 @@
 import { captureImportSession, type MediaImportDeps } from './mediaImport'
 import type { MediaItem } from './model'
 
-/** Resume the durable half of imports interrupted between probe, hash and copy.
- * Generated Cache/ sources are already workspace-owned and must not be copied
- * into Media/. Work is sequential; a large reopen cannot fan out hash readers. */
+/** Resume the durable half of imports interrupted between probe, hash and copy:
+ * an item still provisional is hashed when its file is there, and an item
+ * outside the project folder is copied in. Work is sequential; a large reopen
+ * cannot fan out hash readers. */
 export async function recoverInterruptedImports(
   deps: MediaImportDeps,
   report: (mediaId: string, error: unknown) => void,
@@ -14,8 +15,6 @@ export async function recoverInterruptedImports(
   const dir = deps.workspaceDir()
   if (!dir) return
   const assertCurrent = captureImportSession(deps)
-  const normalized = (p: string) => p.replaceAll('\\', '/').replace(/\/$/, '')
-  const cachePrefix = normalized(dir) + '/Cache/'
   const items = Object.values(deps.actor.snapshot().media_pool)
     .filter(item => item.file_hash_blake3.startsWith('pending-') || item.path_rel === null)
   for (const item of items) {
@@ -37,7 +36,7 @@ export async function recoverInterruptedImports(
       }
       // A producer may have completed the copy while the hash was running.
       current = deps.actor.snapshot().media_pool[item.id]
-      if (current?.path_rel === null && !normalized(current.path_abs).startsWith(cachePrefix)) {
+      if (current?.path_rel === null) {
         if (holds && !(await holds(current))) continue
         assertCurrent()
         await deps.enqueueWorkspaceCopy(item.id, current.path_abs)

@@ -425,6 +425,8 @@ describe('ensureImported', () => {
         const { id, deps, item } = await relinked('C:/proj/Media/restored/x.mp4')
         expect(id).toBe(HELD)
         expect(item.path_rel).toBe('Media/restored/x.mp4')
+        // The OS path its project path names, not the source as spelled.
+        expect(item.path_abs).toBe('C:\\proj\\Media\\restored\\x.mp4')
         expect(deps._enqueueWorkspaceCopy).not.toHaveBeenCalled()
       })
 
@@ -579,7 +581,8 @@ describe('ensureImported', () => {
       expect(deps._enqueueWorkspaceCopy).not.toHaveBeenCalled()
       const item = actor.snapshot().media_pool[MID]
       expect(item.path_rel).toBe('Media/x.mp4')
-      expect(item.path_abs).toBe('C:/proj/Media/x.mp4')
+      // The OS path its project path names, not the source as spelled.
+      expect(item.path_abs).toBe('C:\\proj\\Media\\x.mp4')
       expect(item.file_hash_blake3).toBe('realhash-deadbeef')
     })
 

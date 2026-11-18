@@ -6,10 +6,8 @@
 // `platform` picks the path rules, so a test on Linux can speak Windows paths.
 import path from 'node:path'
 import type { MediaItem } from './model'
-import { isPortableSegment, projectPathOf, type ProjectPath } from '../../shared/projectPath'
-
-/** The folder the import copy writes into (native `jobs/import.rs` MEDIA_DIR). */
-const MEDIA_DIR = 'Media'
+import { MEDIA, parseProjectPath, type ProjectPath } from '../../shared/projectPath'
+import { fromNative, toNative } from './projectPathNative'
 /** The probe's provisional hash (native `media_item_from_metadata`). */
 const PENDING_HASH = 'pending-'
 
@@ -107,22 +105,22 @@ export function nextImportStep(input: {
   return recorded.length ? { kind: 'relink', id: recorded[0].id } : { kind: 'add' }
 }
 
-/** `source`'s path relative to the project folder when it already sits under
- *  the project's Media/ folder with names valid on every OS, else null. A
- *  folder is Media/ when it is the same folder, however the two paths spell
- *  it. */
+/** `source`'s project path when it already sits under the project's Media/
+ *  folder with names valid on every OS, else null: such a file is copied in
+ *  under a portable name instead. A folder is Media/ when it is the same
+ *  folder, however the two paths spell it. */
 export function mediaFolderPath(
   workspaceDir: string, source: string,
   realPath: (p: string) => string, fileKey: FileKey, platform: NodeJS.Platform,
 ): ProjectPath | null {
   const lib = pathLib(platform)
-  const media = fileKey(lib.join(workspaceDir, MEDIA_DIR))
+  const media = fileKey(toNative(workspaceDir, MEDIA, platform))
   if (media === null) return null
   const file = realPath(source)
   for (let dir = lib.dirname(file); ; dir = lib.dirname(dir)) {
     if (fileKey(dir) === media) {
-      const segments = lib.relative(dir, file).split(lib.sep)
-      return segments.every(isPortableSegment) ? projectPathOf(MEDIA_DIR, ...segments) : null
+      const inside = fromNative(dir, file, platform)
+      return inside === null ? null : parseProjectPath(`${MEDIA}/${inside}`)
     }
     if (lib.dirname(dir) === dir) return null
   }

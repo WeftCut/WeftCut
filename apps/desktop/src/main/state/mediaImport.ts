@@ -7,7 +7,8 @@ import { parseProjectPath, type ProjectPath } from '../../shared/projectPath'
 import { McpArgError, mapCommandError } from './mcp-commands'
 import type { ImportTrace } from '../importDiagnostics'
 import { hasFailedDerivative } from './derivative-jobs'
-import { absoluteSource, mediaFolderPath, nextImportStep, pathLib, spelledKey, type FileKey, type Holding } from './importSource'
+import { absoluteSource, mediaFolderPath, nextImportStep, spelledKey, type FileKey, type Holding } from './importSource'
+import { toNative } from './projectPathNative'
 
 export type MediaImportDeps = {
   beginImport?: () => ImportTrace
@@ -137,7 +138,7 @@ async function ensureImported(asked: string, deps: MediaImportDeps, write: Write
     const pending = reserved.get(mediaId)
     const workspaceDir = deps.workspaceDir()
     const copying = item && item.path_rel === null && pending && pending.source === item.path_abs && workspaceDir
-      ? { path_rel: pending.path_rel, path_abs: pathLib(deps.platform ?? process.platform).join(workspaceDir, pending.path_rel) }
+      ? { path_rel: pending.path_rel, path_abs: toNative(workspaceDir, pending.path_rel, deps.platform ?? process.platform) }
       : null
     return { mediaId, disposition, existing: priorIds.has(mediaId), copying, sameContentAs: hash === undefined ? []
       : Object.values(pool).filter(m => m.id !== mediaId && m.file_hash_blake3 === hash).map(m => m.id) }
@@ -163,6 +164,7 @@ async function ensureImported(asked: string, deps: MediaImportDeps, write: Write
     const hashSource = () => (trace ? deps.compute.hashMediaSource(path, trace.id) : deps.compute.hashMediaSource(path))
     const workspaceDir = deps.workspaceDir()
     const inMedia = workspaceDir ? mediaFolderPath(workspaceDir, path, realPath, fileKey, platform) : null
+    const inPlace = workspaceDir && inMedia ? { path_rel: inMedia, path_abs: toNative(workspaceDir, inMedia, platform) } : null
     // Every await below is followed by a fresh decision over the pool as it
     // is then, so the final one runs in the same turn as its write: two
     // imports racing through their reads still land one row, one relink.
@@ -195,7 +197,7 @@ async function ensureImported(asked: string, deps: MediaImportDeps, write: Write
         return outcome(step.id, 'reused')
       } else {
         const held = deps.actor.snapshot().media_pool[step.id]
-        const relinked = relink(held, item, path, workspaceDir, inMedia, assertCurrent, write, deps, reserved).then(() => held.id)
+        const relinked = relink(held, item, path, workspaceDir, inPlace, assertCurrent, write, deps, reserved).then(() => held.id)
         inFlight.set(held.id, relinked)
         try { await relinked }
         finally { inFlight.delete(held.id) }
@@ -207,8 +209,8 @@ async function ensureImported(asked: string, deps: MediaImportDeps, write: Write
     }
     const r = write('add_media_item', { media: item })
     if (!r.ok) throw new Error(JSON.stringify(r.error))
-    trace?.bind(item, Boolean(workspaceDir) && !inMedia)
-    const settled = settleImport(item, path, hash, { hashSource, workspaceDir, inMedia, assertCurrent, write, trace, reserved }, deps)
+    trace?.bind(item, Boolean(workspaceDir) && !inPlace)
+    const settled = settleImport(item, path, hash, { hashSource, workspaceDir, inPlace, assertCurrent, write, trace, reserved }, deps)
     inFlight.set(item.id, settled)
     try {
       const mediaId = await settled
@@ -234,30 +236,35 @@ async function holdingOf(item: MediaItem, deps: MediaImportDeps): Promise<Holdin
   catch { return 'gone' }
 }
 
+/** Where a source already under Media/ is recorded: its project path and the
+ *  OS path that names, never the source as the caller spelled it. */
+type InPlace = { path_rel: ProjectPath; path_abs: string }
+
 /** Point `held`, whose own file no longer holds its bytes (gone or
  *  overwritten), at `path`, a file `found` by its probe to hold them: recorded
  *  in place under Media/, else copied in as an import's source is. Its
  *  derivatives regenerate whatever left with the file. */
 async function relink(
-  held: MediaItem, found: MediaItem, path: string, workspaceDir: string | null, inMedia: string | null,
+  held: MediaItem, found: MediaItem, path: string, workspaceDir: string | null, inPlace: InPlace | null,
   assertCurrent: () => void, write: Write, deps: MediaImportDeps, reserved: Reservations,
 ): Promise<void> {
   const r = write('set_media_workspace_paths', { media: held.id, paths: {
-    path_abs: path, path_rel: inMedia, file_hash_blake3: held.file_hash_blake3, file_size: found.file_size, file_mtime: found.file_mtime } })
+    ...(inPlace ?? { path_abs: path, path_rel: null }),
+    file_hash_blake3: held.file_hash_blake3, file_size: found.file_size, file_mtime: found.file_mtime } })
   if (!r.ok) throw new Error(JSON.stringify(r.error))
   await deps.enqueueDerivatives([deps.actor.snapshot().media_pool[held.id]])
   assertCurrent()
-  if (workspaceDir && !inMedia) await enqueueCopy(deps, reserved, held.id, path)
+  if (workspaceDir && !inPlace) await enqueueCopy(deps, reserved, held.id, path)
 }
 
 /** The rest of an import once its provisional row is in the pool: the real
  *  hash, derivatives, then the workspace copy. A failed hash read rolls the row
  *  back. Shared with any import of the same file that lands meanwhile. */
 async function settleImport(item: MediaItem, path: string, hashed: string | null, ctx: {
-  hashSource: () => Promise<string>; workspaceDir: string | null; inMedia: string | null
+  hashSource: () => Promise<string>; workspaceDir: string | null; inPlace: InPlace | null
   assertCurrent: () => void; write: Write; trace: ImportTrace | undefined; reserved: Reservations
 }, deps: MediaImportDeps): Promise<string> {
-  const { hashSource, workspaceDir, inMedia, assertCurrent, write, trace, reserved } = ctx
+  const { hashSource, workspaceDir, inPlace, assertCurrent, write, trace, reserved } = ctx
   let hash = hashed
   // Compute the REAL content hash (a lightweight standalone read pass), set it
   // on the pool item, THEN enqueue derivatives — so every job bakes the final
@@ -292,9 +299,9 @@ async function settleImport(item: MediaItem, path: string, hashed: string | null
   // re-confirms the same hash, and flips path_abs via the media:workspace_paths
   // seam. No-op napi when no workspace. A source already under Media/ is
   // where the copy would land: it is recorded in place instead.
-  if (inMedia) {
+  if (inPlace) {
     const wr = write('set_media_workspace_paths', { media: item.id, paths: {
-      path_abs: path, path_rel: inMedia, file_hash_blake3: hash, file_size: item.file_size, file_mtime: item.file_mtime } })
+      ...inPlace, file_hash_blake3: hash, file_size: item.file_size, file_mtime: item.file_mtime } })
     if (!wr.ok) throw new Error(JSON.stringify(wr.error))
   } else if (workspaceDir) await enqueueCopy(deps, reserved, item.id, path)
   assertCurrent()

@@ -222,9 +222,10 @@ export function mediaCard(p: Project, id: string): Record<string, unknown> | nul
     resources: MEDIA_SUBRESOURCES[item.kind].map((r) => `${PREFIX_MEDIA}${id}/${r}`) }
 }
 
-/** `project://media`: the pool keyed by media id, each row the stored item
- *  with `media_id` for its id (the key `import_media` answers) and its
- *  `derivatives`. */
+/** `project://media`: the pool keyed by media id, each row the item as this
+ *  session holds it (`path_abs` and the derivative paths are this machine's,
+ *  not the project file's) with `media_id` for its id (the key `import_media`
+ *  answers) and its `derivatives`. */
 function mediaRows(p: Project): Record<string, unknown> {
   return Object.fromEntries(Object.entries(p.media_pool).map(([key, item]) => {
     const { id, ...stored } = item
