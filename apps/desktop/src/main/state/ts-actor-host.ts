@@ -706,7 +706,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     if (!revision) throw new Error(diagnostic ?? `Motifs/${id}/ holds no Motif package`)
     const files = () => {
       const snapshot = project.snapshot(id)
-      if (snapshot?.revision !== revision) throw revisionConflict(snapshot?.revision ?? 'none', 'look at the Motif again')
+      if (snapshot?.revision !== revision) throw revisionConflict(snapshot?.revision ?? null, 'look at the Motif again')
       return snapshot.files
     }
     return { motif_id: id, revision, trusted: motifTrust.trusted(revision, id), summary: motifTrustSummary(revision, files) }
@@ -720,7 +720,7 @@ export function createTsActorHost(deps: TsActorHostDeps): TsActorHost {
     if (!deps.motifTrust) throw new Error('motifTool: trust record not configured')
     const current = project.status(id).revision
     if (typeof args.revision !== 'string' || current !== args.revision)
-      throw revisionConflict(current ?? 'none', 'look at the Motif again before trusting it')
+      throw revisionConflict(current ?? null, 'look at the Motif again before trusting it')
     deps.motifTrust.trustNow(current)
     deps.send('motifs:changed', {})
     deps.mcpResourcesChanged?.()

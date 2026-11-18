@@ -14,7 +14,7 @@ import { declaredManifest, declaredPackage, emptyPackageFiles, normalize, replac
 import { motifFileSegments, readMotifDirectory, readMotifFile, sameStamps, stampMotifDirectory, type MotifFile } from './packageFiles'
 import { PackageRevisions, type PackageStamp } from './packageRevisions'
 import { PackageSource, type PackageListing, type PackageSnapshot } from './packageSource'
-import { revisionConflict } from './refusal'
+import { caseAliasRefusal, revisionConflict } from './refusal'
 import type { UserMotifStore } from './store'
 
 /** The folder under a project that holds its Motifs. */
@@ -38,10 +38,12 @@ export interface MotifState { status: MotifStatus; revision: string | null; diag
 /** A library or built-in package to copy into a project. */
 export interface LibraryPackage { id: string; uid: string; version: number; revision: string; files: readonly MotifFile[] }
 
-/** Where a Motif made in a project starts. `copy` takes the files of any
- *  Motif the caller read; `zip` keeps the lineage the archive names. */
+/** Where a Motif made in a project starts. `empty` is the empty package,
+ *  with `changes` (path to bytes, null to delete) laid over it when given;
+ *  `copy` takes the files of any Motif the caller read; `zip` keeps the
+ *  lineage the archive names. */
 export type CreateSource =
-  | { kind: 'empty'; name?: string }
+  | { kind: 'empty'; name?: string; changes?: ReadonlyMap<string, Buffer | null> }
   | { kind: 'copy'; files: readonly MotifFile[] }
   | { kind: 'zip'; path: string }
   | { kind: 'directory'; path: string }
@@ -171,6 +173,15 @@ export class ProjectMotifStore {
     }).sort()
   }
 
+  /** The entry under `Motifs/` whose name differs from `id` only in case;
+   *  null when there is none. */
+  private caseAlias(id: string): string | null {
+    let names: string[]
+    try { names = readdirSync(this.dir) } catch { return null }
+    const folded = id.toLowerCase()
+    return names.find(name => name !== id && name.toLowerCase() === folded) ?? null
+  }
+
   /** Whether an entry named exactly `id` is under `Motifs/`, a folder or
    *  anything else.
    *
@@ -238,11 +249,16 @@ export class ProjectMotifStore {
    *  copying again changes nothing; one that makes none is never written
    *  over, and its diagnostic is thrown. A kept folder holding other bytes
    *  than `files` is heard as `opened`: it was not made by this call.
-   *  `base` goes to the listeners with `cause` (`RevisionListener`). */
+   *  `base` goes to the listeners with `cause` (`RevisionListener`). A
+   *  folder named `id` in another case is refused before anything is written:
+   *  a case-insensitive file system (macOS, Windows) cannot hold both, and
+   *  the project must open on one. */
   materialize(id: string, files: readonly MotifFile[], cause: RevisionCause, base: string | null = null): string {
     const dir = this.folder(id)
     let wrote = false
     if (!this.present(id)) {
+      const alias = this.caseAlias(id)
+      if (alias !== null) throw caseAliasRefusal(alias, id)
       validateFiles(files)
       mkdirSync(this.dir, { recursive: true })
       const staging = path.join(this.dir, `.stage-${randomUUID()}`)
@@ -314,7 +330,11 @@ export class ProjectMotifStore {
     let carried: string | null = null
     let came: string | null = null
     switch (source.kind) {
-      case 'empty': files = emptyPackageFiles(source.name); break
+      case 'empty': {
+        const empty = emptyPackageFiles(source.name)
+        files = source.changes ? withChanges(empty, source.changes) : empty
+        break
+      }
       case 'copy': files = source.files; break
       case 'directory': {
         if (!path.isAbsolute(source.path)) throw new Error('Source path must be absolute')
@@ -377,28 +397,42 @@ export class ProjectMotifStore {
 
   /** Applies `changes` (path to bytes, null to delete) to `id`'s folder,
    *  whose revision must be `expected`; a function makes them from the files
-   *  the folder holds. The whole result must make a package before any file
-   *  is written; the files are written one by one (`writeThrough`). Answers
-   *  the new revision, heard as an edit of the one read, which is observed
-   *  first when this store last saw another. */
-  applyChanges(id: string, expected: string,
+   *  the folder holds. `expected` null repairs a folder whose files make no
+   *  package, which has no revision; a folder that makes one refuses it. The
+   *  whole result must make a package before any file is written; the files
+   *  are written one by one (`writeThrough`). Answers the new revision, heard
+   *  as an edit of the one read, which is observed first when this store last
+   *  saw another; a repair is heard as an edit of the last package seen. */
+  applyChanges(id: string, expected: string | null,
     changes: ReadonlyMap<string, Buffer | null> | ((files: readonly MotifFile[]) => ReadonlyMap<string, Buffer | null>)): string {
     const dir = this.packageFolder(id)
     if (!dir) throw new Error(`Motif '${id}' has no folder in this project`)
-    const { files, revision, stamp } = this.source.read(dir)
+    const { files, revision, stamp } = this.readForEdit(id, dir, expected)
     if (!stamp) throw new Error('The Motif folder changed while it was read; read it again')
-    if (revision !== expected) throw revisionConflict(revision, 'read the Motif again and merge')
-    this.saw(id, revision)
+    if (revision !== expected) throw revisionConflict(revision, revision === null
+      ? 'send expected_revision: null to repair its files'
+      : expected === null ? 'it makes a package: send its revision as expected_revision' : 'read the Motif again and merge')
+    if (revision !== null) this.saw(id, revision)
     if (typeof changes === 'function') changes = changes(files)
-    const next = new Map(files.map(f => [f.path, f.bytes]))
-    for (const [rel, bytes] of changes) {
-      if (bytes) next.set(rel, bytes)
-      else next.delete(rel)
-    }
-    const { revision: after } = declaredPackage([...next].map(([p, bytes]) => ({ path: p, bytes })), id)
+    const { revision: after } = declaredPackage(withChanges(files, changes), id)
     writeThrough(dir, stamp, files, changes)
-    this.emit(id, after, 'edited-while-open', revision)
+    this.emit(id, after, 'edited-while-open', revision ?? this.observed.get(id) ?? null)
     return after
+  }
+
+  /** `id`'s files for an edit, with their revision: null when they make no
+   *  package. A valid folder is read through its revision records unless the
+   *  caller repairs (`expected` null); a folder that cannot be read throws. */
+  private readForEdit(id: string, dir: string, expected: string | null): { files: MotifFile[]; revision: string | null; stamp: PackageStamp | null } {
+    if (expected !== null) {
+      try { return this.source.read(dir) } catch (error) {
+        const { files, stamp } = this.source.revisions.read(dir)
+        if (revisionOf(files, id) !== null) throw error
+        return { files, revision: null, stamp }
+      }
+    }
+    const { files, stamp } = this.source.revisions.read(dir)
+    return { files, revision: revisionOf(files, id), stamp }
   }
 
   /** The project becomes the open one: every folder under `Motifs/` is
@@ -486,6 +520,16 @@ export class ProjectMotifStore {
 /** The id a folder's content is hashed under for `contentKey`: any fixed
  *  one, as `declaredPackage` checks no id. */
 const CONTENT_KEY_ID = 'content'
+
+/** `files` with `changes` (path to bytes, null to delete) applied. */
+function withChanges(files: readonly MotifFile[], changes: ReadonlyMap<string, Buffer | null>): MotifFile[] {
+  const next = new Map(files.map(f => [f.path, f.bytes]))
+  for (const [rel, bytes] of changes) {
+    if (bytes) next.set(rel, bytes)
+    else next.delete(rel)
+  }
+  return [...next].map(([rel, bytes]) => ({ path: rel, bytes }))
+}
 
 /** The revision `files` make under `id`; null when they make no package. */
 function revisionOf(files: readonly MotifFile[], id: string): string | null {

@@ -37,6 +37,17 @@ export interface ResolvedMotif extends MotifRoute {
   diagnostic?: string
 }
 
+/** `gate`'s refusal: the host's Motif is in a state that does not render
+ *  (its folder gone, its package broken, its revision untrusted). The state
+ *  is the Motif's, and its listing shows it; the capture refused has nothing
+ *  wrong with it, as when a folder is deleted while its captures are in
+ *  flight. A `content` MotifError to every caller. */
+export class MotifGateRefusal extends MotifError {
+  constructor(readonly status: Exclude<MotifStatus, 'ok'>, detail: string) {
+    super('content', detail)
+  }
+}
+
 /** A package that may render. */
 export interface RenderableMotif { manifest: Manifest; revision: string }
 
@@ -177,11 +188,11 @@ export class MotifResolver {
     }
   }
 
-  /** The host's package when it may render; throws a `content` MotifError
+  /** The host's package when it may render; throws a `MotifGateRefusal`
    *  naming why not. */
   gate(host: string): RenderableMotif {
     const resolved = this.resolve(host)
-    if (resolved.status !== 'ok') throw new MotifError('content', resolved.diagnostic ?? `Motif '${host}' is ${resolved.status}`)
+    if (resolved.status !== 'ok') throw new MotifGateRefusal(resolved.status, resolved.diagnostic ?? `Motif '${host}' is ${resolved.status}`)
     return { manifest: resolved.manifest!, revision: resolved.revision! }
   }
 

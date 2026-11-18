@@ -8,7 +8,7 @@ import { motifFrameCacheKey } from '../../renderer/render/motifs/motifFrames'
 import { builtinMotifs, motifRevision } from './authoring'
 import { normalize } from './motifPackage'
 import { ProjectMotifStore } from './projectStore'
-import { MotifResolver, routeOfHost } from './resolver'
+import { MotifGateRefusal, MotifResolver, routeOfHost } from './resolver'
 import { PROPOSALS_DIR, UserMotifStore } from './store'
 import type { MotifTrustView } from './trust'
 
@@ -63,6 +63,11 @@ describe('resolving a host', () => {
     expect(resolver.resolve('badge')).toMatchObject({ scope: 'project', status: 'missing', diagnostic: expect.stringMatching(/No project is open/) })
     const project = openProject('Film')
     expect(resolver.resolve('badge')).toMatchObject({ status: 'missing', diagnostic: expect.stringMatching(/no folder/) })
+    // The Motif's state, not a capture failure: capture answers it without an error row.
+    let refusal: unknown
+    try { resolver.gate('badge') } catch (error) { refusal = error }
+    expect(refusal).toBeInstanceOf(MotifGateRefusal)
+    expect(refusal).toMatchObject({ code: 'content', status: 'missing' })
     projectMotif(project, 'badge', { 'art.svg': '<svg/>' })
     expect(resolver.resolve('badge')).toEqual({ scope: 'project', id: 'badge', status: 'ok', revision: project.status('badge').revision,
       manifest: expect.objectContaining({ id: 'badge', size: [320, 180] }) })
@@ -77,7 +82,7 @@ describe('resolving a host', () => {
     projectMotif(project, 'broken', { 'manifest.json': '{ not json', 'art.svg': '<svg/>' })
     expect(resolver.resolve('broken')).toMatchObject({ status: 'invalid', revision: null, diagnostic: expect.any(String) })
     expect(resolver.readFile('broken', 'art.svg')).toBeNull()
-    expect(() => resolver.gate('broken')).toThrow(expect.objectContaining({ code: 'content' }))
+    expect(() => resolver.gate('broken')).toThrow(expect.objectContaining({ code: 'content', status: 'invalid' }))
     expect(() => resolver.pin('broken', 'a'.repeat(64))).toThrow(expect.objectContaining({ code: 'content' }))
   })
 
@@ -89,7 +94,7 @@ describe('resolving a host', () => {
     expect(resolver.resolve('received')).toEqual({ scope: 'project', id: 'received', status: 'untrusted', revision,
       manifest: expect.objectContaining({ id: 'received' }), diagnostic: expect.stringMatching(/not trusted on this machine/) })
     for (const file of ['index.html', 'params.html', 'art.svg']) expect(resolver.readFile('received', file), file).toBeNull()
-    expect(() => resolver.gate('received')).toThrow(expect.objectContaining({ code: 'content', message: expect.stringMatching(/not trusted/) }))
+    expect(() => resolver.gate('received')).toThrow(expect.objectContaining({ code: 'content', status: 'untrusted', message: expect.stringMatching(/not trusted/) }))
     expect(() => resolver.pin('received', revision)).toThrow(expect.objectContaining({ code: 'content' }))
     untrusted.delete(revision)
     expect(resolver.gate('received').revision).toBe(revision)

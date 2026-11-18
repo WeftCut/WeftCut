@@ -4,8 +4,23 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { composeMotifHtml } from '../../shared/motifs/catalog'
+import { EventEmitter } from 'node:events'
 import { ProjectMotifStore, type MotifState } from './projectStore'
+import { TRUST_FILES } from './trust'
 import { DEBOUNCE_QUIET_MS, Debouncer, spawnMotifWatcher, watchProjectMotifs } from './watcher'
+
+// The OS watch, replaced only by a test that sets `fakeWatch.next`: what a
+// watch reports is then emitted by the test itself.
+const fakeWatch = vi.hoisted(() => ({ next: null as unknown }))
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>()
+  const watch = ((...args: Parameters<typeof fs.watch>) => {
+    const fake = fakeWatch.next
+    fakeWatch.next = null
+    return fake ?? fs.watch(...args)
+  }) as typeof fs.watch
+  return { ...fs, watch }
+})
 
 describe('Debouncer', () => {
   beforeEach(() => vi.useFakeTimers())
@@ -58,6 +73,35 @@ async function expectFiresOnWrite(root: string): Promise<void> {
 }
 
 describe('spawnMotifWatcher', () => {
+  describe('on reported changes', () => {
+    beforeEach(() => vi.useFakeTimers())
+    afterEach(() => vi.useRealTimers())
+
+    it('fires for a library change, never for the trust record beside the library', () => {
+      const root = mkdtempSync(path.join(tmpdir(), 'motifwatch-'))
+      const tree = Object.assign(new EventEmitter(), { close: () => {} })
+      fakeWatch.next = tree
+      const fired = vi.fn()
+      const w = spawnMotifWatcher(root, fired)
+      try {
+        // A trust write: its temp written, then renamed over the record.
+        for (const name of TRUST_FILES) tree.emit('change', 'rename', name)
+        vi.advanceTimersByTime(DEBOUNCE_QUIET_MS)
+        expect(fired, 'the trust record is no library change').not.toHaveBeenCalled()
+        tree.emit('change', 'rename', path.join('card', 'v2', 'index.html'))
+        vi.advanceTimersByTime(DEBOUNCE_QUIET_MS)
+        expect(fired).toHaveBeenCalledTimes(1)
+        // A change the watch cannot name may be the library's.
+        tree.emit('change', 'rename', null)
+        vi.advanceTimersByTime(DEBOUNCE_QUIET_MS)
+        expect(fired).toHaveBeenCalledTimes(2)
+      } finally {
+        w.close()
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+  })
+
   it('fires onChange on a real file write under the root', async () => {
     await expectFiresOnWrite(mkdtempSync(path.join(tmpdir(), 'motifwatch-')))
   }, 2 * WATCH_REPORTS_MS)

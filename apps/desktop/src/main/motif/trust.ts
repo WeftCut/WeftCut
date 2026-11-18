@@ -7,7 +7,7 @@
 // `effectiveState`.
 import { mkdirSync, readFileSync, renameSync } from 'node:fs'
 import path from 'node:path'
-import { nodeAtomicWriteIo, writeFileAtomic } from '../atomicWrite'
+import { ATOMIC_TEMP_SUFFIX, nodeAtomicWriteIo, writeFileAtomic } from '../atomicWrite'
 import { motifRevision, type BuiltinMotif } from './authoring'
 import type { MotifState, RevisionCause } from './projectStore'
 import type { UserMotifStore } from './store'
@@ -17,6 +17,9 @@ import type { UserMotifStore } from './store'
 export const TRUST_FILE = '.trust.json'
 /** Where an unreadable record is moved, for a person to look at. */
 export const TRUST_CORRUPT_SUFFIX = '.corrupt'
+/** Every name the record writes in the library root: itself, its atomic
+ *  write's temp, and an unreadable one moved aside. None is a package's. */
+export const TRUST_FILES: readonly string[] = [TRUST_FILE, TRUST_FILE + ATOMIC_TEMP_SUFFIX, TRUST_FILE + TRUST_CORRUPT_SUFFIX]
 /** Revisions kept in the record; past it the oldest trusted leave first. */
 export const TRUST_KEPT = 20_000
 /** Revisions remembered as found untrusted at the opens of projects no

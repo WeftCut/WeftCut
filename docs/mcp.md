@@ -1062,7 +1062,8 @@ stored), `from`, `path` and the latest proposal's `publication`; library rows
 carry `status` builtin | installed, `version` and `in_project` (the project id
 holding that lineage, or null). `create_motif { source }` makes a Motif in the
 open project and answers `{motif_id, revision, path}`: `empty` (960×540, 5 s,
-no props), `copy` (a project Motif, or a library one with `group: "library"`),
+no props; optional `files`, in `update_motif_files` form, laid over it in the
+same commit), `copy` (a project Motif, or a library one with `group: "library"`),
 `zip` (keeps the id and lineage the archive carries; a taken id gets
 `-<8 hex of the lineage>`) or `directory` (copied; a folder written under the
 project's `Motifs/` that the table does not hold is adopted in place). Every
@@ -1070,7 +1071,8 @@ other source starts a new lineage, its id made from its name and numbered when
 taken; the commit is the agent's. `read_motif` (a path answers
 UTF-8 text ≤ 256 KiB, or `{size, sha256}` for a binary file; a folder whose
 files make no package is still read, with its diagnostic), `update_motif_files`
-(revision-checked batch; exact-match `edits`; the one inline binary form is an
+(revision-checked batch; `expected_revision: null` repairs a folder whose files
+make no package and is refused for a valid one; exact-match `edits`; the one inline binary form is an
 entry `{path, base64}`, ≤ 256 KiB decoded each and ≤ 4 MiB per call; one
 recorded commit, no approval), `preview_motif` (`local_t_s`: 1–24 times in
 seconds from the Motif's start, not timeline time, on one labelled PNG contact

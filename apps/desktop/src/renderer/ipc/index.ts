@@ -3373,13 +3373,13 @@ export async function getMotifSource(id: string): Promise<MotifSource> {
   return { manifest: file.manifest, revision: file.revision, html: file.text };
 }
 
-/// Makes a new project Motif from authored `{ manifest, html }`. Returns its id.
+/// Makes a new project Motif from authored `{ manifest, html }`, as one undo
+/// step. Returns its id.
 export async function createProjectMotif(manifest: MotifManifest, html: string): Promise<string> {
-  const made = await invoke<{ motif_id: string; revision: string }>("create_motif", { source: { kind: "empty", name: manifest.name } });
-  await invoke("update_motif_files", {
-    motif_id: made.motif_id, expected_revision: made.revision,
+  const made = await invoke<{ motif_id: string }>("create_motif", { source: {
+    kind: "empty", name: manifest.name,
     files: [{ path: "manifest.json", text: JSON.stringify(manifest) }, { path: "index.html", text: html }],
-  });
+  } });
   return made.motif_id;
 }
 

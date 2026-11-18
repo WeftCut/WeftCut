@@ -69,7 +69,9 @@ create_motif makes a Motif in the open project from exactly one source:
 It answers motif_id, revision and path, the folder that now holds the Motif.
 The id is made from the Motif's name and numbered when the project holds it.
 
-- empty: a 960×540 canvas, 5 s long, with no props.
+- empty: a 960×540 canvas, 5 s long, with no props. Its optional files, in
+  update_motif_files form, are laid over it in the same undo step; a
+  manifest.json among them names the Motif.
 - copy: an independent copy of a project or library Motif, of a new lineage,
   so it reads as project only. Copy a Motif to change it for some clips while
   the others keep the original.
@@ -100,7 +102,9 @@ and Review shows the change where the Motif plays. Saves close together are
 recorded as one. A save that leaves the package invalid is not recorded: the
 Motif reports status invalid with its diagnostic, preview and export refuse
 it, and the next valid save is recorded. The folder is read again only when a
-file's size, times or identity changed (ADR 0164).
+file's size, times or identity changed (ADR 0164). A save recorded right after
+an undo is a new commit, so it clears redo: the app never overwrites an edit
+it has not recorded.
 
 Every Motif layer re-renders from the new revision; the frame cache is keyed
 by it. To change a Motif for some clips only, copy it first (above).
@@ -148,7 +152,11 @@ write. The files are then written one by one into the folder, after checking
 that nothing changed it since the read; a failed write puts back the files
 already written. The call is one commit in the user's undo history. A stale
 expected_revision is refused with the current revision: read again and merge
-instead of retrying.
+instead of retrying. A folder whose files make no package has no revision;
+repair it with expected_revision null, which a valid folder refuses. When the commit is refused with HistoryLocked (another
+session holds the history), the files are already written and stay: the app
+records them as a file edit, like any save in the folder. Do not write them
+again.
 
 ## Review and undo
 
