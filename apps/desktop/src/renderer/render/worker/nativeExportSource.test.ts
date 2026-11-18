@@ -62,6 +62,7 @@ class FakeRelay {
 const W = 4;
 const H = 2;
 const DUR = 33_333;
+const CREDIT_WINDOW = 6;
 
 function makeHandle(
   sourceColor?: VideoColorSpaceInit,
@@ -76,7 +77,7 @@ function makeHandle(
     mediaId: "m0",
     handleKey: "m0#0",
     proxyAssetUrl: "weftcut-media://ignored",
-    nativeExport: { sourcePath: "C:/orig/tiny.mov", outFormat, creditWindow: 6 },
+    nativeExport: { sourcePath: "C:/orig/tiny.mov", outFormat, creditWindow: CREDIT_WINDOW },
     ...(sourceColor ? { sourceColor } : {}),
   };
   const handle = new NativeExportSourceHandle(init, relay as unknown as NativeDecodeRelayClient);
@@ -160,8 +161,7 @@ describe("NativeExportSourceHandle", () => {
     // Park a waiter far ahead: freeBehindWaiters drops frame 0 (below the
     // waiter, keeping its lower neighbour) WITHOUT going through evictBefore.
     const waiting = handle.ring.waitForPts(100 * DUR);
-    // A later frame satisfies the waiter (strictly-later PTS) and the next
-    // onFrame reconcile credits the frame freeBehindWaiters removed.
+    // A later frame satisfies the waiter (strictly-later PTS).
     sink.onFrame(frameMsg(101 * DUR));
     await waiting;
     // Invariant: credits returned == frames that have left the ring. Never a
@@ -170,6 +170,44 @@ describe("NativeExportSourceHandle", () => {
     // In-flight (pushed − credited) equals what is still resident.
     const inFlight = handle["framesPushed"] - relay.totalCredits();
     expect(inFlight).toBe(handle.ring.size());
+  });
+
+  it("credits frames a parking waiter frees without waiting for another push or evict", async () => {
+    // The producer filled its window before the consumer parked (several source
+    // frames per output step), so it is parked with no credit. The frames the
+    // parking waiter frees are its only way to resume: no push can arrive and
+    // the loop's next evict runs only after this wait resolves.
+    const { handle, relay } = makeHandle();
+    await handle.decodeRange(0, 100 * DUR);
+    const sink = relay.sink!;
+    for (let i = 0; i < CREDIT_WINDOW; i++) sink.onFrame(frameMsg(i * DUR));
+    expect(relay.totalCredits()).toBe(0);
+
+    const waiting = handle.ring.waitForPts((CREDIT_WINDOW + 1) * DUR);
+    expect(handle.ring.size()).toBeLessThan(CREDIT_WINDOW);
+    expect(relay.totalCredits(), "one credit per frame the waiter freed").toBe(
+      CREDIT_WINDOW - handle.ring.size(),
+    );
+
+    // Later departures are credited once more each, never the freed ones again.
+    sink.onFrame(frameMsg((CREDIT_WINDOW + 2) * DUR));
+    await waiting;
+    handle.evictBefore((CREDIT_WINDOW + 2) * DUR);
+    expect(relay.totalCredits(), "each departed frame credited exactly once").toBe(
+      CREDIT_WINDOW + 1 - handle.ring.size(),
+    );
+  });
+
+  it("credits a frame a push frees behind a parked waiter in that same push", async () => {
+    const { handle, relay } = makeHandle();
+    await handle.decodeRange(0, 100 * DUR);
+    const sink = relay.sink!;
+    void handle.ring.waitForPts(100 * DUR);
+    sink.onFrame(frameMsg(0));
+    sink.onFrame(frameMsg(DUR)); // frees frame 0 behind the waiter
+    expect(relay.totalCredits(), "one credit per frame the push freed").toBe(
+      2 - handle.ring.size(),
+    );
   });
 
   it("stamps frames with the mapped sourceColor, never the raw ffmpeg tag names", async () => {

@@ -86,7 +86,7 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
     this.frameColorSpace = colorSpaceFromSource(init.sourceColor);
     // Unique, realm-safe, stable for this handle's lifetime.
     this.sessionId = `nd-${seq++}-${init.mediaId}-${init.handleKey ?? init.mediaId}`;
-    this.ring = new ExportFrameStore();
+    this.ring = new ExportFrameStore(() => this.reconcileCredits());
     this.relay = relay;
     this.relay.register(this.sessionId, {
       onFrame: (f) => this.onFrame(f),
@@ -126,7 +126,6 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
     // release them (and their credits) before the Rust session re-seeks.
     if (aUs < this.lastRangeAUs) {
       this.ring.flush();
-      this.reconcileCredits();
       this.ring.clearEosDrain();
     }
     this.lastRangeAUs = aUs;
@@ -135,15 +134,20 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
 
   evictBefore(cutoffUs: number): void {
     this.ring.evictBefore(cutoffUs);
-    this.reconcileCredits();
   }
 
   /// Return one credit per frame that has LEFT the ring by ANY path (evict, the
-  /// ring's push/waitForPts `freeBehindWaiters`, or EOS flush) and not yet been
-  /// credited: `framesPushed - ring.size()` = frames that have departed. This
-  /// keeps the total in flight (Rust-buffered + relay + resident-in-ring) ≤
-  /// creditWindow so memory is bounded, and never accrues a deficit that would
-  /// starve the producer. Called after every push and every evictBefore.
+  /// ring's push/waitForPts `freeBehindWaiters`, or a backward-jump flush) and
+  /// not yet been credited: `framesPushed - ring.size()` = frames that have
+  /// departed. This keeps the total in flight (Rust-buffered + relay +
+  /// resident-in-ring) ≤ creditWindow so memory is bounded, and never accrues a
+  /// deficit that would starve the producer. Runs as the ring's shrink callback,
+  /// so every departure path credits at the moment it frees.
+  ///
+  /// LANDMINE: a frame freed by a parking `waitForPts` must credit right there.
+  /// The producer may already be parked with its window full, and the export
+  /// loop's next evict runs only after that wait resolves: deferring the credit
+  /// to the next push or evict deadlocks the export.
   private reconcileCredits(): void {
     if (this._disposed) return;
     const owed = this.framesPushed - this.ring.size() - this.creditsReturned;
@@ -199,10 +203,8 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
       };
     }
     // Frames arrive source-normalized; push with the frame's own ptsUs.
+    this.countPushed();
     this.ring.push(nv12, frame.ptsUs);
-    this.framesPushed++;
-    this.dispatchedTotal++;
-    this.reconcileCredits();
   }
 
   /// The I420P10 lane: wrap the transferred bytes as a `TenBitFrame` — ZERO-COPY,
@@ -234,10 +236,16 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
         frameFormat: "I420P10",
       };
     }
+    this.countPushed();
     this.ring.push(tenBit, frame.ptsUs);
+  }
+
+  /// Counted BEFORE `ring.push`: the push may free frames behind a waiter, and
+  /// that shrink's reconcile must already see this frame as pushed, or one
+  /// departed frame's credit is withheld until the next shrink.
+  private countPushed(): void {
     this.framesPushed++;
     this.dispatchedTotal++;
-    this.reconcileCredits();
   }
 
   /// Ordered range completion is a presentation-finality proof: every frame
