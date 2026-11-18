@@ -105,8 +105,9 @@ Rejected:
 - The binary exists in a profile only after the app has run there once. A
   config comes from the running app's Connect panel, so a client never holds
   one before that.
-- `weftcut` is not on `PATH`. A package names no command: the app registers
-  the server with each host, and a plugin carries content only (ADR 0167).
+- A package names no command: the app registers the server with each host,
+  and a plugin carries content only (ADR 0167). The app puts `weftcut` on no
+  `PATH`; only the Homebrew cask links it there, on macOS, for terminal use.
 - An AppImage that was moved is found again only after it is opened once
   from its new place.
 - On macOS with several copies of the app and a stale `launch.json`,
@@ -123,7 +124,8 @@ Rejected:
   it is assigned or redirected (`$o = & weftcut …`, `> file`). A batch file,
   `cmd /c`, `| Out-String` and Git Bash wait and capture. The JS shim, on the
   app's GUI executable, behaved the same. A console twin of the binary would
-  lift this; nothing needs one while the binary is not on `PATH`.
+  lift this; nothing needs one while nothing puts the binary on a Windows
+  `PATH`.
 - The fuse is flipped at packaging, so an unpackaged run still honours
   `ELECTRON_RUN_AS_NODE`; only checks on the packaged app can see it off.
 

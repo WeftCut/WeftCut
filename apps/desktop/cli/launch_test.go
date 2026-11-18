@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -111,40 +112,48 @@ func TestSiblingApp(t *testing.T) {
 func TestLaunchCommand(t *testing.T) {
 	bundle := "/Applications/WeftCut.app"
 	exe := bundle + "/Contents/MacOS/WeftCut"
-	type command struct {
-		name string
-		args []string
-	}
 	cases := []struct {
 		what string
 		h    host
 		t    appTarget
-		want command
+		want launchCmd
 	}{
 		{"an executable runs as recorded, arguments verbatim",
 			machine("linux", nil, "", nil, nil), appTarget{exec: "/opt/WeftCut/weftcut", args: []string{"--a", "b c"}},
-			command{"/opt/WeftCut/weftcut", []string{"--a", "b c"}}},
+			launchCmd{name: "/opt/WeftCut/weftcut", args: []string{"--a", "b c"}}},
 		{"a bundle means nothing off macOS",
 			machine("windows", nil, "", nil, []string{bundle}), appTarget{exec: `C:\Program Files\WeftCut\WeftCut.exe`, bundle: bundle},
-			command{`C:\Program Files\WeftCut\WeftCut.exe`, nil}},
+			launchCmd{name: `C:\Program Files\WeftCut\WeftCut.exe`}},
 		{"macOS opens the bundle while its path exists",
 			machine("darwin", nil, "", nil, []string{bundle}), appTarget{exec: exe, bundle: bundle},
-			command{"/usr/bin/open", []string{"-a", bundle}}},
+			launchCmd{name: "/usr/bin/open", args: []string{"-a", bundle}, throughOpen: true}},
 		{"with its arguments after --args",
 			machine("darwin", nil, "", nil, []string{bundle}), appTarget{exec: exe, args: []string{"--a", "b c"}, bundle: bundle},
-			command{"/usr/bin/open", []string{"-a", bundle, "--args", "--a", "b c"}}},
+			launchCmd{name: "/usr/bin/open", args: []string{"-a", bundle, "--args", "--a", "b c"}, throughOpen: true}},
 		{"and by bundle id once the path is gone",
 			machine("darwin", nil, "", nil, nil), appTarget{exec: exe, args: []string{"--a"}, bundle: bundle},
-			command{"/usr/bin/open", []string{"-b", product.BundleID, "--args", "--a"}}},
+			launchCmd{name: "/usr/bin/open", args: []string{"-b", product.BundleID, "--args", "--a"}, throughOpen: true, byBundleID: true}},
 		{"macOS without a bundle (a dev run) runs the executable",
 			machine("darwin", nil, "", nil, nil), appTarget{exec: "/dev/electron", args: []string{"."}},
-			command{"/dev/electron", []string{"."}}},
+			launchCmd{name: "/dev/electron", args: []string{"."}}},
 	}
 	for _, c := range cases {
-		name, args := launchCommand(c.h, c.t)
-		if name != c.want.name || !reflect.DeepEqual(args, c.want.args) {
-			t.Errorf("%s: %s %q, want %s %q", c.what, name, args, c.want.name, c.want.args)
+		if got := launchCommand(c.h, c.t); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: %+v, want %+v", c.what, got, c.want)
 		}
+	}
+}
+
+// Starting a path with nothing at it is told apart from any other failure to
+// start, by the error this OS gives.
+func TestStartingAMissingAppIsRecognised(t *testing.T) {
+	gone := filepath.Join(t.TempDir(), "WeftCut")
+	if runtime.GOOS == "windows" {
+		gone += ".exe"
+	}
+	err := startDetached(processHost(), launchCmd{name: gone}, nil)
+	if err == nil || !nothingAt(err) {
+		t.Fatalf("starting %s: %v, want an error that says nothing is there", gone, err)
 	}
 }
 
