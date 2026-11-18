@@ -265,12 +265,18 @@ const (
 	alreadyRunningText = "WeftCut is already running — the full tool catalog is available."
 	launchedText       = "WeftCut launched and its MCP endpoint is up. The full tool catalog is now available " +
 		"in this session (tools/list_changed was sent)."
-	noAppText = "This weftcut CLI does not know where the WeftCut app is installed. " +
-		"Ask the user to open WeftCut once (the app records how to start it), " +
-		"or set the " + appEnv + " environment variable to a launchable WeftCut executable."
+	noAppText = "This weftcut CLI does not know where WeftCut is installed. " +
+		"Ask the user to install WeftCut (https://weftcut.com) or, if it is installed, to open it once."
 	beforeInitializeText = "The client has not sent initialize: only initialize and ping are answered before it."
 	duplicateIDText      = "A request with this id is still in flight."
 )
+
+// appMissingText is the answer when nothing is where the app was recorded, the
+// same on every OS: the CLI cannot tell an uninstalled app from a moved one.
+func appMissingText(app string) string {
+	return fmt.Sprintf("WeftCut is not installed at %s any more. ", app) +
+		"Ask the user to install WeftCut (https://weftcut.com) or, if they moved it, to open it once from its new place."
+}
 
 func launchFailedText(app string, err error) string {
 	return fmt.Sprintf("Failed to launch WeftCut (%s): %s", app, err)

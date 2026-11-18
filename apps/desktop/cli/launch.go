@@ -4,7 +4,10 @@ package main
 // that detach the child are per OS: launch_unix.go, launch_windows.go.
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -97,6 +100,19 @@ func findApp(h host, userData string, readFile func(string) ([]byte, error)) (ap
 	return siblingApp(h)
 }
 
+// launchCmd is the process that starts the app.
+type launchCmd struct {
+	name string
+	args []string
+	// throughOpen: the process is macOS `open`, which hands the bundle to
+	// LaunchServices and exits. Its exit status is the only word on whether
+	// an app was found: the app itself is not its child.
+	throughOpen bool
+	// byBundleID: the recorded bundle is gone, so `open` looks the app up by
+	// its bundle id.
+	byBundleID bool
+}
+
 // launchCommand is the process to start for t.
 //
 // LANDMINE (macOS): a bundle goes through LaunchServices, never by its
@@ -105,19 +121,27 @@ func findApp(h host, userData string, readFile func(string) ([]byte, error)) (ap
 // the spawning program the one macOS attributes its permission requests to.
 // `open -a` the bundle while its path exists, `open -b` the bundle id
 // otherwise. See ADR 0165.
-func launchCommand(h host, t appTarget) (name string, args []string) {
+func launchCommand(h host, t appTarget) launchCmd {
 	if h.goos != "darwin" || t.bundle == "" {
-		return t.exec, t.args
+		return launchCmd{name: t.exec, args: t.args}
 	}
+	c := launchCmd{name: "/usr/bin/open", throughOpen: true}
 	if h.isDir(t.bundle) {
-		args = []string{"-a", t.bundle}
+		c.args = []string{"-a", t.bundle}
 	} else {
-		args = []string{"-b", product.BundleID}
+		c.byBundleID = true
+		c.args = []string{"-b", product.BundleID}
 	}
 	if len(t.args) > 0 {
-		args = append(append(args, "--args"), t.args...)
+		c.args = append(append(c.args, "--args"), t.args...)
 	}
-	return "/usr/bin/open", args
+	return c
+}
+
+// nothingAt reports whether a start failed because nothing is at the path it
+// named: the app was uninstalled, or moved, since its path was recorded.
+func nothingAt(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, exec.ErrNotFound)
 }
 
 // childEnv is the environment the app starts in. Without ELECTRON_RUN_AS_NODE:
@@ -135,16 +159,29 @@ func childEnv(environ []string, goos string) []string {
 	return out
 }
 
-// startDetached starts the app so that it outlives the shim and shares none of
-// its stdio: the client owns those pipes and must see them close with the shim.
-func startDetached(h host, name string, args []string) error {
-	cmd := exec.Command(name, args...)
+// startDetached starts c so that the app outlives the shim and shares none of
+// its stdio: the client owns those pipes and must see them close with the
+// shim. exited, when given, is called once the process ends, with its error and
+// the first line it wrote to stderr; it is given only for `open`, which exits
+// at once, never for the app itself.
+func startDetached(h host, c launchCmd, exited func(err error, stderr string)) error {
+	cmd := exec.Command(c.name, c.args...)
 	cmd.Env = childEnv(os.Environ(), h.goos)
 	cmd.SysProcAttr = detached()
+	var stderr bytes.Buffer
+	if exited != nil {
+		cmd.Stderr = &stderr
+	}
 	if err := cmd.Start(); err != nil {
 		return err
 	}
 	// Reaped whenever it ends, so a short-lived child (`open`) leaves no zombie.
-	go func() { _ = cmd.Wait() }()
+	go func() {
+		err := cmd.Wait()
+		if exited != nil {
+			line, _, _ := strings.Cut(strings.TrimSpace(stderr.String()), "\n")
+			exited(err, strings.TrimSpace(line))
+		}
+	}()
 	return nil
 }

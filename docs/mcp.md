@@ -50,7 +50,9 @@ the agent-facing UX. Agent guidance ships as one skill (ADR 0046).
 - **Its catalog = synthetic ∪ (app reachable ? real catalog : ∅).** Always
   present: `weftcut_status` (endpoint state, next steps, a `Project:` line;
   read-only) and `launch_weftcut` (detached GUI start, bounded wait;
-  idempotent). `tools/list_changed` fires whenever the app comes up or goes
+  idempotent; an app no longer where it was recorded, uninstalled or moved,
+  is answered at once, in the same words on every OS; on macOS that is
+  `open -b` finding no bundle with the app's id). `tools/list_changed` fires whenever the app comes up or goes
   away, so one session upgrades when the app starts and degrades when it
   closes. While the app is up, what it sends (notifications, and requests to
   the client) is forwarded verbatim. Subcommands beside `mcp`: `info` (exit 3
