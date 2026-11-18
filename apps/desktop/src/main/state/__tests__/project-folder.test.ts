@@ -98,7 +98,7 @@ describe('openProject — a folder written on another OS', () => {
     const disk = memDisk()
     folder(disk, '/projects/Demo', windowsV6({ voiceover: true }))
     const wave = '/projects/Demo/Cache/waveforms/clip.json'
-    const h = harness(disk, { [MEDIA_ID]: { waveform_path: wave, full_proxy_landed: { path: '/projects/Demo/Cache/proxies/clip.mp4', format_version: 8 } } })
+    const h = harness(disk, { [MEDIA_ID]: { waveform_path: wave, full_proxy_landed: '/projects/Demo/Cache/proxies/clip.mp4' } })
     await openProject(h.deps, '/projects/Demo')
     const item = h.swapped[0]!.media_pool[MEDIA_ID]!
     expect(item.waveform_path).toBe(wave)
@@ -183,7 +183,7 @@ describe('the open project in its folder (host)', () => {
     folder(disk, '/projects/Demo', windowsV6())
     const proxy = '/projects/Demo/Cache/proxies/clip.full-p8.mp4'
     disk.put(proxy, 'proxy')
-    const t = makeHost(disk, () => ({ [MEDIA_ID]: { full_proxy_landed: { path: proxy, format_version: 8 } } }))
+    const t = makeHost(disk, () => ({ [MEDIA_ID]: { full_proxy_landed: proxy } }))
     await t.host.handleInvoke('project_open', { path: '/projects/Demo' })
     expect(media(t)[0]!.decode_route).toMatchObject({ route: 'proxied', full_proxy: proxy })
     t.host.stop()
@@ -196,7 +196,7 @@ describe('the open project in its folder (host)', () => {
     disk.put('/projects/Demo/Cache/proxies/old.mp4', 'old proxy')
     const fresh = '/projects/Copy/Cache/waveforms/clip.json'
     const t = makeHost(disk, (dir) => (dir === '/projects/Copy' ? { [MEDIA_ID]: { waveform_path: fresh } } : {
-      [MEDIA_ID]: { waveform_path: '/projects/Demo/Cache/waveforms/clip.json', full_proxy_landed: { path: '/projects/Demo/Cache/proxies/old.mp4', format_version: 8 } },
+      [MEDIA_ID]: { waveform_path: '/projects/Demo/Cache/waveforms/clip.json', full_proxy_landed: '/projects/Demo/Cache/proxies/old.mp4' },
     }))
     await t.host.handleInvoke('project_open', { path: '/projects/Demo' })
     const tracks = () => Object.values(t.host.actor.snapshot().compositions).reduce((n, c) => n + c.tracks.length, 0)

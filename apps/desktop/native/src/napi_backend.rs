@@ -1867,10 +1867,7 @@ mod tests {
         );
         assert_eq!(
             patch["full_proxy_landed"],
-            serde_json::json!({
-                "path": b.cache.proxy("cached-hash"),
-                "format_version": crate::jobs::proxy::PROXY_FORMAT_VERSION,
-            })
+            serde_json::json!(b.cache.proxy("cached-hash"))
         );
         assert!(patch.get("set_route").is_none());
         let job_events = [

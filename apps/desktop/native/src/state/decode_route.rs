@@ -1,6 +1,7 @@
 //! The per-source Decode Route — where preview and export each read pixels.
-//! Persisted as the source of truth. The readiness paths live INSIDE the
-//! variants so a route↔path contradiction (a Bypass carrying a proxy) is
+//! `project.json` persists only the variant (ADR 0175); the readiness paths
+//! are runtime state, found in the cache by hash on open. They live INSIDE
+//! the variants so a route↔path contradiction (a Bypass carrying a proxy) is
 //! unrepresentable. See docs/data-model.md#mediaitem and CONTEXT.md.
 
 use std::path::PathBuf;
@@ -26,8 +27,6 @@ pub enum DecodeRoute {
         quick_proxy: Option<PathBuf>,
         #[serde(default)]
         full_proxy: Option<PathBuf>,
-        #[serde(default)]
-        format_version: u32,
     },
     /// Native software-decode preview (ProRes today): the original is
     /// WebCodecs-blind but a native ffmpeg SW decoder can preview it directly.
@@ -39,8 +38,6 @@ pub enum DecodeRoute {
         quick_proxy: Option<PathBuf>,
         #[serde(default)]
         full_proxy: Option<PathBuf>,
-        #[serde(default)]
-        format_version: u32,
     },
 }
 
@@ -55,7 +52,6 @@ impl DecodeRoute {
             (ExportSource::FullProxy, PreviewSource::Proxy) => DecodeRoute::Proxied {
                 quick_proxy: None,
                 full_proxy: None,
-                format_version: 0,
             },
             (ExportSource::FullProxy, PreviewSource::Original) => {
                 unreachable!("preview=Original implies export=Original")
@@ -63,7 +59,6 @@ impl DecodeRoute {
             (ExportSource::FullProxy, PreviewSource::NativeFfmpeg) => DecodeRoute::NativeSw {
                 quick_proxy: None,
                 full_proxy: None,
-                format_version: 0,
             },
             (ExportSource::Original, PreviewSource::NativeFfmpeg) => {
                 unreachable!("NativeFfmpeg preview implies FullProxy export")
@@ -78,7 +73,6 @@ impl DecodeRoute {
             DecodeRoute::DirectExport { quick_proxy } => DecodeRoute::Proxied {
                 quick_proxy,
                 full_proxy: None,
-                format_version: 0,
             },
             other => other,
         }
@@ -116,14 +110,12 @@ mod tests {
         let nsw = serde_json::to_value(DecodeRoute::NativeSw {
             quick_proxy: None,
             full_proxy: None,
-            format_version: 0,
         })
         .unwrap();
         assert_eq!(nsw, g.samples["native-sw"]);
         let px = serde_json::to_value(DecodeRoute::Proxied {
             quick_proxy: None,
             full_proxy: None,
-            format_version: 0,
         })
         .unwrap();
         assert_eq!(px, g.samples["proxied"]);
@@ -140,7 +132,6 @@ mod tests {
             DecodeRoute::Proxied {
                 quick_proxy: q,
                 full_proxy: None,
-                format_version: 0
             }
         );
         assert_eq!(DecodeRoute::Bypass.route_corrected(), DecodeRoute::Bypass);

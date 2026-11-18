@@ -24,7 +24,7 @@ function runtimeItem(over: Partial<MediaItem>): MediaItem {
     metadata: { duration_us: 1_000_000 }, file_hash_blake3: HASH, file_size: 1, file_mtime: 0,
     imported_at: '2026-01-01T00:00:00Z',
     decode_route: { route: 'proxied', quick_proxy: `/home/u/Film/Cache/proxies/${HASH}.quick-q4.mp4`,
-      full_proxy: `/home/u/Film/Cache/proxies/${HASH}.full-p7.mp4`, format_version: 7 },
+      full_proxy: `/home/u/Film/Cache/proxies/${HASH}.full-p7.mp4` },
     conform_path: `/home/u/Film/Cache/conform/${HASH}.wav`, waveform_path: `/home/u/Film/Cache/waveforms/${HASH}.bin`,
     thumbnails_dir: `/home/u/Film/Cache/thumbnails/${HASH}`, ...over,
   }

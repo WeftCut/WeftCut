@@ -34,22 +34,22 @@ const V = (decode_route: any, extra: any = {}) =>
 
 describe("importOptimizeStatus (frozen behavior, route-driven)", () => {
   it("proxied + full ready ⇒ ready", () =>
-    expect(importOptimizeStatus(V({ route: "proxied", quick_proxy: "q", full_proxy: "f", format_version: 1 }), depsT())).toBe("ready"));
+    expect(importOptimizeStatus(V({ route: "proxied", quick_proxy: "q", full_proxy: "f" }), depsT())).toBe("ready"));
   // native-sw must settle like proxied — see importOptimize.ts.
   it("native-sw + full ready ⇒ ready (not a terminal checking)", () =>
-    expect(importOptimizeStatus(V({ route: "native-sw", quick_proxy: "q", full_proxy: "f", format_version: 7 }), depsT())).toBe("ready"));
+    expect(importOptimizeStatus(V({ route: "native-sw", quick_proxy: "q", full_proxy: "f" }), depsT())).toBe("ready"));
   it("native-sw without its master keeps reporting work in flight", () =>
-    expect(importOptimizeStatus(V({ route: "native-sw", quick_proxy: "q", full_proxy: null, format_version: 7 }), depsT({ ps: "pending" }))).toBe("transcoding"));
+    expect(importOptimizeStatus(V({ route: "native-sw", quick_proxy: "q", full_proxy: null }), depsT({ ps: "pending" }))).toBe("transcoding"));
   it("bypass ⇒ direct", () =>
     expect(importOptimizeStatus(V({ route: "bypass" }), depsT())).toBe("direct"));
   it("direct-export + quick ready ⇒ direct", () =>
     expect(importOptimizeStatus(V({ route: "direct-export", quick_proxy: "q" }), depsT())).toBe("direct"));
   it("decodable this machine ⇒ bridged", () =>
-    expect(importOptimizeStatus(V({ route: "proxied", quick_proxy: null, full_proxy: null, format_version: 0 }), depsT({ memo: new Map([["m1", "ok"]]) }))).toBe("bridged"));
+    expect(importOptimizeStatus(V({ route: "proxied", quick_proxy: null, full_proxy: null }), depsT({ memo: new Map([["m1", "ok"]]) }))).toBe("bridged"));
   it("undecodable + proxy pending ⇒ transcoding", () =>
-    expect(importOptimizeStatus(V({ route: "proxied", quick_proxy: null, full_proxy: null, format_version: 0 }), depsT({ ps: "pending" }))).toBe("transcoding"));
+    expect(importOptimizeStatus(V({ route: "proxied", quick_proxy: null, full_proxy: null }), depsT({ ps: "pending" }))).toBe("transcoding"));
   it("proxy failed ⇒ failed", () =>
-    expect(importOptimizeStatus(V({ route: "proxied", quick_proxy: null, full_proxy: null, format_version: 0 }), depsT({ ps: "failed" }))).toBe("failed"));
+    expect(importOptimizeStatus(V({ route: "proxied", quick_proxy: null, full_proxy: null }), depsT({ ps: "failed" }))).toBe("failed"));
 
   it("keeps a decodable DirectExport source checking while its probe is in flight (memo pending)", () =>
     expect(importOptimizeStatus(V({ route: "direct-export", quick_proxy: null }), depsT({ memo: new Map([["m1", "pending"]]) }))).toBe("checking"));
@@ -57,11 +57,11 @@ describe("importOptimizeStatus (frozen behavior, route-driven)", () => {
     // QuickThenFull: the quick proxy lands first, but the full master is the real
     // terminal. The DirectExport early-settle must NOT fire — stays bridged.
     expect(importOptimizeStatus(
-      V({ route: "proxied", quick_proxy: "q", full_proxy: null, format_version: 0 }, { pix_fmt: "yuv420p10le" }),
+      V({ route: "proxied", quick_proxy: "q", full_proxy: null }, { pix_fmt: "yuv420p10le" }),
       depsT({ memo: new Map([["m1", "ok"]]), ps: "pending" }),
     )).toBe("bridged"));
   it("checking in the pre-decision window (proxied, nothing ready, no memo/proxyState)", () =>
-    expect(importOptimizeStatus(V({ route: "proxied", quick_proxy: null, full_proxy: null, format_version: 0 }), depsT())).toBe("checking"));
+    expect(importOptimizeStatus(V({ route: "proxied", quick_proxy: null, full_proxy: null }), depsT())).toBe("checking"));
   it("direct for non-video media", () =>
     expect(importOptimizeStatus(V({ route: "bypass" }, { kind: "Audio" }), depsT())).toBe("direct"));
 });

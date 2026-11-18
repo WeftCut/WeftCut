@@ -459,11 +459,11 @@ export function buildProjectSummary(
       case 'direct-export': return { route: 'direct-export', quick_proxy: there(r.quick_proxy, f.quick_proxy) }
       case 'proxied': return {
         route: 'proxied', quick_proxy: there(r.quick_proxy, f.quick_proxy),
-        full_proxy: there(r.full_proxy, f.full_proxy), format_version: r.format_version,
+        full_proxy: there(r.full_proxy, f.full_proxy),
       }
       case 'native-sw': return {
         route: 'native-sw', quick_proxy: there(r.quick_proxy, f.quick_proxy),
-        full_proxy: there(r.full_proxy, f.full_proxy), format_version: r.format_version,
+        full_proxy: there(r.full_proxy, f.full_proxy),
       }
     }
   }

@@ -118,7 +118,6 @@ pub fn initial_decode_route(kind: MediaKind) -> DecodeRoute {
         MediaKind::Video => DecodeRoute::Proxied {
             quick_proxy: None,
             full_proxy: None,
-            format_version: 0,
         },
         _ => DecodeRoute::Bypass,
     }
@@ -554,7 +553,6 @@ mod tests {
         assert!(route_needs_decision(&DecodeRoute::Proxied {
             quick_proxy: None,
             full_proxy: Some("/no/such/file.mp4".into()),
-            format_version: 0,
         }));
     }
 }

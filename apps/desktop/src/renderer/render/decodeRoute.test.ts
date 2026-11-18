@@ -11,17 +11,17 @@ describe("resolveDecode — full route × readiness matrix", () => {
     ["bypass", M("Video", { route: "bypass" }), "orig.mp4", "orig.mp4"],
     ["direct-export, quick pending", M("Video", { route: "direct-export", quick_proxy: null }), null, "orig.mp4"],
     ["direct-export, quick ready", M("Video", { route: "direct-export", quick_proxy: "q.mp4" }), "q.mp4", "orig.mp4"],
-    ["proxied, nothing ready", M("Video", { route: "proxied", quick_proxy: null, full_proxy: null, format_version: 0 }), null, null],
-    ["proxied, quick ready", M("Video", { route: "proxied", quick_proxy: "q.mp4", full_proxy: null, format_version: 0 }), "q.mp4", null],
-    ["proxied, both ready", M("Video", { route: "proxied", quick_proxy: "q.mp4", full_proxy: "f.mp4", format_version: 3 }), "q.mp4", "f.mp4"],
+    ["proxied, nothing ready", M("Video", { route: "proxied", quick_proxy: null, full_proxy: null }), null, null],
+    ["proxied, quick ready", M("Video", { route: "proxied", quick_proxy: "q.mp4", full_proxy: null }), "q.mp4", null],
+    ["proxied, both ready", M("Video", { route: "proxied", quick_proxy: "q.mp4", full_proxy: "f.mp4" }), "q.mp4", "f.mp4"],
     // Quick proxy gone but full master present (e.g. an older import whose quick
     // was cleaned up): preview must fall back to the full proxy, not go blank.
-    ["proxied, quick gone, full ready", M("Video", { route: "proxied", quick_proxy: null, full_proxy: "f.mp4", format_version: 3 }), "f.mp4", "f.mp4"],
+    ["proxied, quick gone, full ready", M("Video", { route: "proxied", quick_proxy: null, full_proxy: "f.mp4" }), "f.mp4", "f.mp4"],
     // native-sw carries proxy paths like proxied and resolves identically:
     // original-vs-proxy is the engine resolver's call at decode time, never
     // resolveDecode's.
-    ["native-sw, quick ready", M("Video", { route: "native-sw", quick_proxy: "q.mp4", full_proxy: null, format_version: 0 }), "q.mp4", null],
-    ["native-sw, both ready", M("Video", { route: "native-sw", quick_proxy: "q.mp4", full_proxy: "f.mp4", format_version: 3 }), "q.mp4", "f.mp4"],
+    ["native-sw, quick ready", M("Video", { route: "native-sw", quick_proxy: "q.mp4", full_proxy: null }), "q.mp4", null],
+    ["native-sw, both ready", M("Video", { route: "native-sw", quick_proxy: "q.mp4", full_proxy: "f.mp4" }), "q.mp4", "f.mp4"],
     ["image is bypass-like", M("Image", { route: "bypass" }), "orig.mp4", "orig.mp4"],
   ])("%s", (_name, media, previewPath, exportPath) => {
     const r = resolveDecode(media);
@@ -38,10 +38,10 @@ describe("DecodeRoute wire shape", () => {
     const bypass: DecodeRoute = { route: "bypass" };
     const de: DecodeRoute = { route: "direct-export", quick_proxy: null };
     const px: DecodeRoute = {
-      route: "proxied", quick_proxy: null, full_proxy: null, format_version: 0,
+      route: "proxied", quick_proxy: null, full_proxy: null,
     };
     const nsw: DecodeRoute = {
-      route: "native-sw", quick_proxy: null, full_proxy: null, format_version: 0,
+      route: "native-sw", quick_proxy: null, full_proxy: null,
     };
     expect(bypass).toEqual(golden.samples.bypass);
     expect(de).toEqual(golden.samples["direct-export"]);

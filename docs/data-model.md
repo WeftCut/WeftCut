@@ -226,9 +226,11 @@ cannot contradict each other (wire: `{ route: "bypass" | "direct-export" |
 - `bypass` — preview and export read the original.
 - `direct-export { quick_proxy }` — export reads the original; preview reads a
   720p short-GOP quick proxy.
-- `proxied { quick_proxy, full_proxy, format_version }` — export reads the
-  source-resolution master `full_proxy`; preview reads the quick proxy (falling
-  back to the full one). Bumping `format_version` forces regeneration.
+- `proxied { quick_proxy, full_proxy }` — export reads the source-resolution
+  master `full_proxy`; preview reads the quick proxy (falling back to the full
+  one). The master's recipe version is in its cache file name
+  (`<hash>.full-p<N>.mp4`, `CacheLayout::proxy`), so bumping
+  `FULL_PROXY_FORMAT_VERSION` leaves older masters unfound and they regenerate.
 - `native-sw` — a WebCodecs-blind source (ProRes, DNxHD/HR, MPEG-2, VC-1/WMV3;
   `codec_is_blindspot` in `native/src/jobs/proxy_decision.rs`); same fields and
   path resolution as `proxied`. Preview decodes the original through the

@@ -26,7 +26,7 @@ const directExport = (quick: string | null = null) =>
   ({ route: "direct-export", quick_proxy: quick }) as const;
 const bypass = { route: "bypass" } as const;
 const proxied = (over: { quick_proxy?: string | null; full_proxy?: string | null } = {}) =>
-  ({ route: "proxied", quick_proxy: over.quick_proxy ?? null, full_proxy: over.full_proxy ?? null, format_version: 1 }) as const;
+  ({ route: "proxied", quick_proxy: over.quick_proxy ?? null, full_proxy: over.full_proxy ?? null }) as const;
 
 const vid = (over: Record<string, unknown>) => ({
   id: "m", label: "clip", kind: "Video", path: "/o.mov",

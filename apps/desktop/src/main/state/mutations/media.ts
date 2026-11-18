@@ -53,13 +53,13 @@ export function mediaItemTemplate(id: Uuid, kind: MediaItem['kind'], durationUs:
  *   - `quick_proxy_landed` is the tri-state quick-proxy slot (Option<Option<P>>
  *     in Rust → `'quick_proxy_landed' in patch` here; null = cleared); folded
  *     into DirectExport/Proxied, ignored on Bypass.
- *   - `full_proxy_landed` is a NAMED object `{ path, format_version }` (Rust
- *     `FullProxyLanded`, not a tuple/array); folded into Proxied only.
+ *   - `full_proxy_landed` is the same tri-state for the full export master;
+ *     folded into Proxied/NativeSw only.
  *  waveform/conform/thumbnails are plain Option<T> (set-or-leave; never cleared). */
 export interface MediaDerivativesPatch {
   set_route?: DecodeRoute
   quick_proxy_landed?: string | null
-  full_proxy_landed?: { path: string; format_version: number } | null
+  full_proxy_landed?: string | null
   waveform_path?: string | null
   conform_path?: string | null
   thumbnails_dir?: string | null
@@ -86,10 +86,8 @@ export function applySetMediaDerivatives(pool: Record<string, MediaItem>, id: Uu
     // Bypass: no quick slot — ignore (Rust never emits this; defensive).
   }
   if ('full_proxy_landed' in patch) {
-    const f = patch.full_proxy_landed
-    if (route.route === 'proxied' || route.route === 'native-sw') {
-      route = { ...route, full_proxy: f?.path ?? null, format_version: f?.format_version ?? route.format_version }
-    }
+    const f = patch.full_proxy_landed ?? null
+    if (route.route === 'proxied' || route.route === 'native-sw') route = { ...route, full_proxy: f }
   }
   next.decode_route = route
   // plain Option<PathBuf> (Rust `if let Some(p)`): set only when present-and-non-null.

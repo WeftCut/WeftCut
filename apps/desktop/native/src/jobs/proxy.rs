@@ -223,7 +223,6 @@ mod tests {
             decode_route: DecodeRoute::Proxied {
                 quick_proxy: None,
                 full_proxy: None,
-                format_version: 0,
             },
             waveform_path: None,
             conform_path: None,
@@ -341,7 +340,6 @@ mod tests {
             decode_route: DecodeRoute::Proxied {
                 quick_proxy: None,
                 full_proxy: None,
-                format_version: 0,
             },
             waveform_path: None,
             conform_path: None,
@@ -468,7 +466,6 @@ mod tests {
             decode_route: DecodeRoute::Proxied {
                 quick_proxy: None,
                 full_proxy: None,
-                format_version: 0,
             },
             waveform_path: None,
             conform_path: None,
@@ -556,7 +553,6 @@ mod tests {
             decode_route: DecodeRoute::Proxied {
                 quick_proxy: None,
                 full_proxy: None,
-                format_version: 0,
             },
             waveform_path: None,
             conform_path: None,
@@ -596,7 +592,6 @@ mod tests {
         media.decode_route = DecodeRoute::Proxied {
             quick_proxy: None,
             full_proxy: Some(unversioned),
-            format_version: PROXY_FORMAT_VERSION,
         };
         assert_eq!(cached_path(&cache, &media), None);
 
@@ -662,7 +657,6 @@ mod tests {
             decode_route: DecodeRoute::Proxied {
                 quick_proxy: None,
                 full_proxy: None,
-                format_version: 0,
             },
             waveform_path: None,
             conform_path: None,
@@ -765,7 +759,6 @@ mod tests {
             decode_route: DecodeRoute::Proxied {
                 quick_proxy: None,
                 full_proxy: None,
-                format_version: 0,
             },
             waveform_path: None,
             conform_path: None,

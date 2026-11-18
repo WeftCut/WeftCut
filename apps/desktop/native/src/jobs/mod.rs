@@ -43,8 +43,7 @@ use tracing::{debug, info, warn};
 use crate::cache::CacheLayout;
 use crate::logs::{LogBusSlot, LogCategory, LogEntryInput, LogLevel, LogSource};
 use crate::state::{
-    CommandError, DecodeRoute, FullProxyLanded, MediaDerivativesPatch, MediaId, MediaItem,
-    MediaKind,
+    CommandError, DecodeRoute, MediaDerivativesPatch, MediaId, MediaItem, MediaKind,
 };
 
 /// Emit a completed job's derivative patch as `media:derivatives {media_id,
@@ -287,12 +286,7 @@ pub fn cached_patch(cache: &CacheLayout, media: &MediaItem) -> MediaDerivativesP
         media.decode_route,
         DecodeRoute::Proxied { .. } | DecodeRoute::NativeSw { .. }
     ) {
-        patch.full_proxy_landed = cached_derivative(cache, media, JobKind::Proxy).map(|path| {
-            Some(FullProxyLanded {
-                path,
-                format_version: proxy::PROXY_FORMAT_VERSION,
-            })
-        });
+        patch.full_proxy_landed = cached_derivative(cache, media, JobKind::Proxy).map(Some);
     }
     patch
 }
@@ -711,10 +705,7 @@ fn spawn_proxy_decision(
         ) {
             if let Some(master) = proxy::cached_path(&cache, &media) {
                 let patch = MediaDerivativesPatch {
-                    full_proxy_landed: Some(Some(FullProxyLanded {
-                        path: master.clone(),
-                        format_version: proxy::PROXY_FORMAT_VERSION,
-                    })),
+                    full_proxy_landed: Some(Some(master.clone())),
                     ..Default::default()
                 };
                 if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
@@ -1025,10 +1016,7 @@ fn spawn_proxy(
                 let path_str = proxy_path.display().to_string();
 
                 let patch = MediaDerivativesPatch {
-                    full_proxy_landed: Some(Some(FullProxyLanded {
-                        path: proxy_path,
-                        format_version: proxy::PROXY_FORMAT_VERSION,
-                    })),
+                    full_proxy_landed: Some(Some(proxy_path)),
                     ..Default::default()
                 };
                 if let Err(e) = commit_media_derivatives(&events, media_id, patch).await {
@@ -1276,7 +1264,7 @@ mod tests {
 
     #[test]
     fn derivatives_patch_serializes_tristate() {
-        use crate::state::{DecodeRoute, FullProxyLanded, MediaDerivativesPatch};
+        use crate::state::{DecodeRoute, MediaDerivativesPatch};
         use serde_json::json;
 
         // absent: outer None → key omitted entirely.
@@ -1310,19 +1298,13 @@ mod tests {
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v.get("quick_proxy_landed").unwrap(), &json!("q.mp4"));
 
-        // a full proxy landed → Some(Some(FullProxyLanded)) → self-describing object.
+        // a full proxy landed → Some(Some(path)) → string, like the quick one.
         let p = MediaDerivativesPatch {
-            full_proxy_landed: Some(Some(FullProxyLanded {
-                path: "full.mp4".into(),
-                format_version: 7,
-            })),
+            full_proxy_landed: Some(Some("full.mp4".into())),
             ..Default::default()
         };
         let v = serde_json::to_value(&p).unwrap();
-        assert_eq!(
-            v.get("full_proxy_landed").unwrap(),
-            &json!({ "path": "full.mp4", "format_version": 7 })
-        );
+        assert_eq!(v.get("full_proxy_landed").unwrap(), &json!("full.mp4"));
 
         // set_route: an authoritative route replacement serializes the variant.
         let p = MediaDerivativesPatch {
@@ -1363,7 +1345,6 @@ mod tests {
             decode_route: DecodeRoute::Proxied {
                 quick_proxy: None,
                 full_proxy: None, // the landed commit never persisted
-                format_version: 0,
             },
             waveform_path: None,
             conform_path: None,
@@ -1407,14 +1388,7 @@ mod tests {
             .unwrap()
             .get("full_proxy_landed")
             .unwrap();
-        assert_eq!(
-            landed.get("path").unwrap(),
-            &serde_json::json!(cache.proxy(hash))
-        );
-        assert_eq!(
-            landed.get("format_version").unwrap(),
-            &serde_json::json!(proxy::PROXY_FORMAT_VERSION)
-        );
+        assert_eq!(landed, &serde_json::json!(cache.proxy(hash)));
 
         // No re-decision: nothing may carry a set_route reset.
         let recorded = sink.events.lock().unwrap().clone();
@@ -1523,8 +1497,7 @@ mod tests {
             Some(Some(cache.quick_proxy(&hash)))
         );
         let landed = patch.full_proxy_landed.clone().flatten().expect("master");
-        assert_eq!(landed.path, cache.proxy(&hash));
-        assert_eq!(landed.format_version, proxy::PROXY_FORMAT_VERSION);
+        assert_eq!(landed, cache.proxy(&hash));
         // No audio stream: nothing to restore for the audio kinds.
         assert_eq!(patch.conform_path, None);
         assert_eq!(patch.waveform_path, None);
@@ -1532,8 +1505,7 @@ mod tests {
         // The fold `applySetMediaDerivatives` makes of this patch.
         let reopened = DecodeRoute::Proxied {
             quick_proxy: patch.quick_proxy_landed.flatten(),
-            full_proxy: Some(landed.path),
-            format_version: landed.format_version,
+            full_proxy: Some(landed),
         };
         assert!(!proxy_decision::route_needs_decision(&reopened));
     }
@@ -1557,7 +1529,6 @@ mod tests {
         media.decode_route = DecodeRoute::Proxied {
             quick_proxy: None,
             full_proxy: None,
-            format_version: 0,
         };
         assert!(cached_patch(&cache, &media).full_proxy_landed.is_some());
         media.file_hash_blake3 = format!("pending-{}", media.id);

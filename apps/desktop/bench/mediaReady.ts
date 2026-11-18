@@ -22,11 +22,6 @@
 // A remote app host has no renderer to listen on, so there the pool is the
 // only source: a derivative must LAND, a failed job holds the wait until the
 // timeout (the error says so, and app.log has the failure).
-//
-// "Landed" also means "inside this project's folder". A project opened from a
-// template copy still carries the derivative paths of the folder it was built
-// in until the app re-adopts its own cached files; those stale paths must not
-// read as ready.
 
 import type { Page } from '@playwright/test'
 
@@ -93,7 +88,8 @@ export async function recordMediaJobs(page: Page): Promise<void> {
  *  The proxy pair follows the route as it stands: before the decision a video
  *  reads as `proxied` with nothing landed, so it cannot pass early; once the
  *  decision commits `direct-export`, only the quick proxy is still owed. */
-function expected(m: MediaWire, landed: (p: string | null | undefined) => boolean): Array<[string, boolean]> {
+function expected(m: MediaWire): Array<[string, boolean]> {
+  const landed = (p: string | null | undefined) => !!p
   const out: Array<[string, boolean]> = [['hash', !m.file_hash_blake3.startsWith('pending-')]]
   if (m.kind === 'Video') out.push(['thumbnails', landed(m.thumbnails_dir)])
   if (m.metadata.audio) out.push(['conform', landed(m.conform_path)], ['waveform', landed(m.waveform_path)])
@@ -105,15 +101,6 @@ function expected(m: MediaWire, landed: (p: string | null | undefined) => boolea
   return out
 }
 
-/** A derivative path counts when set and, given a project folder, inside it
- *  (either separator, any case: the host may be Windows). */
-export function landedIn(projectDir: string | undefined): (p: string | null | undefined) => boolean {
-  if (!projectDir) return (p) => !!p
-  const norm = (s: string) => s.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '')
-  const root = `${norm(projectDir)}/`
-  return (p) => !!p && norm(p).startsWith(root)
-}
-
 /** Poll until every pool item's derivatives have landed, completed or failed
  *  and no started job is still open; past `timeoutMs`, throw naming what is
  *  still pending. A failed job does not fail the run — it is part of the
@@ -123,11 +110,8 @@ export async function waitForMedia(opts: {
   readPool: () => Promise<Record<string, MediaWire>>
   readEvents: (() => Promise<JobEvent[]>) | null
   timeoutMs: number
-  /** The open project's folder, in the host's spelling. */
-  projectDir?: string
 }): Promise<MediaWait> {
   const { readPool, readEvents, timeoutMs } = opts
-  const landed = landedIn(opts.projectDir)
   const start = Date.now()
   for (;;) {
     const pool = Object.values(await readPool())
@@ -143,7 +127,7 @@ export async function waitForMedia(opts: {
     const settled = new Set<string>()
     const items: MediaWait['items'] = pool.map((m) => {
       const derivatives: Record<string, Outcome> = {}
-      for (const [kind, isLanded] of expected(m, landed)) {
+      for (const [kind, isLanded] of expected(m)) {
         if (isLanded) derivatives[kind] = 'landed'
         else if (ended(m.media_id, kind, 'media:job_error')) derivatives[kind] = 'failed'
         else if (ended(m.media_id, kind, 'media:job_complete')) derivatives[kind] = 'complete'

@@ -17,7 +17,7 @@ function actorWithMedia(): ActorHandle {
     id: MID, label: null, path_abs: '/ws/Media/clip.mp4', path_rel: parseProjectPath('Media/clip.mp4'),
     kind: 'Video', metadata: { duration_us: 1_000_000 }, file_hash_blake3: 'x', file_size: 0, file_mtime: 0,
     imported_at: '2026-01-01T00:00:00Z',
-    decode_route: { route: 'proxied', quick_proxy: null, full_proxy: 'old.mp4', format_version: 0 },
+    decode_route: { route: 'proxied', quick_proxy: null, full_proxy: 'old.mp4' },
     conform_path: null, waveform_path: null, thumbnails_dir: null,
   }
   const initial: Project = { ...base, media_pool: { [MID]: item } }
@@ -25,26 +25,26 @@ function actorWithMedia(): ActorHandle {
 }
 
 describe('applyDerivativesEvent', () => {
-  it('SET: a full_proxy_landed object folds into the Proxied route', () => {
+  it('SET: a full_proxy_landed path folds into the Proxied route', () => {
     const a = actorWithMedia()
-    const r = applyDerivativesEvent(a, { media_id: MID, patch: { full_proxy_landed: { path: 'new.mp4', format_version: 3 } } })
+    const r = applyDerivativesEvent(a, { media_id: MID, patch: { full_proxy_landed: 'new.mp4' } })
     expect(r.ok).toBe(true)
     expect(a.snapshot().media_pool[MID].decode_route)
-      .toEqual({ route: 'proxied', quick_proxy: null, full_proxy: 'new.mp4', format_version: 3 })
+      .toEqual({ route: 'proxied', quick_proxy: null, full_proxy: 'new.mp4' })
   })
 
   it('CLEAR: an explicit null full_proxy_landed clears the master (tri-state)', () => {
     const a = actorWithMedia()
     applyDerivativesEvent(a, { media_id: MID, patch: { full_proxy_landed: null } })
     expect(a.snapshot().media_pool[MID].decode_route)
-      .toEqual({ route: 'proxied', quick_proxy: null, full_proxy: null, format_version: 0 })
+      .toEqual({ route: 'proxied', quick_proxy: null, full_proxy: null })
   })
 
   it('LEAVE: an absent route key leaves the existing route value', () => {
     const a = actorWithMedia()
     applyDerivativesEvent(a, { media_id: MID, patch: { conform_path: 'c.bin' } }) // no route key
     expect(a.snapshot().media_pool[MID].decode_route)
-      .toEqual({ route: 'proxied', quick_proxy: null, full_proxy: 'old.mp4', format_version: 0 }) // unchanged
+      .toEqual({ route: 'proxied', quick_proxy: null, full_proxy: 'old.mp4' }) // unchanged
     expect(a.snapshot().media_pool[MID].conform_path).toBe('c.bin')
   })
 

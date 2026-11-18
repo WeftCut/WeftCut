@@ -313,7 +313,6 @@ describe("MediaPool optimize badges", () => {
       route: "proxied",
       quick_proxy: null,
       full_proxy: null,
-      format_version: 0,
     });
     media.kind = "Video";
     const { container } = renderPool([media], {

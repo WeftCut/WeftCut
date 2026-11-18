@@ -149,13 +149,11 @@ describe('ProjectSummary projection', () => {
   it('nullifies a proxied route\'s readiness slots when the media is missing, keeps them when present', () => {
     // routeForSummary existence-gates the proxy readiness
     // paths: a serialized-but-deleted proxy must project as null, not a stale path.
-    // format_version is NOT a path and passes through unchanged.
     const mediaId = 'cccccccc-0000-0000-0000-000000000003'
     const proxiedRoute = {
       route: 'proxied' as const,
       quick_proxy: 'workspace/quick.mp4',
       full_proxy: 'workspace/full.mp4',
-      format_version: 7,
     }
 
     const buildWith = (files: () => MediaFiles) => {
@@ -166,13 +164,12 @@ describe('ProjectSummary projection', () => {
       return buildProjectSummary(a.snapshot(), a.historyStatus(), files)
     }
 
-    // Missing media → both readiness slots nullified; format_version preserved.
+    // Missing media → both readiness slots nullified.
     const missing = buildWith(NONE_THERE)
     expect(missing.media[0].decode_route).toEqual({
       route: 'proxied',
       quick_proxy: null,
       full_proxy: null,
-      format_version: 7,
     })
 
     // Present media → both readiness paths survive intact.
@@ -181,7 +178,6 @@ describe('ProjectSummary projection', () => {
       route: 'proxied',
       quick_proxy: 'workspace/quick.mp4',
       full_proxy: 'workspace/full.mp4',
-      format_version: 7,
     })
   })
 
@@ -189,14 +185,14 @@ describe('ProjectSummary projection', () => {
     const a = freshActor()
     const mediaId = 'cccccccc-0000-0000-0000-000000000004'
     const item = mediaItemTemplate(mediaId, 'Video', 6_000_000)
-    item.decode_route = { route: 'proxied', quick_proxy: 'workspace/quick.mp4', full_proxy: 'workspace/full.mp4', format_version: 7 }
+    item.decode_route = { route: 'proxied', quick_proxy: 'workspace/quick.mp4', full_proxy: 'workspace/full.mp4' }
     item.conform_path = 'workspace/a.conform'
     a.dispatch('add_media_item', { media: item })
     const s = buildProjectSummary(a.snapshot(), a.historyStatus(),
       () => ({ source: 'missing', quick_proxy: true, full_proxy: false, conform: true }))
     expect(s.media[0]).toMatchObject({
       available: false,
-      decode_route: { route: 'proxied', quick_proxy: 'workspace/quick.mp4', full_proxy: null, format_version: 7 },
+      decode_route: { route: 'proxied', quick_proxy: 'workspace/quick.mp4', full_proxy: null },
       conform_path: 'workspace/a.conform',
     })
   })

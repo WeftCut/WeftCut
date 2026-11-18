@@ -10,7 +10,7 @@ import type { MediaItem } from './model'
 const MID = '00000000-0000-0000-0000-0000000000aa'
 const video = (patch: Partial<MediaItem> = {}): MediaItem => ({
   ...mediaItemTemplate(MID, 'Video', 4_000_000, true),
-  decode_route: { route: 'proxied', quick_proxy: null, full_proxy: null, format_version: 1 },
+  decode_route: { route: 'proxied', quick_proxy: null, full_proxy: null },
   ...patch,
 })
 const notReady = (derivative: string) => ({

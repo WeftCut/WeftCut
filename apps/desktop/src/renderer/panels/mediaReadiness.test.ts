@@ -13,7 +13,7 @@ const baseVideo = (over: Partial<MediaSummary> = {}): MediaSummary => ({
   height: 1080,
   size_bytes: 10_000_000,
   available: true,
-  decode_route: { route: "proxied", quick_proxy: null, full_proxy: null, format_version: 0 },
+  decode_route: { route: "proxied", quick_proxy: null, full_proxy: null },
   codec: "h264",
   pix_fmt: "yuv420p",
   ...over,

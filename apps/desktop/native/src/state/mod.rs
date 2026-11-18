@@ -30,9 +30,7 @@ pub mod track;
 pub mod transform;
 pub mod transition;
 
-pub use command::{
-    CommandError, FullProxyLanded, LatticeField, MediaDerivativesPatch, ValidationError,
-};
+pub use command::{CommandError, LatticeField, MediaDerivativesPatch, ValidationError};
 pub use decode_route::DecodeRoute;
 
 pub use animated::{

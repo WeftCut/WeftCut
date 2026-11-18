@@ -162,11 +162,6 @@ failed job holds the wait until the timeout, whose error says so. The
 diagnostics file then holds the host's process and GPU status instead of the
 ledger, and `app.log` plus `project-logs/` hold the failure.
 
-A derivative only counts as landed when its path is inside the open project's
-folder. A project opened from a template carries the paths of the folder it
-was built in until the app re-adopts its own cached copies; those must not
-read as ready.
-
 `smoke-*` tasks use synthetic layers only and exist to check the plumbing. They
 measure nothing.
 

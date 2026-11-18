@@ -56,6 +56,6 @@ function unreadyRoute(route: DecodeRoute['route']): DecodeRoute {
     case 'bypass': return { route }
     case 'direct-export': return { route, quick_proxy: null }
     case 'proxied':
-    case 'native-sw': return { route, quick_proxy: null, full_proxy: null, format_version: 0 }
+    case 'native-sw': return { route, quick_proxy: null, full_proxy: null }
   }
 }

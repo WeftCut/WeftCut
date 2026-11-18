@@ -115,14 +115,14 @@ describe('applySetMediaDerivatives — route fold', () => {
     })
     expect(out.m1.decode_route).toEqual({ route: 'direct-export', quick_proxy: 'q.mp4' })
   })
-  it('full_proxy_landed folds into Proxied with version', () => {
+  it('full_proxy_landed folds into Proxied', () => {
     const out = applySetMediaDerivatives(
-      base({ route: 'proxied', quick_proxy: 'q.mp4', full_proxy: null, format_version: 0 }),
+      base({ route: 'proxied', quick_proxy: 'q.mp4', full_proxy: null }),
       'm1',
-      { full_proxy_landed: { path: 'f.mp4', format_version: 3 } },
+      { full_proxy_landed: 'f.mp4' },
     )
     expect(out.m1.decode_route).toEqual({
-      route: 'proxied', quick_proxy: 'q.mp4', full_proxy: 'f.mp4', format_version: 3,
+      route: 'proxied', quick_proxy: 'q.mp4', full_proxy: 'f.mp4',
     })
   })
   it('quick_proxy_landed on Bypass is ignored', () => {
@@ -133,11 +133,11 @@ describe('applySetMediaDerivatives — route fold', () => {
   })
   it('null quick_proxy_landed clears the slot on Proxied (tri-state)', () => {
     const out = applySetMediaDerivatives(
-      base({ route: 'proxied', quick_proxy: 'q.mp4', full_proxy: null, format_version: 0 }),
+      base({ route: 'proxied', quick_proxy: 'q.mp4', full_proxy: null }),
       'm1',
       { quick_proxy_landed: null },
     )
-    expect(out.m1.decode_route).toEqual({ route: 'proxied', quick_proxy: null, full_proxy: null, format_version: 0 })
+    expect(out.m1.decode_route).toEqual({ route: 'proxied', quick_proxy: null, full_proxy: null })
   })
   it('plain path options (waveform/conform/thumbnails) set alongside the route', () => {
     const out = applySetMediaDerivatives(pool1(), MID, {
