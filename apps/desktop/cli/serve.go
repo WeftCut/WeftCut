@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -60,7 +61,13 @@ type (
 		arm  uint64
 	}
 	evOwnExpired struct{ key string }
-	evLaunchTick struct{}
+	// evLaunchTick and evOpenExited belong to the launch wait numbered seq.
+	evLaunchTick struct{ seq uint64 }
+	evOpenExited struct {
+		seq    uint64
+		err    error
+		stderr string
+	}
 )
 
 // request is a client request: its envelope, and the line it arrived as.
@@ -92,9 +99,12 @@ const (
 // launchWait is a launch_weftcut that started the app and is waiting for its
 // endpoint. Later calls join it instead of starting the app again.
 type launchWait struct {
+	seq      uint64
 	deadline time.Time
 	app      string
-	callers  []string
+	// byBundleID: the wait started `open -b`, the recorded bundle being gone.
+	byBundleID bool
+	callers    []string
 	// polling: the connect attempt in flight is this wait's look.
 	polling bool
 }
@@ -102,6 +112,8 @@ type launchWait struct {
 type server struct {
 	host     host
 	userData string
+	// start runs a launch command detached (startDetached; a fake in tests).
+	start    func(c launchCmd, exited func(err error, stderr string)) error
 	timeouts timeouts
 	events   chan any
 	out      *outbox
@@ -137,6 +149,7 @@ type server struct {
 	// key to the id as the client wrote it. A cancelled call leaves it.
 	local     map[string]json.RawMessage
 	launching *launchWait
+	launchSeq uint64
 
 	order, nextOwn, posts uint64
 	probing               bool
@@ -149,6 +162,9 @@ func serve(h host) int {
 	s := &server{
 		host:     h,
 		userData: resolveUserDataDir(h),
+		start: func(c launchCmd, exited func(error, string)) error {
+			return startDetached(h, c, exited)
+		},
 		timeouts: configuredTimeouts(h),
 		events:   make(chan any, 64),
 	}
@@ -221,7 +237,9 @@ func (s *server) handle(ev any) bool {
 	case evOwnExpired:
 		s.ownExpired(ev.key)
 	case evLaunchTick:
-		s.launchTick()
+		s.launchTick(ev.seq)
+	case evOpenExited:
+		s.openExited(ev)
 	}
 	return true
 }
@@ -668,17 +686,52 @@ func (s *server) launch(key string) {
 		s.answerLocal(key, textResult(noAppText, true))
 		return
 	}
-	name, args := launchCommand(s.host, target)
-	if err := startDetached(s.host, name, args); err != nil {
-		s.answerLocal(key, textResult(launchFailedText(target.describe(), err), true))
+	command := launchCommand(s.host, target)
+	s.launchSeq++
+	seq, events := s.launchSeq, s.events
+	var exited func(error, string)
+	if command.throughOpen {
+		exited = func(err error, stderr string) { events <- evOpenExited{seq: seq, err: err, stderr: stderr} }
+	}
+	if err := s.start(command, exited); err != nil {
+		text := launchFailedText(target.describe(), err)
+		if nothingAt(err) {
+			text = appMissingText(target.describe())
+		}
+		s.answerLocal(key, textResult(text, true))
 		return
 	}
-	s.launching = &launchWait{deadline: time.Now().Add(launchTimeout), app: target.describe(), callers: []string{key}}
-	s.after(launchPoll, evLaunchTick{})
+	s.launching = &launchWait{
+		seq:        seq,
+		deadline:   time.Now().Add(launchTimeout),
+		app:        target.describe(),
+		byBundleID: command.byBundleID,
+		callers:    []string{key},
+	}
+	s.after(launchPoll, evLaunchTick{seq})
 }
 
-func (s *server) launchTick() {
-	if s.launching == nil {
+// openExited ends a launch wait whose `open` failed: LaunchServices started
+// nothing, so no endpoint is coming. A clean exit says nothing yet; the wait
+// goes on.
+func (s *server) openExited(ev evOpenExited) {
+	w := s.launching
+	if w == nil || w.seq != ev.seq || ev.err == nil {
+		return
+	}
+	text := appMissingText(w.app)
+	if !w.byBundleID {
+		reason := ev.err
+		if ev.stderr != "" {
+			reason = errors.New(ev.stderr)
+		}
+		text = launchFailedText(w.app, reason)
+	}
+	s.finishLaunch(textResult(text, true))
+}
+
+func (s *server) launchTick(seq uint64) {
+	if s.launching == nil || s.launching.seq != seq {
 		return
 	}
 	s.launching.polling = true
@@ -709,9 +762,15 @@ func (s *server) launchLooked() {
 		result = textResult(launchTimeoutText(w.app, launchTimeout), true)
 	default:
 		w.polling = false
-		s.after(launchPoll, evLaunchTick{})
+		s.after(launchPoll, evLaunchTick{w.seq})
 		return
 	}
+	s.finishLaunch(result)
+}
+
+// finishLaunch answers every call waiting on the launch with result.
+func (s *server) finishLaunch(result json.RawMessage) {
+	w := s.launching
 	s.launching = nil
 	for _, caller := range w.callers {
 		s.answerLocal(caller, result)
