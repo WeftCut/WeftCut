@@ -5,11 +5,12 @@ import { once } from 'node:events'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { ownProcessTree, closeProcessTree, CLOSE_LIMIT_MS, FFMPEG_GRACE_MS } from './process-cleanup.mjs'
+import { ownProcessTree, closeProcessTree, CLOSE_LIMIT_MS, FFMPEG_GRACE_MS, WINDOWS_LISTING_MS, WINDOWS_LISTING_ATTEMPTS } from './process-cleanup.mjs'
 
 // A close that times out lists every process for its report. On Windows that
-// is a CIM query through PowerShell, which process-cleanup.mjs allows 15 s.
-const TIMED_OUT_CLOSE_MS = 30_000
+// is a CIM query through PowerShell, which process-cleanup.mjs gives up to
+// WINDOWS_LISTING_ATTEMPTS tries of WINDOWS_LISTING_MS each.
+const TIMED_OUT_CLOSE_MS = WINDOWS_LISTING_ATTEMPTS * WINDOWS_LISTING_MS + 15_000
 
 // A close that succeeds returns when the tree is gone; its tests only need a
 // timeout above the limit the close itself gives up at.

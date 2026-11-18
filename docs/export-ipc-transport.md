@@ -27,7 +27,9 @@ the Worker's export ring. The WebCodecs engine (in-Worker `VideoDecoder`;
    `MessageChannel`.
 3. The export Worker transfers each frame to the sender (same process, no
    copy); the sender posts it to main, the one cross-process copy, off the
-   compositing thread. Main (`main/exportSinkPort.ts`) writes frames to
+   compositing thread, and transfers the buffer back for a later frame, so
+   an export cycles through the few buffers its plan counts instead of
+   leaving one per frame to the garbage collector. Main (`main/exportSinkPort.ts`) writes frames to
    ffmpeg's stdin in arrival order and answers each with the count written,
    or once with the error that ends the stream; no frame is written after a
    failed one. The Worker keeps at most `readbackFrames` frames
