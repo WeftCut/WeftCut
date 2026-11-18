@@ -125,12 +125,20 @@ test.describe('color round-trip conformance (Electron)', () => {
 // untagged source as BT.601 at every size, so the intended matrix is passed
 // explicitly.
 //
+// The two full-range charts run here through the ffmpeg engine only (the
+// round-trip cases above take them through webcodecs): the native decode
+// session packs its frames with swscale, which must not change their levels.
+//
 // The ffmpeg pin needs the native-decode component, so its cases run only with
 // WEFTCUT_DECODE_E2E=1, like export-prores-fidelity. `nativeHandles` tells the
 // two engines apart, so a silent fallback never counts as coverage.
 
-interface UntaggedChart {
+type DecodeEngine = 'webcodecs' | 'ffmpeg'
+
+interface EngineChart {
   label: string
+  title: (engine: DecodeEngine) => string
+  engines: readonly DecodeEngine[]
   source: string
   manifest: string
   canvas: { width: number; height: number; fpsNum: number; fpsDen: number }
@@ -139,9 +147,11 @@ interface UntaggedChart {
   inRange: string
 }
 
-const UNTAGGED_CHARTS: readonly UntaggedChart[] = [
+const ENGINE_CHARTS: readonly EngineChart[] = [
   {
     label: 'SD',
+    title: (engine) => `untagged SD chart exports as BT.601 through the ${engine} decode engine`,
+    engines: ['webcodecs', 'ffmpeg'],
     source: path.resolve(MEDIA_DIR, 'test_480p_color_601ltd_untagged.mp4'),
     manifest: path.resolve(MEDIA_DIR, 'color_manifest_720x480.json'),
     canvas: { width: 720, height: 480, fpsNum: 30, fpsDen: 1 },
@@ -150,22 +160,34 @@ const UNTAGGED_CHARTS: readonly UntaggedChart[] = [
   },
   {
     label: 'HD',
+    title: (engine) => `untagged HD chart exports as BT.709 through the ${engine} decode engine`,
+    engines: ['webcodecs', 'ffmpeg'],
     source: path.resolve(MEDIA_DIR, 'test_1080p_color_709ltd_untagged.mp4'),
     manifest: MANIFEST,
     canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
     inMatrix: 'bt709',
     inRange: 'tv',
   },
+  ...(['709full', '601full'] as const).map((enc): EngineChart => ({
+    label: enc,
+    title: (engine) => `${enc} chart keeps full-range levels through the ${engine} decode engine`,
+    engines: ['ffmpeg'],
+    source: path.resolve(MEDIA_DIR, `test_1080p_color_${enc}.mp4`),
+    manifest: MANIFEST,
+    canvas: { width: 1920, height: 1080, fpsNum: 30, fpsDen: 1 },
+    inMatrix: enc === '709full' ? 'bt709' : 'smpte170m',
+    inRange: 'pc',
+  })),
 ]
 
-test.describe('untagged-chart export color agreement (Electron)', () => {
+test.describe('chart export color agreement across decode engines (Electron)', () => {
   let app: ElectronApplication | undefined
   let page: Page
 
   test.beforeAll(async () => {
     test.skip(
-      !BASELINE || !UNTAGGED_CHARTS.some((c) => existsSync(c.source)),
-      'untagged color fixtures or baseline not present (run `npm run fixtures`; baseline is committed)',
+      !BASELINE || !ENGINE_CHARTS.some((c) => existsSync(c.source)),
+      'color chart fixtures or baseline not present (run `npm run fixtures`; baseline is committed)',
     )
     ;({ app, page } = await launchApp())
     // The native leg starts while import work can still hold a task slot; two
@@ -178,9 +200,9 @@ test.describe('untagged-chart export color agreement (Electron)', () => {
   })
 
   for (const engine of ['webcodecs', 'ffmpeg'] as const) {
-    for (const chart of UNTAGGED_CHARTS) {
-      const reads = chart.inMatrix === 'bt709' ? 'BT.709' : 'BT.601'
-      test(`untagged ${chart.label} chart exports as ${reads} through the ${engine} decode engine`, async () => {
+    for (const chart of ENGINE_CHARTS) {
+      if (!chart.engines.includes(engine)) continue
+      test(chart.title(engine), async () => {
         if (engine === 'ffmpeg') {
           test.skip(
             process.env.WEFTCUT_DECODE_E2E !== '1',
@@ -188,17 +210,17 @@ test.describe('untagged-chart export color agreement (Electron)', () => {
           )
           test.skip(!DECODE_COMPONENT_PRESENT, `native-decode component not built (${DECODE_ADDON}) — the app cannot open native sessions`)
         }
-        test.skip(!existsSync(chart.source), `untagged chart fixture not found at ${chart.source} (npm run fixtures)`)
+        test.skip(!existsSync(chart.source), `chart fixture not found at ${chart.source} (npm run fixtures)`)
         test.skip(!existsSync(chart.manifest), `color manifest not found at ${chart.manifest} (npm run fixtures)`)
         test.setTimeout(240000)
         const manifest = JSON.parse(readFileSync(chart.manifest, 'utf8')) as { width: number; height: number }
         expect(manifest.width).toBe(chart.canvas.width) // 1:1 chart→composition mapping
         expect(manifest.height).toBe(chart.canvas.height)
-        const output = path.join(tmpDir('weftcut-e2e-untagged-color-out-'), `untagged-${chart.label}-${engine}.mp4`)
+        const output = path.join(tmpDir('weftcut-e2e-engine-color-out-'), `${chart.label}-${engine}.mp4`)
 
         await newProject(page, {
-          parentFolder: tmpDir('weftcut-e2e-untagged-color-proj-'),
-          name: `e2e-untagged-${chart.label}-${engine}-` + Date.now(),
+          parentFolder: tmpDir('weftcut-e2e-engine-color-proj-'),
+          name: `e2e-engine-${chart.label}-${engine}-` + Date.now(),
           canvas: chart.canvas,
         })
 
@@ -214,7 +236,7 @@ test.describe('untagged-chart export color agreement (Electron)', () => {
           | { nativeHandles: number; colorDiag?: unknown }
           | null
         if (!perf) throw new Error('export settled but __weftcutExportPerf is missing (VITE_WEFTCUT_E2E build?)')
-        console.log(`[e2e] untagged ${chart.label} ${engine}: colorDiag=${JSON.stringify(perf.colorDiag ?? null)}`)
+        console.log(`[e2e] chart ${chart.label} ${engine}: colorDiag=${JSON.stringify(perf.colorDiag ?? null)}`)
         if (engine === 'ffmpeg') {
           expect(perf.nativeHandles, 'ffmpeg pin must engage the native session').toBeGreaterThanOrEqual(1)
         } else {
@@ -231,7 +253,7 @@ test.describe('untagged-chart export color agreement (Electron)', () => {
         })
         const faithfulMax = colorFaithfulMax(BASELINE.faithfulMax)
         console.log(
-          `[e2e] untagged ${chart.label} ${engine}: worst_app_max=${report.worst_app_max} (faithfulMax=${faithfulMax})`,
+          `[e2e] chart ${chart.label} ${engine}: worst_app_max=${report.worst_app_max} (faithfulMax=${faithfulMax})`,
         )
         const offenders = report.patches.filter(
           (p: any) => Math.max(...p.app_error.max) > faithfulMax,
