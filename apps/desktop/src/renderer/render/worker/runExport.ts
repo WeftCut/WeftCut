@@ -325,15 +325,17 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
         [...new Set(Object.values(packet.frames).map(frame => frame.bitmap))]),
       fail: error => { cleanup(); reject(error); },
     }) : null;
+    const decodeSessions = new Set<string>();
     const cleanup = () => {
       if (disposed) return;
       disposed = true;
       resourceWaits.abort();
       motifProducer?.dispose();
       init.signal?.removeEventListener("abort", onAbort);
-      // Terminating the Worker closes the native decode ports it holds, and a
-      // closed port closes its session in main (main/frameCarrier/
-      // decodeSessionHost.ts): no session outlives the export on any path.
+      // A handle closes its own native decode session when it is disposed, but
+      // a Worker terminated here may never get to: end every session this
+      // export opened (a no-op for one already closed), so none outlives it.
+      for (const sessionId of decodeSessions) window.api.exportDecode.close({ sessionId });
       worker.terminate();
       sender?.terminate();
       for (const release of workerResources.values()) release();
@@ -411,6 +413,7 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
         // the Worker, which talks to the session directly from then on. An
         // open failure reaches the Worker's handle (`ensureReady` rejects →
         // the export aborts).
+        decodeSessions.add(ev.sessionId);
         openExportDecode({
           sessionId: ev.sessionId,
           path: ev.path,
@@ -419,8 +422,9 @@ export async function runExport(init: RunExportInit): Promise<RunExportResult> {
           finalizationToken: init.finalizationToken,
         }).then(
           ({ info, port }) => {
-            // The export already ended: closing the port closes the session.
-            if (disposed) { port.close(); return; }
+            // The export ended while this open was in flight, so its cleanup
+            // could not reach the session yet.
+            if (disposed) { port.close(); window.api.exportDecode.close({ sessionId: ev.sessionId }); return; }
             worker.postMessage({ type: "nd:openResult", reqId: ev.reqId, ok: true, info, port } satisfies ExportRequest, [port]);
           },
           (err: unknown) => {

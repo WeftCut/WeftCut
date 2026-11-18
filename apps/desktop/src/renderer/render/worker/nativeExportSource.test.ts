@@ -212,7 +212,7 @@ describe("NativeExportSourceHandle", () => {
     ]);
   });
 
-  it("dispose releases every frame still held, then closes the port, once", async () => {
+  it("dispose releases every frame still held, then ends the session and closes the port, once", async () => {
     const { handle, port } = makeHandle();
     await handle.ensureReady();
     for (let i = 0; i < 3; i++) port.deliver(frameMsg(i * DUR));
@@ -224,6 +224,7 @@ describe("NativeExportSourceHandle", () => {
       { type: "release", lease: 0 },
       { type: "release", lease: 1 },
       { type: "release", lease: 2 },
+      { type: "close" },
       "close",
     ]);
     // Nothing the session still had in flight reaches the disposed handle.
@@ -231,12 +232,12 @@ describe("NativeExportSourceHandle", () => {
     expect(handle.ring.size()).toBe(0);
   });
 
-  it("a handle disposed while its session opens closes the port as soon as it arrives", async () => {
+  it("a handle disposed while its session opens ends the session as soon as its port arrives", async () => {
     const { handle, port } = makeHandle();
     const ready = handle.ensureReady();
     handle.dispose();
     await ready;
-    expect(port.log).toEqual(["close"]);
+    expect(port.log).toEqual([{ type: "close" }, "close"]);
     expect(port.onmessage).toBeNull();
   });
 

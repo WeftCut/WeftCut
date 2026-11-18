@@ -1,6 +1,6 @@
 // Native software export-decode sessions (blind-spot originals: ProRes, DNxHD,
-// MPEG-2, VC-1; routing in ADR 0033). Each session runs on its own port to the
-// export Worker (frameCarrier/decodeSessionHost.ts); this module owns admission:
+// MPEG-2, VC-1; routing in ADR 0033). Each session is served on its own port,
+// held by the export Worker (frameCarrier/decodeSessionHost.ts); this module owns admission:
 // one session per id, and the decoder memory it reserves until it closes.
 
 import type { WebContents } from 'electron'
@@ -22,8 +22,8 @@ export interface ExportDecodeRequest {
 
 const sessions = new Set<string>()
 
-/** Opens a session served on `port` until the port closes or `owner`'s document
- * goes away. Messages flow only after the first `range` command. */
+/** Opens a session served on `port` until its consumer closes it or `owner`'s
+ * document goes away. Messages flow only after the first `range` command. */
 export function openExportDecode(
   backend: NativeDecode,
   owner: WebContents,

@@ -147,6 +147,7 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
       window: this.window,
     }).then(({ port }) => {
       if (this._disposed) {
+        port.postMessage({ type: "close" });
         port.close();
         return;
       }
@@ -245,12 +246,14 @@ export class NativeExportSourceHandle implements ExportDecodeSession {
     this.ring.push(frame, msg.ptsUs);
   }
 
-  /// Closing the port closes the native session in main.
+  /// Ends the native session in main, then drops the port. Messages posted
+  /// before a port closes are still delivered.
   private closePort(): void {
     const port = this.port;
     this.port = null;
     if (!port) return;
     port.onmessage = null;
+    port.postMessage({ type: "close" });
     port.close();
   }
 

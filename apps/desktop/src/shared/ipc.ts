@@ -554,8 +554,8 @@ export interface WeftcutApi {
   /// Native software export-decode (blind-spot originals: ProRes/DNxHD/MPEG-2/
   /// VC-1). `open` starts a session and resolves with its open info; the
   /// session's port arrives separately as a window message
-  /// (`openExportDecode` in the renderer), and closing that port closes the
-  /// session.
+  /// (`openExportDecode` in the renderer). The session ends on a `close`
+  /// command from its port; `close` here ends one whose port holder is gone.
   exportDecode: {
     open(args: {
       sessionId: string
@@ -567,6 +567,7 @@ export interface WeftcutApi {
       window: number
       finalizationToken?: string | undefined
     }): Promise<ExportDecodeOpenInfo>
+    close(args: { sessionId: string }): void
   }
   /// Availability of the optional @weftcut/native-decode component (level-0
   /// gate). The renderer pulls this once on mount (availability is fixed for a

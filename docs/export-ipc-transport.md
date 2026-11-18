@@ -42,33 +42,43 @@ The renderer main thread never touches a frame.
 
 ## Decode-in
 
-Main → Worker over one port per session, feeding natively decoded frames to
-the export compositor (routing: [ADR 0033](adr/0033-export-decode-joins-the-engine-overlay.md);
-consumption: [`render.md`](render.md) § Export decode pipelines):
+Main → Worker, one port per session held by the export Worker, feeding
+natively decoded frames to the export compositor (routing:
+[ADR 0033](adr/0033-export-decode-joins-the-engine-overlay.md); consumption:
+[`render.md`](render.md) § Export decode pipelines):
 
 1. `NativeExportSourceHandle` posts `nd:open`; the page calls
-   `exportDecode:open`, and main (`src/main/exportDecode.ts`) reserves the
-   decoder's memory, opens the `export_sw` session and sends the session's
-   port to the page as a message tagged with its session id. The page
-   transfers the port to the Worker in `nd:openResult`
-   (`renderer/ipc/exportDecode.ts`). Nothing else about the session passes
-   the page's main thread.
+   `exportDecode.open`. The preload creates the session's `MessageChannel`
+   and keeps one end (`preload/decodeSessionPorts.ts`); main
+   (`src/main/exportDecode.ts`) reserves the decoder's memory and opens the
+   `export_sw` session. The other end reaches the page as a window message
+   tagged with its session id, and the page transfers it to the Worker in
+   `nd:openResult` (`renderer/ipc/exportDecode.ts`). No page code handles a
+   frame or a per-frame message.
 2. The session's messages are the addon's generated `DecodeMsg` (`bytes`,
-   `mark`, `end`, `error`), posted on the port as delivered
-   (`main/frameCarrier/decodeSessionHost.ts`); a frame's bytes cross as the
-   one main → Worker copy. `mark` carries the completed `[aUs, bUs]` and,
-   since every earlier frame has arrived, proves presentation finality for
-   pending `waitForPts` targets.
+   `mark`, `end`, `error`). Main sends each on `decodeSession:msg` as
+   delivered (`main/frameCarrier/decodeSessionHost.ts` over
+   `ipcCarrierPort.ts`): the one cross-process copy. The preload posts it on
+   the session's port with the frame's buffer transferred, so the bytes cross
+   no `contextBridge`. `mark` carries the completed `[aUs, bUs]` and, since
+   every earlier frame has arrived, proves presentation finality for pending
+   `waitForPts` targets.
+   Main does not hold the port itself: posting a 4K frame on a
+   `MessagePortMain` cost main 1.6× (Windows) to 2.3× (macOS) the time of
+   `webContents.send`, and a 4K native-decode export ran 10 % slower on
+   Windows with it.
 3. **Delivery order is the contract.** An `end`/`mark` overtaking its tail
    frames corrupts the export tail; never split control and frames onto
    separate ports or channels.
 4. Backpressure is a lease window: the producer parks at `window` frames in
    flight, and the handle posts `release` with a frame's lease the moment
-   that frame leaves the ring (consumed, evicted or freed). Main hands a
-   release to the session directly, so it lands mid-range.
-5. Closing the port closes the session. The handle closes it on dispose and
-   on a terminal error; terminating the Worker closes it too. Main also
-   closes a session when its document goes (reload, crash, destroy).
+   that frame leaves the ring (consumed, evicted or freed). Commands go up
+   the port and on to main as `decodeSession:cmd`; main hands a release to
+   the session directly, so it lands mid-range.
+5. A `close` command ends the session. The handle posts it on dispose and on
+   a terminal error; when an export ends, the page closes every session it
+   opened, which covers a Worker terminated before its handles disposed. Main
+   also closes a session when its document goes (reload, crash, destroy).
 
 ## Why IPC
 

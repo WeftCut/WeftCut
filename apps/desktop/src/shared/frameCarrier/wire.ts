@@ -21,7 +21,8 @@ export type { ExportDecodeOpenInfo }
 
 /** One command up a decode session's port. `range` asks for every frame in
  * `[aUs, bUs]`; `release` hands back the lease of a frame that has left the
- * consumer. Closing the port closes the session; there is no close command. */
+ * consumer; `close` ends the session. */
 export type DecodeCommand =
   | { type: 'range'; aUs: number; bUs: number }
   | { type: 'release'; lease: number }
+  | { type: 'close' }

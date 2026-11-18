@@ -38,8 +38,8 @@ Date: 2026-08-05
   the export ring (consumed, evicted or freed), so a duplicate or stale return
   cannot widen the window. Releases bypass the command channel.
 - **One ordered in-band channel.** Frames and control (`DecodeMsg`:
-  `bytes`/`mark`/`end`/`error`) travel together on one port per session, from
-  main straight to the export Worker (`docs/export-ipc-transport.md`).
+  `bytes`/`mark`/`end`/`error`) travel together on one port per session, held
+  by the export Worker (`docs/export-ipc-transport.md`).
   `mark` is the presentation-finality proof that lets `ExportFrameStore`
   settle a target left in a one-microsecond timestamp-conversion gap. `decodeRange` dispatch never awaits
   `mark`, which would block lease returns and deadlock.
@@ -58,9 +58,9 @@ Date: 2026-08-05
   `nativeHandles ≥ 1` so a silent proxy fallback cannot pass.
 - A `webcodecs` pin preserves the pre-overlay behavior, including the
   full-proxy wait for blind spots.
-- One export opens one session per phase group. A session ends when its port
-  closes (the Worker disposed it or was terminated) or its document goes away,
-  so a renderer crash cannot strand decode threads.
+- One export opens one session per phase group. A session ends on its
+  consumer's `close`, when the export that opened it ends, or when its document
+  goes away, so a renderer crash cannot strand decode threads.
 - 4:2:2 chroma halves before compositing (swscale to I420P10); a faithful
   ProRes 422 path needs a 4:2:2 transport format.
 - Not built: one same-engine session rebuild before abort, and an abort

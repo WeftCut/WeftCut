@@ -33,8 +33,6 @@ export function openExportDecode(
       },
       (error: unknown) => {
         window.removeEventListener("message", onMessage);
-        // Closing a port that did arrive closes its session in main.
-        port?.close();
         reject(error instanceof Error ? error : new Error(String(error)));
       },
     );

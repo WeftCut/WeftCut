@@ -94,6 +94,7 @@ import { installPreviewGpuIpc } from './previewGpuIpc.js'
 import { recordFrameReadySent } from './previewGpuTiming.js'
 import { openPreviewSw, requestFrameAtPreviewSw, closePreviewSw, consumePreviewSw } from './previewSw.js'
 import { openExportDecode } from './exportDecode.js'
+import { installDecodeSessionIpc, ipcCarrierPort } from './frameCarrier/ipcCarrierPort.js'
 import { serveSinkPort } from './exportSinkPort.js'
 import { loadNativeDecode } from './native-decode.js'
 import { mainWindowGeometryDefaults, MAIN_WINDOW_LABEL } from './mainWindowConfig.js'
@@ -2348,19 +2349,15 @@ app.whenReady().then(async () => {
     catch (e) { console.warn('[main] previewSw:consume failed', e) }
   })
 
-  // Native software export-decode: each session gets its own port, which the
-  // page hands to the export Worker (docs/export-ipc-transport.md § Decode-in).
-  // A port cannot be an invoke reply, so it follows as a message tagged with
-  // its session id.
-  ipcMain.handle('exportDecode:open', (event, a: { finalizationToken?: string; sessionId: string; path: string; outFormat: 'NV12' | 'I420P10'; window: number }) => {
-    const { port1, port2 } = new MessageChannelMain()
-    const info = openExportDecode(ndBackend(), event.sender, port1, {
+  // Native software export-decode: each session is served on a port the
+  // sender's preload holds, whose other end the page hands to the export Worker
+  // (docs/export-ipc-transport.md § Decode-in).
+  installDecodeSessionIpc(ipcMain)
+  ipcMain.handle('exportDecode:open', (event, a: { finalizationToken?: string; sessionId: string; path: string; outFormat: 'NV12' | 'I420P10'; window: number }) =>
+    openExportDecode(ndBackend(), event.sender, ipcCarrierPort(event.sender, a.sessionId), {
       sessionId: a.sessionId, path: a.path, outFormat: a.outFormat, window: a.window,
       finalizationId: resolveExportFinalization(event.sender.id, a.finalizationToken),
-    })
-    event.sender.postMessage('exportDecode:port', { sessionId: a.sessionId }, [port2])
-    return info
-  })
+    }))
 
   // Secondary windows (Dev Performance Monitor etc.) via win:* IPC.
   ipcMain.handle('win:create', (_e, { label, options }: { label: string; options?: SecondaryWinOpts }) => createSecondary(label, options, layoutTheme, motifTuning))

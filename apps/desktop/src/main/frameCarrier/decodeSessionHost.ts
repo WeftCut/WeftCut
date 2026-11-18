@@ -1,11 +1,13 @@
-// Carries one native decode session on one MessagePort: messages down, commands
-// up, one close. Transport: docs/export-ipc-transport.md § Decode-in.
+// Carries one native decode session on one port: messages down, commands up,
+// one close. Transport: docs/export-ipc-transport.md § Decode-in.
 
 import type { DecodeMsg } from '@weftcut/native-decode'
 import type { DecodeCommand } from '../../shared/frameCarrier/wire'
 import type { DocumentOwner } from './documentOwner'
 
-/** The part of Electron's `MessagePortMain` a session host uses. */
+/** The port a session is served on, as its host sees it. `ipcCarrierPort`
+ * reaches a port the renderer's preload holds; Electron's `MessagePortMain`
+ * fits as it is. */
 export interface CarrierPort {
   on(event: 'message', listener: (event: { data: unknown }) => void): unknown
   on(event: 'close', listener: () => void): unknown
@@ -21,14 +23,14 @@ export interface DecodeSessionSpec<Info> {
   /** Opens the native session, delivering its messages to `onMsg` in the order
    * the session produced them. Throws to refuse the session. */
   open(onMsg: (msg: DecodeMsg) => void): Info
-  command(cmd: DecodeCommand): void
+  command(cmd: Exclude<DecodeCommand, { type: 'close' }>): void
   /** Closes the native session. Called once, and only after `open` returned. */
   close(): void
 }
 
-/** Opens `spec`'s session and serves it on its port until the port closes or
- * the owner goes away, whichever comes first; either closes the session once.
- * A failed open registers nothing and closes the port. */
+/** Opens `spec`'s session and serves it on its port until a `close` command,
+ * the port closing or the owner going away, whichever comes first; each closes
+ * the session once. A failed open registers nothing and closes the port. */
 export function hostDecodeSession<Info>(spec: DecodeSessionSpec<Info>): Info {
   const { port } = spec
   let closed = false
@@ -54,6 +56,7 @@ export function hostDecodeSession<Info>(spec: DecodeSessionSpec<Info>): Info {
     if (closed) return
     const cmd = decodeCommand(data)
     if (!cmd) { console.warn('[main] decode session: unknown command', data); return }
+    if (cmd.type === 'close') { shutdown(); return }
     // The session may already be gone natively (a terminal error); a command
     // racing that must not throw out of the port's listener.
     try { spec.command(cmd) }
@@ -73,5 +76,6 @@ function decodeCommand(data: unknown): DecodeCommand | null {
     return { type: 'range', aUs: cmd.aUs as number, bUs: cmd.bUs as number }
   if (cmd.type === 'release' && Number.isInteger(cmd.lease) && (cmd.lease as number) >= 0)
     return { type: 'release', lease: cmd.lease as number }
+  if (cmd.type === 'close') return { type: 'close' }
   return null
 }

@@ -3,6 +3,7 @@ import type { SharedTextureImported } from 'electron'
 import { installMotifFrames } from './motifFrames'
 import { MotifReadBarrier } from './motifReadBarrier'
 import { createPreviewSwFrames } from './previewSwFrames'
+import { createDecodeSessionPorts } from './decodeSessionPorts'
 import { createReadCompletionProof, type ReadCompletionCost } from '../shared/readCompletion'
 import { readLayoutThemeArgument } from '../shared/layout-theme'
 import { readMotifTuningArgument } from '../shared/motifs/tuning'
@@ -37,18 +38,16 @@ import type {
 } from '../shared/data-root'
 import type { MenuProjection } from '../shared/menu'
 import type { UpdateDownloadResult, UpdateRestartResult, UpdateResume, UpdateStatus } from '../shared/updates'
-import type { ExportDecodeOpenInfo } from '../shared/frameCarrier/wire'
+import type { DecodeWireMsg, ExportDecodeOpenInfo } from '../shared/frameCarrier/wire'
 
 type Listener = (payload: unknown) => void
 
 const previewSwFrames = createPreviewSwFrames()
 ipcRenderer.on('previewSw:frame', (_e, frame: PreviewSwFrameMsg) => previewSwFrames.dispatch(frame))
-// An export decode session's port. A port cannot cross contextBridge, so it
-// reaches the page as a window message tagged with its session id
-// (`openExportDecode` in the renderer).
-ipcRenderer.on('exportDecode:port', (event, data: { sessionId: string }) => {
-  window.postMessage({ weftcutExportDecodePort: data.sessionId }, '*', event.ports)
-})
+// Decode sessions served on a port this preload holds (decodeSessionPorts.ts).
+const decodeSessionPorts = createDecodeSessionPorts((sessionId, cmd) => ipcRenderer.send('decodeSession:cmd', sessionId, cmd))
+ipcRenderer.on('decodeSession:msg', (_e, sessionId: string, msg: DecodeWireMsg) => decodeSessionPorts.deliver(sessionId, msg))
+ipcRenderer.on('decodeSession:end', (_e, sessionId: string) => decodeSessionPorts.end(sessionId))
 
 // The contextBridge surface — the COMPLETE set of things the (untrusted)
 // renderer can ask the main process to do. Grouped, named methods rather than a
@@ -318,11 +317,23 @@ const api: WeftcutApi = {
     },
   },
 
-  // Native software export-decode. The session's port follows on its own
-  // (`exportDecode:port` above).
+  // Native software export-decode. A port cannot cross contextBridge, so the
+  // consumer's end reaches the page as a window message tagged with its session
+  // id (`openExportDecode` in the renderer).
   exportDecode: {
-    open(args: { sessionId: string; path: string; outFormat: 'NV12' | 'I420P10'; window: number; finalizationToken?: string | undefined }): Promise<ExportDecodeOpenInfo> {
-      return ipcRenderer.invoke('exportDecode:open', args) as Promise<ExportDecodeOpenInfo>
+    async open(args: { sessionId: string; path: string; outFormat: 'NV12' | 'I420P10'; window: number; finalizationToken?: string | undefined }): Promise<ExportDecodeOpenInfo> {
+      const consumerPort = decodeSessionPorts.open(args.sessionId)
+      try {
+        const info = await ipcRenderer.invoke('exportDecode:open', args) as ExportDecodeOpenInfo
+        window.postMessage({ weftcutExportDecodePort: args.sessionId }, '*', [consumerPort])
+        return info
+      } catch (error) {
+        decodeSessionPorts.end(args.sessionId)
+        throw error
+      }
+    },
+    close(args: { sessionId: string }): void {
+      ipcRenderer.send('decodeSession:cmd', args.sessionId, { type: 'close' })
     },
   },
 

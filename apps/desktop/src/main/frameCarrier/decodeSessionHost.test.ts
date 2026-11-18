@@ -77,7 +77,7 @@ describe('hostDecodeSession', () => {
     const { port, commands } = hosted()
     port.send({ type: 'range', aUs: 0, bUs: 500 })
     port.send({ type: 'release', lease: 3 })
-    port.send({ type: 'close' })
+    port.send({ type: 'pause' })
     port.send({ type: 'release', lease: -1 })
     port.send({ type: 'range', aUs: 'x', bUs: 1 })
     port.send(null)
@@ -93,9 +93,19 @@ describe('hostDecodeSession', () => {
     expect(() => port.send({ type: 'release', lease: 0 })).not.toThrow()
   })
 
+  it('closes the session and its port once on a close command', () => {
+    const { port, owner, close, commands } = hosted()
+    port.send({ type: 'close' })
+    port.send({ type: 'close' })
+    port.send({ type: 'release', lease: 0 })
+    expect(close).toHaveBeenCalledOnce()
+    expect(port.state.closed).toBe(true)
+    expect(commands, 'close is the host\'s, not the session\'s').toEqual([])
+    expect(owner.subscribers.size, 'the owner no longer holds the closed session').toBe(0)
+  })
+
   it('closes the session once when the far end of its port closes', () => {
-    // This is how an export's sessions end when runExport terminates its
-    // Worker: the Worker's ports close with it.
+    // A port main holds itself (`MessagePortMain`) reports its far end closing.
     const { port, owner, close } = hosted()
     port.farEndCloses()
     port.farEndCloses()
