@@ -38,12 +38,16 @@ None of that rides on a stripped-down editor. Everything an agent can reach, you
 
 ## Quick start
 
-> [!NOTE]
->
-> We don't have a verified macOS installer yet, so allow it under **System Settings → Privacy & Security → Open Anyway**
+1. Install WeftCut:
+   - **macOS** (Apple silicon, macOS 13 or later) with [Homebrew](https://brew.sh):
 
-1. Download the installer for your platform from the [releases page](https://github.com/WeftCut/WeftCut/releases/latest).
-2. Install the app, open the settings panel, and copy the prompt that teaches your agent how to connect to WeftCut.
+     ```bash
+     brew install --cask weftcut
+     ```
+
+     This also puts the `weftcut` command on your `PATH`. The app updates itself, so `brew upgrade` leaves it alone.
+   - **Windows, Linux, or macOS without Homebrew**: download the installer for your platform from the [releases page](https://github.com/WeftCut/WeftCut/releases/latest).
+2. Open the app's settings panel and copy the prompt that teaches your agent how to connect to WeftCut.
 3. Enjoy your work.
 
 ## Hand your timeline to an agent
