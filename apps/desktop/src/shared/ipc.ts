@@ -134,11 +134,10 @@ export type PreviewGpuColorSpace = {
 ///              1080p track, 0.35-0.42 thread-s/s at 4K. NOT fixable by widening
 ///              its deadline; see `FENCE_DEADLINE_MS`, where the wider bound
 ///              measured worse. Retained as the A/B control.
-///   readback — CORRECT but expensive: rasterize + read back 1px, which blocks
-///              until Chromium's cross-device read has GPU-completed. ~20ms of
-///              renderer-thread time per frame — the wall that caps hardware
-///              preview at 2 smooth 1080p tracks. The A/B control and the safe
-///              fallback.
+///   readback — CORRECT and synchronous: draw one source pixel and read it
+///              back (shared/readCompletion.ts), which blocks until Chromium's
+///              cross-device read has GPU-completed. Renderer-thread time once
+///              per frame per session. The A/B control and the safe fallback.
 ///   gpuflush — force the copy on the GPU only (texImage2D + flush), no CPU
 ///              readback. MEASURED AND REJECTED: reorders exactly as `none`
 ///              does, so submitting the copy is not what the ack was waiting
