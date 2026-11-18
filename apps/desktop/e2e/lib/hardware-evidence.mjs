@@ -1,6 +1,9 @@
 /** Returns a documented skip reason only for affirmative unavailability.
  * All other software paths are failures, never hardware coverage. `before`
- * is the pre-sampling snapshot; check again after pixel/SSIM measurements. */
+ * is the pre-sampling snapshot; check again after pixel/SSIM measurements.
+ * @param {object | null | undefined} current
+ * @param {string} lane
+ * @param {{ required?: boolean, before?: { hwFallbackCount: number } | null }} [options] */
 export function verifyHardwareEvidence(current, lane, { required = false, before } = {}) {
   if (!current) throw new Error('Hardware evidence missing: no active clip')
   const details = JSON.stringify(current)

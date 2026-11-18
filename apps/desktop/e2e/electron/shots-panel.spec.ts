@@ -64,8 +64,7 @@ const RAISED_SENSITIVITY = '0.6'
 const CUT_A_US = 2_000_000
 const CUT_B_US = 4_000_000
 
-/// Only the fields this spec reads, spelled out rather than intersected onto
-/// the driver's loose `CompositionSummary` (group-timeline.spec.ts' shape).
+/// Only the fields this spec reads.
 interface WireLayer {
   id: string
   t_start_us: number

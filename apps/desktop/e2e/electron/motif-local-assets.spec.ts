@@ -147,7 +147,7 @@ test('@serial Three.js Motif ZIP round-trip loads local modules, GLB and texture
         const blob = URL.createObjectURL(new Blob(['local-buffer']));
         const value = await (await fetch(blob)).text(); URL.revokeObjectURL(blob);
         return {blocked, value, hasNode: typeof require !== 'undefined'};
-      })()`)
+      })()`) as Promise<{ blocked: Array<{ failed: boolean; directive: string }>; value: string; hasNode: boolean }>
     }, id)
     expect(confinement.blocked).toEqual(Array.from({ length: 5 }, () => ({ failed: true, directive: 'connect-src' })))
     expect(confinement.value).toBe('local-buffer')

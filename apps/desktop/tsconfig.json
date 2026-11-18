@@ -4,11 +4,13 @@
   //   tsconfig.main.json    Electron main process + electron-vite config (no DOM)
   //   tsconfig.preload.json Electron preload (DOM — runs in the renderer context)
   //   tsconfig.web.json     renderer
+  //   tsconfig.e2e.json     Playwright E2E specs, helpers and config
   "files": [],
   "references": [
     { "path": "./tsconfig.shared.json" },
     { "path": "./tsconfig.main.json" },
     { "path": "./tsconfig.preload.json" },
-    { "path": "./tsconfig.web.json" }
+    { "path": "./tsconfig.web.json" },
+    { "path": "./tsconfig.e2e.json" }
   ]
 }
