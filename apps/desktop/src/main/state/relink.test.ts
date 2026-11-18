@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { relinkMissingMedia, type RelinkFs } from './relink'
 import { blankProject, type MediaItem, type Project } from './model'
 import { seededGen } from './ids'
+import { parseProjectPath } from '../../shared/projectPath'
 
 const posixJoin = (...p: string[]) => p.join('/')
 
@@ -34,7 +35,7 @@ const fakeHash = (fs: { files: Map<string, string> }) => async (p: string) => {
 
 function mediaItem(over: Partial<MediaItem>): MediaItem {
   return {
-    id: 'm1', label: null, path_abs: '/ws/Media/clip.mp4', path_rel: 'Media/clip.mp4', kind: 'Video',
+    id: 'm1', label: null, path_abs: '/ws/Media/clip.mp4', path_rel: parseProjectPath('Media/clip.mp4'), kind: 'Video',
     metadata: { duration_us: 1_000_000 }, decode_route: { route: 'bypass' },
     waveform_path: null, conform_path: null, thumbnails_dir: null,
     file_hash_blake3: 'b3:AAAA', file_size: 4, file_mtime: 1, imported_at: '2026-01-01T00:00:00Z',
@@ -66,7 +67,7 @@ describe('relinkMissingMedia', () => {
     // "鐢靛瓙姒ㄨ彍" is the GENUINE artifact — "电子榨菜"'s UTF-8 bytes decoded
     // as GBK, exactly what a flag-less zip does on a zh-CN Windows.
     const fs = memFs({ '/ws/Media/鐢靛瓙姒ㄨ彍.mp4': 'AAAA' })
-    const { project: out, report } = await run(withPool([mediaItem({ path_rel: 'Media/电子榨菜.mp4', path_abs: '/ws/Media/电子榨菜.mp4' })]), fs)
+    const { project: out, report } = await run(withPool([mediaItem({ path_rel: parseProjectPath('Media/电子榨菜.mp4'), path_abs: '/ws/Media/电子榨菜.mp4' })]), fs)
     expect(fs.renames).toEqual([['/ws/Media/鐢靛瓙姒ㄨ彍.mp4', '/ws/Media/电子榨菜.mp4']])
     expect(out.media_pool['m1'].path_abs).toBe('/ws/Media/电子榨菜.mp4')
     expect(out.media_pool['m1'].path_rel).toBe('Media/电子榨菜.mp4')  // recorded name kept
@@ -82,7 +83,7 @@ describe('relinkMissingMedia', () => {
       '/ws/Media/stray.mp3': 'AAAA',   // the real content, under a new name
       '/ws/Media/clip.mp4': 'XXXX',    // squatter on the flattened recorded name (different bytes)
     })
-    const item = mediaItem({ path_rel: 'Media/sub/clip.mp4', path_abs: '/ws/Media/sub/clip.mp4' })
+    const item = mediaItem({ path_rel: parseProjectPath('Media/sub/clip.mp4'), path_abs: '/ws/Media/sub/clip.mp4' })
     const { project: out, report } = await run(withPool([item]), fs)
     expect(fs.renames).toEqual([])
     expect(out.media_pool['m1'].path_rel).toBe('Media/stray.mp3')
@@ -101,8 +102,8 @@ describe('relinkMissingMedia', () => {
     // m2 resolves fine at shared.mp4; m1 (same size, and hashing shared.mp4
     // WOULD match) must not rebind m2's file out from under it.
     const fs = memFs({ '/ws/Media/shared.mp4': 'AAAA' })
-    const m1 = mediaItem({ id: 'm1', path_rel: 'Media/gone.mp4', path_abs: '/ws/Media/gone.mp4' })
-    const m2 = mediaItem({ id: 'm2', path_rel: 'Media/shared.mp4', path_abs: '/ws/Media/shared.mp4' })
+    const m1 = mediaItem({ id: 'm1', path_rel: parseProjectPath('Media/gone.mp4'), path_abs: '/ws/Media/gone.mp4' })
+    const m2 = mediaItem({ id: 'm2', path_rel: parseProjectPath('Media/shared.mp4'), path_abs: '/ws/Media/shared.mp4' })
     const { report } = await run(withPool([m1, m2]), fs)
     expect(report.missing).toEqual(['m1'])
     expect(fs.files.has('/ws/Media/shared.mp4')).toBe(true)
@@ -129,8 +130,8 @@ describe('relinkMissingMedia', () => {
 
   it('binds a duplicate-content second item to the first heal instead of leaving it missing', async () => {
     const fs = memFs({ '/ws/Media/stray.mp3': 'AAAA' })
-    const a = mediaItem({ id: 'a', path_rel: 'Media/one.mp3', path_abs: '/ws/Media/one.mp3' })
-    const b = mediaItem({ id: 'b', path_rel: 'Media/two.mp3', path_abs: '/ws/Media/two.mp3' })
+    const a = mediaItem({ id: 'a', path_rel: parseProjectPath('Media/one.mp3'), path_abs: '/ws/Media/one.mp3' })
+    const b = mediaItem({ id: 'b', path_rel: parseProjectPath('Media/two.mp3'), path_abs: '/ws/Media/two.mp3' })
     const { project: out, report } = await run(withPool([a, b]), fs)
     expect(report.healed).toHaveLength(2)
     expect(report.missing).toEqual([])

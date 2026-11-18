@@ -4,6 +4,7 @@ import { seededGen } from '../state/ids'
 import { blankProject, type MediaItem, type Project } from '../state/model'
 import { mediaItemTemplate } from '../state/mutations/media'
 import { shapeImportResult } from './hybridResult'
+import { parseProjectPath } from '../../shared/projectPath'
 
 const A = '00000000-0000-0000-0000-0000000000aa'
 const B = '00000000-0000-0000-0000-0000000000bb'
@@ -21,9 +22,9 @@ const record = (after: Project, outcome: ImportOutcome) =>
 describe('shapeImportResult', () => {
   it('names the pooled file: the Media/ copy while it runs (copying), the record once it landed (NEW-4)', () => {
     const p = pool(item(A, 'h1', 'D:/pictures/a.mp4'))
-    const copying = record(p, { mediaId: A, disposition: 'added', existing: false, sameContentAs: [], copying: { path_rel: 'Media/a.mp4', path_abs: 'C:/proj/Media/a.mp4' } })
+    const copying = record(p, { mediaId: A, disposition: 'added', existing: false, sameContentAs: [], copying: { path_rel: parseProjectPath('Media/a.mp4'), path_abs: 'C:/proj/Media/a.mp4' } })
     expect(copying).toMatchObject({ path: 'C:/proj/Media/a.mp4', path_rel: 'Media/a.mp4', copying: true })
-    const landed = pool({ ...item(A, 'h1'), path_rel: 'Media/a.mp4' })
+    const landed = pool({ ...item(A, 'h1'), path_rel: parseProjectPath('Media/a.mp4') })
     const r = record(landed, { mediaId: A, disposition: 'reused', existing: true, sameContentAs: [], copying: null })
     expect(r).toMatchObject({ path: `C:/proj/Media/${A}.mp4`, path_rel: 'Media/a.mp4' })
     expect(r).not.toHaveProperty('copying')

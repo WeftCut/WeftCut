@@ -15,7 +15,6 @@ const OWNERS = new Set(['src/shared/projectPath.ts', 'src/main/state/projectPath
 const PENDING = [
   'src/main/state/importSource.ts',
   'src/main/state/mediaImport.ts',
-  'src/main/state/persistence.ts',
   'src/main/state/relink.ts',
 ]
 

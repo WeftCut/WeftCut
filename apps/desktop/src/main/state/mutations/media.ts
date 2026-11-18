@@ -1,5 +1,6 @@
 import type { AudioParams, LayerParams, MediaItem, Project, Track, Uuid } from '../model'
 import type { DecodeRoute } from '../../../shared/decode-route'
+import type { ProjectPath } from '../../../shared/projectPath'
 import type { IdGen } from '../ids'
 import { CommandFailure } from '../errors'
 import { defaultTransform } from './add'
@@ -63,7 +64,7 @@ export interface MediaDerivativesPatch {
   thumbnails_dir?: string | null
 }
 export interface WorkspacePaths {
-  path_abs: string; path_rel: string | null; file_hash_blake3: string; file_size: number; file_mtime: number
+  path_abs: string; path_rel: ProjectPath | null; file_hash_blake3: string; file_size: number; file_mtime: number
 }
 
 /** set_media_derivatives — patch one pool item's derivative fields, returning

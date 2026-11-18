@@ -424,7 +424,7 @@ describe('ensureImported', () => {
       it('records a found file already under Media in place', async () => {
         const { id, deps, item } = await relinked('C:/proj/Media/restored/x.mp4')
         expect(id).toBe(HELD)
-        expect(item.path_rel).toBe('Media\\restored\\x.mp4')
+        expect(item.path_rel).toBe('Media/restored/x.mp4')
         expect(deps._enqueueWorkspaceCopy).not.toHaveBeenCalled()
       })
 
@@ -538,7 +538,7 @@ describe('ensureImported', () => {
       const deps = makeDeps(actor, { workspaceDir: 'C:/proj' })
       await importFile({ path: 'Media/x.mp4' }, deps)
       expect(deps._probeMedia).toHaveBeenCalledWith('C:\\proj\\Media\\x.mp4')
-      expect(actor.snapshot().media_pool[MID].path_rel).toBe('Media\\x.mp4')
+      expect(actor.snapshot().media_pool[MID].path_rel).toBe('Media/x.mp4')
     })
 
     it('answers the held item for a pooled file', async () => {
@@ -578,7 +578,7 @@ describe('ensureImported', () => {
       await importFile({ path: 'C:/proj/Media/x.mp4' }, deps)
       expect(deps._enqueueWorkspaceCopy).not.toHaveBeenCalled()
       const item = actor.snapshot().media_pool[MID]
-      expect(item.path_rel).toBe('Media\\x.mp4')
+      expect(item.path_rel).toBe('Media/x.mp4')
       expect(item.path_abs).toBe('C:/proj/Media/x.mp4')
       expect(item.file_hash_blake3).toBe('realhash-deadbeef')
     })

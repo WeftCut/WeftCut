@@ -10,6 +10,7 @@
 // the wrong file. Runs between loadProjectFromJson and replaceState — a pure
 // value repair, never a history entry.
 import type { MediaItem, Project } from './model'
+import { isPortableSegment, projectPathOf, type ProjectPath } from '../../shared/projectPath'
 
 /** jobs/import.rs MEDIA_DIR — the flat workspace folder every import copy lands in. */
 const MEDIA_DIR = 'Media'
@@ -90,7 +91,7 @@ export async function relinkMissingMedia(
 
   // Same content imported twice with both copies missing: the second item
   // binds to the file the first heal landed on instead of staying missing.
-  const healedByHash = new Map<string, { path_abs: string; path_rel: string; from: string }>()
+  const healedByHash = new Map<string, { path_abs: string; path_rel: ProjectPath; from: string }>()
 
   const media_pool: Record<string, MediaItem> = { ...project.media_pool }
   for (const id of missingIds) {
@@ -117,17 +118,16 @@ export async function relinkMissingMedia(
 
     const recordedBase = basenameOfRel(item.path_rel!)
     const recordedAbs = join(mediaDir, recordedBase)
-    let bound: { path_abs: string; path_rel: string }
+    // The found name is adopted only when it is valid on every OS.
+    const adopted = isPortableSegment(hit.name) ? { path_abs: hit.abs, path_rel: projectPathOf(MEDIA_DIR, hit.name) } : null
+    let bound: { path_abs: string; path_rel: ProjectPath } | null = adopted
     if (!fs.exists(recordedAbs)) {
       try {
         fs.rename(hit.abs, recordedAbs)
         bound = { path_abs: recordedAbs, path_rel: item.path_rel! }
-      } catch {
-        bound = { path_abs: hit.abs, path_rel: join(MEDIA_DIR, hit.name) }
-      }
-    } else {
-      bound = { path_abs: hit.abs, path_rel: join(MEDIA_DIR, hit.name) }
+      } catch { /* adopt the found name */ }
     }
+    if (!bound) { report.missing.push(id); continue }
 
     const stat = fs.statFile(bound.path_abs)
     media_pool[id] = {

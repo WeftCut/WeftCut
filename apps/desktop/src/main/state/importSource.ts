@@ -6,6 +6,7 @@
 // `platform` picks the path rules, so a test on Linux can speak Windows paths.
 import path from 'node:path'
 import type { MediaItem } from './model'
+import { isPortableSegment, projectPathOf, type ProjectPath } from '../../shared/projectPath'
 
 /** The folder the import copy writes into (native `jobs/import.rs` MEDIA_DIR). */
 const MEDIA_DIR = 'Media'
@@ -107,18 +108,22 @@ export function nextImportStep(input: {
 }
 
 /** `source`'s path relative to the project folder when it already sits under
- *  the project's Media/ folder, else null. A folder is Media/ when it is the
- *  same folder, however the two paths spell it. */
+ *  the project's Media/ folder with names valid on every OS, else null. A
+ *  folder is Media/ when it is the same folder, however the two paths spell
+ *  it. */
 export function mediaFolderPath(
   workspaceDir: string, source: string,
   realPath: (p: string) => string, fileKey: FileKey, platform: NodeJS.Platform,
-): string | null {
+): ProjectPath | null {
   const lib = pathLib(platform)
   const media = fileKey(lib.join(workspaceDir, MEDIA_DIR))
   if (media === null) return null
   const file = realPath(source)
   for (let dir = lib.dirname(file); ; dir = lib.dirname(dir)) {
-    if (fileKey(dir) === media) return lib.join(MEDIA_DIR, lib.relative(dir, file))
+    if (fileKey(dir) === media) {
+      const segments = lib.relative(dir, file).split(lib.sep)
+      return segments.every(isPortableSegment) ? projectPathOf(MEDIA_DIR, ...segments) : null
+    }
     if (lib.dirname(dir) === dir) return null
   }
 }

@@ -3,6 +3,7 @@ import { applyDerivativesEvent, applyWorkspacePathsEvent } from '../jobs-writeba
 import { createActor, type ActorHandle } from '../actor'
 import { blankProject, type MediaItem, type Project } from '../model'
 import { seededGen } from '../ids'
+import { parseProjectPath } from '../../../shared/projectPath'
 
 const MID = '00000000-0000-0000-0000-0000000000aa'
 
@@ -13,7 +14,7 @@ function actorWithMedia(): ActorHandle {
   const idGen = seededGen()
   const base = blankProject(idGen, 'p')
   const item: MediaItem = {
-    id: MID, label: null, path_abs: '/ws/Media/clip.mp4', path_rel: 'Media/clip.mp4',
+    id: MID, label: null, path_abs: '/ws/Media/clip.mp4', path_rel: parseProjectPath('Media/clip.mp4'),
     kind: 'Video', metadata: { duration_us: 1_000_000 }, file_hash_blake3: 'x', file_size: 0, file_mtime: 0,
     imported_at: '2026-01-01T00:00:00Z',
     decode_route: { route: 'proxied', quick_proxy: null, full_proxy: 'old.mp4', format_version: 0 },
@@ -84,5 +85,27 @@ describe('applyWorkspacePathsEvent', () => {
     expect(a.snapshot().media_pool[MID]).toEqual(before)
     expect(discard).toHaveBeenCalledWith('/ws/Media/clip-2.mp4')
     expect(relocated).not.toHaveBeenCalled()
+  })
+
+  it('refuses a path_rel that is not a project path, keeping what the item records', () => {
+    const a = actorWithMedia(), relocated = vi.fn()
+    const before = structuredClone(a.snapshot().media_pool[MID])
+    expect(() => applyWorkspacePathsEvent(a, { ...copy('x'), path_rel: 'Media\\clip-2.mp4' }, relocated)).toThrow(/backslash/)
+    expect(a.snapshot().media_pool[MID]).toEqual(before)
+    expect(relocated).not.toHaveBeenCalled()
+  })
+})
+
+describe('the actor takes a media path only as a project path', () => {
+  it('refuses add_media_item and set_media_workspace_paths with a host path', () => {
+    const a = actorWithMedia()
+    const item = { ...a.snapshot().media_pool[MID], id: '00000000-0000-0000-0000-0000000000ab', path_rel: 'Media\\b.mp4' }
+    const added = a.dispatch('add_media_item', { media: item })
+    expect(!added.ok && added.error).toMatchObject({ error: 'InvalidArgument', field: 'path_rel' })
+    const set = a.dispatch('set_media_workspace_paths', { media: MID, paths: {
+      path_abs: 'C:\\Users\\u\\Film\\Media\\c.mp4', path_rel: 'C:\\Users\\u\\Film\\Media\\c.mp4', file_hash_blake3: 'x', file_size: 0, file_mtime: 0 } })
+    expect(!set.ok && set.error).toMatchObject({ error: 'InvalidArgument', field: 'path_rel' })
+    expect(Object.keys(a.snapshot().media_pool)).toEqual([MID])
+    expect(a.snapshot().media_pool[MID]!.path_rel).toBe('Media/clip.mp4')
   })
 })

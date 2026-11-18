@@ -11,7 +11,7 @@ import { migrationEvaluation } from './migrationEvaluation'
 import { blankProject, type Transform } from './model'
 import { seededGen } from './ids'
 import { withGroup, root } from './__tests__/fixtures/project'
-import { parseProjectJson, serializeProjectToJson } from './persistence'
+import { loadProjectFromJson, serializeProjectToJson } from './persistence'
 import { validate } from './validate'
 import { defaultTransform } from './mutations/add'
 
@@ -135,12 +135,12 @@ describe('schema v3 → v4 anchor Position', () => {
     ref.params.transform.scale_x = curve(1, 2)
     ref.params.transform.scale_y = curve(1, 2)
     const before = serializeProjectToJson(p)
-    const migrated = parseProjectJson(before)
+    const migrated = loadProjectFromJson(before, { dir: '/home/u/Film' })
     expect(migrated.upgradedFrom).toBe(3)
     expect(migrated.bakedPositions).toHaveLength(1)
     expect(() => validate(migrated.project)).not.toThrow()
     const saved = serializeProjectToJson(migrated.project)
-    const reopened = parseProjectJson(saved)
+    const reopened = loadProjectFromJson(saved, { dir: '/home/u/Film' })
     expect(reopened.upgradedFrom).toBeNull()
     expect(reopened.bakedPositions).toEqual([])
     expect(serializeProjectToJson(reopened.project)).toBe(saved)

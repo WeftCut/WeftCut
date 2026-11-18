@@ -151,7 +151,7 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   // `commitWorkspace` below ROTATES it, so a row emitted during the parse lands in
   // the doomed pre-open bus (or nowhere at all on a fresh launch) and silently
   // vanishes — the same trap `OrchestratorDeps.onRelink` documents. Object
-  // identity cannot carry the report instead: `reconcileMediaPaths` and
+  // identity cannot carry the report instead: placing the media in `dir` and
   // other load repairs may spread into fresh objects, so a WeakMap keyed on
   // the parsed project is already dead by the time `replaceState` runs.
   let gridRepairs: readonly GridRepair[] = []
@@ -162,7 +162,7 @@ export async function openProject(deps: OrchestratorDeps, dir: string): Promise<
   // left to say, so it rides along as `detail` rather than being discarded.
   let loaded: ReturnType<typeof loadProjectFromJson>
   try {
-    loaded = loadProjectFromJson(text, { dir, join, onGridRepair: (r) => { gridRepairs = r }, migration: deps.migration?.(dir) })
+    loaded = loadProjectFromJson(text, { dir, platform: process.platform, onGridRepair: (r) => { gridRepairs = r }, migration: deps.migration?.(dir) })
   } catch (e) {
     if (isWorkspaceFailure(e)) throw e
     throw new WorkspaceFailure({ error: 'ProjectFileUnreadable', detail: String(e) })

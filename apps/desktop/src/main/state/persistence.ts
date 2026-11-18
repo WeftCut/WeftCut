@@ -3,13 +3,15 @@
 // The PURE on-disk persistence surface: project serialization + the
 // schema-version gate. No node:fs here — the file read/write/delete shell and
 // the workspace/cache/LogBus/recents/jobs orchestration live in
-// workspace-orchestrator.ts (injected fs). Filesystem/platform impurities are
-// injected (`join` for path reconcile).
+// workspace-orchestrator.ts (injected fs). The disk form of a project is
+// projectFile.ts's.
 import { WorkspaceFailure } from '../../shared/workspaceErrors'
-import { SCHEMA_VERSION, type MediaItem, type Project } from './model'
+import { SCHEMA_VERSION, type Project } from './model'
 import { migrationEvaluation } from './migrationEvaluation'
-import { upgradeWire, type MigrationContext, type MotifCopy, type PositionBakeReport } from './migrate'
-import { serializeProject, parseProject, type GridRepair, type ParseProjectOptions } from './serialize'
+import { upgradeWire, type FilePlan, type MigrationContext, type MotifCopy, type PositionBakeReport } from './migrate'
+import { parseProject, type GridRepair } from './serialize'
+import { mediaAtFolder, toProjectFile } from './projectFile'
+import type { PathPlatform } from './projectPathNative'
 
 /** The on-disk project file name inside a workspace folder. */
 export const PROJECT_FILE = 'project.json'
@@ -29,7 +31,7 @@ export function preUpgradeBackupFile(fromVersion: number): string {
 /** 2-space-indented JSON, NO trailing newline. Round-trip fidelity, not
  *  byte-identical key order, is the contract. */
 export function serializeProjectToJson(p: Project): string {
-  return JSON.stringify(serializeProject(p), null, 2)
+  return JSON.stringify(toProjectFile(p), null, 2)
 }
 
 /** The schema-version gate: refuse what this build cannot read, and report the
@@ -70,44 +72,32 @@ export interface ParsedProjectFile {
   /** Motif packages the upgrade recorded in `Motifs/` that the open still
    *  has to copy there (`openProject`). */
   motifCopies: MotifCopy[]
+  /** Files the upgrade moved a record to, for the open to move or copy
+   *  inside the folder. */
+  filePlans: FilePlan[]
 }
 
-/** Deserialize project.json text → Project: parse → gate → upgrade → cast.
+/** Load project.json text from the folder `dir`: parse → gate → upgrade →
+ *  cast → each media item at its place in `dir` under `platform`'s path rules.
  *  JSON.parse throws on malformed text; the gate runs BEFORE the structural cast
  *  so the rich version-specific guidance wins over parseProject's generic check,
- *  and the chain runs before it so the cast only ever sees the current shape. */
-export function parseProjectJson(text: string, opts: ParseProjectOptions & { migration?: MigrationContext } = {}): ParsedProjectFile {
+ *  and the chain runs before it so the cast only ever sees the current shape.
+ *  No derivative is ready afterwards: the open finds them in the cache again. */
+export function loadProjectFromJson(text: string, opts: {
+  dir: string; platform?: PathPlatform; onGridRepair?: (repairs: readonly GridRepair[]) => void; migration?: MigrationContext
+}): ParsedProjectFile {
   const json: unknown = JSON.parse(text)
   const version = schemaGate(json)
   const bakedPositions: PositionBakeReport[] = []
   const motifCopies: MotifCopy[] = []
-  const { wire } = upgradeWire(json as Record<string, unknown>, version, SCHEMA_VERSION, undefined,
-    { ...migrationEvaluation, ...opts.migration, onBake: report => bakedPositions.push(report), onMotifCopy: copy => motifCopies.push(copy) })
-  return { project: parseProject(wire, opts), upgradedFrom: version === SCHEMA_VERSION ? null : version, bakedPositions, motifCopies }
-}
-
-/** On load, an item whose `path_rel` is populated has its in-memory `path_abs`
- *  recomputed as join(dir, path_rel), reconciling the saved absolute path with
- *  the current (possibly-moved) workspace location. Items with
- *  `path_rel === null` (import-worker copy pending, or synthesized Cache/ media)
- *  keep their serialized `path_abs` verbatim. `join` is injected: node:path in
- *  production, a posix joiner in tests. */
-export function reconcileMediaPaths(p: Project, dir: string, join: (...parts: string[]) => string): Project {
-  const media_pool: Record<string, MediaItem> = {}
-  for (const [id, item] of Object.entries(p.media_pool)) {
-    media_pool[id] = item.path_rel ? { ...item, path_abs: join(dir, item.path_rel) } : item
-  }
-  return { ...p, media_pool }
-}
-
-/** The pure half of a project load: parse + schema-gate + schema upgrade + media
- *  path reconcile. Quick proxies persist; native hydration verifies the current
- *  content-addressed recipe before reuse. NOTE: stale-proxy invalidation (the
- *  Proxied route's `format_version`) is deliberately NOT done here — it rides the
- *  background jobs write-back. */
-export function loadProjectFromJson(text: string, opts: { dir: string; join: (...parts: string[]) => string; onGridRepair?: (repairs: readonly GridRepair[]) => void; migration?: MigrationContext }): ParsedProjectFile {
+  const filePlans: FilePlan[] = []
+  const { wire } = upgradeWire(json as Record<string, unknown>, version, SCHEMA_VERSION, undefined, {
+    ...migrationEvaluation, ...opts.migration,
+    onBake: report => bakedPositions.push(report), onMotifCopy: copy => motifCopies.push(copy), onFile: plan => filePlans.push(plan),
+  })
   // Omitting the hook (tests) leaves `onGridRepair: undefined`, which parseProject
   // falls back to its console default for — the reporting default is unchanged.
-  const { project, ...loaded } = parseProjectJson(text, { onGridRepair: opts.onGridRepair, migration: opts.migration })
-  return { ...loaded, project: reconcileMediaPaths(project, opts.dir, opts.join) }
+  const parsed = parseProject(wire, { onGridRepair: opts.onGridRepair })
+  const project = { ...parsed, media_pool: mediaAtFolder(parsed.media_pool, opts.dir, opts.platform ?? process.platform) }
+  return { project, upgradedFrom: version === SCHEMA_VERSION ? null : version, bakedPositions, motifCopies, filePlans }
 }

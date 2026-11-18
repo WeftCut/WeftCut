@@ -48,6 +48,7 @@ import { videoClipParams, audioParams, imageOverlayParams, mediaExtent, applySep
   applySetMediaDerivatives, applySetMediaWorkspacePaths, applySetMediaHash, referencingLayers,
   type MediaDerivativesPatch, type WorkspacePaths } from './mutations/media'
 import type { MediaItem } from './model'
+import { isProjectPath } from '../../shared/projectPath'
 import { applyParamsPatch, applyUpdateLayerParams, applyUpdateLayerParamTrack, type LayerParamsPatch } from './mutations/params'
 import { applySetScaleLinked, copyTrackFreshIds, enforceScaleLinkInvariant, transformOf } from './mutations/scaleLink'
 import type { Manifest, MotifManifests } from '../../shared/motifs/catalog'
@@ -810,12 +811,20 @@ export function createActor(opts: ActorOptions): ActorHandle {
     broadcastUnrecorded('Updated track flags', current())
   }
 
+  /** A `path_rel` handed in by a caller (a Rust job, an import) enters the
+   *  pool only as a ProjectPath. */
+  function requirePathRel(v: unknown): void {
+    if (v === null || (typeof v === 'string' && isProjectPath(v))) return
+    throw new CommandFailure({ error: 'InvalidArgument', field: 'path_rel', detail: `not a project path: ${JSON.stringify(v)}` })
+  }
+
   // ── add_media_item — UNRECORDED. Insert into the
   //    pool (media id is the caller's, NOT counter-minted), validate the probe,
   //    then replace the pool EVERYWHERE (durable across undo) + broadcast (burns
   //    one id). No HistoryEntry. ──
   function addMediaItem(item: MediaItem): Uuid {
     opts.assertWritable?.()
+    requirePathRel(item.path_rel)
     const cur = current()
     const nextPool = { ...cur.media_pool, [item.id]: item }
     runValidate({ ...cur, media_pool: nextPool })
@@ -834,6 +843,7 @@ export function createActor(opts: ActorOptions): ActorHandle {
   }
   // ── set_media_workspace_paths — UNRECORDED. ──
   function setMediaWorkspacePaths(id: Uuid, paths: WorkspacePaths): void {
+    requirePathRel(paths.path_rel)
     const nextPool = applySetMediaWorkspacePaths(current().media_pool, id, paths) // throws MediaNotFound
     history.replaceMediaPoolEverywhere(nextPool)
     broadcastUnrecorded('Updated media workspace paths', current())

@@ -3,6 +3,7 @@
 import type { ActorHandle } from './actor'
 import type { Actor } from './history'
 import type { MediaItem } from './model'
+import { parseProjectPath, type ProjectPath } from '../../shared/projectPath'
 import { McpArgError, mapCommandError } from './mcp-commands'
 import type { ImportTrace } from '../importDiagnostics'
 import { hasFailedDerivative } from './derivative-jobs'
@@ -59,7 +60,7 @@ export interface ImportOutcome {
   /** Where the pooled file lands while its copy into `Media/` is still
    *  running: the reserved workspace-relative and absolute paths. Null once the
    *  pool record holds its own `path_rel`, or when nothing is being copied. */
-  copying: { path_rel: string; path_abs: string } | null
+  copying: { path_rel: ProjectPath; path_abs: string } | null
 }
 
 const errText = (e: unknown): string => e instanceof Error ? e.message : String(e)
@@ -93,13 +94,13 @@ export function createMediaImporter(deps: MediaImportDeps): MediaImporter {
 }
 
 /** The `Media/` name each queued copy is reserved to land at, by media id. */
-type Reservations = Map<string, { source: string; path_rel: string }>
+type Reservations = Map<string, { source: string; path_rel: ProjectPath }>
 
 /** Queue the workspace copy of `source` for `mediaId`, remembering where it
- *  will land. */
+ *  will land. Throws when the answered place is not a ProjectPath. */
 async function enqueueCopy(deps: MediaImportDeps, reserved: Reservations, mediaId: string, source: string): Promise<void> {
   const rel = await deps.enqueueWorkspaceCopy(mediaId, source)
-  if (typeof rel === 'string') reserved.set(mediaId, { source, path_rel: rel })
+  if (typeof rel === 'string') reserved.set(mediaId, { source, path_rel: parseProjectPath(rel) })
 }
 
 /** An actor write attributed to the importing caller. */

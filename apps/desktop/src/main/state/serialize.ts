@@ -4,6 +4,7 @@ import { frameGrid, gridForLayerKind, snapOnGrid, snapUpOnGrid, type Grid } from
 import { scaleTracksTwins } from './mutations/scaleLink'
 import { positionProblem } from '../../shared/position'
 import { isUuid } from './ids'
+import { parseProjectPath } from '../../shared/projectPath'
 
 function serializeLink(g: Link): unknown {
   return { id: g.id, members: [...g.members].sort() }
@@ -466,9 +467,30 @@ function forEachWireTransform(o: Record<string, unknown>, fn: (transform: Record
   })
 }
 
+/** Refuses a media item whose place cannot be read: a `path_rel` that is not
+ *  a ProjectPath, an external item (`path_rel` null) without its `path_abs`,
+ *  or a route without its tag. Items may be in the disk form
+ *  (`projectFile.ts`), whose runtime fields `mediaAtFolder` fills in. */
+function checkMediaPaths(pool: Record<string, unknown>): void {
+  for (const [id, item] of Object.entries(pool)) {
+    if (item === null || typeof item !== 'object') throw new Error(`parseProject: media ${id} must be an object`)
+    const { path_rel, path_abs, decode_route } = item as Record<string, unknown>
+    if (path_rel === null) {
+      if (typeof path_abs !== 'string') throw new Error(`parseProject: media ${id} has neither path_rel nor path_abs`)
+    } else if (typeof path_rel !== 'string') {
+      throw new Error(`parseProject: media ${id} path_rel must be a string or null`)
+    } else {
+      try { parseProjectPath(path_rel) } catch (e) { throw new Error(`parseProject: media ${id} path_rel: ${(e as Error).message}`) }
+    }
+    const route = (decode_route as { route?: unknown } | null)?.route
+    if (typeof route !== 'string' || !DECODE_ROUTES.has(route)) throw new Error(`parseProject: media ${id} decode_route has no known route`)
+  }
+}
+const DECODE_ROUTES = new Set(['bypass', 'direct-export', 'proxied', 'native-sw'])
+
 /** Validate + type a wire object as a Project, and normalize it.
  *
- *  Takes the CURRENT schema version as given: `parseProjectJson` (persistence.ts)
+ *  Takes the CURRENT schema version as given: `loadProjectFromJson` (persistence.ts)
  *  refuses what it cannot read and runs the migration chain (migrate.ts) first,
  *  so the equality check below is a post-condition on that walk — it fires only
  *  if the chain returned something at the wrong version, or if a caller reached
@@ -498,6 +520,7 @@ export function parseProject(json: unknown, opts: ParseProjectOptions = {}): Pro
   requireString('project_id')
   requireObject('metadata')
   requireObject('media_pool')
+  checkMediaPaths(o.media_pool as Record<string, unknown>)
   requireObject('audio_roles')
   requireObject('settings')
   requireObject('motifs')
