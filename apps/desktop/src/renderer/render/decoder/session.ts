@@ -124,7 +124,8 @@ export interface FrameSelection {
 /// (export) satisfies them as documented no-ops (Null Object). The trailing
 /// members are honestly optional — an engine that cannot provide a value simply
 /// omits the method (WebCodecs has decodeQueueSize, FfmpegSource does not;
-/// onFatalError is FfmpegSource-only, WebCodecs self-heals internally).
+/// onFatalError is FfmpegSource-only: WebCodecs rebuilds its decoder after an
+/// error and reports nothing when it gives up).
 export interface PreviewDecodeDevice {
   kind: 'hardware' | 'software' | 'browser';
   backend: string;
