@@ -23,22 +23,46 @@ function processRows() {
   })
 }
 
-/** Every process as { pid, ppid, command }, the command line in full: a
- * Chromium child is told apart only by its `--type=` switch. */
+/** How long one Windows listing may take, and how many it gets. A CIM query
+ * on a runner where WMI sat idle can outlast the limit; the next one takes
+ * about a second, so a timed-out listing is tried once more. */
+export const WINDOWS_LISTING_MS = 15_000
+export const WINDOWS_LISTING_ATTEMPTS = 2
+
+/** Every process as `rows` of { pid, ppid, command }, the command line in
+ * full (a Chromium child is told apart only by its `--type=` switch). When no
+ * listing could be read, `failure` says why, each attempt with its time: an
+ * empty list would read as "nothing left" in a report. */
 function processCommands() {
   if (process.platform === 'win32') {
-    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-      'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress'],
-    { encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024 * 1024, windowsHide: true })
-    try {
-      return [JSON.parse(result.stdout)].flat().map(row => ({ pid: row.ProcessId, ppid: row.ParentProcessId, command: row.CommandLine || row.Name || '' }))
-    } catch { return [] }
+    const attempts = []
+    for (let attempt = 0; attempt < WINDOWS_LISTING_ATTEMPTS; attempt++) {
+      const started = Date.now()
+      const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+        'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress'],
+      { encoding: 'utf8', timeout: WINDOWS_LISTING_MS, maxBuffer: 64 * 1024 * 1024, windowsHide: true })
+      const seconds = ((Date.now() - started) / 1000).toFixed(1)
+      try {
+        const rows = [JSON.parse(result.stdout)].flat().map(row => ({ pid: row.ProcessId, ppid: row.ParentProcessId, command: row.CommandLine || row.Name || '' }))
+        return { rows, failure: null }
+      } catch {
+        const why = result.error?.code === 'ETIMEDOUT' ? 'timed out'
+          : result.error ? result.error.message
+          : `exit ${result.status ?? result.signal}${result.stderr?.trim() ? `: ${result.stderr.trim().split('\n').at(-1)}` : ''}`
+        attempts.push(`${why} after ${seconds} s`)
+      }
+    }
+    return { rows: [], failure: `process listing failed (${attempts.join('; ')})` }
   }
   const result = spawnSync('ps', ['-axo', 'pid=,ppid=,args='], { encoding: 'utf8', timeout: 1000, maxBuffer: 16 * 1024 * 1024 })
-  return (result.stdout ?? '').split('\n').flatMap(line => {
-    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.*?)\s*$/)
-    return match ? [{ pid: Number(match[1]), ppid: Number(match[2]), command: match[3] }] : []
-  })
+  if (result.error || !result.stdout) return { rows: [], failure: `process listing failed (${result.error?.message ?? `exit ${result.status ?? result.signal}, no output`})` }
+  return {
+    rows: result.stdout.split('\n').flatMap(line => {
+      const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.*?)\s*$/)
+      return match ? [{ pid: Number(match[1]), ppid: Number(match[2]), command: match[3] }] : []
+    }),
+    failure: null,
+  }
 }
 
 /** The executable's name and the switches that say which child it is. */
@@ -139,7 +163,7 @@ export function ownProcessTree(child, { ffmpegGraceMs = FFMPEG_GRACE_MS } = {}) 
      * its child. Read this before force(): afterwards all are gone. */
     evidence() {
       if (!pid) return { report: 'leader: never started', mainPid: null }
-      const rows = processCommands()
+      const { rows, failure } = processCommands()
       const owned = new Set(ownedPids(processRows()))
       const family = [pid]
       for (let i = 0; i < family.length; i++) {
@@ -155,7 +179,8 @@ export function ownProcessTree(child, { ffmpegGraceMs = FFMPEG_GRACE_MS } = {}) 
         : [`main process ${pid}: ${state}`]
       const left = rows.filter(row => row.pid !== pid && row.pid !== main && (owned.has(row.pid) || family.includes(row.pid)))
       for (const row of left) lines.push(`  left ${row.pid} (parent ${row.ppid}): ${brief(row.command)}`)
-      if (left.length === 0) lines.push('  left: no other process')
+      if (failure) lines.push(`  left: unknown, ${failure}`)
+      else if (left.length === 0) lines.push('  left: no other process')
       return { report: lines.join('\n'), mainPid: shell ? main : running ? pid : null }
     },
     force() {

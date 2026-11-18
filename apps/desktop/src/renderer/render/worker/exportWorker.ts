@@ -541,7 +541,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
             // ring is full, then all of them are read with one wait for the GPU.
             const capT0 = performance.now();
             pack!.submit(compositeRT!);
-            const batch = pack!.full ? pack!.drain() : [];
+            const batch = pack!.full ? pack!.drain(sinkFrames!.buffer) : [];
             captureMs += performance.now() - capT0;
 
             // `encodeMs` is the stall waiting for the sink to take frames,
@@ -677,7 +677,7 @@ async function runExport(req: Extract<ExportRequest, { type: "start" }>) {
     // main thread finishes the sink on `done`, so a frame still unread or
     // unwritten would race ffmpeg's end of input.
     if (pack && sinkFrames) {
-      for (const bytes of pack.drain()) await sinkFrames.send(bytes);
+      for (const bytes of pack.drain(sinkFrames.buffer)) await sinkFrames.send(bytes);
       await sinkFrames.settle();
     }
 
