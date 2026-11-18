@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SinkFrameStream, type SinkFramePort } from "./sinkFrameStream";
-import type { SinkPortReply } from "../../../shared/exportSinkPort";
+import { SinkFrameStream, type SinkFramePort, type SinkStreamMessage } from "./sinkFrameStream";
 
 function fakePort() {
   const sent: number[] = [];
@@ -8,7 +7,7 @@ function fakePort() {
     onmessage: null,
     postMessage: (frame) => { sent.push(frame[0]!); },
   };
-  const reply = (data: SinkPortReply) => port.onmessage!({ data } as MessageEvent<SinkPortReply>);
+  const reply = (data: SinkStreamMessage) => port.onmessage!({ data } as MessageEvent<SinkStreamMessage>);
   return { port, sent, reply };
 }
 
@@ -46,5 +45,21 @@ describe("SinkFrameStream", () => {
     reply({ error: "ffmpeg stdin: broken pipe" });
     await expect(stream.send(new Uint8Array([1]))).rejects.toThrow("broken pipe");
     await expect(stream.settle()).rejects.toThrow("broken pipe");
+  });
+  it("gives the next frame a sent frame's buffer once it comes back, and a new one otherwise", () => {
+    const { port, reply } = fakePort();
+    const stream = new SinkFrameStream(port, 2);
+    const first = stream.buffer(6);
+    expect(first.byteLength).toBe(6);
+    reply({ recycled: first });
+    expect(stream.buffer(6)).toBe(first);
+    expect(stream.buffer(6)).not.toBe(first);
+  });
+
+  it("never hands out a returned buffer of another size", () => {
+    const { port, reply } = fakePort();
+    const stream = new SinkFrameStream(port, 2);
+    reply({ recycled: new Uint8Array(4) });
+    expect(stream.buffer(6).byteLength).toBe(6);
   });
 });

@@ -180,8 +180,8 @@ export class PackYuvPlanar {
 
   /// Every submitted frame, oldest first, each one frame-owned buffer in
   /// planar (Y, Cb, Cr) plane order — safe to transfer.
-  drain(): Uint8Array[] {
-    return this.reader?.drain() ?? [];
+  drain(buffer?: (bytes: number) => Uint8Array): Uint8Array[] {
+    return this.reader?.drain(buffer) ?? [];
   }
 
   dispose(): void {
