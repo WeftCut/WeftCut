@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir } from './helpers/driver'
+import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir, colorFaithfulMax } from './helpers/driver'
 
 // Saturated-chart color gate for the Lite engine's PREVIEW (WebCodecs decode
 // of the original, converted by the browser's 2D-canvas path; ADR 0014). The
@@ -12,8 +12,8 @@ import { launchApp, newProject, importAndPlaceMedia, invokeCmd, tmpDir } from '.
 // must land on the same patches the native lanes do (preview-sw-color,
 // preview-hw-color) and export does (color-conformance).
 //
-// Same sampling method and ceiling as preview-sw-color. Needs a
-// VITE_WEFTCUT_E2E=1 build; no native-decode component.
+// Same sampling method as preview-sw-color. Needs a VITE_WEFTCUT_E2E=1 build;
+// no native-decode component.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const MEDIA_DIR = process.env.WEFTCUT_TEST_MEDIA || path.resolve(__dirname, '../fixtures/media')
@@ -27,7 +27,12 @@ const SEEK_US = 500_000 // mid-chart; the chart is static, any decoded frame sho
 // quantization, its 4:2:0 chroma siting and the RGBA8 round-trip cost ≈1–2
 // steps each on flat patch centers. A matrix read the wrong way reads as 10–30
 // steps on the saturated patches.
-const PATCH_TOL = 8
+//
+// Unlike the native lanes, this lane's conversion is the browser's, so a leg
+// whose raster is software takes the ceiling the export colour gate takes
+// there (`colorFaithfulMax`: its chroma rounding reaches 12 on the BT.709
+// blue channel). A matrix read the wrong way still reads above it (24–39).
+const PATCH_TOL = colorFaithfulMax(8)
 
 interface ManifestPatch {
   id: string
